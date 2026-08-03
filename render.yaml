@@ -1,0 +1,44 @@
+databases:
+  - name: stealthlab-db
+    plan: free
+    postgresMajorVersion: "16"
+
+services:
+  - type: web
+    name: stealthlab-backend
+    runtime: python
+    plan: free
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: stealthlab-db
+          property: connectionString
+      - key: FRONTEND_ORIGIN
+        value: https://frontend-tau-one-80.vercel.app
+      - key: GOVERNANCE_ENABLED
+        value: "true"
+      - key: DAILY_LLM_BUDGET_USD
+        value: "10.0"
+      - key: PER_VIEWER_DAILY_BUDGET_USD
+        value: "1.0"
+      - key: PRIVATE_VISIBILITY_ENABLED
+        value: "false"
+      - key: REAL_AUTH_ENABLED
+        value: "false"
+      - key: USE_LOCAL_MODELS
+        value: "false"
+      - key: USE_GENERAL_COMPUTE
+        value: "false"
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: FIREWORKS_API_KEY
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: GOOGLE_API_KEY
+        sync: false
+      - key: VOYAGE_API_KEY
+        sync: false

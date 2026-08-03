@@ -39,7 +39,7 @@ app = FastAPI(title="Workflow Debate Platform", version="0.1.0", lifespan=lifesp
 # for v0 -- tighten before this serves more than one frontend deployment.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[os.environ.get("FRONTEND_ORIGIN", "http://localhost:3000")],
+    allow_origins=[os.environ.get("FRONTEND_ORIGIN", "http://localhost:3001")],
     allow_methods=["GET", "POST"],
     allow_headers=["*"],
 )

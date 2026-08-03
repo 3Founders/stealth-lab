@@ -1,8 +1,8 @@
-# Workflow Debate Platform
+# Task Graph + Ontology for Workflow Intelligence 
 
-A governance layer for changes to an operational knowledge graph.
+Most systems that hold knowledge treat a write as a storage operation. 
 
-Most systems that hold knowledge treat a write as a storage operation. Here a
+Here a
 write is a proposed change that has to survive an argument, a review, and a human
 before it lands — and once it lands, the version it replaced is still there and
 still queryable.
