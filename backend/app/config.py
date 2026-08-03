@@ -72,6 +72,13 @@ class Settings(BaseSettings):
     general_compute_panel_models: str = ""
     general_compute_judge_model: str = ""
 
+    # --- Agent execution: file upload/output handling ---
+    agent_upload_dir: str = "/tmp/agent_uploads"
+    agent_output_dir: str = "/tmp/agent_outputs"
+    max_upload_bytes: int = 20 * 1024 * 1024  # 20MB per file -- generous for a
+                                                # scanned medical report, still a
+                                                # real bound against resource exhaustion
+
     # Model IDs, overridable without touching code.
     anthropic_model: str = "claude-sonnet-4-6"
     fireworks_model: str = "accounts/fireworks/models/kimi-k3"

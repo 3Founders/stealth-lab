@@ -8,7 +8,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api import admin, approval, chat, decompose, graph, ingest
+from app.api import admin, agents, approval, chat, decompose, graph, ingest
 from app.api.deps import require_trustworthy_identity
 from app.db.session import close_pool, create_pool
 
@@ -39,7 +39,7 @@ app = FastAPI(title="Workflow Debate Platform", version="0.1.0", lifespan=lifesp
 # for v0 -- tighten before this serves more than one frontend deployment.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[os.environ.get("FRONTEND_ORIGIN", "http://localhost:3001")],
+    allow_origins=[os.environ.get("FRONTEND_ORIGIN", "http://localhost:3000")],
     allow_methods=["GET", "POST"],
     allow_headers=["*"],
 )
@@ -50,6 +50,7 @@ app.include_router(admin.router)
 app.include_router(graph.router)
 app.include_router(chat.router)
 app.include_router(decompose.router)
+app.include_router(agents.router)
 
 
 @app.get("/health")

@@ -1,134 +1,152 @@
-# Workflow Debate Platform — Backend (Phase A)
+# Workflow Debate Platform
 
-Phase A of the MVP plan: the domain-agnostic skeleton. Everything here is
-generic machinery, built and tested with no domain content anywhere in it.
-That is deliberate — it's what makes the generalisability claim checkable
-rather than aspirational. Phase B (first onboarding, threshold
-calibration, end-to-end validation) needs a confirmed real workflow.
+Detect a bottleneck in a company's workflows → debate the fix among
+heterogeneous AI models → evaluate the fix rigorously → apply it only
+after a human approves, fully auditable. V2 adds a public-facing half:
+anyone can describe a problem in plain language and get back a proposed
+task decomposition, quarantined behind a structural safety boundary
+until a human approves it too.
 
-## Layout
-
-```
-db/01_ontology.sql     KnowledgeNode / TaskNode / edges / episodes / traces
-db/02_loop.sql         triggers / debates / turns / candidates / scorecards / approvals
-app/models/            Pydantic mirrors of both schemas + ChangeSet
-app/db/                connection pool (with the JSONB codec) + GraphStore
-app/debate/            panel agents, state machine, Vada engine, prompts
-app/eval/              Layer 1 evaluator (Nirnaya) + judge rubric
-app/services/          trigger detection, knowledge update, loop orchestrator
-app/export/            markdown diff rendering
-app/onboarding/        reusable workflow seeding
-app/api/               FastAPI routes (ingest, approval, admin)
-scripts/               bootstrap_demo.py — seeds a demo workflow + trace data
-tests/                 offline logic tests (no DB required)
-TEST_REPORT.md         full record of everything verified live in development
-```
+Full design reasoning: `V2_PLATFORM_PLAN.md`. Current build status and
+every real bug found so far: `V2_STATUS.md`. Budgeted real-model testing
+protocol: `TESTING_PLAN.md`. Dense technical writeup with real code/math:
+`TECHNICAL_DEEP_DIVE.md`.
 
 ## Setup
 
 ```bash
-# 1. Database — any Postgres 15+ with pgvector (Supabase, or local)
-createdb workflow_db
-psql -d workflow_db -f db/01_ontology.sql
-psql -d workflow_db -f db/02_loop.sql
-
-# 2. Backend
+# 1. Dependencies
 pip install -r requirements.txt
-cp .env.example .env   # fill in DATABASE_URL at minimum
-uvicorn app.main:app --reload
-```
 
-`GET /health` should return `{"status":"ok"}` at this point. That's the
-whole app working — but the docket will be empty, correctly, since
-nothing has created a trigger yet.
+# 2. Database — Postgres 15+ with pgvector (Supabase works). Run in order:
+psql -d your_db -f db/01_ontology.sql
+psql -d your_db -f db/02_loop.sql
+psql -d your_db -f db/03_access.sql
+psql -d your_db -f db/04_governance.sql
+psql -d your_db -f db/05_decomposition.sql
 
-**To see it do something**, with `DATABASE_URL` exported in your shell:
-```bash
+# 3. Config
+cp .env.example .env
+# set DATABASE_URL at minimum
+
+# 4. Run
+uvicorn app.main:app --reload      # http://localhost:8000/health
+python -m pytest tests/ -q         # 168 tests, no DB or API keys needed
+
+# 5. Demo data (an empty graph does nothing)
 python scripts/bootstrap_demo.py
+
+# 6. Frontend, from the matching frontend_v2 folder
+npm install && npm run dev         # http://localhost:3000
 ```
-Seeds the example workflow and inserts trace data shaped to actually
-cross the default bottleneck thresholds — without this there's nothing
-for a scan to find. Then either `curl -X POST localhost:8000/v1/admin/scan`
-or click "Run scan" in the frontend.
 
-**Four API keys are needed for that last step specifically** — one per
-debate-panel seat plus an independent judge: `ANTHROPIC_API_KEY`,
-`FIREWORKS_API_KEY` (Kimi K3), `OPENAI_API_KEY`, `GOOGLE_API_KEY`
-(Gemini — the fourth exists because the judge must be a model family
-none of the three panelists use). Everything else in this backend runs
-without any of them.
+**Model providers**, checked in this order in `app/debate/panel.py`:
 
-Run the tests with `python -m pytest tests/ -q` — no database, no keys.
+| Setting | Cost | Use |
+|---|---|---|
+| `USE_LOCAL_MODELS=true` | Free | Ollama, structural smoke-testing |
+| `USE_GENERAL_COMPUTE=true` | Cheap | Hosted open-weight, real reasoning quality |
+| (neither set) | Paid | Anthropic + Fireworks/Kimi + OpenAI + Google, the originally-designed roster |
 
-## Notes for review
+Full model-selection env vars are documented in `.env.example`.
 
-**Verification status, by item:**
+## How it works
 
-| Item | Coverage |
-|---|---|
-| 1. Ontology | Live: schema, `task_nodes` JSONB fields |
-| 2. Ingestion | Live: FK rejection, `ON CONFLICT` dedup, batch resilience to malformed records |
-| 3. Vāda debate | Offline only: engine logic (convergence, round-cap, agent-failure resilience), SDK wrapper parsing against mocked responses, `_extract_json` against realistic model-output quirks. **Real API calls to Anthropic/Fireworks/OpenAI have never been made** — no credentials in this environment. This is the one gap that cannot be closed from here. |
-| 4. Layer 1 eval | Live: groundedness scoring against a real `GraphStore` with real and nonexistent citations, judge-independence enforcement, fail-closed behavior |
-| 5. Approval + update | Live: `_supersede_task` edge-rewiring, bi-temporal point-in-time queries, and the full `decide()` endpoint end to end (approve and reject paths) |
-| 6. Delivery formatter | Offline: 10 tests, including that Layer 2 absence and advisory-only status are always stated explicitly, never silently omitted |
-| 7. Onboarding | Live: real seeding, spec validation catching bad wiring |
-| State machine | Live: real transaction, real row lock, real illegal-transition rejection |
-| Trigger detection | Live: real `GROUP BY`/`HAVING` aggregation, dedup logic |
+**Ontology.** Two connected graphs — `knowledge_nodes` and `task_nodes` —
+bi-temporal: every row tracks `t_valid`/`t_invalid` (when a fact was true
+in the world) separately from `t_created`/`t_expired` (when the system
+learned it). Updates are invalidate-and-append, never in-place, so any
+past graph state is exactly reconstructable. `provenance` tags every row
+by origin (`company_ingested`, `company_debate`, `prior_library`,
+`public_generated`), so nothing external is ever mistaken for earned
+company fact.
 
-**Two real bugs found and fixed this session, both invisible without live testing:**
+**Debate protocol** (`app/debate/`). Modeled on the Nyaya dialectic:
+*Vada* (cooperative default — propose/amend/pass, round-robin until a
+round produces no movement or a cap is hit), *Nirnaya* (an independent
+judge, enforced in code to share no model family with the panel).
+Heterogeneity is enforced too — `assert_heterogeneous` checks model
+*family*, not name, so two versions of the same base model correctly
+fail the check.
 
-1. Every JSONB write pre-serialized with `json.dumps()` and cast `::jsonb`,
-   which silently corrupted the connection's JSONB decoding for
-   subsequent reads once the type codec was registered. Affected every
-   JSONB column in the system. Fixed by passing native Python objects and
-   letting the codec encode.
+**Evaluation** (`app/eval/`). Layer 1: deterministic — every citation in
+an argument is checked against the real graph (`node_exists`), an
+uncited claim scores 0.0, the judge fails *closed* on error. Layer 2:
+real statistics — Welch's t-test (not Student's, doesn't assume equal
+variance), sequential testing with an O'Brien-Fleming alpha-spending
+boundary, Benjamini-Hochberg correction across metrics — validated
+against `scipy`'s own reference implementations, not just "runs without
+erroring". Only the weakest of three possible evidence tiers is
+implemented (simulated replay, labelled everywhere as a model's opinion,
+never as measurement); the other two are honestly documented as blocked
+in `V2_STATUS.md`.
 
-2. `TriggerDetector.record()`'s duplicate-suppression checked for an
-   *open debate*, but nothing in `record()` opens one — that happens in a
-   separate call. In the gap between a trigger being recorded and a
-   debate actually being opened for it, a second scan found nothing to
-   join against and inserted a duplicate trigger for the same
-   bottleneck. Fixed by checking for an unresolved trigger, not just an
-   open debate.
+**Access control** (`app/services/access.py`). One function builds every
+visibility predicate in the system — nothing else is permitted to write
+`visibility = ...` into a query. Launches as a fully public commons;
+private visibility is schema-ready but disabled until real
+authentication exists (the app refuses to boot if you enable one without
+the other).
 
-Both were caught by writing tests that exercised real, multi-step
-sequences against actual state — not by inspection, and not by mocks.
+**Governance** (`app/services/governance.py`). Rate limiting and an LLM
+spend cap, both fail *closed* on infrastructure errors, checked and
+recorded together under a Postgres advisory lock (a plain transaction is
+not sufficient here — verified live: it let 10 concurrent requests
+through a limit of 3 before the lock was added).
 
-**Genuinely not yet exercised:** anything requiring real LLM responses
-(item 3's actual API behavior), the vector index at scale, or concurrent
-writers against `DebateStateMachine`'s row lock.
+**Generative decomposition + injection defense** (`app/services/
+decomposition.py`, `untrusted.py`). The one place untrusted public text
+reaches an LLM directly. Four defense layers, in ascending order of what
+they actually guarantee — delimiting, an instruction-hierarchy prompt,
+and pattern scanning are all *mitigations*, assumed to eventually fail.
+The real guarantee is structural: generated content may only create new
+graph nodes and connect them to each other, never modify or attach to
+anything that already exists (`GENERATIVE_OP_TYPES` in
+`app/models/change.py`). Re-validated at *apply* time too, not just at
+generation, so a proposal tampered with in storage between the two still
+can't escalate.
 
-**Fail-closed choices worth knowing about:**
-- A judge outage marks a candidate failed, never passed (`Layer1Evaluator`).
-- An uncited proposal scores 0.0 groundedness and does not pass.
-- A change set that fails to apply rolls back and leaves the debate in
-  `PENDING_APPROVAL` rather than recording an approval that didn't happen.
+## API
 
-## Deployment
+| Method | Path | Purpose |
+|---|---|---|
+| POST | `/v1/traces` | Ingest execution traces |
+| POST | `/v1/admin/scan` | Detect bottlenecks, run the full debate loop |
+| GET | `/v1/approvals/pending` | List scorecards awaiting a decision |
+| POST | `/v1/approvals/{id}` | Approve or reject |
+| GET | `/v1/graph/{node_id}` | Subgraph for visualization |
+| POST | `/v1/chat` | Grounded Q&A over the knowledge graph |
+| POST | `/v1/decompose` | Tab 1: problem in, proposed workflow out |
+| GET | `/v1/decompose/pending` | List public proposals awaiting a decision |
+| GET | `/v1/decompose/{id}` | Full detail on one proposal |
+| POST | `/v1/decompose/{id}/decide` | Approve or reject a public decomposition |
+| GET | `/health` | Liveness check |
 
-Railway or Render, per the plan's Section 12. Both platforms need one
-setting the monorepo layout makes non-default: point them at the
-`backend/` subdirectory, not the repo root.
+## Testing
 
-- **Railway:** New service → Deploy from GitHub repo → in the service's
-  Settings, set **Root Directory** to `backend`. It picks up the
-  `Procfile` automatically. Add the environment variables from
-  `.env.example` under Variables.
-- **Render:** New Web Service → connect the repo → set **Root Directory**
-  to `backend` in the create form. Build command
-  `pip install -r requirements.txt`, start command
-  `uvicorn app.main:app --host 0.0.0.0 --port $PORT` (same as the
-  `Procfile`, Render just wants it typed into the form directly).
+```bash
+python -m pytest tests/ -q          # 168 tests, offline, no DB needed
+```
 
-Either way, set `DATABASE_URL` to a real hosted Postgres with pgvector
-enabled (Supabase's is the easiest to get pgvector on without extra
-setup) and `FRONTEND_ORIGIN` to wherever the frontend ends up deployed —
-CORS will reject the frontend's requests until that matches exactly.
+Plus 7 scripts against a real (disposable) Postgres, because several
+real bugs in this project were only ever findable that way:
 
-## Deliberately absent (Phase A scope)
+```bash
+export DATABASE_URL=postgresql://...
+python integration_check.py               # bi-temporal graph + KnowledgeUpdater
+python integration_check_2.py             # DebateStateMachine + TriggerDetector
+python integration_check_3.py             # ingestion, Layer 1, approval endpoint
+python integration_check_4.py             # real-vs-silent debate failure diagnostics
+python integration_check_v2.py            # access control, incl. the private-edge leak case
+python integration_check_v2_governance.py # rate limiting + the concurrency race
+python integration_check_v2_decomposition.py  # applying a decomposition + 2 escalation attempts
+```
 
-Layer 2 empirical eval, Jalpa adversarial escalation, Prover-Estimator,
-human panelists, real auth/RBAC, multi-tenancy enforcement, cold-start
-apparatus beyond PERT fields. Each has a trigger condition in Section 12
-and Section 15.3 of the plan.
+## Not built
+
+Job queue (debates run synchronously in the request handler — fine for
+one company's occasional use, wrong under public traffic), real
+authentication, the public Tab 2 review/reward surface, identity and
+payments, Prover-Estimator (needed once rewards create a real incentive
+to mislead), and the two stronger tiers of Layer 2 evidence. Each is
+detailed, with why, in `V2_STATUS.md`.

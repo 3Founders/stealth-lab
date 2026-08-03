@@ -130,3 +130,36 @@ def test_panel_and_judge_together_are_four_genuinely_distinct_families():
 
     assert_heterogeneous(panel)
     enforce_independence(judge, panel)  # must not raise
+
+
+# --- Regression: chat previously bypassed provider selection entirely ---
+
+def test_chat_agent_respects_general_compute_when_configured():
+    """
+    chat.py hardcoded AnthropicAgent directly until this was found --
+    built before provider selection existed, never updated when it was
+    added. Same class of gap Layer 2's wiring had earlier in this project.
+    """
+    from app.debate.panel import default_chat_agent
+
+    s = _settings()
+    s.use_local_models = False
+    s.use_general_compute = True
+    with patch("app.debate.panel.settings", s):
+        agent = default_chat_agent()
+
+    assert agent.model_id == "kimi-k2.7-code"
+    assert agent.api_key_field == "general_compute_api_key"
+    assert agent.agent_id == "chat"
+
+
+def test_chat_agent_falls_back_to_anthropic_when_nothing_configured():
+    from app.debate.panel import default_chat_agent
+
+    with patch("app.debate.panel.settings") as s:
+        s.use_local_models = False
+        s.use_general_compute = False
+        agent = default_chat_agent()
+
+    assert agent.family == "anthropic"
+    assert agent.agent_id == "chat"

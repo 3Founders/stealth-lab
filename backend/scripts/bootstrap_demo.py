@@ -43,6 +43,16 @@ async def main():
 
     # The "extract" task gets a deliberately bad error rate -- 8 failures,
     # 2 successes out of 10 crosses _DEMO_RULES' 0.15 threshold clearly.
+    #
+    # trace_id embeds target_id rather than being a bare "demo-fail-0"
+    # literal: trace_id is the traces table's primary key, and a bare
+    # literal collides across runs against a persistent database. With
+    # ON CONFLICT DO NOTHING, that doesn't crash -- it silently inserts
+    # nothing, meaning every run after the first creates a brand-new task
+    # node with zero real trace data attached to it. Confirmed live: this
+    # was why a freshly-seeded demo task stopped triggering after several
+    # repeated bootstrap runs, even though the print output looked
+    # identical every time.
     target_id = seeded.task_ids["extract"]
     now = datetime.now(timezone.utc)
     async with pool.acquire() as conn:
@@ -51,14 +61,14 @@ async def main():
                 "INSERT INTO traces (trace_id, timestamp, task_node_id, actor_id, "
                 "action_type, outcome) VALUES ($1,$2,$3,'demo-agent','invoke_agent','failure') "
                 "ON CONFLICT (trace_id) DO NOTHING",
-                f"demo-fail-{i}", now, target_id,
+                f"demo-fail-{target_id}-{i}", now, target_id,
             )
         for i in range(2):
             await conn.execute(
                 "INSERT INTO traces (trace_id, timestamp, task_node_id, actor_id, "
                 "action_type, outcome) VALUES ($1,$2,$3,'demo-agent','invoke_agent','success') "
                 "ON CONFLICT (trace_id) DO NOTHING",
-                f"demo-ok-{i}", now, target_id,
+                f"demo-ok-{target_id}-{i}", now, target_id,
             )
     print("Inserted 10 traces for 'Extract structured fields' — 80% error rate, "
           "well past the demo threshold of 15%")

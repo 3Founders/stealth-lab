@@ -1,5 +1,18 @@
 # V2 Real-Model Testing Plan
 
+**Status update:** Stage 1 (local) was skipped by deliberate choice --
+went straight to Stage 2 (General Compute, hosted open-weight) instead.
+Stage 2 is substantially complete: the full decomposition battery,
+including all six adversarial inputs and the false-positive check, the
+chat/grounding battery, and two full debate cycles (one approved, one
+rejected on Layer 1) have all run against real models. Six real bugs
+were found and fixed in the process -- see `V2_STATUS.md`'s "Stage 2
+real-model testing" section for the complete list, not repeated here.
+Stage 3 (the originally-designed four-provider panel: Anthropic,
+Fireworks, OpenAI, Google) has not been run -- General Compute exercised
+every real-model code path, so whether that separate pass is still worth
+doing is an open call, not a blocker.
+
 ## What this closes
 
 Everything in V2 has been tested against scripted mocks, a fake HTTP server, or small local models. The one thing never tested: whether a real model's actual output survives contact with this system, specifically whether it emits parseable JSON in the expected shapes, whether it follows the citation format, and whether the prompt injection defense holds against a real model being genuinely persuaded rather than a scripted one pretending to be hijacked.

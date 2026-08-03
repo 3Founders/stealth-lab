@@ -333,3 +333,125 @@ it at Ollama (`ollama pull llama3.2 qwen2.5 mistral gemma2
 mxbai-embed-large`). The panel, judge, and embeddings all route locally.
 See `.env.example`. This is also the cheapest way to close the
 "never verified against real models" gap noted above.
+
+---
+
+## Stage 2 real-model testing (post-write, update)
+
+First real-model validation pass, against General Compute (hosted
+open-weight, OpenAI-compatible), completed after this document was
+originally written. Found and fixed six real bugs, none caught by the
+148 offline tests at the time, all now covered or directly verified
+against real Postgres:
+
+1. **`retrieval.py` lexical search was structurally broken for natural
+   questions.** `plainto_tsquery` ANDs every word together, so a
+   question like "What does the extraction step depend on?" required
+   all three stemmed terms present, which a short node name almost never
+   satisfies. Fixed to OR the same stemmed terms instead. Verified
+   directly in SQL before touching code.
+2. **`chat.py` hardcoded `AnthropicAgent`**, built before local/General
+   Compute provider selection existed, never updated when it was added.
+   Silently ignored `USE_GENERAL_COMPUTE` entirely. Fixed with a proper
+   `default_chat_agent()` factory; two regression tests added.
+3. **`CostGovernor.record()` was never called anywhere.** The budget
+   check worked and genuinely blocked requests; nothing ever fed it real
+   spend, so the cap looked enforced and wasn't. Fixed by threading an
+   `on_call` recording hook through every real LLM call site (panel,
+   judge, Layer 2, decomposition, chat). Verified end to end: a real
+   debate cycle produced real spend rows, and an artificially-lowered
+   cap genuinely blocked a subsequent request.
+4. **Decomposition's generator/critic calls had no timeout at all**,
+   unlike the debate panel's `gather_responses` (120s). A hung
+   connection would wait forever with no way to detect it. Fixed with a
+   90s timeout; verified against a deliberately hanging mock (fires at
+   exactly 90s, not sooner, not never).
+5. **The same trace-ID-collision bug, found three separate times**,
+   always the same shape: a fixed literal ID with `ON CONFLICT DO
+   NOTHING`, silently inserting nothing on any run after the first
+   against a persistent (not recreated) database.
+   `integration_check_2.py`, `integration_check_4.py` (a separate,
+   unrelated hardcoded-connection-string bug there too), and
+   `scripts/bootstrap_demo.py` all had it. Fixed by embedding the
+   run's own task/entity ID into each trace ID.
+6. **General Compute's price table entries were missing**, so real
+   calls fell through to a worst-case-provider estimate (Anthropic's
+   rate), not dangerous, but made the cost cap trigger at a fraction of
+   real available budget. Added real per-model prices.
+
+Also confirmed working correctly under real conditions for the first
+time: the capability boundary (two real adversarial decomposition
+attempts, both correctly refused by the model itself before any
+operation was ever generated), the chat grounding/citation system (a
+real answer with verified citations, three real refusals correctly
+flagged `grounding 0.00` rather than fabricating an answer), and one
+full debate → Layer 1 → approval → bi-temporal graph update cycle,
+confirmed directly against the database, not just trusted from the API
+response.
+
+**Utility scripts added during this pass** (diagnostic tools, not part
+of the running application): `hide_duplicate_seeds.py` (marks redundant
+demo-seed duplicates private without deleting anything -- safe to
+re-run), `check_scan.py`, `check_retrieval_2.py`, `check_graph_update.py`,
+`unblock_demo_task.py`, `list_models.py`. Each is self-contained and
+documents what it checks in its own header.
+
+**Test count: 168 offline tests** (was 148 at initial V2 delivery).
+
+---
+
+## Load testing (Tier 2, first real data)
+
+`scripts/generate_scale_data.py` (bulk-insert synthetic branching
+workflows via `copy_records_to_table`) and `scripts/benchmark_scale.py`
+(times the three hot paths across 100 / 1,000 / 10,000 task tiers)
+answer the question this doc has flagged as open since the first
+architecture pass.
+
+**Result: nothing fails at 10,000 tasks / 200,000 traces.** No errors,
+no timeouts. The "dedicated graph DB" upgrade trigger has not fired.
+
+**But not flat, either.** `lexical_search` and `trigger_scan` (a
+full-table aggregate by design) both grow faster than linear -- roughly
+44x and 54x latency for a 100x data increase, landing at 177ms and
+123ms respectively at the top tier. Not urgent, but a real, honest
+signal, not zero cost as data grows.
+
+`traverse_from` at depth=3 was non-monotonic across tiers (faster at
+10,000 tasks than at 1,000), most likely graph-structure variance from
+the random branching generator rather than a real trend -- reported
+plainly rather than smoothed into a cleaner-looking story.
+
+Ran on local sandbox Postgres, not Supabase's hosted infrastructure --
+the scaling shape is the meaningful signal here, not the absolute
+millisecond figures.
+
+---
+
+## Execution harness (new capability, reopens Section 10 deliberately)
+
+`app/services/execution.py`. First thing in this project that actually
+*runs* a task rather than proposing, debating, or evaluating a change to
+one -- everything before this assumed the product only observes and
+governs execution owned elsewhere.
+
+Deliberately narrow: `SKILL_REGISTRY` is a closed, hand-written Python
+dict, not connected to any external marketplace or dynamic-import path.
+Running arbitrary third-party skills is a distinct, later decision
+needing its own sandboxing design -- a Snyk audit of public skill
+marketplaces found 36% had a security flaw, 76 confirmed malicious, so
+this is not something to back into as an extension of a convenience
+harness.
+
+**The concrete unblock:** traces produced here are real execution
+outcomes, not synthetic seeding. Verified live: running a real skill 10
+times (9 failures, 1 success) produced real trace rows that
+`TriggerDetector.scan()` genuinely found (`observed_value=0.9`) -- this
+is what Layer 2's Tier 2 (off-policy evaluation) has been blocked on
+since it was first scoped.
+
+9 offline tests, covering the success path, the failure path (a raising
+skill produces a real 'failure' trace, not a crash), an unregistered
+skill_ref raising clearly rather than silently no-oping, and trace_id
+uniqueness (this project has hit that exact collision bug three times
+already in other scripts).
