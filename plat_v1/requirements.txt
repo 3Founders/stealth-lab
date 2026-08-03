@@ -1,0 +1,29 @@
+fastapi>=0.115
+uvicorn[standard]>=0.32
+asyncpg>=0.30
+pydantic>=2.9
+pydantic-settings>=2.6
+python-dotenv>=1.0
+
+# Model implementations. 0.77 is the first release whose non-beta messages
+# resource accepts `output_config`, which structured outputs need. Verified,
+# not guessed: 0.76 and earlier raise TypeError on the keyword. Prose-wrapped
+# JSON is not an accepted fallback here, so this floor is load-bearing.
+anthropic>=0.77
+
+# Embeddings for hybrid retrieval over task nodes.
+voyageai>=0.3
+
+# JSON Schema validation. Used by the typechecker's structural comparison and
+# by the executor's per-stage input/output validation. Pure Python, no native
+# build, so the offline test suite can depend on it.
+jsonschema>=4.23
+
+# PDF -> Excel reference workflow. Imported lazily inside the runners so the
+# offline tests (which never touch a PDF) run without them installed.
+pdfplumber>=0.11
+openpyxl>=3.1
+
+# Dev
+pytest>=8.0
+pytest-asyncio>=0.24

@@ -1,0 +1,19 @@
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.ruff_cache/
+.venv/
+venv/
+env/
+*.egg-info/
+dist/
+build/
+.env
+.DS_Store
+*.log
+
+# Run artifacts. KEEP_RUN_ARTIFACTS defaults to true because a run whose
+# output file vanished before anyone fetched it is a failed run that reports
+# success -- but the .xlsx files it produces are output, not source.
+artifacts/

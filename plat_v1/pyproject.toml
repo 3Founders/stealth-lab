@@ -1,0 +1,20 @@
+# Tooling config only. This is not a packaged distribution -- the app runs
+# from source via uvicorn, so there is deliberately no [project] table.
+
+[tool.ruff]
+line-length = 100
+target-version = "py313"
+
+[tool.ruff.lint]
+# The pyflakes error classes and syntax errors: things that are wrong, rather
+# than things that are unfashionable. F82 is the one that catches a real
+# typo'd variable.
+select = ["E9", "F63", "F7", "F82"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# Auto: an async test is collected as one without a marker. Strict mode would
+# mean every module carries a blanket `pytestmark`, which then warns on each
+# sync test in the same file -- noise that trains people to ignore output.
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"

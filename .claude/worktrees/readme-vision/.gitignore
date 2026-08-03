@@ -1,0 +1,25 @@
+# Repo-root ignores. Each app dir (backend/, backend_v1/, frontend/,
+# frontend_v1/) has its own .gitignore for language-specific artifacts;
+# this file covers the monorepo root and anything not under those.
+
+# Secrets -- safety net. Per-app .gitignore files already cover .env, but
+# there is no coverage for a stray .env created at the root or in a new
+# directory that does not have its own ignore file yet.
+.env
+.env.local
+.env.*.local
+!.env.example
+!.env.local.example
+
+# Rust scratch work (backend/backend/hello_world) -- an unrelated
+# experiment, and its target/ dir is compiled output: .exe, .pdb, and
+# incremental cache. Never belongs in version control.
+hello_world/
+target/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
