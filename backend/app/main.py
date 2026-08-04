@@ -8,7 +8,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api import admin, agents, approval, chat, decompose, graph, ingest
+from app.api import admin, agent_store, agents, approval, chat, decompose, graph, ingest
 from app.api.deps import require_trustworthy_identity
 from app.db.session import close_pool, create_pool
 
@@ -51,6 +51,7 @@ app.include_router(graph.router)
 app.include_router(chat.router)
 app.include_router(decompose.router)
 app.include_router(agents.router)
+app.include_router(agent_store.router)
 
 
 @app.get("/health")

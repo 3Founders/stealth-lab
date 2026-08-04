@@ -7,6 +7,78 @@ import { api, ScorecardDetail, ApprovalResponse, SubgraphResponse } from "@/lib/
 import WorkflowGraph from "@/components/WorkflowGraph";
 import Layer2Evidence from "@/components/Layer2Evidence";
 
+function HumanArgumentSection({
+  debateId, onSubmitted,
+}: { debateId: string; onSubmitted: () => void }) {
+  const [author, setAuthor] = useState("");
+  const [content, setContent] = useState("");
+  const [working, setWorking] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [submitted, setSubmitted] = useState(false);
+
+  async function submit() {
+    if (!author.trim() || !content.trim()) {
+      alert("Enter both your name and your argument first.");
+      return;
+    }
+    setWorking(true);
+    setError(null);
+    try {
+      await api.addHumanTurn(debateId, author, content, "propose");
+      setSubmitted(true);
+      onSubmitted(); // reload the case, showing the panel's real reaction
+    } catch (e) {
+      setError(
+        e instanceof Error ? e.message : "Could not add this argument.",
+      );
+    } finally {
+      setWorking(false);
+    }
+  }
+
+  if (submitted) {
+    return (
+      <div className="case-section">
+        <div className="case-label">Your argument</div>
+        <p className="case-body">
+          Added. The transcript above now includes the panel&rsquo;s real
+          reaction to it, and the scorecard reflects whatever came out of
+          that round.
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="case-section">
+      <div className="case-label">Add an argument before deciding</div>
+      <p className="case-body">
+        This runs one real additional round: the panel sees your point and
+        reacts to it before you decide. Not a comment thread, an actual
+        continuation of the debate.
+      </p>
+      <input
+        className="ask-input"
+        style={{ width: "100%", marginBottom: "0.5rem" }}
+        placeholder="Your name or id"
+        value={author}
+        onChange={(e) => setAuthor(e.target.value)}
+      />
+      <textarea
+        className="ask-input"
+        style={{ width: "100%", minHeight: "80px", marginBottom: "0.5rem" }}
+        placeholder="What should the panel consider?"
+        value={content}
+        onChange={(e) => setContent(e.target.value)}
+      />
+      {error && <p className="case-body" style={{ color: "var(--fail)" }}>{error}</p>}
+      <button className="ask-button" disabled={working} onClick={submit}>
+        {working ? "Waiting for the panel's response…" : "Add argument"}
+      </button>
+    </div>
+  );
+}
+
 export default function CaseFile() {
   const params = useParams<{ id: string }>();
   const [detail, setDetail] = useState<ScorecardDetail | null>(null);
@@ -176,9 +248,15 @@ export default function CaseFile() {
           <div className="case-section">
             <div className="case-label">Debate transcript</div>
             {detail.transcript.map((turn, i) => (
-              <div key={i} className="transcript-turn">
+              <div
+                key={i}
+                className={`transcript-turn ${turn.speaker_kind === "human" ? "transcript-turn-human" : ""}`}
+              >
                 <div>
                   <div className="transcript-speaker">
+                    {turn.speaker_kind === "human" && (
+                      <span className="transcript-human-badge">HUMAN</span>
+                    )}
                     {turn.speaker_id}
                     {turn.model_used && <> · {turn.model_used}</>}
                   </div>
@@ -189,6 +267,8 @@ export default function CaseFile() {
             ))}
           </div>
         )}
+
+        {!result && <HumanArgumentSection debateId={detail.debate_id} onSubmitted={load} />}
 
         {result ? (
           <div className={`stamp ${result.decision}`}>{result.decision}</div>

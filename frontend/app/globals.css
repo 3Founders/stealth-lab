@@ -584,3 +584,198 @@ a {
 .problem-input::placeholder {
   color: var(--ink-text-dim);
 }
+
+/* --- Agent runner (file upload/download) --- */
+.upload-dropzone {
+  border: 2px dashed var(--rule);
+  border-radius: 4px;
+  padding: 2.5rem 1.5rem;
+  text-align: center;
+  margin-bottom: 1rem;
+}
+
+.upload-label {
+  cursor: pointer;
+  font-family: var(--font-sans);
+  font-size: 0.95rem;
+  color: var(--ink-text-dim);
+}
+
+.upload-label:hover {
+  color: var(--ink-text);
+}
+
+.upload-file-list {
+  list-style: none;
+  padding: 0;
+  margin: 0 0 1rem;
+}
+
+.upload-file-list li {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.5rem 0.75rem;
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+  color: var(--ink-text);
+  border-bottom: 1px solid var(--rule);
+}
+
+.upload-file-size {
+  color: var(--ink-text-dim);
+  margin-left: auto;
+}
+
+.upload-remove {
+  background: none;
+  border: none;
+  color: var(--fail);
+  font-size: 1.1rem;
+  cursor: pointer;
+  line-height: 1;
+  padding: 0 0.25rem;
+}
+
+.agent-results-list {
+  list-style: none;
+  padding: 0;
+  margin: 1rem 0;
+}
+
+.agent-result-row {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 0.85rem 0;
+  border-bottom: 1px solid var(--rule-paper);
+  font-family: var(--font-sans);
+}
+
+.agent-result-name {
+  font-weight: 500;
+  color: var(--paper-text);
+}
+
+.agent-result-meta {
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  color: var(--paper-text-dim);
+}
+
+.agent-download-link {
+  margin-left: auto;
+  font-family: var(--font-sans);
+  font-weight: 600;
+  font-size: 0.85rem;
+  color: var(--pass);
+  text-decoration: none;
+  padding: 0.4rem 0.9rem;
+  border: 1px solid var(--pass);
+  border-radius: 3px;
+}
+
+.agent-download-link:hover {
+  background: var(--pass);
+  color: var(--paper);
+}
+
+.agent-result-error {
+  margin-left: auto;
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  color: var(--fail);
+  max-width: 50%;
+  text-align: right;
+}
+
+/* --- Agent Store --- */
+.agent-store-list {
+  list-style: none;
+  padding: 0;
+  margin: 1.5rem 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.agent-store-card {
+  background: var(--paper);
+  color: var(--paper-text);
+  border-radius: 3px;
+  padding: 1.25rem 1.5rem;
+}
+
+.agent-store-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0.5rem;
+}
+
+.agent-store-name {
+  font-family: var(--font-serif);
+  font-size: 1.1rem;
+  font-weight: 600;
+}
+
+.agent-store-badge {
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 0.2rem 0.6rem;
+  border-radius: 2px;
+}
+
+.agent-store-badge.runnable {
+  background: rgba(43, 95, 95, 0.15);
+  color: var(--pass);
+}
+
+.agent-store-badge.not-runnable {
+  background: rgba(139, 58, 58, 0.1);
+  color: var(--fail);
+}
+
+.agent-store-description {
+  font-family: var(--font-sans);
+  font-size: 0.9rem;
+  line-height: 1.5;
+  color: var(--paper-text-dim);
+  margin: 0 0 0.75rem;
+}
+
+.agent-store-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  color: var(--paper-text-dim);
+}
+
+.agent-store-meta-dim {
+  font-style: italic;
+}
+
+/* --- Human participation in debate transcripts --- */
+.transcript-turn-human {
+  border-left: 3px solid var(--pass);
+  padding-left: 0.75rem;
+  background: rgba(43, 95, 95, 0.04);
+}
+
+.transcript-human-badge {
+  display: inline-block;
+  font-family: var(--font-mono);
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  color: var(--pass);
+  border: 1px solid var(--pass);
+  border-radius: 2px;
+  padding: 0.05rem 0.35rem;
+  margin-right: 0.5rem;
+  vertical-align: middle;
+}

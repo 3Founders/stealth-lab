@@ -107,94 +107,10 @@ class DebateEngine:
 
         for round_number in range(1, self.max_rounds + 1):
             rounds_used = round_number
-            user = build_user_prompt(
-                trigger_context=trigger_context,
-                graph_context=graph_context,
-                transcript=_render_transcript(turns),
-                candidates=_render_candidates(candidates),
-                round_number=round_number,
-                max_rounds=self.max_rounds,
+            round_had_movement = await self._run_round(
+                debate_id, round_number, turns, candidates, by_id, agent_failures,
+                trigger_context, graph_context, on_turn,
             )
-            replies = await gather_responses(self.agents, VADA_SYSTEM, user, on_call=self.on_call)
-
-            round_had_movement = False
-            for agent in self.agents:
-                reply = replies[agent.agent_id]
-                if isinstance(reply, Exception):
-                    log.warning("agent %s failed in round %d: %s",
-                                agent.agent_id, round_number, reply)
-                    agent_failures.append(f"{agent.agent_id} (round {round_number}): {reply}")
-                    continue
-
-                try:
-                    payload = _extract_json(reply)
-                except ValueError as exc:
-                    log.warning("agent %s returned unparseable output: %s",
-                                agent.agent_id, exc)
-                    continue
-
-                action = payload.get("action", "pass")
-                if action not in ("propose", "amend", "pass"):
-                    log.warning("agent %s returned unknown action %r; treating as pass",
-                                agent.agent_id, action)
-                    action = "pass"
-
-                content = str(payload.get("content", "")).strip()
-                cites = _parse_cites(payload.get("cites"))
-                candidate_id: Optional[UUID] = None
-
-                if action == "propose":
-                    cand = Candidate(
-                        id=uuid4(),
-                        debate_id=debate_id,
-                        summary=str(payload.get("summary") or content[:120] or "(no summary)"),
-                        rationale=content,
-                        change_set=_parse_change_set(payload.get("change_set")),
-                        supporters=[agent.agent_id],
-                    )
-                    candidates.append(cand)
-                    by_id[cand.id] = cand
-                    candidate_id = cand.id
-                    round_had_movement = True
-
-                elif action == "amend":
-                    raw_id = payload.get("candidate_id")
-                    target = None
-                    if raw_id:
-                        try:
-                            target = by_id.get(UUID(str(raw_id)))
-                        except (ValueError, AttributeError):
-                            target = None
-                    if target is None:
-                        # Amending a nonexistent candidate is a malformed
-                        # turn, not a proposal -- record it as a pass so the
-                        # transcript stays honest about what happened.
-                        log.warning("agent %s amended unknown candidate %r",
-                                    agent.agent_id, raw_id)
-                        action = "pass"
-                    else:
-                        target.add_supporter(agent.agent_id)
-                        new_ops = _parse_change_set(payload.get("change_set"))
-                        if new_ops.ops:
-                            target.change_set = new_ops
-                        target.rationale += f"\n\n[amended by {agent.agent_id}]\n{content}"
-                        candidate_id = target.id
-                        round_had_movement = True
-
-                turn = DebateTurn(
-                    debate_id=debate_id,
-                    round_number=round_number,
-                    speaker_id=agent.agent_id,
-                    speaker_kind="agent",
-                    model_used=agent.model_id,
-                    action=action,  # type: ignore[arg-type]
-                    candidate_id=candidate_id,
-                    content=content,
-                    cites=cites,
-                )
-                turns.append(turn)
-                if on_turn:
-                    await _maybe_await(on_turn(turn))
 
             if not round_had_movement:
                 # Section 7: a full round with no proposal and no amendment
@@ -214,6 +130,151 @@ class DebateEngine:
             candidates=candidates,
             agent_failures=agent_failures,
         )
+
+    async def run_continuation_round(
+        self,
+        debate_id: UUID,
+        round_number: int,
+        turns: list[DebateTurn],
+        candidates: list[Candidate],
+        trigger_context: dict[str, Any],
+        graph_context: str = "",
+        on_turn: Optional[Callable[[DebateTurn], Any]] = None,
+    ) -> tuple[list[DebateTurn], list[Candidate], bool]:
+        """
+        Runs exactly one additional round against a debate's already-
+        persisted history, reloaded and reconstructed by the caller
+        (see app/services/human_participation.py) -- for a human turn
+        added after the debate already reached PENDING_APPROVAL.
+
+        Uses the identical per-round logic `run()` itself uses
+        internally (`_run_round`), not a separate reimplementation, so
+        a continuation round behaves exactly like any other round the
+        panel has always gone through, indistinguishable in how it's
+        processed, only different in why it was triggered.
+
+        Returns (new_turns_from_this_round, updated_candidates,
+        round_had_movement) -- the caller decides what a lack of
+        movement means for their own flow, unlike `run()`, which treats
+        it as convergence and stops.
+        """
+        by_id = {c.id: c for c in candidates}
+        new_turns_start = len(turns)
+        round_had_movement = await self._run_round(
+            debate_id, round_number, turns, candidates, by_id, [],
+            trigger_context, graph_context, on_turn,
+        )
+        return turns[new_turns_start:], candidates, round_had_movement
+
+    async def _run_round(
+        self,
+        debate_id: UUID,
+        round_number: int,
+        turns: list[DebateTurn],
+        candidates: list[Candidate],
+        by_id: dict[UUID, Candidate],
+        agent_failures: list[str],
+        trigger_context: dict[str, Any],
+        graph_context: str,
+        on_turn: Optional[Callable[[DebateTurn], Any]],
+    ) -> bool:
+        """
+        One round: every agent sees the transcript and candidates so far
+        (mutated in place, appended to `turns`/`candidates`), responds
+        once. Returns whether the round had real movement (a proposal or
+        amendment), the same signal `run()`'s loop uses to detect
+        convergence.
+        """
+        user = build_user_prompt(
+            trigger_context=trigger_context,
+            graph_context=graph_context,
+            transcript=_render_transcript(turns),
+            candidates=_render_candidates(candidates),
+            round_number=round_number,
+            max_rounds=self.max_rounds,
+        )
+        replies = await gather_responses(self.agents, VADA_SYSTEM, user, on_call=self.on_call)
+
+        round_had_movement = False
+        for agent in self.agents:
+            reply = replies[agent.agent_id]
+            if isinstance(reply, Exception):
+                log.warning("agent %s failed in round %d: %s",
+                            agent.agent_id, round_number, reply)
+                agent_failures.append(f"{agent.agent_id} (round {round_number}): {reply}")
+                continue
+
+            try:
+                payload = _extract_json(reply)
+            except ValueError as exc:
+                log.warning("agent %s returned unparseable output: %s",
+                            agent.agent_id, exc)
+                continue
+
+            action = payload.get("action", "pass")
+            if action not in ("propose", "amend", "pass"):
+                log.warning("agent %s returned unknown action %r; treating as pass",
+                            agent.agent_id, action)
+                action = "pass"
+
+            content = str(payload.get("content", "")).strip()
+            cites = _parse_cites(payload.get("cites"))
+            candidate_id: Optional[UUID] = None
+
+            if action == "propose":
+                cand = Candidate(
+                    id=uuid4(),
+                    debate_id=debate_id,
+                    summary=str(payload.get("summary") or content[:120] or "(no summary)"),
+                    rationale=content,
+                    change_set=_parse_change_set(payload.get("change_set")),
+                    supporters=[agent.agent_id],
+                )
+                candidates.append(cand)
+                by_id[cand.id] = cand
+                candidate_id = cand.id
+                round_had_movement = True
+
+            elif action == "amend":
+                raw_id = payload.get("candidate_id")
+                target = None
+                if raw_id:
+                    try:
+                        target = by_id.get(UUID(str(raw_id)))
+                    except (ValueError, AttributeError):
+                        target = None
+                if target is None:
+                    # Amending a nonexistent candidate is a malformed
+                    # turn, not a proposal -- record it as a pass so the
+                    # transcript stays honest about what happened.
+                    log.warning("agent %s amended unknown candidate %r",
+                                agent.agent_id, raw_id)
+                    action = "pass"
+                else:
+                    target.add_supporter(agent.agent_id)
+                    new_ops = _parse_change_set(payload.get("change_set"))
+                    if new_ops.ops:
+                        target.change_set = new_ops
+                    target.rationale += f"\n\n[amended by {agent.agent_id}]\n{content}"
+                    candidate_id = target.id
+                    round_had_movement = True
+
+            turn = DebateTurn(
+                debate_id=debate_id,
+                round_number=round_number,
+                speaker_id=agent.agent_id,
+                speaker_kind="agent",
+                model_used=agent.model_id,
+                action=action,  # type: ignore[arg-type]
+                candidate_id=candidate_id,
+                content=content,
+                cites=cites,
+            )
+            turns.append(turn)
+            if on_turn:
+                await _maybe_await(on_turn(turn))
+
+        return round_had_movement
 
 
 async def _maybe_await(value: Any) -> Any:

@@ -149,7 +149,59 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return res.json() as Promise<T>;
 }
 
+async function requestMultipart<T>(path: string, formData: FormData): Promise<T> {
+  // Deliberately does NOT set Content-Type -- the browser must set it
+  // itself for multipart/form-data, including a boundary string it
+  // generates, which JavaScript cannot construct correctly by hand.
+  // Setting "application/json" here (request()'s default) would silently
+  // corrupt the upload rather than fail loudly.
+  const res = await fetch(`${API_BASE}${path}`, {
+    method: "POST",
+    body: formData,
+    cache: "no-store",
+  });
+  if (!res.ok) {
+    const body = await res.text();
+    throw new ApiError(body || res.statusText, res.status);
+  }
+  return res.json() as Promise<T>;
+}
+
+export type ExtractionStatus = {
+  original_filename: string;
+  outcome: "success" | "failure";
+  field_count: number | null;
+  error: string | null;
+};
+
+export type RunResponse = {
+  extractions: ExtractionStatus[];
+  combined_file_id: string | null;
+  combined_download_path: string | null;
+  combined_error: string | null;
+};
+
+export const agentsApi = {
+  runMedicalReportExtraction: (files: File[]) => {
+    const formData = new FormData();
+    for (const file of files) formData.append("files", file);
+    return requestMultipart<RunResponse>(
+      "/v1/agents/medical-report-extraction/run",
+      formData,
+    );
+  },
+
+  downloadUrl: (downloadPath: string) => `${API_BASE}${downloadPath}`,
+};
+
 export const api = {
+  addHumanTurn: (
+    debateId: string, author: string, content: string, action: string = "propose",
+  ) =>
+    request<{ new_scorecards: ScorecardSummary[] }>(
+      `/v1/approvals/${debateId}/human-turn`,
+      { method: "POST", body: JSON.stringify({ author, content, action }) },
+    ),
   listPending: () => request<ScorecardSummary[]>("/v1/approvals/pending"),
 
   getDetail: (scorecardId: string) =>
@@ -190,10 +242,12 @@ export type DecomposeResponse = {
   structural_problems: string[];
   objections: string[];
   suspected_manipulation: boolean;
-  critique_failed: boolean;
   input_flagged: boolean;
   input_truncated: boolean;
   related_existing: string[];
+  reused_nodes: { id: string; table: string; name: string; similarity: number; method: string }[];
+  is_novel: boolean;
+  suggested_agents: { id: string; name: string; description: string }[];
 };
 
 export type DecideResponse = {
@@ -214,5 +268,86 @@ export const decomposeApi = {
     request<DecideResponse>(`/v1/decompose/${id}/decide`, {
       method: "POST",
       body: JSON.stringify({ approver_id: approverId, decision }),
+    }),
+};
+
+// --- Agent Store (search/browse) ---
+
+export type AgentSearchResult = {
+  id: string;
+  name: string;
+  description: string;
+  source: "internal" | "graph_derived" | "user_submitted" | "external_marketplace";
+  execution_mode: "local_skill" | "remote_http" | "graph_workflow";
+  runnable: boolean;
+};
+
+export type PendingAgent = {
+  id: string;
+  name: string;
+  description: string;
+  source: string;
+  execution_mode: string;
+  source_decomposition_id: string | null;
+  t_created: string;
+};
+
+export type PromoteResponse = {
+  agent_id: string;
+  review_state: string;
+  passed_review: boolean;
+  review_notes: string;
+};
+
+export type AgentDecideResponse = {
+  agent_id: string;
+  review_state: string;
+  runnable: boolean;
+};
+
+export type SubmitAgentResponse = {
+  agent_id: string;
+  review_state: string;
+  passed_review: boolean;
+  reviewer_notes: string;
+};
+
+export const agentStoreApi = {
+  browseOrSearch: (query?: string) => {
+    const qs = query && query.trim() ? `?q=${encodeURIComponent(query)}` : "";
+    return request<{ results: AgentSearchResult[] }>(`/v1/agent-store${qs}`);
+  },
+
+  pending: () => request<PendingAgent[]>("/v1/agent-store/pending"),
+
+  promote: (decompositionId: string, actor: string) =>
+    request<PromoteResponse>("/v1/agent-store/promote", {
+      method: "POST",
+      body: JSON.stringify({ decomposition_id: decompositionId, actor }),
+    }),
+
+  decideAgent: (
+    agentId: string, decision: "approved" | "rejected", actor: string,
+    acknowledgeSandboxLimitations: boolean = false,
+  ) =>
+    request<AgentDecideResponse>(`/v1/agent-store/${agentId}/decide`, {
+      method: "POST",
+      body: JSON.stringify({
+        decision, actor,
+        acknowledge_sandbox_limitations: acknowledgeSandboxLimitations,
+      }),
+    }),
+
+  submit: (
+    name: string, description: string,
+    source: "user_submitted" | "external_marketplace",
+    sourceDetail: Record<string, unknown>, submittedBy: string,
+  ) =>
+    request<SubmitAgentResponse>("/v1/agent-store/submit", {
+      method: "POST",
+      body: JSON.stringify({
+        name, description, source,
+        source_detail: sourceDetail, submitted_by: submittedBy,
+      }),
     }),
 };

@@ -48,6 +48,9 @@ class DecomposeResponse(BaseModel):
     input_flagged: bool
     input_truncated: bool
     related_existing: list[str]
+    reused_nodes: list[dict] = []
+    is_novel: bool = False
+    suggested_agents: list[dict] = []
 
 
 class DecideRequest(BaseModel):
@@ -83,6 +86,28 @@ async def decompose(
     result = await service.decompose(body.problem)
     ops = [op.model_dump(mode="json") for op in result.change_set.ops]
 
+    # Only approved AND runnable agents may ever surface here -- not just
+    # approved. search_agents() already filters to review_state='approved'
+    # at the query level (the same non-negotiable constraint used
+    # everywhere else an agent is shown publicly), but an approved
+    # graph_workflow agent whose constituent skill doesn't resolve
+    # (runnable=False, see agent_decision.py) is real, listed, reviewed
+    # content -- just not safe to suggest as something to actually run.
+    suggested_agents: list[dict] = []
+    try:
+        from app.services.agent_search import search_agents
+        matches = await search_agents(pool, query=body.problem, scope=scope, limit=5)
+        suggested_agents = [
+            {"id": str(a.id), "name": a.name, "description": a.description}
+            for a in matches if a.runnable
+        ]
+    except Exception as exc:  # noqa: BLE001
+        # Agent suggestion is a genuine enhancement, not the point of this
+        # endpoint -- a search failure here must not break decomposition
+        # itself, the same discipline as retrieval's own graceful
+        # degradation in HybridRetriever.
+        log.error("agent suggestion failed, continuing without it: %s", exc)
+
     row = await pool.fetchrow(
         "INSERT INTO decompositions (submitter_key, problem, feasible, reasoning, "
         "change_set, structural_problems, objections, suspected_manipulation, "
@@ -105,6 +130,9 @@ async def decompose(
         input_flagged=bool(result.input_flags),
         input_truncated=result.input_truncated,
         related_existing=result.related_existing,
+        reused_nodes=result.reused_nodes,
+        is_novel=result.is_novel,
+        suggested_agents=suggested_agents,
     )
 
 
