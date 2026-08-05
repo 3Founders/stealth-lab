@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { GraphEdge, GraphNode } from "@/lib/api";
 
 /**
@@ -37,9 +37,10 @@ function sanitizeEdgeLabel(s: string): string {
   return s.replace(/[|"\n]/g, " ").trim();
 }
 
-// mermaid's own viewBox already accounts for stroke width, arrowheads and
-// label overflow — SVGElement.getBBox() does not, and undermeasures wide
-// diagrams enough to clip them against the viewport.
+// mermaid draws small: a short chain of nodes might natively be ~300x30px.
+// Parsing its own viewBox (not SVGElement.getBBox(), which undermeasures
+// stroke/marker overflow) lets the default view scale UP to fill the
+// viewport instead of sitting tiny in the corner at "100%".
 function parseSvgSize(svgMarkup: string): { width: number; height: number } | null {
   const m = svgMarkup.match(/viewBox="[-\d.]+\s+[-\d.]+\s+([\d.]+)\s+([\d.]+)"/);
   if (!m) return null;
@@ -52,11 +53,9 @@ const MIN_SCALE = 0.1;
 // Ceiling for interactive zoom-in — SVG stays crisp at any scale, so this
 // just bounds how far a click/scroll can go.
 const MAX_SCALE = 8;
-// Floor for the *auto-fit* scale specifically (initial load + reset). Wide
-// diagrams would otherwise fit-to-width down to an unreadably small scale;
-// below this floor we'd rather start legible and let the user pan to see
-// the rest, or zoom out manually past this floor if they want the overview.
-const MIN_FIT_SCALE = 0.6;
+// Ceiling specifically for the *default* auto-scale-up, so a tiny 1-2 node
+// graph doesn't blow up to fill the whole viewport at an absurd size.
+const MAX_DEFAULT_SCALE = 3;
 
 export default function WorkflowGraph({
   nodes,
@@ -69,12 +68,11 @@ export default function WorkflowGraph({
 }) {
   const reactId = useId().replace(/[^a-zA-Z0-9]/g, "");
   const viewportRef = useRef<HTMLDivElement>(null);
-  const contentRef = useRef<HTMLDivElement>(null);
   const dragRef = useRef<{ startX: number; startY: number; origX: number; origY: number } | null>(null);
 
   const [svg, setSvg] = useState<string | null>(null);
   const [naturalSize, setNaturalSize] = useState<{ width: number; height: number } | null>(null);
-  const [transform, setTransform] = useState({ scale: 1, x: 0, y: 0 });
+  const [transform, setTransform] = useState({ scale: 1, x: 8, y: 8 });
 
   useEffect(() => {
     if (nodes.length === 0) {
@@ -117,8 +115,10 @@ export default function WorkflowGraph({
       try {
         const { svg: rendered } = await mermaid.render(`workflow-graph-${reactId}`, lines.join("\n"));
         if (!cancelled) {
+          const size = parseSvgSize(rendered);
           setSvg(rendered);
-          setNaturalSize(parseSvgSize(rendered));
+          setNaturalSize(size);
+          setTransform({ scale: size ? defaultScaleFor(size) : 1, x: 8, y: 8 });
         }
       } catch {
         if (!cancelled) {
@@ -134,21 +134,18 @@ export default function WorkflowGraph({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [nodes, edges, center, reactId]);
 
-  function fitToViewport() {
-    if (!naturalSize || !viewportRef.current) return;
+  // Scale UP to fill the viewport (mermaid draws small), but never past
+  // MAX_DEFAULT_SCALE, and never below 1x. Bounded by height only, not
+  // width — a wide single-row diagram (common: flowchart LR) has a lot of
+  // unused vertical space to grow into, and horizontal overflow is fine
+  // since the viewport is pannable; capping by width too just left wide,
+  // short diagrams stuck near 1x.
+  function defaultScaleFor(size: { width: number; height: number }): number {
     const el = viewportRef.current;
-    const scaleX = naturalSize.width > 0 ? (el.clientWidth - 16) / naturalSize.width : 1;
-    const scaleY = naturalSize.height > 0 ? (el.clientHeight - 16) / naturalSize.height : 1;
-    const fit = Math.max(MIN_FIT_SCALE, Math.min(1, scaleX, scaleY));
-    setTransform({ scale: fit, x: 8, y: 8 });
+    if (!el || size.height <= 0) return 1;
+    const heightFit = (el.clientHeight - 16) / size.height;
+    return Math.min(MAX_DEFAULT_SCALE, Math.max(1, heightFit));
   }
-
-  // Fit the diagram to the viewport once it's rendered, so large graphs
-  // start zoomed out (matching the old behaviour) instead of clipped.
-  useLayoutEffect(() => {
-    fitToViewport();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [svg, naturalSize]);
 
   useEffect(() => {
     const el = viewportRef.current;
@@ -173,10 +170,15 @@ export default function WorkflowGraph({
     dragRef.current = { startX: e.clientX, startY: e.clientY, origX: transform.x, origY: transform.y };
   }
   function onMouseMove(e: React.MouseEvent) {
-    if (!dragRef.current) return;
-    const dx = e.clientX - dragRef.current.startX;
-    const dy = e.clientY - dragRef.current.startY;
-    setTransform((t) => ({ ...t, x: dragRef.current!.origX + dx, y: dragRef.current!.origY + dy }));
+    const drag = dragRef.current;
+    if (!drag) return;
+    const dx = e.clientX - drag.startX;
+    const dy = e.clientY - drag.startY;
+    // Capture drag into the closure by value, not by re-reading dragRef.current
+    // inside the updater: a mouseup (which nulls the ref) can land between
+    // this call and React actually invoking the updater, which previously
+    // threw "Cannot read properties of null (reading 'origX')".
+    setTransform((t) => ({ ...t, x: drag.origX + dx, y: drag.origY + dy }));
   }
   function endDrag() {
     dragRef.current = null;
@@ -198,7 +200,12 @@ export default function WorkflowGraph({
         <button type="button" className="ask-button" style={{ padding: "0.15rem 0.6rem" }} onClick={() => zoomBy(1 / 1.25)}>
           −
         </button>
-        <button type="button" className="ask-button" style={{ padding: "0.15rem 0.6rem" }} onClick={fitToViewport}>
+        <button
+          type="button"
+          className="ask-button"
+          style={{ padding: "0.15rem 0.6rem" }}
+          onClick={() => setTransform({ scale: naturalSize ? defaultScaleFor(naturalSize) : 1, x: 8, y: 8 })}
+        >
           reset
         </button>
       </div>
@@ -217,7 +224,6 @@ export default function WorkflowGraph({
         }}
       >
         <div
-          ref={contentRef}
           style={{
             transform: `translate(${transform.x}px, ${transform.y}px) scale(${transform.scale})`,
             transformOrigin: "0 0",

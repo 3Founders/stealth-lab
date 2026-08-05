@@ -79,8 +79,8 @@ export default function ApprovalsDocket() {
         <Link href="/archive" className="nav-tab">
           Archive
         </Link>
-        <Link href="/agents" className="nav-tab">
-          Agents
+        <Link href="/tasks" className="nav-tab">
+          Tasks
         </Link>
       </div>
 

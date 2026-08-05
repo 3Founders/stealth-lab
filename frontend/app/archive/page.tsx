@@ -72,8 +72,8 @@ export default function ArchivePage() {
         <Link href="/archive" className="nav-tab active">
           Archive
         </Link>
-        <Link href="/agents" className="nav-tab">
-          Agents
+        <Link href="/tasks" className="nav-tab">
+          Tasks
         </Link>
       </div>
 

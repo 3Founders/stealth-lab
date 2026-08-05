@@ -18,7 +18,7 @@ const CODE_SOURCED = new Set(["user_submitted", "external_marketplace"]);
 // stage 3 is search/browse, a generic runner for arbitrary agent types
 // is out of scope here.
 const KNOWN_RUN_PAGES: Record<string, string> = {
-  "Medical Report Extraction": "/agents/medical-report-extraction",
+  "Medical Report Extraction": "/tasks/medical-report-extraction",
 };
 
 type View = "browse" | "submit" | "pending";
@@ -77,14 +77,16 @@ function SubmitAgentForm({ onSubmitted }: { onSubmitted: () => void }) {
 
   return (
     <div className="case-section">
-      <div className="case-label">Submit an agent</div>
+      <div className="case-label">Submit a Task</div>
       <p className="case-body">
         A user-submitted request is a structured description of what you
-        want, not code. 
+        want, not code, a real no-code builder is a much larger separate
+        project. An external-marketplace submission with real code gets a
+        real static security scan as part of its review.
       </p>
 
       <input className="ask-input" style={{ width: "100%", marginBottom: "0.5rem" }}
-        placeholder="Agent name" value={name} onChange={(e) => setName(e.target.value)} />
+        placeholder="Task name" value={name} onChange={(e) => setName(e.target.value)} />
       <textarea className="ask-input" style={{ width: "100%", minHeight: "60px", marginBottom: "0.5rem" }}
         placeholder="What does this agent do?" value={description}
         onChange={(e) => setDescription(e.target.value)} />
@@ -226,7 +228,7 @@ export default function AgentStorePage() {
       setResults(response.results);
     } catch (e) {
       setError(
-        e instanceof Error ? e.message : "Could not reach the agent store.",
+        e instanceof Error ? e.message : "Could not reach the task store.",
       );
     } finally {
       setLoading(false);
@@ -254,9 +256,9 @@ export default function AgentStorePage() {
     <main className="shell">
       <div className="masthead">
         <div>
-          <div className="masthead-title">Agent Store</div>
+          <div className="masthead-title">Task Store</div>
           <div className="masthead-sub">
-            search for a reviewed, ready-to-use agent
+            search for a reviewed, ready-to-use task node
           </div>
         </div>
       </div>
@@ -271,8 +273,8 @@ export default function AgentStorePage() {
         <Link href="/archive" className="nav-tab">
           Archive
         </Link>
-        <Link href="/agents" className="nav-tab active">
-          Agents
+        <Link href="/tasks" className="nav-tab active">
+          Tasks
         </Link>
       </div>
 
@@ -289,7 +291,7 @@ export default function AgentStorePage() {
           style={{ background: "none", border: "none", cursor: "pointer" }}
           onClick={() => setView("submit")}
         >
-          Submit an agent
+          Submit a Task
         </button>
         <button
           className={`nav-tab ${view === "pending" ? "active" : ""}`}

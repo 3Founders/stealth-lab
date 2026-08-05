@@ -69,8 +69,8 @@ export default function MedicalReportExtractionAgent() {
         <Link href="/archive" className="nav-tab">
           Archive
         </Link>
-        <Link href="/agents" className="nav-tab active">
-          Agents
+        <Link href="/tasks" className="nav-tab active">
+          Tasks
         </Link>
       </div>
 
