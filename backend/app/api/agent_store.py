@@ -163,6 +163,7 @@ async def submit_agent(body: SubmitAgentRequest, pool=Depends(get_pool)) -> Subm
 
 
 
+@router.post("/promote", response_model=PromoteResponse)
 async def promote(body: PromoteRequest, pool=Depends(get_pool)) -> PromoteResponse:
     try:
         outcome = await promote_decomposition(
