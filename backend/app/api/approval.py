@@ -25,14 +25,45 @@ from app.debate.state_machine import DebateStateMachine, IllegalTransition
 from app.export.markdown_diff import render_export
 from app.models.change import ChangeSet
 from app.models.debate import Layer1Result, Scorecard
+from app.services.human_participation import DebateNotPendingApproval, add_human_turn
 from app.services.knowledge_update import ChangeApplicationError, KnowledgeUpdater
 
 log = logging.getLogger(__name__)
+
+
+class HumanTurnRequest(BaseModel):
+    author: str
+    content: str
+    action: str = "propose"
+    candidate_id: Optional[UUID] = None
+
+
+class HumanTurnResponse(BaseModel):
+    new_scorecards: list[Scorecard]
+
+
 router = APIRouter(prefix="/v1/approvals", tags=["approval"])
 
 
 async def get_pool(request: Request):
     return request.app.state.pool
+
+
+@router.post("/{debate_id}/human-turn", response_model=HumanTurnResponse)
+async def submit_human_turn(
+    debate_id: UUID, body: HumanTurnRequest, request: Request,
+) -> HumanTurnResponse:
+    pool = request.app.state.pool
+    try:
+        scorecards = await add_human_turn(
+            pool, debate_id, body.author, body.content,
+            action=body.action, candidate_id=body.candidate_id,
+        )
+    except DebateNotPendingApproval as exc:
+        raise HTTPException(409, str(exc)) from exc
+    except LookupError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    return HumanTurnResponse(new_scorecards=scorecards)
 
 
 class ApprovalRequest(BaseModel):

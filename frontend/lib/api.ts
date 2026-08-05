@@ -195,6 +195,13 @@ export const agentsApi = {
 };
 
 export const api = {
+  addHumanTurn: (
+    debateId: string, author: string, content: string, action: string = "propose",
+  ) =>
+    request<{ new_scorecards: ScorecardSummary[] }>(
+      `/v1/approvals/${debateId}/human-turn`,
+      { method: "POST", body: JSON.stringify({ author, content, action }) },
+    ),
   listPending: () => request<ScorecardSummary[]>("/v1/approvals/pending"),
 
   getDetail: (scorecardId: string) =>
@@ -238,6 +245,9 @@ export type DecomposeResponse = {
   input_flagged: boolean;
   input_truncated: boolean;
   related_existing: string[];
+  reused_nodes: { id: string; table: string; name: string; similarity: number; method: string }[];
+  is_novel: boolean;
+  suggested_agents: { id: string; name: string; description: string }[];
 };
 
 export type DecideResponse = {
@@ -258,5 +268,86 @@ export const decomposeApi = {
     request<DecideResponse>(`/v1/decompose/${id}/decide`, {
       method: "POST",
       body: JSON.stringify({ approver_id: approverId, decision }),
+    }),
+};
+
+// --- Agent Store (search/browse) ---
+
+export type AgentSearchResult = {
+  id: string;
+  name: string;
+  description: string;
+  source: "internal" | "graph_derived" | "user_submitted" | "external_marketplace";
+  execution_mode: "local_skill" | "remote_http" | "graph_workflow";
+  runnable: boolean;
+};
+
+export type PendingAgent = {
+  id: string;
+  name: string;
+  description: string;
+  source: string;
+  execution_mode: string;
+  source_decomposition_id: string | null;
+  t_created: string;
+};
+
+export type PromoteResponse = {
+  agent_id: string;
+  review_state: string;
+  passed_review: boolean;
+  review_notes: string;
+};
+
+export type AgentDecideResponse = {
+  agent_id: string;
+  review_state: string;
+  runnable: boolean;
+};
+
+export type SubmitAgentResponse = {
+  agent_id: string;
+  review_state: string;
+  passed_review: boolean;
+  reviewer_notes: string;
+};
+
+export const agentStoreApi = {
+  browseOrSearch: (query?: string) => {
+    const qs = query && query.trim() ? `?q=${encodeURIComponent(query)}` : "";
+    return request<{ results: AgentSearchResult[] }>(`/v1/agent-store${qs}`);
+  },
+
+  pending: () => request<PendingAgent[]>("/v1/agent-store/pending"),
+
+  promote: (decompositionId: string, actor: string) =>
+    request<PromoteResponse>("/v1/agent-store/promote", {
+      method: "POST",
+      body: JSON.stringify({ decomposition_id: decompositionId, actor }),
+    }),
+
+  decideAgent: (
+    agentId: string, decision: "approved" | "rejected", actor: string,
+    acknowledgeSandboxLimitations: boolean = false,
+  ) =>
+    request<AgentDecideResponse>(`/v1/agent-store/${agentId}/decide`, {
+      method: "POST",
+      body: JSON.stringify({
+        decision, actor,
+        acknowledge_sandbox_limitations: acknowledgeSandboxLimitations,
+      }),
+    }),
+
+  submit: (
+    name: string, description: string,
+    source: "user_submitted" | "external_marketplace",
+    sourceDetail: Record<string, unknown>, submittedBy: string,
+  ) =>
+    request<SubmitAgentResponse>("/v1/agent-store/submit", {
+      method: "POST",
+      body: JSON.stringify({
+        name, description, source,
+        source_detail: sourceDetail, submitted_by: submittedBy,
+      }),
     }),
 };

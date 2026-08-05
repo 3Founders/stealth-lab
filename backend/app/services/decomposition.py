@@ -37,6 +37,7 @@ from typing import Optional
 
 from app.debate.panel import PanelAgent, _extract_json
 from app.models.change import ChangeSet
+from app.services.reuse_detection import find_reusable_nodes
 from app.services.retrieval import HybridRetriever, RetrievalResult
 from app.services.untrusted import (
     UNTRUSTED_INPUT_PREAMBLE,
@@ -125,6 +126,8 @@ class Decomposition:
     input_flags: list[str] = field(default_factory=list)
     input_truncated: bool = False
     related_existing: list[str] = field(default_factory=list)
+    reused_nodes: list[dict] = field(default_factory=list)
+    is_novel: bool = False
 
     @property
     def safe_to_propose(self) -> bool:
@@ -193,9 +196,52 @@ class DecompositionService:
 
         context, related = await self._existing_context(clean.text)
 
+        # Deterministic reuse check, runs before any model call. See
+        # app/services/reuse_detection.py for the full reasoning: this
+        # replaces asking the model, in prose, to notice an existing
+        # match, which depends on per-call judgment and isn't guaranteed
+        # consistent between two identical calls.
+        reused = []
+        if self._retriever is not None:
+            try:
+                reused = await find_reusable_nodes(
+                    self._retriever._pool, clean.text,
+                    scope=self._retriever._scope, embedder=self._retriever._embedder,
+                )
+            except Exception as exc:  # noqa: BLE001
+                log.warning("reuse check failed, proceeding without it: %s", exc)
+
+        full_matches = [r for r in reused if r.is_full_match]
+        if full_matches:
+            best = full_matches[0]
+            return Decomposition(
+                feasible=True,
+                reasoning=(
+                    f"An existing {('task' if best.table == 'task_nodes' else 'knowledge')} "
+                    f"node, {best.name!r}, already covers this "
+                    f"(similarity {best.similarity:.2f} via {best.method} match). "
+                    "No new decomposition was generated -- this is a deterministic "
+                    "match, not a model judgment call."
+                ),
+                input_flags=clean.flags,
+                input_truncated=clean.truncated,
+                related_existing=related,
+                reused_nodes=[
+                    {"id": r.id, "table": r.table, "name": r.name,
+                     "similarity": round(r.similarity, 3), "method": r.method}
+                    for r in full_matches
+                ],
+                is_novel=False,
+            )
+
+        partial_matches = [r for r in reused if not r.is_full_match]
+
         user_prompt = (
-            (f"## Existing workflow steps that may be relevant\n\n{context}\n\n"
-             if context else "")
+            (f"## These existing steps already exist and must NOT be recreated\n\n"
+             + "\n".join(f"- {r.name}: {r.description[:200]}" for r in partial_matches)
+             + "\n\n" if partial_matches else "")
+            + (f"## Other existing workflow steps that may be relevant\n\n{context}\n\n"
+               if context else "")
             + "## The problem\n\n"
             + wrap_untrusted(clean.text)
         )
@@ -238,6 +284,12 @@ class DecompositionService:
             input_flags=clean.flags,
             input_truncated=clean.truncated,
             related_existing=related,
+            reused_nodes=[
+                {"id": r.id, "table": r.table, "name": r.name,
+                 "similarity": round(r.similarity, 3), "method": r.method}
+                for r in partial_matches
+            ],
+            is_novel=not reused,  # true only when nothing existing matched at all
         )
 
         if not result.feasible:
@@ -260,6 +312,26 @@ class DecompositionService:
             result.structural_problems.append(
                 f"{result.node_count} nodes proposed; the limit is {MAX_GENERATED_NODES}"
             )
+
+        # A real, deterministic check that the model actually honored the
+        # "do not recreate this" instruction, rather than trusting prose
+        # compliance the same way this whole mechanism was built to stop
+        # trusting. Reuses the same lexical-overlap function as the
+        # detection step itself, deliberately -- it's a sanity check on
+        # the model's own output, not a fresh similarity judgment.
+        if partial_matches:
+            from app.services.reuse_detection import _lexical_overlap
+            for op in result.change_set.ops:
+                if op.op_type != "create_task_node":
+                    continue
+                proposed_text = f"{op.name} {op.description or ''}"
+                for match in partial_matches:
+                    if _lexical_overlap(proposed_text, match.description) > 0.6:
+                        result.structural_problems.append(
+                            f"proposed step {op.name!r} looks like a duplicate of "
+                            f"existing node {match.name!r}, despite being told not "
+                            "to recreate it"
+                        )
 
         if result.structural_problems:
             log.warning(
