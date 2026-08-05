@@ -1,121 +1,62 @@
 "use client";
 
+import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { GraphEdge, GraphNode } from "@/lib/api";
 
 /**
- * Layered DAG rendering for a workflow subgraph.
+ * Renders a workflow subgraph with mermaid, wrapped in a small pan/zoom
+ * viewport. Mermaid gives us layout + SVG for free; it has no zoom UI of
+ * its own, so that part is a thin manual layer (wheel-to-zoom, drag-to-pan,
+ * +/-/reset controls) around the rendered <svg>.
  *
- * Hand-rolled SVG rather than a graph library: these workflows are small
- * (typically 3-10 nodes), the visual language has to match the existing
- * case-file styling, and a library would bring its own conventions to
- * override. Revisit if graphs grow past ~30 nodes or need pan/zoom.
- *
- * Layer assignment is longest-path-from-source. The backend's
- * traverse_from walks edges in both directions, so the returned subgraph
- * can contain cycles even though workflows are conceptually DAGs --
- * the traversal below is explicitly cycle-safe rather than assuming
- * acyclicity and hanging if it's violated.
+ * Styling is pushed into the SVG via themeCSS referencing the app's own
+ * CSS variables, so the diagram inherits the paper theme instead of
+ * mermaid's defaults.
  */
 
-const NODE_W = 168;
-const NODE_H = 52;
-const H_GAP = 60;
-const V_GAP = 28;
-const PAD = 24;
+const THEME_CSS = `
+  .node rect, .node polygon { fill: transparent; stroke: var(--rule-paper); stroke-width: 1px; }
+  .node.center rect, .node.center polygon { fill: var(--paper-dim); stroke: var(--pass); stroke-width: 2px; }
+  .node.knowledge rect, .node.knowledge polygon { stroke-dasharray: 4 3; }
+  .nodeLabel { font-family: var(--font-serif); font-size: 13px; color: var(--paper-text); }
+  .edgeLabel { font-family: var(--font-mono); font-size: 9px; color: var(--paper-text-dim); background: transparent !important; }
+  .edgeLabel rect { fill: transparent !important; }
+  .flowchart-link { stroke: var(--rule-paper); }
+  .marker { fill: var(--rule-paper); stroke: var(--rule-paper); }
+`;
 
-type Positioned = GraphNode & { x: number; y: number; layer: number };
-
-function assignLayers(nodes: GraphNode[], edges: GraphEdge[]): Map<string, number> {
-  const ids = new Set(nodes.map((n) => n.id));
-  const outgoing = new Map<string, string[]>();
-  const indegree = new Map<string, number>();
-
-  for (const id of ids) {
-    outgoing.set(id, []);
-    indegree.set(id, 0);
-  }
-  for (const e of edges) {
-    if (!ids.has(e.source) || !ids.has(e.target)) continue;
-    outgoing.get(e.source)!.push(e.target);
-    indegree.set(e.target, (indegree.get(e.target) ?? 0) + 1);
-  }
-
-  const layer = new Map<string, number>();
-  for (const id of ids) layer.set(id, 0);
-
-  // Kahn's algorithm. Any node left unprocessed is part of a cycle and
-  // keeps its default layer 0 -- degraded but still renders, rather than
-  // looping forever.
-  const queue = [...ids].filter((id) => (indegree.get(id) ?? 0) === 0);
-  const remaining = new Map(indegree);
-  let processed = 0;
-
-  while (queue.length > 0) {
-    const id = queue.shift()!;
-    processed++;
-    for (const next of outgoing.get(id) ?? []) {
-      layer.set(next, Math.max(layer.get(next) ?? 0, (layer.get(id) ?? 0) + 1));
-      const left = (remaining.get(next) ?? 1) - 1;
-      remaining.set(next, left);
-      if (left === 0) queue.push(next);
-    }
-  }
-
-  if (processed < ids.size) {
-    // Cyclic subgraph: fall back to BFS depth from an arbitrary root so
-    // the layout is still readable rather than collapsing to one column.
-    const seen = new Set<string>();
-    const start = [...ids][0];
-    const bfs: [string, number][] = [[start, 0]];
-    while (bfs.length > 0) {
-      const [id, d] = bfs.shift()!;
-      if (seen.has(id)) continue;
-      seen.add(id);
-      layer.set(id, d);
-      for (const next of outgoing.get(id) ?? []) {
-        if (!seen.has(next)) bfs.push([next, d + 1]);
-      }
-    }
-  }
-
-  return layer;
+function escapeHtml(s: string): string {
+  return s
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
 }
 
-function layout(nodes: GraphNode[], edges: GraphEdge[]): {
-  positioned: Positioned[];
-  width: number;
-  height: number;
-} {
-  const layerOf = assignLayers(nodes, edges);
-  const byLayer = new Map<number, GraphNode[]>();
-  for (const n of nodes) {
-    const l = layerOf.get(n.id) ?? 0;
-    if (!byLayer.has(l)) byLayer.set(l, []);
-    byLayer.get(l)!.push(n);
-  }
-
-  const layers = [...byLayer.keys()].sort((a, b) => a - b);
-  const tallest = Math.max(...layers.map((l) => byLayer.get(l)!.length), 1);
-  const height = PAD * 2 + tallest * NODE_H + (tallest - 1) * V_GAP;
-
-  const positioned: Positioned[] = [];
-  layers.forEach((l, columnIndex) => {
-    const column = byLayer.get(l)!;
-    const columnHeight = column.length * NODE_H + (column.length - 1) * V_GAP;
-    const yStart = (height - columnHeight) / 2;
-    column.forEach((n, i) => {
-      positioned.push({
-        ...n,
-        layer: l,
-        x: PAD + columnIndex * (NODE_W + H_GAP),
-        y: yStart + i * (NODE_H + V_GAP),
-      });
-    });
-  });
-
-  const width = PAD * 2 + layers.length * NODE_W + (layers.length - 1) * H_GAP;
-  return { positioned, width, height };
+function sanitizeEdgeLabel(s: string): string {
+  return s.replace(/[|"\n]/g, " ").trim();
 }
+
+// mermaid's own viewBox already accounts for stroke width, arrowheads and
+// label overflow — SVGElement.getBBox() does not, and undermeasures wide
+// diagrams enough to clip them against the viewport.
+function parseSvgSize(svgMarkup: string): { width: number; height: number } | null {
+  const m = svgMarkup.match(/viewBox="[-\d.]+\s+[-\d.]+\s+([\d.]+)\s+([\d.]+)"/);
+  if (!m) return null;
+  return { width: parseFloat(m[1]), height: parseFloat(m[2]) };
+}
+
+// Floor for interactive zoom-out (via wheel/− button). Deliberately low so
+// a wide diagram can always be shrunk enough to see it in full.
+const MIN_SCALE = 0.1;
+// Ceiling for interactive zoom-in — SVG stays crisp at any scale, so this
+// just bounds how far a click/scroll can go.
+const MAX_SCALE = 8;
+// Floor for the *auto-fit* scale specifically (initial load + reset). Wide
+// diagrams would otherwise fit-to-width down to an unreadably small scale;
+// below this floor we'd rather start legible and let the user pan to see
+// the rest, or zoom out manually past this floor if they want the overview.
+const MIN_FIT_SCALE = 0.6;
 
 export default function WorkflowGraph({
   nodes,
@@ -126,117 +67,165 @@ export default function WorkflowGraph({
   edges: GraphEdge[];
   center: string;
 }) {
+  const reactId = useId().replace(/[^a-zA-Z0-9]/g, "");
+  const viewportRef = useRef<HTMLDivElement>(null);
+  const contentRef = useRef<HTMLDivElement>(null);
+  const dragRef = useRef<{ startX: number; startY: number; origX: number; origY: number } | null>(null);
+
+  const [svg, setSvg] = useState<string | null>(null);
+  const [naturalSize, setNaturalSize] = useState<{ width: number; height: number } | null>(null);
+  const [transform, setTransform] = useState({ scale: 1, x: 0, y: 0 });
+
+  useEffect(() => {
+    if (nodes.length === 0) {
+      setSvg(null);
+      return;
+    }
+    let cancelled = false;
+
+    (async () => {
+      const mermaid = (await import("mermaid")).default;
+      mermaid.initialize({
+        startOnLoad: false,
+        securityLevel: "loose",
+        theme: "base",
+        themeCSS: THEME_CSS,
+      });
+
+      const idOf = new Map<string, string>();
+      nodes.forEach((n, i) => idOf.set(n.id, `wn${i}`));
+
+      const lines = ["flowchart LR"];
+      nodes.forEach((n) => {
+        const safeId = idOf.get(n.id)!;
+        const isTask = n.table === "task_nodes";
+        const tag = isTask ? "TASK" : "KNOWLEDGE";
+        const label = n.label.length > 26 ? `${n.label.slice(0, 25)}…` : n.label;
+        lines.push(`${safeId}["${tag}<br/>${escapeHtml(label)}"]`);
+        const classes = [isTask ? "task" : "knowledge"];
+        if (n.id === center) classes.push("center");
+        lines.push(`class ${safeId} ${classes.join(",")}`);
+      });
+      edges.forEach((e) => {
+        const s = idOf.get(e.source);
+        const t = idOf.get(e.target);
+        if (!s || !t) return;
+        const label = sanitizeEdgeLabel(e.label ?? "");
+        lines.push(label ? `${s} -->|${label}| ${t}` : `${s} --> ${t}`);
+      });
+
+      try {
+        const { svg: rendered } = await mermaid.render(`workflow-graph-${reactId}`, lines.join("\n"));
+        if (!cancelled) {
+          setSvg(rendered);
+          setNaturalSize(parseSvgSize(rendered));
+        }
+      } catch {
+        if (!cancelled) {
+          setSvg(null);
+          setNaturalSize(null);
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [nodes, edges, center, reactId]);
+
+  function fitToViewport() {
+    if (!naturalSize || !viewportRef.current) return;
+    const el = viewportRef.current;
+    const scaleX = naturalSize.width > 0 ? (el.clientWidth - 16) / naturalSize.width : 1;
+    const scaleY = naturalSize.height > 0 ? (el.clientHeight - 16) / naturalSize.height : 1;
+    const fit = Math.max(MIN_FIT_SCALE, Math.min(1, scaleX, scaleY));
+    setTransform({ scale: fit, x: 8, y: 8 });
+  }
+
+  // Fit the diagram to the viewport once it's rendered, so large graphs
+  // start zoomed out (matching the old behaviour) instead of clipped.
+  useLayoutEffect(() => {
+    fitToViewport();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [svg, naturalSize]);
+
+  useEffect(() => {
+    const el = viewportRef.current;
+    if (!el) return;
+    const onWheel = (e: WheelEvent) => {
+      e.preventDefault();
+      const rect = el.getBoundingClientRect();
+      const cx = e.clientX - rect.left;
+      const cy = e.clientY - rect.top;
+      const factor = e.deltaY < 0 ? 1.1 : 1 / 1.1;
+      setTransform((t) => {
+        const scale = Math.min(MAX_SCALE, Math.max(MIN_SCALE, t.scale * factor));
+        const ratio = scale / t.scale;
+        return { scale, x: cx - (cx - t.x) * ratio, y: cy - (cy - t.y) * ratio };
+      });
+    };
+    el.addEventListener("wheel", onWheel, { passive: false });
+    return () => el.removeEventListener("wheel", onWheel);
+  }, []);
+
+  function onMouseDown(e: React.MouseEvent) {
+    dragRef.current = { startX: e.clientX, startY: e.clientY, origX: transform.x, origY: transform.y };
+  }
+  function onMouseMove(e: React.MouseEvent) {
+    if (!dragRef.current) return;
+    const dx = e.clientX - dragRef.current.startX;
+    const dy = e.clientY - dragRef.current.startY;
+    setTransform((t) => ({ ...t, x: dragRef.current!.origX + dx, y: dragRef.current!.origY + dy }));
+  }
+  function endDrag() {
+    dragRef.current = null;
+  }
+  function zoomBy(factor: number) {
+    setTransform((t) => ({ ...t, scale: Math.min(MAX_SCALE, Math.max(MIN_SCALE, t.scale * factor)) }));
+  }
+
   if (nodes.length === 0) {
     return <p className="case-body">No connected nodes to display.</p>;
   }
 
-  const { positioned, width, height } = layout(nodes, edges);
-  const posById = new Map(positioned.map((p) => [p.id, p]));
-
   return (
-    <div style={{ overflowX: "auto" }}>
-      <svg
-        width={width}
-        height={height}
-        viewBox={`0 0 ${width} ${height}`}
-        style={{ maxWidth: "100%" }}
-        role="img"
-        aria-label="Workflow task graph"
+    <div style={{ position: "relative" }}>
+      <div style={{ position: "absolute", top: 6, right: 6, zIndex: 1, display: "flex", gap: "0.25rem" }}>
+        <button type="button" className="ask-button" style={{ padding: "0.15rem 0.6rem" }} onClick={() => zoomBy(1.25)}>
+          +
+        </button>
+        <button type="button" className="ask-button" style={{ padding: "0.15rem 0.6rem" }} onClick={() => zoomBy(1 / 1.25)}>
+          −
+        </button>
+        <button type="button" className="ask-button" style={{ padding: "0.15rem 0.6rem" }} onClick={fitToViewport}>
+          reset
+        </button>
+      </div>
+      <div
+        ref={viewportRef}
+        onMouseDown={onMouseDown}
+        onMouseMove={onMouseMove}
+        onMouseUp={endDrag}
+        onMouseLeave={endDrag}
+        style={{
+          overflow: "hidden",
+          border: "1px solid var(--rule-paper)",
+          borderRadius: "3px",
+          height: "420px",
+          cursor: dragRef.current ? "grabbing" : "grab",
+        }}
       >
-        <defs>
-          <marker
-            id="arrow"
-            viewBox="0 0 10 10"
-            refX="9"
-            refY="5"
-            markerWidth="6"
-            markerHeight="6"
-            orient="auto-start-reverse"
-          >
-            <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--rule-paper)" />
-          </marker>
-        </defs>
-
-        {edges.map((e) => {
-          const s = posById.get(e.source);
-          const t = posById.get(e.target);
-          if (!s || !t) return null;
-
-          // Draw left-to-right regardless of stored direction, so arrows
-          // read naturally against the layered layout.
-          const forward = s.x <= t.x;
-          const from = forward ? s : t;
-          const to = forward ? t : s;
-          const x1 = from.x + NODE_W;
-          const y1 = from.y + NODE_H / 2;
-          const x2 = to.x;
-          const y2 = to.y + NODE_H / 2;
-          const midX = (x1 + x2) / 2;
-
-          return (
-            <g key={e.id}>
-              <path
-                d={`M ${x1} ${y1} C ${midX} ${y1}, ${midX} ${y2}, ${x2} ${y2}`}
-                fill="none"
-                stroke="var(--rule-paper)"
-                strokeWidth="1.5"
-                markerEnd="url(#arrow)"
-              />
-              <text
-                x={midX}
-                y={(y1 + y2) / 2 - 6}
-                textAnchor="middle"
-                fontFamily="var(--font-mono)"
-                fontSize="9"
-                fill="var(--paper-text-dim)"
-              >
-                {e.label}
-              </text>
-            </g>
-          );
-        })}
-
-        {positioned.map((n) => {
-          const isCenter = n.id === center;
-          const isTask = n.table === "task_nodes";
-          return (
-            <g key={n.id}>
-              <rect
-                x={n.x}
-                y={n.y}
-                width={NODE_W}
-                height={NODE_H}
-                rx={3}
-                fill={isCenter ? "var(--paper-dim)" : "transparent"}
-                stroke={isCenter ? "var(--pass)" : "var(--rule-paper)"}
-                strokeWidth={isCenter ? 2 : 1}
-                strokeDasharray={isTask ? undefined : "4 3"}
-              />
-              <text
-                x={n.x + NODE_W / 2}
-                y={n.y + 20}
-                textAnchor="middle"
-                fontFamily="var(--font-mono)"
-                fontSize="8"
-                fill="var(--paper-text-dim)"
-                letterSpacing="0.05em"
-              >
-                {isTask ? "TASK" : "KNOWLEDGE"}
-              </text>
-              <text
-                x={n.x + NODE_W / 2}
-                y={n.y + 37}
-                textAnchor="middle"
-                fontFamily="var(--font-serif)"
-                fontSize="13"
-                fill="var(--paper-text)"
-              >
-                {n.label.length > 22 ? `${n.label.slice(0, 21)}…` : n.label}
-              </text>
-            </g>
-          );
-        })}
-      </svg>
+        <div
+          ref={contentRef}
+          style={{
+            transform: `translate(${transform.x}px, ${transform.y}px) scale(${transform.scale})`,
+            transformOrigin: "0 0",
+            width: "fit-content",
+          }}
+          {...(svg ? { dangerouslySetInnerHTML: { __html: svg } } : {})}
+        />
+      </div>
     </div>
   );
 }
