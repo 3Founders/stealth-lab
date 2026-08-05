@@ -149,6 +149,51 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return res.json() as Promise<T>;
 }
 
+async function requestMultipart<T>(path: string, formData: FormData): Promise<T> {
+  // Deliberately does NOT set Content-Type -- the browser must set it
+  // itself for multipart/form-data, including a boundary string it
+  // generates, which JavaScript cannot construct correctly by hand.
+  // Setting "application/json" here (request()'s default) would silently
+  // corrupt the upload rather than fail loudly.
+  const res = await fetch(`${API_BASE}${path}`, {
+    method: "POST",
+    body: formData,
+    cache: "no-store",
+  });
+  if (!res.ok) {
+    const body = await res.text();
+    throw new ApiError(body || res.statusText, res.status);
+  }
+  return res.json() as Promise<T>;
+}
+
+export type ExtractionStatus = {
+  original_filename: string;
+  outcome: "success" | "failure";
+  field_count: number | null;
+  error: string | null;
+};
+
+export type RunResponse = {
+  extractions: ExtractionStatus[];
+  combined_file_id: string | null;
+  combined_download_path: string | null;
+  combined_error: string | null;
+};
+
+export const agentsApi = {
+  runMedicalReportExtraction: (files: File[]) => {
+    const formData = new FormData();
+    for (const file of files) formData.append("files", file);
+    return requestMultipart<RunResponse>(
+      "/v1/agents/medical-report-extraction/run",
+      formData,
+    );
+  },
+
+  downloadUrl: (downloadPath: string) => `${API_BASE}${downloadPath}`,
+};
+
 export const api = {
   listPending: () => request<ScorecardSummary[]>("/v1/approvals/pending"),
 
@@ -190,7 +235,6 @@ export type DecomposeResponse = {
   structural_problems: string[];
   objections: string[];
   suspected_manipulation: boolean;
-  critique_failed: boolean;
   input_flagged: boolean;
   input_truncated: boolean;
   related_existing: string[];

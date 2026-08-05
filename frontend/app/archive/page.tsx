@@ -72,6 +72,9 @@ export default function ArchivePage() {
         <Link href="/archive" className="nav-tab active">
           Archive
         </Link>
+        <Link href="/agents/medical-report-extraction" className="nav-tab">
+          Agents
+        </Link>
       </div>
 
       {enquiries.length === 0 && (

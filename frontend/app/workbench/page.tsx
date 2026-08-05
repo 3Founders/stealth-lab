@@ -70,6 +70,9 @@ export default function WorkbenchPage() {
         <Link href="/archive" className="nav-tab">
           Archive
         </Link>
+        <Link href="/agents/medical-report-extraction" className="nav-tab">
+          Agents
+        </Link>
       </div>
 
       <textarea
@@ -96,20 +99,6 @@ export default function WorkbenchPage() {
         <div className="case-file" style={{ marginTop: "2rem" }}>
           {/* Manipulation suspicion goes first — a reviewer who reads the
               plan before the warning has already been influenced by it. */}
-          {/* Unreviewed is not the same as reviewed-and-clean, so it gets
-              its own banner above the plan rather than a line in the
-              objections list. */}
-          {result.critique_failed && (
-            <div className="tier-banner simulated">
-              This plan was never adversarially reviewed
-              <span className="tier-detail">
-                {result.objections[0] ??
-                  "The critique model could not be reached."}{" "}
-                Nothing has checked these steps for flaws or hidden instructions.
-              </span>
-            </div>
-          )}
-
           {(result.suspected_manipulation || result.input_flagged) && (
             <div className="tier-banner simulated">
               {result.suspected_manipulation
@@ -160,7 +149,7 @@ export default function WorkbenchPage() {
                 </div>
               )}
 
-              {result.objections.length > 0 && !result.critique_failed && (
+              {result.objections.length > 0 && (
                 <div className="case-section">
                   <div className="case-label">Raised in adversarial review</div>
                   <ul className="evidence-notes">

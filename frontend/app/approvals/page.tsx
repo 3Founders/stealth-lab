@@ -79,6 +79,9 @@ export default function ApprovalsDocket() {
         <Link href="/archive" className="nav-tab">
           Archive
         </Link>
+        <Link href="/agents/medical-report-extraction" className="nav-tab">
+          Agents
+        </Link>
       </div>
 
       {scanMessage && (
