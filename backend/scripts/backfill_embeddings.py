@@ -19,7 +19,9 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from app.db.session import create_pool
+from app.services.access import AccessScope
 from app.services.embeddings import Embedder, node_text, to_pgvector
+from app.services.hierarchy import attach_new_leaf
 
 BATCH = 64
 
@@ -34,6 +36,7 @@ async def backfill_table(pool, embedder, table: str) -> int:
         print(f"  {table}: nothing to backfill")
         return 0
 
+    scope = AccessScope.unrestricted()
     done = 0
     for i in range(0, len(rows), BATCH):
         chunk = rows[i : i + BATCH]
@@ -47,6 +50,20 @@ async def backfill_table(pool, embedder, table: str) -> int:
                 )
         done += len(chunk)
         print(f"  {table}: {done}/{len(rows)}")
+
+        # Part B: a node needs its own embedding before it can be routed
+        # into the tree (see hierarchy.py's has_embedding requirement --
+        # attaching an unembedded node would force lexical fallback for
+        # the whole level it joins). This is the first point that's true,
+        # so it's the natural place to attach, not a separate pass.
+        # Best-effort: a node that fails to attach just stays a root and
+        # gets picked up by the next build_hierarchy_for_table sweep --
+        # not a reason to fail the embedding backfill itself.
+        for row in chunk:
+            try:
+                await attach_new_leaf(pool, table, str(row["id"]), scope=scope, embedder=embedder)
+            except Exception as exc:  # noqa: BLE001
+                print(f"    (hierarchy attach skipped for {row['id']}: {exc})")
     return done
 
 

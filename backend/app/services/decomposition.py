@@ -37,7 +37,9 @@ from typing import Optional
 
 from app.debate.panel import PanelAgent, _extract_json
 from app.models.change import ChangeSet
-from app.services.reuse_detection import find_reusable_nodes
+from app.services.dedup import dedupe_changeset_ops
+from app.services.hierarchy import hierarchical_search
+from app.services.reuse_detection import FULL_MATCH_THRESHOLD, ReusableNode, find_reusable_nodes
 from app.services.retrieval import HybridRetriever, RetrievalResult
 from app.services.untrusted import (
     UNTRUSTED_INPUT_PREAMBLE,
@@ -128,6 +130,10 @@ class Decomposition:
     related_existing: list[str] = field(default_factory=list)
     reused_nodes: list[dict] = field(default_factory=list)
     is_novel: bool = False
+    # Sibling create-ops within THIS proposal that were collapsed into
+    # each other (Part A reuse consolidation) -- distinct from
+    # reused_nodes, which is matches against the EXISTING graph.
+    deduplicated: list[dict] = field(default_factory=list)
 
     @property
     def safe_to_propose(self) -> bool:
@@ -184,6 +190,48 @@ class DecompositionService:
             log.warning("context retrieval failed, decomposing without it: %s", exc)
             return "", []
 
+    async def _try_hierarchical_match(self, problem: str) -> Optional[ReusableNode]:
+        """
+        Part B: try the tree before the flat scan in find_reusable_nodes.
+
+        Deliberately narrow -- only ever short-circuits on a CONFIDENT
+        FULL match (>= FULL_MATCH_THRESHOLD, same constant and same
+        semantics reuse_detection.py already uses). Anything less
+        confident, any table where the tree isn't built yet or signals
+        low confidence (hierarchical_search's own used_flat_fallback),
+        or any error, and this returns None -- the caller falls through
+        to the exact existing find_reusable_nodes flat scan unchanged.
+        This is additive only: it can make a full match cheaper to find,
+        it can never make one harder to find, since the flat path is
+        still there as the fallback in every other case.
+
+        Does not attempt partial matches -- those still come from
+        find_reusable_nodes, and only matter on the non-full-match path
+        this function never takes anyway (decompose() returns
+        immediately on a full match, before partial_matches is used).
+        """
+        if self._retriever is None:
+            return None
+        best: Optional[ReusableNode] = None
+        for table in ("task_nodes", "knowledge_nodes"):
+            try:
+                result = await hierarchical_search(
+                    self._retriever._pool, table, problem,
+                    scope=self._retriever._scope, embedder=self._retriever._embedder,
+                    beam=3, adaptive=True,
+                )
+            except Exception as exc:  # noqa: BLE001
+                log.warning("hierarchical_search failed for %s, will fall back to flat scan: %s", table, exc)
+                continue
+            if result.used_flat_fallback or result.leaf_id is None or result.similarity is None:
+                continue
+            if result.similarity >= FULL_MATCH_THRESHOLD and (best is None or result.similarity > best.similarity):
+                best = ReusableNode(
+                    id=result.leaf_id, table=table, name=result.leaf_name or "",
+                    description="", similarity=result.similarity, method="vector",
+                )
+        return best
+
     async def decompose(self, problem: str) -> Decomposition:
         clean: SanitizedInput = sanitize(problem)
 
@@ -203,13 +251,17 @@ class DecompositionService:
         # consistent between two identical calls.
         reused = []
         if self._retriever is not None:
-            try:
-                reused = await find_reusable_nodes(
-                    self._retriever._pool, clean.text,
-                    scope=self._retriever._scope, embedder=self._retriever._embedder,
-                )
-            except Exception as exc:  # noqa: BLE001
-                log.warning("reuse check failed, proceeding without it: %s", exc)
+            hierarchical_match = await self._try_hierarchical_match(clean.text)
+            if hierarchical_match is not None:
+                reused = [hierarchical_match]
+            else:
+                try:
+                    reused = await find_reusable_nodes(
+                        self._retriever._pool, clean.text,
+                        scope=self._retriever._scope, embedder=self._retriever._embedder,
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    log.warning("reuse check failed, proceeding without it: %s", exc)
 
         full_matches = [r for r in reused if r.is_full_match]
         if full_matches:
@@ -303,6 +355,17 @@ class DecompositionService:
             result.feasible = False
             result.structural_problems = [f"could not parse proposed operations: {exc}"]
             return result
+
+        # Reuse consolidation (Part A, see app/services/dedup.py): the
+        # model can propose several new steps that duplicate EACH OTHER,
+        # not just steps that duplicate something already in the graph
+        # (that case is `partial_matches` above, and was already
+        # checked). Runs before validate_generative() so node_count and
+        # the capability check both see the deduplicated set. Pure and
+        # in-memory -- collapses the proposal, never touches the
+        # database, so it cannot violate the generative capability
+        # boundary no matter what produced these ops.
+        result.change_set, result.deduplicated = dedupe_changeset_ops(result.change_set)
 
         # The capability boundary. This is the check that makes a hijacked
         # generator harmless rather than dangerous.
