@@ -183,6 +183,30 @@ async def main():
         }, fh, indent=2)
     print("\nwrote experiment_1_results.json")
 
+    # --- diagnostic: which skills win as FALSE positives most often, and
+    # does instruction length correlate with miss rate -- both patterns
+    # found during the pilot, worth quantifying at full scale rather than
+    # re-deriving by hand from another manual sample. ---
+    print(f"\n=== False-positive top-1 skill frequency (wrong AND won) ===")
+    fp_counts: dict[str, int] = {}
+    for t in tasks:
+        gt = set(t["skills"])
+        top1 = ranked_by_task.get(t["id"], [(None, 0)])[0][0]
+        if top1 and top1 not in gt:
+            fp_counts[top1] = fp_counts.get(top1, 0) + 1
+    for skill, count in sorted(fp_counts.items(), key=lambda x: -x[1])[:10]:
+        print(f"  {skill}: wrongly won top-1 for {count} task(s)")
+
+    print(f"\n=== Instruction length vs hit/miss (chars) ===")
+    hit_lens = [len(instructions[t["id"]]) for t in tasks
+                if ranked_by_task.get(t["id"], [(None, 0)])[0][0] in set(t["skills"])]
+    miss_lens = [len(instructions[t["id"]]) for t in tasks
+                 if ranked_by_task.get(t["id"], [(None, 0)])[0][0] not in set(t["skills"])]
+    if hit_lens:
+        print(f"  hits:  mean {sum(hit_lens)/len(hit_lens):.0f} chars (n={len(hit_lens)})")
+    if miss_lens:
+        print(f"  misses: mean {sum(miss_lens)/len(miss_lens):.0f} chars (n={len(miss_lens)})")
+
 
 if __name__ == "__main__":
     asyncio.run(main())
