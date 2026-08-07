@@ -88,8 +88,11 @@ async def main():
             print(f"  query={row['name']!r} -> leaf={result.leaf_name!r} "
                   f"sim={result.similarity} comparisons={result.comparisons} "
                   f"flat_fallback={result.used_flat_fallback}")
-            print("  (searching for a node's own exact name should return itself with similarity ~1.0 --")
-            print("   if it doesn't, something in the descent logic is wrong, not just imprecise)")
+            print("  (Voyage embeds 'query' and 'document' input_type asymmetrically, so even an")
+            print("   exact self-match won't hit ~1.0 -- confirmed against a real run at ~0.74, consistent")
+            print("   with an isolated doc-vs-query embedding test on the same text. If this number is")
+            print("   noticeably lower (well under ~0.6) OR the wrong leaf_name comes back, THAT'S the")
+            print("   real signal something's wrong -- not the absolute number being under 1.0.")
     else:
         print("\n(dry run only -- pass --apply to actually build the tree and run traversal checks)")
 

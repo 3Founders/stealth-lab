@@ -313,6 +313,16 @@ async def build_hierarchy_for_table(
                         members = [rows_by_id[k] for k in g.member_keys]
                         name = summarizer(members)
                         await _create_internal_node(conn, table, g.member_keys, name, now, approver_id)
+        else:
+            # Dry run: nothing gets written, so _fetch_roots would return
+            # the IDENTICAL root set next iteration and re-plan the exact
+            # same level forever (up to max_levels) -- that's not a real
+            # simulation of further levels, just the same plan reported
+            # repeatedly. Stop after one level; a dry run can only
+            # honestly report what the FIRST level would do.
+            total_internal += len(internal_groups)
+            break
+
         total_internal += len(internal_groups)
         level += 1
 
@@ -414,6 +424,16 @@ async def hierarchical_search(
     if not frontier_ids:
         return SearchResult(None, None, None, used_flat_fallback=True, comparisons=0)
 
+    # Best LEAF candidate found so far, carried across iterations. A beam
+    # can mix leaves (no children -- already a final answer) and internal
+    # nodes (have children -- need further descent). Discarding the
+    # leaves just because something else in the beam has children throws
+    # away a candidate that might score higher than anything descent
+    # into the internal node goes on to find -- confirmed for real: a
+    # root at query-similarity 0.65 got silently dropped in favor of
+    # descending into a sibling group that only led to a 0.51 leaf.
+    best_leaf: Optional[tuple] = None  # (id, name, similarity)
+
     for _ in range(20):  # hard cap on depth -- a real tree won't be this deep;
                           # guards against an edge-graph cycle turning into an infinite loop
         scored = await pool.fetch(
@@ -423,16 +443,17 @@ async def hierarchical_search(
         )
         comparisons += len(scored)
         if not scored:
-            return SearchResult(None, None, None, used_flat_fallback=True, comparisons=comparisons)
+            break
 
         ranked = sorted(scored, key=lambda r: r["similarity"], reverse=True)
-        if ranked[0]["similarity"] < confidence_floor:
+        if best_leaf is None and ranked[0]["similarity"] < confidence_floor:
             return SearchResult(None, None, None, used_flat_fallback=True, comparisons=comparisons)
 
         eff_beam = beam
         if adaptive and len(ranked) > 1 and (ranked[0]["similarity"] - ranked[1]["similarity"]) < gap_threshold:
             eff_beam = max(beam, expanded_beam)
-        next_frontier = [str(r["id"]) for r in ranked[:eff_beam]]
+        next_frontier_rows = ranked[:eff_beam]
+        next_frontier = [str(r["id"]) for r in next_frontier_rows]
 
         children = await pool.fetch(
             f"SELECT e.source_id, n.id, n.name FROM edges e "
@@ -441,22 +462,37 @@ async def hierarchical_search(
             f"AND e.target_table = '{table}' AND e.source_id = ANY($1::uuid[])",
             [UUID(i) for i in next_frontier],
         )
+        children_by_parent: dict[str, list[dict]] = {}
+        for c in children:
+            children_by_parent.setdefault(str(c["source_id"]), []).append(c)
 
-        if not children:
-            # Frontier nodes are leaves -- ranked already IS the exact
-            # (coarse-to-fine) leaf-level comparison. Done.
-            best = next(r for r in ranked if str(r["id"]) in next_frontier)
-            if not await _passes_postcondition_gate(pool, table, str(best["id"]), query_postconditions):
-                return SearchResult(None, None, None, used_flat_fallback=True, comparisons=comparisons)
-            return SearchResult(
-                leaf_id=str(best["id"]), leaf_name=best["name"], similarity=float(best["similarity"]),
-                used_flat_fallback=False, comparisons=comparisons,
-            )
+        # Update best_leaf with any beam member that has NO children --
+        # it's a final answer in its own right, not to be silently
+        # dropped just because a sibling in the beam has children.
+        for r in next_frontier_rows:
+            if str(r["id"]) not in children_by_parent:
+                sim = float(r["similarity"])
+                if best_leaf is None or sim > best_leaf[2]:
+                    best_leaf = (str(r["id"]), r["name"], sim)
 
-        frontier_ids = list({str(c["id"]) for c in children})
+        next_children = [c for r in next_frontier_rows for c in children_by_parent.get(str(r["id"]), [])]
+        if not next_children:
+            # Nothing left to descend into -- best_leaf (if any) is the
+            # answer. Falls through to the check below.
+            break
 
-    log.warning("hierarchical_search hit the depth cap without reaching a leaf -- possible cycle in PARENT_OF edges")
-    return SearchResult(None, None, None, used_flat_fallback=True, comparisons=comparisons)
+        frontier_ids = list({str(c["id"]) for c in next_children})
+
+    if best_leaf is None:
+        return SearchResult(None, None, None, used_flat_fallback=True, comparisons=comparisons)
+
+    best_id, best_name, best_sim = best_leaf
+    if not await _passes_postcondition_gate(pool, table, best_id, query_postconditions):
+        return SearchResult(None, None, None, used_flat_fallback=True, comparisons=comparisons)
+    return SearchResult(
+        leaf_id=best_id, leaf_name=best_name, similarity=best_sim,
+        used_flat_fallback=False, comparisons=comparisons,
+    )
 
 
 async def batch_hierarchical_search(
@@ -506,7 +542,15 @@ async def batch_hierarchical_search(
     vec_texts = {ref: to_pgvector(vec) for ref, vec in queries.items()}
     comparisons = {ref: 0 for ref in refs}
     results: dict[str, SearchResult] = {}
-    last_best: dict[str, tuple[str, str, float]] = {}  # ref -> (id, name, similarity)
+    # Best LEAF candidate per ref, carried across iterations -- same fix
+    # as hierarchical_search: a beam can mix leaves (already a final
+    # answer) and internal nodes (need further descent), and discarding
+    # a leaf just because a sibling in ITS OWN beam has children throws
+    # away a candidate that might outscore anything descent finds.
+    # Confirmed for real against production data: a 0.65-similarity root
+    # got silently dropped in favor of descending into a sibling that
+    # only led to a 0.51 leaf.
+    best_leaf: dict[str, tuple[str, str, float]] = {}
 
     root_rows = await _fetch_roots(pool, table, scope)
     if not root_rows:
@@ -524,7 +568,7 @@ async def batch_hierarchical_search(
         for ref in active:
             groups.setdefault(frozenset(frontier[ref]), []).append(ref)
 
-        winners: dict[str, list[str]] = {}  # ref -> next frontier ids (empty if resolved this round)
+        winners: dict[str, list] = {}  # ref -> beam rows (full, not just ids)
         for frontier_ids, group_refs in groups.items():
             pairs = [(ref, vec_texts[ref]) for ref in group_refs]
             rows = await pool.fetch(
@@ -542,24 +586,24 @@ async def batch_hierarchical_search(
                 comparisons[ref] += len(frontier_ids)
                 scored = by_ref.get(ref, [])
                 if not scored:
-                    results[ref] = SearchResult(None, None, None, True, comparisons[ref])
+                    if ref not in best_leaf:
+                        results[ref] = SearchResult(None, None, None, True, comparisons[ref])
                     active.discard(ref)
                     continue
                 ranked = sorted(scored, key=lambda r: r["similarity"], reverse=True)
-                if ranked[0]["similarity"] < confidence_floor:
+                if ref not in best_leaf and ranked[0]["similarity"] < confidence_floor:
                     results[ref] = SearchResult(None, None, None, True, comparisons[ref])
                     active.discard(ref)
                     continue
-                last_best[ref] = (str(ranked[0]["id"]), ranked[0]["name"], float(ranked[0]["similarity"]))
                 eff_beam = beam
                 if adaptive and len(ranked) > 1 and (ranked[0]["similarity"] - ranked[1]["similarity"]) < gap_threshold:
                     eff_beam = max(beam, expanded_beam)
-                winners[ref] = [str(r["id"]) for r in ranked[:eff_beam]]
+                winners[ref] = ranked[:eff_beam]
 
         if not winners:
             break
 
-        all_next_ids = {i for ids in winners.values() for i in ids}
+        all_next_ids = {str(r["id"]) for rows in winners.values() for r in rows}
         children_rows = await pool.fetch(
             f"SELECT e.source_id, n.id, n.name FROM edges e "
             f"JOIN {table} n ON n.id = e.target_id AND n.t_invalid IS NULL "
@@ -573,15 +617,27 @@ async def batch_hierarchical_search(
 
         next_active = set()
         leaf_resolutions: dict[str, tuple[str, str, float]] = {}
-        for ref, ids in winners.items():
-            children = {cid for i in ids for cid in children_by_parent.get(i, set())}
-            if not children:
-                # Frontier nodes are leaves -- last_best[ref] IS the exact
-                # (coarse-to-fine) leaf-level comparison already computed.
-                leaf_resolutions[ref] = last_best[ref]
-            else:
-                frontier[ref] = list(children)
-                next_active.add(ref)
+        for ref, beam_rows in winners.items():
+            # A beam member with no children is a final-answer candidate
+            # in its own right -- update best_leaf regardless of what
+            # other members of this SAME beam turn out to have.
+            for r in beam_rows:
+                rid = str(r["id"])
+                if rid not in children_by_parent:
+                    sim = float(r["similarity"])
+                    if ref not in best_leaf or sim > best_leaf[ref][2]:
+                        best_leaf[ref] = (rid, r["name"], sim)
+
+            next_children = {cid for r in beam_rows for cid in children_by_parent.get(str(r["id"]), set())}
+            if not next_children:
+                # Nothing left to descend for this ref -- best_leaf is
+                # the final answer (guaranteed present: every beam member
+                # either had children, contributing nothing here, or was
+                # just added to best_leaf above).
+                leaf_resolutions[ref] = best_leaf[ref]
+                continue
+            frontier[ref] = list(next_children)
+            next_active.add(ref)
 
         # Rule 1 gate, batched: one extra round trip covering every ref
         # that actually has a postcondition constraint this round, not
@@ -606,9 +662,13 @@ async def batch_hierarchical_search(
             results[ref] = SearchResult(bid, bname, bsim, False, comparisons[ref])
         active = next_active
 
-    for ref in active:  # depth cap hit without resolving -- same cycle-guard as hierarchical_search
-        log.warning("batch_hierarchical_search hit the depth cap for ref=%s without reaching a leaf", ref)
-        results[ref] = SearchResult(None, None, None, True, comparisons[ref])
+    for ref in active:  # depth cap hit -- use best_leaf if we have one rather than discard it
+        if ref in best_leaf:
+            bid, bname, bsim = best_leaf[ref]
+            results[ref] = SearchResult(bid, bname, bsim, False, comparisons[ref])
+        else:
+            log.warning("batch_hierarchical_search hit the depth cap for ref=%s without reaching a leaf", ref)
+            results[ref] = SearchResult(None, None, None, True, comparisons[ref])
 
     return results
 
