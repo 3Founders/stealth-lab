@@ -77,12 +77,20 @@ async def resolve_subtask_reuse(
     scope: Optional[AccessScope] = None,
     embedder: Optional[Embedder] = None,
     threshold: float = FULL_MATCH_THRESHOLD,
+    query_postconditions: Optional[dict[str, list[str]]] = None,
 ) -> tuple[ChangeSet, SubtaskReuseReport]:
     """
     For each newly-proposed create op, check it individually against the
     EXISTING persisted graph. A confident match drops that op (and any
     edge that solely referenced it) from the changeset -- shrink-only,
     same safety pattern as dedupe_changeset_ops.
+
+    `query_postconditions`: Rule 1 gate, keyed by op ref. Optional --
+    nothing produces these yet for LLM-generated subtasks (see
+    EXPERIMENT_PLAN_FINAL.md's open next-step on this), so today this
+    is only usable when a caller explicitly supplies postconditions for
+    specific refs; anything else passes through ungated, unchanged from
+    before this parameter existed.
     """
     scope = scope or AccessScope.unrestricted()
     embedder = embedder or Embedder()
@@ -113,6 +121,7 @@ async def resolve_subtask_reuse(
             continue
         results = await batch_hierarchical_search(
             pool, table, queries, scope=scope, beam=3, adaptive=True,
+            query_postconditions=query_postconditions,
         )
         for ref, result in results.items():
             if result.used_flat_fallback or result.leaf_id is None or result.similarity is None:

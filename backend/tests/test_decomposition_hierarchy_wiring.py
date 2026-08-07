@@ -100,7 +100,26 @@ def test_no_retriever_returns_none_without_calling_search():
     mocked.assert_not_called()
 
 
-def test_picks_best_match_across_both_tables():
+def test_decompose_threads_query_postconditions_to_hierarchical_match():
+    """
+    Confirms decompose()'s new query_postconditions parameter actually
+    reaches hierarchical_search, not just that it's accepted and
+    silently dropped somewhere along the way.
+    """
+    service = _make_service_with_retriever()
+    captured = {}
+
+    async def capture_search(pool, table, problem, **kwargs):
+        captured[table] = kwargs.get("query_postconditions")
+        return SearchResult(None, None, None, used_flat_fallback=True, comparisons=0)
+
+    with patch("app.services.decomposition.hierarchical_search", new=capture_search):
+        asyncio.run(service._try_hierarchical_match(
+            "some problem", query_postconditions=["schema_conformance"],
+        ))
+
+    assert captured["task_nodes"] == ["schema_conformance"]
+    assert captured["knowledge_nodes"] == ["schema_conformance"]
     service = _make_service_with_retriever()
     task_result = SearchResult(
         leaf_id="task-1", leaf_name="Task match", similarity=0.91,

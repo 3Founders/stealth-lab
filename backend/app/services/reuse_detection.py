@@ -37,6 +37,7 @@ import asyncpg
 
 from app.services.access import AccessScope, visibility_predicate
 from app.services.embeddings import Embedder, to_pgvector
+from app.services.precondition_gate import extract_postconditions, postconditions_compatible
 
 FULL_MATCH_THRESHOLD = 0.90
 PARTIAL_MATCH_THRESHOLD = 0.70
@@ -61,6 +62,7 @@ class ReusableNode:
     description: str
     similarity: float
     method: str  # 'vector' | 'lexical'
+    postconditions: Optional[list[str]] = None
 
     @property
     def is_full_match(self) -> bool:
@@ -91,12 +93,12 @@ async def _vector_candidates(
     vis_sql, vis_params = visibility_predicate(scope, param_index=3)
     vec = to_pgvector(query_vec)
     results: list[ReusableNode] = []
-    for table, name_expr in (
-        ("task_nodes", "name || ' ' || COALESCE(description, '')"),
-        ("knowledge_nodes", "name"),
+    for table, name_expr, props_col in (
+        ("task_nodes", "name || ' ' || COALESCE(description, '')", "success_criteria"),
+        ("knowledge_nodes", "name", "properties"),
     ):
         rows = await pool.fetch(
-            f"SELECT id, name, {name_expr} AS full_text, "
+            f"SELECT id, name, {name_expr} AS full_text, {props_col} AS props, "
             f"1 - (embedding <=> $1::vector) AS similarity "
             f"FROM {table} "
             f"WHERE t_invalid IS NULL AND {vis_sql} AND embedding IS NOT NULL "
@@ -107,7 +109,7 @@ async def _vector_candidates(
             results.append(ReusableNode(
                 id=str(r["id"]), table=table, name=r["name"],
                 description=r["full_text"], similarity=float(r["similarity"]),
-                method="vector",
+                method="vector", postconditions=extract_postconditions(r["props"]),
             ))
     return sorted(results, key=lambda n: n.similarity, reverse=True)
 
@@ -117,12 +119,12 @@ async def _lexical_candidates(
 ) -> list[ReusableNode]:
     vis_sql, vis_params = visibility_predicate(scope, param_index=1)
     results: list[ReusableNode] = []
-    for table, name_expr in (
-        ("task_nodes", "name || ' ' || COALESCE(description, '')"),
-        ("knowledge_nodes", "name"),
+    for table, name_expr, props_col in (
+        ("task_nodes", "name || ' ' || COALESCE(description, '')", "success_criteria"),
+        ("knowledge_nodes", "name", "properties"),
     ):
         rows = await pool.fetch(
-            f"SELECT id, name, {name_expr} AS full_text FROM {table} "
+            f"SELECT id, name, {name_expr} AS full_text, {props_col} AS props FROM {table} "
             f"WHERE t_invalid IS NULL AND {vis_sql} LIMIT 200",
             *vis_params,
         )
@@ -132,6 +134,7 @@ async def _lexical_candidates(
                 results.append(ReusableNode(
                     id=str(r["id"]), table=table, name=r["name"],
                     description=r["full_text"], similarity=score, method="lexical",
+                    postconditions=extract_postconditions(r["props"]),
                 ))
     results.sort(key=lambda n: n.similarity, reverse=True)
     return results[:limit]
@@ -143,6 +146,7 @@ async def find_reusable_nodes(
     scope: Optional[AccessScope] = None,
     embedder: Optional[Embedder] = None,
     query_vec: Optional[list[float]] = None,
+    query_postconditions: Optional[list[str]] = None,
 ) -> list[ReusableNode]:
     """
     Returns candidates above PARTIAL_MATCH_THRESHOLD, highest similarity
@@ -157,8 +161,23 @@ async def find_reusable_nodes(
     `problem` again -- see decomposition.py, which embeds the problem
     text once and threads it through every call site here that would
     otherwise redundantly embed the identical string.
+
+    `query_postconditions`: Rule 1 gate (precondition_gate.py). Optional
+    -- when not supplied (the common case today, nothing upstream
+    produces these yet), every candidate passes through unchanged, zero
+    behavior change from before this parameter existed. When supplied,
+    a candidate whose OWN stated postconditions conflict with these is
+    dropped even if its embedding similarity cleared threshold -- this
+    is what stops a same-wording, different-precondition match (the
+    adversarial DE/SWE case) from being accepted on text similarity
+    alone.
     """
     scope = scope or AccessScope.anonymous()
+
+    def _gated(cands: list[ReusableNode]) -> list[ReusableNode]:
+        if query_postconditions is None:
+            return cands
+        return [c for c in cands if postconditions_compatible(c.postconditions, query_postconditions)]
 
     try:
         embedder = embedder or Embedder()
@@ -166,7 +185,7 @@ async def find_reusable_nodes(
             query_vec = await embedder.embed_one(problem, input_type="query")
         candidates = await _vector_candidates(pool, query_vec, scope)
         if candidates:
-            return [c for c in candidates if c.similarity >= PARTIAL_MATCH_THRESHOLD]
+            return _gated([c for c in candidates if c.similarity >= PARTIAL_MATCH_THRESHOLD])
     except Exception:  # noqa: BLE001
         import logging
         logging.getLogger(__name__).error(
@@ -174,4 +193,4 @@ async def find_reusable_nodes(
         )
 
     lexical = await _lexical_candidates(pool, problem, scope)
-    return [c for c in lexical if c.similarity >= LEXICAL_PARTIAL_MATCH_THRESHOLD]
+    return _gated([c for c in lexical if c.similarity >= LEXICAL_PARTIAL_MATCH_THRESHOLD])

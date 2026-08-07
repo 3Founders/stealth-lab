@@ -45,6 +45,7 @@ import asyncpg
 from app.services.access import AccessScope, visibility_predicate
 from app.services.dedup import complete_linkage_clusters
 from app.services.embeddings import Embedder
+from app.services.precondition_gate import extract_postconditions, postconditions_compatible
 from app.services.reuse_detection import (
     FULL_MATCH_THRESHOLD,
     LEXICAL_FULL_MATCH_THRESHOLD,
@@ -348,6 +349,25 @@ class SearchResult:
     comparisons: int
 
 
+def _props_col(table: str) -> str:
+    return "success_criteria" if table == "task_nodes" else "properties"
+
+
+async def _passes_postcondition_gate(
+    pool: asyncpg.Pool, table: str, node_id: str, query_postconditions: Optional[list[str]]
+) -> bool:
+    """Rule 1 gate, checked only against the WINNING leaf a search is
+    about to return -- not during descent, so the beam-search logic
+    itself stays untouched. Optional: when query_postconditions is
+    None (nothing supplied one), this always passes -- zero behavior
+    change from before this existed."""
+    if query_postconditions is None:
+        return True
+    row = await pool.fetchrow(f"SELECT {_props_col(table)} AS props FROM {table} WHERE id = $1", UUID(node_id))
+    candidate_postconditions = extract_postconditions(row["props"]) if row else None
+    return postconditions_compatible(candidate_postconditions, query_postconditions)
+
+
 async def hierarchical_search(
     pool: asyncpg.Pool,
     table: str,
@@ -360,6 +380,7 @@ async def hierarchical_search(
     expanded_beam: int = 3,
     confidence_floor: float = 0.3,
     query_vec: Optional[list[float]] = None,
+    query_postconditions: Optional[list[str]] = None,
 ) -> SearchResult:
     """
     Beam-descend the tree: mean-vector routing, confidence-adaptive
@@ -373,6 +394,12 @@ async def hierarchical_search(
     `query_vec`: pass an already-computed embedding to skip embedding
     `query_text` again (see decomposition.py's threading of one
     up-front embed call through every reuse-check site).
+
+    `query_postconditions`: Rule 1 gate (precondition_gate.py).
+    Optional, checked only against the final winning leaf -- if it
+    fails, this reports used_flat_fallback=True rather than returning
+    a match the gate rejected, same signal the caller already handles
+    for a low-confidence result.
     """
     scope = scope or AccessScope.unrestricted()
     embedder = embedder or Embedder()
@@ -419,6 +446,8 @@ async def hierarchical_search(
             # Frontier nodes are leaves -- ranked already IS the exact
             # (coarse-to-fine) leaf-level comparison. Done.
             best = next(r for r in ranked if str(r["id"]) in next_frontier)
+            if not await _passes_postcondition_gate(pool, table, str(best["id"]), query_postconditions):
+                return SearchResult(None, None, None, used_flat_fallback=True, comparisons=comparisons)
             return SearchResult(
                 leaf_id=str(best["id"]), leaf_name=best["name"], similarity=float(best["similarity"]),
                 used_flat_fallback=False, comparisons=comparisons,
@@ -440,12 +469,18 @@ async def batch_hierarchical_search(
     gap_threshold: float = 0.03,
     expanded_beam: int = 3,
     confidence_floor: float = 0.3,
+    query_postconditions: Optional[dict[str, list[str]]] = None,
 ) -> dict[str, SearchResult]:
     """
     Same algorithm as hierarchical_search (mean-vector routing,
     confidence-adaptive beam, exact leaf-level comparison, flat-fallback
     signal on low confidence) but for MANY queries at once, keyed by
     caller-supplied ref (e.g. a proposed ChangeSet op's ref).
+
+    `query_postconditions`: Rule 1 gate, keyed by the same ref as
+    `queries`. Optional and per-ref -- a ref with no entry (or when the
+    whole dict is None) passes through ungated, same as
+    hierarchical_search's single-query version.
 
     Built for Part C (per-subtask reuse resolution): naively calling
     hierarchical_search once per proposed subtask means N round trips
@@ -537,16 +572,38 @@ async def batch_hierarchical_search(
             children_by_parent.setdefault(str(c["source_id"]), set()).add(str(c["id"]))
 
         next_active = set()
+        leaf_resolutions: dict[str, tuple[str, str, float]] = {}
         for ref, ids in winners.items():
             children = {cid for i in ids for cid in children_by_parent.get(i, set())}
             if not children:
                 # Frontier nodes are leaves -- last_best[ref] IS the exact
                 # (coarse-to-fine) leaf-level comparison already computed.
-                bid, bname, bsim = last_best[ref]
-                results[ref] = SearchResult(bid, bname, bsim, False, comparisons[ref])
+                leaf_resolutions[ref] = last_best[ref]
             else:
                 frontier[ref] = list(children)
                 next_active.add(ref)
+
+        # Rule 1 gate, batched: one extra round trip covering every ref
+        # that actually has a postcondition constraint this round, not
+        # one query per ref -- same batching principle as the rest of
+        # this function.
+        gated_refs = [r for r in leaf_resolutions if query_postconditions and r in query_postconditions]
+        props_by_id: dict[str, object] = {}
+        if gated_refs:
+            ids_to_check = list({leaf_resolutions[r][0] for r in gated_refs})
+            prop_rows = await pool.fetch(
+                f"SELECT id, {_props_col(table)} AS props FROM {table} WHERE id = ANY($1::uuid[])",
+                [UUID(i) for i in ids_to_check],
+            )
+            props_by_id = {str(r["id"]): r["props"] for r in prop_rows}
+
+        for ref, (bid, bname, bsim) in leaf_resolutions.items():
+            if query_postconditions and ref in query_postconditions:
+                candidate_postconditions = extract_postconditions(props_by_id.get(bid))
+                if not postconditions_compatible(candidate_postconditions, query_postconditions[ref]):
+                    results[ref] = SearchResult(None, None, None, True, comparisons[ref])
+                    continue
+            results[ref] = SearchResult(bid, bname, bsim, False, comparisons[ref])
         active = next_active
 
     for ref in active:  # depth cap hit without resolving -- same cycle-guard as hierarchical_search

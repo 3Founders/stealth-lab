@@ -198,7 +198,8 @@ class DecompositionService:
             return "", []
 
     async def _try_hierarchical_match(
-        self, problem: str, query_vec: Optional[list[float]] = None
+        self, problem: str, query_vec: Optional[list[float]] = None,
+        query_postconditions: Optional[list[str]] = None,
     ) -> Optional[ReusableNode]:
         """
         Part B: try the tree before the flat scan in find_reusable_nodes.
@@ -228,6 +229,7 @@ class DecompositionService:
                     self._retriever._pool, table, problem,
                     scope=self._retriever._scope, embedder=self._retriever._embedder,
                     beam=3, adaptive=True, query_vec=query_vec,
+                    query_postconditions=query_postconditions,
                 )
             except Exception as exc:  # noqa: BLE001
                 log.warning("hierarchical_search failed for %s, will fall back to flat scan: %s", table, exc)
@@ -241,7 +243,22 @@ class DecompositionService:
                 )
         return best
 
-    async def decompose(self, problem: str) -> Decomposition:
+    async def decompose(
+        self, problem: str, query_postconditions: Optional[list[str]] = None,
+    ) -> Decomposition:
+        """
+        `query_postconditions`: Rule 1 gate input (precondition_gate.py).
+        Optional -- nothing upstream produces these automatically yet
+        (no LLM-extraction step exists), so this is currently only
+        usable when a CALLER explicitly supplies them (e.g. a benchmark
+        harness that hand-authors postconditions for its test tasks).
+        When omitted, behavior is unchanged from before this parameter
+        existed. Applies to the TOP-LEVEL reuse check (this problem
+        statement as a whole) -- does not yet reach Part C's per-
+        subtask matching, since generated subtasks don't carry their
+        own postconditions either; that needs the debate/generation
+        prompt extended to emit them, a separate, larger change.
+        """
         clean: SanitizedInput = sanitize(problem)
 
         if not clean.text.strip():
@@ -272,7 +289,9 @@ class DecompositionService:
         # consistent between two identical calls.
         reused = []
         if self._retriever is not None:
-            hierarchical_match = await self._try_hierarchical_match(clean.text, query_vec=query_vec)
+            hierarchical_match = await self._try_hierarchical_match(
+                clean.text, query_vec=query_vec, query_postconditions=query_postconditions,
+            )
             if hierarchical_match is not None:
                 reused = [hierarchical_match]
             else:
@@ -280,7 +299,7 @@ class DecompositionService:
                     reused = await find_reusable_nodes(
                         self._retriever._pool, clean.text,
                         scope=self._retriever._scope, embedder=self._retriever._embedder,
-                        query_vec=query_vec,
+                        query_vec=query_vec, query_postconditions=query_postconditions,
                     )
                 except Exception as exc:  # noqa: BLE001
                     log.warning("reuse check failed, proceeding without it: %s", exc)
