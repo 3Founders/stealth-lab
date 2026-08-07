@@ -272,12 +272,24 @@ async def merge_cluster(
     cluster_ids: list[str],
     approver_id: str,
     now: datetime,
+    canonical_rule: str = "earliest",
 ) -> Optional[MergeReport]:
     """
     Merge one cluster of duplicate ids within `table`, inside a
-    transaction the caller owns. Canonical = earliest t_created (no
-    other signal is available generically; a domain-specific tiebreak
-    can be layered on later without changing this function's contract).
+    transaction the caller owns.
+
+    `canonical_rule` controls which member survives:
+      - "earliest" (default): earliest t_created wins. Correct for Part
+        A's actual use case -- accidental re-creation of the same node,
+        where the first-created row is the real one and later ones are
+        the duplicates.
+      - "latest": most recent t_created wins. Required for supersession
+        (a NEW policy replacing an OLD one, e.g. Experiment 3's debate-
+        triggered updates) -- using "earliest" there would keep the
+        STALE node live and invalidate the new one, exactly backwards.
+        This was a real gap: found via a merge_cluster test built
+        specifically to check post-merge read behavior, not caught by
+        code review alone.
 
     Edges pointing at a duplicate are rewired onto the canonical node
     (same pattern as knowledge_update.py::_supersede_task), or dropped
@@ -289,6 +301,9 @@ async def merge_cluster(
     sweep or edit already reconciled this cluster) -- a valid no-op,
     not an error.
     """
+    if canonical_rule not in ("earliest", "latest"):
+        raise ValueError(f"canonical_rule must be 'earliest' or 'latest', got {canonical_rule!r}")
+
     rows = await conn.fetch(
         f"SELECT id, name, t_created FROM {table} "
         f"WHERE id = ANY($1::uuid[]) AND t_invalid IS NULL FOR UPDATE",
@@ -297,7 +312,7 @@ async def merge_cluster(
     if len(rows) < 2:
         return None
 
-    ordered = sorted(rows, key=lambda r: r["t_created"])
+    ordered = sorted(rows, key=lambda r: r["t_created"], reverse=(canonical_rule == "latest"))
     canonical = ordered[0]
     duplicates = ordered[1:]
     canonical_id = canonical["id"]

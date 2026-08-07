@@ -44,9 +44,12 @@ class FakePool:
         self.edges: list[dict] = []
         self.fetch_calls = 0
 
-    def add_node(self, table: str, name: str, embedding) -> str:
+    def add_node(self, table: str, name: str, embedding, postconditions=None) -> str:
         nid = str(uuid4())
-        self.nodes[table][nid] = {"id": nid, "name": name, "embedding": unit(embedding)}
+        self.nodes[table][nid] = {
+            "id": nid, "name": name, "embedding": unit(embedding),
+            "props": {"postconditions": postconditions} if postconditions else {},
+        }
         return nid
 
     def add_parent_of(self, table: str, parent_id: str, child_id: str):
@@ -56,24 +59,13 @@ class FakePool:
         self.fetch_calls += 1
         table = "task_nodes" if "task_nodes" in query else "knowledge_nodes"
 
-        # Order matters: the flat-scan fallback query contains BOTH
-        # "NOT EXISTS" and the unnest shape, so it must be matched before
-        # either of the two branches below would swallow it.
-        if "NOT EXISTS" in query and "unnest(" in query:  # _flat_best_match
-            refs, vec_texts = params[0], params[1]
-            # A leaf owns no children -- i.e. is never a PARENT_OF source.
-            parents = {e["source_id"] for e in self.edges if e["table"] == table}
-            leaves = [nid for nid in self.nodes[table] if nid not in parents]
-            rows = []
-            for ref, vec_text in zip(refs, vec_texts):
-                qvec = unit([float(x) for x in vec_text.strip("[]").split(",")])
-                for nid in leaves:
-                    n = self.nodes[table][nid]
-                    rows.append({
-                        "ref": ref, "id": UUID(nid), "name": n["name"],
-                        "similarity": float(np.dot(qvec, n["embedding"])),
-                    })
-            return rows
+        if "props" in query and "id = ANY($1::uuid[])" in query and "unnest" not in query and "edges" not in query:
+            # batch_hierarchical_search's Rule 1 gate fetch
+            ids = [str(i) for i in params[0]]
+            return [
+                {"id": UUID(nid), "props": self.nodes[table][nid]["props"]}
+                for nid in ids if nid in self.nodes[table]
+            ]
 
         if "NOT EXISTS" in query:  # _fetch_roots
             owned = {e["target_id"] for e in self.edges if e["table"] == table}
@@ -286,6 +278,64 @@ async def _batched_cost(pool: FakePool, embedder: FakeEmbedder, change_set):
     embedder.embed_one_calls = 0
     await resolve_subtask_reuse(change_set, pool, scope=AccessScope.unrestricted(), embedder=embedder)
     return pool.fetch_calls, embedder.embed_calls
+
+
+def test_precondition_gate_blocks_a_match_end_to_end():
+    """
+    The exact adversarial case, run through the REAL wired path this
+    time (resolve_subtask_reuse -> batch_hierarchical_search -> Rule 1
+    gate), not just the standalone gate module. A DE-labeled existing
+    node and an incoming SWE-labeled subtask share enough surface text
+    to clear FULL_MATCH_THRESHOLD on embedding similarity alone, but
+    their stated postconditions conflict -- confirms the gate actually
+    blocks it once wired, not just in isolation.
+    """
+    pool = FakePool()
+    shared_direction = unit(np.ones(16))
+    de_id = pool.add_node(
+        "task_nodes", "validate the output", shared_direction,
+        postconditions=["schema_conformance", "field_types_valid"],
+    )
+
+    text = "validate the output "
+    vectors = {text: unit(shared_direction + 0.01 * np.random.default_rng(1).normal(size=16))}
+    ops = [CreateTaskNodeOp(ref="swe_task", name=text.strip(), description="")]
+    change_set = ChangeSet(ops=ops)
+    embedder = FakeEmbedder(vectors)
+
+    new_cs, report = asyncio.run(resolve_subtask_reuse(
+        change_set, pool, scope=AccessScope.unrestricted(), embedder=embedder,
+        query_postconditions={"swe_task": ["test_suite_passes", "no_regressions"]},
+    ))
+
+    assert report.matches == [], "gate must block this match despite high embedding similarity"
+    assert len(new_cs.ops) == 1, "the op must survive as novel, not get wrongly dropped as a duplicate"
+
+
+def test_precondition_gate_allows_a_genuine_match_end_to_end():
+    """Same setup, but incoming postconditions genuinely overlap -- confirms
+    the gate isn't just blocking everything, only the mismatched case."""
+    pool = FakePool()
+    shared_direction = unit(np.ones(16))
+    existing_id = pool.add_node(
+        "task_nodes", "validate the output", shared_direction,
+        postconditions=["schema_conformance", "field_types_valid"],
+    )
+
+    text = "validate the output "
+    vectors = {text: unit(shared_direction + 0.01 * np.random.default_rng(2).normal(size=16))}
+    ops = [CreateTaskNodeOp(ref="de_task", name=text.strip(), description="")]
+    change_set = ChangeSet(ops=ops)
+    embedder = FakeEmbedder(vectors)
+
+    new_cs, report = asyncio.run(resolve_subtask_reuse(
+        change_set, pool, scope=AccessScope.unrestricted(), embedder=embedder,
+        query_postconditions={"de_task": ["schema_conformance", "field_types_valid"]},
+    ))
+
+    assert len(report.matches) == 1
+    assert report.matches[0]["matched_id"] == existing_id
+    assert new_cs.ops == []
 
 
 def test_cost_comparison_naive_vs_batched():
