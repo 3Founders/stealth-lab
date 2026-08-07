@@ -18,8 +18,12 @@ import sys
 import pytest
 
 sys.path.insert(
+    # experiments/ lives at the REPO ROOT, not under backend/ -- two levels
+    # up from backend/tests/, not one. It moved, and the old single-".."
+    # path silently resolved to a directory that no longer exists, which
+    # surfaced as a collection error rather than a skip.
     0, os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                    "..", "experiments", "swebench_pro")
+                    "..", "..", "experiments", "swebench_pro")
 )
 
 from pro_harness import (  # noqa: E402

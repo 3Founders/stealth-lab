@@ -13,13 +13,29 @@ message rather than an opaque None.
 from __future__ import annotations
 
 from functools import lru_cache
+from pathlib import Path
 from typing import Optional
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+# backend/, i.e. the directory that actually holds .env.
+#
+# env_file was a bare ".env", which pydantic-settings resolves against the
+# CURRENT WORKING DIRECTORY, not this package. That silently produced a
+# fully-default Settings for anything launched from the repo root -- every
+# secret None, every require() failing with "set it in your .env" while the
+# populated .env sat one directory away. The failure surfaces only at the
+# first API call, which for a long ingestion job is after the expensive part
+# has already run.
+_BACKEND_ROOT = Path(__file__).resolve().parents[1]
+
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+    # Later entries win, so a .env in the working directory still overrides
+    # the packaged one -- the previous behaviour, kept.
+    model_config = SettingsConfigDict(
+        env_file=(_BACKEND_ROOT / ".env", ".env"), extra="ignore"
+    )
 
     database_url: Optional[str] = None
 

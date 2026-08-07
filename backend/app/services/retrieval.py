@@ -27,6 +27,7 @@ import asyncpg
 from app.db.graph_store import GraphStore
 from app.services.access import AccessScope, visibility_predicate
 from app.services.embeddings import Embedder, to_pgvector
+from app.services.reuse_detection import _NOT_A_HIERARCHY_GROUP
 
 log = logging.getLogger(__name__)
 
@@ -106,7 +107,25 @@ class HybridRetriever:
         self._graph = GraphStore(pool, scope=self._scope)
 
     async def _vector_search(self, query_vec: list[float], limit: int) -> list[tuple[UUID, str, int]]:
-        """Returns (id, table, rank). Only rank matters downstream, for RRF."""
+        """
+        Returns (id, table, rank). Only rank matters downstream, for RRF.
+
+        Synthetic hierarchy aggregators are excluded from BOTH legs. They are
+        not content -- build_hierarchy_for_table writes them purely as routing
+        waypoints -- but they are unusually attractive to retrieval on both
+        axes at once: their embedding is the MEAN of their children, so it sits
+        near a cluster centroid, and their name is the concatenation of their
+        children's names, so it is lexically dense enough to match almost any
+        query touching that cluster. Measured on the 731-instance SWE-bench
+        graph: 3 of 5 RRF entrypoints and 11 of 20 returned nodes were groups,
+        cutting the effective top-k from 5 to 2 and pulling unrelated repos
+        into context through one-hop expansion off a group's PARENT_OF edges.
+
+        This is the same class of bug as the one already fixed in
+        find_reusable_nodes (which recommended "Group: statistics, Group: docx…"
+        as reusable work); the predicate is shared with it deliberately so the
+        two cannot drift apart.
+        """
         vec = to_pgvector(query_vec)
         vis_sql, vis_params = visibility_predicate(self._scope, param_index=3)
         rows = await self._pool.fetch(
@@ -115,10 +134,12 @@ class HybridRetriever:
                 SELECT id, 'task_nodes' AS tbl, embedding <=> $1::vector AS dist
                 FROM task_nodes
                 WHERE embedding IS NOT NULL AND t_invalid IS NULL AND {vis_sql}
+                  AND {_NOT_A_HIERARCHY_GROUP.format(table='task_nodes')}
                 UNION ALL
                 SELECT id, 'knowledge_nodes' AS tbl, embedding <=> $1::vector AS dist
                 FROM knowledge_nodes
                 WHERE embedding IS NOT NULL AND t_invalid IS NULL AND {vis_sql}
+                  AND {_NOT_A_HIERARCHY_GROUP.format(table='knowledge_nodes')}
             ) combined
             ORDER BY dist ASC LIMIT $2
             """,
@@ -152,6 +173,7 @@ class HybridRetriever:
                                (SELECT q FROM parsed_query)) AS rank
                 FROM task_nodes
                 WHERE t_invalid IS NULL AND {vis_sql}
+                  AND {_NOT_A_HIERARCHY_GROUP.format(table='task_nodes')}
                   AND to_tsvector('english', name || ' ' || COALESCE(description,''))
                       @@ (SELECT q FROM parsed_query)
                 UNION ALL
@@ -159,6 +181,7 @@ class HybridRetriever:
                        ts_rank(to_tsvector('english', name), (SELECT q FROM parsed_query)) AS rank
                 FROM knowledge_nodes
                 WHERE t_invalid IS NULL AND {vis_sql}
+                  AND {_NOT_A_HIERARCHY_GROUP.format(table='knowledge_nodes')}
                   AND to_tsvector('english', name) @@ (SELECT q FROM parsed_query)
             ) combined
             ORDER BY rank DESC LIMIT $2

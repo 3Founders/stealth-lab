@@ -44,7 +44,8 @@ from typing import Optional
 from app.models.change import ChangeSet, CreateEdgeOp, CreateKnowledgeNodeOp, CreateTaskNodeOp
 from app.services.access import AccessScope, visibility_predicate
 from app.services.embeddings import Embedder, to_pgvector
-from app.services.hierarchy import batch_hierarchical_search
+from app.services.hierarchy import _props_col, batch_hierarchical_search
+from app.services.precondition_gate import extract_postconditions, postconditions_compatible
 from app.services.reuse_detection import FULL_MATCH_THRESHOLD
 
 
@@ -84,7 +85,8 @@ class SubtaskReuseReport:
 
 
 async def _flat_best_match(
-    pool, table: str, ref_vectors: dict[str, list[float]], scope: AccessScope
+    pool, table: str, ref_vectors: dict[str, list[float]], scope: AccessScope,
+    query_postconditions: Optional[dict[str, list[str]]] = None,
 ) -> dict[str, tuple[str, str, float]]:
     """
     Exhaustive scan fallback: score every given ref against every live LEAF
@@ -103,13 +105,22 @@ async def _flat_best_match(
 
     One batched query, same unnest/CROSS JOIN shape as
     batch_hierarchical_search, so N refs cost one round trip rather than N.
+
+    The Rule 1 postcondition gate is applied HERE TOO, and that is not
+    optional. The gate lives inside batch_hierarchical_search; a fallback
+    that skipped it would let any match the gate deliberately blocked come
+    straight back through the side door, which is strictly worse than
+    having no fallback -- the tree would appear to reject an incompatible
+    procedure while the flat path silently reinstated it. Caught by
+    test_precondition_gate_blocks_a_match_end_to_end.
     """
     if not ref_vectors:
         return {}
     refs = list(ref_vectors.keys())
     vis_sql, vis_params = visibility_predicate(scope, alias="n", param_index=3)
     rows = await pool.fetch(
-        f"SELECT q.ref, n.id, n.name, 1 - (n.embedding <=> q.vec::vector) AS similarity "
+        f"SELECT q.ref, n.id, n.name, {_props_col(table)} AS props, "
+        f"1 - (n.embedding <=> q.vec::vector) AS similarity "
         f"FROM unnest($1::text[], $2::text[]) AS q(ref, vec) "
         f"CROSS JOIN {table} n "
         f"WHERE n.t_invalid IS NULL AND n.embedding IS NOT NULL AND {vis_sql} "
@@ -121,10 +132,16 @@ async def _flat_best_match(
     )
     best: dict[str, tuple[str, str, float]] = {}
     for r in rows:
+        ref = r["ref"]
+        wanted = (query_postconditions or {}).get(ref)
+        if wanted is not None and not postconditions_compatible(
+            extract_postconditions(r["props"] if "props" in r.keys() else None), wanted
+        ):
+            continue
         sim = float(r["similarity"])
-        current = best.get(r["ref"])
+        current = best.get(ref)
         if current is None or sim > current[2]:
-            best[r["ref"]] = (str(r["id"]), r["name"], sim)
+            best[ref] = (str(r["id"]), r["name"], sim)
     return best
 
 
@@ -189,7 +206,9 @@ async def resolve_subtask_reuse(
             ref: queries[ref] for ref, r in results.items()
             if r.used_flat_fallback or r.leaf_id is None or r.similarity is None
         }
-        flat = await _flat_best_match(pool, table, unresolved, scope)
+        flat = await _flat_best_match(
+            pool, table, unresolved, scope, query_postconditions=query_postconditions
+        )
         report.flat_fallbacks += len(unresolved)
 
         for ref in queries:

@@ -67,6 +67,34 @@ class FakePool:
                 for nid in ids if nid in self.nodes[table]
             ]
 
+        # Order matters: subtask_reuse._flat_best_match's query contains BOTH
+        # "NOT EXISTS" and the unnest shape, so it must be matched before the
+        # _fetch_roots branch below would swallow it and return rows with no
+        # `similarity` key. (This branch was lost in the merge that brought in
+        # the precondition gate; its absence surfaced as KeyError('similarity')
+        # rather than as an unrecognised-query assertion.)
+        if "NOT EXISTS" in query and "unnest(" in query:  # _flat_best_match
+            refs, vec_texts = params[0], params[1]
+            # A leaf owns no children -- i.e. is never a PARENT_OF source.
+            parents = {e["source_id"] for e in self.edges if e["table"] == table}
+            leaves = [nid for nid in self.nodes[table] if nid not in parents]
+            rows = []
+            for ref, vec_text in zip(refs, vec_texts):
+                qvec = unit([float(x) for x in vec_text.strip("[]").split(",")])
+                for nid in leaves:
+                    n = self.nodes[table][nid]
+                    rows.append({
+                        # `props` because the real query selects it: the flat
+                        # fallback applies the same Rule 1 gate as the tree
+                        # path, and without this column the gate would see no
+                        # postconditions and pass trivially -- reinstating
+                        # exactly the match it is supposed to block.
+                        "ref": ref, "id": UUID(nid), "name": n["name"],
+                        "props": n["props"],
+                        "similarity": float(np.dot(qvec, n["embedding"])),
+                    })
+            return rows
+
         if "NOT EXISTS" in query:  # _fetch_roots
             owned = {e["target_id"] for e in self.edges if e["table"] == table}
             return [

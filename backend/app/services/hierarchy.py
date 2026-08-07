@@ -153,7 +153,27 @@ def _name_expr(table: str, alias: str = "") -> str:
 async def _fetch_roots(pool: asyncpg.Pool, table: str, scope: AccessScope) -> list[dict]:
     """Nodes with no incoming PARENT_OF edge -- i.e. not yet owned by
     any internal node. These are the current top of whatever tree
-    structure exists so far (possibly still a flat, unclustered set)."""
+    structure exists so far (possibly still a flat, unclustered set).
+
+    The ORDER BY is REQUIRED, not cosmetic. Without it Postgres returns
+    heap order, which varies with page layout, vacuum and concurrent
+    writes -- and complete_linkage_clusters is greedy and agglomerative,
+    so its output depends on the order it sees its input. Measured on the
+    731-instance SWE-bench graph: two builds over byte-identical data
+    produced 299 vs 368 internal nodes and 113 vs 54 roots. A doubled
+    top-level fan-out changes both descent cost and routing quality, so
+    any retrieval number measured against an unordered build is not
+    reproducible -- including the ones already recorded for Experiments
+    1A and 5.
+
+    It orders by NAME first and id only as a tie-break, because ordering
+    by id alone fixes the leaves and nothing above them: internal nodes are
+    inserted with gen_random_uuid(), so at level 1 and beyond "ordered by
+    id" is still a fresh random permutation on every build. Name is derived
+    from content (_default_summary concatenates the children's names), so
+    it is stable across rebuilds as long as the level below was stable --
+    which is what makes the determinism inductive rather than just true at
+    the bottom."""
     vis_sql, vis_params = visibility_predicate(scope, alias="n", param_index=1)
     rows = await pool.fetch(
         f"SELECT n.id, n.name, (n.embedding IS NOT NULL) AS has_embedding, "
@@ -161,7 +181,8 @@ async def _fetch_roots(pool: asyncpg.Pool, table: str, scope: AccessScope) -> li
         f"FROM {table} n "
         f"WHERE n.t_invalid IS NULL AND {vis_sql} "
         f"AND NOT EXISTS (SELECT 1 FROM edges e WHERE e.t_invalid IS NULL AND {_OWNS_FILTER} "
-        f"  AND e.target_id = n.id AND e.target_table = '{table}')",
+        f"  AND e.target_id = n.id AND e.target_table = '{table}') "
+        f"ORDER BY n.name, n.id",
         *vis_params,
     )
     return [dict(r) for r in rows]
