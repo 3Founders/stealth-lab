@@ -276,6 +276,9 @@ export default function AgentStorePage() {
         <Link href="/tasks" className="nav-tab active">
           Tasks
         </Link>
+        <Link href="/visualize" className="nav-tab">
+          Visualize
+        </Link>
       </div>
 
       <div className="nav-tabs" style={{ marginBottom: "1.5rem" }}>

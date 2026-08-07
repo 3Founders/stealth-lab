@@ -779,3 +779,155 @@ a {
   margin-right: 0.5rem;
   vertical-align: middle;
 }
+
+/* --- Visualize (the stored graph) --- */
+.graph-stats {
+  display: flex;
+  gap: 1.25rem;
+  flex-wrap: wrap;
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  color: var(--ink-text-dim);
+  margin-bottom: 1.25rem;
+}
+
+.graph-toolbar {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  align-items: center;
+  margin-bottom: 1.25rem;
+}
+
+.graph-toolbar-label {
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--ink-text-dim);
+  margin-left: 0.75rem;
+}
+
+.graph-chip {
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: 0.35rem 0.7rem;
+  background: transparent;
+  color: var(--ink-text-dim);
+  border: 1px solid var(--rule);
+  border-radius: 3px;
+  cursor: pointer;
+}
+
+.graph-chip:hover:not(:disabled) {
+  color: var(--ink-text);
+  border-color: var(--ink-text-dim);
+}
+
+.graph-chip.active {
+  background: var(--pass);
+  border-color: var(--pass);
+  color: var(--paper);
+}
+
+.graph-chip:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.graph-legend {
+  display: flex;
+  gap: 1.25rem;
+  flex-wrap: wrap;
+  align-items: center;
+  margin-top: 0.75rem;
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  color: var(--paper-text-dim);
+}
+
+/* Mirrors WorkflowGraph's THEME_CSS: solid outline for task nodes,
+   dashed for knowledge. If that changes, change this with it. */
+.graph-legend-swatch {
+  display: inline-block;
+  width: 1.1rem;
+  height: 0.7rem;
+  margin-right: 0.35rem;
+  vertical-align: middle;
+  border: 1px solid var(--rule-paper);
+  border-radius: 2px;
+}
+
+.graph-legend-swatch.knowledge {
+  border-style: dashed;
+}
+
+.graph-node-row {
+  display: flex;
+  width: 100%;
+  gap: 0.9rem;
+  align-items: baseline;
+  text-align: left;
+  padding: 0.7rem 0.5rem;
+  background: transparent;
+  border: none;
+  border-bottom: 1px solid var(--rule-paper);
+  color: var(--paper-text);
+  font-family: var(--font-sans);
+  cursor: pointer;
+}
+
+.graph-node-row:hover {
+  background: var(--paper-dim);
+}
+
+.graph-node-row.selected {
+  background: var(--paper-dim);
+  box-shadow: inset 3px 0 0 var(--pass);
+}
+
+.graph-node-kind {
+  flex: 0 0 5.5rem;
+  font-family: var(--font-mono);
+  font-size: 0.66rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--paper-text-dim);
+}
+
+.graph-node-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.graph-node-name {
+  display: block;
+  font-size: 0.92rem;
+  font-weight: 500;
+}
+
+.graph-node-superseded {
+  font-family: var(--font-mono);
+  font-size: 0.62rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--fail);
+  margin-left: 0.5rem;
+}
+
+.graph-node-desc {
+  display: block;
+  margin-top: 0.2rem;
+  font-size: 0.78rem;
+  line-height: 1.45;
+  color: var(--paper-text-dim);
+}
+
+.graph-node-meta {
+  flex: 0 0 auto;
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  color: var(--paper-text-dim);
+}
