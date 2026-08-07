@@ -40,6 +40,7 @@ from app.models.change import ChangeSet
 from app.services.dedup import dedupe_changeset_ops
 from app.services.hierarchy import hierarchical_search
 from app.services.reuse_detection import FULL_MATCH_THRESHOLD, ReusableNode, find_reusable_nodes
+from app.services.subtask_reuse import resolve_subtask_reuse
 from app.services.retrieval import HybridRetriever, RetrievalResult
 from app.services.untrusted import (
     UNTRUSTED_INPUT_PREAMBLE,
@@ -134,6 +135,12 @@ class Decomposition:
     # each other (Part A reuse consolidation) -- distinct from
     # reused_nodes, which is matches against the EXISTING graph.
     deduplicated: list[dict] = field(default_factory=list)
+    # Part C: individual proposed subtasks that matched something
+    # ALREADY in the graph (not just each other) -- see
+    # app/services/subtask_reuse.py. Distinct from both fields above:
+    # deduplicated is new-vs-new, this is new-vs-existing, per subtask
+    # rather than per whole problem.
+    subtask_reuse: list[dict] = field(default_factory=list)
 
     @property
     def safe_to_propose(self) -> bool:
@@ -175,7 +182,7 @@ class DecompositionService:
         self._retriever = retriever
         self.on_call = on_call  # cost-recording hook, see debate/engine.py
 
-    async def _existing_context(self, problem: str) -> tuple[str, list[str]]:
+    async def _existing_context(self, problem: str, query_vec: Optional[list[float]] = None) -> tuple[str, list[str]]:
         """
         Retrieve related existing workflows, so the model can reuse rather
         than duplicate. Failure here degrades quality, not safety, so it
@@ -184,13 +191,15 @@ class DecompositionService:
         if self._retriever is None:
             return "", []
         try:
-            result: RetrievalResult = await self._retriever.retrieve(problem, top_k=5)
+            result: RetrievalResult = await self._retriever.retrieve(problem, top_k=5, query_vec=query_vec)
             return result.as_context(), [n.name for n in result.nodes]
         except Exception as exc:  # noqa: BLE001
             log.warning("context retrieval failed, decomposing without it: %s", exc)
             return "", []
 
-    async def _try_hierarchical_match(self, problem: str) -> Optional[ReusableNode]:
+    async def _try_hierarchical_match(
+        self, problem: str, query_vec: Optional[list[float]] = None
+    ) -> Optional[ReusableNode]:
         """
         Part B: try the tree before the flat scan in find_reusable_nodes.
 
@@ -218,7 +227,7 @@ class DecompositionService:
                 result = await hierarchical_search(
                     self._retriever._pool, table, problem,
                     scope=self._retriever._scope, embedder=self._retriever._embedder,
-                    beam=3, adaptive=True,
+                    beam=3, adaptive=True, query_vec=query_vec,
                 )
             except Exception as exc:  # noqa: BLE001
                 log.warning("hierarchical_search failed for %s, will fall back to flat scan: %s", table, exc)
@@ -242,7 +251,19 @@ class DecompositionService:
                 input_flags=clean.flags,
             )
 
-        context, related = await self._existing_context(clean.text)
+        # Embed the problem text ONCE and thread it through every call
+        # site below that would otherwise independently embed the same
+        # string -- _existing_context, _try_hierarchical_match (which
+        # itself checks 2 tables), and the find_reusable_nodes fallback
+        # previously issued 4 separate embed calls for identical text.
+        query_vec = None
+        if self._retriever is not None:
+            try:
+                query_vec = await self._retriever._embedder.embed_one(clean.text, input_type="query")
+            except Exception as exc:  # noqa: BLE001
+                log.warning("up-front embedding failed, call sites below will embed individually: %s", exc)
+
+        context, related = await self._existing_context(clean.text, query_vec=query_vec)
 
         # Deterministic reuse check, runs before any model call. See
         # app/services/reuse_detection.py for the full reasoning: this
@@ -251,7 +272,7 @@ class DecompositionService:
         # consistent between two identical calls.
         reused = []
         if self._retriever is not None:
-            hierarchical_match = await self._try_hierarchical_match(clean.text)
+            hierarchical_match = await self._try_hierarchical_match(clean.text, query_vec=query_vec)
             if hierarchical_match is not None:
                 reused = [hierarchical_match]
             else:
@@ -259,6 +280,7 @@ class DecompositionService:
                     reused = await find_reusable_nodes(
                         self._retriever._pool, clean.text,
                         scope=self._retriever._scope, embedder=self._retriever._embedder,
+                        query_vec=query_vec,
                     )
                 except Exception as exc:  # noqa: BLE001
                     log.warning("reuse check failed, proceeding without it: %s", exc)
@@ -366,6 +388,24 @@ class DecompositionService:
         # database, so it cannot violate the generative capability
         # boundary no matter what produced these ops.
         result.change_set, result.deduplicated = dedupe_changeset_ops(result.change_set)
+
+        # Part C: check each SURVIVING proposed subtask individually
+        # against the existing graph, not just against its siblings.
+        # Batched (one embed call, one search per table) rather than a
+        # naive per-op loop -- see subtask_reuse.py's docstring for why
+        # that matters for cost. Runs before validate_generative() for
+        # the same reason dedupe does: it only ever shrinks the
+        # proposal, never attaches it to an existing node's real id, so
+        # it stays inside the generative capability boundary.
+        if self._retriever is not None:
+            try:
+                result.change_set, subtask_report = await resolve_subtask_reuse(
+                    result.change_set, self._retriever._pool,
+                    scope=self._retriever._scope, embedder=self._retriever._embedder,
+                )
+                result.subtask_reuse = subtask_report.matches
+            except Exception as exc:  # noqa: BLE001
+                log.warning("subtask reuse resolution failed, proceeding without it: %s", exc)
 
         # The capability boundary. This is the check that makes a hijacked
         # generator harmless rather than dangerous.

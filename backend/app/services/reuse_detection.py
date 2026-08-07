@@ -142,6 +142,7 @@ async def find_reusable_nodes(
     problem: str,
     scope: Optional[AccessScope] = None,
     embedder: Optional[Embedder] = None,
+    query_vec: Optional[list[float]] = None,
 ) -> list[ReusableNode]:
     """
     Returns candidates above PARTIAL_MATCH_THRESHOLD, highest similarity
@@ -151,12 +152,18 @@ async def find_reusable_nodes(
     Vector search is tried first; falls back to lexical only on a real
     failure (no key, provider outage) or when nothing has an embedding
     at all, logged either way, not silently substituted.
+
+    `query_vec`: pass an already-computed embedding to skip embedding
+    `problem` again -- see decomposition.py, which embeds the problem
+    text once and threads it through every call site here that would
+    otherwise redundantly embed the identical string.
     """
     scope = scope or AccessScope.anonymous()
 
     try:
         embedder = embedder or Embedder()
-        query_vec = await embedder.embed_one(problem, input_type="query")
+        if query_vec is None:
+            query_vec = await embedder.embed_one(problem, input_type="query")
         candidates = await _vector_candidates(pool, query_vec, scope)
         if candidates:
             return [c for c in candidates if c.similarity >= PARTIAL_MATCH_THRESHOLD]

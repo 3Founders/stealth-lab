@@ -148,6 +148,7 @@ class HybridRetriever:
         top_k: int = 6,
         expand_depth: int = 1,
         max_context_nodes: int = 25,
+        query_vec: Optional[list[float]] = None,
     ) -> RetrievalResult:
         """
         Hybrid entrypoints, then bounded graph expansion.
@@ -156,10 +157,16 @@ class HybridRetriever:
         directly-relevant neighbours, and at depth 2 a well-connected node
         drags in most of the graph, diluting the context rather than
         enriching it.
+
+        `query_vec`: pass an already-computed embedding to skip embedding
+        `query` again. decompose() embeds the problem text once and threads
+        it through every reuse-check call site that would otherwise embed
+        the identical string independently -- see decomposition.py.
         """
         vector_hits: list[tuple[UUID, str, int]] = []
         try:
-            query_vec = await self._embedder.embed_one(query, input_type="query")
+            if query_vec is None:
+                query_vec = await self._embedder.embed_one(query, input_type="query")
             vector_hits = await self._vector_search(query_vec, top_k * 2)
         except Exception as exc:  # noqa: BLE001
             # Degrade to lexical-only rather than failing the whole query.

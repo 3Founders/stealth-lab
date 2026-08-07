@@ -359,6 +359,7 @@ async def hierarchical_search(
     gap_threshold: float = 0.03,
     expanded_beam: int = 3,
     confidence_floor: float = 0.3,
+    query_vec: Optional[list[float]] = None,
 ) -> SearchResult:
     """
     Beam-descend the tree: mean-vector routing, confidence-adaptive
@@ -368,16 +369,21 @@ async def hierarchical_search(
     expected to fall back to reuse_detection.find_reusable_nodes /
     HybridRetriever in that case, this function does not do that
     itself (keeps this module's contract to "tree search only").
+
+    `query_vec`: pass an already-computed embedding to skip embedding
+    `query_text` again (see decomposition.py's threading of one
+    up-front embed call through every reuse-check site).
     """
     scope = scope or AccessScope.unrestricted()
     embedder = embedder or Embedder()
     comparisons = 0
 
-    query_vec = await embedder.embed_one(query_text, input_type="query")
+    if query_vec is None:
+        query_vec = await embedder.embed_one(query_text, input_type="query")
     from app.services.embeddings import to_pgvector
     vec_str = to_pgvector(query_vec)
 
-    frontier_ids = [r["id"] for r in await _fetch_roots(pool, table, scope)]
+    frontier_ids = [str(r["id"]) for r in await _fetch_roots(pool, table, scope)]
     if not frontier_ids:
         return SearchResult(None, None, None, used_flat_fallback=True, comparisons=0)
 
@@ -422,6 +428,132 @@ async def hierarchical_search(
 
     log.warning("hierarchical_search hit the depth cap without reaching a leaf -- possible cycle in PARENT_OF edges")
     return SearchResult(None, None, None, used_flat_fallback=True, comparisons=comparisons)
+
+
+async def batch_hierarchical_search(
+    pool: asyncpg.Pool,
+    table: str,
+    queries: dict[str, list[float]],
+    scope: Optional[AccessScope] = None,
+    beam: int = 1,
+    adaptive: bool = True,
+    gap_threshold: float = 0.03,
+    expanded_beam: int = 3,
+    confidence_floor: float = 0.3,
+) -> dict[str, SearchResult]:
+    """
+    Same algorithm as hierarchical_search (mean-vector routing,
+    confidence-adaptive beam, exact leaf-level comparison, flat-fallback
+    signal on low confidence) but for MANY queries at once, keyed by
+    caller-supplied ref (e.g. a proposed ChangeSet op's ref).
+
+    Built for Part C (per-subtask reuse resolution): naively calling
+    hierarchical_search once per proposed subtask means N round trips
+    per level, N times the cost. This batches by GROUPING queries that
+    currently share the same frontier and scoring each group's queries
+    against that frontier in ONE SQL round trip (a query x candidate
+    cross join), so the round-trip count is bounded by the number of
+    DISTINCT frontiers active at a level, not by the number of queries.
+
+    All queries share the same frontier at level 1 (the tree's roots),
+    so level 1 is always exactly one round trip regardless of N. Deeper
+    levels cost more only to the extent queries actually diverge onto
+    different branches -- and subtasks proposed from the SAME parent
+    decomposition are plausibly semantically related, so in practice
+    they're expected to cluster onto shared branches rather than
+    scatter into N singleton groups. Worth confirming against real
+    traffic rather than assumed, same caveat as everywhere else in this
+    module that depends on real usage patterns.
+    """
+    scope = scope or AccessScope.unrestricted()
+    from app.services.embeddings import to_pgvector
+    refs = list(queries.keys())
+    vec_texts = {ref: to_pgvector(vec) for ref, vec in queries.items()}
+    comparisons = {ref: 0 for ref in refs}
+    results: dict[str, SearchResult] = {}
+    last_best: dict[str, tuple[str, str, float]] = {}  # ref -> (id, name, similarity)
+
+    root_rows = await _fetch_roots(pool, table, scope)
+    if not root_rows:
+        return {ref: SearchResult(None, None, None, True, 0) for ref in refs}
+    root_ids = [str(r["id"]) for r in root_rows]
+
+    frontier: dict[str, list[str]] = {ref: root_ids for ref in refs}
+    active = set(refs)
+
+    for _ in range(20):  # same hard depth cap as hierarchical_search
+        if not active:
+            break
+
+        groups: dict[frozenset, list[str]] = {}
+        for ref in active:
+            groups.setdefault(frozenset(frontier[ref]), []).append(ref)
+
+        winners: dict[str, list[str]] = {}  # ref -> next frontier ids (empty if resolved this round)
+        for frontier_ids, group_refs in groups.items():
+            pairs = [(ref, vec_texts[ref]) for ref in group_refs]
+            rows = await pool.fetch(
+                f"SELECT q.ref, n.id, n.name, 1 - (n.embedding <=> q.vec_text::vector) AS similarity "
+                f"FROM unnest($1::text[], $2::text[]) AS q(ref, vec_text) "
+                f"CROSS JOIN {table} n "
+                f"WHERE n.id = ANY($3::uuid[]) AND n.t_invalid IS NULL",
+                [p[0] for p in pairs], [p[1] for p in pairs], [UUID(i) for i in frontier_ids],
+            )
+            by_ref: dict[str, list] = {}
+            for row in rows:
+                by_ref.setdefault(row["ref"], []).append(row)
+
+            for ref in group_refs:
+                comparisons[ref] += len(frontier_ids)
+                scored = by_ref.get(ref, [])
+                if not scored:
+                    results[ref] = SearchResult(None, None, None, True, comparisons[ref])
+                    active.discard(ref)
+                    continue
+                ranked = sorted(scored, key=lambda r: r["similarity"], reverse=True)
+                if ranked[0]["similarity"] < confidence_floor:
+                    results[ref] = SearchResult(None, None, None, True, comparisons[ref])
+                    active.discard(ref)
+                    continue
+                last_best[ref] = (str(ranked[0]["id"]), ranked[0]["name"], float(ranked[0]["similarity"]))
+                eff_beam = beam
+                if adaptive and len(ranked) > 1 and (ranked[0]["similarity"] - ranked[1]["similarity"]) < gap_threshold:
+                    eff_beam = max(beam, expanded_beam)
+                winners[ref] = [str(r["id"]) for r in ranked[:eff_beam]]
+
+        if not winners:
+            break
+
+        all_next_ids = {i for ids in winners.values() for i in ids}
+        children_rows = await pool.fetch(
+            f"SELECT e.source_id, n.id, n.name FROM edges e "
+            f"JOIN {table} n ON n.id = e.target_id AND n.t_invalid IS NULL "
+            f"WHERE e.t_invalid IS NULL AND {_OWNS_FILTER} AND e.source_table = '{table}' "
+            f"AND e.target_table = '{table}' AND e.source_id = ANY($1::uuid[])",
+            [UUID(i) for i in all_next_ids],
+        )
+        children_by_parent: dict[str, set[str]] = {}
+        for c in children_rows:
+            children_by_parent.setdefault(str(c["source_id"]), set()).add(str(c["id"]))
+
+        next_active = set()
+        for ref, ids in winners.items():
+            children = {cid for i in ids for cid in children_by_parent.get(i, set())}
+            if not children:
+                # Frontier nodes are leaves -- last_best[ref] IS the exact
+                # (coarse-to-fine) leaf-level comparison already computed.
+                bid, bname, bsim = last_best[ref]
+                results[ref] = SearchResult(bid, bname, bsim, False, comparisons[ref])
+            else:
+                frontier[ref] = list(children)
+                next_active.add(ref)
+        active = next_active
+
+    for ref in active:  # depth cap hit without resolving -- same cycle-guard as hierarchical_search
+        log.warning("batch_hierarchical_search hit the depth cap for ref=%s without reaching a leaf", ref)
+        results[ref] = SearchResult(None, None, None, True, comparisons[ref])
+
+    return results
 
 
 async def attach_new_leaf(
