@@ -112,6 +112,13 @@ def default_registry() -> SkillRegistry:
     reg = SkillRegistry()
     reg.register("echo", _echo_skill)
     reg.register("flaky_example", _flaky_skill)
+    # The first non-trivial skill: runs a real repo's real test suite in a
+    # network-isolated container (app/services/repo_execution.py). Imported
+    # lazily so this module keeps importing cleanly on a host without
+    # Docker -- registration must not depend on the daemon existing, only
+    # actually running it does.
+    from app.services.repo_execution import repo_execution_skill
+    reg.register("repo_execution", repo_execution_skill)
     return reg
 
 

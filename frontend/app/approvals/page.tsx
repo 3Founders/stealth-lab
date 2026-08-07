@@ -82,6 +82,9 @@ export default function ApprovalsDocket() {
         <Link href="/tasks" className="nav-tab">
           Tasks
         </Link>
+        <Link href="/visualize" className="nav-tab">
+          Visualize
+        </Link>
       </div>
 
       {scanMessage && (

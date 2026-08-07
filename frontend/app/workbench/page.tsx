@@ -181,6 +181,9 @@ export default function WorkbenchPage() {
         <Link href="/tasks" className="nav-tab">
           Tasks
         </Link>
+        <Link href="/visualize" className="nav-tab">
+          Visualize
+        </Link>
       </div>
 
       <textarea

@@ -118,6 +118,38 @@ export type SubgraphResponse = {
   edges: GraphEdge[];
 };
 
+/**
+ * The whole-graph view (GET /v1/graph) returns supersets of GraphNode and
+ * GraphEdge, so anything that renders a subgraph renders this too.
+ */
+export type GraphOverviewNode = GraphNode & {
+  /** Knowledge node's own type ('person', 'policy', ...), or 'task'. */
+  node_type: string;
+  description: string | null;
+  provenance: string;
+  /** False once the node's validity window has closed — superseded, not deleted. */
+  current: boolean;
+  t_created: string;
+};
+
+export type GraphOverviewEdge = GraphEdge & {
+  source_table: "knowledge_nodes" | "task_nodes";
+  target_table: "knowledge_nodes" | "task_nodes";
+  edge_type: string;
+  current: boolean;
+};
+
+export type GraphOverview = {
+  nodes: GraphOverviewNode[];
+  edges: GraphOverviewEdge[];
+  /** Counted before the limit was applied — compare against nodes.length. */
+  total_nodes: number;
+  total_edges: number;
+  truncated: boolean;
+  /** Edges whose endpoints aren't in `nodes` (not visible, or cut by the limit). */
+  omitted_edges: number;
+};
+
 export type ChatResponse = {
   answer: string;
   cited_node_ids: string[];
@@ -220,6 +252,14 @@ export const api = {
 
   getSubgraph: (nodeId: string, depth = 2) =>
     request<SubgraphResponse>(`/v1/graph/${nodeId}?depth=${depth}`),
+
+  getGraph: (opts?: { limit?: number; includeSuperseded?: boolean }) => {
+    const params = new URLSearchParams();
+    if (opts?.limit !== undefined) params.set("limit", String(opts.limit));
+    if (opts?.includeSuperseded) params.set("include_superseded", "true");
+    const qs = params.toString();
+    return request<GraphOverview>(`/v1/graph${qs ? `?${qs}` : ""}`);
+  },
 
   ask: (question: string, topK = 6) =>
     request<ChatResponse>("/v1/chat", {
