@@ -167,12 +167,21 @@ async def _fetch_roots(pool: asyncpg.Pool, table: str, scope: AccessScope) -> li
 
 
 async def _pairwise_similarity(
-    pool: asyncpg.Pool, table: str, ids: list[str], scope: AccessScope, rows_by_id: dict
+    pool: asyncpg.Pool, table: str, ids: list[str], scope: AccessScope, rows_by_id: dict,
+    threshold: Optional[float] = None,
 ) -> tuple[Callable[[str, str], float], float]:
     """Returns (similarity_fn, threshold_used). Vector via SQL self-join
     when every id has an embedding (mirrors dedup.py's approach --
     asyncpg has no vector codec, so this is computed server-side, never
-    parsed from raw bytes in Python); lexical fallback otherwise."""
+    parsed from raw bytes in Python); lexical fallback otherwise.
+
+    `threshold` overrides DEFAULT_GROUP_THRESHOLD and is interpreted on the
+    COSINE scale, rescaled below for the lexical branch so that one
+    caller-facing number means the same thing under either similarity
+    function. Previously this ignored the caller entirely and always
+    returned the default, which silently made
+    build_hierarchy_for_table's own `threshold` argument a no-op."""
+    base = DEFAULT_GROUP_THRESHOLD if threshold is None else threshold
     use_vector = all(rows_by_id[i]["has_embedding"] for i in ids)
     if use_vector:
         pair_rows = await pool.fetch(
@@ -190,14 +199,14 @@ async def _pairwise_similarity(
 
         def sim(a: str, b: str) -> float:
             return sim_lookup.get((a, b), 0.0)
-        return sim, DEFAULT_GROUP_THRESHOLD
+        return sim, base
 
     def sim(a: str, b: str) -> float:
         return _lexical_overlap(rows_by_id[a]["full_text"], rows_by_id[b]["full_text"])
     # Lexical overlap lives on a different numeric scale than cosine --
     # scale the grouping threshold down the same proportion
     # reuse_detection.py's lexical thresholds sit below its vector ones.
-    return sim, DEFAULT_GROUP_THRESHOLD * (LEXICAL_FULL_MATCH_THRESHOLD / FULL_MATCH_THRESHOLD)
+    return sim, base * (LEXICAL_FULL_MATCH_THRESHOLD / FULL_MATCH_THRESHOLD)
 
 
 async def _create_internal_node(
@@ -293,7 +302,9 @@ async def build_hierarchy_for_table(
 
         rows_by_id = {str(r["id"]): r for r in roots}
         ids = list(rows_by_id.keys())
-        sim, eff_threshold = await _pairwise_similarity(pool, table, ids, scope, rows_by_id)
+        sim, eff_threshold = await _pairwise_similarity(
+            pool, table, ids, scope, rows_by_id, threshold
+        )
         groups = plan_next_level(ids, sim, eff_threshold, min_children, max_children)
 
         internal_groups = [g for g in groups if g.is_internal]

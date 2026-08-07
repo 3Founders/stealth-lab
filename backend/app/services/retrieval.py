@@ -51,17 +51,42 @@ class RetrievalResult:
     nodes: list[RetrievedNode]
     entrypoint_ids: list[UUID]
 
-    def as_context(self) -> str:
-        """Render for an LLM prompt, with ids so answers can cite them."""
-        lines = []
-        for n in self.nodes:
+    def as_context(
+        self, max_chars_per_node: int = 1200, max_total_chars: int = 12_000
+    ) -> str:
+        """
+        Render for an LLM prompt, with ids so answers can cite them.
+
+        Budgeted, because this string was previously unbounded by document
+        size: it interpolated every retrieved node's FULL description, and
+        retrieve() will happily return up to max_context_nodes (25) of
+        them. With demo-sized nodes that is a short paragraph; with real
+        document-sized nodes it is not. Measured against an 8000-character
+        skill corpus, a single /v1/decompose call built a 28,595-token
+        request -- rejected outright by a provider with a 12K token/minute
+        ceiling, and expensive everywhere else.
+
+        Truncation is announced in the text rather than silent, so a model
+        that needs the omitted detail can say so instead of confidently
+        answering from a fragment it did not know was a fragment.
+        """
+        lines: list[str] = []
+        used = 0
+        for i, n in enumerate(self.nodes):
             kind = "task" if n.table == "task_nodes" else "knowledge"
             line = f"[{kind}:{n.id}] {n.name}"
             if n.description:
-                line += f" — {n.description}"
+                desc = n.description
+                if len(desc) > max_chars_per_node:
+                    desc = desc[:max_chars_per_node].rstrip() + " …[truncated]"
+                line += f" — {desc}"
             if n.hops > 0:
                 line += f" (related, {n.hops} hop{'s' if n.hops > 1 else ''} away)"
+            if used + len(line) > max_total_chars and lines:
+                lines.append(f"…[{len(self.nodes) - i} further nodes omitted for length]")
+                break
             lines.append(line)
+            used += len(line)
         return "\n".join(lines)
 
 

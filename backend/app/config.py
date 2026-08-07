@@ -72,6 +72,18 @@ class Settings(BaseSettings):
     general_compute_panel_models: str = ""
     general_compute_judge_model: str = ""
 
+    # --- SLM arm (Experiment 4): hosted small models ---
+    # The experiment plan specifies Groq/Cerebras for the small-model arm,
+    # not local Ollama. Hosted inference pins a published model snapshot,
+    # which a locally-pulled tag does not -- `llama3.1:8b` in Ollama is
+    # whatever that tag pointed at on the day it was pulled, so a result
+    # measured against it is not reproducible by anyone else.
+    groq_api_key: Optional[str] = None
+    groq_base_url: str = "https://api.groq.com/openai/v1"
+    groq_models: str = "llama-3.1-8b-instant,gemma2-9b-it"
+    cerebras_api_key: Optional[str] = None
+    cerebras_base_url: str = "https://api.cerebras.ai/v1"
+
     # --- Agent execution: file upload/output handling ---
     agent_upload_dir: str = "/tmp/agent_uploads"
     agent_output_dir: str = "/tmp/agent_outputs"

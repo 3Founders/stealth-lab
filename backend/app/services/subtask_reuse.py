@@ -42,8 +42,8 @@ from dataclasses import dataclass, field
 from typing import Optional
 
 from app.models.change import ChangeSet, CreateEdgeOp, CreateKnowledgeNodeOp, CreateTaskNodeOp
-from app.services.access import AccessScope
-from app.services.embeddings import Embedder
+from app.services.access import AccessScope, visibility_predicate
+from app.services.embeddings import Embedder, to_pgvector
 from app.services.hierarchy import batch_hierarchical_search
 from app.services.reuse_detection import FULL_MATCH_THRESHOLD
 
@@ -69,6 +69,63 @@ class SubtaskReuseReport:
     matches: list[dict] = field(default_factory=list)
     embed_calls: int = 0
     ops_checked: int = 0
+    # Every op's best candidate and score, REGARDLESS of threshold, and
+    # regardless of whether the tree resolved it. `matches` alone cannot
+    # distinguish "nothing in the graph resembles this subtask" from "the
+    # threshold is set for a different comparison than the one being made"
+    # -- both render as an empty list. Retrieval in this codebase already
+    # degrades silently in several places; a mechanism whose only output is
+    # a filtered list inherits that problem. This is the diagnostic.
+    candidates: list[dict] = field(default_factory=list)
+    # How many ops the tree could not resolve and the flat scan had to
+    # score instead. A high number means the hierarchy is not built, is
+    # stale, or routes badly for this content.
+    flat_fallbacks: int = 0
+
+
+async def _flat_best_match(
+    pool, table: str, ref_vectors: dict[str, list[float]], scope: AccessScope
+) -> dict[str, tuple[str, str, float]]:
+    """
+    Exhaustive scan fallback: score every given ref against every live LEAF
+    of `table`, returning the best per ref.
+
+    Exists because batch_hierarchical_search reports used_flat_fallback and
+    then returns nothing -- it is documented as "tree search only", leaving
+    the fallback to the caller (hierarchy.py:367). Before this, that caller
+    contract was unmet here: an unresolved ref was simply skipped, so a
+    corpus with no tree built yet produced zero matches and looked like a
+    corpus with no reusable content. Those are opposite conclusions.
+
+    Leaves only -- a node owning children is a synthetic hierarchy group
+    (hierarchy.py:216 writes those), and matching a proposed subtask onto a
+    generated cluster label rather than real content would be wrong.
+
+    One batched query, same unnest/CROSS JOIN shape as
+    batch_hierarchical_search, so N refs cost one round trip rather than N.
+    """
+    if not ref_vectors:
+        return {}
+    refs = list(ref_vectors.keys())
+    vis_sql, vis_params = visibility_predicate(scope, alias="n", param_index=3)
+    rows = await pool.fetch(
+        f"SELECT q.ref, n.id, n.name, 1 - (n.embedding <=> q.vec::vector) AS similarity "
+        f"FROM unnest($1::text[], $2::text[]) AS q(ref, vec) "
+        f"CROSS JOIN {table} n "
+        f"WHERE n.t_invalid IS NULL AND n.embedding IS NOT NULL AND {vis_sql} "
+        f"AND NOT EXISTS ("
+        f"  SELECT 1 FROM edges e WHERE e.t_invalid IS NULL "
+        f"  AND e.edge_type = 'OWNS' AND e.custom_edge_type = 'PARENT_OF' "
+        f"  AND e.source_id = n.id AND e.source_table = '{table}')",
+        refs, [to_pgvector(ref_vectors[r]) for r in refs], *vis_params,
+    )
+    best: dict[str, tuple[str, str, float]] = {}
+    for r in rows:
+        sim = float(r["similarity"])
+        current = best.get(r["ref"])
+        if current is None or sim > current[2]:
+            best[r["ref"]] = (str(r["id"]), r["name"], sim)
+    return best
 
 
 async def resolve_subtask_reuse(
@@ -114,15 +171,43 @@ async def resolve_subtask_reuse(
         results = await batch_hierarchical_search(
             pool, table, queries, scope=scope, beam=3, adaptive=True,
         )
-        for ref, result in results.items():
-            if result.used_flat_fallback or result.leaf_id is None or result.similarity is None:
-                continue
-            if result.similarity >= threshold:
+
+        # Anything the tree declined to resolve still gets a score, from an
+        # exhaustive leaf scan. Skipping these was the difference between
+        # "no reusable component exists" and "the tree wasn't built" -- see
+        # _flat_best_match.
+        unresolved = {
+            ref: queries[ref] for ref, r in results.items()
+            if r.used_flat_fallback or r.leaf_id is None or r.similarity is None
+        }
+        flat = await _flat_best_match(pool, table, unresolved, scope)
+        report.flat_fallbacks += len(unresolved)
+
+        for ref in queries:
+            result = results.get(ref)
+            if ref in unresolved:
+                hit = flat.get(ref)
+                if hit is None:
+                    continue  # table genuinely has no scoreable leaf
+                matched_id, matched_name, similarity = hit
+                method = "flat"
+            else:
+                matched_id, matched_name = result.leaf_id, result.leaf_name
+                similarity = result.similarity
+                method = "tree"
+
+            report.candidates.append({
+                "ref": ref, "name": op_by_ref[ref].name, "table": table,
+                "matched_id": matched_id, "matched_name": matched_name,
+                "similarity": similarity, "method": method,
+                "above_threshold": similarity >= threshold,
+            })
+            if similarity >= threshold:
                 dropped_refs.add(ref)
                 report.matches.append({
                     "ref": ref, "name": op_by_ref[ref].name, "table": table,
-                    "matched_id": result.leaf_id, "matched_name": result.leaf_name,
-                    "similarity": result.similarity,
+                    "matched_id": matched_id, "matched_name": matched_name,
+                    "similarity": similarity, "method": method,
                 })
 
     if not dropped_refs:

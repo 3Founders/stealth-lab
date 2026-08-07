@@ -56,6 +56,25 @@ class FakePool:
         self.fetch_calls += 1
         table = "task_nodes" if "task_nodes" in query else "knowledge_nodes"
 
+        # Order matters: the flat-scan fallback query contains BOTH
+        # "NOT EXISTS" and the unnest shape, so it must be matched before
+        # either of the two branches below would swallow it.
+        if "NOT EXISTS" in query and "unnest(" in query:  # _flat_best_match
+            refs, vec_texts = params[0], params[1]
+            # A leaf owns no children -- i.e. is never a PARENT_OF source.
+            parents = {e["source_id"] for e in self.edges if e["table"] == table}
+            leaves = [nid for nid in self.nodes[table] if nid not in parents]
+            rows = []
+            for ref, vec_text in zip(refs, vec_texts):
+                qvec = unit([float(x) for x in vec_text.strip("[]").split(",")])
+                for nid in leaves:
+                    n = self.nodes[table][nid]
+                    rows.append({
+                        "ref": ref, "id": UUID(nid), "name": n["name"],
+                        "similarity": float(np.dot(qvec, n["embedding"])),
+                    })
+            return rows
+
         if "NOT EXISTS" in query:  # _fetch_roots
             owned = {e["target_id"] for e in self.edges if e["table"] == table}
             return [
