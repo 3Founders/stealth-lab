@@ -141,14 +141,6 @@ class Decomposition:
     # deduplicated is new-vs-new, this is new-vs-existing, per subtask
     # rather than per whole problem.
     subtask_reuse: list[dict] = field(default_factory=list)
-    # Every proposed subtask's best candidate and score, INCLUDING those
-    # below the match threshold. subtask_reuse alone cannot distinguish
-    # "the graph holds nothing like this subtask" from "the threshold is
-    # calibrated for a different comparison" -- both render as an empty
-    # list, and the two call for opposite responses. Populated from
-    # SubtaskReuseReport.candidates, which was previously computed and
-    # discarded here.
-    subtask_candidates: list[dict] = field(default_factory=list)
 
     @property
     def safe_to_propose(self) -> bool:
@@ -431,7 +423,6 @@ class DecompositionService:
                     scope=self._retriever._scope, embedder=self._retriever._embedder,
                 )
                 result.subtask_reuse = subtask_report.matches
-                result.subtask_candidates = subtask_report.candidates
             except Exception as exc:  # noqa: BLE001
                 log.warning("subtask reuse resolution failed, proceeding without it: %s", exc)
 

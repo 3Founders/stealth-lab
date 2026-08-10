@@ -51,24 +51,6 @@ PARTIAL_MATCH_THRESHOLD = 0.70
 LEXICAL_FULL_MATCH_THRESHOLD = 0.55
 LEXICAL_PARTIAL_MATCH_THRESHOLD = 0.25
 
-# Hierarchy internal nodes (hierarchy.py::_create_internal_node) are
-# synthetic cluster labels like "Group: statistics, sql (+2 more)". They
-# live in the same table as real content and carry an averaged embedding,
-# so an unfiltered candidate scan happily returns one as "existing work you
-# could reuse" -- which is not reusable content, it is a generated grouping
-# artifact. Observed for real: once a hierarchy was built over the AFTER
-# skill library, /v1/decompose began reporting
-# "Group: statistics, Group: docx, factchecking, pdf (+2 more)" as a
-# reusable node and injecting it into the generator prompt.
-#
-# OWNS/PARENT_OF is written by hierarchy.py and nothing else, so being the
-# SOURCE of one identifies a group node exactly.
-_NOT_A_HIERARCHY_GROUP = (
-    "NOT EXISTS (SELECT 1 FROM edges e WHERE e.t_invalid IS NULL "
-    "AND e.edge_type = 'OWNS' AND e.custom_edge_type = 'PARENT_OF' "
-    "AND e.source_id = {table}.id AND e.source_table = '{table}')"
-)
-
 _WORD_RE = re.compile(r"[a-z0-9]+")
 
 
@@ -115,21 +97,20 @@ async def _vector_candidates(
         ("task_nodes", "name || ' ' || COALESCE(description, '')", "success_criteria"),
         ("knowledge_nodes", "name", "properties"),
     ):
+        # Excludes internal_proxy task_nodes (Experiment 3's "Reconcile:
+        # X vs Y" scaffold nodes) -- a synthetic reconciliation-debate
+        # scaffold should never be suggested as a match for a real,
+        # unrelated /v1/decompose call.
+        proxy_filter = (
+            "AND (success_criteria->>'internal_proxy') IS DISTINCT FROM 'true' "
+            if table == "task_nodes" else ""
+        )
         rows = await pool.fetch(
             f"SELECT id, name, {name_expr} AS full_text, {props_col} AS props, "
             f"1 - (embedding <=> $1::vector) AS similarity "
             f"FROM {table} "
-            f"WHERE t_invalid IS NULL AND {vis_sql} AND embedding IS NOT NULL "
-            f"AND {_NOT_A_HIERARCHY_GROUP.format(table=table)} "
-            # Order by the raw distance operator, ascending -- NOT by the
-            # derived `similarity DESC`. pgvector's HNSW index answers
-            # `embedding <=> q ASC`; sorting by `1 - (embedding <=> q) DESC`
-            # is a computed expression the planner cannot match to the
-            # index, so it falls back to a sequential scan. Measured on a
-            # 1,555-node table: 14.78 ms sequential vs 1.52 ms indexed,
-            # for identical results. The two forms are indistinguishable
-            # in the output and differ only in the plan.
-            f"ORDER BY embedding <=> $1::vector ASC LIMIT $2",
+            f"WHERE t_invalid IS NULL AND {vis_sql} AND embedding IS NOT NULL {proxy_filter}"
+            f"ORDER BY similarity DESC LIMIT $2",
             vec, limit, *vis_params,
         )
         for r in rows:
@@ -150,10 +131,13 @@ async def _lexical_candidates(
         ("task_nodes", "name || ' ' || COALESCE(description, '')", "success_criteria"),
         ("knowledge_nodes", "name", "properties"),
     ):
+        proxy_filter = (
+            "AND (success_criteria->>'internal_proxy') IS DISTINCT FROM 'true' "
+            if table == "task_nodes" else ""
+        )
         rows = await pool.fetch(
             f"SELECT id, name, {name_expr} AS full_text, {props_col} AS props FROM {table} "
-            f"WHERE t_invalid IS NULL AND {vis_sql} "
-            f"AND {_NOT_A_HIERARCHY_GROUP.format(table=table)} LIMIT 200",
+            f"WHERE t_invalid IS NULL AND {vis_sql} {proxy_filter}LIMIT 200",
             *vis_params,
         )
         for r in rows:

@@ -189,3 +189,79 @@ def test_local_agent_needs_no_api_key():
             result = asyncio.run(agent.respond("sys", "user"))
 
     assert result == "ok"
+
+
+class _FlakyAgent:
+    """
+    Fails with a rate-limit-shaped error a fixed number of times, then
+    succeeds -- for testing _call_with_retry / gather_responses' backoff
+    behavior without any real network call or real sleep duration.
+    """
+    agent_id = "flaky"
+    model_id = "flaky-model"
+    family = "flaky"
+
+    def __init__(self, fail_times: int, error_text: str = "Error code: 429 - rate limited"):
+        self.fail_times = fail_times
+        self.error_text = error_text
+        self.calls = 0
+
+    async def respond(self, system: str, user: str) -> str:
+        self.calls += 1
+        if self.calls <= self.fail_times:
+            raise RuntimeError(self.error_text)
+        return '{"action": "pass"}'
+
+
+class _AlwaysFailsNonRateLimitAgent:
+    """A genuine (non-rate-limit) failure -- must NOT be retried."""
+    agent_id = "broken"
+    model_id = "broken-model"
+    family = "broken"
+
+    def __init__(self):
+        self.calls = 0
+
+    async def respond(self, system: str, user: str) -> str:
+        self.calls += 1
+        raise ValueError("malformed request: missing required field 'summary'")
+
+
+def test_gather_responses_retries_rate_limit_errors_and_recovers():
+    from app.debate.panel import gather_responses
+
+    async def run():
+        with patch("app.debate.panel.asyncio.sleep", new=AsyncMock()):  # no real delay in tests
+            agent = _FlakyAgent(fail_times=2)
+            results = await gather_responses([agent], system="sys", user="usr")
+            assert results["flaky"] == '{"action": "pass"}'
+            assert agent.calls == 3, "should have retried exactly twice before succeeding"
+
+    asyncio.run(run())
+
+
+def test_gather_responses_does_not_retry_non_rate_limit_errors():
+    from app.debate.panel import gather_responses
+
+    async def run():
+        with patch("app.debate.panel.asyncio.sleep", new=AsyncMock()) as mock_sleep:
+            agent = _AlwaysFailsNonRateLimitAgent()
+            results = await gather_responses([agent], system="sys", user="usr")
+            assert isinstance(results["broken"], ValueError)
+            assert agent.calls == 1, "a genuine (non-rate-limit) error must fail immediately, not retry"
+            mock_sleep.assert_not_called()
+
+    asyncio.run(run())
+
+
+def test_gather_responses_gives_up_after_max_retries_on_persistent_rate_limit():
+    from app.debate.panel import gather_responses
+
+    async def run():
+        with patch("app.debate.panel.asyncio.sleep", new=AsyncMock()):
+            agent = _FlakyAgent(fail_times=99)  # never recovers within max_retries
+            results = await gather_responses([agent], system="sys", user="usr")
+            assert isinstance(results["flaky"], RuntimeError)
+            assert agent.calls == 4, "max_retries=3 means 1 initial call + 3 retries = 4 total"
+
+    asyncio.run(run())

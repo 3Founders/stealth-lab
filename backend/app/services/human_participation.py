@@ -161,11 +161,13 @@ async def add_human_turn(
             for c in candidates:
                 await conn.execute(
                     "INSERT INTO candidates (id, debate_id, summary, rationale, "
-                    "change_set, supporters) VALUES ($1,$2,$3,$4,$5,$6) "
+                    "change_set, supporters, no_action_justified) VALUES ($1,$2,$3,$4,$5,$6,$7) "
                     "ON CONFLICT (id) DO UPDATE SET rationale = EXCLUDED.rationale, "
-                    "supporters = EXCLUDED.supporters, updated_at = now()",
+                    "supporters = EXCLUDED.supporters, "
+                    "no_action_justified = EXCLUDED.no_action_justified, updated_at = now()",
                     c.id, c.debate_id, c.summary, c.rationale,
                     c.change_set.model_dump(mode="json"), c.supporters,
+                    c.no_action_justified,
                 )
             for t in new_turns:
                 await conn.execute(

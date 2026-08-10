@@ -78,6 +78,19 @@ class Candidate(BaseModel):
     rationale: str
     change_set: ChangeSet = Field(default_factory=ChangeSet)
     supporters: list[str] = Field(default_factory=list)
+    # True only when an agent EXPLICITLY asserts "no update is the correct
+    # resolution" (the FALSE-POSITIVE, NO-ACTION outcome the prompt
+    # sanctions) -- not set implicitly just because ops happens to be
+    # empty. Confirmed real, not hypothetical: 3 real PEP debates where
+    # every panelist unanimously and correctly concluded no update was
+    # needed still failed Layer 1, because ChangeSet.validate_ops() flags
+    # ANY empty ops list as "proposes no actual change" and Layer 1
+    # requires zero structural problems to pass -- a genuinely correct
+    # diagnosis was structurally indistinguishable from a malformed,
+    # failed-to-produce-anything turn. This flag lets Layer 1 tell the
+    # two apart without weakening the original protection (a candidate
+    # with empty ops and this flag NOT set still fails exactly as before).
+    no_action_justified: bool = False
     created_at: datetime = Field(default_factory=_now)
     updated_at: datetime = Field(default_factory=_now)
 

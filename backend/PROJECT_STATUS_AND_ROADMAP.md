@@ -46,13 +46,59 @@ produces one combined comparison table, not separate files.
 - Frontend: Agent Store browse/search page, promotion + agent-approval
   flow inside Workbench.
 
-**Testing discipline:** 194 offline tests, multiple live integration
+**Testing discipline:** 244 offline tests (was 194 as of this doc's last
+edit; 50 added during the Experiment 1/3 validation session below, real
+bugs caught along the way — see that section), multiple live integration
 checks against real Postgres, real bugs found and fixed throughout
 (trace-ID collisions across 3 separate scripts, a rate-limiter race, an
 AND/OR lexical search bug, a resource-limit wiring bug in the sandbox,
 and others), each verified against real behavior, not asserted.
 
+## Experiment validation (Exp 1 + Exp 3) — stopped here as a checkpoint
+
+Full detail and confidence grading in `TECHNICAL_DEEP_DIVE.md` Section
+11. Headline results:
+
+**Experiment 1 (retrieval):** 76.7% precision@1 vs. 31.8% lexical
+baseline, n=129 real AFTER tasks, non-overlapping 95% CIs. High
+confidence, unaffected by later PEP ingestion (different table
+entirely — confirmed from code, not assumed). The `de` role
+underperforms (63%), diagnosed but not fixed — needs live AFTER data
+this environment can't reach.
+
+**Experiment 3 (debate + update):** 27/32 real, machine-labeled PEP
+`Superseded-By` pairs correctly resolved, 0 wrong-direction, 0
+false-positive misdiagnoses — vs. banking_knowledge's n=2 ceiling.
+Found and fixed three real structural bugs along the way (rate-limit
+turns silently lost with no retry, a candidate-id hallucination
+recovery gap, and a date-fabrication class caught twice on two
+different corpora) plus one genuinely important one: Layer 1 made a
+correct "no action needed" resolution structurally impossible to pass,
+confirmed via real transcripts on 3 PEP pairs. Fixed via a prompt
+default toward durable annotation (matches what most successful
+debates already did unprompted) plus a `no_action_justified` backstop.
+
+**Deployment-blocking:** `migration_add_no_action_justified.sql` must
+run before this backend deploys -- two `INSERT INTO candidates`
+call sites now write a column that won't exist otherwise, and every
+debate (not just PEP ones) will hard-error until it's applied.
+
+**Not yet done:** Experiment 2 (adversarial gate, built and
+unit-tested, never run on real data) and Experiment 4 (SLM token
+reduction, nothing built) remain fully open.
+
 ## What's planned ahead
+
+### 0. Experiment 2: real-data result, checkpoint reached
+
+Real test run against 628 genuine cross-role AFTER task pairs (not
+synthetic): 1 pair (~0.16%) crosses the production match threshold, and
+the gate correctly blocks it. Zero false negatives on the complement
+check. n=1 is real confirmation the mechanism works on the one genuine
+instance available, not a statistical rate -- same honest limit as
+Experiment 3's original banking n=2. Also found and fixed along the way:
+the gate's own docstring wrongly claimed it wasn't wired into the real
+matching pipeline -- it was, confirmed by checking the actual code.
 
 ### 1. Workbench: fix task/decomposition reuse
 

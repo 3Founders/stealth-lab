@@ -92,9 +92,11 @@ async def main():
     tasks = [t for t in tasks if t["id"] in instructions]
     print(f"  {len(tasks)} tasks with a readable instruction")
 
-    print("\n[2/4] batch-embedding all task instructions (one call)...")
+    print("\n[2/4] batch-embedding all task instructions (rate-limit-aware, may take a while)...")
     embedder = Embedder()
-    vectors = await embedder.embed([instructions[t["id"]] for t in tasks], input_type="query")
+    vectors = await embedder.embed_batched(
+        [instructions[t["id"]] for t in tasks], input_type="query",
+    )
     print(f"  embedded {len(vectors)} tasks")
 
     print("\n[3/4] scoring all tasks against the skill library (one SQL round trip)...")

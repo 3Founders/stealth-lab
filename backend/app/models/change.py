@@ -104,11 +104,28 @@ class UpdateTaskNodeOp(BaseModel):
     reason: str
 
 
+class UpdateKnowledgeNodeOp(BaseModel):
+    """
+    Supersede a KnowledgeNode: same invalidate-and-append pattern as
+    UpdateTaskNodeOp, applied to the table that previously had no update
+    path at all -- knowledge_nodes were read-only reference material a
+    debate could cite but never itself revise. Added specifically so a
+    debate can resolve a genuine knowledge conflict (e.g. a superseded
+    policy), not just a task-execution bottleneck.
+    """
+
+    op_type: Literal["update_knowledge_node"] = "update_knowledge_node"
+    knowledge_node_id: UUID
+    changes: dict[str, Any]
+    reason: str
+
+
 ChangeOp = Annotated[
     Union[
         InvalidateEdgeOp,
         CreateEdgeOp,
         UpdateTaskNodeOp,
+        UpdateKnowledgeNodeOp,
         CreateTaskNodeOp,
         CreateKnowledgeNodeOp,
     ],
@@ -143,6 +160,12 @@ MUTABLE_TASK_FIELDS: frozenset[str] = frozenset({
     "pert_optimistic_ms", "pert_likely_ms", "pert_pessimistic_ms",
 })
 
+# Same idea, for knowledge_nodes. Excludes node_type deliberately: a
+# supersession changes what a policy SAYS, not what KIND of thing it is --
+# reclassifying node_type is a different, more structural operation this
+# op is not meant to cover.
+MUTABLE_KNOWLEDGE_FIELDS: frozenset[str] = frozenset({"name", "properties"})
+
 
 class ChangeSet(BaseModel):
     ops: list[ChangeOp] = Field(default_factory=list)
@@ -164,6 +187,14 @@ class ChangeSet(BaseModel):
                 if not op.changes:
                     problems.append(f"op[{i}]: update_task_node with no changes")
                 illegal = set(op.changes) - MUTABLE_TASK_FIELDS
+                if illegal:
+                    problems.append(
+                        f"op[{i}]: cannot modify protected field(s): {sorted(illegal)}"
+                    )
+            elif isinstance(op, UpdateKnowledgeNodeOp):
+                if not op.changes:
+                    problems.append(f"op[{i}]: update_knowledge_node with no changes")
+                illegal = set(op.changes) - MUTABLE_KNOWLEDGE_FIELDS
                 if illegal:
                     problems.append(
                         f"op[{i}]: cannot modify protected field(s): {sorted(illegal)}"
@@ -226,3 +257,7 @@ class ChangeSet(BaseModel):
     @property
     def touched_task_nodes(self) -> set[UUID]:
         return {op.task_node_id for op in self.ops if isinstance(op, UpdateTaskNodeOp)}
+
+    @property
+    def touched_knowledge_nodes(self) -> set[UUID]:
+        return {op.knowledge_node_id for op in self.ops if isinstance(op, UpdateKnowledgeNodeOp)}

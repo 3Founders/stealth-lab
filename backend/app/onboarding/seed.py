@@ -128,7 +128,14 @@ class Onboarder:
 
         embedder = Embedder()
         try:
-            vectors = await embedder.embed([text for _, _, text in targets], input_type="document")
+            # embed_batched, not embed: a small ingestion (a handful of
+            # nodes) becomes a single batch with zero added delay -- but
+            # a large one (hundreds of real documents, as in a real
+            # corpus ingestion) would otherwise trip Voyage's free-tier
+            # TPM limit in one shot, exactly like the AFTER task-
+            # embedding run did before this got fixed. Safe either way,
+            # not just for the large case.
+            vectors = await embedder.embed_batched([text for _, _, text in targets], input_type="document")
         except Exception as exc:  # noqa: BLE001
             log.error("embedding failed during onboarding: %s", exc)
             result.embedding_error = str(exc)

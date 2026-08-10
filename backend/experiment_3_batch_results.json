@@ -1,0 +1,112 @@
+[
+  {
+    "pair": {
+      "id_a": "81c47054-de0e-4711-b1ed-a1e5c798e16e",
+      "name_a": "Managing your spending limit in a Green Account (checking)",
+      "category_a": "checking_accounts",
+      "id_b": "84ebb003-f996-4604-b3e5-95dfc9aba8a1",
+      "name_b": "Green Account (checking): What happens if a payment exceeds your balance?",
+      "category_b": "checking_accounts",
+      "similarity": 0.899994394182658
+    },
+    "outcome": "passed",
+    "groundedness": 1.0,
+    "candidate_id": "84c41893-4f1b-40b1-9604-cd59e3f1ea11"
+  },
+  {
+    "pair": {
+      "id_a": "50ae9c81-917d-4d92-af52-24f926a08a7c",
+      "name_a": "Silver Saver Account: Transferring funds to external banks",
+      "category_a": "business_savings_accounts",
+      "id_b": "b64ed04b-9370-46c6-98a2-4d12dde2b796",
+      "name_b": "Automatic Sweep: Defining Excess Fund Thresholds",
+      "category_b": "business_savings_accounts",
+      "similarity": 0.8217422259892374
+    },
+    "outcome": "passed",
+    "groundedness": 1.0,
+    "candidate_id": "518729bb-8017-4666-995b-a3020afd408a"
+  },
+  {
+    "pair": {
+      "id_a": "cd11467a-07ca-425e-bde0-d56d03f5b64e",
+      "name_a": "Silver Zoom Card: Designed for Transportation and Logistics Businesses",
+      "category_a": "business_credit_cards",
+      "id_b": "d722c7b7-68d1-4ae2-a171-1e94688fa25a",
+      "name_b": "Virtual Card Management: Setting Spending Limits Per Card",
+      "category_b": "business_credit_cards",
+      "similarity": 0.7817625636387638
+    },
+    "outcome": "passed",
+    "groundedness": 1.0,
+    "candidate_id": "07df5d5d-b6e9-4fea-a64b-db30211018c3"
+  },
+  {
+    "pair": {
+      "id_a": "b53177f6-8d14-45e5-be30-0b67e79c13aa",
+      "name_a": "Silver Plus Account: How is interest calculated and when is it paid?",
+      "category_a": "savings_accounts",
+      "id_b": "fca86ca7-8a92-46ca-b919-de42d5f5d920",
+      "name_b": "Private banking services for Diamond Elite members",
+      "category_b": "savings_accounts",
+      "similarity": 0.7462976574897766
+    },
+    "outcome": "no_candidates"
+  },
+  {
+    "pair": {
+      "id_a": "aa7914fd-ad4a-4607-b2d6-650ec0aba910",
+      "name_a": "Gold Account: Transferring funds between accounts instantly",
+      "category_a": "savings_accounts",
+      "id_b": "de0cc8c7-74ec-4a15-ab49-918a7734b894",
+      "name_b": "Gold Plus Saver Account: Transferring funds to external banks",
+      "category_b": "business_savings_accounts",
+      "similarity": 0.8997885852989137
+    },
+    "outcome": "passed",
+    "groundedness": 1.0,
+    "candidate_id": "31119645-19a7-4fd7-b28c-51eb546e536d"
+  },
+  {
+    "pair": {
+      "id_a": "33951ddb-d5eb-469f-8d5d-e8a62ed65295",
+      "name_a": "Business Gold Rewards Card: What Qualifies as Operations Spend?",
+      "category_a": "business_credit_cards",
+      "id_b": "b80f3a14-7caf-4b3b-929b-5635141734e3",
+      "name_b": "International ATM withdrawals for Blue Account",
+      "category_b": "checking_accounts",
+      "similarity": 0.7719060182571411
+    },
+    "outcome": "passed",
+    "groundedness": 1.0,
+    "candidate_id": "0ad75646-b11b-4b4e-80ee-ffb2b7ed5aff"
+  },
+  {
+    "pair": {
+      "id_a": "b64ed04b-9370-46c6-98a2-4d12dde2b796",
+      "name_a": "Automatic Sweep: Defining Excess Fund Thresholds",
+      "category_a": "business_savings_accounts",
+      "id_b": "f6b2248b-ca20-4a19-8cfe-17d6284ab1e0",
+      "name_b": "How do I remove spending limits on my teen's account?",
+      "category_b": "checking_accounts",
+      "similarity": 0.7442991289914187
+    },
+    "outcome": "passed",
+    "groundedness": 1.0,
+    "candidate_id": "2d1f00ae-4652-4eed-8daf-9466eddffb96"
+  },
+  {
+    "pair": {
+      "id_a": "23c5c464-2aae-4088-9e49-83622d9f4cfa",
+      "name_a": "Platinum Reserve Account: Same-day transfers and wire capabilities",
+      "category_a": "business_savings_accounts",
+      "id_b": "8ae5ff29-c67c-4c1f-8409-985eafa4ecdf",
+      "name_b": "Business Bronze Rewards Card: No Annual Fee - What Does This Mean?",
+      "category_b": "business_credit_cards",
+      "similarity": 0.722571849822998
+    },
+    "outcome": "passed",
+    "groundedness": 1.0,
+    "candidate_id": "37701e9e-7bc3-444f-a141-7fb8a6c0348d"
+  }
+]

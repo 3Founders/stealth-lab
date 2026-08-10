@@ -26,19 +26,33 @@ REPO = "DavydenkoGr/AFTER"
 
 def main():
     all_files = list_repo_files(REPO, repo_type="dataset")
-    toml_files = sorted(f for f in all_files if re.match(r"^tasks/[^/]+/[^/]+/task\.toml$", f))
+    toml_files = sorted(f for f in all_files if f.endswith("/task.toml") and f.startswith("tasks/"))
     print(f"found {len(toml_files)} tasks")
 
     index = []
+    skipped = []
     for f in toml_files:
         path = hf_hub_download(REPO, filename=f, repo_type="dataset")
         data = tomllib.load(open(path, "rb"))
+        # Confirmed real, not hypothetical: at least one real task.toml in
+        # this repo does not have a top-level [task] table -- a bare
+        # `data["task"]` crashed the whole run on it. Skip and report
+        # rather than lose every task after the malformed one just
+        # because it happened to sort earlier alphabetically.
+        if "task" not in data:
+            skipped.append((f, sorted(data.keys())))
+            continue
         t = data["task"]
         index.append({
-            "path": f, "id": t["id"], "role": t["role"],
+            "path": f, "id": t.get("id", f), "role": t.get("role", "UNKNOWN"),
             "skills": t.get("skills", []), "difficulty": t.get("difficulty"),
             "tags": t.get("tags", []),
         })
+
+    if skipped:
+        print(f"WARNING: {len(skipped)} task.toml file(s) had no top-level [task] table, skipped:")
+        for f, keys in skipped:
+            print(f"  {f} -- actual top-level keys: {keys}")
 
     with open("after_task_index.json", "w") as fh:
         json.dump(index, fh, indent=2)

@@ -1,0 +1,112 @@
+running experiment 1 on 129 tasks
+
+[1/4] fetching instruction.md for each task...
+  fetched 20/129 instructions
+  fetched 40/129 instructions
+  fetched 60/129 instructions
+  fetched 80/129 instructions
+  fetched 100/129 instructions
+  fetched 120/129 instructions
+  129 tasks with a readable instruction
+
+[2/4] embedding task instructions (paced to the Voyage rate limits)...
+  8 instruction(s) already embedded in after_instruction_embeddings.json
+  121 texts, ~82850 tokens -> 9 request(s) at 10000 TPM / 3 RPM, ~9 min
+  rate-limited by Voyage; retrying in 60s (attempt 1 of 4)
+  rate-limited by Voyage; retrying in 120s (attempt 2 of 4)
+  rate-limited by Voyage; retrying in 180s (attempt 3 of 4)
+Traceback (most recent call last):
+  File "C:\Users\chait\Prog\3Found\Stealth\StealthLab\backend\scripts\..\app\services\embeddings.py", line 84, in _embed_voyage
+    result = await client.embed(
+             ^^^^^^^^^^^^^^^^^^^
+        list(texts), model=self.model, input_type=input_type
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "C:\Users\chait\AppData\Local\Programs\Python\Python313\Lib\site-packages\voyageai\client_async.py", line 101, in embed
+    async for attempt in self._make_retry_controller():
+    ...<9 lines>...
+            )
+  File "C:\Users\chait\AppData\Local\Programs\Python\Python313\Lib\site-packages\tenacity\asyncio\__init__.py", line 170, in __anext__
+    do = await self.iter(retry_state=self._retry_state)
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\chait\AppData\Local\Programs\Python\Python313\Lib\site-packages\tenacity\asyncio\__init__.py", line 157, in iter
+    result = await action(retry_state)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\chait\AppData\Local\Programs\Python\Python313\Lib\site-packages\tenacity\_utils.py", line 111, in inner
+    return call(*args, **kwargs)
+  File "C:\Users\chait\AppData\Local\Programs\Python\Python313\Lib\site-packages\tenacity\__init__.py", line 413, in exc_check
+    raise retry_exc.reraise()
+          ~~~~~~~~~~~~~~~~~^^
+  File "C:\Users\chait\AppData\Local\Programs\Python\Python313\Lib\site-packages\tenacity\__init__.py", line 184, in reraise
+    raise self.last_attempt.result()
+          ~~~~~~~~~~~~~~~~~~~~~~~~^^
+  File "C:\Users\chait\AppData\Local\Programs\Python\Python313\Lib\concurrent\futures\_base.py", line 449, in result
+    return self.__get_result()
+           ~~~~~~~~~~~~~~~~~^^
+  File "C:\Users\chait\AppData\Local\Programs\Python\Python313\Lib\concurrent\futures\_base.py", line 401, in __get_result
+    raise self._exception
+  File "C:\Users\chait\AppData\Local\Programs\Python\Python313\Lib\site-packages\voyageai\client_async.py", line 103, in embed
+    response = await voyageai.Embedding.acreate(
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<7 lines>...
+    )
+    ^
+  File "C:\Users\chait\AppData\Local\Programs\Python\Python313\Lib\site-packages\voyageai\api_resources\embedding.py", line 44, in acreate
+    response = await super().acreate(*args, **kwargs)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\chait\AppData\Local\Programs\Python\Python313\Lib\site-packages\voyageai\api_resources\api_resource.py", line 69, in acreate
+    response = await requestor.arequest(
+               ^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<6 lines>...
+    )
+    ^
+  File "C:\Users\chait\AppData\Local\Programs\Python\Python313\Lib\site-packages\voyageai\api_resources\api_requestor.py", line 174, in arequest
+    resp = await self._interpret_async_response(result)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\chait\AppData\Local\Programs\Python\Python313\Lib\site-packages\voyageai\api_resources\api_requestor.py", line 402, in _interpret_async_response
+    return self._interpret_response_line(
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^
+        (await result.read()).decode("utf-8"),
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        result.status,
+        ^^^^^^^^^^^^^^
+        result.headers,
+        ^^^^^^^^^^^^^^^
+    )
+    ^
+  File "C:\Users\chait\AppData\Local\Programs\Python\Python313\Lib\site-packages\voyageai\api_resources\api_requestor.py", line 439, in _interpret_response_line
+    raise self.handle_error_response(rbody, rcode, resp.data, rheaders)
+voyageai.error.RateLimitError: You have not yet added your payment method in the billing page and will have reduced rate limits of 3 RPM and 10K TPM. To unlock our standard rate limits, please add a payment method in the billing page for the appropriate organization in the user dashboard (https://dashboard.voyageai.com/). Even with payment methods entered, the free tokens (200M tokens for Voyage series 3) will still apply. After adding a payment method, you should see your rate limits increase after several minutes. See our pricing docs (https://docs.voyageai.com/docs/pricing) for the free tokens for your model.
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "C:\Users\chait\Prog\3Found\Stealth\StealthLab\backend\scripts\run_experiment_1.py", line 484, in <module>
+    asyncio.run(main())
+    ~~~~~~~~~~~^^^^^^^^
+  File "C:\Users\chait\AppData\Local\Programs\Python\Python313\Lib\asyncio\runners.py", line 194, in run
+    return runner.run(main)
+           ~~~~~~~~~~^^^^^^
+  File "C:\Users\chait\AppData\Local\Programs\Python\Python313\Lib\asyncio\runners.py", line 118, in run
+    return self._loop.run_until_complete(task)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "C:\Users\chait\AppData\Local\Programs\Python\Python313\Lib\asyncio\base_events.py", line 721, in run_until_complete
+    return future.result()
+           ~~~~~~~~~~~~~^^
+  File "C:\Users\chait\Prog\3Found\Stealth\StealthLab\backend\scripts\run_experiment_1.py", line 360, in main
+    await embed_throttled(
+    ...<7 lines>...
+    )
+  File "C:\Users\chait\Prog\3Found\Stealth\StealthLab\backend\scripts\run_experiment_1.py", line 257, in embed_throttled
+    result = await embed_with_retry(embedder, [texts[i] for i in batch], input_type)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\chait\Prog\3Found\Stealth\StealthLab\backend\scripts\run_experiment_1.py", line 197, in embed_with_retry
+    return await embedder.embed(texts, input_type=input_type)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\chait\Prog\3Found\Stealth\StealthLab\backend\scripts\..\app\services\embeddings.py", line 53, in embed
+    return await self._embed_voyage(texts, input_type)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\chait\Prog\3Found\Stealth\StealthLab\backend\scripts\..\app\services\embeddings.py", line 88, in _embed_voyage
+    raise EmbeddingError(f"Voyage embedding failed: {exc}") from exc
+app.services.embeddings.EmbeddingError: Voyage embedding failed: You have not yet added your payment method in the billing page and will have reduced rate limits of 3 RPM and 10K TPM. To unlock our standard rate limits, please add a payment method in the billing page for the appropriate organization in the user dashboard (https://dashboard.voyageai.com/). Even with payment methods entered, the free tokens (200M tokens for Voyage series 3) will still apply. After adding a payment method, you should see your rate limits increase after several minutes. See our pricing docs (https://docs.voyageai.com/docs/pricing) for the free tokens for your model.

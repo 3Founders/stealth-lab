@@ -67,34 +67,6 @@ class FakePool:
                 for nid in ids if nid in self.nodes[table]
             ]
 
-        # Order matters: subtask_reuse._flat_best_match's query contains BOTH
-        # "NOT EXISTS" and the unnest shape, so it must be matched before the
-        # _fetch_roots branch below would swallow it and return rows with no
-        # `similarity` key. (This branch was lost in the merge that brought in
-        # the precondition gate; its absence surfaced as KeyError('similarity')
-        # rather than as an unrecognised-query assertion.)
-        if "NOT EXISTS" in query and "unnest(" in query:  # _flat_best_match
-            refs, vec_texts = params[0], params[1]
-            # A leaf owns no children -- i.e. is never a PARENT_OF source.
-            parents = {e["source_id"] for e in self.edges if e["table"] == table}
-            leaves = [nid for nid in self.nodes[table] if nid not in parents]
-            rows = []
-            for ref, vec_text in zip(refs, vec_texts):
-                qvec = unit([float(x) for x in vec_text.strip("[]").split(",")])
-                for nid in leaves:
-                    n = self.nodes[table][nid]
-                    rows.append({
-                        # `props` because the real query selects it: the flat
-                        # fallback applies the same Rule 1 gate as the tree
-                        # path, and without this column the gate would see no
-                        # postconditions and pass trivially -- reinstating
-                        # exactly the match it is supposed to block.
-                        "ref": ref, "id": UUID(nid), "name": n["name"],
-                        "props": n["props"],
-                        "similarity": float(np.dot(qvec, n["embedding"])),
-                    })
-            return rows
-
         if "NOT EXISTS" in query:  # _fetch_roots
             owned = {e["target_id"] for e in self.edges if e["table"] == table}
             return [
@@ -364,6 +336,78 @@ def test_precondition_gate_allows_a_genuine_match_end_to_end():
     assert len(report.matches) == 1
     assert report.matches[0]["matched_id"] == existing_id
     assert new_cs.ops == []
+
+
+def test_precondition_gate_allows_partial_overlap_above_threshold_end_to_end():
+    """
+    A real gap neither the unit tests nor the real-AFTER-data run could
+    exercise: real data only ever produces BINARY role:X tags (0% or
+    100% overlap, since a task has exactly one role), so the Jaccard
+    partial-overlap threshold logic (>= 0.25) has never actually been
+    exercised end-to-end through the real wired pipeline -- only via
+    the pure postconditions_compatible() unit tests, which don't touch
+    hierarchy.py's real SQL fetch / _passes_postcondition_gate path at
+    all. This constructs a realistic multi-tag scenario (the kind two
+    genuinely related-but-not-identical tasks might actually have) where
+    overlap sits clearly above threshold, run through the real code.
+    """
+    pool = FakePool()
+    shared_direction = unit(np.ones(16))
+    existing_id = pool.add_node(
+        "task_nodes", "clean and validate uploaded records", shared_direction,
+        postconditions=["schema_conformance", "field_types_valid", "no_null_ids", "encoding_utf8"],
+    )
+
+    text = "clean and validate uploaded records "
+    vectors = {text: unit(shared_direction + 0.01 * np.random.default_rng(3).normal(size=16))}
+    ops = [CreateTaskNodeOp(ref="new_task", name=text.strip(), description="")]
+    change_set = ChangeSet(ops=ops)
+    embedder = FakeEmbedder(vectors)
+
+    # 3 of 4 tags shared (schema_conformance, field_types_valid, no_null_ids),
+    # 1 tag differs each side (encoding_utf8 vs currency_normalized) ->
+    # Jaccard = 3/5 = 0.6, comfortably above the 0.25 threshold.
+    new_cs, report = asyncio.run(resolve_subtask_reuse(
+        change_set, pool, scope=AccessScope.unrestricted(), embedder=embedder,
+        query_postconditions={"new_task": [
+            "schema_conformance", "field_types_valid", "no_null_ids", "currency_normalized",
+        ]},
+    ))
+
+    assert len(report.matches) == 1, "genuine partial overlap above threshold must pass the gate"
+    assert report.matches[0]["matched_id"] == existing_id
+    assert new_cs.ops == []
+
+
+def test_precondition_gate_blocks_partial_overlap_below_threshold_end_to_end():
+    """Same shape, but overlap below threshold -- must correctly block,
+    not just correctly allow. The real-data run only ever saw the
+    all-or-nothing role:X case; this is the genuine partial-overlap
+    rejection case through the real wired path."""
+    pool = FakePool()
+    shared_direction = unit(np.ones(16))
+    pool.add_node(
+        "task_nodes", "clean and validate uploaded records", shared_direction,
+        postconditions=["schema_conformance", "field_types_valid", "no_null_ids", "encoding_utf8"],
+    )
+
+    text = "clean and validate uploaded records "
+    vectors = {text: unit(shared_direction + 0.01 * np.random.default_rng(4).normal(size=16))}
+    ops = [CreateTaskNodeOp(ref="new_task", name=text.strip(), description="")]
+    change_set = ChangeSet(ops=ops)
+    embedder = FakeEmbedder(vectors)
+
+    # Only 1 tag shared (schema_conformance) out of 6 union ->
+    # Jaccard = 1/6 ≈ 0.167, below the 0.25 threshold.
+    new_cs, report = asyncio.run(resolve_subtask_reuse(
+        change_set, pool, scope=AccessScope.unrestricted(), embedder=embedder,
+        query_postconditions={"new_task": [
+            "schema_conformance", "date_format_valid", "currency_normalized",
+        ]},
+    ))
+
+    assert report.matches == [], "genuine partial overlap below threshold must block, not just the binary case"
+    assert len(new_cs.ops) == 1
 
 
 def test_cost_comparison_naive_vs_batched():

@@ -27,13 +27,24 @@ import asyncpg
 from app.db.graph_store import GraphStore
 from app.services.access import AccessScope, visibility_predicate
 from app.services.embeddings import Embedder, to_pgvector
-from app.services.reuse_detection import _NOT_A_HIERARCHY_GROUP
 
 log = logging.getLogger(__name__)
 
 # RRF's smoothing constant. 60 is the value from the original RRF paper
 # and the common default; it damps the dominance of rank-1 hits.
 RRF_K = 60
+
+# A hierarchy-group node (e.g. a "collection of related instances" parent)
+# exists to organize other nodes, not to be retrieved itself -- it has no
+# instance of its own, so surfacing it as a hit is always a dead end for the
+# caller. PARENT_OF is the custom edge type that marks that grouping
+# relationship; excluding any node that is the SOURCE of a live PARENT_OF
+# edge keeps group nodes out of both direct search and graph expansion.
+_NOT_A_HIERARCHY_GROUP = (
+    "NOT EXISTS (SELECT 1 FROM edges e WHERE e.t_invalid IS NULL "
+    "AND e.edge_type = 'OWNS' AND e.custom_edge_type = 'PARENT_OF' "
+    "AND e.source_id = {table}.id AND e.source_table = '{table}')"
+)
 
 
 @dataclass
@@ -52,42 +63,17 @@ class RetrievalResult:
     nodes: list[RetrievedNode]
     entrypoint_ids: list[UUID]
 
-    def as_context(
-        self, max_chars_per_node: int = 1200, max_total_chars: int = 12_000
-    ) -> str:
-        """
-        Render for an LLM prompt, with ids so answers can cite them.
-
-        Budgeted, because this string was previously unbounded by document
-        size: it interpolated every retrieved node's FULL description, and
-        retrieve() will happily return up to max_context_nodes (25) of
-        them. With demo-sized nodes that is a short paragraph; with real
-        document-sized nodes it is not. Measured against an 8000-character
-        skill corpus, a single /v1/decompose call built a 28,595-token
-        request -- rejected outright by a provider with a 12K token/minute
-        ceiling, and expensive everywhere else.
-
-        Truncation is announced in the text rather than silent, so a model
-        that needs the omitted detail can say so instead of confidently
-        answering from a fragment it did not know was a fragment.
-        """
-        lines: list[str] = []
-        used = 0
-        for i, n in enumerate(self.nodes):
+    def as_context(self) -> str:
+        """Render for an LLM prompt, with ids so answers can cite them."""
+        lines = []
+        for n in self.nodes:
             kind = "task" if n.table == "task_nodes" else "knowledge"
             line = f"[{kind}:{n.id}] {n.name}"
             if n.description:
-                desc = n.description
-                if len(desc) > max_chars_per_node:
-                    desc = desc[:max_chars_per_node].rstrip() + " …[truncated]"
-                line += f" — {desc}"
+                line += f" — {n.description}"
             if n.hops > 0:
                 line += f" (related, {n.hops} hop{'s' if n.hops > 1 else ''} away)"
-            if used + len(line) > max_total_chars and lines:
-                lines.append(f"…[{len(self.nodes) - i} further nodes omitted for length]")
-                break
             lines.append(line)
-            used += len(line)
         return "\n".join(lines)
 
 
@@ -97,7 +83,14 @@ class HybridRetriever:
         pool: asyncpg.Pool,
         embedder: Optional[Embedder] = None,
         scope: Optional[AccessScope] = None,
+        embedding_column: str = "embedding",
+        tables: tuple[str, ...] = ("task_nodes", "knowledge_nodes"),
     ):
+        if embedding_column not in ("embedding", "embedding_joint"):
+            raise ValueError(
+                f"embedding_column must be 'embedding' or 'embedding_joint', "
+                f"got {embedding_column!r}"
+            )
         self._pool = pool
         self._embedder = embedder or Embedder()
         self._scope = scope or AccessScope.unrestricted()
@@ -105,42 +98,29 @@ class HybridRetriever:
         # filtered its entrypoints but then expanded through unscoped
         # traversal would leak exactly what the filter prevented.
         self._graph = GraphStore(pool, scope=self._scope)
+        self._emb = embedding_column
+        # embedding_joint only exists on task_nodes -- knowledge_nodes has no
+        # alt column, so a caller asking for the joint embedding is
+        # implicitly restricted there rather than erroring.
+        self._tables = tuple(t for t in tables if t == "task_nodes") \
+            if embedding_column != "embedding" else tables
 
     async def _vector_search(self, query_vec: list[float], limit: int) -> list[tuple[UUID, str, int]]:
-        """
-        Returns (id, table, rank). Only rank matters downstream, for RRF.
-
-        Synthetic hierarchy aggregators are excluded from BOTH legs. They are
-        not content -- build_hierarchy_for_table writes them purely as routing
-        waypoints -- but they are unusually attractive to retrieval on both
-        axes at once: their embedding is the MEAN of their children, so it sits
-        near a cluster centroid, and their name is the concatenation of their
-        children's names, so it is lexically dense enough to match almost any
-        query touching that cluster. Measured on the 731-instance SWE-bench
-        graph: 3 of 5 RRF entrypoints and 11 of 20 returned nodes were groups,
-        cutting the effective top-k from 5 to 2 and pulling unrelated repos
-        into context through one-hop expansion off a group's PARENT_OF edges.
-
-        This is the same class of bug as the one already fixed in
-        find_reusable_nodes (which recommended "Group: statistics, Group: docx…"
-        as reusable work); the predicate is shared with it deliberately so the
-        two cannot drift apart.
-        """
+        """Returns (id, table, rank). Only rank matters downstream, for RRF."""
         vec = to_pgvector(query_vec)
         vis_sql, vis_params = visibility_predicate(self._scope, param_index=3)
+        legs = []
+        for table in self._tables:
+            not_group = _NOT_A_HIERARCHY_GROUP.format(table=table)
+            legs.append(
+                f"SELECT id, '{table}' AS tbl, {self._emb} <=> $1::vector AS dist "
+                f"FROM {table} "
+                f"WHERE {self._emb} IS NOT NULL AND t_invalid IS NULL AND {vis_sql} "
+                f"AND {not_group}"
+            )
         rows = await self._pool.fetch(
             f"""
-            SELECT id, tbl FROM (
-                SELECT id, 'task_nodes' AS tbl, embedding <=> $1::vector AS dist
-                FROM task_nodes
-                WHERE embedding IS NOT NULL AND t_invalid IS NULL AND {vis_sql}
-                  AND {_NOT_A_HIERARCHY_GROUP.format(table='task_nodes')}
-                UNION ALL
-                SELECT id, 'knowledge_nodes' AS tbl, embedding <=> $1::vector AS dist
-                FROM knowledge_nodes
-                WHERE embedding IS NOT NULL AND t_invalid IS NULL AND {vis_sql}
-                  AND {_NOT_A_HIERARCHY_GROUP.format(table='knowledge_nodes')}
-            ) combined
+            SELECT id, tbl FROM ({" UNION ALL ".join(legs)}) combined
             ORDER BY dist ASC LIMIT $2
             """,
             vec, limit, *vis_params,
@@ -149,6 +129,31 @@ class HybridRetriever:
 
     async def _lexical_search(self, query: str, limit: int) -> list[tuple[UUID, str, int]]:
         vis_sql, vis_params = visibility_predicate(self._scope, param_index=3)
+        legs = []
+        if "task_nodes" in self._tables:
+            not_group = _NOT_A_HIERARCHY_GROUP.format(table="task_nodes")
+            legs.append(
+                f"""
+                SELECT id, 'task_nodes' AS tbl,
+                       ts_rank(to_tsvector('english', name || ' ' || COALESCE(description,'')),
+                               (SELECT q FROM parsed_query)) AS rank
+                FROM task_nodes
+                WHERE t_invalid IS NULL AND {vis_sql} AND {not_group}
+                  AND to_tsvector('english', name || ' ' || COALESCE(description,''))
+                      @@ (SELECT q FROM parsed_query)
+                """
+            )
+        if "knowledge_nodes" in self._tables:
+            not_group = _NOT_A_HIERARCHY_GROUP.format(table="knowledge_nodes")
+            legs.append(
+                f"""
+                SELECT id, 'knowledge_nodes' AS tbl,
+                       ts_rank(to_tsvector('english', name), (SELECT q FROM parsed_query)) AS rank
+                FROM knowledge_nodes
+                WHERE t_invalid IS NULL AND {vis_sql} AND {not_group}
+                  AND to_tsvector('english', name) @@ (SELECT q FROM parsed_query)
+                """
+            )
         rows = await self._pool.fetch(
             f"""
             WITH parsed_query AS (
@@ -167,23 +172,7 @@ class HybridRetriever:
                     regexp_replace(plainto_tsquery('english', $1)::text, ' & ', ' | ', 'g')
                 ) AS q
             )
-            SELECT id, tbl FROM (
-                SELECT id, 'task_nodes' AS tbl,
-                       ts_rank(to_tsvector('english', name || ' ' || COALESCE(description,'')),
-                               (SELECT q FROM parsed_query)) AS rank
-                FROM task_nodes
-                WHERE t_invalid IS NULL AND {vis_sql}
-                  AND {_NOT_A_HIERARCHY_GROUP.format(table='task_nodes')}
-                  AND to_tsvector('english', name || ' ' || COALESCE(description,''))
-                      @@ (SELECT q FROM parsed_query)
-                UNION ALL
-                SELECT id, 'knowledge_nodes' AS tbl,
-                       ts_rank(to_tsvector('english', name), (SELECT q FROM parsed_query)) AS rank
-                FROM knowledge_nodes
-                WHERE t_invalid IS NULL AND {vis_sql}
-                  AND {_NOT_A_HIERARCHY_GROUP.format(table='knowledge_nodes')}
-                  AND to_tsvector('english', name) @@ (SELECT q FROM parsed_query)
-            ) combined
+            SELECT id, tbl FROM ({" UNION ALL ".join(legs)}) combined
             ORDER BY rank DESC LIMIT $2
             """,
             query, limit, *vis_params,
@@ -261,14 +250,25 @@ class HybridRetriever:
                 continue
             edges = await self._graph.traverse_from(ids, table, max_depth=expand_depth)
             for e in edges:
+                # A PARENT_OF edge marks a hierarchy-group relationship, not
+                # a topical relation -- riding it during expansion would pull
+                # in every sibling under the same group node regardless of
+                # relevance. Direct search already excludes group nodes
+                # themselves (_NOT_A_HIERARCHY_GROUP above); this stops
+                # expansion from reintroducing them, or their other
+                # children, through the back door.
+                if e.custom_edge_type == "PARENT_OF":
+                    continue
                 for nid, ntable in ((e.source_id, e.source_table), (e.target_id, e.target_table)):
                     if nid in found or len(found) >= max_context_nodes:
                         continue
+                    not_group = _NOT_A_HIERARCHY_GROUP.format(table=ntable)
                     exp_sql, exp_params = visibility_predicate(self._scope, param_index=2)
                     row = await self._pool.fetchrow(
                         f"SELECT id, name, "
                         f"{'description' if ntable == 'task_nodes' else 'NULL AS description'} "
-                        f"FROM {ntable} WHERE id = $1 AND t_invalid IS NULL AND {exp_sql}",
+                        f"FROM {ntable} WHERE id = $1 AND t_invalid IS NULL AND {exp_sql} "
+                        f"AND {not_group}",
                         nid, *exp_params,
                     )
                     if row:

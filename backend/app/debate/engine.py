@@ -220,6 +220,12 @@ class DebateEngine:
             content = str(payload.get("content", "")).strip()
             cites = _parse_cites(payload.get("cites"))
             candidate_id: Optional[UUID] = None
+            # Explicit, deliberate assertion only -- must be True in the
+            # payload, never inferred from ops happening to be empty. An
+            # agent that forgets change_set entirely (a real failure mode)
+            # must NOT accidentally get treated as having justified no
+            # action; only a genuine, intentional flag counts.
+            no_action_justified = payload.get("no_action_justified") is True
 
             if action == "propose":
                 cand = Candidate(
@@ -229,6 +235,7 @@ class DebateEngine:
                     rationale=content,
                     change_set=_parse_change_set(payload.get("change_set")),
                     supporters=[agent.agent_id],
+                    no_action_justified=no_action_justified,
                 )
                 candidates.append(cand)
                 by_id[cand.id] = cand
@@ -243,18 +250,43 @@ class DebateEngine:
                         target = by_id.get(UUID(str(raw_id)))
                     except (ValueError, AttributeError):
                         target = None
+                if target is None and len(by_id) == 1:
+                    # Missing/invalid candidate_id, but exactly ONE live
+                    # candidate exists -- an "amend" can only mean that
+                    # one, unambiguously. Confirmed real, not hypothetical:
+                    # a real run had an agent send candidate_id=None with
+                    # exactly one candidate on the table, and the turn's
+                    # actual content was clearly building on it. Recovering
+                    # this is a safe inference, not a guess across multiple
+                    # options -- deliberately NOT extended to the 2+
+                    # candidate case below, where which one was intended
+                    # genuinely cannot be determined from a missing id.
+                    (target,) = by_id.values()
+                    log.info("agent %s amended with missing/invalid candidate_id %r; "
+                             "recovered as the single live candidate %s",
+                             agent.agent_id, raw_id, target.id)
                 if target is None:
-                    # Amending a nonexistent candidate is a malformed
-                    # turn, not a proposal -- record it as a pass so the
-                    # transcript stays honest about what happened.
-                    log.warning("agent %s amended unknown candidate %r",
-                                agent.agent_id, raw_id)
+                    # 0 or 2+ live candidates and no resolvable id -- a
+                    # genuinely malformed turn, not a proposal. Record it
+                    # as a pass so the transcript stays honest about what
+                    # happened, rather than guessing which candidate among
+                    # several was meant.
+                    log.warning("agent %s amended unknown candidate %r (%d live candidate(s))",
+                                agent.agent_id, raw_id, len(by_id))
                     action = "pass"
                 else:
                     target.add_supporter(agent.agent_id)
                     new_ops = _parse_change_set(payload.get("change_set"))
                     if new_ops.ops:
                         target.change_set = new_ops
+                        target.no_action_justified = False  # a real op set
+                                                             # was proposed;
+                                                             # any earlier
+                                                             # no-action
+                                                             # claim no
+                                                             # longer applies
+                    elif no_action_justified:
+                        target.no_action_justified = True
                     target.rationale += f"\n\n[amended by {agent.agent_id}]\n{content}"
                     candidate_id = target.id
                     round_had_movement = True

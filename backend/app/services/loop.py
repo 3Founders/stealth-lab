@@ -57,12 +57,66 @@ async def _render_graph_context(graph: GraphStore, task_node_id: UUID,
 
     edges = await graph.traverse_from([task_node_id], "task_nodes", max_depth=2)
     if edges:
+        # SUPERSEDES edges are deliberately permanent (they're the audit
+        # trail), so traversal can reach a node whose own row is
+        # invalidated even though the edge pointing at it is still
+        # "live". Confirmed live: a panel proposed update_knowledge_node
+        # against an already-superseded node it saw in context with no
+        # indication it was dead. Label liveness explicitly rather than
+        # drop SUPERSEDES history entirely -- "this was superseded" is
+        # useful context, silently hiding it would remove real signal.
+        node_ids_by_table: dict[str, set] = {}
+        for e in edges:
+            node_ids_by_table.setdefault(e.source_table, set()).add(e.source_id)
+            node_ids_by_table.setdefault(e.target_table, set()).add(e.target_id)
+        live_status: dict[tuple, bool] = {}
+        content_by_node: dict[tuple, str] = {}
+        for table, ids in node_ids_by_table.items():
+            if table == "task_nodes":
+                rows = await pool.fetch(
+                    f"SELECT id, name, description, (t_invalid IS NULL) AS live "
+                    f"FROM {table} WHERE id = ANY($1::uuid[])", list(ids),
+                )
+                for r in rows:
+                    live_status[(table, r["id"])] = r["live"]
+                    text = r["name"]
+                    if r["description"]:
+                        text += f" -- {r['description'][:400]}"
+                    content_by_node[(table, r["id"])] = text
+            else:  # knowledge_nodes -- the actual gap this fixes: panelists could
+                   # previously see only a bare id for a cited knowledge_node,
+                   # never what it actually says. Confirmed live: a panel
+                   # correctly refused to resolve a conflict it couldn't see
+                   # the content of, while a DIFFERENT panel confidently
+                   # described content that was never in its context at all --
+                   # a plausible-sounding inference from the node's NAME alone,
+                   # not a grounded citation, and groundedness scoring had no
+                   # way to catch that distinction.
+                rows = await pool.fetch(
+                    f"SELECT id, name, properties, (t_invalid IS NULL) AS live "
+                    f"FROM {table} WHERE id = ANY($1::uuid[])", list(ids),
+                )
+                for r in rows:
+                    live_status[(table, r["id"])] = r["live"]
+                    props = r["properties"] if isinstance(r["properties"], dict) else {}
+                    body = props.get("content") or props.get("statement") or ""
+                    text = r["name"]
+                    if body:
+                        text += f" -- {body[:600]}"
+                    content_by_node[(table, r["id"])] = text
+
         lines.append("### Related")
         for e in edges[:50]:
             label = e.custom_edge_type or e.edge_type
+            src_live = live_status.get((e.source_table, e.source_id), True)
+            tgt_live = live_status.get((e.target_table, e.target_id), True)
+            src_tag = "" if src_live else " [SUPERSEDED, do not target this node]"
+            tgt_tag = "" if tgt_live else " [SUPERSEDED, do not target this node]"
+            src_text = content_by_node.get((e.source_table, e.source_id), str(e.source_id))
+            tgt_text = content_by_node.get((e.target_table, e.target_id), str(e.target_id))
             lines.append(
-                f"- {e.source_table}:{e.source_id} —[{label}]→ "
-                f"{e.target_table}:{e.target_id}"
+                f"- {e.source_table}:{e.source_id}{src_tag} ({src_text}) —[{label}]→ "
+                f"{e.target_table}:{e.target_id}{tgt_tag} ({tgt_text})"
             )
     return "\n".join(lines)
 
@@ -232,9 +286,10 @@ class LoopOrchestrator:
                 for c in result.candidates:
                     await conn.execute(
                         "INSERT INTO candidates (id, debate_id, summary, rationale, "
-                        "change_set, supporters) VALUES ($1,$2,$3,$4,$5,$6)",
+                        "change_set, supporters, no_action_justified) VALUES ($1,$2,$3,$4,$5,$6,$7)",
                         c.id, c.debate_id, c.summary, c.rationale,
                         c.change_set.model_dump(mode="json"), c.supporters,
+                        c.no_action_justified,
                     )
                 for t in result.turns:
                     await conn.execute(

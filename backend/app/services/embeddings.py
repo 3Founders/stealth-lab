@@ -110,6 +110,88 @@ class Embedder:
             raise EmbeddingError("no embedding returned")
         return vectors[0]
 
+    async def embed_batched(
+        self,
+        texts: Sequence[str],
+        input_type: InputType = "document",
+        max_tokens_per_call: int = 8000,
+        seconds_between_calls: float = 65.0,
+        max_retries_per_call: int = 3,
+    ) -> list[list[float]]:
+        """
+        For bulk jobs (backfills, evaluation runs) large enough to trip
+        Voyage's free-tier TPM limit even as a SINGLE request -- one call
+        with enough text in it can exceed 10K tokens/minute on its own,
+        RPM isn't the binding constraint once individual documents get
+        long (e.g. AFTER's task instructions). Chunks by an estimated
+        token budget, then paces calls in real time rather than firing
+        them back to back.
+
+        Token estimate is `len(text) // 4` -- the standard rough
+        approximation for English text, not an exact tokenizer count.
+        `max_tokens_per_call` is set conservatively below the 10K/min
+        limit for that reason (imprecise estimate + retry safety
+        margin), not because 8000 is itself a meaningful number.
+
+        `seconds_between_calls=65` is deliberately over 60: the TPM
+        window is a rolling minute, not calls-since-start, so spacing
+        by slightly more than a minute guarantees the previous call's
+        tokens have fully aged out of the window before the next one
+        counts against it -- not just "usually enough".
+
+        Still retries with real backoff on an actual RateLimitError
+        (not just the estimated pacing above) since the token estimate
+        is approximate, not exact -- pacing reduces how often the limit
+        gets hit, it doesn't guarantee it never does.
+        """
+        if not texts:
+            return []
+
+        def estimate_tokens(t: str) -> int:
+            return max(1, len(t) // 4)
+
+        batches: list[list[str]] = []
+        current: list[str] = []
+        current_tokens = 0
+        for text in texts:
+            t = estimate_tokens(text)
+            if current and current_tokens + t > max_tokens_per_call:
+                batches.append(current)
+                current, current_tokens = [], 0
+            current.append(text)
+            current_tokens += t
+        if current:
+            batches.append(current)
+
+        log.info(
+            "embed_batched: %d texts split into %d call(s), ~%ds apart",
+            len(texts), len(batches), int(seconds_between_calls),
+        )
+
+        import asyncio
+
+        all_vectors: list[list[float]] = []
+        for i, batch in enumerate(batches):
+            for attempt in range(max_retries_per_call):
+                try:
+                    vectors = await self.embed(batch, input_type=input_type)
+                    all_vectors.extend(vectors)
+                    break
+                except EmbeddingError as exc:
+                    if "RateLimitError" not in str(type(exc.__cause__).__name__) and "rate limit" not in str(exc).lower():
+                        raise  # a real failure, not a rate limit -- don't retry blindly
+                    if attempt == max_retries_per_call - 1:
+                        raise
+                    wait = seconds_between_calls * (attempt + 1)
+                    log.warning("rate limited on batch %d/%d, retry %d/%d after %ds",
+                                i + 1, len(batches), attempt + 1, max_retries_per_call, int(wait))
+                    await asyncio.sleep(wait)
+
+            if i < len(batches) - 1:
+                await asyncio.sleep(seconds_between_calls)
+
+        return all_vectors
+
 
 def to_pgvector(vector: Sequence[float]) -> str:
     """

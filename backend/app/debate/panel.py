@@ -374,6 +374,60 @@ def assert_heterogeneous(agents: list[PanelAgent]) -> None:
         )
 
 
+def _is_rate_limit_error(exc: Exception) -> bool:
+    """
+    Provider-agnostic rate-limit detection. Deliberately string-matching
+    on "429" / "rate limit" rather than importing anthropic.RateLimitError
+    and openai.RateLimitError specifically -- OpenAICompatAgent covers
+    several different providers (OpenAI, Fireworks, Gemini's compat
+    endpoint, local servers) behind one client class, and a provider-
+    specific exception type check would miss whichever ones don't map
+    cleanly onto the openai SDK's own error hierarchy. Confirmed real
+    against an actual failure: 'Error code: 429 - {"error": {"message":
+    "Provider request failed with status 429" ...}}' from a real panel
+    run against General Compute, with zero retry previously -- every
+    panelist hitting this lost its entire turn for that round, silently,
+    with no distinction from a genuine model failure.
+
+    KNOWN FRAGILITY, not fixed: plain substring matching means an error
+    message that happens to CONTAIN the phrase "rate limit" for an
+    unrelated reason (e.g. explaining a different endpoint's limits) would
+    be misclassified as retryable. Caught this exact failure mode while
+    writing this function's own test (a deliberately-worded non-rate-limit
+    error accidentally matched the substring). "429" is the more reliable
+    of the two signals in practice -- real provider errors reliably
+    include it, genuine unrelated errors essentially never do by
+    coincidence.
+    """
+    text = str(exc).lower()
+    return "429" in text or "rate limit" in text or "rate_limit" in text
+
+
+async def _call_with_retry(
+    agent: "PanelAgent", system: str, user: str, timeout: float,
+    max_retries: int = 3, base_delay: float = 2.0,
+) -> str:
+    """
+    Retries ONLY rate-limit-shaped failures, with exponential backoff --
+    a genuine model/parsing error should still surface immediately as a
+    failed turn (existing behavior), not be masked behind retries that
+    can't fix it. On the last attempt, whatever exception occurs
+    propagates to the caller unchanged, same as before this wrapper
+    existed.
+    """
+    last_exc: Optional[Exception] = None
+    for attempt in range(max_retries + 1):
+        try:
+            return await asyncio.wait_for(agent.respond(system, user), timeout=timeout)
+        except Exception as exc:  # noqa: BLE001 -- deliberately broad, see _is_rate_limit_error
+            last_exc = exc
+            if attempt >= max_retries or not _is_rate_limit_error(exc):
+                raise
+            delay = base_delay * (2 ** attempt)
+            await asyncio.sleep(delay)
+    raise last_exc  # unreachable, satisfies type checkers
+
+
 async def gather_responses(
     agents: list[PanelAgent], system: str, user: str, timeout: float = 120.0,
     on_call: Optional[Callable[[PanelAgent, str, str], "asyncio.Future"]] = None,
@@ -381,7 +435,11 @@ async def gather_responses(
     """
     Query agents concurrently. One agent failing (rate limit, timeout,
     outage) must not abort the round -- the exception is returned in place
-    of that agent's turn and recorded as a skipped turn.
+    of that agent's turn and recorded as a skipped turn. Rate-limit
+    failures specifically are retried with backoff first (see
+    _call_with_retry) before being allowed to count as a failed turn --
+    confirmed necessary against a real run where a panelist lost most of
+    its rounds to 429s with no retry at all.
 
     `on_call`, if given, fires once per agent immediately after its
     response, with (agent, prompt_text, response_text) -- the actual
@@ -391,7 +449,7 @@ async def gather_responses(
 
     async def one(agent: PanelAgent) -> str | Exception:
         try:
-            result = await asyncio.wait_for(agent.respond(system, user), timeout=timeout)
+            result = await _call_with_retry(agent, system, user, timeout)
             if on_call:
                 await on_call(agent, system + user, result)
             return result

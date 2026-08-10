@@ -1,0 +1,31 @@
+[
+  {
+    "pair": {
+      "id_a": "b5f22558-2cfa-4441-9506-c48805711360",
+      "id_b": "118d2838-0d98-48c7-887f-39451166b18f",
+      "name_a": "Internal: Business Checking Account Promotion - October 2025",
+      "name_b": "Internal: Business Checking Account Promotion - November 2025",
+      "category_a": null,
+      "category_b": null,
+      "similarity": 1.0
+    },
+    "outcome": "no_pass",
+    "n_candidates": 1,
+    "trigger_id": "97ec4c39-f857-46be-a796-02d9935a607f"
+  },
+  {
+    "pair": {
+      "id_a": "e5635e3f-7bf2-4179-a9ab-4950a4da4cd8",
+      "id_b": "617b9443-50df-46d9-a6c8-4db4b0c6b33a",
+      "name_a": "Internal: Business Savings Account Promotion - October 2025",
+      "name_b": "Internal: Business Savings Account Promotion - November 2025",
+      "category_a": null,
+      "category_b": null,
+      "similarity": 1.0
+    },
+    "outcome": "passed",
+    "groundedness": 1.0,
+    "candidate_id": "bb590c42-1a4e-4a09-817d-65793a5919dd",
+    "trigger_id": "4e1a6677-15a8-4b57-bbf5-2ca8f9ff1bbf"
+  }
+]

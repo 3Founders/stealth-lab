@@ -155,55 +155,35 @@ async def _fetch_roots(pool: asyncpg.Pool, table: str, scope: AccessScope) -> li
     any internal node. These are the current top of whatever tree
     structure exists so far (possibly still a flat, unclustered set).
 
-    The ORDER BY is REQUIRED, not cosmetic. Without it Postgres returns
-    heap order, which varies with page layout, vacuum and concurrent
-    writes -- and complete_linkage_clusters is greedy and agglomerative,
-    so its output depends on the order it sees its input. Measured on the
-    731-instance SWE-bench graph: two builds over byte-identical data
-    produced 299 vs 368 internal nodes and 113 vs 54 roots. A doubled
-    top-level fan-out changes both descent cost and routing quality, so
-    any retrieval number measured against an unordered build is not
-    reproducible -- including the ones already recorded for Experiments
-    1A and 5.
-
-    It orders by NAME first and id only as a tie-break, because ordering
-    by id alone fixes the leaves and nothing above them: internal nodes are
-    inserted with gen_random_uuid(), so at level 1 and beyond "ordered by
-    id" is still a fresh random permutation on every build. Name is derived
-    from content (_default_summary concatenates the children's names), so
-    it is stable across rebuilds as long as the level below was stable --
-    which is what makes the determinism inductive rather than just true at
-    the bottom."""
+    Excludes internal_proxy task_nodes (Experiment 3's "Reconcile: X vs
+    Y" scaffold nodes) when the table is task_nodes -- same class of
+    fix as excluding hierarchy Group nodes from knowledge_conflict
+    detection: a synthetic scaffold node was never a real task a user's
+    /v1/decompose call should ever be matched against."""
+    proxy_filter = (
+        "AND (n.success_criteria->>'internal_proxy') IS DISTINCT FROM 'true' "
+        if table == "task_nodes" else ""
+    )
     vis_sql, vis_params = visibility_predicate(scope, alias="n", param_index=1)
     rows = await pool.fetch(
         f"SELECT n.id, n.name, (n.embedding IS NOT NULL) AS has_embedding, "
         f"{_name_expr(table, alias='n')} AS full_text "
         f"FROM {table} n "
-        f"WHERE n.t_invalid IS NULL AND {vis_sql} "
+        f"WHERE n.t_invalid IS NULL AND {vis_sql} {proxy_filter}"
         f"AND NOT EXISTS (SELECT 1 FROM edges e WHERE e.t_invalid IS NULL AND {_OWNS_FILTER} "
-        f"  AND e.target_id = n.id AND e.target_table = '{table}') "
-        f"ORDER BY n.name, n.id",
+        f"  AND e.target_id = n.id AND e.target_table = '{table}')",
         *vis_params,
     )
     return [dict(r) for r in rows]
 
 
 async def _pairwise_similarity(
-    pool: asyncpg.Pool, table: str, ids: list[str], scope: AccessScope, rows_by_id: dict,
-    threshold: Optional[float] = None,
+    pool: asyncpg.Pool, table: str, ids: list[str], scope: AccessScope, rows_by_id: dict
 ) -> tuple[Callable[[str, str], float], float]:
     """Returns (similarity_fn, threshold_used). Vector via SQL self-join
     when every id has an embedding (mirrors dedup.py's approach --
     asyncpg has no vector codec, so this is computed server-side, never
-    parsed from raw bytes in Python); lexical fallback otherwise.
-
-    `threshold` overrides DEFAULT_GROUP_THRESHOLD and is interpreted on the
-    COSINE scale, rescaled below for the lexical branch so that one
-    caller-facing number means the same thing under either similarity
-    function. Previously this ignored the caller entirely and always
-    returned the default, which silently made
-    build_hierarchy_for_table's own `threshold` argument a no-op."""
-    base = DEFAULT_GROUP_THRESHOLD if threshold is None else threshold
+    parsed from raw bytes in Python); lexical fallback otherwise."""
     use_vector = all(rows_by_id[i]["has_embedding"] for i in ids)
     if use_vector:
         pair_rows = await pool.fetch(
@@ -221,14 +201,14 @@ async def _pairwise_similarity(
 
         def sim(a: str, b: str) -> float:
             return sim_lookup.get((a, b), 0.0)
-        return sim, base
+        return sim, DEFAULT_GROUP_THRESHOLD
 
     def sim(a: str, b: str) -> float:
         return _lexical_overlap(rows_by_id[a]["full_text"], rows_by_id[b]["full_text"])
     # Lexical overlap lives on a different numeric scale than cosine --
     # scale the grouping threshold down the same proportion
     # reuse_detection.py's lexical thresholds sit below its vector ones.
-    return sim, base * (LEXICAL_FULL_MATCH_THRESHOLD / FULL_MATCH_THRESHOLD)
+    return sim, DEFAULT_GROUP_THRESHOLD * (LEXICAL_FULL_MATCH_THRESHOLD / FULL_MATCH_THRESHOLD)
 
 
 async def _create_internal_node(
@@ -324,9 +304,7 @@ async def build_hierarchy_for_table(
 
         rows_by_id = {str(r["id"]): r for r in roots}
         ids = list(rows_by_id.keys())
-        sim, eff_threshold = await _pairwise_similarity(
-            pool, table, ids, scope, rows_by_id, threshold
-        )
+        sim, eff_threshold = await _pairwise_similarity(pool, table, ids, scope, rows_by_id)
         groups = plan_next_level(ids, sim, eff_threshold, min_children, max_children)
 
         internal_groups = [g for g in groups if g.is_internal]

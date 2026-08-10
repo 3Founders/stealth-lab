@@ -29,6 +29,7 @@ from app.models.change import (
     CreateKnowledgeNodeOp,
     CreateTaskNodeOp,
     InvalidateEdgeOp,
+    UpdateKnowledgeNodeOp,
     UpdateTaskNodeOp,
 )
 
@@ -42,6 +43,11 @@ _TASK_CARRY_FORWARD = (
     "success_criteria", "cost_estimate", "latency_estimate_ms",
     "pert_optimistic_ms", "pert_likely_ms", "pert_pessimistic_ms", "embedding",
 )
+
+# Same idea for knowledge_nodes. node_type is deliberately carried forward
+# but never overridable via `changes` (see MUTABLE_KNOWLEDGE_FIELDS) --
+# supersession changes content, not classification.
+_KNOWLEDGE_CARRY_FORWARD = ("tenant_id", "node_type", "name", "properties", "embedding")
 
 
 class ChangeApplicationError(Exception):
@@ -176,6 +182,8 @@ class KnowledgeUpdater:
                         applied.append(await self._create_edge(conn, op, now, approver_id))
                     elif isinstance(op, UpdateTaskNodeOp):
                         applied.append(await self._supersede_task(conn, op, now, approver_id))
+                    elif isinstance(op, UpdateKnowledgeNodeOp):
+                        applied.append(await self._supersede_knowledge(conn, op, now, approver_id))
                     else:  # pragma: no cover -- discriminated union is exhaustive
                         raise ChangeApplicationError(f"unknown op type: {op!r}")
         return applied
@@ -280,6 +288,83 @@ class KnowledgeUpdater:
         return {
             "op": "update_task_node",
             "old_id": str(op.task_node_id),
+            "new_id": str(new_id),
+            "rewired_edges": len(rewired),
+            "at": now.isoformat(),
+        }
+
+    async def _supersede_knowledge(self, conn, op: UpdateKnowledgeNodeOp, now, approver) -> dict:
+        """
+        Mirrors _supersede_task exactly, on knowledge_nodes. Previously
+        there was no update path for this table at all -- knowledge_nodes
+        were read-only reference material a debate could cite but never
+        itself revise, which is what made "debate resolves a policy
+        conflict" impossible to actually apply even if a panel proposed it.
+        """
+        old = await conn.fetchrow(
+            "SELECT * FROM knowledge_nodes WHERE id = $1 AND t_invalid IS NULL FOR UPDATE",
+            op.knowledge_node_id,
+        )
+        if old is None:
+            raise ChangeApplicationError(
+                f"knowledge_node {op.knowledge_node_id} not found or already superseded"
+            )
+
+        merged: dict[str, Any] = {c: old[c] for c in _KNOWLEDGE_CARRY_FORWARD}
+        merged.update(op.changes)
+
+        cols = list(_KNOWLEDGE_CARRY_FORWARD)
+        values = [merged[c] for c in cols]
+        placeholders = ", ".join(f"${i+1}" for i in range(len(cols)))
+        n = len(cols)
+        new_row = await conn.fetchrow(
+            f"INSERT INTO knowledge_nodes ({', '.join(cols)}, provenance, t_valid, t_created, created_by) "
+            f"VALUES ({placeholders}, 'company_debate', ${n+1}, ${n+1}, ${n+2}) RETURNING id",
+            *values, now, approver,
+        )
+        new_id = new_row["id"]
+
+        await conn.execute(
+            "UPDATE knowledge_nodes SET t_invalid = $2, t_expired = $2 WHERE id = $1",
+            op.knowledge_node_id, now,
+        )
+        await conn.execute(
+            "INSERT INTO edges (edge_type, source_id, source_table, target_id, target_table, "
+            "properties, provenance, t_valid, t_created, created_by) "
+            "VALUES ('SUPERSEDES', $1, 'knowledge_nodes', $2, 'knowledge_nodes', $3, "
+            "'company_debate', $4, $4, $5)",
+            new_id, op.knowledge_node_id, {"reason": op.reason}, now, approver,
+        )
+
+        # Edges pointing at the old version (including the proxy
+        # reconciliation task's CONFLICTS_WITH edges -- see
+        # knowledge_conflict.py) must follow it forward.
+        rewired = await conn.fetch(
+            "SELECT id, edge_type::text AS edge_type, custom_edge_type, source_id, source_table, "
+            "target_id, target_table, properties FROM edges "
+            "WHERE t_invalid IS NULL AND edge_type <> 'SUPERSEDES' "
+            "AND ((source_id = $1 AND source_table = 'knowledge_nodes') "
+            "  OR (target_id = $1 AND target_table = 'knowledge_nodes'))",
+            op.knowledge_node_id,
+        )
+        for e in rewired:
+            src = new_id if (e["source_id"] == op.knowledge_node_id and e["source_table"] == "knowledge_nodes") else e["source_id"]
+            tgt = new_id if (e["target_id"] == op.knowledge_node_id and e["target_table"] == "knowledge_nodes") else e["target_id"]
+            props = e["properties"] if isinstance(e["properties"], dict) else {}
+            await conn.execute(
+                "INSERT INTO edges (edge_type, custom_edge_type, source_id, source_table, "
+                "target_id, target_table, properties, provenance, t_valid, t_created, created_by) "
+                "VALUES ($1::edge_type, $2, $3, $4, $5, $6, $7, 'company_debate', $8, $8, $9)",
+                e["edge_type"], e["custom_edge_type"], src, e["source_table"],
+                tgt, e["target_table"], props, now, approver,
+            )
+            await conn.execute(
+                "UPDATE edges SET t_invalid = $2, t_expired = $2 WHERE id = $1", e["id"], now
+            )
+
+        return {
+            "op": "update_knowledge_node",
+            "old_id": str(op.knowledge_node_id),
             "new_id": str(new_id),
             "rewired_edges": len(rewired),
             "at": now.isoformat(),

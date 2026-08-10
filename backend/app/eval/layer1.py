@@ -93,6 +93,25 @@ class Layer1Evaluator:
     async def evaluate(self, candidate: Candidate, cited=None) -> Layer1Result:
         cited = cited or []
         structural = candidate.change_set.validate_ops()
+        if candidate.no_action_justified and not candidate.change_set.ops:
+            # An explicit, deliberate "no update is the correct
+            # resolution" claim -- distinct from a malformed turn that
+            # merely happens to have empty ops. validate_ops() cannot
+            # tell these apart (it only sees the ChangeSet, not the
+            # candidate's stated intent), so its one possible complaint
+            # for an empty ops list ("change set is empty -- candidate
+            # proposes no actual change") is the wrong verdict here and
+            # is dropped. Confirmed real, not hypothetical: 3 real PEP
+            # debates where every panelist unanimously and correctly
+            # concluded no update was needed still failed Layer 1 solely
+            # because of this check, with groundedness and the fallacy
+            # judge both otherwise clean -- the diagnosis was right and
+            # the system rejected it anyway. Everything else (fallacy
+            # check, groundedness on citations) still applies at full
+            # strength below; only this one structural complaint is
+            # suppressed, and only when explicitly asserted.
+            structural = [p for p in structural
+                          if p != "change set is empty -- candidate proposes no actual change"]
         score, unresolved = await self._groundedness(candidate, cited)
 
         flags: list[FallacyFlag] = []

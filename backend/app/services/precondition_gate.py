@@ -32,13 +32,16 @@ formal logical predicates. "Compatible" means meaningful tag overlap
 formal-methods approach, not a claim to have solved general
 precondition reasoning.
 
-NOT YET WIRED into reuse_detection.py / hierarchy.py / subtask_reuse.py:
-doing so means adding success_criteria/properties to their SQL SELECT
-clauses (currently they only fetch id/name/description/similarity) and
-threading query-side postconditions through decompose(). That's real,
-well-defined follow-up work, deliberately not rushed into three
-heavily-tested, load-bearing files in the same pass this module was
-written -- see EXPERIMENT_PLAN_FINAL.md's next-steps section.
+NOW WIRED into hierarchy.py's batch_hierarchical_search /
+find_best_match (see _passes_postcondition_gate, a real SQL fetch of
+the candidate's stored properties/success_criteria, checked once a
+candidate crosses the embedding threshold). This docstring previously
+said "not yet wired" -- stale as of that integration landing; corrected
+here rather than left misleading. NOT yet run against real data,
+though: ingest_after_skills.py populates postconditions as
+["role:<role>"] for every real ingested AFTER task, which is real
+substrate for testing this, but no experiment has actually exercised
+it against that real corpus yet.
 """
 from __future__ import annotations
 

@@ -74,10 +74,11 @@ async def main():
 
     apply = "--apply" in sys.argv
     if apply:
-        print("\n== APPLYING build for task_nodes ==")
-        report = await build_hierarchy_for_table(pool, "task_nodes", scope=scope, embedder=embedder, apply=True)
-        print(f"  built {report.internal_nodes_created} internal node(s), "
-              f"{report.final_root_count} root(s) remain")
+        for table in ("task_nodes", "knowledge_nodes"):
+            print(f"\n== APPLYING build for {table} ==")
+            report = await build_hierarchy_for_table(pool, table, scope=scope, embedder=embedder, apply=True)
+            print(f"  built {report.internal_nodes_created} internal node(s), "
+                  f"{report.final_root_count} root(s) remain")
 
         print("\n== hierarchical_search sanity check ==")
         row = await pool.fetchrow(

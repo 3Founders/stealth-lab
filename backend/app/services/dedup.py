@@ -69,6 +69,72 @@ from app.services.reuse_detection import (
 
 log = logging.getLogger(__name__)
 
+_TITLE_STOPWORDS = frozenset({
+    "a", "an", "the", "and", "or", "of", "to", "for", "in", "on", "at",
+    "is", "are", "your", "you", "this", "that", "with", "how", "what",
+    "explained", "understanding", "overview",
+})
+
+
+def _title_diff_is_trivial(name_a: str, name_b: str) -> bool:
+    """
+    True only if every substantive word in one title also appears in the
+    other -- i.e. the symmetric difference, after stripping punctuation
+    and stopwords, is empty.
+
+    Exists because embedding similarity ALONE is not a safe dedup signal
+    on corpora with deliberate cross-variant templating (confirmed on
+    real data: "Blue Account specifications and requirements" vs
+    "Purple Account specifications and requirements" scored 0.95 cosine
+    similarity -- two genuinely different products sharing a template).
+    Generic lexical-overlap measures don't fix this either -- checked
+    both before writing this: word-Jaccard on that same pair scores
+    0.67 (above the existing 0.55 lexical threshold), and
+    difflib.SequenceMatcher scores 0.93 -- both dominated by the long
+    shared boilerplate, both would wrongly pass. The actual signal that
+    matters isn't "how similar overall", it's "does any real content
+    word differ at all" -- "blue" vs "purple" is a small edit distance
+    and a small set-difference, but it's exactly the word that makes
+    these different things.
+
+    Deliberately strict (empty diff, not "mostly the same"): a false
+    merge silently destroys a real distinction (confirmed: 303 wrongly
+    merged on this corpus); a false non-merge just leaves two rows a
+    later, more careful pass can still catch. The costs are not
+    symmetric, so this errs toward under-merging, not over-merging.
+    """
+    import re
+
+    def tokens(s: str) -> set[str]:
+        words = re.findall(r"[a-z0-9]+", s.lower())
+        return {w for w in words if w not in _TITLE_STOPWORDS}
+
+    ta, tb = tokens(name_a), tokens(name_b)
+    return (ta ^ tb) == set()
+
+
+def _categories_agree(properties_a, properties_b) -> bool:
+    """
+    False only when BOTH rows carry an explicit 'category' in properties
+    AND those categories differ. True whenever either side lacks a
+    category (most tables/corpora don't have one -- this must not block
+    dedup for data that never opted into categorization).
+
+    Exists for the exact false positive the title gate alone can't
+    catch: "Business Silver Rewards Card: ..." vs "Silver Rewards
+    Card: ..." -- "business" appears in BOTH titles (once as the
+    distinguishing product-line prefix, once incidentally in "Business
+    Travel" in both), so the word-SET diff is empty even though these
+    are genuinely different products. The corpus's own category label
+    (business_credit_cards vs credit_cards) catches what the title
+    heuristic structurally cannot, since it's position-blind by design.
+    """
+    cat_a = (properties_a or {}).get("category") if isinstance(properties_a, dict) else None
+    cat_b = (properties_b or {}).get("category") if isinstance(properties_b, dict) else None
+    if cat_a is None or cat_b is None:
+        return True
+    return cat_a == cat_b
+
 
 def complete_linkage_clusters(
     keys: list[str], similarity: Callable[[str, str], float], threshold: float
@@ -219,10 +285,12 @@ async def find_duplicate_clusters(
     Returns only clusters with more than one member.
     """
     name_expr = "name || ' ' || COALESCE(description, '')" if table == "task_nodes" else "name"
+    props_expr = "properties" if table == "knowledge_nodes" else "NULL"
     vis_sql, vis_params = visibility_predicate(scope, param_index=1)
 
     rows = await pool.fetch(
-        f"SELECT id, name, {name_expr} AS full_text, (embedding IS NOT NULL) AS has_embedding "
+        f"SELECT id, name, {name_expr} AS full_text, (embedding IS NOT NULL) AS has_embedding, "
+        f"{props_expr} AS properties "
         f"FROM {table} WHERE t_invalid IS NULL AND {vis_sql}",
         *vis_params,
     )
@@ -250,6 +318,16 @@ async def find_duplicate_clusters(
             sim_lookup[(b, a)] = s
 
         def sim(a: str, b: str) -> float:
+            if not _title_diff_is_trivial(by_id[a]["name"], by_id[b]["name"]):
+                return 0.0  # any substantive title difference disqualifies a merge,
+                            # regardless of embedding similarity -- see _title_diff_is_trivial
+            if not _categories_agree(by_id[a].get("properties"), by_id[b].get("properties")):
+                return 0.0  # different product lines with a same-tier name in common
+                            # (e.g. "Business Silver Rewards Card" vs "Silver Rewards Card" --
+                            # a real false positive: the title gate alone can't see that
+                            # "business" is a distinguishing PREFIX, not incidental repetition,
+                            # since it works on word sets, not position). Only applies when
+                            # both rows actually carry a category -- absent on most tables.
             return sim_lookup.get((a, b), 0.0)
 
         threshold = FULL_MATCH_THRESHOLD

@@ -43,6 +43,7 @@ class Settings(BaseSettings):
     anthropic_api_key: Optional[str] = None
     fireworks_api_key: Optional[str] = None   # Kimi K3
     openai_api_key: Optional[str] = None      # third seat
+    groq_api_key: Optional[str] = None        # Experiment 4 SLM arm -- OpenAI-compatible
 
     # Judge (Section 8.1 / Nirnaya) must be independent of the panel
     # (enforce_independence checks model family). The panel already uses
@@ -88,18 +89,6 @@ class Settings(BaseSettings):
     general_compute_panel_models: str = ""
     general_compute_judge_model: str = ""
 
-    # --- SLM arm (Experiment 4): hosted small models ---
-    # The experiment plan specifies Groq/Cerebras for the small-model arm,
-    # not local Ollama. Hosted inference pins a published model snapshot,
-    # which a locally-pulled tag does not -- `llama3.1:8b` in Ollama is
-    # whatever that tag pointed at on the day it was pulled, so a result
-    # measured against it is not reproducible by anyone else.
-    groq_api_key: Optional[str] = None
-    groq_base_url: str = "https://api.groq.com/openai/v1"
-    groq_models: str = "llama-3.1-8b-instant,gemma2-9b-it"
-    cerebras_api_key: Optional[str] = None
-    cerebras_base_url: str = "https://api.cerebras.ai/v1"
-
     # --- Agent execution: file upload/output handling ---
     agent_upload_dir: str = "/tmp/agent_uploads"
     agent_output_dir: str = "/tmp/agent_outputs"
@@ -112,6 +101,34 @@ class Settings(BaseSettings):
     fireworks_model: str = "accounts/fireworks/models/kimi-k3"
     openai_model: str = "gpt-4.1"
     gemini_model: str = "gemini-2.5-pro"
+    groq_model: str = "qwen/qwen3.6-27b"  # Experiment 4 SLM arm -- dense, real,
+                                            # hosted; confirmed the strongest coding
+                                            # option Groq currently serves (the true
+                                            # sparse Qwen3.6-35B-A3B isn't available
+                                            # via any pay-per-token hosted API as of
+                                            # this writing, only self-hosted/on-demand)
+    groq_base_url: str = "https://api.groq.com/openai/v1"
+    experiment_4_llm_model: str = "deepseek-v3.2"  # switched from gpt-oss-120b:
+                                            # real SWE-Bench Verified data shows
+                                            # DeepSeek V3.2 clearly ahead on
+                                            # practical coding (67.8% vs 62.4%),
+                                            # the benchmark closest in shape to
+                                            # what this experiment actually tests.
+                                            # gpt-oss-120b led on unrelated
+                                            # benchmarks (CodeForces, GPQA) but
+                                            # those aren't what we're measuring.
+                                            # UNCERTAIN: General Compute's exact
+                                            # model string wasn't directly
+                                            # confirmed from their own docs --
+                                            # "deepseek-v3.2" is the most common
+                                            # naming convention across other
+                                            # providers, but if this 400s, the
+                                            # error should list valid model names;
+                                            # update this field with whatever that
+                                            # says. Still a frontier-ADJACENT
+                                            # open-weight model, not a true
+                                            # closed-lab frontier system -- same
+                                            # honest limit as gpt-oss-120b had.
     embedding_model: str = "voyage-3-large"
     embedding_dimension: int = 1024  # must match VECTOR(n) in 01_ontology.sql
 
