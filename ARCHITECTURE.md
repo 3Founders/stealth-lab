@@ -1,195 +1,223 @@
-# Architecture — agentic literature graph
+# Architecture — graph-memory + HTN agent on SWE-bench Pro
 
-Scope: claims made in agent/LLM research. Not all of science. Draft, for editing.
+What each part is, why it is shaped that way, and where it is verified.
+Every claim marked **[T-n]** is checked by a test — see [TEST.md](TEST.md).
 
-## Nodes
+---
 
-| Type | Is |
-|---|---|
-| Paper | one document. arXiv / open access only. |
-| Method | a named approach — ReAct, Reflexion, ToT |
-| Benchmark | a suite — SWE-bench, GAIA, τ-bench, OSWorld |
-| TaskInstance | one item inside a suite. This is the micro-eval. |
-| Scaffold | the harness the method ran inside |
-| Model | base LLM, versioned |
-| Claim | one examinable proposition. The atom. |
-| Result | a Claim of type `measurement` |
-| Artifact | repo, dataset, container image |
+## The question
 
-## The atom is a claim, not a paper
+**Does a knowledge graph of a codebase's own past fixes help a small model fix
+a new bug — and does HTN decomposition help more?**
 
-A paper is a container. The claim is what gets verified, disputed, superseded,
-cited and reused, so it is the thing that needs an address.
+Three arms per instance, on identical repository snapshots:
 
-The atom is **not the sentence as written**. Sentences hedge, use anaphora, carry
-two claims in one clause, and split one claim across three. The node is a
-normalised proposition; the sentence hangs off it as evidence.
+| arm | agent | memory block | isolates |
+|---|---|---|---|
+| `no_memory` | flat | — | baseline |
+| `graph_memory` | flat | retrieved precedents | **does the graph help?** |
+| `htn_memory` | HTN DAG | retrieved precedents | **does decomposition help?** (memory fixed) |
 
-| Field | |
-|---|---|
-| `text` | one proposition. No anaphora. Hedge made explicit. |
-| `source` | paper + character span. Always recoverable. |
-| `qualifiers` | scope conditions, as structured fields not prose |
-| `claim_type` | measurement / method / interpretation / limitation |
-| `status` | the ladder below |
-| `strength` | asserted / hedged / speculative — signal, not noise |
+`no_memory` → `graph_memory` and `graph_memory` → `htn_memory` each vary
+exactly one thing. **[T-31]**
 
-`claim_type` decides adjudication. Measurements get re-run; interpretations go to
-the panel.
+---
 
-Not every sentence is a claim. Background, motivation and related work are text.
-Something has to classify, and false positives pollute the graph.
+## 1 · Corpus and grading
 
-## A claim carries its conditions
+**SWE-bench Pro** — 731 real GitHub issues, 11 repos, 4 languages
+(go 38%, python 36%, js 23%, ts 3%). Each carries the issue text, the repo
+pinned *before* the fix, the reference patch, and hidden tests
+(`fail_to_pass`, `pass_to_pass`).
 
-`qualifiers` is the field that matters, and the same principle governs Results.
+`pro_harness.evaluate()` runs the candidate patch in the instance's own Docker
+image. **Resolved** iff every `fail_to_pass` passes **and** no `pass_to_pass`
+breaks. A test that never ran counts as a failure — treating absence as a pass
+is the one bug that manufactures successes. **[T-12]**
 
-A Result is **not** `(method, benchmark) → score`. It is
-`(method, scaffold, model, benchmark_version, config) → score`.
+**Gold runs first, every instance.** If the reference patch does not resolve,
+the instance is excluded before either arm spends a token. NodeBB is exactly
+this case: its gold patch passes all 3 f2p then breaks 6 unrelated email
+tests, so no patch can score better. **[T-11]**
 
-GAIA moves 30–50 points on scaffold alone. A graph that drops the scaffold stores
-a number that means nothing. "ReAct improves accuracy 10%", atomised without which
-model, which benchmark and which baseline, is confident nonsense. Atomising
-without qualifiers is worse than not atomising.
+Pilot: **10 of 11 repos** grade their own gold patch correctly (go 4/4,
+python 3/3, ts 1/1, js 2/3; NodeBB the sole failure).
 
-Prior art: nanopublications, ~2010, life sciences — this idea with a name. It
-never reached adoption because authors wouldn't author them and no consumer
-appeared. We extract rather than ask, and the consumer is our own router.
+---
 
-## Edges
+## 2 · The knowledge graph
 
-`REPORTS` (paper→result) · `EVALUATED_ON` (result→benchmark) · `RAN_IN`
-(result→scaffold) · `RAN_ON` (result→model) · `SUPERSEDES` · `DISPUTES` ·
-`REPRODUCES` · `FAILS_TO_REPRODUCE` · `CITES`
+```
+task_node ──OWNS/RESOLVED_AT──▶ knowledge_node
+the issue                        where the fix landed
+title, problem statement,        files, symbols, interface,
+requirements, interface,         and the gold diff
+issue_categories                 (7.1 MB across 731)
+```
 
-## Admission
+731 task nodes + 731 knowledge nodes + 731 edges in `stealthlab_swebench`
+(pgvector, HNSW `vector_cosine_ops`). **[T-21]**
 
-Every Result carries a status. Computed, never asserted.
+**Why the split.** `HybridRetriever` matches a new issue against past *task*
+nodes by meaning and keyword, then traverses one hop to pull the *knowledge*
+node. Retrieval finds the **similar problem**; the graph supplies the
+**answer location**. A flat list cannot do the second step. Verified not
+decorative: 40/40 queries return knowledge nodes reached by expansion.
+**[T-22]**
 
-| Status | Requires |
-|---|---|
-| `reported` | extracted from a paper. The default. |
-| `reproducible` | carries model id+version, scaffold id+version, benchmark version, decoding params, seed |
-| `reproduced` | someone re-ran and matched |
-| `disputed` | a `FAILS_TO_REPRODUCE` or `DISPUTES` edge exists |
+### Two embedding columns
 
-Expected headline finding: most results never leave `reported`.
+| column | text | result |
+|---|---|---|
+| `embedding` | title + problem statement | baseline |
+| `embedding_joint` | title + problem + **the gold diff** | **wins** |
 
-## Adjudication
+Issue-only vectors cannot separate two senses of a domain word — *"Flipt Fails
+to Authenticate with AWS ECR"* (registry login) outranked *"Authentication
+cookies are not cleared"* (request middleware) for an auth-middleware query.
+Only the diffs distinguish them.
 
-| Claim | Settled by |
-|---|---|
-| "M scores S on B" | re-execution |
-| "the gap between M1 and M2 is real" | Welch + Benjamini-Hochberg (existing Layer 2) |
-| "M is the better approach" | debate panel + human approval |
+**n=400, leave-one-out: joint better on 19 queries, worse on 5, tied on 376.
+Sign test p = 0.0066.** All four metrics move together. `embedding_joint` is
+the default. **[T-24]**
 
-Only the first is cheap. The third is where the existing debate engine earns its
-place.
+### Leave-one-out via the bi-temporal columns
 
-## Temporal
+Holding out instance *X* sets `t_invalid` on its task node, knowledge node and
+edge. Every backend read already filters `t_invalid IS NULL`, so *X* vanishes
+without being deleted, and testing another instance is two UPDATEs rather than
+a 37-minute re-embed. The runner **aborts** if *X* retrieves itself.
+**[T-23]**
 
-SOTA is a validity window, not a flag. `SUPERSEDES` closes the previous holder's
-window. "Who held SOTA on B in March, and what displaced them" is a query.
+The HTN tree is rebuilt *after* the holdout: internal nodes route on the mean
+of their children's embeddings, so a tree built while *X* was live has *X*
+folded into its parent's routing signal.
 
-## Maps onto the existing schema
+---
 
-- Paper, Method, Benchmark, Model, Scaffold → `knowledge_nodes`
-- TaskInstance → `task_nodes` (has an interface and a success criterion)
-- Result → `knowledge_nodes`, status in `properties`
-- Everything else → `edges`
-- `provenance = prior_library` for ingested literature
-- Retrieval: existing hybrid search + bounded expansion, unchanged
+## 3 · The agents
 
-No new storage engine. New node types and one status field.
+Both use the same `RepoSandbox`, the same tools, the same 40-step leaf budget,
+temperature 0, and both return `AgentRun` — so the harness cannot tell which
+ran. That is what makes flat-vs-HTN controlled. **[T-45]**
 
-## Ingestion
+### Tools
 
-`acquire → parse → normalise → episode → extract → resolve → review → graph`
+`list_dir` · `search` · `read_file` · `edit_file` · `create_file` ·
+`delete_file` · `finish`
 
-**Acquire.** arXiv bulk (S3, requester-pays) plus OAI-PMH for metadata. Filter
-hard before anything expensive runs: a keyword prefilter on the chosen benchmark
-names cuts cs.AI/CL/LG down to an affordable corpus.
+Editing is **exact string replacement**, and the diff is generated
+mechanically. Asking a model to author a `git apply`-able diff conflates
+fixing the bug with counting context lines, and a patch that fails to apply
+grades identically to a wrong answer.
 
-**Parse.** Take the LaTeX source, not the PDF. Sections, tables, captions,
-citations and floats are explicit in source and have to be guessed from a PDF.
-ar5iv/LaTeXML already publishes HTML for much of arXiv. PDF is the fallback path
-only — GROBID for structure, MinerU or Nougat for the hard ones. That fallback is
-the same table-extraction problem as the PDF→Excel work; build it once.
+Three capabilities exist because an audit against all 731 gold patches showed
+the agent could not otherwise do the corpus:
 
-**Normalise.** Sections, paragraphs, sentences with character offsets, tables as
-data, references resolved to arXiv id / DOI.
+| requirement | instances | was |
+|---|---|---|
+| create a new file | **243 (33.2%)** | **impossible** |
+| delete a file | 18 (2.5%) | impossible |
+| rename | 10 (1.4%) | impossible |
 
-**Episode.** Raw file *and* parsed document both land in `episodes`, never
-summarised away. This is the layer that makes re-extraction possible.
+**6 of the 20 experiment instances required a new file** and were unwinnable
+in every arm regardless of model or retriever — 30% of the sample producing
+guaranteed concordant failures, contributing zero discordant pairs. **[T-41]**
 
-**Extract.** The LLM step. Currently unvalidated, and the whole game. Every claim
-records `extractor_version`.
+`edit_file` falls back to **whitespace-tolerant matching** when an exact match
+fails: same non-space characters, still unique, replacement re-indented to the
+file's own style by counting depth on a ladder of the snippet's distinct
+indent widths. Go is 38% of the corpus and tab-indented; a model emitting
+spaces could never match. **[T-42]**
 
-**Resolve.** Surface forms to canonical nodes. This is the hard part, not parsing.
-`GPT-4` / `gpt-4-0613`; SWE-bench vs SWE-bench Verified vs SWE-bench Lite are
-different benchmarks that papers routinely conflate.
+### Flat agent (`agent.py`)
 
-**Review.** Nothing enters as `reproducible` or above without passing the
-admission check. Sampled human review on the rest.
+One growing transcript, resent whole on every call. Cost is `d·N²/2`.
+Measured: teleport **1,067,259 tokens** in one arm over 40 steps — mean 26,681
+per call, final context ~53K, because 22 file dumps rode along on every later
+step.
 
-Re-extraction is supersession, not migration. Extraction will improve; the raw
-episode stays, the extractor is versioned, and a better pass supersedes old claims
-with history intact.
+### HTN agent (`htn_agent.py`) — DAG
 
-Licensing: arXiv metadata is open, full text is per-paper and often not CC. Store
-offsets and short quotes rather than redistributed full text unless the licence is
-clear.
+```
+        [1] create src/hooks/useWindowWidth.ts     deps: []
+              │
+        [2] export it from the barrel file        deps: [1]
+              │
+        [3] update the consumer to use the hook   deps: [2]
 
-## Entity authority
+        [4] add the changelog fragment            deps: []   ← independent
+```
 
-Resolution is the hard part, so don't invent vocabulary where one already exists.
+**Planner** (one LLM call) emits a JSON DAG of 2–6 nodes with explicit `deps`.
+**Executor** runs nodes in topological order, each in **its own fresh message
+list** — system + issue + the DAG + one-line notes from finished nodes + that
+node's local tool results. Context is O(local steps), not O(all steps).
+**[T-33]**
 
-| Type | Authority |
-|---|---|
-| Paper | arXiv id / DOI / OpenAlex |
-| Model | Hugging Face model id, else Wikidata QID |
-| Institution | ROR |
-| Benchmark | **ours** — no authority exists |
-| Method | **ours** — no authority exists |
-| Scaffold | **ours** |
+**Failure is contained.** A node that fails after its replans is marked
+`failed`, and only its *transitive dependents* become `blocked`. Independent
+branches still run. **[T-35]**
 
-Only three need curating, and each is small: tens of benchmarks that matter, a few
-hundred named methods. A bounded hand-curated list, not an ontology project. The
-distinction is the whole reason earlier attempts at this died.
+**Replanning is localized.** A failed node asks the planner for one
+alternative *method* for that node alone, up to `MAX_METHODS=2`. Completed
+nodes keep their edits in the sandbox and their notes in the DAG; nothing
+valid is re-executed. **[T-32]**
 
-Every canonical entity carries `aliases` (surface forms, many-to-one) and `is_a`
-edges. `gpt-4-0613` is_a `GPT-4` is_a `OpenAI model` is_a `LLM`. Subsumption is
-required rather than decorative — a claim about GPT-4 has to be reachable from a
-query about OpenAI models.
+The DAG is validated on parse: self-loops and dangling deps dropped, cycles
+broken by keeping only backward edges, and a single line of prose rejected as
+"not a decomposition" rather than accepted as a one-step plan. **[T-34]**
 
-Resolution order: exact alias → embedding candidate above threshold → pending
-queue.
+---
 
-**An unresolved reference blocks admission. It never creates a node.** Silent
-duplicate creation is how this graph dies: two SWE-bench nodes, results split
-across both, nothing ever deleted, nobody notices for a year.
+## 4 · What is measured
 
-RDF stays an export format. Pulling QIDs means touching it anyway and emitting it
-is cheap, but it is not the internal model — open-world semantics break every
-admission check in this document.
+**Resolution** — McNemar's exact test on paired outcomes, reported **with the
+discordant-pair count**. Concordant pairs carry no information; with zero
+discordant pairs there is no test, which is different from "no difference".
+**[T-51]**
 
-## Out of scope
+**Copyability** — what fraction of the gold patch's added lines were already
+visible in what the agent was shown. If the memory arm wins, this says whether
+it won by *reasoning from* precedents or by *copying one that contained the
+answer*. Running 0.03–0.11, so wins are not lookup. **[T-53]**
 
-- Hosting full text
-- Competing with OpenAlex / Semantic Scholar on coverage
-- Fields other than agent/LLM research
-- Ranking authors or venues
+**Retrieval quality** — `file_recall`, `dir_recall`, `same_repo_rate`, scored
+before any agent runs, so "retrieval was wrong" is distinguishable from
+"retrieval was right and the agent failed anyway". **[T-54]**
 
-## Open questions
+**HTN telemetry** — nodes done/failed/blocked, replans, DAG edges, planner
+calls, decomposition failures.
 
-- Who arbitrates a `DISPUTES` edge, and what closes it?
-- Do we re-execute anything ourselves, or only record others' reproductions?
-- Scaffold identity — how do we decide two papers used "the same" scaffold?
-- Granularity — store per-benchmark scores, or per-TaskInstance?
-- Does a Result supersede, or do both stay live with different configs?
-- Claim dedupe — the same proposition appears in many papers, phrased differently.
-  Merge into one node with many sources, or keep separate and link? Merging is
-  right and hard.
-- What classifies a span as a claim, and what is the false-positive cost?
-- If a claim's qualifiers are incomplete in the source, do we admit it as a claim
-  with unknown scope, or refuse it?
+### Power — read this before reading any p-value
+
+The exact test floors at `2/2^k`, so **k ≥ 6 discordant pairs one-way** is
+required for p<0.05. At a 10% baseline:
+
+| n | +10pp | +20pp | +30pp | +40pp |
+|---|---|---|---|---|
+| **20** | 0.003 | 0.041 | 0.188 | 0.435 |
+| 40 | 0.017 | 0.146 | 0.505 | 0.839 |
+| 120 | 0.029 | 0.508 | 0.968 | 1.000 |
+
+**A null at n=20 most likely means underpowered, not "no effect".**
+`check_results.py` prints the shortfall on every summary so this cannot be
+forgotten.
+
+---
+
+## 5 · Running it
+
+```bash
+python experiments/swebench_pro/run_graph_experiment.py -n 20     # 3 arms
+python check_results.py final                                     # status, any time
+```
+
+Resumable: results append to JSONL and completed instances are skipped, but
+rows that recorded a harness error are **not** counted as done — a transient
+failure baked in permanently is how an earlier file acquired frozen
+`api_error` rows. **[T-52]**
+
+Every LLM call has a **180s timeout** and backoff capped at 20s. Without them
+one unresponsive request froze a whole sweep for 77 minutes, looking exactly
+like normal progress.

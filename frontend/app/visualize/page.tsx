@@ -88,6 +88,20 @@ export default function VisualizePage() {
       setFocusError(null);
       return;
     }
+    // GET /v1/graph/{id} resolves its centre with a "still current" check
+    // and 404s on anything superseded, so once history is shown these rows
+    // are selectable but not focusable. Saying which of the two it is
+    // beats spending a round trip to render "something went wrong".
+    const node = byId.get(nodeId);
+    if (node && !node.current) {
+      setFocus(null);
+      setFocusError(
+        `“${node.label}” has been superseded, so it has no current ` +
+          `neighbourhood to walk. Select the node that replaced it to see ` +
+          `where those links went.`,
+      );
+      return;
+    }
     focusOn(nodeId, depth);
   }
 
@@ -106,24 +120,61 @@ export default function VisualizePage() {
     [nodes, filter],
   );
 
-  // Both arrays are memoised because WorkflowGraph re-runs mermaid whenever
-  // its node/edge props change identity — a fresh array each render would
-  // re-layout the diagram on every keystroke elsewhere on the page.
-  const drawnNodes = useMemo<GraphNode[]>(
-    () => (focus ? focus.nodes : visible),
-    [focus, visible],
-  );
-
-  const drawnEdges = useMemo<GraphEdge[]>(() => {
-    if (focus) return focus.edges;
-    const shown = new Set(visible.map((n) => n.id));
-    return edges.filter((e) => shown.has(e.source) && shown.has(e.target));
-  }, [focus, visible, edges]);
-
   const byId = useMemo(
     () => new Map(nodes.map((n) => [n.id, n])),
     [nodes],
   );
+
+  /**
+   * Reconcile the focused view against the overview.
+   *
+   * GET /v1/graph/{id} walks *edges* by validity but labels the nodes it
+   * lands on without checking whether they are still current, so focusing
+   * can surface superseded nodes even while the overview is hiding them —
+   * nodes drawn in the diagram that have no row in the list below it. The
+   * subgraph response carries no `current` flag of its own, so the
+   * overview is the only reference available here: it is exactly the set
+   * of nodes this page is currently willing to show.
+   *
+   * That inference only holds while the overview is complete. Once it is
+   * truncated, a node missing from it may have been cut by the limit
+   * rather than superseded, and dropping those would hide live parts of
+   * the neighbourhood — a worse failure than showing a stale one. In that
+   * case the focused view is left exactly as the backend sent it.
+   */
+  const reconciled = !includeSuperseded && !overview?.truncated;
+
+  const focusView = useMemo(() => {
+    if (!focus) return null;
+    if (!reconciled) {
+      return { nodes: focus.nodes, edges: focus.edges, hiddenNodes: 0, hiddenEdges: 0 };
+    }
+    const keptNodes = focus.nodes.filter((n) => byId.has(n.id));
+    const kept = new Set(keptNodes.map((n) => n.id));
+    const keptEdges = focus.edges.filter(
+      (e) => kept.has(e.source) && kept.has(e.target),
+    );
+    return {
+      nodes: keptNodes,
+      edges: keptEdges,
+      hiddenNodes: focus.nodes.length - keptNodes.length,
+      hiddenEdges: focus.edges.length - keptEdges.length,
+    };
+  }, [focus, byId, reconciled]);
+
+  // Both arrays are memoised because WorkflowGraph re-runs mermaid whenever
+  // its node/edge props change identity — a fresh array each render would
+  // re-layout the diagram on every keystroke elsewhere on the page.
+  const drawnNodes = useMemo<GraphNode[]>(
+    () => (focusView ? focusView.nodes : visible),
+    [focusView, visible],
+  );
+
+  const drawnEdges = useMemo<GraphEdge[]>(() => {
+    if (focusView) return focusView.edges;
+    const shown = new Set(visible.map((n) => n.id));
+    return edges.filter((e) => shown.has(e.source) && shown.has(e.target));
+  }, [focusView, visible, edges]);
 
   const selected: GraphOverviewNode | undefined = focus
     ? byId.get(focus.nodeId)
@@ -292,6 +343,21 @@ export default function VisualizePage() {
                     }`
                   : "The whole graph"}
               </div>
+
+              {focusView && focusView.hiddenNodes > 0 && (
+                <p className="case-body" style={{ marginTop: 0 }}>
+                  <span className="enquiry-warning">
+                    {focusView.hiddenNodes} superseded node
+                    {focusView.hiddenNodes === 1 ? "" : "s"} hidden
+                    {focusView.hiddenEdges > 0 &&
+                      `, with ${focusView.hiddenEdges} link${
+                        focusView.hiddenEdges === 1 ? "" : "s"
+                      }`}
+                  </span>{" "}
+                  — this node&rsquo;s history sits outside the current graph.
+                  Turn on &ldquo;Show superseded&rdquo; to include it.
+                </p>
+              )}
 
               {focusBusy ? (
                 <p className="case-body">Walking the graph&hellip;</p>
