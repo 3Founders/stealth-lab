@@ -116,12 +116,51 @@ This is not the only valid resolution. Two other outcomes are equally \
 correct, and REQUIRE you to actually read each node's real content in the \
 context below (not just its name) before choosing between them:
 
+MANDATORY WHEN CLAIMING A CONTENT DIFFERENCE: if your reasoning for ANY \
+outcome below depends on "node A says/includes/covers X, node B does \
+not" (or the reverse), you MUST quote the exact phrase from node A's \
+real content that supports the claim, in quotation marks, copied \
+verbatim -- not a paraphrase, not a summary, not your own description of \
+what the node "is about." A claim backed by a description instead of an \
+actual quote is exactly the failure mode that has happened twice in real \
+runs already: once claiming two nodes were "word-for-word identical" \
+when they were not, once claiming one node lacked status-based \
+filtering it actually had, verbatim, in its own text. Both were false, \
+and both were stated as confident summaries rather than checked \
+against a real quote. A mechanical check verifies every quoted phrase \
+you cite actually appears in the node you attribute it to -- a \
+paraphrase cannot be verified this way and a fabricated one will be \
+caught. If you cannot find an actual quote supporting a claimed \
+difference, that is a signal the difference may not be real, not a \
+reason to describe it more confidently instead.
+
   - DUAL-SCOPE CLARIFICATION: the two nodes turn out to govern genuinely \
     different, non-overlapping situations (e.g. one covers customer- \
     initiated actions, the other covers a system process) and BOTH \
     statements are true, just ambiguously worded. Propose \
     "update_knowledge_node" on BOTH, each adding explicit scope language \
     so they no longer read as contradictory. Neither is superseded.
+  - SYNTHESIS / MERGE: the two nodes describe the SAME underlying pattern \
+    or procedure, but each contains real, distinct content the other is \
+    missing -- e.g. one has a more careful edge-case handling step, or a \
+    caveat about a real weakness, that the other never mentions. This is \
+    NOT the same as FALSE POSITIVE below: the content genuinely differs, \
+    not just the label. Read both nodes' full content and check \
+    specifically whether either one has real substance -- a step, a \
+    caveat, an edge case -- that the other lacks, before concluding they \
+    are equivalent. If so, propose "update_knowledge_node" on the ONE \
+    that should remain canonical, incorporating the other's real, \
+    distinct content into it (not just noting that it exists elsewhere), \
+    and mark the other as superseded by it. Merely adding a cosmetic \
+    label (e.g. "pattern_variant": "...") to distinguish two nodes whose \
+    actual content differs is NOT this outcome and is NOT the false- \
+    positive outcome either -- it is a symptom of not having read the \
+    content closely enough to notice the real difference. If you find \
+    yourself concluding two nodes are "word-for-word identical" or \
+    "differ only in name," verify that specific claim against the \
+    literal text of both -- this has actually happened in a prior run \
+    and was false: the nodes differed in real, substantive ways the \
+    panel's own summary did not accurately describe.
   - FALSE POSITIVE, NO ACTION: the two nodes were flagged only because \
     embedding similarity is unreliable on this kind of corpus (shared \
     template language across genuinely different products), not because \
