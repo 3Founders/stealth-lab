@@ -1,0 +1,7 @@
+{
+  "task_nodes": 731,
+  "knowledge_nodes": 731,
+  "edges": 731,
+  "model": "voyage-3-large",
+  "dsn": "postgresql://postgres:stealthlab@127.0.0.1:5433/stealthlab_swebench"
+}

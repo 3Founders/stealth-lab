@@ -1,0 +1,483 @@
+{
+  "summary": {
+    "n_tasks": 3,
+    "n_errors": 0,
+    "flat_recall_mean": 0.5556,
+    "flat_top1_recall_mean": 0.3333,
+    "prior_recall_mean": 0.0,
+    "mean_ops_per_task": 0,
+    "candidate_similarity": {
+      "n": 0,
+      "min": null,
+      "max": null,
+      "mean": null,
+      "median": null
+    },
+    "by_threshold": {
+      "0.3": {
+        "partc_recall_mean": 0.0,
+        "pipeline_recall_mean": 0.0,
+        "false_components_mean": 0,
+        "pipeline_recovered_all": 0,
+        "flat_recovered_all": 0,
+        "mcnemar_p": 1.0,
+        "wilcoxon_p": 0.25
+      },
+      "0.35": {
+        "partc_recall_mean": 0.0,
+        "pipeline_recall_mean": 0.0,
+        "false_components_mean": 0,
+        "pipeline_recovered_all": 0,
+        "flat_recovered_all": 0,
+        "mcnemar_p": 1.0,
+        "wilcoxon_p": 0.25
+      },
+      "0.4": {
+        "partc_recall_mean": 0.0,
+        "pipeline_recall_mean": 0.0,
+        "false_components_mean": 0,
+        "pipeline_recovered_all": 0,
+        "flat_recovered_all": 0,
+        "mcnemar_p": 1.0,
+        "wilcoxon_p": 0.25
+      },
+      "0.45": {
+        "partc_recall_mean": 0.0,
+        "pipeline_recall_mean": 0.0,
+        "false_components_mean": 0,
+        "pipeline_recovered_all": 0,
+        "flat_recovered_all": 0,
+        "mcnemar_p": 1.0,
+        "wilcoxon_p": 0.25
+      },
+      "0.5": {
+        "partc_recall_mean": 0.0,
+        "pipeline_recall_mean": 0.0,
+        "false_components_mean": 0,
+        "pipeline_recovered_all": 0,
+        "flat_recovered_all": 0,
+        "mcnemar_p": 1.0,
+        "wilcoxon_p": 0.25
+      },
+      "0.55": {
+        "partc_recall_mean": 0.0,
+        "pipeline_recall_mean": 0.0,
+        "false_components_mean": 0,
+        "pipeline_recovered_all": 0,
+        "flat_recovered_all": 0,
+        "mcnemar_p": 1.0,
+        "wilcoxon_p": 0.25
+      },
+      "0.6": {
+        "partc_recall_mean": 0.0,
+        "pipeline_recall_mean": 0.0,
+        "false_components_mean": 0,
+        "pipeline_recovered_all": 0,
+        "flat_recovered_all": 0,
+        "mcnemar_p": 1.0,
+        "wilcoxon_p": 0.25
+      },
+      "0.65": {
+        "partc_recall_mean": 0.0,
+        "pipeline_recall_mean": 0.0,
+        "false_components_mean": 0,
+        "pipeline_recovered_all": 0,
+        "flat_recovered_all": 0,
+        "mcnemar_p": 1.0,
+        "wilcoxon_p": 0.25
+      },
+      "0.7": {
+        "partc_recall_mean": 0.0,
+        "pipeline_recall_mean": 0.0,
+        "false_components_mean": 0,
+        "pipeline_recovered_all": 0,
+        "flat_recovered_all": 0,
+        "mcnemar_p": 1.0,
+        "wilcoxon_p": 0.25
+      },
+      "0.75": {
+        "partc_recall_mean": 0.0,
+        "pipeline_recall_mean": 0.0,
+        "false_components_mean": 0,
+        "pipeline_recovered_all": 0,
+        "flat_recovered_all": 0,
+        "mcnemar_p": 1.0,
+        "wilcoxon_p": 0.25
+      },
+      "0.8": {
+        "partc_recall_mean": 0.0,
+        "pipeline_recall_mean": 0.0,
+        "false_components_mean": 0,
+        "pipeline_recovered_all": 0,
+        "flat_recovered_all": 0,
+        "mcnemar_p": 1.0,
+        "wilcoxon_p": 0.25
+      },
+      "0.85": {
+        "partc_recall_mean": 0.0,
+        "pipeline_recall_mean": 0.0,
+        "false_components_mean": 0,
+        "pipeline_recovered_all": 0,
+        "flat_recovered_all": 0,
+        "mcnemar_p": 1.0,
+        "wilcoxon_p": 0.25
+      },
+      "0.9": {
+        "partc_recall_mean": 0.0,
+        "pipeline_recall_mean": 0.0,
+        "false_components_mean": 0,
+        "pipeline_recovered_all": 0,
+        "flat_recovered_all": 0,
+        "mcnemar_p": 1.0,
+        "wilcoxon_p": 0.25
+      },
+      "0.95": {
+        "partc_recall_mean": 0.0,
+        "pipeline_recall_mean": 0.0,
+        "false_components_mean": 0,
+        "pipeline_recovered_all": 0,
+        "flat_recovered_all": 0,
+        "mcnemar_p": 1.0,
+        "wilcoxon_p": 0.25
+      }
+    }
+  },
+  "rows": [
+    {
+      "task_id": "hard-de-partner-feed-rulebook",
+      "role": "de",
+      "gold": [
+        "statistics",
+        "validation",
+        "xlsx"
+      ],
+      "n_gold": 3,
+      "n_ops": 0,
+      "feasible": false,
+      "prior_reuse": [],
+      "prior_recall": 0.0,
+      "flat_topk": [
+        "validation",
+        "xlsx",
+        "pipelines"
+      ],
+      "flat_recall": 0.6666666666666666,
+      "flat_top1_recall": 0.3333333333333333,
+      "candidate_similarities": [],
+      "candidate_methods": [],
+      "per_threshold": {
+        "0.3": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.35": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.4": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.45": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.5": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.55": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.6": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.65": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.7": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.75": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.8": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.85": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.9": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.95": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        }
+      },
+      "seconds": 2.2
+    },
+    {
+      "task_id": "hard-de-schema-contract-migration",
+      "role": "de",
+      "gold": [
+        "migrations",
+        "sql",
+        "validation"
+      ],
+      "n_gold": 3,
+      "n_ops": 0,
+      "feasible": false,
+      "prior_reuse": [],
+      "prior_recall": 0.0,
+      "flat_topk": [
+        "migrations",
+        "pipelines",
+        "transactions"
+      ],
+      "flat_recall": 0.3333333333333333,
+      "flat_top1_recall": 0.3333333333333333,
+      "candidate_similarities": [],
+      "candidate_methods": [],
+      "per_threshold": {
+        "0.3": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.35": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.4": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.45": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.5": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.55": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.6": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.65": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.7": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.75": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.8": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.85": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.9": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.95": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        }
+      },
+      "seconds": 2.2
+    },
+    {
+      "task_id": "hard-de-incremental-api-ingest",
+      "role": "de",
+      "gold": [
+        "api",
+        "configs",
+        "pipelines"
+      ],
+      "n_gold": 3,
+      "n_ops": 0,
+      "feasible": false,
+      "prior_reuse": [],
+      "prior_recall": 0.0,
+      "flat_topk": [
+        "pipelines",
+        "api",
+        "rag"
+      ],
+      "flat_recall": 0.6666666666666666,
+      "flat_top1_recall": 0.3333333333333333,
+      "candidate_similarities": [],
+      "candidate_methods": [],
+      "per_threshold": {
+        "0.3": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.35": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.4": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.45": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.5": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.55": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.6": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.65": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.7": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.75": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.8": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.85": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.9": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.95": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        }
+      },
+      "seconds": 0.4
+    }
+  ],
+  "wall_seconds": 2.6,
+  "embedder": {
+    "api_calls": 0,
+    "cache_hits": 6,
+    "cache_size": 341
+  }
+}

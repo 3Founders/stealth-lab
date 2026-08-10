@@ -1,0 +1,20 @@
+{
+  "n_total": 6,
+  "n_usable": 0,
+  "n_excluded_gold": 0,
+  "arms": {
+    "htn_memory": {
+      "resolved": 0,
+      "rate": null,
+      "tokens": 0,
+      "no_patch": 0,
+      "mean_tool_calls": null
+    }
+  },
+  "pairwise": {},
+  "mean_max_copyable_fraction": null,
+  "instances_with_any_copyable_line": 0,
+  "mean_file_recall": null,
+  "mean_dir_recall": null,
+  "htn": null
+}

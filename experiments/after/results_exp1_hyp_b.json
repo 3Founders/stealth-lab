@@ -1,0 +1,4908 @@
+{
+  "summary": {
+    "n_tasks": 40,
+    "n_errors": 0,
+    "flat_recall_mean": 0.6667,
+    "flat_top1_recall_mean": 0.375,
+    "prior_recall_mean": 0.0458,
+    "mean_ops_per_task": 5.45,
+    "candidate_similarity": {
+      "n": 101,
+      "min": 0.3072,
+      "max": 0.8213,
+      "mean": 0.4737,
+      "median": 0.4533
+    },
+    "by_threshold": {
+      "0.3": {
+        "partc_recall_mean": 0.1458,
+        "pipeline_recall_mean": 0.1458,
+        "false_components_mean": 0.7,
+        "pipeline_recovered_all": 2,
+        "flat_recovered_all": 13,
+        "mcnemar_p": 0.007385,
+        "wilcoxon_p": 1e-06
+      },
+      "0.35": {
+        "partc_recall_mean": 0.1458,
+        "pipeline_recall_mean": 0.1458,
+        "false_components_mean": 0.675,
+        "pipeline_recovered_all": 2,
+        "flat_recovered_all": 13,
+        "mcnemar_p": 0.007385,
+        "wilcoxon_p": 1e-06
+      },
+      "0.4": {
+        "partc_recall_mean": 0.1333,
+        "pipeline_recall_mean": 0.1333,
+        "false_components_mean": 0.475,
+        "pipeline_recovered_all": 2,
+        "flat_recovered_all": 13,
+        "mcnemar_p": 0.007385,
+        "wilcoxon_p": 1e-06
+      },
+      "0.45": {
+        "partc_recall_mean": 0.1208,
+        "pipeline_recall_mean": 0.1208,
+        "false_components_mean": 0.2,
+        "pipeline_recovered_all": 1,
+        "flat_recovered_all": 13,
+        "mcnemar_p": 0.001831,
+        "wilcoxon_p": 0.0
+      },
+      "0.5": {
+        "partc_recall_mean": 0.0792,
+        "pipeline_recall_mean": 0.0792,
+        "false_components_mean": 0.1,
+        "pipeline_recovered_all": 1,
+        "flat_recovered_all": 13,
+        "mcnemar_p": 0.001831,
+        "wilcoxon_p": 0.0
+      },
+      "0.55": {
+        "partc_recall_mean": 0.0708,
+        "pipeline_recall_mean": 0.0708,
+        "false_components_mean": 0.05,
+        "pipeline_recovered_all": 1,
+        "flat_recovered_all": 13,
+        "mcnemar_p": 0.001831,
+        "wilcoxon_p": 0.0
+      },
+      "0.6": {
+        "partc_recall_mean": 0.0375,
+        "pipeline_recall_mean": 0.0458,
+        "false_components_mean": 0.025,
+        "pipeline_recovered_all": 0,
+        "flat_recovered_all": 13,
+        "mcnemar_p": 0.000244,
+        "wilcoxon_p": 0.0
+      },
+      "0.65": {
+        "partc_recall_mean": 0.0375,
+        "pipeline_recall_mean": 0.0458,
+        "false_components_mean": 0,
+        "pipeline_recovered_all": 0,
+        "flat_recovered_all": 13,
+        "mcnemar_p": 0.000244,
+        "wilcoxon_p": 0.0
+      },
+      "0.7": {
+        "partc_recall_mean": 0.0292,
+        "pipeline_recall_mean": 0.0458,
+        "false_components_mean": 0,
+        "pipeline_recovered_all": 0,
+        "flat_recovered_all": 13,
+        "mcnemar_p": 0.000244,
+        "wilcoxon_p": 0.0
+      },
+      "0.75": {
+        "partc_recall_mean": 0.0208,
+        "pipeline_recall_mean": 0.0458,
+        "false_components_mean": 0,
+        "pipeline_recovered_all": 0,
+        "flat_recovered_all": 13,
+        "mcnemar_p": 0.000244,
+        "wilcoxon_p": 0.0
+      },
+      "0.8": {
+        "partc_recall_mean": 0.0125,
+        "pipeline_recall_mean": 0.0458,
+        "false_components_mean": 0,
+        "pipeline_recovered_all": 0,
+        "flat_recovered_all": 13,
+        "mcnemar_p": 0.000244,
+        "wilcoxon_p": 0.0
+      },
+      "0.85": {
+        "partc_recall_mean": 0.0,
+        "pipeline_recall_mean": 0.0458,
+        "false_components_mean": 0,
+        "pipeline_recovered_all": 0,
+        "flat_recovered_all": 13,
+        "mcnemar_p": 0.000244,
+        "wilcoxon_p": 0.0
+      },
+      "0.9": {
+        "partc_recall_mean": 0.0,
+        "pipeline_recall_mean": 0.0458,
+        "false_components_mean": 0,
+        "pipeline_recovered_all": 0,
+        "flat_recovered_all": 13,
+        "mcnemar_p": 0.000244,
+        "wilcoxon_p": 0.0
+      },
+      "0.95": {
+        "partc_recall_mean": 0.0,
+        "pipeline_recall_mean": 0.0458,
+        "false_components_mean": 0,
+        "pipeline_recovered_all": 0,
+        "flat_recovered_all": 13,
+        "mcnemar_p": 0.000244,
+        "wilcoxon_p": 0.0
+      }
+    }
+  },
+  "rows": [
+    {
+      "task_id": "hard-ds-stratified-experiment-audit",
+      "role": "ds",
+      "gold": [
+        "statistics",
+        "validation",
+        "xlsx"
+      ],
+      "n_gold": 3,
+      "n_ops": 0,
+      "feasible": false,
+      "prior_reuse": [],
+      "prior_recall": 0.0,
+      "flat_topk": [
+        "validation",
+        "model_training",
+        "factchecking"
+      ],
+      "flat_recall": 0.3333333333333333,
+      "flat_top1_recall": 0.3333333333333333,
+      "candidate_similarities": [],
+      "candidate_methods": [],
+      "per_threshold": {
+        "0.3": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.35": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.4": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.45": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.5": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.55": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.6": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.65": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.7": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.75": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.8": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.85": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.9": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.95": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        }
+      },
+      "seconds": 22.3
+    },
+    {
+      "task_id": "ab-test-validation",
+      "role": "ds",
+      "gold": [
+        "statistics",
+        "testing"
+      ],
+      "n_gold": 2,
+      "n_ops": 0,
+      "feasible": false,
+      "prior_reuse": [],
+      "prior_recall": 0.0,
+      "flat_topk": [
+        "statistics",
+        "validation"
+      ],
+      "flat_recall": 0.5,
+      "flat_top1_recall": 0.5,
+      "candidate_similarities": [],
+      "candidate_methods": [],
+      "per_threshold": {
+        "0.3": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.35": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.4": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.45": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.5": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.55": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.6": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.65": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.7": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.75": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.8": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.85": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.9": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.95": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        }
+      },
+      "seconds": 22.4
+    },
+    {
+      "task_id": "deepset-ai-haystack-3546-a260299",
+      "role": "genai",
+      "gold": [
+        "evaluation",
+        "rag"
+      ],
+      "n_gold": 2,
+      "n_ops": 0,
+      "feasible": false,
+      "prior_reuse": [],
+      "prior_recall": 0.0,
+      "flat_topk": [
+        "rag",
+        "evaluation"
+      ],
+      "flat_recall": 1.0,
+      "flat_top1_recall": 0.5,
+      "candidate_similarities": [],
+      "candidate_methods": [],
+      "per_threshold": {
+        "0.3": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.35": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.4": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.45": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.5": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.55": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.6": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.65": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.7": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.75": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.8": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.85": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.9": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.95": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        }
+      },
+      "seconds": 1.5
+    },
+    {
+      "task_id": "hard-genai-prompt-policy-eval-pack",
+      "role": "genai",
+      "gold": [
+        "docx",
+        "evaluation",
+        "prompting"
+      ],
+      "n_gold": 3,
+      "n_ops": 0,
+      "feasible": false,
+      "prior_reuse": [],
+      "prior_recall": 0.0,
+      "flat_topk": [
+        "factchecking",
+        "prompting",
+        "evaluation"
+      ],
+      "flat_recall": 0.6666666666666666,
+      "flat_top1_recall": 0.0,
+      "candidate_similarities": [],
+      "candidate_methods": [],
+      "per_threshold": {
+        "0.3": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.35": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.4": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.45": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.5": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.55": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.6": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.65": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.7": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.75": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.8": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.85": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.9": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.95": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        }
+      },
+      "seconds": 2.9
+    },
+    {
+      "task_id": "yaml-type-coercion-fix",
+      "role": "infra",
+      "gold": [
+        "configs",
+        "debugging"
+      ],
+      "n_gold": 2,
+      "n_ops": 0,
+      "feasible": false,
+      "prior_reuse": [],
+      "prior_recall": 0.0,
+      "flat_topk": [
+        "configs",
+        "debugging"
+      ],
+      "flat_recall": 1.0,
+      "flat_top1_recall": 0.5,
+      "candidate_similarities": [],
+      "candidate_methods": [],
+      "per_threshold": {
+        "0.3": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.35": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.4": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.45": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.5": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.55": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.6": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.65": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.7": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.75": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.8": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.85": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.9": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.95": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        }
+      },
+      "seconds": 5.5
+    },
+    {
+      "task_id": "hierarchical-ranking-analysis",
+      "role": "de",
+      "gold": [
+        "sql",
+        "statistics"
+      ],
+      "n_gold": 2,
+      "n_ops": 22,
+      "feasible": true,
+      "prior_reuse": [
+        "Group: statistics, Group: docx, factchecking, pdf (+2 more), Group: sql, transactions"
+      ],
+      "prior_recall": 0.0,
+      "flat_topk": [
+        "sql",
+        "statistics"
+      ],
+      "flat_recall": 1.0,
+      "flat_top1_recall": 0.5,
+      "candidate_similarities": [
+        0.4908,
+        0.4858,
+        0.4768,
+        0.4701,
+        0.4189,
+        0.4181,
+        0.4138,
+        0.3723,
+        0.3086
+      ],
+      "candidate_methods": [
+        "tree"
+      ],
+      "per_threshold": {
+        "0.3": {
+          "partc_recall": 0.5,
+          "pipeline_recall": 0.5,
+          "false_components": 4,
+          "matched": [
+            "api",
+            "evaluation",
+            "model_training",
+            "sql",
+            "validation"
+          ]
+        },
+        "0.35": {
+          "partc_recall": 0.5,
+          "pipeline_recall": 0.5,
+          "false_components": 4,
+          "matched": [
+            "api",
+            "evaluation",
+            "model_training",
+            "sql",
+            "validation"
+          ]
+        },
+        "0.4": {
+          "partc_recall": 0.5,
+          "pipeline_recall": 0.5,
+          "false_components": 3,
+          "matched": [
+            "evaluation",
+            "model_training",
+            "sql",
+            "validation"
+          ]
+        },
+        "0.45": {
+          "partc_recall": 0.5,
+          "pipeline_recall": 0.5,
+          "false_components": 0,
+          "matched": [
+            "sql"
+          ]
+        },
+        "0.5": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.55": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.6": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.65": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.7": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.75": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.8": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.85": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.9": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.95": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        }
+      },
+      "seconds": 37.8
+    },
+    {
+      "task_id": "hard-swe-api-version-bridge",
+      "role": "swe",
+      "gold": [
+        "api",
+        "migrations",
+        "testing"
+      ],
+      "n_gold": 3,
+      "n_ops": 0,
+      "feasible": false,
+      "prior_reuse": [],
+      "prior_recall": 0.0,
+      "flat_topk": [
+        "api",
+        "debugging",
+        "rag"
+      ],
+      "flat_recall": 0.3333333333333333,
+      "flat_top1_recall": 0.3333333333333333,
+      "candidate_similarities": [],
+      "candidate_methods": [],
+      "per_threshold": {
+        "0.3": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.35": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.4": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.45": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.5": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.55": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.6": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.65": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.7": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.75": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.8": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.85": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.9": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.95": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        }
+      },
+      "seconds": 7.1
+    },
+    {
+      "task_id": "kubernetes-manifest-repair-3",
+      "role": "swe",
+      "gold": [
+        "configs",
+        "validation"
+      ],
+      "n_gold": 2,
+      "n_ops": 0,
+      "feasible": false,
+      "prior_reuse": [],
+      "prior_recall": 0.0,
+      "flat_topk": [
+        "configs",
+        "containers"
+      ],
+      "flat_recall": 0.5,
+      "flat_top1_recall": 0.5,
+      "candidate_similarities": [],
+      "candidate_methods": [],
+      "per_threshold": {
+        "0.3": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.35": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.4": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.45": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.5": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.55": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.6": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.65": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.7": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.75": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.8": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.85": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.9": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.95": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        }
+      },
+      "seconds": 1.9
+    },
+    {
+      "task_id": "jsonl-schema-validation",
+      "role": "de",
+      "gold": [
+        "api",
+        "validation"
+      ],
+      "n_gold": 2,
+      "n_ops": 0,
+      "feasible": false,
+      "prior_reuse": [],
+      "prior_recall": 0.0,
+      "flat_topk": [
+        "validation",
+        "api"
+      ],
+      "flat_recall": 1.0,
+      "flat_top1_recall": 0.5,
+      "candidate_similarities": [],
+      "candidate_methods": [],
+      "per_threshold": {
+        "0.3": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.35": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.4": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.45": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.5": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.55": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.6": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.65": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.7": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.75": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.8": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.85": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.9": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.95": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        }
+      },
+      "seconds": 1.5
+    },
+    {
+      "task_id": "hard-ds-leakage-resistant-readmission-model",
+      "role": "ds",
+      "gold": [
+        "model_training",
+        "pipelines",
+        "validation"
+      ],
+      "n_gold": 3,
+      "n_ops": 0,
+      "feasible": false,
+      "prior_reuse": [],
+      "prior_recall": 0.0,
+      "flat_topk": [
+        "pipelines",
+        "model_training",
+        "transactions"
+      ],
+      "flat_recall": 0.6666666666666666,
+      "flat_top1_recall": 0.3333333333333333,
+      "candidate_similarities": [],
+      "candidate_methods": [],
+      "per_threshold": {
+        "0.3": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.35": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.4": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.45": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.5": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.55": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.6": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.65": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.7": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.75": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.8": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.85": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.9": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.95": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        }
+      },
+      "seconds": 1.4
+    },
+    {
+      "task_id": "inventory-reconciliation-validation",
+      "role": "ds",
+      "gold": [
+        "sql",
+        "validation"
+      ],
+      "n_gold": 2,
+      "n_ops": 0,
+      "feasible": false,
+      "prior_reuse": [],
+      "prior_recall": 0.0,
+      "flat_topk": [
+        "validation",
+        "transactions"
+      ],
+      "flat_recall": 0.5,
+      "flat_top1_recall": 0.5,
+      "candidate_similarities": [],
+      "candidate_methods": [],
+      "per_threshold": {
+        "0.3": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.35": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.4": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.45": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.5": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.55": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.6": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.65": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.7": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.75": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.8": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.85": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.9": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.95": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        }
+      },
+      "seconds": 2.9
+    },
+    {
+      "task_id": "adaptive-cruise-control",
+      "role": "infra",
+      "gold": [
+        "configs",
+        "pipelines"
+      ],
+      "n_gold": 2,
+      "n_ops": 13,
+      "feasible": true,
+      "prior_reuse": [],
+      "prior_recall": 0.0,
+      "flat_topk": [
+        "model_training",
+        "rag"
+      ],
+      "flat_recall": 0.0,
+      "flat_top1_recall": 0.0,
+      "candidate_similarities": [
+        0.5122,
+        0.4985,
+        0.4341,
+        0.4302,
+        0.3827,
+        0.3713,
+        0.3632
+      ],
+      "candidate_methods": [
+        "tree"
+      ],
+      "per_threshold": {
+        "0.3": {
+          "partc_recall": 0.5,
+          "pipeline_recall": 0.5,
+          "false_components": 4,
+          "matched": [
+            "api",
+            "configs",
+            "evaluation",
+            "model_training",
+            "rag"
+          ]
+        },
+        "0.35": {
+          "partc_recall": 0.5,
+          "pipeline_recall": 0.5,
+          "false_components": 4,
+          "matched": [
+            "api",
+            "configs",
+            "evaluation",
+            "model_training",
+            "rag"
+          ]
+        },
+        "0.4": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 2,
+          "matched": [
+            "model_training",
+            "rag"
+          ]
+        },
+        "0.45": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 1,
+          "matched": [
+            "model_training"
+          ]
+        },
+        "0.5": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 1,
+          "matched": [
+            "model_training"
+          ]
+        },
+        "0.55": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.6": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.65": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.7": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.75": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.8": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.85": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.9": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.95": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        }
+      },
+      "seconds": 36.6
+    },
+    {
+      "task_id": "deepset-ai-haystack-92-accd8b1",
+      "role": "genai",
+      "gold": [
+        "evaluation",
+        "rag"
+      ],
+      "n_gold": 2,
+      "n_ops": 0,
+      "feasible": false,
+      "prior_reuse": [],
+      "prior_recall": 0.0,
+      "flat_topk": [
+        "rag",
+        "evaluation"
+      ],
+      "flat_recall": 1.0,
+      "flat_top1_recall": 0.5,
+      "candidate_similarities": [],
+      "candidate_methods": [],
+      "per_threshold": {
+        "0.3": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.35": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.4": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.45": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.5": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.55": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.6": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.65": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.7": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.75": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.8": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.85": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.9": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.95": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        }
+      },
+      "seconds": 9.4
+    },
+    {
+      "task_id": "hard-pm-vendor-proposal-scorecard",
+      "role": "pm",
+      "gold": [
+        "docx",
+        "evaluation",
+        "xlsx"
+      ],
+      "n_gold": 3,
+      "n_ops": 36,
+      "feasible": true,
+      "prior_reuse": [
+        "Group: Group: terraform, Group: containers, Group: api, configs, debugging (+1 more), Group: evaluation, model_training, pipelines (+1 more), Group: testing, Group: statistics, Group: docx, factchecking, pdf (+2 more), Group: sql, transactions, Group: xlsx, Group: migrations, refactoring",
+        "Group: docx, factchecking, pdf (+2 more)",
+        "Group: evaluation, model_training, pipelines (+1 more)",
+        "Group: testing, Group: statistics, Group: docx, factchecking, pdf (+2 more), Group: sql, transactions, Group: xlsx, Group: migrations, refactoring"
+      ],
+      "prior_recall": 0.0,
+      "flat_topk": [
+        "factchecking",
+        "evaluation",
+        "prompting"
+      ],
+      "flat_recall": 0.3333333333333333,
+      "flat_top1_recall": 0.0,
+      "candidate_similarities": [
+        0.529,
+        0.5053,
+        0.4781,
+        0.4747,
+        0.462,
+        0.4533,
+        0.4503,
+        0.445,
+        0.4413,
+        0.4286,
+        0.4259,
+        0.4101,
+        0.3963,
+        0.3616
+      ],
+      "candidate_methods": [
+        "tree"
+      ],
+      "per_threshold": {
+        "0.3": {
+          "partc_recall": 0.6666666666666666,
+          "pipeline_recall": 0.6666666666666666,
+          "false_components": 5,
+          "matched": [
+            "docx",
+            "evaluation",
+            "factchecking",
+            "pptx",
+            "prompting",
+            "rag",
+            "validation"
+          ]
+        },
+        "0.35": {
+          "partc_recall": 0.6666666666666666,
+          "pipeline_recall": 0.6666666666666666,
+          "false_components": 5,
+          "matched": [
+            "docx",
+            "evaluation",
+            "factchecking",
+            "pptx",
+            "prompting",
+            "rag",
+            "validation"
+          ]
+        },
+        "0.4": {
+          "partc_recall": 0.6666666666666666,
+          "pipeline_recall": 0.6666666666666666,
+          "false_components": 5,
+          "matched": [
+            "docx",
+            "evaluation",
+            "factchecking",
+            "pptx",
+            "prompting",
+            "rag",
+            "validation"
+          ]
+        },
+        "0.45": {
+          "partc_recall": 0.6666666666666666,
+          "pipeline_recall": 0.6666666666666666,
+          "false_components": 2,
+          "matched": [
+            "docx",
+            "evaluation",
+            "factchecking",
+            "rag"
+          ]
+        },
+        "0.5": {
+          "partc_recall": 0.3333333333333333,
+          "pipeline_recall": 0.3333333333333333,
+          "false_components": 1,
+          "matched": [
+            "evaluation",
+            "rag"
+          ]
+        },
+        "0.55": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.6": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.65": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.7": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.75": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.8": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.85": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.9": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.95": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        }
+      },
+      "seconds": 32.4
+    },
+    {
+      "task_id": "formula-audit-tool",
+      "role": "infra",
+      "gold": [
+        "configs",
+        "xlsx"
+      ],
+      "n_gold": 2,
+      "n_ops": 0,
+      "feasible": false,
+      "prior_reuse": [],
+      "prior_recall": 0.0,
+      "flat_topk": [
+        "xlsx",
+        "validation"
+      ],
+      "flat_recall": 0.5,
+      "flat_top1_recall": 0.5,
+      "candidate_similarities": [],
+      "candidate_methods": [],
+      "per_threshold": {
+        "0.3": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.35": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.4": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.45": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.5": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.55": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.6": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.65": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.7": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.75": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.8": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.85": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.9": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.95": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        }
+      },
+      "seconds": 3.9
+    },
+    {
+      "task_id": "acroform-field-validation",
+      "role": "pm",
+      "gold": [
+        "pdf",
+        "validation"
+      ],
+      "n_gold": 2,
+      "n_ops": 0,
+      "feasible": false,
+      "prior_reuse": [],
+      "prior_recall": 0.0,
+      "flat_topk": [
+        "pdf",
+        "validation"
+      ],
+      "flat_recall": 1.0,
+      "flat_top1_recall": 0.5,
+      "candidate_similarities": [],
+      "candidate_methods": [],
+      "per_threshold": {
+        "0.3": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.35": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.4": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.45": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.5": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.55": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.6": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.65": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.7": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.75": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.8": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.85": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.9": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.95": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        }
+      },
+      "seconds": 2.8
+    },
+    {
+      "task_id": "reconcile-presentation-to-excel",
+      "role": "pm",
+      "gold": [
+        "pptx",
+        "xlsx"
+      ],
+      "n_gold": 2,
+      "n_ops": 0,
+      "feasible": false,
+      "prior_reuse": [],
+      "prior_recall": 0.0,
+      "flat_topk": [
+        "pptx",
+        "xlsx"
+      ],
+      "flat_recall": 1.0,
+      "flat_top1_recall": 0.5,
+      "candidate_similarities": [],
+      "candidate_methods": [],
+      "per_threshold": {
+        "0.3": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.35": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.4": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.45": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.5": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.55": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.6": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.65": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.7": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.75": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.8": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.85": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.9": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.95": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        }
+      },
+      "seconds": 1.7
+    },
+    {
+      "task_id": "hard-swe-layered-config-debug",
+      "role": "swe",
+      "gold": [
+        "configs",
+        "debugging",
+        "validation"
+      ],
+      "n_gold": 3,
+      "n_ops": 0,
+      "feasible": false,
+      "prior_reuse": [],
+      "prior_recall": 0.0,
+      "flat_topk": [
+        "configs",
+        "debugging",
+        "api"
+      ],
+      "flat_recall": 0.6666666666666666,
+      "flat_top1_recall": 0.3333333333333333,
+      "candidate_similarities": [],
+      "candidate_methods": [],
+      "per_threshold": {
+        "0.3": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.35": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.4": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.45": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.5": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.55": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.6": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.65": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.7": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.75": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.8": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.85": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.9": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.95": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        }
+      },
+      "seconds": 3.1
+    },
+    {
+      "task_id": "hard-de-schema-contract-migration",
+      "role": "de",
+      "gold": [
+        "migrations",
+        "sql",
+        "validation"
+      ],
+      "n_gold": 3,
+      "n_ops": 0,
+      "feasible": false,
+      "prior_reuse": [],
+      "prior_recall": 0.0,
+      "flat_topk": [
+        "migrations",
+        "pipelines",
+        "transactions"
+      ],
+      "flat_recall": 0.3333333333333333,
+      "flat_top1_recall": 0.3333333333333333,
+      "candidate_similarities": [],
+      "candidate_methods": [],
+      "per_threshold": {
+        "0.3": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.35": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.4": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.45": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.5": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.55": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.6": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.65": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.7": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.75": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.8": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.85": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.9": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.95": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        }
+      },
+      "seconds": 3.4
+    },
+    {
+      "task_id": "hard-de-partner-feed-rulebook",
+      "role": "de",
+      "gold": [
+        "statistics",
+        "validation",
+        "xlsx"
+      ],
+      "n_gold": 3,
+      "n_ops": 0,
+      "feasible": false,
+      "prior_reuse": [],
+      "prior_recall": 0.0,
+      "flat_topk": [
+        "validation",
+        "xlsx",
+        "pipelines"
+      ],
+      "flat_recall": 0.6666666666666666,
+      "flat_top1_recall": 0.3333333333333333,
+      "candidate_similarities": [],
+      "candidate_methods": [],
+      "per_threshold": {
+        "0.3": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.35": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.4": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.45": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.5": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.55": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.6": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.65": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.7": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.75": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.8": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.85": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.9": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.95": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        }
+      },
+      "seconds": 5.5
+    },
+    {
+      "task_id": "sales-pivot-analysis",
+      "role": "de",
+      "gold": [
+        "pipelines",
+        "xlsx"
+      ],
+      "n_gold": 2,
+      "n_ops": 0,
+      "feasible": false,
+      "prior_reuse": [],
+      "prior_recall": 0.0,
+      "flat_topk": [
+        "xlsx",
+        "pptx"
+      ],
+      "flat_recall": 0.5,
+      "flat_top1_recall": 0.5,
+      "candidate_similarities": [],
+      "candidate_methods": [],
+      "per_threshold": {
+        "0.3": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.35": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.4": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.45": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.5": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.55": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.6": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.65": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.7": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.75": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.8": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.85": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.9": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.95": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        }
+      },
+      "seconds": 5.7
+    },
+    {
+      "task_id": "template-filler-validation",
+      "role": "swe",
+      "gold": [
+        "docx",
+        "testing"
+      ],
+      "n_gold": 2,
+      "n_ops": 26,
+      "feasible": true,
+      "prior_reuse": [
+        "Group: docx, factchecking, pdf (+2 more)",
+        "docx"
+      ],
+      "prior_recall": 0.5,
+      "flat_topk": [
+        "docx",
+        "pptx"
+      ],
+      "flat_recall": 0.5,
+      "flat_top1_recall": 0.5,
+      "candidate_similarities": [
+        0.8213,
+        0.6647,
+        0.6122,
+        0.5947,
+        0.5643,
+        0.5567,
+        0.5327,
+        0.5198,
+        0.503,
+        0.4422,
+        0.4321,
+        0.4241,
+        0.4214,
+        0.4126,
+        0.3897
+      ],
+      "candidate_methods": [
+        "tree"
+      ],
+      "per_threshold": {
+        "0.3": {
+          "partc_recall": 0.5,
+          "pipeline_recall": 0.5,
+          "false_components": 1,
+          "matched": [
+            "debugging",
+            "docx"
+          ]
+        },
+        "0.35": {
+          "partc_recall": 0.5,
+          "pipeline_recall": 0.5,
+          "false_components": 1,
+          "matched": [
+            "debugging",
+            "docx"
+          ]
+        },
+        "0.4": {
+          "partc_recall": 0.5,
+          "pipeline_recall": 0.5,
+          "false_components": 1,
+          "matched": [
+            "debugging",
+            "docx"
+          ]
+        },
+        "0.45": {
+          "partc_recall": 0.5,
+          "pipeline_recall": 0.5,
+          "false_components": 0,
+          "matched": [
+            "docx"
+          ]
+        },
+        "0.5": {
+          "partc_recall": 0.5,
+          "pipeline_recall": 0.5,
+          "false_components": 0,
+          "matched": [
+            "docx"
+          ]
+        },
+        "0.55": {
+          "partc_recall": 0.5,
+          "pipeline_recall": 0.5,
+          "false_components": 0,
+          "matched": [
+            "docx"
+          ]
+        },
+        "0.6": {
+          "partc_recall": 0.5,
+          "pipeline_recall": 0.5,
+          "false_components": 0,
+          "matched": [
+            "docx"
+          ]
+        },
+        "0.65": {
+          "partc_recall": 0.5,
+          "pipeline_recall": 0.5,
+          "false_components": 0,
+          "matched": [
+            "docx"
+          ]
+        },
+        "0.7": {
+          "partc_recall": 0.5,
+          "pipeline_recall": 0.5,
+          "false_components": 0,
+          "matched": [
+            "docx"
+          ]
+        },
+        "0.75": {
+          "partc_recall": 0.5,
+          "pipeline_recall": 0.5,
+          "false_components": 0,
+          "matched": [
+            "docx"
+          ]
+        },
+        "0.8": {
+          "partc_recall": 0.5,
+          "pipeline_recall": 0.5,
+          "false_components": 0,
+          "matched": [
+            "docx"
+          ]
+        },
+        "0.85": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.5,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.9": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.5,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.95": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.5,
+          "false_components": 0,
+          "matched": []
+        }
+      },
+      "seconds": 32.1
+    },
+    {
+      "task_id": "hard-mlflow-genai-scorers",
+      "role": "genai",
+      "gold": [
+        "api",
+        "evaluation"
+      ],
+      "n_gold": 2,
+      "n_ops": 11,
+      "feasible": true,
+      "prior_reuse": [
+        "Group: evaluation, model_training, pipelines (+1 more)"
+      ],
+      "prior_recall": 0.0,
+      "flat_topk": [
+        "evaluation",
+        "model_training"
+      ],
+      "flat_recall": 0.5,
+      "flat_top1_recall": 0.5,
+      "candidate_similarities": [
+        0.6049,
+        0.5251,
+        0.4583,
+        0.441,
+        0.375,
+        0.3591
+      ],
+      "candidate_methods": [
+        "tree"
+      ],
+      "per_threshold": {
+        "0.3": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 4,
+          "matched": [
+            "configs",
+            "debugging",
+            "factchecking",
+            "model_training"
+          ]
+        },
+        "0.35": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 4,
+          "matched": [
+            "configs",
+            "debugging",
+            "factchecking",
+            "model_training"
+          ]
+        },
+        "0.4": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 2,
+          "matched": [
+            "factchecking",
+            "model_training"
+          ]
+        },
+        "0.45": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 1,
+          "matched": [
+            "model_training"
+          ]
+        },
+        "0.5": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 1,
+          "matched": [
+            "model_training"
+          ]
+        },
+        "0.55": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 1,
+          "matched": [
+            "model_training"
+          ]
+        },
+        "0.6": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 1,
+          "matched": [
+            "model_training"
+          ]
+        },
+        "0.65": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.7": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.75": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.8": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.85": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.9": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.95": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        }
+      },
+      "seconds": 64.0
+    },
+    {
+      "task_id": "multi-series-demand-forecasting",
+      "role": "ds",
+      "gold": [
+        "evaluation",
+        "model_training"
+      ],
+      "n_gold": 2,
+      "n_ops": 27,
+      "feasible": true,
+      "prior_reuse": [],
+      "prior_recall": 0.0,
+      "flat_topk": [
+        "model_training",
+        "transactions"
+      ],
+      "flat_recall": 0.5,
+      "flat_top1_recall": 0.5,
+      "candidate_similarities": [
+        0.4934,
+        0.4837,
+        0.4692,
+        0.4626,
+        0.4532,
+        0.4506,
+        0.4479,
+        0.4324,
+        0.4241,
+        0.4162,
+        0.4076,
+        0.4041
+      ],
+      "candidate_methods": [
+        "tree"
+      ],
+      "per_threshold": {
+        "0.3": {
+          "partc_recall": 1.0,
+          "pipeline_recall": 1.0,
+          "false_components": 1,
+          "matched": [
+            "evaluation",
+            "model_training",
+            "transactions"
+          ]
+        },
+        "0.35": {
+          "partc_recall": 1.0,
+          "pipeline_recall": 1.0,
+          "false_components": 1,
+          "matched": [
+            "evaluation",
+            "model_training",
+            "transactions"
+          ]
+        },
+        "0.4": {
+          "partc_recall": 1.0,
+          "pipeline_recall": 1.0,
+          "false_components": 1,
+          "matched": [
+            "evaluation",
+            "model_training",
+            "transactions"
+          ]
+        },
+        "0.45": {
+          "partc_recall": 0.5,
+          "pipeline_recall": 0.5,
+          "false_components": 1,
+          "matched": [
+            "model_training",
+            "transactions"
+          ]
+        },
+        "0.5": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.55": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.6": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.65": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.7": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.75": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.8": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.85": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.9": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.95": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        }
+      },
+      "seconds": 26.4
+    },
+    {
+      "task_id": "jsonl-dataset-generator",
+      "role": "genai",
+      "gold": [
+        "api",
+        "docx"
+      ],
+      "n_gold": 2,
+      "n_ops": 0,
+      "feasible": false,
+      "prior_reuse": [],
+      "prior_recall": 0.0,
+      "flat_topk": [
+        "docx",
+        "pdf"
+      ],
+      "flat_recall": 0.5,
+      "flat_top1_recall": 0.5,
+      "candidate_similarities": [],
+      "candidate_methods": [],
+      "per_threshold": {
+        "0.3": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.35": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.4": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.45": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.5": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.55": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.6": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.65": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.7": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.75": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.8": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.85": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.9": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.95": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        }
+      },
+      "seconds": 1.5
+    },
+    {
+      "task_id": "hard-minio-runtime-config",
+      "role": "infra",
+      "gold": [
+        "configs",
+        "debugging"
+      ],
+      "n_gold": 2,
+      "n_ops": 0,
+      "feasible": false,
+      "prior_reuse": [],
+      "prior_recall": 0.0,
+      "flat_topk": [
+        "configs",
+        "debugging"
+      ],
+      "flat_recall": 1.0,
+      "flat_top1_recall": 0.5,
+      "candidate_similarities": [],
+      "candidate_methods": [],
+      "per_threshold": {
+        "0.3": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.35": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.4": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.45": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.5": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.55": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.6": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.65": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.7": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.75": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.8": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.85": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.9": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.95": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        }
+      },
+      "seconds": 1.4
+    },
+    {
+      "task_id": "docx-sanitization-pdf-redaction",
+      "role": "genai",
+      "gold": [
+        "docx",
+        "pdf",
+        "pptx"
+      ],
+      "n_gold": 3,
+      "n_ops": 0,
+      "feasible": false,
+      "prior_reuse": [],
+      "prior_recall": 0.0,
+      "flat_topk": [
+        "factchecking",
+        "pptx",
+        "docx"
+      ],
+      "flat_recall": 0.6666666666666666,
+      "flat_top1_recall": 0.0,
+      "candidate_similarities": [],
+      "candidate_methods": [],
+      "per_threshold": {
+        "0.3": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.35": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.4": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.45": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.5": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.55": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.6": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.65": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.7": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.75": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.8": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.85": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.9": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.95": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        }
+      },
+      "seconds": 5.6
+    },
+    {
+      "task_id": "template-merger-pptx",
+      "role": "pm",
+      "gold": [
+        "docx",
+        "pptx"
+      ],
+      "n_gold": 2,
+      "n_ops": 0,
+      "feasible": false,
+      "prior_reuse": [],
+      "prior_recall": 0.0,
+      "flat_topk": [
+        "pptx",
+        "docx"
+      ],
+      "flat_recall": 1.0,
+      "flat_top1_recall": 0.5,
+      "candidate_similarities": [],
+      "candidate_methods": [],
+      "per_threshold": {
+        "0.3": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.35": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.4": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.45": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.5": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.55": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.6": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.65": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.7": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.75": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.8": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.85": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.9": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.95": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        }
+      },
+      "seconds": 1.4
+    },
+    {
+      "task_id": "hard-de-incremental-api-ingest",
+      "role": "de",
+      "gold": [
+        "api",
+        "configs",
+        "pipelines"
+      ],
+      "n_gold": 3,
+      "n_ops": 0,
+      "feasible": false,
+      "prior_reuse": [],
+      "prior_recall": 0.0,
+      "flat_topk": [
+        "pipelines",
+        "api",
+        "rag"
+      ],
+      "flat_recall": 0.6666666666666666,
+      "flat_top1_recall": 0.3333333333333333,
+      "candidate_similarities": [],
+      "candidate_methods": [],
+      "per_threshold": {
+        "0.3": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.35": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.4": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.45": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.5": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.55": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.6": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.65": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.7": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.75": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.8": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.85": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.9": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.95": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        }
+      },
+      "seconds": 1.2
+    },
+    {
+      "task_id": "type-coercion-debugging",
+      "role": "de",
+      "gold": [
+        "debugging",
+        "testing"
+      ],
+      "n_gold": 2,
+      "n_ops": 0,
+      "feasible": false,
+      "prior_reuse": [],
+      "prior_recall": 0.0,
+      "flat_topk": [
+        "debugging",
+        "testing"
+      ],
+      "flat_recall": 1.0,
+      "flat_top1_recall": 0.5,
+      "candidate_similarities": [],
+      "candidate_methods": [],
+      "per_threshold": {
+        "0.3": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.35": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.4": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.45": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.5": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.55": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.6": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.65": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.7": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.75": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.8": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.85": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.9": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.95": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        }
+      },
+      "seconds": 1.9
+    },
+    {
+      "task_id": "acroform-field-validator",
+      "role": "genai",
+      "gold": [
+        "api",
+        "pdf"
+      ],
+      "n_gold": 2,
+      "n_ops": 0,
+      "feasible": false,
+      "prior_reuse": [],
+      "prior_recall": 0.0,
+      "flat_topk": [
+        "pdf",
+        "factchecking"
+      ],
+      "flat_recall": 0.5,
+      "flat_top1_recall": 0.5,
+      "candidate_similarities": [],
+      "candidate_methods": [],
+      "per_threshold": {
+        "0.3": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.35": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.4": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.45": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.5": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.55": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.6": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.65": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.7": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.75": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.8": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.85": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.9": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.95": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        }
+      },
+      "seconds": 7.0
+    },
+    {
+      "task_id": "employee-report-generation",
+      "role": "pm",
+      "gold": [
+        "docx",
+        "pdf",
+        "xlsx"
+      ],
+      "n_gold": 3,
+      "n_ops": 16,
+      "feasible": true,
+      "prior_reuse": [
+        "Group: docx, factchecking, pdf (+2 more)",
+        "docx",
+        "pdf"
+      ],
+      "prior_recall": 0.6666666666666666,
+      "flat_topk": [
+        "docx",
+        "pdf",
+        "factchecking"
+      ],
+      "flat_recall": 0.6666666666666666,
+      "flat_top1_recall": 0.3333333333333333,
+      "candidate_similarities": [
+        0.7193,
+        0.675,
+        0.5682,
+        0.5504,
+        0.5112,
+        0.4949,
+        0.4421,
+        0.3368
+      ],
+      "candidate_methods": [
+        "tree"
+      ],
+      "per_threshold": {
+        "0.3": {
+          "partc_recall": 0.6666666666666666,
+          "pipeline_recall": 0.6666666666666666,
+          "false_components": 2,
+          "matched": [
+            "docx",
+            "factchecking",
+            "pdf",
+            "pptx"
+          ]
+        },
+        "0.35": {
+          "partc_recall": 0.6666666666666666,
+          "pipeline_recall": 0.6666666666666666,
+          "false_components": 2,
+          "matched": [
+            "docx",
+            "factchecking",
+            "pdf",
+            "pptx"
+          ]
+        },
+        "0.4": {
+          "partc_recall": 0.6666666666666666,
+          "pipeline_recall": 0.6666666666666666,
+          "false_components": 2,
+          "matched": [
+            "docx",
+            "factchecking",
+            "pdf",
+            "pptx"
+          ]
+        },
+        "0.45": {
+          "partc_recall": 0.6666666666666666,
+          "pipeline_recall": 0.6666666666666666,
+          "false_components": 1,
+          "matched": [
+            "docx",
+            "factchecking",
+            "pdf"
+          ]
+        },
+        "0.5": {
+          "partc_recall": 0.6666666666666666,
+          "pipeline_recall": 0.6666666666666666,
+          "false_components": 1,
+          "matched": [
+            "docx",
+            "factchecking",
+            "pdf"
+          ]
+        },
+        "0.55": {
+          "partc_recall": 0.6666666666666666,
+          "pipeline_recall": 0.6666666666666666,
+          "false_components": 1,
+          "matched": [
+            "docx",
+            "factchecking",
+            "pdf"
+          ]
+        },
+        "0.6": {
+          "partc_recall": 0.6666666666666666,
+          "pipeline_recall": 0.6666666666666666,
+          "false_components": 0,
+          "matched": [
+            "docx",
+            "pdf"
+          ]
+        },
+        "0.65": {
+          "partc_recall": 0.6666666666666666,
+          "pipeline_recall": 0.6666666666666666,
+          "false_components": 0,
+          "matched": [
+            "docx",
+            "pdf"
+          ]
+        },
+        "0.7": {
+          "partc_recall": 0.3333333333333333,
+          "pipeline_recall": 0.6666666666666666,
+          "false_components": 0,
+          "matched": [
+            "pdf"
+          ]
+        },
+        "0.75": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.6666666666666666,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.8": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.6666666666666666,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.85": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.6666666666666666,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.9": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.6666666666666666,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.95": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.6666666666666666,
+          "false_components": 0,
+          "matched": []
+        }
+      },
+      "seconds": 33.5
+    },
+    {
+      "task_id": "redact-sensitive-data",
+      "role": "genai",
+      "gold": [
+        "pdf",
+        "pptx"
+      ],
+      "n_gold": 2,
+      "n_ops": 0,
+      "feasible": false,
+      "prior_reuse": [],
+      "prior_recall": 0.0,
+      "flat_topk": [
+        "factchecking",
+        "pdf"
+      ],
+      "flat_recall": 0.5,
+      "flat_top1_recall": 0.0,
+      "candidate_similarities": [],
+      "candidate_methods": [],
+      "per_threshold": {
+        "0.3": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.35": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.4": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.45": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.5": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.55": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.6": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.65": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.7": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.75": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.8": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.85": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.9": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.95": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        }
+      },
+      "seconds": 8.7
+    },
+    {
+      "task_id": "hard-terraform-migration",
+      "role": "infra",
+      "gold": [
+        "configs",
+        "migrations",
+        "terraform"
+      ],
+      "n_gold": 3,
+      "n_ops": 0,
+      "feasible": false,
+      "prior_reuse": [],
+      "prior_recall": 0.0,
+      "flat_topk": [
+        "terraform",
+        "migrations",
+        "configs"
+      ],
+      "flat_recall": 1.0,
+      "flat_top1_recall": 0.3333333333333333,
+      "candidate_similarities": [],
+      "candidate_methods": [],
+      "per_threshold": {
+        "0.3": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.35": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.4": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.45": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.5": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.55": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.6": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.65": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.7": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.75": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.8": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.85": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.9": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.95": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        }
+      },
+      "seconds": 1.4
+    },
+    {
+      "task_id": "hard-genai-hybrid-rag-citations",
+      "role": "genai",
+      "gold": [
+        "evaluation",
+        "factchecking",
+        "rag"
+      ],
+      "n_gold": 3,
+      "n_ops": 19,
+      "feasible": true,
+      "prior_reuse": [
+        "Group: Group: terraform, Group: containers, Group: api, configs, debugging (+1 more), Group: evaluation, model_training, pipelines (+1 more), Group: testing, Group: statistics, Group: docx, factchecking, pdf (+2 more), Group: sql, transactions, Group: xlsx, Group: migrations, refactoring",
+        "Group: docx, factchecking, pdf (+2 more)",
+        "Group: evaluation, model_training, pipelines (+1 more)",
+        "Group: statistics, Group: docx, factchecking, pdf (+2 more), Group: sql, transactions",
+        "rag"
+      ],
+      "prior_recall": 0.3333333333333333,
+      "flat_topk": [
+        "rag",
+        "evaluation",
+        "factchecking"
+      ],
+      "flat_recall": 1.0,
+      "flat_top1_recall": 0.3333333333333333,
+      "candidate_similarities": [
+        0.7878,
+        0.6213,
+        0.5612,
+        0.5584,
+        0.5371,
+        0.4987,
+        0.4362,
+        0.4332,
+        0.4295
+      ],
+      "candidate_methods": [
+        "tree"
+      ],
+      "per_threshold": {
+        "0.3": {
+          "partc_recall": 0.3333333333333333,
+          "pipeline_recall": 0.3333333333333333,
+          "false_components": 1,
+          "matched": [
+            "prompting",
+            "rag"
+          ]
+        },
+        "0.35": {
+          "partc_recall": 0.3333333333333333,
+          "pipeline_recall": 0.3333333333333333,
+          "false_components": 1,
+          "matched": [
+            "prompting",
+            "rag"
+          ]
+        },
+        "0.4": {
+          "partc_recall": 0.3333333333333333,
+          "pipeline_recall": 0.3333333333333333,
+          "false_components": 1,
+          "matched": [
+            "prompting",
+            "rag"
+          ]
+        },
+        "0.45": {
+          "partc_recall": 0.3333333333333333,
+          "pipeline_recall": 0.3333333333333333,
+          "false_components": 0,
+          "matched": [
+            "rag"
+          ]
+        },
+        "0.5": {
+          "partc_recall": 0.3333333333333333,
+          "pipeline_recall": 0.3333333333333333,
+          "false_components": 0,
+          "matched": [
+            "rag"
+          ]
+        },
+        "0.55": {
+          "partc_recall": 0.3333333333333333,
+          "pipeline_recall": 0.3333333333333333,
+          "false_components": 0,
+          "matched": [
+            "rag"
+          ]
+        },
+        "0.6": {
+          "partc_recall": 0.3333333333333333,
+          "pipeline_recall": 0.3333333333333333,
+          "false_components": 0,
+          "matched": [
+            "rag"
+          ]
+        },
+        "0.65": {
+          "partc_recall": 0.3333333333333333,
+          "pipeline_recall": 0.3333333333333333,
+          "false_components": 0,
+          "matched": [
+            "rag"
+          ]
+        },
+        "0.7": {
+          "partc_recall": 0.3333333333333333,
+          "pipeline_recall": 0.3333333333333333,
+          "false_components": 0,
+          "matched": [
+            "rag"
+          ]
+        },
+        "0.75": {
+          "partc_recall": 0.3333333333333333,
+          "pipeline_recall": 0.3333333333333333,
+          "false_components": 0,
+          "matched": [
+            "rag"
+          ]
+        },
+        "0.8": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.3333333333333333,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.85": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.3333333333333333,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.9": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.3333333333333333,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.95": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.3333333333333333,
+          "false_components": 0,
+          "matched": []
+        }
+      },
+      "seconds": 42.3
+    },
+    {
+      "task_id": "template-validation-pdf-fields",
+      "role": "pm",
+      "gold": [
+        "docx",
+        "pdf"
+      ],
+      "n_gold": 2,
+      "n_ops": 0,
+      "feasible": false,
+      "prior_reuse": [],
+      "prior_recall": 0.0,
+      "flat_topk": [
+        "docx",
+        "pdf"
+      ],
+      "flat_recall": 1.0,
+      "flat_top1_recall": 0.5,
+      "candidate_similarities": [],
+      "candidate_methods": [],
+      "per_threshold": {
+        "0.3": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.35": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.4": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.45": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.5": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.55": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.6": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.65": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.7": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.75": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.8": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.85": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.9": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.95": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        }
+      },
+      "seconds": 8.0
+    },
+    {
+      "task_id": "instance-flipt-io-flipt-406f9396ad65696d58865b3a6283109cd4eaf40e",
+      "role": "swe",
+      "gold": [
+        "api",
+        "configs"
+      ],
+      "n_gold": 2,
+      "n_ops": 0,
+      "feasible": false,
+      "prior_reuse": [],
+      "prior_recall": 0.0,
+      "flat_topk": [
+        "configs",
+        "debugging"
+      ],
+      "flat_recall": 0.5,
+      "flat_top1_recall": 0.5,
+      "candidate_similarities": [],
+      "candidate_methods": [],
+      "per_threshold": {
+        "0.3": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.35": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.4": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.45": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.5": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.55": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.6": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.65": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.7": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.75": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.8": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.85": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.9": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.95": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        }
+      },
+      "seconds": 1.2
+    },
+    {
+      "task_id": "hard-swe-plugin-query-refactor",
+      "role": "swe",
+      "gold": [
+        "refactoring",
+        "sql",
+        "validation"
+      ],
+      "n_gold": 3,
+      "n_ops": 0,
+      "feasible": false,
+      "prior_reuse": [],
+      "prior_recall": 0.0,
+      "flat_topk": [
+        "factchecking",
+        "pipelines",
+        "refactoring"
+      ],
+      "flat_recall": 0.3333333333333333,
+      "flat_top1_recall": 0.0,
+      "candidate_similarities": [],
+      "candidate_methods": [],
+      "per_threshold": {
+        "0.3": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.35": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.4": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.45": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.5": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.55": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.6": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.65": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.7": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.75": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.8": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.85": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.9": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.95": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        }
+      },
+      "seconds": 1.2
+    },
+    {
+      "task_id": "hard-ds-paper-claim-leaderboard",
+      "role": "ds",
+      "gold": [
+        "evaluation",
+        "factchecking",
+        "pdf"
+      ],
+      "n_gold": 3,
+      "n_ops": 26,
+      "feasible": true,
+      "prior_reuse": [
+        "Group: docx, factchecking, pdf (+2 more)",
+        "Group: evaluation, model_training, pipelines (+1 more)",
+        "factchecking"
+      ],
+      "prior_recall": 0.3333333333333333,
+      "flat_topk": [
+        "factchecking",
+        "rag",
+        "evaluation"
+      ],
+      "flat_recall": 0.6666666666666666,
+      "flat_top1_recall": 0.3333333333333333,
+      "candidate_similarities": [
+        0.5809,
+        0.5692,
+        0.5638,
+        0.5461,
+        0.5405,
+        0.5377,
+        0.494,
+        0.4757,
+        0.4625,
+        0.4347,
+        0.4154,
+        0.3761
+      ],
+      "candidate_methods": [
+        "tree"
+      ],
+      "per_threshold": {
+        "0.3": {
+          "partc_recall": 1.0,
+          "pipeline_recall": 1.0,
+          "false_components": 3,
+          "matched": [
+            "evaluation",
+            "factchecking",
+            "model_training",
+            "pdf",
+            "prompting",
+            "rag"
+          ]
+        },
+        "0.35": {
+          "partc_recall": 1.0,
+          "pipeline_recall": 1.0,
+          "false_components": 3,
+          "matched": [
+            "evaluation",
+            "factchecking",
+            "model_training",
+            "pdf",
+            "prompting",
+            "rag"
+          ]
+        },
+        "0.4": {
+          "partc_recall": 1.0,
+          "pipeline_recall": 1.0,
+          "false_components": 2,
+          "matched": [
+            "evaluation",
+            "factchecking",
+            "model_training",
+            "pdf",
+            "rag"
+          ]
+        },
+        "0.45": {
+          "partc_recall": 1.0,
+          "pipeline_recall": 1.0,
+          "false_components": 2,
+          "matched": [
+            "evaluation",
+            "factchecking",
+            "model_training",
+            "pdf",
+            "rag"
+          ]
+        },
+        "0.5": {
+          "partc_recall": 1.0,
+          "pipeline_recall": 1.0,
+          "false_components": 0,
+          "matched": [
+            "evaluation",
+            "factchecking",
+            "pdf"
+          ]
+        },
+        "0.55": {
+          "partc_recall": 1.0,
+          "pipeline_recall": 1.0,
+          "false_components": 0,
+          "matched": [
+            "evaluation",
+            "factchecking",
+            "pdf"
+          ]
+        },
+        "0.6": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.3333333333333333,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.65": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.3333333333333333,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.7": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.3333333333333333,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.75": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.3333333333333333,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.8": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.3333333333333333,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.85": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.3333333333333333,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.9": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.3333333333333333,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.95": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.3333333333333333,
+          "false_components": 0,
+          "matched": []
+        }
+      },
+      "seconds": 126.6
+    },
+    {
+      "task_id": "hard-pdf-excel-diff",
+      "role": "pm",
+      "gold": [
+        "pdf",
+        "validation",
+        "xlsx"
+      ],
+      "n_gold": 3,
+      "n_ops": 22,
+      "feasible": true,
+      "prior_reuse": [
+        "Group: docx, factchecking, pdf (+2 more)"
+      ],
+      "prior_recall": 0.0,
+      "flat_topk": [
+        "pdf",
+        "xlsx",
+        "factchecking"
+      ],
+      "flat_recall": 0.6666666666666666,
+      "flat_top1_recall": 0.3333333333333333,
+      "candidate_similarities": [
+        0.5647,
+        0.4916,
+        0.4373,
+        0.3907,
+        0.3676,
+        0.3512,
+        0.346,
+        0.3167,
+        0.3072
+      ],
+      "candidate_methods": [
+        "tree"
+      ],
+      "per_threshold": {
+        "0.3": {
+          "partc_recall": 0.6666666666666666,
+          "pipeline_recall": 0.6666666666666666,
+          "false_components": 3,
+          "matched": [
+            "api",
+            "docx",
+            "factchecking",
+            "pdf",
+            "validation"
+          ]
+        },
+        "0.35": {
+          "partc_recall": 0.6666666666666666,
+          "pipeline_recall": 0.6666666666666666,
+          "false_components": 2,
+          "matched": [
+            "api",
+            "docx",
+            "pdf",
+            "validation"
+          ]
+        },
+        "0.4": {
+          "partc_recall": 0.6666666666666666,
+          "pipeline_recall": 0.6666666666666666,
+          "false_components": 0,
+          "matched": [
+            "pdf",
+            "validation"
+          ]
+        },
+        "0.45": {
+          "partc_recall": 0.6666666666666666,
+          "pipeline_recall": 0.6666666666666666,
+          "false_components": 0,
+          "matched": [
+            "pdf",
+            "validation"
+          ]
+        },
+        "0.5": {
+          "partc_recall": 0.3333333333333333,
+          "pipeline_recall": 0.3333333333333333,
+          "false_components": 0,
+          "matched": [
+            "pdf"
+          ]
+        },
+        "0.55": {
+          "partc_recall": 0.3333333333333333,
+          "pipeline_recall": 0.3333333333333333,
+          "false_components": 0,
+          "matched": [
+            "pdf"
+          ]
+        },
+        "0.6": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.65": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.7": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.75": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.8": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.85": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.9": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        },
+        "0.95": {
+          "partc_recall": 0.0,
+          "pipeline_recall": 0.0,
+          "false_components": 0,
+          "matched": []
+        }
+      },
+      "seconds": 50.6
+    }
+  ],
+  "wall_seconds": 223.4,
+  "embedder": {
+    "api_calls": 15,
+    "cache_hits": 80,
+    "cache_size": 252
+  }
+}

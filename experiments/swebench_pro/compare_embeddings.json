@@ -1,0 +1,1633 @@
+{
+  "n": 100,
+  "top_k": 5,
+  "summary": {
+    "file_recall": {
+      "split": 0.4221,
+      "joint": 0.4511,
+      "delta": 0.0291
+    },
+    "dir_recall": {
+      "split": 0.6227,
+      "joint": 0.6399,
+      "delta": 0.0172
+    },
+    "same_repo_rate": {
+      "split": 0.825,
+      "joint": 0.842,
+      "delta": 0.017
+    },
+    "hit_any_file": {
+      "split": 0.74,
+      "joint": 0.8,
+      "delta": 0.06
+    },
+    "sign_test": {
+      "joint_better": 7,
+      "joint_worse": 1,
+      "p": 0.07031
+    }
+  },
+  "detail": [
+    {
+      "instance_id": "instance_NodeBB__NodeBB-04998908ba6721d64eba79ae3b65a351dcfbc5b5-vnan",
+      "repo": "NodeBB/NodeBB",
+      "embedding": {
+        "file_recall": 0.09090909090909091,
+        "dir_recall": 0.1,
+        "same_repo_rate": 0.8,
+        "hit_any_file": 1.0
+      },
+      "embedding_joint": {
+        "file_recall": 0.09090909090909091,
+        "dir_recall": 0.1,
+        "same_repo_rate": 0.8,
+        "hit_any_file": 1.0
+      }
+    },
+    {
+      "instance_id": "instance_qutebrowser__qutebrowser-f631cd4422744160d9dcf7a0455da532ce973315-v35616345bb8052ea303186706cec663146f0f184",
+      "repo": "qutebrowser/qutebrowser",
+      "embedding": {
+        "file_recall": 0.0,
+        "dir_recall": 0.0,
+        "same_repo_rate": 0.5,
+        "hit_any_file": 0.0
+      },
+      "embedding_joint": {
+        "file_recall": 0.0,
+        "dir_recall": 0.0,
+        "same_repo_rate": 0.4,
+        "hit_any_file": 0.0
+      }
+    },
+    {
+      "instance_id": "instance_element-hq__element-web-33e8edb3d508d6eefb354819ca693b7accc695e7",
+      "repo": "element-hq/element-web",
+      "embedding": {
+        "file_recall": 0.0,
+        "dir_recall": 0.0,
+        "same_repo_rate": 0.0,
+        "hit_any_file": 0.0
+      },
+      "embedding_joint": {
+        "file_recall": 0.0,
+        "dir_recall": 0.0,
+        "same_repo_rate": 0.0,
+        "hit_any_file": 0.0
+      }
+    },
+    {
+      "instance_id": "instance_internetarchive__openlibrary-8a5a63af6e0be406aa6c8c9b6d5f28b2f1b6af5a-v0f5aece3601a5b4419f7ccec1dbda2071be28ee4",
+      "repo": "internetarchive/openlibrary",
+      "embedding": {
+        "file_recall": 0.0,
+        "dir_recall": 0.0,
+        "same_repo_rate": 0.0,
+        "hit_any_file": 0.0
+      },
+      "embedding_joint": {
+        "file_recall": 0.0,
+        "dir_recall": 0.0,
+        "same_repo_rate": 0.0,
+        "hit_any_file": 0.0
+      }
+    },
+    {
+      "instance_id": "instance_flipt-io__flipt-3b2c25ee8a3ac247c3fad13ad8d64ace34ec8ee7",
+      "repo": "flipt-io/flipt",
+      "embedding": {
+        "file_recall": 0.8,
+        "dir_recall": 0.6666666666666666,
+        "same_repo_rate": 1.0,
+        "hit_any_file": 1.0
+      },
+      "embedding_joint": {
+        "file_recall": 0.8,
+        "dir_recall": 0.6666666666666666,
+        "same_repo_rate": 1.0,
+        "hit_any_file": 1.0
+      }
+    },
+    {
+      "instance_id": "instance_qutebrowser__qutebrowser-0fc6d1109d041c69a68a896db87cf1b8c194cef7-v2ef375ac784985212b1805e1d0431dc8f1b3c171",
+      "repo": "qutebrowser/qutebrowser",
+      "embedding": {
+        "file_recall": 0.5,
+        "dir_recall": 1.0,
+        "same_repo_rate": 0.8,
+        "hit_any_file": 1.0
+      },
+      "embedding_joint": {
+        "file_recall": 0.0,
+        "dir_recall": 0.3333333333333333,
+        "same_repo_rate": 1.0,
+        "hit_any_file": 0.0
+      }
+    },
+    {
+      "instance_id": "instance_ansible__ansible-e40889e7112ae00a21a2c74312b330e67a766cc0-v1055803c3a812189a1133297f7f5468579283f86",
+      "repo": "ansible/ansible",
+      "embedding": {
+        "file_recall": 0.3,
+        "dir_recall": 0.5555555555555556,
+        "same_repo_rate": 1.0,
+        "hit_any_file": 1.0
+      },
+      "embedding_joint": {
+        "file_recall": 0.2,
+        "dir_recall": 0.4444444444444444,
+        "same_repo_rate": 1.0,
+        "hit_any_file": 1.0
+      }
+    },
+    {
+      "instance_id": "instance_flipt-io__flipt-f808b4dd6e36b9dc8b011eb26b196f4e2cc64c41",
+      "repo": "flipt-io/flipt",
+      "embedding": {
+        "file_recall": 0.625,
+        "dir_recall": 0.75,
+        "same_repo_rate": 0.8,
+        "hit_any_file": 1.0
+      },
+      "embedding_joint": {
+        "file_recall": 0.625,
+        "dir_recall": 0.75,
+        "same_repo_rate": 0.8,
+        "hit_any_file": 1.0
+      }
+    },
+    {
+      "instance_id": "instance_flipt-io__flipt-756f00f79ba8abf9fe53f3c6c818123b42eb7355",
+      "repo": "flipt-io/flipt",
+      "embedding": {
+        "file_recall": 0.625,
+        "dir_recall": 1.0,
+        "same_repo_rate": 1.0,
+        "hit_any_file": 1.0
+      },
+      "embedding_joint": {
+        "file_recall": 0.5,
+        "dir_recall": 0.75,
+        "same_repo_rate": 0.6,
+        "hit_any_file": 1.0
+      }
+    },
+    {
+      "instance_id": "instance_element-hq__element-web-404c412bcb694f04ba0c4d5479541203d701bca0-vnan",
+      "repo": "element-hq/element-web",
+      "embedding": {
+        "file_recall": 0.5,
+        "dir_recall": 0.5,
+        "same_repo_rate": 0.4,
+        "hit_any_file": 1.0
+      },
+      "embedding_joint": {
+        "file_recall": 0.5,
+        "dir_recall": 1.0,
+        "same_repo_rate": 0.6,
+        "hit_any_file": 1.0
+      }
+    },
+    {
+      "instance_id": "instance_future-architect__vuls-0ec945d0510cdebf92cdd8999f94610772689f14",
+      "repo": "future-architect/vuls",
+      "embedding": {
+        "file_recall": 1.0,
+        "dir_recall": 1.0,
+        "same_repo_rate": 1.0,
+        "hit_any_file": 1.0
+      },
+      "embedding_joint": {
+        "file_recall": 1.0,
+        "dir_recall": 1.0,
+        "same_repo_rate": 1.0,
+        "hit_any_file": 1.0
+      }
+    },
+    {
+      "instance_id": "instance_future-architect__vuls-be7b9114cc9545e68fb0ee7bc63d7ec53d1a00ad",
+      "repo": "future-architect/vuls",
+      "embedding": {
+        "file_recall": 1.0,
+        "dir_recall": 1.0,
+        "same_repo_rate": 1.0,
+        "hit_any_file": 1.0
+      },
+      "embedding_joint": {
+        "file_recall": 1.0,
+        "dir_recall": 1.0,
+        "same_repo_rate": 1.0,
+        "hit_any_file": 1.0
+      }
+    },
+    {
+      "instance_id": "instance_element-hq__element-web-1077729a19c0ce902e713cf6fab42c91fb7907f1-vnan",
+      "repo": "element-hq/element-web",
+      "embedding": {
+        "file_recall": 0.0,
+        "dir_recall": 0.0,
+        "same_repo_rate": 1.0,
+        "hit_any_file": 0.0
+      },
+      "embedding_joint": {
+        "file_recall": 0.0,
+        "dir_recall": 0.0,
+        "same_repo_rate": 1.0,
+        "hit_any_file": 0.0
+      }
+    },
+    {
+      "instance_id": "instance_flipt-io__flipt-b22f5f02e40b225b6b93fff472914973422e97c6",
+      "repo": "flipt-io/flipt",
+      "embedding": {
+        "file_recall": 0.375,
+        "dir_recall": 0.75,
+        "same_repo_rate": 1.0,
+        "hit_any_file": 1.0
+      },
+      "embedding_joint": {
+        "file_recall": 0.375,
+        "dir_recall": 0.75,
+        "same_repo_rate": 1.0,
+        "hit_any_file": 1.0
+      }
+    },
+    {
+      "instance_id": "instance_ansible__ansible-0fd88717c953b92ed8a50495d55e630eb5d59166-vba6da65a0f3baefda7a058ebbd0a8dcafb8512f5",
+      "repo": "ansible/ansible",
+      "embedding": {
+        "file_recall": 1.0,
+        "dir_recall": 1.0,
+        "same_repo_rate": 1.0,
+        "hit_any_file": 1.0
+      },
+      "embedding_joint": {
+        "file_recall": 1.0,
+        "dir_recall": 1.0,
+        "same_repo_rate": 1.0,
+        "hit_any_file": 1.0
+      }
+    },
+    {
+      "instance_id": "instance_gravitational__teleport-8302d467d160f869b77184e262adbe2fbc95d9ba-vce94f93ad1030e3136852817f2423c1b3ac37bc4",
+      "repo": "gravitational/teleport",
+      "embedding": {
+        "file_recall": 0.4,
+        "dir_recall": 0.5,
+        "same_repo_rate": 1.0,
+        "hit_any_file": 1.0
+      },
+      "embedding_joint": {
+        "file_recall": 0.4,
+        "dir_recall": 0.5,
+        "same_repo_rate": 1.0,
+        "hit_any_file": 1.0
+      }
+    },
+    {
+      "instance_id": "instance_internetarchive__openlibrary-ba3abfb6af6e722185d3715929ab0f3e5a134eed-v76304ecdb3a5954fcf13feb710e8c40fcf24b73c",
+      "repo": "internetarchive/openlibrary",
+      "embedding": {
+        "file_recall": 1.0,
+        "dir_recall": 1.0,
+        "same_repo_rate": 1.0,
+        "hit_any_file": 1.0
+      },
+      "embedding_joint": {
+        "file_recall": 1.0,
+        "dir_recall": 1.0,
+        "same_repo_rate": 1.0,
+        "hit_any_file": 1.0
+      }
+    },
+    {
+      "instance_id": "instance_ansible__ansible-0ea40e09d1b35bcb69ff4d9cecf3d0defa4b36e8-v30a923fb5c164d6cd18280c02422f75e611e8fb2",
+      "repo": "ansible/ansible",
+      "embedding": {
+        "file_recall": 0.0,
+        "dir_recall": 0.6666666666666666,
+        "same_repo_rate": 1.0,
+        "hit_any_file": 0.0
+      },
+      "embedding_joint": {
+        "file_recall": 0.0,
+        "dir_recall": 0.6666666666666666,
+        "same_repo_rate": 1.0,
+        "hit_any_file": 0.0
+      }
+    },
+    {
+      "instance_id": "instance_flipt-io__flipt-5ffba3406a7993d97ced4cc13658bee66150fcca",
+      "repo": "flipt-io/flipt",
+      "embedding": {
+        "file_recall": 0.5,
+        "dir_recall": 1.0,
+        "same_repo_rate": 0.8,
+        "hit_any_file": 1.0
+      },
+      "embedding_joint": {
+        "file_recall": 0.75,
+        "dir_recall": 1.0,
+        "same_repo_rate": 1.0,
+        "hit_any_file": 1.0
+      }
+    },
+    {
+      "instance_id": "instance_ansible__ansible-de01db08d00c8d2438e1ba5989c313ba16a145b0-vba6da65a0f3baefda7a058ebbd0a8dcafb8512f5",
+      "repo": "ansible/ansible",
+      "embedding": {
+        "file_recall": 0.0,
+        "dir_recall": 0.6666666666666666,
+        "same_repo_rate": 1.0,
+        "hit_any_file": 0.0
+      },
+      "embedding_joint": {
+        "file_recall": 0.0,
+        "dir_recall": 0.6666666666666666,
+        "same_repo_rate": 1.0,
+        "hit_any_file": 0.0
+      }
+    },
+    {
+      "instance_id": "instance_NodeBB__NodeBB-76c6e30282906ac664f2c9278fc90999b27b1f48-vd59a5728dfc977f44533186ace531248c2917516",
+      "repo": "NodeBB/NodeBB",
+      "embedding": {
+        "file_recall": 0.0,
+        "dir_recall": 0.0,
+        "same_repo_rate": 0.0,
+        "hit_any_file": 0.0
+      },
+      "embedding_joint": {
+        "file_recall": 0.03773584905660377,
+        "dir_recall": 0.058823529411764705,
+        "same_repo_rate": 0.8,
+        "hit_any_file": 1.0
+      }
+    },
+    {
+      "instance_id": "instance_NodeBB__NodeBB-9c576a0758690f45a6ca03b5884c601e473bf2c1-vd59a5728dfc977f44533186ace531248c2917516",
+      "repo": "NodeBB/NodeBB",
+      "embedding": {
+        "file_recall": 0.125,
+        "dir_recall": 0.16666666666666666,
+        "same_repo_rate": 0.8,
+        "hit_any_file": 1.0
+      },
+      "embedding_joint": {
+        "file_recall": 0.125,
+        "dir_recall": 0.16666666666666666,
+        "same_repo_rate": 0.8,
+        "hit_any_file": 1.0
+      }
+    },
+    {
+      "instance_id": "instance_internetarchive__openlibrary-7f7e53aa4cf74a4f8549a5bcd4810c527e2f6d7e-v13642507b4fc1f8d234172bf8129942da2c2ca26",
+      "repo": "internetarchive/openlibrary",
+      "embedding": {
+        "file_recall": 1.0,
+        "dir_recall": 1.0,
+        "same_repo_rate": 1.0,
+        "hit_any_file": 1.0
+      },
+      "embedding_joint": {
+        "file_recall": 1.0,
+        "dir_recall": 1.0,
+        "same_repo_rate": 1.0,
+        "hit_any_file": 1.0
+      }
+    },
+    {
+      "instance_id": "instance_navidrome__navidrome-28389fb05e1523564dfc61fa43ed8eb8a10f938c",
+      "repo": "navidrome/navidrome",
+      "embedding": {
+        "file_recall": 0.3,
+        "dir_recall": 0.625,
+        "same_repo_rate": 1.0,
+        "hit_any_file": 1.0
+      },
+      "embedding_joint": {
+        "file_recall": 0.3,
+        "dir_recall": 0.5,
+        "same_repo_rate": 1.0,
+        "hit_any_file": 1.0
+      }
+    },
+    {
+      "instance_id": "instance_gravitational__teleport-7744f72c6eb631791434b648ba41083b5f6d2278-vce94f93ad1030e3136852817f2423c1b3ac37bc4",
+      "repo": "gravitational/teleport",
+      "embedding": {
+        "file_recall": 0.18181818181818182,
+        "dir_recall": 0.5,
+        "same_repo_rate": 0.4,
+        "hit_any_file": 1.0
+      },
+      "embedding_joint": {
+        "file_recall": 0.18181818181818182,
+        "dir_recall": 0.25,
+        "same_repo_rate": 0.2,
+        "hit_any_file": 1.0
+      }
+    },
+    {
+      "instance_id": "instance_tutao__tutanota-f373ac3808deefce8183dad8d16729839cc330c1-v2939aa9f4356f0dc9f523ee5ce19d09e08ab979b",
+      "repo": "tutao/tutanota",
+      "embedding": {
+        "file_recall": 0.1111111111111111,
+        "dir_recall": 0.14285714285714285,
+        "same_repo_rate": 0.2,
+        "hit_any_file": 1.0
+      },
+      "embedding_joint": {
+        "file_recall": 0.1111111111111111,
+        "dir_recall": 0.14285714285714285,
+        "same_repo_rate": 0.2,
+        "hit_any_file": 1.0
+      }
+    },
+    {
+      "instance_id": "instance_ansible__ansible-a02e22e902a69aeb465f16bf03f7f5a91b2cb828-vba6da65a0f3baefda7a058ebbd0a8dcafb8512f5",
+      "repo": "ansible/ansible",
+      "embedding": {
+        "file_recall": 0.6,
+        "dir_recall": 1.0,
+        "same_repo_rate": 1.0,
+        "hit_any_file": 1.0
+      },
+      "embedding_joint": {
+        "file_recall": 0.6,
+        "dir_recall": 1.0,
+        "same_repo_rate": 1.0,
+        "hit_any_file": 1.0
+      }
+    },
+    {
+      "instance_id": "instance_flipt-io__flipt-967855b429f749c28c112b8cb1b15bc79157f973",
+      "repo": "flipt-io/flipt",
+      "embedding": {
+        "file_recall": 0.2,
+        "dir_recall": 0.6666666666666666,
+        "same_repo_rate": 1.0,
+        "hit_any_file": 1.0
+      },
+      "embedding_joint": {
+        "file_recall": 0.2,
+        "dir_recall": 0.6666666666666666,
+        "same_repo_rate": 1.0,
+        "hit_any_file": 1.0
+      }
+    },
+    {
+      "instance_id": "instance_flipt-io__flipt-524f277313606f8cd29b299617d6565c01642e15",
+      "repo": "flipt-io/flipt",
+      "embedding": {
+        "file_recall": 0.0,
+        "dir_recall": 0.0,
+        "same_repo_rate": 1.0,
+        "hit_any_file": 0.0
+      },
+      "embedding_joint": {
+        "file_recall": 0.09090909090909091,
+        "dir_recall": 0.16666666666666666,
+        "same_repo_rate": 1.0,
+        "hit_any_file": 1.0
+      }
+    },
+    {
+      "instance_id": "instance_element-hq__element-web-27139ca68eb075a4438c18fca184887002a4ffbc-vnan",
+      "repo": "element-hq/element-web",
+      "embedding": {
+        "file_recall": 0.0,
+        "dir_recall": 0.0,
+        "same_repo_rate": 0.4,
+        "hit_any_file": 0.0
+      },
+      "embedding_joint": {
+        "file_recall": 0.0,
+        "dir_recall": 0.0,
+        "same_repo_rate": 0.4,
+        "hit_any_file": 0.0
+      }
+    },
+    {
+      "instance_id": "instance_gravitational__teleport-87a593518b6ce94624f6c28516ce38cc30cbea5a",
+      "repo": "gravitational/teleport",
+      "embedding": {
+        "file_recall": 0.0,
+        "dir_recall": 0.0,
+        "same_repo_rate": 1.0,
+        "hit_any_file": 0.0
+      },
+      "embedding_joint": {
+        "file_recall": 0.0,
+        "dir_recall": 0.0,
+        "same_repo_rate": 0.8,
+        "hit_any_file": 0.0
+      }
+    },
+    {
+      "instance_id": "instance_future-architect__vuls-4c04acbd9ea5b073efe999e33381fa9f399d6f27",
+      "repo": "future-architect/vuls",
+      "embedding": {
+        "file_recall": 0.5,
+        "dir_recall": 0.5,
+        "same_repo_rate": 1.0,
+        "hit_any_file": 1.0
+      },
+      "embedding_joint": {
+        "file_recall": 0.5,
+        "dir_recall": 0.5,
+        "same_repo_rate": 1.0,
+        "hit_any_file": 1.0
+      }
+    },
+    {
+      "instance_id": "instance_internetarchive__openlibrary-7bf3238533070f2d24bafbb26eedf675d51941f6-v08d8e8889ec945ab821fb156c04c7d2e2810debb",
+      "repo": "internetarchive/openlibrary",
+      "embedding": {
+        "file_recall": 0.3333333333333333,
+        "dir_recall": 0.2857142857142857,
+        "same_repo_rate": 1.0,
+        "hit_any_file": 1.0
+      },
+      "embedding_joint": {
+        "file_recall": 0.3333333333333333,
+        "dir_recall": 0.2857142857142857,
+        "same_repo_rate": 1.0,
+        "hit_any_file": 1.0
+      }
+    },
+    {
+      "instance_id": "instance_protonmail__webclients-6e165e106d258a442ae849cdf08260329cb92d39",
+      "repo": "protonmail/webclients",
+      "embedding": {
+        "file_recall": 0.2222222222222222,
+        "dir_recall": 0.2857142857142857,
+        "same_repo_rate": 0.8,
+        "hit_any_file": 1.0
+      },
+      "embedding_joint": {
+        "file_recall": 0.2222222222222222,
+        "dir_recall": 0.2857142857142857,
+        "same_repo_rate": 0.8,
+        "hit_any_file": 1.0
+      }
+    },
+    {
+      "instance_id": "instance_NodeBB__NodeBB-97c8569a798075c50e93e585ac741ab55cb7c28b-vf2cf3cbd463b7ad942381f1c6d077626485a1e9e",
+      "repo": "NodeBB/NodeBB",
+      "embedding": {
+        "file_recall": 0.0,
+        "dir_recall": 0.0,
+        "same_repo_rate": 0.4,
+        "hit_any_file": 0.0
+      },
+      "embedding_joint": {
+        "file_recall": 0.0,
+        "dir_recall": 0.5,
+        "same_repo_rate": 0.8,
+        "hit_any_file": 0.0
+      }
+    },
+    {
+      "instance_id": "instance_navidrome__navidrome-0130c6dc13438b48cf0fdfab08a89e357b5517c9",
+      "repo": "navidrome/navidrome",
+      "embedding": {
+        "file_recall": 0.6666666666666666,
+        "dir_recall": 1.0,
+        "same_repo_rate": 1.0,
+        "hit_any_file": 1.0
+      },
+      "embedding_joint": {
+        "file_recall": 0.8333333333333334,
+        "dir_recall": 1.0,
+        "same_repo_rate": 1.0,
+        "hit_any_file": 1.0
+      }
+    },
+    {
+      "instance_id": "instance_qutebrowser__qutebrowser-cf06f4e3708f886032d4d2a30108c2fddb042d81-v2ef375ac784985212b1805e1d0431dc8f1b3c171",
+      "repo": "qutebrowser/qutebrowser",
+      "embedding": {
+        "file_recall": 1.0,
+        "dir_recall": 1.0,
+        "same_repo_rate": 0.4,
+        "hit_any_file": 1.0
+      },
+      "embedding_joint": {
+        "file_recall": 1.0,
+        "dir_recall": 1.0,
+        "same_repo_rate": 0.6,
+        "hit_any_file": 1.0
+      }
+    },
+    {
+      "instance_id": "instance_gravitational__teleport-65438e6e44b6ce51458d09b7bb028a2797cfb0ea-vce94f93ad1030e3136852817f2423c1b3ac37bc4",
+      "repo": "gravitational/teleport",
+      "embedding": {
+        "file_recall": 0.625,
+        "dir_recall": 1.0,
+        "same_repo_rate": 1.0,
+        "hit_any_file": 1.0
+      },
+      "embedding_joint": {
+        "file_recall": 0.625,
+        "dir_recall": 1.0,
+        "same_repo_rate": 0.8,
+        "hit_any_file": 1.0
+      }
+    },
+    {
+      "instance_id": "instance_internetarchive__openlibrary-7edd1ef09d91fe0b435707633c5cc9af41dedddf-v76304ecdb3a5954fcf13feb710e8c40fcf24b73c",
+      "repo": "internetarchive/openlibrary",
+      "embedding": {
+        "file_recall": 0.5,
+        "dir_recall": 1.0,
+        "same_repo_rate": 1.0,
+        "hit_any_file": 1.0
+      },
+      "embedding_joint": {
+        "file_recall": 0.5,
+        "dir_recall": 1.0,
+        "same_repo_rate": 1.0,
+        "hit_any_file": 1.0
+      }
+    },
+    {
+      "instance_id": "instance_flipt-io__flipt-56a620b8fc9ef7a0819b47709aa541cdfdbba00b",
+      "repo": "flipt-io/flipt",
+      "embedding": {
+        "file_recall": 0.6363636363636364,
+        "dir_recall": 0.8571428571428571,
+        "same_repo_rate": 0.8,
+        "hit_any_file": 1.0
+      },
+      "embedding_joint": {
+        "file_recall": 0.6363636363636364,
+        "dir_recall": 0.8571428571428571,
+        "same_repo_rate": 1.0,
+        "hit_any_file": 1.0
+      }
+    },
+    {
+      "instance_id": "instance_gravitational__teleport-4d0117b50dc8cdb91c94b537a4844776b224cd3d",
+      "repo": "gravitational/teleport",
+      "embedding": {
+        "file_recall": 0.0,
+        "dir_recall": 0.0,
+        "same_repo_rate": 0.8,
+        "hit_any_file": 0.0
+      },
+      "embedding_joint": {
+        "file_recall": 0.3333333333333333,
+        "dir_recall": 0.5,
+        "same_repo_rate": 0.8,
+        "hit_any_file": 1.0
+      }
+    },
+    {
+      "instance_id": "instance_protonmail__webclients-3a6790f480309130b5d6332dce6c9d5ccca13ee3",
+      "repo": "protonmail/webclients",
+      "embedding": {
+        "file_recall": 0.1,
+        "dir_recall": 0.125,
+        "same_repo_rate": 0.6,
+        "hit_any_file": 1.0
+      },
+      "embedding_joint": {
+        "file_recall": 0.1,
+        "dir_recall": 0.125,
+        "same_repo_rate": 0.8,
+        "hit_any_file": 1.0
+      }
+    },
+    {
+      "instance_id": "instance_gravitational__teleport-0ecf31de0e98b272a6a2610abe1bbedd379a38a3-vce94f93ad1030e3136852817f2423c1b3ac37bc4",
+      "repo": "gravitational/teleport",
+      "embedding": {
+        "file_recall": 0.3333333333333333,
+        "dir_recall": 0.5,
+        "same_repo_rate": 1.0,
+        "hit_any_file": 1.0
+      },
+      "embedding_joint": {
+        "file_recall": 0.6666666666666666,
+        "dir_recall": 1.0,
+        "same_repo_rate": 1.0,
+        "hit_any_file": 1.0
+      }
+    },
+    {
+      "instance_id": "instance_element-hq__element-web-66d0b318bc6fee0d17b54c1781d6ab5d5d323135-vnan",
+      "repo": "element-hq/element-web",
+      "embedding": {
+        "file_recall": 0.6666666666666666,
+        "dir_recall": 0.6666666666666666,
+        "same_repo_rate": 1.0,
+        "hit_any_file": 1.0
+      },
+      "embedding_joint": {
+        "file_recall": 0.6666666666666666,
+        "dir_recall": 0.6666666666666666,
+        "same_repo_rate": 1.0,
+        "hit_any_file": 1.0
+      }
+    },
+    {
+      "instance_id": "instance_navidrome__navidrome-6bd4c0f6bfa653e9b8b27cfdc2955762d371d6e9",
+      "repo": "navidrome/navidrome",
+      "embedding": {
+        "file_recall": 0.3333333333333333,
+        "dir_recall": 0.5,
+        "same_repo_rate": 0.4,
+        "hit_any_file": 1.0
+      },
+      "embedding_joint": {
+        "file_recall": 0.3333333333333333,
+        "dir_recall": 0.5,
+        "same_repo_rate": 0.4,
+        "hit_any_file": 1.0
+      }
+    },
+    {
+      "instance_id": "instance_ansible__ansible-deb54e4c5b32a346f1f0b0a14f1c713d2cc2e961-vba6da65a0f3baefda7a058ebbd0a8dcafb8512f5",
+      "repo": "ansible/ansible",
+      "embedding": {
+        "file_recall": 0.6,
+        "dir_recall": 0.75,
+        "same_repo_rate": 1.0,
+        "hit_any_file": 1.0
+      },
+      "embedding_joint": {
+        "file_recall": 0.6,
+        "dir_recall": 0.75,
+        "same_repo_rate": 1.0,
+        "hit_any_file": 1.0
+      }
+    },
+    {
+      "instance_id": "instance_flipt-io__flipt-c1728053367c753688f114ec26e703c8fdeda125",
+      "repo": "flipt-io/flipt",
+      "embedding": {
+        "file_recall": 0.5,
+        "dir_recall": 1.0,
+        "same_repo_rate": 1.0,
+        "hit_any_file": 1.0
+      },
+      "embedding_joint": {
+        "file_recall": 0.5,
+        "dir_recall": 1.0,
+        "same_repo_rate": 1.0,
+        "hit_any_file": 1.0
+      }
+    },
+    {
+      "instance_id": "instance_ansible__ansible-a1569ea4ca6af5480cf0b7b3135f5e12add28a44-v0f01c69f1e2528b935359cfe578530722bca2c59",
+      "repo": "ansible/ansible",
+      "embedding": {
+        "file_recall": 0.5,
+        "dir_recall": 1.0,
+        "same_repo_rate": 1.0,
+        "hit_any_file": 1.0
+      },
+      "embedding_joint": {
+        "file_recall": 0.5,
+        "dir_recall": 1.0,
+        "same_repo_rate": 1.0,
+        "hit_any_file": 1.0
+      }
+    },
+    {
+      "instance_id": "instance_NodeBB__NodeBB-cfc237c2b79d8c731bbfc6cadf977ed530bfd57a-v0495b863a912fbff5749c67e860612b91825407c",
+      "repo": "NodeBB/NodeBB",
+      "embedding": {
+        "file_recall": 0.0,
+        "dir_recall": 0.0,
+        "same_repo_rate": 0.0,
+        "hit_any_file": 0.0
+      },
+      "embedding_joint": {
+        "file_recall": 0.0,
+        "dir_recall": 0.0,
+        "same_repo_rate": 0.0,
+        "hit_any_file": 0.0
+      }
+    },
+    {
+      "instance_id": "instance_protonmail__webclients-32ff10999a06455cb2147f6873d627456924ae13",
+      "repo": "protonmail/webclients",
+      "embedding": {
+        "file_recall": 0.0,
+        "dir_recall": 0.0,
+        "same_repo_rate": 0.6,
+        "hit_any_file": 0.0
+      },
+      "embedding_joint": {
+        "file_recall": 0.0,
+        "dir_recall": 0.0,
+        "same_repo_rate": 0.6,
+        "hit_any_file": 0.0
+      }
+    },
+    {
+      "instance_id": "instance_ansible__ansible-811093f0225caa4dd33890933150a81c6a6d5226-v1055803c3a812189a1133297f7f5468579283f86",
+      "repo": "ansible/ansible",
+      "embedding": {
+        "file_recall": 0.4,
+        "dir_recall": 0.8,
+        "same_repo_rate": 1.0,
+        "hit_any_file": 1.0
+      },
+      "embedding_joint": {
+        "file_recall": 0.4,
+        "dir_recall": 0.8,
+        "same_repo_rate": 1.0,
+        "hit_any_file": 1.0
+      }
+    },
+    {
+      "instance_id": "instance_protonmail__webclients-c5a2089ca2bfe9aa1d85a664b8ad87ef843a1c9c",
+      "repo": "protonmail/webclients",
+      "embedding": {
+        "file_recall": 0.0,
+        "dir_recall": 1.0,
+        "same_repo_rate": 1.0,
+        "hit_any_file": 0.0
+      },
+      "embedding_joint": {
+        "file_recall": 1.0,
+        "dir_recall": 1.0,
+        "same_repo_rate": 1.0,
+        "hit_any_file": 1.0
+      }
+    },
+    {
+      "instance_id": "instance_gravitational__teleport-af5e2517de7d18406b614e413aca61c319312171-vee9b09fb20c43af7e520f57e9239bbcf46b7113d",
+      "repo": "gravitational/teleport",
+      "embedding": {
+        "file_recall": 0.5,
+        "dir_recall": 0.5,
+        "same_repo_rate": 1.0,
+        "hit_any_file": 1.0
+      },
+      "embedding_joint": {
+        "file_recall": 0.5,
+        "dir_recall": 0.5,
+        "same_repo_rate": 1.0,
+        "hit_any_file": 1.0
+      }
+    },
+    {
+      "instance_id": "instance_navidrome__navidrome-6c6223f2f9db2c8c253e0d40a192e3519c9037d1",
+      "repo": "navidrome/navidrome",
+      "embedding": {
+        "file_recall": 1.0,
+        "dir_recall": 1.0,
+        "same_repo_rate": 0.8,
+        "hit_any_file": 1.0
+      },
+      "embedding_joint": {
+        "file_recall": 1.0,
+        "dir_recall": 1.0,
+        "same_repo_rate": 0.4,
+        "hit_any_file": 1.0
+      }
+    },
+    {
+      "instance_id": "instance_element-hq__element-web-d405160080bbe804f7e9294067d004a7d4dad9d6-vnan",
+      "repo": "element-hq/element-web",
+      "embedding": {
+        "file_recall": 0.5,
+        "dir_recall": 0.5,
+        "same_repo_rate": 0.6,
+        "hit_any_file": 1.0
+      },
+      "embedding_joint": {
+        "file_recall": 0.5,
+        "dir_recall": 0.5,
+        "same_repo_rate": 1.0,
+        "hit_any_file": 1.0
+      }
+    },
+    {
+      "instance_id": "instance_future-architect__vuls-36456cb151894964ba1683ce7da5c35ada789970",
+      "repo": "future-architect/vuls",
+      "embedding": {
+        "file_recall": 1.0,
+        "dir_recall": 1.0,
+        "same_repo_rate": 0.8,
+        "hit_any_file": 1.0
+      },
+      "embedding_joint": {
+        "file_recall": 1.0,
+        "dir_recall": 1.0,
+        "same_repo_rate": 0.8,
+        "hit_any_file": 1.0
+      }
+    },
+    {
+      "instance_id": "instance_future-architect__vuls-17ae386d1e185ba742eea4668ca77642e22b54c4",
+      "repo": "future-architect/vuls",
+      "embedding": {
+        "file_recall": 1.0,
+        "dir_recall": 1.0,
+        "same_repo_rate": 1.0,
+        "hit_any_file": 1.0
+      },
+      "embedding_joint": {
+        "file_recall": 1.0,
+        "dir_recall": 1.0,
+        "same_repo_rate": 1.0,
+        "hit_any_file": 1.0
+      }
+    },
+    {
+      "instance_id": "instance_gravitational__teleport-46aa81b1ce96ebb4ebed2ae53fd78cd44a05da6c-vee9b09fb20c43af7e520f57e9239bbcf46b7113d",
+      "repo": "gravitational/teleport",
+      "embedding": {
+        "file_recall": 0.5,
+        "dir_recall": 1.0,
+        "same_repo_rate": 1.0,
+        "hit_any_file": 1.0
+      },
+      "embedding_joint": {
+        "file_recall": 0.5,
+        "dir_recall": 1.0,
+        "same_repo_rate": 0.4,
+        "hit_any_file": 1.0
+      }
+    },
+    {
+      "instance_id": "instance_NodeBB__NodeBB-a917210c5b2c20637094545401f85783905c074c-vf2cf3cbd463b7ad942381f1c6d077626485a1e9e",
+      "repo": "NodeBB/NodeBB",
+      "embedding": {
+        "file_recall": 0.0,
+        "dir_recall": 0.6666666666666666,
+        "same_repo_rate": 0.6,
+        "hit_any_file": 0.0
+      },
+      "embedding_joint": {
+        "file_recall": 0.0,
+        "dir_recall": 0.6666666666666666,
+        "same_repo_rate": 0.6,
+        "hit_any_file": 0.0
+      }
+    },
+    {
+      "instance_id": "instance_protonmail__webclients-e65cc5f33719e02e1c378146fb981d27bc24bdf4",
+      "repo": "protonmail/webclients",
+      "embedding": {
+        "file_recall": 0.18181818181818182,
+        "dir_recall": 0.75,
+        "same_repo_rate": 0.6,
+        "hit_any_file": 1.0
+      },
+      "embedding_joint": {
+        "file_recall": 0.18181818181818182,
+        "dir_recall": 0.75,
+        "same_repo_rate": 0.6,
+        "hit_any_file": 1.0
+      }
+    },
+    {
+      "instance_id": "instance_qutebrowser__qutebrowser-34a13afd36b5e529d553892b1cd8b9d5ce8881c4-vafb3e8e01b31319c66c4e666b8a3b1d8ba55db24",
+      "repo": "qutebrowser/qutebrowser",
+      "embedding": {
+        "file_recall": 1.0,
+        "dir_recall": 1.0,
+        "same_repo_rate": 0.4,
+        "hit_any_file": 1.0
+      },
+      "embedding_joint": {
+        "file_recall": 1.0,
+        "dir_recall": 1.0,
+        "same_repo_rate": 0.4,
+        "hit_any_file": 1.0
+      }
+    },
+    {
+      "instance_id": "instance_future-architect__vuls-7e91f5ef7e5712b1a3d7d5066ad6607e9debc21c",
+      "repo": "future-architect/vuls",
+      "embedding": {
+        "file_recall": 0.5,
+        "dir_recall": 1.0,
+        "same_repo_rate": 1.0,
+        "hit_any_file": 1.0
+      },
+      "embedding_joint": {
+        "file_recall": 0.5,
+        "dir_recall": 1.0,
+        "same_repo_rate": 1.0,
+        "hit_any_file": 1.0
+      }
+    },
+    {
+      "instance_id": "instance_protonmail__webclients-7e54526774e577c0ebb58ced7ba8bef349a69fec",
+      "repo": "protonmail/webclients",
+      "embedding": {
+        "file_recall": 0.08333333333333333,
+        "dir_recall": 0.14285714285714285,
+        "same_repo_rate": 1.0,
+        "hit_any_file": 1.0
+      },
+      "embedding_joint": {
+        "file_recall": 0.08333333333333333,
+        "dir_recall": 0.2857142857142857,
+        "same_repo_rate": 1.0,
+        "hit_any_file": 1.0
+      }
+    },
+    {
+      "instance_id": "instance_flipt-io__flipt-0fd09def402258834b9d6c0eaa6d3b4ab93b4446",
+      "repo": "flipt-io/flipt",
+      "embedding": {
+        "file_recall": 0.2,
+        "dir_recall": 0.5,
+        "same_repo_rate": 1.0,
+        "hit_any_file": 1.0
+      },
+      "embedding_joint": {
+        "file_recall": 0.2,
+        "dir_recall": 0.5,
+        "same_repo_rate": 1.0,
+        "hit_any_file": 1.0
+      }
+    },
+    {
+      "instance_id": "instance_future-architect__vuls-4b680b996061044e93ef5977a081661665d3360a",
+      "repo": "future-architect/vuls",
+      "embedding": {
+        "file_recall": 0.0,
+        "dir_recall": 1.0,
+        "same_repo_rate": 1.0,
+        "hit_any_file": 0.0
+      },
+      "embedding_joint": {
+        "file_recall": 0.3333333333333333,
+        "dir_recall": 1.0,
+        "same_repo_rate": 1.0,
+        "hit_any_file": 1.0
+      }
+    },
+    {
+      "instance_id": "instance_future-architect__vuls-61c39637f2f3809e1b5dad05f0c57c799dce1587",
+      "repo": "future-architect/vuls",
+      "embedding": {
+        "file_recall": 0.5,
+        "dir_recall": 0.6666666666666666,
+        "same_repo_rate": 1.0,
+        "hit_any_file": 1.0
+      },
+      "embedding_joint": {
+        "file_recall": 0.5,
+        "dir_recall": 0.6666666666666666,
+        "same_repo_rate": 0.8,
+        "hit_any_file": 1.0
+      }
+    },
+    {
+      "instance_id": "instance_element-hq__element-web-e15ef9f3de36df7f318c083e485f44e1de8aad17",
+      "repo": "element-hq/element-web",
+      "embedding": {
+        "file_recall": 0.16666666666666666,
+        "dir_recall": 0.5,
+        "same_repo_rate": 1.0,
+        "hit_any_file": 1.0
+      },
+      "embedding_joint": {
+        "file_recall": 0.16666666666666666,
+        "dir_recall": 0.5,
+        "same_repo_rate": 1.0,
+        "hit_any_file": 1.0
+      }
+    },
+    {
+      "instance_id": "instance_flipt-io__flipt-2ca5dfb3513e4e786d2b037075617cccc286d5c3",
+      "repo": "flipt-io/flipt",
+      "embedding": {
+        "file_recall": 0.5,
+        "dir_recall": 0.375,
+        "same_repo_rate": 1.0,
+        "hit_any_file": 1.0
+      },
+      "embedding_joint": {
+        "file_recall": 0.5,
+        "dir_recall": 0.375,
+        "same_repo_rate": 1.0,
+        "hit_any_file": 1.0
+      }
+    },
+    {
+      "instance_id": "instance_future-architect__vuls-457a3a9627fb9a0800d0aecf1d4713fb634a9011",
+      "repo": "future-architect/vuls",
+      "embedding": {
+        "file_recall": 1.0,
+        "dir_recall": 1.0,
+        "same_repo_rate": 1.0,
+        "hit_any_file": 1.0
+      },
+      "embedding_joint": {
+        "file_recall": 1.0,
+        "dir_recall": 1.0,
+        "same_repo_rate": 1.0,
+        "hit_any_file": 1.0
+      }
+    },
+    {
+      "instance_id": "instance_navidrome__navidrome-d21932bd1b2379b0ebca2d19e5d8bae91040268a",
+      "repo": "navidrome/navidrome",
+      "embedding": {
+        "file_recall": 0.25,
+        "dir_recall": 1.0,
+        "same_repo_rate": 1.0,
+        "hit_any_file": 1.0
+      },
+      "embedding_joint": {
+        "file_recall": 0.25,
+        "dir_recall": 1.0,
+        "same_repo_rate": 1.0,
+        "hit_any_file": 1.0
+      }
+    },
+    {
+      "instance_id": "instance_qutebrowser__qutebrowser-0aa57e4f7243024fa4bba8853306691b5dbd77b3-v5149fcda2a9a6fe1d35dfed1bade1444a11ef271",
+      "repo": "qutebrowser/qutebrowser",
+      "embedding": {
+        "file_recall": 1.0,
+        "dir_recall": 1.0,
+        "same_repo_rate": 1.0,
+        "hit_any_file": 1.0
+      },
+      "embedding_joint": {
+        "file_recall": 1.0,
+        "dir_recall": 1.0,
+        "same_repo_rate": 1.0,
+        "hit_any_file": 1.0
+      }
+    },
+    {
+      "instance_id": "instance_internetarchive__openlibrary-6afdb09df692223c3a31df65cfa92f15e5614c01-v08d8e8889ec945ab821fb156c04c7d2e2810debb",
+      "repo": "internetarchive/openlibrary",
+      "embedding": {
+        "file_recall": 1.0,
+        "dir_recall": 1.0,
+        "same_repo_rate": 0.6,
+        "hit_any_file": 1.0
+      },
+      "embedding_joint": {
+        "file_recall": 1.0,
+        "dir_recall": 1.0,
+        "same_repo_rate": 0.8,
+        "hit_any_file": 1.0
+      }
+    },
+    {
+      "instance_id": "instance_qutebrowser__qutebrowser-fcfa069a06ade76d91bac38127f3235c13d78eb1-v5fc38aaf22415ab0b70567368332beee7955b367",
+      "repo": "qutebrowser/qutebrowser",
+      "embedding": {
+        "file_recall": 0.0,
+        "dir_recall": 1.0,
+        "same_repo_rate": 0.8,
+        "hit_any_file": 0.0
+      },
+      "embedding_joint": {
+        "file_recall": 0.0,
+        "dir_recall": 1.0,
+        "same_repo_rate": 1.0,
+        "hit_any_file": 0.0
+      }
+    },
+    {
+      "instance_id": "instance_ansible__ansible-eea46a0d1b99a6dadedbb6a3502d599235fa7ec3-v390e508d27db7a51eece36bb6d9698b63a5b638a",
+      "repo": "ansible/ansible",
+      "embedding": {
+        "file_recall": 0.0,
+        "dir_recall": 0.0,
+        "same_repo_rate": 1.0,
+        "hit_any_file": 0.0
+      },
+      "embedding_joint": {
+        "file_recall": 0.0,
+        "dir_recall": 0.0,
+        "same_repo_rate": 1.0,
+        "hit_any_file": 0.0
+      }
+    },
+    {
+      "instance_id": "instance_flipt-io__flipt-e594593dae52badf80ffd27878d2275c7f0b20e9",
+      "repo": "flipt-io/flipt",
+      "embedding": {
+        "file_recall": 0.3333333333333333,
+        "dir_recall": 0.5,
+        "same_repo_rate": 1.0,
+        "hit_any_file": 1.0
+      },
+      "embedding_joint": {
+        "file_recall": 0.3333333333333333,
+        "dir_recall": 0.5,
+        "same_repo_rate": 1.0,
+        "hit_any_file": 1.0
+      }
+    },
+    {
+      "instance_id": "instance_internetarchive__openlibrary-0d13e6b4bf80bced6c0946b969b9a1b6963f6bce-v76304ecdb3a5954fcf13feb710e8c40fcf24b73c",
+      "repo": "internetarchive/openlibrary",
+      "embedding": {
+        "file_recall": 1.0,
+        "dir_recall": 1.0,
+        "same_repo_rate": 1.0,
+        "hit_any_file": 1.0
+      },
+      "embedding_joint": {
+        "file_recall": 1.0,
+        "dir_recall": 1.0,
+        "same_repo_rate": 1.0,
+        "hit_any_file": 1.0
+      }
+    },
+    {
+      "instance_id": "instance_flipt-io__flipt-b433bd05ce405837804693bebd5f4b88d87133c8",
+      "repo": "flipt-io/flipt",
+      "embedding": {
+        "file_recall": 0.39285714285714285,
+        "dir_recall": 0.29411764705882354,
+        "same_repo_rate": 1.0,
+        "hit_any_file": 1.0
+      },
+      "embedding_joint": {
+        "file_recall": 0.39285714285714285,
+        "dir_recall": 0.29411764705882354,
+        "same_repo_rate": 1.0,
+        "hit_any_file": 1.0
+      }
+    },
+    {
+      "instance_id": "instance_navidrome__navidrome-87d4db7638b37eeb754b217440ab7a372f669205",
+      "repo": "navidrome/navidrome",
+      "embedding": {
+        "file_recall": 0.3333333333333333,
+        "dir_recall": 0.6666666666666666,
+        "same_repo_rate": 1.0,
+        "hit_any_file": 1.0
+      },
+      "embedding_joint": {
+        "file_recall": 0.3333333333333333,
+        "dir_recall": 0.6666666666666666,
+        "same_repo_rate": 1.0,
+        "hit_any_file": 1.0
+      }
+    },
+    {
+      "instance_id": "instance_ansible__ansible-e22e103cdf8edc56ff7d9b848a58f94f1471a263-v1055803c3a812189a1133297f7f5468579283f86",
+      "repo": "ansible/ansible",
+      "embedding": {
+        "file_recall": 0.5,
+        "dir_recall": 1.0,
+        "same_repo_rate": 1.0,
+        "hit_any_file": 1.0
+      },
+      "embedding_joint": {
+        "file_recall": 0.5,
+        "dir_recall": 1.0,
+        "same_repo_rate": 1.0,
+        "hit_any_file": 1.0
+      }
+    },
+    {
+      "instance_id": "instance_protonmail__webclients-e7f3f20c8ad86089967498632ace73c1157a9d51",
+      "repo": "protonmail/webclients",
+      "embedding": {
+        "file_recall": 0.0,
+        "dir_recall": 0.0,
+        "same_repo_rate": 0.4,
+        "hit_any_file": 0.0
+      },
+      "embedding_joint": {
+        "file_recall": 0.0,
+        "dir_recall": 0.0,
+        "same_repo_rate": 0.4,
+        "hit_any_file": 0.0
+      }
+    },
+    {
+      "instance_id": "instance_protonmail__webclients-715dbd4e6999499cd2a576a532d8214f75189116",
+      "repo": "protonmail/webclients",
+      "embedding": {
+        "file_recall": 0.0,
+        "dir_recall": 0.0,
+        "same_repo_rate": 0.2,
+        "hit_any_file": 0.0
+      },
+      "embedding_joint": {
+        "file_recall": 0.0,
+        "dir_recall": 0.0,
+        "same_repo_rate": 0.2,
+        "hit_any_file": 0.0
+      }
+    },
+    {
+      "instance_id": "instance_ansible__ansible-f8ef34672b961a95ec7282643679492862c688ec-vba6da65a0f3baefda7a058ebbd0a8dcafb8512f5",
+      "repo": "ansible/ansible",
+      "embedding": {
+        "file_recall": 0.14285714285714285,
+        "dir_recall": 0.6,
+        "same_repo_rate": 1.0,
+        "hit_any_file": 1.0
+      },
+      "embedding_joint": {
+        "file_recall": 0.14285714285714285,
+        "dir_recall": 0.6,
+        "same_repo_rate": 1.0,
+        "hit_any_file": 1.0
+      }
+    },
+    {
+      "instance_id": "instance_navidrome__navidrome-de90152a7173039677ac808f5bfb1e644d761336",
+      "repo": "navidrome/navidrome",
+      "embedding": {
+        "file_recall": 1.0,
+        "dir_recall": 1.0,
+        "same_repo_rate": 1.0,
+        "hit_any_file": 1.0
+      },
+      "embedding_joint": {
+        "file_recall": 1.0,
+        "dir_recall": 1.0,
+        "same_repo_rate": 1.0,
+        "hit_any_file": 1.0
+      }
+    },
+    {
+      "instance_id": "instance_ansible__ansible-189fcb37f973f0b1d52b555728208eeb9a6fce83-v906c969b551b346ef54a2c0b41e04f632b7b73c2",
+      "repo": "ansible/ansible",
+      "embedding": {
+        "file_recall": 0.0,
+        "dir_recall": 0.0,
+        "same_repo_rate": 1.0,
+        "hit_any_file": 0.0
+      },
+      "embedding_joint": {
+        "file_recall": 0.0,
+        "dir_recall": 0.0,
+        "same_repo_rate": 1.0,
+        "hit_any_file": 0.0
+      }
+    },
+    {
+      "instance_id": "instance_qutebrowser__qutebrowser-bedc9f7fadf93f83d8dee95feeecb9922b6f063f-v2ef375ac784985212b1805e1d0431dc8f1b3c171",
+      "repo": "qutebrowser/qutebrowser",
+      "embedding": {
+        "file_recall": 0.5,
+        "dir_recall": 0.6666666666666666,
+        "same_repo_rate": 1.0,
+        "hit_any_file": 1.0
+      },
+      "embedding_joint": {
+        "file_recall": 0.5,
+        "dir_recall": 0.6666666666666666,
+        "same_repo_rate": 1.0,
+        "hit_any_file": 1.0
+      }
+    },
+    {
+      "instance_id": "instance_ansible__ansible-de5858f48dc9e1ce9117034e0d7e76806f420ca8-v1055803c3a812189a1133297f7f5468579283f86",
+      "repo": "ansible/ansible",
+      "embedding": {
+        "file_recall": 0.25,
+        "dir_recall": 0.75,
+        "same_repo_rate": 1.0,
+        "hit_any_file": 1.0
+      },
+      "embedding_joint": {
+        "file_recall": 0.75,
+        "dir_recall": 1.0,
+        "same_repo_rate": 1.0,
+        "hit_any_file": 1.0
+      }
+    },
+    {
+      "instance_id": "instance_qutebrowser__qutebrowser-e5340c449f23608803c286da0563b62f58ba25b0-v059c6fdc75567943479b23ebca7c07b5e9a7f34c",
+      "repo": "qutebrowser/qutebrowser",
+      "embedding": {
+        "file_recall": 0.0,
+        "dir_recall": 0.4,
+        "same_repo_rate": 0.8,
+        "hit_any_file": 0.0
+      },
+      "embedding_joint": {
+        "file_recall": 0.14285714285714285,
+        "dir_recall": 0.6,
+        "same_repo_rate": 1.0,
+        "hit_any_file": 1.0
+      }
+    },
+    {
+      "instance_id": "instance_NodeBB__NodeBB-8ca65b0c78c67c1653487c02d1135e1b702185e1-vf2cf3cbd463b7ad942381f1c6d077626485a1e9e",
+      "repo": "NodeBB/NodeBB",
+      "embedding": {
+        "file_recall": 0.3333333333333333,
+        "dir_recall": 0.3333333333333333,
+        "same_repo_rate": 0.6,
+        "hit_any_file": 1.0
+      },
+      "embedding_joint": {
+        "file_recall": 0.3333333333333333,
+        "dir_recall": 0.3333333333333333,
+        "same_repo_rate": 0.8,
+        "hit_any_file": 1.0
+      }
+    },
+    {
+      "instance_id": "instance_ansible__ansible-622a493ae03bd5e5cf517d336fc426e9d12208c7-v906c969b551b346ef54a2c0b41e04f632b7b73c2",
+      "repo": "ansible/ansible",
+      "embedding": {
+        "file_recall": 0.0,
+        "dir_recall": 1.0,
+        "same_repo_rate": 1.0,
+        "hit_any_file": 0.0
+      },
+      "embedding_joint": {
+        "file_recall": 0.0,
+        "dir_recall": 1.0,
+        "same_repo_rate": 1.0,
+        "hit_any_file": 0.0
+      }
+    },
+    {
+      "instance_id": "instance_element-hq__element-web-fe14847bb9bb07cab1b9c6c54335ff22ca5e516a-vnan",
+      "repo": "element-hq/element-web",
+      "embedding": {
+        "file_recall": 0.5555555555555556,
+        "dir_recall": 0.8333333333333334,
+        "same_repo_rate": 1.0,
+        "hit_any_file": 1.0
+      },
+      "embedding_joint": {
+        "file_recall": 0.3333333333333333,
+        "dir_recall": 0.6666666666666666,
+        "same_repo_rate": 1.0,
+        "hit_any_file": 1.0
+      }
+    },
+    {
+      "instance_id": "instance_internetarchive__openlibrary-c8996ecc40803b9155935fd7ff3b8e7be6c1437c-ve8fc82d8aae8463b752a211156c5b7b59f349237",
+      "repo": "internetarchive/openlibrary",
+      "embedding": {
+        "file_recall": 1.0,
+        "dir_recall": 1.0,
+        "same_repo_rate": 1.0,
+        "hit_any_file": 1.0
+      },
+      "embedding_joint": {
+        "file_recall": 1.0,
+        "dir_recall": 1.0,
+        "same_repo_rate": 1.0,
+        "hit_any_file": 1.0
+      }
+    },
+    {
+      "instance_id": "instance_internetarchive__openlibrary-91efee627df01e32007abf2d6ebf73f9d9053076-vbee42ad1b72fb23c6a1c874868a720b370983ed2",
+      "repo": "internetarchive/openlibrary",
+      "embedding": {
+        "file_recall": 1.0,
+        "dir_recall": 1.0,
+        "same_repo_rate": 0.6,
+        "hit_any_file": 1.0
+      },
+      "embedding_joint": {
+        "file_recall": 1.0,
+        "dir_recall": 1.0,
+        "same_repo_rate": 0.4,
+        "hit_any_file": 1.0
+      }
+    },
+    {
+      "instance_id": "instance_internetarchive__openlibrary-431442c92887a3aece3f8aa771dd029738a80eb1-v76304ecdb3a5954fcf13feb710e8c40fcf24b73c",
+      "repo": "internetarchive/openlibrary",
+      "embedding": {
+        "file_recall": 1.0,
+        "dir_recall": 1.0,
+        "same_repo_rate": 0.2,
+        "hit_any_file": 1.0
+      },
+      "embedding_joint": {
+        "file_recall": 1.0,
+        "dir_recall": 1.0,
+        "same_repo_rate": 0.8,
+        "hit_any_file": 1.0
+      }
+    },
+    {
+      "instance_id": "instance_navidrome__navidrome-3f2d24695e9382125dfe5e6d6c8bbeb4a313a4f9",
+      "repo": "navidrome/navidrome",
+      "embedding": {
+        "file_recall": 0.5,
+        "dir_recall": 0.6,
+        "same_repo_rate": 1.0,
+        "hit_any_file": 1.0
+      },
+      "embedding_joint": {
+        "file_recall": 0.3333333333333333,
+        "dir_recall": 0.4,
+        "same_repo_rate": 1.0,
+        "hit_any_file": 1.0
+      }
+    },
+    {
+      "instance_id": "instance_navidrome__navidrome-56303cde23a4122d2447cbb266f942601a78d7e4",
+      "repo": "navidrome/navidrome",
+      "embedding": {
+        "file_recall": 1.0,
+        "dir_recall": 1.0,
+        "same_repo_rate": 1.0,
+        "hit_any_file": 1.0
+      },
+      "embedding_joint": {
+        "file_recall": 1.0,
+        "dir_recall": 1.0,
+        "same_repo_rate": 1.0,
+        "hit_any_file": 1.0
+      }
+    },
+    {
+      "instance_id": "instance_internetarchive__openlibrary-e010b2a13697de70170033902ba2e27a1e1acbe9-v0f5aece3601a5b4419f7ccec1dbda2071be28ee4",
+      "repo": "internetarchive/openlibrary",
+      "embedding": {
+        "file_recall": 1.0,
+        "dir_recall": 1.0,
+        "same_repo_rate": 1.0,
+        "hit_any_file": 1.0
+      },
+      "embedding_joint": {
+        "file_recall": 1.0,
+        "dir_recall": 1.0,
+        "same_repo_rate": 1.0,
+        "hit_any_file": 1.0
+      }
+    },
+    {
+      "instance_id": "instance_qutebrowser__qutebrowser-0b621cb0ce2b54d3f93d8d41d8ff4257888a87e5-v2ef375ac784985212b1805e1d0431dc8f1b3c171",
+      "repo": "qutebrowser/qutebrowser",
+      "embedding": {
+        "file_recall": 1.0,
+        "dir_recall": 1.0,
+        "same_repo_rate": 0.8,
+        "hit_any_file": 1.0
+      },
+      "embedding_joint": {
+        "file_recall": 1.0,
+        "dir_recall": 1.0,
+        "same_repo_rate": 0.8,
+        "hit_any_file": 1.0
+      }
+    },
+    {
+      "instance_id": "instance_qutebrowser__qutebrowser-322834d0e6bf17e5661145c9f085b41215c280e8-v488d33dd1b2540b234cbb0468af6b6614941ce8f",
+      "repo": "qutebrowser/qutebrowser",
+      "embedding": {
+        "file_recall": 0.0,
+        "dir_recall": 0.3333333333333333,
+        "same_repo_rate": 1.0,
+        "hit_any_file": 0.0
+      },
+      "embedding_joint": {
+        "file_recall": 0.6666666666666666,
+        "dir_recall": 1.0,
+        "same_repo_rate": 1.0,
+        "hit_any_file": 1.0
+      }
+    },
+    {
+      "instance_id": "instance_internetarchive__openlibrary-630221ab686c64e75a2ce253c893c033e4814b2e-v93c53c13d5f9b383ebb411ee7750b49dcd1a34c6",
+      "repo": "internetarchive/openlibrary",
+      "embedding": {
+        "file_recall": 0.3333333333333333,
+        "dir_recall": 0.6666666666666666,
+        "same_repo_rate": 1.0,
+        "hit_any_file": 1.0
+      },
+      "embedding_joint": {
+        "file_recall": 0.5,
+        "dir_recall": 0.6666666666666666,
+        "same_repo_rate": 1.0,
+        "hit_any_file": 1.0
+      }
+    },
+    {
+      "instance_id": "instance_element-hq__element-web-ecfd1736e5dd9808e87911fc264e6c816653e1a9-vnan",
+      "repo": "element-hq/element-web",
+      "embedding": {
+        "file_recall": 0.0,
+        "dir_recall": 0.5,
+        "same_repo_rate": 1.0,
+        "hit_any_file": 0.0
+      },
+      "embedding_joint": {
+        "file_recall": 0.0,
+        "dir_recall": 0.5,
+        "same_repo_rate": 1.0,
+        "hit_any_file": 0.0
+      }
+    }
+  ]
+}

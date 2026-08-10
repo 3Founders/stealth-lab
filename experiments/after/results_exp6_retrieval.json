@@ -1,0 +1,93 @@
+{
+  "library": 22,
+  "queries": 89,
+  "bm25_validation": {
+    "validated": true,
+    "mean_pearson_vs_rank_bm25": 0.989672,
+    "top1_agreement": "39/40"
+  },
+  "methods": {
+    "jaccard_baseline": {
+      "p@1": 0.7528,
+      "recall@3": 0.8876,
+      "recall@5": 0.9326
+    },
+    "bm25": {
+      "p@1": 0.809,
+      "recall@3": 0.9213,
+      "recall@5": 0.9663
+    },
+    "dense_voyage": {
+      "p@1": 0.7865,
+      "recall@3": 0.8989,
+      "recall@5": 0.9663
+    },
+    "rrf_dense_bm25": {
+      "p@1": 0.809,
+      "recall@3": 0.9551,
+      "recall@5": 0.9775
+    },
+    "mmr_dense": {
+      "p@1": 0.7865,
+      "recall@3": 0.8876,
+      "recall@5": 0.9663
+    },
+    "hyde_dense": {
+      "p@1": 0.764,
+      "recall@3": 0.9101,
+      "recall@5": 0.9326
+    },
+    "hyde_plus_dense_rrf": {
+      "p@1": 0.7528,
+      "recall@3": 0.8989,
+      "recall@5": 0.9663
+    },
+    "cross_encoder_rerank": {
+      "p@1": 0.5281,
+      "recall@3": 0.809,
+      "recall@5": 0.9101
+    }
+  },
+  "mcnemar_vs_dense_voyage": {
+    "jaccard_baseline": {
+      "a_wins": 5,
+      "b_wins": 8,
+      "discordant": 13,
+      "p_value": 0.581055
+    },
+    "bm25": {
+      "a_wins": 7,
+      "b_wins": 5,
+      "discordant": 12,
+      "p_value": 0.774414
+    },
+    "rrf_dense_bm25": {
+      "a_wins": 3,
+      "b_wins": 1,
+      "discordant": 4,
+      "p_value": 0.625
+    },
+    "mmr_dense": {
+      "discordant": 0,
+      "p_value": 1.0
+    },
+    "hyde_dense": {
+      "a_wins": 1,
+      "b_wins": 3,
+      "discordant": 4,
+      "p_value": 0.625
+    },
+    "hyde_plus_dense_rrf": {
+      "a_wins": 0,
+      "b_wins": 3,
+      "discordant": 3,
+      "p_value": 0.25
+    },
+    "cross_encoder_rerank": {
+      "a_wins": 6,
+      "b_wins": 29,
+      "discordant": 35,
+      "p_value": 0.000117
+    }
+  }
+}

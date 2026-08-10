@@ -1,0 +1,980 @@
+{
+  "summary": {
+    "slm_8b": {
+      "provider": "groq",
+      "model": "llama-3.1-8b-instant",
+      "n": 20,
+      "no_context": {
+        "prompt": 880.5,
+        "completion": 731.0,
+        "total": 1611.4
+      },
+      "with_context": {
+        "prompt": 2119.4,
+        "completion": 743.5,
+        "total": 2862.9
+      },
+      "completion_delta_mean": -12.6,
+      "completion_wilcoxon_p": 0.586174,
+      "total_token_ratio_ctx_over_bare": 1.777
+    },
+    "large_120b": {
+      "provider": "general_compute",
+      "model": "gpt-oss-120b",
+      "n": 20,
+      "no_context": {
+        "prompt": 921.6,
+        "completion": 2674.8,
+        "total": 3596.3
+      },
+      "with_context": {
+        "prompt": 2161.6,
+        "completion": 2638,
+        "total": 4799.6
+      },
+      "completion_delta_mean": 36.8,
+      "completion_wilcoxon_p": 0.277355,
+      "total_token_ratio_ctx_over_bare": 1.335
+    }
+  },
+  "rows": [
+    {
+      "arm": "slm_8b",
+      "provider": "groq",
+      "model": "llama-3.1-8b-instant",
+      "task_id": "hard-de-incremental-api-ingest",
+      "gold": [
+        "pipelines",
+        "api",
+        "configs"
+      ],
+      "no_context": {
+        "prompt_tokens": 980,
+        "completion_tokens": 615,
+        "total_tokens": 1595,
+        "seconds": 1.4
+      },
+      "with_context": {
+        "prompt_tokens": 2219,
+        "completion_tokens": 900,
+        "total_tokens": 3119,
+        "seconds": 1.4
+      },
+      "context_chars": 5104
+    },
+    {
+      "arm": "slm_8b",
+      "provider": "groq",
+      "model": "llama-3.1-8b-instant",
+      "task_id": "hard-de-partner-feed-rulebook",
+      "gold": [
+        "statistics",
+        "xlsx",
+        "validation"
+      ],
+      "no_context": {
+        "prompt_tokens": 860,
+        "completion_tokens": 651,
+        "total_tokens": 1511,
+        "seconds": 19.0
+      },
+      "with_context": {
+        "prompt_tokens": 2059,
+        "completion_tokens": 841,
+        "total_tokens": 2900,
+        "seconds": 22.5
+      },
+      "context_chars": 5106
+    },
+    {
+      "arm": "slm_8b",
+      "provider": "groq",
+      "model": "llama-3.1-8b-instant",
+      "task_id": "hard-de-schema-contract-migration",
+      "gold": [
+        "sql",
+        "migrations",
+        "validation"
+      ],
+      "no_context": {
+        "prompt_tokens": 542,
+        "completion_tokens": 862,
+        "total_tokens": 1404,
+        "seconds": 13.2
+      },
+      "with_context": {
+        "prompt_tokens": 1748,
+        "completion_tokens": 598,
+        "total_tokens": 2346,
+        "seconds": 28.0
+      },
+      "context_chars": 5111
+    },
+    {
+      "arm": "slm_8b",
+      "provider": "groq",
+      "model": "llama-3.1-8b-instant",
+      "task_id": "hierarchical-ranking-analysis",
+      "gold": [
+        "sql",
+        "statistics"
+      ],
+      "no_context": {
+        "prompt_tokens": 1138,
+        "completion_tokens": 900,
+        "total_tokens": 2038,
+        "seconds": 17.2
+      },
+      "with_context": {
+        "prompt_tokens": 2586,
+        "completion_tokens": 900,
+        "total_tokens": 3486,
+        "seconds": 34.7
+      },
+      "context_chars": 5105
+    },
+    {
+      "arm": "slm_8b",
+      "provider": "groq",
+      "model": "llama-3.1-8b-instant",
+      "task_id": "jsonl-schema-validation",
+      "gold": [
+        "api",
+        "validation"
+      ],
+      "no_context": {
+        "prompt_tokens": 964,
+        "completion_tokens": 782,
+        "total_tokens": 1746,
+        "seconds": 19.1
+      },
+      "with_context": {
+        "prompt_tokens": 2155,
+        "completion_tokens": 900,
+        "total_tokens": 3055,
+        "seconds": 29.4
+      },
+      "context_chars": 5105
+    },
+    {
+      "arm": "slm_8b",
+      "provider": "groq",
+      "model": "llama-3.1-8b-instant",
+      "task_id": "sales-pivot-analysis",
+      "gold": [
+        "pipelines",
+        "xlsx"
+      ],
+      "no_context": {
+        "prompt_tokens": 719,
+        "completion_tokens": 550,
+        "total_tokens": 1269,
+        "seconds": 15.8
+      },
+      "with_context": {
+        "prompt_tokens": 1921,
+        "completion_tokens": 782,
+        "total_tokens": 2703,
+        "seconds": 24.4
+      },
+      "context_chars": 5100
+    },
+    {
+      "arm": "slm_8b",
+      "provider": "groq",
+      "model": "llama-3.1-8b-instant",
+      "task_id": "type-coercion-debugging",
+      "gold": [
+        "debugging",
+        "testing"
+      ],
+      "no_context": {
+        "prompt_tokens": 610,
+        "completion_tokens": 821,
+        "total_tokens": 1431,
+        "seconds": 15.2
+      },
+      "with_context": {
+        "prompt_tokens": 1772,
+        "completion_tokens": 625,
+        "total_tokens": 2397,
+        "seconds": 25.1
+      },
+      "context_chars": 5108
+    },
+    {
+      "arm": "slm_8b",
+      "provider": "groq",
+      "model": "llama-3.1-8b-instant",
+      "task_id": "ab-test-validation",
+      "gold": [
+        "statistics",
+        "testing"
+      ],
+      "no_context": {
+        "prompt_tokens": 835,
+        "completion_tokens": 900,
+        "total_tokens": 1735,
+        "seconds": 15.3
+      },
+      "with_context": {
+        "prompt_tokens": 2139,
+        "completion_tokens": 724,
+        "total_tokens": 2863,
+        "seconds": 30.2
+      },
+      "context_chars": 5112
+    },
+    {
+      "arm": "slm_8b",
+      "provider": "groq",
+      "model": "llama-3.1-8b-instant",
+      "task_id": "hard-ds-leakage-resistant-readmission-model",
+      "gold": [
+        "model_training",
+        "pipelines",
+        "validation"
+      ],
+      "no_context": {
+        "prompt_tokens": 768,
+        "completion_tokens": 644,
+        "total_tokens": 1412,
+        "seconds": 15.0
+      },
+      "with_context": {
+        "prompt_tokens": 2028,
+        "completion_tokens": 696,
+        "total_tokens": 2724,
+        "seconds": 26.2
+      },
+      "context_chars": 5115
+    },
+    {
+      "arm": "slm_8b",
+      "provider": "groq",
+      "model": "llama-3.1-8b-instant",
+      "task_id": "hard-ds-paper-claim-leaderboard",
+      "gold": [
+        "factchecking",
+        "pdf",
+        "evaluation"
+      ],
+      "no_context": {
+        "prompt_tokens": 888,
+        "completion_tokens": 679,
+        "total_tokens": 1567,
+        "seconds": 16.1
+      },
+      "with_context": {
+        "prompt_tokens": 2186,
+        "completion_tokens": 745,
+        "total_tokens": 2931,
+        "seconds": 29.3
+      },
+      "context_chars": 5107
+    },
+    {
+      "arm": "slm_8b",
+      "provider": "groq",
+      "model": "llama-3.1-8b-instant",
+      "task_id": "hard-ds-stratified-experiment-audit",
+      "gold": [
+        "statistics",
+        "xlsx",
+        "validation"
+      ],
+      "no_context": {
+        "prompt_tokens": 813,
+        "completion_tokens": 595,
+        "total_tokens": 1408,
+        "seconds": 14.0
+      },
+      "with_context": {
+        "prompt_tokens": 2025,
+        "completion_tokens": 586,
+        "total_tokens": 2611,
+        "seconds": 27.1
+      },
+      "context_chars": 5116
+    },
+    {
+      "arm": "slm_8b",
+      "provider": "groq",
+      "model": "llama-3.1-8b-instant",
+      "task_id": "inventory-reconciliation-validation",
+      "gold": [
+        "sql",
+        "validation"
+      ],
+      "no_context": {
+        "prompt_tokens": 1277,
+        "completion_tokens": 900,
+        "total_tokens": 2177,
+        "seconds": 19.3
+      },
+      "with_context": {
+        "prompt_tokens": 2516,
+        "completion_tokens": 900,
+        "total_tokens": 3416,
+        "seconds": 34.5
+      },
+      "context_chars": 5114
+    },
+    {
+      "arm": "slm_8b",
+      "provider": "groq",
+      "model": "llama-3.1-8b-instant",
+      "task_id": "multi-series-demand-forecasting",
+      "gold": [
+        "model_training",
+        "evaluation"
+      ],
+      "no_context": {
+        "prompt_tokens": 348,
+        "completion_tokens": 768,
+        "total_tokens": 1116,
+        "seconds": 13.2
+      },
+      "with_context": {
+        "prompt_tokens": 1609,
+        "completion_tokens": 630,
+        "total_tokens": 2239,
+        "seconds": 22.0
+      },
+      "context_chars": 5118
+    },
+    {
+      "arm": "slm_8b",
+      "provider": "groq",
+      "model": "llama-3.1-8b-instant",
+      "task_id": "acroform-field-validator",
+      "gold": [
+        "api",
+        "pdf"
+      ],
+      "no_context": {
+        "prompt_tokens": 1030,
+        "completion_tokens": 711,
+        "total_tokens": 1741,
+        "seconds": 17.1
+      },
+      "with_context": {
+        "prompt_tokens": 2314,
+        "completion_tokens": 900,
+        "total_tokens": 3214,
+        "seconds": 30.4
+      },
+      "context_chars": 5107
+    },
+    {
+      "arm": "slm_8b",
+      "provider": "groq",
+      "model": "llama-3.1-8b-instant",
+      "task_id": "deepset-ai-haystack-3546-a260299",
+      "gold": [
+        "rag",
+        "evaluation"
+      ],
+      "no_context": {
+        "prompt_tokens": 503,
+        "completion_tokens": 398,
+        "total_tokens": 901,
+        "seconds": 13.6
+      },
+      "with_context": {
+        "prompt_tokens": 1713,
+        "completion_tokens": 416,
+        "total_tokens": 2129,
+        "seconds": 20.9
+      },
+      "context_chars": 5105
+    },
+    {
+      "arm": "slm_8b",
+      "provider": "groq",
+      "model": "llama-3.1-8b-instant",
+      "task_id": "deepset-ai-haystack-92-accd8b1",
+      "gold": [
+        "evaluation",
+        "rag"
+      ],
+      "no_context": {
+        "prompt_tokens": 500,
+        "completion_tokens": 519,
+        "total_tokens": 1019,
+        "seconds": 8.9
+      },
+      "with_context": {
+        "prompt_tokens": 1710,
+        "completion_tokens": 549,
+        "total_tokens": 2259,
+        "seconds": 22.9
+      },
+      "context_chars": 5105
+    },
+    {
+      "arm": "slm_8b",
+      "provider": "groq",
+      "model": "llama-3.1-8b-instant",
+      "task_id": "docx-sanitization-pdf-redaction",
+      "gold": [
+        "docx",
+        "pdf",
+        "pptx"
+      ],
+      "no_context": {
+        "prompt_tokens": 1281,
+        "completion_tokens": 900,
+        "total_tokens": 2181,
+        "seconds": 18.3
+      },
+      "with_context": {
+        "prompt_tokens": 2509,
+        "completion_tokens": 900,
+        "total_tokens": 3409,
+        "seconds": 34.5
+      },
+      "context_chars": 5108
+    },
+    {
+      "arm": "slm_8b",
+      "provider": "groq",
+      "model": "llama-3.1-8b-instant",
+      "task_id": "hard-genai-hybrid-rag-citations",
+      "gold": [
+        "rag",
+        "factchecking",
+        "evaluation"
+      ],
+      "no_context": {
+        "prompt_tokens": 1007,
+        "completion_tokens": 844,
+        "total_tokens": 1851,
+        "seconds": 19.2
+      },
+      "with_context": {
+        "prompt_tokens": 2217,
+        "completion_tokens": 537,
+        "total_tokens": 2754,
+        "seconds": 30.0
+      },
+      "context_chars": 5105
+    },
+    {
+      "arm": "slm_8b",
+      "provider": "groq",
+      "model": "llama-3.1-8b-instant",
+      "task_id": "hard-genai-prompt-policy-eval-pack",
+      "gold": [
+        "prompting",
+        "docx",
+        "evaluation"
+      ],
+      "no_context": {
+        "prompt_tokens": 1155,
+        "completion_tokens": 783,
+        "total_tokens": 1938,
+        "seconds": 17.0
+      },
+      "with_context": {
+        "prompt_tokens": 2412,
+        "completion_tokens": 890,
+        "total_tokens": 3302,
+        "seconds": 32.4
+      },
+      "context_chars": 5113
+    },
+    {
+      "arm": "slm_8b",
+      "provider": "groq",
+      "model": "llama-3.1-8b-instant",
+      "task_id": "hard-mlflow-genai-scorers",
+      "gold": [
+        "api",
+        "evaluation"
+      ],
+      "no_context": {
+        "prompt_tokens": 1391,
+        "completion_tokens": 797,
+        "total_tokens": 2188,
+        "seconds": 22.1
+      },
+      "with_context": {
+        "prompt_tokens": 2550,
+        "completion_tokens": 852,
+        "total_tokens": 3402,
+        "seconds": 34.2
+      },
+      "context_chars": 5116
+    },
+    {
+      "arm": "large_120b",
+      "provider": "general_compute",
+      "model": "gpt-oss-120b",
+      "task_id": "hard-de-incremental-api-ingest",
+      "gold": [
+        "pipelines",
+        "api",
+        "configs"
+      ],
+      "no_context": {
+        "prompt_tokens": 1017,
+        "completion_tokens": 2386,
+        "total_tokens": 3403,
+        "seconds": 4.1
+      },
+      "with_context": {
+        "prompt_tokens": 2257,
+        "completion_tokens": 2911,
+        "total_tokens": 5168,
+        "seconds": 4.5
+      },
+      "context_chars": 5104
+    },
+    {
+      "arm": "large_120b",
+      "provider": "general_compute",
+      "model": "gpt-oss-120b",
+      "task_id": "hard-de-partner-feed-rulebook",
+      "gold": [
+        "statistics",
+        "xlsx",
+        "validation"
+      ],
+      "no_context": {
+        "prompt_tokens": 906,
+        "completion_tokens": 2529,
+        "total_tokens": 3435,
+        "seconds": 7.4
+      },
+      "with_context": {
+        "prompt_tokens": 2109,
+        "completion_tokens": 2691,
+        "total_tokens": 4800,
+        "seconds": 10.3
+      },
+      "context_chars": 5106
+    },
+    {
+      "arm": "large_120b",
+      "provider": "general_compute",
+      "model": "gpt-oss-120b",
+      "task_id": "hard-de-schema-contract-migration",
+      "gold": [
+        "sql",
+        "migrations",
+        "validation"
+      ],
+      "no_context": {
+        "prompt_tokens": 581,
+        "completion_tokens": 2438,
+        "total_tokens": 3019,
+        "seconds": 7.5
+      },
+      "with_context": {
+        "prompt_tokens": 1784,
+        "completion_tokens": 2733,
+        "total_tokens": 4517,
+        "seconds": 4.1
+      },
+      "context_chars": 5111
+    },
+    {
+      "arm": "large_120b",
+      "provider": "general_compute",
+      "model": "gpt-oss-120b",
+      "task_id": "hierarchical-ranking-analysis",
+      "gold": [
+        "sql",
+        "statistics"
+      ],
+      "no_context": {
+        "prompt_tokens": 1176,
+        "completion_tokens": 2611,
+        "total_tokens": 3787,
+        "seconds": 5.5
+      },
+      "with_context": {
+        "prompt_tokens": 2636,
+        "completion_tokens": 2451,
+        "total_tokens": 5087,
+        "seconds": 3.7
+      },
+      "context_chars": 5105
+    },
+    {
+      "arm": "large_120b",
+      "provider": "general_compute",
+      "model": "gpt-oss-120b",
+      "task_id": "jsonl-schema-validation",
+      "gold": [
+        "api",
+        "validation"
+      ],
+      "no_context": {
+        "prompt_tokens": 1010,
+        "completion_tokens": 1999,
+        "total_tokens": 3009,
+        "seconds": 3.3
+      },
+      "with_context": {
+        "prompt_tokens": 2202,
+        "completion_tokens": 2795,
+        "total_tokens": 4997,
+        "seconds": 4.6
+      },
+      "context_chars": 5105
+    },
+    {
+      "arm": "large_120b",
+      "provider": "general_compute",
+      "model": "gpt-oss-120b",
+      "task_id": "sales-pivot-analysis",
+      "gold": [
+        "pipelines",
+        "xlsx"
+      ],
+      "no_context": {
+        "prompt_tokens": 753,
+        "completion_tokens": 2061,
+        "total_tokens": 2814,
+        "seconds": 3.1
+      },
+      "with_context": {
+        "prompt_tokens": 1961,
+        "completion_tokens": 2313,
+        "total_tokens": 4274,
+        "seconds": 3.5
+      },
+      "context_chars": 5100
+    },
+    {
+      "arm": "large_120b",
+      "provider": "general_compute",
+      "model": "gpt-oss-120b",
+      "task_id": "type-coercion-debugging",
+      "gold": [
+        "debugging",
+        "testing"
+      ],
+      "no_context": {
+        "prompt_tokens": 654,
+        "completion_tokens": 4693,
+        "total_tokens": 5347,
+        "seconds": 6.6
+      },
+      "with_context": {
+        "prompt_tokens": 1819,
+        "completion_tokens": 2506,
+        "total_tokens": 4325,
+        "seconds": 3.8
+      },
+      "context_chars": 5108
+    },
+    {
+      "arm": "large_120b",
+      "provider": "general_compute",
+      "model": "gpt-oss-120b",
+      "task_id": "ab-test-validation",
+      "gold": [
+        "statistics",
+        "testing"
+      ],
+      "no_context": {
+        "prompt_tokens": 872,
+        "completion_tokens": 1907,
+        "total_tokens": 2779,
+        "seconds": 2.9
+      },
+      "with_context": {
+        "prompt_tokens": 2172,
+        "completion_tokens": 1842,
+        "total_tokens": 4014,
+        "seconds": 2.9
+      },
+      "context_chars": 5112
+    },
+    {
+      "arm": "large_120b",
+      "provider": "general_compute",
+      "model": "gpt-oss-120b",
+      "task_id": "hard-ds-leakage-resistant-readmission-model",
+      "gold": [
+        "model_training",
+        "pipelines",
+        "validation"
+      ],
+      "no_context": {
+        "prompt_tokens": 810,
+        "completion_tokens": 2800,
+        "total_tokens": 3610,
+        "seconds": 4.4
+      },
+      "with_context": {
+        "prompt_tokens": 2075,
+        "completion_tokens": 3160,
+        "total_tokens": 5235,
+        "seconds": 4.7
+      },
+      "context_chars": 5115
+    },
+    {
+      "arm": "large_120b",
+      "provider": "general_compute",
+      "model": "gpt-oss-120b",
+      "task_id": "hard-ds-paper-claim-leaderboard",
+      "gold": [
+        "factchecking",
+        "pdf",
+        "evaluation"
+      ],
+      "no_context": {
+        "prompt_tokens": 921,
+        "completion_tokens": 2137,
+        "total_tokens": 3058,
+        "seconds": 3.2
+      },
+      "with_context": {
+        "prompt_tokens": 2213,
+        "completion_tokens": 2528,
+        "total_tokens": 4741,
+        "seconds": 3.8
+      },
+      "context_chars": 5107
+    },
+    {
+      "arm": "large_120b",
+      "provider": "general_compute",
+      "model": "gpt-oss-120b",
+      "task_id": "hard-ds-stratified-experiment-audit",
+      "gold": [
+        "statistics",
+        "xlsx",
+        "validation"
+      ],
+      "no_context": {
+        "prompt_tokens": 854,
+        "completion_tokens": 3810,
+        "total_tokens": 4664,
+        "seconds": 5.4
+      },
+      "with_context": {
+        "prompt_tokens": 2071,
+        "completion_tokens": 2686,
+        "total_tokens": 4757,
+        "seconds": 4.0
+      },
+      "context_chars": 5116
+    },
+    {
+      "arm": "large_120b",
+      "provider": "general_compute",
+      "model": "gpt-oss-120b",
+      "task_id": "inventory-reconciliation-validation",
+      "gold": [
+        "sql",
+        "validation"
+      ],
+      "no_context": {
+        "prompt_tokens": 1318,
+        "completion_tokens": 3093,
+        "total_tokens": 4411,
+        "seconds": 4.6
+      },
+      "with_context": {
+        "prompt_tokens": 2558,
+        "completion_tokens": 2960,
+        "total_tokens": 5518,
+        "seconds": 4.4
+      },
+      "context_chars": 5114
+    },
+    {
+      "arm": "large_120b",
+      "provider": "general_compute",
+      "model": "gpt-oss-120b",
+      "task_id": "multi-series-demand-forecasting",
+      "gold": [
+        "model_training",
+        "evaluation"
+      ],
+      "no_context": {
+        "prompt_tokens": 387,
+        "completion_tokens": 2773,
+        "total_tokens": 3160,
+        "seconds": 4.3
+      },
+      "with_context": {
+        "prompt_tokens": 1654,
+        "completion_tokens": 2592,
+        "total_tokens": 4246,
+        "seconds": 3.9
+      },
+      "context_chars": 5118
+    },
+    {
+      "arm": "large_120b",
+      "provider": "general_compute",
+      "model": "gpt-oss-120b",
+      "task_id": "acroform-field-validator",
+      "gold": [
+        "api",
+        "pdf"
+      ],
+      "no_context": {
+        "prompt_tokens": 1073,
+        "completion_tokens": 3795,
+        "total_tokens": 4868,
+        "seconds": 5.5
+      },
+      "with_context": {
+        "prompt_tokens": 2349,
+        "completion_tokens": 1932,
+        "total_tokens": 4281,
+        "seconds": 3.0
+      },
+      "context_chars": 5107
+    },
+    {
+      "arm": "large_120b",
+      "provider": "general_compute",
+      "model": "gpt-oss-120b",
+      "task_id": "deepset-ai-haystack-3546-a260299",
+      "gold": [
+        "rag",
+        "evaluation"
+      ],
+      "no_context": {
+        "prompt_tokens": 542,
+        "completion_tokens": 1262,
+        "total_tokens": 1804,
+        "seconds": 2.1
+      },
+      "with_context": {
+        "prompt_tokens": 1752,
+        "completion_tokens": 1934,
+        "total_tokens": 3686,
+        "seconds": 3.0
+      },
+      "context_chars": 5105
+    },
+    {
+      "arm": "large_120b",
+      "provider": "general_compute",
+      "model": "gpt-oss-120b",
+      "task_id": "deepset-ai-haystack-92-accd8b1",
+      "gold": [
+        "evaluation",
+        "rag"
+      ],
+      "no_context": {
+        "prompt_tokens": 538,
+        "completion_tokens": 2147,
+        "total_tokens": 2685,
+        "seconds": 3.3
+      },
+      "with_context": {
+        "prompt_tokens": 1748,
+        "completion_tokens": 2384,
+        "total_tokens": 4132,
+        "seconds": 3.6
+      },
+      "context_chars": 5105
+    },
+    {
+      "arm": "large_120b",
+      "provider": "general_compute",
+      "model": "gpt-oss-120b",
+      "task_id": "docx-sanitization-pdf-redaction",
+      "gold": [
+        "docx",
+        "pdf",
+        "pptx"
+      ],
+      "no_context": {
+        "prompt_tokens": 1322,
+        "completion_tokens": 2869,
+        "total_tokens": 4191,
+        "seconds": 4.2
+      },
+      "with_context": {
+        "prompt_tokens": 2548,
+        "completion_tokens": 2634,
+        "total_tokens": 5182,
+        "seconds": 4.0
+      },
+      "context_chars": 5108
+    },
+    {
+      "arm": "large_120b",
+      "provider": "general_compute",
+      "model": "gpt-oss-120b",
+      "task_id": "hard-genai-hybrid-rag-citations",
+      "gold": [
+        "rag",
+        "factchecking",
+        "evaluation"
+      ],
+      "no_context": {
+        "prompt_tokens": 1046,
+        "completion_tokens": 2602,
+        "total_tokens": 3648,
+        "seconds": 3.9
+      },
+      "with_context": {
+        "prompt_tokens": 2256,
+        "completion_tokens": 2935,
+        "total_tokens": 5191,
+        "seconds": 4.4
+      },
+      "context_chars": 5105
+    },
+    {
+      "arm": "large_120b",
+      "provider": "general_compute",
+      "model": "gpt-oss-120b",
+      "task_id": "hard-genai-prompt-policy-eval-pack",
+      "gold": [
+        "prompting",
+        "docx",
+        "evaluation"
+      ],
+      "no_context": {
+        "prompt_tokens": 1204,
+        "completion_tokens": 1960,
+        "total_tokens": 3164,
+        "seconds": 3.0
+      },
+      "with_context": {
+        "prompt_tokens": 2454,
+        "completion_tokens": 2936,
+        "total_tokens": 5390,
+        "seconds": 4.4
+      },
+      "context_chars": 5113
+    },
+    {
+      "arm": "large_120b",
+      "provider": "general_compute",
+      "model": "gpt-oss-120b",
+      "task_id": "hard-mlflow-genai-scorers",
+      "gold": [
+        "api",
+        "evaluation"
+      ],
+      "no_context": {
+        "prompt_tokens": 1448,
+        "completion_tokens": 3623,
+        "total_tokens": 5071,
+        "seconds": 5.3
+      },
+      "with_context": {
+        "prompt_tokens": 2614,
+        "completion_tokens": 3837,
+        "total_tokens": 6451,
+        "seconds": 5.9
+      },
+      "context_chars": 5116
+    }
+  ]
+}

@@ -1,0 +1,62 @@
+{
+  "n_total": 20,
+  "n_usable": 1,
+  "n_excluded_gold": 0,
+  "arms": {
+    "no_memory": {
+      "resolved": 0,
+      "rate": 0.0,
+      "tokens": 77358,
+      "no_patch": 0,
+      "mean_tool_calls": 17.0
+    },
+    "graph_memory": {
+      "resolved": 0,
+      "rate": 0.0,
+      "tokens": 57733,
+      "no_patch": 0,
+      "mean_tool_calls": 12.0
+    },
+    "htn_memory": {
+      "resolved": 0,
+      "rate": 0.0,
+      "tokens": 30608,
+      "no_patch": 0,
+      "mean_tool_calls": 10.0
+    }
+  },
+  "pairwise": {
+    "no_memory vs graph_memory": {
+      "discordant_first_only": 0,
+      "discordant_second_only": 0,
+      "mcnemar_p": null,
+      "note": "no discordant pairs \u2014 the test has no input",
+      "token_delta_pct": -25.4
+    },
+    "no_memory vs htn_memory": {
+      "discordant_first_only": 0,
+      "discordant_second_only": 0,
+      "mcnemar_p": null,
+      "note": "no discordant pairs \u2014 the test has no input",
+      "token_delta_pct": -60.4
+    },
+    "graph_memory vs htn_memory": {
+      "discordant_first_only": 0,
+      "discordant_second_only": 0,
+      "mcnemar_p": null,
+      "note": "no discordant pairs \u2014 the test has no input",
+      "token_delta_pct": -47.0
+    }
+  },
+  "mean_max_copyable_fraction": 0.0,
+  "instances_with_any_copyable_line": 0,
+  "mean_file_recall": 1.0,
+  "mean_dir_recall": 1.0,
+  "htn": {
+    "mean_subgoals": 2.0,
+    "total_replans": 0,
+    "subgoals_done": 2,
+    "subgoals_failed": 0,
+    "decompose_failures": 0
+  }
+}
