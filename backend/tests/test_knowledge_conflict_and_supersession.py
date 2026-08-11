@@ -136,6 +136,13 @@ class FakeDB:
             node = self.knowledge_nodes.get(str(params[0]))
             return {"name": node["name"]} if node else None
 
+        if q.startswith("SELECT properties FROM knowledge_nodes WHERE id = $1"):
+            # Added for MECHANICALLY_COMPUTED_PROPERTY_SCHEMA (knowledge_conflict.py) --
+            # a real gap in this fixture: it never needed to serve just the
+            # properties column before this fact-injection existed.
+            node = self.knowledge_nodes.get(str(params[0]))
+            return {"properties": node["properties"]} if node else None
+
         if q.startswith("SELECT * FROM knowledge_nodes WHERE id"):
             node = self.knowledge_nodes.get(str(params[0]))
             if node is None or node["t_invalid"] is not None:

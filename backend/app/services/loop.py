@@ -181,6 +181,21 @@ class LoopOrchestrator:
             "threshold": float(trigger["threshold"]),
             "sample_size": trigger["sample_size"],
         }
+        # Real, serious pre-existing bug found and fixed here: `detail`
+        # (e.g. MECHANICALLY_COMPUTED_DATE_OVERLAP, and now also
+        # MECHANICALLY_COMPUTED_CONTENT_DIFF) was written into the
+        # triggers table by create_conflict_trigger_for_pair, but never
+        # read back anywhere -- trigger_context only ever had these 5
+        # hardcoded keys. build_user_prompt DOES render whatever is in
+        # trigger_context (json.dumps'd directly into "## The problem"),
+        # so the gap was entirely here: the computed facts were being
+        # silently discarded before the panel ever saw them. Confirmed
+        # by tracing every read site of TriggerHit.detail in the
+        # codebase -- there was exactly one write (triggers.py's
+        # INSERT) and zero reads, for both mechanically-computed fact
+        # types, not just the new one.
+        if trigger["detail"]:
+            trigger_context.update(trigger["detail"])
 
         result = await self._engine.run(
             debate_id=debate_id,

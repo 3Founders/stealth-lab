@@ -75,7 +75,9 @@ from graph_ingest import (  # noqa: E402
 from graph_memory import (  # noqa: E402
     hold_out, htn_route, rebuild_hierarchy, render_context, restore_all, retrieve,
 )
+from debate_curation import consider_debate_curation  # noqa: E402
 from pro_harness import evaluate, image_for, pull_image, remove_image  # noqa: E402
+from safe_fs import safe_rmtree  # noqa: E402
 from run_experiment import extract, snapshot_repo  # noqa: E402
 from run_graph_instance import (  # noqa: E402
     DEFAULT_SCRIPTS, _hand_editable, score_copyability, score_retrieval,
@@ -288,10 +290,12 @@ async def run_one(sample, pool, embedder, agent, htn, args) -> dict:
                 "wall_seconds": round(run.wall_seconds, 1), "agent_error": run.error,
                 "graded": graded,
             }
-            shutil.rmtree(work, ignore_errors=True)
+            safe_rmtree(work)
     finally:
         remove_image(image_for(sample))
-        shutil.rmtree(inst_dir, ignore_errors=True)
+        safe_rmtree(inst_dir)  # both were ignore_errors=True -- see safe_fs.py's
+                                 # module docstring for the real incident that
+                                 # motivated logging cleanup failures instead
         rec["wall_seconds"] = round(time.time() - t_start, 1)
     return rec
 
@@ -404,6 +408,15 @@ async def main() -> int:
     ap.add_argument("--arms", default="no_memory,graph_memory,htn_memory",
                     help="comma-separated arms from ARM_SPEC, run per instance")
     ap.add_argument("--out", default=str(HERE / "graph_experiment_joint.jsonl"))
+    ap.add_argument("--enable-debate-curation", action="store_true", default=False,
+                    help="after each instance is restored to the live graph, check "
+                         "it against the existing corpus and run a real synthesis/"
+                         "dedup debate if a genuine match is found. OFF by default "
+                         "so a run without it stays a clean baseline to A/B against "
+                         "-- this is a real, largely UNTESTED extension as of when "
+                         "it was added (verified in isolation with mocks, never run "
+                         "against real SWE-bench knowledge_nodes). Adds real debate "
+                         "API cost per matched instance, on top of the agent cost.")
     args = ap.parse_args()
     args.arms = [a.strip() for a in args.arms.split(',') if a.strip()]
     unknown = [a for a in args.arms if a not in ARM_SPEC]
@@ -476,6 +489,43 @@ async def main() -> int:
                 await restore_all(pool)
             with out.open("a", encoding="utf-8") as f:
                 f.write(json.dumps(rec, default=str) + "\n")
+
+            # Real, largely untested extension (see --enable-debate-curation's
+            # help text) -- deliberately AFTER the real evaluation result is
+            # already safely written to disk, and in its own try/except, so a
+            # curation failure can never lose or corrupt an instance's actual
+            # evaluation outcome. Only runs for instances that reached a real,
+            # gold-validated state (not excluded, not errored) -- whether the
+            # AGENT resolved it is irrelevant to whether its knowledge_node is
+            # worth curating; only gold-validity matters for that.
+            if args.enable_debate_curation and not rec.get("excluded") and not rec.get("error"):
+                try:
+                    node_row = await pool.fetchrow(
+                        "SELECT id FROM knowledge_nodes WHERE properties->>'instance_id' = $1 "
+                        "AND t_invalid IS NULL", iid,
+                    )
+                    if node_row is None:
+                        print(f"    curation: skipped -- no live knowledge_node found for {iid}",
+                              flush=True)
+                    else:
+                        curation_query = f"{title_of(sample['problem_statement'])}\n\n{normalize_statement(sample['problem_statement'])[:1500]}"
+                        curation_result = await consider_debate_curation(
+                            pool, str(node_row["id"]), curation_query,
+                        )
+                        if curation_result is None:
+                            print("    curation: no genuine match found -- nothing to do", flush=True)
+                        else:
+                            print(f"    curation: {curation_result['outcome']} "
+                                  f"(matched {curation_result.get('matched_node')}, "
+                                  f"sim={curation_result.get('similarity', 0):.3f})", flush=True)
+                        with (HERE / "debate_curation_log.jsonl").open("a", encoding="utf-8") as f:
+                            f.write(json.dumps(
+                                {"instance_id": iid, "result": curation_result}, default=str) + "\n")
+                except Exception as exc:  # noqa: BLE001
+                    # Loud, not silent -- but never fatal to the real run.
+                    print(f"    curation: FAILED with {type(exc).__name__}: {exc} "
+                          f"-- real evaluation result above is unaffected", flush=True)
+
             if rec.get("excluded"):
                 print(f"    EXCLUDED: {rec['excluded']}", flush=True)
             else:

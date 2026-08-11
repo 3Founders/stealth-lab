@@ -176,6 +176,72 @@ async def create_conflict_trigger_for_pair(
             f"real start date as the precedence point, verbatim -- do not invent a new date to make "
             f"the boundary sound cleaner."
         )
+
+    # Same fix pattern, for a different confirmed real failure: the
+    # panel was asked to compare two nodes' content for a SYNTHESIS/
+    # MERGE resolution and, across three separate real attempts, every
+    # one produced a confident but FALSE claim about what differed
+    # ("word-for-word identical" when it wasn't; "lacks status
+    # filtering" -- twice -- when the identical filtering language was
+    # present in both). Computing the real diff here, in code, removes
+    # the task of NOTICING differences from the panel's own reasoning;
+    # its job becomes judging what a verified-real difference means,
+    # not rediscovering what differs in the first place.
+    from app.services.content_diff import compute_content_diff
+    content_diff = compute_content_diff(contents.get(node_id_a, ""), contents.get(node_id_b, ""))
+    diff_lines = [
+        f"MECHANICALLY COMPUTED CONTENT DIFF (not a suggestion -- this is the real, verified "
+        f"textual difference between the two nodes; do not independently judge whether they are "
+        f"'identical' or whether one 'lacks' something the diff below shows is actually present "
+        f"in it). similarity_ratio={content_diff['similarity_ratio']} "
+        f"(1.0 = identical text, 0.0 = no overlap at all).",
+    ]
+    if content_diff["identical"]:
+        diff_lines.append("The two nodes' content is textually IDENTICAL. Any resolution claiming "
+                           "a content difference between them would be false.")
+    else:
+        if content_diff["only_in_a"]:
+            diff_lines.append(f"Present ONLY in node A ({content_diff['n_common_sentences']} "
+                               f"sentences are shared by both, not counted here):")
+            diff_lines.extend(f"  - {s}" for s in content_diff["only_in_a"][:10])
+        if content_diff["only_in_b"]:
+            diff_lines.append(f"Present ONLY in node B:")
+            diff_lines.extend(f"  - {s}" for s in content_diff["only_in_b"][:10])
+        diff_lines.append(
+            "If a sentence in one list has an obvious close counterpart in the other (e.g. both "
+            "describe the same step with slightly different wording), that concept is present in "
+            "BOTH nodes -- do not claim one side lacks it. Only claim something is missing from a "
+            "node if it has no counterpart anywhere in the other node's list above."
+        )
+    detail["MECHANICALLY_COMPUTED_CONTENT_DIFF"] = "\n".join(diff_lines)
+
+    # Real, serious bug caught before ever applying a proposal: a real
+    # debate run proposed writing merged content under a key called
+    # "statement" -- the actual key every retrieval query in this
+    # codebase reads is "content" (confirmed: ingest_trajectory_library.py,
+    # debate_task_a_vs_task_b.py's own SELECT). Applying that proposal
+    # as-written would have silently destroyed the real "postconditions"
+    # key (KnowledgeUpdater's merge REPLACES the whole properties dict,
+    # not a deep merge) and written content under a key nothing ever
+    # reads -- the update would "succeed" but be permanently invisible
+    # to retrieval. Nothing in the prompt told the panel the real schema,
+    # so it invented a plausible-sounding key. Telling it directly.
+    schema_keys_a = sorted((await pool.fetchrow(
+        "SELECT properties FROM knowledge_nodes WHERE id = $1", node_id_a))["properties"].keys())
+    schema_keys_b = sorted((await pool.fetchrow(
+        "SELECT properties FROM knowledge_nodes WHERE id = $1", node_id_b))["properties"].keys())
+    detail["MECHANICALLY_COMPUTED_PROPERTY_SCHEMA"] = (
+        f"Node A's real, current properties keys: {schema_keys_a}. "
+        f"Node B's real, current properties keys: {schema_keys_b}. "
+        f"If your change_set writes to 'properties', it REPLACES the entire properties "
+        f"object -- it is not a deep merge. If a node has a key you are not deliberately "
+        f"changing (e.g. 'postconditions'), you MUST include it, unchanged, in your proposed "
+        f"'properties' object, or it will be silently deleted. The main content field is "
+        f"stored under the key 'content', not 'statement', 'text', 'body', or any other name -- "
+        f"use 'content' exactly, or your proposed update will be written but never actually "
+        f"read by anything, indistinguishable from having done nothing at all."
+    )
+
     hit = TriggerHit(
         task_node_id=proxy_id,
         rule_name="knowledge_conflict",
