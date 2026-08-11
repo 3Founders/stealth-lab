@@ -18,7 +18,7 @@ sys.path.insert(
     0, os.path.join(os.path.dirname(os.path.abspath(__file__)),
                     "..", "..", "experiments", "swebench_pro"))
 
-import code_index  # noqa: E402
+from app.services import code_index  # noqa: E402
 from agent import RepoSandbox  # noqa: E402
 
 PY_SRC = b'''def add(a, b):

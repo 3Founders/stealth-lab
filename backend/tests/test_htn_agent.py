@@ -574,3 +574,116 @@ class TestPersonaToolAccess:
         from htn_agent import AugmentedHTNAgent
         goal = "Locate the root cause and verify the fix carefully."
         assert AugmentedHTNAgent._persona(goal) == "verifier"
+
+
+class TestSubgoalHandoffIntegrity:
+    """Regression coverage for a real observed failure: node 1 of a live
+    SWE-bench Pro run correctly identified the fix location
+    (AnsibleCollectionRef.is_valid_collection_name in
+    _collection_finder.py -- a real gold file), but node 2's context only
+    ever saw the first 80 characters of that finding and re-searched for
+    it from scratch, burning its whole step budget and failing. The
+    summary was ALSO cut to 200 chars at the point it was first written,
+    so both truncation points have to be checked."""
+
+    def test_a_long_finding_survives_into_a_dependent_nodes_context(self, repo):
+        needle = "XXFINDING_the_real_file_is_src_slash_a_dot_pyXX"
+        long_summary = ("Investigated the module and confirmed the answer: "
+                        + needle + " " + ("padding text to push past eighty characters " * 8))
+        client = FakeClient([
+            _msg(content='[{"id":1,"goal":"locate the validation logic","deps":[]},'
+                         ' {"id":2,"goal":"use what was found to make the fix","deps":[1]}]'),
+            _msg(tool_calls=[("subgoal_done", {"summary": long_summary})]),
+            _msg(tool_calls=[("subgoal_done", {"summary": "used it"})]),
+        ])
+        HTNAgent(client, "m").run(INSTANCE, repo, "arm")
+        tool_reqs = [r for r in client.requests if r.get("tools")]
+        # The second subgoal's very first request is where the finding must
+        # appear -- that's node 2's system prompt, built from node 1's note.
+        node2_first_sys = tool_reqs[1]["messages"][0]["content"]
+        assert needle in node2_first_sys, (
+            "node 1's finding was truncated before node 2 ever saw it -- "
+            "this is the exact defect observed on the real ansible run"
+        )
+
+
+class TestReplanReachableOnCeilingExhaustion:
+    """Regression coverage for the other half of the same real failure:
+    AugmentedHTNAgent's concurrent scheduler grants a node one ROUND's
+    worth of steps (STEPS_PER_SUBGOAL), not its full remaining budget.
+    A node that used its whole round without a terminal call was being
+    marked "failed" outright -- `spent_here >= ceiling` forced that branch
+    before `_replan` (or even a fresh-round retry) could ever run, so
+    `replans` stayed 0 even though the node had attempts left. On the real
+    run this meant node 2 died silently with zero edits after exactly
+    STEPS_PER_SUBGOAL calls, which is precisely what this test reproduces
+    at a small, fast scale."""
+
+    def test_exhausting_one_round_retries_instead_of_failing(self, repo):
+        from htn_agent import AugmentedHTNAgent
+        client = FakeClient([
+            _msg(content='["Only one subgoal here to run"]'),
+            # Round 1: three non-terminal calls exhaust a 3-step ceiling
+            # without ever calling subgoal_done/subgoal_failed.
+            _msg(tool_calls=[("read_file", {"path": "src/a.py"})]),
+            _msg(tool_calls=[("read_file", {"path": "src/a.py"})]),
+            _msg(tool_calls=[("read_file", {"path": "src/a.py"})]),
+            # Round 2: a fresh reservation lets it actually finish.
+            _msg(tool_calls=[("subgoal_done", {"summary": "done on retry"})]),
+        ])
+        run = AugmentedHTNAgent(
+            client, "m", max_steps=12, steps_per_subgoal=3, max_methods=2,
+        ).run(INSTANCE, repo, "arm")
+
+        assert run.htn["subgoals_done"] == 1, run.htn
+        assert run.htn["subgoals_failed"] == 0, run.htn
+        # No replan was needed -- the node simply got a second round with a
+        # fresh budget, exactly as _schedule's own docstring promises.
+        assert run.htn["replans"] == 0
+        assert "__replan__" not in run.tool_calls
+        # Every scripted tool call actually ran -- nothing was abandoned.
+        leaf = [t for t in run.tool_calls if not t.startswith("__")]
+        assert leaf == ["read_file", "read_file", "read_file", "subgoal_done"]
+        # Two attempts were spent to get there: the exhausted round, then
+        # the one that finished.
+        assert run.htn["nodes"][0]["attempts"] == 2
+
+    def test_termination_when_a_node_can_never_finish(self, repo):
+        """A node that keeps exhausting every round it's given must still
+        terminate -- it must not spin forever waiting for a round that
+        finally lets it call subgoal_done.
+
+        max_methods is set high enough here that attempts never becomes the
+        limiting factor -- this isolates the TOTAL step budget as the actual
+        cause of termination (7 = 3 + 3 + 1: two full rounds, then a last
+        partial round of exactly what remains), distinct from
+        test_exhausting_one_round_retries_instead_of_failing above, where a
+        node succeeds on retry, and from the attempts-exhausted case
+        covered by TestLocalizedReplanning.test_replan_attempts_are_bounded."""
+        from htn_agent import AugmentedHTNAgent
+        client = FakeClient(
+            [_msg(content='["A subgoal that will never signal completion"]')]
+            + [_msg(tool_calls=[("read_file", {"path": "src/a.py"})])] * 40
+        )
+        run = AugmentedHTNAgent(
+            client, "m", max_steps=7, steps_per_subgoal=3, max_methods=5,
+        ).run(INSTANCE, repo, "arm")
+        leaf = [t for t in run.tool_calls if not t.startswith("__")]
+        assert len(leaf) == 7          # every step of the total budget spent
+        assert run.stop_reason == "step_budget"
+        # It never reached a terminal call, so it must not be "failed" --
+        # pending-and-out-of-budget is a different, honest outcome.
+        assert run.htn["nodes"][0]["status"] == "pending"
+
+    def test_unchanged_plan_still_behaves_identically_when_nothing_exhausts(self, repo):
+        """Non-regression: when every node finishes within its first
+        round, nothing about this fix changes observed behaviour."""
+        client = FakeClient([
+            _msg(content='["Only subgoal to run here"]'),
+            _msg(tool_calls=[("subgoal_done", {"summary": "ok, no retry needed"})]),
+        ])
+        from htn_agent import AugmentedHTNAgent
+        run = AugmentedHTNAgent(client, "m").run(INSTANCE, repo, "arm")
+        assert run.htn["subgoals_done"] == 1
+        assert run.htn["nodes"][0]["attempts"] == 1
+        assert run.htn["replans"] == 0

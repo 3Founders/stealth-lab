@@ -64,7 +64,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from app.db.session import create_pool  # noqa: E402
 from app.services.embeddings import to_pgvector  # noqa: E402
-from experiments.after.embed_cache import CachedEmbedder  # noqa: E402
+from app.services.embed_cache import CachedEmbedder  # noqa: E402
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from pro_harness import strip_binary_hunks  # noqa: E402

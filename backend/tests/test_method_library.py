@@ -11,18 +11,11 @@ has no beam search or batching to simulate.
 from __future__ import annotations
 
 import asyncio
-import os
-import sys
 
 import numpy as np
 import pytest
 
-sys.path.insert(
-    0, os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                    "..", "..", "experiments", "swebench_pro")
-)
-
-from method_library import find_reusable_plan, persist_plan  # noqa: E402
+from app.services.method_library import find_reusable_plan, persist_plan
 
 
 def unit(v):

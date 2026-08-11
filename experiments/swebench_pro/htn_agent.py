@@ -43,7 +43,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Optional
 
-import code_index
+from app.services import code_index
 from agent import (
     MAX_RETRIES, MAX_TOOL_CHARS, REQUEST_TIMEOUT, TOOLS, AgentRun, RepoSandbox, Usage,
 )
@@ -67,6 +67,18 @@ TOTAL_STEP_BUDGET = 28   # same leaf budget as the flat agent, for comparability
 # as deep as these patches go. Bounded because each level costs a planner
 # call and an unbounded recursion would spend the whole budget planning.
 MAX_DEPTH = 2
+
+# How much of a finished node's own account of what it did survives into a
+# dependent node's context. Previously 200/80 respectively -- cut so hard
+# that a node's real finding (e.g. "found the validation logic in
+# AnsibleCollectionRef.is_valid_collection_name in _collection_finder.py")
+# was reliably destroyed before a dependent ever saw it, forcing the
+# dependent to re-search for something its own plan already knew, burning
+# its whole step budget and then failing outright. Both limits gate the
+# SAME piece of text at two points (write, then render), so both must move
+# together or the second one just re-imposes the old ceiling.
+SUBGOAL_SUMMARY_CHARS = 800
+SUBGOAL_NOTE_CONTEXT_CHARS = 500
 
 SUBGOAL_TOOLS = TOOLS[:-1] + [
     {"type": "function", "function": {
@@ -364,7 +376,7 @@ class HTNAgent:
     # (below) can add real checks without duplicating _run_node's loop.
     def _build_context(self, node: Node, nodes: list[Node]) -> tuple[str, str]:
         """(done, plan) blocks for the executor prompt."""
-        done = "\n".join(f"  - [{n.id}] {n.goal[:80]} -> {n.note[:80]}"
+        done = "\n".join(f"  - [{n.id}] {n.goal[:80]} -> {n.note[:SUBGOAL_NOTE_CONTEXT_CHARS]}"
                          for n in nodes if n.status == "done") or "  (nothing yet)"
         plan = "\n".join(
             f"  [{n.id}] ({n.status}){' deps=' + str(n.deps) if n.deps else ''} "
@@ -493,7 +505,7 @@ class HTNAgent:
                         messages.append({"role": "tool", "tool_call_id": call.id,
                                          "content": f"cannot mark done -- {why}"})
                         continue
-                    return "done", str(args.get("summary", ""))[:200], steps
+                    return "done", str(args.get("summary", ""))[:SUBGOAL_SUMMARY_CHARS], steps
                 if name == "subgoal_failed":
                     node.last_evidence = self._last_tool_result(messages)
                     return "failed", str(args.get("reason", ""))[:300], steps
@@ -568,8 +580,9 @@ class HTNAgent:
         """
         Reconstruct a Node graph from an EARLIER run's `run.htn["nodes"]`
         snapshot -- same shape that dict already has (id/goal/deps/status/
-        attempts/note/depth/parent), so no separate resume format exists to
-        keep in sync. The topological loop in `run()` only ever picks a node
+        attempts/note/last_evidence/depth/parent), so no separate resume
+        format exists to keep in sync. The topological loop in `run()`
+        only ever picks a node
         with status=='pending'; a done/failed/blocked/expanded node from the
         earlier session is left exactly as it was and simply never
         reconsidered, so resuming falls out of the scheduler's ordinary logic
@@ -586,6 +599,7 @@ class HTNAgent:
                      status=n.get("status", "pending"),
                      attempts=int(n.get("attempts", 0)),
                      note=str(n.get("note", "")),
+                     last_evidence=str(n.get("last_evidence", "")),
                      depth=int(n.get("depth", 0)),
                      parent=n.get("parent")) for n in state]
 
@@ -644,8 +658,28 @@ class HTNAgent:
             if outcome == "done":
                 ready.status = "done"
                 break
-            if ready.attempts > self._max_methods or spent_here >= ceiling:
+            if ready.attempts > self._max_methods:
                 ready.status = "failed"
+                break
+            if spent_here >= ceiling:
+                # Ran out of THIS turn's allotment before reaching a
+                # terminal call -- not the same thing as genuinely failing.
+                # `ceiling` here can be a per-ROUND reservation smaller than
+                # the node's real remaining budget (AugmentedHTNAgent's
+                # concurrent scheduler grants one attempt's worth per node
+                # per round, not a node's full worst-case allotment up
+                # front -- see that class's _schedule docstring), so a node
+                # that simply used its whole round is not out of attempts,
+                # only out of THIS round. Leave status "pending" (its
+                # current value, untouched here) so the caller's scheduler
+                # reads that back and grants a fresh reservation next round
+                # instead of discarding a node that never got to try again
+                # -- this method's own docstring already promised exactly
+                # this ("ready.status is left 'pending'"); the two branches
+                # above were merged into one condition that always fired
+                # "failed" first, so the promise was never kept in
+                # practice. Do not call _replan here: it would consume an
+                # attempt for a node that hasn't actually finished trying.
                 break
             alt = self._replan(instance, ready, str(payload), usage, trace)
             if not alt:
@@ -727,6 +761,7 @@ class HTNAgent:
             "plan": plan_snapshot,
             "nodes": [{"id": n.id, "goal": n.goal, "deps": n.deps,
                        "status": n.status, "attempts": n.attempts, "note": n.note,
+                       "last_evidence": n.last_evidence,
                        "depth": n.depth, "parent": n.parent}
                       for n in nodes],
             "replans": trace["replans"], "planner_calls": trace["planner_calls"],
@@ -959,7 +994,7 @@ class AugmentedHTNAgent(HTNAgent):
                 continue
             relevant.add(d)
             frontier.extend(by_id[d].deps)
-        done_lines = [f"  - [{n.id}] {n.goal[:80]} -> {n.note[:80]}"
+        done_lines = [f"  - [{n.id}] {n.goal[:80]} -> {n.note[:SUBGOAL_NOTE_CONTEXT_CHARS]}"
                      for n in nodes if n.id in relevant and n.status == "done"]
         done = "\n".join(done_lines) or "  (no relevant prior work)"
         ancestors, p = [], node.parent
@@ -1065,7 +1100,8 @@ class ResearchHTNAgent(AugmentedHTNAgent):
            await agent._synthesize_method(pool, embedder, instance["problem_statement"])
            run = agent.run(instance, sandbox, arm, memory_block=memory_block)  # sync, as always
            if run.htn["subgoals_done"] > 0 and run.htn["subgoals_failed"] == 0:
-               await method_library.persist_plan(
+               from app.services.method_library import persist_plan
+               await persist_plan(
                    pool, embedder, instance["problem_statement"],
                    run.htn["plan"], steps_used=run.steps)
 
@@ -1116,7 +1152,7 @@ class ResearchHTNAgent(AugmentedHTNAgent):
         cannot be collapsed into `.run()` itself. Returns whether a match
         was found (also visible afterwards via `run.htn["seeded_from_library"]`).
         """
-        from method_library import find_reusable_plan
+        from app.services.method_library import find_reusable_plan
         match = await find_reusable_plan(pool, embedder, problem_statement)
         if match and match.get("decomposition"):
             self._pending_seed_plan = match["decomposition"]

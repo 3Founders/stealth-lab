@@ -47,6 +47,35 @@ LANG_BY_EXT = {
     ".tsx": "tsx",
 }
 
+# `dist`, `node_modules`, `.next`, `coverage`, `target` hold zero gold-patch
+# files across all 731 SWE-bench Pro instances, so skipping them costs
+# nothing. `vendor` (11 files) and `build` (26) DO appear and are
+# deliberately left in. Shared by every file-tree walk that needs to know
+# "which files are source code" -- RepoSandbox's list_dir/search and
+# call_graph's repo-wide symbol index both reuse this so they agree on the
+# same tree.
+SKIP_DIRS = {".git", "__pycache__", ".pytest_cache", ".tox", "node_modules",
+             "dist", ".next", "coverage", "target"}
+
+# DENYLIST, not an allowlist, and that distinction is the whole point.
+# The previous allowlist ({.py .yml .yaml .txt .cfg .rst .md .ini .json .sh})
+# could not see a single .go, .ts, .tsx or .js file -- 69% of every file the
+# gold patches touch, and in 48.7% of instances not one of the files needing
+# the edit was visible to `search` at all. It survived because the only run
+# we had measured was 9/9 ansible, where .py and .yml are both listed.
+# The corpus's gold patches span .go .py .ts .tsx .js .yml .json .sum .mod
+# .asciidoc .pcss .cue .tpl .proto .scss .less .pot and a long tail beyond,
+# plus extensionless files like Dockerfile and Makefile. Enumerating that is
+# a losing game; naming what is definitely NOT source is not.
+BINARY_EXT = {
+    ".png", ".jpg", ".jpeg", ".gif", ".bmp", ".ico", ".webp", ".tiff",
+    ".pdf", ".zip", ".gz", ".bz2", ".xz", ".tar", ".7z", ".rar", ".jar",
+    ".woff", ".woff2", ".ttf", ".eot", ".otf",
+    ".mp3", ".mp4", ".wav", ".ogg", ".webm", ".avi", ".mov",
+    ".so", ".dll", ".dylib", ".exe", ".bin", ".o", ".a", ".class", ".pyc",
+    ".wasm", ".db", ".sqlite", ".pack", ".idx",
+}
+
 # Node types that count as a "symbol" worth its own entry, per language.
 # Deliberately excludes plain variable/const declarations (too numerous, and
 # rarely what a subgoal like "fix the Add function" is pointing at) except

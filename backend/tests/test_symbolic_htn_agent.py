@@ -10,7 +10,7 @@ exactly when reachability finds something, and that the opt-in strict gate
 blocks only the keyword-corroborated case -- a generic reachable file, or
 one the issue text never mentions, must NOT be blocked.
 
-No DB, no LLM, no Docker: method_library.find_reusable_plan is mocked
+No DB, no LLM, no Docker: app.services.method_library.find_reusable_plan is mocked
 directly (it is imported locally inside the function under test, so
 patching the module attribute is visible at call time); the decomposition
 bridge is driven by a stub returning a pre-built Decomposition, same
@@ -90,7 +90,7 @@ class TestWrapperFallbackChain:
             async def decompose(self, problem, query_postconditions=None):
                 raise AssertionError("bridge must not be called on a method-library hit")
 
-        with patch("method_library.find_reusable_plan", new=AsyncMock(
+        with patch("app.services.method_library.find_reusable_plan", new=AsyncMock(
                 return_value={"decomposition": [{"id": 1, "goal": "reused step", "deps": []}]})):
             hit = asyncio.run(agent._synthesize_plan(
                 pool=object(), embedder=object(),
@@ -102,7 +102,7 @@ class TestWrapperFallbackChain:
 
     def test_bridge_hit_when_method_library_misses(self):
         agent = NeuroSymbolicWrapperHTNAgent(client=None, model="m")
-        with patch("method_library.find_reusable_plan", new=AsyncMock(return_value=None)):
+        with patch("app.services.method_library.find_reusable_plan", new=AsyncMock(return_value=None)):
             hit = asyncio.run(agent._synthesize_plan(
                 pool=object(), embedder=object(),
                 sample={"problem_statement": "x", "instance_id": "i1"},
@@ -113,7 +113,7 @@ class TestWrapperFallbackChain:
 
     def test_double_miss_leaves_pending_seed_plan_unset(self):
         agent = NeuroSymbolicWrapperHTNAgent(client=None, model="m")
-        with patch("method_library.find_reusable_plan", new=AsyncMock(return_value=None)):
+        with patch("app.services.method_library.find_reusable_plan", new=AsyncMock(return_value=None)):
             hit = asyncio.run(agent._synthesize_plan(
                 pool=object(), embedder=object(),
                 sample={"problem_statement": "x", "instance_id": "i1"},
@@ -124,7 +124,7 @@ class TestWrapperFallbackChain:
 
     def test_no_decomposer_given_and_method_library_misses(self):
         agent = NeuroSymbolicWrapperHTNAgent(client=None, model="m")
-        with patch("method_library.find_reusable_plan", new=AsyncMock(return_value=None)):
+        with patch("app.services.method_library.find_reusable_plan", new=AsyncMock(return_value=None)):
             hit = asyncio.run(agent._synthesize_plan(
                 pool=object(), embedder=object(), sample={"problem_statement": "x"}))
         assert hit is False

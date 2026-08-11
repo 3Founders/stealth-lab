@@ -39,29 +39,21 @@ from __future__ import annotations
 import json
 import os
 import re
-import shutil
-<<<<<<< HEAD
-=======
-
-from safe_fs import safe_rmtree
->>>>>>> 9f329aa6c2de1314c7a0c1690dd82ec5b50d7123
 import subprocess
 from dataclasses import dataclass, field
 from typing import Optional
 
+from safe_fs import safe_rmtree
+
 IMAGE_NS = "jefzda/sweap-images"
-<<<<<<< HEAD
-DEFAULT_TIMEOUT = 1800  # 30 min; ansible-test units on a cold container is slow
-=======
 DEFAULT_TIMEOUT = 2700  # 45 min, up from 30 -- a real run timed out on
-                          # protonmail/webclients (a JS/TS monorepo, likely a
-                          # heavier install/build step than ansible-test).
-                          # This is a modest bump based on n=1 real observed
-                          # timeout, not a comprehensive per-repo sizing --
-                          # a smarter repo-aware policy is a natural next
-                          # step once more real timeout data exists. Still
-                          # overridable per-call via evaluate()'s timeout arg.
->>>>>>> 9f329aa6c2de1314c7a0c1690dd82ec5b50d7123
+                        # protonmail/webclients (a JS/TS monorepo, likely a
+                        # heavier install/build step than ansible-test).
+                        # This is a modest bump based on n=1 real observed
+                        # timeout, not a comprehensive per-repo sizing --
+                        # a smarter repo-aware policy is a natural next
+                        # step once more real timeout data exists. Still
+                        # overridable per-call via evaluate()'s timeout arg.
 DEFAULT_MEMORY = "6g"
 DEFAULT_CPUS = "4"
 
@@ -250,14 +242,10 @@ def evaluate(
         raise HarnessError(f"no run_scripts/{iid} -- instance not in the OS harness")
 
     if os.path.isdir(workspace):
-<<<<<<< HEAD
-        shutil.rmtree(workspace, ignore_errors=True)
-=======
         safe_rmtree(workspace)  # was ignore_errors=True -- a real disk-exhaustion
-                                  # incident (OSError, no space left on device)
-                                  # happened mid-run with zero prior signal that
-                                  # cleanup might be failing silently somewhere
->>>>>>> 9f329aa6c2de1314c7a0c1690dd82ec5b50d7123
+                                # incident (OSError, no space left on device)
+                                # happened mid-run with zero prior signal that
+                                # cleanup might be failing silently somewhere
     os.makedirs(workspace, exist_ok=True)
 
     pull_image(image)

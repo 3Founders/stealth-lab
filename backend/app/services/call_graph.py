@@ -27,8 +27,8 @@ from typing import Optional
 
 from tree_sitter_language_pack import get_parser
 
-import code_index
-from agent import BINARY_EXT, SKIP_DIRS
+from app.services import code_index
+from app.services.code_index import BINARY_EXT, SKIP_DIRS
 
 # Node types that represent "call this thing", per language tree-sitter
 # grammar. Name-based: resolves to the identifier being called, not its
@@ -116,7 +116,7 @@ def build_repo_symbol_index(root: str, max_files: int = MAX_INDEX_FILES,
     """
     Reverse name -> [(file, Symbol), ...] index over an entire checkout.
 
-    Reuses agent.py's SKIP_DIRS/BINARY_EXT so this walks the same tree
+    Reuses code_index.py's SKIP_DIRS/BINARY_EXT so this walks the same tree
     `search`/`list_dir` do -- no separate exclusion list to drift out of
     sync. Bounded by file count and wall-clock so a huge repo cannot blow
     the per-instance time budget; `truncated` reports whether that bound

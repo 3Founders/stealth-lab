@@ -9,17 +9,9 @@ right cross-file hop, stops at the requested depth, and degrades safely
 """
 from __future__ import annotations
 
-import os
-import sys
-
 import pytest
 
-sys.path.insert(
-    0, os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                    "..", "..", "experiments", "swebench_pro")
-)
-
-from call_graph import (  # noqa: E402
+from app.services.call_graph import (
     build_repo_symbol_index, call_targets, reachable_symbols, seed_from_text,
     seeds_in_file,
 )

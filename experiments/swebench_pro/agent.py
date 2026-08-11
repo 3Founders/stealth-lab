@@ -29,7 +29,8 @@ import time
 from dataclasses import dataclass, field
 from typing import Optional
 
-import code_index
+from app.services import code_index
+from app.services.code_index import BINARY_EXT, SKIP_DIRS
 
 # How many times an episode may recover from a provider error by dropping
 # its last exchange. Bounded: if the conversation is unrecoverable, repeated
@@ -69,31 +70,6 @@ MAX_LIST_ENTRIES = 60
 # the symbol does not exist.
 MAX_SEARCH_FILES = 20_000
 MAX_SEARCH_FILE_BYTES = 2_000_000
-
-# `dist`, `node_modules`, `.next`, `coverage`, `target` hold zero gold-patch
-# files across all 731 instances, so skipping them costs nothing. `vendor`
-# (11 files) and `build` (26) DO appear and are deliberately left in.
-SKIP_DIRS = {".git", "__pycache__", ".pytest_cache", ".tox", "node_modules",
-             "dist", ".next", "coverage", "target"}
-
-# DENYLIST, not an allowlist, and that distinction is the whole point.
-# The previous allowlist ({.py .yml .yaml .txt .cfg .rst .md .ini .json .sh})
-# could not see a single .go, .ts, .tsx or .js file -- 69% of every file the
-# gold patches touch, and in 48.7% of instances not one of the files needing
-# the edit was visible to `search` at all. It survived because the only run
-# we had measured was 9/9 ansible, where .py and .yml are both listed.
-# The corpus's gold patches span .go .py .ts .tsx .js .yml .json .sum .mod
-# .asciidoc .pcss .cue .tpl .proto .scss .less .pot and a long tail beyond,
-# plus extensionless files like Dockerfile and Makefile. Enumerating that is
-# a losing game; naming what is definitely NOT source is not.
-BINARY_EXT = {
-    ".png", ".jpg", ".jpeg", ".gif", ".bmp", ".ico", ".webp", ".tiff",
-    ".pdf", ".zip", ".gz", ".bz2", ".xz", ".tar", ".7z", ".rar", ".jar",
-    ".woff", ".woff2", ".ttf", ".eot", ".otf",
-    ".mp3", ".mp4", ".wav", ".ogg", ".webm", ".avi", ".mov",
-    ".so", ".dll", ".dylib", ".exe", ".bin", ".o", ".a", ".class", ".pyc",
-    ".wasm", ".db", ".sqlite", ".pack", ".idx",
-}
 
 
 @dataclass

@@ -31,15 +31,11 @@ in htn_agent.py for the glue that hands a match to HTNAgent.run() via its
 """
 from __future__ import annotations
 
-import sys
-from pathlib import Path
 from typing import Optional
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "backend"))
-
-from app.services.embeddings import Embedder, to_pgvector  # noqa: E402
-from app.services.precondition_gate import extract_postconditions, postconditions_compatible  # noqa: E402
-from app.services.reuse_detection import (  # noqa: E402
+from app.services.embeddings import Embedder, to_pgvector
+from app.services.precondition_gate import extract_postconditions, postconditions_compatible
+from app.services.reuse_detection import (
     FULL_MATCH_THRESHOLD, LEXICAL_FULL_MATCH_THRESHOLD, _lexical_overlap,
 )
 

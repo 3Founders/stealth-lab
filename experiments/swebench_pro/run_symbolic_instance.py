@@ -32,7 +32,7 @@ sys.path.insert(0, str(HERE.parents[1]))
 from app.db.session import create_pool  # noqa: E402
 from app.services.access import AccessScope  # noqa: E402
 from app.services.retrieval import HybridRetriever  # noqa: E402
-from experiments.after.embed_cache import CachedEmbedder  # noqa: E402
+from app.services.embed_cache import CachedEmbedder  # noqa: E402
 from agent import RepoSandbox, Usage  # noqa: E402
 from decomposition_bridge import build_decomposer  # noqa: E402
 from graph_ingest import (  # noqa: E402
@@ -240,7 +240,7 @@ async def main() -> int:
                   f"edited={run.files_edited} stop={run.stop_reason}")
 
             if args.persist_on_success and resolved and getattr(run, "htn", None):
-                from method_library import persist_plan
+                from app.services.method_library import persist_plan
                 await persist_plan(
                     pool, embedder, sample["problem_statement"], run.htn["plan"],
                     steps_used=run.steps, touch_tags=touch_tags_from_run(run))

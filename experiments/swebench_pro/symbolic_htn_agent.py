@@ -35,7 +35,7 @@ from __future__ import annotations
 import threading
 from typing import Optional
 
-import call_graph
+from app.services import call_graph
 import decomposition_bridge
 from htn_agent import AugmentedHTNAgent, Node, ResearchHTNAgent
 
@@ -208,7 +208,7 @@ class TypedPreconditionHTNAgent(AugmentedHTNAgent):
             seed_files = sorted({rel for rel, _name in seeds} | set(reach.files))
             query_postconditions = [f"touches:{f}" for f in seed_files]
 
-        from method_library import find_reusable_plan
+        from app.services.method_library import find_reusable_plan
         match = await find_reusable_plan(pool, embedder, problem, query_postconditions)
         if match and match.get("decomposition"):
             self._pending_seed_plan = match["decomposition"]

@@ -49,7 +49,7 @@ sys.path.insert(0, str(HERE.parents[1]))
 
 from app.config import settings  # noqa: E402
 from app.db.session import create_pool  # noqa: E402
-from experiments.after.embed_cache import CachedEmbedder  # noqa: E402
+from app.services.embed_cache import CachedEmbedder  # noqa: E402
 from agent import Agent, RepoSandbox  # noqa: E402
 from htn_agent import AugmentedHTNAgent as HTNAgent  # noqa: E402
 
@@ -76,6 +76,7 @@ from graph_memory import (  # noqa: E402
     hold_out, htn_route, rebuild_hierarchy, render_context, restore_all, retrieve,
 )
 from debate_curation import consider_debate_curation  # noqa: E402
+from app.services.failure_capture import capture_failure  # noqa: E402
 from pro_harness import evaluate, image_for, pull_image, remove_image  # noqa: E402
 from safe_fs import safe_rmtree  # noqa: E402
 from run_experiment import extract, snapshot_repo  # noqa: E402
@@ -290,6 +291,31 @@ async def run_one(sample, pool, embedder, agent, htn, args) -> dict:
                 "wall_seconds": round(run.wall_seconds, 1), "agent_error": run.error,
                 "graded": graded,
             }
+
+            # Best-effort, never fatal to the real run above -- same
+            # discipline as the debate-curation call site: the real
+            # evaluation result is already in `rec[arm]` before this runs,
+            # so a failure here can only lose telemetry, never the result.
+            if args.enable_failure_capture and kind == "htn":
+                htn_nodes = (getattr(run, "htn", None) or {}).get("nodes") or []
+                failed_nodes = [n for n in htn_nodes if n.get("status") == "failed"]
+                try:
+                    for n in failed_nodes:
+                        node_id = await capture_failure(
+                            pool, instance_id=iid, repo=sample["repo"], arm=arm,
+                            model=args.model, failing_goal=str(n.get("goal", "")),
+                            reason=str(n.get("note", "")),
+                            last_evidence=str(n.get("last_evidence", "")),
+                            stop_reason=run.stop_reason,
+                        )
+                        if node_id:
+                            print(f"      failure_capture: stored {node_id} "
+                                  f"for subgoal [{n.get('id')}]", flush=True)
+                except Exception as exc:  # noqa: BLE001
+                    print(f"      failure_capture: FAILED with "
+                          f"{type(exc).__name__}: {exc} -- real evaluation "
+                          f"result above is unaffected", flush=True)
+
             safe_rmtree(work)
     finally:
         remove_image(image_for(sample))
@@ -417,6 +443,17 @@ async def main() -> int:
                          "it was added (verified in isolation with mocks, never run "
                          "against real SWE-bench knowledge_nodes). Adds real debate "
                          "API cost per matched instance, on top of the agent cost.")
+    ap.add_argument("--enable-failure-capture", action="store_true", default=False,
+                    help="persist each failed HTN subgoal's own subgoal_failed "
+                         "reason (and last tool result) as a failure_mode "
+                         "knowledge_node linked to the instance's task_node, "
+                         "instead of discarding it -- the survivorship-bias fix "
+                         "for method_library.py, which stores only successes. "
+                         "OFF by default: a new write path, same caution as "
+                         "--enable-debate-curation. Excluded from every arm's "
+                         "own retrieval by default regardless of this flag (see "
+                         "graph_memory.retrieve's include_failure_modes) -- this "
+                         "flag controls WRITING failure nodes, not reading them.")
     args = ap.parse_args()
     args.arms = [a.strip() for a in args.arms.split(',') if a.strip()]
     unknown = [a for a in args.arms if a not in ARM_SPEC]

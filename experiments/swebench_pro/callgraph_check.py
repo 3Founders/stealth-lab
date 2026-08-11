@@ -33,8 +33,9 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
+sys.path.insert(0, str(HERE.parents[1] / "backend"))
 
-from call_graph import build_repo_symbol_index, reachable_symbols, seeds_in_file  # noqa: E402
+from app.services.call_graph import build_repo_symbol_index, reachable_symbols, seeds_in_file  # noqa: E402
 from graph_ingest import load_dataset, patch_facts, title_of  # noqa: E402
 from pro_harness import image_for, pull_image, remove_image  # noqa: E402
 from run_experiment import extract, snapshot_repo  # noqa: E402
