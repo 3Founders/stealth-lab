@@ -620,8 +620,67 @@ not on reading whole directories.
 USER = """Issue to fix:
 
 {problem_statement}
-{memory_block}
+{spec_block}{memory_block}
 Begin."""
+
+# SWE-bench Pro ships two human-authored fields alongside the issue text:
+# `requirements` (what the fix must satisfy) and `interface` (signatures it
+# must provide). The benchmark's own protocol puts BOTH in the agent prompt
+# -- "we include the problem statement, requirements and interface
+# specification in the agent prompt", and models are scored on "their
+# ability to implement a given repair after being given significant details
+# (rather than their ability to resolve ambiguity)" (arXiv:2509.16941).
+# Omitting them made this a strictly harder, non-standard task and made the
+# resolve rate non-comparable to the published leaderboard.
+#
+# Measured cost of getting this wrong: future-architect/vuls-407407d found
+# the gold file, applied cleanly, broke nothing, declared both subgoals
+# done in 10 of 28 calls -- and failed, because it guessed the `|` joiner
+# from the issue text while its unused `requirements` field also specified
+# the ordering, the CVSS-distinctness rule and the AffectedPackages
+# aggregation it never implemented.
+#
+# Capped because these are large (requirements 124-6.7k chars, interface
+# 1-12.2k per the dataset card) and the flat agent resends its whole
+# message list every turn, so an uncapped tail would be paid ~22 times.
+SPEC_REQUIREMENTS_CHARS = 2000
+SPEC_INTERFACE_CHARS = 1500
+
+
+def _spec_field(instance: dict, key: str) -> str:
+    """One spec field, or "" when it is genuinely absent.
+
+    Both fields are documented as nullable, and the dataset arrives as a
+    pandas row -- so a missing value is float('nan'), NOT None. `nan` is
+    truthy and `str(nan)` is "nan", so the obvious `str(v or "")` would
+    paste the literal text "nan" into the prompt as if it were the
+    specification. Checked by string, after coercion, for that reason.
+    """
+    value = instance.get(key)
+    if value is None:
+        return ""
+    text = str(value).strip()
+    return "" if text.lower() in ("", "nan", "none", "null") else text
+
+
+def spec_block(instance: dict) -> str:
+    """The requirements/interface block, or "" if the instance has neither.
+
+    Returning "" rather than a header with empty content matters: an empty
+    "REQUIREMENTS:" heading reads to the model as "there are no
+    requirements", which is a different and misleading claim from saying
+    nothing at all.
+    """
+    parts = []
+    requirements = _spec_field(instance, "requirements")
+    if requirements:
+        parts.append("REQUIREMENTS -- the fix must satisfy all of these:\n"
+                     + requirements[:SPEC_REQUIREMENTS_CHARS])
+    interface = _spec_field(instance, "interface")
+    if interface:
+        parts.append("INTERFACE -- signatures the fix must provide:\n"
+                     + interface[:SPEC_INTERFACE_CHARS])
+    return ("\n\n" + "\n\n".join(parts) + "\n") if parts else ""
 
 
 class Agent:
@@ -640,6 +699,7 @@ class Agent:
                 repo=instance["repo"], max_steps=self._max_steps)},
             {"role": "user", "content": USER.format(
                 problem_statement=instance["problem_statement"],
+                spec_block=spec_block(instance),
                 memory_block=f"\n{memory_block}" if memory_block else "")},
         ]
         tool_log: list[str] = []

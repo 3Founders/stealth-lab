@@ -45,8 +45,14 @@ from typing import Optional
 
 from app.services import code_index
 from agent import (
-    MAX_RETRIES, MAX_TOOL_CHARS, REQUEST_TIMEOUT, TOOLS, AgentRun, RepoSandbox, Usage,
+    MAX_RETRIES, MAX_TOOL_CHARS, REQUEST_TIMEOUT, SPEC_INTERFACE_CHARS,
+    SPEC_REQUIREMENTS_CHARS, TOOLS, AgentRun, RepoSandbox, Usage, spec_block,
 )
+
+# Re-exported so both agents' callers and tests read the caps from one
+# place; the definitions live in agent.py because the flat agent needs
+# them too and htn_agent already depends on that module, not the reverse.
+__all_spec_caps__ = (SPEC_REQUIREMENTS_CHARS, SPEC_INTERFACE_CHARS)
 
 # Widened from a 5-minute-per-run target to 10, AND from list_symbols/
 # read_symbol having cut the dominant per-call cost (median symbol read
@@ -79,6 +85,27 @@ MAX_DEPTH = 2
 # together or the second one just re-imposes the old ceiling.
 SUBGOAL_SUMMARY_CHARS = 800
 SUBGOAL_NOTE_CONTEXT_CHARS = 500
+
+# Fewest tool calls a round must offer before it is worth spending one of a
+# node's `max_methods + 1` attempts on. A node's per-round ceiling is
+# whatever _Budget has left, so late rounds shrink -- and a 1-call round
+# cannot read anything AND then act, so it can never reach subgoal_done or
+# subgoal_failed. Charging an attempt for it is charging for a round that
+# was never winnable: gravitational/teleport's node 2 died at attempts=3
+# with the note "exhausted its 1-call budget", which blocked nodes 3 and 4
+# and left 3 of its 4 subgoals never run.
+#
+# 3 = one read, one edit, one terminal call. Below that, _run_turn returns
+# the node to "pending" WITHOUT consuming an attempt so the scheduler can
+# grant it a full reservation next round.
+MIN_VIABLE_SUBGOAL_BUDGET = 3
+
+# Prefix on every path-resolution hint. Exists so tests (and a human
+# reading a transcript) can tell an injected hint from EXECUTOR_SYSTEM's
+# own boilerplate, which already contains the phrase "does not exist"
+# ("Use create_file when the subgoal calls for a file that does not exist
+# yet") -- keying on that phrase matches the wrong text.
+PATH_HINT_MARKER = "PATH CHECK:"
 
 SUBGOAL_TOOLS = TOOLS[:-1] + [
     {"type": "function", "function": {
@@ -152,7 +179,7 @@ ALREADY DONE (their changes are already applied -- build on them, do not redo):
 
 YOUR CURRENT SUBGOAL:
 {subgoal}
-
+{spec_block}
 Do only this subgoal. At most {steps} tool calls -- prefer list_symbols + \
 read_symbol over read_file, it costs far fewer tokens. Call subgoal_done \
 when complete, or subgoal_failed if it cannot be done as stated. Edit source \
@@ -173,6 +200,10 @@ class Node:
     status: str = "pending"
     attempts: int = 0
     note: str = ""
+    # Advisory text from the path precondition, e.g. "the file is actually
+    # at X". Set by _verify_precondition (which runs before the executor's
+    # messages are built) and rendered by _system_prompt_extra.
+    path_hint: str = ""
     depth: int = 0
     parent: Optional[int] = None
     # Last tool result seen before this node gave up, set by _run_node
@@ -344,10 +375,15 @@ class HTNAgent:
                 # cap) -- a stored plan earns no less scrutiny than a new one.
                 trace["seeded_from_library"] = True
                 return nodes
+        # The spec goes to the PLANNER, not just the executor: it is what
+        # turns "deduplicate the entries" into a subgoal naming the actual
+        # delimiter, ordering and fields the tests check. A plan written
+        # without it is under-specified before any executor runs.
         msgs = [{"role": "system", "content": PLANNER_SYSTEM.format(
             repo=instance["repo"], max_subgoals=MAX_SUBGOALS)},
             {"role": "user", "content":
-                f"{instance['problem_statement']}\n{memory_block}"}]
+                f"{instance['problem_statement']}"
+                f"{spec_block(instance)}\n{memory_block}"}]
         trace["planner_calls"] += 1
         nodes = self.parse_dag(
             (self._chat(msgs, usage).choices[0].message.content or ""))
@@ -474,7 +510,8 @@ class HTNAgent:
         messages = [
             {"role": "system", "content": EXECUTOR_SYSTEM.format(
                 repo=instance["repo"], plan=plan, done=done,
-                subgoal=node.goal, steps=budget) + self._system_prompt_extra(node)},
+                subgoal=node.goal, spec_block=spec_block(instance),
+                steps=budget) + self._system_prompt_extra(node)},
             {"role": "user", "content": "Begin this subgoal."},
         ]
         steps = 0
@@ -580,7 +617,7 @@ class HTNAgent:
         """
         Reconstruct a Node graph from an EARLIER run's `run.htn["nodes"]`
         snapshot -- same shape that dict already has (id/goal/deps/status/
-        attempts/note/last_evidence/depth/parent), so no separate resume
+        attempts/note/last_evidence/path_hint/depth/parent), so no separate resume
         format exists to keep in sync. The topological loop in `run()`
         only ever picks a node
         with status=='pending'; a done/failed/blocked/expanded node from the
@@ -600,6 +637,7 @@ class HTNAgent:
                      attempts=int(n.get("attempts", 0)),
                      note=str(n.get("note", "")),
                      last_evidence=str(n.get("last_evidence", "")),
+                     path_hint=str(n.get("path_hint", "")),
                      depth=int(n.get("depth", 0)),
                      parent=n.get("parent")) for n in state]
 
@@ -626,7 +664,17 @@ class HTNAgent:
         spent_here = 0
         while ready.attempts <= self._max_methods:
             budget = min(self._per_subgoal, ceiling - spent_here)
-            if budget <= 0:
+            if budget < MIN_VIABLE_SUBGOAL_BUDGET:
+                # Too few calls to reach ANY terminal tool call, so this
+                # round cannot produce information. Leave the node
+                # "pending" and, crucially, do NOT charge it an attempt --
+                # see MIN_VIABLE_SUBGOAL_BUDGET. Callers must treat a turn
+                # that returns 0 steps as no-progress and stop, or this
+                # becomes an infinite loop: with used == 0 the scheduler
+                # releases the entire reservation, so _Budget.remaining()
+                # never falls and the round would repeat forever.
+                # AugmentedHTNAgent._schedule has that guard; HTNAgent's
+                # own loop already returns "step_budget" on a pending node.
                 break
             ready.attempts += 1
             outcome, payload, used = self._run_node(
@@ -670,16 +718,28 @@ class HTNAgent:
                 # per round, not a node's full worst-case allotment up
                 # front -- see that class's _schedule docstring), so a node
                 # that simply used its whole round is not out of attempts,
-                # only out of THIS round. Leave status "pending" (its
-                # current value, untouched here) so the caller's scheduler
-                # reads that back and grants a fresh reservation next round
-                # instead of discarding a node that never got to try again
-                # -- this method's own docstring already promised exactly
-                # this ("ready.status is left 'pending'"); the two branches
-                # above were merged into one condition that always fired
-                # "failed" first, so the promise was never kept in
-                # practice. Do not call _replan here: it would consume an
-                # attempt for a node that hasn't actually finished trying.
+                # only out of THIS round. Leave status "pending" so the
+                # scheduler grants a fresh reservation next round.
+                #
+                # REPLAN FIRST, though. An earlier version of this branch
+                # just broke, which meant the next round re-ran the SAME
+                # goal -- and a goal that could not be finished in `budget`
+                # calls is not going to be finished by the identical
+                # `budget` calls again. Measured on ansible-f327e65d: three
+                # identical 9-call rounds spent 27 tool calls, completed no
+                # subgoal, and left four half-applied edits that broke 25
+                # previously-passing tests, with replans: 0 the whole time.
+                # The replan machinery exists precisely to supply a
+                # DIFFERENT approach; it was simply never reachable from
+                # here.
+                alt = self._replan(instance, ready, str(payload), usage, trace)
+                if not alt:
+                    # No alternative approach available -- retrying the same
+                    # goal would repeat the round that just failed.
+                    ready.status = "failed"
+                else:
+                    tool_log.append("__replan__")
+                    ready.goal = alt
                 break
             alt = self._replan(instance, ready, str(payload), usage, trace)
             if not alt:
@@ -761,7 +821,7 @@ class HTNAgent:
             "plan": plan_snapshot,
             "nodes": [{"id": n.id, "goal": n.goal, "deps": n.deps,
                        "status": n.status, "attempts": n.attempts, "note": n.note,
-                       "last_evidence": n.last_evidence,
+                       "last_evidence": n.last_evidence, "path_hint": n.path_hint,
                        "depth": n.depth, "parent": n.parent}
                       for n in nodes],
             "replans": trace["replans"], "planner_calls": trace["planner_calls"],
@@ -886,6 +946,9 @@ class AugmentedHTNAgent(HTNAgent):
     _FILE_RE = re.compile(r'\b([\w][\w/-]*\.(?:' + "|".join(_CODE_EXT) + r'))\b',
                           re.IGNORECASE)
     MAX_CONTEXT_CHARS = 1500
+    # Ceiling on the basename index walk, mirroring call_graph's own
+    # MAX_INDEX_FILES. Truncation only weakens a hint; it never fails a run.
+    MAX_INDEXED_FILES = 4000
     # Cap on how many ready nodes run at once. MAX_SUBGOALS is 4, so this
     # already covers a typical top-level ready set; a hard cap (rather than
     # "however many happen to be ready") bounds thread count and, via
@@ -937,22 +1000,83 @@ class AugmentedHTNAgent(HTNAgent):
         return [t for t in base if t['function']['name'] in allowed]
 
     def _system_prompt_extra(self, node: Node) -> str:
-        return self.PERSONAS[self._persona(node.goal)]["prompt"]
+        extra = self.PERSONAS[self._persona(node.goal)]["prompt"]
+        if node.path_hint:
+            extra = f"{extra}\n{node.path_hint}"
+        return extra
+
+    def _basename_index(self, sandbox: RepoSandbox) -> dict[str, list[str]]:
+        """basename -> [relative path, ...] over the whole checkout, cached.
+
+        Same lazy per-sandbox shape TypedPreconditionHTNAgent._get_index
+        uses, and it walks with code_index.SKIP_DIRS so it sees exactly the
+        tree `search`/`list_dir` do -- a hint pointing at a file the agent's
+        own tools cannot reach would be worse than no hint. Bounded like
+        call_graph's index so a huge checkout cannot eat the per-instance
+        budget; a truncated index only weakens hints, never breaks a run.
+        """
+        cached = getattr(self, "_bn_index", None)
+        if cached is not None and cached[0] == sandbox.root:
+            return cached[1]
+        index: dict[str, list[str]] = {}
+        seen = 0
+        for dirpath, dirnames, filenames in os.walk(sandbox.root):
+            dirnames[:] = [d for d in dirnames if d not in code_index.SKIP_DIRS]
+            for fn in filenames:
+                rel = os.path.relpath(os.path.join(dirpath, fn), sandbox.root)
+                index.setdefault(fn, []).append(rel.replace("\\", "/"))
+                seen += 1
+                if seen >= self.MAX_INDEXED_FILES:
+                    break
+            if seen >= self.MAX_INDEXED_FILES:
+                break
+        self._bn_index = (sandbox.root, index)  # type: ignore[attr-defined]
+        return index
 
     # -- 1. static pre/postcondition checks --------------------------------
     def _verify_precondition(self, node: Node, sandbox: RepoSandbox) -> tuple[bool, str]:
+        """ADVISORY, never fatal -- and that is a deliberate reversal.
+
+        This used to hard-fail any goal naming a path that does not exist,
+        returning zero steps used. That was survivable while the planner
+        wrote vague goals ("search collection_loader/ for the validation"),
+        but once `requirements` reached the planner it started naming
+        specific files -- and requirements give a BARE BASENAME ("...should
+        be removed in dataclasses.py"), so the planner supplies a directory
+        it has never verified. Measured consequence on ansible-f327e65d: the
+        planner guessed lib/ansible/utils/dataclasses.py, the real file was
+        lib/ansible/galaxy/dependency_resolution/dataclasses.py, the node
+        was killed before a single tool call, all three attempts went on
+        replans that guessed further wrong paths, and a previously RESOLVED
+        instance became no_patch on 2,234 tokens.
+
+        The file was there the whole time. So resolve by basename and TELL
+        the executor, rather than refusing to let it look.
+        """
         if any(h in node.goal.lower() for h in self._CREATE_HINTS):
             return True, ""
+        hints: list[str] = []
         for m in self._FILE_RE.finditer(node.goal):
             path = m.group(1)
             try:
                 full = sandbox._resolve(path)
             except ValueError:
                 continue
-            if not os.path.isfile(full) and not os.path.isdir(full):
-                return False, (f"goal names '{path}', which does not exist in "
-                               f"the repository and the goal does not ask to "
-                               f"create it")
+            if os.path.isfile(full) or os.path.isdir(full):
+                continue
+            matches = self._basename_index(sandbox).get(os.path.basename(path), [])
+            if len(matches) == 1:
+                hints.append(f"'{path}' does not exist; the file is at "
+                             f"'{matches[0]}' -- use that path.")
+            elif matches:
+                shown = ", ".join(f"'{p}'" for p in matches[:5])
+                hints.append(f"'{path}' does not exist; candidates with that "
+                             f"name: {shown}. Confirm which one before editing.")
+            else:
+                hints.append(f"'{path}' does not exist anywhere in the repo. "
+                             f"Locate the right file first, or create it if "
+                             f"the subgoal genuinely needs a new one.")
+        node.path_hint = (PATH_HINT_MARKER + " " + " ".join(hints)) if hints else ""
         return True, ""
 
     def _verify_postcondition(self, node: Node, sandbox: RepoSandbox) -> tuple[bool, str]:
@@ -1053,11 +1177,13 @@ class AugmentedHTNAgent(HTNAgent):
                 return "step_budget"
             batch = [n for n in batch if n.id in reservations]
 
+            spent_this_round = 0
             if len(batch) == 1:
                 # No concurrency to pay thread-pool overhead for.
                 n = batch[0]
                 used = self._run_turn(instance, sandbox, n, nodes, usage,
                                       tool_log, trace, reservations[n.id])
+                spent_this_round += used
                 budget.release(reservations[n.id] - used)
             else:
                 with concurrent.futures.ThreadPoolExecutor(max_workers=len(batch)) as pool:
@@ -1067,7 +1193,29 @@ class AugmentedHTNAgent(HTNAgent):
                     for fut in concurrent.futures.as_completed(futures):
                         n = futures[fut]
                         used = fut.result()  # re-raises a worker's exception here
+                        spent_this_round += used
                         budget.release(reservations[n.id] - used)
+
+            # TERMINATION GUARD, and the reason MIN_VIABLE_SUBGOAL_BUDGET is
+            # safe to have at all. A round in which every node declined its
+            # reservation as non-viable spends nothing, so `release` returns
+            # the whole grant and `remaining()` is unchanged -- the next
+            # iteration would reserve the same too-small amount and decline
+            # again, forever, without ever calling the model (so no scripted
+            # or real response could break the cycle either).
+            #
+            # But zero STEPS is not the same as zero PROGRESS. A node can
+            # reach a terminal status without spending a tool call at all
+            # (a failed precondition, an executor that answers with no tool
+            # call), and that genuinely advances the graph: it can unblock a
+            # replan, or simply leave an INDEPENDENT branch still waiting
+            # its turn. Stopping there stranded that branch. Only a round
+            # that both spent nothing AND left every node exactly as it
+            # found them is truly stuck.
+            progressed = spent_this_round > 0 or any(
+                n.status != "pending" for n in batch)
+            if not progressed:
+                return "step_budget"
 
             if any(n.status == "pending" for n in batch) and budget.remaining() <= 0:
                 return "step_budget"
