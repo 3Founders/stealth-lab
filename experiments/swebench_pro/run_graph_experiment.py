@@ -398,7 +398,9 @@ def summarise(rows: list[dict], arms: Optional[list[str]] = None) -> dict:
     }
 
 
-async def main() -> int:
+def build_arg_parser() -> argparse.ArgumentParser:
+    """Split out from main() so tests can assert on flags/defaults without
+    running the DB/OpenAI-client setup the rest of main() does."""
     ap = argparse.ArgumentParser()
     ap.add_argument("-n", "--n-instances", type=int, default=20)
     ap.add_argument("--instance-ids", default=None,
@@ -417,6 +419,10 @@ async def main() -> int:
     ap.add_argument("--work-dir", default=os.path.expanduser("~/AppData/Local/Temp/swebench_graph"))
     ap.add_argument("--model", default="gemma-4-31B-it")
     ap.add_argument("--max-steps", type=int, default=28)
+    ap.add_argument("--steps-per-subgoal", type=int, default=None,
+                    help="HTN-only: per-round step ceiling passed to AugmentedHTNAgent "
+                         "(default: htn_agent.py's own STEPS_PER_SUBGOAL). The flat agent "
+                         "has no per-node concept, so this does not affect it.")
     ap.add_argument("--top-k", type=int, default=4)
     ap.add_argument("--include-patches", action="store_true", default=True)
     ap.add_argument("--no-include-patches", dest="include_patches", action="store_false")
@@ -454,7 +460,11 @@ async def main() -> int:
                          "own retrieval by default regardless of this flag (see "
                          "graph_memory.retrieve's include_failure_modes) -- this "
                          "flag controls WRITING failure nodes, not reading them.")
-    args = ap.parse_args()
+    return ap
+
+
+async def main() -> int:
+    args = build_arg_parser().parse_args()
     args.arms = [a.strip() for a in args.arms.split(',') if a.strip()]
     unknown = [a for a in args.arms if a not in ARM_SPEC]
     if unknown:
@@ -496,7 +506,10 @@ async def main() -> int:
     client = OpenAI(max_retries=0, api_key=settings.require("general_compute_api_key"),
                     base_url=settings.general_compute_base_url)
     agent = Agent(client, args.model, max_steps=args.max_steps)
-    htn = HTNAgent(client, args.model, max_steps=args.max_steps)
+    htn_kwargs = {"max_steps": args.max_steps}
+    if args.steps_per_subgoal is not None:
+        htn_kwargs["steps_per_subgoal"] = args.steps_per_subgoal
+    htn = HTNAgent(client, args.model, **htn_kwargs)
     pool = await create_pool(dsn=args.dsn, min_size=1, max_size=4)
 
     try:

@@ -812,8 +812,29 @@ class HTNAgent:
         except Exception as exc:  # noqa: BLE001
             error, stop_reason = f"{type(exc).__name__}: {exc}", "api_error"
 
+        subgoals_done = sum(1 for n in nodes if n.status == "done")
+        patch = sandbox.diff()
+        discarded_patch_bytes = 0
+        # No subgoal ever reached "done" -- whatever edits are on disk are
+        # necessarily partial (a node mid-edit that then failed, or one
+        # still "pending"/"blocked"). Before this guard those edits still
+        # shipped as the patch: on ansible-f327e65d a node that removed two
+        # functions per `requirements` but never got to add their
+        # replacement broke 25 previously-passing tests (p2p_broke: 25) --
+        # additive-but-incomplete work is inert, but the spec block can
+        # make incomplete work destructive. An empty patch scores the same
+        # as `no_patch` on the benchmark either way, so this trades a
+        # (already-losing) attempt for the never-breaks-working-code
+        # property that held across all 19 baseline runs. error/api_error
+        # runs are left alone -- that is a different, already-diagnosable
+        # failure mode, not a plan that silently ran out of subgoals.
+        if subgoals_done == 0 and stop_reason != "api_error" and patch:
+            discarded_patch_bytes = len(patch)
+            patch = ""
+            stop_reason = "discarded_incomplete_plan"
+
         run = AgentRun(
-            instance_id=instance["instance_id"], arm=arm, patch=sandbox.diff(),
+            instance_id=instance["instance_id"], arm=arm, patch=patch,
             usage=usage, steps=usage.calls, tool_calls=tool_log,
             files_edited=sandbox.edited_files(), stop_reason=stop_reason,
             wall_seconds=time.time() - t0, retrieved=retrieved or [], error=error)
@@ -828,13 +849,14 @@ class HTNAgent:
             "decompose_failed": trace["decompose_failed"],
             "seeded_from_library": trace["seeded_from_library"],
             "resumed": trace["resumed"],
-            "subgoals_done": sum(1 for n in nodes if n.status == "done"),
+            "subgoals_done": subgoals_done,
             "subgoals_failed": sum(1 for n in nodes if n.status == "failed"),
             "subgoals_blocked": sum(1 for n in nodes if n.status == "blocked"),
             "subgoals_expanded": sum(1 for n in nodes if n.status == "expanded"),
             "max_depth_reached": max((n.depth for n in nodes), default=0),
             "nodes_total": len(nodes),
             "edges": sum(len(n.deps) for n in nodes),
+            "discarded_patch_bytes": discarded_patch_bytes,
         }
         return run
 
