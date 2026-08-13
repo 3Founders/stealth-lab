@@ -23,6 +23,8 @@ from uuid import UUID
 
 import asyncpg
 
+from app.services.embeddings import Embedder, node_text, to_pgvector
+
 from app.models.change import (
     ChangeSet,
     CreateEdgeOp,
@@ -55,8 +57,25 @@ class ChangeApplicationError(Exception):
 
 
 class KnowledgeUpdater:
-    def __init__(self, pool: asyncpg.Pool):
+    def __init__(self, pool: asyncpg.Pool, embedder: Optional[Embedder] = None):
         self._pool = pool
+        # Real, confirmed bug: 'embedding' is in both carry-forward tuples
+        # above, meaning a superseding row's embedding was always copied
+        # UNCHANGED from the row it replaces -- even when op.changes
+        # rewrites the actual content that embedding is supposed to
+        # represent. Found for real: a debate-merged node's superseded
+        # pointer ("Superseded -- see <id>") kept scoring 0.65 similarity
+        # on real semantic queries, because its embedding still reflected
+        # the OLD, pre-supersession trajectory text, not its new,
+        # unrelated-to-anything pointer text. Lazily constructed so
+        # existing callers that never change embeddable content (most
+        # ops) pay nothing extra.
+        self._embedder = embedder
+
+    def _get_embedder(self) -> Embedder:
+        if self._embedder is None:
+            self._embedder = Embedder()
+        return self._embedder
 
     async def apply_generated(
         self,
@@ -236,6 +255,25 @@ class KnowledgeUpdater:
         merged: dict[str, Any] = {c: old[c] for c in _TASK_CARRY_FORWARD}
         merged.update(op.changes)
 
+        # Same real fix as _supersede_knowledge, applied preventively here
+        # -- no real evidence yet of this specific case occurring (unlike
+        # the knowledge_nodes case, which was directly observed), but the
+        # structural bug (embedding blindly carried forward even when the
+        # embedded content changes) is identical. Re-embeds using the
+        # SAME name+description convention every other real task_node
+        # embedding uses (node_text, embeddings.py) -- not a different
+        # or invented one.
+        if "name" in op.changes or "description" in op.changes:
+            new_name = merged.get("name")
+            new_description = merged.get("description")
+            if isinstance(new_name, str) and new_name.strip():
+                embedder = self._get_embedder()
+                merged["embedding"] = to_pgvector(
+                    await embedder.embed_one(
+                        node_text(new_name, new_description), input_type="document"
+                    )
+                )
+
         cols = list(_TASK_CARRY_FORWARD)
         values = [merged[c] for c in cols]
         placeholders = ", ".join(f"${i+1}" for i in range(len(cols)))
@@ -312,6 +350,21 @@ class KnowledgeUpdater:
 
         merged: dict[str, Any] = {c: old[c] for c in _KNOWLEDGE_CARRY_FORWARD}
         merged.update(op.changes)
+
+        # Real fix: if this op is changing properties, and the new
+        # properties has real 'content', re-embed it -- don't blindly
+        # carry the old embedding forward to represent new text it was
+        # never computed from. Only re-embeds when 'content' is present
+        # in the NEW properties specifically -- an op that only touches
+        # e.g. postconditions, leaving content untouched, correctly
+        # keeps the existing embedding as-is.
+        if "properties" in op.changes:
+            new_content = (op.changes.get("properties") or {}).get("content")
+            if isinstance(new_content, str) and new_content.strip():
+                embedder = self._get_embedder()
+                merged["embedding"] = to_pgvector(
+                    await embedder.embed_one(new_content, input_type="document")
+                )
 
         cols = list(_KNOWLEDGE_CARRY_FORWARD)
         values = [merged[c] for c in cols]
