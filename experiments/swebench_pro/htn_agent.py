@@ -46,7 +46,8 @@ from typing import Optional
 from app.services import code_index
 from agent import (
     MAX_RETRIES, MAX_TOOL_CHARS, REQUEST_TIMEOUT, SPEC_INTERFACE_CHARS,
-    SPEC_REQUIREMENTS_CHARS, TOOLS, AgentRun, RepoSandbox, Usage, spec_block,
+    SPEC_REQUIREMENTS_CHARS, TOOLS, AgentRun, RepoSandbox, Usage, _spec_field,
+    backoff_seconds, is_transient, spec_block,
 )
 
 # Re-exported so both agents' callers and tests read the caps from one
@@ -146,17 +147,27 @@ you write -- not your reasoning.
 Each subgoal must be:
 - EXECUTABLE: name the file or symbol. "Find where auth happens" is useless; \
 "In internal/server/auth/middleware.go, add a cookie fallback to the token \
-lookup" is executable.
+lookup" is executable. If a CANDIDATE FILES list is given below, prefer a \
+path from it -- those are verified to exist in this checkout. If the fix \
+genuinely needs a different or new file, say so explicitly rather than \
+guessing a plausible-looking path.
 - SMALL: a few reads and one or two edits.
-- HONEST ABOUT DEPENDENCIES: `deps` lists the ids of subgoals whose changes \
-this one builds on. Use [] when it is independent. Independent subgoals keep \
-running even if a sibling fails, so do not invent dependencies.
+- HONEST ABOUT DEPENDENCIES: `deps` lists the ids of subgoals this one is \
+ORDERED after -- use it freely, most real fixes have a natural sequence. \
+`requires` is the narrower, stricter claim that this subgoal cannot even \
+START until that one's edits physically exist (e.g. it edits a function the \
+other one creates) -- list an id there ONLY if that is true; most `deps` \
+should NOT also be in `requires`. A subgoal blocked by a `deps`-only \
+predecessor's failure still gets to run; one blocked by a `requires` \
+predecessor's failure does not, so overusing `requires` needlessly kills \
+work that could otherwise proceed.
 
 If the fix needs a file that does not exist, say so -- creating one is a \
 normal subgoal.
 
 Reply with ONLY a JSON array, no prose or fences:
-[{{"id": 1, "goal": "...", "deps": []}}, {{"id": 2, "goal": "...", "deps": [1]}}]"""
+[{{"id": 1, "goal": "...", "deps": []}}, \
+{{"id": 2, "goal": "...", "deps": [1], "requires": [1]}}]"""
 
 REPLAN_SYSTEM = """A subgoal failed. Propose ONE alternative way to achieve the \
 same intent in the {repo} repository.
@@ -192,6 +203,17 @@ class Node:
     id: int
     goal: str
     deps: list[int] = field(default_factory=list)
+    # SUBSET of deps meaning "cannot even start until that one's edits
+    # physically landed" -- e.g. this subgoal edits a function the other
+    # one creates. deps alone is just ORDERING: the planner's own honest
+    # sequencing of subgoals, most of which do not need this. The
+    # distinction is what _block_dependents/_satisfied act on: a failed
+    # requires-predecessor blocks this node (the real invariant -- never
+    # edit against a state that does not exist); a failed deps-only
+    # predecessor does not, this node still gets its turn. See
+    # _block_dependents's own docstring for the measured cost of treating
+    # every deps edge as a hard blocker.
+    requires: list[int] = field(default_factory=list)
     # pending | done | failed | blocked | expanded
     # `expanded` is a COMPOUND task: it did no work itself, its children did.
     # It counts as satisfied only when all of its children are satisfied,
@@ -288,14 +310,19 @@ class HTNAgent:
                 return r
             except Exception as exc:  # noqa: BLE001
                 last = exc
-                if not any(s in str(exc).lower() for s in
-                           ("429", "rate limit", "timeout", "502", "503", "504",
-                            "overloaded", "connection", "provider_error")):
+                # Classification and backoff live in agent.py's
+                # is_transient/backoff_seconds -- this method used to carry
+                # its own inline copy, and the two copies drifted: agent.py's
+                # got fixed for "Request timed out." (APITimeoutError's
+                # actual message; "timeout" is not a substring of "timed
+                # out") and this one didn't, so a Stage 5 sweep died on
+                # every htn_memory arm at "tok=0 tools=0" while the flat
+                # agent, calling the fixed copy, completed the SAME instance
+                # normally. One shared function is what makes that
+                # unrepeatable.
+                if not is_transient(exc) or attempt == MAX_RETRIES - 1:
                     raise
-                if attempt == MAX_RETRIES - 1:
-                    raise
-                rate_limited = "429" in str(exc) or "rate limit" in str(exc).lower()
-                time.sleep(25.0 if rate_limited else min(4 * 2 ** attempt, 20))
+                time.sleep(backoff_seconds(exc, attempt))
         raise last  # type: ignore[misc]
 
     # --------------------------------------------------------------- plan
@@ -322,10 +349,11 @@ class HTNAgent:
                         goal = str(item.get("goal") or item.get("subgoal") or "").strip()
                         nid = int(item.get("id", i))
                         deps = [int(d) for d in (item.get("deps") or [])]
+                        requires = [int(d) for d in (item.get("requires") or [])]
                     else:
-                        goal, nid, deps = str(item).strip(), i, []
+                        goal, nid, deps, requires = str(item).strip(), i, [], []
                     if len(goal) > 10:
-                        nodes.append(Node(id=nid, goal=goal, deps=deps))
+                        nodes.append(Node(id=nid, goal=goal, deps=deps, requires=requires))
             except (json.JSONDecodeError, TypeError, ValueError):
                 nodes = []
         if not nodes:                      # bullet/numbered fallback
@@ -343,12 +371,19 @@ class HTNAgent:
         ids = {n.id for n in nodes}
         for n in nodes:
             n.deps = [d for d in n.deps if d in ids and d != n.id]   # drop dangling/self
+            n.requires = [d for d in n.requires if d in ids and d != n.id]
         # Break cycles by keeping only edges that point backwards in the
         # planner's own ordering. A cycle is unschedulable, and refusing the
         # whole plan over one bad edge would throw away a usable decomposition.
         order = {n.id: i for i, n in enumerate(nodes)}
         for n in nodes:
             n.deps = [d for d in n.deps if order[d] < order[n.id]]
+            # requires must be a SUBSET of deps -- a hard dependency that
+            # is not even an ordering edge is a contradiction, and trusting
+            # it anyway would let a stray requires id block scheduling
+            # without deps ever having established the ordering that makes
+            # blocking meaningful.
+            n.requires = [d for d in n.requires if d in n.deps]
         return nodes
 
     def _seed_plan(self) -> Optional[list[dict]]:
@@ -364,8 +399,60 @@ class HTNAgent:
         """
         return getattr(self, "_pending_seed_plan", None)
 
+    # Identifiers worth searching the repo for: backtick-quoted tokens (SWE-
+    # bench Pro's `interface` field names exact symbols this way) and bare
+    # snake_case/CamelCase/dotted identifiers of at least 4 chars -- short
+    # enough to catch real names, long enough that "a", "id", "is" do not
+    # turn into a repo-wide fishing expedition.
+    _IDENTIFIER_RE = re.compile(
+        r"`([^`]{3,80})`|\b([a-zA-Z_][a-zA-Z0-9_]{3,40}(?:\.[a-zA-Z_][a-zA-Z0-9_]{2,40})*)\b")
+    MAX_CANDIDATE_SEARCHES = 12
+    MAX_CANDIDATE_FILES = 8
+
+    def _candidate_files(self, instance: dict, sandbox: RepoSandbox) -> list[str]:
+        """
+        Verified repo paths to hand the planner, so it plans against files
+        that actually exist instead of an imagined layout.
+
+        THE GAP THIS CLOSES: the planner never sees the repository -- only
+        the issue text -- yet PLANNER_SYSTEM demands each subgoal "name the
+        file or symbol". Measured across every run with plan data: only
+        ~47% of planned paths matched a gold file, and the miss is not
+        random -- the deepseek ansible run planned edits to
+        `galaxy/collection/__init__.py` and `galaxy/dataclasses.py`, right
+        basename conventions, wrong directory; the REAL files were
+        `galaxy/dependency_resolution/dataclasses.py` and
+        `utils/collection_loader/_collection_finder.py`. path_hint cannot
+        catch this: those planned paths exist, just not for this fix.
+
+        Zero extra LLM calls -- RepoSandbox.search is local os.walk+regex,
+        already capped by MAX_SEARCH_HITS/MAX_SEARCH_FILES -- so this serves
+        the token thesis rather than costing against it.
+        """
+        text = (f"{instance.get('problem_statement', '')} "
+                f"{_spec_field(instance, 'requirements')} "
+                f"{_spec_field(instance, 'interface')}")
+        seen: set[str] = set()
+        idents: list[str] = []
+        for m in self._IDENTIFIER_RE.finditer(text):
+            ident = m.group(1) or m.group(2)
+            if ident and ident.lower() not in seen:
+                seen.add(ident.lower())
+                idents.append(ident)
+        counts: dict[str, int] = {}
+        for ident in idents[:self.MAX_CANDIDATE_SEARCHES]:
+            hits = sandbox.search(re.escape(ident))
+            if hits in ("no matches", "") or hits.startswith("bad regex"):
+                continue
+            for line in hits.splitlines():
+                path = line.split(":", 1)[0]
+                if path and not path.startswith("..."):
+                    counts[path] = counts.get(path, 0) + 1
+        ranked = sorted(counts, key=counts.get, reverse=True)
+        return ranked[:self.MAX_CANDIDATE_FILES]
+
     def _decompose(self, instance: dict, memory_block: str, usage: Usage,
-                   trace: dict) -> list[Node]:
+                   trace: dict, sandbox: Optional[RepoSandbox] = None) -> list[Node]:
         seed = self._seed_plan()
         if seed:
             nodes = self.parse_dag(json.dumps(seed))
@@ -375,6 +462,15 @@ class HTNAgent:
                 # cap) -- a stored plan earns no less scrutiny than a new one.
                 trace["seeded_from_library"] = True
                 return nodes
+        # `sandbox` is Optional only so _decompose keeps working for any
+        # caller/test that predates the localization pre-pass; every real
+        # run() call site has a sandbox by construction.
+        candidates = self._candidate_files(instance, sandbox) if sandbox else []
+        candidate_block = (
+            "\n\nCANDIDATE FILES (verified to exist in this checkout, ranked "
+            "by relevance -- prefer one of these; if the fix genuinely needs "
+            "a different file, say so explicitly):\n" + "\n".join(candidates)
+        ) if candidates else ""
         # The spec goes to the PLANNER, not just the executor: it is what
         # turns "deduplicate the entries" into a subgoal naming the actual
         # delimiter, ordering and fields the tests check. A plan written
@@ -383,7 +479,7 @@ class HTNAgent:
             repo=instance["repo"], max_subgoals=MAX_SUBGOALS)},
             {"role": "user", "content":
                 f"{instance['problem_statement']}"
-                f"{spec_block(instance)}\n{memory_block}"}]
+                f"{spec_block(instance)}{candidate_block}\n{memory_block}"}]
         trace["planner_calls"] += 1
         nodes = self.parse_dag(
             (self._chat(msgs, usage).choices[0].message.content or ""))
@@ -417,6 +513,21 @@ class HTNAgent:
         plan = "\n".join(
             f"  [{n.id}] ({n.status}){' deps=' + str(n.deps) if n.deps else ''} "
             f"{n.goal[:100]}" for n in nodes)
+        # A deps-only (soft) predecessor's failure no longer transitively
+        # blocks this node (see _block_dependents) -- it gets to run, but
+        # needs to know that predecessor's edits are NOT on disk, in case
+        # its own goal assumed they were. A `requires`-listed predecessor's
+        # failure never reaches here: that blocks this node before it is
+        # ever scheduled, via the strict _satisfied/_dep_met check.
+        failed_soft = [n2 for n2 in nodes if n2.id in node.deps
+                       and n2.id not in node.requires and n2.status == "failed"]
+        if failed_soft:
+            warn = "\n".join(
+                f"  NOTE: subgoal [{n2.id}] ({n2.goal[:80]}) did NOT complete "
+                f"({n2.note[:120]}) -- its changes are NOT on disk. You may "
+                f"need to do that work yourself if this subgoal depends on it."
+                for n2 in failed_soft)
+            plan = f"{plan}\n{warn}"
         return done, plan
 
     def _tools_for(self, node: Node) -> list[dict]:
@@ -578,7 +689,8 @@ class HTNAgent:
 
     @staticmethod
     def _satisfied(nodes: list[Node], nid: int) -> bool:
-        """A dependency is met only if the work actually happened.
+        """A HARD dependency (also listed in the dependent's `requires`) is
+        met only if the work actually happened.
 
         A compound (`expanded`) node did nothing itself -- it is satisfied
         only when every child is. Treating `expanded` as done would let a
@@ -594,20 +706,51 @@ class HTNAgent:
         return False
 
     @staticmethod
-    def _block_dependents(nodes: list[Node], failed_id: int) -> int:
-        """Mark the transitive dependents of a failed node as blocked.
+    def _dep_met(nodes: list[Node], dependent: Node, dep_id: int) -> bool:
+        """Whether ONE of `dependent`'s deps is met, given the soft/hard
+        split (see Node.requires's docstring).
 
-        Containment is the point of the DAG: a node that never depended on
-        the failure keeps its turn. Running a dependent whose prerequisite
-        did not land would produce edits against a state that does not
-        exist -- worse than skipping it, because it still burns budget and
-        can corrupt the patch."""
+        A HARD dep (dep_id in dependent.requires) uses the strict
+        _satisfied check above -- it must have genuinely landed.
+
+        A SOFT dep (ordering only) is met once its predecessor reaches ANY
+        terminal status. `pending` is deliberately excluded: a soft
+        successor still waits its turn rather than racing a predecessor
+        that has not been attempted yet or is still mid-retry, so `deps`
+        keeps meaning ordering even though it no longer means blocking on
+        failure. This is what lets a `deps`-only predecessor's failure
+        stop cascading -- _block_dependents no longer marks this node
+        `blocked` for it, so once the predecessor settles (however it
+        settles), this node becomes schedulable."""
+        if dep_id in dependent.requires:
+            return HTNAgent._satisfied(nodes, dep_id)
+        dep = next((x for x in nodes if x.id == dep_id), None)
+        return dep is None or dep.status != "pending"
+
+    @staticmethod
+    def _block_dependents(nodes: list[Node], failed_id: int) -> int:
+        """Mark the transitive HARD dependents of a failed node as blocked.
+
+        Cascades along `requires` only, not `deps`. Containment is the
+        point of the DAG: a node that never REQUIRED the failure keeps its
+        turn -- running one whose prerequisite's edits do not exist would
+        corrupt the patch, but most `deps` are the planner's honest
+        ordering, not a real data dependency, and a plan is nearly always a
+        linear chain (measured: 74-83% of real plans), so treating every
+        `deps` edge as a hard blocker meant a single root-node failure
+        produced subgoals_done == 0 in 12 of 12 observed cases -- the DAG's
+        whole containment story never engaged because there was nothing
+        left un-blocked to contain. A `deps`-only dependent still runs; see
+        _satisfied's soft-vs-hard split, which is what makes this safe --
+        it becomes SCHEDULABLE once its failed predecessor settles, but is
+        told via its note that the predecessor did not land, in case it
+        needs to redo that work itself."""
         blocked, changed = {failed_id}, True
         while changed:
             changed = False
             for n in nodes:
-                if n.status == "pending" and any(d in blocked for d in n.deps):
-                    n.status, n.note = "blocked", f"prerequisite {n.deps} did not complete"
+                if n.status == "pending" and any(d in blocked for d in n.requires):
+                    n.status, n.note = "blocked", f"prerequisite {n.requires} did not complete"
                     blocked.add(n.id)
                     changed = True
         return sum(1 for n in nodes if n.status == "blocked")
@@ -616,10 +759,10 @@ class HTNAgent:
     def _rehydrate(state: list[dict]) -> list[Node]:
         """
         Reconstruct a Node graph from an EARLIER run's `run.htn["nodes"]`
-        snapshot -- same shape that dict already has (id/goal/deps/status/
-        attempts/note/last_evidence/path_hint/depth/parent), so no separate resume
-        format exists to keep in sync. The topological loop in `run()`
-        only ever picks a node
+        snapshot -- same shape that dict already has (id/goal/deps/requires/
+        status/attempts/note/last_evidence/path_hint/depth/parent), so no
+        separate resume format exists to keep in sync. The topological loop
+        in `run()` only ever picks a node
         with status=='pending'; a done/failed/blocked/expanded node from the
         earlier session is left exactly as it was and simply never
         reconsidered, so resuming falls out of the scheduler's ordinary logic
@@ -633,6 +776,7 @@ class HTNAgent:
         """
         return [Node(id=int(n["id"]), goal=str(n["goal"]),
                      deps=[int(d) for d in (n.get("deps") or [])],
+                     requires=[int(d) for d in (n.get("requires") or [])],
                      status=n.get("status", "pending"),
                      attempts=int(n.get("attempts", 0)),
                      note=str(n.get("note", "")),
@@ -766,7 +910,7 @@ class HTNAgent:
         budget = _Budget(self._max_steps)
         while True:
             ready = next((n for n in nodes if n.status == "pending"
-                          and all(self._satisfied(nodes, d) for d in n.deps)), None)
+                          and all(self._dep_met(nodes, n, d) for d in n.deps)), None)
             if ready is None:
                 return "finished"
             ceiling = budget.reserve(budget.remaining())
@@ -797,7 +941,7 @@ class HTNAgent:
             # resumes adds the two AgentRun.usage/steps together itself;
             # HTNAgent has no memory of a prior call to add them to.
             nodes = (self._rehydrate(resume_state) if resume_state
-                     else self._decompose(instance, memory_block, usage, trace))
+                     else self._decompose(instance, memory_block, usage, trace, sandbox))
         except Exception as exc:  # noqa: BLE001
             return AgentRun(instance_id=instance["instance_id"], arm=arm,
                             patch=sandbox.diff(), usage=usage, steps=usage.calls,
@@ -806,7 +950,8 @@ class HTNAgent:
                             retrieved=retrieved or [],
                             error=f"{type(exc).__name__}: {exc}")
 
-        plan_snapshot = [{"id": n.id, "goal": n.goal, "deps": n.deps} for n in nodes]
+        plan_snapshot = [{"id": n.id, "goal": n.goal, "deps": n.deps,
+                          "requires": n.requires} for n in nodes]
         try:
             stop_reason = self._schedule(instance, sandbox, nodes, usage, tool_log, trace)
         except Exception as exc:  # noqa: BLE001
@@ -841,6 +986,7 @@ class HTNAgent:
         run.htn = {  # type: ignore[attr-defined]
             "plan": plan_snapshot,
             "nodes": [{"id": n.id, "goal": n.goal, "deps": n.deps,
+                       "requires": n.requires,
                        "status": n.status, "attempts": n.attempts, "note": n.note,
                        "last_evidence": n.last_evidence, "path_hint": n.path_hint,
                        "depth": n.depth, "parent": n.parent}
@@ -1174,7 +1320,7 @@ class AugmentedHTNAgent(HTNAgent):
         per_node_cap = self._per_subgoal
         while True:
             ready_batch = [n for n in nodes if n.status == "pending"
-                           and all(self._satisfied(nodes, d) for d in n.deps)]
+                           and all(self._dep_met(nodes, n, d) for d in n.deps)]
             if not ready_batch:
                 return "finished"
             # SLA-tight runs fall back to one node at a time -- the same

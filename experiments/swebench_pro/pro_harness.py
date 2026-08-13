@@ -40,6 +40,7 @@ import json
 import os
 import re
 import subprocess
+import time
 from dataclasses import dataclass, field
 from typing import Optional
 
@@ -121,12 +122,55 @@ def image_present(image: str) -> bool:
     return _run(["docker", "image", "inspect", image]).returncode == 0
 
 
+# A run through the whole sweep either succeeded or failed BEFORE this
+# existed on 4 of 5 instances in one Stage 5 check -- every one of them
+# `docker pull` failing with "dial tcp: lookup registry-1.docker.io: no
+# such host", a DNS blip that had already cleared by the time it was
+# investigated (nslookup resolved fine minutes later). Zero retry meant a
+# few seconds of bad network cost the whole instance, with no chance to
+# recover -- the exact failure shape Agent._complete/HTNAgent._chat used
+# to have before is_transient()/backoff_seconds() (agent.py). Kept
+# separate from those rather than reused: this classifies subprocess
+# stderr text, not a Python exception type, and DNS blips clear in
+# seconds, not the multi-minute window LLM calls need, so the retry
+# budget here is deliberately much shorter.
+DOCKER_PULL_MAX_RETRIES = 3
+DOCKER_PULL_BACKOFF = (5.0, 15.0)  # seconds before retry 2, 3
+
+
+def _pull_is_transient(stderr: str) -> bool:
+    """
+    True for network-layer failures a retry can plausibly fix. False for
+    "manifest unknown"/"repository does not exist" (a real missing
+    image -- retrying cannot fix a 404) and "unauthorized"/"denied" (a
+    real auth problem -- retrying just repeats the same rejection).
+    Those must still fail on the first attempt, or a genuinely dead
+    image turns into a multi-minute retried hang for every instance that
+    references it.
+    """
+    s = stderr.lower()
+    return any(p in s for p in (
+        "no such host", "temporary failure in name resolution",
+        "timeout", "i/o timeout", "tls handshake timeout",
+        "connection refused", "connection reset", "eof",
+        "network is unreachable", "dial tcp",
+    ))
+
+
 def pull_image(image: str, timeout: int = 3600) -> None:
     if image_present(image):
         return
-    proc = _run(["docker", "pull", "-q", image], timeout=timeout)
-    if proc.returncode != 0:
-        raise HarnessError(f"pull failed for {image}: {proc.stderr.strip()[:400]}")
+    last: Optional[subprocess.CompletedProcess] = None
+    for attempt in range(DOCKER_PULL_MAX_RETRIES):
+        proc = _run(["docker", "pull", "-q", image], timeout=timeout)
+        if proc.returncode == 0:
+            return
+        last = proc
+        if (not _pull_is_transient(proc.stderr)
+                or attempt == DOCKER_PULL_MAX_RETRIES - 1):
+            break
+        time.sleep(DOCKER_PULL_BACKOFF[attempt])
+    raise HarnessError(f"pull failed for {image}: {last.stderr.strip()[:400]}")
 
 
 def remove_image(image: str) -> None:

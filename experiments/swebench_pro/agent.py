@@ -683,6 +683,65 @@ def spec_block(instance: dict) -> str:
     return ("\n\n" + "\n\n".join(parts) + "\n") if parts else ""
 
 
+# ---------------------------------------------------------- shared retry policy
+# Used by BOTH Agent._complete and HTNAgent._chat (htn_agent.py). This used to
+# be two separately-maintained copies of the same classification, and they
+# drifted: htn_agent.py's copy never got the fix below, so every HTN arm in a
+# Stage 5 sweep died at "tok=0 tools=0" while the flat agent's arm, running
+# the fixed copy, completed normally on the SAME instance. One function that
+# both callers import is what makes that class of drift impossible to repeat.
+#
+# "provider_error" is the gateway reporting that ITS upstream failed -- not a
+# complaint about our request. It arrived as a 400, which was not in the
+# original list, so an episode died at step 34 of 40 with one edit made and
+# `finish` never reached, in BOTH arms. The failing payload could not be
+# reproduced synthetically (100 turns and 80K tokens pass; every message
+# shape passes), which is itself evidence it is upstream flake rather than
+# our shape. A genuinely malformed request still fails all attempts and
+# surfaces normally.
+#
+# MATCH ON THE EXCEPTION TYPE FIRST, and read this before trusting the string
+# list alone. openai constructs APITimeoutError with the message "Request
+# timed out." -- and "timeout" is NOT a substring of "timed out". It
+# subclasses APIConnectionError but OVERRIDES that class's "Connection
+# error." message, so the "connection" entry does not rescue it either. A
+# timeout was therefore classified non-transient and raised on the FIRST
+# attempt, killing an arm at exactly REQUEST_TIMEOUT with zero tokens spent.
+# Because summarise() counts an instance only when EVERY arm is valid, one
+# such timeout discarded the whole instance -- including the 71,850 tokens an
+# arm that had already RESOLVED spent on it. `500` was missing for the same
+# reason 502/503/504 were present: nobody hit it yet.
+#
+# type(exc).__name__ needs no `import openai` -- this module takes an
+# INJECTED client and stays provider-agnostic, which is what lets the tests
+# drive it with a fake.
+def is_transient(exc: Exception) -> bool:
+    etype = type(exc).__name__.lower()
+    return (
+        any(s in etype for s in
+            ("timeout", "connection", "ratelimit", "internalserver"))
+        or any(s in str(exc).lower() for s in
+               ("429", "rate limit", "timed out", "timeout", "500",
+                "502", "503", "504", "overloaded", "connection",
+                "provider_error", "provider request failed"))
+    )
+
+
+def backoff_seconds(exc: Exception, attempt: int) -> float:
+    """
+    Capped. Uncapped exponential backoff (4,8,16,32,64) costs 124s per failed
+    call, and at 40 steps that is 83 minutes of sleeping in a single episode
+    -- indistinguishable from a hang, and it silently multiplies the cost of
+    a whole sweep. A 429 is a TOKENS-PER-MINUTE window, not congestion --
+    retrying in 4s just burns another attempt inside the same window. Wait
+    most of a window instead; anything else gets the short backoff.
+    """
+    etype = type(exc).__name__.lower()
+    rate_limited = ("ratelimit" in etype or "429" in str(exc)
+                    or "rate limit" in str(exc).lower())
+    return 25.0 if rate_limited else min(4 * (2 ** attempt), MAX_BACKOFF)
+
+
 class Agent:
     def __init__(self, client, model: str, max_steps: int = 25, temperature: float = 0.0):
         self._client = client
@@ -856,31 +915,9 @@ class Agent:
                 )
             except Exception as exc:  # noqa: BLE001
                 last = exc
-                # "provider_error" is the gateway reporting that ITS upstream
-                # failed -- not a complaint about our request. It arrived as a
-                # 400, which was not in this list, so the episode died at step
-                # 34 of 40 with one edit made and `finish` never reached, in
-                # BOTH arms. The failing payload could not be reproduced
-                # synthetically (100 turns and 80K tokens pass; every message
-                # shape passes), which is itself evidence it is upstream flake
-                # rather than our shape. A genuinely malformed request still
-                # fails all five attempts and surfaces normally.
-                transient = any(s in str(exc).lower() for s in
-                                ("429", "rate limit", "timeout", "502", "503",
-                                 "504", "overloaded", "connection",
-                                 "provider_error", "provider request failed"))
-                if not transient or attempt == MAX_RETRIES - 1:
+                if not is_transient(exc) or attempt == MAX_RETRIES - 1:
                     raise
-                # Capped. Uncapped exponential backoff (4,8,16,32,64) costs
-                # 124s per failed call, and at 40 steps that is 83 minutes of
-                # sleeping in a single episode -- indistinguishable from a
-                # hang, and it silently multiplies the cost of a whole sweep.
-                # A 429 is a TOKENS-PER-MINUTE window, not congestion --
-                # retrying in 4s just burns another attempt inside the same
-                # window. Wait most of a window instead; anything else gets
-                # the short backoff.
-                rate_limited = "429" in str(exc) or "rate limit" in str(exc).lower()
-                time.sleep(25.0 if rate_limited else min(4 * (2 ** attempt), MAX_BACKOFF))
+                time.sleep(backoff_seconds(exc, attempt))
         raise last  # type: ignore[misc]
 
     def _budget_note(self, step: int, sandbox: RepoSandbox) -> str:

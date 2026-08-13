@@ -26,8 +26,10 @@ sys.path.insert(
                     "..", "..", "experiments", "swebench_pro")
 )
 
+import pro_harness  # noqa: E402
 from pro_harness import (  # noqa: E402
-    _grade, build_entryscript, pylist, shell_quote_env, strip_binary_hunks,
+    DOCKER_PULL_MAX_RETRIES, HarnessError, _grade, build_entryscript, pylist,
+    pull_image, shell_quote_env, strip_binary_hunks,
 )
 
 
@@ -149,3 +151,186 @@ class TestBinaryHunks:
         out = strip_binary_hunks(patch)
         assert "img.png" not in out
         assert "a.py" in out
+
+
+class _Proc:
+    def __init__(self, returncode: int, stderr: str = ""):
+        self.returncode = returncode
+        self.stderr = stderr
+
+
+class TestPullImageRetries:
+    """pull_image had ZERO retry until this: one docker pull, any failure
+    raised immediately. Direct regression for a Stage 5 sweep where 4 of 5
+    instances died on "dial tcp: lookup registry-1.docker.io: no such
+    host" -- a DNS blip that had already cleared minutes later -- while
+    the 5th (an LLM APIConnectionError) survived precisely because THAT
+    path already retries. This class is what makes docker pulls match
+    that same standard."""
+
+    def _no_sleep(self, monkeypatch):
+        slept: list[float] = []
+        monkeypatch.setattr(pro_harness.time, "sleep", lambda s: slept.append(s))
+        return slept
+
+    def _never_present(self, monkeypatch):
+        monkeypatch.setattr(pro_harness, "image_present", lambda image: False)
+
+    def test_dns_failure_is_retried_then_succeeds(self, monkeypatch):
+        self._never_present(monkeypatch)
+        slept = self._no_sleep(monkeypatch)
+        calls = []
+        results = [
+            _Proc(1, "Error response from daemon: ... dial tcp: lookup "
+                     "registry-1.docker.io: no such host"),
+            _Proc(0, ""),
+        ]
+
+        def fake_run(cmd, timeout=300):
+            calls.append(cmd)
+            return results.pop(0)
+
+        monkeypatch.setattr(pro_harness, "_run", fake_run)
+        pull_image("some/image:tag")  # must not raise
+        assert len(calls) == 2
+        assert len(slept) == 1
+
+    def test_outage_that_outlasts_the_window_still_raises(self, monkeypatch):
+        self._never_present(monkeypatch)
+        self._no_sleep(monkeypatch)
+        stderr = "dial tcp: lookup registry-1.docker.io: no such host"
+        calls = []
+
+        def fake_run(cmd, timeout=300):
+            calls.append(cmd)
+            return _Proc(1, stderr)
+
+        monkeypatch.setattr(pro_harness, "_run", fake_run)
+        with pytest.raises(HarnessError, match="no such host"):
+            pull_image("some/image:tag")
+        assert len(calls) == DOCKER_PULL_MAX_RETRIES
+
+    def test_missing_image_fails_on_the_first_attempt(self, monkeypatch):
+        """A 404 is not a network problem. Retrying it just burns the
+        whole backoff window before failing anyway."""
+        self._never_present(monkeypatch)
+        slept = self._no_sleep(monkeypatch)
+        calls = []
+
+        def fake_run(cmd, timeout=300):
+            calls.append(cmd)
+            return _Proc(1, "manifest unknown: manifest tag does not exist")
+
+        monkeypatch.setattr(pro_harness, "_run", fake_run)
+        with pytest.raises(HarnessError, match="manifest unknown"):
+            pull_image("some/image:tag")
+        assert len(calls) == 1
+        assert slept == []
+
+    def test_auth_failure_also_fails_fast(self, monkeypatch):
+        self._never_present(monkeypatch)
+        slept = self._no_sleep(monkeypatch)
+        calls = []
+
+        def fake_run(cmd, timeout=300):
+            calls.append(cmd)
+            return _Proc(1, "unauthorized: authentication required")
+
+        monkeypatch.setattr(pro_harness, "_run", fake_run)
+        with pytest.raises(HarnessError):
+            pull_image("some/image:tag")
+        assert len(calls) == 1
+        assert slept == []
+
+    def test_image_already_present_never_calls_run(self, monkeypatch):
+        monkeypatch.setattr(pro_harness, "image_present", lambda image: True)
+
+        def fail(cmd, timeout=300):
+            raise AssertionError("_run should not be called")
+
+        monkeypatch.setattr(pro_harness, "_run", fail)
+        pull_image("some/image:tag")  # must not raise, must not call _run
+
+    @pytest.mark.parametrize("stderr", [
+        "connection refused",
+        "connection reset by peer",
+        "i/o timeout",
+        "net/http: TLS handshake timeout",
+        "network is unreachable",
+        "temporary failure in name resolution",
+    ])
+    def test_every_listed_transient_substring_is_retried(self, stderr, monkeypatch):
+        """Only "no such host" was exercised above; the classifier lists
+        9 substrings total -- this is what actually proves the other 6
+        aren't dead entries that look covered but never get hit."""
+        self._never_present(monkeypatch)
+        self._no_sleep(monkeypatch)
+        results = [_Proc(1, stderr), _Proc(0, "")]
+        calls = []
+
+        def fake_run(cmd, timeout=300):
+            calls.append(cmd)
+            return results.pop(0)
+
+        monkeypatch.setattr(pro_harness, "_run", fake_run)
+        pull_image("some/image:tag")  # must not raise
+        assert len(calls) == 2
+
+    def test_an_unrecognized_error_is_fail_fast_by_default(self, monkeypatch):
+        """The default must be fail-fast, not accidentally permissive --
+        manifest unknown/unauthorized above could coincidentally be the
+        ONLY two strings treated as non-transient if the classifier were
+        an allowlist-shaped bug rather than the intended denylist-by-
+        omission."""
+        self._never_present(monkeypatch)
+        slept = self._no_sleep(monkeypatch)
+        calls = []
+
+        def fake_run(cmd, timeout=300):
+            calls.append(cmd)
+            return _Proc(1, "disk quota exceeded")
+
+        monkeypatch.setattr(pro_harness, "_run", fake_run)
+        with pytest.raises(HarnessError, match="disk quota exceeded"):
+            pull_image("some/image:tag")
+        assert len(calls) == 1
+        assert slept == []
+
+    def test_backoff_values_match_the_declared_schedule_exactly(self, monkeypatch):
+        """Not just "some list of length 2" -- the actual seconds, so a
+        transposition in DOCKER_PULL_BACKOFF's tuple is caught here rather
+        than only showing up as a slower-than-intended sweep."""
+        self._never_present(monkeypatch)
+        slept = self._no_sleep(monkeypatch)
+        stderr = "dial tcp: lookup registry-1.docker.io: no such host"
+        monkeypatch.setattr(pro_harness, "_run", lambda cmd, timeout=300: _Proc(1, stderr))
+        with pytest.raises(HarnessError):
+            pull_image("some/image:tag")
+        assert slept == [5.0, 15.0]
+
+
+class TestPullIsTransientClassifierDirectly:
+    """Same discipline as test_agent_retry.py's
+    TestBothAgentsAgreeOnClassification: pin the classifier's own
+    contract directly, so a future edit to the substring list gets one
+    fast, direct failure here instead of only surfacing through the
+    slower retry-loop-shaped tests above."""
+
+    @pytest.mark.parametrize("stderr,expected", [
+        ("dial tcp: lookup registry-1.docker.io: no such host", True),
+        ("temporary failure in name resolution", True),
+        ("i/o timeout", True),
+        ("net/http: TLS handshake timeout", True),
+        ("connection refused", True),
+        ("connection reset by peer", True),
+        ("unexpected EOF", True),
+        ("network is unreachable", True),
+        ("manifest unknown: manifest tag does not exist", False),
+        ("repository does not exist or may require 'docker login'", False),
+        ("unauthorized: authentication required", False),
+        ("denied: requested access to the resource is denied", False),
+        ("disk quota exceeded", False),
+        ("", False),
+    ])
+    def test_classification_table(self, stderr, expected):
+        assert pro_harness._pull_is_transient(stderr) is expected

@@ -270,9 +270,14 @@ class TestDAGStructure:
         assert "create the base module first" in sys_msgs[0].split("YOUR CURRENT SUBGOAL:")[1]
 
     def test_failure_blocks_only_dependents(self, repo):
+        """"depends on" here means a HARD dependency (requires), not mere
+        ordering -- a deps-only sibling now runs even past a failure (see
+        TestTypedDependencyEdges); this test is specifically about the
+        requires case still being blocked."""
         client = FakeClient([
             _msg(content='[{"id":1,"goal":"this subgoal will fail","deps":[]},'
-                         ' {"id":2,"goal":"this depends on the failure","deps":[1]},'
+                         ' {"id":2,"goal":"this depends on the failure","deps":[1],'
+                         ' "requires":[1]},'
                          ' {"id":3,"goal":"this is fully independent work","deps":[]}]'),
             # node 1 gets max_methods+1 attempts, so exhaust all of them
             _msg(tool_calls=[("subgoal_failed", {"reason": "nope"})]),
@@ -292,7 +297,8 @@ class TestDAGStructure:
     def test_blocked_nodes_consume_no_budget(self, repo):
         client = FakeClient([
             _msg(content='[{"id":1,"goal":"this subgoal will fail","deps":[]},'
-                         ' {"id":2,"goal":"blocked dependent subgoal","deps":[1]}]'),
+                         ' {"id":2,"goal":"blocked dependent subgoal","deps":[1],'
+                         ' "requires":[1]}]'),
             _msg(tool_calls=[("subgoal_failed", {"reason": "no"})]),
             _msg(content="Alternative that also fails here"),
             _msg(tool_calls=[("subgoal_failed", {"reason": "no"})]),
@@ -1139,3 +1145,147 @@ class TestStepsPerSubgoalCLIFlag:
         args = self._parser().parse_args(["--steps-per-subgoal", "20", "--max-steps", "200"])
         assert args.steps_per_subgoal == 20
         assert args.max_steps == 200
+
+
+class TestLocalizationPrePass:
+    """The planner never saw the repository -- only the issue text -- yet
+    PLANNER_SYSTEM demands each subgoal 'name the file or symbol'. Measured
+    across every run with plan data: only ~47% of planned paths matched a
+    gold file, and the deepseek ansible run planned edits to
+    galaxy/collection/__init__.py and galaxy/dataclasses.py (right basename
+    convention, wrong directory) when the real files were
+    galaxy/dependency_resolution/dataclasses.py and
+    utils/collection_loader/_collection_finder.py. _candidate_files gives
+    the planner verified repo facts to ground on instead, at zero extra LLM
+    cost (RepoSandbox.search is local)."""
+
+    def test_candidate_files_reach_the_planner_prompt(self, nested_repo):
+        from htn_agent import HTNAgent
+        client = FakeClient([
+            _msg(content='["Only subgoal to run here"]'),
+            _msg(tool_calls=[("subgoal_done", {"summary": "ok"})]),
+        ])
+        inst = {**INSTANCE, "problem_statement":
+                "The `is_valid` function returns the wrong result."}
+        HTNAgent(client, "m").run(inst, nested_repo, "arm")
+        planner_text = "\n".join(m["content"] for m in client.requests[0]["messages"])
+        assert "CANDIDATE FILES (verified to exist" in planner_text
+        assert "lib/galaxy/resolution/dataclasses.py" in planner_text
+
+    def test_no_hits_means_no_candidate_block_prompt_otherwise_unchanged(self, repo):
+        """Null-degradation, same discipline as TestTaskSpecReachesThePrompt:
+        an issue mentioning nothing findable in this checkout must not
+        inject an empty or misleading CANDIDATE FILES header."""
+        from htn_agent import HTNAgent
+        client = FakeClient([
+            _msg(content='["Only subgoal to run here"]'),
+            _msg(tool_calls=[("subgoal_done", {"summary": "ok"})]),
+        ])
+        HTNAgent(client, "m").run(INSTANCE, repo, "arm")
+        planner_text = "\n".join(m["content"] for m in client.requests[0]["messages"])
+        assert "CANDIDATE FILES (verified to exist" not in planner_text
+
+    def test_search_volume_is_bounded_regardless_of_issue_text_length(self, repo, monkeypatch):
+        """A pathological issue text must not turn into dozens of repo
+        walks -- that would fight the token thesis this pre-pass exists to
+        serve, not just cost nothing as advertised."""
+        from htn_agent import HTNAgent
+        calls = []
+        orig_search = repo.search
+
+        def counting_search(pattern, path="."):
+            calls.append(pattern)
+            return orig_search(pattern, path)
+
+        monkeypatch.setattr(repo, "search", counting_search)
+        many_idents = " ".join(f"identifier_{i}_word" for i in range(50))
+        inst = {**INSTANCE, "problem_statement": many_idents}
+        HTNAgent(FakeClient([]), "m")._candidate_files(inst, repo)
+        assert len(calls) <= HTNAgent.MAX_CANDIDATE_SEARCHES
+
+
+class TestTypedDependencyEdges:
+    """Plans are pure linear chains in 74-83% of real runs. Before this,
+    EVERY deps edge was a hard blocker: a root-node failure produced
+    subgoals_done == 0 in 12 of 12 observed cases, because the planner's
+    honest sequential ORDERING (deps) was being enforced as if it were a
+    real data dependency. `requires` is now the narrower, explicit claim;
+    plain `deps` no longer blocks on failure, only on ordering."""
+
+    def test_failed_soft_dependent_still_runs_and_is_told_why(self, repo):
+        from htn_agent import HTNAgent
+        client = FakeClient([
+            _msg(content='[{"id": 1, "goal": "First subgoal here", "deps": []}, '
+                         '{"id": 2, "goal": "Second subgoal here", "deps": [1]}]'),
+            _msg(tool_calls=[("subgoal_failed", {"reason": "cannot do it"})]),
+            _msg(tool_calls=[("subgoal_done", {"summary": "done anyway"})]),
+        ])
+        run = HTNAgent(client, "m", max_methods=0).run(INSTANCE, repo, "arm")
+        assert run.htn["nodes"][0]["status"] == "failed"
+        # The whole point: node 2 still ran instead of being blocked.
+        assert run.htn["nodes"][1]["status"] == "done"
+        executor_calls = [r for r in client.requests if r.get("tools")]
+        assert len(executor_calls) == 2, "node 2 must have gotten its own turn"
+        node2_prompt = "\n".join(m["content"] for m in executor_calls[1]["messages"])
+        assert "did NOT complete" in node2_prompt
+        assert "[1]" in node2_prompt
+
+    def test_failed_hard_dependent_is_still_blocked(self, repo):
+        """The real invariant this whole module exists to protect: a
+        dependent that TRULY needs a predecessor's edits must not run
+        against a state that does not exist."""
+        from htn_agent import HTNAgent
+        client = FakeClient([
+            _msg(content='[{"id": 1, "goal": "First subgoal here", "deps": []}, '
+                         '{"id": 2, "goal": "Second subgoal here", "deps": [1], '
+                         '"requires": [1]}]'),
+            _msg(tool_calls=[("subgoal_failed", {"reason": "cannot do it"})]),
+        ])
+        run = HTNAgent(client, "m", max_methods=0).run(INSTANCE, repo, "arm")
+        assert run.htn["nodes"][0]["status"] == "failed"
+        assert run.htn["nodes"][1]["status"] == "blocked"
+        # Node 2 never got a turn -- only the planner + node 1's one attempt.
+        assert len(client.requests) == 2
+
+    def test_soft_dependent_of_a_successful_node_runs_normally(self, repo):
+        """Non-regression: the ordinary, common case is unaffected."""
+        from htn_agent import HTNAgent
+        client = FakeClient([
+            _msg(content='[{"id": 1, "goal": "First subgoal here", "deps": []}, '
+                         '{"id": 2, "goal": "Second subgoal here", "deps": [1]}]'),
+            _msg(tool_calls=[("subgoal_done", {"summary": "first done"})]),
+            _msg(tool_calls=[("subgoal_done", {"summary": "second done"})]),
+        ])
+        run = HTNAgent(client, "m").run(INSTANCE, repo, "arm")
+        assert run.htn["nodes"][0]["status"] == "done"
+        assert run.htn["nodes"][1]["status"] == "done"
+
+    def test_requires_survives_the_snapshot_and_rehydrate_round_trip(self, repo):
+        """That last-sync docstring on _rehydrate is a promise, not a
+        suggestion: resuming an interrupted run must not silently downgrade
+        every edge back to soft."""
+        from htn_agent import HTNAgent
+        client = FakeClient([
+            _msg(content='[{"id": 1, "goal": "First subgoal here", "deps": []}, '
+                         '{"id": 2, "goal": "Second subgoal here", "deps": [1], '
+                         '"requires": [1]}]'),
+            _msg(tool_calls=[("subgoal_done", {"summary": "first done"})]),
+            _msg(tool_calls=[("subgoal_done", {"summary": "second done"})]),
+        ])
+        run = HTNAgent(client, "m").run(INSTANCE, repo, "arm")
+        assert run.htn["nodes"][1]["requires"] == [1]
+        assert run.htn["plan"][1]["requires"] == [1]
+        rehydrated = HTNAgent._rehydrate(run.htn["nodes"])
+        assert rehydrated[1].requires == [1]
+
+    def test_requires_not_also_listed_in_deps_is_dropped(self):
+        """requires must be a SUBSET of deps -- a hard dependency that is
+        not even an ordering edge is a contradiction; trusting it anyway
+        would let a stray id block scheduling without deps ever having
+        established the ordering that makes blocking meaningful."""
+        from htn_agent import HTNAgent
+        nodes = HTNAgent.parse_dag(
+            '[{"id": 1, "goal": "First subgoal here", "deps": []}, '
+            '{"id": 2, "goal": "Second subgoal here", "deps": [], "requires": [1]}]')
+        assert nodes[1].deps == []
+        assert nodes[1].requires == []

@@ -40,7 +40,10 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from mcp.server import MCPServer
+from mcp.server.auth.provider import AccessToken, TokenVerifier
+from mcp.server.auth.settings import AuthSettings
 from mcp.server.mcpserver import Context
+from pydantic import AnyHttpUrl
 
 from app.db.session import create_pool
 from app.api.approval import decide, ApprovalRequest
@@ -121,6 +124,50 @@ async def lifespan(server: MCPServer) -> AsyncIterator[dict]:
         await pool.close()
 
 
+class StaticTokenVerifier(TokenVerifier):
+    """Minimal bearer-token check for a single-tenant, loopback-bound
+    deployment -- NOT a real OAuth flow. The SDK positions this server as
+    an OAuth 2.1 RESOURCE server (it validates tokens, it does not issue
+    them), and requires token_verifier+auth to be passed together; this is
+    the simplest thing that satisfies that contract.
+
+    Constant-time comparison (secrets.compare_digest) because this is a
+    bearer secret compared against attacker-controlled input over the
+    network -- a naive `==` leaks timing information proportional to the
+    matching prefix length. `secrets` is already imported above (used for
+    instance_id generation); this is its second, more load-bearing use.
+
+    Deliberately NOT sufficient on its own: solve_task's repo_path is
+    caller-controlled and apply_change_set is an ungated write (see
+    README_MCP_SERVER.md's "Known v1 limitations"). This gates WHO can
+    reach those tools, it does not make either tool safe against a caller
+    who does hold a valid token -- that is why hosting stays loopback-only
+    (see the ASGI app / uvicorn invocation below), not exposed via tunnel.
+    """
+
+    def __init__(self, token: str):
+        self._token = token
+
+    async def verify_token(self, token: str) -> AccessToken | None:
+        if not secrets.compare_digest(token, self._token):
+            return None
+        return AccessToken(token=token, client_id="stealthlab-local", scopes=["stealthlab:tools"])
+
+
+def _require_mcp_token() -> str:
+    """Fail at import time, not on the first tool call -- same discipline
+    as lifespan's own DATABASE_URL check just above."""
+    token = os.environ.get("STEALTHLAB_MCP_TOKEN")
+    if not token:
+        raise RuntimeError(
+            "STEALTHLAB_MCP_TOKEN not set -- generate one with "
+            "`python -c \"import secrets; print(secrets.token_urlsafe(32))\"` "
+            "and add it to backend/.env")
+    return token
+
+
+_MCP_PORT = 8765  # not the SDK's default 8000, which app/main.py's FastAPI app already uses
+
 server = MCPServer(
     name="stealthlab",
     version="1.0.0",
@@ -135,7 +182,30 @@ server = MCPServer(
     ),
     lifespan=lifespan,
     extensions=[TasksExtension()],
+    # Authorization applies to HTTP transports only -- stdio (the `mcp dev`
+    # Inspector quickstart in README_MCP_SERVER.md) bypasses it entirely,
+    # by protocol design, not by an oversight here.
+    token_verifier=StaticTokenVerifier(_require_mcp_token()),
+    auth=AuthSettings(
+        issuer_url=AnyHttpUrl(f"http://127.0.0.1:{_MCP_PORT}"),
+        resource_server_url=AnyHttpUrl(f"http://127.0.0.1:{_MCP_PORT}/mcp"),
+        required_scopes=["stealthlab:tools"],
+    ),
 )
+
+# ASGI app for hosted Streamable HTTP -- serves POST/GET on /mcp. The stdio
+# entrypoint at the bottom of this file (`if __name__ == "__main__"`) is
+# UNCHANGED and still what the Inspector quickstart uses; this is an
+# additional way to run the same `server`, not a replacement.
+#
+# Serve with (from backend/):
+#   uvicorn app.mcp_server.server:app --host 127.0.0.1 --port 8765 --workers 1
+#
+# --workers 1 is load-bearing, not incidental: TasksExtension's backing
+# store (tasks_extension.py) is in-memory, so a second worker process
+# would serve a tasks/get poll from a process that never saw the task
+# propose_synthesis/solve_task created -- the call would appear to hang.
+app = server.streamable_http_app()
 
 
 @server.tool()

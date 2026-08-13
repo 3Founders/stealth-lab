@@ -64,6 +64,97 @@ with deliberately malformed input → `detect_conflict_trigger` → only then
 `propose_synthesis`/`submit_approval`/`decompose_task`/`solve_task`, since
 those cost real API spend.
 
+## Hosting -- Streamable HTTP, for real clients (Claude Code included)
+
+The Inspector quickstart above uses **stdio** (a subprocess Claude Code or
+`mcp dev` spawns and talks to over stdin/stdout). This section is for
+**hosting** the same `server` object over HTTP so any Streamable HTTP client
+can connect to it, including a Claude Code instance on a different machine
+on your network.
+
+**Requires `mcp[cli]>=2.0.0`** (`pyproject.toml`/`requirements.txt` are
+already pinned to it). The 1.x line ships `FastMCP`/`Server`, not the
+`MCPServer` class this file uses -- confirmed by a real failing import
+against 1.29.0, not assumed from changelogs.
+
+**Why this stays loopback-only.** `DATABASE_URL` is a local Postgres
+instance -- a cloud-hosted server could not reach it. More importantly,
+`solve_task`'s `repo_path` is caller-controlled and `apply_change_set` is an
+**ungated write** (see "Known v1 limitations" below); a bearer token gates
+*who* can call these tools, it does not make either tool safe against
+*anyone* holding a valid token. Treat this as a way to reach the server from
+another process/machine you already trust, not as a public deployment.
+
+### 1. Generate a token and set it
+
+```bash
+python -c "import secrets; print(secrets.token_urlsafe(32))"
+```
+
+Add it to `backend/.env` (gitignored -- confirmed via `git check-ignore`,
+never commit this) as `STEALTHLAB_MCP_TOKEN=...`. The server fails at
+**import time**, not on the first tool call, if this is unset -- same
+discipline as `lifespan`'s existing `DATABASE_URL` check.
+
+### 2. Run it
+
+```bash
+cd backend
+uvicorn app.mcp_server.server:app --host 127.0.0.1 --port 8765 --workers 1
+```
+
+`app` is `server.streamable_http_app()`, exposed at module level; it serves
+`/mcp`. **`--workers 1` is load-bearing**, not a default left alone: the
+Tasks extension's backing store (`tasks_extension.py`) is in-memory, so a
+second worker would sometimes answer a `tasks/get` poll from a process that
+never saw the task `propose_synthesis`/`solve_task` created, and that call
+would appear to hang. Port 8765 avoids colliding with `app/main.py`'s
+FastAPI app, which already uses uvicorn's conventional 8000.
+
+Confirm auth is actually enforced before connecting anything to it:
+
+```bash
+curl -s -o /dev/null -w '%{http_code}\n' -X POST http://127.0.0.1:8765/mcp
+# expect 401
+
+curl -s -o /dev/null -w '%{http_code}\n' -X POST http://127.0.0.1:8765/mcp \
+  -H "Authorization: Bearer $STEALTHLAB_MCP_TOKEN"
+# expect NOT 401
+```
+
+A 200 on the *unauthenticated* call means the token check did not take
+effect and the endpoint is open to anything that can reach that port.
+
+### 3. Connect Claude Code
+
+```bash
+claude mcp add --transport http stealthlab http://127.0.0.1:8765/mcp \
+  --header "Authorization: Bearer $STEALTHLAB_MCP_TOKEN" \
+  --scope local
+```
+
+**Use `--scope local`, not `project`.** Project scope writes to `.mcp.json`
+in the repo root, which is meant to be checked into version control --
+that would commit the bearer token. Local scope keeps the entry in
+`~/.claude.json`.
+
+`propose_synthesis` and `solve_task` are genuinely long-running; raise the
+per-server tool timeout past Claude Code's default by adding a `timeout`
+(milliseconds) field to the server's entry in `~/.claude.json`:
+
+```json
+"stealthlab": {
+  "type": "http",
+  "url": "http://127.0.0.1:8765/mcp",
+  "headers": { "Authorization": "Bearer ..." },
+  "timeout": 600000
+}
+```
+
+Then `claude mcp list` should show `stealthlab ✔ Connected`. `! Needs
+authentication` means the header did not land; `✘ Failed to connect` means
+either uvicorn or the database is not actually up.
+
 ## Example workflow -- knowledge-conflict governance loop
 
 1. `decompose_task("we updated our vacation policy to 20 days")` → proposal

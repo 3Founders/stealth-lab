@@ -9,12 +9,18 @@
 #   - mcp[cli]: the [cli] extra specifically, needed for `mcp dev`/`mcp run`
 #     (the Inspector, used to test app/mcp_server/server.py) -- bare `mcp`
 #     alone does not include this
+#
+# >=2.0.0 is REQUIRED, not aspirational: app/mcp_server/server.py imports
+# MCPServer from mcp.server and mcp.server.mcpserver.Context, neither of
+# which exist in the 1.x line (confirmed by a real failing import against
+# 1.29.0 -- 1.x ships FastMCP/Server instead). 2.0.0 is the current stable
+# release on PyPI as of this pin, not a prerelease.
 
 anthropic
 asyncpg
 fastapi
 huggingface-hub
-mcp[cli]
+mcp[cli]>=2.0.0
 numpy
 openai
 openpyxl

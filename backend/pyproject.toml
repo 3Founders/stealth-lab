@@ -7,7 +7,11 @@ dependencies = [
     "asyncpg",
     "fastapi",
     "huggingface-hub",
-    "mcp[cli]",
+    # >=2.0.0 required: app/mcp_server/server.py imports mcp.server.MCPServer
+    # and mcp.server.mcpserver.Context, neither of which exist in the 1.x
+    # line (confirmed by a real failing import against 1.29.0). See
+    # requirements.txt's matching note for the full explanation.
+    "mcp[cli]>=2.0.0",
     "numpy",
     "openai",
     "openpyxl",
