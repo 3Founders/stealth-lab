@@ -47,6 +47,7 @@ from pydantic import AnyHttpUrl
 
 from app.db.session import create_pool
 from app.api.approval import decide, ApprovalRequest
+from app.api.decompose import decompose, decide as decide_decomposition_fn, DecomposeRequest, DecideRequest
 from app.models.change import ChangeSet
 from app.services.access import AccessScope
 from app.services.decomposition import DecompositionService
@@ -595,42 +596,48 @@ async def detect_conflict_trigger(new_node_id: str, ctx: Context) -> str:
 async def decompose_task(problem: str, ctx: Context) -> str:
     """
     Turn an unstructured problem description into a real, structured graph
-    proposal -- new task_nodes/knowledge_nodes/edges -- WITHOUT writing
-    anything to the graph. Nothing this tool produces is applied until you
-    review it and separately call apply_change_set, exactly the same
-    "propose, don't auto-apply" discipline propose_synthesis already
-    follows (and the same discipline this project's own real API endpoint,
-    POST /v1/decompose, enforces via its separate /decide step).
+    proposal -- new task_nodes/knowledge_nodes/edges -- persisted to the
+    real `decompositions` table, WITHOUT writing anything to the actual
+    graph yet.
 
-    Thin wrapper around DecompositionService.decompose() -- the exact
-    real, already-tested class backing the real /v1/decompose endpoint.
-    No new decomposition logic lives here. Uses the same real
-    generator/critic/retriever construction that endpoint uses: panel[0]
-    generates, panel[1] (a DIFFERENT model family) critiques -- a model
-    reviewing its own output shares whatever blind spot produced the flaw
-    in the first place, real retrieval grounds it against what already
-    exists in the graph so it reuses rather than duplicates.
+    REAL BUG FOUND AND FIXED after this tool's first version shipped: it
+    used to tell callers to apply the result via apply_change_set. That
+    was wrong, and a genuinely serious gap -- apply_change_set uses
+    KnowledgeUpdater.apply(), which never calls validate_generative(),
+    the capability-boundary check that's this project's own stated "only
+    real guarantee" against a prompt-injected/hijacked model (V2_STATUS.md:
+    generated content may only CREATE new nodes and connect them to each
+    other -- never modify, invalidate, or attach to anything that already
+    exists). Using apply_change_set on this tool's output would have
+    bypassed that guarantee entirely. Use decide_decomposition instead --
+    it calls the real, correct app.api.decompose.decide(), which re-runs
+    validate_generative() at apply time specifically so a proposal
+    tampered with in storage still can't escalate.
 
-    HONEST NOTE on applying the result: the returned change_set uses
-    create_task_node/create_knowledge_node/create_edge ops, not
-    update_knowledge_node. I confirmed apply_change_set's real
-    preflight_validate explicitly only inspects update_knowledge_node ops
-    (skips everything else unconditionally) and KnowledgeUpdater.apply()
-    genuinely handles all six real op types -- so apply_change_set is safe
-    to use as-is for this tool's output, no new application path was
-    built or needed.
+    This version calls the real app.api.decompose.decompose() endpoint
+    function directly (not the bare DecompositionService -- that was the
+    root cause of the bug above: it skipped the real endpoint's
+    persistence step entirely, so there was never a real decomposition_id
+    for a proper decide step to reference). No new decomposition logic
+    lives here.
+
+    HONEST GAP, stated plainly: the real endpoint's rate-limiting and
+    cost-governance dependencies (enforce_limits, a real per-viewer
+    scope_key) aren't replicated here -- this tool uses a fixed
+    "mcp_decompose_task" scope_key, so real per-caller rate limits and
+    spend caps do NOT apply to calls made through this MCP tool the way
+    they would through the real HTTP endpoint. Fine for trusted/internal
+    use (this project's current, explicit posture), a real gap to close
+    before opening this specific tool to untrusted callers.
 
     problem: plain-language description of the workflow/problem to
     decompose -- ordinary phrasing, up to ~20,000 characters (the real
     endpoint's own limit).
 
-    Returns: feasibility, the panel's reasoning, any structural problems
-    (these alone block safe_to_propose -- a malformed change set or an
-    attempted capability escalation), any objections (surfaced for you to
-    judge, NOT auto-blocking -- one model's critique isn't made silently
-    authoritative over a human reviewer), whether manipulation was
-    suspected, related existing graph content found, and the real
-    change_set JSON ready for apply_change_set.
+    Returns: the real decomposition_id (hand this to decide_decomposition),
+    feasibility, reasoning, structural problems (block safe_to_propose),
+    objections (surfaced, not auto-blocking), suspected manipulation,
+    related existing content, and the change_set for your own review.
     """
     pool = ctx.request_context.lifespan_context["pool"]
 
@@ -639,15 +646,15 @@ async def decompose_task(problem: str, ctx: Context) -> str:
     if len(problem) > 20_000:
         return f"REFUSED: problem is {len(problem)} chars, over the real 20,000-char limit."
 
-    panel = default_panel()
-    service = DecompositionService(
-        generator=panel[0],
-        critic=panel[1] if len(panel) > 1 else default_judge(),
-        retriever=HybridRetriever(pool, scope=AccessScope.unrestricted()),
+    result = await decompose(
+        DecomposeRequest(problem=problem),
+        pool=pool,
+        scope=AccessScope.unrestricted(),
+        scope_key="mcp_decompose_task",
     )
-    result = await service.decompose(problem)
 
     lines = [
+        f"decomposition_id: {result.id}",
         f"feasible: {result.feasible}",
         f"safe_to_propose: {result.safe_to_propose}",
         f"node_count: {result.node_count}",
@@ -663,11 +670,69 @@ async def decompose_task(problem: str, ctx: Context) -> str:
         lines.append(f"related_existing: {result.related_existing}")
     if result.reused_nodes:
         lines.append(f"reused_nodes (matched against existing graph): {result.reused_nodes}")
-    if result.deduplicated:
-        lines.append(f"deduplicated (collapsed within this proposal): {result.deduplicated}")
+    if result.suggested_agents:
+        lines.append(f"suggested_agents: {result.suggested_agents}")
 
-    change_set_json = json.dumps(result.change_set.model_dump(mode="json"))
-    lines.append(f"\nchange_set (hand this to apply_change_set once you've reviewed it above):\n{change_set_json}")
+    lines.append(f"\nops (for your review): {json.dumps(result.ops)}")
+    lines.append(
+        f"\nOnce reviewed, call decide_decomposition({result.id!r}, approver_id, "
+        f"\"approved\" or \"rejected\") -- NOT apply_change_set."
+    )
+    return "\n".join(lines)
+
+
+@server.tool()
+async def decide_decomposition(decomposition_id: str, approver_id: str, decision: str,
+                                ctx: Context) -> str:
+    """
+    The REAL, capability-boundary-checked approve/reject step for a
+    decompose_task proposal -- calls the exact real, already-tested
+    app.api.decompose.decide() function directly (plain importable async
+    function, not called over HTTP).
+
+    THIS IS THE CORRECT PATH for decompose_task's output. On approval,
+    this calls KnowledgeUpdater.apply_generated(), which re-runs
+    validate_generative() at apply time -- the capability check ran once
+    at generation, and running it again here means a proposal tampered
+    with in storage between propose and decide still cannot escalate to
+    modifying or invalidating existing graph content. Every node/edge
+    written this way is tagged `public_generated`, so the graph never
+    loses track of which content came from an untrusted submission versus
+    a company's own documents. apply_change_set does NOT do any of this
+    -- do not use it for decompose_task's output.
+
+    decomposition_id: the real id from decompose_task's output.
+    approver_id: who is deciding -- stored in the real decompositions row.
+    decision: "approved" or "rejected".
+
+    Real idempotency guard (from the underlying decide()): re-deciding an
+    already-decided decomposition is refused, not silently re-applied --
+    every apply inserts new nodes, so approving twice would create a
+    duplicate subgraph.
+    """
+    pool = ctx.request_context.lifespan_context["pool"]
+
+    try:
+        decomposition_uuid = UUID(decomposition_id)
+    except ValueError:
+        return f"REFUSED: {decomposition_id!r} is not a valid UUID."
+
+    if decision not in ("approved", "rejected"):
+        return f"REFUSED: decision must be 'approved' or 'rejected', got {decision!r}."
+
+    body = DecideRequest(approver_id=approver_id, decision=decision)
+    try:
+        result = await decide_decomposition_fn(decomposition_uuid, body, pool)
+    except HTTPException as exc:
+        return f"REFUSED ({exc.status_code}): {exc.detail}"
+
+    lines = [
+        f"decomposition_id: {result.id}",
+        f"decision: {result.decision}",
+        f"created_nodes: {result.created_nodes if result.created_nodes else '(none -- rejected, nothing applied)'}",
+    ]
+    if result.refs:
+        lines.append(f"refs: {result.refs}")
     return "\n".join(lines)
 
 
