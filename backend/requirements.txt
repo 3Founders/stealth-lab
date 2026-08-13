@@ -1,31 +1,31 @@
-fastapi>=0.115
-uvicorn[standard]>=0.32
-asyncpg>=0.30
-pydantic>=2.9
-pydantic-settings>=2.6
-python-dotenv>=1.0
+# Built by actually parsing every real import across backend/ with Python's
+# ast module (not reconstructed from memory) -- see the extraction method in
+# the conversation this was generated from if this ever needs regenerating.
+#
+# Two real entries here were NOT found by import-parsing and were added from
+# direct knowledge instead, since pip install alone can't discover them:
+#   - uvicorn: launches app/main.py's real FastAPI app from the command line
+#     (`uvicorn app.main:app`), never `import`ed directly in any .py file
+#   - mcp[cli]: the [cli] extra specifically, needed for `mcp dev`/`mcp run`
+#     (the Inspector, used to test app/mcp_server/server.py) -- bare `mcp`
+#     alone does not include this
 
-# Panel agents (Section 7). openai covers both OpenAI and Fireworks/Kimi K3,
-# which is OpenAI-compatible and differs only in base_url.
-anthropic>=0.40
-openai>=1.55
-
-# Embeddings (not yet wired -- retrieval currently uses graph traversal only)
-voyageai>=0.3  # embeddings (V1 item #3) -- now actually used
-
-# Layer 2 statistics -- validated against scipy's own t-test in tests
-scipy>=1.11
-
-# Document-processing skills (medical report -> Excel client use case)
-pdfplumber>=0.11
-openpyxl>=3.1
-reportlab>=4.0  # dev/test only -- generates synthetic PDFs for offline tests
-
-# Optional: YAML workflow specs for onboarding
-PyYAML>=6.0
-
-# Dev
-pytest>=8.0
-pytest-asyncio>=0.24
-python-multipart>=0.0.9  # needed for UploadFile / multipart form handling
-bandit>=1.9  # real static security scanning for code-sourced agent review
+anthropic
+asyncpg
+fastapi
+huggingface-hub
+mcp[cli]
+numpy
+openai
+openpyxl
+pdfplumber
+pydantic
+pydantic-settings
+pytest
+python-dotenv
+PyYAML
+reportlab
+scipy
+tree-sitter-language-pack
+uvicorn
+voyageai

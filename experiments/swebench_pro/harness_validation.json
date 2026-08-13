@@ -1,0 +1,25 @@
+{
+  "instance_id": "instance_ansible__ansible-a26c325bd8f6e2822d9d7e62f77a424c1db4fbf6-v0f01c69f1e2528b935359cfe578530722bca2c59",
+  "gold": {
+    "resolved": true,
+    "status": "resolved",
+    "apply_status": "applied",
+    "n_tests_parsed": 42,
+    "f2p_passed": 4,
+    "f2p_missing": [],
+    "p2p_broke": []
+  },
+  "empty": {
+    "resolved": false,
+    "status": "f2p_failed",
+    "apply_status": "empty",
+    "n_tests_parsed": 42,
+    "f2p_missing": [
+      "test/units/module_utils/urls/test_Request.py::test_Request_fallback",
+      "test/units/module_utils/urls/test_Request.py::test_open_url",
+      "test/units/module_utils/urls/test_fetch_url.py::test_fetch_url",
+      "test/units/module_utils/urls/test_fetch_url.py::test_fetch_url_params"
+    ]
+  },
+  "usable": true
+}

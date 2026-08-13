@@ -8,15 +8,7 @@ property below is the point of the file, not the formatting assertions.
 """
 from __future__ import annotations
 
-import os
-import sys
-
-sys.path.insert(
-    0, os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                    "..", "..", "experiments", "swebench_pro")
-)
-
-from patch_format import diff_to_search_replace  # noqa: E402
+from app.services.patch_format import diff_to_search_replace
 
 
 SIMPLE = (

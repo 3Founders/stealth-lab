@@ -1,0 +1,26 @@
+{
+  "n_total": 20,
+  "n_usable": 19,
+  "n_excluded_gold": 1,
+  "arms": {
+    "htn_memory": {
+      "resolved": 3,
+      "rate": 0.158,
+      "tokens": 1283773,
+      "no_patch": 4,
+      "mean_tool_calls": 23.7
+    }
+  },
+  "pairwise": {},
+  "mean_max_copyable_fraction": 0.0377,
+  "instances_with_any_copyable_line": 11,
+  "mean_file_recall": 0.298,
+  "mean_dir_recall": 0.456,
+  "htn": {
+    "mean_subgoals": 2.74,
+    "total_replans": 8,
+    "subgoals_done": 25,
+    "subgoals_failed": 12,
+    "decompose_failures": 0
+  }
+}

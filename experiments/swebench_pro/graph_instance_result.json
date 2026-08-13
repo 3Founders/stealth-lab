@@ -1,0 +1,109 @@
+{
+  "instance_id": "instance_flipt-io__flipt-6fe76d024ee0c50ddb09c86f4ae0bd4c208fd65f",
+  "repo": "flipt-io/flipt",
+  "language": "go",
+  "title": "Authentication middleware does not support client tokens via cookies",
+  "gold_files": [
+    "internal/server/auth/middleware.go"
+  ],
+  "model": "deepseek-v3.1",
+  "max_steps": 40,
+  "selection": {
+    "selected_by": "fewest hand-editable gold files",
+    "repo_pool": "flipt-io/flipt",
+    "gold_file_count": 1,
+    "skipped_generated_only": 24
+  },
+  "held_out_rows": 3,
+  "live_task_nodes": 730,
+  "hierarchy": {
+    "task_nodes": "HierarchyBuildReport(table='task_nodes', levels_built=6, internal_nodes_created=295, final_root_count=117, level_details=[{'level': 0, 'roots_seen': 730, 'groups_formed': 352, 'internal_nodes_proposed': 204}, {'level': 1, 'roots_seen': 352, 'groups_formed': 196, 'internal_nodes_proposed': 65}, {'level': 2, 'roots_seen': 196, 'groups_formed': 140, 'internal_nodes_proposed': 19}, {'level': 3, 'roots_seen': 140, 'groups_formed': 123, 'internal_nodes_proposed': 5}, {'level': 4, 'roots_seen': 123, 'groups_formed': 118, 'internal_nodes_proposed': 1}, {'level': 5, 'roots_seen': 118, 'groups_formed': 117, 'internal_nodes_proposed': 1}])"
+  },
+  "retrieval": {
+    "n_hits": 5,
+    "retrieved_files": 29,
+    "gold_files": 1,
+    "files_hit": [],
+    "file_recall": 0.0,
+    "file_precision": 0.0,
+    "dir_recall": 1.0,
+    "dirs_hit": [
+      "internal/server/auth"
+    ],
+    "deepest_shared_prefix_segments": 3,
+    "gold_dirs": [
+      "internal/server/auth"
+    ],
+    "same_repo_hits": 5,
+    "same_repo_rate": 1.0,
+    "hit_instances": [
+      "instance_flipt-io__flipt-96820c3ad10b0b2305e8877b6b303f7fafdf815f",
+      "instance_flipt-io__flipt-3ef34d1fff012140ba86ab3cafec8f9934b492be",
+      "instance_flipt-io__flipt-b6cef5cdc0daff3ee99e5974ed60a1dc6b4b0d67",
+      "instance_flipt-io__flipt-9d25c18b79bc7829a6fb08ec9e8793d5d17e2868",
+      "instance_flipt-io__flipt-e88e93990e3ec1e7697754b423decc510d5dd5fe"
+    ]
+  },
+  "htn": {
+    "instance_id": "instance_flipt-io__flipt-a42d38a1bb1df267c53d9d4a706cf34825ae3da9",
+    "leaf_name": "Implement configurable CSRF protection",
+    "similarity": 0.6919597387313843,
+    "used_flat_fallback": false,
+    "comparisons": 117
+  },
+  "retrieval_diag": {
+    "nodes_returned": 20,
+    "entrypoints": 5,
+    "instances_resolved": 9,
+    "direct": 5,
+    "by_expansion": 15
+  },
+  "memory_block_chars": 5425,
+  "arm_config": {
+    "include_patches": true,
+    "include_requirements": true,
+    "patch_chars": 1400,
+    "memory_chars": 6000
+  },
+  "copyability": {
+    "gold_added_lines": 53,
+    "max_copyable_fraction": 0.019,
+    "union_copyable_fraction": 0.019,
+    "any_precedent_contains_gold_line": true,
+    "example_copyable_lines": [
+      "if err != nil {"
+    ],
+    "per_precedent": [
+      {
+        "instance_id": "instance_flipt-io__flipt-96820c3ad10b0b2305e8877b6b303f7fafdf815f",
+        "shown_added_lines": 34,
+        "overlap_with_gold": 0,
+        "fraction_of_gold": 0.0
+      },
+      {
+        "instance_id": "instance_flipt-io__flipt-3ef34d1fff012140ba86ab3cafec8f9934b492be",
+        "shown_added_lines": 78,
+        "overlap_with_gold": 1,
+        "fraction_of_gold": 0.019
+      },
+      {
+        "instance_id": "instance_flipt-io__flipt-b6cef5cdc0daff3ee99e5974ed60a1dc6b4b0d67",
+        "shown_added_lines": 34,
+        "overlap_with_gold": 0,
+        "fraction_of_gold": 0.0
+      },
+      {
+        "instance_id": "instance_flipt-io__flipt-9d25c18b79bc7829a6fb08ec9e8793d5d17e2868",
+        "shown_added_lines": 257,
+        "overlap_with_gold": 1,
+        "fraction_of_gold": 0.019
+      },
+      {
+        "instance_id": "instance_flipt-io__flipt-e88e93990e3ec1e7697754b423decc510d5dd5fe",
+        "shown_added_lines": 60,
+        "overlap_with_gold": 0,
+        "fraction_of_gold": 0.0
+      }
+    ]
+  }
+}

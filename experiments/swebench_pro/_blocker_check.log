@@ -1,0 +1,6 @@
+restricted to 1 explicitly-named instances
+experiment: include_patches=True include_requirements=True model=gemma-4-31B-it
+1 instances selected, 0 already done
+by repo: {'ansible/ansible': 1}
+
+[1/1] ansible/ansible — Collection Name Validation Accepts Python Keywords

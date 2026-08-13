@@ -1,0 +1,44 @@
+[project]
+name = "stealthlab-backend"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = [
+    "anthropic",
+    "asyncpg",
+    "fastapi",
+    "huggingface-hub",
+    "mcp[cli]",
+    "numpy",
+    "openai",
+    "openpyxl",
+    "pdfplumber",
+    "pydantic",
+    "pydantic-settings",
+    "pytest",
+    "python-dotenv",
+    "PyYAML",
+    "reportlab",
+    "scipy",
+    # Real, newly-confirmed transitive requirement: app/mcp_server/server.py's
+    # solve_task imports experiments/swebench_pro/agent.py, which imports
+    # app/services/code_index.py, which imports this at module level. Not
+    # previously declared anywhere in backend/ (confirmed: same real gap the
+    # SWEBENCH_RUNBOOK.md already flagged for a different reason -- this is
+    # the same missing package, newly load-bearing for a different path).
+    "tree-sitter-language-pack",
+    "uvicorn",
+    "voyageai",
+]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+# Explicit, not auto-discovered: db/, scripts/, tests/ are real sibling
+# directories (SQL files, standalone run-directly scripts, pytest suite)
+# -- none of them are meant to be importable packages. Only app/ is.
+# Without this, setuptools sees multiple top-level dirs and refuses to
+# guess (confirmed real error: "Multiple top-level packages discovered
+# in a flat-layout: ['db', 'app']").
+packages = ["app"]

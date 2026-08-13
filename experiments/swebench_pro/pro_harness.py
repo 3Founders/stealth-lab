@@ -39,22 +39,21 @@ from __future__ import annotations
 import json
 import os
 import re
-import shutil
-
-from safe_fs import safe_rmtree
 import subprocess
 from dataclasses import dataclass, field
 from typing import Optional
 
+from safe_fs import safe_rmtree
+
 IMAGE_NS = "jefzda/sweap-images"
 DEFAULT_TIMEOUT = 2700  # 45 min, up from 30 -- a real run timed out on
-                          # protonmail/webclients (a JS/TS monorepo, likely a
-                          # heavier install/build step than ansible-test).
-                          # This is a modest bump based on n=1 real observed
-                          # timeout, not a comprehensive per-repo sizing --
-                          # a smarter repo-aware policy is a natural next
-                          # step once more real timeout data exists. Still
-                          # overridable per-call via evaluate()'s timeout arg.
+                        # protonmail/webclients (a JS/TS monorepo, likely a
+                        # heavier install/build step than ansible-test).
+                        # This is a modest bump based on n=1 real observed
+                        # timeout, not a comprehensive per-repo sizing --
+                        # a smarter repo-aware policy is a natural next
+                        # step once more real timeout data exists. Still
+                        # overridable per-call via evaluate()'s timeout arg.
 DEFAULT_MEMORY = "6g"
 DEFAULT_CPUS = "4"
 
@@ -244,9 +243,9 @@ def evaluate(
 
     if os.path.isdir(workspace):
         safe_rmtree(workspace)  # was ignore_errors=True -- a real disk-exhaustion
-                                  # incident (OSError, no space left on device)
-                                  # happened mid-run with zero prior signal that
-                                  # cleanup might be failing silently somewhere
+                                # incident (OSError, no space left on device)
+                                # happened mid-run with zero prior signal that
+                                # cleanup might be failing silently somewhere
     os.makedirs(workspace, exist_ok=True)
 
     pull_image(image)

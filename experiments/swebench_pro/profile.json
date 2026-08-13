@@ -1,0 +1,134 @@
+{
+  "ansible/ansible": {
+    "n": 96,
+    "languages": [
+      "python"
+    ],
+    "image_gb_compressed": 0.54,
+    "run_script_needs_network": null,
+    "median_p2p": 10,
+    "median_f2p": 4,
+    "median_patch_bytes": 7585,
+    "n_test_files_median": 1
+  },
+  "internetarchive/openlibrary": {
+    "n": 91,
+    "languages": [
+      "python"
+    ],
+    "image_gb_compressed": 0.97,
+    "run_script_needs_network": null,
+    "median_p2p": 5,
+    "median_f2p": 3,
+    "median_patch_bytes": 6440,
+    "n_test_files_median": 1
+  },
+  "flipt-io/flipt": {
+    "n": 85,
+    "languages": [
+      "go"
+    ],
+    "image_gb_compressed": 0.7,
+    "run_script_needs_network": null,
+    "median_p2p": 0,
+    "median_f2p": 2,
+    "median_patch_bytes": 9949,
+    "n_test_files_median": 7
+  },
+  "qutebrowser/qutebrowser": {
+    "n": 79,
+    "languages": [
+      "python"
+    ],
+    "image_gb_compressed": 0.58,
+    "run_script_needs_network": null,
+    "median_p2p": 46,
+    "median_f2p": 5,
+    "median_patch_bytes": 4747,
+    "n_test_files_median": 1
+  },
+  "gravitational/teleport": {
+    "n": 76,
+    "languages": [
+      "go"
+    ],
+    "image_gb_compressed": 2.42,
+    "run_script_needs_network": null,
+    "median_p2p": 0,
+    "median_f2p": 3,
+    "median_patch_bytes": 8595,
+    "n_test_files_median": 7
+  },
+  "protonmail/webclients": {
+    "n": 65,
+    "languages": [
+      "js"
+    ],
+    "image_gb_compressed": 3.94,
+    "run_script_needs_network": null,
+    "median_p2p": 1,
+    "median_f2p": 4,
+    "median_patch_bytes": 11740,
+    "n_test_files_median": 2
+  },
+  "future-architect/vuls": {
+    "n": 62,
+    "languages": [
+      "go"
+    ],
+    "image_gb_compressed": 1.39,
+    "run_script_needs_network": null,
+    "median_p2p": 0,
+    "median_f2p": 4,
+    "median_patch_bytes": 11510,
+    "n_test_files_median": 11
+  },
+  "navidrome/navidrome": {
+    "n": 57,
+    "languages": [
+      "go"
+    ],
+    "image_gb_compressed": 0.88,
+    "run_script_needs_network": null,
+    "median_p2p": 0,
+    "median_f2p": 1,
+    "median_patch_bytes": 9347,
+    "n_test_files_median": 1
+  },
+  "element-hq/element-web": {
+    "n": 56,
+    "languages": [
+      "js"
+    ],
+    "image_gb_compressed": 1.02,
+    "run_script_needs_network": null,
+    "median_p2p": 90,
+    "median_f2p": 6,
+    "median_patch_bytes": 7718,
+    "n_test_files_median": 14
+  },
+  "NodeBB/NodeBB": {
+    "n": 44,
+    "languages": [
+      "js"
+    ],
+    "image_gb_compressed": 0.85,
+    "run_script_needs_network": null,
+    "median_p2p": 182,
+    "median_f2p": 2,
+    "median_patch_bytes": 6056,
+    "n_test_files_median": 1
+  },
+  "tutao/tutanota": {
+    "n": 20,
+    "languages": [
+      "ts"
+    ],
+    "image_gb_compressed": 1.31,
+    "run_script_needs_network": null,
+    "median_p2p": 0,
+    "median_f2p": 78,
+    "median_patch_bytes": 11069,
+    "n_test_files_median": 108
+  }
+}

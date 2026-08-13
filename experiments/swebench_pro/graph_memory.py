@@ -47,12 +47,11 @@ from typing import Optional
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "backend"))
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-
 from app.services.access import AccessScope  # noqa: E402
-from patch_format import diff_to_search_replace  # noqa: E402
+from app.services.patch_format import diff_to_search_replace  # noqa: E402
 from app.services.hierarchy import build_hierarchy_for_table, hierarchical_search  # noqa: E402
 from app.services.retrieval import HybridRetriever  # noqa: E402
+from app.services.failure_capture import CREATED_BY as FAILURE_CREATED_BY  # noqa: E402
 
 CREATED_BY = "swebench_ingest"
 HIERARCHY_BY = "hierarchy_builder"
@@ -132,27 +131,38 @@ async def _instance_of(pool, node_id, table: str) -> Optional[dict]:
     side of the task/knowledge pair was hit."""
     if table == "task_nodes":
         row = await pool.fetchrow(
-            "SELECT skill_ref AS iid, name, io_schema AS props FROM task_nodes "
-            "WHERE id = $1", node_id)
+            "SELECT skill_ref AS iid, name, io_schema AS props, created_by "
+            "FROM task_nodes WHERE id = $1", node_id)
     else:
         row = await pool.fetchrow(
-            "SELECT properties->>'instance_id' AS iid, name, properties AS props "
-            "FROM knowledge_nodes WHERE id = $1", node_id)
+            "SELECT properties->>'instance_id' AS iid, name, properties AS props, "
+            "created_by FROM knowledge_nodes WHERE id = $1", node_id)
     return dict(row) if row else None
 
 
 async def _hydrate(pool, instance_id: str) -> Optional[dict]:
-    """Everything the renderer needs about one instance, from both nodes."""
+    """Everything the renderer needs about one instance, from both nodes.
+
+    node_type = 'code_location' is a load-bearing filter, not a
+    tidiness one: failure_capture.py (backend/app/services) writes a
+    SECOND live knowledge_node per instance (node_type='failure_mode')
+    sharing the same properties.instance_id key this join matches on.
+    Before that module existed at most one knowledge_node ever matched
+    here, so the join was unambiguous by construction; without this
+    filter it is a coin flip which row -- code_location or
+    failure_mode -- the renderer receives, and a failure_mode row has
+    none of the keys (patch/files/interface) callers below read."""
     return await pool.fetchrow(
         "SELECT t.name AS title, t.io_schema AS tprops, k.properties AS kprops "
         "FROM task_nodes t LEFT JOIN knowledge_nodes k "
         "  ON k.properties->>'instance_id' = t.skill_ref "
+        "  AND k.node_type = 'code_location' "
         "WHERE t.skill_ref = $1 LIMIT 1", instance_id)
 
 
 async def retrieve(
     pool, query_text: str, embedder, top_k: int = 5, expand_depth: int = 1,
-    embedding_column: str = "embedding",
+    embedding_column: str = "embedding", include_failure_modes: bool = False,
 ) -> tuple[list[GraphHit], dict]:
     """
     Hybrid entrypoints + one-hop expansion, mapped back to instances.
@@ -160,6 +170,14 @@ async def retrieve(
     Returns (hits, diagnostics). Diagnostics carry the raw node counts so a
     run that retrieved nothing is distinguishable from one that retrieved
     the wrong thing -- the distinction Exp 1 kept losing.
+
+    `include_failure_modes`: failure_capture.py's nodes are excluded by
+    default. Cross-instance failure learning is the eventual point of
+    storing them, but render_context's SEARCH/REPLACE pipeline has
+    nothing to do with a node shaped like {reason, last_evidence} yet --
+    surfacing one unannounced would silently inject noise into the
+    memory block rather than a usable precedent. Flip this only once a
+    caller actually renders that shape differently from a fix.
     """
     # `embedding_joint` lives on task_nodes only, so restrict the search to
     # that table rather than erroring on a column knowledge_nodes lacks. The
@@ -180,6 +198,8 @@ async def retrieve(
         info = await _instance_of(pool, node.id, node.table)
         if not info or not info.get("iid"):
             continue  # a hierarchy group node, which has no instance
+        if not include_failure_modes and info.get("created_by") == FAILURE_CREATED_BY:
+            continue
         iid = info["iid"]
         if iid in seen:
             seen[iid].matched_by = sorted(set(seen[iid].matched_by + node.matched_by))

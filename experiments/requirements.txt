@@ -1,0 +1,16 @@
+# Built by actually parsing every real import across experiments/ with
+# Python's ast module (not reconstructed from memory).
+#
+# References backend's requirements rather than duplicating them: every
+# script here imports directly from backend/app/* (asyncpg, pydantic-settings,
+# etc. are needed transitively, not just what's listed below).
+-r ../backend/requirements.txt
+
+# One real entry NOT found by import-parsing: pyarrow. pandas.read_parquet()
+# needs it internally as an engine, but nothing in this codebase imports it
+# by name directly -- confirmed necessary the hard way, via a real
+# ModuleNotFoundError hit earlier when only pandas was installed.
+datasets
+pandas
+pyarrow
+requests

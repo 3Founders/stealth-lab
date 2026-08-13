@@ -41,7 +41,7 @@ sys.path.insert(0, str(HERE.parents[1] / "backend"))
 sys.path.insert(0, str(HERE.parents[1]))
 
 from app.db.session import create_pool  # noqa: E402
-from experiments.after.embed_cache import CachedEmbedder  # noqa: E402
+from app.services.embed_cache import CachedEmbedder  # noqa: E402
 from agent import Agent, RepoSandbox  # noqa: E402
 from graph_ingest import (  # noqa: E402
     SWEBENCH_DSN, load_dataset, normalize_statement, patch_facts, title_of,
