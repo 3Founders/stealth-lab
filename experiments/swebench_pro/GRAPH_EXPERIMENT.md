@@ -285,6 +285,9 @@ failure. If it recurs, `backend/app/services/retrieval.py` and
 
 ## 10. Running it
 
+Full ingest-to-grade runbook, all flags, and every failure mode hit this
+session with its fix: [`RUNBOOK.md`](RUNBOOK.md). The quick version:
+
 ```bash
 cd experiments/swebench_pro
 
