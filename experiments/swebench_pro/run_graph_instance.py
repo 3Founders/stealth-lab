@@ -40,9 +40,9 @@ sys.path.insert(0, str(HERE))
 sys.path.insert(0, str(HERE.parents[1] / "backend"))
 sys.path.insert(0, str(HERE.parents[1]))
 
-from app.db.session import create_pool  # noqa: E402
 from app.services.embed_cache import CachedEmbedder  # noqa: E402
 from agent import Agent, RepoSandbox  # noqa: E402
+from db_connect import connect_pool  # noqa: E402
 from graph_ingest import (  # noqa: E402
     SWEBENCH_DSN, load_dataset, normalize_statement, patch_facts, title_of,
 )
@@ -263,7 +263,7 @@ async def main() -> int:
 
     embedder = CachedEmbedder(min_interval=21.0)
     embedder.MAX_BATCH_TOKENS = 3300
-    pool = await create_pool(dsn=args.dsn, min_size=1, max_size=4)
+    pool = await connect_pool(args.dsn, min_size=1, max_size=4)
     record: dict = {"instance_id": iid, "repo": sample["repo"],
                     "language": sample["repo_language"], "title": title,
                     "gold_files": gold_files, "model": args.model,

@@ -88,55 +88,91 @@ seconds.
 
 # Why runs are not resolving — failure analysis
 
-Same 6-instance run, all `graded` fields inspected directly (not inferred).
-n=6 is small — treat this as "what failure modes exist", not "what fraction
-of instances fail this way" — but every instance shows a concrete, evidenced
-cause, not a shrug.
+Superseded from an earlier 6-instance read by `graph_experiment_3arm_check1.jsonl`
+finishing at **n=11**: zero errors, zero exclusions, one model
+(`gemma-4-31B-it`), one budget (`max_steps=28`) — the cleanest dataset in the
+repo. All `graded`/`htn` fields inspected directly, not inferred.
 
-| instance | arm | status | root cause (evidenced) |
+| arm | resolved | tokens | tokens/instance |
 |---|---|---|---|
-| ansible | no_memory | **resolved** | — |
-| ansible | htn_memory | f2p_failed | `stop_reason=step_budget`. Gold needs 2 files; HTN only edited 1 (`dataclasses.py`), never reached `_collection_finder.py` before its 28-step ceiling. **Budget exhaustion, not a wrong idea.** |
-| element-web | both | **resolved** | — |
-| flipt | both | **resolved** | htn used 31 tool calls (over the nominal 28 — HTN's per-subgoal budget can exceed the flat agent's global one) but still finished. |
-| vuls | no_memory | f2p_failed | Edited the **correct** file (`converter.go`), patch applied, but `f2p_missing=1` — the fix itself was logically wrong, not a localization or budget problem. |
-| vuls | htn_memory | **resolved** | Same file, correct fix — HTN succeeded where flat didn't on this one. |
-| teleport | both | f2p_failed | Gold spans **4 files**; both arms edited only `forwarder.go`, missing `server.go`/`kubernetes.go`/`service.go`. Result: `f2p_missing=43` — the whole downstream test surface that depends on the untouched files fails. **Cross-file miss** — this is the "Pattern A" failure mode already named (but left unfixed) in `GRAPH_EXPERIMENT.md`. |
-| openlibrary | both | f2p_failed | `p2p_broke=5` on **top of** `f2p_missing=1` — the patch didn't just fail to fix the bug, it broke 5 previously-passing tests. htn also only touched 1 of the 2 gold files (`lists.py`, missed `utils.py`). Two independent problems stacked: an incomplete fix *and* a regression. |
+| `no_memory` | 5/11 (45%) | 1,944,103 | 176,736 |
+| `htn_memory` | 4/11 (36%) | **996,396** | **90,581** |
 
-## Failure mode breakdown (this run)
+Discordant pairs: `no_memory`-only 2, `htn`-only 1 → McNemar p = 1.0 — **no
+evidence of a resolution difference in either direction** at this n (3
+discordant pairs is the "no information" zone `mcnemar()`'s own docstring
+warns about). What *is* solid: HTN resolves 4 of 11 on **51% of the tokens**
+(996,396 / 1,944,103 — a 49% savings, not 49% usage), and won an instance
+(`vuls`) that `no_memory` failed.
 
-- **Cross-file miss** (edited fewer than the required gold files): teleport
-  (both arms), openlibrary (htn), ansible (htn) — **3 of 6 non-trivial
-  failures**. This is the dominant, already-diagnosed pattern: the agent finds
-  and fixes the file the problem statement obviously points to, then stops
-  before reaching files it only needed to touch as a consequence of the first
-  edit.
-- **Step-budget exhaustion before completing a correct plan**: ansible/htn,
-  and likely a contributor to teleport/openlibrary — `stop_reason=step_budget`
-  appears in 4/6 htn_memory rows in this file. HTN's per-subgoal step
-  allocation is being spent finding files rather than editing them on the
-  multi-file cases.
-- **Wrong fix on the right file** (vuls/no_memory): the one failure that is
-  neither localization nor budget — genuine reasoning error, and the only one
-  where more retrieval or more steps wouldn't obviously help.
-- **Regression from the patch itself** (openlibrary, `p2p_broke=5`): the
-  agent's edit had a side effect on passing tests it never re-checked against.
-  Neither arm runs the test suite before submitting — there's no
-  self-verification step in the tool loop, so a breaking change is invisible
-  to the agent until the harness grades it.
+## The two structural defects behind most of the non-resolutions
 
-## Caveat
+Across the 32 nodes HTN planned in these 11 runs:
 
-This is one 6-instance run on `gemma-4-31B-it`, the default/unreliable model
-per earlier findings in this session — not the currently-preferred
-deepseek-v3.2. The **time distribution** in the first half of this file is
-model-independent (grading cost has nothing to do with which model wrote the
-patch), but these specific failure counts should not be read as "the current
-deepseek-v3.2 setup fails this way" without a same-model rerun. A clean,
-uninterrupted deepseek-v3.2 sweep — which this session has not yet gotten,
-between the retry/pull_image/collision infra bugs already fixed — is what
-would make this table trustworthy at more than n=6.
+| node outcome | count | share |
+|---|---|---|
+| `done` | 15 | 47% |
+| ran, unfinished (`pending`) | 6 | 19% |
+| **never ran — budget-starved** (`attempts==0, pending`) | **7** | **22%** |
+| never ran — dependency cascade (`attempts==0, blocked`) | 2 | 6% |
+| ran, `failed` | 2 | 6% |
+
+**8 of 11 runs ended in `stop_reason=step_budget`**; only 2 reached
+`finished`. Root cause: `TOTAL_STEP_BUDGET=28` but
+`MAX_SUBGOALS(4) × STEPS_PER_SUBGOAL(9) = 36` — the run could not fund even
+one attempt per planned subgoal, and one node's retries could legally
+consume the whole budget before a later node was ever attempted. Traced
+exactly on `ansible-f327e65d`: node 1's three 9-step rounds (27 of 28 steps)
+left node 2 a 1-step grant, below `MIN_VIABLE_SUBGOAL_BUDGET`, declined.
+
+Separately: of 32 gold files across these instances, **53% are never
+mentioned in any node's goal**, even by basename. No repair mechanism can fix
+a file that was never named — `_verify_precondition` only rewrites paths that
+*were* named (wrong directory, not missing entirely), and
+`decompose_subgoal` (the only mechanism that can *add* a node to a plan) has
+fired **0 times in 66 recorded HTN runs**. This is the same "cross-file miss"
+pattern the earlier 6-instance read already named on `teleport`/`openlibrary`
+— now confirmed structural, not incidental, and now measured (53%, not "some
+files").
+
+**Status: both defects fixed this session** — see the plan doc / commit for
+`TOTAL_STEP_BUDGET` raised to 72, a reservation floor stopping one node from
+starving never-run siblings, and per-node instrumentation (tokens, steps,
+files touched, gold-file hit rate) added specifically so the cross-file-miss
+question — is `_candidate_files` failing to surface the gold file, or is the
+planner ignoring one it was shown? — is answerable from data on the next run
+instead of guessed. The gold-file-omission fix itself is **not yet done**;
+the instrumentation is what the next diagnosis run needs.
+
+## Other failure modes present (n=11)
+
+- **Wrong fix on the right file** (`vuls`/no_memory before the HTN arm fixed
+  it): edited the correct file, applied cleanly, but the fix itself was
+  logically wrong — the one failure mode neither more retrieval nor more
+  budget obviously helps.
+- **No self-verification step**: neither arm runs the test suite before
+  submitting a patch, so a regression is invisible to the agent until the
+  harness grades it. Contributes to `p2p_broke` cases in the broader
+  (pre-Aug-15) result history; not isolated to a specific instance here.
+
+## Model validity — corrected
+
+An earlier version of this file called `gemma-4-31B-it` "the
+default/unreliable model" versus "the currently-preferred deepseek-v3.2".
+Measured across every arm-run in the repo's result files, the opposite is
+true:
+
+| model | arm-runs | valid | api_error | validity |
+|---|---|---|---|---|
+| **gemma-4-31B-it** | 99 | 96 | 3 | **97%** |
+| deepseek-v3.2 | 18 | 3 | 15 | 17% |
+| gpt-oss-120b | 1 | 0 | 1 | 0% |
+
+gemma-4-31B-it is the only model in this harness that reliably completes
+episodes, and the only one with enough valid runs to measure anything from.
+The time-distribution analysis above (grading cost vs. agent-loop cost) is
+model-independent regardless of which model wrote the patch, and does not
+depend on this correction.
 
 ---
 

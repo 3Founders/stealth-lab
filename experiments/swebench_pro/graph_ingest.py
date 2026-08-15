@@ -62,12 +62,12 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "backend"))
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from app.db.session import create_pool  # noqa: E402
 from app.services.embeddings import to_pgvector  # noqa: E402
 from app.services.embed_cache import CachedEmbedder  # noqa: E402
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from pro_harness import strip_binary_hunks  # noqa: E402
+from db_connect import connect_pool  # noqa: E402
 
 CREATED_BY = "swebench_ingest"
 SWEBENCH_DSN = "postgresql://postgres:stealthlab@127.0.0.1:5433/stealthlab_swebench"
@@ -333,7 +333,7 @@ async def main() -> int:
     embedder = CachedEmbedder(min_interval=args.min_interval,
                               cache_path=args.cache_path)
     embedder.MAX_BATCH_TOKENS = MAX_BATCH_TOKENS
-    pool = await create_pool(dsn=args.dsn, min_size=1, max_size=4)
+    pool = await connect_pool(args.dsn, min_size=1, max_size=4)
 
     try:
         if args.joint_embeddings:

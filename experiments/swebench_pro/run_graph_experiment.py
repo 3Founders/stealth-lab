@@ -48,26 +48,31 @@ sys.path.insert(0, str(HERE.parents[1] / "backend"))
 sys.path.insert(0, str(HERE.parents[1]))
 
 from app.config import settings  # noqa: E402
-from app.db.session import create_pool  # noqa: E402
 from app.services.embed_cache import CachedEmbedder  # noqa: E402
 from agent import Agent, RepoSandbox  # noqa: E402
 from htn_agent import AugmentedHTNAgent as HTNAgent  # noqa: E402
+from db_connect import connect_pool  # noqa: E402
 
 # Arm specification: name -> (agent kind, whether the memory block is shown).
 #
-# Three arms, giving TWO clean paired comparisons on identical instances:
-#   no_memory   vs graph_memory  -> does the knowledge graph help?      (flat)
-#   graph_memory vs htn_memory   -> does HTN decomposition help?  (memory held fixed)
+# Four arms, the full 2x2 of (flat/HTN) x (memory/no-memory), giving three
+# clean paired comparisons on identical instances:
+#   no_memory    vs graph_memory   -> does the knowledge graph help?        (flat)
+#   htn_no_memory vs htn_memory    -> does the knowledge graph help?        (HTN)
+#   graph_memory vs htn_memory     -> does HTN decomposition help?  (memory held fixed)
 #
 # Every arm shares the instance, the snapshot, the tools and the step budget,
-# so each comparison varies exactly one thing. A fourth arm (htn_no_memory)
-# would complete the 2x2 but at ~8 min per arm it would cut the instance
-# count by a quarter, and n matters more here than the interaction term --
-# at these resolution rates the experiment is already power-limited.
+# so each comparison varies exactly one thing. htn_no_memory was originally
+# left out to protect n (this doc used to argue n mattered more than the
+# interaction term) -- restored once the step-budget fix made htn_memory's
+# OWN numbers trustworthy enough that separating "decomposition hurts" from
+# "budget starved it" became the more valuable question. If per-instance
+# cost is a binding constraint again, drop this arm before dropping n.
 ARM_SPEC = {
-    "no_memory":    ("flat", False),
-    "graph_memory": ("flat", True),
-    "htn_memory":   ("htn", True),
+    "no_memory":     ("flat", False),
+    "graph_memory":  ("flat", True),
+    "htn_memory":    ("htn",  True),
+    "htn_no_memory": ("htn",  False),
 }
 from graph_ingest import (  # noqa: E402
     SWEBENCH_DSN, load_dataset, normalize_statement, patch_facts, title_of,
@@ -204,6 +209,85 @@ def _load_gold_cache() -> dict:
 
 def _save_gold_cache(cache: dict) -> None:
     GOLD_CACHE_PATH.write_text(json.dumps(cache, indent=1), encoding="utf-8")
+
+
+def node_metrics(htn: Optional[dict], gold_files: list[str], run_wall: float) -> Optional[dict]:
+    """
+    Aggregate per-node HTN telemetry (htn_agent.py's `_node_row`) against
+    this instance's gold files. Aggregates ONLY -- the full per-node detail
+    already lives in `htn["nodes"]` and `gold_files` is already stored on
+    the row, so nothing here is duplicated. Dependency-free (no DB/Docker),
+    so it is directly unit-testable, and every field is read with
+    `.get(..., default)` so it tolerates a legacy `htn` dict from before
+    node-level instrumentation existed -- of the ~20 result files already on
+    disk, none have these keys, and this must not raise on any of them.
+
+    None for a flat arm (no `htn`) or a plan with zero nodes (a decompose
+    failure that fell back to the single-node stub still has one node, so
+    an empty list here means _decompose itself never ran -- e.g. a
+    rehydrated resume with no snapshot).
+    """
+    if not htn:
+        return None
+    nodes = htn.get("nodes") or []
+    if not nodes:
+        return None
+    gold = set(gold_files)
+
+    # Starvation, split three ways -- see run_one's call site and
+    # GRAPH_EXPERIMENT.md for why conflating "never got a reservation"
+    # with "dependency cascade" would blame the budget for a planning
+    # failure that isn't the budget's fault.
+    n_budget_starved = sum(1 for n in nodes
+                           if n.get("attempts", 0) == 0 and n.get("status") == "pending")
+    n_hard_starved = sum(1 for n in nodes if n.get("budget_granted", 0) == 0)
+    n_blocked_unrun = sum(1 for n in nodes
+                          if n.get("attempts", 0) == 0 and n.get("status") == "blocked")
+
+    editing = [n for n in nodes if n.get("files_edited")]
+    hitting = [n for n in editing if set(n.get("files_edited") or []) & gold]
+    off_gold_only = [n for n in editing if not (set(n.get("files_edited") or []) & gold)]
+    covered: set[str] = set()
+    for n in nodes:
+        covered |= set(n.get("files_edited") or [])
+    covered &= gold
+
+    tokens_by_status: dict[str, int] = {}
+    steps_by_status: dict[str, int] = {}
+    for n in nodes:
+        st = n.get("status", "?")
+        tok = n.get("prompt_tokens", 0) + n.get("completion_tokens", 0)
+        tokens_by_status[st] = tokens_by_status.get(st, 0) + tok
+        steps_by_status[st] = steps_by_status.get(st, 0) + n.get("steps_used", 0)
+
+    total_node_tokens = sum(tokens_by_status.values())
+    done_tokens = tokens_by_status.get("done", 0)
+    n_done = sum(1 for n in nodes if n.get("status") == "done")
+    node_wall_total = sum(n.get("wall_seconds", 0.0) for n in nodes)
+
+    return {
+        "n_nodes": len(nodes),
+        "n_budget_starved": n_budget_starved,
+        "n_hard_starved": n_hard_starved,
+        "n_blocked_unrun": n_blocked_unrun,
+        "n_nodes_editing": len(editing),
+        "n_nodes_hitting_gold": len(hitting),
+        "n_nodes_only_off_gold": len(off_gold_only),
+        "gold_hit_rate_of_editing_nodes": (
+            round(len(hitting) / len(editing), 3) if editing else None),
+        # Should equal the run-level files_edited_correct (rec[arm], set
+        # from run.files_edited & gold_files) -- a mismatch means this
+        # per-node attribution is leaking somewhere, so it self-checks.
+        "gold_files_covered": len(covered),
+        "gold_files_total": len(gold),
+        "tokens_by_status": tokens_by_status,
+        "steps_by_status": steps_by_status,
+        "wasted_token_pct": (
+            round(100 * (total_node_tokens - done_tokens) / total_node_tokens, 1)
+            if total_node_tokens else None),
+        "tokens_per_done_subgoal": round(done_tokens / n_done, 1) if n_done else None,
+        "achieved_parallelism": round(node_wall_total / run_wall, 2) if run_wall else None,
+    }
 
 
 async def run_one(sample, pool, embedder, agent, htn, args,
@@ -360,6 +444,8 @@ async def run_one(sample, pool, embedder, agent, htn, args,
                 "n_files_deleted": len(sandbox._deleted),
                 "agent_kind": kind,
                 "htn": getattr(run, "htn", None),
+                "htn_nodes": node_metrics(
+                    getattr(run, "htn", None), gold_files, run.wall_seconds),
                 "n_recovered": run.tool_calls.count("__recovered__"),
                 "files_edited": run.files_edited,
                 "files_edited_correct": sorted(set(run.files_edited) & set(gold_files)),
@@ -455,8 +541,36 @@ def summarise(rows: list[dict], arms: Optional[list[str]] = None) -> dict:
           if r.get("retrieval", {}).get("file_recall") is not None]
     dr = [r["retrieval"]["dir_recall"] for r in usable
           if r.get("retrieval", {}).get("dir_recall") is not None]
-    htn_rows = [r["htn_memory"]["htn"] for r in usable
-                if r.get("htn_memory", {}).get("htn")]
+    # Both HTN-kind arms (htn_memory AND htn_no_memory), not just
+    # htn_memory -- hardcoding one arm here silently reported nothing for
+    # the other the moment a second HTN arm existed.
+    htn_arms = [a for a in arms if ARM_SPEC.get(a, (None,))[0] == "htn"]
+    htn_rows = [r[a]["htn"] for a in htn_arms for r in usable
+                if r.get(a, {}).get("htn")]
+    # node_metrics()'s per-instance-arm aggregate (run_one's rec[a]["htn_nodes"]).
+    # Every field below is read with .get(k, 0)/.get(k) -- summarise() runs
+    # over ~20 existing result files that predate this key entirely, and a
+    # KeyError here would break regenerating any of their _*_summary.json.
+    node_rows = [r[a]["htn_nodes"] for a in htn_arms for r in usable
+                 if r.get(a, {}).get("htn_nodes")]
+
+    # Pooled numerator/denominator, not a mean of per-instance ratios --
+    # plans are 2-4 nodes, so mean-of-ratios would be dominated by the
+    # instances with a denominator of 1.
+    nodes_total_pool = sum(h.get("nodes_total", 0) for h in htn_rows)
+    node_steps_pool = sum(h.get("node_steps_total", 0) for h in htn_rows)
+    node_tokens_pool = sum(h.get("node_tokens_total", 0) for h in htn_rows)
+    node_wall_pool = sum(h.get("node_wall_total", 0.0) for h in htn_rows)
+    budget_starved_pool = sum(nr.get("n_budget_starved", 0) for nr in node_rows)
+    hitting_pool = sum(nr.get("n_nodes_hitting_gold", 0) for nr in node_rows)
+    editing_pool = sum(nr.get("n_nodes_editing", 0) for nr in node_rows)
+    covered_pool = sum(nr.get("gold_files_covered", 0) for nr in node_rows)
+    gold_total_pool = sum(nr.get("gold_files_total", 0) for nr in node_rows)
+    tot_node_tok_pool = sum(sum(nr.get("tokens_by_status", {}).values()) for nr in node_rows)
+    done_tok_pool = sum(nr.get("tokens_by_status", {}).get("done", 0) for nr in node_rows)
+    parallelism_vals = [nr["achieved_parallelism"] for nr in node_rows
+                        if nr.get("achieved_parallelism") is not None]
+
     return {
         "n_total": len(rows), "n_usable": n,
         "n_excluded_gold": sum(1 for r in rows if r.get("excluded")),
@@ -471,6 +585,29 @@ def summarise(rows: list[dict], arms: Optional[list[str]] = None) -> dict:
             "subgoals_done": sum(h["subgoals_done"] for h in htn_rows),
             "subgoals_failed": sum(h["subgoals_failed"] for h in htn_rows),
             "decompose_failures": sum(1 for h in htn_rows if h["decompose_failed"]),
+            "nodes_total": nodes_total_pool,
+            "nodes_never_ran": sum(h.get("nodes_never_ran", 0) for h in htn_rows),
+            "budget_starved_nodes": budget_starved_pool,
+            "instances_with_starvation": sum(
+                1 for nr in node_rows if nr.get("n_budget_starved", 0) > 0),
+            "starvation_rate": (round(budget_starved_pool / nodes_total_pool, 3)
+                               if nodes_total_pool else None),
+            "node_gold_hit_rate": (round(hitting_pool / editing_pool, 3)
+                                   if editing_pool else None),
+            "gold_file_coverage": (round(covered_pool / gold_total_pool, 3)
+                                   if gold_total_pool else None),
+            "mean_node_steps": (round(node_steps_pool / nodes_total_pool, 2)
+                               if nodes_total_pool else None),
+            "mean_node_tokens": (round(node_tokens_pool / nodes_total_pool, 1)
+                                if nodes_total_pool else None),
+            "mean_node_wall": (round(node_wall_pool / nodes_total_pool, 2)
+                              if nodes_total_pool else None),
+            "wasted_token_pct": (round(100 * (tot_node_tok_pool - done_tok_pool)
+                                       / tot_node_tok_pool, 1)
+                                 if tot_node_tok_pool else None),
+            "mean_achieved_parallelism": (
+                round(sum(parallelism_vals) / len(parallelism_vals), 2)
+                if parallelism_vals else None),
         } if htn_rows else None,
     }
 
@@ -574,69 +711,13 @@ def build_arg_parser() -> argparse.ArgumentParser:
     return ap
 
 
-# Pool creation used to be a single unguarded `create_pool(...)` call, and a
-# whole sweep died at startup on:
-#     asyncio.exceptions.CancelledError  (in _create_ssl_connection)
-#     -> TimeoutError                    (asyncpg connect timeout)
-# i.e. the TLS handshake did not complete inside asyncpg's DEFAULT 60s connect
-# timeout. That is the normal shape of a serverless Postgres (Neon and friends)
-# resuming a suspended compute: the first connection after an idle period has
-# to wake the instance, and cold starts routinely exceed 60s. 60s is a bad
-# bound for that, and zero retries meant a cold start cost the entire run
-# before a single instance began.
-#
-# So: a longer per-attempt bound, plus a bounded retry -- and, like
-# _pull_is_transient in pro_harness.py, retry ONLY what a retry can fix. A
-# wrong password or a missing database is permanent; retrying it just repeats
-# the same rejection four times and buries the real message under two minutes
-# of backoff.
-DB_CONNECT_TIMEOUT = 150.0        # seconds for ONE attempt (asyncpg default 60)
-DB_CONNECT_MAX_RETRIES = 4
-DB_CONNECT_BACKOFF = (5.0, 15.0, 30.0)  # before attempts 2, 3, 4
-
-
-def _db_connect_is_transient(exc: BaseException) -> bool:
-    """
-    True for connect failures a retry can plausibly fix: timeouts (cold
-    start), socket/DNS errors, and the Postgres-side "not ready / too busy"
-    codes. False for authentication, unknown-database and configuration
-    errors, which are exactly as broken on attempt 4 as on attempt 1.
-    """
-    import asyncpg
-
-    # asyncpg surfaces a blown connect timeout as TimeoutError (it catches the
-    # inner CancelledError itself), and TimeoutError is an OSError subclass on
-    # 3.11+, so socket/DNS/timeout all land in this one branch.
-    if isinstance(exc, (asyncio.TimeoutError, ConnectionError, OSError)):
-        return True
-    return isinstance(exc, (
-        asyncpg.exceptions.CannotConnectNowError,       # server starting up
-        asyncpg.exceptions.TooManyConnectionsError,
-        asyncpg.exceptions.ConnectionDoesNotExistError,
-        asyncpg.exceptions.ConnectionFailureError,
-    ))
-
-
-async def connect_pool(dsn: Optional[str], **kwargs):
-    """create_pool() with a cold-start-sized timeout and bounded retry."""
-    last: Optional[BaseException] = None
-    for attempt in range(DB_CONNECT_MAX_RETRIES):
-        try:
-            return await create_pool(dsn=dsn, timeout=DB_CONNECT_TIMEOUT, **kwargs)
-        except Exception as exc:  # noqa: BLE001
-            last = exc
-            if (not _db_connect_is_transient(exc)
-                    or attempt == DB_CONNECT_MAX_RETRIES - 1):
-                break
-            wait = DB_CONNECT_BACKOFF[attempt]
-            print(f"    db connect failed ({type(exc).__name__}: {exc}); "
-                  f"retry {attempt + 2}/{DB_CONNECT_MAX_RETRIES} in {wait:.0f}s",
-                  flush=True)
-            await asyncio.sleep(wait)
-    raise RuntimeError(
-        f"could not connect to the database after {DB_CONNECT_MAX_RETRIES} "
-        f"attempts: {type(last).__name__}: {last}"
-    ) from last
+# connect_pool moved to db_connect.py so every script that opens its own
+# pool can share the same cold-start-tolerant retry (see that module's
+# docstring for the incident that motivated it) instead of each needing its
+# own copy -- which is exactly how run_symbolic_instance.py,
+# run_graph_instance.py, compare_embeddings.py and graph_ingest.py ended up
+# still calling create_pool() directly, unprotected, after this fix first
+# landed only here.
 
 
 async def main() -> int:

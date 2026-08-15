@@ -214,6 +214,96 @@ class TestContextIsBounded:
         assert run.stop_reason in ("step_budget", "finished")
 
 
+class TestPlanContextScopesWithNodeCount:
+    """The plan-listing half of _build_context used to list EVERY node in
+    EVERY other node's prompt -- fine at 2-4 nodes, but at real scale that
+    reproduces the flat agent's "resend everything" cost at the plan-graph
+    level: per-node prompt size grows with TOTAL node count, not with what
+    that node actually needs. Above PLAN_CONTEXT_MAX_NODES, only a node's
+    own transitive dependencies (plus itself) are listed in full.
+
+    Below the threshold, behaviour is byte-for-byte unchanged -- these
+    tests pin that down explicitly so a future change to the threshold or
+    the scoping logic can't silently regress the common (small-plan) case.
+    """
+
+    @staticmethod
+    def _chain(n: int) -> list[Node]:
+        """n nodes, each depending on all previous ones -- a maximally
+        connected chain, so _transitive_deps has real work to do."""
+        return [Node(id=i, goal=f"subgoal number {i} of the plan",
+                     deps=list(range(1, i))) for i in range(1, n + 1)]
+
+    def test_at_threshold_every_node_is_listed_in_full(self):
+        from htn_agent import PLAN_CONTEXT_MAX_NODES
+        nodes = self._chain(PLAN_CONTEXT_MAX_NODES)
+        agent = HTNAgent(client=None, model="m")
+        _, plan = agent._build_context(nodes[-1], nodes)
+        for n in nodes:
+            assert f"subgoal number {n.id} of the plan" in plan
+        assert "not directly relevant" not in plan
+
+    def test_above_threshold_irrelevant_nodes_are_omitted(self):
+        from htn_agent import PLAN_CONTEXT_MAX_NODES
+        n = PLAN_CONTEXT_MAX_NODES + 3
+        nodes = self._chain(n)
+        # Node 2 depends only on node 1 (deps=[1]) -- everything from 3
+        # onward is irrelevant to it and must not appear.
+        target = nodes[1]
+        assert target.deps == [1]
+        agent = HTNAgent(client=None, model="m")
+        _, plan = agent._build_context(target, nodes)
+        assert "subgoal number 1 of the plan" in plan   # relevant: kept
+        assert "subgoal number 2 of the plan" in plan   # itself: kept
+        for i in range(3, n + 1):
+            assert f"subgoal number {i} of the plan" not in plan
+        assert f"{n - 2} other subgoal(s)" in plan
+
+    def test_augmented_agent_plan_is_scoped_the_same_way(self):
+        """AugmentedHTNAgent overrides _build_context for the `done` block
+        but delegates `plan` to super() -- confirm that delegation actually
+        carries the scoping through, not just the unscoped base text."""
+        from htn_agent import PLAN_CONTEXT_MAX_NODES, AugmentedHTNAgent
+        n = PLAN_CONTEXT_MAX_NODES + 3
+        nodes = self._chain(n)
+        target = nodes[1]
+        agent = AugmentedHTNAgent(client=None, model="m")
+        _, plan = agent._build_context(target, nodes)
+        assert f"subgoal number {n} of the plan" not in plan
+        assert f"{n - 2} other subgoal(s)" in plan
+
+    def test_last_node_in_a_long_chain_sees_everyone_as_relevant(self):
+        """The LAST node in a fully-connected chain depends on all others,
+        so its own transitive closure legitimately includes everyone --
+        the scoping must not truncate genuinely relevant context just
+        because the total node count is high."""
+        from htn_agent import PLAN_CONTEXT_MAX_NODES
+        n = PLAN_CONTEXT_MAX_NODES + 3
+        nodes = self._chain(n)
+        agent = HTNAgent(client=None, model="m")
+        _, plan = agent._build_context(nodes[-1], nodes)
+        for i in range(1, n + 1):
+            assert f"subgoal number {i} of the plan" in plan
+        assert "not directly relevant" not in plan
+
+
+class TestPlannerInvitesDecomposition:
+    """decompose_subgoal fired 0 times across 66 real recorded HTN runs --
+    root-caused to PLANNER_SYSTEM instructing every subgoal be 'SMALL', so
+    the planner never wrote one broad enough to need decomposing. This
+    isn't a mechanism bug (TestRecursiveDecomposition already covers the
+    mechanism itself working); it's a prompt-framing gap. Pin the fixed
+    wording down directly rather than trying to infer it from a scripted
+    model's behaviour."""
+
+    def test_planner_prompt_permits_broad_subgoals(self):
+        from htn_agent import PLANNER_SYSTEM
+        rendered = PLANNER_SYSTEM.format(repo="acme/thing", max_subgoals=4)
+        assert "decompose_subgoal" in rendered
+        assert "normal, expected outcome" in rendered
+        assert "silently omit files" in rendered
+
+
 class TestHarnessCompatibility:
     def test_returns_the_same_shape_as_the_flat_agent(self, repo):
         client = FakeClient([

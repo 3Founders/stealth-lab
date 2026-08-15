@@ -68,7 +68,14 @@ __all_spec_caps__ = (SPEC_REQUIREMENTS_CHARS, SPEC_INTERFACE_CHARS)
 STEPS_PER_SUBGOAL = 9
 MAX_METHODS = 2          # alternative decomposition methods per failing node
 MAX_SUBGOALS = 4
-TOTAL_STEP_BUDGET = 28   # same leaf budget as the flat agent, for comparability
+# MAX_SUBGOALS * STEPS_PER_SUBGOAL = 36 is the minimum budget that can fund
+# ONE attempt for every planned node; 28 (this file's old value, "same leaf
+# budget as the flat agent") could not, and measured on 11 real runs it
+# starved 7 of 32 planned nodes down to zero tool calls (never even attempted)
+# and left 8 of 11 runs ending in stop_reason=step_budget with only 2
+# reaching "finished". 72 = MAX_SUBGOALS * STEPS_PER_SUBGOAL * 2, funding one
+# retry (max_methods allows up to 3) for every node, not just the first.
+TOTAL_STEP_BUDGET = 72
 # How many times a compound task may decompose into further compound tasks.
 # 1 = the flat one-level plan. 3 lets issue -> area -> file -> edit, which is
 # as deep as these patches go. Bounded because each level costs a planner
@@ -100,6 +107,18 @@ SUBGOAL_NOTE_CONTEXT_CHARS = 500
 # the node to "pending" WITHOUT consuming an attempt so the scheduler can
 # grant it a full reservation next round.
 MIN_VIABLE_SUBGOAL_BUDGET = 3
+
+# Below this many total nodes, _build_context's plan listing shows every
+# node in full -- unchanged from the original behaviour, so existing small
+# plans (the common case) see no difference. Above it, listing every node
+# in every OTHER node's prompt is exactly the flat agent's "resend
+# everything" problem recreated at the plan-graph level: prompt size grows
+# with TOTAL node count instead of with what's actually relevant to the
+# node being executed. Past this threshold, only the current node's own
+# transitive dependencies are listed in full; everything else collapses to
+# one count line. Set just above the old MAX_SUBGOALS=4 ceiling so a plan
+# at the old size is never affected by this at all.
+PLAN_CONTEXT_MAX_NODES = 6
 
 # Prefix on every path-resolution hint. Exists so tests (and a human
 # reading a transcript) can tell an injected hint from EXECUTOR_SYSTEM's
@@ -151,7 +170,14 @@ lookup" is executable. If a CANDIDATE FILES list is given below, prefer a \
 path from it -- those are verified to exist in this checkout. If the fix \
 genuinely needs a different or new file, say so explicitly rather than \
 guessing a plausible-looking path.
-- SMALL: a few reads and one or two edits.
+- RIGHT-SIZED, NOT ARTIFICIALLY SMALL: prefer a few reads and one or two \
+edits when that's genuinely enough. But if the fix plausibly touches \
+several files or you are not yet sure how many edits it needs, it is \
+BETTER to write one subgoal naming the right area than to guess narrowly \
+and silently omit files it will turn out to need -- the executor can call \
+decompose_subgoal once it has seen the actual code and knows the real \
+shape of the work. A subgoal that decomposes further is a normal, \
+expected outcome, not a planning failure.
 - HONEST ABOUT DEPENDENCIES: `deps` lists the ids of subgoals this one is \
 ORDERED after -- use it freely, most real fixes have a natural sequence. \
 `requires` is the narrower, stricter claim that this subgoal cannot even \
@@ -234,6 +260,32 @@ class Node:
     # error instead of the model's one-line paraphrase of it.
     last_evidence: str = ""
 
+    # ---- instrumentation only; never read by any scheduling/planning
+    # decision in this file. Written by exactly ONE thread at a time: each
+    # scheduler (_schedule, both the base and concurrent versions) submits
+    # exactly one _run_turn per distinct node, the only OTHER cross-thread
+    # writes to a Node anywhere are _block_dependents's status/note (under
+    # _nodes_lock) and child-node construction on expand, and run() reads
+    # these fields only after the ThreadPoolExecutor context has exited --
+    # a happens-before edge. That confinement is why plain += below needs
+    # no lock; a future change that lets two turns for one node overlap, or
+    # that submits the same node twice in one round, would silently break
+    # this invariant.
+    steps_used: int = 0             # tool calls charged to this node, all rounds/attempts
+    budget_granted: int = 0         # sum of _Budget reservations made for this node
+    rounds: int = 0                 # scheduling rounds it received a reservation in
+    llm_calls: int = 0
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    # Occupancy (summed across turns), not span -- under concurrent
+    # scheduling sum(node.wall_seconds) / run.wall_seconds is the achieved-
+    # parallelism measurement, otherwise unobtainable from the run alone.
+    wall_seconds: float = 0.0
+    started_at: Optional[float] = None   # epoch, first turn entered
+    ended_at: Optional[float] = None     # epoch, last turn left
+    tool_calls: list[str] = field(default_factory=list)     # this node's own, in order
+    files_edited: list[str] = field(default_factory=list)   # repo-relative, deduped, ordered
+
 
 class _Budget:
     """
@@ -270,6 +322,89 @@ class _Budget:
             return
         with self._lock:
             self._spent = max(0, self._spent - unused)
+
+
+class _NodeUsage:
+    """
+    Write-through view of a run's real Usage that ALSO charges one Node.
+
+    Duck-types the one method `_chat` calls (`.add(u)`), and is constructed
+    to REPLACE the `usage` local inside `_run_turn` for that node's turn --
+    so `_run_node` (unmodified) and `_replan` (unmodified) both charge the
+    node automatically, without either needing to know a node is being
+    tracked.
+
+    `_chat` already mutates the shared Usage under `self._usage_lock`
+    (lines ~304-309) -- `add` here runs the node-side write inside that
+    SAME critical section, so no second lock or lock ordering is
+    introduced.
+
+    Deliberately NOT "a fresh per-node Usage(), merged into the global one
+    when the turn ends": `_run_turn` can raise (a worker's exception
+    re-raises at `fut.result()`), and `run()` still builds an AgentRun from
+    the real `usage` on that path (see `run()`'s except clause) -- deferred
+    merging would silently drop that turn's tokens from `run.usage.total`
+    on exactly the api_error rows most worth diagnosing. It would also be
+    wrong to merge with `Usage.add`, since that increments `.calls` by 1
+    per call, not by the merged object's own `.calls` -- merging two Usage
+    objects with the same `.add` double-counts nothing meaningfully; it
+    undercounts silently. Charging both counters at the true call site
+    avoids the whole class of bug.
+    """
+
+    def __init__(self, shared: Usage, node: Node):
+        self._shared = shared
+        self._node = node
+
+    def add(self, u) -> None:
+        self._shared.add(u)
+        self._node.prompt_tokens += u.prompt_tokens
+        self._node.completion_tokens += u.completion_tokens
+        self._node.llm_calls += 1
+
+    # Anything reading run totals through this wrapper (there is no such
+    # call site today, but a future one should not silently see zeros)
+    # keeps seeing the real, shared numbers.
+    @property
+    def prompt_tokens(self) -> int:
+        return self._shared.prompt_tokens
+
+    @property
+    def completion_tokens(self) -> int:
+        return self._shared.completion_tokens
+
+    @property
+    def calls(self) -> int:
+        return self._shared.calls
+
+    @property
+    def total(self) -> int:
+        return self._shared.total
+
+
+def _node_row(n: Node) -> dict:
+    """
+    Serialise one Node for `run.htn["nodes"]`. Keeps the original 11 keys
+    IN PLACE (additive-only contract -- every existing consumer of a result
+    row, and every already-written .jsonl file, keeps working unchanged)
+    and appends the instrumentation fields.
+    """
+    return {
+        "id": n.id, "goal": n.goal, "deps": n.deps, "requires": n.requires,
+        "status": n.status, "attempts": n.attempts, "note": n.note,
+        "last_evidence": n.last_evidence, "path_hint": n.path_hint,
+        "depth": n.depth, "parent": n.parent,
+        "steps_used": n.steps_used, "budget_granted": n.budget_granted,
+        "rounds": n.rounds, "llm_calls": n.llm_calls,
+        "prompt_tokens": n.prompt_tokens, "completion_tokens": n.completion_tokens,
+        "total_tokens": n.prompt_tokens + n.completion_tokens,
+        "wall_seconds": round(n.wall_seconds, 3),
+        "started_at": round(n.started_at, 3) if n.started_at is not None else None,
+        "ended_at": round(n.ended_at, 3) if n.ended_at is not None else None,
+        "tool_calls": list(n.tool_calls), "n_tool_calls": len(n.tool_calls),
+        "files_edited": list(n.files_edited),
+        "replans": n.tool_calls.count("__replan__"),
+    }
 
 
 class HTNAgent:
@@ -466,6 +601,11 @@ class HTNAgent:
         # caller/test that predates the localization pre-pass; every real
         # run() call site has a sandbox by construction.
         candidates = self._candidate_files(instance, sandbox) if sandbox else []
+        # Recorded so the gold-file-omission fork (does the pre-pass miss
+        # the file, or does the planner ignore a file it WAS shown?) is
+        # answerable from data instead of guessed -- this was previously
+        # discarded the moment candidate_block was built.
+        trace["candidate_files"] = candidates
         candidate_block = (
             "\n\nCANDIDATE FILES (verified to exist in this checkout, ranked "
             "by relevance -- prefer one of these; if the fix genuinely needs "
@@ -506,13 +646,52 @@ class HTNAgent:
     # Every method below is a no-op / pass-through in HTNAgent -- calling it
     # reproduces today's behaviour exactly. They exist so AugmentedHTNAgent
     # (below) can add real checks without duplicating _run_node's loop.
+    @staticmethod
+    def _transitive_deps(node: Node, nodes: list[Node]) -> set[int]:
+        """Every node id `node` depends on, directly or indirectly (via
+        `deps`, the ordering edge -- a superset of `requires`). Shared by
+        `_build_context` (both the base plan-listing scope below and
+        AugmentedHTNAgent's `done`-block scope) so the two stay consistent
+        rather than each walking the graph its own slightly different way."""
+        by_id = {n.id: n for n in nodes}
+        relevant: set[int] = set()
+        frontier = list(node.deps)
+        while frontier:
+            d = frontier.pop()
+            if d in relevant or d not in by_id:
+                continue
+            relevant.add(d)
+            frontier.extend(by_id[d].deps)
+        return relevant
+
     def _build_context(self, node: Node, nodes: list[Node]) -> tuple[str, str]:
-        """(done, plan) blocks for the executor prompt."""
+        """(done, plan) blocks for the executor prompt.
+
+        `plan` lists every OTHER node's goal/status -- useful orientation
+        when the graph is small, but at PLAN_CONTEXT_MAX_NODES+ nodes,
+        listing all of them in every single node's prompt reproduces the
+        flat agent's "resend everything" cost at the plan-graph level:
+        per-node prompt size grows with TOTAL node count, not with what
+        that node actually needs. Past the threshold, only this node's own
+        transitive dependencies (plus itself) are listed in full; the rest
+        collapse into one count line -- deliberately not filtered to zero,
+        since a bare "N other subgoals exist elsewhere" is still useful
+        orientation without paying per-node cost for it.
+        """
         done = "\n".join(f"  - [{n.id}] {n.goal[:80]} -> {n.note[:SUBGOAL_NOTE_CONTEXT_CHARS]}"
                          for n in nodes if n.status == "done") or "  (nothing yet)"
+        if len(nodes) <= PLAN_CONTEXT_MAX_NODES:
+            plan_nodes, omitted = nodes, 0
+        else:
+            relevant = self._transitive_deps(node, nodes) | {node.id}
+            plan_nodes = [n for n in nodes if n.id in relevant]
+            omitted = len(nodes) - len(plan_nodes)
         plan = "\n".join(
             f"  [{n.id}] ({n.status}){' deps=' + str(n.deps) if n.deps else ''} "
-            f"{n.goal[:100]}" for n in nodes)
+            f"{n.goal[:100]}" for n in plan_nodes)
+        if omitted:
+            plan += (f"\n  ... {omitted} other subgoal(s) elsewhere in the plan, "
+                     f"not directly relevant to this one")
         # A deps-only (soft) predecessor's failure no longer transitively
         # blocks this node (see _block_dependents) -- it gets to run, but
         # needs to know that predecessor's edits are NOT on disk, in case
@@ -573,6 +752,26 @@ class HTNAgent:
         entire node -- is exactly what it catches.
         """
         return bool(sandbox.edited_files())
+
+    @staticmethod
+    def _fingerprint(sandbox: RepoSandbox, path: str) -> tuple[str, Optional[bytes]]:
+        """Repo-relative path plus the target file's current bytes (None if
+        absent), for an exact before/after edit comparison. Never raises --
+        a path-escape rejection or any other read failure must not be able
+        to fail the turn it is only instrumenting; on any error this
+        returns ("", None), which the caller's `if rel and ...` guard
+        treats as "nothing to attribute"."""
+        if not path:
+            return "", None
+        try:
+            full = sandbox._resolve(path)
+            rel = os.path.relpath(full, sandbox.root).replace("\\", "/")
+            if os.path.isfile(full):
+                with open(full, "rb") as f:
+                    return rel, f.read()
+            return rel, None
+        except Exception:  # noqa: BLE001
+            return "", None
 
     def _budget_note(self, steps_used: int, budget: int, node: Node,
                      sandbox: RepoSandbox) -> str:
@@ -646,6 +845,7 @@ class HTNAgent:
                 except json.JSONDecodeError:
                     args = {}
                 tool_log.append(name)
+                node.tool_calls.append(name)
                 steps += 1
                 if name == "subgoal_done":
                     ok, why = self._verify_postcondition(node, sandbox)
@@ -678,7 +878,24 @@ class HTNAgent:
                     # where a parallel scheduler actually gets its wall-clock
                     # win, since those calls dominate a node's tool-call count.
                     with self._sandbox_lock:
+                        # Exact attribution, taken INSIDE the lock that
+                        # already serialises every mutation -- no race
+                        # window, unlike a snapshot around an unlocked LLM
+                        # call. Byte-compare rather than a
+                        # sandbox._original delta: _original.setdefault
+                        # (agent.py) records only the FIRST node ever to
+                        # touch a file, so a delta would silently miss the
+                        # second node to edit the same file -- precisely
+                        # the HTN conflict case worth knowing about.
+                        # _fingerprint never raises (instrumentation must
+                        # never be able to fail a turn -- same discipline
+                        # as the failure_capture call site in
+                        # run_graph_experiment.py).
+                        rel, before = self._fingerprint(sandbox, args.get("path", ""))
                         result, _ = Agent._dispatch(name, args, sandbox)
+                        _, after = self._fingerprint(sandbox, args.get("path", ""))
+                        if rel and after != before and rel not in node.files_edited:
+                            node.files_edited.append(rel)
                 else:
                     result, _ = Agent._dispatch(name, args, sandbox)
                 messages.append({"role": "tool", "tool_call_id": call.id,
@@ -773,6 +990,14 @@ class HTNAgent:
         done nodes did (e.g. re-apply the earlier run's `AgentRun.patch` to a
         fresh checkout, or keep working in the same checkout across the
         interruption) before passing this run's snapshot back in.
+
+        Every instrumentation field below uses `.get(key, default)`, not a
+        bare index -- both because a snapshot from BEFORE instrumentation
+        existed (any of the ~20 result files already on disk) has none of
+        these keys, and because a resumed run must not silently report
+        zeros for a previously-done node's real cost while `attempts`
+        round-trips correctly; `.get` with the dataclass's own zero-value
+        defaults keeps both cases from raising.
         """
         return [Node(id=int(n["id"]), goal=str(n["goal"]),
                      deps=[int(d) for d in (n.get("deps") or [])],
@@ -783,7 +1008,18 @@ class HTNAgent:
                      last_evidence=str(n.get("last_evidence", "")),
                      path_hint=str(n.get("path_hint", "")),
                      depth=int(n.get("depth", 0)),
-                     parent=n.get("parent")) for n in state]
+                     parent=n.get("parent"),
+                     steps_used=int(n.get("steps_used", 0)),
+                     budget_granted=int(n.get("budget_granted", 0)),
+                     rounds=int(n.get("rounds", 0)),
+                     llm_calls=int(n.get("llm_calls", 0)),
+                     prompt_tokens=int(n.get("prompt_tokens", 0)),
+                     completion_tokens=int(n.get("completion_tokens", 0)),
+                     wall_seconds=float(n.get("wall_seconds", 0.0)),
+                     started_at=n.get("started_at"),
+                     ended_at=n.get("ended_at"),
+                     tool_calls=list(n.get("tool_calls") or []),
+                     files_edited=list(n.get("files_edited") or [])) for n in state]
 
     def _run_turn(self, instance: dict, sandbox: RepoSandbox, ready: Node,
                   nodes: list[Node], usage: Usage, tool_log: list[str],
@@ -804,97 +1040,119 @@ class HTNAgent:
 
         Returns steps actually used, so callers sharing a `_Budget` across
         several concurrent turns can `.release()` whatever went unspent.
+
+        Rebinds `usage` to a `_NodeUsage` wrapping the real, shared `usage`
+        -- see that class's docstring. This means `_run_node` and
+        `_replan` below (both unmodified) automatically charge THIS node's
+        token/call counters through the same write-through, so a replan's
+        cost is attributed to the node that needed it.
         """
-        spent_here = 0
-        while ready.attempts <= self._max_methods:
-            budget = min(self._per_subgoal, ceiling - spent_here)
-            if budget < MIN_VIABLE_SUBGOAL_BUDGET:
-                # Too few calls to reach ANY terminal tool call, so this
-                # round cannot produce information. Leave the node
-                # "pending" and, crucially, do NOT charge it an attempt --
-                # see MIN_VIABLE_SUBGOAL_BUDGET. Callers must treat a turn
-                # that returns 0 steps as no-progress and stop, or this
-                # becomes an infinite loop: with used == 0 the scheduler
-                # releases the entire reservation, so _Budget.remaining()
-                # never falls and the round would repeat forever.
-                # AugmentedHTNAgent._schedule has that guard; HTNAgent's
-                # own loop already returns "step_budget" on a pending node.
-                break
-            ready.attempts += 1
-            outcome, payload, used = self._run_node(
-                instance, sandbox, ready, nodes, budget, usage, tool_log)
-            spent_here += used
-            if outcome == "expand":
-                # RECURSION: this compound task is replaced by children that
-                # must all finish before anything depending on it may run.
-                # The parent keeps its own deps; children with no siblings
-                # named inherit them, so the graph stays connected rather
-                # than the subtree floating free.
-                with self._nodes_lock:
-                    base = max(n.id for n in nodes)
-                    local: dict[int, int] = {}
-                    for j, k in enumerate(payload, 1):   # type: ignore[arg-type]
-                        local[j] = base + j
-                    for j, k in enumerate(payload, 1):   # type: ignore[arg-type]
-                        kd = [local[d] for d in (k.get("deps") or [])
-                              if isinstance(d, int) and d in local and d < j]
-                        nodes.append(Node(
-                            id=local[j], goal=str(k["goal"]).strip(),
-                            deps=kd or list(ready.deps),
-                            depth=ready.depth + 1, parent=ready.id))
-                ready.status = "expanded"
-                ready.note = f"decomposed into {len(payload)} subgoals"  # type: ignore[arg-type]
-                tool_log.append("__expand__")
-                break
-            ready.note = str(payload)
-            if outcome == "done":
-                ready.status = "done"
-                break
-            if ready.attempts > self._max_methods:
-                ready.status = "failed"
-                break
-            if spent_here >= ceiling:
-                # Ran out of THIS turn's allotment before reaching a
-                # terminal call -- not the same thing as genuinely failing.
-                # `ceiling` here can be a per-ROUND reservation smaller than
-                # the node's real remaining budget (AugmentedHTNAgent's
-                # concurrent scheduler grants one attempt's worth per node
-                # per round, not a node's full worst-case allotment up
-                # front -- see that class's _schedule docstring), so a node
-                # that simply used its whole round is not out of attempts,
-                # only out of THIS round. Leave status "pending" so the
-                # scheduler grants a fresh reservation next round.
-                #
-                # REPLAN FIRST, though. An earlier version of this branch
-                # just broke, which meant the next round re-ran the SAME
-                # goal -- and a goal that could not be finished in `budget`
-                # calls is not going to be finished by the identical
-                # `budget` calls again. Measured on ansible-f327e65d: three
-                # identical 9-call rounds spent 27 tool calls, completed no
-                # subgoal, and left four half-applied edits that broke 25
-                # previously-passing tests, with replans: 0 the whole time.
-                # The replan machinery exists precisely to supply a
-                # DIFFERENT approach; it was simply never reachable from
-                # here.
+        usage = _NodeUsage(usage, ready)
+        t_turn = time.time()
+        try:
+            spent_here = 0
+            while ready.attempts <= self._max_methods:
+                budget = min(self._per_subgoal, ceiling - spent_here)
+                if budget < MIN_VIABLE_SUBGOAL_BUDGET:
+                    # Too few calls to reach ANY terminal tool call, so this
+                    # round cannot produce information. Leave the node
+                    # "pending" and, crucially, do NOT charge it an attempt --
+                    # see MIN_VIABLE_SUBGOAL_BUDGET. Callers must treat a turn
+                    # that returns 0 steps as no-progress and stop, or this
+                    # becomes an infinite loop: with used == 0 the scheduler
+                    # releases the entire reservation, so _Budget.remaining()
+                    # never falls and the round would repeat forever.
+                    # AugmentedHTNAgent._schedule has that guard; HTNAgent's
+                    # own loop already returns "step_budget" on a pending node.
+                    break
+                ready.attempts += 1
+                outcome, payload, used = self._run_node(
+                    instance, sandbox, ready, nodes, budget, usage, tool_log)
+                spent_here += used
+                if outcome == "expand":
+                    # RECURSION: this compound task is replaced by children that
+                    # must all finish before anything depending on it may run.
+                    # The parent keeps its own deps; children with no siblings
+                    # named inherit them, so the graph stays connected rather
+                    # than the subtree floating free.
+                    with self._nodes_lock:
+                        base = max(n.id for n in nodes)
+                        local: dict[int, int] = {}
+                        for j, k in enumerate(payload, 1):   # type: ignore[arg-type]
+                            local[j] = base + j
+                        for j, k in enumerate(payload, 1):   # type: ignore[arg-type]
+                            kd = [local[d] for d in (k.get("deps") or [])
+                                  if isinstance(d, int) and d in local and d < j]
+                            nodes.append(Node(
+                                id=local[j], goal=str(k["goal"]).strip(),
+                                deps=kd or list(ready.deps),
+                                depth=ready.depth + 1, parent=ready.id))
+                    ready.status = "expanded"
+                    ready.note = f"decomposed into {len(payload)} subgoals"  # type: ignore[arg-type]
+                    tool_log.append("__expand__")
+                    ready.tool_calls.append("__expand__")
+                    break
+                ready.note = str(payload)
+                if outcome == "done":
+                    ready.status = "done"
+                    break
+                if ready.attempts > self._max_methods:
+                    ready.status = "failed"
+                    break
+                if spent_here >= ceiling:
+                    # Ran out of THIS turn's allotment before reaching a
+                    # terminal call -- not the same thing as genuinely failing.
+                    # `ceiling` here can be a per-ROUND reservation smaller than
+                    # the node's real remaining budget (AugmentedHTNAgent's
+                    # concurrent scheduler grants one attempt's worth per node
+                    # per round, not a node's full worst-case allotment up
+                    # front -- see that class's _schedule docstring), so a node
+                    # that simply used its whole round is not out of attempts,
+                    # only out of THIS round. Leave status "pending" so the
+                    # scheduler grants a fresh reservation next round.
+                    #
+                    # REPLAN FIRST, though. An earlier version of this branch
+                    # just broke, which meant the next round re-ran the SAME
+                    # goal -- and a goal that could not be finished in `budget`
+                    # calls is not going to be finished by the identical
+                    # `budget` calls again. Measured on ansible-f327e65d: three
+                    # identical 9-call rounds spent 27 tool calls, completed no
+                    # subgoal, and left four half-applied edits that broke 25
+                    # previously-passing tests, with replans: 0 the whole time.
+                    # The replan machinery exists precisely to supply a
+                    # DIFFERENT approach; it was simply never reachable from
+                    # here.
+                    alt = self._replan(instance, ready, str(payload), usage, trace)
+                    if not alt:
+                        # No alternative approach available -- retrying the same
+                        # goal would repeat the round that just failed.
+                        ready.status = "failed"
+                    else:
+                        tool_log.append("__replan__")
+                        ready.tool_calls.append("__replan__")
+                        ready.goal = alt
+                    break
                 alt = self._replan(instance, ready, str(payload), usage, trace)
                 if not alt:
-                    # No alternative approach available -- retrying the same
-                    # goal would repeat the round that just failed.
                     ready.status = "failed"
-                else:
-                    tool_log.append("__replan__")
-                    ready.goal = alt
-                break
-            alt = self._replan(instance, ready, str(payload), usage, trace)
-            if not alt:
-                ready.status = "failed"
-                break
-            tool_log.append("__replan__")
-            ready.goal = alt
-        if ready.status == "failed":
-            with self._nodes_lock:
-                self._block_dependents(nodes, ready.id)
-        return spent_here
+                    break
+                tool_log.append("__replan__")
+                ready.tool_calls.append("__replan__")
+                ready.goal = alt
+            if ready.status == "failed":
+                with self._nodes_lock:
+                    self._block_dependents(nodes, ready.id)
+            return spent_here
+        finally:
+            # try/finally, not a trailing block: a raising turn (e.g. _chat
+            # exhausts retries and raises) still reports what it spent --
+            # otherwise the api_error rows, the ones most worth diagnosing,
+            # are exactly the ones with no node-level data.
+            ready.steps_used += spent_here
+            ready.wall_seconds += time.time() - t_turn
+            if ready.started_at is None:
+                ready.started_at = t_turn
+            ready.ended_at = time.time()
 
     def _schedule(self, instance: dict, sandbox: RepoSandbox, nodes: list[Node],
                  usage: Usage, tool_log: list[str], trace: dict) -> str:
@@ -908,14 +1166,42 @@ class HTNAgent:
         "step_budget" (budget exhausted with ready work remaining).
         """
         budget = _Budget(self._max_steps)
+        # Cap what any single node can draw to its own worst-case allotment
+        # (one attempt per method, per_subgoal steps each) rather than
+        # granting `budget.remaining()` outright -- the latter let whichever
+        # node happened to be ready first consume the ENTIRE run budget
+        # across all of ITS OWN retries before a later, dependent node was
+        # even looked at (the more extreme form of the bug fixed in
+        # AugmentedHTNAgent._schedule, which reserves per-round instead).
+        node_cap = self._per_subgoal * (self._max_methods + 1)
         while True:
             ready = next((n for n in nodes if n.status == "pending"
                           and all(self._dep_met(nodes, n, d) for d in n.deps)), None)
             if ready is None:
                 return "finished"
-            ceiling = budget.reserve(budget.remaining())
+            # FAIR SHARE -- see AugmentedHTNAgent._schedule's longer comment
+            # for the measured failure this answers and why a fixed
+            # protective floor (this scheduler's earlier version) doesn't
+            # generalize to many never-run nodes: dividing whatever budget
+            # remains by how many nodes still need a first look self-
+            # corrects as nodes finish, where a fixed floor sized for one
+            # topology does not. `max(1, ...)` guarantees a non-zero ask
+            # while real budget remains; a too-small resulting grant is
+            # left to `_run_turn`'s own MIN_VIABLE_SUBGOAL_BUDGET decline.
+            never_run = [n for n in nodes if n.attempts == 0 and n.status == "pending"]
+            # A first attempt is already counted in never_run (it's pending
+            # with attempts==0, so it's a member of its own list). A retry
+            # is NOT in never_run (attempts>=1), so it needs its own "+1"
+            # slot IN the divisor -- but only when never_run is non-empty:
+            # a solo retry with nobody else to protect must get the full
+            # per-node cap, not be halved against a phantom competitor.
+            d = max(1, len(never_run) + (1 if ready.attempts >= 1 else 0))
+            want = min(node_cap, max(1, budget.remaining() // d))
+            ceiling = budget.reserve(want)
             if ceiling <= 0:
                 return "step_budget"
+            ready.budget_granted += ceiling
+            ready.rounds += 1
             used = self._run_turn(instance, sandbox, ready, nodes, usage,
                                   tool_log, trace, ceiling)
             budget.release(ceiling - used)
@@ -931,7 +1217,8 @@ class HTNAgent:
         self._t0, self._run_usage = t0, usage
         tool_log: list[str] = []
         trace = {"planner_calls": 0, "replans": 0, "decompose_failed": False,
-                 "seeded_from_library": False, "resumed": bool(resume_state)}
+                 "seeded_from_library": False, "resumed": bool(resume_state),
+                 "candidate_files": []}
         error, stop_reason = None, "finished"
 
         try:
@@ -985,16 +1272,12 @@ class HTNAgent:
             wall_seconds=time.time() - t0, retrieved=retrieved or [], error=error)
         run.htn = {  # type: ignore[attr-defined]
             "plan": plan_snapshot,
-            "nodes": [{"id": n.id, "goal": n.goal, "deps": n.deps,
-                       "requires": n.requires,
-                       "status": n.status, "attempts": n.attempts, "note": n.note,
-                       "last_evidence": n.last_evidence, "path_hint": n.path_hint,
-                       "depth": n.depth, "parent": n.parent}
-                      for n in nodes],
+            "nodes": [_node_row(n) for n in nodes],
             "replans": trace["replans"], "planner_calls": trace["planner_calls"],
             "decompose_failed": trace["decompose_failed"],
             "seeded_from_library": trace["seeded_from_library"],
             "resumed": trace["resumed"],
+            "candidate_files": trace["candidate_files"],
             "subgoals_done": subgoals_done,
             "subgoals_failed": sum(1 for n in nodes if n.status == "failed"),
             "subgoals_blocked": sum(1 for n in nodes if n.status == "blocked"),
@@ -1003,6 +1286,23 @@ class HTNAgent:
             "nodes_total": len(nodes),
             "edges": sum(len(n.deps) for n in nodes),
             "discarded_patch_bytes": discarded_patch_bytes,
+            # Per-node roll-ups. "starved" here means the SCHEDULER-level
+            # signal (never attempted at all) -- run_graph_experiment.py's
+            # node_metrics() splits this further into budget-starved vs
+            # dependency-blocked, which needs `status` too and so cannot
+            # be computed from this count alone.
+            "nodes_never_ran": sum(1 for n in nodes if n.attempts == 0),
+            "nodes_unbudgeted": sum(1 for n in nodes if n.budget_granted == 0),
+            "node_steps_total": sum(n.steps_used for n in nodes),
+            "node_tokens_total": sum(n.prompt_tokens + n.completion_tokens for n in nodes),
+            "node_llm_calls_total": sum(n.llm_calls for n in nodes),
+            "node_wall_total": round(sum(n.wall_seconds for n in nodes), 3),
+            # usage.total includes planner/replan calls, which are charged
+            # to the run-global Usage directly in _decompose (never
+            # rebound to a node) -- so this is exactly the planning
+            # overhead a node-level view cannot see.
+            "overhead_tokens": usage.total - sum(
+                n.prompt_tokens + n.completion_tokens for n in nodes),
         }
         return run
 
@@ -1278,14 +1578,7 @@ class AugmentedHTNAgent(HTNAgent):
     # -- 2. hierarchical context compression --------------------------------
     def _build_context(self, node: Node, nodes: list[Node]) -> tuple[str, str]:
         by_id = {n.id: n for n in nodes}
-        relevant: set[int] = set()
-        frontier = list(node.deps)
-        while frontier:
-            d = frontier.pop()
-            if d in relevant or d not in by_id:
-                continue
-            relevant.add(d)
-            frontier.extend(by_id[d].deps)
+        relevant = self._transitive_deps(node, nodes)
         done_lines = [f"  - [{n.id}] {n.goal[:80]} -> {n.note[:SUBGOAL_NOTE_CONTEXT_CHARS]}"
                      for n in nodes if n.id in relevant and n.status == "done"]
         done = "\n".join(done_lines) or "  (no relevant prior work)"
@@ -1335,12 +1628,58 @@ class AugmentedHTNAgent(HTNAgent):
             # starts -- see _Budget's docstring for why that (not a
             # check-then-spend read inside each thread) is what keeps a
             # concurrent round from overshooting the total step budget.
+            #
+            # FAIR SHARE, not a fixed floor. The first version of this fix
+            # (a fixed MIN_VIABLE_SUBGOAL_BUDGET reserved per never-run
+            # node, applied only to a node's SECOND+ attempt) stopped one
+            # RETRYING node from starving others -- measured on
+            # ansible-f327e65d, node 1's three retries (9+9+9=27 of 28
+            # steps) left node 2 a 1-step grant, below
+            # MIN_VIABLE_SUBGOAL_BUDGET, declined, run ended with node 2
+            # never attempted -- but it left every FIRST attempt
+            # unthrottled. That has the same failure shape one level up:
+            # with 10 independent leaf nodes at width 4, rounds 1-2 (nodes
+            # 1-8, all first attempts) each drew the full per-round cap
+            # unthrottled, leaving nothing for nodes 9-10's first attempt
+            # in round 3 -- the exact starvation this fix exists to
+            # prevent, just via siblings instead of retries.
+            #
+            # The fix that covers both shapes: divide whatever budget
+            # remains by how many nodes still need a first look (a retry
+            # counts as needing one MORE slot in that same shared pool,
+            # since it's drawing from it too), every round, for every
+            # grant -- not a fixed protective amount sized for one
+            # scenario. `divisor` self-corrects as nodes finish (fewer
+            # nodes left => bigger shares for whoever remains), and
+            # `max(1, ...)` guarantees `reserve()` is never asked for 0
+            # while real budget remains, so a too-small resulting share is
+            # left to `_run_turn`'s own MIN_VIABLE_SUBGOAL_BUDGET decline
+            # (a real, already-tested "not viable yet, no attempt charged"
+            # path) rather than needing a second, separate escape hatch
+            # here. The arithmetic happens before a single `reserve()`
+            # call, not as a separate remaining()-then-reserve() pair, so
+            # nothing here depends on this reservation loop staying
+            # single-threaded (documented as such above, but this makes
+            # the safety property survive a future refactor).
+            never_run = [m for m in nodes if m.attempts == 0 and m.status == "pending"]
             reservations: dict[int, int] = {}
             for n in batch:
-                grant = budget.reserve(per_node_cap)
+                if budget.remaining() <= 0:
+                    break
+                # A first attempt is already counted in never_run (it's
+                # pending with attempts==0, a member of its own list). A
+                # retry is NOT in never_run, so it needs its own "+1" slot
+                # -- but only when never_run is non-empty: a solo retry
+                # with nobody else to protect must get the full per-node
+                # cap, not be halved against a phantom competitor.
+                d = max(1, len(never_run) + (1 if n.attempts >= 1 else 0))
+                want = min(per_node_cap, max(1, budget.remaining() // d))
+                grant = budget.reserve(want)
                 if grant <= 0:
                     break
                 reservations[n.id] = grant
+                n.budget_granted += grant
+                n.rounds += 1
             if not reservations:
                 return "step_budget"
             batch = [n for n in batch if n.id in reservations]
