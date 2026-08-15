@@ -181,7 +181,33 @@ def mcnemar(a_only: int, b_only: int) -> tuple[float, str]:
     return p, f"{n} discordant pairs (no_mem-only {a_only}, mem-only {b_only})"
 
 
-async def run_one(sample, pool, embedder, agent, htn, args) -> dict:
+# Cache of gold-patch validation results, keyed by instance_id, across
+# separate script invocations. Grading a gold patch is a FULL docker
+# container run of the real test suite -- the same cost as grading any arm's
+# patch -- and it was being re-paid on every single rerun even when nothing
+# about the instance or its gold patch changed. That's dead weight
+# specifically for the pattern this experiment gets used in most: re-running
+# the SAME small set of instances repeatedly to verify an agent fix. Keyed
+# by instance_id, not repo (unlike pilot_gold_results.json, which is a
+# coarser repo-level filter used at SELECTION time, not here).
+GOLD_CACHE_PATH = HERE / "gold_cache.json"
+
+
+def _load_gold_cache() -> dict:
+    if not GOLD_CACHE_PATH.exists():
+        return {}
+    try:
+        return json.loads(GOLD_CACHE_PATH.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return {}
+
+
+def _save_gold_cache(cache: dict) -> None:
+    GOLD_CACHE_PATH.write_text(json.dumps(cache, indent=1), encoding="utf-8")
+
+
+async def run_one(sample, pool, embedder, agent, htn, args,
+                  gold_cache: Optional[dict] = None) -> dict:
     iid = sample["instance_id"]
     gold_files, _ = patch_facts(str(sample["patch"]))
     title = title_of(sample["problem_statement"])
@@ -205,6 +231,20 @@ async def run_one(sample, pool, embedder, agent, htn, args) -> dict:
         rec["error"] = "holdout_leaked"
         return rec
 
+    # Restored HERE, not after agent execution + grading finish (main()'s
+    # per-iteration `finally` used to be the only place this happened,
+    # holding the instance out for the whole multi-minute run instead of
+    # just the retrieval step that actually needs it). Nothing after this
+    # point calls retrieve()/htn_route() again for THIS instance -- hits and
+    # memory_block are already fixed -- so there is no correctness reason to
+    # keep it invalidated any longer, and shrinking the window is what makes
+    # a future concurrent-instance run safe: only the few-second critical
+    # section above needs exclusive access to the hierarchy tables, not the
+    # 10+ minutes of docker/LLM work below. main()'s own restore_all() call
+    # stays as a safety net for the exception path (if this function raises
+    # before reaching here).
+    await restore_all(pool)
+
     rec["retrieval"] = score_retrieval(hits, gold_files, sample["repo"])
     rec["retrieval_diag"] = diag
     rec["copyability"] = score_copyability(hits, str(sample["patch"]))
@@ -218,14 +258,30 @@ async def run_one(sample, pool, embedder, agent, htn, args) -> dict:
     pull_image(image_for(sample))
     try:
         tar_path = snapshot_repo(sample, os.path.join(inst_dir, "snap"))
-        gold = evaluate(sample, str(sample["patch"]), args.scripts_dir,
-                        os.path.join(inst_dir, "gold_ws"), keep_image=True)
-        rec["gold"] = {"resolved": gold.resolved, "status": gold.status,
-                       "n_tests_parsed": gold.n_tests_parsed}
-        if not gold.resolved:
+        cached_gold = (gold_cache or {}).get(iid)
+        if cached_gold is not None:
+            rec["gold"] = dict(cached_gold, cached=True)
+        else:
+            gold = evaluate(sample, str(sample["patch"]), args.scripts_dir,
+                            os.path.join(inst_dir, "gold_ws"), keep_image=True)
+            rec["gold"] = {"resolved": gold.resolved, "status": gold.status,
+                           "n_tests_parsed": gold.n_tests_parsed}
+            if gold_cache is not None:
+                gold_cache[iid] = dict(rec["gold"])
+                _save_gold_cache(gold_cache)
+        if not rec["gold"]["resolved"]:
             rec["excluded"] = "gold_patch_does_not_resolve"
             return rec
 
+        # Patch generation stays sequential: agent/htn are single objects
+        # shared across every instance and arm in this process, and
+        # HTNAgent.run() stashes per-run state on `self` (self._t0,
+        # self._run_usage, read by _shallow()'s SLA gate) -- two .run()
+        # calls on the SAME agent object at once would stomp each other's
+        # budget bookkeeping. Grading has no such shared state (each
+        # evaluate() call is an isolated subprocess + its own workspace
+        # dir), so it's what actually gets parallelized below.
+        arm_runs: dict[str, tuple] = {}   # arm -> (kind, run, sandbox, work)
         for arm in args.arms:
             kind, use_memory = ARM_SPEC[arm]
             work = extract(tar_path, os.path.join(inst_dir, f"repo_{arm}"))
@@ -233,16 +289,35 @@ async def run_one(sample, pool, embedder, agent, htn, args) -> dict:
             runner = agent if kind == "flat" else htn
             run = runner.run(sample, sandbox, arm,
                              memory_block=memory_block if use_memory else "")
-            if run.patch.strip():
-                res = evaluate(sample, run.patch, args.scripts_dir,
-                               os.path.join(inst_dir, f"{arm}_ws"), keep_image=True)
-                resolved, status = res.resolved, res.status
-                graded = {"f2p_passed": len(res.f2p_passed),
-                          "f2p_missing": len(res.f2p_missing),
-                          "p2p_broke": len(res.p2p_broke),
-                          "apply_status": res.apply_status}
-            else:
-                resolved, status, graded = False, "no_patch", {}
+            arm_runs[arm] = (kind, run, sandbox, work)
+
+        async def grade_one(arm: str, run) -> tuple[bool, str, dict]:
+            if not run.patch.strip():
+                return False, "no_patch", {}
+            res = await asyncio.to_thread(
+                evaluate, sample, run.patch, args.scripts_dir,
+                os.path.join(inst_dir, f"{arm}_ws"), keep_image=True)
+            return res.resolved, res.status, {
+                "f2p_passed": len(res.f2p_passed), "f2p_missing": len(res.f2p_missing),
+                "p2p_broke": len(res.p2p_broke), "apply_status": res.apply_status}
+
+        if args.parallel_grading:
+            # Isolated per-arm workspaces and --rm containers -- nothing
+            # shared to race on. Each container still reserves its own
+            # --memory/--cpus, so this trades peak resource usage for
+            # wall-clock: up to len(args.arms)x the RAM/CPU of one grading
+            # run, for roughly 1/len(args.arms) of the wall time. Opt-in
+            # rather than default -- that tradeoff is wrong on a
+            # resource-constrained machine.
+            results = await asyncio.gather(*(
+                grade_one(a, r) for a, (_, r, _, _) in arm_runs.items()))
+            graded_by_arm = dict(zip(arm_runs.keys(), results))
+        else:
+            graded_by_arm = {a: await grade_one(a, r)
+                             for a, (_, r, _, _) in arm_runs.items()}
+
+        for arm, (kind, run, sandbox, work) in arm_runs.items():
+            resolved, status, graded = graded_by_arm[arm]
             # Heartbeat AS EACH ARM FINISHES, not after the whole instance.
             # Without it the log is silent from "[n/20]" until all three arms
             # complete -- 30-45 minutes -- which is indistinguishable from a
@@ -318,7 +393,8 @@ async def run_one(sample, pool, embedder, agent, htn, args) -> dict:
 
             safe_rmtree(work)
     finally:
-        remove_image(image_for(sample))
+        if not args.keep_images:
+            remove_image(image_for(sample))
         safe_rmtree(inst_dir)  # both were ignore_errors=True -- see safe_fs.py's
                                  # module docstring for the real incident that
                                  # motivated logging cleanup failures instead
@@ -460,6 +536,23 @@ def build_arg_parser() -> argparse.ArgumentParser:
                          "own retrieval by default regardless of this flag (see "
                          "graph_memory.retrieve's include_failure_modes) -- this "
                          "flag controls WRITING failure nodes, not reading them.")
+    ap.add_argument("--keep-images", action="store_true", default=False,
+                    help="don't docker rmi an instance's image when the instance "
+                         "finishes. Off by default (a full sweep across many "
+                         "distinct images can eat disk -- Pro images share zero "
+                         "layers, ~0.5-4GB each). Turn on when repeatedly "
+                         "re-running the SAME small instance set (e.g. verifying "
+                         "an agent fix) -- pull_image() already skips a re-pull "
+                         "when the image is present, so this makes every rerun "
+                         "after the first skip the download entirely.")
+    ap.add_argument("--parallel-grading", action="store_true", default=False,
+                    help="grade all of an instance's arms concurrently (each "
+                         "evaluate() call is an isolated subprocess + workspace, "
+                         "nothing shared to race on) instead of one at a time. "
+                         "Cuts grading wall-clock roughly len(args.arms)x at the "
+                         "cost of running that many docker containers at once, "
+                         "each reserving their own --memory/--cpus -- off by "
+                         "default since that tradeoff can OOM a constrained host.")
     return ap
 
 
@@ -511,6 +604,9 @@ async def main() -> int:
         htn_kwargs["steps_per_subgoal"] = args.steps_per_subgoal
     htn = HTNAgent(client, args.model, **htn_kwargs)
     pool = await create_pool(dsn=args.dsn, min_size=1, max_size=4)
+    gold_cache = _load_gold_cache()
+    if gold_cache:
+        print(f"gold cache: {len(gold_cache)} instance(s) loaded from {GOLD_CACHE_PATH.name}")
 
     try:
         await restore_all(pool)
@@ -521,8 +617,10 @@ async def main() -> int:
                 continue
             print(f"\n[{i}/{len(picked)}] {sample['repo']} — {title_of(sample['problem_statement'])[:70]}",
                   flush=True)
+            print(f"      started {time.strftime('%Y-%m-%d %H:%M:%S')}", flush=True)
+            instance_t0 = time.time()
             try:
-                rec = await run_one(sample, pool, embedder, agent, htn, args)
+                rec = await run_one(sample, pool, embedder, agent, htn, args, gold_cache)
             except Exception as exc:  # noqa: BLE001
                 # Full traceback, not just the message. A bare
                 # "ValueError: Paths don't have the same drive" names neither
@@ -539,6 +637,8 @@ async def main() -> int:
                 await restore_all(pool)
             with out.open("a", encoding="utf-8") as f:
                 f.write(json.dumps(rec, default=str) + "\n")
+            print(f"      finished {time.strftime('%Y-%m-%d %H:%M:%S')} "
+                  f"({time.time() - instance_t0:.0f}s)", flush=True)
 
             # Real, largely untested extension (see --enable-debate-curation's
             # help text) -- deliberately AFTER the real evaluation result is
