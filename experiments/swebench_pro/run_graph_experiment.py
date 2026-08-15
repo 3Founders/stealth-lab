@@ -223,7 +223,8 @@ async def run_one(sample, pool, embedder, agent, htn, args,
     await rebuild_hierarchy(pool, embedder)
     query = f"{title}\n\n{normalize_statement(sample['problem_statement'])[:1500]}"
     hits, diag = await retrieve(pool, query, embedder, top_k=args.top_k,
-                                embedding_column=args.embedding_column)
+                                embedding_column=args.embedding_column,
+                                include_failure_modes=args.include_failure_modes)
     rec["embedding_column"] = args.embedding_column
     rec["htn"] = await htn_route(pool, query, embedder)
 
@@ -535,7 +536,24 @@ def build_arg_parser() -> argparse.ArgumentParser:
                          "--enable-debate-curation. Excluded from every arm's "
                          "own retrieval by default regardless of this flag (see "
                          "graph_memory.retrieve's include_failure_modes) -- this "
-                         "flag controls WRITING failure nodes, not reading them.")
+                         "flag controls WRITING failure nodes, not reading them. "
+                         "Pair with --include-failure-modes to actually close "
+                         "the loop.")
+    ap.add_argument("--include-failure-modes", action="store_true", default=False,
+                    help="let retrieve() surface failure_mode knowledge_nodes "
+                         "(written by --enable-failure-capture) back into "
+                         "memory_block for later instances. OFF by default -- "
+                         "this is the read-side counterpart that was previously "
+                         "missing entirely (include_failure_modes existed as a "
+                         "graph_memory.retrieve() parameter with no CLI flag "
+                         "wired to it, so --enable-failure-capture alone could "
+                         "never be tested for real effect). _hydrate()'s own "
+                         "real-solution-wins-over-failure-reason guard (see "
+                         "tests/test_graph_memory_failure_isolation.py) still "
+                         "applies regardless of this flag -- this only affects "
+                         "whether a failure_mode node is eligible to be a hit "
+                         "in the first place, not whether it can shadow a real "
+                         "ingested solution.")
     ap.add_argument("--keep-images", action="store_true", default=False,
                     help="don't docker rmi an instance's image when the instance "
                          "finishes. Off by default (a full sweep across many "
