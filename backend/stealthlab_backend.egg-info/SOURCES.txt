@@ -9,10 +9,12 @@ stealthlab_backend.egg-info/dependency_links.txt
 stealthlab_backend.egg-info/requires.txt
 stealthlab_backend.egg-info/top_level.txt
 tests/test_access.py
+tests/test_agent_retry.py
 tests/test_agent_review_state_machine.py
 tests/test_agent_sandbox.py
 tests/test_call_graph.py
 tests/test_chat.py
+tests/test_claims.py
 tests/test_code_index.py
 tests/test_decomposition.py
 tests/test_decomposition_bridge.py

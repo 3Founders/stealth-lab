@@ -6,7 +6,7 @@ Requires-Dist: anthropic
 Requires-Dist: asyncpg
 Requires-Dist: fastapi
 Requires-Dist: huggingface-hub
-Requires-Dist: mcp[cli]
+Requires-Dist: mcp[cli]>=2.0.0
 Requires-Dist: numpy
 Requires-Dist: openai
 Requires-Dist: openpyxl
