@@ -3,33 +3,6 @@
 Two people, two laptops, one shared map at `.scratch/memory-substrate/` on branch
 `research/claude-code-hooks`. Your part first, then your friend's part below it.
 
----
-
-## YOUR PART (do this, then delete this section before pushing)
-
-Only the Wayfinder state needs to go up — not the rest of the untracked scratch/experiment
-output sitting in this working directory.
-
-```bash
-cd "C:\Users\chait\Prog\3Found\Stealth\StealthLab"
-
-git add .scratch/memory-substrate explain.md handoff.md
-git commit -m "Add Wayfinder memory-substrate map, tickets, inventory, and research findings"
-git push origin research/claude-code-hooks
-```
-
-Verify what actually got staged before committing, if you want to double check nothing else
-got swept in:
-
-```bash
-git status --short
-```
-
-Once pushed, delete the "YOUR PART" section above from `handoff.md` (or just delete the whole
-file) — it's a one-time setup note, not something that needs to live in the repo long-term.
-
----
-
 ## YOUR FRIEND'S PART
 
 ### 1. Get the repo and the branch

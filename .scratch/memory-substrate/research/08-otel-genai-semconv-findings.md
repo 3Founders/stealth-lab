@@ -1,393 +1,241 @@
-# Findings: OpenTelemetry GenAI semantic conventions vs. spec.md's canonical trace
+# OpenTelemetry GenAI Semantic Conventions — Findings
 
-Evidence document for [ticket 08](../issues/08-otel-genai-semconv.md). This is
-evidence-gathering only — the derive/extend/diverge call belongs to
-[ticket 06](../issues/06-canonical-trace-model.md) (not yet resolved as of this
-writing); nothing here is a decision.
+**One-line summary:** The GenAI semantic conventions are still entirely `Development`-status (zero `gen_ai.*` attributes/spans/events are Stable), the whole convention set was moved out of `open-telemetry/semantic-conventions` into a new dedicated repo (`open-telemetry/semantic-conventions-genai`) in June 2026, this repo's `OTEL_SPEC_VERSION = "1.30.0-experimental"` pin is stale and points at a version whose home repo no longer carries GenAI content, and the specific strings in `OTEL_ACTION_MAP` (`gen_ai.invoke_agent`, `gen_ai.execute_tool`, `gen_ai.chat`) were never real span names or attribute values in any version of the spec — the actual mechanism is an unprefixed `gen_ai.operation.name` attribute value (`invoke_agent`, `execute_tool`, `chat`, …) plus a separately-formatted span name string.
 
-**Summary:** the GenAI semantic conventions have been split out of the main
-OpenTelemetry semantic-conventions repo into a dedicated, still pre-1.0
-repository (`open-telemetry/semantic-conventions-genai`) as of June 2026. Every
-`gen_ai.*` signal remains stability level "Development" (the successor label
-to "experimental") — none is Stable. This repo's pin,
-`OTEL_SPEC_VERSION = "1.30.0-experimental"` in `backend/app/models/trace.py`,
-predates the repo split and is stale both in version number and in which repo
-owns the spec. `OTEL_ACTION_MAP`'s literal key strings do not match current
-attribute values (see §1). Coverage of spec.md's Identity/Environment/Intent
-fields is thin outside the LLM-call-shaped fields; coverage of Events/Agent
-events fields tied to tool calls and agent invocation is good; anything about
-permissions, retries, provenance, or environment/repo state has no semconv
-equivalent at all — semconv was built for LLM API telemetry, not for
-IDE/coding-agent trace ingestion.
+---
 
 ## 1. Current status of the GenAI semantic conventions
 
-- As of **2026-06-12, semantic-conventions v1.42.0**, all `gen_ai.*`
-  attributes, spans, metrics, and events were deprecated in the main
-  `open-telemetry/semantic-conventions` repo and moved to a new dedicated
-  repo, `open-telemetry/semantic-conventions-genai`. The redirect is visible
-  live at the official docs page, which now reads as a stub pointing
-  elsewhere: [opentelemetry.io/docs/specs/semconv/gen-ai/](https://opentelemetry.io/docs/specs/semconv/gen-ai/).
-- The new repo ([open-telemetry/semantic-conventions-genai](https://github.com/open-telemetry/semantic-conventions-genai))
-  has **no tagged release** as of this research (its Releases page is empty);
-  it is versioned only by git commits on `main`, managed with Weaver against
-  the core semantic-conventions schema.
-- Every attribute checked (`gen_ai.provider.name`, `gen_ai.operation.name`,
-  `gen_ai.agent.id`, `gen_ai.tool.call.id`, `gen_ai.conversation.id`, etc.) is
-  tagged **stability: Development** — the current name for what used to be
-  called "experimental." None of the GenAI-specific attributes are Stable.
-  Only the borrowed general-purpose attributes (`error.type`,
-  `exception.type`, `exception.message`, `exception.stacktrace`) are Stable,
-  because they come from OTel's core (non-GenAI) semantic conventions.
-- **Is the repo's pin stale?** Yes, on two axes: (a) `1.30.0-experimental` is
-  a version number from before the repo split — that version tag lived in
-  `open-telemetry/semantic-conventions`, which no longer owns GenAI content at
-  all; (b) the spec has continued to evolve past 1.30.0 inside the old repo
-  before the split (e.g. `gen_ai.conversation.id` and the create/invoke agent
-  distinction are later additions) and now continues to evolve, untagged, in
-  the new repo. There is no way to cite "1.30.0-experimental" against the
-  current source of truth — that version string doesn't resolve to anything
-  in the current repo.
-- **Does anything in `OTEL_ACTION_MAP` now conflict?** Partially. The map's
-  keys (`gen_ai.invoke_agent`, `gen_ai.execute_tool`, `gen_ai.chat`) read as
-  if they were literal `gen_ai.*`-namespaced span or operation identifiers,
-  but current semconv `gen_ai.operation.name` **values are bare, unprefixed
-  strings** — `"invoke_agent"`, `"execute_tool"`, `"chat"`, `"create_agent"`,
-  `"generate_content"`, `"text_completion"`, `"embeddings"`, `"plan"`,
-  `"invoke_workflow"`, and others — not `"gen_ai.invoke_agent"` etc. (source:
-  [gen-ai-spans.md](https://cdn.jsdelivr.net/gh/open-telemetry/semantic-conventions-genai@main/docs/gen-ai/gen-ai-spans.md),
-  [gen-ai-agent-spans.md](https://cdn.jsdelivr.net/gh/open-telemetry/semantic-conventions-genai@main/docs/gen-ai/gen-ai-agent-spans.md)).
-  So if `OTEL_ACTION_MAP` is meant to match wire values emitted by real
-  `gen_ai.operation.name` attributes, its keys have a stray `gen_ai.` prefix
-  that will never match. `human.review` has no semconv counterpart at all —
-  human-in-the-loop review is outside GenAI semconv's scope.
+**Repo split (the single most important fact for this ticket).** As of `v1.42.0` (published 2026‑06‑12), the main `open-telemetry/semantic-conventions` repo deprecated and removed all `gen_ai.*` content; `v1.43.0` (2026‑07‑03) shipped none. `docs/gen-ai/` in that repo is now a stub page stating "This page has moved and is no longer maintained in this repository," pointing to a new, independent repository: **`open-telemetry/semantic-conventions-genai`** ([repo](https://github.com/open-telemetry/semantic-conventions-genai), confirmed live 2026‑08‑17 via GitHub API — `docs/gen-ai/` there currently holds `README.md`, `anthropic.md`, `aws-bedrock.md`, `azure-ai-inference.md`, `gen-ai-agent-spans.md`, `gen-ai-events.md`, `gen-ai-exceptions.md`, `gen-ai-metrics.md`, `gen-ai-spans.md`, `mcp.md`, `openai.md`, `non-normative/`). This is a **new, separate repo**, not a renamed branch — it "extends the core OpenTelemetry Semantic Conventions" using the Weaver tool, and per `git tags` it **has no releases/tags yet** (checked 2026‑08‑17), meaning there is no equivalent of a pinned "1.4x.0" version to cite for the new home the way `1.30.0` was citable in the old repo.
 
-## 2. Coverage against spec.md's canonical trace requirements
+**Stability.** Every page fetched (`docs/gen-ai/README.md`, `gen-ai-spans.md`, `gen-ai-agent-spans.md`, `gen-ai-events.md`, `gen-ai-exceptions.md`) carries `**Status**: [Development][DocumentStatus]` at the document level, and every individual attribute/span/event row in the autogenerated tables carries a `![Development]` badge — with the sole exception of a small set of *general* (non-`gen_ai`) OTel attributes that are reused on GenAI spans and are already Stable: `error.type`, `server.address`, `server.port`, and the `exception.*` attributes (`exception.message`, `exception.type`, `exception.stacktrace`). No `gen_ai.*`-namespaced attribute, span type, event, or metric is Stable as of 2026‑08‑17. This matches independent secondary confirmation: ["The state of the OpenTelemetry GenAI semantic conventions (July 2026)"](https://john-hodge.com/blog/opentelemetry-genai-semantic-conventions/) states "as of July 17, 2026, no GenAI-specific span, event, metric, or attribute in the dedicated repository is marked Stable."
 
-Coverage table. Status values: **covered** (a `gen_ai.*` or core-OTel
-attribute exists with matching semantics), **covered-under-different-name**
-(an attribute exists but is named/scoped differently or is expressed via
-OTel's native span/trace mechanics rather than an explicit field),
-**no-equivalent** (nothing in the registry addresses it).
+**Version history since 1.30.0** (the repo's pin), reconstructed from the `semantic-conventions` release list ([releases API](https://github.com/open-telemetry/semantic-conventions/releases), confirmed via `api.github.com` on 2026‑08‑17: v1.30.0 → 2025‑01‑24, ... v1.42.0 → 2026‑06‑12, v1.44.0 → 2026‑08‑04 latest) cross-referenced against the John Hodge write-up for GenAI-specific changes:
+
+| Version | Date | GenAI-relevant change |
+|---|---|---|
+| v1.30.0 | 2025-01-24 | Repo's current pin |
+| v1.31.0–v1.36.0 | 2025-03 to 2025-07 | Incremental attribute additions |
+| v1.37.0 | 2025-08-25 | `gen_ai.system` renamed to `gen_ai.provider.name`; per-message log events replaced by structured `gen_ai.input.messages`/`gen_ai.output.messages` attributes |
+| v1.38.0 | 2025-10-29 | Added `gen_ai.evaluation.result` event |
+| v1.40.0 | 2026-02-19 | Added retrieval spans, cache-token attributes, `gen_ai.agent.version` |
+| v1.41.0 | 2026-04-28 | Split `invoke_agent` into separate client/internal span definitions; added reasoning-token fields; stricter `execute_tool` naming |
+| v1.42.0 | 2026-06-12 | **All `gen_ai.*` content removed from this repo and moved to `semantic-conventions-genai`** |
+| v1.43.0–v1.44.0 | 2026-07 to 2026-08 | No GenAI content in this repo (moved) |
+
+**Does anything in `OTEL_ACTION_MAP` conflict with the current spec?** Yes, on two independent axes:
+
+1. **The mapped strings were never span names or attribute values, even at 1.30.0.** In the current (and, per the span-naming pattern documented, in every prior version reachable from the current docs) spec, there is no span literally named `gen_ai.invoke_agent`, `gen_ai.execute_tool`, or `gen_ai.chat`. Instead:
+   - There is a `gen_ai.operation.name` attribute whose value is an **unprefixed** string from a fixed enum: `chat`, `create_agent`, `invoke_agent`, `execute_tool`, `invoke_workflow`, `plan`, `retrieval`, `embeddings`, `generate_content`, `text_completion`, `fetch_response`, plus several `*_memory` operation names — never `gen_ai.invoke_agent` as a value.
+   - The **span name** (the string that appears as the span's display name) follows its own template, e.g. the tool-call span name is `execute_tool {gen_ai.tool.name}`, the agent-invocation span name is `invoke_agent {gen_ai.agent.name}`, and the model-inference span name is `{gen_ai.operation.name} {gen_ai.request.model}` (e.g. `chat gpt-4`, not `gen_ai.chat`).
+   - So `OTEL_ACTION_MAP`'s keys conflate an attribute value with a `gen_ai.`-prefixed pseudo-namespace that has never existed in this form. This was true when the repo pinned 1.30.0, not just something that "drifted."
+2. **`"human.review": "human_review"` has no counterpart anywhere in GenAI semconv, at any version.** There is no `human.*` namespace, no human-in-the-loop review span/event, and no permission-approval span in `gen-ai-agent-spans.md`, `gen-ai-spans.md`, or `gen-ai-events.md`. It is an invented convention specific to this repo, which is fine as a deliberate extension but should not be labeled as if it were part of the OTel spec.
+3. **Separately**, `"gen_ai.chat": "invoke_agent"` maps the model-inference operation name onto the *agent* `ActionType`, which is a semantic mismatch independent of naming — `chat` in the real spec denotes a model/inference-level span (`gen-ai-spans.md`), not an `invoke_agent` (agent-level) span; they are siblings/parent-child, not synonyms.
+
+**Is the pin stale?** Yes, on both grounds: (a) five patch/minor cycles of GenAI-relevant changes shipped between 1.30.0 and the point where the content left the versioned repo, and (b) the home repository the version string points to (`semantic-conventions`) has since disowned all `gen_ai.*` content, so `OTEL_SPEC_VERSION = "1.30.0-experimental"` is no longer even a coherent citation — a reader following it today lands on a stub redirect page, not spec text.
+
+References: [semantic-conventions-genai repo](https://github.com/open-telemetry/semantic-conventions-genai) · [semantic-conventions releases](https://github.com/open-telemetry/semantic-conventions/releases) · [gen-ai/README.md (new repo)](https://cdn.jsdelivr.net/gh/open-telemetry/semantic-conventions-genai@main/docs/gen-ai/README.md) · [opentelemetry.io redirect stub](https://opentelemetry.io/docs/specs/semconv/gen-ai/) · [John Hodge, "The state of the OpenTelemetry GenAI semantic conventions (July 2026)"](https://john-hodge.com/blog/opentelemetry-genai-semantic-conventions/)
+
+---
+
+## 2. Field-by-field coverage
+
+See the full **Coverage Table** below (one row per spec.md field, all groups). Summary of the pattern: Identity fields are the best covered (agent identity, provider, conversation/session), Intent fields are essentially uncovered (semconv has no structured "goal/constraints/autonomy" concept), Environment fields are covered only via *general* OTel resource conventions (`vcs.*`, `os.*`, `host.*`, `service.*`) that are outside the `gen_ai.*` namespace entirely, Events fields are mostly covered by the tool-call and agent-invocation span attribute sets, and Agent-events fields are a mixed bag — some map cleanly to spans/events (model invocation, tool invocation/result, subagent start/stop via `invoke_agent`), several have no equivalent at all (retry-as-event, permission request/denial, compaction-as-event, task created/completed as first-class concepts).
+
+---
+
+## 3. Agent and tool spans
+
+Semconv's agent/tool span model, from `gen-ai-agent-spans.md` and `gen-ai-spans.md` (both v-pinned to `semantic-conventions@v1.44.0` cross-references as of the fetch, content itself unversioned/`main` in the new repo):
+
+- **`create_agent`** — `CLIENT`-kind span, span name `create_agent {gen_ai.agent.name}`, for remote/hosted agent creation (e.g. AWS Bedrock agent, OpenAI Assistant).
+- **`invoke_agent` (client)** — `CLIENT`-kind span, name `invoke_agent {gen_ai.agent.name}`, for invoking a *remote* agent service (OpenAI Assistants API, Bedrock Agents).
+- **`invoke_agent` (internal)** — separate span **type** with `INTERNAL` kind, same name template, for in-process agent frameworks (LangChain agents, CrewAI). Split into client/internal variants as of v1.41.0 (2026-04).
+- **`invoke_workflow`** — `INTERNAL`-kind span, name `invoke_workflow {gen_ai.workflow.name}`, explicitly for **multi-agent orchestration** (LangGraph `*Graph*.invoke`, CrewAI `Crew.kickoff()`, ADK `Runner.run()` with multi-agent graphs, OpenAI Agents `Runner.run` with handoffs). The spec explicitly says this span should **not** be emitted for a standalone single-agent invocation, and should be nested when a sub-graph is invoked inside another graph — i.e., workflows can nest.
+- **`plan`** — `INTERNAL`-kind span for an agent's planning/decomposition phase; documented as a **child of `invoke_agent`**, with the LLM call that produced the plan as its own child, and downstream tool/task spans as siblings under the parent `invoke_agent` span.
+- **`execute_tool`** — `INTERNAL`-kind span, name `execute_tool {gen_ai.tool.name}`, for a tool call. Carries `gen_ai.tool.call.id`, `gen_ai.tool.name`, `gen_ai.tool.type` (`function`/`extension`/`datastore`), and opt-in `gen_ai.tool.call.arguments`/`gen_ai.tool.call.result`.
+- **`{operation} {model}` inference span** (e.g. `chat gpt-4`) — `CLIENT`-kind (or `INTERNAL` if the model runs in-process), one per model call, nested under whatever agent/workflow span invoked it.
+
+**Is there an established hierarchy?** Yes, but it is a **span parent-child tree**, established purely by normal OTel span nesting (whichever span is "current" when a child span starts becomes its parent) — there is no separate "episode" or "trace-group" concept in the spec beyond `gen_ai.conversation.id` as a *correlating attribute*, not a structural container. A typical nesting for a multi-agent tool-using run would be:
+
+```
+invoke_workflow (multi_agent_rag)
+ └─ invoke_agent (internal, "Researcher")
+     ├─ plan
+     │   └─ chat gpt-4          (the LLM call that produced the plan)
+     ├─ execute_tool (search)
+     ├─ chat gpt-4               (LLM call synthesizing tool result)
+     └─ invoke_agent (internal, "Writer")   ← subagent, nested
+         └─ chat gpt-4
+```
+
+`gen_ai.conversation.id` links spans that belong to the same multi-turn session/thread but does **not** create a structural parent — it is explicitly documented as something instrumentations should populate only when a *real* backend-known conversation identifier exists (LangChain `session_id`, Bedrock agent sessions, OpenAI Assistant threads), and instrumentations are explicitly told **not** to fabricate one from a trace ID or a content hash.
+
+**Does this match spec.md's episode/trace/event nesting? Precisely: no, not automatically.** spec.md's model has three distinct, independently-scoped identifiers — `episode_id` (a business-level unit of work that may span multiple sessions/agents/commits), `trace_id`/`parent_trace_id` (execution-causal chain), and `session_id` (a login/connection-level grouping) — plus `event` as the atomic unit inside a trace with its own `parent_event_id`. OTel's span tree gives you the trace_id/parent-trace-id shape (a span **is** effectively spec.md's "trace" unit, and OTel spans already carry parent-span-id natively) and, weakly, `gen_ai.conversation.id` as something session_id-*adjacent*. It has **no concept at all** matching spec.md's `episode_id` — an episode (e.g., "user asked for a bug fix, agent ran three sessions and two subagents over two days, produced one PR") is a higher-level aggregate that OTel's span/trace model was never designed to express, and nothing in `gen-ai-agent-spans.md` or `gen-ai-spans.md` proposes one. This repo's HTN agent per-run telemetry (`experiments/swebench_pro/*.jsonl`) is a separate, in-repo concept from this `traces` table entirely and is not part of this comparison (per the task framing) — but note for completeness that neither of the two repo-internal trace concepts maps 1:1 onto OTel's span tree either; spec.md's episode assembler is explicitly meant to sit *above* raw trace/event ingestion as a separate aggregation step, which is consistent with treating OTel spans as only the "Events"/"trace" layer of spec.md's model, not the "episode" layer.
+
+References: [gen-ai-agent-spans.md](https://cdn.jsdelivr.net/gh/open-telemetry/semantic-conventions-genai@main/docs/gen-ai/gen-ai-agent-spans.md) · [gen-ai-spans.md](https://cdn.jsdelivr.net/gh/open-telemetry/semantic-conventions-genai@main/docs/gen-ai/gen-ai-spans.md)
+
+---
+
+## 4. Events vs spans vs logs
+
+**Where prompt/completion content lives today.** As of the current (`main`) state of `semantic-conventions-genai`, content lives in **structured attributes**, not a separate per-message log/event stream:
+
+- `gen_ai.input.messages` — full chat history sent to the model, JSON-schema-defined ([schema](https://github.com/open-telemetry/semantic-conventions-genai/blob/main/model/gen-ai/gen-ai-input-messages.json)), role/parts structure (`user`/`assistant`/`tool`, with `text`/`tool_call`/`tool_call_response` part types).
+- `gen_ai.output.messages` — one entry per model choice/candidate, same schema family.
+- `gen_ai.system_instructions` — system/developer instructions, kept separate from `gen_ai.input.messages`.
+- `gen_ai.tool.call.arguments` / `gen_ai.tool.call.result` — on the `execute_tool` span.
+
+All four are marked **requirement level `Opt-In`** — never captured by default. The doc is explicit that these attributes "MAY" be recorded on **either spans or events/logs**: "When the attribute is recorded on events, it MUST be recorded in structured form. When recorded on spans, it MAY be recorded as a JSON string if structured format is not supported and SHOULD be recorded in structured form otherwise." This is a real change in direction, confirmed by the version-history reconstruction above: prior to **v1.37.0 (2025-08-25)**, the convention used a dedicated per-message **log-based event stream**; v1.37.0 replaced that with today's structured-attribute-on-span-or-event model, explicitly noted as `gen_ai.system` → `gen_ai.provider.name` renaming plus "per-message events replaced by structured attributes." A dedicated event, `gen_ai.client.inference.operation.details` (in `gen-ai-events.md`), still exists as an **alternative** capture point when a team prefers "storing input/output details independently from traces" — so both mechanisms (attribute-on-span, attribute-on-event) coexist by design, and the choice is left to the instrumentation/deployment.
+
+**Does semconv say whether to capture it at all?** Yes, explicitly, in the "Capturing instructions, inputs, and outputs" section of `gen-ai-spans.md`:
+
+> "OpenTelemetry instrumentations SHOULD NOT capture them by default, but SHOULD provide an option for users to opt in."
+
+Three usage patterns are named: (1) don't record at all (default); (2) record on spans/events directly via the attributes above, suited to environments where telemetry volume/privacy is manageable; (3) store content in external storage and record only a reference on the span, recommended for production. Pattern 3 explicitly supports an **upload hook** that instrumentations may call with the raw instruction/input/output objects *before* JSON serialization, independent of the capture opt-in flag, so an application can intercept and redirect raw content to its own store even when the corresponding span attribute is left empty.
+
+**The actual opt-in env var**, confirmed verbatim in the primary source (`gen-ai-spans.md`, "Uploading content to external storage" cross-reference and inline note): **`OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT`** — this is the flag instrumentation libraries are expected to check before populating `gen_ai.input.messages`/`gen_ai.output.messages`/`gen_ai.system_instructions`. This is distinct from **`OTEL_SEMCONV_STABILITY_OPT_IN=gen_ai_latest_experimental`**, a different, general OTel-SDK env var that controls which *version/shape* of the (still-experimental) attribute names an instrumentation emits, not whether content is captured — confirmed both by the primary source's separate discussion of attribute-naming stability opt-in and independently by Google's ADK OpenTelemetry docs, which reference `OTEL_SEMCONV_STABILITY_OPT_IN='gen_ai_latest_experimental'` for enabling the newest attribute shapes.
+
+**Relation to spec.md's raw-payload-recoverability requirement.** spec.md requires "the raw provider payload must remain recoverable where privacy policy permits" and "do NOT send raw traces to an external LLM by default." Semconv's model is compatible in spirit and mechanism — its default is *also* non-capture, its opt-in is *also* explicit and per-deployment, and its external-storage-plus-reference pattern is structurally the same shape spec.md wants (store raw payload elsewhere, keep a pointer on the trace record). It does not, however, define anything like a retention policy, redaction policy, or per-user/owner isolation guarantee — those remain entirely this repo's responsibility; semconv only defines the capture toggle and the storage-reference pattern, not governance around it.
+
+References: [gen-ai-spans.md, "Capturing instructions, inputs, and outputs"](https://cdn.jsdelivr.net/gh/open-telemetry/semantic-conventions-genai@main/docs/gen-ai/gen-ai-spans.md) · [gen-ai-events.md](https://cdn.jsdelivr.net/gh/open-telemetry/semantic-conventions-genai@main/docs/gen-ai/gen-ai-events.md) · [Google Cloud ADK OTel instrumentation docs](https://docs.cloud.google.com/stackdriver/docs/instrumentation/ai-agent-adk) (secondary confirmation of `OTEL_SEMCONV_STABILITY_OPT_IN`)
+
+---
+
+## 5. Extension mechanism
+
+GenAI-specific extension guidance is minimal because the GenAI docs mostly point back to **general OTel semantic-conventions naming guidance** (`docs/general/naming.md` in `open-telemetry/semantic-conventions`, "Recommendations for application developers"), which lays out the actual rules:
+
+1. **Reverse-domain namespacing for company-specific attributes**: prefix with your company's reverse domain, e.g. `com.acme.shopname`, to avoid clashes with other companies' attributes in a system that mixes vendors.
+2. **Application-name namespacing for internal-only attributes**: prefix with a reasonably-unique application name (e.g. `myuniquemapapp.longitude`), provided it doesn't collide with an existing semconv namespace.
+3. **Explicit prohibition on squatting existing namespaces**: "It is not recommended to use existing OpenTelemetry semantic convention namespace as a prefix for a new company- or application-specific attribute name" — i.e., you should not invent `gen_ai.stealthlab.episode_id`; OpenTelemetry may claim that name later, or another vendor's instrumentation may collide with it if combined with yours.
+4. **Path to standardization**: if the attribute is broadly applicable, submit a proposal to the spec repo to add it (and, if needed, a new namespace) through the normal RFC/PR process.
+5. **`otel.*` is fully reserved** — attribute names starting with `otel.` may only be defined by the OpenTelemetry spec itself and require spec-level approval to add.
+
+Within GenAI semconv specifically, the pattern used for provider extension is the **`gen_ai.<provider-key>.*`** family referenced by `gen_ai.provider.name` (e.g., `aws.bedrock.*`, `openai.*`, `anthropic.*` — note these provider-specific pages are *not* nested under `gen_ai.` in practice; they are top-level namespaces like `aws.bedrock.*`/`openai.*`, keyed by the `gen_ai.provider.name` discriminator value). The spec explicitly documents this pattern: "GenAI spans, metrics, and events related to AWS Bedrock should have the `gen_ai.provider.name` set to `aws.bedrock` and include applicable `aws.bedrock.*` attributes and are not expected to include `openai.*` attributes" — i.e., `gen_ai.provider.name` is the discriminator, and each provider gets its own top-level namespace for anything semconv doesn't standardize, rather than being nested inside `gen_ai.*` itself.
+
+**Implication for this repo**: an application-specific field like `episode_id` should, per this guidance, live either under a reverse-domain/application-specific prefix (e.g. `stealthlab.episode_id` or `com.3founders.stealthlab.episode_id`) rather than trying to graft it onto `gen_ai.*`, and should not be represented as if it were part of the OTel spec the way `OTEL_ACTION_MAP`'s current strings implicitly are.
+
+References: [semantic-conventions naming.md, "Recommendations for application developers"](https://cdn.jsdelivr.net/gh/open-telemetry/semantic-conventions@main/docs/general/naming.md) · [gen-ai-agent-spans.md, `gen_ai.provider.name` footnote [2]](https://cdn.jsdelivr.net/gh/open-telemetry/semantic-conventions-genai@main/docs/gen-ai/gen-ai-agent-spans.md)
+
+---
+
+## 6. Ecosystem reality
+
+Adoption is real but shallow and inconsistent — several major vendors have announced or shipped support, but every framework/vendor checked hedges on exactly which convention era (pre-/post-1.37) it emits, and no two agree on the same version.
+
+| Project | Status (evidence) |
+|---|---|
+| **Datadog LLM/Agent Observability** | Natively supports OTel GenAI semconv **v1.37+**, announced Dec 2025: "instrument your LLM applications once with OTel, export OTel GenAI spans... and analyze GenAI spans directly in Agent Observability, with no code changes required." ([Datadog blog](https://www.datadoghq.com/blog/llm-otel-semantic-convention/), [docs](https://docs.datadoghq.com/llm_observability/instrumentation/otel_instrumentation/)) |
+| **Honeycomb** | Cited (via Langfuse's own comparison writeup and the John Hodge survey) as one of the vendors that "already support these conventions" alongside Datadog and New Relic; not independently verified against Honeycomb's own docs in this pass — treat as secondary-sourced. |
+| **Langfuse** | Accepts a full OTLP endpoint (`/api/public/otel`) and maps incoming `gen_ai.*` attributes onto its internal data model, explicitly to increase compatibility beyond its native SDKs; recommends its own `langfuse.*` attributes for anything semconv doesn't cover, and those take precedence over generic `gen_ai.*` when both are present. ([Langfuse OTel docs](https://langfuse.com/integrations/native/opentelemetry)) |
+| **Traceloop / OpenLLMetry** | Historically shipped its *own* `gen_ai.prompt`/`gen_ai.completion` attributes that predate and diverge from the current registry — there is an open bug in the OpenLLMetry repo noting these are "deprecated in the latest OpenTelemetry Semantic Conventions" ([issue #3515](https://github.com/traceloop/openllmetry/issues/3515)). Traceloop says it is "leading OpenTelemetry's LLM semantic convention WG," but OpenLLMetry's own conventions are documented as an *extension on top of* the standard, adding agent-lifecycle/multi-agent/memory concepts the standard doesn't have yet — i.e., real but not 1:1 with the registry. |
+| **Arize Phoenix / OpenInference** | Phoenix's own tracing still runs on Arize's pre-existing **OpenInference** conventions, not `gen_ai.*`, by default. A separate Arize product, **Arize AX**, added native `gen_ai.*` support ([Arize blog](https://arize.com/blog/arize-ax-opentelemetry-genai-semantic-conventions/)). Arize's own docs frame OpenInference and OTel GenAI as expected to "converge" over time, i.e., explicitly not yet converged. There is an open GitHub discussion in the Phoenix repo (#13041 / issue #10622) specifically about whether/how to add native `gen_ai.*` support to Phoenix itself. |
+| **Google ADK (Agent Development Kit)** | Documented as natively emitting spans consistent with OTel GenAI semconv, with hierarchical agent→LLM→tool span nesting matching the `invoke_agent`/inference/`execute_tool` model described in §3, and documents the `OTEL_SEMCONV_STABILITY_OPT_IN='gen_ai_latest_experimental'` flag to opt into the newest attribute shapes. ([Google Cloud ADK OTel instrumentation docs](https://docs.cloud.google.com/stackdriver/docs/instrumentation/ai-agent-adk), [ADK traces docs](https://adk.dev/observability/traces/)) |
+| **Microsoft Agent Framework / Semantic Kernel** | Agent Framework is documented as emitting traces/logs/metrics per OTel GenAI semconv out of the box, without manual span wrapping. ([Microsoft Learn: Agent Framework observability](https://learn.microsoft.com/en-us/agent-framework/tutorials/agents/enable-observability)) |
+| **OpenAI Agents SDK** | Per the John Hodge survey (secondary, but specific and dated): "does not emit OTel GenAI conventions natively" — it has its own tracing/handoff model, referenced from the *outside* by other frameworks' `invoke_workflow` span guidance (e.g. ADK/LangGraph/OpenAI Agents are all cited by name in `gen-ai-agent-spans.md`'s `invoke_workflow` examples as frameworks whose orchestration constructs *should* map onto that span), but that's semconv describing OpenAI Agents SDK usage, not OpenAI Agents SDK emitting semconv itself. |
+| **LangChain / LangGraph, LlamaIndex** | Referenced *by the spec itself* as canonical examples of frameworks whose session/conversation concepts map to `gen_ai.conversation.id` (`LangChain session_id`, `LlamaIndex chat store`) — i.e., the spec authors are actively designing against these frameworks' actual behavior, a sign of real (if not fully verified independently in this pass) engagement. |
+| **Vercel AI SDK 7** (per John Hodge survey) | Emits `gen_ai.provider.name` and `gen_ai.usage.input_tokens` — i.e., the **post-1.37** attribute names, not the older `gen_ai.system`/`prompt_tokens` era. |
+| **Strands Agents** (per John Hodge survey) | Defaults to **v1.36-era** behavior; the newest conventions are opt-in — a concrete example of the version-fragmentation problem. |
+
+**Net read:** adoption is broad enough that "nobody implements this" would be false — Datadog, Google ADK, Microsoft Agent Framework, Vercel AI SDK, and Langfuse's ingestion layer all genuinely speak some dialect of `gen_ai.*` today. But it is *not* interoperable-by-default: different tools sit at different historical checkpoints of an actively-renaming spec (pre/post-1.37 message format, pre/post-1.41 agent-span split, in-repo vs. moved-repo), several major players (Phoenix/OpenInference, OpenLLMetry) maintain their own competing/overlapping conventions rather than the registry verbatim, and the registry's own document status (`Development`, zero Stable fields) means every vendor above is explicitly free to change field names without a deprecation cycle. Treat "OTel GenAI semconv compliance" as aspirational-and-partial across the ecosystem, not a settled lingua franca.
+
+---
+
+## Coverage Table
+
+Status legend: **covered** = a `gen_ai.*` (or directly relevant general-OTel) attribute exists with matching semantics; **covered-under-different-name** = an attribute exists but is named/scoped differently than spec.md's field, or lives outside the `gen_ai.*` namespace (general OTel resource/trace concepts); **no-equivalent** = nothing in current semconv addresses this.
 
 ### Identity
 
 | spec.md field | semconv attribute | status |
 |---|---|---|
-| trace_id | OTel native `trace_id` (W3C trace context, not a `gen_ai.*` attribute) | covered-under-different-name |
-| episode_id | — | no-equivalent |
-| session_id | `gen_ai.conversation.id` (explicitly "session, thread" per its own description) | covered-under-different-name |
-| parent_trace_id | OTel native span `parent_span_id` / trace context propagation | covered-under-different-name |
-| parent_event_id | — (events don't have a parent-event attribute; nesting is via the enclosing span) | no-equivalent |
-| agent_id | `gen_ai.agent.id` (provider-assigned; explicitly *not* meant for transient in-memory instance IDs) | covered-under-different-name |
-| actor_id | — (no attribute distinguishes human vs. agent vs. system actor) | no-equivalent |
-| provider | `gen_ai.provider.name` (`openai`, `anthropic`, `aws.bedrock`, `gcp.vertex_ai`, ...) | covered |
-| provider_version | `gen_ai.request.model` / `gen_ai.response.model` cover model version, not provider/SDK version; no attribute for e.g. "Claude Code CLI v2.x" | covered-under-different-name |
+| trace_id | *(none — OTel's native span/trace ID serves an analogous structural role but is not a `gen_ai.*` field and is 1:1 with a span, not spec.md's broader "trace" unit)* | covered-under-different-name |
+| episode_id | *(none)* | no-equivalent |
+| session_id | `gen_ai.conversation.id` (populated only when a real backend/session identifier exists; MUST NOT be synthesized) | covered-under-different-name |
+| parent_trace_id | *(native OTel span parent-id / W3C trace context — not a `gen_ai.*` attribute)* | covered-under-different-name |
+| parent_event_id | *(none — OTel log records/events don't carry a formal "parent event" field beyond their attached trace/span context)* | no-equivalent |
+| agent_id | `gen_ai.agent.id` | covered |
+| actor_id | *(none — no generic "who/what performed this" attribute beyond `gen_ai.agent.id` for the agent itself)* | no-equivalent |
+| provider | `gen_ai.provider.name` | covered |
+| provider_version | *(none — only `gen_ai.agent.version` and `gen_ai.prompt.version` exist; no provider/SDK version attribute)* | no-equivalent |
 
 ### Intent
 
 | spec.md field | semconv attribute | status |
 |---|---|---|
-| user_goal | `gen_ai.input.messages` (opt-in; captures conversation content generically, not a distinct "goal" field) | covered-under-different-name |
-| task description | — | no-equivalent |
-| constraints | — | no-equivalent |
-| requested autonomy | — | no-equivalent |
-| task identifiers | — | no-equivalent |
+| user_goal | *(none — closest is raw `gen_ai.input.messages` content, not a structured goal field)* | no-equivalent |
+| task description | *(none)* | no-equivalent |
+| constraints | *(none)* | no-equivalent |
+| requested autonomy | *(none)* | no-equivalent |
+| task identifiers where available | *(none — `gen_ai.response.id`/`gen_ai.request.previous_response.id` identify model responses, not application tasks)* | no-equivalent |
 
 ### Environment
 
 | spec.md field | semconv attribute | status |
 |---|---|---|
-| cwd | — (not in `gen_ai.*`; OTel has generic `process.*`/`os.*` resource attributes in core semconv, not GenAI-specific, and none is "current working directory") | no-equivalent |
-| repository identity/root/branch/commit SHA/dirty state | — (OTel core has `vcs.*` semantic conventions for CI/CD contexts, but they are not referenced anywhere in the GenAI conventions and are a separate, unrelated namespace) | no-equivalent |
-| runtime versions | — | no-equivalent |
-| application/editor identity | — (closest is `gen_ai.provider.name`, which names the model provider, not the host application) | no-equivalent |
-| OS/device identity | — (OTel core `os.*`/`host.*` resource attributes exist generically but aren't part of, or referenced by, GenAI semconv) | no-equivalent |
+| cwd | *(none)* | no-equivalent |
+| repository identity | `vcs.repository.name`, `vcs.repository.url.full` (general OTel `vcs.*`, not gen_ai-specific) | covered-under-different-name |
+| repository root | *(none — vcs.* covers identity/refs, not local filesystem root)* | no-equivalent |
+| branch | `vcs.ref.head.name` (general OTel `vcs.*`) | covered-under-different-name |
+| commit SHA | `vcs.ref.head.revision` (general OTel `vcs.*`) | covered-under-different-name |
+| dirty/clean state | *(none)* | no-equivalent |
+| relevant environment/runtime versions | general OTel resource attrs e.g. `process.runtime.version`, `telemetry.sdk.version` (not gen_ai-specific) | covered-under-different-name |
+| application/editor identity | `service.name` / `service.version` (general OTel resource attrs, Stable) | covered-under-different-name |
+| OS/device identity | `os.name`/`os.version`/`os.type`, `host.name`/`host.id` (general OTel resource attrs, Stable) | covered-under-different-name |
 
 ### Events
 
 | spec.md field | semconv attribute | status |
 |---|---|---|
-| sequence number | — (OTel events/spans are ordered by timestamp, not an explicit sequence attribute) | no-equivalent |
-| timestamp | OTel native span/event timestamps | covered |
-| event type | `gen_ai.operation.name` (for spans) / distinct event names like `gen_ai.client.inference.operation.details`, `gen_ai.client.operation.exception`, `gen_ai.evaluation.result` | covered-under-different-name |
-| actor | — | no-equivalent |
+| sequence number | *(none — OTel relies on timestamp + span/log ordering, no explicit sequence attribute)* | no-equivalent |
+| timestamp | native OTel span/log timestamp (not a `gen_ai.*` attribute, but structurally always present) | covered-under-different-name |
+| event type | `gen_ai.operation.name` (span-level) or event `name` (e.g. `gen_ai.client.inference.operation.details`, `gen_ai.evaluation.result`, `gen_ai.client.operation.exception`) | covered-under-different-name |
+| actor | `gen_ai.agent.name` / `gen_ai.agent.id` on agent spans; no generic cross-cutting "actor" field | covered-under-different-name |
 | tool | `gen_ai.tool.name` | covered |
 | tool call ID | `gen_ai.tool.call.id` | covered |
-| parent tool/agent relationship | OTel native span parent-child nesting (an `invoke_agent` span is parent of its `execute_tool`/inference child spans); no explicit "parent agent id" attribute | covered-under-different-name |
-| tool input | `gen_ai.tool.call.arguments` (opt-in, sensitive-data warning) | covered |
-| tool output | `gen_ai.tool.call.result` (opt-in, sensitive-data warning) | covered |
-| success/failure | `error.type` presence/absence + OTel span status (per "Recording Errors" guidance) — no explicit boolean/enum outcome field | covered-under-different-name |
-| duration | OTel native span start/end timestamps | covered |
-| permission state | — | no-equivalent |
-| error information | `error.type` (span attribute) plus `exception.type`/`exception.message`/`exception.stacktrace` on the `gen_ai.client.operation.exception` event (these three are Stable core-OTel attributes) | covered |
-| provenance | — (no attribute for "which extractor/pipeline version produced this record") | no-equivalent |
-| raw provider payload reference | — (content itself can be captured via opt-in `gen_ai.input.messages`/`gen_ai.output.messages`/`gen_ai.tool.call.arguments`/`gen_ai.tool.call.result`, but there's no attribute for a *reference/pointer* to an externally stored raw payload) | no-equivalent |
+| parent tool/agent relationship | native OTel span parent-child nesting (not a `gen_ai.*` attribute) | covered-under-different-name |
+| tool input | `gen_ai.tool.call.arguments` (Opt-In) | covered |
+| tool output | `gen_ai.tool.call.result` (Opt-In) | covered |
+| success/failure | `error.type` (Stable, general OTel) + span status per "Recording Errors" doc | covered-under-different-name |
+| duration | native OTel span duration (start/end timestamps) | covered-under-different-name |
+| permission state | *(none)* | no-equivalent |
+| error information | `error.type`, `exception.type`, `exception.message`, `exception.stacktrace` (all Stable, general OTel, via `gen_ai.client.operation.exception` event) | covered-under-different-name |
+| provenance | *(none — no attribute captures "which extractor/instrumentation version produced this record")* | no-equivalent |
+| raw provider payload reference | *(none — semconv defines an external-storage-plus-hook pattern conceptually but no standard "reference" attribute name)* | no-equivalent |
 
 ### Agent events
 
 | spec.md field | semconv attribute | status |
 |---|---|---|
-| model invocation | `gen_ai.operation.name = chat/text_completion/generate_content/embeddings` span | covered |
-| user prompt | `gen_ai.input.messages` (opt-in) | covered |
-| assistant turn | `gen_ai.output.messages` (opt-in) | covered |
-| tool invocation | `execute_tool` span (`gen_ai.tool.*`) | covered |
-| tool result | `gen_ai.tool.call.result` | covered |
-| tool failure | `error.type` on the `execute_tool` span | covered-under-different-name |
-| retry | — (spec text notes retries are absorbed into the same span's duration, not modeled as a distinct event) | no-equivalent |
-| subagent start | `invoke_agent`/`create_agent` child span start | covered-under-different-name |
-| subagent stop | child span end | covered-under-different-name |
-| task created | — | no-equivalent |
-| task completed | — (closest is span completion, but no "task" concept distinct from agent/tool spans) | no-equivalent |
-| permission request/denial | — | no-equivalent |
-| compaction | — | no-equivalent |
-| session start/end | `gen_ai.conversation.id` scopes messages to a session but there is no explicit session-start/session-end signal | no-equivalent |
+| model invocation | inference span, `gen_ai.operation.name = chat` (or `generate_content`/`text_completion`/etc.), span name `{operation} {model}` | covered |
+| user prompt | `gen_ai.input.messages` (role: `user`) — Opt-In | covered |
+| assistant turn | `gen_ai.output.messages` (role: `assistant`) — Opt-In | covered |
+| tool invocation | `execute_tool` span | covered |
+| tool result | `gen_ai.tool.call.result` on `execute_tool` span — Opt-In | covered |
+| tool failure | `error.type`/`exception.*` on `execute_tool` span | covered-under-different-name |
+| retry | *(none — spec says the span covering an operation "SHOULD cover the duration of the logical operation with all retries," i.e. retries are absorbed into one span, not itemized as separate events/attempts)* | no-equivalent |
+| subagent start | `invoke_agent` (internal) span start, nested under a parent `invoke_agent`/`invoke_workflow` span | covered-under-different-name |
+| subagent stop | `invoke_agent` (internal) span end | covered-under-different-name |
+| task created | *(none — no `gen_ai.task.*` concept distinct from spans/operations themselves)* | no-equivalent |
+| task completed | *(none)* | no-equivalent |
+| permission request/denial | *(none)* | no-equivalent |
+| compaction | `gen_ai.conversation.compacted` (boolean, Recommended-when-available, on inference spans/events — a flag, not a discrete compaction event) | covered-under-different-name |
+| session start/end | *(none — `gen_ai.conversation.id` correlates spans within a session but there is no explicit session-start/session-end span or event)* | no-equivalent |
 
-**Pattern:** everything shaped like "an LLM API call or a tool call within
-one" is covered, often well (tool call id/name/args/result, token counts,
-finish reasons, provider name, model name/version, error type + exception
-detail). Everything shaped like "IDE/coding-agent session context" — cwd,
-repo/VCS state, editor identity, task/permission/compaction bookkeeping,
-provenance of the record itself — has no equivalent, because GenAI semconv's
-design center is LLM-provider API telemetry (chat/embeddings/tool-call spans
-for backend services), not coding-agent session telemetry.
-
-## 3. Agent and tool spans specifically
-
-Span kinds and nesting, per
-[gen-ai-agent-spans.md](https://cdn.jsdelivr.net/gh/open-telemetry/semantic-conventions-genai@main/docs/gen-ai/gen-ai-agent-spans.md)
-and
-[gen-ai-spans.md](https://cdn.jsdelivr.net/gh/open-telemetry/semantic-conventions-genai@main/docs/gen-ai/gen-ai-spans.md):
-
-- **`create_agent`** (span kind CLIENT): one-time instantiation of a *remote*
-  agent (e.g. an OpenAI Assistant, a Bedrock agent). Span name
-  `create_agent {gen_ai.agent.name}`.
-- **`invoke_agent`** (span kind CLIENT or INTERNAL): executing an existing
-  agent — CLIENT for remote agent services, INTERNAL for local frameworks
-  (the doc names LangChain and CrewAI as INTERNAL examples). Span name
-  `invoke_agent {gen_ai.agent.name}`. Many `invoke_agent` calls can occur
-  against one `create_agent`-produced identity.
-- **`plan`** (span kind INTERNAL): optional child span for an explicit
-  planning step; "the LLM call that generates the plan SHOULD be a child of
-  the plan span, and the tool or task spans produced from the plan are
-  typically sibling operations under the same `invoke_agent` span."
-- **`execute_tool`** (span kind INTERNAL): one span per tool call, attributes
-  `gen_ai.tool.name`, `gen_ai.tool.call.id`, `gen_ai.tool.call.arguments`,
-  `gen_ai.tool.call.result`. Nested as a child of the `invoke_agent` span (or
-  sibling of the plan span, per above).
-- **`invoke_workflow`** (span kind INTERNAL): a coarser wrapper for
-  multi-agent orchestration/workflow engines, separate from a single agent
-  invocation.
-- **Session/multi-turn:** `gen_ai.conversation.id` is the only session-scoping
-  mechanism — it's a string attribute stamped onto every span/event belonging
-  to the same conversation, not a distinct span or entity of its own. There is
-  no "session span" that wraps multiple `invoke_agent` calls; correlation
-  across turns is by attribute value, not by span parent-child nesting.
-
-**Does this match spec.md's episode/trace/event nesting?** Not directly, and
-the two hierarchies answer different questions:
-
-- Semconv's hierarchy is **span parent-child nesting within one W3C trace**:
-  `invoke_agent` → `plan`/`execute_tool`/chat spans, correlated to a
-  conversation by a flat `gen_ai.conversation.id` attribute, not by any
-  further containment.
-- spec.md's hierarchy (confirmed by `inventory.md` and this repo's schema) is
-  **episode → trace → event as separate first-class rows**, and — per the
-  standing distinction this ticket was told to preserve — this repo's
-  `traces` table (`backend/db/01_ontology.sql`,
-  `backend/app/models/trace.py`) is a *different* concept from the HTN
-  agent's own ephemeral per-run `.jsonl` execution telemetry under
-  `experiments/swebench_pro/`. Neither of those two existing repo concepts is
-  simply "a semconv span" — `traces` today is a flat outcome record
-  (`TraceRecord`: `trace_id`, `task_node_id`, `outcome`, `action_type`,
-  `cost`, `latency_ms`, `parent_trace_id`), closer in spirit to a single
-  semconv span than to a whole trace tree, while `episode_id`/`episode_links`
-  (mentioned in spec.md's Identity fields) have no semconv counterpart at
-  all — episodes are this repo's grouping concept, wayfinding-external to
-  OTel entirely.
-
-So: semconv gives a real, usable parent-child span shape for
-*agent-invocation-contains-tool-calls*, which is a good structural match for
-one *slice* of spec.md's Events (an event's "parent tool/agent relationship"
-field maps naturally onto OTel span parent_span_id). But semconv has nothing
-that plays the role of spec.md's `episode` (a durable grouping entity
-independent of any single execution) — that concept must come from this
-repo's own model, not from semconv, regardless of the derive/extend/diverge
-call.
-
-## 4. Events vs. spans vs. logs, and the privacy opt-in
-
-Per
-[gen-ai-events.md](https://cdn.jsdelivr.net/gh/open-telemetry/semantic-conventions-genai@main/docs/gen-ai/gen-ai-events.md)
-and the OTel Python contrib docs for the GenAI instrumentation:
-
-- Prompt/completion/tool-argument/tool-result content is **not captured by
-  default** anywhere. It is gated behind an explicit opt-in.
-- The mechanism has moved historically (older semconv put message content on
-  separate `gen_ai.{role}.message`/`gen_ai.choice` **log-based events**;
-  current semconv can instead inline the same content as **span attributes**
-  — `gen_ai.input.messages`, `gen_ai.output.messages`,
-  `gen_ai.system_instructions`, `gen_ai.tool.call.arguments`,
-  `gen_ai.tool.call.result` — or emit a single combined
-  `gen_ai.client.inference.operation.details` event). Both shapes exist
-  simultaneously in the current instrumentation ecosystem depending on which
-  stability opt-in flag is set.
-- Concretely, the OpenTelemetry Python GenAI instrumentation utility
-  documents (per
-  [opentelemetry-python-contrib GenAI util docs](https://opentelemetry-python-contrib.readthedocs.io/en/latest/instrumentation-genai/util.html)
-  and corroborated by New Relic's Strands SDK write-up) two environment
-  variables that jointly control this:
-  - `OTEL_SEMCONV_STABILITY_OPT_IN=gen_ai_latest_experimental` — selects the
-    newer span/event attribute shapes.
-  - `OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT` — the actual content
-    gate, with values `true` (legacy: content on `gen_ai.{role}.message` /
-    `gen_ai.choice` log events), `span_only`, `event_only`, or
-    `span_and_event` (new-shape variants). Unset means no content capture at
-    all, only structural/metadata attributes (token counts, model name,
-    finish reasons, etc.).
-  - Attributes carrying content are explicitly flagged in the registry docs
-    as sensitive-data risks (e.g. `gen_ai.tool.description`: "may contain
-    sensitive data"; `gen_ai.tool.call.result`: "may contain sensitive
-    information") and are marked **Opt-In** requirement level, meaning
-    instrumentations must not record them unless the user turns them on.
-  - Redaction/truncation itself is explicitly *not* specified by semconv:
-    "Instrumentations MAY provide a way for users to filter or truncate"
-    these attributes — implementation is left to each instrumentation
-    library, not standardized.
-
-**Relevance to spec.md's raw-payload-recoverability-under-privacy-policy
-requirement:** semconv's opt-in flag is a coarse global on/off (plus a
-shape choice), not a policy engine — it has no concept of per-field redaction
-rules, retention tiers, or "capture but encrypt at rest," all of which
-spec.md's privacy language (lines ~894-912: "do NOT send raw traces to an
-external LLM by default") implies this repo needs. Semconv's content-capture
-switch is a reasonable low bar (off by default, explicit opt-in to turn on),
-but it is not a substitute for this repo's own privacy policy layer.
-
-## 5. Extension mechanism
-
-Per OTel's general (non-GenAI-specific) naming rules, still authoritative for
-all semantic conventions including GenAI:
-[opentelemetry.io/docs/specs/semconv/general/naming/](https://opentelemetry.io/docs/specs/semconv/general/naming/)
-and the source doc
-[semantic-conventions/docs/general/naming.md](https://github.com/open-telemetry/semantic-conventions/blob/main/docs/general/naming.md):
-
-- The `otel.*` namespace is reserved exclusively for the OpenTelemetry
-  specification itself.
-- Attribute/span/metric names are structured `{domain}.{component}.{property}`
-  with `.` as the only hierarchy delimiter; lowercase Latin letters, digits,
-  underscore, dot only.
-- **Explicit guidance against squatting on an existing semconv namespace**:
-  "It is not recommended to use existing OpenTelemetry semantic convention
-  namespace as a prefix for a new company- or application-specific attribute
-  name, as this may result in a name clash in the future if OpenTelemetry
-  decides to use that same name for a different purpose."
-- **The recommended extension mechanism is a reverse-DNS company namespace**:
-  "it is recommended to prefix the new name by your company's reverse domain
-  name, e.g. `com.acme.shopname`." This is the general OTel-wide mechanism,
-  not something GenAI-specific — there is no separate `gen_ai.`-scoped
-  extension registry or process for adding vendor fields under `gen_ai.*`
-  itself.
-- Practical implication for this repo: any field this repo needs that
-  semconv doesn't define (episode_id, task description, permission state,
-  repo/VCS identity, etc.) should NOT be smuggled in as `gen_ai.something` —
-  it should live under this repo's own namespace (e.g. something like
-  `stealthlab.*` or a reverse-DNS form) if ever exported as OTel attributes,
-  precisely so a future GenAI semconv release adding those names doesn't
-  collide with this repo's meaning for them.
-
-## 6. Ecosystem reality
-
-Evidence is mixed — real but partial adoption, with at least one prominent
-fork of the ecosystem emitting a *different*, non-standard convention set
-under a similar name:
-
-- **AWS Strands SDK** (agent framework) does emit `gen_ai.*` attributes when
-  configured with both `OTEL_SEMCONV_STABILITY_OPT_IN=gen_ai_latest_experimental`
-  and `OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT=true` — confirmed
-  via New Relic's own integration write-up showing real captured
-  `gen_ai.input.messages`/`gen_ai.output.messages`/`gen_ai.system_instructions`
-  spans from a travel-planning agent on Bedrock AgentCore
-  ([New Relic: Traces for AI Agents with OTel and Strands SDK](https://newrelic.com/blog/observability/traces-for-ai-agents-otel-strand)).
-- **OpenLLMetry / Traceloop**: patches OpenAI, Anthropic, LangChain, and
-  LlamaIndex clients to emit spans to any OTLP endpoint, and is widely used as
-  the de facto instrumentation layer by several LLM observability backends
-  (Laminar, Langfuse, Phoenix, LangSmith reportedly all ingest OpenLLMetry
-  spans). **However, Traceloop's own OTLP endpoint documents that it expects
-  "OpenLLMetry semantic conventions," explicitly distinct from the official
-  OpenTelemetry GenAI conventions** — i.e. the most widely deployed
-  instrumentation layer in this space runs its own convention set that only
-  overlaps with, rather than strictly implements, the official `gen_ai.*`
-  registry.
-- **Langfuse**: as of the sources found, still only "publicly considering"
-  full OTel integration rather than having shipped official `gen_ai.*`
-  semconv emission; it and Arize Phoenix support OTel-*compatible* trace
-  ingestion generally (accepting OTLP), which is a lower bar than emitting
-  the specific GenAI attribute names.
-- General-purpose commentary corroborates thin/uneven adoption: as of
-  March 2026, most GenAI semantic conventions were still experimental, and
-  "most SDK wrappers still emit wrong span names" relative to the official
-  registry (secondary source, cited here only as adoption-texture evidence,
-  not as spec content: [dev.to summary of OTel GenAI status](https://dev.to/x4nent/opentelemetry-genai-semantic-conventions-the-standard-for-llm-observability-1o2a)).
-- Net picture: adoption exists and is real for the LLM-call-shaped subset
-  (chat spans, token counts, tool-call spans) among AWS-ecosystem and some
-  official OTel-contrib Python instrumentation packages
-  (`opentelemetry-instrumentation-openai-v2`,
-  `opentelemetry-instrumentation-google-genai`, both on PyPI and both
-  targeting the official registry). But the single most widely deployed
-  instrumentation path in practice (OpenLLMetry) runs a related-but-distinct
-  convention set, and no coding-agent-specific vendor was found emitting the
-  official registry's episode/session/environment-adjacent fields (because,
-  per §2, those fields largely don't exist in the registry to emit).
+---
 
 ## Recommendation (input to ticket 06, not a decision)
 
-The evidence supports a **hybrid framing rather than a pure derive-or-extend
-binary**, for ticket 06 to weigh:
+The evidence above suggests, for ticket 06 ("Canonical trace model") to weigh:
 
-- **For the LLM-call/tool-call-shaped slice of spec.md's Events and Agent
-  events groups** (tool name/id/input/output, model invocation, token
-  counts, error type, provider/model identity, agent invoke/create,
-  parent-child span nesting) — coverage is real and the registry's shape
-  (span kind, attribute names, opt-in content gating) is usable as-is or with
-  light renaming. This is where "derive from semconv" earns its keep: the
-  registry got real design attention here and multiple frameworks/vendors
-  independently converged on similar shapes.
-- **For spec.md's Identity, Intent, and Environment groups**
-  (episode_id, actor_id, user_goal/task description/constraints/autonomy,
-  cwd/repo identity/branch/commit SHA/dirty state, permission state, task
-  created/completed, compaction, retry-as-event, provenance,
-  raw-payload-reference) — there is no semconv equivalent to derive from at
-  all; these are coding-agent/IDE-session concepts outside GenAI semconv's
-  design center (built for backend LLM-API telemetry). This is necessarily
-  "diverge deliberately" territory — not a compatibility gap that a future
-  semconv version is likely to close, since the registry's own scope
-  statement is about LLM clients, agents, tool execution, and MCP, not IDE
-  session/repo/task bookkeeping.
-- **Whatever fields this repo adds beyond semconv should live under this
-  repo's own namespace** (§5) rather than as unofficial `gen_ai.*`
-  extensions, both because that's OTel's own stated guidance and because the
-  registry is actively evolving pre-1.0 (§1) — any `gen_ai.foo` string this
-  repo invents today has a real chance of being claimed with different
-  semantics by the official registry tomorrow.
-- Whatever ticket 06 decides, `OTEL_SPEC_VERSION = "1.30.0-experimental"`
-  and `OTEL_ACTION_MAP`'s exact key strings in `backend/app/models/trace.py`
-  need to change regardless of the derive/extend/diverge outcome — the pinned
-  version is unresolvable against the current source of truth, and the
-  mapped strings don't match current `gen_ai.operation.name` wire values
-  (§1). That correction is orthogonal to the bigger strategic call.
+- **Extend-it-loosely rather than derive-from-semconv-directly.** GenAI semconv covers the narrow slice of spec.md's canonical trace format that concerns model/tool/agent execution mechanics (agent identity, provider, tool name/args/result, token usage, span nesting for agent↔tool↔model calls) reasonably well, and that slice is worth aligning field names with for future interoperability with Datadog/ADK/Agent-Framework-style ingestion. But the coverage table shows semconv has **no answer at all** for roughly half of spec.md's required fields — the entire Intent group, most of Identity (`episode_id`, `actor_id`, `provider_version`, `parent_event_id`), most of Environment (`cwd`, repo root, dirty state), and a substantial chunk of Events/Agent-events (permission state, provenance, retry-as-event, task lifecycle, session boundaries, sequence numbers). A pure "derive from semconv" approach would leave spec.md's own stated requirements unmet.
+- **Do not diverge deliberately/silently** either — the parts semconv *does* cover (agent spans, tool-call spans, token usage, error/exception shape, content-capture opt-in mechanism) are worth reusing by name where the concepts line up 1:1, both because it's free interoperability with an ecosystem that — per §6 — is thin but real and growing, and because re-inventing e.g. tool-call argument/result shapes from scratch would forfeit that for no benefit.
+- **The specific extension mechanism to use, if ticket 06 goes this route, is documented and unambiguous**: don't nest new fields under `gen_ai.*` (per general naming.md's explicit warning against squatting existing namespaces); use an application-specific top-level namespace (e.g. `stealthlab.episode_id`, `stealthlab.actor_id`) for the fields semconv has no equivalent for, mirroring how `aws.bedrock.*`/`openai.*` sit alongside rather than inside `gen_ai.*`.
+- **Given the whole convention set is `Development`-status with zero Stable fields and just changed homes entirely (repo split, mid-2026)**, any adoption should be treated as tracking a moving target, not pinning to a version the way `OTEL_SPEC_VERSION` currently implies — the new repo doesn't even have tags yet to pin to. A vendored/mapped subset (what this repo already does with `OTEL_ACTION_MAP`) is the right general shape, but the specific mapped values need correcting regardless of what ticket 06 decides (see below).
 
-## Sources
+**On `OTEL_SPEC_VERSION` and `OTEL_ACTION_MAP` specifically** (explicit answer requested by the task):
 
-- [open-telemetry/semantic-conventions-genai](https://github.com/open-telemetry/semantic-conventions-genai) (repo root)
-- [semantic-conventions-genai: docs/registry/attributes/gen-ai.md](https://cdn.jsdelivr.net/gh/open-telemetry/semantic-conventions-genai@main/docs/registry/attributes/gen-ai.md)
-- [semantic-conventions-genai: docs/gen-ai/gen-ai-agent-spans.md](https://cdn.jsdelivr.net/gh/open-telemetry/semantic-conventions-genai@main/docs/gen-ai/gen-ai-agent-spans.md)
-- [semantic-conventions-genai: docs/gen-ai/gen-ai-spans.md](https://cdn.jsdelivr.net/gh/open-telemetry/semantic-conventions-genai@main/docs/gen-ai/gen-ai-spans.md)
-- [semantic-conventions-genai: docs/gen-ai/gen-ai-events.md](https://cdn.jsdelivr.net/gh/open-telemetry/semantic-conventions-genai@main/docs/gen-ai/gen-ai-events.md)
-- [semantic-conventions-genai: docs/gen-ai/gen-ai-exceptions.md](https://cdn.jsdelivr.net/gh/open-telemetry/semantic-conventions-genai@main/docs/gen-ai/gen-ai-exceptions.md)
-- [opentelemetry.io/docs/specs/semconv/gen-ai/](https://opentelemetry.io/docs/specs/semconv/gen-ai/) (redirect stub confirming the repo migration)
-- [opentelemetry.io/docs/specs/semconv/general/naming/](https://opentelemetry.io/docs/specs/semconv/general/naming/) and [semantic-conventions/docs/general/naming.md](https://github.com/open-telemetry/semantic-conventions/blob/main/docs/general/naming.md) (extension/namespacing rules)
-- [OpenTelemetry Python Contrib: instrumentation-genai util docs](https://opentelemetry-python-contrib.readthedocs.io/en/latest/instrumentation-genai/util.html) (`OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT` values)
-- [New Relic: Traces for AI Agents with OTel and Strands SDK](https://newrelic.com/blog/observability/traces-for-ai-agents-otel-strand) (ecosystem adoption evidence, env var corroboration)
-- [Traceloop: GenAI Semantic Conventions docs](https://www.traceloop.com/docs/openllmetry/contributing/semantic-conventions) (OpenLLMetry's distinct convention set)
-- `backend/app/models/trace.py` (this repo's current pin and mapping, cited throughout as the object of comparison)
+- `OTEL_SPEC_VERSION = "1.30.0-experimental"` **is stale**. Current latest tagged version of the (now GenAI-content-free) `semantic-conventions` repo is `v1.44.0` (2026-08-04); GenAI content itself no longer lives in a versioned/tagged location at all (it moved to `semantic-conventions-genai`, which has no tags as of 2026-08-17).
+- **None of `OTEL_ACTION_MAP`'s three `gen_ai.*`-prefixed keys are, or ever were, valid current semconv span names.** `gen_ai.invoke_agent`, `gen_ai.execute_tool`, and `gen_ai.chat` do not appear anywhere in the current spec as span names or attribute values; the real mechanism is the unprefixed `gen_ai.operation.name` attribute (values `invoke_agent`, `execute_tool`, `chat`) combined with a separately-templated span-name string (`invoke_agent {agent_name}`, `execute_tool {tool_name}`, `{operation} {model}`).
+- `"human.review": "human_review"` has no counterpart in GenAI semconv at all — it is a from-scratch, repo-specific convention, which is fine, but should not sit in the same table as if it were spec-derived without a comment saying so.
