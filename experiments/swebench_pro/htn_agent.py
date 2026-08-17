@@ -923,6 +923,37 @@ class HTNAgent:
         return False
 
     @staticmethod
+    def _future_competitor(nodes: list[Node], m: "Node") -> bool:
+        """Whether `m` is a genuine future draw on the step budget even
+        while it isn't ready yet -- the divisor `_schedule` uses to give a
+        currently-running node a fair (not starved, not unopposed) share.
+
+        A node blocked only by unmet SOFT (`deps`) predecessors becomes
+        ready as soon as those predecessors settle, WIN OR LOSE (see
+        `_dep_met`'s docstring) -- it is a guaranteed future competitor, so
+        it must count even before it's ready; excluding it left a
+        deps-only downstream node starved of any budget once its failing
+        predecessor finally exhausted every attempt (regression case:
+        `test_htn_node_telemetry.py`'s 3-node chain, node 2 stuck at
+        attempts==0 because node 1 alone, uncontested, was free to spend
+        the whole run on itself).
+
+        A node blocked by an unmet HARD (`requires`) predecessor that has
+        NOT YET succeeded is different: it can only ever run if that
+        predecessor succeeds, an outcome that is still unknown. Counting
+        it reserves real budget for a node that may never get to spend it
+        -- measured live on ansible-f327e65d/gravitational-teleport/
+        tutao-tutanota, where node 1's `requires`-blocked dependents were
+        counted as competitors throughout node 1's own retries, throttling
+        every attempt down to 3-4 steps and burning all of MAX_METHODS+1
+        on starvation rather than a real shot at finishing. Once that
+        predecessor actually settles, this resolves itself either way: on
+        success the dependent becomes `_dep_met` and joins the divisor
+        honestly; on failure `_block_dependents` marks it `blocked`,
+        dropping it out of consideration entirely."""
+        return all(HTNAgent._satisfied(nodes, d) for d in m.requires)
+
+    @staticmethod
     def _dep_met(nodes: list[Node], dependent: Node, dep_id: int) -> bool:
         """Whether ONE of `dependent`'s deps is met, given the soft/hard
         split (see Node.requires's docstring).
@@ -1175,8 +1206,9 @@ class HTNAgent:
         # AugmentedHTNAgent._schedule, which reserves per-round instead).
         node_cap = self._per_subgoal * (self._max_methods + 1)
         while True:
-            ready = next((n for n in nodes if n.status == "pending"
-                          and all(self._dep_met(nodes, n, d) for d in n.deps)), None)
+            ready_all = [n for n in nodes if n.status == "pending"
+                        and all(self._dep_met(nodes, n, d) for d in n.deps)]
+            ready = ready_all[0] if ready_all else None
             if ready is None:
                 return "finished"
             # FAIR SHARE -- see AugmentedHTNAgent._schedule's longer comment
@@ -1188,7 +1220,15 @@ class HTNAgent:
             # topology does not. `max(1, ...)` guarantees a non-zero ask
             # while real budget remains; a too-small resulting grant is
             # left to `_run_turn`'s own MIN_VIABLE_SUBGOAL_BUDGET decline.
-            never_run = [n for n in nodes if n.attempts == 0 and n.status == "pending"]
+            #
+            # Filtered by _future_competitor, NOT plain status=="pending"
+            # -- see its docstring and AugmentedHTNAgent._schedule's
+            # matching comment: a node blocked on an unresolved HARD
+            # requires cannot possibly compete this round or any round
+            # before its predecessor settles, and counting it anyway
+            # starves the node that IS running for a phantom competitor.
+            never_run = [n for n in nodes if n.attempts == 0 and n.status == "pending"
+                        and self._future_competitor(nodes, n)]
             # A first attempt is already counted in never_run (it's pending
             # with attempts==0, so it's a member of its own list). A retry
             # is NOT in never_run (attempts>=1), so it needs its own "+1"
@@ -1661,7 +1701,24 @@ class AugmentedHTNAgent(HTNAgent):
             # nothing here depends on this reservation loop staying
             # single-threaded (documented as such above, but this makes
             # the safety property survive a future refactor).
-            never_run = [m for m in nodes if m.attempts == 0 and m.status == "pending"]
+            # Filtered by _future_competitor, NOT plain status=="pending"
+            # over the whole graph: a node blocked only by unmet SOFT deps
+            # is a guaranteed future competitor (it becomes ready once its
+            # predecessor settles, win or lose) and must still count, but
+            # a node blocked by an unresolved HARD requires cannot
+            # possibly compete until that predecessor actually succeeds --
+            # counting it anyway starves whoever IS running for a phantom
+            # competitor. Measured live on ansible-f327e65d,
+            # gravitational-teleport and tutao-tutanota: node 1 alone in
+            # ready_batch, divided by 2-3 requires-blocked siblings that
+            # could not run until node 1 itself succeeded, so each retry
+            # got ~3-4 steps instead of per_node_cap=9 and burned all
+            # MAX_METHODS+1 attempts on starvation (19-23 of a 72 step
+            # budget) rather than a real shot at finishing. See
+            # _future_competitor's docstring for the full split and the
+            # regression case (a deps-only chain) it also has to satisfy.
+            never_run = [m for m in nodes if m.attempts == 0 and m.status == "pending"
+                        and self._future_competitor(nodes, m)]
             reservations: dict[int, int] = {}
             for n in batch:
                 if budget.remaining() <= 0:
