@@ -81,6 +81,17 @@ A locked architecture specification for milestone 1 — a general experiential +
   defaults; field-level encryption for redaction-adjacent cases is cross-referenced to ticket 18,
   not decided here. If a provider is adopted later, identity only — `access.py` stays the sole
   authorization authority, never Supabase RLS.
+- [Migration mechanism and data migration](issues/17-migration-mechanism.md) — keep raw SQL, add
+  a `schema_migrations` ledger + one documented runner script + a CI test diffing code against
+  schema (the two known drifts, `embedding_joint` and missing `public_generated`, were both
+  schema-vs-code consistency failures a test would have caught — not something a migration
+  framework's revision tracking addresses, and Alembic's real value needs SQLAlchemy models this
+  stack doesn't have). Seed data split out of the DDL sequence. No migration needed for
+  `episodes`/`traces` (inherited from ticket 06, untouched), `edges`, or `knowledge_nodes`'
+  existing node types — new shapes arrive alongside old ones. `claim`-type rows blocked on
+  ticket 03's still-open answer, not invented here. Method-library rows becoming procedures get a
+  fresh UUID plus an explicit link edge, never a reused id. SWE-bench corpus stays exactly where
+  it is, untouched — out of scope per this map's own locked decision.
 
 ## Not yet specified
 
