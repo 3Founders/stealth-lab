@@ -63,6 +63,15 @@ A locked architecture specification for milestone 1 — a general experiential +
   span parent-child nesting does not model this repo's episode/trace/event grouping;
   evidence points to a hybrid derive-for-LLM-shaped-fields/diverge-for-session-shaped-fields
   outcome, left for ticket 06 to decide.
+- [Canonical trace model](issues/06-canonical-trace-model.md) — three new/existing tables, not
+  a rework of `traces`: a new `trace_events` table (atomic events) and a new trace-header table
+  sit alongside the untouched `traces` (kept exactly as-is for its real consumers,
+  `triggers.py`/`layer2.py`); `episodes` becomes the real episode-assembly target. Trace is a
+  grouping *below* episode (one turn/subagent run), not identical to it — spec.md's separate
+  `trace_id`/`episode_id` fields and ticket 08's `gen_ai.conversation.id` findings both point
+  the same way. Hybrid OTel-semconv adoption per ticket 08's own recommendation: derive for
+  LLM/tool-call-shaped fields, diverge (own namespace) for Identity/Intent/Environment fields.
+  Existing `task_node_id` FK on `traces` untouched; the new tables simply don't carry it.
 
 ## Not yet specified
 
