@@ -107,6 +107,22 @@ A locked architecture specification for milestone 1 — a general experiential +
   which owns the actual claims schema. Vault encryption only helps if its key is stored separately
   from the shared `DATABASE_URL`. Sampling means whole-episode accept/reject, a real trade-off,
   not a solved problem — whatever episodes are dropped are lost entirely.
+- [Ingestion pipeline shape](issues/16-ingestion-pipeline-shape.md) — a Postgres job table polled
+  with `SELECT ... FOR UPDATE SKIP LOCKED` by an in-process asyncio worker: a broker contradicts
+  local-first, and in-memory-only repeats `InMemoryTaskStore`'s known restart/replica limitation
+  in the one place spec.md's replayability requirement makes it unacceptable. Collector appends to
+  a local file rather than POSTing per event — hooks are best-effort with tight timeouts (30s on
+  `UserPromptSubmit`, 10s on `MessageDisplay`) and silent drops, so network latency must stay out
+  of the user's editing loop; the local append is also where ticket 18's client-side redaction
+  runs. Idempotency reuses `/v1/traces`' per-record + `ON CONFLICT DO NOTHING` pattern at raw
+  persistence only, with a collector-computed composite key (hooks carry no native event ID);
+  downstream stages key by *job*, which is what distinguishes replay from duplicate delivery.
+  Bounded local file, drop-oldest, with a recorded drop counter — never block, never unbounded.
+  Ordering is assembly-time only. Honest limit: nothing structurally prevents calling the compiler
+  on a request path (`admin.py:92-94` proves discipline alone fails) — a job-row-only entry point
+  is a speed bump, not a guarantee. Also found while verifying: `main.py:27`'s pool and
+  `session.py`'s `close_pool()` operate on different objects, which an in-process worker would
+  inherit.
 
 ## Not yet specified
 
