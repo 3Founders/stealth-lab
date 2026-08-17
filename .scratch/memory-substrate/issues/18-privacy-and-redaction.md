@@ -1,7 +1,7 @@
 # Privacy and redaction
 
 Type: grilling
-Status:
+Status: claimed
 Blocked by: 06, 09
 
 ## Question
