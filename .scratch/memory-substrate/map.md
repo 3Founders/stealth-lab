@@ -72,6 +72,15 @@ A locked architecture specification for milestone 1 — a general experiential +
   the same way. Hybrid OTel-semconv adoption per ticket 08's own recommendation: derive for
   LLM/tool-call-shaped fields, diverge (own namespace) for Identity/Intent/Environment fields.
   Existing `task_node_id` FK on `traces` untouched; the new tables simply don't carry it.
+- [Isolation and auth posture](issues/09-isolation-and-auth.md) — stay local-first,
+  single/few-trusted-owner for milestone 1; do not adopt Supabase Auth or WorkOS yet, consistent
+  with `mcp_server/server.py`'s own already-shipped single-tenant, loopback-only posture. Every
+  new table gets `owner_id` from row one and every new query goes through `access.py` — the
+  `tenant_id` cautionary tale, not repeated. Project isolation is its own axis (a `project_id`
+  column), not folded into episode. Blanket encryption is already covered by Supabase's platform
+  defaults; field-level encryption for redaction-adjacent cases is cross-referenced to ticket 18,
+  not decided here. If a provider is adopted later, identity only — `access.py` stays the sole
+  authorization authority, never Supabase RLS.
 
 ## Not yet specified
 
