@@ -63,47 +63,50 @@ A locked architecture specification for milestone 1 — a general experiential +
   span parent-child nesting does not model this repo's episode/trace/event grouping;
   evidence points to a hybrid derive-for-LLM-shaped-fields/diverge-for-session-shaped-fields
   outcome, left for ticket 06 to decide.
-- [Canonical trace model](issues/06-canonical-trace-model.md) — three new/existing tables, not
-  a rework of `traces`: a new `trace_events` table (atomic events) and a new trace-header table
-  sit alongside the untouched `traces` (kept exactly as-is for its real consumers,
-  `triggers.py`/`layer2.py`); `episodes` becomes the real episode-assembly target. Trace is a
-  grouping *below* episode (one turn/subagent run), not identical to it — spec.md's separate
-  `trace_id`/`episode_id` fields and ticket 08's `gen_ai.conversation.id` findings both point
-  the same way. Hybrid OTel-semconv adoption per ticket 08's own recommendation: derive for
-  LLM/tool-call-shaped fields, diverge (own namespace) for Identity/Intent/Environment fields.
-  Existing `task_node_id` FK on `traces` untouched; the new tables simply don't carry it.
+- [Canonical trace model](issues/06-canonical-trace-model.md) — two new tables (`trace_events`,
+  a trace-header table), not a rework of `traces`, but *not* because `traces` is event-shaped —
+  reviewed and corrected: `traces` already has `parent_trace_id` (a real, live causal tree) and
+  is span-shaped, closer to spec.md's TRACE concept than first claimed. The real reasons are its
+  `NOT NULL` `task_node_id` FK (confirmed the most common real rejection cause in `ingest.py`),
+  its 3-value `action_type` CHECK vs. Claude Code's 31 real events, and its `NOT NULL` outcome
+  CHECK — all three would have to weaken for existing consumers (`triggers.py`, `layer2.py`) to
+  accommodate the new shape. New tables carry both `owner_id` and `visibility` (see ticket 09
+  correction) from row one — `traces`/`episodes` currently have neither column, a real gap
+  independent of this decision. Hybrid OTel-semconv adoption per ticket 08. Existing `task_node_id`
+  FK on `traces` untouched.
 - [Isolation and auth posture](issues/09-isolation-and-auth.md) — stay local-first,
   single/few-trusted-owner for milestone 1; do not adopt Supabase Auth or WorkOS yet, consistent
-  with `mcp_server/server.py`'s own already-shipped single-tenant, loopback-only posture. Every
-  new table gets `owner_id` from row one and every new query goes through `access.py` — the
-  `tenant_id` cautionary tale, not repeated. Project isolation is its own axis (a `project_id`
-  column), not folded into episode. Blanket encryption is already covered by Supabase's platform
-  defaults; field-level encryption for redaction-adjacent cases is cross-referenced to ticket 18,
-  not decided here. If a provider is adopted later, identity only — `access.py` stays the sole
-  authorization authority, never Supabase RLS.
+  with `mcp_server/server.py`'s own already-shipped single-tenant, loopback-only posture.
+  Corrected on review: new tables need **both** `owner_id` and `visibility` (not `owner_id`
+  alone — `access.py`'s `visibility_predicate()` requires `visibility` in every non-unrestricted
+  branch; `owner_id`-only would recreate the exact `embedding_joint` ghost-column failure shape
+  ticket 17 warns about). `db/03_access.sql` already adds the pair together on four tables;
+  `traces`/`episodes` currently have neither. Project isolation is its own axis. Encryption
+  cross-referenced to ticket 18. If a provider is adopted later, identity only — `access.py`
+  stays the sole authorization authority, never Supabase RLS.
 - [Migration mechanism and data migration](issues/17-migration-mechanism.md) — keep raw SQL, add
   a `schema_migrations` ledger + one documented runner script + a CI test diffing code against
-  schema (the two known drifts, `embedding_joint` and missing `public_generated`, were both
-  schema-vs-code consistency failures a test would have caught — not something a migration
-  framework's revision tracking addresses, and Alembic's real value needs SQLAlchemy models this
-  stack doesn't have). Seed data split out of the DDL sequence. No migration needed for
-  `episodes`/`traces` (inherited from ticket 06, untouched), `edges`, or `knowledge_nodes`'
-  existing node types — new shapes arrive alongside old ones. `claim`-type rows blocked on
-  ticket 03's still-open answer, not invented here. Method-library rows becoming procedures get a
-  fresh UUID plus an explicit link edge, never a reused id. SWE-bench corpus stays exactly where
-  it is, untouched — out of scope per this map's own locked decision.
+  schema (the two known drifts were schema-vs-code consistency failures a test would have caught,
+  not something a migration framework addresses). Sharpened on review: `embedding_joint` isn't
+  just unreachable at query time — `graph_ingest.py` writes it and `compare_embeddings.py` reads
+  it, meaning Stage 2's real, published result (p=0.0066, n=400) was produced through a column no
+  version-controlled DDL creates; the CI check must diff against the *live* database, not just
+  the DDL files, or it validates the drift instead of catching it. No migration needed for
+  `episodes`/`traces`/`edges`/existing `knowledge_nodes` types. `claim`-type rows blocked on
+  ticket 03. Method-library rows becoming procedures get a fresh UUID plus an explicit link edge.
+  SWE-bench corpus stays untouched, out of scope.
 - [Privacy and redaction](issues/18-privacy-and-redaction.md) — redaction happens client-side at
-  the collector, before transmission (creates a real dependency on ticket 16, still open — the
-  collector must be able to run it), on the parsed JSON structure not raw text. Honestly a
-  best-effort floor for *detected* patterns, not a guarantee (unlike `GENERATIVE_OP_TYPES`'s real
-  guarantee) — the hard local-only default is the actual backstop this falls back on, not an
-  independent consideration. Path/tool exclusion as two separate configurable axes with real
-  shipped defaults. Deletion tombstones the episode (`t_invalid`) and flags dependent claims via
-  `truth_state`, not delete-cascade; downstream procedure consequences deferred to ticket 13 as
-  an inference, not a citation. Field-level Vault encryption only meaningfully adds protection if
-  its key is stored separately from the existing shared `DATABASE_URL` — otherwise a stolen
-  laptop defeats both together. Sampling means whole-episode accept/reject, never within-episode
-  — a real trade-off (dropped episodes are lost entirely), not a solved problem.
+  the collector, before transmission (real dependency on ticket 16), on the parsed JSON structure
+  not raw text — a best-effort floor for *detected* patterns only, never a guarantee; the hard
+  local-only default is the real backstop. Path/tool exclusion as two configurable axes with real
+  shipped defaults. Corrected on review: deletion tombstoning `episodes` is a genuine **schema
+  addition** (`episodes` has no `t_invalid` today), and `episode_links` is currently declared
+  `ON DELETE CASCADE` — the opposite behavior, needing an explicit fix, not an automatic
+  consequence of adding a column. `truth_state` is not a column — it's a JSONB key inside
+  `knowledge_nodes.properties` (`claims.py:131`), with real query-cost implications for ticket 03,
+  which owns the actual claims schema. Vault encryption only helps if its key is stored separately
+  from the shared `DATABASE_URL`. Sampling means whole-episode accept/reject, a real trade-off,
+  not a solved problem — whatever episodes are dropped are lost entirely.
 
 ## Not yet specified
 

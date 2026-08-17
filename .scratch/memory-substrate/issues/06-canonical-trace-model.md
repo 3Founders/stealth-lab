@@ -64,11 +64,43 @@ different shapes is separate tables (`knowledge_nodes`/`task_nodes`/`edges`/`epi
 tables, not one with a type column) — `edges`' single-table-with-discriminator design works
 *because* every edge type shares identical columns, which isn't true here.
 
-**Naming note, flagged rather than silently resolved:** the *existing* `traces` table's row-level
-meaning (one flat span/outcome record) is actually closer to spec.md's **EVENT** concept than to
-spec.md's **TRACE** concept (a causal history/container). Worth an explicit decision — separate
-from this ticket — on whether that's confusing enough to warrant a rename, or left as-is since
-`traces` keeps serving its own unrelated purpose below.
+**Correction (added on review — the original version of this answer got this wrong).** An earlier
+draft of this ticket claimed the existing `traces` table's row-level meaning was "closer to
+spec.md's EVENT concept than to spec.md's TRACE concept (a causal history/container)," and flagged
+a possible naming collision on that basis. That was **factually wrong** and the naming-collision
+concern built on it is withdrawn. `traces` has `parent_trace_id TEXT` (`db/01_ontology.sql:113`),
+a real, live self-referential tree — populated by `api/ingest.py:67-72` and modeled in
+`models/trace.py:40`. Together with `action_type IN ('invoke_agent','execute_tool','human_review')`
+(OTel GenAI span kinds, per ticket 08), `traces` is span-shaped *with* causal nesting, i.e.
+structurally much closer to spec.md's TRACE concept than the original claim allowed.
+
+Because of that error, the original answer never seriously tested the alternative it should have:
+**is a new table needed at all, or does `traces` just need extra columns?** Tested properly now,
+a separate table is still right, but for three concrete, independently sufficient reasons rather
+than a shape argument:
+
+1. **`task_node_id UUID NOT NULL REFERENCES task_nodes(id)`** — not a theoretical objection.
+   `api/ingest.py`'s own error-handling comment states a `task_node_id` FK violation is the most
+   common rejection cause: "the customer sent a trace for a node we haven't onboarded." A Claude
+   Code session on a laptop has no pre-existing company task node. Making the column nullable
+   would weaken the guarantee for the existing consumers that rely on it.
+2. **`action_type TEXT CHECK (action_type IN ('invoke_agent','execute_tool','human_review'))`** —
+   a hard three-value CHECK. Claude Code has 31 real event types (ticket 07); `SessionStart`,
+   `PreCompact`, `PermissionDenied`, `SubagentStop` and most others map to none of them. Either
+   the CHECK is dropped (weakening it for existing consumers) or every Claude Code event is
+   crushed into three misleading buckets, destroying exactly the distinctions episode assembly
+   needs. `OTEL_ACTION_MAP` (`models/trace.py:23-28`) has the same limit — four mappings, all
+   LLM-call-shaped — and is structurally incapable of covering Claude Code's vocabulary
+   regardless of the version staleness ticket 08 separately identified.
+3. **`outcome TEXT NOT NULL CHECK (...)`** — `NOT NULL`, three values. Most Claude Code events
+   have no outcome at all (`SessionStart`, `UserPromptSubmit`, `CwdChanged`); forcing one means
+   fabricating data.
+
+All three constraints exist *because* `traces` is purpose-built for company-task-execution
+monitoring, and its two real consumers depend on those guarantees holding. Retrofitting would mean
+weakening all three for existing consumers to accommodate a fundamentally different ingestion
+shape — which is exactly the "what breaks" tradeoff the ticket asked to be judged on. Two tables,
+two purposes, no weakening.
 
 **Existing `traces` table: untouched, including its `task_node_id` FK.** It keeps serving its
 real, current consumers exactly as they are:
@@ -117,3 +149,17 @@ trace. "One turn" is the OTel-aligned default, but "one subagent's complete run"
 defensible and not always the same boundary (a single turn can spawn a subagent whose own work
 might deserve its own trace). Treating this the same way spec.md treats episode boundaries itself
 — multiple heuristics plus later semantic segmentation, not one rigid rule now.
+**Access-control columns on the new tables (added on review, cross-referencing ticket 09):** the
+new `trace_events` and trace-header tables must carry **both** `owner_id TEXT` *and*
+`visibility visibility_level NOT NULL DEFAULT 'public'`, not `owner_id` alone.
+`access.py:83-93`'s `visibility_predicate()` emits `visibility = 'public'` in every non-
+unrestricted branch, so a table with `owner_id` but no `visibility` column produces SQL
+referencing a column that does not exist — the same failure shape as the `embedding_joint` ghost
+column ticket 17 identifies. `db/03_access.sql:28-43` adds the two together, as a pair, on all
+four tables it covers; the new tables should follow that established pattern exactly.
+
+Worth noting for whoever implements this: `traces` and `episodes` currently have **neither**
+column — `03_access.sql` covers only `knowledge_nodes`, `task_nodes`, `edges` and `debates`. The
+two existing tables closest to this effort's subject matter are the ones presently outside the
+access-control system entirely. That is not a blocker for this ticket's decision (the new tables
+carry the columns from row one), but it is a real, previously-unstated gap in the existing schema.

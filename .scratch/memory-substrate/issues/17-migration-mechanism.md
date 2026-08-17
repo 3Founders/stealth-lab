@@ -122,3 +122,31 @@ entry is the pragmatic middle ground over real reversibility for every future fi
   experiment's fate is decided later, that is the right point to decide whether it needs its own
   database or an `owner_id` backfill — deciding it now inside this ticket would be scope creep
   past what is already locked.
+### Addendum (added on review) — the `embedding_joint` drift is worse than described
+
+Verified independently: `retrieval.py:89` accepts `embedding_joint` as a valid
+`embedding_column` value, and **no DDL file anywhere in `backend/db/` creates that column**
+(confirmed by grep across all 11 files). The ticket describes the consequence as "constructing a
+retriever with it passes validation and fails at query time," which is accurate but understates
+the scope, because the column is not merely *accepted* — it is actively *depended on* by real,
+running code outside `backend/`:
+
+- `experiments/swebench_pro/graph_ingest.py:343-365` (`--joint-embeddings`) issues
+  `UPDATE task_nodes SET embedding_joint = ...` and queries `WHERE ... embedding_joint IS NULL`.
+- `experiments/swebench_pro/compare_embeddings.py:103-141` reads it as one of two compared
+  columns, and Stage 2's headline result (joint beats split, sign test p=0.0066, n=400) was
+  measured through it.
+
+So a column that no version-controlled DDL creates is load-bearing for a produced experimental
+result. It must have been added by hand, out of band, on whichever database those runs used —
+which means the schema that produced a recorded result cannot be reconstructed from this
+repository. That is a stronger argument for the ledger + runner + CI-check package proposed above
+than the ticket's own framing implies: the failure is not only "a query errors later," it is
+"a result exists whose schema provenance is unrecoverable."
+
+It also sharpens what the CI check must actually compare. Checking `retrieval.py`'s accepted
+literals against `backend/db/*.sql` alone would still pass on a database where someone had added
+the column by hand. The check has to compare accepted literals against the **live database's**
+`information_schema.columns`, and separately assert that every column the live database has is
+creatable from a version-controlled DDL file — otherwise it validates the drift instead of
+catching it.

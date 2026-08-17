@@ -110,3 +110,33 @@ ticket's own instinct. If sampling survives at all, it should mean sampling whol
 honestly, this doesn't dissolve the underlying cost, only relocates it: whatever episodes get
 dropped are lost entirely, including potentially rare-but-important ones. A real trade-off, not
 a solved problem.
+### Addendum (added on review) — three corrections to the deletion answer above
+
+The deletion answer above is directionally right but described two mechanisms imprecisely, in
+ways that matter for whoever implements it.
+
+**1. `episodes` has no `t_invalid` column.** The answer says deletion should "tombstone the
+episode (`t_invalid`), `knowledge_update.py`'s own pattern," framed as reusing something that
+already exists. It does not exist on this table: `db/01_ontology.sql:83-91` gives `episodes` only
+`id`, `tenant_id`, `episode_type`, `content`, `content_ref`, `timestamp`, `metadata` — no
+bi-temporal columns at all. The bi-temporal pattern is real and well-established *elsewhere*
+(`knowledge_nodes`, `task_nodes`, `edges`), so adopting it here is reasonable and consistent —
+but it is a **schema addition**, not a reuse, and should be costed as one.
+
+**2. The existing schema is currently wired for the opposite behaviour.**
+`db/01_ontology.sql:93-95` declares `episode_links.episode_id ... REFERENCES episodes(id) ON
+DELETE CASCADE`. So a hard `DELETE` of an episode today silently removes its links, which is
+exactly the destroy-the-justification outcome the tombstone approach exists to prevent. Adopting
+tombstoning therefore means either dropping/altering that FK action or guaranteeing hard deletes
+never happen on this table — an explicit decision either way, not something that follows
+automatically from adding `t_invalid`.
+
+**3. `truth_state` is not a column.** The answer refers to "`claims.py`'s `truth_state` axis" as
+though it were first-class. It is a key inside `properties` JSONB on `knowledge_nodes` — see
+`claims.py:131`, which flips it with
+`properties || '{"truth_state": "OUT"}'::jsonb`. There is no `claims` table in any DDL file. The
+orthogonality the answer relies on (deleted-in-world-time vs. no-longer-believed) is genuinely
+real and already implemented, but flagging dependent claims means a JSONB property update, not a
+column update — and any query filtering on it pays JSONB-access cost rather than using a plain
+indexed column. Whether that stays acceptable at trace-ingestion volume is a real question for
+**ticket 03 (Claim representation)**, which owns this decision and is still open.
