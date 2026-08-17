@@ -1,7 +1,7 @@
 # Canonical trace model
 
 Type: grilling
-Status:
+Status: claimed
 Blocked by: 01
 
 ## Question
