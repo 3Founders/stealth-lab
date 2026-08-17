@@ -1,7 +1,7 @@
 # Migration mechanism and data migration
 
 Type: grilling
-Status:
+Status: claimed
 Blocked by: 01
 
 ## Question
