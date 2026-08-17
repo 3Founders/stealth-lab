@@ -92,6 +92,18 @@ A locked architecture specification for milestone 1 — a general experiential +
   ticket 03's still-open answer, not invented here. Method-library rows becoming procedures get a
   fresh UUID plus an explicit link edge, never a reused id. SWE-bench corpus stays exactly where
   it is, untouched — out of scope per this map's own locked decision.
+- [Privacy and redaction](issues/18-privacy-and-redaction.md) — redaction happens client-side at
+  the collector, before transmission (creates a real dependency on ticket 16, still open — the
+  collector must be able to run it), on the parsed JSON structure not raw text. Honestly a
+  best-effort floor for *detected* patterns, not a guarantee (unlike `GENERATIVE_OP_TYPES`'s real
+  guarantee) — the hard local-only default is the actual backstop this falls back on, not an
+  independent consideration. Path/tool exclusion as two separate configurable axes with real
+  shipped defaults. Deletion tombstones the episode (`t_invalid`) and flags dependent claims via
+  `truth_state`, not delete-cascade; downstream procedure consequences deferred to ticket 13 as
+  an inference, not a citation. Field-level Vault encryption only meaningfully adds protection if
+  its key is stored separately from the existing shared `DATABASE_URL` — otherwise a stolen
+  laptop defeats both together. Sampling means whole-episode accept/reject, never within-episode
+  — a real trade-off (dropped episodes are lost entirely), not a solved problem.
 
 ## Not yet specified
 
