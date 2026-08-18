@@ -18,12 +18,12 @@ protocol: `TESTING_PLAN.md`. Dense technical writeup with real code/math:
 # 1. Dependencies
 pip install -r requirements.txt
 
-# 2. Database — Postgres 15+ with pgvector (Supabase works). Run in order:
-psql -d your_db -f db/01_ontology.sql
-psql -d your_db -f db/02_loop.sql
-psql -d your_db -f db/03_access.sql
-psql -d your_db -f db/04_governance.sql
-psql -d your_db -f db/05_decomposition.sql
+# 2. Database — Postgres 15+ with pgvector (Supabase works). Single entry
+# point (ticket 17, memory-substrate map: replaces the previous by-hand
+# psql loop, which stopped at 05 and never mentioned 06-11):
+export DATABASE_URL=postgresql://...   # your real connection string
+python3 scripts/migrate.py             # applies all pending migrations + seeds, in order
+python3 scripts/migrate.py --status    # see what's applied vs. pending, without running anything
 
 # 3. Config
 cp .env.example .env

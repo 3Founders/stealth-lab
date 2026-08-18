@@ -203,7 +203,8 @@ Postgres 15+ with pgvector. Schema files are idempotent and run in order.
 
 ```bash
 createdb workflow_db
-for f in db/0*.sql; do psql -d workflow_db -f "$f"; done
+cd backend
+DATABASE_URL=postgresql://localhost/workflow_db python3 scripts/migrate.py
 ```
 
 ```bash

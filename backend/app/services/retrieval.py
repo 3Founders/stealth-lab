@@ -77,6 +77,16 @@ class RetrievalResult:
         return "\n".join(lines)
 
 
+VALID_EMBEDDING_COLUMNS: tuple[str, ...] = ("embedding", "embedding_joint")
+"""
+The real, single source of truth for what embedding_column may be. Hoisted
+out of HybridRetriever.__init__'s inline tuple literal (ticket 17,
+memory-substrate map): the CI drift check (tests/test_schema_drift.py)
+imports this exact constant rather than re-hardcoding the list a second
+time, which would recreate the drift risk this check exists to catch.
+"""
+
+
 class HybridRetriever:
     def __init__(
         self,
@@ -86,9 +96,9 @@ class HybridRetriever:
         embedding_column: str = "embedding",
         tables: tuple[str, ...] = ("task_nodes", "knowledge_nodes"),
     ):
-        if embedding_column not in ("embedding", "embedding_joint"):
+        if embedding_column not in VALID_EMBEDDING_COLUMNS:
             raise ValueError(
-                f"embedding_column must be 'embedding' or 'embedding_joint', "
+                f"embedding_column must be one of {VALID_EMBEDDING_COLUMNS}, "
                 f"got {embedding_column!r}"
             )
         self._pool = pool

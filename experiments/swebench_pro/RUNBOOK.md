@@ -63,13 +63,12 @@ docker run -d --name stealthlab-pg \
 docker exec stealthlab-pg psql -U postgres -c "CREATE DATABASE stealthlab_swebench;"
 ```
 
-Then apply the schema (idempotent — safe to re-run):
+Then apply the schema (safe to re-run — the migration runner has its own
+ledger, ticket 17/memory-substrate map):
 
 ```bash
 cd backend
-for f in db/0*.sql; do
-  docker exec -i stealthlab-pg psql -U postgres -d stealthlab_swebench -f - < "$f"
-done
+DATABASE_URL=postgresql://postgres:stealthlab@localhost:5433/stealthlab_swebench python3 scripts/migrate.py
 ```
 
 Confirm it's actually up before continuing — `docker ps --filter

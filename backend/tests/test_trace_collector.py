@@ -1,0 +1,122 @@
+import json
+from pathlib import Path
+
+import pytest
+
+from app.services.trace_collector import append_event, compute_dedup_key, read_drop_count
+
+
+def test_dedup_key_is_deterministic_for_identical_inputs():
+    key1 = compute_dedup_key("sess1", "PostToolUse", 5, {"a": 1})
+    key2 = compute_dedup_key("sess1", "PostToolUse", 5, {"a": 1})
+    assert key1 == key2
+
+
+def test_dedup_key_differs_for_different_sequence():
+    key1 = compute_dedup_key("sess1", "PostToolUse", 5, {"a": 1})
+    key2 = compute_dedup_key("sess1", "PostToolUse", 6, {"a": 1})
+    assert key1 != key2
+
+
+def test_dedup_key_differs_for_different_session():
+    key1 = compute_dedup_key("sess1", "PostToolUse", 5, {"a": 1})
+    key2 = compute_dedup_key("sess2", "PostToolUse", 5, {"a": 1})
+    assert key1 != key2
+
+
+def test_dedup_key_is_stable_regardless_of_dict_key_order():
+    """Real, meaningful case: json.dumps with sort_keys must make this
+    true, or the same logical payload could produce two different keys
+    depending on how the caller happened to construct the dict."""
+    key1 = compute_dedup_key("sess1", "PostToolUse", 5, {"a": 1, "b": 2})
+    key2 = compute_dedup_key("sess1", "PostToolUse", 5, {"b": 2, "a": 1})
+    assert key1 == key2
+
+
+def test_append_writes_a_real_readable_line(tmp_path: Path):
+    f = tmp_path / "events.jsonl"
+    record = append_event(
+        {"event_type": "PostToolUse", "tool_output": {"stdout": "ok"}},
+        f, session_id="sess1", event_type="PostToolUse", sequence=1,
+    )
+    assert f.exists()
+    lines = f.read_text().splitlines()
+    assert len(lines) == 2  # header + 1 record
+    parsed = json.loads(lines[1])
+    assert parsed["dedup_key"] == record["dedup_key"]
+    assert parsed["session_id"] == "sess1"
+
+
+def test_append_redacts_before_writing_to_disk(tmp_path: Path):
+    """Real, important case: the file on disk must never contain the raw
+    secret -- confirms the collector actually calls redaction, not just
+    that redaction exists as a separately-tested unit."""
+    f = tmp_path / "events.jsonl"
+    append_event(
+        {"event_type": "PostToolUse", "tool_output": {"stdout": "AKIAIOSFODNN7EXAMPLE"}},
+        f, session_id="sess1", event_type="PostToolUse", sequence=1,
+    )
+    raw_file_content = f.read_text()
+    assert "AKIAIOSFODNN7EXAMPLE" not in raw_file_content
+    assert "[REDACTED:aws_access_key]" in raw_file_content
+
+
+def test_multiple_appends_accumulate_in_order(tmp_path: Path):
+    f = tmp_path / "events.jsonl"
+    for i in range(5):
+        append_event(
+            {"event_type": "PostToolUse", "n": i},
+            f, session_id="sess1", event_type="PostToolUse", sequence=i,
+        )
+    lines = f.read_text().splitlines()
+    assert len(lines) == 6  # header + 5 records
+    seqs = [json.loads(l)["sequence"] for l in lines[1:]]
+    assert seqs == [0, 1, 2, 3, 4]
+
+
+def test_bounded_file_drops_oldest_when_over_budget(tmp_path: Path):
+    f = tmp_path / "events.jsonl"
+    max_lines = 10
+    for i in range(15):
+        append_event(
+            {"event_type": "PostToolUse", "n": i},
+            f, session_id="sess1", event_type="PostToolUse", sequence=i,
+            max_lines=max_lines,
+        )
+    lines = f.read_text().splitlines()
+    records = [json.loads(l) for l in lines[1:]]
+    # Real check: the SURVIVING records are the most RECENT ones, not an
+    # arbitrary subset -- confirms "drop oldest" is actually oldest-first,
+    # not just "drop something."
+    seqs = [r["sequence"] for r in records]
+    assert seqs == sorted(seqs)  # still in order
+    assert seqs[-1] == 14  # the most recent event always survives
+    assert 0 not in seqs  # the very first event was dropped
+
+
+def test_drop_count_is_recorded_and_readable(tmp_path: Path):
+    f = tmp_path / "events.jsonl"
+    max_lines = 10
+    for i in range(15):
+        append_event(
+            {"event_type": "PostToolUse", "n": i},
+            f, session_id="sess1", event_type="PostToolUse", sequence=i,
+            max_lines=max_lines,
+        )
+    drop_count = read_drop_count(f)
+    assert drop_count > 0, "expected some real drops given 15 events into a 10-line budget"
+
+
+def test_no_drop_count_when_never_over_budget(tmp_path: Path):
+    f = tmp_path / "events.jsonl"
+    for i in range(3):
+        append_event(
+            {"event_type": "PostToolUse", "n": i},
+            f, session_id="sess1", event_type="PostToolUse", sequence=i,
+            max_lines=100,
+        )
+    assert read_drop_count(f) == 0
+
+
+def test_read_drop_count_on_nonexistent_file_is_zero(tmp_path: Path):
+    assert read_drop_count(tmp_path / "does_not_exist.jsonl") == 0

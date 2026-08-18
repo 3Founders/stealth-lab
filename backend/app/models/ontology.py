@@ -14,7 +14,15 @@ from uuid import UUID, uuid4
 
 from pydantic import BaseModel, Field
 
-ProvenanceSource = Literal["company_ingested", "company_debate", "prior_library"]
+ProvenanceSource = Literal[
+    "company_ingested", "company_debate", "prior_library", "public_generated"
+]
+"""
+Real fix (ticket 17, memory-substrate map): `public_generated` is written by
+`knowledge_update.py`'s apply_generated() (lines 124, 137, 163) and exists in
+the real DB enum, but was missing here -- hydrating those rows via
+from_row() raised. Confirmed via direct grep before this fix, not assumed.
+"""
 EdgeType = Literal[
     "REQUIRES", "PRODUCES", "TRIGGERED_BY", "SUPERSEDES",
     "VALIDATED_BY", "OWNS", "RESPONSIBLE_FOR",
