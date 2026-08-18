@@ -12,6 +12,8 @@ A locked architecture specification for milestone 1 — a general experiential +
 
 **Every session calls:** the `grilling` and `domain-modeling` skills. Research tickets call `research`; prototype tickets call `prototype`.
 
+**Standing reference:** [research/external-literature-review.md](research/external-literature-review.md) — an external literature review (agent memory architectures, TMS/belief revision, provenance graphs, procedural memory, retrieval, bitemporal modeling) gathered mid-effort. Not tied to one ticket; most load-bearing for 02, 03, 04, 05, 09, 10, 12, 13, 14, 18. Corroborates the map's existing direction rather than redirecting it — in particular, the "procedure = planner-neutral object + separate execution binding" pattern it documents (MemP, Voyager, Agent Workflow Memory) is the concrete literature grounding for the Procedure≠HTN invariant ticket 05 has to resolve.
+
 **Standing preferences for this effort:**
 
 - Cite exact existing files/classes/functions in every resolution. Do not invent existing functionality.
@@ -63,9 +65,76 @@ A locked architecture specification for milestone 1 — a general experiential +
   span parent-child nesting does not model this repo's episode/trace/event grouping;
   evidence points to a hybrid derive-for-LLM-shaped-fields/diverge-for-session-shaped-fields
   outcome, left for ticket 06 to decide.
+- [Canonical trace model](issues/06-canonical-trace-model.md) — three tables, not an extension
+  of `traces`: a new `trace_events` atomic-event table, a new trace-header table (name TBD)
+  rolling up one causally-connected execution, and the existing `episodes` table as the real
+  episode-assembly target — `traces` itself is left untouched, still serving `triggers.py`/
+  `eval/layer2.py` exactly as today. Raw payloads reuse `episodes.content_ref`'s existing
+  storage-pointer pattern. Event dedup uses a computed composite key (session_id + hook name +
+  payload hash), since ticket 07 found hooks carry no native event ID. Every `trace_events` row
+  stamps its own schema/extractor version, since ticket 08 found no provider supplies one.
+  OTel semconv: hybrid — derive naming for the LLM/tool-call-shaped slice, diverge under this
+  repo's own namespace (not `gen_ai.*`) for session-shaped fields with no semconv equivalent.
+- [Substrate/domain seam](issues/02-substrate-domain-seam.md) — a second domain is a design
+  constraint, not a scheduled build (no adapter gets built now). Representation mechanism:
+  uniform `domain TEXT` + `domain_payload JSONB` on every concept holding concrete
+  domain-shaped facts (episode, trace-header, `trace_events`, state, procedure), validated at
+  write time against a single `(concept, domain) → PydanticModel` registry in the service
+  layer — not a database constraint, no ORM/Alembic in this repo. Claim/observation/evidence/
+  procedure-execution stay fully generic, no domain split. This resolves ticket 06's
+  "own namespace, mechanism TBD" fields directly: they're `domain_payload` under
+  `domain='coding'`. Package boundary named now (`backend/app/services/coding/` for the 7
+  unambiguous files), physical move deferred as implementation work, not a further ticket.
+- [Claim representation](issues/03-claim-representation.md) — ratified `claims.py`'s existing
+  approach (`node_type='claim'` on `knowledge_nodes`), not a dedicated table: identical access
+  pattern to knowledge_nodes, and nothing produces a claim yet so this was a clean-slate call.
+  Fix carried with it: `capture_claim()` should set `embedding` (currently omitted, so claims
+  are invisible to retrieval today). `node_type` counter-pressure gets a real but narrowly-
+  scoped fix — a `NODE_TYPE_SCHEMAS` write-time registry for `claim` only, not retroactive to
+  the other 6 virtual types. Subject/predicate/object as three JSONB keys plus one expression
+  index, not real columns — no index exists on `properties`/`node_type` today regardless.
+  Observations (04) and procedures (05) aren't bound to the same representation, only to the
+  same test (shared access pattern vs. distinct shape/volume/lifecycle) that produced this
+  answer.
+- [Procedure representation](issues/05-procedure-representation.md) — dedicated `procedures`
+  table, resolving spec.md's forbidden TASK NODE/PROCEDURE collapse (today a procedure is
+  just a tagged `task_nodes` row). A stored plan is an **execution binding** *of* a procedure,
+  not the procedure itself — the concrete mechanism for Procedure≠HTN: `steps` is
+  planner-neutral, an HTN-specific binding (ticket 15) translates to a concrete DAG at
+  instantiation time. Parameterization: both a deterministic extractor (tool-call-argument
+  slot inference, no LLM) and an LLM-pass extractor get built, caller picks which runs;
+  `parameter_schema` stamps `extraction_method`/`extractor_version` per ticket 06's
+  versioned-extraction discipline. No blocking "measure reuse first" ticket — chicken-and-egg,
+  so `verification_stats` is baked in from day one instead. `hierarchy.py`/`subtask_reuse.py`
+  untouched (different concern). Existing `htn_method_library`-tagged `task_nodes` become
+  legacy candidate procedures, migrated by ticket 17 with a `migrated_from_task_node_id`
+  pointer. Versioning rides existing bitemporal + `SUPERSEDES` (procedures added as a valid
+  `edges` source/target table), not a new mechanism. `family_id` self-references `procedures`
+  itself (abstract family row, same table) — explicitly distinct from motifs (out of scope).
 
 ## Not yet specified
 
+- **The ATMS "assumption environment" gap.** `claims.py` currently asserts a claim
+  unconditionally; de Kleer's ATMS models a claim as believed only under an explicit
+  assumption set (`repo, commit, branch, dependency_lock_hash, ...`). Deliberately deferred by
+  ticket 03 since nothing produces a claim yet — no real usage pattern to design the shape
+  against. Resurface once ticket 04 (Observation layer) actually starts producing claims.
+- **`node_type` registry cleanup beyond `claim`.** Ticket 03 added a write-time schema
+  registry for `node_type='claim'` only. The other 6 existing virtual types (`failure_mode`,
+  `hierarchy_group`, `code_location`, `policy`, `policy_document`, `fact`) remain unvalidated
+  TEXT-tagged rows. Real cleanup, deliberately out of this ticket's scope — revisit once it's
+  clear which of those 6 are still live vs. dead weight.
+
+- **Trace-header naming and the exact trace-boundary rule** — ticket 06 deliberately left the
+  new trace-header table unnamed and treated "what starts a new trace" (one turn vs. one
+  subagent run) as a multi-heuristic question rather than settling it, the same way spec.md
+  treats episode boundaries. Sharpens into a ticket once episode assembly (ticket 11) is
+  worked, since the two boundary questions are coupled.
+- **The 6 mixed-classification services** (`agent_decision.py`, `agent_promotion.py`,
+  `agent_review_orchestrator.py`, `content_diff.py`, `execution.py`, `method_library.py`) —
+  ticket 02 deliberately left these unclassified against the coding/generic seam rather than
+  guess. May sharpen once ticket 05 (procedure representation) lands, since
+  `method_library.py` is central to that decision.
 - **Evidence as a first-class thing.** No evidence table exists today; citations are resolved at query time and never persisted. Whether evidence becomes its own record, an edge kind, or a property depends on how claim/observation/procedure representation land.
 - **Provenance/justification graph shape** — how "why do we believe this" is actually queried, and what makes it TMS-ready without being a TMS. Sharpens once claim and observation representations are fixed.
 - **Procedure execution records** — the shape of what every reuse writes back (procedure version, bound parameters, initial state, concrete plan, deviations, cost). Depends on the procedure model and the HTN relocation together.
