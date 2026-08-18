@@ -105,3 +105,30 @@ family is just another `procedures` row (flagged non-directly-executable via
 concrete leaves). Explicitly distinct from Behavioral Motifs (out of scope this milestone,
 per the map): a family is same-domain structural grouping; a motif is the later,
 cross-domain, hypothesis-only pattern.
+
+### Amendments (consistency pass, after tickets 09/13 landed)
+
+Two corrections found by auditing this ticket against later resolutions:
+
+**1. `procedures` must carry both `owner_id` and `visibility`.** This ticket's field list omitted
+them. [Ticket 09](09-isolation-and-auth.md) requires **every new table** to carry
+`owner_id TEXT` *and* `visibility visibility_level NOT NULL DEFAULT 'public'` — not one or the
+other, because `access.py::visibility_predicate()` references `visibility` in every
+non-unrestricted branch, so a table with `owner_id` alone produces broken SQL. `procedures` was
+specified with neither, which is the same class of schema/code drift as the `embedding_joint`
+ghost column ticket 17 warns about. Corrected: the table carries both.
+
+**2. `verification_stats` gains match cost and realised savings.**
+[Ticket 13](13-procedure-lifecycle-versioning.md) adopts Minton's utility formula as a retirement
+criterion orthogonal to failure:
+
+```
+utility(P) = (application_frequency × average_savings) − match_cost
+```
+
+A procedure can be entirely correct and still be net-negative, because matching it costs more
+than it saves — and nothing in the failure-driven lifecycle would ever catch that. Computing it
+requires `verification_stats` to record **match cost** and **realised savings** per execution,
+alongside the `attempts / successes / mean_steps / times_reused` this ticket originally specified
+(carried over from `method_library.py`). Same amendment pattern ticket 10 used on ticket 03:
+extending a field list this ticket defined, not reopening its representation decision.
