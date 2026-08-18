@@ -12,6 +12,17 @@ A locked architecture specification for milestone 1 — a general experiential +
 
 **Every session calls:** the `grilling` and `domain-modeling` skills. Research tickets call `research`; prototype tickets call `prototype`.
 
+**Research findings, all four briefs answered:** [research/answers1.md](research/answers1.md) (temporal fact representation → ticket 10, resolved), [answers2.md](research/answers2.md) (trace segmentation + semantic extraction → tickets 04, 11), [answers3.md](research/answers3.md) (reuse economics → tickets 12, 13, 15), [answers4.md](research/answers4.md) (retrieval + resource allocation → tickets 14, 15). Each open ticket carries a `## Research findings` section summarising what its own sub-questions came back with. Two things worth knowing before working any of them:
+
+1. **A cross-ticket contradiction that is only apparent.** Brief 3 says applicability *must* use a strict, non-compensatory filter cascade; Brief 4 says a strict cascade is an *antipattern* for retrieval. Both are right because they govern different things — **hard constraints filter, soft relevance signals fuse**. A violated precondition is a disqualification (ticket 12); a low structural-locality score is a weak signal (ticket 14). These two mechanisms must not be unified.
+2. **The utility problem is confirmed real and unaddressed by the LLM-agent field.** Minton's `utility = (application_frequency × average_savings) − match_cost` means a *correct* procedure can still be worth deleting because matching it costs more than it saves. The 2026 skill-library survey does not mention it or negative transfer at all. This adds a retirement criterion to ticket 13 orthogonal to any failure, requires `verification_stats` to record match cost and realised savings (ticket 05), and requires a matched no-transfer control arm to measure (ticket 12).
+
+Recurring caveat across all four briefs: **almost nothing is measured for LLM-coding-agent systems specifically** — findings are transferred from process mining, CBR, classical planning, IR, flaky-test practice and speedup learning, and each brief says so per-question. Treat numbers as calibration, not as validated constants.
+
+**Open research prompts + per-decision triage:** [research/research-prompts-open-questions.md](research/research-prompts-open-questions.md) — all 51 decisions across the 7 open tickets, each classified as externally-researchable (31), answerable from this repo alone (17), or needing this repo's own data (3), plus 4 consolidated Perplexity briefs covering the 31. **Before working any open ticket, check its sub-questions in that triage** — it tells you which parts of the ticket are worth researching versus just deciding, and names 12 specific prior-art leads a generic search misses (most importantly **the utility problem**, which is a named classical threat to the whole procedural-memory premise: stored plans can make a system net *slower* because match cost grows faster than planning savings).
+
+**Standing reference #2:** [research/external-literature-review-2-open-questions.md](research/external-literature-review-2-open-questions.md) — targets the 7 remaining open tickets specifically, and unlike review #1 it *changes* things: ticket 10 needs a materialization escape hatch (projection-by-query is only cheap for as-of-now queries); ticket 12's fail-open-vs-fail-closed question has a principled answer (fail closed, structured predicates not string tags); ticket 13 has near-exact prior art worth fetching; ticket 14 should likely defer reranking. Also flags that **five of the seven open questions have no directly applicable literature** — those are engineering judgement calls, and the affected tickets should say so rather than implying more grounding than exists. Citations relayed from a literature search, not independently verified — check before load-bearing use.
+
 **Standing reference:** [research/external-literature-review.md](research/external-literature-review.md) — an external literature review (agent memory architectures, TMS/belief revision, provenance graphs, procedural memory, retrieval, bitemporal modeling) gathered mid-effort. Not tied to one ticket; most load-bearing for 02, 03, 04, 05, 09, 10, 12, 13, 14, 18. Corroborates the map's existing direction rather than redirecting it — in particular, the "procedure = planner-neutral object + separate execution binding" pattern it documents (MemP, Voyager, Agent Workflow Memory) is the concrete literature grounding for the Procedure≠HTN invariant ticket 05 has to resolve.
 
 **Standing preferences for this effort:**
@@ -162,7 +173,133 @@ A locked architecture specification for milestone 1 — a general experiential +
   `session.py`'s `close_pool()` operate on different objects, which an in-process worker would
   inherit.
 
+- [State model](issues/10-state-model.md) — **no state table**: `state_before`/`state_after` are
+  one read-time projection over the claim graph evaluated at two timestamps, `state_delta` a set
+  difference computed on demand. Confirmed a recognized stance, not a novel bet — it is the
+  event-calculus frame axiom as a query, with Datomic as production precedent. Granularity and
+  domain-neutrality both dissolve (state is a function of scope+timestamp; claims are already
+  generic). Three corrections made against the research findings: (1) **GiST, not btree** — a
+  composite partial GiST expression index over `(properties->>'subject', tstzrange(t_valid,
+  t_invalid))` with `btree_gist`, requiring zero schema change, superseding an earlier btree
+  draft; (2) **no exclusion constraint** — it would make the contradiction case unrepresentable,
+  inverting the required preserve-both-and-mark behaviour; (3) **the ~100-250-events
+  materialization threshold does not transfer** — it exists because event sourcing replays O(n),
+  while this design does indexed containment lookup O(log n); XTDB's narrower warning about
+  full-history and temporal-range queries does stand, and neither is needed in milestone 1.
+  Closed-world assumption adopted (absence = empty result, no NULL sentinel), with a
+  non-foreclosing escape hatch: if "unknown" is ever needed it becomes an explicit status value,
+  never a NULL. **Adds `epistemic_status` (`observed` | `inferred`) to ticket 03's
+  `ClaimProperties`** — required because unifying durable belief with transient world-state
+  demands the two be distinguishable; this extends ticket 03's registry rather than reopening it,
+  and ticket 04 owns how the value is assigned. Artifact references are a typed union
+  (`GitSha | BlobUri | DbId`) naming their addressing scheme, not a bare string.
+- [Observation layer](issues/04-observation-layer.md) — dedicated `observations` table, diverging
+  from claims: observations are *immutable* (re-derived under a new extractor version, never
+  superseded) so bitemporal machinery goes unused, and they are the highest-volume object in the
+  system, which after ticket 10 made claims high-volume too would compound a risk rather than
+  share infrastructure. Source-event link is a dedicated `observation_events` join table (reverse
+  traversal is load-bearing for provenance); rejected extending polymorphic `edges` at the
+  system's highest write volume. Both extractors built, deterministic and model-based — and that
+  split **is** ticket 10's `epistemic_status` (`observed` / `inferred`), giving that field a
+  well-defined producer. Extraction version stamps components, not one hash. **No confidence field
+  at all**: raw logprobs are uncalibrated and verbalized confidence is uncorrelated with accuracy,
+  so storing a float would invite downstream code to trust it — consistent with the map's
+  standing preference that confidence is derived, never asserted.
+- [Episode assembly](issues/11-episode-assembly.md) — strict precedence with hierarchical nesting
+  (`prompt > subagent > commit/test > idle`); voting, union and intersection all rejected. Idle
+  gaps kept as the weakest signal with the threshold **fitted** (two-component Gaussian mixture on
+  log-scaled inter-event times, valley lands ~1h for developer workflows) rather than the
+  30-minute convention, which the literature calls "dodgy maths done on 1995 browsing behaviour" —
+  independently vindicating spec.md's refusal of a single timeout rule. Semantic segmentation
+  subdivides within deterministic boundaries, never across. **Episode is the right unit for memory
+  and the wrong one for procedure mining** — HRL option-discovery shows description-optimal and
+  extraction-optimal boundaries genuinely differ; M1 builds episodes only and the option-span
+  segmenter goes to fog, unowned. Evaluation targets 70–80% precision, not >90%, because human
+  inter-annotator agreement on task boundaries is itself only ~70–80%.
+- [Applicability function](issues/12-applicability-function.md) — preconditions are structured
+  predicates over the claim graph, **derived deterministically from the source episode's
+  `state_before`** (ticket 10 supplies the producer, which is what makes predicates viable rather
+  than aspirational); tags demoted to coarse filtering only, since Jaccard-over-tags is a
+  *similarity* measure being used as an *applicability* test — a category error per CBR, not just
+  imprecision; LLM for soft ranking only (~F1 65%, disqualifying for a hard gate). Nine factors
+  combine as a **non-compensatory filter cascade** — the pathology has a name, **criterion
+  compensation**, and weighted linear scoring across mixed hard/soft criteria is the named
+  antipattern. Unknown preconditions **fail closed**, free under ticket 10's CWA;
+  **rejected brief 3's three-valued-logic recommendation** because it would partially reopen
+  ticket 10 for no M1 gain. Cold start solved by *disabling reuse*, not weakening the gate.
+  Scope narrowing: record evidence now (failure cases, CBR pattern), automate later — it needs
+  ticket 13's classifier as a hard prerequisite. "False reuse rate" is properly **negative
+  transfer**, and measuring it requires a matched no-transfer control arm.
+- [Procedure lifecycle](issues/13-procedure-lifecycle-versioning.md) — **three orthogonal axes**
+  (`verification_state` evidence-driven, `staleness` dependency-driven, `availability`
+  circuit-breaker-driven), not the survey's single enum: a procedure can be verified *and* stale
+  *and* quarantined, and an enum would let a dependency event overwrite hard-won verification
+  evidence. Verification bar is **≥10 successes / 0 failures / ≥3 distinct contexts** — 3/3 gives
+  a 95% CI of [0.48, 0.99] and the rule of three bounds its failure rate at 100% — but the bar
+  gates *automatic* retrieval only; candidates stay explicitly invocable. Failure classification
+  collapses spec.md's six categories to **four automated** ones (automated classification tops out
+  ~F1 65%) with the finer distinction retained as evidence. Staleness uses package-version
+  granularity accepting 20–30% over-invalidation, justified by asymmetry: over-invalidation costs
+  revalidation, under-invalidation means reusing a stale procedure as verified. Circuit breaker
+  and quarantine adopted with published parameters, as config. **Utility-based retirement added**:
+  `utility = (freq × savings) − match_cost` retires correct-but-net-negative procedures, which
+  nothing failure-driven would catch — this amends ticket 05's `verification_stats`.
+- [Local retrieval hierarchy](issues/14-local-retrieval-hierarchy.md) — locality signals split by
+  **derivation precision**, not uniformly: symbols, open files, import-derived dependency edges
+  and related tests filter; recency, recent failures, and **name-resolved call-graph edges** rank.
+  `call_graph.py` becomes a ranking feature, not a filter — at 75–85% precision a filter would
+  permanently discard 15–25% of relevant results, while a ranking feature only misorders. Tiers
+  **union and fuse**, not strict cascade (early-stage recall loss is the named antipattern for
+  code retrieval); `RRF_K=60` kept — convex combination reportedly beats it but switching without
+  measurement would trade a working default for an unvalidated one. Reranking **out of M1**
+  (~5% NDCG@10 when the first stage is already hybrid+RRF+graph, at ~50ms p95 hot-path cost).
+  Three query paths over one shared index; meta-ranker deferred since no M1 caller asks for
+  cross-type ranking. Context budget in **tokens, hard cap, 8k default** with priority-ordered
+  fill — this is what makes local-first enforceable rather than aspirational. Property-based tests
+  for RRF invariants (monotonicity, idempotence, commutativity, stability) land before any
+  extension of the untested `retrieval.py`.
+- [HTN relocation](issues/15-htn-relocation-and-hyperparameters.md) — engine moves to
+  `backend/app/execution/` with one entry point (procedure + bound params + state → execution
+  record). **Sync core, async shell**, all I/O pre-fetched at the boundary — which turns today's
+  `_pending_seed_plan` hack into the deliberate pattern. Restructured, not just relocated, per the
+  owner's standing instruction: the three-class inheritance chain becomes one engine with a
+  pluggable scheduler strategy, and per-run state moves to a `RunContext`. Hyperparameters split
+  by **transferability** — structural limits (`MAX_DEPTH`, parallelism) transfer and carry over;
+  budgets/thresholds (`MAX_SUBGOALS`, retries, step budgets, `MIN_VIABLE_SUBGOAL_BUDGET`) are
+  distribution-sensitive, so they become config marked provisional/unvalidated for this domain.
+  Planner is **phase-dependent**: default while cold (ticket 12), fallback once procedures verify
+  — switchable, not baked in. **Match-cost-aware ordering** adopted as the utility-problem
+  mitigation (cheapest-to-match first, fail-fast precondition ordering).
+
 ## Not yet specified
+
+- **Option-span segmenter for procedure mining — currently unowned.** Ticket 11 establishes that
+  episode boundaries (description-optimal) and procedure-extractable spans (extraction-optimal)
+  genuinely differ. M1 builds episodes only. Procedure *mining* will need its own segmenter over
+  subgoal/bottleneck/change-point boundaries; no ticket owns it, and ticket 05 settled procedure
+  representation, not extraction.
+- **Automated scope narrowing.** Ticket 12 records failure evidence (failure cases, CBR pattern)
+  but defers automated version-space narrowing — it needs ≥3 failures, MDL, hysteresis, and
+  ticket 13's failure classifier as a hard prerequisite.
+- **Hosted-model drift detection.** Ticket 04's compound extraction key is necessary but not
+  sufficient: a hosted model can change behaviour without changing its advertised ID. Detecting
+  that needs output-distribution monitoring over a fixed calibration set.
+- **Calibrated confidence via conformal prediction.** Ticket 04 stores no confidence field at all.
+  If confidence is ever needed, the mechanism is conformal prediction against a calibration set,
+  storing prediction-set size rather than a float.
+- **Empirical-Bayes shrinkage for execution budgets.** Ticket 15 defers adaptive per-procedure
+  budgets: they need ~30–50 executions per procedure type, which M1 will not supply.
+- **Meta-ranker for cross-type retrieval.** Ticket 14 uses separate query paths per object type;
+  cross-type ranking ("this claim matters more than that procedure") has no M1 consumer.
+- **Convex-combination fusion as an RRF alternative.** Ticket 14 keeps `RRF_K=60`; the research
+  reports convex combination outperforms it, but switching requires measurement this repo cannot
+  currently do.
+
+- **Materialization for temporal-range and full-history queries.** Ticket 10 established that
+  point-in-time projection is an indexed lookup needing no materialization, but XTDB's warning
+  about full-history reconstruction and temporal *range* joins stands. Milestone 1 needs neither
+  query shape, so nothing is built. Resurfaces only if such a query shape becomes required, or if
+  p95 projection latency breaches 100ms.
 
 - **Claim write-volume risk against ticket 03's premise.** Ticket 03 placed claims in
   `knowledge_nodes` partly because "nothing produces a claim yet." Ticket 10's state-as-claims

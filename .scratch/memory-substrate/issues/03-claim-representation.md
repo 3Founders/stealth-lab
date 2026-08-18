@@ -76,3 +76,33 @@ used to justify three separate tables over one discriminated table)? Observation
 this the same way claims do (→ `node_type`-based). Procedures likely don't (parameter
 schemas, verification stats, lifecycle states → probably a dedicated table). Diverging there
 would be coherent, not inconsistent, as long as the same test produced both answers.
+
+### Amendment (from ticket 10)
+
+[Ticket 10](10-state-model.md) makes state a projection over these same claim rows, which
+unifies durable belief with transient world-state in one table. The research findings warn that
+a unified store must keep the two distinguishable, so `ClaimProperties` gains one more validated
+field:
+
+- `epistemic_status`: `observed` (deterministically derived from trace events) | `inferred`
+  (semantically extracted, model-derived)
+
+This extends the `NODE_TYPE_SCHEMAS` registry this ticket established rather than revisiting the
+representation decision — adding a validated field is that registry's intended extension path.
+[Ticket 04](04-observation-layer.md) owns how the value is assigned.
+
+### Amendment 2 (consistency pass, after ticket 04 landed)
+
+This ticket predicted observations would "likely pass this the same way claims do (→
+`node_type`-based)". **That prediction was wrong, and [ticket 04](04-observation-layer.md)
+overrode it** — observations get a dedicated table.
+
+The prediction failed for reasons this ticket could not see at the time: observations are
+*immutable* (re-derived under a new extractor version rather than superseded), so the bitemporal
+machinery `knowledge_nodes` donates goes unused; and [ticket 10](10-state-model.md) subsequently
+made claims high-volume by turning state into claim rows, so adding the highest-volume object in
+the system to the same table compounds a risk rather than sharing infrastructure.
+
+The *method* held even though the prediction didn't — this ticket's own framing was "apply the
+same test, not the same answer," and the test genuinely produced a different answer. Recorded
+here so the two tickets don't read as contradicting each other.
