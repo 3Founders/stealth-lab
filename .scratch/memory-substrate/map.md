@@ -65,16 +65,6 @@ A locked architecture specification for milestone 1 — a general experiential +
   span parent-child nesting does not model this repo's episode/trace/event grouping;
   evidence points to a hybrid derive-for-LLM-shaped-fields/diverge-for-session-shaped-fields
   outcome, left for ticket 06 to decide.
-- [Canonical trace model](issues/06-canonical-trace-model.md) — three tables, not an extension
-  of `traces`: a new `trace_events` atomic-event table, a new trace-header table (name TBD)
-  rolling up one causally-connected execution, and the existing `episodes` table as the real
-  episode-assembly target — `traces` itself is left untouched, still serving `triggers.py`/
-  `eval/layer2.py` exactly as today. Raw payloads reuse `episodes.content_ref`'s existing
-  storage-pointer pattern. Event dedup uses a computed composite key (session_id + hook name +
-  payload hash), since ticket 07 found hooks carry no native event ID. Every `trace_events` row
-  stamps its own schema/extractor version, since ticket 08 found no provider supplies one.
-  OTel semconv: hybrid — derive naming for the LLM/tool-call-shaped slice, diverge under this
-  repo's own namespace (not `gen_ai.*`) for session-shaped fields with no semconv equivalent.
 - [Substrate/domain seam](issues/02-substrate-domain-seam.md) — a second domain is a design
   constraint, not a scheduled build (no adapter gets built now). Representation mechanism:
   uniform `domain TEXT` + `domain_payload JSONB` on every concept holding concrete
@@ -111,9 +101,85 @@ A locked architecture specification for milestone 1 — a general experiential +
   pointer. Versioning rides existing bitemporal + `SUPERSEDES` (procedures added as a valid
   `edges` source/target table), not a new mechanism. `family_id` self-references `procedures`
   itself (abstract family row, same table) — explicitly distinct from motifs (out of scope).
+- [Canonical trace model](issues/06-canonical-trace-model.md) — two new tables (`trace_events`,
+  a trace-header table), not a rework of `traces`, but *not* because `traces` is event-shaped —
+  reviewed and corrected: `traces` already has `parent_trace_id` (a real, live causal tree) and
+  is span-shaped, closer to spec.md's TRACE concept than first claimed. The real reasons are its
+  `NOT NULL` `task_node_id` FK (confirmed the most common real rejection cause in `ingest.py`),
+  its 3-value `action_type` CHECK vs. Claude Code's 31 real events, and its `NOT NULL` outcome
+  CHECK — all three would have to weaken for existing consumers (`triggers.py`, `layer2.py`) to
+  accommodate the new shape. New tables carry both `owner_id` and `visibility` (see ticket 09
+  correction) from row one — `traces`/`episodes` currently have neither column, a real gap
+  independent of this decision. Hybrid OTel-semconv adoption per ticket 08. Existing `task_node_id`
+  FK on `traces` untouched.
+- [Isolation and auth posture](issues/09-isolation-and-auth.md) — stay local-first,
+  single/few-trusted-owner for milestone 1; do not adopt Supabase Auth or WorkOS yet, consistent
+  with `mcp_server/server.py`'s own already-shipped single-tenant, loopback-only posture.
+  Corrected on review: new tables need **both** `owner_id` and `visibility` (not `owner_id`
+  alone — `access.py`'s `visibility_predicate()` requires `visibility` in every non-unrestricted
+  branch; `owner_id`-only would recreate the exact `embedding_joint` ghost-column failure shape
+  ticket 17 warns about). `db/03_access.sql` already adds the pair together on four tables;
+  `traces`/`episodes` currently have neither. Project isolation is its own axis. Encryption
+  cross-referenced to ticket 18. If a provider is adopted later, identity only — `access.py`
+  stays the sole authorization authority, never Supabase RLS.
+- [Migration mechanism and data migration](issues/17-migration-mechanism.md) — keep raw SQL, add
+  a `schema_migrations` ledger + one documented runner script + a CI test diffing code against
+  schema (the two known drifts were schema-vs-code consistency failures a test would have caught,
+  not something a migration framework addresses). Sharpened on review: `embedding_joint` isn't
+  just unreachable at query time — `graph_ingest.py` writes it and `compare_embeddings.py` reads
+  it, meaning Stage 2's real, published result (p=0.0066, n=400) was produced through a column no
+  version-controlled DDL creates; the CI check must diff against the *live* database, not just
+  the DDL files, or it validates the drift instead of catching it. No migration needed for
+  `episodes`/`traces`/`edges`/existing `knowledge_nodes` types. `claim`-type rows blocked on
+  ticket 03. Method-library rows becoming procedures get a fresh UUID plus an explicit link edge.
+  SWE-bench corpus stays untouched, out of scope.
+- [Privacy and redaction](issues/18-privacy-and-redaction.md) — redaction happens client-side at
+  the collector, before transmission (real dependency on ticket 16), on the parsed JSON structure
+  not raw text — a best-effort floor for *detected* patterns only, never a guarantee; the hard
+  local-only default is the real backstop. Path/tool exclusion as two configurable axes with real
+  shipped defaults. Corrected on review: deletion tombstoning `episodes` is a genuine **schema
+  addition** (`episodes` has no `t_invalid` today), and `episode_links` is currently declared
+  `ON DELETE CASCADE` — the opposite behavior, needing an explicit fix, not an automatic
+  consequence of adding a column. `truth_state` is not a column — it's a JSONB key inside
+  `knowledge_nodes.properties` (`claims.py:131`), with real query-cost implications for ticket 03,
+  which owns the actual claims schema. Vault encryption only helps if its key is stored separately
+  from the shared `DATABASE_URL`. Sampling means whole-episode accept/reject, a real trade-off,
+  not a solved problem — whatever episodes are dropped are lost entirely.
+- [Ingestion pipeline shape](issues/16-ingestion-pipeline-shape.md) — a Postgres job table polled
+  with `SELECT ... FOR UPDATE SKIP LOCKED` by an in-process asyncio worker: a broker contradicts
+  local-first, and in-memory-only repeats `InMemoryTaskStore`'s known restart/replica limitation
+  in the one place spec.md's replayability requirement makes it unacceptable. Collector appends to
+  a local file rather than POSTing per event — hooks are best-effort with tight timeouts (30s on
+  `UserPromptSubmit`, 10s on `MessageDisplay`) and silent drops, so network latency must stay out
+  of the user's editing loop; the local append is also where ticket 18's client-side redaction
+  runs. Idempotency reuses `/v1/traces`' per-record + `ON CONFLICT DO NOTHING` pattern at raw
+  persistence only, with a collector-computed composite key (hooks carry no native event ID);
+  downstream stages key by *job*, which is what distinguishes replay from duplicate delivery.
+  Bounded local file, drop-oldest, with a recorded drop counter — never block, never unbounded.
+  Ordering is assembly-time only. Honest limit: nothing structurally prevents calling the compiler
+  on a request path (`admin.py:92-94` proves discipline alone fails) — a job-row-only entry point
+  is a speed bump, not a guarantee. Also found while verifying: `main.py:27`'s pool and
+  `session.py`'s `close_pool()` operate on different objects, which an in-process worker would
+  inherit.
 
 ## Not yet specified
 
+- **Claim write-volume risk against ticket 03's premise.** Ticket 03 placed claims in
+  `knowledge_nodes` partly because "nothing produces a claim yet." Ticket 10's state-as-claims
+  design changes that materially: potentially one claim per file edit and per test run, per
+  episode. If that volume materializes, splitting claims into a dedicated table later means
+  migrating rows *plus* every `edges` row referencing them via `source_table='knowledge_nodes'`.
+  Cheap to revisit before production data exists; expensive after. Revisit when the first real
+  claim producer (ticket 04) is wired.
+- **Justification granularity is episode-level, not activity-level.** `claims.py` points a
+  claim at an *episode* via `episode_links`, not at the specific extraction *activity* (PROV-O's
+  `Activity` pattern, per the literature review §3). Answers "which episode produced this" but
+  not "which extraction produced this, and was that extraction any good." Retrofitting once
+  claims exist means backfill or two permanent provenance granularities.
+- **Claim predicates have no namespacing.** `predicate` is a free string (`content_hash`,
+  `last_run_outcome`). Fine with one domain; a second could collide (`status` meaning two
+  different things). Cheap now as a naming convention (`coding.content_hash`), expensive once
+  claims exist and need renaming across every row.
 - **The ATMS "assumption environment" gap.** `claims.py` currently asserts a claim
   unconditionally; de Kleer's ATMS models a claim as believed only under an explicit
   assumption set (`repo, commit, branch, dependency_lock_hash, ...`). Deliberately deferred by
