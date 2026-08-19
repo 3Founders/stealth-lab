@@ -1,0 +1,399 @@
+"""
+Local-first retrieval hierarchy (ticket 14, memory-substrate map).
+Builds on HybridRetriever (retrieval.py) rather than replacing it --
+that module's RRF-fused semantic+lexical search plus bounded graph
+expansion is the "semantic retrieval" tier this ticket's hierarchy
+composes with, not something to duplicate.
+
+THE CENTRAL DECISION, stated once here rather than re-derived at every
+call site: tiers compose by UNION with weighted fusion, NOT a strict
+filter cascade -- the opposite composition rule from ticket 12's
+applicability.py, deliberately. A violated precondition (ticket 12) is
+a disqualification; a low structural-locality score (here) is a weak
+signal. The two mechanisms must not be unified, per both tickets'
+explicit cross-reference to each other.
+
+SIGNAL CLASSIFICATION, per ticket 14's resolved answer -- split by how
+precisely each signal was derived, not by which "tier" it conceptually
+belongs to:
+
+| Signal                          | Role   | Why                              |
+|----------------------------------|--------|-----------------------------------|
+| Current working set (open files) | FILTER | high precision, moderate recall  |
+| Relevant symbols (defs/calls)    | FILTER | high precision AND recall        |
+| Import-derived dependency edges  | FILTER | deterministic derivation         |
+| Related tests                   | FILTER | high precision for impl tasks    |
+| Name-resolved call-graph edges   | RANK   | ~75-85% precision -- imprecise   |
+| Recency (recent commits)         | RANK   | moderate precision, low recall   |
+| Recent failures                  | RANK   | moderate precision, low recall   |
+| Semantic (RRF hybrid)            | RANK   | HybridRetriever, unchanged       |
+
+HONEST SCOPE for this pass -- real vs caller-supplied signals:
+
+- **Current working set**: REAL, wired to a real data source --
+  observations.py's `file_touched` observations (ticket 04), joined
+  through observation_events -> trace_events by session_id. This is
+  the one structural signal with a genuine, already-existing producer
+  in this repo; ticket 12's applicability.py hit the identical
+  "producer problem" concern, and this is answered the same way --
+  name a real producer or don't build the check.
+- **Recent commits**: REAL, same data source (`commit_made`
+  observations), used as a soft rank signal per the table above.
+- **Relevant symbols / import-derived deps / related tests /
+  name-resolved call-graph edges**: NOT computed by this module.
+  call_graph.py's reachability data is host-side/filesystem-based (real
+  repo checkout, tree-sitter) with zero DB coupling -- correctly so,
+  matching this repo's existing module boundaries (retrieval.py has no
+  filesystem access, call_graph.py has no DB access). Wiring a live
+  repo checkout's call-graph output INTO a retrieval call is real,
+  separate integration work for whichever caller has that checkout
+  (the HTN engine, once ticket 15's deferred scheduler-strategy piece
+  gives it one) -- not invented here. These fields exist on
+  StructuralContext as real, usable slots a caller CAN populate; this
+  pass does not itself populate them.
+- **Recent failures**: NOT wired -- failure_capture.py records
+  failures, but linking a failure to "which files are relevant to
+  avoid repeating it" needs real design (which fields, what
+  similarity), not assumed here.
+
+Reranking is explicitly out of milestone 1 (ticket 14's own decision --
+marginal gain too small against an already-strong first stage). Not
+present here or anywhere in this module.
+"""
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from typing import Optional
+from uuid import UUID
+
+import asyncpg
+
+from app.services.access import AccessScope
+from app.services.retrieval import HybridRetriever, RetrievedNode, RetrievalResult
+
+# Ticket 14's own number: "a knee at ~8k tokens for code tasks, beyond
+# which reported degradation is severe." Configuration, not a literal
+# buried in logic -- same discipline as ticket 13's borrowed constants.
+DEFAULT_TOKEN_BUDGET = 8_000
+
+# HONEST APPROXIMATION: no tokenizer dependency exists anywhere in this
+# codebase (confirmed by search) and adding one for a single budget
+# calculation is a real cost against a well-known, defensible estimate.
+# ~4 characters per token is the standard rough English-text ratio; this
+# is an approximation stated as such, not presented as an exact count.
+CHARS_PER_TOKEN_ESTIMATE = 4
+
+# Priority order for token-budgeted fill, per ticket 14's resolved
+# answer verbatim: "structural > temporal > causal > semantic."
+TIER_PRIORITY = ("structural", "temporal", "causal", "semantic")
+
+
+@dataclass
+class StructuralContext:
+    """
+    Caller-supplied structural signals -- this module fuses/filters with
+    them, it does not compute most of them (see module docstring for
+    which fields are real vs. caller-populated in this pass).
+    """
+    open_files: list[str] = field(default_factory=list)             # FILTER, real
+    relevant_symbols: list[str] = field(default_factory=list)       # FILTER, caller-supplied
+    import_deps: list[str] = field(default_factory=list)            # FILTER, caller-supplied
+    related_tests: list[str] = field(default_factory=list)          # FILTER, caller-supplied
+    call_graph_ranked_names: list[str] = field(default_factory=list)  # RANK, caller-supplied
+    recent_commit_files: list[str] = field(default_factory=list)    # RANK, real (see get_recent_commit_files)
+    recent_failure_files: list[str] = field(default_factory=list)   # RANK, caller-supplied
+
+    def has_any_filter(self) -> bool:
+        return bool(self.open_files or self.relevant_symbols
+                    or self.import_deps or self.related_tests)
+
+    def has_any_rank_boost(self) -> bool:
+        return bool(self.call_graph_ranked_names or self.recent_commit_files
+                    or self.recent_failure_files)
+
+
+async def get_current_working_set(
+    pool: asyncpg.Pool, *, session_id: str, limit: int = 50,
+) -> list[str]:
+    """
+    Real, DB-backed "current working set" signal -- distinct file paths
+    from `file_touched` observations (ticket 04) for this session, most
+    recently touched first. This is the real producer for
+    StructuralContext.open_files; a caller with a live session should
+    call this rather than leaving open_files empty.
+    """
+    rows = await pool.fetch(
+        """
+        SELECT o.properties->>'file_path' AS file_path, MAX(o.extracted_at) AS last_touched
+        FROM observations o
+        JOIN observation_events oe ON oe.observation_id = o.id
+        JOIN trace_events te ON te.id = oe.event_id
+        WHERE te.session_id = $1 AND o.observation_type = 'file_touched'
+          AND o.properties->>'file_path' IS NOT NULL
+        GROUP BY o.properties->>'file_path'
+        ORDER BY last_touched DESC
+        LIMIT $2
+        """,
+        session_id, limit,
+    )
+    return [r["file_path"] for r in rows]
+
+
+async def get_recent_commit_files(
+    pool: asyncpg.Pool, *, session_id: str, limit: int = 20,
+) -> list[str]:
+    """
+    Real, DB-backed "recent commits" soft-ranking signal (ticket 14:
+    "moderate precision, low recall -- soft ranking / tiebreaker only").
+    Derived from `commit_made` observations' own recorded file touches
+    within the same session, not from git log directly -- this module
+    has no filesystem access, same boundary discipline as the rest of
+    this file. Returns the SAME kind of value as open_files (file
+    paths) so both can be compared against retrieved node names/paths
+    uniformly by the caller.
+    """
+    rows = await pool.fetch(
+        """
+        SELECT DISTINCT fo.properties->>'file_path' AS file_path
+        FROM observations c
+        JOIN observation_events coe ON coe.observation_id = c.id
+        JOIN trace_events cte ON cte.id = coe.event_id
+        JOIN trace_events fte ON fte.session_id = cte.session_id
+        JOIN observation_events foe ON foe.event_id = fte.id
+        JOIN observations fo ON fo.id = foe.observation_id
+        WHERE cte.session_id = $1 AND c.observation_type = 'commit_made'
+          AND fo.observation_type = 'file_touched'
+          AND fo.extracted_at <= c.extracted_at
+          AND fo.properties->>'file_path' IS NOT NULL
+        ORDER BY file_path
+        LIMIT $2
+        """,
+        session_id, limit,
+    )
+    return [r["file_path"] for r in rows]
+
+
+def _estimate_tokens(text: str) -> int:
+    return max(1, len(text) // CHARS_PER_TOKEN_ESTIMATE)
+
+
+def _node_render(n: RetrievedNode) -> str:
+    kind = "task" if n.table == "task_nodes" else "knowledge"
+    line = f"[{kind}:{n.id}] {n.name}"
+    if n.description:
+        line += f" — {n.description}"
+    if n.hops > 0:
+        line += f" (related, {n.hops} hop{'s' if n.hops > 1 else ''} away)"
+    return line
+
+
+@dataclass
+class AssembledContext:
+    text: str
+    included_node_ids: list[UUID]
+    excluded_node_ids: list[UUID]
+    estimated_tokens: int
+    token_budget: int
+    tiers_included: dict[str, int]  # tier name -> count of nodes actually included
+
+
+def assemble_context(
+    tiers: list[tuple[str, list[RetrievedNode]]],
+    token_budget: int = DEFAULT_TOKEN_BUDGET,
+) -> AssembledContext:
+    """
+    Ticket 14's token-budgeted, priority-ordered fill -- "denominated in
+    tokens (not items, not FLOPs)... filled in priority order structural
+    > temporal > causal > semantic, truncating at the cap rather than
+    degrading silently." This is what makes "context stays approximately
+    local as memory grows" an enforced property rather than an
+    aspiration, per the ticket's own framing.
+
+    `tiers`: list of (tier_name, nodes) -- tier_name should be one of
+    TIER_PRIORITY, but an unrecognized name is not an error (appended
+    after the known tiers, in the order given, rather than silently
+    dropped -- a caller experimenting with a new tier should not lose
+    its output for not having updated this constant).
+
+    A node appearing in more than one tier is rendered ONCE, counted
+    against whichever tier fills it first (priority order) -- ticket 14
+    explicitly treats this as a union, not per-tier duplication.
+    """
+    order = {name: i for i, name in enumerate(TIER_PRIORITY)}
+    ordered_tiers = sorted(tiers, key=lambda t: order.get(t[0], len(TIER_PRIORITY)))
+
+    seen: set[UUID] = set()
+    included_lines: list[str] = []
+    included_ids: list[UUID] = []
+    excluded_ids: list[UUID] = []
+    tiers_included: dict[str, int] = {}
+    used_tokens = 0
+
+    for tier_name, nodes in ordered_tiers:
+        count_this_tier = 0
+        for n in nodes:
+            if n.id in seen:
+                continue
+            seen.add(n.id)
+            line = _node_render(n)
+            line_tokens = _estimate_tokens(line)
+            if used_tokens + line_tokens > token_budget:
+                excluded_ids.append(n.id)
+                continue
+            included_lines.append(line)
+            included_ids.append(n.id)
+            used_tokens += line_tokens
+            count_this_tier += 1
+        if count_this_tier:
+            tiers_included[tier_name] = count_this_tier
+
+    return AssembledContext(
+        text="\n".join(included_lines),
+        included_node_ids=included_ids,
+        excluded_node_ids=excluded_ids,
+        estimated_tokens=used_tokens,
+        token_budget=token_budget,
+        tiers_included=tiers_included,
+    )
+
+
+def _path_matches(node_name: str, node_description: Optional[str], candidates: list[str]) -> bool:
+    """A node "matches" a structural filter candidate if the candidate
+    (a file path or symbol name) appears as a substring of the node's
+    own name or description. Deliberately simple substring matching,
+    not a path-parsing library -- task_nodes/knowledge_nodes carry free
+    text names, not structured path fields, so this is the same kind of
+    best-effort text match retrieval.py's own lexical search already
+    relies on, not a new, more fragile mechanism."""
+    haystack = (node_name or "") + " " + (node_description or "")
+    return any(c and c in haystack for c in candidates)
+
+
+async def _tier_candidates_by_path(
+    pool: asyncpg.Pool, candidates: list[str], *, scope: Optional[AccessScope],
+    matched_by_label: str, limit: int = 25,
+) -> list[RetrievedNode]:
+    """
+    Real, independent tier retrieval -- NOT a filter/boost on the
+    semantic tier's own results. Queries task_nodes/knowledge_nodes
+    directly by substring match against `candidates` (file paths), so a
+    node the semantic (RRF) tier never surfaced at all can still enter
+    the union through this tier -- the actual point of "union with
+    weighted fusion, not a strict cascade" (ticket 14): a signal source
+    finding something the others missed must be able to contribute it,
+    not merely re-rank what another source already found.
+
+    Score is a flat, deliberately-low constant (0.05, well below a
+    typical real RRF score) -- these results are ordered by tier
+    priority in assemble_context, not by this score directly; the score
+    only matters for stable secondary sorting within one tier's own
+    candidate list.
+    """
+    if not candidates or scope is None:
+        scope = scope or AccessScope.unrestricted()
+    from app.services.access import visibility_predicate
+    found: list[RetrievedNode] = []
+    for table, desc_col in (("task_nodes", "description"), ("knowledge_nodes", "NULL")):
+        vis_sql, vis_params = visibility_predicate(scope, param_index=2)
+        rows = await pool.fetch(
+            f"SELECT id, name, {desc_col} AS description FROM {table} "
+            f"WHERE t_invalid IS NULL AND {vis_sql} "
+            f"AND (name ILIKE ANY($1::text[]) "
+            f"OR ({desc_col} IS NOT NULL AND {desc_col} ILIKE ANY($1::text[]))) "
+            f"LIMIT {limit}",
+            [f"%{c}%" for c in candidates if c], *vis_params,
+        )
+        for row in rows:
+            found.append(RetrievedNode(
+                id=row["id"], table=table, name=row["name"],
+                description=row["description"], score=0.05,
+                matched_by=[matched_by_label], hops=0,
+            ))
+    return found
+
+
+async def retrieve_local_first(
+    pool: asyncpg.Pool,
+    query: str,
+    *,
+    embedder=None,
+    scope: Optional[AccessScope] = None,
+    structural: Optional[StructuralContext] = None,
+    top_k: int = 6,
+    expand_depth: int = 1,
+    max_context_nodes: int = 25,
+    token_budget: int = DEFAULT_TOKEN_BUDGET,
+) -> AssembledContext:
+    """
+    The real ticket-14 pipeline: three genuinely independent tiers,
+    UNIONED (a node any one tier finds can enter the result -- this is
+    what makes it a union rather than a cascade), then assembled under
+    the token budget in priority order (structural > temporal > causal
+    > semantic).
+
+    - **structural tier**: real nodes matched directly against
+      structural.open_files (+ relevant_symbols/import_deps/
+      related_tests, when a caller has populated them) -- queried
+      independently of the semantic search, so a structurally-relevant
+      node the RRF hybrid never ranked highly still gets in.
+    - **temporal tier**: real nodes matched against
+      structural.recent_commit_files -- same independent-query
+      treatment, lower priority than structural per the fixed order.
+    - **semantic tier**: HybridRetriever's own RRF-fused result,
+      unchanged -- this function does not reimplement or replace it.
+      call_graph_ranked_names/recent_failure_files (when populated)
+      apply as a small SCORE BOOST within this tier only, per ticket
+      14's classification of those specific signals as soft ranking
+      features rather than independently-queryable filters (they name
+      SYMBOLS/imprecise associations, not retrievable node identity the
+      way a file path naturally maps to a node's own name/description).
+
+    No "causal" tier is populated in this pass -- ticket 14 names it in
+    the priority order but this repo has no wired producer for a
+    genuinely causal (not just temporal) signal yet; assemble_context
+    handles an empty or absent tier name without needing a placeholder.
+    """
+    structural = structural or StructuralContext()
+    retriever = HybridRetriever(pool, embedder=embedder, scope=scope)
+    semantic_result: RetrievalResult = await retriever.retrieve(
+        query, top_k=top_k, expand_depth=expand_depth, max_context_nodes=max_context_nodes,
+    )
+    semantic_nodes = list(semantic_result.nodes)
+
+    if structural.call_graph_ranked_names or structural.recent_failure_files:
+        rank_candidates = structural.call_graph_ranked_names + structural.recent_failure_files
+        boosted = []
+        for n in semantic_nodes:
+            boost = 0.01 if _path_matches(n.name, n.description, rank_candidates) else 0.0
+            boosted.append(RetrievedNode(
+                id=n.id, table=n.table, name=n.name, description=n.description,
+                score=n.score + boost, matched_by=n.matched_by, hops=n.hops,
+            ))
+        semantic_nodes = sorted(boosted, key=lambda n: (n.hops, -n.score))
+
+    structural_candidates = (
+        structural.open_files + structural.relevant_symbols
+        + structural.import_deps + structural.related_tests
+    )
+    structural_nodes = (
+        await _tier_candidates_by_path(
+            pool, structural_candidates, scope=scope, matched_by_label="structural",
+        )
+        if structural_candidates else []
+    )
+
+    temporal_nodes = (
+        await _tier_candidates_by_path(
+            pool, structural.recent_commit_files, scope=scope, matched_by_label="temporal",
+        )
+        if structural.recent_commit_files else []
+    )
+
+    return assemble_context(
+        [
+            ("structural", structural_nodes),
+            ("temporal", temporal_nodes),
+            ("semantic", semantic_nodes),
+        ],
+        token_budget=token_budget,
+    )
