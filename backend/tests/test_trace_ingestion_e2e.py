@@ -329,7 +329,7 @@ def test_a2_real_worker_run_unblocks_collector_trimming(tmp_path: Path):
                 )
             # No worker has run yet -- nothing should have been trimmed,
             # even though 8 > max_lines(5).
-            pre_worker_lines = f.read_text().splitlines()[1:]
+            pre_worker_lines = f.read_text().splitlines()
             assert len(pre_worker_lines) == 8, "must not trim before any real worker run"
 
             result = await process_collector_file(pool, f)
@@ -341,7 +341,7 @@ def test_a2_real_worker_run_unblocks_collector_trimming(tmp_path: Path):
                     f, session_id=session_id, event_type="PostToolUse", sequence=i,
                     max_lines=max_lines,
                 )
-            post_worker_lines = f.read_text().splitlines()[1:]
+            post_worker_lines = f.read_text().splitlines()
             records = [json.loads(l) for l in post_worker_lines]
             seqs = [r["sequence"] for r in records]
             # The real A2 guarantee: trimming became possible after the

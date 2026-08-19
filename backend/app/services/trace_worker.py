@@ -23,7 +23,7 @@ from pathlib import Path
 
 import asyncpg
 
-from app.services.trace_collector import mark_worker_seen
+from app.services.trace_collector import mark_worker_seen, read_drop_count
 
 SCHEMA_VERSION = "1"
 
@@ -58,8 +58,10 @@ def _read_records(file_path: Path) -> tuple[list[dict], list[tuple[int, str, str
     if not file_path.exists():
         return [], []
     lines = file_path.read_text().splitlines()
-    if lines and lines[0].startswith('{"_drop_count"'):
-        lines = lines[1:]
+    # A1 fix removed the synthetic header line entirely (drop_count now
+    # lives in the sidecar meta.json -- see trace_collector.py's
+    # read_drop_count()) -- every line in this file is now a real data
+    # record, no special-casing needed.
 
     good: list[dict] = []
     quarantined: list[tuple[int, str, str]] = []
@@ -204,6 +206,20 @@ async def process_collector_file(pool: asyncpg.Pool, file_path: Path, *,
     # events the worker had never read. This call is what makes that
     # guarantee real, not just documented.
     mark_worker_seen(file_path, len(good_records))
+
+    # "Smaller, worth knowing" fix from the code review: drop_count was
+    # "computed, stored in the file, never read by the worker, no column
+    # to land in" -- migration 17 added agent_traces.collector_drop_count
+    # for exactly this. Surfaced here, once per run, for every trace
+    # this run touched -- a lossy collector period is now visible in the
+    # database, not just in a local sidecar file nobody queries.
+    drop_count = read_drop_count(file_path)
+    if drop_count > 0 and headers_ensured:
+        async with pool.acquire() as conn:
+            await conn.execute(
+                "UPDATE agent_traces SET collector_drop_count = $1 WHERE trace_id = ANY($2::text[])",
+                drop_count, list(headers_ensured),
+            )
 
     return {
         "records_seen": len(good_records) + len(quarantined),
