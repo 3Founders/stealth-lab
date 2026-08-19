@@ -123,6 +123,11 @@ def _htn_agent(client):
     return HTNAgent(client, "m")
 
 
+def _ctx():
+    from htn_agent import RunContext
+    return RunContext(t0=0.0, usage=Usage())
+
+
 class TestTimeoutIsRetried:
     """The regression this module exists for."""
 
@@ -207,14 +212,14 @@ class TestHTNAgentChatUsesTheSamePolicy:
         client = ScriptedClient([APITimeoutError() for _ in range(MAX_RETRIES)],
                                 then_ok=False)
         with pytest.raises(APITimeoutError):
-            _htn_agent(client)._chat([{"role": "user", "content": "x"}], Usage())
+            _htn_agent(client)._chat([{"role": "user", "content": "x"}], Usage(), _ctx())
         assert client.calls == MAX_RETRIES
 
     def test_a_timeout_that_clears_returns_the_response_and_records_usage_once(
             self, no_sleep):
         client = ScriptedClient([APITimeoutError()])
         usage = Usage()
-        resp = _htn_agent(client)._chat([{"role": "user", "content": "x"}], usage)
+        resp = _htn_agent(client)._chat([{"role": "user", "content": "x"}], usage, _ctx())
         assert resp.choices[0].message.content == "ok"
         assert client.calls == 2
         # Usage is recorded once, from the call that actually returned --
@@ -224,18 +229,18 @@ class TestHTNAgentChatUsesTheSamePolicy:
     def test_a_real_bug_is_not_retried(self, no_sleep):
         client = ScriptedClient([ValueError("bad request shape")], then_ok=False)
         with pytest.raises(ValueError):
-            _htn_agent(client)._chat([{"role": "user", "content": "x"}], Usage())
+            _htn_agent(client)._chat([{"role": "user", "content": "x"}], Usage(), _ctx())
         assert client.calls == 1
         assert no_sleep == []
 
     def test_rate_limit_waits_most_of_a_window(self, no_sleep):
         client = ScriptedClient([RateLimitError()])
-        _htn_agent(client)._chat([{"role": "user", "content": "x"}], Usage())
+        _htn_agent(client)._chat([{"role": "user", "content": "x"}], Usage(), _ctx())
         assert no_sleep == [25.0]
 
     def test_everything_else_gets_the_short_capped_backoff(self, no_sleep):
         client = ScriptedClient([APITimeoutError()])
-        _htn_agent(client)._chat([{"role": "user", "content": "x"}], Usage())
+        _htn_agent(client)._chat([{"role": "user", "content": "x"}], Usage(), _ctx())
         assert no_sleep == [4.0]
 
 

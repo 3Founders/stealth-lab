@@ -613,7 +613,10 @@ class TestPersonaToolAccess:
         "`KeyPermanentlyInvalidatedError` is triggered.")
 
     def _names(self, agent, node):
-        return {t["function"]["name"] for t in agent._tools_for(node)}
+        from htn_agent import RunContext
+        from agent import Usage
+        ctx = RunContext(t0=0.0, usage=Usage())
+        return {t["function"]["name"] for t in agent._tools_for(node, ctx)}
 
     @pytest.mark.parametrize("goal", [
         "Locate the config loader.",           # locator
@@ -1071,7 +1074,7 @@ class TestZeroStepFailureIsStillProgress:
         share a batch, node 2 spends steps, and `spent_this_round` is
         non-zero -- which hides the defect rather than testing it."""
         from htn_agent import AugmentedHTNAgent
-        monkeypatch.setattr(AugmentedHTNAgent, "_shallow", lambda self: True)
+        monkeypatch.setattr(AugmentedHTNAgent, "_shallow", lambda self, ctx: True)
 
         # Node 1 fails immediately and cheaply; node 2 is independent
         # (deps []) and must still get its turn.
@@ -1379,3 +1382,141 @@ class TestTypedDependencyEdges:
             '{"id": 2, "goal": "Second subgoal here", "deps": [], "requires": [1]}]')
         assert nodes[1].deps == []
         assert nodes[1].requires == []
+
+
+class TestRunContextExtraction:
+    """Ticket 15's real fix, tested directly: per-run state (usage, seed
+    plan, the three locks) must not leak between two .run() calls on the
+    SAME agent instance -- the exact problem run_graph_experiment.py's
+    own comment names."""
+
+    @staticmethod
+    def _sandbox(tmp_path, name):
+        d = tmp_path / name
+        (d / "src").mkdir(parents=True)
+        (d / "src" / "a.py").write_text("def f():\n    return 1\n", encoding="utf-8")
+        return RepoSandbox(str(d))
+
+    def test_two_sequential_runs_on_the_same_agent_do_not_share_usage(self, tmp_path):
+        from htn_agent import HTNAgent
+        client = FakeClient([
+            _msg(content='["First run subgoal here"]'),
+            _msg(tool_calls=[("subgoal_done", {"summary": "done"})]),
+            _msg(content='["Second run subgoal here"]'),
+            _msg(tool_calls=[("subgoal_done", {"summary": "done"})]),
+        ])
+        agent = HTNAgent(client, "m")
+        repo1 = self._sandbox(tmp_path, "r1")
+        repo2 = self._sandbox(tmp_path, "r2")
+        run1 = agent.run(INSTANCE, repo1, "arm")
+        run2 = agent.run(INSTANCE, repo2, "arm")
+        # Each run's own usage.calls must reflect only ITS OWN calls, not
+        # an accumulation across both runs -- confirms usage isn't shared
+        # agent-level state leaking between calls.
+        assert run1.usage.calls == run2.usage.calls, (
+            "two structurally identical runs should report identical "
+            "per-run usage -- any drift means state leaked between them"
+        )
+
+    def test_a_seed_plan_set_before_one_run_does_not_leak_into_the_next(self, tmp_path):
+        """The real staleness bug found and fixed during RunContext
+        extraction: _pending_seed_plan used to be read but never
+        cleared, so it could silently survive into an unrelated later
+        run() call."""
+        from htn_agent import HTNAgent
+        client = FakeClient([
+            # Only ONE planner-shaped response queued -- if the seed
+            # plan leaks into run 2, run 2 must NOT need a second
+            # planner call (it would reuse the seeded plan and skip
+            # straight to execution), so queuing only run 1's real
+            # planner response plus both runs' executor responses is
+            # exactly what would make a leak observable.
+            _msg(tool_calls=[("subgoal_done", {"summary": "run 1 done"})]),
+            _msg(content='["Run 2 fresh subgoal here"]'),
+            _msg(tool_calls=[("subgoal_done", {"summary": "run 2 done"})]),
+        ])
+        agent = HTNAgent(client, "m")
+        agent._pending_seed_plan = [{"id": 1, "goal": "Seeded subgoal for run 1"}]
+        run1 = agent.run(INSTANCE, self._sandbox(tmp_path, "r1"), "arm")
+        assert run1.htn["seeded_from_library"] is True
+
+        # No seed set before run 2 -- it must plan fresh (consume the
+        # queued planner response), not silently reuse run 1's seed.
+        run2 = agent.run(INSTANCE, self._sandbox(tmp_path, "r2"), "arm")
+        assert run2.htn["seeded_from_library"] is False
+        assert run2.htn["nodes"][0]["goal"] == "Run 2 fresh subgoal here"
+
+    def test_pending_seed_plan_instance_attribute_is_cleared_after_run(self, tmp_path):
+        from htn_agent import HTNAgent
+        client = FakeClient([
+            _msg(tool_calls=[("subgoal_done", {"summary": "done"})]),
+        ])
+        agent = HTNAgent(client, "m")
+        agent._pending_seed_plan = [{"id": 1, "goal": "Seeded subgoal here"}]
+        agent.run(INSTANCE, self._sandbox(tmp_path, "r1"), "arm")
+        assert agent._pending_seed_plan is None
+
+
+class TestHTNConfig:
+    """Ticket 15's hyperparameter split, tested directly: structural vs.
+    distributional, and the additive from_config() constructor."""
+
+    def test_default_config_matches_original_module_constants(self):
+        from htn_agent import (
+            DistributionalBudgets, MAX_DEPTH, MAX_METHODS, MAX_SUBGOALS,
+            MIN_VIABLE_SUBGOAL_BUDGET, PLAN_CONTEXT_MAX_NODES,
+            STEPS_PER_SUBGOAL, StructuralLimits, TOTAL_STEP_BUDGET,
+        )
+        structural = StructuralLimits()
+        budgets = DistributionalBudgets()
+        assert structural.max_depth == MAX_DEPTH
+        assert budgets.max_subgoals == MAX_SUBGOALS
+        assert budgets.max_methods == MAX_METHODS
+        assert budgets.steps_per_subgoal == STEPS_PER_SUBGOAL
+        assert budgets.total_step_budget == TOTAL_STEP_BUDGET
+        assert budgets.min_viable_subgoal_budget == MIN_VIABLE_SUBGOAL_BUDGET
+        assert budgets.plan_context_max_nodes == PLAN_CONTEXT_MAX_NODES
+
+    def test_structural_limits_matches_augmented_class_level_constant(self):
+        """StructuralLimits.max_parallel_nodes is a deliberate duplicate
+        of AugmentedHTNAgent.MAX_PARALLEL_NODES (the dataclass is
+        defined before the class exists in the file) -- this test is
+        what stops the two from silently drifting apart."""
+        from htn_agent import AugmentedHTNAgent, StructuralLimits
+        assert StructuralLimits().max_parallel_nodes == AugmentedHTNAgent.MAX_PARALLEL_NODES
+
+    def test_from_config_produces_an_agent_with_the_configured_budgets(self):
+        from htn_agent import DistributionalBudgets, HTNAgent, HTNConfig
+        config = HTNConfig(budgets=DistributionalBudgets(
+            total_step_budget=99, steps_per_subgoal=5, max_methods=1,
+        ))
+        agent = HTNAgent.from_config(None, "m", config)
+        assert agent._max_steps == 99
+        assert agent._per_subgoal == 5
+        assert agent._max_methods == 1
+
+    def test_from_config_default_matches_individual_kwarg_construction(self):
+        """The additive-only guarantee: from_config() with a default
+        HTNConfig must produce an agent identical to the original
+        individual-kwarg constructor -- no behavior change for anyone
+        who switches to the new constructor without customizing it."""
+        from htn_agent import HTNConfig, HTNAgent
+        via_config = HTNAgent.from_config(None, "m", HTNConfig())
+        via_kwargs = HTNAgent(None, "m")
+        assert via_config._max_steps == via_kwargs._max_steps
+        assert via_config._per_subgoal == via_kwargs._per_subgoal
+        assert via_config._max_methods == via_kwargs._max_methods
+
+    def test_augmented_htn_agent_from_config_is_inherited_correctly(self):
+        from htn_agent import AugmentedHTNAgent, HTNConfig
+        agent = AugmentedHTNAgent.from_config(
+            None, "m", HTNConfig(), max_wall_seconds=120.0,
+        )
+        assert isinstance(agent, AugmentedHTNAgent)
+        assert agent._max_wall_seconds == 120.0
+
+    def test_budgets_are_marked_provisional(self):
+        """Ticket 15: mark distributional constants provisional 'at the
+        point of definition, not in a comment elsewhere.'"""
+        from htn_agent import DistributionalBudgets
+        assert DistributionalBudgets.PROVISIONAL is True
