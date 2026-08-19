@@ -29,6 +29,8 @@ from typing import Any, Optional
 
 import asyncpg
 
+from app.services.embeddings import to_pgvector
+
 CREATED_BY = "procedure_capture"
 
 # Ticket 13's exact numbers -- literature-grounded (Beta-Bernoulli, rule
@@ -80,6 +82,7 @@ async def capture_procedure(
     created_by: str = CREATED_BY,
     owner_id: Optional[str] = None,
     visibility: str = "public",
+    embedding: Optional[list[float]] = None,
 ) -> dict:
     """
     Inserts a new procedure, always starting `candidate` / `fresh` /
@@ -105,13 +108,13 @@ async def capture_procedure(
             expected_effects, postconditions, invariants, failure_conditions,
             scope, exclusions, family_id, evidence_refs, source_episode_ids,
             provenance, domain, domain_payload, migrated_from_task_node_id,
-            created_by, owner_id, visibility
+            created_by, owner_id, visibility, embedding
         ) VALUES (
             $1, $2, $3::jsonb, $4::jsonb, $5::jsonb, $6::jsonb,
             $7::jsonb, $8::jsonb, $9::jsonb, $10::jsonb,
             $11::jsonb, $12::jsonb, $13, $14::jsonb, $15,
             $16, $17, $18::jsonb, $19,
-            $20, $21, $22::visibility_level
+            $20, $21, $22::visibility_level, $23::vector
         )
         RETURNING id, procedure_id
         """,
@@ -133,6 +136,7 @@ async def capture_procedure(
         domain_payload if domain_payload is not None else {},
         migrated_from_task_node_id,
         created_by, owner_id, visibility,
+        to_pgvector(embedding) if embedding is not None else None,
     )
     return {"id": str(row["id"]), "procedure_id": str(row["procedure_id"])}
 
