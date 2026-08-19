@@ -1,0 +1,4 @@
+# Generated reports: reproducible via the scripts, and subagent filenames
+# can encode prompt-derived labels. Keep local.
+schema_report.json
+segmentation_report.json
