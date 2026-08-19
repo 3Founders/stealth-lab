@@ -13,7 +13,22 @@ from uuid import UUID, uuid4
 
 import pytest
 
-from app.services.claims import CREATED_BY, capture_claim, relate_claims
+from app.services.claims import CREATED_BY, capture_claim as _real_capture_claim, relate_claims
+
+
+class FakeEmbedder:
+    """No real network access needed -- a fixed vector is enough to
+    prove capture_claim() actually calls the embedder and passes the
+    result through to the INSERT, without touching Voyage."""
+    async def embed_one(self, text, input_type="document"):
+        return [0.0] * 1024
+
+
+async def capture_claim(db, **kwargs):
+    """Test-local wrapper: every real capture_claim() call in this
+    file goes through here so none of them need to remember to pass
+    a fake embedder individually."""
+    return await _real_capture_claim(db, embedder=FakeEmbedder(), **kwargs)
 
 
 class FakeDB:
@@ -51,11 +66,12 @@ class FakeDB:
     async def fetchval(self, query: str, *params):
         q = query.strip()
         if q.startswith("INSERT INTO knowledge_nodes"):
-            name, properties, created_by = params
+            name, properties, embedding, created_by = params
             nid = str(uuid4())
             self.knowledge_nodes[nid] = {
                 "id": UUID(nid), "node_type": "claim", "name": name,
-                "properties": dict(properties), "created_by": created_by,
+                "properties": dict(properties), "embedding": embedding,
+                "created_by": created_by,
             }
             return UUID(nid)
         raise AssertionError(f"FakeDB.fetchval: unrecognized query\n{q}")
@@ -197,6 +213,64 @@ class TestCaptureClaim:
         assert len(node["name"]) <= 200
         # The full text still survives in properties.
         assert node["properties"]["statement"] == long_statement
+
+    def test_embedding_is_actually_set_on_the_row(self):
+        """The real bug ticket 03 found and this fix closes: embedding
+        was previously omitted from the INSERT entirely, making every
+        claim invisible to HybridRetriever (which filters on
+        `embedding IS NOT NULL` throughout). Confirms the fix reaches
+        the actual row, not just that the function runs. Stored as
+        pgvector's real text wire format (to_pgvector), not a raw
+        Python list -- asyncpg has no native vector codec."""
+        db = FakeDB()
+        db.add_task_node("instance_x")
+        node_id = asyncio.run(capture_claim(
+            db, statement="a claim that must be retrievable", task_ids=["instance_x"],
+        ))
+        node = db.knowledge_nodes[node_id]
+        assert node["embedding"] is not None
+        assert node["embedding"].startswith("[") and node["embedding"].endswith("]")
+        assert len(node["embedding"].split(",")) == 1024
+
+    def test_structured_fields_are_validated_and_stored(self):
+        """Real check on ticket 03/10's NODE_TYPE_SCHEMAS registry: the
+        new structured fields actually reach properties, validated."""
+        db = FakeDB()
+        db.add_task_node("instance_x")
+        node_id = asyncio.run(capture_claim(
+            db, statement="the auth module requires a valid token",
+            task_ids=["instance_x"],
+            subject="auth module", predicate="requires", object="valid token",
+            claim_type="requirement", extraction_version="v1",
+            epistemic_status="observed",
+        ))
+        props = db.knowledge_nodes[node_id]["properties"]
+        assert props["subject"] == "auth module"
+        assert props["predicate"] == "requires"
+        assert props["object"] == "valid token"
+        assert props["claim_type"] == "requirement"
+        assert props["extraction_version"] == "v1"
+        assert props["epistemic_status"] == "observed"
+
+    def test_invalid_epistemic_status_is_rejected(self):
+        """NODE_TYPE_SCHEMAS validation actually fires -- a bad value
+        fails loudly at write time, not silently at some later read."""
+        db = FakeDB()
+        db.add_task_node("instance_x")
+        with pytest.raises(Exception):  # pydantic.ValidationError
+            asyncio.run(capture_claim(
+                db, statement="bad status", task_ids=["instance_x"],
+                epistemic_status="guessed",  # not 'observed' or 'inferred'
+            ))
+
+    def test_confidence_out_of_range_is_rejected(self):
+        db = FakeDB()
+        db.add_task_node("instance_x")
+        with pytest.raises(Exception):
+            asyncio.run(capture_claim(
+                db, statement="bad confidence", task_ids=["instance_x"],
+                confidence=1.5,
+            ))
 
 
 class TestRelateClaims:

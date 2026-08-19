@@ -1,7 +1,8 @@
 """
 Claim-level hyper-nodes, on top of the existing bi-temporal
 knowledge_nodes/task_nodes/edges schema (backend/db/01_ontology.sql) --
-no migration, because every piece this needs already exists:
+no migration for the base representation, because every piece this needs
+already exists:
 
   - a Claim is just node_type='claim'; node_type is TEXT, not an enum.
   - temporal scoping is t_valid/t_invalid, already bi-temporal on every row.
@@ -23,17 +24,79 @@ no migration, because every piece this needs already exists:
 Same WHY-NOT-KnowledgeUpdater reasoning as failure_capture.py: this is a
 trusted, internal write of one node plus its edges in one transaction,
 not a dispatch through apply()/apply_generated()'s op-type machinery.
+
+Ticket 03 (memory-substrate map): NODE_TYPE_SCHEMAS is a real, validated
+registry for node_type='claim' specifically -- the same pattern ticket 02
+established for domain_payload (a dict-keyed Pydantic-model registry,
+validated in the service layer, not a DB constraint -- no ORM/Alembic in
+this repo). Deliberately scoped to 'claim' only; the other 6 existing
+virtual types (failure_mode, hierarchy_group, code_location, policy,
+policy_document, fact) are NOT retroactively migrated onto this pattern
+here -- that's real, separate cleanup ticket 03 explicitly declined to
+fold in.
 """
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 
 import asyncpg
+from pydantic import BaseModel, Field
+
+from app.services.embeddings import Embedder, to_pgvector
 
 CREATED_BY = "claim_capture"
 
 TRUTH_STATES = {"IN", "OUT"}
 RELATIONS = {"SUPERSEDES", "CONTRADICTS"}
+
+
+class ClaimProperties(BaseModel):
+    """
+    Real, validated schema for node_type='claim' properties (ticket 03,
+    amended by ticket 10). Every field here was named explicitly in the
+    resolved ticket text -- nothing invented beyond it.
+
+    `epistemic_status` (ticket 10's amendment): 'observed' (deterministically
+    derived from trace events) vs 'inferred' (semantically extracted,
+    model-derived). Ticket 04 owns HOW this value gets assigned when a
+    claim is produced from an observation -- see
+    app/services/observations.py's claim-promotion helper.
+
+    `confidence` stays here even though ticket 04 explicitly forbids it on
+    the raw `observations` table -- a claim is one step removed from raw
+    extraction, and this field is real estate for a future calibrated
+    signal (ticket 04's own fog item: conformal prediction against a
+    calibration set), not populated with anything today. Left unset by
+    default rather than populated with an uncalibrated guess, same
+    reasoning ticket 04 already established.
+    """
+
+    model_config = {"extra": "allow"}  # properties may carry additional,
+    # unvalidated keys (e.g. this claim's own free-form domain context)
+    # -- this registry validates the fields ticket 03/10 named, it does
+    # not forbid a caller from attaching more.
+
+    statement: str
+    subject: Optional[str] = None
+    predicate: Optional[str] = None
+    object: Optional[str] = None
+    truth_state: Literal["IN", "OUT"] = "IN"
+    claim_type: Optional[str] = None
+    confidence: Optional[float] = Field(default=None, ge=0.0, le=1.0)
+    extraction_version: Optional[str] = None
+    epistemic_status: Optional[Literal["observed", "inferred"]] = None
+
+
+NODE_TYPE_SCHEMAS: dict[str, type[BaseModel]] = {
+    "claim": ClaimProperties,
+}
+"""
+Ticket 03's registry, scoped to 'claim' only. Mirrors ticket 02's real
+DOMAIN_PAYLOAD_SCHEMAS pattern (dict[key, type[BaseModel]], validated at
+write time in the service layer) -- same idiom, different key shape
+(node_type alone here, vs (concept, domain) there), because claims are
+explicitly one of the concepts ticket 02 named as NOT domain-shaped.
+"""
 
 
 async def capture_claim(
@@ -44,12 +107,34 @@ async def capture_claim(
     justification_episode_id: Optional[str] = None,
     created_by: str = CREATED_BY,
     truth_state: str = "IN",
+    subject: Optional[str] = None,
+    predicate: Optional[str] = None,
+    object: Optional[str] = None,  # noqa: A002 -- matches the real triple field name (ticket 03)
+    claim_type: Optional[str] = None,
+    confidence: Optional[float] = None,
+    extraction_version: Optional[str] = None,
+    epistemic_status: Optional[str] = None,
     properties: Optional[dict[str, Any]] = None,
+    embedder: Optional[Embedder] = None,
 ) -> Optional[str]:
     """
     Write one claim knowledge_node plus one PRODUCES/CLAIM_OF edge to
     EACH live task_node in `task_ids` (task_nodes.skill_ref, the same
     key graph_ingest.py and failure_capture.py both use).
+
+    REAL BUG FIXED (ticket 03's own finding, confirmed directly against
+    this file before fixing it): this function previously omitted
+    `embedding` from its INSERT entirely -- claims were written but
+    invisible to the real retrieval stack (HybridRetriever filters on
+    `embedding IS NOT NULL` throughout). Fixed by computing one from
+    `statement`, same as every other real embedded write path in this
+    codebase. `embedder` is injectable (mirrors KnowledgeUpdater's own
+    lazy-construction pattern) so tests don't need real network access.
+
+    Properties are now validated against ClaimProperties (ticket 03's
+    NODE_TYPE_SCHEMAS registry) before insert -- a malformed
+    confidence/epistemic_status value fails loudly here, not silently at
+    some later read.
 
     Returns the new claim's id, or None if none of `task_ids` resolve to
     a live task_node -- a claim that supports nothing has nothing to
@@ -59,11 +144,26 @@ async def capture_claim(
     """
     if truth_state not in TRUTH_STATES:
         raise ValueError(f"truth_state must be one of {TRUTH_STATES}, got {truth_state!r}")
+
+    validated = ClaimProperties(
+        statement=statement,
+        subject=subject,
+        predicate=predicate,
+        object=object,
+        truth_state=truth_state,
+        claim_type=claim_type,
+        confidence=confidence,
+        extraction_version=extraction_version,
+        epistemic_status=epistemic_status,
+    )
     props: dict[str, Any] = {
         **(properties or {}),
-        "statement": statement,
-        "truth_state": truth_state,
+        **validated.model_dump(exclude_none=True),
     }
+
+    embedder = embedder or Embedder()
+    embedding = await embedder.embed_one(statement, input_type="document")
+
     async with pool.acquire() as conn:
         async with conn.transaction():
             rows = await conn.fetch(
@@ -75,10 +175,10 @@ async def capture_claim(
                 return None
             node_id = await conn.fetchval(
                 "INSERT INTO knowledge_nodes "
-                "(node_type, name, properties, created_by, provenance) "
-                "VALUES ('claim', $1, $2, $3, 'company_ingested') "
+                "(node_type, name, properties, embedding, created_by, provenance) "
+                "VALUES ('claim', $1, $2, $3::vector, $4, 'company_ingested') "
                 "RETURNING id",
-                statement[:200], props, created_by,
+                statement[:200], props, to_pgvector(embedding), created_by,
             )
             for row in rows:
                 await conn.execute(
