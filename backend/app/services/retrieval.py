@@ -87,6 +87,37 @@ time, which would recreate the drift risk this check exists to catch.
 """
 
 
+def fuse_rrf(
+    ranked_lists: list[tuple[list[tuple[UUID, str, int]], str]],
+    k: int = RRF_K,
+) -> tuple[dict[tuple[UUID, str], float], dict[tuple[UUID, str], list[str]]]:
+    """
+    Pure Reciprocal Rank Fusion -- no I/O, extracted from retrieve()'s
+    body (ticket 14: "the component is load-bearing with zero coverage
+    ... property-based tests land before any extension") so the fusion
+    arithmetic itself is directly testable against real invariants
+    (monotonicity, idempotence, commutativity, stability -- see
+    tests/test_retrieval_rrf_properties.py) without needing a live
+    database. `retrieve()` below is now a thin caller of this function;
+    behavior is unchanged, only factored so it can be tested at all.
+
+    `ranked_lists`: each element is (hits, label) where hits is a list
+    of (node_id, table, rank) -- rank is 0-based position within that
+    one ranked list, exactly what _vector_search/_lexical_search already
+    return. `label` tags which signal contributed (e.g. "semantic",
+    "keyword"), carried through into the returned `matched` dict for
+    RetrievedNode.matched_by.
+    """
+    scores: dict[tuple[UUID, str], float] = {}
+    matched: dict[tuple[UUID, str], list[str]] = {}
+    for hits, label in ranked_lists:
+        for node_id, table, rank in hits:
+            key = (node_id, table)
+            scores[key] = scores.get(key, 0.0) + 1.0 / (k + rank + 1)
+            matched.setdefault(key, []).append(label)
+    return scores, matched
+
+
 class HybridRetriever:
     def __init__(
         self,
@@ -223,14 +254,10 @@ class HybridRetriever:
 
         lexical_hits = await self._lexical_search(query, top_k * 2)
 
-        # Reciprocal Rank Fusion
-        scores: dict[tuple[UUID, str], float] = {}
-        matched: dict[tuple[UUID, str], list[str]] = {}
-        for hits, label in ((vector_hits, "semantic"), (lexical_hits, "keyword")):
-            for node_id, table, rank in hits:
-                key = (node_id, table)
-                scores[key] = scores.get(key, 0.0) + 1.0 / (RRF_K + rank + 1)
-                matched.setdefault(key, []).append(label)
+        # Reciprocal Rank Fusion -- pure arithmetic, see fuse_rrf() above.
+        scores, matched = fuse_rrf(
+            [(vector_hits, "semantic"), (lexical_hits, "keyword")]
+        )
 
         ranked = sorted(scores.items(), key=lambda kv: kv[1], reverse=True)[:top_k]
         if not ranked:
