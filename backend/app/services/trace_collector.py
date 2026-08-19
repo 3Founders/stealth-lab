@@ -216,13 +216,30 @@ def append_event(
     file_path: Path,
     session_id: str,
     event_type: str,
-    sequence: int,
+    sequence: int | None = None,
     max_lines: int = DEFAULT_MAX_LINES,
 ) -> dict:
     """
     Redacts, keys, and appends one event to the local collector file.
     Returns the redacted+keyed record actually written (useful for
     testing and for the caller to log/confirm).
+
+    `sequence`: pass an explicit int for callers that already have a
+    real ordering (tests, replay). Pass None (the default, and what the
+    real hook wrapper -- scripts/hook_wrapper.py -- does) to have one
+    assigned automatically: real Claude Code hook payloads carry no
+    native per-session sequence number (confirmed against
+    .scratch/memory-substrate/research/claude-code-hook-schema.md's
+    documented common-fields list), so the collector maintains a
+    per-file monotonic counter in the sidecar meta file, incremented
+    atomically under the same lock as the write below -- two concurrent
+    hooks for the same session cannot receive the same auto-assigned
+    sequence. (Real, known limitation, matches the code review's own
+    "smaller, worth knowing" note: a hook wrapper that restarts its own
+    numbering, or writes to a different file for the same logical
+    session, would not compose with this counter -- out of scope here,
+    since this collector has no way to detect that from inside one
+    process.)
 
     Backpressure (ticket 16's answer): bounded by line count, drop
     oldest, with a running drop counter -- silent loss is exactly what
@@ -261,21 +278,34 @@ def append_event(
     compaction, only the fully-old or fully-new version.
     """
     redacted = redact_event(event)
-    dedup_key = compute_dedup_key(session_id, event_type, sequence, event)
-    record = {
-        "dedup_key": dedup_key,
-        "session_id": session_id,
-        "event_type": event_type,
-        "sequence": sequence,
-        "event": redacted,
-    }
-    line = json.dumps(record)
 
     file_path.parent.mkdir(parents=True, exist_ok=True)
     lock_path = _lock_path_for(file_path)
     meta_path = _meta_path_for(file_path)
 
     with _locked(lock_path):
+        meta = _read_meta(meta_path)
+
+        # Sequence and dedup_key/record construction happen INSIDE the
+        # lock when sequence must be auto-assigned -- computing them
+        # before acquiring the lock (the old structure) would race two
+        # concurrent auto-assigning callers into reading the same
+        # "next" value before either had written it back.
+        resolved_sequence = sequence
+        if resolved_sequence is None:
+            resolved_sequence = meta.get("next_sequence", 0)
+            meta["next_sequence"] = resolved_sequence + 1
+
+        dedup_key = compute_dedup_key(session_id, event_type, resolved_sequence, event)
+        record = {
+            "dedup_key": dedup_key,
+            "session_id": session_id,
+            "event_type": event_type,
+            "sequence": resolved_sequence,
+            "event": redacted,
+        }
+        line = json.dumps(record)
+
         # The real, O(1) append. fsync so a crash immediately after
         # append_event() returns cannot lose the write -- the caller (a
         # Claude Code hook) has no way to know to retry.
@@ -284,7 +314,6 @@ def append_event(
             f.flush()
             os.fsync(f.fileno())
 
-        meta = _read_meta(meta_path)
         line_count = meta.get("line_count", 0) + 1
         drop_count = meta.get("drop_count", 0)
         worker_seen = meta.get("worker_seen_count", 0)

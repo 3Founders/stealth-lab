@@ -1,0 +1,46 @@
+{
+  "_comment": "Example only -- NOT auto-installed by anything in this repo. Copy the relevant `hooks` entries into your own .claude/settings.json (all projects) or .claude/settings.local.json (this project, gitignored) to actually enable collection. Registration shape and CLAUDE_PROJECT_DIR placeholder confirmed against .scratch/memory-substrate/research/claude-code-hook-schema.md's Configuration mechanism section -- untested against a real Claude Code process, same honest caveat as hook_wrapper.py itself.",
+
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ${CLAUDE_PROJECT_DIR}/backend/scripts/hook_wrapper.py",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ${CLAUDE_PROJECT_DIR}/backend/scripts/hook_wrapper.py",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "PostToolUseFailure": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ${CLAUDE_PROJECT_DIR}/backend/scripts/hook_wrapper.py",
+            "timeout": 5
+          }
+        ]
+      }
+    ]
+  },
+
+  "_timeout_note": "5s is deliberately short relative to the documented 600s default -- append_event() should complete in well under a second (real O(1) append per the A1 fix); a hook taking anywhere near 5s here means something is genuinely wrong (lock contention, filesystem issue), and per the docs a timed-out command hook is silently canceled and its output discarded (non-blocking) -- better to fail fast and visibly in the debug log than sit near the 10-minute default.",
+
+  "_scope_note": "Only PreToolUse/PostToolUse/PostToolUseFailure are wired here -- the three event types hook_wrapper.py's build_event() actually maps with confirmed field names. SessionStart/UserPromptSubmit/Stop/etc. would need their own matcher entries below (same command) once someone decides those event types are worth collecting; build_event() already has a defensive fallback path for them, but it hasn't been exercised against real payloads for those event types specifically."
+}

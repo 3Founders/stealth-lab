@@ -335,3 +335,55 @@ def test_a1_windows_lock_path_acquires_and_releases_correctly(tmp_path: Path, mo
                 pass
     finally:
         real_lock.release()
+
+
+def test_sequence_auto_assigns_monotonically_when_not_given(tmp_path: Path):
+    """Real hook payloads carry no native sequence number (confirmed
+    against the hook schema research doc); sequence=None must produce a
+    real, monotonic, gap-free counter."""
+    f = tmp_path / "events.jsonl"
+    records = [
+        append_event({"n": i}, f, session_id="sess1", event_type="PostToolUse", sequence=None)
+        for i in range(10)
+    ]
+    seqs = [r["sequence"] for r in records]
+    assert seqs == list(range(10))
+
+
+def test_concurrent_auto_sequence_assignment_has_no_collisions(tmp_path: Path):
+    """Real concurrency test for the auto-sequence path specifically --
+    separate from test_concurrent_appends_do_not_lose_updates (which
+    uses explicit sequences). Confirms the read-increment-write of
+    next_sequence inside the same lock as the write is actually atomic
+    under real thread contention, not just correct in the single-writer
+    case."""
+    import threading
+
+    f = tmp_path / "events.jsonl"
+    n_writers = 40
+    errors: list[Exception] = []
+    results: list[dict] = []
+    results_lock = threading.Lock()
+
+    def _write(i: int) -> None:
+        try:
+            record = append_event(
+                {"n": i}, f, session_id="sess-auto", event_type="PostToolUse", sequence=None,
+            )
+            with results_lock:
+                results.append(record)
+        except Exception as exc:  # noqa: BLE001
+            errors.append(exc)
+
+    threads = [threading.Thread(target=_write, args=(i,)) for i in range(n_writers)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=10)
+
+    assert not errors, f"writer(s) raised: {errors}"
+    assigned_seqs = sorted(r["sequence"] for r in results)
+    assert assigned_seqs == list(range(n_writers)), (
+        "auto-assigned sequences must be a real permutation of 0..N-1, no "
+        "collisions and no gaps, even under real thread contention"
+    )
