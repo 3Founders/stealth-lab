@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from app.services.trace_collector import append_event, compute_dedup_key, read_drop_count
+from app.services.trace_collector import append_event, compute_dedup_key, mark_worker_seen, read_drop_count
 
 
 def test_dedup_key_is_deterministic_for_identical_inputs():
@@ -75,6 +75,11 @@ def test_multiple_appends_accumulate_in_order(tmp_path: Path):
 
 
 def test_bounded_file_drops_oldest_when_over_budget(tmp_path: Path):
+    """A2 real update: trimming is now gated on mark_worker_seen() -- a
+    worker must have confirmed reading a line before it can be trimmed
+    (see the dedicated no-trim-without-worker-progress test below).
+    This test simulates a worker that has already seen everything
+    written so far, which is the case trimming is meant to cover."""
     f = tmp_path / "events.jsonl"
     max_lines = 10
     for i in range(15):
@@ -83,6 +88,7 @@ def test_bounded_file_drops_oldest_when_over_budget(tmp_path: Path):
             f, session_id="sess1", event_type="PostToolUse", sequence=i,
             max_lines=max_lines,
         )
+        mark_worker_seen(f, i + 1)  # simulate the worker tailing in real time
     lines = f.read_text().splitlines()
     records = [json.loads(l) for l in lines[1:]]
     # Real check: the SURVIVING records are the most RECENT ones, not an
@@ -103,8 +109,53 @@ def test_drop_count_is_recorded_and_readable(tmp_path: Path):
             f, session_id="sess1", event_type="PostToolUse", sequence=i,
             max_lines=max_lines,
         )
+        mark_worker_seen(f, i + 1)
     drop_count = read_drop_count(f)
     assert drop_count > 0, "expected some real drops given 15 events into a 10-line budget"
+
+
+def test_a2_trimming_never_discards_events_the_worker_has_not_seen(tmp_path: Path):
+    """The actual A2 guarantee, tested directly: with NO mark_worker_seen()
+    call at all (the worker is down, or hasn't run yet -- the exact
+    scenario the handoff flagged: 'if the worker is down during one 50k
+    burst, those events are gone'), the file must be allowed to exceed
+    max_lines rather than silently drop unread data."""
+    f = tmp_path / "events.jsonl"
+    max_lines = 10
+    for i in range(15):
+        append_event(
+            {"event_type": "PostToolUse", "n": i},
+            f, session_id="sess1", event_type="PostToolUse", sequence=i,
+            max_lines=max_lines,
+        )
+    lines = f.read_text().splitlines()
+    records = [json.loads(l) for l in lines[1:]]
+    seqs = [r["sequence"] for r in records]
+    assert seqs == list(range(15)), "every event must survive -- nothing was ever confirmed read"
+    assert read_drop_count(f) == 0
+
+
+def test_a2_trimming_only_removes_up_to_the_workers_high_water_mark(tmp_path: Path):
+    """Partial-progress case: the worker saw the first 5 events (of 15
+    written, max_lines=10), so compaction may trim at most 5 lines --
+    even though the naive 'drop oldest 20%' math might want to trim
+    more, it must never trim past what's been confirmed."""
+    f = tmp_path / "events.jsonl"
+    max_lines = 10
+    for i in range(15):
+        append_event(
+            {"event_type": "PostToolUse", "n": i},
+            f, session_id="sess1", event_type="PostToolUse", sequence=i,
+            max_lines=max_lines,
+        )
+        if i == 4:
+            mark_worker_seen(f, 5)  # worker confirmed only the first 5
+
+    lines = f.read_text().splitlines()
+    records = [json.loads(l) for l in lines[1:]]
+    seqs = [r["sequence"] for r in records]
+    assert min(seqs) == 5, "exactly the worker-confirmed prefix (0-4) should have been trimmed, no more"
+    assert 14 in seqs
 
 
 def test_no_drop_count_when_never_over_budget(tmp_path: Path):

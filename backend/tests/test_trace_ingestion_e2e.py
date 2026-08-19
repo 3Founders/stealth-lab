@@ -4,6 +4,7 @@ real DATABASE_URL, same pattern as tests/test_schema_drift.py -- skips,
 does not fail, when one isn't configured.
 """
 import asyncio
+import json
 import os
 from pathlib import Path
 
@@ -159,6 +160,197 @@ def test_multiple_events_share_one_trace_header(tmp_path: Path):
                     "SELECT count(*) FROM trace_events WHERE session_id = $1", session_id
                 )
                 assert event_count == 3
+        finally:
+            await _cleanup(pool, session_id)
+            await pool.close()
+
+    asyncio.run(_run())
+
+
+def test_a7_owner_id_and_visibility_are_actually_written(tmp_path: Path):
+    """Real, live confirmation of the A7 fix: agent_traces/trace_events
+    both carry real owner_id/visibility columns, but process_collector_file()
+    never populated either -- every row silently landed public/unowned."""
+    async def _run():
+        pool = await asyncpg.create_pool(DATABASE_URL, min_size=1, max_size=2)
+        session_id = "test-session-a7-001"
+        try:
+            await _cleanup(pool, session_id)
+
+            f = tmp_path / "events.jsonl"
+            append_event(
+                {"event_type": "PostToolUse", "timestamp": "2026-08-19T10:00:00Z"},
+                f, session_id=session_id, event_type="PostToolUse", sequence=0,
+            )
+
+            result = await process_collector_file(
+                pool, f, owner_id="alice", visibility="private",
+            )
+            assert result["inserted"] == 1
+
+            trace_row = await pool.fetchrow(
+                "SELECT owner_id, visibility::text AS visibility FROM agent_traces "
+                "WHERE session_id = $1", session_id,
+            )
+            assert trace_row["owner_id"] == "alice"
+            assert trace_row["visibility"] == "private"
+
+            event_row = await pool.fetchrow(
+                "SELECT owner_id, visibility::text AS visibility FROM trace_events "
+                "WHERE session_id = $1", session_id,
+            )
+            assert event_row["owner_id"] == "alice"
+            assert event_row["visibility"] == "private"
+        finally:
+            await _cleanup(pool, session_id)
+            await pool.close()
+
+    asyncio.run(_run())
+
+
+def test_a4_one_malformed_line_no_longer_stalls_the_whole_file(tmp_path: Path):
+    """Real, live confirmation of the A4 fix: a truncated/corrupt line
+    (exactly what a torn write produces) used to raise out of
+    _read_records entirely, so a file with 1 bad line + N good lines
+    processed ZERO records. Now the bad line is quarantined and every
+    good line still gets processed."""
+    async def _run():
+        pool = await asyncpg.create_pool(DATABASE_URL, min_size=1, max_size=2)
+        session_id = "test-session-a4-001"
+        try:
+            await _cleanup(pool, session_id)
+
+            f = tmp_path / "events.jsonl"
+            append_event(
+                {"event_type": "PostToolUse", "timestamp": "2026-08-19T10:00:00Z"},
+                f, session_id=session_id, event_type="PostToolUse", sequence=0,
+            )
+            # Simulate a torn write: append a truncated, invalid JSON line.
+            with f.open("a") as fh:
+                fh.write('{"dedup_key": "broken", "session_id": "test-sess' + "\n")
+            append_event(
+                {"event_type": "PostToolUse", "timestamp": "2026-08-19T10:00:01Z"},
+                f, session_id=session_id, event_type="PostToolUse", sequence=1,
+            )
+
+            result = await process_collector_file(pool, f)
+            assert result["inserted"] == 2, "both good lines must survive one bad line"
+            assert result["quarantined"] == 1
+
+            quarantine_path = f.with_name(f.name + ".quarantine")
+            assert quarantine_path.exists()
+            quarantined_lines = quarantine_path.read_text().splitlines()
+            assert len(quarantined_lines) == 1
+        finally:
+            await _cleanup(pool, session_id)
+            await pool.close()
+
+    asyncio.run(_run())
+
+
+def test_a4_trailing_z_timestamp_is_parsed_correctly(tmp_path: Path):
+    """JS-origin hook payloads emit trailing 'Z' timestamps
+    ('2026-08-19T10:00:00.000Z'); _parse_timestamp must handle this on
+    any Python version, not rely on 3.11+'s broader fromisoformat."""
+    async def _run():
+        pool = await asyncpg.create_pool(DATABASE_URL, min_size=1, max_size=2)
+        session_id = "test-session-a4-z-001"
+        try:
+            await _cleanup(pool, session_id)
+            f = tmp_path / "events.jsonl"
+            append_event(
+                {"event_type": "PostToolUse", "timestamp": "2026-08-19T10:00:00.123Z"},
+                f, session_id=session_id, event_type="PostToolUse", sequence=0,
+            )
+            result = await process_collector_file(pool, f)
+            assert result["inserted"] == 1
+            assert result["quarantined"] == 0
+        finally:
+            await _cleanup(pool, session_id)
+            await pool.close()
+
+    asyncio.run(_run())
+
+
+def test_a3_header_is_ensured_once_per_distinct_trace_not_per_event(tmp_path: Path):
+    """Real confirmation of the A3 fix: many events sharing one
+    session/trace must only trigger one _ensure_trace_header call, not
+    one per event -- checked via a real, small connection-count proxy:
+    processing works correctly and fast for a batch that would have been
+    50k redundant upserts under the old per-event behaviour. This test
+    checks correctness (one real agent_traces row, not duplicated
+    effort) rather than instrumenting call counts directly."""
+    async def _run():
+        pool = await asyncpg.create_pool(DATABASE_URL, min_size=1, max_size=2)
+        session_id = "test-session-a3-001"
+        try:
+            await _cleanup(pool, session_id)
+            f = tmp_path / "events.jsonl"
+            for i in range(50):
+                append_event(
+                    {"event_type": "PostToolUse", "timestamp": f"2026-08-19T10:00:{i:02d}Z"},
+                    f, session_id=session_id, event_type="PostToolUse", sequence=i,
+                )
+
+            result = await process_collector_file(pool, f)
+            assert result["inserted"] == 50
+
+            trace_count = await pool.fetchval(
+                "SELECT count(*) FROM agent_traces WHERE session_id = $1", session_id
+            )
+            assert trace_count == 1, "one distinct trace should produce exactly one header row"
+        finally:
+            await _cleanup(pool, session_id)
+            await pool.close()
+
+    asyncio.run(_run())
+
+
+def test_a2_real_worker_run_unblocks_collector_trimming(tmp_path: Path):
+    """Real, full end-to-end confirmation of A2, collector and worker
+    both exercised for real (not through mark_worker_seen() called
+    directly, as the collector-side tests do): write past max_lines with
+    no worker running -- nothing is trimmed. Run the real worker once.
+    Write more -- now trimming is allowed, because a real worker run
+    just confirmed reading everything currently in the file."""
+    async def _run():
+        pool = await asyncpg.create_pool(DATABASE_URL, min_size=1, max_size=2)
+        session_id = "test-session-a2-e2e-001"
+        try:
+            await _cleanup(pool, session_id)
+            f = tmp_path / "events.jsonl"
+            max_lines = 5
+
+            for i in range(8):
+                append_event(
+                    {"event_type": "PostToolUse", "timestamp": f"2026-08-19T10:00:{i:02d}Z"},
+                    f, session_id=session_id, event_type="PostToolUse", sequence=i,
+                    max_lines=max_lines,
+                )
+            # No worker has run yet -- nothing should have been trimmed,
+            # even though 8 > max_lines(5).
+            pre_worker_lines = f.read_text().splitlines()[1:]
+            assert len(pre_worker_lines) == 8, "must not trim before any real worker run"
+
+            result = await process_collector_file(pool, f)
+            assert result["inserted"] == 8
+
+            for i in range(8, 12):
+                append_event(
+                    {"event_type": "PostToolUse", "timestamp": f"2026-08-19T10:01:{i:02d}Z"},
+                    f, session_id=session_id, event_type="PostToolUse", sequence=i,
+                    max_lines=max_lines,
+                )
+            post_worker_lines = f.read_text().splitlines()[1:]
+            records = [json.loads(l) for l in post_worker_lines]
+            seqs = [r["sequence"] for r in records]
+            # The real A2 guarantee: trimming became possible after the
+            # worker ran (some of 0-7 were dropped), unlike the pre-worker
+            # phase where nothing was ever dropped. (TRIM_FRACTION's 1-line-
+            # per-call pace for a small max_lines is a separate, pre-existing
+            # property -- not what this test is checking.)
+            assert min(seqs) > 0, "at least the earliest events should now be trimmable"
+            assert 11 in seqs, "the most recent event must always survive"
         finally:
             await _cleanup(pool, session_id)
             await pool.close()

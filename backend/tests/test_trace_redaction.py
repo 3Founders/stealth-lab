@@ -6,7 +6,7 @@ logic itself, which is a different, legitimate thing from claiming
 real-world coverage (that question is explicitly still open, per ticket
 18's own admission that detection is inherently incomplete).
 """
-from app.services.trace_redaction import redact_event, redact_value
+from app.services.trace_redaction import PATH_REDACTION_PLACEHOLDER, redact_event, redact_value
 
 
 def test_aws_key_is_redacted_within_a_string_leaf():
@@ -166,3 +166,61 @@ def test_dotall_pattern_cannot_span_across_separate_fields():
         "unrelated text mentioning -----END EXAMPLE KEY----- in a log line"
     )
     assert "_redaction" not in result
+
+
+def test_a5_windows_ssh_key_path_is_now_excluded():
+    """Real, live confirmation of the A5 fix: PurePosixPath does not
+    normalize backslashes -- a Windows SSH key path like
+    C:\\Users\\chait\\.ssh\\id_rsa matched none of SENSITIVE_PATH_PATTERNS
+    before this fix (rule 6 needed '.ssh/', rule 3 needed 'id_rsa' right
+    after '/' or string start; backslash satisfied neither)."""
+    event = {
+        "tool_input": {"file_path": r"C:\Users\chait\.ssh\id_rsa"},
+        "tool_output": {"content": "-----BEGIN OPENSSH PRIVATE KEY-----\nreal key bytes\n"},
+    }
+    result = redact_event(event)
+    assert result["tool_input"] == PATH_REDACTION_PLACEHOLDER
+    assert result["tool_output"] == PATH_REDACTION_PLACEHOLDER
+    assert "sensitive_path" in result["_redaction"]["patterns_matched"]
+
+
+def test_a5_windows_env_file_path_is_now_excluded():
+    event = {"tool_input": {"file_path": r"C:\Users\chait\project\.env"}}
+    result = redact_event(event)
+    assert result["tool_input"] == PATH_REDACTION_PLACEHOLDER
+
+
+def test_a5_env_file_referenced_inside_a_bash_command_is_excluded():
+    """Real fix: '.env' preceded by a space (as it is inside an actual
+    shell command like 'cat .env') previously matched no rule, since
+    rule 1 only accepted '.env' preceded by '/' or the string start."""
+    event = {"tool_input": {"command": "cat .env"}}
+    result = redact_event(event)
+    assert result["tool_input"] == PATH_REDACTION_PLACEHOLDER
+
+
+def test_a6_tool_response_field_is_redacted_and_normalized_to_tool_output():
+    """Real fix for the A6 unknown: if the raw event carries the tool's
+    result under 'tool_response' instead of 'tool_output' (the real
+    Claude Code field name could not be confirmed from available docs),
+    it must still be redacted, AND normalized into 'tool_output' so
+    every downstream consumer (trace_worker.py, observations.py) keeps
+    working without needing to learn a second field name."""
+    event = {
+        "tool_name": "Bash",
+        "tool_response": {"stdout": "AKIAABCDEFGHIJKLMNOP leaked in output"},
+    }
+    result = redact_event(event)
+    assert "tool_response" not in result
+    assert result["tool_output"]["stdout"] == "[REDACTED:aws_access_key] leaked in output"
+    assert "aws_access_key" in result["_redaction"]["patterns_matched"]
+
+
+def test_a6_tool_response_sensitive_path_is_excluded_wholesale():
+    event = {
+        "tool_input": {"file_path": "/home/user/.ssh/id_ed25519"},
+        "tool_response": {"content": "real private key bytes"},
+    }
+    result = redact_event(event)
+    assert result["tool_output"] == PATH_REDACTION_PLACEHOLDER
+    assert "tool_response" not in result

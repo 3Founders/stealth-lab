@@ -42,16 +42,25 @@ KNOWN_TOKEN_PATTERNS: list[tuple[str, re.Pattern]] = [
 # ticket 18's own example (a private key's raw bytes don't match any
 # known-prefix pattern at all, but its filename is a reliable signal).
 SENSITIVE_PATH_PATTERNS: list[re.Pattern] = [
-    re.compile(r"(^|/)\.env($|\.[\w.]+$)"),
+    re.compile(r"(^|[/\s])\.env($|\.[\w.]+$)"),
     re.compile(r"\.pem$"),
-    re.compile(r"(^|/)id_(rsa|dsa|ecdsa|ed25519)$"),
+    re.compile(r"(^|[/\s])id_(rsa|dsa|ecdsa|ed25519)$"),
     re.compile(r"\.key$"),
     re.compile(r"\.pfx$"),
-    re.compile(r"(^|/)\.ssh/"),
-    re.compile(r"(^|/)\.aws/credentials$"),
+    re.compile(r"(^|[/\s])\.ssh/"),
+    re.compile(r"(^|[/\s])\.aws/credentials$"),
 ]
 
 PATH_REDACTION_PLACEHOLDER = "[EXCLUDED: sensitive path]"
+
+# A6 real, unresolved fact (code review, Aug 19): the actual field name
+# Claude Code's PostToolUse hook uses for a tool's result could not be
+# settled from the real docs available -- they say "tool_output/
+# tool_response-shaped... tool-specific result payloads rather than one
+# fixed field name", not a single confirmed name. Rather than guess and
+# risk leaving the real one completely unredacted (the highest-consequence
+# version of this unknown), both are treated as tool-result fields here.
+TOOL_RESULT_FIELD_NAMES = ("tool_output", "tool_response")
 
 # Real, load-bearing constant, not a comment (ticket 18, Grill 2): nothing
 # in this module's own successful redaction should be read by a caller as
@@ -74,9 +83,21 @@ def _redact_string(value: str) -> tuple[str, list[str]]:
 
 
 def _is_sensitive_path(value: str) -> bool:
-    # PurePosixPath normalizes separators without touching the filesystem
-    # -- this never opens or stats the path, just inspects the string.
-    candidate = str(PurePosixPath(value))
+    """
+    A1/A5 real bug fix (found by code review, confirmed by reading the
+    source rather than trusting the old docstring's claim): the old
+    comment said "PurePosixPath normalizes separators" -- it does not.
+    PurePosixPath treats backslash as an ordinary filename character, so
+    a Windows path like C:\\Users\\chait\\.ssh\\id_rsa matched none of
+    SENSITIVE_PATH_PATTERNS (rule 6 needs '.ssh/', rule 3 needs 'id_rsa'
+    right after '/' or at the string start) -- on Windows, where at
+    least one real collaborator on this repo actually develops, SSH keys
+    were never excluded. Fixed by explicitly normalizing backslashes to
+    forward slashes first (string-level only -- this never touches the
+    filesystem, same as before), so both separator styles land on the
+    same rule set instead of only one working by construction.
+    """
+    candidate = str(PurePosixPath(value.replace("\\", "/")))
     return any(p.search(candidate) for p in SENSITIVE_PATH_PATTERNS)
 
 
@@ -136,9 +157,22 @@ def redact_event(event: dict) -> dict:
     Returns the redacted event plus a `_redaction` metadata key recording
     which pattern names fired -- real, auditable signal for whether
     redaction did anything, not a silent transform.
+
+    A6 real fix: the raw event may carry the tool's result under
+    `tool_output` OR `tool_response` (see TOOL_RESULT_FIELD_NAMES above
+    -- which one the real hook actually sends could not be confirmed).
+    Whichever is present gets redacted the same way tool_output always
+    did, AND is normalized into the `tool_output` key on the returned
+    event, so every downstream consumer (trace_worker.py's INSERT,
+    observations.py's extractor) keeps working unchanged rather than
+    needing to learn a second field name each.
     """
     matched: list[str] = []
     result = dict(event)
+
+    raw_output_field = next((f for f in TOOL_RESULT_FIELD_NAMES if f in result), None)
+    if raw_output_field is not None and raw_output_field != "tool_output":
+        result["tool_output"] = result.pop(raw_output_field)
 
     path_excluded = "tool_input" in result and _find_sensitive_path(result["tool_input"])
 

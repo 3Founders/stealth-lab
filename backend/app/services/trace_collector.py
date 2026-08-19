@@ -93,6 +93,54 @@ def _locked(lock_path: Path, timeout: float = DEFAULT_LOCK_TIMEOUT_SECONDS) -> I
         os.close(fd)
 
 
+def _meta_path_for(file_path: Path) -> Path:
+    return file_path.with_name(file_path.name + ".meta.json")
+
+
+def _lock_path_for(file_path: Path) -> Path:
+    return file_path.with_name(file_path.name + ".lock")
+
+
+def _read_meta(meta_path: Path) -> dict:
+    if not meta_path.exists():
+        return {}
+    try:
+        return json.loads(meta_path.read_text())
+    except (json.JSONDecodeError, OSError):
+        return {}
+
+
+def _write_meta(meta_path: Path, meta: dict) -> None:
+    tmp_path = meta_path.with_name(meta_path.name + f".tmp.{os.getpid()}.{time.monotonic_ns()}")
+    tmp_path.write_text(json.dumps(meta))
+    os.replace(tmp_path, meta_path)
+
+
+def mark_worker_seen(file_path: Path, seen_count: int) -> None:
+    """
+    A2 real fix, called by trace_worker.py after a successful run: the
+    old design let compaction "drop the oldest 20%" purely by local line
+    count, with zero knowledge of whether the worker had read those
+    lines yet -- "if the worker is down during one 50k burst, those
+    events are gone... drop_count increments and nothing ever reads it,
+    so the loss is invisible in the DB."
+
+    Records a real, monotonic high-water mark (never decreases -- a
+    worker run that saw fewer lines than a previous run, e.g. because it
+    ran on a smaller file, must not un-mark lines a prior run already
+    confirmed) that append_event()'s compaction below will not trim past.
+    Runs under the same lock as append_event() -- the worker and any
+    concurrent collector append must not race on this file.
+    """
+    lock_path = _lock_path_for(file_path)
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    with _locked(lock_path):
+        meta_path = _meta_path_for(file_path)
+        meta = _read_meta(meta_path)
+        meta["worker_seen_count"] = max(meta.get("worker_seen_count", 0), seen_count)
+        _write_meta(meta_path, meta)
+
+
 def compute_dedup_key(session_id: str, event_type: str, sequence: int, payload: dict) -> str:
     """
     Deterministic composite key (ticket 06's answer): hooks carry no
@@ -146,7 +194,8 @@ def append_event(
     }
 
     file_path.parent.mkdir(parents=True, exist_ok=True)
-    lock_path = file_path.with_name(file_path.name + ".lock")
+    lock_path = _lock_path_for(file_path)
+    meta_path = _meta_path_for(file_path)
 
     with _locked(lock_path):
         lines: list[str] = []
@@ -163,8 +212,22 @@ def append_event(
 
         if len(lines) > max_lines:
             trim_n = max(1, int(max_lines * TRIM_FRACTION))
-            drop_count += trim_n
-            lines = lines[trim_n:]
+            meta = _read_meta(meta_path)
+            worker_seen = meta.get("worker_seen_count", 0)
+            # A2 real fix: only trim lines the worker has actually
+            # confirmed processing (mark_worker_seen()). If the worker
+            # hasn't run recently enough, worker_seen may be less than
+            # trim_n -- in that case trim only what's safe, and the file
+            # temporarily exceeds max_lines rather than silently
+            # discarding data the worker never saw. That's the accepted
+            # tradeoff: a late worker means a bigger file, never data
+            # loss the drop_count can't account for.
+            safe_trim_n = min(trim_n, worker_seen)
+            if safe_trim_n > 0:
+                drop_count += safe_trim_n
+                lines = lines[safe_trim_n:]
+                meta["worker_seen_count"] = worker_seen - safe_trim_n
+                _write_meta(meta_path, meta)
 
         header = json.dumps({"_drop_count": drop_count})
         content = "\n".join([header] + lines) + "\n"
