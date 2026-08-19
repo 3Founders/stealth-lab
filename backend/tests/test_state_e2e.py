@@ -10,6 +10,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from app.db.session import create_pool
+from app.services.access import AccessScope
 from app.services.claims import capture_claim, relate_claims
 from app.services.state import project_state, state_delta
 
@@ -230,6 +231,94 @@ def test_state_delta_reports_the_real_supersession_as_added_and_removed():
             # The real, meaningful assertion: new_id ends up live, old_id does not.
             assert new_id in added_ids
             assert old_id not in added_ids
+        finally:
+            await _cleanup(pool, subject)
+            await pool.close()
+
+    asyncio.run(_run())
+
+
+def test_a_private_claim_is_invisible_to_a_different_viewer_but_visible_to_its_owner():
+    """Real, live confirmation of the fix for ticket 09's gap: project_state()
+    previously never applied visibility_predicate() at all, so a 'private'
+    claim was exactly as visible as a public one to every caller. Now a
+    claim written with owner_id='alice', visibility='private' must be
+    absent from an anonymous scope AND from a different viewer's scope,
+    present for its own owner, and present under unrestricted() (the
+    internal/backfill escape hatch, unaffected by this change)."""
+    async def _run():
+        pool = await create_pool(DATABASE_URL, min_size=1, max_size=2)
+        subject = "state-test-subject-006-private"
+        try:
+            await _cleanup(pool, subject)
+            await pool.execute(
+                "INSERT INTO task_nodes (name, skill_ref) VALUES ('state test 6', "
+                "'state_test_skill')"
+            )
+            await capture_claim(
+                pool, statement="alice's private claim", task_ids=["state_test_skill"],
+                subject=subject, predicate="status", object="secret",
+                embedder=FakeEmbedder(), owner_id="alice", visibility="private",
+            )
+
+            anon_state = await project_state(
+                pool, subjects=[subject], scope=AccessScope.anonymous()
+            )
+            assert anon_state == []
+
+            bob_state = await project_state(
+                pool, subjects=[subject], scope=AccessScope.for_user("bob")
+            )
+            assert bob_state == []
+
+            alice_state = await project_state(
+                pool, subjects=[subject], scope=AccessScope.for_user("alice")
+            )
+            assert len(alice_state) == 1
+            assert alice_state[0]["object"] == "secret"
+
+            unrestricted_state = await project_state(
+                pool, subjects=[subject], scope=AccessScope.unrestricted()
+            )
+            assert len(unrestricted_state) == 1
+
+            # Default (no scope passed) must match unrestricted() -- the
+            # documented back-compat behaviour for internal callers.
+            default_state = await project_state(pool, subjects=[subject])
+            assert len(default_state) == 1
+        finally:
+            await _cleanup(pool, subject)
+            await pool.close()
+
+    asyncio.run(_run())
+
+
+def test_a_public_claim_is_visible_to_everyone_regardless_of_scope():
+    """The commons stays a commons: adding scope enforcement must not
+    accidentally start hiding public claims from anonymous/other viewers."""
+    async def _run():
+        pool = await create_pool(DATABASE_URL, min_size=1, max_size=2)
+        subject = "state-test-subject-007-public"
+        try:
+            await _cleanup(pool, subject)
+            await pool.execute(
+                "INSERT INTO task_nodes (name, skill_ref) VALUES ('state test 7', "
+                "'state_test_skill')"
+            )
+            await capture_claim(
+                pool, statement="a public claim", task_ids=["state_test_skill"],
+                subject=subject, predicate="status", object="visible_to_all",
+                embedder=FakeEmbedder(), owner_id="alice", visibility="public",
+            )
+
+            for scope in (
+                AccessScope.anonymous(),
+                AccessScope.for_user("bob"),
+                AccessScope.for_user("alice"),
+                AccessScope.unrestricted(),
+            ):
+                state = await project_state(pool, subjects=[subject], scope=scope)
+                assert len(state) == 1, f"expected visible under scope={scope!r}"
         finally:
             await _cleanup(pool, subject)
             await pool.close()

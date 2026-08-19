@@ -215,3 +215,86 @@ def test_promote_nonexistent_observation_returns_none():
             await pool.close()
 
     asyncio.run(_run())
+
+
+def test_promoting_a_private_observation_is_blocked_for_a_different_viewer():
+    """Real, live confirmation of the fix: promote_observation_to_claim()
+    previously ran an unscoped fetch, so any caller could promote (and
+    thereby read the content of) any observation regardless of
+    visibility. A private observation owned by 'alice' must not be
+    promotable under bob's scope (returns None, same contract as
+    'observation not found'), but must succeed under alice's own scope
+    and under unrestricted()."""
+    async def _run():
+        from app.services.access import AccessScope
+
+        pool = await _real_create_pool(DATABASE_URL, min_size=1, max_size=2)
+        session_id = "obs-test-session-004-private"
+        try:
+            await _cleanup(pool, session_id)
+
+            task_id = await pool.fetchval(
+                "INSERT INTO task_nodes (name, skill_ref) VALUES ('obs-test task 3', "
+                "'obs_test_skill') RETURNING id"
+            )
+            trace_id = await pool.fetchval(
+                "INSERT INTO agent_traces (trace_id, session_id, started_at, schema_version) "
+                "VALUES ($1, $2, now(), '1') RETURNING trace_id",
+                "obs-test-trace-004", session_id,
+            )
+            event_id = await pool.fetchval(
+                "INSERT INTO trace_events (trace_id, session_id, sequence, event_type, "
+                "\"timestamp\", tool_name, dedup_key, schema_version) "
+                "VALUES ($1,$2,0,'PostToolUse',now(),'Edit','obs-test-dedup-4','1') "
+                "RETURNING id",
+                trace_id, session_id,
+            )
+            obs_id = await persist_observation(
+                pool, observation_type="file_touched",
+                label="obs-test private observation",
+                extractor_kind="deterministic", event_ids=[str(event_id)],
+                owner_id="alice", visibility="private",
+            )
+
+            # Confirm the write actually landed as private -- otherwise
+            # this test would pass for the wrong reason.
+            row = await pool.fetchrow(
+                "SELECT owner_id, visibility::text AS visibility FROM observations WHERE id = $1",
+                obs_id,
+            )
+            assert row["owner_id"] == "alice"
+            assert row["visibility"] == "private"
+
+            blocked = await promote_observation_to_claim(
+                pool, observation_id=obs_id, task_ids=["obs_test_skill"],
+                embedder=FakeEmbedder(), scope=AccessScope.for_user("bob"),
+            )
+            assert blocked is None
+
+            blocked_anon = await promote_observation_to_claim(
+                pool, observation_id=obs_id, task_ids=["obs_test_skill"],
+                embedder=FakeEmbedder(), scope=AccessScope.anonymous(),
+            )
+            assert blocked_anon is None
+
+            allowed = await promote_observation_to_claim(
+                pool, observation_id=obs_id, task_ids=["obs_test_skill"],
+                embedder=FakeEmbedder(), scope=AccessScope.for_user("alice"),
+            )
+            assert allowed is not None
+
+            # The resulting claim must inherit the observation's own
+            # ownership, not silently revert to capture_claim()'s public
+            # default -- otherwise a private observation leaks into the
+            # commons the moment it's promoted.
+            claim_row = await pool.fetchrow(
+                "SELECT owner_id, visibility::text AS visibility FROM knowledge_nodes "
+                "WHERE id = $1", allowed,
+            )
+            assert claim_row["owner_id"] == "alice"
+            assert claim_row["visibility"] == "private"
+        finally:
+            await _cleanup(pool, session_id)
+            await pool.close()
+
+    asyncio.run(_run())

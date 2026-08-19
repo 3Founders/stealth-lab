@@ -22,6 +22,7 @@ from typing import Any, Optional
 
 import asyncpg
 
+from app.services.access import AccessScope, visibility_predicate
 from app.services.claims import capture_claim
 from app.services.embeddings import Embedder
 
@@ -176,6 +177,8 @@ async def persist_observation(
     model_id: Optional[str] = None,
     prompt_hash: Optional[str] = None,
     decoding_params_hash: Optional[str] = None,
+    owner_id: Optional[str] = None,
+    visibility: str = "public",
 ) -> str:
     """
     Writes one observation row plus one observation_events link per real
@@ -186,7 +189,17 @@ async def persist_observation(
     superseded (ticket 04's own reasoning). Deduplication, if wanted, is
     the caller's job (e.g. checking observation_events for this event_id
     + this extractor_name before calling this).
+
+    REAL GAP FIXED: `14_observations.sql` gives this table real
+    `owner_id`/`visibility` columns (ticket 09's pair, correctly present
+    together), but this INSERT never populated them -- every observation
+    silently landed as `visibility='public'`, `owner_id=NULL` regardless
+    of who or what produced it. Now real parameters, not decorative
+    columns.
     """
+    if visibility not in ("public", "private"):
+        raise ValueError(f"visibility must be 'public' or 'private', got {visibility!r}")
+
     extractor_name = (
         DETERMINISTIC_EXTRACTOR_NAME if extractor_kind == "deterministic"
         else MODEL_EXTRACTOR_NAME
@@ -202,11 +215,12 @@ async def persist_observation(
                 "INSERT INTO observations "
                 "(observation_type, label, extractor_kind, extractor_name, "
                 " code_version, model_id, prompt_hash, decoding_params_hash, "
-                " properties, created_by) "
-                "VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id",
+                " properties, created_by, owner_id, visibility) "
+                "VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12::visibility_level) "
+                "RETURNING id",
                 observation_type, label, extractor_kind, extractor_name,
                 code_version, model_id, prompt_hash, decoding_params_hash,
-                properties or {}, CREATED_BY,
+                properties or {}, CREATED_BY, owner_id, visibility,
             )
             for event_id in event_ids:
                 await conn.execute(
@@ -224,6 +238,7 @@ async def promote_observation_to_claim(
     task_ids: list[str],
     justification_episode_id: Optional[str] = None,
     embedder: Optional[Embedder] = None,
+    scope: Optional[AccessScope] = None,
 ) -> Optional[str]:
     """
     Real wiring ticket 04 owns per ticket 10's amendment: reads a real
@@ -240,11 +255,24 @@ async def promote_observation_to_claim(
     single hash destroys the ability to ask "which came from model X").
     Both are honored: components stay queryable on the observation row
     that produced this claim; the claim gets a readable composite.
+
+    REAL GAP FIXED: this fetch was previously unscoped -- any caller
+    could promote (and thereby read the content of, via the resulting
+    claim) any observation by id regardless of visibility. `scope` is
+    now applied via access.py's visibility_predicate() (defaults to
+    unrestricted() for internal callers, same convention as elsewhere).
+    The resulting claim also inherits the observation's own
+    owner_id/visibility rather than silently reverting to public -- a
+    private observation promoted to a claim must not leak into the
+    shared commons just because capture_claim()'s defaults are public.
     """
+    scope = scope or AccessScope.unrestricted()
+    vis_sql, vis_params = visibility_predicate(scope, param_index=2)
     row = await pool.fetchrow(
         "SELECT observation_type, label, extractor_kind, extractor_name, "
-        "code_version, model_id FROM observations WHERE id = $1",
-        observation_id,
+        "code_version, model_id, owner_id, visibility::text AS visibility "
+        f"FROM observations WHERE id = $1 AND {vis_sql}",
+        observation_id, *vis_params,
     )
     if row is None:
         return None
@@ -264,4 +292,6 @@ async def promote_observation_to_claim(
         epistemic_status=epistemic_status,
         extraction_version=extraction_version,
         embedder=embedder,
+        owner_id=row["owner_id"],
+        visibility=row["visibility"],
     )

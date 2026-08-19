@@ -116,6 +116,8 @@ async def capture_claim(
     epistemic_status: Optional[str] = None,
     properties: Optional[dict[str, Any]] = None,
     embedder: Optional[Embedder] = None,
+    owner_id: Optional[str] = None,
+    visibility: str = "public",
 ) -> Optional[str]:
     """
     Write one claim knowledge_node plus one PRODUCES/CLAIM_OF edge to
@@ -141,9 +143,22 @@ async def capture_claim(
     link to, so it is dropped rather than written orphaned. Matches
     capture_failure()'s silent-no-op discipline: best-effort telemetry
     must never be able to fail the run it is attached to.
+
+    REAL GAP FIXED (found while working ticket 09's production gaps,
+    confirmed by grepping the whole app/ tree): this INSERT never set
+    `owner_id`/`visibility` at all, so every claim silently fell back to
+    the schema default (`visibility='public'`, `owner_id=NULL`) --
+    exactly the tenant_id cautionary case access.py's own docstring
+    warns about, except at write time rather than read time. A caller
+    passing `AccessScope.for_user(...)` to a scoped reader would still
+    never see anything as "theirs", because nothing had ever recorded
+    whose it was. `owner_id`/`visibility` are now real parameters here,
+    not decorative columns.
     """
     if truth_state not in TRUTH_STATES:
         raise ValueError(f"truth_state must be one of {TRUTH_STATES}, got {truth_state!r}")
+    if visibility not in ("public", "private"):
+        raise ValueError(f"visibility must be 'public' or 'private', got {visibility!r}")
 
     validated = ClaimProperties(
         statement=statement,
@@ -175,10 +190,12 @@ async def capture_claim(
                 return None
             node_id = await conn.fetchval(
                 "INSERT INTO knowledge_nodes "
-                "(node_type, name, properties, embedding, created_by, provenance) "
-                "VALUES ('claim', $1, $2, $3::vector, $4, 'company_ingested') "
+                "(node_type, name, properties, embedding, created_by, provenance, "
+                " owner_id, visibility) "
+                "VALUES ('claim', $1, $2, $3::vector, $4, 'company_ingested', $5, $6::visibility_level) "
                 "RETURNING id",
                 statement[:200], props, to_pgvector(embedding), created_by,
+                owner_id, visibility,
             )
             for row in rows:
                 await conn.execute(

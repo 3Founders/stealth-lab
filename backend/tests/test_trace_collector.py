@@ -120,3 +120,64 @@ def test_no_drop_count_when_never_over_budget(tmp_path: Path):
 
 def test_read_drop_count_on_nonexistent_file_is_zero(tmp_path: Path):
     assert read_drop_count(tmp_path / "does_not_exist.jsonl") == 0
+
+
+def test_concurrent_appends_do_not_lose_updates(tmp_path: Path):
+    """Real, live confirmation of the fix for the race condition flagged
+    in the last handoff: append_event() used to do a full
+    read-modify-write with no locking, so two writers racing on the same
+    file could silently clobber each other (a classic lost update) --
+    "fine for one hook firing at a time, unsafe the moment two fire close
+    together (a normal scenario, not an edge case)". Fire many real
+    concurrent writers at the same file from real OS threads (not
+    asyncio -- flock is what's actually being exercised, and threads
+    give genuinely overlapping syscalls, unlike cooperative asyncio
+    tasks) and confirm every single append survives."""
+    import threading
+
+    f = tmp_path / "concurrent_events.jsonl"
+    n_writers = 40
+    errors: list[Exception] = []
+
+    def _write(i: int) -> None:
+        try:
+            append_event(
+                {"event_type": "PostToolUse", "tool_output": {"i": i}},
+                f, session_id="sess-concurrent", event_type="PostToolUse", sequence=i,
+            )
+        except Exception as exc:  # noqa: BLE001
+            errors.append(exc)
+
+    threads = [threading.Thread(target=_write, args=(i,)) for i in range(n_writers)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=10)
+
+    assert not errors, f"writer(s) raised: {errors}"
+
+    lines = f.read_text().splitlines()
+    assert lines[0].startswith('{"_drop_count"')
+    records = [json.loads(l) for l in lines[1:]]
+    assert len(records) == n_writers, (
+        f"expected {n_writers} surviving records, got {len(records)} -- "
+        "a lost update under concurrent writers"
+    )
+    sequences = {r["sequence"] for r in records}
+    assert sequences == set(range(n_writers)), "some writer's record was overwritten, not just delayed"
+
+
+def test_a_stale_lock_file_left_by_a_crashed_writer_does_not_deadlock_future_writers(tmp_path: Path):
+    """A crashed process that held the lock would have released it on
+    process exit (flock is tied to the open file description, not the
+    lock *file* on disk) -- so a leftover .lock file itself must not
+    block a fresh writer from acquiring the lock again."""
+    f = tmp_path / "events.jsonl"
+    lock_path = f.with_name(f.name + ".lock")
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    lock_path.write_text("")  # simulate a stale lock file with no active holder
+
+    record = append_event(
+        {"event_type": "PostToolUse"}, f, session_id="sess1", event_type="PostToolUse", sequence=1,
+    )
+    assert record["session_id"] == "sess1"
