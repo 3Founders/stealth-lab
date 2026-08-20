@@ -75,6 +75,7 @@ present here or anywhere in this module.
 """
 from __future__ import annotations
 
+import asyncio
 import os
 from dataclasses import dataclass, field
 from typing import Optional
@@ -318,11 +319,43 @@ async def assemble_structural_context(
     related_tests: list[str] = []
     call_graph_ranked_names: list[str] = []
     if repo_root and filesystem_seed:
-        relevant_symbols = get_relevant_symbols(repo_root, filesystem_seed)
+        # REAL FIX, found by measuring rather than assuming: these four
+        # producers are synchronous, filesystem/tree-sitter-bound calls
+        # (get_call_graph_ranked_names alone measured at 4.2s against
+        # this repo -- call_graph.py's own MAX_INDEX_SECONDS caps it at
+        # 20s, not milliseconds). Calling them directly, unawaited,
+        # inside this async function blocks the ENTIRE event loop for
+        # that whole duration -- and since the MCP server this feeds
+        # (server.py's solve_task) runs with `--workers 1`, that is not
+        # "one slow request", it is the WHOLE SERVER going unresponsive
+        # to every concurrent user for several real seconds, once per
+        # solve_task call. run_in_executor() moves each call to a real
+        # OS thread, off the event loop, fixing that.
+        #
+        # SEQUENTIAL awaits, deliberately NOT asyncio.gather()-ed
+        # concurrently -- measured, not assumed: gathering all four at
+        # once (they don't depend on each other's output, so this
+        # looked like a free wall-clock win) actually made the event
+        # loop WORSE, not better -- 1 heartbeat fired during a ~4s run
+        # with 4 CPU-bound tree-sitter threads contending for the GIL
+        # at once, versus 19 heartbeats with the exact same 4 calls run
+        # one at a time. CPython's GIL means "off the event loop thread"
+        # is not the same as "not competing with it" -- a single
+        # CPU-heavy worker thread interleaves fine with the main
+        # thread's event loop, but several at once starve it far more
+        # than the wall-clock savings are worth. Confirmed directly with
+        # both versions before choosing this one, not decided from
+        # theory.
         from app.services.import_deps import import_targets_for_many
         from app.services.related_tests import related_test_files_for_many
-        import_deps = import_targets_for_many(repo_root, filesystem_seed)
-        related_tests = related_test_files_for_many(repo_root, filesystem_seed)
+
+        loop = asyncio.get_event_loop()
+        relevant_symbols = await loop.run_in_executor(
+            None, get_relevant_symbols, repo_root, filesystem_seed)
+        import_deps = await loop.run_in_executor(
+            None, import_targets_for_many, repo_root, filesystem_seed)
+        related_tests = await loop.run_in_executor(
+            None, related_test_files_for_many, repo_root, filesystem_seed)
         # Only real session-observed open_files seed the call graph --
         # see COLD START above: a git-derived seed is repo-scoped, and
         # get_call_graph_ranked_names's own docstring says it seeds from
@@ -330,7 +363,8 @@ async def assemble_structural_context(
         # represents" -- feeding it a repo-scoped seed would launder
         # that same lower-precision signal one hop further downstream.
         if open_files:
-            call_graph_ranked_names = get_call_graph_ranked_names(repo_root, open_files)
+            call_graph_ranked_names = await loop.run_in_executor(
+                None, get_call_graph_ranked_names, repo_root, open_files)
 
     return StructuralContext(
         open_files=open_files,

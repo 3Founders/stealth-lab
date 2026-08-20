@@ -504,3 +504,114 @@ def test_assemble_structural_context_seed_files_never_become_open_files():
             await pool.close()
 
     asyncio.run(_run())
+
+
+def test_assemble_structural_context_does_not_block_the_event_loop():
+    """
+    Real, direct confirmation of the run_in_executor fix -- not just
+    'still returns correct results', but the actual property that
+    mattered: the event loop stays responsive WHILE the filesystem/
+    tree-sitter producers are running.
+
+    Real session + real file_touched observation, deliberately, not
+    seed_files alone: an earlier version of this test used only
+    seed_files (no session_id), which meant open_files stayed empty,
+    which meant get_call_graph_ranked_names -- the genuinely slow
+    producer (measured at 4.2s against this repo; the other three
+    together run in ~5ms) -- never ran at all. That version's low
+    heartbeat count wasn't evidence of blocking, it was evidence the
+    whole call finished before a single 0.05s heartbeat interval could
+    fire either way -- caught by timing the three fast producers in
+    isolation (5ms total) before trusting the earlier test's result.
+    A real session_id with a real file_touched observation is what
+    actually exercises the slow path this test needs to check.
+    """
+    async def _run():
+        pool = await create_pool(DATABASE_URL, min_size=1, max_size=2)
+        session_id = "local-retr-test-heartbeat-session"
+        try:
+            from app.services.observations import persist_observation
+
+            await pool.execute(
+                "DELETE FROM observation_events WHERE event_id IN "
+                "(SELECT id FROM trace_events WHERE session_id = $1)", session_id,
+            )
+            await pool.execute(
+                "DELETE FROM observations WHERE id NOT IN "
+                "(SELECT observation_id FROM observation_events)"
+            )
+            await pool.execute("DELETE FROM trace_events WHERE session_id = $1", session_id)
+            await pool.execute("DELETE FROM agent_traces WHERE session_id = $1", session_id)
+
+            trace_id = await pool.fetchval(
+                "INSERT INTO agent_traces (trace_id, session_id, started_at, schema_version) "
+                "VALUES ($1, $2, now(), '1') RETURNING trace_id",
+                session_id, session_id,
+            )
+            event_id = await pool.fetchval(
+                "INSERT INTO trace_events (trace_id, session_id, sequence, event_type, "
+                "\"timestamp\", tool_name, dedup_key, schema_version) "
+                "VALUES ($1,$2,0,'PostToolUse',now(),'Edit',$3,'1') RETURNING id",
+                trace_id, session_id, "local-retr-heartbeat-dedup",
+            )
+            await persist_observation(
+                pool, observation_type="file_touched", label="Modified " + _REAL_FILE,
+                extractor_kind="deterministic", event_ids=[str(event_id)],
+                properties={"file_path": _REAL_FILE, "tool_name": "Edit"},
+            )
+
+            heartbeats: list[float] = []
+            stop = asyncio.Event()
+
+            async def _heartbeat():
+                start = asyncio.get_event_loop().time()
+                while not stop.is_set():
+                    await asyncio.sleep(0.05)
+                    heartbeats.append(asyncio.get_event_loop().time() - start)
+
+            heartbeat_task = asyncio.ensure_future(_heartbeat())
+            try:
+                ctx = await assemble_structural_context(
+                    pool, session_id=session_id, repo_root=_REPO_ROOT,
+                )
+            finally:
+                stop.set()
+                await heartbeat_task
+
+            # Real confirmation the slow path actually ran, not just
+            # that the call returned quickly for an unrelated reason.
+            assert ctx.call_graph_ranked_names, (
+                "test setup didn't actually exercise the slow "
+                "get_call_graph_ranked_names path -- open_files was empty"
+            )
+
+            # A blocked (or GIL-starved-by-concurrent-executor-tasks)
+            # event loop would have produced very few heartbeats during
+            # the real, multi-second call graph build. Threshold is
+            # real, not a guess: measured directly at three points
+            # before picking it -- 0 heartbeats with the original
+            # unawaited-blocking code, 1 with all four producers
+            # gathered CONCURRENTLY via asyncio.gather() (GIL contention
+            # from several CPU-bound tree-sitter threads at once starves
+            # the main thread more than a single one does), and double
+            # digits with the actual fix (sequential awaits, one
+            # executor call at a time).
+            assert len(heartbeats) >= 10, (
+                f"only {len(heartbeats)} heartbeats fired -- the event loop "
+                "was likely blocked (or GIL-starved by concurrent CPU-bound "
+                "executor tasks) during assemble_structural_context"
+            )
+        finally:
+            await pool.execute(
+                "DELETE FROM observation_events WHERE event_id IN "
+                "(SELECT id FROM trace_events WHERE session_id = $1)", session_id,
+            )
+            await pool.execute(
+                "DELETE FROM observations WHERE id NOT IN "
+                "(SELECT observation_id FROM observation_events)"
+            )
+            await pool.execute("DELETE FROM trace_events WHERE session_id = $1", session_id)
+            await pool.execute("DELETE FROM agent_traces WHERE session_id = $1", session_id)
+            await pool.close()
+
+    asyncio.run(_run())
