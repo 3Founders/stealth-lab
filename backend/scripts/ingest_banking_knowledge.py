@@ -90,7 +90,22 @@ async def main():
             key=data["id"],
             node_type="policy_document",
             name=data["title"],
-            properties={"content": data["content"], "category": derive_category(data["id"])},
+            # source_doc_id: REAL FIX, not present before this pass. The
+            # tau2 document id (data["id"]) previously existed only as
+            # KnowledgeSpec.key, an in-memory onboarding-time value that
+            # maps to a fresh knowledge_nodes.id and is then discarded --
+            # confirmed by reading Onboarder.seed() (app/onboarding/
+            # seed.py), which returns key->id mappings but persists
+            # neither the key nor the mapping. A retriever that needs to
+            # report tau2 doc ids back (required_documents-style
+            # evaluation) had no way to recover them from a retrieved
+            # row. Stored in properties (JSONB, no schema change) rather
+            # than as a new column -- this is domain-specific to the
+            # tau2 ingestion, not a general ontology field.
+            properties={
+                "content": data["content"], "category": derive_category(data["id"]),
+                "source_doc_id": data["id"],
+            },
         ))
 
     spec = WorkflowSpec(workflow_name="tau2_banking_knowledge", knowledge=knowledge_specs)

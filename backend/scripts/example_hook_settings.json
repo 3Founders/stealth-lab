@@ -1,5 +1,5 @@
 {
-  "_comment": "Example only -- NOT auto-installed by anything in this repo. Copy the relevant `hooks` entries into your own .claude/settings.json (all projects) or .claude/settings.local.json (this project, gitignored) to actually enable collection. Registration shape and CLAUDE_PROJECT_DIR placeholder confirmed against .scratch/memory-substrate/research/claude-code-hook-schema.md's Configuration mechanism section -- untested against a real Claude Code process, same honest caveat as hook_wrapper.py itself.",
+  "_comment": "Example only -- NOT auto-installed by anything in this repo. Copy the relevant `hooks` entries into your own .claude/settings.json (all projects) or .claude/settings.local.json (this project, gitignored) to actually enable collection. Registration shape and CLAUDE_PROJECT_DIR placeholder confirmed against .scratch/memory-substrate/research/claude-code-hook-schema.md's Configuration mechanism section. `python`, not `python3` -- this repo's own environment notes say python3 is intercepted by the Windows App Execution Alias and fails immediately; every other script in this repo already follows that rule, this file didn't. Fired against a real Claude Code process and confirmed working -- see IMPLEMENTATION_HANDOFF.md.",
 
   "hooks": {
     "PreToolUse": [
@@ -8,7 +8,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 ${CLAUDE_PROJECT_DIR}/backend/scripts/hook_wrapper.py",
+            "command": "python ${CLAUDE_PROJECT_DIR}/backend/scripts/hook_wrapper.py",
             "timeout": 5
           }
         ]
@@ -20,7 +20,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 ${CLAUDE_PROJECT_DIR}/backend/scripts/hook_wrapper.py",
+            "command": "python ${CLAUDE_PROJECT_DIR}/backend/scripts/hook_wrapper.py",
             "timeout": 5
           }
         ]
@@ -32,7 +32,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 ${CLAUDE_PROJECT_DIR}/backend/scripts/hook_wrapper.py",
+            "command": "python ${CLAUDE_PROJECT_DIR}/backend/scripts/hook_wrapper.py",
             "timeout": 5
           }
         ]

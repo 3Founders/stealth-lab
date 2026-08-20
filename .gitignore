@@ -1,3 +1,13 @@
 backend/.env
 experiments/swebench_pro/__pycache__
 experiments/after/__pycache__backend/.env
+
+# Real hook collector output (backend/scripts/hook_wrapper.py,
+# example_hook_settings.json) -- session tool_input/tool_output content,
+# redacted (trace_redaction.py) but still real transcript data, and
+# untracked by default gets caught by `git add -A`/`-u`. Confirmed a
+# real gap, not theoretical: firing hooks for real during this session's
+# own work (handoff item 4) produced .claude/traces/ with nothing
+# excluding it.
+.claude/traces/
+.claude/settings.local.json

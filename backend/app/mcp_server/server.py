@@ -28,10 +28,11 @@ import asyncio
 import json
 import os
 import secrets
+import subprocess
 import sys
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import AsyncIterator
+from typing import AsyncIterator, Optional
 from uuid import UUID
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
@@ -54,6 +55,7 @@ from app.services.decomposition import DecompositionService
 from app.services.embeddings import Embedder
 from app.services.knowledge_conflict import detect_and_create_conflict_trigger
 from app.services.knowledge_update import ChangeApplicationError, KnowledgeUpdater
+from app.services.local_retrieval import assemble_structural_context, retrieve_local_first
 from app.services.retrieval import HybridRetriever
 from app.services.reuse_detection import _vector_candidates
 from app.config import settings
@@ -423,7 +425,8 @@ async def propose_synthesis(trigger_id: str, ctx: Context) -> str:
 
 @server.tool()
 async def solve_task(task_description: str, repo_path: str, ctx: Context,
-                      model: str = "gemma-4-31B-it", max_steps: int = 25) -> str:
+                      model: str = "gemma-4-31B-it", max_steps: int = 25,
+                      session_id: Optional[str] = None) -> str:
     """
     Retrieval-grounded coding agent: find prior solved patterns relevant to
     this task, then run a real, sandboxed, tool-calling agent loop against
@@ -454,6 +457,17 @@ async def solve_task(task_description: str, repo_path: str, ctx: Context,
         separately once a match was found; this tool does not yet do that
         second fetch, so memory_block here is a pointer/summary, not the
         full retrieved trajectory Experiment 4 actually validated.
+      - STRUCTURAL CONTEXT (handoff item 2, real wiring added here):
+        retrieve_local_first()'s structural/temporal/semantic union
+        (local_retrieval.py) is genuinely called now, via
+        assemble_structural_context(). Cold-start caveat, stated in that
+        function's own docstring and repeated here because it matters at
+        THIS call site specifically: without `session_id`, or on a
+        session with no prior file_touched observations, the structural
+        and temporal tiers are seeded from `git diff --name-only HEAD`
+        instead (uncommitted repo state) -- lower precision than a real
+        session's working set, and this tool's own doc says so rather
+        than presenting it as equivalent.
 
     SECURITY, stated plainly, not discovered later: repo_path is
     caller-controlled. RepoSandbox refuses to let edits escape repo_path
@@ -473,6 +487,11 @@ async def solve_task(task_description: str, repo_path: str, ctx: Context,
     NOT Groq qwen3.6-27b, the real, measured, more-expensive SLM choice
     from Experiment 4's cost finding.
     max_steps: tool-call budget for the agent loop.
+    session_id: optional -- when a real Claude Code (or other) session id
+    is known for this call, its file_touched/commit_made observations
+    seed the structural tier at real, session-scoped precision. Omitted
+    or unknown: falls back to a git-diff seed (see STRUCTURAL CONTEXT
+    above).
     """
     pool = ctx.request_context.lifespan_context["pool"]
 
@@ -488,6 +507,36 @@ async def solve_task(task_description: str, repo_path: str, ctx: Context,
         memory_block = "Prior solved pattern(s) that may be relevant (see HONEST GAP above -- summary only, not full trajectory text):\n" + "\n".join(
             f"- [{c.table}] {c.name} (similarity={c.similarity:.2f})" for c in candidates
         )
+
+    # Structural context (handoff item 2's real wiring): a genuinely
+    # independent retrieval path from the precedent lookup above -- see
+    # local_retrieval.py's own header for why union, not cascade, is the
+    # right composition. Best-effort: a git failure or an empty repo
+    # must not abort the whole tool, so seed_files defaults to [] rather
+    # than propagating an exception.
+    seed_files: list[str] = []
+    try:
+        git_diff = subprocess.run(
+            ["git", "diff", "--name-only", "HEAD"],
+            cwd=repo_path, capture_output=True, text=True, timeout=5,
+        )
+        if git_diff.returncode == 0:
+            seed_files = [line.strip() for line in git_diff.stdout.splitlines() if line.strip()]
+    except (OSError, subprocess.TimeoutExpired):
+        pass
+
+    structural = await assemble_structural_context(
+        pool, session_id=session_id, repo_root=repo_path, seed_files=seed_files,
+    )
+    structural_result = await retrieve_local_first(
+        pool, task_description, embedder=embedder, structural=structural,
+    )
+    if structural_result.text:
+        structural_block = (
+            "Structurally/temporally relevant context from this repo "
+            f"(tiers: {structural_result.tiers_included}):\n{structural_result.text}"
+        )
+        memory_block = f"{memory_block}\n\n{structural_block}" if memory_block else structural_block
 
     sandbox = RepoSandbox(repo_path)
     client = OpenAI(

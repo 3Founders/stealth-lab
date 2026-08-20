@@ -5,6 +5,15 @@ to define is re-exported here unchanged, so the ~50 existing
 `from htn_agent import X` / `import htn_agent` call sites across this
 repo's tests and experiment scripts keep working without modification.
 
+The `import *` below covers the PUBLIC names only -- it skips every
+`_underscore` name, and app.execution.htn_agent defines no `__all__` to
+override that. So private helpers that real call sites import must be
+named explicitly; see the second import statement. This was not a
+theoretical gap: `_node_row` was missing, and because a failed import is
+a COLLECTION error rather than a test failure, pytest aborted the entire
+run ("Interrupted: 1 error during collection") and executed zero tests.
+Any future call site importing a private helper needs a line added there.
+
 New code should import from app.execution.htn_agent directly. This
 module exists for backward compatibility during and after the
 relocation, not as a second place the engine's logic lives -- there is
@@ -27,3 +36,8 @@ if str(_backend_dir) not in sys.path:
     sys.path.insert(0, str(_backend_dir))
 
 from app.execution.htn_agent import *  # noqa: F401,F403
+
+# Private helpers with real call sites -- `import *` above does not
+# re-export these (see docstring). Add to this line, don't create a
+# second one, so there's exactly one place future additions go.
+from app.execution.htn_agent import _node_row  # noqa: F401

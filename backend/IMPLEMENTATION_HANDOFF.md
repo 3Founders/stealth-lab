@@ -1,149 +1,182 @@
-# Implementation handoff: step 5/6 done, ticket 15 fully restructured, local_retrieval.py complete
+# Implementation handoff: ingestion pipeline closed end-to-end, hooks fired for real, retrieval wired into a caller
 
-> **Update (Aug 20, commits `44ba4e3` through `68d905b`).** Everything the
-> previous version of this doc called "remaining" is done: `local_retrieval.py`
-> now has all 7 of ticket 14's structural/temporal/rank signals wired to real
-> producers (not just 1), ticket 15's deferred scheduler-strategy restructuring
-> is complete, and two of `ResearchHTNAgent`'s three remaining stub methods
-> are real implementations. This doc replaces the previous version wholesale.
-> Real remaining work is now genuinely small and precisely scoped — see
-> "What's actually remaining" below; read that section first if you're
-> starting fresh.
+> **Update (Aug 20, commits after `68d905b`).** The previous version of this
+> doc listed four "remaining" items and said two of them were blocked on
+> credentials/network. Neither was true on this machine (`.env` carries
+> `DATABASE_URL` and `GENERAL_COMPUTE_API_KEY`), and a closer look found the
+> real blocker wasn't in that list at all: `retrieve_local_first()` needs
+> `StructuralContext.open_files`, which needs `get_current_working_set()`,
+> which reads the `observations` table — and **nothing wrote to it**.
+> `extract_deterministic_observations()`/`persist_observation()` had zero
+> non-test callers; `process_collector_file()` had zero callers outside
+> tests; `ingestion_jobs` rows were written and never consumed. That's now
+> closed, tested against a real database, and proven against a **real
+> Claude Code hook firing during this very session** — not a synthetic
+> fixture. Read "What's actually remaining" below; it's shorter now.
 
 This is the CODE-level handoff. For the PLANNING-level one, see
 `.scratch/memory-substrate/map.md` and the 18 resolved tickets in
 `.scratch/memory-substrate/issues/` (both on `main`). This doc tells you
 what's built, tested, and true right now — it doesn't repeat that reasoning.
 
-## Environment setup (unchanged from last time, repeated because it trips people up)
+## Environment setup
 
 - **Real database**: Supabase Postgres, connection string via `$DATABASE_URL`
   or `--dsn` to `scripts/migrate.py`. Never hardcode it in a committed file.
 - **Windows**: use `python`/`py`, not `python3` (App Execution Alias
-  intercepts it). `git am --abort` clears a stuck `.git/rebase-apply` safely
-  if a patch application gets interrupted or re-run.
-- **Local dev DB**: Postgres 16 + pgvector.
+  intercepts it) — including in hook `command` fields; `example_hook_
+  settings.json` had `python3` and was fixed this session (see below).
+  `git am --abort` clears a stuck `.git/rebase-apply` safely if a patch
+  application gets interrupted or re-run.
+- **Local dev DB**: Postgres 17 + pgvector 0.8.0, confirmed working on
+  Windows this session. No prebuilt Windows binary exists for PG17 at time
+  of writing — built from source: `nmake /f Makefile.win` under a VS Build
+  Tools 2022 `vcvars64` shell, pointed at `PGROOT`, then manually copied
+  `vector.dll`/`vector.control`/`vector--*.sql` into the PG `lib`/`share\
+  extension` dirs (the Makefile's own `install` target needs admin rights
+  Program Files requires; do the copy from an elevated prompt).
   ```
-  createdb stealthlab_local
+  createdb stealthlab_local   # or use an existing local Postgres 17 db
   psql -d stealthlab_local -c "CREATE EXTENSION vector;"
   python backend/scripts/migrate.py --dsn postgresql://<user>:<pass>@localhost:5432/stealthlab_local
   ```
+  All 19 migrations apply cleanly in order on a fresh DB — confirmed this
+  session, not assumed.
   e2e tests skip cleanly (not fail) without `DATABASE_URL` set.
 - **pip**: `pip install -r requirements.txt --break-system-packages
   --ignore-installed PyJWT` (Debian-installed PyJWT conflicts otherwise).
 
 ## What's actually remaining — read this first
 
-Four real items, none blocking each other, ranked by how contained they are:
-
 1. **`ResearchHTNAgent._mcts_pick`** (item 4 of that class's own docstring) —
-   still a `NotImplementedError` stub. Needs a real LLM call to generate 2-3
-   decomposition candidates before the UCB1/scoring mechanics around it can
-   be tested meaningfully — same category of blocker as gap 4 below (nothing
-   in a sandbox environment can make that call). `_ast_edit` (item 2) and
-   `_method_score` (item 5) are DONE as of `68d905b` — only this one stub
-   remains on that class.
+   still a `NotImplementedError` stub, the only one left in `app/`. Needs a
+   real LLM call to generate 2-3 decomposition candidates before the
+   UCB1/scoring mechanics around it can be tested meaningfully. `_ast_edit`
+   and `_method_score` are done. **Not credential-blocked** — General
+   Compute creds are in `.env` — just not built yet.
 
-2. **Wiring `retrieve_local_first()` into a real caller.** Every piece
-   (`app/services/local_retrieval.py`, all 7 producers) is built and tested
-   standalone, but nothing in the actual execution path calls it yet — there
-   is no real function today that takes a live session + repo checkout,
-   assembles a `StructuralContext` from `get_current_working_set()` /
-   `get_relevant_symbols()` / etc., and feeds it through. This is genuinely
-   buildable now (all the pieces exist), just not done — the natural next
-   step, not blocked on anything external.
+2. **`extract_model_observation` has never touched a real LLM.** Same
+   root cause as above (built, tested for shape, never actually called).
 
 3. **Collapsing the HTN class hierarchy's other 7 behavioral overrides**
    (`_verify_precondition`, `_verify_postcondition`, `_system_prompt_extra`,
    `_replan_evidence`, `_build_context`, `_basename_index`,
    `_tools_for`/`_persona`) into one class. The SCHEDULER half of ticket 15's
-   "one engine, pluggable strategy" ask is done (`SchedulerStrategy`,
-   `SequentialScheduler`, `ConcurrentBatchScheduler` — see below); this is
-   the other, larger half, deliberately left alone both times it came up.
-   Real risk, not just size: each override is independently justified (a
-   basename-hint fix, multi-language postcondition checking, hierarchical
-   context compression — each with its own measured-regression comment), and
-   several existing tests specifically assert the BASE class's simpler,
-   unaugmented defaults on purpose. Collapsing these would be a real,
-   deliberate behavior-change decision, not a pure refactor — needs your
-   explicit call before starting, not just time.
+   "one engine, pluggable strategy" ask is done; this is the other, larger
+   half, deliberately left alone. Real risk, not just size: each override is
+   independently justified (a basename-hint fix, multi-language
+   postcondition checking, hierarchical context compression — each with its
+   own measured-regression comment), and several existing tests specifically
+   assert the BASE class's simpler, unaugmented defaults on purpose.
+   Collapsing these is a real, deliberate behavior-change decision — needs
+   an explicit call before starting, not just time.
 
-4. **Hook wiring has never fired against a real Claude Code process.**
-   Unchanged since the last handoff. `scripts/hook_wrapper.py` and
-   `scripts/example_hook_settings.json` are built and tested as far as
-   possible without one. Real next step: copy the example into a real
-   `.claude/settings.local.json`, do real tool calls, check whether
-   `.claude/traces/<session_id>.jsonl` appears with sane content.
+4. **τ³-bench micro-test — started, not finished.** The plan: seed
+   `banking_knowledge`'s procedural documents into the real `procedures`
+   table (ticket 05/12's non-compensatory preconditions map almost exactly
+   onto that domain's "## Eligibility Requirements" / "## Opening
+   Procedure" documents), wrap `retrieve_local_first` as a tau2
+   `@register_retriever`, and run one real task, comparing retrieved ids
+   against `task.required_documents`. **Done so far:** all 698
+   `banking_knowledge` documents are ingested as real `knowledge_nodes`
+   (`provenance='prior_library'`), via the existing
+   `scripts/ingest_banking_knowledge.py` pointed at
+   `experiments/tau3_bench/_tau2_bench_src` — confirmed with
+   `SELECT count(*) FROM knowledge_nodes WHERE node_type='policy_document'`
+   → 698. **Not done:** the ingestion script now also stores
+   `properties.source_doc_id` (a real gap fixed this session — the tau2
+   doc id previously existed only as an in-memory onboarding key and was
+   never persisted anywhere retrievable), but the procedure-seeding
+   script, the tau2 retriever adapter, and the actual task run are all
+   still unwritten. Explicitly note when picking this up: banking_
+   knowledge has no repo checkout, so `retrieve_local_first`'s structural
+   tier is inert there — this test exercises procedure seeding,
+   applicability, and semantic retrieval, NOT the structural hierarchy
+   item 5 below already validates against a real repo.
 
-**Separately, still genuinely blocked on credentials/network, not on effort:**
-- **Gap 4** — `extract_model_observation` in `observations.py` has never
-  touched a real LLM (General Compute or Groq, both OpenAI-compatible).
-- **`_mcts_pick`** above, same root cause.
+## What's built and verified this session (not just written — run against real infrastructure)
 
-## What's built — full file map (everything from this doc's previous version, plus what's new)
+**1. The three-link gap that made `observations` orphaned is closed.**
+New `backend/app/services/ingestion_jobs.py`: `claim_jobs()` (real
+`SELECT ... FOR UPDATE SKIP LOCKED`), `handle_normalize_trace_event()`
+(calls the existing, previously-uncalled `extract_deterministic_
+observations()` + `persist_observation()`), `process_pending_jobs()`
+(per-job try/except so one bad job — A4's lesson — doesn't stall the
+batch), `requeue_stuck_jobs()` (manual recovery for a worker that died
+mid-job). New `backend/scripts/run_ingestion.py` — the runnable entry
+point neither `process_collector_file()` nor `process_pending_jobs()` had
+before this: one `--once` pass or `--interval N` loop over both.
+
+Verified against a real database with `tests/test_ingestion_jobs_e2e.py`
+(4 tests, all passing): a real `Edit` trace_event produces a real
+`file_touched` observation end to end; an unknown `job_type` is marked
+`failed` rather than stuck; a job pointing at a since-deleted trace_event
+is a no-op, not a batch-stalling error; `requeue_stuck_jobs` only touches
+genuinely old `processing` rows.
+
+**2. `retrieve_local_first()` now has a real caller.** New
+`assemble_structural_context()` in `local_retrieval.py` — the
+orchestrator the previous handoff named as missing. Takes
+`(session_id, repo_root, seed_files)`, calls the 6 already-built
+producers, returns a `StructuralContext`. **Cold-start handling, stated
+because it's easy to get wrong**: a session's first retrieval has no
+`file_touched` observations yet, and `get_call_graph_ranked_names()`
+early-returns on empty `open_files` — so without a seed the entire
+structural tier goes silently empty. `seed_files` (e.g. `git diff
+--name-only HEAD`) feeds ONLY the three filesystem producers
+(`relevant_symbols`/`import_deps`/`related_tests`); it never populates
+`open_files` itself and never becomes a FILTER candidate — a repo-scoped
+seed is lower-precision than a session-scoped one, and letting it into a
+FILTER slot would be the criterion-compensation mistake ticket 12 warns
+against, in reverse.
+
+Wired into `app/mcp_server/server.py`'s `solve_task` — the natural
+caller, already has `repo_path` + the pool. It now builds a structural
+context (git-diff-seeded unless a `session_id` is passed), calls
+`retrieve_local_first`, and appends the result to `memory_block`
+alongside the existing `retrieve_precedent`-based prior-solution lookup
+(kept separate and unchanged — different retrieval concern, precedent
+trajectories vs. structural file context, conflating them would have
+been wrong).
+
+Verified with 3 new tests in `test_local_retrieval_e2e.py` against a real
+DB and this repo's own real files (not synthetic fixtures): cold start
+with no session/repo/seed is honestly all-empty; a real session's
+observations produce real `code_index.py`/tree-sitter output for a real
+file in this repo; `seed_files` feeds the filesystem producers but never
+leaks into `open_files`.
+
+**3. Hooks fired for real — genuinely, during this session's own work, not
+simulated.** Fixed `scripts/example_hook_settings.json`'s `python3` →
+`python` (would have failed immediately on Windows, contradicting this
+doc's own environment section). Registered it in this repo's
+`.claude/settings.local.json`, then made real tool calls — and
+`.claude/traces/<this-session's-own-id>.jsonl` appeared with 33 real
+events, including genuine `tool_input`/`tool_output` from this
+conversation's own Bash commands. Ran `run_ingestion.py` against it: **40
+records seen, 40 inserted, 40 jobs done, 0 failed** — real
+`command_executed`/`file_touched` observations landed in the database
+from a live hook firing, not a hand-built payload.
+
+One real, unrelated gap found and fixed in the course of this: **`.claude/
+traces/` and `.claude/settings.local.json` were untracked but NOT
+gitignored** — `git status` showed both as `??`, meaning a `git add -A`
+would have committed real (redacted, but still real) session transcript
+content and local permission config. Neither was in `.gitignore` at all
+before this session. Fixed.
+
+## What's built — file map (carried forward, unchanged since last handoff unless noted)
 
 - **Access control, collector/worker, hook wiring, migrations 17-19,
-  procedures (ticket 05+13), applicability (ticket 12)** — unchanged from
-  the last handoff version; see git log for those commits
-  (`c6d1d04` through `a9e7fe1`) if you need the detail, not repeated here.
-- **Execution engine** (ticket 15, NOW FULLY DONE):
-  `backend/app/execution/htn_agent.py` — real implementation;
-  `experiments/swebench_pro/htn_agent.py` is a 29-line re-export shim, don't
-  edit it. `RunContext` carries all per-run state.
-  `HTNConfig`/`StructuralLimits`/`DistributionalBudgets` are the
-  hyperparameter config objects. **New since last handoff:** `SchedulerStrategy`
-  (ABC), `SequentialScheduler`, `ConcurrentBatchScheduler` — the two
-  scheduling algorithms are real, interchangeable strategy objects now, not
-  fixed to one class each. `HTNAgent(..., scheduler=ConcurrentBatchScheduler())`
-  and `AugmentedHTNAgent(..., scheduler=SequentialScheduler())` both work.
-  `ResearchHTNAgent._ast_edit` (stdlib `ast`, replaces a function/class's
-  entire source, rejects non-parsing results, wired into real tool dispatch
-  as `ast_replace_function`, gated to `.py`-naming goals) and
-  `._method_score` (Beta-Bernoulli posterior mean) are real now;
-  `._mcts_pick` remains a stub (see above). `._run_ready_batch` was removed
-  entirely — confirmed dead, and superseded by `ConcurrentBatchScheduler`
-  under a different name.
-- **Retrieval** (ticket 14, `local_retrieval.py` NOW FULLY DONE — all 7
-  signals real, not 1):
-  - `open_files` → `get_current_working_set()` (observations.py, unchanged)
-  - `recent_commit_files` → `get_recent_commit_files()` (unchanged)
-  - `related_tests` → `app/services/related_tests.py` (naming-convention,
-    filesystem-checked)
-  - `relevant_symbols` → `get_relevant_symbols()` (wraps `code_index.outline()`)
-  - `import_deps` → `app/services/import_deps.py` (**new tree-sitter
-    capability** — this repo had zero import-parsing before; real filesystem
-    resolution for Python and relative JS/TS, honest raw-string fallback for
-    Go and bare JS/TS specifiers)
-  - `call_graph_ranked_names` → `get_call_graph_ranked_names()` (wraps
-    `call_graph.py`'s existing reachability)
-  - `recent_failure_files` → `get_recent_failure_files()` +
-    `failure_capture.py`'s new optional `file_paths` param (no migration
-    needed, `properties` is already JSONB)
-
-## Real bugs found and fixed this session (worth knowing about if you touch these files)
-
-- `import_deps.py`: `from . import foo` initially resolved to the useless
-  literal `.` — fixed to resolve the real file. `from __future__ import X`
-  was silently invisible entirely (it's a distinct tree-sitter grammar node,
-  confirmed by direct inspection, not assumed) — fixed.
-- `related_tests.py`: an early version missed this repo's own
-  `test_X_e2e.py` convention — caught by running it against real files here
-  (`procedures.py`, `applicability.py`), not synthetic fixtures alone.
-- `htn_agent.py`'s scheduler extraction: `ConcurrentBatchScheduler` initially
-  depended on `AugmentedHTNAgent`-only attributes (`_shallow`,
-  `MAX_PARALLEL_NODES`), so "pluggable scheduler" was only true in one
-  direction until real base-class defaults were added to `HTNAgent` itself.
-  Caught by the first test of the actual new capability, not assumed to
-  work from the extraction alone.
-- `_ast_edit`: an early version dropped decorators (`node.lineno` for a
-  decorated function points at the `def` line, not the decorator, confirmed
-  by direct AST inspection) — caught by writing the regression test first
-  and watching it fail against the naive version.
-- Two real transcription bugs during the scheduler extraction itself (a
-  literal `\"` escape sequence left in several comments, and the blanket
-  fix for that then corrupting two unrelated legitimate lines by
-  coincidental pattern match) — both caught by `ast.parse` failing, fixed
-  precisely at the byte level, not guessed.
+  procedures (ticket 05+13), applicability (ticket 12), execution engine
+  (ticket 15, scheduler strategy), retrieval producers (ticket 14, all 7)**
+  — unchanged from the last handoff version; see git log
+  (`c6d1d04` through `68d905b`) for that detail, not repeated here.
+- **New this session**: `app/services/ingestion_jobs.py`,
+  `scripts/run_ingestion.py`, `assemble_structural_context()` in
+  `local_retrieval.py`, `solve_task`'s structural-context wiring in
+  `app/mcp_server/server.py`, `properties.source_doc_id` in
+  `scripts/ingest_banking_knowledge.py`.
 
 ## Testing what's built
 
@@ -152,26 +185,41 @@ export DATABASE_URL=postgresql://...
 python -m pytest tests/ -q
 ```
 
-**833 passed, 2 skipped, zero failures** — verified fresh at `68d905b`
-immediately before writing this doc, not copied from an earlier run.
+**852 passed, 1 skipped, zero failures** — verified fresh this session on
+a freshly-migrated local Postgres 17 + pgvector DB, not copied from an
+earlier run. (Without `DATABASE_URL`: DB-gated tests skip rather than
+fail — a green run without a database is not coverage of anything
+touching Postgres; check the skip count.)
 
 New test files/classes worth reading if you're touching this area next:
-`tests/test_import_deps.py`, `tests/test_related_tests.py`,
-`test_htn_agent.py`'s `TestSchedulerStrategy`/`TestAstEdit`/`TestMethodScore`
-classes, `test_local_retrieval_e2e.py`'s producer-specific tests (each one
-proves its signal is a genuinely INDEPENDENT retrieval path — findable via
-that signal alone, with zero semantic/lexical overlap with the query — not
-just a filter/boost on what semantic search already found).
+`tests/test_ingestion_jobs_e2e.py` (the job-consumer link),
+`test_local_retrieval_e2e.py`'s `assemble_structural_context` tests (the
+orchestrator + cold-start behavior).
 
-## Working style that kept producing real results — same as last time, still true
+## Real bugs found and fixed this session
 
-Verify against real code before asserting anything (every fix above was
-confirmed broken against the pre-fix code, then confirmed fixed — not
-written and assumed). Real database, not mocks, for anything touching
-Postgres. Real filesystem fixtures, not just synthetic ones, for anything
-touching `call_graph.py`/`code_index.py`/tree-sitter — several of the real
-bugs above were only caught by testing against this repo's own actual files.
-Honest scope notes in every module's own docstring, not buried elsewhere.
+- The back-compat shim `experiments/swebench_pro/htn_agent.py` claimed
+  "every name this module used to define is re-exported here unchanged"
+  but used `from app.execution.htn_agent import *`, which skips every
+  `_underscore` name (no `__all__` defined). `_node_row` was missing —
+  pytest reported `Interrupted: 1 error during collection` and ran **zero**
+  tests. Fixed with an explicit second import; docstring corrected.
+- `ingestion_jobs`/`observations` link never existed — see above.
+- `.gitignore` didn't cover `.claude/traces/` or `.claude/settings.local.json`
+  — see above.
+- `ingest_banking_knowledge.py`'s tau2 document id was never persisted
+  anywhere retrievable (only lived as an in-memory `KnowledgeSpec.key`
+  during onboarding) — fixed by storing it in `properties.source_doc_id`.
+
+## Working style that kept producing real results — still true
+
+Verify against real code before asserting anything. Real database, not
+mocks. Real hook firing against this session's own tool calls, not a
+synthetic payload, for the hook-wiring claim specifically — a hand-built
+JSON payload piped to `hook_wrapper.py` would have proven the wrapper's
+parsing logic but not that Claude Code's actual hook mechanism invokes it
+correctly with real fields. Honest scope notes in every module's own
+docstring, not buried elsewhere.
 
 ## Suggested skills
 

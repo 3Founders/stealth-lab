@@ -11,6 +11,7 @@ import pytest
 from app.db.session import create_pool
 from app.services.local_retrieval import (
     StructuralContext,
+    assemble_structural_context,
     get_current_working_set,
     get_recent_commit_files,
     retrieve_local_first,
@@ -401,6 +402,105 @@ def test_call_graph_ranked_names_boosts_semantic_tier_ranking(tmp_path):
             )
         finally:
             await _cleanup(pool, "local-retr-test-nosession", name_prefix="local-retr-test-cgboost")
+            await pool.close()
+
+    asyncio.run(_run())
+
+
+# ---------------------------------------------------------------------
+# assemble_structural_context() -- the caller-side orchestrator step 2
+# added. This module's own docstring named it as missing: every producer
+# above was real and independently tested, but nothing assembled them
+# for a live (session_id, repo_root) pair. These tests exercise the
+# orchestration itself, not the producers a second time.
+# ---------------------------------------------------------------------
+
+_REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+_REAL_FILE = "app/services/local_retrieval.py"  # a real file in this repo, used as-is
+
+
+def test_assemble_structural_context_cold_start_is_honestly_empty():
+    """No session_id, no repo_root, no seed_files -- every field must
+    default empty rather than raise or silently invent data. This is
+    the cold-start case the function's own docstring names."""
+    async def _run():
+        pool = await create_pool(DATABASE_URL, min_size=1, max_size=2)
+        try:
+            ctx = await assemble_structural_context(pool)
+            assert ctx.open_files == []
+            assert ctx.relevant_symbols == []
+            assert ctx.import_deps == []
+            assert ctx.related_tests == []
+            assert ctx.call_graph_ranked_names == []
+            assert ctx.recent_commit_files == []
+        finally:
+            await pool.close()
+
+    asyncio.run(_run())
+
+
+def test_assemble_structural_context_uses_real_session_observations():
+    """With a real session that has file_touched observations, open_files
+    must come from get_current_working_set() -- and with repo_root also
+    given, the filesystem producers must run against that real path and
+    return real symbols/imports for it, not placeholders."""
+    async def _run():
+        pool = await create_pool(DATABASE_URL, min_size=1, max_size=2)
+        session_id = "local-retr-test-session-assemble"
+        try:
+            await _cleanup(pool, session_id)
+            event_id = await _insert_trace_event(pool, session_id, 0)
+            await persist_observation(
+                pool, observation_type="file_touched", label=f"Modified {_REAL_FILE}",
+                extractor_kind="deterministic", event_ids=[event_id],
+                properties={"file_path": _REAL_FILE, "tool_name": "Edit"},
+            )
+
+            ctx = await assemble_structural_context(
+                pool, session_id=session_id, repo_root=_REPO_ROOT,
+            )
+            assert ctx.open_files == [_REAL_FILE]
+            assert "StructuralContext" in ctx.relevant_symbols, (
+                "relevant_symbols must be real code_index.py output for the real file"
+            )
+            assert "dataclasses" in ctx.import_deps, (
+                "import_deps must be real tree-sitter output for the real file"
+            )
+        finally:
+            await _cleanup(pool, session_id)
+            await pool.close()
+
+    asyncio.run(_run())
+
+
+def test_assemble_structural_context_seed_files_never_become_open_files():
+    """The cold-start seed is deliberately NOT the same signal as a real
+    session's open_files -- ticket 14 classifies open_files as FILTER
+    specifically because it's session-scoped/high-precision. A caller-
+    supplied seed (e.g. git diff) must feed the filesystem producers but
+    must never populate open_files itself, or it silently becomes a
+    FILTER candidate at the wrong precision -- exactly the criterion-
+    compensation mistake the module header warns against for the
+    opposite pairing."""
+    async def _run():
+        pool = await create_pool(DATABASE_URL, min_size=1, max_size=2)
+        try:
+            # No session_id at all -- this is the pure cold-start path.
+            ctx = await assemble_structural_context(
+                pool, repo_root=_REPO_ROOT, seed_files=[_REAL_FILE],
+            )
+            assert ctx.open_files == [], (
+                "seed_files must never leak into open_files -- it is a "
+                "seed for the filesystem producers, not a FILTER signal itself"
+            )
+            assert "StructuralContext" in ctx.relevant_symbols, (
+                "the filesystem producers must still run, seeded from seed_files"
+            )
+            assert ctx.call_graph_ranked_names == [], (
+                "call_graph_ranked_names must stay empty on a git-seeded cold "
+                "start -- it only seeds from real open_files, per its own docstring"
+            )
+        finally:
             await pool.close()
 
     asyncio.run(_run())

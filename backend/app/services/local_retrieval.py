@@ -258,6 +258,90 @@ def get_call_graph_ranked_names(
     return reachability.files
 
 
+async def assemble_structural_context(
+    pool: asyncpg.Pool,
+    *,
+    session_id: Optional[str] = None,
+    repo_root: Optional[str] = None,
+    seed_files: Optional[list[str]] = None,
+) -> StructuralContext:
+    """
+    The caller-facing orchestrator the module docstring's own "HONEST
+    SCOPE" section names as missing: every producer above already
+    existed and was independently tested, but nothing assembled them
+    into one StructuralContext for a real (session_id, repo_root) pair.
+    retrieve_local_first() itself deliberately stays DB-only per this
+    module's own boundary discipline -- this function is the one place
+    that boundary is allowed to be crossed, since it's explicitly the
+    caller-side assembly step the docstring already anticipated.
+
+    COLD START, stated plainly rather than glossed over: open_files
+    comes from get_current_working_set(), which reads file_touched
+    observations for `session_id`. A session's first retrieval, by
+    definition, has no observations yet -- and get_call_graph_ranked_
+    names() early-returns on empty open_files (local_retrieval.py's own
+    producer), so without a seed the ENTIRE structural tier is empty on
+    turn one, degrading silently to semantic-only.
+
+    `seed_files` exists for exactly that gap -- e.g. `git diff --name-
+    only HEAD` from a real checkout. Deliberately named "seed", not
+    folded into open_files: ticket 14 classifies the working set as a
+    FILTER signal specifically BECAUSE it's session-scoped (high
+    precision). A git-derived seed is repo-scoped -- two concurrent
+    sessions on the same checkout get the same seed, and it measures
+    "what's uncommitted here" rather than "what this session is doing".
+    Smuggling a lower-precision signal into a FILTER slot is exactly the
+    criterion-compensation mistake ticket 12 and this module's own
+    header warn against for the opposite pairing (similarity outscoring
+    a hard constraint) -- the same logic applies in reverse here.
+    `seed_files` therefore ONLY seeds the three filesystem producers
+    (relevant_symbols / import_deps / related_tests), which each
+    re-derive their own real, high-precision output from whatever files
+    they're pointed at. It never enters open_files and is never itself a
+    FILTER candidate.
+
+    Every field left at its default (empty list) if the precondition for
+    computing it doesn't hold (no session_id -> no DB-backed fields; no
+    repo_root -> no filesystem-backed fields) -- an honestly-empty
+    StructuralContext, same discipline as the rest of this module.
+    """
+    open_files: list[str] = []
+    recent_commit_files: list[str] = []
+    if session_id:
+        open_files = await get_current_working_set(pool, session_id=session_id)
+        recent_commit_files = await get_recent_commit_files(pool, session_id=session_id)
+
+    filesystem_seed = open_files or list(seed_files or [])
+
+    relevant_symbols: list[str] = []
+    import_deps: list[str] = []
+    related_tests: list[str] = []
+    call_graph_ranked_names: list[str] = []
+    if repo_root and filesystem_seed:
+        relevant_symbols = get_relevant_symbols(repo_root, filesystem_seed)
+        from app.services.import_deps import import_targets_for_many
+        from app.services.related_tests import related_test_files_for_many
+        import_deps = import_targets_for_many(repo_root, filesystem_seed)
+        related_tests = related_test_files_for_many(repo_root, filesystem_seed)
+        # Only real session-observed open_files seed the call graph --
+        # see COLD START above: a git-derived seed is repo-scoped, and
+        # get_call_graph_ranked_names's own docstring says it seeds from
+        # "the current-working-set signal open_files already
+        # represents" -- feeding it a repo-scoped seed would launder
+        # that same lower-precision signal one hop further downstream.
+        if open_files:
+            call_graph_ranked_names = get_call_graph_ranked_names(repo_root, open_files)
+
+    return StructuralContext(
+        open_files=open_files,
+        relevant_symbols=relevant_symbols,
+        import_deps=import_deps,
+        related_tests=related_tests,
+        call_graph_ranked_names=call_graph_ranked_names,
+        recent_commit_files=recent_commit_files,
+    )
+
+
 def _estimate_tokens(text: str) -> int:
     return max(1, len(text) // CHARS_PER_TOKEN_ESTIMATE)
 
