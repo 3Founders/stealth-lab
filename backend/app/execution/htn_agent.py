@@ -79,6 +79,7 @@ in the pipeline and TEST.md for what is verified about it.
 """
 from __future__ import annotations
 
+import ast
 import concurrent.futures
 import json
 import os
@@ -1397,7 +1398,7 @@ class HTNAgent:
                         continue
                     return "expand", kids[:4], steps
                 from agent import Agent
-                if name in ("edit_file", "create_file", "delete_file"):
+                if name in ("edit_file", "create_file", "delete_file", "ast_replace_function"):
                     # RepoSandbox mutates files on disk and its own
                     # bookkeeping dict; a concurrent sibling node running in
                     # another thread must not interleave with that. Reads
@@ -1419,7 +1420,20 @@ class HTNAgent:
                         # as the failure_capture call site in
                         # run_graph_experiment.py).
                         rel, before = self._fingerprint(sandbox, args.get("path", ""))
-                        result, _ = Agent._dispatch(name, args, sandbox)
+                        if name == "ast_replace_function":
+                            # Item 2's real implementation (_ast_edit,
+                            # ResearchHTNAgent-only) -- not a call into
+                            # Agent._dispatch, since this tool doesn't
+                            # exist in the flat agent's baseline tool set
+                            # at all. Only ResearchHTNAgent ever offers
+                            # this name to the LLM (see its _tools_for
+                            # override), so this branch is unreachable
+                            # for HTNAgent/AugmentedHTNAgent in practice.
+                            result = self._ast_edit(
+                                sandbox, args.get("path", ""),
+                                args.get("symbol", ""), args.get("new_source", ""))
+                        else:
+                            result, _ = Agent._dispatch(name, args, sandbox)
                         _, after = self._fingerprint(sandbox, args.get("path", ""))
                         if rel and after != before and rel not in node.files_edited:
                             node.files_edited.append(rel)
@@ -2231,6 +2245,38 @@ class ResearchHTNAgent(AugmentedHTNAgent):
        -> start in `_method_score(self, record) -> float`.
     """
 
+    def _tools_for(self, node: Node, ctx: "RunContext") -> list[dict]:
+        """
+        Adds ast_replace_function to the tool list, gated to .py files
+        per the class docstring's own item 2 ("gated to .py files;
+        everything else keeps using edit_file") -- checked against the
+        node's OWN goal text (reusing AugmentedHTNAgent's own _FILE_RE,
+        the same pattern _verify_precondition already uses for path
+        hints), not offered unconditionally. edit_file/create_file
+        remain available regardless -- this is an additional option for
+        whole-function/class replacement, never a replacement for them.
+        """
+        tools = super()._tools_for(node, ctx)
+        if any(m.lower().endswith(".py") for m in self._FILE_RE.findall(node.goal)):
+            tools = tools + [{"type": "function", "function": {
+                "name": "ast_replace_function",
+                "description": (
+                    "Replace a top-level (or class-nested) function, async "
+                    "function, or class's ENTIRE source -- def/class line, "
+                    "any decorators, and body -- by name, using Python's own "
+                    "AST. Only for .py files. The edit is rejected (nothing "
+                    "written) if the replacement does not parse. Prefer "
+                    "edit_file for smaller, in-body changes; use this when "
+                    "replacing a whole function or class definition."),
+                "parameters": {"type": "object", "properties": {
+                    "path": {"type": "string"},
+                    "symbol": {"type": "string", "description": "the function or class name to replace"},
+                    "new_source": {"type": "string",
+                                   "description": "the COMPLETE replacement source, "
+                                                  "including the def/class line and any decorators"},
+                }, "required": ["path", "symbol", "new_source"]}}}]
+        return tools
+
     async def _synthesize_method(self, pool, embedder, problem_statement: str) -> bool:
         """
         Look up a reusable decomposition for `problem_statement` and, if a
@@ -2247,11 +2293,103 @@ class ResearchHTNAgent(AugmentedHTNAgent):
             return True
         return False
 
-    def _ast_edit(self, *args, **kwargs):
-        raise NotImplementedError("see ResearchHTNAgent docstring, item 2")
+    def _ast_edit(self, sandbox: RepoSandbox, path: str, symbol: str, new_source: str) -> str:
+        """
+        Real implementation of item 2 (see class docstring): parses a
+        .py file with the stdlib `ast` module, locates a top-level (or
+        class-nested, one level -- matching code_index.py's own
+        "ClassName.method" qualified-name convention) function/class by
+        name, and replaces its source text with `new_source` --
+        rejecting the edit if `ast.parse` fails on the RESULT, so a
+        syntactically invalid change can never be produced. This is the
+        gate; `_verify_postcondition` (AugmentedHTNAgent's real,
+        multi-language check) would also have caught it after the fact
+        via tree-sitter, but this catches it before ever touching disk.
+
+        Decorators are included in the replaced span if present (using
+        the first decorator's own line, not `symbol`'s own `lineno`,
+        which in Python 3.8+ refers to the `def`/`class` line itself,
+        not any decorator above it) -- dropping a decorator silently
+        would be a real, easy-to-miss correctness bug for anything
+        using e.g. `@property` or `@dataclass`.
+        """
+        if not path.endswith(".py"):
+            return f"ast_replace_function only supports .py files, got {path!r}"
+        try:
+            full = sandbox._resolve(path)
+        except ValueError as exc:
+            return f"invalid path: {exc}"
+        if not os.path.isfile(full):
+            return f"{path} does not exist"
+        try:
+            with open(full, encoding="utf-8", errors="replace") as f:
+                content = f.read()
+        except OSError as exc:
+            return f"could not read {path}: {exc}"
+
+        try:
+            tree = ast.parse(content)
+        except SyntaxError as exc:
+            return f"{path} does not currently parse -- fix its existing syntax first: {exc}"
+
+        target = None
+        for candidate_node in ast.walk(tree):
+            if isinstance(candidate_node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)) \
+                    and candidate_node.name == symbol:
+                target = candidate_node
+                break
+        if target is None:
+            return f"no function or class named {symbol!r} found in {path}"
+
+        start_line = target.lineno - 1  # ast is 1-indexed; convert to 0-indexed
+        if target.decorator_list:
+            start_line = min(d.lineno for d in target.decorator_list) - 1
+        end_line = target.end_lineno  # 1-indexed inclusive end == exclusive 0-indexed slice bound
+
+        lines = content.splitlines(keepends=True)
+        replacement = new_source if new_source.endswith("\n") else new_source + "\n"
+        written = "".join(lines[:start_line]) + replacement + "".join(lines[end_line:])
+
+        try:
+            ast.parse(written)
+        except SyntaxError as exc:
+            return f"replacement would make {path} invalid -- not applied: {exc}"
+
+        rel = os.path.relpath(full, sandbox.root).replace("\\", "/")
+        sandbox._original.setdefault(rel, content)
+        with open(full, "w", encoding="utf-8", newline="") as f:
+            f.write(written)
+        return f"replaced {symbol} in {rel}"
 
     def _mcts_pick(self, *args, **kwargs):
         raise NotImplementedError("see ResearchHTNAgent docstring, item 4")
 
-    def _method_score(self, *args, **kwargs):
-        raise NotImplementedError("see ResearchHTNAgent docstring, item 5")
+    def _method_score(self, record: dict) -> float:
+        """
+        Real implementation of item 5 (see class docstring): posterior
+        mean of a Beta(1 + successes, 1 + attempts - successes)
+        distribution -- the same Beta-Bernoulli reasoning
+        procedures.py's own lifecycle (ticket 13) already uses for
+        promotion, applied here to a method-library record's raw
+        (successes, attempts) counters instead of ticket 13's
+        verification_state machinery (a method-library record is
+        simpler: no circuit breaker, no quarantine, just "how well has
+        this decomposition actually worked").
+
+        `record` is any dict-like with "successes" and "attempts" int
+        keys -- deliberately not coupled to one specific record shape
+        (method_library.py's real persist_plan/find_reusable_plan
+        schema, or a lighter caller-constructed dict), since this
+        function's only real job is the arithmetic, not schema
+        validation.
+
+        Prior Beta(1,1) (uniform) rather than Beta(0,0) (improper) --
+        a record with zero attempts gets a neutral 0.5, not a
+        division-by-zero or an assumed-good 1.0, honestly reflecting
+        "no evidence yet" rather than either extreme.
+        """
+        attempts = record.get("attempts", 0)
+        successes = record.get("successes", 0)
+        alpha = 1 + successes
+        beta = 1 + max(0, attempts - successes)
+        return alpha / (alpha + beta)

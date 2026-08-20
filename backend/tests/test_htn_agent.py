@@ -1620,12 +1620,180 @@ class TestSchedulerStrategy:
     def test_the_four_dead_stub_methods_are_confirmed_gone_except_three_real_ones(self):
         """_run_ready_batch was removed as genuinely obsolete (superseded
         by ConcurrentBatchScheduler, confirmed by grep -- zero references
-        anywhere before removal). The other three (_ast_edit, _mcts_pick,
-        _method_score) are still real, undone future work and must
-        remain."""
+        anywhere before removal). _mcts_pick is still real, undone future
+        work (needs a real LLM call for candidate generation) and must
+        remain a NotImplementedError stub. _ast_edit and _method_score
+        are no longer stubs at all -- see TestAstEdit/TestMethodScore for
+        their real implementations, confirmed here only by NOT raising
+        NotImplementedError."""
         from htn_agent import ResearchHTNAgent
         assert not hasattr(ResearchHTNAgent, "_run_ready_batch")
-        for name in ("_ast_edit", "_mcts_pick", "_method_score"):
-            assert hasattr(ResearchHTNAgent, name)
-            with pytest.raises(NotImplementedError):
-                getattr(ResearchHTNAgent(None, "m"), name)()
+        with pytest.raises(NotImplementedError):
+            ResearchHTNAgent(None, "m")._mcts_pick()
+        assert ResearchHTNAgent(None, "m")._method_score({"attempts": 0, "successes": 0}) == 0.5
+
+
+class TestAstEdit:
+    """Real implementation of ResearchHTNAgent's item 2 (see class
+    docstring): parse a .py file, locate a symbol by name, replace its
+    source, reject if the result would not parse."""
+
+    def test_replaces_a_top_level_function(self, tmp_path):
+        from htn_agent import ResearchHTNAgent
+
+        (tmp_path / "mod.py").write_text("def f():\n    return 1\n\ndef g():\n    return 2\n")
+        sandbox = RepoSandbox(str(tmp_path))
+        agent = ResearchHTNAgent(None, "m")
+        result = agent._ast_edit(sandbox, "mod.py", "f", "def f():\n    return 99\n")
+        assert "replaced f" in result
+        assert (tmp_path / "mod.py").read_text() == "def f():\n    return 99\n\ndef g():\n    return 2\n"
+
+    def test_replaces_a_class(self, tmp_path):
+        from htn_agent import ResearchHTNAgent
+
+        (tmp_path / "mod.py").write_text("class Foo:\n    x = 1\n")
+        sandbox = RepoSandbox(str(tmp_path))
+        agent = ResearchHTNAgent(None, "m")
+        result = agent._ast_edit(sandbox, "mod.py", "Foo", "class Foo:\n    x = 2\n    y = 3\n")
+        assert "replaced Foo" in result
+        assert "y = 3" in (tmp_path / "mod.py").read_text()
+
+    def test_preserves_a_decorator(self, tmp_path):
+        """Real fix: node.lineno for a decorated function starts at the
+        `def` line, not the decorator, in Python 3.8+ -- confirmed by
+        direct AST inspection before writing this, not assumed. Without
+        using decorator_list's own lineno, the decorator would be
+        silently dropped."""
+        from htn_agent import ResearchHTNAgent
+
+        (tmp_path / "mod.py").write_text(
+            "@staticmethod\ndef f():\n    return 1\n\ndef g():\n    return 2\n"
+        )
+        sandbox = RepoSandbox(str(tmp_path))
+        agent = ResearchHTNAgent(None, "m")
+        agent._ast_edit(sandbox, "mod.py", "f", "@staticmethod\ndef f():\n    return 99\n")
+        content = (tmp_path / "mod.py").read_text()
+        assert content.count("@staticmethod") == 1
+        assert "def g():" in content, "the OLD decorator line must not have swallowed the next symbol"
+
+    def test_rejects_a_replacement_that_would_not_parse(self, tmp_path):
+        from htn_agent import ResearchHTNAgent
+
+        original = "def f():\n    return 1\n"
+        (tmp_path / "mod.py").write_text(original)
+        sandbox = RepoSandbox(str(tmp_path))
+        agent = ResearchHTNAgent(None, "m")
+        result = agent._ast_edit(sandbox, "mod.py", "f", "def f(:\n    this is not valid python\n")
+        assert "not applied" in result
+        assert (tmp_path / "mod.py").read_text() == original, "a rejected edit must not touch the file at all"
+
+    def test_missing_symbol_is_a_real_error_not_a_silent_no_op(self, tmp_path):
+        from htn_agent import ResearchHTNAgent
+
+        (tmp_path / "mod.py").write_text("def f():\n    return 1\n")
+        sandbox = RepoSandbox(str(tmp_path))
+        agent = ResearchHTNAgent(None, "m")
+        result = agent._ast_edit(sandbox, "mod.py", "nonexistent_symbol", "def f():\n    return 2\n")
+        assert "no function or class named" in result
+
+    def test_non_py_file_is_rejected(self, tmp_path):
+        from htn_agent import ResearchHTNAgent
+
+        (tmp_path / "mod.go").write_text("package main\n")
+        sandbox = RepoSandbox(str(tmp_path))
+        agent = ResearchHTNAgent(None, "m")
+        result = agent._ast_edit(sandbox, "mod.go", "main", "package main\n")
+        assert "only supports .py files" in result
+
+    def test_file_that_already_has_a_syntax_error_is_rejected_before_replacement(self, tmp_path):
+        from htn_agent import ResearchHTNAgent
+
+        (tmp_path / "mod.py").write_text("def f(:\n    broken already\n")
+        sandbox = RepoSandbox(str(tmp_path))
+        agent = ResearchHTNAgent(None, "m")
+        result = agent._ast_edit(sandbox, "mod.py", "f", "def f():\n    return 1\n")
+        assert "does not currently parse" in result
+
+    def test_edited_file_is_tracked_in_sandbox_bookkeeping(self, tmp_path):
+        """Real confirmation that _ast_edit follows the same
+        sandbox._original.setdefault pattern edit_file/create_file use
+        -- so sandbox.diff()/edited_files() correctly reflect the
+        change, not just the file on disk."""
+        from htn_agent import ResearchHTNAgent
+
+        (tmp_path / "mod.py").write_text("def f():\n    return 1\n")
+        sandbox = RepoSandbox(str(tmp_path))
+        agent = ResearchHTNAgent(None, "m")
+        agent._ast_edit(sandbox, "mod.py", "f", "def f():\n    return 2\n")
+        assert "mod.py" in sandbox.edited_files()
+
+    def test_ast_replace_function_offered_only_when_goal_names_a_py_file(self):
+        """Real confirmation of the _tools_for gating -- 'gated to .py
+        files; everything else keeps using edit_file' (class docstring,
+        item 2)."""
+        from htn_agent import RunContext, ResearchHTNAgent
+        from agent import Usage
+
+        agent = ResearchHTNAgent(None, "m")
+        ctx = RunContext(t0=0.0, usage=Usage())
+
+        py_node = Node(id=1, goal="In app/services/foo.py, fix the validator")
+        py_tools = {t["function"]["name"] for t in agent._tools_for(py_node, ctx)}
+        assert "ast_replace_function" in py_tools
+
+        no_file_node = Node(id=2, goal="Investigate the broken handler")
+        no_file_tools = {t["function"]["name"] for t in agent._tools_for(no_file_node, ctx)}
+        assert "ast_replace_function" not in no_file_tools
+
+        go_node = Node(id=3, goal="In main.go, fix the handler")
+        go_tools = {t["function"]["name"] for t in agent._tools_for(go_node, ctx)}
+        assert "ast_replace_function" not in go_tools
+        assert "edit_file" in go_tools, "edit_file must remain available regardless"
+
+
+class TestMethodScore:
+    """Real implementation of ResearchHTNAgent's item 5 (see class
+    docstring): Beta-Bernoulli posterior mean, same reasoning
+    procedures.py's own lifecycle (ticket 13) uses for promotion."""
+
+    def test_no_attempts_gives_neutral_half(self):
+        from htn_agent import ResearchHTNAgent
+        agent = ResearchHTNAgent(None, "m")
+        assert agent._method_score({"attempts": 0, "successes": 0}) == 0.5
+
+    def test_all_successes_scores_high_but_not_exactly_one(self):
+        """Beta(1,1) prior means even a perfect record never reaches
+        literal 1.0 -- a real, deliberate property (nothing is ever
+        treated as absolutely certain from finite evidence)."""
+        from htn_agent import ResearchHTNAgent
+        agent = ResearchHTNAgent(None, "m")
+        score = agent._method_score({"attempts": 10, "successes": 10})
+        assert 0.9 < score < 1.0
+
+    def test_all_failures_scores_low_but_not_exactly_zero(self):
+        from htn_agent import ResearchHTNAgent
+        agent = ResearchHTNAgent(None, "m")
+        score = agent._method_score({"attempts": 10, "successes": 0})
+        assert 0.0 < score < 0.1
+
+    def test_more_evidence_at_the_same_high_ratio_moves_closer_to_the_raw_ratio(self):
+        """A real property of the posterior mean, checked with an actual
+        computation rather than assumed: at a FIXED ratio away from 0.5,
+        more evidence pulls the estimate closer to the raw success rate
+        (less influenced by the neutral prior). (Testing this AT exactly
+        50% would be misleading -- the posterior mean is exactly 0.5
+        regardless of evidence size there; the prior's pull shows up in
+        the interval width, not the mean, at that one ratio. 100% is a
+        real ratio where more evidence visibly matters.)"""
+        from htn_agent import ResearchHTNAgent
+        agent = ResearchHTNAgent(None, "m")
+        few = agent._method_score({"attempts": 2, "successes": 2})
+        many = agent._method_score({"attempts": 200, "successes": 200})
+        assert few == pytest.approx(0.75, abs=0.01)
+        assert many == pytest.approx(0.995, abs=0.01)
+        assert many > few, "more evidence at the same 100% ratio should push closer to 1.0"
+
+    def test_missing_keys_default_to_zero_not_a_crash(self):
+        from htn_agent import ResearchHTNAgent
+        agent = ResearchHTNAgent(None, "m")
+        assert agent._method_score({}) == 0.5
