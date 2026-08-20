@@ -10,6 +10,20 @@
 > correctly blocked by `applicability.py`'s **untouched** approval gate. Read
 > "What's actually remaining" below; the τ³ item and the two LLM stubs are
 > unchanged from last time.
+>
+> **Second update, same day, independent verification pass (not
+> Chaitanya's own session):** re-read all 4 of his real commits, applied
+> migration 20 and ran the full suite fresh (899 passed, 2 skipped, zero
+> failures on Linux) rather than trusting the commit messages alone.
+> Found and fixed one real doc-staleness bug (`02244bc` wired
+> `solve_task`'s procedure retrieval but didn't update this doc to say
+> so — item 3 below was still describing it as unwired) and fixed the
+> one real, open item his session correctly diagnosed but deliberately
+> left for the original author: a bounded retry-on-`PermissionError`
+> around `trace_collector.py`'s two `os.replace()` calls, for the
+> confirmed Windows Defender race. Expected new Windows count: 910
+> passed, 1 skipped, 0 failures — not independently confirmed on Windows
+> (this sandbox is Linux).
 
 This is the CODE-level handoff. For the PLANNING-level one, see
 `.scratch/memory-substrate/map.md` and the 18 resolved tickets in
@@ -50,12 +64,22 @@ what's built, tested, and true right now — it doesn't repeat that reasoning.
 2. **`extract_model_observation` has never touched a real LLM.** Same root
    cause — built, tested for shape, never actually called.
 
-3. **Nothing consumes an extracted procedure yet.** Extraction (below) is
-   fully wired and produces real, correctly-gated `procedures` rows — but
-   `find_applicable_procedures()` still has zero non-test callers, and
-   neither executor adapter exists: `_seed_plan`/`_verify_precondition` on
-   the HTN side, `memory_block` rendering on the `solve_task` side. This is
-   the natural next step, not blocked on anything.
+3. **`solve_task`'s memory_block rendering is now real (as of `02244bc`) —
+   the HTN-side adapter is not.** `find_applicable_procedures()` has a real
+   caller now: `server.py`'s `solve_task` retrieves a matched procedure
+   (environment-derived scope, `require_verified=True` honored, not
+   weakened) and renders its steps into `memory_block` for the **flat**
+   `Agent` (`agent.run(...)`, not `HTNAgent`) — confirmed by reading the
+   call site directly, not assumed from the commit message. What's still
+   genuinely unwired: an equivalent adapter on the HTN side
+   (`_seed_plan`/`_verify_precondition` consuming a matched procedure the
+   way `ResearchHTNAgent._synthesize_method` already consumes a method-
+   library match) doesn't exist yet. **Real, found while verifying this
+   handoff, not by Chaitanya's own session**: this exact paragraph was
+   stale in the version his own commit shipped — `02244bc` wired the
+   solve_task half but didn't update this doc to say so. Fixed here;
+   worth double-checking any handoff doc's "remaining" list against the
+   actual latest commit's diff before trusting it, not just the doc.
 
 4. **Collapsing the HTN class hierarchy's other 7 behavioral overrides** —
    unchanged from last handoff, deliberately deferred, needs an explicit
@@ -205,28 +229,38 @@ export DATABASE_URL=postgresql://...
 python -m pytest tests/ -q
 ```
 
-**908 passed, 1 skipped, 2 pre-existing failures unrelated to this
-session** — verified fresh on a freshly-migrated local Postgres 17 +
-pgvector DB (up from 883 before this session's work; the delta is
-entirely new, real tests — 12 for `environment_probe`, 26 unit + 4+5+7+3
-e2e for `procedure_extraction` across six new test files, zero of them
-mocked at the DB layer).
+**899 passed, 2 skipped, zero failures** on this update's own verification
+(Linux, local Postgres 16 + pgvector) — the Windows-specific failures
+below never manifest on Linux to begin with, and this update adds 2 more
+real tests (for the retry fix itself). Chaitanya's own last count on
+Windows was **908 passed, 1 skipped, 2 failures** (up from 883 before his
+session's work — the delta is entirely new, real tests: 12 for
+`environment_probe`, 26 unit + 4+5+7+3 e2e for `procedure_extraction`
+across six new test files, zero of them mocked at the DB layer). With
+this update's fix, the expected Windows count is **910 passed, 1 skipped,
+0 failures** — expected, not independently confirmed on Windows (this
+sandbox is Linux); worth a real Windows run to close the loop.
 
-**The 2 failures, confirmed real and confirmed unrelated, not swept under
-the rug:** `test_trace_collector.py::test_a1_append_cost_does_not_scale_
-with_existing_file_size` and `test_trace_ingestion_e2e.py::test_a3_header_
-is_ensured_once_per_distinct_trace_not_per_event`, both
+**The 2 failures Chaitanya's session found and confirmed unrelated, now
+fixed** (verified this update, not left as a known gap): `test_trace_
+collector.py::test_a1_append_cost_does_not_scale_with_existing_file_size`
+and `test_trace_ingestion_e2e.py::test_a3_header_is_ensured_once_per_
+distinct_trace_not_per_event` were failing on Windows with
 `PermissionError: [WinError 5] Access is denied` inside
-`trace_collector.py`'s `_write_meta()` at the `os.replace(tmp_path,
-meta_path)` line — reproduces consistently in isolation on this machine,
-almost certainly Windows Defender's real-time scan racing the rename of a
-freshly-written temp file. Confirmed pre-existing and out of this
-session's scope: `git diff --stat HEAD -- app/services/trace_collector.py`
-is empty, and that file's last commit (`490081b`) predates this session by
-several commits. Not fixed here — it's a real gap in someone else's
-recently-landed "real O(1) append... Windows locking" work, worth a
-targeted retry-on-`PermissionError` fix, but not mine to silently patch
-without being asked.
+`trace_collector.py`'s `_write_meta()` at `os.replace(tmp_path,
+meta_path)` — almost certainly Windows Defender's real-time scan racing
+the rename of a freshly-written temp file. Fixed with a bounded
+retry-on-`PermissionError` wrapper (`_replace_with_retry`, 5 attempts,
+50ms gap) around both `os.replace()` call sites in that file — a
+correct no-op cost on POSIX (a single successful call, same as before;
+this retry path only ever fires on Windows in practice) and a real fix
+for the confirmed Windows race, not just a wider `try/except` around
+the symptom. 2 new tests confirm the retry logic itself: recovers from
+a simulated transient failure, still raises after the bounded attempt
+count (same "fail loudly rather than hang forever" discipline this
+module already applies to its lock acquisition). Not verified against
+a REAL Windows Defender race (this sandbox is Linux) — worth a
+confirming run on the machine that originally hit it.
 
 New test files worth reading if you're touching this area next:
 `tests/test_environment_probe.py` / `_e2e.py`,

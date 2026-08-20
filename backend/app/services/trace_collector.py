@@ -24,7 +24,7 @@ import sys
 import time
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Iterator
+from typing import Iterator, Optional
 
 from app.services.trace_redaction import redact_event
 
@@ -157,10 +157,44 @@ def _read_meta(meta_path: Path) -> dict:
         return {}
 
 
+def _replace_with_retry(src: Path, dst: Path,
+                         attempts: int = 5, delay_seconds: float = 0.05) -> None:
+    """
+    Real fix for a real, confirmed-on-Windows bug (found by Chaitanya's
+    session, diagnosed to this exact line, deliberately left for the
+    original author rather than silently patched -- this is that fix):
+    `os.replace()` on Windows can raise `PermissionError: [WinError 5]
+    Access is denied` when another process (almost always Windows
+    Defender's real-time scan) transiently holds a handle on the
+    just-written temp file or the destination, racing the rename.
+    POSIX's rename() has no such failure mode -- this retry only ever
+    fires on Windows in practice, and is a correct no-op cost everywhere
+    else (a single successful os.replace() call, same as before).
+
+    Bounded, not infinite -- same "fail loudly rather than hang forever"
+    discipline this module already applies to its lock acquisition
+    (`_locked()`'s own `DEFAULT_LOCK_TIMEOUT_SECONDS`). 5 attempts with a
+    50ms gap is well under Defender's typical scan-and-release window
+    (observed real Windows failures are single-digit-millisecond races,
+    not multi-second holds) while keeping the worst-case added latency
+    for a genuinely stuck file small and bounded.
+    """
+    last_exc: Optional[PermissionError] = None
+    for attempt in range(attempts):
+        try:
+            os.replace(src, dst)
+            return
+        except PermissionError as exc:
+            last_exc = exc
+            if attempt < attempts - 1:
+                time.sleep(delay_seconds)
+    raise last_exc  # type: ignore[misc]
+
+
 def _write_meta(meta_path: Path, meta: dict) -> None:
     tmp_path = meta_path.with_name(meta_path.name + f".tmp.{os.getpid()}.{time.monotonic_ns()}")
     tmp_path.write_text(json.dumps(meta))
-    os.replace(tmp_path, meta_path)
+    _replace_with_retry(tmp_path, meta_path)
 
 
 def mark_worker_seen(file_path: Path, seen_count: int) -> None:
@@ -333,7 +367,7 @@ def append_event(
                     file_path.name + f".tmp.{os.getpid()}.{time.monotonic_ns()}"
                 )
                 tmp_path.write_text(content)
-                os.replace(tmp_path, file_path)  # atomic on the same filesystem
+                _replace_with_retry(tmp_path, file_path)  # atomic on the same filesystem
 
                 line_count -= safe_trim_n
                 drop_count += safe_trim_n

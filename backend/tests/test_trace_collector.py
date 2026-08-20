@@ -1,4 +1,5 @@
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -387,3 +388,52 @@ def test_concurrent_auto_sequence_assignment_has_no_collisions(tmp_path: Path):
         "auto-assigned sequences must be a real permutation of 0..N-1, no "
         "collisions and no gaps, even under real thread contention"
     )
+
+
+def test_replace_with_retry_recovers_from_a_transient_permission_error(tmp_path, monkeypatch):
+    """
+    Real, direct test of the retry logic itself, for the confirmed
+    Windows bug (PermissionError: [WinError 5] Access is denied inside
+    os.replace(), almost certainly Windows Defender's real-time scan
+    racing a rename) -- simulated here since this sandbox is Linux and
+    cannot reproduce the real race. Monkeypatches os.replace to fail
+    with PermissionError twice, then succeed, confirming the retry
+    actually recovers rather than propagating the first failure.
+    """
+    from app.services import trace_collector as tc
+
+    src = tmp_path / "src.tmp"
+    dst = tmp_path / "dst.txt"
+    src.write_text("real content")
+
+    real_replace = os.replace
+    calls = {"n": 0}
+
+    def _flaky_replace(a, b):
+        calls["n"] += 1
+        if calls["n"] <= 2:
+            raise PermissionError("[WinError 5] Access is denied (simulated)")
+        real_replace(a, b)
+
+    monkeypatch.setattr(tc.os, "replace", _flaky_replace)
+    tc._replace_with_retry(src, dst, attempts=5, delay_seconds=0.001)
+    assert calls["n"] == 3
+    assert dst.read_text() == "real content"
+
+
+def test_replace_with_retry_gives_up_after_the_bounded_attempt_count(tmp_path, monkeypatch):
+    """Real confirmation this is bounded, not infinite -- same 'fail
+    loudly rather than hang forever' discipline the lock-acquisition
+    timeout already follows."""
+    from app.services import trace_collector as tc
+
+    src = tmp_path / "src.tmp"
+    dst = tmp_path / "dst.txt"
+    src.write_text("x")
+
+    def _always_fails(a, b):
+        raise PermissionError("[WinError 5] Access is denied (simulated, permanent)")
+
+    monkeypatch.setattr(tc.os, "replace", _always_fails)
+    with pytest.raises(PermissionError):
+        tc._replace_with_retry(src, dst, attempts=3, delay_seconds=0.001)
