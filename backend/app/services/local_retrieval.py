@@ -28,42 +28,46 @@ belongs to:
 | Recent failures                  | RANK   | moderate precision, low recall   |
 | Semantic (RRF hybrid)            | RANK   | HybridRetriever, unchanged       |
 
-HONEST SCOPE for this pass -- real vs caller-supplied signals:
+HONEST SCOPE -- real vs unwired signals, updated as each gets a real
+producer (all but one now have one):
 
-- **Current working set**: REAL, wired to a real data source --
-  observations.py's `file_touched` observations (ticket 04), joined
-  through observation_events -> trace_events by session_id. This is
-  the one structural signal with a genuine, already-existing producer
-  in this repo; ticket 12's applicability.py hit the identical
-  "producer problem" concern, and this is answered the same way --
-  name a real producer or don't build the check.
+- **Current working set**: REAL -- observations.py's `file_touched`
+  observations (ticket 04), joined through observation_events ->
+  trace_events by session_id. Producer: get_current_working_set().
 - **Recent commits**: REAL, same data source (`commit_made`
-  observations), used as a soft rank signal per the table above.
-- **Related tests**: REAL, wired to app/services/related_tests.py
-  (`related_test_files_for_many`) -- naming-convention discovery,
-  checked against a real repo checkout on disk, same host-side/
-  filesystem-only discipline as call_graph.py. A caller with a real
-  checkout should call it to populate StructuralContext.related_tests
-  rather than leaving it empty; this module still doesn't compute it
-  automatically inside retrieve_local_first() itself, since that would
-  require accepting a repo root parameter this DB-service module
-  doesn't otherwise need -- the caller passes the already-derived list
-  in, same pattern as open_files/recent_commit_files.
-- **Relevant symbols / import-derived deps / name-resolved call-graph
-  edges**: NOT computed by this module. call_graph.py's reachability
-  data is host-side/filesystem-based (real repo checkout, tree-sitter)
-  with zero DB coupling -- correctly so, matching this repo's existing
-  module boundaries (retrieval.py has no filesystem access, call_graph.py
-  has no DB access). Wiring a live repo checkout's call-graph output
-  INTO a retrieval call is real, separate integration work for whichever
-  caller has that checkout (the HTN engine, once ticket 15's deferred
-  scheduler-strategy piece gives it one) -- not invented here. These
-  fields exist on StructuralContext as real, usable slots a caller CAN
-  populate; this pass does not itself populate them.
-- **Recent failures**: NOT wired -- failure_capture.py records
-  failures, but linking a failure to "which files are relevant to
-  avoid repeating it" needs real design (which fields, what
-  similarity), not assumed here.
+  observations). Producer: get_recent_commit_files().
+- **Related tests**: REAL -- app/services/related_tests.py, naming-
+  convention discovery checked against a real repo checkout on disk.
+  Producer: related_test_files_for_many().
+- **Relevant symbols**: REAL -- wraps code_index.py's own outline()
+  directly (byte-exact symbol extraction, already existed for a
+  different purpose). Producer: get_relevant_symbols().
+- **Import-derived dependency edges**: REAL -- app/services/import_deps.py,
+  new tree-sitter-based import extraction with real filesystem
+  resolution for Python and relative JS/TS imports (Go and bare JS/TS
+  specifiers are returned as honest, unresolved raw strings -- see that
+  module's own docstring for why full resolution isn't attempted).
+  Producer: import_targets_for_many().
+- **Name-resolved call-graph edges**: REAL -- wraps call_graph.py's own
+  build_repo_symbol_index + seeds_in_file + reachable_symbols, seeded
+  from open_files. Producer: get_call_graph_ranked_names(). Genuinely
+  more expensive than the other producers (a repo-wide symbol index
+  build) -- see that function's own docstring for the caching caveat.
+- **Recent failures**: NOT wired -- confirmed by directly reading
+  failure_capture.py, not assumed: `capture_failure()`'s real schema
+  has NO file-path field at all (instance_id/repo/arm/reason/
+  last_evidence are all free text). Linking a failure to "which files
+  are relevant to avoid repeating it" needs real schema/design work
+  this pass doesn't invent.
+
+All five real producers above are still CALLER-INVOKED, not automatic
+inside retrieve_local_first() itself -- that function takes an already-
+built StructuralContext, it doesn't accept a repo root or session_id
+and derive one internally. This keeps local_retrieval.py itself a pure
+DB-service module (no filesystem coupling), matching retrieval.py's own
+existing boundary; a caller with both a live session and a real repo
+checkout (the natural case once ticket 15's deferred scheduler-strategy
+piece exists) calls the producers itself and passes the result in.
 
 Reranking is explicitly out of milestone 1 (ticket 14's own decision --
 marginal gain too small against an already-strong first stage). Not
@@ -71,6 +75,7 @@ present here or anywhere in this module.
 """
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass, field
 from typing import Optional
 from uuid import UUID
@@ -105,12 +110,12 @@ class StructuralContext:
     which fields are real vs. caller-populated in this pass).
     """
     open_files: list[str] = field(default_factory=list)             # FILTER, real
-    relevant_symbols: list[str] = field(default_factory=list)       # FILTER, caller-supplied
-    import_deps: list[str] = field(default_factory=list)            # FILTER, caller-supplied
+    relevant_symbols: list[str] = field(default_factory=list)       # FILTER, real (see get_relevant_symbols)
+    import_deps: list[str] = field(default_factory=list)            # FILTER, real (see app/services/import_deps.py)
     related_tests: list[str] = field(default_factory=list)          # FILTER, real (see related_tests.related_test_files_for_many)
-    call_graph_ranked_names: list[str] = field(default_factory=list)  # RANK, caller-supplied
+    call_graph_ranked_names: list[str] = field(default_factory=list)  # RANK, real (see get_call_graph_ranked_names)
     recent_commit_files: list[str] = field(default_factory=list)    # RANK, real (see get_recent_commit_files)
-    recent_failure_files: list[str] = field(default_factory=list)   # RANK, caller-supplied
+    recent_failure_files: list[str] = field(default_factory=list)   # RANK, NOT wired -- see module docstring
 
     def has_any_filter(self) -> bool:
         return bool(self.open_files or self.relevant_symbols
@@ -180,6 +185,77 @@ async def get_recent_commit_files(
         session_id, limit,
     )
     return [r["file_path"] for r in rows]
+
+
+def get_relevant_symbols(root: str, rel_paths: list[str]) -> list[str]:
+    """
+    Real, filesystem-backed "relevant symbols" FILTER signal (ticket 14:
+    "high precision AND recall" -- the strongest of the four filter
+    signals in its own table). Wraps code_index.outline() directly --
+    every top-level (and class-nested) symbol NAME defined in each given
+    file, real and byte-exact per that module's own extraction, not
+    guessed. Union across `rel_paths`, deduplicated, in call order.
+
+    Host-side/filesystem-only, same boundary discipline as call_graph.py/
+    related_tests.py/import_deps.py -- no DB, needs a real repo checkout.
+    """
+    from app.services import code_index
+
+    seen: set[str] = set()
+    result: list[str] = []
+    for rel_path in rel_paths:
+        full = os.path.join(root, rel_path)
+        if not os.path.isfile(full):
+            continue
+        try:
+            with open(full, "rb") as f:
+                source = f.read()
+        except OSError:
+            continue
+        symbols = code_index.outline(source, rel_path)
+        if not symbols:
+            continue
+        for s in symbols:
+            if s.name not in seen:
+                seen.add(s.name)
+                result.append(s.name)
+    return result
+
+
+def get_call_graph_ranked_names(
+    root: str, open_files: list[str], *, max_hops: int = 2, max_nodes: int = 200,
+) -> list[str]:
+    """
+    Real, filesystem-backed "name-resolved call-graph edges" RANK signal
+    (ticket 14: "~75-85% precision -- imprecise, rank don't filter").
+    Wraps call_graph.py's own build_repo_symbol_index + seeds_in_file +
+    reachable_symbols -- this function does not reimplement any
+    reachability logic, only seeds it from `open_files` (the same
+    current-working-set signal open_files already represents) and
+    returns the real FILES call_graph.py's BFS reached.
+
+    Genuinely more expensive than the other producers here (a full
+    repo-wide symbol index build) -- call_graph.py's own MAX_INDEX_FILES/
+    MAX_INDEX_SECONDS bounds already cap that cost; this function adds
+    no further bound of its own; a caller retrieving on every turn of a
+    long-running agent should consider caching build_repo_symbol_index's
+    result across calls rather than calling this function directly each
+    time (not done here -- this is a thin, honest wrapper, not a cache).
+    """
+    from app.services import call_graph
+
+    if not open_files:
+        return []
+    index = call_graph.build_repo_symbol_index(root)
+    seeds: list[tuple[str, str]] = []
+    for rel_path in open_files:
+        seeds.extend(call_graph.seeds_in_file(root, rel_path))
+    if not seeds:
+        return []
+    reachability = call_graph.reachable_symbols(
+        seeds, root, index, max_hops=max_hops, max_nodes=max_nodes,
+    )
+    return reachability.files
 
 
 def _estimate_tokens(text: str) -> int:

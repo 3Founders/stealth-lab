@@ -279,3 +279,128 @@ def test_related_test_files_wired_end_to_end_into_structural_tier(tmp_path):
             await pool.close()
 
     asyncio.run(_run())
+
+
+def test_relevant_symbols_wired_end_to_end_into_structural_tier(tmp_path):
+    """Real confirmation that get_relevant_symbols() (wrapping
+    code_index.outline()) plugs into StructuralContext and works through
+    the full pipeline -- a real Python file with a real defined function,
+    found via the structural tier with zero semantic/lexical overlap."""
+    async def _run():
+        from app.services.local_retrieval import get_relevant_symbols
+
+        source_dir = tmp_path / "app"
+        source_dir.mkdir(parents=True)
+        (source_dir / "gadget.py").write_text("def compute_gadget_value():\n    return 1\n")
+
+        symbols = get_relevant_symbols(str(tmp_path), ["app/gadget.py"])
+        assert "compute_gadget_value" in symbols
+
+        pool = await create_pool(DATABASE_URL, min_size=1, max_size=2)
+        try:
+            await _cleanup(pool, "local-retr-test-nosession", name_prefix="local-retr-test-symwired")
+            await pool.execute(
+                "INSERT INTO task_nodes (name, description, skill_ref) "
+                "VALUES ('local-retr-test-symwired-node', "
+                "'implements compute_gadget_value for the report', 's1')"
+            )
+            result = await retrieve_local_first(
+                pool, "totally unrelated query text",
+                embedder=FakeEmbedder(),
+                structural=StructuralContext(relevant_symbols=symbols),
+            )
+            assert "local-retr-test-symwired-node" in result.text
+            assert result.tiers_included.get("structural", 0) >= 1
+        finally:
+            await _cleanup(pool, "local-retr-test-nosession", name_prefix="local-retr-test-symwired")
+            await pool.close()
+
+    asyncio.run(_run())
+
+
+def test_import_deps_wired_end_to_end_into_structural_tier(tmp_path):
+    """Real confirmation that import_targets_for_many() (import_deps.py)
+    plugs into StructuralContext and works through the full pipeline."""
+    async def _run():
+        from app.services.import_deps import import_targets_for_many
+
+        (tmp_path / "app").mkdir()
+        (tmp_path / "app" / "dep.py").write_text("y = 1\n")
+        (tmp_path / "app" / "consumer.py").write_text("from app.dep import y\n")
+
+        deps = import_targets_for_many(str(tmp_path), ["app/consumer.py"])
+        assert "app/dep.py" in deps
+
+        pool = await create_pool(DATABASE_URL, min_size=1, max_size=2)
+        try:
+            await _cleanup(pool, "local-retr-test-nosession", name_prefix="local-retr-test-depwired")
+            await pool.execute(
+                "INSERT INTO task_nodes (name, description, skill_ref) "
+                "VALUES ('local-retr-test-depwired-node', "
+                "'defines the value read by app/dep.py', 's1')"
+            )
+            result = await retrieve_local_first(
+                pool, "totally unrelated query text",
+                embedder=FakeEmbedder(),
+                structural=StructuralContext(import_deps=deps),
+            )
+            assert "local-retr-test-depwired-node" in result.text
+        finally:
+            await _cleanup(pool, "local-retr-test-nosession", name_prefix="local-retr-test-depwired")
+            await pool.close()
+
+    asyncio.run(_run())
+
+
+def test_call_graph_ranked_names_boosts_semantic_tier_ranking(tmp_path):
+    """Real confirmation of get_call_graph_ranked_names() through the
+    full pipeline. Unlike the FILTER-tier producers above, this is a
+    RANK signal -- it boosts ordering WITHIN the semantic tier, it does
+    not add independent candidates. Confirmed by checking that a node
+    matched by BOTH a real query overlap AND the call-graph signal ranks
+    at or above one matched by query overlap alone."""
+    async def _run():
+        from app.services.local_retrieval import get_call_graph_ranked_names
+
+        app_dir = tmp_path / "app"
+        app_dir.mkdir()
+        (app_dir / "entry.py").write_text(
+            "from app.helper import helper_func\n\ndef entry_func():\n    return helper_func()\n"
+        )
+        (app_dir / "helper.py").write_text("def helper_func():\n    return 1\n")
+
+        ranked_files = get_call_graph_ranked_names(str(tmp_path), ["app/entry.py"])
+        assert "app/helper.py" in ranked_files, f"expected app/helper.py reachable, got {ranked_files}"
+
+        pool = await create_pool(DATABASE_URL, min_size=1, max_size=2)
+        try:
+            await _cleanup(pool, "local-retr-test-nosession", name_prefix="local-retr-test-cgboost")
+            # Both nodes share query words (real semantic/lexical match),
+            # but only ONE also matches the call-graph signal.
+            await pool.execute(
+                "INSERT INTO task_nodes (name, description, skill_ref) "
+                "VALUES ('local-retr-test-cgboost shared query words boosted', "
+                "'touches app/helper.py directly', 's1')"
+            )
+            await pool.execute(
+                "INSERT INTO task_nodes (name, description, skill_ref) "
+                "VALUES ('local-retr-test-cgboost shared query words plain', "
+                "'no call graph relation', 's2')"
+            )
+
+            result = await retrieve_local_first(
+                pool, "local-retr-test-cgboost shared query words",
+                embedder=FakeEmbedder(),
+                structural=StructuralContext(call_graph_ranked_names=ranked_files),
+            )
+            names_in_order = [n for n in result.text.split("\n")]
+            boosted_idx = next(i for i, l in enumerate(names_in_order) if "boosted" in l)
+            plain_idx = next(i for i, l in enumerate(names_in_order) if "plain" in l)
+            assert boosted_idx <= plain_idx, (
+                "the call-graph-matched node should rank at or above the plain match"
+            )
+        finally:
+            await _cleanup(pool, "local-retr-test-nosession", name_prefix="local-retr-test-cgboost")
+            await pool.close()
+
+    asyncio.run(_run())
