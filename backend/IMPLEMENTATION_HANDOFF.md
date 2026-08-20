@@ -1,18 +1,15 @@
-# Implementation handoff: ingestion pipeline closed end-to-end, hooks fired for real, retrieval wired into a caller
+# Implementation handoff: procedure extraction is real, end to end, and gated behind approval
 
-> **Update (Aug 20, commits after `68d905b`).** The previous version of this
-> doc listed four "remaining" items and said two of them were blocked on
-> credentials/network. Neither was true on this machine (`.env` carries
-> `DATABASE_URL` and `GENERAL_COMPUTE_API_KEY`), and a closer look found the
-> real blocker wasn't in that list at all: `retrieve_local_first()` needs
-> `StructuralContext.open_files`, which needs `get_current_working_set()`,
-> which reads the `observations` table — and **nothing wrote to it**.
-> `extract_deterministic_observations()`/`persist_observation()` had zero
-> non-test callers; `process_collector_file()` had zero callers outside
-> tests; `ingestion_jobs` rows were written and never consumed. That's now
-> closed, tested against a real database, and proven against a **real
-> Claude Code hook firing during this very session** — not a synthetic
-> fixture. Read "What's actually remaining" below; it's shorter now.
+> **Update (Aug 20, commits after `d0edd21`).** The previous version of this
+> doc closed the ingestion pipeline and wired retrieval into a caller. This
+> update adds the piece `capture_procedure()`'s own docstring named as
+> missing: nothing turned an episode of real work into a `procedures` row.
+> That gap is closed — a full `procedure_extraction` package, migration 20,
+> and a capstone e2e test proving the whole chain: real session →
+> real observations → real derived preconditions → a real `procedures` row →
+> correctly blocked by `applicability.py`'s **untouched** approval gate. Read
+> "What's actually remaining" below; the τ³ item and the two LLM stubs are
+> unchanged from last time.
 
 This is the CODE-level handoff. For the PLANNING-level one, see
 `.scratch/memory-substrate/map.md` and the 18 resolved tickets in
@@ -24,159 +21,182 @@ what's built, tested, and true right now — it doesn't repeat that reasoning.
 - **Real database**: Supabase Postgres, connection string via `$DATABASE_URL`
   or `--dsn` to `scripts/migrate.py`. Never hardcode it in a committed file.
 - **Windows**: use `python`/`py`, not `python3` (App Execution Alias
-  intercepts it) — including in hook `command` fields; `example_hook_
-  settings.json` had `python3` and was fixed this session (see below).
-  `git am --abort` clears a stuck `.git/rebase-apply` safely if a patch
-  application gets interrupted or re-run.
+  intercepts it) — including in hook `command` fields. `git am --abort`
+  clears a stuck `.git/rebase-apply` safely if a patch application gets
+  interrupted or re-run.
 - **Local dev DB**: Postgres 17 + pgvector 0.8.0, confirmed working on
-  Windows this session. No prebuilt Windows binary exists for PG17 at time
-  of writing — built from source: `nmake /f Makefile.win` under a VS Build
-  Tools 2022 `vcvars64` shell, pointed at `PGROOT`, then manually copied
-  `vector.dll`/`vector.control`/`vector--*.sql` into the PG `lib`/`share\
-  extension` dirs (the Makefile's own `install` target needs admin rights
-  Program Files requires; do the copy from an elevated prompt).
+  Windows. No prebuilt Windows binary exists for PG17 — built from source:
+  `nmake /f Makefile.win` under a VS Build Tools 2022 `vcvars64` shell,
+  pointed at `PGROOT`, then manually copied `vector.dll`/`vector.control`/
+  `vector--*.sql` into the PG `lib`/`share\extension` dirs (the Makefile's
+  own `install` target needs admin rights Program Files requires; copy from
+  an elevated prompt).
   ```
-  createdb stealthlab_local   # or use an existing local Postgres 17 db
+  createdb stealthlab_local
   psql -d stealthlab_local -c "CREATE EXTENSION vector;"
   python backend/scripts/migrate.py --dsn postgresql://<user>:<pass>@localhost:5432/stealthlab_local
   ```
-  All 19 migrations apply cleanly in order on a fresh DB — confirmed this
-  session, not assumed.
+  All 20 migrations apply cleanly in order on a fresh DB.
   e2e tests skip cleanly (not fail) without `DATABASE_URL` set.
 - **pip**: `pip install -r requirements.txt --break-system-packages
   --ignore-installed PyJWT` (Debian-installed PyJWT conflicts otherwise).
 
 ## What's actually remaining — read this first
 
-1. **`ResearchHTNAgent._mcts_pick`** (item 4 of that class's own docstring) —
-   still a `NotImplementedError` stub, the only one left in `app/`. Needs a
-   real LLM call to generate 2-3 decomposition candidates before the
-   UCB1/scoring mechanics around it can be tested meaningfully. `_ast_edit`
-   and `_method_score` are done. **Not credential-blocked** — General
-   Compute creds are in `.env` — just not built yet.
+1. **`ResearchHTNAgent._mcts_pick`** — still a `NotImplementedError` stub,
+   the only one left in `app/`. Needs a real LLM call. Not credential-blocked
+   (General Compute creds are in `.env`), just not built.
 
-2. **`extract_model_observation` has never touched a real LLM.** Same
-   root cause as above (built, tested for shape, never actually called).
+2. **`extract_model_observation` has never touched a real LLM.** Same root
+   cause — built, tested for shape, never actually called.
 
-3. **Collapsing the HTN class hierarchy's other 7 behavioral overrides**
-   (`_verify_precondition`, `_verify_postcondition`, `_system_prompt_extra`,
-   `_replan_evidence`, `_build_context`, `_basename_index`,
-   `_tools_for`/`_persona`) into one class. The SCHEDULER half of ticket 15's
-   "one engine, pluggable strategy" ask is done; this is the other, larger
-   half, deliberately left alone. Real risk, not just size: each override is
-   independently justified (a basename-hint fix, multi-language
-   postcondition checking, hierarchical context compression — each with its
-   own measured-regression comment), and several existing tests specifically
-   assert the BASE class's simpler, unaugmented defaults on purpose.
-   Collapsing these is a real, deliberate behavior-change decision — needs
-   an explicit call before starting, not just time.
+3. **Nothing consumes an extracted procedure yet.** Extraction (below) is
+   fully wired and produces real, correctly-gated `procedures` rows — but
+   `find_applicable_procedures()` still has zero non-test callers, and
+   neither executor adapter exists: `_seed_plan`/`_verify_precondition` on
+   the HTN side, `memory_block` rendering on the `solve_task` side. This is
+   the natural next step, not blocked on anything.
 
-4. **τ³-bench micro-test — started, not finished.** The plan: seed
-   `banking_knowledge`'s procedural documents into the real `procedures`
-   table (ticket 05/12's non-compensatory preconditions map almost exactly
-   onto that domain's "## Eligibility Requirements" / "## Opening
-   Procedure" documents), wrap `retrieve_local_first` as a tau2
-   `@register_retriever`, and run one real task, comparing retrieved ids
-   against `task.required_documents`. **Done so far:** all 698
-   `banking_knowledge` documents are ingested as real `knowledge_nodes`
-   (`provenance='prior_library'`), via the existing
-   `scripts/ingest_banking_knowledge.py` pointed at
-   `experiments/tau3_bench/_tau2_bench_src` — confirmed with
-   `SELECT count(*) FROM knowledge_nodes WHERE node_type='policy_document'`
-   → 698. **Not done:** the ingestion script now also stores
-   `properties.source_doc_id` (a real gap fixed this session — the tau2
-   doc id previously existed only as an in-memory onboarding key and was
-   never persisted anywhere retrievable), but the procedure-seeding
-   script, the tau2 retriever adapter, and the actual task run are all
-   still unwritten. Explicitly note when picking this up: banking_
-   knowledge has no repo checkout, so `retrieve_local_first`'s structural
-   tier is inert there — this test exercises procedure seeding,
-   applicability, and semantic retrieval, NOT the structural hierarchy
-   item 5 below already validates against a real repo.
+4. **Collapsing the HTN class hierarchy's other 7 behavioral overrides** —
+   unchanged from last handoff, deliberately deferred, needs an explicit
+   call before starting (see prior version's reasoning, still accurate).
 
-## What's built and verified this session (not just written — run against real infrastructure)
+5. **τ³-bench micro-test — started, not finished.** Unchanged from last
+   time: 698 `banking_knowledge` documents ingested with real
+   `properties.source_doc_id`; procedure-seeding script, tau2 retriever
+   adapter, and the actual task run are still unwritten.
 
-**1. The three-link gap that made `observations` orphaned is closed.**
-New `backend/app/services/ingestion_jobs.py`: `claim_jobs()` (real
-`SELECT ... FOR UPDATE SKIP LOCKED`), `handle_normalize_trace_event()`
-(calls the existing, previously-uncalled `extract_deterministic_
-observations()` + `persist_observation()`), `process_pending_jobs()`
-(per-job try/except so one bad job — A4's lesson — doesn't stall the
-batch), `requeue_stuck_jobs()` (manual recovery for a worker that died
-mid-job). New `backend/scripts/run_ingestion.py` — the runnable entry
-point neither `process_collector_file()` nor `process_pending_jobs()` had
-before this: one `--once` pass or `--interval N` loop over both.
+## What's built and verified this session (not just written — run against a real database)
 
-Verified against a real database with `tests/test_ingestion_jobs_e2e.py`
-(4 tests, all passing): a real `Edit` trace_event produces a real
-`file_touched` observation end to end; an unknown `job_type` is marked
-`failed` rather than stuck; a job pointing at a since-deleted trace_event
-is a no-op, not a batch-stalling error; `requeue_stuck_jobs` only touches
-genuinely old `processing` rows.
+**A full `backend/app/services/procedure_extraction/` package**, plus two
+new top-level modules it depends on. The core design decision, stated once
+because it shapes everything: sorting `ExtractedProcedure`'s fields by
+whether they genuinely require a model shows only TWO do
+(`capability_statement`, step phrasing) — preconditions, scope, the step
+skeleton, slots, and failure_conditions are all real derivations against
+real state. Migration 18's own comment on `procedures.preconditions` says
+exactly this: *"structured predicates derived from the source episode's
+state_before projection... NOT hand-authored tags."* The **compounding
+benefit**: a precondition derived from `project_state()` is, by
+construction, already in the environment probe's vocabulary, so it cannot
+fail groundedness — a pure-LLM extractor needs a validator to catch an
+invented precondition; this design cannot produce one in the first place.
 
-**2. `retrieve_local_first()` now has a real caller.** New
-`assemble_structural_context()` in `local_retrieval.py` — the
-orchestrator the previous handoff named as missing. Takes
-`(session_id, repo_root, seed_files)`, calls the 6 already-built
-producers, returns a `StructuralContext`. **Cold-start handling, stated
-because it's easy to get wrong**: a session's first retrieval has no
-`file_touched` observations yet, and `get_call_graph_ranked_names()`
-early-returns on empty `open_files` — so without a seed the entire
-structural tier goes silently empty. `seed_files` (e.g. `git diff
---name-only HEAD`) feeds ONLY the three filesystem producers
-(`relevant_symbols`/`import_deps`/`related_tests`); it never populates
-`open_files` itself and never becomes a FILTER candidate — a repo-scoped
-seed is lower-precision than a session-scoped one, and letting it into a
-FILTER slot would be the criterion-compensation mistake ticket 12 warns
-against, in reverse.
+**`app/services/environment_probe.py`** (new, hard prerequisite, not a
+later nicety) — deterministic, no LLM. Reads a real checkout
+(`package.json`/lockfiles/`requirements.txt`/`pyproject.toml`) and asserts
+real environment claims (`has_framework`, `has_test_runner`,
+`package_manager`, `language`) via a claim-shaped write path that
+deliberately does **not** go through `claims.py`'s `capture_claim()` — that
+function drops any claim whose `task_ids` don't resolve to a live
+`task_node`, and an environment fact is about a project, not a task.
+Idempotent (re-probing an unchanged repo writes nothing new) and correctly
+supersedes (via `claims.relate_claims()`) when the environment genuinely
+changes, preserving history rather than overwriting. Owns
+`PROBE_PREDICATE_VOCABULARY`, the single exported constant the extraction
+validator checks imported/LLM-supplied preconditions against.
 
-Wired into `app/mcp_server/server.py`'s `solve_task` — the natural
-caller, already has `repo_path` + the pool. It now builds a structural
-context (git-diff-seeded unless a `session_id` is passed), calls
-`retrieve_local_first`, and appends the result to `memory_block`
-alongside the existing `retrieve_precedent`-based prior-solution lookup
-(kept separate and unchanged — different retrieval concern, precedent
-trajectories vs. structural file context, conflating them would have
-been wrong).
+**`app/services/slot_binders.py`** (new, top-level because instantiation
+will need it too) — a registry wrapping producers that already exist and
+are already tested (`call_graph_reachable`, `import_deps`, `related_tests`,
+`relevant_symbols`, `literal`). `best_binder_for()` picks whichever
+producer's real output best covers the files an episode actually touched —
+this is the part of a procedure that's genuinely learned from experience,
+not asserted by a model.
 
-Verified with 3 new tests in `test_local_retrieval_e2e.py` against a real
-DB and this repo's own real files (not synthetic fixtures): cold start
-with no session/repo/seed is honestly all-empty; a real session's
-observations produce real `code_index.py`/tree-sitter output for a real
-file in this repo; `seed_files` feeds the filesystem producers but never
-leaks into `open_files`.
+**`procedure_extraction/evidence.py`** — `SessionEvidenceSource` (real
+`observations`/`trace_events` reads, the exact join
+`get_current_working_set()` already uses) and `AgentRunEvidenceSource`
+(in-process, zero DB round trips). `goal_text`/`outcome` are deliberately
+caller-supplied, not derived — `agent_traces.intent` exists in the schema
+but has zero real writers, and this module doesn't invent a read against a
+column nothing populates.
 
-**3. Hooks fired for real — genuinely, during this session's own work, not
-simulated.** Fixed `scripts/example_hook_settings.json`'s `python3` →
-`python` (would have failed immediately on Windows, contradicting this
-doc's own environment section). Registered it in this repo's
-`.claude/settings.local.json`, then made real tool calls — and
-`.claude/traces/<this-session's-own-id>.jsonl` appeared with 33 real
-events, including genuine `tool_input`/`tool_output` from this
-conversation's own Bash commands. Ran `run_ingestion.py` against it: **40
-records seen, 40 inserted, 40 jobs done, 0 failed** — real
-`command_executed`/`file_touched` observations landed in the database
-from a live hook firing, not a hand-built payload.
+**`procedure_extraction/derive.py`** — the file that matters most, and the
+one with no model in it. `derive_preconditions()`/`derive_scope()` call
+`project_state(as_of=episode_start)` directly. **Real, verified limitation
+found and documented, not assumed** (it took two wrong hypotheses to pin
+down against a live database): `project_state()` requires BOTH
+`t_valid <= as_of` AND `truth_state='IN'` to hold together. Once a claim is
+superseded, the OLD value fails `truth_state` for *every* `as_of` including
+one from before the supersession, but the NEW value fails `t_valid<=as_of`
+for that same timestamp — so the predicate **disappears from the
+projection entirely** once superseded, not the wrong value, an absent one.
+Documented in `derive_preconditions()`'s own docstring and covered by a
+dedicated regression test (`test_derive_preconditions_drops_a_predicate_
+entirely_once_superseded`) so this doesn't need rediscovering.
 
-One real, unrelated gap found and fixed in the course of this: **`.claude/
-traces/` and `.claude/settings.local.json` were untracked but NOT
-gitignored** — `git status` showed both as `??`, meaning a `git add -A`
-would have committed real (redacted, but still real) session transcript
-content and local permission config. Neither was in `.gitignore` at all
-before this session. Fixed.
+**`procedure_extraction/schema.py`** — Pydantic contract mirroring
+`procedures.py`'s real columns. `ProcedureStep` has **no `deps`/`requires`
+field at all** — not a runtime check, a structural guarantee (ticket 05:
+steps are planner-neutral).
 
-## What's built — file map (carried forward, unchanged since last handoff unless noted)
+**`procedure_extraction/strategies.py`** — `DeterministicExtractor` (the
+honest, always-available baseline; migration 20 seeds it enabled) and
+`GroundedHybridExtractor` (one small, bounded LLM call over a compressed,
+run-length-encoded tool-call summary — never the raw episode — asking for
+exactly `capability_statement` and step phrasing). Degradation is explicit:
+no client, an API failure, a malformed response, or a step-count mismatch
+between the LLM's `STEPS` list and the real derived skeleton all fall back
+to the deterministic output, verified by dedicated tests, not asserted.
+
+**`procedure_extraction/validators.py`** — five rules, all run, all
+failures collected (unlike `applicability.py`'s deliberate short-circuit).
+**V1 (precondition groundedness) is the highest-value rule in the
+module** — `check_hard_constraints()` treats "no claim found" and
+"precondition unsatisfied" as the same answer under CWA, so an ungrounded
+precondition makes a procedure permanently, silently unmatchable. V4
+(capability abstraction) mechanically rejects a `capability_statement`
+containing any concrete file path/command drawn from the episode's own
+evidence — this is what makes cross-domain retrieval possible at all.
+
+**`procedure_extraction/registry.py`** — extractors as first-class,
+versioned, reviewable objects, modeled directly on `07_agents.sql`'s
+`agents` table (already this repo's pattern for config-driven, bi-temporal,
+reviewable artifacts, including the deliberate `approved` ≠ `enabled`
+split). Versions supersede, never edit in place. `extractor_stats()`
+reports three signals in increasing order of value and decreasing order of
+availability: validator pass rate (cheap, gameable) → human approval rate →
+downstream success rate rolled up from `record_execution_outcome` (the one
+that matters, necessarily delayed).
+
+**`procedure_extraction/__init__.py`** — `extract_procedure()` (the public
+API: collect evidence → select an extractor via the registry → run it →
+validate → persist via `capture_procedure()` **unchanged**, plus one
+follow-up `UPDATE` for the three migration-20 columns that function doesn't
+yet know about, rather than widening its signature and touching its
+existing callers) and `evaluate_extractor()` (a golden-set dry run,
+diffing a candidate extractor's output against validators without
+persisting — what a human reads before flipping `enabled`; without it,
+"improvable over time" just means driftable).
+
+**Migration 20**: `procedures.approval_status` (a THIRD orthogonal axis,
+deliberately separate from `verification_state` — human approval is not
+the same claim as ≥10 statistically-verified successes, and conflating them
+would destroy ticket 13's semantics), `capability_statement`, `extracted_by`,
+and the `procedure_extractors` table with a seeded, enabled
+`deterministic_v1` baseline row.
+
+### The capstone test — the actual end-to-end claim, proven
+
+`tests/test_procedure_extraction_init_e2e.py`: a real session's real
+`file_touched` observation → `extract_procedure()` → a real `procedures`
+row with `extracted_by='deterministic_v1@1'`, `approval_status='proposed'`,
+a real derived `capability_statement` → **`find_applicable_procedures()`,
+imported and called exactly as-is, does not return it**, even with
+`require_verified=False` (explicit-invocation mode). The approval gate,
+proven against the actual consumer, not asserted.
+
+## What's built — file map
 
 - **Access control, collector/worker, hook wiring, migrations 17-19,
-  procedures (ticket 05+13), applicability (ticket 12), execution engine
-  (ticket 15, scheduler strategy), retrieval producers (ticket 14, all 7)**
-  — unchanged from the last handoff version; see git log
-  (`c6d1d04` through `68d905b`) for that detail, not repeated here.
-- **New this session**: `app/services/ingestion_jobs.py`,
-  `scripts/run_ingestion.py`, `assemble_structural_context()` in
-  `local_retrieval.py`, `solve_task`'s structural-context wiring in
-  `app/mcp_server/server.py`, `properties.source_doc_id` in
-  `scripts/ingest_banking_knowledge.py`.
+  applicability (ticket 12), execution engine (ticket 15), retrieval
+  producers + orchestrator (ticket 14), ingestion_jobs, τ³ ingestion** —
+  unchanged from prior handoffs; see git log for that detail.
+- **New this session**: `app/services/environment_probe.py`,
+  `app/services/slot_binders.py`, `app/services/procedure_extraction/`
+  (evidence, schema, derive, strategies, validators, registry, `__init__`),
+  `db/20_procedure_extraction.sql`.
 
 ## Testing what's built
 
@@ -185,41 +205,58 @@ export DATABASE_URL=postgresql://...
 python -m pytest tests/ -q
 ```
 
-**852 passed, 1 skipped, zero failures** — verified fresh this session on
-a freshly-migrated local Postgres 17 + pgvector DB, not copied from an
-earlier run. (Without `DATABASE_URL`: DB-gated tests skip rather than
-fail — a green run without a database is not coverage of anything
-touching Postgres; check the skip count.)
+**908 passed, 1 skipped, 2 pre-existing failures unrelated to this
+session** — verified fresh on a freshly-migrated local Postgres 17 +
+pgvector DB (up from 883 before this session's work; the delta is
+entirely new, real tests — 12 for `environment_probe`, 26 unit + 4+5+7+3
+e2e for `procedure_extraction` across six new test files, zero of them
+mocked at the DB layer).
 
-New test files/classes worth reading if you're touching this area next:
-`tests/test_ingestion_jobs_e2e.py` (the job-consumer link),
-`test_local_retrieval_e2e.py`'s `assemble_structural_context` tests (the
-orchestrator + cold-start behavior).
+**The 2 failures, confirmed real and confirmed unrelated, not swept under
+the rug:** `test_trace_collector.py::test_a1_append_cost_does_not_scale_
+with_existing_file_size` and `test_trace_ingestion_e2e.py::test_a3_header_
+is_ensured_once_per_distinct_trace_not_per_event`, both
+`PermissionError: [WinError 5] Access is denied` inside
+`trace_collector.py`'s `_write_meta()` at the `os.replace(tmp_path,
+meta_path)` line — reproduces consistently in isolation on this machine,
+almost certainly Windows Defender's real-time scan racing the rename of a
+freshly-written temp file. Confirmed pre-existing and out of this
+session's scope: `git diff --stat HEAD -- app/services/trace_collector.py`
+is empty, and that file's last commit (`490081b`) predates this session by
+several commits. Not fixed here — it's a real gap in someone else's
+recently-landed "real O(1) append... Windows locking" work, worth a
+targeted retry-on-`PermissionError` fix, but not mine to silently patch
+without being asked.
 
-## Real bugs found and fixed this session
+New test files worth reading if you're touching this area next:
+`tests/test_environment_probe.py` / `_e2e.py`,
+`tests/test_procedure_extraction.py` (DB-free: derive/validators/strategies
+pure logic), `tests/test_procedure_extraction_e2e.py` (the
+`project_state()` grounding + the superseded-predicate limitation),
+`tests/test_procedure_extraction_strategies_e2e.py`,
+`tests/test_procedure_extraction_registry_e2e.py`,
+`tests/test_procedure_extraction_init_e2e.py` (the capstone).
 
-- The back-compat shim `experiments/swebench_pro/htn_agent.py` claimed
-  "every name this module used to define is re-exported here unchanged"
-  but used `from app.execution.htn_agent import *`, which skips every
-  `_underscore` name (no `__all__` defined). `_node_row` was missing —
-  pytest reported `Interrupted: 1 error during collection` and ran **zero**
-  tests. Fixed with an explicit second import; docstring corrected.
-- `ingestion_jobs`/`observations` link never existed — see above.
-- `.gitignore` didn't cover `.claude/traces/` or `.claude/settings.local.json`
-  — see above.
-- `ingest_banking_knowledge.py`'s tau2 document id was never persisted
-  anywhere retrievable (only lived as an in-memory `KnowledgeSpec.key`
-  during onboarding) — fixed by storing it in `properties.source_doc_id`.
+## Real bugs / real findings this session
+
+- `project_state()`'s supersession behavior drops a predicate entirely for
+  any `as_of` before the newer claim's own `t_valid` — see derive.py above.
+  Not a bug (it's `project_state()`'s own documented epistemic design), but
+  a real, non-obvious consequence for extraction, now documented rather
+  than silently discovered again by whoever builds instantiation next.
+- `capture_claim()` cannot be reused for environment facts — it silently
+  drops any claim without a resolving `task_id`, and an environment fact
+  isn't about a task. `environment_probe.py` writes the same claim shape
+  through a dedicated path instead of forcing a fake task_node.
 
 ## Working style that kept producing real results — still true
 
-Verify against real code before asserting anything. Real database, not
-mocks. Real hook firing against this session's own tool calls, not a
-synthetic payload, for the hook-wiring claim specifically — a hand-built
-JSON payload piped to `hook_wrapper.py` would have proven the wrapper's
-parsing logic but not that Claude Code's actual hook mechanism invokes it
-correctly with real fields. Honest scope notes in every module's own
-docstring, not buried elsewhere.
+Verify against real code before asserting anything — including your own
+test's assumptions: the `project_state()` supersession behavior above took
+two wrong hypotheses and two real test failures to pin down correctly, and
+both wrong guesses are worth knowing were wrong, not just the right answer.
+Real database, not mocks, for anything touching Postgres. Honest scope
+notes in every module's own docstring, not buried elsewhere.
 
 ## Suggested skills
 
