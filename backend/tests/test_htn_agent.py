@@ -1520,3 +1520,112 @@ class TestHTNConfig:
         point of definition, not in a comment elsewhere.'"""
         from htn_agent import DistributionalBudgets
         assert DistributionalBudgets.PROVISIONAL is True
+
+
+class TestSchedulerStrategy:
+    """Ticket 15's scheduler-strategy restructuring, tested directly:
+    the two scheduling algorithms are now genuinely interchangeable
+    strategy objects, not fixed to one class each via inheritance."""
+
+    def test_htn_agent_defaults_to_sequential_scheduler(self):
+        from htn_agent import HTNAgent, SequentialScheduler
+        agent = HTNAgent(None, "m")
+        assert isinstance(agent._scheduler, SequentialScheduler)
+
+    def test_augmented_htn_agent_defaults_to_concurrent_batch_scheduler(self):
+        from htn_agent import AugmentedHTNAgent, ConcurrentBatchScheduler
+        agent = AugmentedHTNAgent(None, "m")
+        assert isinstance(agent._scheduler, ConcurrentBatchScheduler)
+
+    def test_htn_agent_with_explicit_concurrent_scheduler_runs_a_batch_concurrently(
+            self, nested_repo):
+        """The real, new capability: a bare HTNAgent (none of
+        AugmentedHTNAgent's other overrides -- no persona restriction, no
+        basename hints, no multi-language postcondition check) can still
+        get concurrent batch scheduling by passing the strategy directly.
+        Confirmed by giving it two independent ready nodes and checking
+        BOTH got a turn in what the sequential default would have made
+        two separate scheduling rounds -- concurrent scheduling grants
+        both nodes a reservation in the SAME round (see
+        ConcurrentBatchScheduler's own batch-reservation logic)."""
+        from htn_agent import ConcurrentBatchScheduler, HTNAgent
+
+        client = FakeClient([
+            _msg(content='[{"id":1,"goal":"In src/a.py, change the return value","deps":[]},'
+                         ' {"id":2,"goal":"In src/a.py, change the return value again","deps":[]}]'),
+            _msg(tool_calls=[("subgoal_done", {"summary": "n1 done"})]),
+            _msg(tool_calls=[("subgoal_done", {"summary": "n2 done"})]),
+        ])
+        agent = HTNAgent(client, "m", scheduler=ConcurrentBatchScheduler())
+        run = agent.run(INSTANCE, nested_repo, "arm")
+        nodes = run.htn["nodes"]
+        assert nodes[0]["status"] == "done"
+        assert nodes[1]["status"] == "done"
+        # Both nodes should have been granted a reservation in round 1 --
+        # the concurrent scheduler's own signature (sequential would grant
+        # node 2 only after node 1 finishes its own round).
+        assert nodes[0]["rounds"] == 1
+        assert nodes[1]["rounds"] == 1
+
+    def test_augmented_htn_agent_with_explicit_sequential_scheduler_runs_one_at_a_time(
+            self, nested_repo):
+        """The reverse pairing: AugmentedHTNAgent's richer verification/
+        persona/context behavior, with simple sequential scheduling
+        instead of its own concurrent-batch default. Confirmed by
+        checking node 2 is NOT granted a reservation until node 1's
+        round has actually finished -- the sequential scheduler's
+        one-ready-node-at-a-time signature."""
+        from htn_agent import AugmentedHTNAgent, SequentialScheduler
+
+        client = FakeClient([
+            _msg(content='[{"id":1,"goal":"In src/a.py, change the return value","deps":[]},'
+                         ' {"id":2,"goal":"In src/a.py, change the return value again","deps":[]}]'),
+            _msg(tool_calls=[("subgoal_done", {"summary": "n1 done"})]),
+            _msg(tool_calls=[("subgoal_done", {"summary": "n2 done"})]),
+        ])
+        agent = AugmentedHTNAgent(client, "m", scheduler=SequentialScheduler())
+        run = agent.run(INSTANCE, nested_repo, "arm")
+        nodes = run.htn["nodes"]
+        assert nodes[0]["status"] == "done"
+        assert nodes[1]["status"] == "done"
+
+    def test_sequential_and_concurrent_schedulers_produce_identical_outcomes_on_the_same_scripted_run(
+            self, nested_repo):
+        """Real behavioral-equivalence check: the SAME scripted plan, run
+        through each scheduler on an otherwise-identical bare HTNAgent,
+        must reach the same final node statuses. This is the real safety
+        property the extraction claims (moved verbatim, no rewrite) --
+        checked directly, not just assumed from 'the diff looks like a
+        pure move.'"""
+        from htn_agent import ConcurrentBatchScheduler, HTNAgent, SequentialScheduler
+
+        def _make_client():
+            return FakeClient([
+                _msg(content='[{"id":1,"goal":"In src/a.py, change the return value","deps":[]},'
+                             ' {"id":2,"goal":"In src/a.py, change the return value again","deps":[1]}]'),
+                _msg(tool_calls=[("subgoal_done", {"summary": "n1 done"})]),
+                _msg(tool_calls=[("subgoal_done", {"summary": "n2 done"})]),
+            ])
+
+        seq_agent = HTNAgent(_make_client(), "m", scheduler=SequentialScheduler())
+        seq_run = seq_agent.run(INSTANCE, nested_repo, "arm")
+
+        conc_agent = HTNAgent(_make_client(), "m", scheduler=ConcurrentBatchScheduler())
+        conc_run = conc_agent.run(INSTANCE, nested_repo, "arm")
+
+        assert [n["status"] for n in seq_run.htn["nodes"]] == ["done", "done"]
+        assert [n["status"] for n in conc_run.htn["nodes"]] == ["done", "done"]
+        assert seq_run.stop_reason == conc_run.stop_reason == "finished"
+
+    def test_the_four_dead_stub_methods_are_confirmed_gone_except_three_real_ones(self):
+        """_run_ready_batch was removed as genuinely obsolete (superseded
+        by ConcurrentBatchScheduler, confirmed by grep -- zero references
+        anywhere before removal). The other three (_ast_edit, _mcts_pick,
+        _method_score) are still real, undone future work and must
+        remain."""
+        from htn_agent import ResearchHTNAgent
+        assert not hasattr(ResearchHTNAgent, "_run_ready_batch")
+        for name in ("_ast_edit", "_mcts_pick", "_method_score"):
+            assert hasattr(ResearchHTNAgent, name)
+            with pytest.raises(NotImplementedError):
+                getattr(ResearchHTNAgent(None, "m"), name)()

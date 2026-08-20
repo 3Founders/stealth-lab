@@ -21,14 +21,30 @@ safe -- see RunContext's own docstring for the two bugs this also fixes
 along the way (a lock-sharing contention bug and a stale-seed-plan
 leak), found while doing the extraction, not assumed away.
 
-Scheduler-strategy restructuring (dissolving the HTNAgent ->
-AugmentedHTNAgent -> ResearchHTNAgent inheritance chain into one engine
-with a pluggable scheduler) is ticket 15's OTHER named structural flaw
-and is explicitly NOT done in this pass -- deferred to a dedicated
-follow-up given the real risk of touching _schedule's concurrent
-scheduling logic, which has several hard-won regression fixes documented
-in its own comments (see that method). The class hierarchy below is
-unchanged from the original file.
+Scheduler-strategy restructuring (ticket 15's OTHER named structural
+flaw, "the largest one"): the HTNAgent -> AugmentedHTNAgent ->
+ResearchHTNAgent inheritance chain's two DIFFERENT `_schedule`
+implementations (sequential, concurrent-batch) are now interchangeable
+SchedulerStrategy objects (SequentialScheduler, ConcurrentBatchScheduler
+-- see those classes, defined just above HTNAgent) instead of subclass
+overrides. HONEST SCOPE, stated once here: this is the pluggable-
+scheduler-strategy piece specifically, which is what ticket 15's own
+text literally names ("one engine with a pluggable scheduler strategy
+(sequential, speculative-parallel)"). The three classes' OTHER seven
+behavioral differences (_verify_precondition, _verify_postcondition,
+_system_prompt_extra, _replan_evidence, _build_context, _basename_index,
+_tools_for/_persona) remain real, independently-justified subclass
+overrides, not folded into one class -- each is a genuine improvement
+over the base class's trivial no-op defaults (confirmed by reading each
+one's own measured-regression justification), and several existing
+tests specifically assert the base class's simpler, unaugmented
+defaults on purpose. Collapsing those too would be a real, unrequested
+behavior change for anything constructing a bare HTNAgent today, not a
+pure structural cleanup -- deliberately left alone. See
+SchedulerStrategy's own docstring for what this DOES make possible now
+that wasn't before: `HTNAgent(..., scheduler=ConcurrentBatchScheduler())`
+and `AugmentedHTNAgent(..., scheduler=SequentialScheduler())` are both
+real, genuinely decoupled combinations now.
 
 THREE PROPERTIES, EACH ANSWERING A MEASURED FAILURE IN THE FLAT AGENT
 
@@ -69,6 +85,7 @@ import os
 import re
 import threading
 import time
+from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Optional
 
@@ -570,16 +587,293 @@ def _node_row(n: Node) -> dict:
     }
 
 
+class SchedulerStrategy(ABC):
+    """
+    Ticket 15 (memory-substrate map, HTN relocation): "collapse the
+    three-class chain into one engine with a pluggable scheduler
+    strategy (sequential, speculative-parallel)." This is that
+    extraction -- the ACTUAL two scheduling algorithms that used to
+    differ only via a `_schedule()` override on HTNAgent vs
+    AugmentedHTNAgent are now interchangeable strategy objects.
+
+    HONEST SCOPE: this extracts the SCHEDULING ALGORITHM specifically,
+    not the entire HTNAgent/AugmentedHTNAgent behavioral difference.
+    AugmentedHTNAgent's other seven overrides (_verify_precondition,
+    _verify_postcondition, _system_prompt_extra, _replan_evidence,
+    _build_context, _basename_index, _tools_for/_persona) are each a
+    real, independently-justified improvement over the base class's
+    trivial no-op defaults, not a second "strategy" in the same sense
+    -- collapsing those too would be a real behavior change for
+    anything constructing a bare HTNAgent today (several existing tests
+    specifically assert the base class's simple, unaugmented defaults),
+    and is deliberately NOT done in this pass. What ticket 15 literally
+    names -- "pluggable scheduler strategy (sequential,
+    speculative-parallel)" -- is scheduling, and that's what's pluggable
+    now: `HTNAgent(..., scheduler=ConcurrentBatchScheduler())` gets
+    concurrent scheduling without Augmented's other overrides;
+    `AugmentedHTNAgent(..., scheduler=SequentialScheduler())` gets
+    Augmented's richer verification/context/persona behavior with
+    simple one-node-at-a-time scheduling -- genuinely decoupled, which
+    was not possible before this extraction.
+
+    Both concrete strategies below dispatch every behavior-dependent
+    call back through `agent` (agent._run_turn, agent._dep_met, etc.),
+    preserving normal Python polymorphism -- a subclass overriding
+    _dep_met or _future_competitor still has that override honored
+    correctly when its scheduler calls back into `agent`.
+    """
+    @abstractmethod
+    def schedule(self, agent: "HTNAgent", instance: dict, sandbox: RepoSandbox,
+                nodes: list[Node], usage: Usage, tool_log: list[str],
+                trace: dict, ctx: "RunContext") -> str:
+        ...
+
+
+class SequentialScheduler(SchedulerStrategy):
+    """
+    Moved verbatim from HTNAgent._schedule (this class's own body was
+    never rewritten, only relocated into this strategy object, and
+    verified against the full test suite before/after the move) --
+    topological loop, one node at a time. See the method body's own
+    inline comments (also preserved unchanged) for why each piece of
+    the reservation math is shaped the way it is.
+    """
+    def schedule(self, agent: "HTNAgent", instance: dict, sandbox: RepoSandbox,
+                nodes: list[Node], usage: Usage, tool_log: list[str],
+                trace: dict, ctx: "RunContext") -> str:
+        budget = _Budget(agent._max_steps)
+        # Cap what any single node can draw to its own worst-case allotment
+        # (one attempt per method, per_subgoal steps each) rather than
+        # granting `budget.remaining()` outright -- the latter let whichever
+        # node happened to be ready first consume the ENTIRE run budget
+        # across all of ITS OWN retries before a later, dependent node was
+        # even looked at (the more extreme form of the bug fixed in
+        # ConcurrentBatchScheduler, which reserves per-round instead).
+        node_cap = agent._per_subgoal * (agent._max_methods + 1)
+        while True:
+            ready_all = [n for n in nodes if n.status == "pending"
+                        and all(agent._dep_met(nodes, n, d) for d in n.deps)]
+            ready = ready_all[0] if ready_all else None
+            if ready is None:
+                return "finished"
+            # FAIR SHARE -- see ConcurrentBatchScheduler's longer comment
+            # for the measured failure this answers and why a fixed
+            # protective floor (this scheduler's earlier version) doesn't
+            # generalize to many never-run nodes: dividing whatever budget
+            # remains by how many nodes still need a first look self-
+            # corrects as nodes finish, where a fixed floor sized for one
+            # topology does not. `max(1, ...)` guarantees a non-zero ask
+            # while real budget remains; a too-small resulting grant is
+            # left to `_run_turn`'s own MIN_VIABLE_SUBGOAL_BUDGET decline.
+            #
+            # Filtered by _future_competitor, NOT plain status=="pending"
+            # -- see its docstring and ConcurrentBatchScheduler's matching
+            # comment: a node blocked on an unresolved HARD requires
+            # cannot possibly compete this round or any round before its
+            # predecessor settles, and counting it anyway starves the
+            # node that IS running for a phantom competitor.
+            never_run = [n for n in nodes if n.attempts == 0 and n.status == "pending"
+                        and agent._future_competitor(nodes, n)]
+            # A first attempt is already counted in never_run (it's pending
+            # with attempts==0, so it's a member of its own list). A retry
+            # is NOT in never_run (attempts>=1), so it needs its own "+1"
+            # slot IN the divisor -- but only when never_run is non-empty:
+            # a solo retry with nobody else to protect must get the full
+            # per-node cap, not be halved against a phantom competitor.
+            d = max(1, len(never_run) + (1 if ready.attempts >= 1 else 0))
+            want = min(node_cap, max(1, budget.remaining() // d))
+            ceiling = budget.reserve(want)
+            if ceiling <= 0:
+                return "step_budget"
+            ready.budget_granted += ceiling
+            ready.rounds += 1
+            used = agent._run_turn(instance, sandbox, ready, nodes, usage,
+                                  tool_log, trace, ceiling, ctx)
+            budget.release(ceiling - used)
+            if ready.status == "pending":
+                return "step_budget"
+
+
+class ConcurrentBatchScheduler(SchedulerStrategy):
+    """
+    Moved verbatim from AugmentedHTNAgent._schedule -- runs an entire
+    READY SET concurrently via ThreadPoolExecutor instead of one node
+    at a time. Assumes agent-level config this strategy does not itself
+    define: `agent.MAX_PARALLEL_NODES` and `agent._shallow(ctx)` (the
+    SLA gate) -- today only AugmentedHTNAgent-shaped instances provide
+    both, so pairing this strategy with a bare HTNAgent needs those
+    supplied some other way (a subclass or duck-typed object with those
+    two attributes/methods). See the method body's own inline comments
+    (preserved unchanged, including three real, measured regressions
+    this fair-share math was written to fix) for why each piece is
+    shaped the way it is.
+    """
+    def schedule(self, agent: "HTNAgent", instance: dict, sandbox: RepoSandbox,
+                nodes: list[Node], usage: Usage, tool_log: list[str],
+                trace: dict, ctx: "RunContext") -> str:
+        budget = _Budget(agent._max_steps)
+        # Reserve ONE attempt's worth per node per round, not a node's full
+        # worst-case (all replans included) allotment -- reserving the
+        # latter for even a single node can exhaust the whole run's budget
+        # before a second node gets a look-in, collapsing every batch back
+        # to width 1. A node that needs to retry beyond this round's
+        # reservation is simply left "pending" and picked up again next
+        # round with a fresh one -- `ready.attempts` lives on the Node, not
+        # this call, so multi-attempt retries still work correctly, just
+        # potentially spread across more than one scheduling round.
+        per_node_cap = agent._per_subgoal
+        while True:
+            ready_batch = [n for n in nodes if n.status == "pending"
+                           and all(agent._dep_met(nodes, n, d) for d in n.deps)]
+            if not ready_batch:
+                return "finished"
+            # SLA-tight runs fall back to one node at a time -- the same
+            # withdrawal `_tools_for` already does for decompose_subgoal,
+            # applied here too: when budget is nearly gone, a wide batch's
+            # reservations would starve later nodes in the SAME round rather
+            # than let them run at full size in the next one.
+            width = 1 if agent._shallow(ctx) else agent.MAX_PARALLEL_NODES
+            batch = ready_batch[:width]
+
+            # Reserved ONE AT A TIME, synchronously, before any thread
+            # starts -- see _Budget's docstring for why that (not a
+            # check-then-spend read inside each thread) is what keeps a
+            # concurrent round from overshooting the total step budget.
+            #
+            # FAIR SHARE, not a fixed floor. The first version of this fix
+            # (a fixed MIN_VIABLE_SUBGOAL_BUDGET reserved per never-run
+            # node, applied only to a node's SECOND+ attempt) stopped one
+            # RETRYING node from starving others -- measured on
+            # ansible-f327e65d, node 1's three retries (9+9+9=27 of 28
+            # steps) left node 2 a 1-step grant, below
+            # MIN_VIABLE_SUBGOAL_BUDGET, declined, run ended with node 2
+            # never attempted -- but it left every FIRST attempt
+            # unthrottled. That has the same failure shape one level up:
+            # with 10 independent leaf nodes at width 4, rounds 1-2 (nodes
+            # 1-8, all first attempts) each drew the full per-round cap
+            # unthrottled, leaving nothing for nodes 9-10's first attempt
+            # in round 3 -- the exact starvation this fix exists to
+            # prevent, just via siblings instead of retries.
+            #
+            # The fix that covers both shapes: divide whatever budget
+            # remains by how many nodes still need a first look (a retry
+            # counts as needing one MORE slot in that same shared pool,
+            # since it's drawing from it too), every round, for every
+            # grant -- not a fixed protective amount sized for one
+            # scenario. `divisor` self-corrects as nodes finish (fewer
+            # nodes left => bigger shares for whoever remains), and
+            # `max(1, ...)` guarantees `reserve()` is never asked for 0
+            # while real budget remains, so a too-small resulting share is
+            # left to `_run_turn`'s own MIN_VIABLE_SUBGOAL_BUDGET decline
+            # (a real, already-tested "not viable yet, no attempt charged"
+            # path) rather than needing a second, separate escape hatch
+            # here. The arithmetic happens before a single `reserve()`
+            # call, not as a separate remaining()-then-reserve() pair, so
+            # nothing here depends on this reservation loop staying
+            # single-threaded (documented as such above, but this makes
+            # the safety property survive a future refactor).
+            # Filtered by _future_competitor, NOT plain status=="pending"
+            # over the whole graph: a node blocked only by unmet SOFT deps
+            # is a guaranteed future competitor (it becomes ready once its
+            # predecessor settles, win or lose) and must still count, but
+            # a node blocked by an unresolved HARD requires cannot
+            # possibly compete until that predecessor actually succeeds --
+            # counting it anyway starves whoever IS running for a phantom
+            # competitor. Measured live on ansible-f327e65d,
+            # gravitational-teleport and tutao-tutanota: node 1 alone in
+            # ready_batch, divided by 2-3 requires-blocked siblings that
+            # could not run until node 1 itself succeeded, so each retry
+            # got ~3-4 steps instead of per_node_cap=9 and burned all
+            # MAX_METHODS+1 attempts on starvation (19-23 of a 72 step
+            # budget) rather than a real shot at finishing. See
+            # _future_competitor's docstring for the full split and the
+            # regression case (a deps-only chain) it also has to satisfy.
+            never_run = [m for m in nodes if m.attempts == 0 and m.status == "pending"
+                        and agent._future_competitor(nodes, m)]
+            reservations: dict[int, int] = {}
+            for n in batch:
+                if budget.remaining() <= 0:
+                    break
+                # A first attempt is already counted in never_run (it's
+                # pending with attempts==0, a member of its own list). A
+                # retry is NOT in never_run, so it needs its own "+1" slot
+                # -- but only when never_run is non-empty: a solo retry
+                # with nobody else to protect must get the full per-node
+                # cap, not be halved against a phantom competitor.
+                d = max(1, len(never_run) + (1 if n.attempts >= 1 else 0))
+                want = min(per_node_cap, max(1, budget.remaining() // d))
+                grant = budget.reserve(want)
+                if grant <= 0:
+                    break
+                reservations[n.id] = grant
+                n.budget_granted += grant
+                n.rounds += 1
+            if not reservations:
+                return "step_budget"
+            batch = [n for n in batch if n.id in reservations]
+
+            spent_this_round = 0
+            if len(batch) == 1:
+                # No concurrency to pay thread-pool overhead for.
+                n = batch[0]
+                used = agent._run_turn(instance, sandbox, n, nodes, usage,
+                                      tool_log, trace, reservations[n.id], ctx)
+                spent_this_round += used
+                budget.release(reservations[n.id] - used)
+            else:
+                with concurrent.futures.ThreadPoolExecutor(max_workers=len(batch)) as pool:
+                    futures = {pool.submit(agent._run_turn, instance, sandbox, n, nodes,
+                                           usage, tool_log, trace, reservations[n.id], ctx): n
+                              for n in batch}
+                    for fut in concurrent.futures.as_completed(futures):
+                        n = futures[fut]
+                        used = fut.result()  # re-raises a worker's exception here
+                        spent_this_round += used
+                        budget.release(reservations[n.id] - used)
+
+            # TERMINATION GUARD, and the reason MIN_VIABLE_SUBGOAL_BUDGET is
+            # safe to have at all. A round in which every node declined its
+            # reservation as non-viable spends nothing, so `release` returns
+            # the whole grant and `remaining()` is unchanged -- the next
+            # iteration would reserve the same too-small amount and decline
+            # again, forever, without ever calling the model (so no scripted
+            # or real response could break the cycle either).
+            #
+            # But zero STEPS is not the same as zero PROGRESS. A node can
+            # reach a terminal status without spending a tool call at all
+            # (a failed precondition, an executor that answers with no tool
+            # call), and that genuinely advances the graph: it can unblock a
+            # replan, or simply leave an INDEPENDENT branch still waiting
+            # its turn. Stopping there stranded that branch. Only a round
+            # that both spent nothing AND left every node exactly as it
+            # found them is truly stuck.
+            progressed = spent_this_round > 0 or any(
+                n.status != "pending" for n in batch)
+            if not progressed:
+                return "step_budget"
+
+            if any(n.status == "pending" for n in batch) and budget.remaining() <= 0:
+                return "step_budget"
+
+
 class HTNAgent:
     def __init__(self, client, model: str, max_steps: int = TOTAL_STEP_BUDGET,
                  temperature: float = 0.0, steps_per_subgoal: int = STEPS_PER_SUBGOAL,
-                 max_methods: int = MAX_METHODS):
+                 max_methods: int = MAX_METHODS,
+                 scheduler: Optional["SchedulerStrategy"] = None):
         self._client = client
         self._model = model
         self._max_steps = max_steps
         self._temperature = temperature
         self._per_subgoal = steps_per_subgoal
         self._max_methods = max_methods
+        # Ticket 15's pluggable-scheduler-strategy fix -- defaults to
+        # SequentialScheduler, exactly matching this class's own
+        # historical behavior for anyone who doesn't pass one
+        # explicitly. Pass scheduler=ConcurrentBatchScheduler() to get
+        # concurrent scheduling on a bare HTNAgent, without any of
+        # AugmentedHTNAgent's other overrides.
+        self._scheduler: "SchedulerStrategy" = scheduler or SequentialScheduler()
         # Real, internal-only handoff slot for ResearchHTNAgent's
         # _synthesize_method (set before .run(), read-and-cleared by
         # run() itself into that call's own RunContext -- see
@@ -589,6 +883,33 @@ class HTNAgent:
         # exactly the sync-core/async-shell boundary pattern ticket 15
         # adopts uniformly, not a special case.
         self._pending_seed_plan: Optional[list[dict]] = None
+
+    # Real base-class default so ConcurrentBatchScheduler works on a
+    # BARE HTNAgent, not only on AugmentedHTNAgent-shaped instances --
+    # found by testing the cross-pairing directly (HTNAgent +
+    # ConcurrentBatchScheduler failed with an AttributeError on this
+    # attribute before this default existed), not assumed to already
+    # work from the extraction alone. 4 matches AugmentedHTNAgent's own
+    # MAX_PARALLEL_NODES value -- same real reasoning (MAX_SUBGOALS is
+    # 4, so this already covers a typical top-level ready set),
+    # inherited AS a value here rather than duplicated with a different
+    # number that would make the "same algorithm, same scheduler
+    # object" claim misleading.
+    MAX_PARALLEL_NODES = 4
+
+    def _shallow(self, ctx: "RunContext") -> bool:
+        """
+        Real base-class default (always False -- base HTNAgent has no
+        wall-clock/token-budget SLA concept at all, unlike
+        AugmentedHTNAgent's _max_wall_seconds/_max_token_budget), so
+        ConcurrentBatchScheduler's `agent._shallow(ctx)` call works on
+        ANY HTNAgent-or-subclass instance, not only ones that happen to
+        define it. AugmentedHTNAgent overrides this with real SLA
+        gating (see that class) -- this default is what makes the
+        override optional rather than required for the scheduler to
+        function at all.
+        """
+        return False
 
     @classmethod
     def from_config(cls, client, model: str, config: "HTNConfig", **kwargs) -> "HTNAgent":
@@ -1394,65 +1715,14 @@ class HTNAgent:
     def _schedule(self, instance: dict, sandbox: RepoSandbox, nodes: list[Node],
                  usage: Usage, tool_log: list[str], trace: dict, ctx: "RunContext") -> str:
         """
-        Topological loop: repeatedly pick the next node whose dependencies
-        have all landed, run its full turn, repeat. One node at a time --
-        AugmentedHTNAgent overrides this to run an entire READY SET
-        concurrently instead (real wall-clock parallelism for independent
-        branches; see its docstring, upgrade #6), reusing `_run_turn`
-        completely unchanged. Returns "finished" (nothing left ready) or
+        Delegates to self._scheduler (ticket 15's pluggable-scheduler-
+        strategy fix -- see SchedulerStrategy/SequentialScheduler/
+        ConcurrentBatchScheduler above this class). Defaults to
+        SequentialScheduler, exactly matching this class's own
+        historical behavior. Returns "finished" (nothing left ready) or
         "step_budget" (budget exhausted with ready work remaining).
         """
-        budget = _Budget(self._max_steps)
-        # Cap what any single node can draw to its own worst-case allotment
-        # (one attempt per method, per_subgoal steps each) rather than
-        # granting `budget.remaining()` outright -- the latter let whichever
-        # node happened to be ready first consume the ENTIRE run budget
-        # across all of ITS OWN retries before a later, dependent node was
-        # even looked at (the more extreme form of the bug fixed in
-        # AugmentedHTNAgent._schedule, which reserves per-round instead).
-        node_cap = self._per_subgoal * (self._max_methods + 1)
-        while True:
-            ready_all = [n for n in nodes if n.status == "pending"
-                        and all(self._dep_met(nodes, n, d) for d in n.deps)]
-            ready = ready_all[0] if ready_all else None
-            if ready is None:
-                return "finished"
-            # FAIR SHARE -- see AugmentedHTNAgent._schedule's longer comment
-            # for the measured failure this answers and why a fixed
-            # protective floor (this scheduler's earlier version) doesn't
-            # generalize to many never-run nodes: dividing whatever budget
-            # remains by how many nodes still need a first look self-
-            # corrects as nodes finish, where a fixed floor sized for one
-            # topology does not. `max(1, ...)` guarantees a non-zero ask
-            # while real budget remains; a too-small resulting grant is
-            # left to `_run_turn`'s own MIN_VIABLE_SUBGOAL_BUDGET decline.
-            #
-            # Filtered by _future_competitor, NOT plain status=="pending"
-            # -- see its docstring and AugmentedHTNAgent._schedule's
-            # matching comment: a node blocked on an unresolved HARD
-            # requires cannot possibly compete this round or any round
-            # before its predecessor settles, and counting it anyway
-            # starves the node that IS running for a phantom competitor.
-            never_run = [n for n in nodes if n.attempts == 0 and n.status == "pending"
-                        and self._future_competitor(nodes, n)]
-            # A first attempt is already counted in never_run (it's pending
-            # with attempts==0, so it's a member of its own list). A retry
-            # is NOT in never_run (attempts>=1), so it needs its own "+1"
-            # slot IN the divisor -- but only when never_run is non-empty:
-            # a solo retry with nobody else to protect must get the full
-            # per-node cap, not be halved against a phantom competitor.
-            d = max(1, len(never_run) + (1 if ready.attempts >= 1 else 0))
-            want = min(node_cap, max(1, budget.remaining() // d))
-            ceiling = budget.reserve(want)
-            if ceiling <= 0:
-                return "step_budget"
-            ready.budget_granted += ceiling
-            ready.rounds += 1
-            used = self._run_turn(instance, sandbox, ready, nodes, usage,
-                                  tool_log, trace, ceiling, ctx)
-            budget.release(ceiling - used)
-            if ready.status == "pending":
-                return "step_budget"
+        return self._scheduler.schedule(self, instance, sandbox, nodes, usage, tool_log, trace, ctx)
 
     def run(self, instance: dict, sandbox: RepoSandbox, arm: str,
             memory_block: str = "", retrieved: Optional[list[str]] = None,
@@ -1685,8 +1955,15 @@ class AugmentedHTNAgent(HTNAgent):
     MAX_PARALLEL_NODES = 4
 
     def __init__(self, *args, max_wall_seconds: Optional[float] = None,
-                 max_token_budget: Optional[int] = None, **kwargs):
-        super().__init__(*args, **kwargs)
+                 max_token_budget: Optional[int] = None,
+                 scheduler: Optional["SchedulerStrategy"] = None, **kwargs):
+        # Ticket 15's pluggable-scheduler-strategy fix: defaults to
+        # ConcurrentBatchScheduler, exactly matching this class's own
+        # historical behavior for anyone who doesn't pass one
+        # explicitly. Pass scheduler=SequentialScheduler() to get this
+        # class's richer verification/context/persona behavior with
+        # simple one-node-at-a-time scheduling instead.
+        super().__init__(*args, scheduler=scheduler or ConcurrentBatchScheduler(), **kwargs)
         self._max_wall_seconds = max_wall_seconds
         self._max_token_budget = max_token_budget
 
@@ -1881,153 +2158,6 @@ class AugmentedHTNAgent(HTNAgent):
             return f"{reason}\nLast tool result before giving up: {node.last_evidence}"
         return reason
 
-    # -- 6. speculative parallel DAG execution -------------------------------
-    def _schedule(self, instance: dict, sandbox: RepoSandbox, nodes: list[Node],
-                 usage: Usage, tool_log: list[str], trace: dict, ctx: "RunContext") -> str:
-        budget = _Budget(self._max_steps)
-        # Reserve ONE attempt's worth per node per round, not a node's full
-        # worst-case (all replans included) allotment -- reserving the
-        # latter for even a single node can exhaust the whole run's budget
-        # before a second node gets a look-in, collapsing every batch back
-        # to width 1. A node that needs to retry beyond this round's
-        # reservation is simply left "pending" and picked up again next
-        # round with a fresh one -- `ready.attempts` lives on the Node, not
-        # this call, so multi-attempt retries still work correctly, just
-        # potentially spread across more than one scheduling round.
-        per_node_cap = self._per_subgoal
-        while True:
-            ready_batch = [n for n in nodes if n.status == "pending"
-                           and all(self._dep_met(nodes, n, d) for d in n.deps)]
-            if not ready_batch:
-                return "finished"
-            # SLA-tight runs fall back to one node at a time -- the same
-            # withdrawal `_tools_for` already does for decompose_subgoal,
-            # applied here too: when budget is nearly gone, a wide batch's
-            # reservations would starve later nodes in the SAME round rather
-            # than let them run at full size in the next one.
-            width = 1 if self._shallow(ctx) else self.MAX_PARALLEL_NODES
-            batch = ready_batch[:width]
-
-            # Reserved ONE AT A TIME, synchronously, before any thread
-            # starts -- see _Budget's docstring for why that (not a
-            # check-then-spend read inside each thread) is what keeps a
-            # concurrent round from overshooting the total step budget.
-            #
-            # FAIR SHARE, not a fixed floor. The first version of this fix
-            # (a fixed MIN_VIABLE_SUBGOAL_BUDGET reserved per never-run
-            # node, applied only to a node's SECOND+ attempt) stopped one
-            # RETRYING node from starving others -- measured on
-            # ansible-f327e65d, node 1's three retries (9+9+9=27 of 28
-            # steps) left node 2 a 1-step grant, below
-            # MIN_VIABLE_SUBGOAL_BUDGET, declined, run ended with node 2
-            # never attempted -- but it left every FIRST attempt
-            # unthrottled. That has the same failure shape one level up:
-            # with 10 independent leaf nodes at width 4, rounds 1-2 (nodes
-            # 1-8, all first attempts) each drew the full per-round cap
-            # unthrottled, leaving nothing for nodes 9-10's first attempt
-            # in round 3 -- the exact starvation this fix exists to
-            # prevent, just via siblings instead of retries.
-            #
-            # The fix that covers both shapes: divide whatever budget
-            # remains by how many nodes still need a first look (a retry
-            # counts as needing one MORE slot in that same shared pool,
-            # since it's drawing from it too), every round, for every
-            # grant -- not a fixed protective amount sized for one
-            # scenario. `divisor` self-corrects as nodes finish (fewer
-            # nodes left => bigger shares for whoever remains), and
-            # `max(1, ...)` guarantees `reserve()` is never asked for 0
-            # while real budget remains, so a too-small resulting share is
-            # left to `_run_turn`'s own MIN_VIABLE_SUBGOAL_BUDGET decline
-            # (a real, already-tested "not viable yet, no attempt charged"
-            # path) rather than needing a second, separate escape hatch
-            # here. The arithmetic happens before a single `reserve()`
-            # call, not as a separate remaining()-then-reserve() pair, so
-            # nothing here depends on this reservation loop staying
-            # single-threaded (documented as such above, but this makes
-            # the safety property survive a future refactor).
-            # Filtered by _future_competitor, NOT plain status=="pending"
-            # over the whole graph: a node blocked only by unmet SOFT deps
-            # is a guaranteed future competitor (it becomes ready once its
-            # predecessor settles, win or lose) and must still count, but
-            # a node blocked by an unresolved HARD requires cannot
-            # possibly compete until that predecessor actually succeeds --
-            # counting it anyway starves whoever IS running for a phantom
-            # competitor. Measured live on ansible-f327e65d,
-            # gravitational-teleport and tutao-tutanota: node 1 alone in
-            # ready_batch, divided by 2-3 requires-blocked siblings that
-            # could not run until node 1 itself succeeded, so each retry
-            # got ~3-4 steps instead of per_node_cap=9 and burned all
-            # MAX_METHODS+1 attempts on starvation (19-23 of a 72 step
-            # budget) rather than a real shot at finishing. See
-            # _future_competitor's docstring for the full split and the
-            # regression case (a deps-only chain) it also has to satisfy.
-            never_run = [m for m in nodes if m.attempts == 0 and m.status == "pending"
-                        and self._future_competitor(nodes, m)]
-            reservations: dict[int, int] = {}
-            for n in batch:
-                if budget.remaining() <= 0:
-                    break
-                # A first attempt is already counted in never_run (it's
-                # pending with attempts==0, a member of its own list). A
-                # retry is NOT in never_run, so it needs its own "+1" slot
-                # -- but only when never_run is non-empty: a solo retry
-                # with nobody else to protect must get the full per-node
-                # cap, not be halved against a phantom competitor.
-                d = max(1, len(never_run) + (1 if n.attempts >= 1 else 0))
-                want = min(per_node_cap, max(1, budget.remaining() // d))
-                grant = budget.reserve(want)
-                if grant <= 0:
-                    break
-                reservations[n.id] = grant
-                n.budget_granted += grant
-                n.rounds += 1
-            if not reservations:
-                return "step_budget"
-            batch = [n for n in batch if n.id in reservations]
-
-            spent_this_round = 0
-            if len(batch) == 1:
-                # No concurrency to pay thread-pool overhead for.
-                n = batch[0]
-                used = self._run_turn(instance, sandbox, n, nodes, usage,
-                                      tool_log, trace, reservations[n.id], ctx)
-                spent_this_round += used
-                budget.release(reservations[n.id] - used)
-            else:
-                with concurrent.futures.ThreadPoolExecutor(max_workers=len(batch)) as pool:
-                    futures = {pool.submit(self._run_turn, instance, sandbox, n, nodes,
-                                           usage, tool_log, trace, reservations[n.id], ctx): n
-                              for n in batch}
-                    for fut in concurrent.futures.as_completed(futures):
-                        n = futures[fut]
-                        used = fut.result()  # re-raises a worker's exception here
-                        spent_this_round += used
-                        budget.release(reservations[n.id] - used)
-
-            # TERMINATION GUARD, and the reason MIN_VIABLE_SUBGOAL_BUDGET is
-            # safe to have at all. A round in which every node declined its
-            # reservation as non-viable spends nothing, so `release` returns
-            # the whole grant and `remaining()` is unchanged -- the next
-            # iteration would reserve the same too-small amount and decline
-            # again, forever, without ever calling the model (so no scripted
-            # or real response could break the cycle either).
-            #
-            # But zero STEPS is not the same as zero PROGRESS. A node can
-            # reach a terminal status without spending a tool call at all
-            # (a failed precondition, an executor that answers with no tool
-            # call), and that genuinely advances the graph: it can unblock a
-            # replan, or simply leave an INDEPENDENT branch still waiting
-            # its turn. Stopping there stranded that branch. Only a round
-            # that both spent nothing AND left every node exactly as it
-            # found them is truly stuck.
-            progressed = spent_this_round > 0 or any(
-                n.status != "pending" for n in batch)
-            if not progressed:
-                return "step_budget"
-
-            if any(n.status == "pending" for n in batch) and budget.remaining() <= 0:
-                return "step_budget"
-
 
 class ResearchHTNAgent(AugmentedHTNAgent):
     """
@@ -2072,14 +2202,16 @@ class ResearchHTNAgent(AugmentedHTNAgent):
        can never be produced. Register it alongside SUBGOAL_TOOLS, gated to
        .py files; everything else keeps using edit_file.
        -> start in `_ast_edit(self, sandbox, path, symbol, new_source)`.
-    3. SPECULATIVE PARALLEL DAG EXECUTION. Run every currently-`ready` node
-       concurrently (`concurrent.futures.ThreadPoolExecutor`) instead of one
-       at a time. Needs a `threading.Lock` around sandbox-mutating tool
-       calls specifically (edit_file/create_file/delete_file) -- RepoSandbox
-       is not thread-safe against concurrent writes -- while reads
-       (list_dir/search/read_file) need no lock. A failed branch must block
-       only its own transitive dependents, not siblings already in flight.
-       -> start in `_run_ready_batch(self, ready_nodes, sandbox, nodes, usage, tool_log)`.
+    3. SPECULATIVE PARALLEL DAG EXECUTION -- SUPERSEDED, not a gap anymore.
+       This item described exactly what ConcurrentBatchScheduler (see
+       above HTNAgent) now really implements -- ticket 15's relocation
+       extracted AugmentedHTNAgent's own concurrent-batch `_schedule`
+       into that strategy object, which is real, tested, and the
+       default scheduler AugmentedHTNAgent/ResearchHTNAgent already use.
+       `_run_ready_batch` (the stub this item used to point at) has been
+       removed as genuinely dead -- confirmed by grep, zero references
+       anywhere -- rather than left pointing at a NotImplementedError
+       for something that, under a different name, already works.
     4. MCTS-GUIDED SUBTASK EXPANSION. Instead of accepting the planner's
        first decomposition, generate 2-3 candidates (one real LLM call plus
        cheap heuristic mutations -- merge two nodes, split one on " and ")
@@ -2117,9 +2249,6 @@ class ResearchHTNAgent(AugmentedHTNAgent):
 
     def _ast_edit(self, *args, **kwargs):
         raise NotImplementedError("see ResearchHTNAgent docstring, item 2")
-
-    def _run_ready_batch(self, *args, **kwargs):
-        raise NotImplementedError("see ResearchHTNAgent docstring, item 3")
 
     def _mcts_pick(self, *args, **kwargs):
         raise NotImplementedError("see ResearchHTNAgent docstring, item 4")
