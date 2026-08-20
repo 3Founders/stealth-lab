@@ -56,6 +56,18 @@ async def _make_verified_procedure(pool, name: str, **kwargs) -> str:
             pool, procedure_row_id=row_id, success=True,
             context_key=f"ctx-{i % (MIN_DISTINCT_CONTEXTS_FOR_VERIFIED + 1)}",
         )
+    # REAL, deliberate addition (migration 20): statistical verification
+    # and human approval are two orthogonal gates now -- applicability.py
+    # requires BOTH under require_verified=True (ticket 13's rule
+    # extended consistently: "verified gates automatic retrieval"
+    # applies to approval too). This fixture name says "verified", and
+    # every test using it is exercising OTHER hard constraints (scope,
+    # preconditions, exclusions) -- so it must also be approved, or every
+    # one of those tests would fail on approval_status instead of the
+    # thing they're actually testing.
+    await pool.execute(
+        "UPDATE procedures SET approval_status = 'approved' WHERE id = $1::uuid", row_id,
+    )
     return row_id
 
 
@@ -254,6 +266,53 @@ def test_candidate_procedure_excluded_from_automatic_selection_but_explicitly_in
             assert explicit.applicable is True
         finally:
             await _cleanup(pool, "app-test-candidate")
+            await pool.close()
+
+    asyncio.run(_run())
+
+
+def test_verified_but_unapproved_procedure_excluded_from_automatic_selection():
+    """
+    REAL GAP CLOSED, tested directly: migration 20 added approval_status
+    as a column, but nothing checked it until this session's second
+    real caller of find_applicable_procedures() was being wired -- a
+    procedure could reach 'verified' via pure statistics (10 successes,
+    0 failures, 3+ contexts) with a human never having approved it, and
+    automatic retrieval would have silently surfaced it anyway. Same
+    require_verified split as candidate-vs-verified: explicit invocation
+    still bypasses this, matching ticket 13's rule extended consistently
+    from verification to approval.
+    """
+    async def _run():
+        pool = await create_pool(DATABASE_URL, min_size=1, max_size=2)
+        try:
+            await _cleanup(pool, "app-test-unapproved")
+            from app.services.procedures import MIN_DISTINCT_CONTEXTS_FOR_VERIFIED, MIN_SUCCESSES_FOR_VERIFIED
+            result = await capture_procedure(pool, name="app-test-unapproved-1", goal="g")
+            row_id = result["id"]
+            for i in range(MIN_SUCCESSES_FOR_VERIFIED):
+                await record_execution_outcome(
+                    pool, procedure_row_id=row_id, success=True,
+                    context_key=f"ctx-{i % (MIN_DISTINCT_CONTEXTS_FOR_VERIFIED + 1)}",
+                )
+            # Deliberately NOT approved -- this is the whole point of the test.
+            row = await pool.fetchrow("SELECT * FROM procedures WHERE id = $1", row_id)
+            assert row["verification_state"] == "verified", "fixture must actually reach verified"
+            assert row["approval_status"] == "proposed", "fixture must stay unapproved"
+
+            automatic = await check_hard_constraints(pool, dict(row), require_verified=True)
+            assert automatic.applicable is False
+            assert "approval_status" in automatic.failed_constraints
+
+            explicit = await check_hard_constraints(pool, dict(row), require_verified=False)
+            assert explicit.applicable is True
+
+            results = await find_applicable_procedures(pool, current_scope={}, require_verified=True)
+            assert row_id not in {r["id"] for r in results}, (
+                "a verified-but-unapproved procedure must never be automatically selected"
+            )
+        finally:
+            await _cleanup(pool, "app-test-unapproved")
             await pool.close()
 
     asyncio.run(_run())

@@ -169,6 +169,22 @@ async def check_hard_constraints(
         return ApplicabilityResult(row_id, False, ["availability"])
     if require_verified and procedure["verification_state"] != "verified":
         return ApplicabilityResult(row_id, False, ["verification_state"])
+    # REAL GAP CLOSED (found while wiring the first real caller of this
+    # function): migration 20 added approval_status as a column, but
+    # nothing ever checked it -- a procedure could reach 'verified' via
+    # pure statistics without a human ever having approved it, and
+    # automatic retrieval would happily surface it. Tied to the SAME
+    # require_verified flag as verification_state, not checked
+    # unconditionally: ticket 13's own rule ("verified gates automatic
+    # retrieval; a candidate procedure remains explicitly invocable")
+    # extends consistently to approval -- explicit invocation
+    # (require_verified=False, a human/agent naming this procedure by
+    # id) bypasses both gates the same way; only AUTOMATIC selection
+    # requires both real evidence AND a human sign-off. Gating this
+    # unconditionally would also break test_applicability_e2e.py's
+    # existing suite, which predates approval_status and never sets it.
+    if require_verified and procedure.get("approval_status") != "approved":
+        return ApplicabilityResult(row_id, False, ["approval_status"])
 
     # Scope / exclusions.
     if not _scope_matches(procedure["scope"] or {}, current_scope):

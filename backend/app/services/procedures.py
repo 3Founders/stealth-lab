@@ -379,3 +379,28 @@ async def retire_negative_utility_procedures(pool: asyncpg.Pool, *, min_attempts
             )
             retired_ids.append(str(row["id"]))
     return retired_ids
+
+
+async def approve_procedure(pool: asyncpg.Pool, *, procedure_row_id: str, approved_by: str) -> None:
+    """
+    The missing counterpart to migration 20's approval_status column --
+    real gap, found while wiring applicability.py's new approval_status
+    gate (see that module's own comment): the column existed, nothing
+    could ever set it to 'approved' except raw SQL. Deliberately
+    ORTHOGONAL to verification_state -- an approved procedure with 2
+    recorded successes is still, correctly, not verified; approving
+    something does not fast-track statistical verification.
+    """
+    await pool.execute(
+        "UPDATE procedures SET approval_status = 'approved', approved_by = $2, "
+        "approved_at = now() WHERE id = $1::uuid",
+        procedure_row_id, approved_by,
+    )
+
+
+async def reject_procedure(pool: asyncpg.Pool, *, procedure_row_id: str, approved_by: str) -> None:
+    await pool.execute(
+        "UPDATE procedures SET approval_status = 'rejected', approved_by = $2, "
+        "approved_at = now() WHERE id = $1::uuid",
+        procedure_row_id, approved_by,
+    )

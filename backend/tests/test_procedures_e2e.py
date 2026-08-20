@@ -17,10 +17,12 @@ from app.services.procedures import (
     MIN_DISTINCT_CONTEXTS_FOR_VERIFIED,
     MIN_SUCCESSES_FOR_VERIFIED,
     ProcedureNotFound,
+    approve_procedure,
     capture_procedure,
     check_quarantine_and_disable,
     compute_utility,
     record_execution_outcome,
+    reject_procedure,
     retire_negative_utility_procedures,
 )
 
@@ -33,6 +35,56 @@ pytestmark = pytest.mark.skipif(
 
 async def _cleanup(pool, name_prefix: str) -> None:
     await pool.execute("DELETE FROM procedures WHERE name LIKE $1", f"{name_prefix}%")
+
+
+def test_approve_procedure_is_orthogonal_to_verification_state():
+    """approve_procedure() must set approval_status without touching
+    verification_state -- an approved procedure with zero recorded
+    successes is still, correctly, not verified. The two axes must not
+    bleed into each other."""
+    async def _run():
+        pool = await create_pool(DATABASE_URL, min_size=1, max_size=2)
+        try:
+            await _cleanup(pool, "proc-test-approve")
+            result = await capture_procedure(pool, name="proc-test-approve-1", goal="g")
+            row_id = result["id"]
+
+            row = await pool.fetchrow("SELECT * FROM procedures WHERE id = $1", row_id)
+            assert row["approval_status"] == "proposed"
+
+            await approve_procedure(pool, procedure_row_id=row_id, approved_by="tester")
+
+            row = await pool.fetchrow("SELECT * FROM procedures WHERE id = $1", row_id)
+            assert row["approval_status"] == "approved"
+            assert row["approved_by"] == "tester"
+            assert row["approved_at"] is not None
+            assert row["verification_state"] == "candidate", (
+                "approval must not fast-track statistical verification"
+            )
+        finally:
+            await _cleanup(pool, "proc-test-approve")
+            await pool.close()
+
+    asyncio.run(_run())
+
+
+def test_reject_procedure_sets_rejected_status():
+    async def _run():
+        pool = await create_pool(DATABASE_URL, min_size=1, max_size=2)
+        try:
+            await _cleanup(pool, "proc-test-reject")
+            result = await capture_procedure(pool, name="proc-test-reject-1", goal="g")
+            row_id = result["id"]
+
+            await reject_procedure(pool, procedure_row_id=row_id, approved_by="tester")
+
+            row = await pool.fetchrow("SELECT * FROM procedures WHERE id = $1", row_id)
+            assert row["approval_status"] == "rejected"
+        finally:
+            await _cleanup(pool, "proc-test-reject")
+            await pool.close()
+
+    asyncio.run(_run())
 
 
 def test_capture_procedure_starts_candidate_fresh_active():

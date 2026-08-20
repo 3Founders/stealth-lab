@@ -538,6 +538,52 @@ async def solve_task(task_description: str, repo_path: str, ctx: Context,
         )
         memory_block = f"{memory_block}\n\n{structural_block}" if memory_block else structural_block
 
+    # Procedure retrieval + instantiation (closes the extraction ->
+    # applicability -> use -> outcome loop end to end, for the first
+    # time). Scope narrowed by the SAME environment_probe.py extraction
+    # itself derives from -- a procedure extracted with scope={"language":
+    # ["python"]} only matches a call whose current_scope agrees, real
+    # narrowing on both sides, not a coincidence.
+    #
+    # require_verified DEFAULTS TO TRUE and is deliberately left there,
+    # not weakened to False to make something show up here today. Ticket
+    # 13's own wording: "verified gates automatic retrieval; a candidate
+    # procedure remains explicitly invocable." This IS automatic
+    # selection (the system chose to look, nothing named this procedure
+    # by id), so the honest behavior is: nothing is returned until a
+    # procedure has real evidence (>=10 successes, 0 failures, >=3
+    # distinct contexts) -- which this exact call path is what will,
+    # over repeated real use, accumulate.
+    from app.services.applicability import find_applicable_procedures
+    from app.services.environment_probe import probe_environment
+    from app.services.procedures import record_execution_outcome
+
+    # Synchronous filesystem reads (a handful of specific top-level
+    # files -- package.json/lockfiles/requirements.txt/pyproject.toml,
+    # not a repo walk, so far cheaper than the structural producers
+    # AnujB's fix above addresses) -- off the event loop for the same
+    # reason regardless: consistency with that fix, not a measured
+    # stall of its own.
+    procedure_scope: dict = {}
+    facts = await asyncio.to_thread(probe_environment, repo_path)
+    lang = next((f.object for f in facts if f.predicate == "language"), None)
+    if lang:
+        procedure_scope = {"language": [lang]}
+
+    matched_procedures = await find_applicable_procedures(
+        pool, goal_embedding=query_vec, current_scope=procedure_scope, limit=1,
+    )
+    matched_procedure = matched_procedures[0] if matched_procedures else None
+    if matched_procedure:
+        steps_text = "\n".join(
+            f"  {i+1}. {s.get('action', s)}" for i, s in enumerate(matched_procedure.get("steps") or [])
+        )
+        procedure_block = (
+            f"Relevant learned procedure found (verified, {matched_procedure['verification_stats'].get('successes', 0)} "
+            f"prior successes): {matched_procedure['name']}\n{steps_text}"
+        )
+        memory_block = f"{memory_block}\n\n{procedure_block}" if memory_block else procedure_block
+
     sandbox = RepoSandbox(repo_path)
     client = OpenAI(
         max_retries=0,
@@ -557,6 +603,18 @@ async def solve_task(task_description: str, repo_path: str, ctx: Context,
     # server shares, same reasoning TasksExtension's own docstring gives
     # for why this tool needs task-augmentation in the first place.
     run_result = await asyncio.to_thread(agent.run, instance, sandbox, "mcp_solve_task", memory_block)
+
+    # Real success proxy, reusing run_graph_experiment.py's own
+    # invalid-run marker ("api_error") in the negative direction: the
+    # agent explicitly signalled done AND actually produced a diff --
+    # "finished" alone can mean "gave up cleanly", not "succeeded".
+    if matched_procedure:
+        success = run_result.stop_reason == "finished" and bool(run_result.patch)
+        await record_execution_outcome(
+            pool, procedure_row_id=str(matched_procedure["id"]), success=success,
+            context_key=os.path.basename(os.path.abspath(repo_path)),
+            steps_used=len(run_result.tool_calls),
+        )
 
     lines = [
         f"stop_reason: {run_result.stop_reason}",
