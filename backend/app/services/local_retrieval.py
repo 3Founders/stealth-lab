@@ -39,18 +39,27 @@ HONEST SCOPE for this pass -- real vs caller-supplied signals:
   name a real producer or don't build the check.
 - **Recent commits**: REAL, same data source (`commit_made`
   observations), used as a soft rank signal per the table above.
-- **Relevant symbols / import-derived deps / related tests /
-  name-resolved call-graph edges**: NOT computed by this module.
-  call_graph.py's reachability data is host-side/filesystem-based (real
-  repo checkout, tree-sitter) with zero DB coupling -- correctly so,
-  matching this repo's existing module boundaries (retrieval.py has no
-  filesystem access, call_graph.py has no DB access). Wiring a live
-  repo checkout's call-graph output INTO a retrieval call is real,
-  separate integration work for whichever caller has that checkout
-  (the HTN engine, once ticket 15's deferred scheduler-strategy piece
-  gives it one) -- not invented here. These fields exist on
-  StructuralContext as real, usable slots a caller CAN populate; this
-  pass does not itself populate them.
+- **Related tests**: REAL, wired to app/services/related_tests.py
+  (`related_test_files_for_many`) -- naming-convention discovery,
+  checked against a real repo checkout on disk, same host-side/
+  filesystem-only discipline as call_graph.py. A caller with a real
+  checkout should call it to populate StructuralContext.related_tests
+  rather than leaving it empty; this module still doesn't compute it
+  automatically inside retrieve_local_first() itself, since that would
+  require accepting a repo root parameter this DB-service module
+  doesn't otherwise need -- the caller passes the already-derived list
+  in, same pattern as open_files/recent_commit_files.
+- **Relevant symbols / import-derived deps / name-resolved call-graph
+  edges**: NOT computed by this module. call_graph.py's reachability
+  data is host-side/filesystem-based (real repo checkout, tree-sitter)
+  with zero DB coupling -- correctly so, matching this repo's existing
+  module boundaries (retrieval.py has no filesystem access, call_graph.py
+  has no DB access). Wiring a live repo checkout's call-graph output
+  INTO a retrieval call is real, separate integration work for whichever
+  caller has that checkout (the HTN engine, once ticket 15's deferred
+  scheduler-strategy piece gives it one) -- not invented here. These
+  fields exist on StructuralContext as real, usable slots a caller CAN
+  populate; this pass does not itself populate them.
 - **Recent failures**: NOT wired -- failure_capture.py records
   failures, but linking a failure to "which files are relevant to
   avoid repeating it" needs real design (which fields, what
@@ -98,7 +107,7 @@ class StructuralContext:
     open_files: list[str] = field(default_factory=list)             # FILTER, real
     relevant_symbols: list[str] = field(default_factory=list)       # FILTER, caller-supplied
     import_deps: list[str] = field(default_factory=list)            # FILTER, caller-supplied
-    related_tests: list[str] = field(default_factory=list)          # FILTER, caller-supplied
+    related_tests: list[str] = field(default_factory=list)          # FILTER, real (see related_tests.related_test_files_for_many)
     call_graph_ranked_names: list[str] = field(default_factory=list)  # RANK, caller-supplied
     recent_commit_files: list[str] = field(default_factory=list)    # RANK, real (see get_recent_commit_files)
     recent_failure_files: list[str] = field(default_factory=list)   # RANK, caller-supplied

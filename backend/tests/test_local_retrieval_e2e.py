@@ -235,3 +235,47 @@ def test_retrieve_local_first_structural_tier_outranks_semantic_in_budget_fill()
             await pool.close()
 
     asyncio.run(_run())
+
+
+def test_related_test_files_wired_end_to_end_into_structural_tier(tmp_path):
+    """Real, live confirmation that related_tests.py's output plugs
+    directly into StructuralContext.related_tests and works through the
+    full retrieve_local_first pipeline -- a real repo checkout (tmp_path
+    fixture), a real source file, a real matching test file, and a node
+    in the DB whose description names that test file, findable ONLY via
+    the related_tests structural signal (no semantic/lexical overlap
+    with the query at all)."""
+    async def _run():
+        from app.services.related_tests import related_test_files
+
+        source_dir = tmp_path / "app" / "services"
+        source_dir.mkdir(parents=True)
+        (source_dir / "widget.py").write_text("x = 1\n")
+        tests_dir = tmp_path / "tests"
+        tests_dir.mkdir()
+        (tests_dir / "test_widget.py").write_text("def test_x(): pass\n")
+
+        related = related_test_files(str(tmp_path), "app/services/widget.py")
+        assert related == ["tests/test_widget.py"]
+
+        pool = await create_pool(DATABASE_URL, min_size=1, max_size=2)
+        try:
+            await _cleanup(pool, "local-retr-test-nosession", name_prefix="local-retr-test-relwired")
+            await pool.execute(
+                "INSERT INTO task_nodes (name, description, skill_ref) "
+                "VALUES ('local-retr-test-relwired-node', "
+                "'covered by tests/test_widget.py', 's1')"
+            )
+
+            result = await retrieve_local_first(
+                pool, "completely unrelated query text",
+                embedder=FakeEmbedder(),
+                structural=StructuralContext(related_tests=related),
+            )
+            assert "local-retr-test-relwired-node" in result.text
+            assert result.tiers_included.get("structural", 0) >= 1
+        finally:
+            await _cleanup(pool, "local-retr-test-nosession", name_prefix="local-retr-test-relwired")
+            await pool.close()
+
+    asyncio.run(_run())
