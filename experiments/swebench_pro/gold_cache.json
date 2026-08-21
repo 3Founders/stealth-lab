@@ -1,0 +1,92 @@
+{
+ "instance_ansible__ansible-f327e65d11bb905ed9f15996024f857a95592629-vba6da65a0f3baefda7a058ebbd0a8dcafb8512f5": {
+  "resolved": true,
+  "status": "resolved",
+  "n_tests_parsed": 175
+ },
+ "instance_gravitational__teleport-3fa6904377c006497169945428e8197158667910-v626ec2a48416b10a88641359a169d99e935ff037": {
+  "resolved": true,
+  "status": "resolved",
+  "n_tests_parsed": 48
+ },
+ "instance_tutao__tutanota-de49d486feef842101506adf040a0f00ded59519-v10a26bfb45a064b93f4fc044a0254925037b88f1": {
+  "resolved": true,
+  "status": "resolved",
+  "n_tests_parsed": 5
+ },
+ "instance_element-hq__element-web-5e8488c2838ff4268f39db4a8cca7d74eecf5a7e-vnan": {
+  "resolved": true,
+  "status": "resolved",
+  "n_tests_parsed": 118
+ },
+ "instance_future-architect__vuls-407407d306e9431d6aa0ab566baa6e44e5ba2904": {
+  "resolved": true,
+  "status": "resolved",
+  "n_tests_parsed": 1
+ },
+ "instance_flipt-io__flipt-c12967bc73fdf02054cf3ef8498c05e25f0a18c0": {
+  "resolved": true,
+  "status": "resolved",
+  "n_tests_parsed": 1
+ },
+ "instance_internetarchive__openlibrary-dbbd9d539c6d4fd45d5be9662aa19b6d664b5137-v08d8e8889ec945ab821fb156c04c7d2e2810debb": {
+  "resolved": true,
+  "status": "resolved",
+  "n_tests_parsed": 6
+ },
+ "instance_navidrome__navidrome-27875ba2dd1673ddf8affca526b0664c12c3b98b": {
+  "resolved": true,
+  "status": "resolved",
+  "n_tests_parsed": 1
+ },
+ "instance_protonmail__webclients-08bb09914d0d37b0cd6376d4cab5b77728a43e7b": {
+  "resolved": true,
+  "status": "resolved",
+  "n_tests_parsed": 12
+ },
+ "instance_qutebrowser__qutebrowser-f91ace96223cac8161c16dd061907e138fe85111-v059c6fdc75567943479b23ebca7c07b5e9a7f34c": {
+  "resolved": true,
+  "status": "resolved",
+  "n_tests_parsed": 56
+ },
+ "instance_ansible__ansible-395e5e20fab9cad517243372fa3c3c5d9e09ab2a-v7eee2454f617569fd6889f2211f75bc02a35f9f8": {
+  "resolved": true,
+  "status": "resolved",
+  "n_tests_parsed": 8
+ },
+ "instance_flipt-io__flipt-6fe76d024ee0c50ddb09c86f4ae0bd4c208fd65f": {
+  "resolved": true,
+  "status": "resolved",
+  "n_tests_parsed": 1
+ },
+ "instance_future-architect__vuls-e6c0da61324a0c04026ffd1c031436ee2be9503a": {
+  "resolved": true,
+  "status": "resolved",
+  "n_tests_parsed": 145
+ },
+ "instance_gravitational__teleport-e6d86299a855687b21970504fbf06f52a8f80c74-vce94f93ad1030e3136852817f2423c1b3ac37bc4": {
+  "resolved": true,
+  "status": "resolved",
+  "n_tests_parsed": 769
+ },
+ "instance_internetarchive__openlibrary-25858f9f0c165df25742acf8309ce909773f0cdd-v13642507b4fc1f8d234172bf8129942da2c2ca26": {
+  "resolved": true,
+  "status": "resolved",
+  "n_tests_parsed": 39
+ },
+ "instance_element-hq__element-web-72a8f8f03b1a01bb70ef8a5bb61759416991b32c-vnan": {
+  "resolved": true,
+  "status": "resolved",
+  "n_tests_parsed": 226
+ },
+ "instance_navidrome__navidrome-8d56ec898e776e7e53e352cb9b25677975787ffc": {
+  "resolved": true,
+  "status": "resolved",
+  "n_tests_parsed": 1
+ },
+ "instance_protonmail__webclients-944adbfe06644be0789f59b78395bdd8567d8547": {
+  "resolved": true,
+  "status": "resolved",
+  "n_tests_parsed": 9
+ }
+}

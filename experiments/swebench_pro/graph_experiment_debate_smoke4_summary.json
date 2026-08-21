@@ -1,0 +1,53 @@
+{
+  "n_total": 4,
+  "n_usable": 4,
+  "n_excluded_gold": 0,
+  "arms": {
+    "no_memory": {
+      "resolved": 3,
+      "rate": 0.75,
+      "tokens": 437859,
+      "no_patch": 0,
+      "mean_tool_calls": 14.8
+    },
+    "htn_memory": {
+      "resolved": 2,
+      "rate": 0.5,
+      "tokens": 288796,
+      "no_patch": 1,
+      "mean_tool_calls": 20.2
+    }
+  },
+  "pairwise": {
+    "no_memory vs htn_memory": {
+      "discordant_first_only": 1,
+      "discordant_second_only": 0,
+      "mcnemar_p": 1.0,
+      "note": "1 discordant pairs (no_mem-only 1, mem-only 0)",
+      "token_delta_pct": -34.0
+    }
+  },
+  "mean_max_copyable_fraction": 0.0473,
+  "instances_with_any_copyable_line": 3,
+  "mean_file_recall": 0.458,
+  "mean_dir_recall": 0.541,
+  "htn": {
+    "mean_subgoals": 2.25,
+    "total_replans": 4,
+    "subgoals_done": 5,
+    "subgoals_failed": 1,
+    "decompose_failures": 0,
+    "nodes_total": 9,
+    "nodes_never_ran": 2,
+    "budget_starved_nodes": 0,
+    "instances_with_starvation": 0,
+    "starvation_rate": 0.0,
+    "node_gold_hit_rate": 1.0,
+    "gold_file_coverage": 0.667,
+    "mean_node_steps": 8.56,
+    "mean_node_tokens": 31050.6,
+    "mean_node_wall": 19.36,
+    "wasted_token_pct": 43.3,
+    "mean_achieved_parallelism": 0.56
+  }
+}
