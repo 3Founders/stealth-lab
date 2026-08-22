@@ -44,6 +44,7 @@ import asyncpg
 
 from app.services.access import AccessScope
 from app.services.embeddings import to_pgvector
+from app.services.invariants import check_invariants
 from app.services.state import project_state
 
 # Ticket 12's cold-start answer: "disable procedure retrieval entirely
@@ -131,6 +132,7 @@ async def check_hard_constraints(
     access_scope: Optional[AccessScope] = None,
     require_verified: bool = True,
     as_of: Optional[datetime] = None,
+    invariant_bindings: Optional[dict[str, float]] = None,
 ) -> ApplicabilityResult:
     """
     The non-compensatory filter cascade itself. Short-circuits on the
@@ -216,6 +218,33 @@ async def check_hard_constraints(
                 [f"precondition:subject={subject},predicate={predicate},object={expected_object}"],
             )
 
+    # Numeric invariants -- LAST in the cascade, deliberately. Two
+    # reasons, both real: (1) this is the only stage that can invoke a
+    # solver, making it the most expensive check here, and
+    # find_applicable_procedures() explicitly orders candidates
+    # cheapest-to-match-first for exactly that kind of cost reason --
+    # running it before the equality checks above would invert that; (2)
+    # it is a no-op for every procedure row that exists today (all have
+    # empty `invariants`), so it must not sit in front of checks that do
+    # real work.
+    #
+    # UNDECIDABLE IS NOT DISQUALIFYING, and that asymmetry is the whole
+    # point. At retrieval time nobody has stated an amount yet, so a
+    # procedure whose invariant references unbound quantities is the
+    # NORMAL case -- treating that as inapplicable would make every
+    # invariant-bearing procedure permanently unretrievable, which is the
+    # same "looks correct, never fires" failure V1 exists to prevent.
+    # Only a definite violation (all variables bound, relation false)
+    # disqualifies.
+    invariant_result = check_invariants(
+        procedure.get("invariants") or [], invariant_bindings or {},
+    )
+    if invariant_result.violated or invariant_result.errors:
+        return ApplicabilityResult(
+            row_id, False,
+            [f"invariant:{v}" for v in (invariant_result.violated + invariant_result.errors)],
+        )
+
     return ApplicabilityResult(row_id, True, [])
 
 
@@ -228,6 +257,7 @@ async def find_applicable_procedures(
     require_verified: bool = True,
     limit: int = 10,
     candidate_pool_size: int = 200,
+    invariant_bindings: Optional[dict[str, float]] = None,
 ) -> list[dict]:
     """
     Real ticket-12 pipeline, end to end: cold-start gate, then the
@@ -264,7 +294,7 @@ async def find_applicable_procedures(
         procedure = dict(row)
         result = await check_hard_constraints(
             pool, procedure, current_scope=current_scope, access_scope=access_scope,
-            require_verified=require_verified,
+            require_verified=require_verified, invariant_bindings=invariant_bindings,
         )
         if result.applicable:
             survivors.append(procedure)

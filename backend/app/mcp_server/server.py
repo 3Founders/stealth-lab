@@ -56,6 +56,8 @@ from app.services.embeddings import Embedder
 from app.services.knowledge_conflict import detect_and_create_conflict_trigger
 from app.services.knowledge_update import ChangeApplicationError, KnowledgeUpdater
 from app.services.local_retrieval import assemble_structural_context, retrieve_local_first
+from app.services.procedure_extraction import extract_procedure
+from app.services.procedure_extraction.evidence import AgentRunEvidenceSource
 from app.services.retrieval import HybridRetriever
 from app.services.reuse_detection import _vector_candidates
 from app.config import settings
@@ -423,10 +425,30 @@ async def propose_synthesis(trigger_id: str, ctx: Context) -> str:
     return "\n".join(lines)
 
 
+def _render_step(step) -> str:
+    """One stored procedure step, as a line for the agent's memory block.
+
+    Prefers `goal` (the generalized phrasing) over `action` (the literal
+    "Call Read (3x)") because the abstract form is what transfers to a
+    different task -- falling back to `action` for rows written before
+    steps carried a goal, and to the raw value for anything that isn't a
+    dict at all (the previous behaviour, kept).
+    """
+    if not isinstance(step, dict):
+        return str(step)
+    text = step.get("goal") or step.get("action") or str(step)
+    tools = [
+        impl.get("name") for impl in (step.get("allowed_implementations") or [])
+        if isinstance(impl, dict) and impl.get("name")
+    ]
+    return f"{text}  [tool: {', '.join(tools)}]" if tools else text
+
+
 @server.tool()
 async def solve_task(task_description: str, repo_path: str, ctx: Context,
                       model: str = "gemma-4-31B-it", max_steps: int = 25,
-                      session_id: Optional[str] = None) -> str:
+                      session_id: Optional[str] = None,
+                      allow_unverified_procedures: bool = False) -> str:
     """
     Retrieval-grounded coding agent: find prior solved patterns relevant to
     this task, then run a real, sandboxed, tool-calling agent loop against
@@ -468,6 +490,19 @@ async def solve_task(task_description: str, repo_path: str, ctx: Context,
         instead (uncommitted repo state) -- lower precision than a real
         session's working set, and this tool's own doc says so rather
         than presenting it as equivalent.
+      - EXTRACTION (memory-substrate blocker #1, closed here): a run that
+        finishes with a real diff (stop_reason=="finished" and a
+        non-empty patch) is fed to extract_procedure() afterward, via
+        AgentRunEvidenceSource built from this run's own files_edited/
+        tool_calls. This is the first live caller extract_procedure() has
+        ever had outside its own tests -- a successful solve_task call now
+        can, not always will (V5/validators can still refuse), produce a
+        real procedures row. That row is NOT verified on creation
+        (verification_state defaults unverified; ticket 13's >=10
+        successes/0 failures/>=3 contexts gate still applies before
+        automatic retrieval will ever surface it) -- extraction closes the
+        write side of the loop, not the bootstrap-cold-start gap on the
+        read side (memory-substrate blocker #2, still open).
 
     SECURITY, stated plainly, not discovered later: repo_path is
     caller-controlled. RepoSandbox refuses to let edits escape repo_path
@@ -492,6 +527,16 @@ async def solve_task(task_description: str, repo_path: str, ctx: Context,
     seed the structural tier at real, session-scoped precision. Omitted
     or unknown: falls back to a git-diff seed (see STRUCTURAL CONTEXT
     above).
+    allow_unverified_procedures: default False keeps this call's procedure
+    retrieval on the production default (require_verified=True -- ticket
+    13's >=10 successes/0 failures/>=3 contexts bar, real evidence only).
+    Pass True to ALSO consider procedures this same extraction pass has
+    ever created that haven't earned that evidence yet (memory-substrate
+    blocker #2's opt-in path) -- a real, deliberate developer choice to
+    try a candidate on its own unverified merits, not a way to make
+    verification optional by default. Only affects retrieval; extraction
+    (see EXTRACTION above) always runs on a real success regardless of
+    this flag.
     """
     pool = ctx.request_context.lifespan_context["pool"]
 
@@ -572,15 +617,22 @@ async def solve_task(task_description: str, repo_path: str, ctx: Context,
 
     matched_procedures = await find_applicable_procedures(
         pool, goal_embedding=query_vec, current_scope=procedure_scope, limit=1,
+        require_verified=not allow_unverified_procedures,
     )
     matched_procedure = matched_procedures[0] if matched_procedures else None
     if matched_procedure:
         steps_text = "\n".join(
-            f"  {i+1}. {s.get('action', s)}" for i, s in enumerate(matched_procedure.get("steps") or [])
+            f"  {i+1}. {_render_step(s)}"
+            for i, s in enumerate(matched_procedure.get("steps") or [])
+        )
+        is_verified = matched_procedure.get("verification_state") == "verified"
+        status = (
+            f"verified, {matched_procedure['verification_stats'].get('successes', 0)} prior successes"
+            if is_verified
+            else "UNVERIFIED -- opted in via allow_unverified_procedures, use at your own judgment"
         )
         procedure_block = (
-            f"Relevant learned procedure found (verified, {matched_procedure['verification_stats'].get('successes', 0)} "
-            f"prior successes): {matched_procedure['name']}\n{steps_text}"
+            f"Relevant learned procedure found ({status}): {matched_procedure['name']}\n{steps_text}"
         )
         memory_block = f"{memory_block}\n\n{procedure_block}" if memory_block else procedure_block
 
@@ -608,13 +660,46 @@ async def solve_task(task_description: str, repo_path: str, ctx: Context,
     # invalid-run marker ("api_error") in the negative direction: the
     # agent explicitly signalled done AND actually produced a diff --
     # "finished" alone can mean "gave up cleanly", not "succeeded".
+    run_succeeded = run_result.stop_reason == "finished" and bool(run_result.patch)
     if matched_procedure:
-        success = run_result.stop_reason == "finished" and bool(run_result.patch)
         await record_execution_outcome(
-            pool, procedure_row_id=str(matched_procedure["id"]), success=success,
+            pool, procedure_row_id=str(matched_procedure["id"]), success=run_succeeded,
             context_key=os.path.basename(os.path.abspath(repo_path)),
             steps_used=len(run_result.tool_calls),
         )
+
+    # Procedure extraction (memory-substrate blocker #1: extract_procedure()
+    # otherwise has zero non-test callers, so nothing a developer does
+    # through this tool ever becomes a reusable procedure). Gated on the
+    # SAME success proxy as the outcome recording above -- extracting from
+    # a run that gave up or produced no diff would try to generalize from
+    # nothing; extract_procedure()'s own V5 check refuses that too, but
+    # gating here avoids the wasted derive/strategy work entirely.
+    extraction_note = None
+    if run_succeeded:
+        observations = [
+            {"observation_type": "file_touched", "label": f, "properties": {"file_path": f}}
+            for f in run_result.files_edited
+        ]
+        evidence_source = AgentRunEvidenceSource(
+            goal_text=task_description, outcome="success",
+            observations=observations, tool_sequence=run_result.tool_calls,
+            session_id=session_id, steps_used=len(run_result.tool_calls),
+        )
+        extraction = await extract_procedure(
+            pool, evidence_source, client=client, repo_root=repo_path,
+            entry_seed_files=seed_files, extractor_scope=procedure_scope,
+        )
+        if extraction.procedure_id:
+            extraction_note = (
+                f"extracted_procedure: {extraction.procedure_id} "
+                f"(extracted_by={extraction.extracted_by}, unverified until real reuse "
+                f"accrues evidence -- see should_disable_procedure_retrieval)"
+            )
+        elif extraction.validation_failures:
+            extraction_note = (
+                "extraction_skipped: " + "; ".join(extraction.validation_failures)
+            )
 
     lines = [
         f"stop_reason: {run_result.stop_reason}",
@@ -627,6 +712,8 @@ async def solve_task(task_description: str, repo_path: str, ctx: Context,
     ]
     if run_result.error:
         lines.append(f"error: {run_result.error}")
+    if extraction_note:
+        lines.append(extraction_note)
     diff = run_result.patch
     lines.append("\n--- DIFF ---\n" + diff if diff else "\n(no changes made)")
     return "\n".join(lines)

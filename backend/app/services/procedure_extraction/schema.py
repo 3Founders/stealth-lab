@@ -44,9 +44,44 @@ class ProcedureStep(BaseModel):
     "steps on the procedure is planner-neutral -- the HTN-specific
     binding (ticket 15) translates this into a concrete DAG at
     instantiation time."
+
+    Fields below `action` are the ideal specification's section-13 step
+    shape. Every one is optional/defaulted, deliberately: `{order,
+    action}` was the entire model before, so a required field here would
+    break every existing construction site (including the validator
+    tests, which all construct with exactly those two kwargs).
+
+    Only what real evidence can support is populated today --
+    `allowed_implementations` (derive.py already has the tool name in
+    StepGroup and was throwing it away into prose) and `inputs`. The
+    rest exist so filling them later is a write, not a second schema
+    migration; populating them now would mean inventing values no
+    evidence supports, which is exactly what this package's validators
+    exist to prevent.
     """
     order: int
     action: str
+
+    # Section 13's `goal` -- the ABSTRACT phrasing, where `action` stays
+    # the literal one. GroundedHybridExtractor already asks a model for
+    # exactly this phrase, so the split costs no extra call.
+    goal: Optional[str] = None
+
+    inputs: list[str] = Field(default_factory=list)
+    preconditions: list[Predicate] = Field(default_factory=list)
+
+    # Section 32: a step may be satisfied by deterministic code, a shell
+    # command, an API call, an SLM, a frontier LLM, or a human -- so this
+    # is a LIST of candidate implementations, not a bare `tool_name`
+    # string that would bake in exactly one of those. Entries are
+    # {"type": "tool", "name": "Read"} for now; richer Implementation
+    # rows (section 32's own schema) are later work.
+    allowed_implementations: list[dict] = Field(default_factory=list)
+
+    expected_outputs: list[str] = Field(default_factory=list)
+    verification: Optional[dict] = None
+    failure_policy: Optional[dict] = None
+    cost_budget: Optional[dict] = None
 
     @field_validator("action")
     @classmethod

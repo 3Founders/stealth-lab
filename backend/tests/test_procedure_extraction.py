@@ -276,3 +276,52 @@ def test_parse_abstraction_response_wrong_step_count_returns_none():
 
 def test_parse_abstraction_response_missing_label_returns_none():
     assert _parse_abstraction_response("just some text with no labels", expected_step_count=1) is None
+
+
+# --- section-13 step fields: tool binding survives extraction ---
+
+def test_literal_steps_carry_tool_name_structurally():
+    """The regression this whole change exists to prevent: StepGroup has
+    always known the tool name, and literal_steps_from_skeleton used to
+    discard it into prose, so every real agent run lost its tool-call
+    shape at extraction time."""
+    ev = ProcedureEvidence(
+        goal_text="g", outcome="success",
+        tool_sequence=["Read", "Read", "Edit"],
+    )
+    steps = literal_steps_from_skeleton(derive_step_skeleton(ev))
+    assert [s.allowed_implementations for s in steps] == [
+        [{"type": "tool", "name": "Read"}],
+        [{"type": "tool", "name": "Edit"}],
+    ]
+    # `action` must be byte-identical to the old behaviour -- it is what
+    # existing readers consume.
+    assert [s.action for s in steps] == ["Call Read (2x)", "Call Edit"]
+
+
+def test_new_step_fields_default_without_being_supplied():
+    """Every section-13 field is optional: the two-kwarg construction
+    used by every pre-existing call site and test must keep working."""
+    step = ProcedureStep(order=1, action="do the thing")
+    assert step.goal is None
+    assert step.inputs == []
+    assert step.preconditions == []
+    assert step.allowed_implementations == []
+    assert step.expected_outputs == []
+    assert step.verification is None
+    assert step.failure_policy is None
+    assert step.cost_budget is None
+
+
+def test_v3_scans_slot_placeholders_outside_action():
+    """A {slot} in goal/inputs is as real as one in action -- scanning
+    only `action` would let an undeclared slot escape silently."""
+    proc = ExtractedProcedure(
+        name="n", goal="g", capability_statement="abstract capability",
+        steps=[ProcedureStep(order=1, action="do it", goal="edit {undeclared_slot}")],
+    )
+    failures = validate(proc, _ctx())
+    assert any(
+        f.rule == "V3_slot_integrity" and "undeclared_slot" in f.message
+        for f in failures
+    )

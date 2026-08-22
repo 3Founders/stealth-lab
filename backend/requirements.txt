@@ -35,3 +35,4 @@ scipy
 tree-sitter-language-pack
 uvicorn
 voyageai
+z3-solver

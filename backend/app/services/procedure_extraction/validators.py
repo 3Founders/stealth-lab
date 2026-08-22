@@ -96,7 +96,13 @@ def v3_slot_integrity(proc: ExtractedProcedure, ctx: ValidationContext) -> list[
     declared = {s.name for s in proc.slots}
     referenced: set[str] = set()
     for step in proc.steps:
-        referenced |= {tok.strip("{}") for tok in _extract_braces(step.action)}
+        # Every string-bearing field, not just `action`. A {slot}
+        # placeholder is equally real inside a step's goal or its
+        # inputs, and scanning only `action` would let an undeclared slot
+        # through silently -- the exact failure this rule exists to
+        # catch, just via a field that was added later.
+        for text in _step_texts(step):
+            referenced |= {tok.strip("{}") for tok in _extract_braces(text)}
 
     for name in referenced - declared:
         failures.append(ValidationFailure(
@@ -117,6 +123,22 @@ def v3_slot_integrity(proc: ExtractedProcedure, ctx: ValidationContext) -> list[
                 f"extractor's allowed_binders {sorted(ctx.allowed_binders)}",
             ))
     return failures
+
+
+def _step_texts(step) -> list[str]:
+    """Every free-text string on a step that could carry a {slot}
+    placeholder. Values inside allowed_implementations are included
+    because a tool argument is exactly where a bound slot would appear
+    once steps carry real tool bindings."""
+    texts = [step.action]
+    if step.goal:
+        texts.append(step.goal)
+    texts.extend(step.inputs)
+    texts.extend(step.expected_outputs)
+    for impl in step.allowed_implementations:
+        if isinstance(impl, dict):
+            texts.extend(str(v) for v in impl.values() if isinstance(v, str))
+    return texts
 
 
 def _extract_braces(text: str) -> list[str]:

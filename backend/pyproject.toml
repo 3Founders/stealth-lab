@@ -32,6 +32,11 @@ dependencies = [
     "tree-sitter-language-pack",
     "uvicorn",
     "voyageai",
+    # app/services/invariants.py -- numeric procedure invariants
+    # (procedures.invariants) are decided with a real solver rather than
+    # eval(); see that module's docstring for why the applicability
+    # cascade's equality-only precondition check cannot express them.
+    "z3-solver",
 ]
 
 [build-system]

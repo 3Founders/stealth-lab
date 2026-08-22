@@ -124,11 +124,20 @@ def literal_steps_from_skeleton(skeleton: list[StepGroup]) -> list[ProcedureStep
     step per tool-group, phrased mechanically. No LLM, no ambiguity, and
     -- because it names the literal tool, not an abstracted action --
     it deliberately reads as exactly what it is: a replay skeleton, not
-    a generalized method."""
+    a generalized method.
+
+    `allowed_implementations` carries the tool name STRUCTURALLY, not
+    only inside the prose. That name was always here (StepGroup.tool_name)
+    and was previously discarded into the f-string below -- so every real
+    agent run produced a genuine tool-call sequence whose shape was lost
+    the moment it was extracted. `action` is left byte-identical to what
+    it was, since it is what every current reader consumes.
+    """
     return [
         ProcedureStep(
             order=i,
             action=f"Call {g.tool_name}" + (f" ({g.count}x)" if g.count > 1 else ""),
+            allowed_implementations=[{"type": "tool", "name": g.tool_name}],
         )
         for i, g in enumerate(skeleton, start=1)
     ]

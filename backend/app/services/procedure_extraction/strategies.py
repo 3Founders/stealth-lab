@@ -164,9 +164,24 @@ class GroundedHybridExtractor(ExtractionStrategy):
             )
         capability_statement, step_phrases = parsed
 
+        # _parse_abstraction_response has already enforced
+        # len(step_phrases) == len(skeleton), so this zip cannot silently
+        # truncate -- a mismatch became a parse failure above.
+        #
+        # Both halves are kept, where before only the abstract phrase
+        # survived: `goal` is the model's generalized phrasing (section
+        # 13's own field), `action` is the literal mechanical description
+        # derived from the real tool log, and allowed_implementations
+        # names the tool structurally. Readers that want the abstract
+        # form should prefer `goal` and fall back to `action`.
         steps = [
-            ProcedureStep(order=i, action=phrase)
-            for i, phrase in enumerate(step_phrases, start=1)
+            ProcedureStep(
+                order=i,
+                action=f"Call {g.tool_name}" + (f" ({g.count}x)" if g.count > 1 else ""),
+                goal=phrase,
+                allowed_implementations=[{"type": "tool", "name": g.tool_name}],
+            )
+            for i, (g, phrase) in enumerate(zip(skeleton, step_phrases), start=1)
         ]
 
         return ExtractedProcedure(
