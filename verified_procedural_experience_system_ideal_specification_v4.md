@@ -60,6 +60,24 @@ Task, TaskGraph, ChangeSet, Review
 Policy, Permission, User / Agent
 ```
 
+Every Entity must have scope as an argument. This is the single authoritative
+definition -- each entity's own schema carries its own `scope` field (§5, §7,
+§11, §12, §13, §15, §22, §24); there is no central scope table.
+
+```yaml
+Scope (on every entity):
+  type:
+    global | organization | team | project | repository |
+    branch | user | session | task
+  entity_id: string | null   # what the type points at, when applicable
+```
+
+Rules:
+
+- An entity without an explicit scope is malformed; default is never implicit-global.
+- Scope participates in retrieval filtering (§27), locality ordering (§28),
+permissions (§33), and TMS propagation (§20) identically for every entity type.
+
 
 
 ## 4. Events, Traces and Episodes
@@ -77,6 +95,10 @@ Smallest immutable record of something that happened.
   "actor_id": "agent_7",
   "timestamp": "...",
   "environment_id": "repo_42",
+  "scope": {
+    "type": "repository",
+    "entity_id": "repo_42"
+  },
   "input": {},
   "output": {},
   "status": "success",
@@ -125,6 +147,10 @@ An interpretation of events, tied to its source.
     "subject": "pydantic"
   },
   "source_events": ["event_1", "event_2"],
+  "scope": {
+    "type": "repository",
+    "entity_id": "repo_42"
+  },
   "confidence": 0.92,
   "created_by": "extractor_v3",
   "observed_at": "..."
@@ -134,6 +160,10 @@ An interpretation of events, tied to its source.
 Sources: deterministic extraction, tool/domain parsers, model interpretation, human input.
 
 Observations are revisable and are **not automatically truth**.
+
+A revision is a first-class change, not a silent overwrite: it goes through a
+ChangeSet (§19), and every claim with `derived_from` → this observation is
+re-flagged into the dependency queue for re-evaluation (§20).
 
 ## 6. Claim Graph
 
@@ -176,7 +206,6 @@ Claim ─────────supports─────► Claim
 Claim ─────────supersedes───► Claim
 Claim ─────────refines──────► Claim
 Claim ─────────generalizes──► Claim
-Claim ─────────specializes──► Claim
 
 Claim ─────────about────────► Entity
 Claim ─────────applies_to───► Entity
@@ -250,6 +279,9 @@ Claim:
   provenance:
     created_by: SourceRef
     created_at: datetime
+  
+  required_claims:
+    claims: [claim_ids]  
 
   permissions:
     owner_id: string
@@ -402,6 +434,11 @@ Evidence:
     score: float
     method: string
   independence_group: string
+  scope:
+    type:
+      global | organization | team | project | repository |
+      branch | user | session | task
+    entity_id: string | null
   created_at: datetime
 ```
 
@@ -468,6 +505,12 @@ A **procedure** is a reusable, parameterized way to achieve an outcome under def
 Procedure:
   id: string
   version: integer
+
+  scope:
+    type:
+      global | organization | team | project | repository |
+      branch | user | session | task
+    entity_id: string | null
 
   goal:
     description: string
@@ -539,16 +582,14 @@ Procedure:
     time: number | null
     money: number | null
 
-  capability:
-    capability_id: string
+  trust score:
+    score: int
 
   dependencies:
-    claims: [ClaimRef]
     procedures: [ProcedureRef]
-    tools: [ToolRef]
+    Entity: [EntityRef]
 
-  permissions:
-    policy_id: string
+  auth: (something)
 
   created_at: datetime
 ```
@@ -622,6 +663,12 @@ It is the concrete, executable form of a Procedure for one task.
 ExecutionPlan:
   id: string
 
+  scope:
+    type:
+      global | organization | team | project | repository |
+      branch | user | session | task
+    entity_id: string | null
+
   procedure:
     id: string
     version: integer
@@ -674,29 +721,11 @@ The plan is task-specific and references the immutable Procedure version rather 
 
 and procedure should inherently be related with Execution plan
 
-## 16. Applicability
-
-Applicability asks:
-
-> Does this procedure fit the current situation?
-
-Results:
-
-```text
-applicable
-probably_applicable
-uncertain
-not_applicable
-unsafe
-```
-
-Based on explicit conditions, not semantic similarity alone.
-
-## 17. Capability
+## 16. Capability
 
 Capability asks:
 
-> How reliably can this procedure/implementation achieve its required outcome under stated conditions?
+> How reliably can this implementation achieve its required outcome under stated conditions?
 
 Conceptually:
 
@@ -706,65 +735,40 @@ P(required outcome | state, procedure, implementation)
 
 Conditional on task, state, environment, inputs, implementation and constraints.
 
-Suggested levels:
-
-```text
-0 Unknown
-1 Observed
-2 Reproduced
-3 Validated
-4 Generalized
-5 Trusted
-```
-
 Capability can decrease after failures or environment changes.
 
-## 18. Verification
+## 18. Search
+
+Procedure, and Implementation need to be graded sperately, and there needs to be some non-trivial decay linked with where the failure/error was. 
+
+## 19. Versioning and ChangeSets
+
+There are exactly two mutability classes, and every entity belongs to one of them:
 
 ```text
-A Structural
-B Output
-C Test
-D Independent reproduction
-E Real-world outcome
+VERSIONED-MUTABLE                    HISTORICAL APPEND-ONLY
+(change only via ChangeSet)          (never edited, never deleted)
+  Claim                                Event / Trace
+  Procedure (+ steps)                  Execution / Outcome
+  Implementation                       Artifact
+  ApplicabilityRule                    Review
+  Observation                          Evidence record
+  State
+  Policy / Permission
 ```
 
-Use the strongest available verification.
+A change to anything on the left creates a new version; nothing is overwritten in place.
+A record on the right can never be corrected -- a mistake there is fixed by appending a
+new record that references or supersedes it, not by editing history.
 
-## 19. Procedure Lifecycle
-
-```text
-Candidate
-→ Proposed
-→ Tested
-→ Verified
-→ Reusable
-→ Generalized
-→ Trusted
-```
-
-Failures can cause:
+When a versioned object changes:
 
 ```text
-Trusted
-→ Degraded
-→ Restricted
-→ Stale
-→ Retired
-```
-
-Never silently overwrite history.
-
-## 20. Versioning and ChangeSets
-
-Claims, procedures, applicability rules and implementations are immutable versions.
-
-```text
-P(v1)
+X(v1)
  ↓
 ChangeSet
  ↓
-P(v2)
+X(v2)
 ```
 
 ```json
@@ -773,28 +777,40 @@ P(v2)
   "author": "agent_7",
   "changes": [
     {"operation": "invalidate", "target": "claim_42"},
+    {"operation": "revise", "target": "observation_17"},
     {"operation": "create_version", "target": "procedure_8"}
   ],
   "reason": "...",
-  "evidence": [],
   "review_status": "pending"
 }
 ```
 
 
 
-## 21. Truth Maintenance / Update Propagation
+## 20. Truth Maintenance / Update Propagation
+
+Any change to a versioned object can trigger propagation -- not only claims:
 
 ```text
-Claim A changes
-   ↓
-dependent claims
-   ↓
-dependent procedures
-   ↓
-dependent implementations/routes
-   ↓
-re-evaluate affected objects
+any versioned change
+   ├── Claim superseded / retracted
+   ├── Observation revised            → re-flag derived claims
+   ├── Procedure new version          → re-check plans, routes, capability stats
+   ├── Implementation changed         → re-grade capability, re-route
+   ├── ApplicabilityRule changed      → re-evaluate matching procedures
+   └── Source reliability changed     → re-weight all evidence from that source
+        ↓
+indexed dependency queue (dependents of the changed object)
+        ↓
+re-evaluate affected objects only
+```
+
+Example fan-outs:
+
+```text
+Claim A changes        → dependent claims → dependent procedures → implementations/routes
+Observation O revised  → claims with derived_from(O) → their dependents
+Evidence E retracted   → claims supported_by(E) → status/belief recomputation
 ```
 
 Results:
@@ -818,6 +834,10 @@ An Execution is the actual run of an ExecutionPlan.
 {
   "id": "execution_123",
   "execution_plan_id": "plan_91",
+  "scope": {
+    "type": "repository",
+    "entity_id": "repo_42"
+  },
   "procedure_version": "procedure_42:v7",
   "state_id": "state_99",
   "implementation_id": "slm_4",
@@ -858,6 +878,10 @@ Task
 Predictable nodes can use deterministic code, cached results, small models, specialized models and verified procedures.
 
 Uncertain/high-risk nodes use stronger reasoning or human approval.
+
+Every task node inherits `scope` from its ExecutionPlan (§15); a node may narrow
+it further (e.g. repository-level plan, one high-risk node gated to user-scope
+approval). Nodes never widen scope beyond their plan.
 
 ## 25. Reuse Decision
 
@@ -901,37 +925,7 @@ Sources may include Claude Code, Cursor, IDEs, browser agents, API agents, enter
 
 The substrate must not depend on one vendor.
 
-## 27. Why Traces Preserve Models and Tools
-
-Capability depends on implementation.
-
-Two executions can differ because of:
-
-```text
-model
-tool
-tool version
-environment
-permissions
-```
-
-Therefore:
-
-```text
-Procedure
- ↓
-ExecutionPlan
- ↓
-Execution
- ↓
-Model + Tools + Environment
- ↓
-Outcome
-```
-
-is required to learn which implementation actually demonstrated capability.
-
-## 28. Retrieval
+## 27. Retrieval
 
 ```text
 Current state
@@ -955,21 +949,10 @@ risk
 
 Retrieval is candidate generation, not the final reuse decision.
 
-## 29. Global vs Local Knowledge
+## 28. Global vs Local Knowledge
 
-Scopes:
-
-```text
-global
-organization
-team
-project
-repository
-branch
-user
-session
-task
-```
+Scope itself is defined per-entity (§3) -- this section only fixes how scope
+levels are ordered when retrieving.
 
 Preferred lookup:
 
@@ -1058,8 +1041,6 @@ The graph stores **relationships and IDs**; large content stays in appropriate s
 8. Version extraction models.
 9. Keep graph edges controlled.
 10. Store large payloads outside the graph.
-
-
 
 ## 33. Privacy and Sharing
 
@@ -1224,7 +1205,7 @@ POST /changesets/:id/reject
 4. Every procedure has applicability conditions.
 5. Every capability has a defined task and evaluation criterion.
 6. Every claim has provenance.
-7. Every knowledge change creates a version/change record.
+7. Every change to a versioned object (claim, procedure, implementation, applicability rule, observation, state) creates a version/change record.
 8. Invalid dependencies cannot silently leave procedures trusted.
 9. Private evidence cannot automatically become public.
 10. Failure can reduce capability.
@@ -1235,6 +1216,8 @@ POST /changesets/:id/reject
 15. Candidate extractions are distinguishable from accepted knowledge.
 16. State stores Claim references/version references, not embedded Claims.
 17. Instantiation never silently modifies the source Procedure.
+18. A revision or retraction of any versioned object enqueues its dependents for re-evaluation -- propagation is never claim-only.
+19. Historical records (events, executions, outcomes, artifacts, reviews, evidence) are append-only; correcting them means appending a superseding record.
 
 
 

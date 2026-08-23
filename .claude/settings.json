@@ -1,7 +1,9 @@
 {
   "permissions": {
     "allow": [
-      "Bash(python -c ' *)"
+      "Bash(python -c ' *)",
+      "Bash(grep -v \"\\\\.log$\")",
+      "Bash(export PYTHONUTF8=1 PYTHONIOENCODING=utf-8)"
     ]
   }
 }

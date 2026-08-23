@@ -21,7 +21,9 @@ Two deliberate choices:
 """
 from __future__ import annotations
 
+import hashlib
 import logging
+import threading
 from typing import Literal, Optional, Sequence
 
 from app.config import settings
@@ -29,6 +31,34 @@ from app.config import settings
 log = logging.getLogger(__name__)
 
 InputType = Literal["document", "query"]
+
+# Cross-call embedding cache, keyed by (model, dim, task_type, text-hash).
+# tau2 runs simulations on ThreadPoolExecutor threads and each substrate
+# call bridges through its own asyncio.run(), so this is touched from many
+# threads -- every access goes through the lock. Concurrent agents search
+# overlapping topics; without the cache each identical query re-spends
+# quota from a single 30K-TPM free-tier key. Bounded FIFO eviction keeps
+# memory at ~80MB worst case.
+_EMBED_CACHE: dict[str, list[float]] = {}
+_EMBED_CACHE_ORDER: list[str] = []
+_EMBED_CACHE_LOCK = threading.Lock()
+_EMBED_CACHE_MAX = 20000
+
+
+def _cache_key(model: str, dim: int, task_type: str, text: str) -> str:
+    digest = hashlib.sha256(
+        f"{model}|{dim}|{task_type}|".encode("utf-8") + text.encode("utf-8")
+    ).hexdigest()
+    return f"{model}:{dim}:{task_type}:{digest}"
+
+
+def _cache_put(key: str, vector: list[float]) -> None:
+    with _EMBED_CACHE_LOCK:
+        if key not in _EMBED_CACHE:
+            _EMBED_CACHE_ORDER.append(key)
+            while len(_EMBED_CACHE_ORDER) > _EMBED_CACHE_MAX:
+                _EMBED_CACHE.pop(_EMBED_CACHE_ORDER.pop(0), None)
+        _EMBED_CACHE[key] = vector
 
 
 class EmbeddingError(Exception):
@@ -50,7 +80,126 @@ class Embedder:
 
         if settings.use_local_models:
             return await self._embed_local(texts)
-        return await self._embed_voyage(texts, input_type)
+
+        # Cache pass: serve whatever we already have, send only the misses
+        # to the provider chain.
+        task_type = "RETRIEVAL_QUERY" if input_type == "query" else "RETRIEVAL_DOCUMENT"
+        results: dict[int, list[float]] = {}
+        missing_idx: list[int] = []
+        missing_texts: list[str] = []
+        for i, text in enumerate(texts):
+            key = _cache_key(settings.gemini_embedding_model, self.dimension, task_type, text)
+            with _EMBED_CACHE_LOCK:
+                cached = _EMBED_CACHE.get(key)
+            if cached is not None:
+                results[i] = cached
+            else:
+                missing_idx.append(i)
+                missing_texts.append(text)
+
+        if missing_texts:
+            vectors = await self._embed_via_chain(missing_texts, input_type)
+            for i, text, vec in zip(missing_idx, missing_texts, vectors):
+                results[i] = vec
+                _cache_put(
+                    _cache_key(settings.gemini_embedding_model, self.dimension, task_type, text),
+                    vec,
+                )
+            if len(missing_texts) < len(texts):
+                log.info("embedding cache: %d/%d served without a provider call",
+                         len(texts) - len(missing_texts), len(texts))
+
+        return [results[i] for i in range(len(texts))]
+
+    async def _embed_via_chain(
+        self, texts: Sequence[str], input_type: InputType
+    ) -> list[list[float]]:
+        # Provider chain, first success wins. A provider that errors
+        # (missing key, rate limit, outage) falls through to the next;
+        # only when EVERY provider fails does this raise. Failover is
+        # logged loudly rather than silently absorbed -- a silent swap
+        # would change the vector space under callers' feet without
+        # anyone knowing (the migration-11 drift lesson, at runtime).
+        chain = [p.strip() for p in settings.embedding_provider_chain.split(",") if p.strip()]
+        failures: list[str] = []
+        for provider in chain:
+            try:
+                if provider == "gemini":
+                    vectors = await self._embed_gemini(texts, input_type)
+                elif provider == "voyage":
+                    vectors = await self._embed_voyage(texts, input_type)
+                else:
+                    log.warning("unknown embedding provider %r in chain -- skipped", provider)
+                    continue
+            except EmbeddingError as exc:
+                failures.append(f"{provider}: {exc}")
+                log.warning("embedding provider %s failed (%s) -- falling through",
+                            provider, str(exc)[:200])
+                continue
+            self._check_dimension(vectors, f"{provider}:{self.model}")
+            return vectors
+
+        raise EmbeddingError(
+            "all embedding providers failed -- " + " | ".join(failures)
+        )
+
+    async def _embed_gemini(
+        self, texts: Sequence[str], input_type: InputType
+    ) -> list[list[float]]:
+        """
+        Google gemini-embedding-001 via google-genai. Free tier is 100 RPM /
+        30K TPM / 1K RPD per key, and task_type maps 1:1 onto this module's
+        input_type distinction. MRL truncation to the schema's VECTOR(1024)
+        is done server-side via output_dimensionality.
+
+        Key rotation: GEMINI_API_KEYS (comma-separated) is tried in order
+        whenever a call fails -- a per-key quota error on one key does not
+        burn the next key's independent window. task_008 died permanently
+        in phaseJ because four concurrent simulations drained one key's
+        TPM; two keys double that ceiling.
+        """
+        from google import genai
+        from google.genai import types
+
+        keys = [
+            k.strip() for k in (settings.gemini_api_keys or "").split(",") if k.strip()
+        ]
+        if settings.gemini_api_key and settings.gemini_api_key not in keys:
+            keys.append(settings.gemini_api_key)
+        if not keys:
+            raise EmbeddingError("no Gemini API key configured")
+
+        task_type = "RETRIEVAL_QUERY" if input_type == "query" else "RETRIEVAL_DOCUMENT"
+        failures: list[str] = []
+        for i, key in enumerate(keys):
+            client = genai.Client(api_key=key)
+            try:
+                result = await client.aio.models.embed_content(
+                    model=settings.gemini_embedding_model,
+                    contents=list(texts),
+                    config=types.EmbedContentConfig(
+                        task_type=task_type,
+                        output_dimensionality=self.dimension,
+                    ),
+                )
+            except Exception as exc:  # noqa: BLE001
+                failures.append(str(exc)[:150])
+                log.warning(
+                    "gemini key %d/%d failed (%s) -- %s", i + 1, len(keys),
+                    str(exc)[:120], "rotating" if i < len(keys) - 1 else "exhausted",
+                )
+                continue
+            embeddings = getattr(result, "embeddings", None) or []
+            vectors = [list(e.values) for e in embeddings]
+            if len(vectors) != len(texts):
+                raise EmbeddingError(
+                    f"Gemini returned {len(vectors)} embeddings for {len(texts)} texts"
+                )
+            return vectors
+
+        raise EmbeddingError(
+            f"Gemini embedding failed across {len(keys)} key(s): " + " | ".join(failures)
+        )
 
     async def _embed_local(self, texts: Sequence[str]) -> list[list[float]]:
         """

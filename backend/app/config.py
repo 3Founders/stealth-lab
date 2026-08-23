@@ -52,6 +52,12 @@ class Settings(BaseSettings):
     google_api_key: Optional[str] = None
 
     voyage_api_key: Optional[str] = None
+    gemini_api_key: Optional[str] = None
+    # Comma-separated list of Gemini API keys, rotated in order when a key
+    # hits its quota (429). Two free-tier keys double the effective TPM
+    # ceiling -- task_008 died in phaseJ precisely because four concurrent
+    # simulations exhausted a single key's 30K tokens/minute mid-sweep.
+    gemini_api_keys: Optional[str] = None
 
     # --- Local model provider (development / unblocked testing) ---
     # Any OpenAI-compatible local server (Ollama, LM Studio, llama.cpp's
@@ -131,6 +137,14 @@ class Settings(BaseSettings):
                                             # honest limit as gpt-oss-120b had.
     embedding_model: str = "voyage-3-large"
     embedding_dimension: int = 1024  # must match VECTOR(n) in 01_ontology.sql
+
+    # Provider chain for embeddings -- tried in order, first success wins.
+    # "gemini" needs GEMINI_API_KEY; "voyage" needs VOYAGE_API_KEY. A
+    # provider that fails (missing key, 429, outage) falls through to the
+    # next instead of starving callers -- the exact failure mode that took
+    # down substrate_search mid-phaseH when Voyage's 3-RPM free tier ran dry.
+    embedding_provider_chain: str = "gemini,voyage"
+    gemini_embedding_model: str = "gemini-embedding-001"
 
     # Debate parameters (Section 7).
     max_debate_rounds: int = 5
