@@ -1,0 +1,322 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Verified Procedural Experience System — Schema Map</title>
+<style>
+  :root{
+    --bg:#0f1117; --panel:#171a23; --card:#1d2130; --edge:#2a2f42;
+    --txt:#e6e9f2; --dim:#9aa3b8; --acc:#7aa2ff;
+    --v:#ffb86c; --h:#8be9a8; --d:#c792ea;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--txt);font:14px/1.55 "Segoe UI",system-ui,sans-serif}
+  header{padding:22px 28px 10px;border-bottom:1px solid var(--edge)}
+  h1{margin:0;font-size:20px;font-weight:600}
+  header p{margin:6px 0 0;color:var(--dim)}
+  .legend{display:flex;gap:18px;margin-top:10px;flex-wrap:wrap}
+  .legend span{color:var(--dim)}
+  .dot{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:6px}
+  main{display:flex;height:calc(100vh - 118px)}
+  nav{width:340px;min-width:280px;overflow-y:auto;padding:16px;border-right:1px solid var(--edge)}
+  .layer{margin-bottom:18px}
+  .layer h2{font-size:12px;letter-spacing:.12em;text-transform:uppercase;color:var(--acc);margin:0 0 8px}
+  .chip{display:block;width:100%;text-align:left;background:var(--card);border:1px solid var(--edge);
+        border-radius:8px;padding:9px 12px;margin-bottom:6px;cursor:pointer;color:var(--txt);
+        font-size:13.5px;display:flex;justify-content:space-between;align-items:center}
+  .chip:hover{border-color:var(--acc)}
+  .chip.active{border-color:var(--acc);background:#232a44}
+  .tag{font-size:10px;padding:2px 7px;border-radius:10px;font-weight:600}
+  .tag.V{background:#3a2e1b;color:var(--v)} .tag.H{background:#17301f;color:var(--h)}
+  .tag.D,.tag["D→F"]{background:#2c2140;color:var(--d)}
+  section{flex:1;overflow-y:auto;padding:26px 32px}
+  .empty{color:var(--dim);margin-top:40px}
+  h2.ent{margin:0 0 2px;font-size:22px}
+  .sub{color:var(--dim);margin-bottom:16px}
+  pre{background:var(--panel);border:1px solid var(--edge);border-radius:10px;padding:16px;
+      overflow-x:auto;font:12.5px/1.6 Consolas,"Cascadia Code",monospace}
+  h3{font-size:13px;text-transform:uppercase;letter-spacing:.1em;color:var(--acc);margin:24px 0 8px}
+  table{border-collapse:collapse;width:100%;margin-bottom:8px}
+  td{border:1px solid var(--edge);padding:7px 10px;vertical-align:top}
+  td:first-child{white-space:nowrap;width:220px;color:var(--acc)}
+  ul.cons{list-style:none;padding:0;margin:0}
+  ul.cons li{padding:6px 0;border-bottom:1px dashed var(--edge)}
+  ul.cons b{color:var(--v)}
+</style>
+</head>
+<body>
+<header>
+  <h1>Verified Procedural Experience System — Data Schemas &amp; Object Map</h1>
+  <p>Source of truth: verified_procedural_experience_system_ideal_specification_v4.md · companion to <code>schema.md</code>. Click any entity for its full schema and connections.</p>
+  <div class="legend">
+    <span><span class="dot" style="background:var(--v)"></span>[V] versioned-mutable — ChangeSet only</span>
+    <span><span class="dot" style="background:var(--h)"></span>[H] historical append-only</span>
+    <span><span class="dot" style="background:var(--d)"></span>[D] derived/transient — frozen on first reference</span>
+  </div>
+</header>
+<main>
+<nav id="nav"></nav>
+<section id="detail"><p class="empty">Select an entity from the left to see its full schema and every connection.</p></section>
+</main>
+<script>
+const DATA = {
+  Event:{layer:"Experience",cls:"H",
+    schema:`Event:
+  type: string                  # tool_call | model_response | human_action | system_event ...
+  actor_id: string              # → User/Agent
+  timestamp: datetime
+  environment_id: string
+  scope: {type, entity_id}
+  input: object
+  output: object
+  status: success | failure
+  parent_event_id: id | null
+  artifacts: [→ Artifact]
+  source: string`,
+    conns:[["Artifact","produces"],["Trace","composes into"],["Observation","interpreted as"],["User/Agent","authored by"]],
+    notes:"Smallest immutable record of something that happened. Corrections create new events."},
+  Trace:{layer:"Experience",cls:"H",
+    schema:`Trace: ordered causal event sequence for one execution.
+Preserves: ordering, parent/child relations, actor, model, tools,
+inputs/outputs, errors/retries, human intervention, final outcome,
+environment state.`,
+    conns:[["Episode","composes into"],["Execution","produced by"],["Event","sequence of"]],
+    notes:"Raw traces remain available even after higher-level objects are created."},
+  Episode:{layer:"Experience",cls:"H",
+    schema:`Episode:
+  goal: string
+  start_time / end_time: datetime
+  actor_id: string
+  environment_id: string
+  initial_state: → State
+  final_state: → State
+  trace_ids: [→ Trace]
+  outcome: → Outcome`,
+    conns:[["State","initial/final"],["Trace","contains"],["Outcome","ends with"]],
+    notes:"One bounded piece of work."},
+  Artifact:{layer:"Experience",cls:"H",
+    schema:`Artifact: immutable produced/consumed object
+(report, screenshot, file diff, test report, model output ...).`,
+    conns:[["Event","produced by"],["Observation","interpreted as"],["Evidence","content_ref"]],
+    notes:"Never edited when extraction improves — new Observations are created against the same Artifact."},
+  Observation:{layer:"Knowledge",cls:"V",
+    schema:`Observation:
+  statement: string
+  interpretation: {type, subject}
+  source_events: [→ Event]
+  scope: {type, entity_id}
+  confidence: float
+  created_by: extractor_id + version
+  observed_at: datetime`,
+    conns:[["Event","derived_from / source of"],["Claim","supports / contradicts; derived_from"],["ChangeSet","revised via"]],
+    notes:"Revisions are first-class: they go through a ChangeSet and re-flag dependent Claims via the dependency queue."},
+  Claim:{layer:"Knowledge",cls:"V",
+    schema:`Claim:
+  version: integer
+  statement: {text, language}
+  proposition:
+    type: fact | property | conditional | causal | temporal |
+          probabilistic | comparative | procedural | negative | composite
+    content: object
+  validity: {valid_from, valid_until, observed_at}
+  status: supported | disputed | uncertain | stale |
+          superseded | invalid | retracted
+  belief: {score, method, last_updated}
+  provenance: {created_by → Source, created_at}
+  required_claims: [claim_id]
+  permissions: {owner_id, visibility}`,
+    conns:[["Observation","derived_from"],["Evidence","supported by / contradicted by"],["State","referenced by"],["Entity","about / applies_to"],["ClaimFamily","grouped in"],["Claim","supersedes / refines / depends_on"],["Review","reviewed by"],["ChangeSet","mutated via"]],
+    notes:"Belief is an assessment, not probability-of-truth. Do not force every claim into subject–predicate–object."},
+  ClaimFamily:{layer:"Knowledge",cls:"V",
+    schema:`ClaimFamily: propositional-identity group.
+Relations: same_family | related_family | generalizes | specializes`,
+    conns:[["Claim","groups"]],
+    notes:"Similarity is candidate generation, not identity."},
+  State:{layer:"Knowledge",cls:"V",
+    schema:`State:
+  valid_from: datetime
+  valid_until: datetime | null
+  claims: [{claim_id, claim_version}]
+  snapshot_hash: string`,
+    conns:[["Claim","refs versions of"],["Procedure","required_state"],["ExecutionPlan","starting_state"],["Episode","initial/final state"]],
+    notes:"References, never embedded claims."},
+  Evidence:{layer:"Knowledge",cls:"H",
+    schema:`Evidence:
+  type: execution_result | observation | experiment | benchmark |
+        document | human_review | external_source | artifact | reproduction
+  source_id: → Source
+  content_ref: → Artifact | null
+  strength: {score, method}
+  independence_group: string
+  created_at: datetime`,
+    conns:[["Claim","supports / contradicts"],["Source","derived_from"],["Procedure","supported_by"],["Execution","produces"]],
+    notes:"Repeated identical evidence from the same source does not count as independent evidence."},
+  Source:{layer:"Knowledge",cls:"V",
+    schema:`Source: origin registry
+(agent execution, human action, document, database, API, test,
+benchmark, community review, external research, sensor, system event).
+Reliability tracked separately from claim confidence.`,
+    conns:[["Evidence","originates"],["Claim","sourced_from"],["Observation","created_by"]],
+    notes:""},
+  Review:{layer:"Knowledge",cls:"H",
+    schema:`Review:
+  reviewer: → User/Agent
+  position: support | reject | challenge | reproduce | boundary_note
+  reason: string
+  evidence: [→ Evidence]
+  independence: string`,
+    conns:[["Claim","reviews"],["Procedure","reviews"],["ChangeSet","approves"]],
+    notes:"Model agreement alone never constitutes peer review."},
+  Procedure:{layer:"Procedure",cls:"V",
+    schema:`Procedure:
+  version: integer
+  goal: {description, expected_outcome}
+  inputs: [{name, type, required}]
+  required_state: {claims: [...]}
+  preconditions: [{type: claim_check|tool_check|
+                   environment_check|custom_check, definition}]
+  steps:                        # planner-neutral — NO scheduling edges here
+    - {id, action, inputs, depends_on[],
+       preconditions[], implementation_ids[]}
+  branches: [{condition, next_steps[]}]
+  required_capabilities: [...]
+  required_tools: [tool_id]
+  expected_effects / postconditions / verification /
+  known_failures / failure_conditions / cost`,
+    conns:[["Implementation","realized by"],["ApplicabilityRule","gated by"],["Capability","graded on"],["Evidence","supported_by"],["Claim","requires"],["State","produces"],["ExecutionPlan","instantiated into"]],
+    notes:"A parameterized way of achieving an outcome under stated conditions, backed by evidence, with known failure boundaries."},
+  Implementation:{layer:"Procedure",cls:"V",
+    schema:`Implementation:
+  procedure_id: → Procedure
+  type: deterministic_code | shell | api | rule | lookup |
+        slm | frontier_llm | human | procedure_ref
+  model: string | null
+  requirements: []
+  cost: object
+  latency: object`,
+    conns:[["Procedure","implements"],["TaskNode","selected into"],["Capability","graded on"]],
+    notes:"A prompt may be one implementation; the procedure exists independently of the model."},
+  ApplicabilityRule:{layer:"Procedure",cls:"V",
+    schema:`ApplicabilityRule:
+  conditions: [{claim, value}]
+  exceptions: []`,
+    conns:[["Procedure","gates"],["Claim","conditions reference"]],
+    notes:"Verdicts: applicable | probably_applicable | uncertain | not_applicable | unsafe — non-compensatory: one violated hard constraint disqualifies regardless of similarity."},
+  Capability:{layer:"Procedure",cls:"D",
+    schema:`Capability = P(required outcome | state, procedure, implementation)
+Levels: 0 unknown → 1 observed → 2 reproduced → 3 validated
+        → 4 generalized → 5 trusted
+Moves both directions; decreases on failure or dependency change.`,
+    conns:[["Implementation","grades"],["Procedure","grades"],["Outcome","computed from"]],
+    notes:"Computed, never authored. Conditional on task, state, environment, inputs, implementation, constraints."},
+  ExecutionPlan:{layer:"Execution",cls:"D→F",
+    schema:`ExecutionPlan:
+  procedure: {id, version}
+  task: {description}
+  parameters: object
+  starting_state: → State
+  resolved_claims: [{claim_id, version}]
+  selected_branches: []
+  task_graph: → TaskGraph
+  implementations: {step_id → implementation_id}
+  safety_check: passed | failed | requires_review
+  verification_plan: object`,
+    conns:[["Procedure","instantiates"],["TaskGraph","contains"],["Implementation","selects"],["Execution","runs into"]],
+    notes:"Compiled instantiation of one procedure for one task under one starting state. Frozen once executed."},
+  TaskGraph:{layer:"Execution",cls:"D→F",
+    schema:`TaskNode:
+  step_ref: {procedure_id, version, order}
+  parameters: object
+  node_class: predictable | uncertain | high-risk
+  implementation_id: → Implementation
+  cost_budget: object
+  verification_gate: object
+  deps: [node_ids]          # scheduling edges exist ONLY here`,
+    conns:[["ExecutionPlan","contained in"],["ProcedureStep","instantiates"],["Implementation","bound per node"]],
+    notes:"Nodes inherit plan scope; may narrow, never widen. Changed inputs mean regenerate, never edit."},
+  Execution:{layer:"Execution",cls:"H",
+    schema:`Execution:
+  execution_plan_id: → ExecutionPlan
+  procedure_version: procedure_id:vN     # exact version, always recorded
+  state_id: → State
+  implementation_id: → Implementation
+  parameters: object
+  task_graph_id: → TaskGraph
+  trace_id: → Trace
+  outcome: → Outcome`,
+    conns:[["ExecutionPlan","runs"],["Trace","produces"],["Outcome","produces"],["Evidence","produces"]],
+    notes:"Outcomes must be independently distinguishable from model self-reports."},
+  Outcome:{layer:"Execution",cls:"H",
+    schema:`Outcome:
+  status: success | failure
+  score: float
+  criteria: [{metric, value, required}]
+  human_intervention: boolean`,
+    conns:[["Execution","result of"],["Capability","feeds"],["Episode","terminates"]],
+    notes:"Success based on explicit success predicate where possible."},
+  ChangeSet:{layer:"Governance",cls:"H",
+    schema:`ChangeSet:
+  author: → User/Agent
+  changes: [{operation: invalidate | revise | create_version, target}]
+  reason: string
+  evidence: [→ Evidence]
+  review_status: pending | approved | rejected`,
+    conns:[["Claim/Procedure/Implementation/ApplicabilityRule/Observation","mutates"],["Review","approved by"]],
+    notes:"All mutations to any [V] object happen through ChangeSets."},
+  Policy:{layer:"Governance",cls:"V",
+    schema:`Policy: versioned behavioral rules
+(privacy boundaries, approval requirements, publication controls).
+Policies participate in applicability and execution gating.`,
+    conns:[["Procedure","gates"],["Execution","gates"]],
+    notes:""},
+  Permission:{layer:"Governance",cls:"V",
+    schema:`Permission:
+  owner_id: → User/Agent
+  visibility: private | team | organization | community | global
+  access_policy / sharing_policy / retention_policy`,
+    conns:[["Claim","scopes"],["Procedure","scopes"],["Evidence","scopes"],["User/Agent","owned by"]],
+    notes:"Private evidence can never automatically become public."},
+  "User / Agent":{layer:"Governance",cls:"",
+    schema:`User/Agent: actor identity.
+Authors Events, ChangeSets, Reviews; owns Permissions.
+A procedure never grants more authority than its invoking user has.`,
+    conns:[["Event","authors"],["ChangeSet","authors"],["Review","authors"],["Permission","owns"]],
+    notes:""},
+  "Dependency Index":{layer:"Governance",cls:"",
+    schema:`Dependency Index: typed edge index
+(depends_on, derived_from, supported_by, requires)
+powering selective TMS fan-out.`,
+    conns:[["Claim","fan-out target"],["Procedure","fan-out target"],["Implementation","fan-out target"]],
+    notes:"Any supersede/retract/revise on a [V] object enqueues dependents for re-evaluation — propagation is never claim-only."}
+};
+
+const LAYERS = ["Experience","Knowledge","Procedure","Execution","Governance"];
+const nav = document.getElementById("nav");
+LAYERS.forEach(L => {
+  const div = document.createElement("div"); div.className = "layer";
+  const h = document.createElement("h2"); h.textContent = L + " Layer"; div.appendChild(h);
+  Object.entries(DATA).filter(([k,v])=>v.layer===L).forEach(([name,e])=>{
+    const b = document.createElement("button"); b.className="chip"; b.dataset.name=name;
+    const cls = e.cls==="D→F" ? "D" : e.cls;
+    b.innerHTML = `<span>${name}</span>` + (e.cls?`<span class="tag ${cls}">${e.cls}</span>`:"");
+    b.onclick = ()=>show(name,b);
+    div.appendChild(b);
+  });
+  nav.appendChild(div);
+});
+function show(name, btn){
+  document.querySelectorAll(".chip").forEach(c=>c.classList.remove("active"));
+  btn.classList.add("active");
+  const e = DATA[name];
+  const rows = e.conns.map(([t,l])=>`<tr><td>${t}</td><td>${l}</td></tr>`).join("");
+  document.getElementById("detail").innerHTML =
+    `<h2 class="ent">${name}</h2>
+     <div class="sub">${e.layer} Layer${e.cls?" · ["+e.cls+"]":""}</div>
+     <pre>${e.schema.replace(/&/g,"&amp;").replace(/</g,"&lt;")}</pre>
+     <h3>Notes</h3><p>${e.notes||"—"}</p>
+     <h3>Connections</h3>
+     <table>${rows||"<tr><td>—</td></tr>"}</table>`;
+}
+</script>
+</body>
+</html>
