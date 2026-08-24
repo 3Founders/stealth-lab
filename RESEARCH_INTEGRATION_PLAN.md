@@ -1,0 +1,81 @@
+# Research Integration Plan — Papers → StealthLab
+
+Compiled Aug 23, 2026. Workflow: websearch (market/vendor/pain-point) + arXiv/S2/OpenAlex via webfetch → this synthesis.
+Thesis: nobody has combined **verified procedural memory** + **layered world models** + **memory-aware RL credit assignment** — the pieces published separately within the last 60 days. Assembling them is product roadmap, paper, and moat at once.
+
+---
+
+## Theme A — Make memory an RL component, not a lookup
+
+
+| Paper                     | Takeaway                                                                                                                                  | Repo target                                                                                                           |
+| ------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
+| MolMem (arXiv:2604.12237) | Dual-memory in RL loop: static exemplars (cold-start grounding) + evolving skill memory distilled from successes; dense step-wise rewards | `method_library.py`: add evolving layer fed by trajectory outcomes                                                    |
+| ADRS (arXiv:2608.03223)   | Rescore trajectory tokens conditioned on task-matched procedural skills; return-associated TVA gate                                       | `_method_score` (`htn_agent.py:1487`, currently `NotImplementedError`): implement as return-associated value function |
+| SDAR (arXiv:2605.15155)   | Skill-conditioned guidance as *gated* auxiliary objective on GRPO backbone; naive versions destabilize                                    | Gate retrieval-augmented scoring so imperfect retrievals can't poison training                                        |
+
+
+
+
+## Theme B — Layered world models replace LLM-in-the-loop
+
+
+| Paper                           | Takeaway                                                                                                                                        | Repo target                                                                                                             |
+| ------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| GATS (arXiv:2607.08894)         | L1 exact symbolic match → L2 stats from execution logs → L3 LLM fallback ⇒ zero-LLM planning, 100% vs ReAct 23.9%                               | `retrieval_mixins.py`: three-tier lookup before generative fallback                                                     |
+| WorldEvolver (arXiv:2606.30639) | Episodic memory (real transitions) + semantic memory (rules mined from prediction–observation mismatch) + selective foresight confidence gating | Provenance/success-criteria records double as the mismatch log; gate predictions by confidence before context injection |
+| EnvACE (arXiv:2608.06197)       | "World rehearsal": agent plays own environment; test-time private rehearsal pre-execution; validated on τ²-bench                                | `stealthlab_bridge.py`: rehearsal hook — predict DB effect, then commit                                                 |
+
+
+
+
+## Theme C — Scope-aware sharing = contestation layer validated
+
+- FedWorld (arXiv:2608.01561): federates abstract transition rules across agents; classifies each **shared / cluster-specific / private / unresolved** via supporting-vs-contradicting evidence; reduces negative transfer on τ-bench.
+- Our differentiation: resolution by *execution* (deterministic benchmarks), not peer vote.
+- Product mapping: the evidence registry's scoping semantics = FedWorld's classification, hardened with lifecycle states (active/superseded/retired).
+
+
+
+## Theme D — Trajectory hygiene before distillation
+
+
+| Paper                       | Takeaway                                                                                                                | Repo target                                                                                              |
+| --------------------------- | ----------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
+| CLEANER (arXiv:2601.15141)  | Retrospectively replace failures with successful self-corrections during collection; ⅓ training steps for same accuracy | Procedure-extraction pipeline: purify traces first (fixes RIGHT_FILE_wrong_fix pollution of the library) |
+| TRIAL (arXiv:2608.07371)    | Hindsight-conditioned turn-aligned scoring; WebShop 56.4→75.2% on Qwen3-1.7B                                            | Credit assignment for procedure updates                                                                  |
+| EFCA (arXiv:2608.08255)     | Multi-timescale credit: immediate-effect + state-history signals from environment feedback                              | Map onto StepTracker event streams                                                                       |
+| ActFocus (arXiv:2605.14558) | "Action Bottleneck": gradient mass belongs on action tokens                                                             | Relevant when fine-tuning small models on our traces                                                     |
+
+
+
+
+## Theme E — Semantic lifting (LeCun/JEPA translated to symbolic domains)
+
+
+| Paper                              | Takeaway                                                                                                                                                         | Repo target                                                                                                       |
+| ---------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| V-JEPA 2 / 2-AC (arXiv:2506.09985) | Predict action-conditioned consequences in latent space; plan = cheap simulation (zero-shot robot pick/place from <62h interaction data)                         | Principle behind B+E: predict effects in representation space, verify before commit                               |
+| OCM (arXiv:2607.02846)             | Two executable code bases — object knowledge (Python classes) + procedure knowledge that must import it; online reflection; progressive disclosure of signatures | Adopt invariant: procedures typecheck against a typed domain schema; mirrors existing substrate_search/get design |
+| OPINE-World (arXiv:2607.01531)     | Hypothesize object vocabularies online; counterexample-guided program synthesis                                                                                  | Semantic lifter for domains without given schemas                                                                 |
+| LeCun position paper / AMI Labs    | JEPA: predict abstractions, ignore unpredictable detail; H-JEPA hierarchy for long horizons                                                                      | Framing for spec v5's semantic layer                                                                              |
+
+
+
+
+## Infra watchlist
+
+Molt (NVIDIA, PyTorch-native agentic RL framework) · ToolVerse (arXiv:2607.15660, ~400 real MCPs ≈4,500 tools as RL environments — future eval harness) · MobileRL/ADAGRPO (arXiv:2509.18119, difficulty-curriculum GRPO) · WAR (arXiv:2607.17299, rollout scheduling).
+
+## Sequenced implementation order
+
+1. **CLEANER-style purification** in extraction pipeline (Theme D) — cheapest, fixes known failure class
+2. **Three-tier lookup** (GATS) in retrieval_mixins.py — wall-clock win, aligns with tests-65% bottleneck
+3. **Rehearsal hook** (EnvACE) in bridge — trust-story feature
+4. `_method_score` **as learned value fn** (ADRS/TRIAL/EFCA) — closes the write-side loop
+5. **Object-schema typechecking** (OCM) + scope classification (FedWorld) — registry v1 semantics
+
+Each step is independently shippable and demoable; steps 1–2 land before OSS launch, 3–5 after.
+
+
+

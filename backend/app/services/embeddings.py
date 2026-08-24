@@ -22,8 +22,13 @@ Two deliberate choices:
 from __future__ import annotations
 
 import hashlib
+import json
 import logging
+import os
 import threading
+import time
+from datetime import datetime, timezone
+from pathlib import Path
 from typing import Literal, Optional, Sequence
 
 from app.config import settings
@@ -31,6 +36,92 @@ from app.config import settings
 log = logging.getLogger(__name__)
 
 InputType = Literal["document", "query"]
+
+# ---------------------------------------------------------------------------
+# Usage telemetry + cross-process TPM budget (see docs/usageapi.md).
+# Every Gemini attempt appends one JSONL line so concurrent runs (tau2
+# sweeps, backfills, ad-hoc probes) can be attributed and quota deaths can
+# be explained after the fact instead of by archaeology. The bucket is a
+# rolling-minute token budget shared across ALL processes via a small state
+# file -- it converts would-be 429s into short waits.
+# ---------------------------------------------------------------------------
+_LOG_DIR = Path(__file__).resolve().parents[2] / "logs"
+_USAGE_LOG = _LOG_DIR / "gemini_usage.jsonl"
+_BUCKET_FILE = _LOG_DIR / "gemini_bucket.json"
+
+
+def _caller_tag() -> str:
+    return os.environ.get("CALLER_TAG", "untagged")
+
+
+def _log_usage(key_idx: int, n_texts: int, est_tokens: int, ok: bool,
+               latency_ms: int, err_class: str = "") -> None:
+    if not settings.gemini_usage_log:
+        return
+    try:
+        _LOG_DIR.mkdir(parents=True, exist_ok=True)
+        rec = {
+            "ts": datetime.now(timezone.utc).isoformat(),
+            "key_idx": key_idx,
+            "n_texts": n_texts,
+            "est_tokens": est_tokens,
+            "ok": ok,
+            "latency_ms": latency_ms,
+            "caller": _caller_tag(),
+            "err_class": err_class,
+        }
+        with open(_USAGE_LOG, "a", encoding="utf-8") as fh:
+            fh.write(json.dumps(rec) + "\n")
+    except Exception:  # noqa: BLE001 -- telemetry must never break embedding
+        pass
+
+
+def _bucket_read() -> dict:
+    try:
+        raw = _BUCKET_FILE.read_text(encoding="utf-8")
+        state = json.loads(raw)
+        if isinstance(state, dict) and "start" in state and "used" in state:
+            return state
+    except Exception:  # noqa: BLE001 -- absent/corrupt state resets the window
+        pass
+    return {"start": time.time(), "used": 0}
+
+
+def _bucket_write(state: dict) -> None:
+    _BUCKET_FILE.parent.mkdir(parents=True, exist_ok=True)
+    tmp = _BUCKET_FILE.with_suffix(".tmp")
+    tmp.write_text(json.dumps(state), encoding="utf-8")
+    os.replace(tmp, _BUCKET_FILE)
+
+
+async def _bucket_acquire(est_tokens: int) -> None:
+    """Shared rolling-minute token budget across every process using this module.
+
+    Read-modify-write via temp+replace is not perfectly atomic; collisions
+    occasionally under-count, which only means an occasional real 429 --
+    handled by key rotation and voyage fallback. Bounded total wait so this
+    can never become its own hang."""
+    budget = settings.embed_tpm_budget
+    if budget <= 0 or est_tokens <= 0:
+        return
+
+    import asyncio
+
+    deadline = time.time() + 120.0
+    while True:
+        state = _bucket_read()
+        now = time.time()
+        if now - float(state["start"]) >= 60.0:
+            state = {"start": now, "used": 0}
+        if int(state["used"]) + est_tokens <= budget:
+            state["used"] = int(state["used"]) + est_tokens
+            _bucket_write(state)
+            return
+        if time.time() > deadline:
+            log.warning("embed TPM budget wait exceeded 120s -- proceeding unthrottled")
+            return
+        wait = max(0.5, min(60.0 - (now - float(state["start"])), 10.0))
+        await asyncio.sleep(wait)
 
 # Cross-call embedding cache, keyed by (model, dim, task_type, text-hash).
 # tau2 runs simulations on ThreadPoolExecutor threads and each substrate
@@ -170,9 +261,13 @@ class Embedder:
             raise EmbeddingError("no Gemini API key configured")
 
         task_type = "RETRIEVAL_QUERY" if input_type == "query" else "RETRIEVAL_DOCUMENT"
+        est_tokens = max(1, sum(len(t) // 4 for t in texts) + 8)
+        await _bucket_acquire(est_tokens)
+
         failures: list[str] = []
         for i, key in enumerate(keys):
             client = genai.Client(api_key=key)
+            t0 = time.perf_counter()
             try:
                 result = await client.aio.models.embed_content(
                     model=settings.gemini_embedding_model,
@@ -183,18 +278,25 @@ class Embedder:
                     ),
                 )
             except Exception as exc:  # noqa: BLE001
+                latency_ms = int((time.perf_counter() - t0) * 1000)
+                err_class = ("429" if ("429" in str(exc) or "RESOURCE_EXHAUSTED" in str(exc))
+                             else type(exc).__name__)
                 failures.append(str(exc)[:150])
+                _log_usage(i, len(texts), est_tokens, False, latency_ms, err_class)
                 log.warning(
                     "gemini key %d/%d failed (%s) -- %s", i + 1, len(keys),
                     str(exc)[:120], "rotating" if i < len(keys) - 1 else "exhausted",
                 )
                 continue
+            latency_ms = int((time.perf_counter() - t0) * 1000)
             embeddings = getattr(result, "embeddings", None) or []
             vectors = [list(e.values) for e in embeddings]
             if len(vectors) != len(texts):
+                _log_usage(i, len(texts), est_tokens, False, latency_ms, "count_mismatch")
                 raise EmbeddingError(
                     f"Gemini returned {len(vectors)} embeddings for {len(texts)} texts"
                 )
+            _log_usage(i, len(texts), est_tokens, True, latency_ms)
             return vectors
 
         raise EmbeddingError(

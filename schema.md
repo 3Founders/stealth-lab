@@ -11,6 +11,7 @@ Source of truth: `verified_procedural_experience_system_ideal_specification_v4.m
 ## Experience Layer
 
 ### Event `[H]`
+
 ```yaml
 Event:
   type: string                  # tool_call | model_response | human_action | system_event ...
@@ -26,11 +27,22 @@ Event:
   source: string                # e.g. claude_code, cursor, api_agent
 ```
 
+
+
+- Market/vendor/pain-point evidence → built-in websearch (+Tavily later) 
+
+- Papers & technical credibility checks → arXiv / Semantic Scholar / OpenAlex via webfetch
+
+- Perplexity-style single synthesized report → me, synthesizing across both
+
 ### Trace `[H]`
+
 Ordered, causally connected sequence of Events for one execution. Preserves ordering, parent/child relations, actor, model, tools, inputs/outputs, errors/retries, human intervention, final outcome, environment state. Raw traces remain available even after higher-level objects are created.
 
 ### Episode `[H]`
+
 One bounded piece of work.
+
 ```yaml
 Episode:
   goal: string
@@ -43,15 +55,24 @@ Episode:
   outcome: → Outcome
 ```
 
+
+
 ### Artifact `[H]`
+
 Immutable produced/consumed object: report, screenshot, file diff, test report, model output. Interpreted into Observations by extractors; never edited when extraction improves — new Observations are created against the same Artifact.
 
 ---
 
+
+
 ## Knowledge Layer
 
+
+
 ### Observation `[V]`
+
 Structured interpretation of events/artifacts.
+
 ```yaml
 Observation:
   statement: string
@@ -62,10 +83,13 @@ Observation:
   created_by: extractor_id + version
   observed_at: datetime
 ```
+
 Revisions are first-class: they go through a ChangeSet and re-flag dependent Claims via the dependency queue (§20).
 
 ### Claim `[V]`
+
 The complete knowledge object.
+
 ```yaml
 Claim:
   version: integer
@@ -82,11 +106,16 @@ Claim:
   permissions: {owner_id, visibility}
 ```
 
+
+
 ### ClaimFamily `[V]`
+
 Propositional-identity grouping across communities/domains. Relations: `same_family`, `related_family`, `generalizes`, `specializes`. Similarity is candidate generation, not identity.
 
 ### State `[V]`
+
 What is believed true at a point in time.
+
 ```yaml
 State:
   valid_from: datetime
@@ -95,8 +124,12 @@ State:
   snapshot_hash: string
 ```
 
+
+
 ### Evidence `[H]`
+
 Basis used to support or contradict claims.
+
 ```yaml
 Evidence:
   type: execution_result | observation | experiment | benchmark | document |
@@ -108,10 +141,14 @@ Evidence:
   created_at: datetime
 ```
 
+
+
 ### Source `[V]`
+
 Origin registry: agent execution, human action, document, database, API, test, benchmark, community review, external research, sensor, system event. Source reliability is represented separately from claim confidence.
 
 ### Review `[H]`
+
 ```yaml
 Review:
   reviewer: → User/Agent
@@ -120,14 +157,21 @@ Review:
   evidence: [→ Evidence]
   independence: string                      # reviewer's relation to author
 ```
+
 Model agreement alone never constitutes peer review.
 
 ---
 
+
+
 ## Procedure Layer
 
+
+
 ### Procedure `[V]`
+
 Reusable, parameterized way to achieve an outcome under defined conditions.
+
 ```yaml
 Procedure:
   version: integer
@@ -148,8 +192,12 @@ Procedure:
   cost: object
 ```
 
+
+
 ### Implementation `[V]`
+
 Executable variant satisfying a procedure (or step).
+
 ```yaml
 Implementation:
   procedure_id: → Procedure
@@ -160,17 +208,24 @@ Implementation:
   latency: object
 ```
 
+
+
 ### ApplicabilityRule `[V]`
+
 Hard constraints deciding fit — not semantic similarity.
+
 ```yaml
 ApplicabilityRule:
   conditions: [{claim, value}]
   exceptions: []
 ```
+
 Verdicts: `applicable | probably_applicable | uncertain | not_applicable | unsafe` — with evidence. Non-compensatory: one violated hard constraint disqualifies regardless of similarity score.
 
 ### Capability `[D — computed, never authored]`
+
 How reliably an implementation achieves the outcome under stated conditions.
+
 ```text
 Capability = P(required outcome | state, procedure, implementation)
 Levels: 0 unknown → 1 observed → 2 reproduced → 3 validated → 4 generalized → 5 trusted
@@ -180,10 +235,16 @@ task, state, environment, inputs, implementation, constraints.
 
 ---
 
+
+
 ## Execution Layer
 
+
+
 ### ExecutionPlan `[D → frozen at execution]`
+
 Compiled instantiation of one Procedure for one task under one starting state.
+
 ```yaml
 ExecutionPlan:
   procedure: {id, version}
@@ -198,8 +259,12 @@ ExecutionPlan:
   verification_plan: object
 ```
 
+
+
 ### TaskGraph / TaskNode `[D → frozen at execution]`
+
 The only place scheduling is legal.
+
 ```yaml
 TaskNode:
   step_ref: {procedure_id, version, order}
@@ -210,10 +275,13 @@ TaskNode:
   verification_gate: object
   deps: [node_ids]                          # scheduling edges exist ONLY here
 ```
+
 Nodes inherit plan scope; may narrow it, never widen it. Changed inputs mean regenerate a new DAG, never edit one.
 
 ### Execution `[H]`
+
 Actual run of an ExecutionPlan.
+
 ```yaml
 Execution:
   execution_plan_id: → ExecutionPlan
@@ -226,7 +294,10 @@ Execution:
   outcome: → Outcome
 ```
 
+
+
 ### Outcome `[H]`
+
 ```yaml
 Outcome:
   status: success | failure
@@ -234,14 +305,21 @@ Outcome:
   criteria: [{metric, value, required}]     # explicit success predicate where possible
   human_intervention: boolean
 ```
+
 Outcomes must be independently distinguishable from model self-reports.
 
 ---
 
+
+
 ## Governance Layer
 
+
+
 ### ChangeSet `[H record of a V-mutation]`
+
 All mutations to any `[V]` object happen through ChangeSets.
+
 ```yaml
 ChangeSet:
   author: → User/Agent
@@ -251,19 +329,27 @@ ChangeSet:
   review_status: pending | approved | rejected
 ```
 
+
+
 ### Policy `[V]`
+
 Versioned behavioral rules: privacy boundaries, approval requirements, publication controls. Policies participate in applicability and execution gating.
 
 ### Permission `[V]`
+
 On every versioned object: `{owner_id, visibility: private|team|organization|community|global, access_policy, sharing_policy, retention_policy}`. Private evidence can never automatically become public.
 
 ### User / Agent
+
 Actor identity. Authors Events, ChangeSets, Reviews; owns Permissions. A procedure never grants more authority than its invoking user has.
 
 ### Dependency Index
+
 Typed edge index (`depends_on`, `derived_from`, `supported_by`, `requires`) powering selective TMS fan-out: any supersede/retract/revise on a `[V]` object enqueues dependents for re-evaluation — propagation is never claim-only.
 
 ---
+
+
 
 ## Connection Map
 
@@ -360,3 +446,6 @@ flowchart TD
         DEP -.-> IMP
     end
 ```
+
+
+

@@ -11,3 +11,4 @@ experiments/after/__pycache__backend/.env
 # excluding it.
 .claude/traces/
 .claude/settings.local.json
+backend/logs/

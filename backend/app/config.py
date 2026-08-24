@@ -145,6 +145,12 @@ class Settings(BaseSettings):
     # down substrate_search mid-phaseH when Voyage's 3-RPM free tier ran dry.
     embedding_provider_chain: str = "gemini,voyage"
     gemini_embedding_model: str = "gemini-embedding-001"
+    # Shared cross-process TPM budget for Gemini embed calls -- all callers
+    # (tau2 sweeps, backfills, smoke tests) draw from one rolling-minute
+    # window kept in backend/logs/gemini_bucket.json. Default leaves ~17%
+    # headroom under the free tier's 30K tokens/min ceiling. 0 disables.
+    embed_tpm_budget: int = 25000
+    gemini_usage_log: bool = True
 
     # Debate parameters (Section 7).
     max_debate_rounds: int = 5
