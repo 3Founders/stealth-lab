@@ -16,3 +16,6 @@ backend/logs/
 # Python bytecode
 __pycache__/
 *.pyc
+
+# env files (any location)
+.env

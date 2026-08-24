@@ -1,56 +1,76 @@
-# Build Coordination Board — Bands 1/3/P parallel execution
+# Build Coordination Board — multi-lane parallel execution (worktree edition)
 
-Two-agent split modeled on the τ³ campaign protocol: strict file ownership, zero
-overlap, claims before work. Either agent may hold either lane long-term; lanes are
-defined by FILES, not by identity.
+**Run mode: one git worktree per lane, one agent instance per worktree, this main
+checkout = integrator/reviewer.** Lanes push `lane/<name>` branches; the integrator
+runs the full suite on main and merges green branches. File ownership is absolute —
+a lane that edits outside its paths gets its commit reverted, no discussion.
+
+## Worktrees
+
+```powershell
+git worktree add ..\sl-core-a  -b lane/core-a  origin/main
+git worktree add ..\sl-core-b  -b lane/core-b  origin/main
+git worktree add ..\sl-measure -b lane/measure origin/main
+git worktree add ..\sl-research -b lane/research origin/main
+# per worktree needing pytest: python -m venv backend\.venv; pip install -r requirements.txt
+```
 
 ## Lanes
 
-### Lane CORE (default: Chaitanya's ox-alpha)
-Owns: `backend/db/**` · `backend/app/**` · `backend/tests/**`
-Current queue (in order):
-1. `[ ] claimed @2026-08-24 — ox-alpha (CORE)` **1.7** Persist ExecutionPlan/TaskGraph `[D→frozen]` tables; bind executions
-   to exact plan versions (Appendix C rows #1/#2/#17 proving tests). One-way door —
-   highest priority in the repo.
-2. `[ ]` **Real-DB migration verification**: apply full chain (01→22) on a disposable
-   Postgres via `scripts/migrate.py`; paste engine output. Static text tests are not
-   enough for CHECK constraints / `ALTER TYPE ADD VALUE`.
-3. `[ ]` **1.8** Extraction correctness bundle: precondition relevance filter, V6
-   authoring-time validator, z3 off event loop + solver timeout, memoized
-   `project_state()`, tenant-scoped cold-start gate.
-4. `[ ]` Band 1 exit-criteria sweep + request review from reviewer agent.
+### Lane CORE-A — storage & plans (owns `backend/db/**`, `backend/app/execution/**`, `backend/app/models/**`)
+1. `[ ] claimed @2026-08-24 — ox-alpha (Chaitanya, CORE-A)` **1.7** Persist ExecutionPlan/TaskGraph `[D→frozen]`; bind executions to exact
+   plan versions (Appendix C #1/#2/#17 proving tests in same change). One-way door.
+2. `[ ]` Real-DB migration chain verification (01→22+own) on disposable Postgres;
+   paste engine output.
+3. `[ ]` Band 1 exit-criteria sweep; request integrator review.
 
-Rules: sole author of any new migration files. Never edit `experiments/harness/**`.
+### Lane CORE-B — extraction & gating (owns `backend/app/services/procedure_extraction/**`, `invariants.py`, `applicability.py`, `precondition_gate.py`, `state.py`)
+1. `[ ]` **1.8a** Precondition relevance filter (derive gates only load-bearing facts).
+2. `[ ]` **1.8b** V6 authoring-time invariant validator + z3 off event loop w/ timeout.
+3. `[ ]` **1.8c** Memoized `project_state()` in applicability cascade; tenant-scoped
+   cold-start gate.
+Rule: NO new migrations (schema unchanged); no edits outside owned paths.
 
-### Lane MEASURE+SHIP (default: reviewer ox-alpha instance)
-Owns: `experiments/harness/**` (new) · `packaging/**` (new) · `.scratch/build-board.md`
-Current queue (in order):
-1. `[ ]` **Harness skeleton** (`experiments/harness/`): adapt the three-arm pattern
-   from `experiments/swebench_pro/run_graph_experiment.py`; arms A/B/C per spec §40;
-   synthetic fixtures only until CORE lands 1.7 — no backend file may be modified.
-2. `[ ]` **Scoreboard script**: pass-rate/cost/false-reuse/stale-refusal table +
-   power-analysis footer (discordant pairs printed beside every p-value).
-3. `[ ]` **P1 packaging**: installable package wrapping `trace_collector` +
-   `mcp_server`. Import-only dependency on `backend.app` — read-only, never edits.
-4. `[ ]` Backend hooks discovered to be missing (e.g. latency timers inside
-   `retrieval.py`) → **do not implement**; file a `CORE-request` claim below.
+### Lane MEASURE (owns `experiments/harness/**`)
+1. `[ ]` §40 harness skeleton adapted from `experiments/swebench_pro/run_graph_experiment.py`;
+   arms A/B/C; synthetic fixtures only until CORE-A lands 1.7.
+2. `[ ]` Scoreboard script: pass-rate/cost/false-reuse/stale-refusal + power-analysis
+   footer (discordant pairs beside every p-value).
 
-Rules: never creates migrations; never modifies `backend/**`; reads freely.
+### Lane RESEARCH (owns `.scratch/research/**`, updates to `RESEARCH_INTEGRATION_PLAN.md`)
+Tooling: `research_exa.py` at repo root (key lives in `backend/.env` as EXA_API_KEY —
+never committed). Protocol per founder: market/vendor/pain-point evidence via Exa web
+search; technical credibility checks via arXiv / Semantic Scholar / OpenAlex (webfetch);
+single synthesized reports into `.scratch/research/`.
+1. `[ ]` Execute open verification tickets in RESEARCH_INTEGRATION_PLAN.md
+   (P-M3 leaderboard movement · P-B1 GATS/WorldEvolver/EnvACE numbers · P-C1 FedWorld
+   mechanics · P-I1 Molt/ToolVerse/MobileRL maturity).
+2. `[ ]` Competitive sweep: Mem0 / Letta / Zep-Graphiti / HippoRAG / AWM — what they
+   ship vs our trust spine; file deltas as board notes.
+3. `[ ]` τ-Knowledge ceiling re-check (arXiv:2603.04370) before harness baselines freeze.
+
+### Lane SHIP (owns `packaging/**`) — activates after CORE-A merges 1.7
+1. `[ ]` Installable package wrapping `trace_collector` + `mcp_server`.
+
+## Integrator (= reviewer instance, main checkout)
+- Watches for `lane/*` branch pushes; rebases lane onto origin/main when stale.
+- Runs full suite on the merge candidate; merges green, rejects red with notes here.
+- Sole writer of ROADMAP.md checkbox updates and review files.
 
 ## Shared rules
+- **Claims**: claim your task line (`- [ ] claimed @ts — name`) before starting; mark
+  `[x] done @ts — branch` after. One claimant per task.
+- **Branches**: lanes commit to their `lane/*` branch only; rebase onto origin/main
+  before signaling done. Never push to main directly from a worktree. Never force-push.
+- **Commit prefix**: `core-a:` / `core-b:` / `measure:` / `research:` / `ship:`.
+- **Migrations**: CORE-A exclusively. Others needing schema → request below.
+- **Docs**: spec v4 / schema.md frozen post-Band-0 (board notes only).
+  BAND0_DECISIONS.md founder-owned. ROADMAP checkboxes = integrator.
+- **Session end**: merged/claimed state updated here, or blocking question in Log with
+  numbered options + proposed default.
 
-- **Claims**: write `- [ ] claimed @timestamp — agent` on a task line before starting;
-  move to `[x] done @timestamp — commit` after merge. One claimant per task.
-- **Git**: `git pull --rebase origin main` immediately before every push; expect
-  rejection, rebase, retry. Never force-push. Commit prefix = lane tag
-  (`core:` / `measure:` / `ship:`).
-- **Migrations**: Lane CORE exclusively. MEASURE+SHIP needing schema changes files a
-  request; CORE schedules it.
-- **Docs**: `ROADMAP.md` checkboxes updated by CORE only. `BAND0_DECISIONS.md` is
-  founder-owned; both agents read rulings, neither writes them. Spec v4 / schema.md
-  frozen post-Band-0 — discrepancies get board notes, not silent edits.
-- **Session end**: merged commits with pytest output in the message, or an open
-  blocking question written here.
+## Cross-lane requests
+(none yet)
 
 ## Founder dependencies (blocking nothing currently)
 
@@ -61,4 +81,4 @@ Rules: never creates migrations; never modifies `backend/**`; reads freely.
 
 ## Log
 
-- (initial board created)
+- Board rewritten for worktree multi-lane mode (4 lanes + integrator).
