@@ -77,5 +77,41 @@ Molt (NVIDIA, PyTorch-native agentic RL framework) · ToolVerse (arXiv:2607.1566
 
 Each step is independently shippable and demoable; steps 1–2 land before OSS launch, 3–5 after.
 
+---
+
+## Research Prompts
+
+Methodology tags: `[web]` = built-in websearch (market/vendor/pain-point) · `[papers]` = arXiv / Semantic Scholar / OpenAlex via webfetch · `[exa]` = Exa deep-crawl where plain search underdelivers · synthesis = single report across both, produced in-session, never written to the repo without approval.
+
+### Cross-cutting market prompts
+- P-M1 `[web]` — "agent memory RL fine-tuning startups funding 2026 self-improving agents production deployments pain points"
+- P-M2 `[web]` — "LLM agent reliability enterprise procurement requirements verification audit trail world model simulation trust"
+- P-M3 `[web]` — "tau-bench tau2-bench leaderboard movement 2026 which scaffolds improved most memory components"
+
+### Theme A — Memory as RL component
+- P-A1 `[papers]` — Verify MolMem (2604.12237), ADRS (2608.03223), SDAR (2605.15155): fetch abstracts; confirm dual-memory architecture, return-associated skill scoring, gated auxiliary objectives; extract benchmark deltas and model sizes.
+- P-A2 `[exa]` — Find any production system already shipping evolving skill memory inside an RL loop (not papers — deployed systems, changelogs, blog posts).
+
+### Theme B — Layered world models
+- P-B1 `[papers]` — Verify GATS (2607.08894) three-tier lookup numbers (100% vs ReAct 23.9%), WorldEvolver (2606.30639) mismatch-mining mechanism, EnvACE (2608.06197) τ²-bench rehearsal results.
+- P-B2 `[web]` — "world model simulation agent pre-execution validation enterprise trust cost reduction" — who is selling prediction-before-commit?
+
+### Theme C — Scope-aware sharing
+- P-C1 `[papers]` — Verify FedWorld (2608.01561): shared/cluster-specific/private/unresolved classification mechanics; negative-transfer reduction size on τ-bench.
+- P-C2 `[web]` — "federated agent knowledge sharing negative transfer multi-tenant procedural memory" — competitive scan; anyone productizing scoping semantics?
+
+### Theme D — Trajectory hygiene
+- P-D1 `[papers]` — Verify CLEANER (2601.15141) ⅓-steps claim and its failure-replacement criterion; TRIAL (2608.07371) hindsight scoring on WebShop; EFCA multi-timescale credit.
+- P-D2 `[web]` — "agent trajectory data quality cleaning pipeline commercial tooling" — is hygiene being sold as a product yet?
+
+### Theme E — Semantic lifting
+- P-E1 `[papers]` — Verify OCM (2607.02846) typed-schema/procedure-import invariant; OPINE-World hypothesis-synthesis loop; V-JEPA 2 action-conditioned latent planning.
+- P-E2 `[exa]` — Locate JEPA-inspired *symbolic* domain work beyond robotics (code agents, API agents) published after V-JEPA 2.
+
+### Infra watchlist
+- P-I1 `[papers+web]` — Molt framework maturity; ToolVerse MCP-as-environment coverage vs our τ-integration; MobileRL curriculum applicability to procedure learning.
+
+Execution order: P-A1/P-B1/P-C1/P-D1/P-E1 first (credibility gates everything else); market prompts run in parallel pairs; exa prompts only if [web] results are thin.
+
 
 
