@@ -4,7 +4,7 @@ Source of truth: `verified_procedural_experience_system_ideal_specification_v4.m
 
 **Mutability classes:** `[V]` versioned-mutable (change only via ChangeSet) · `[H]` historical append-only (never edited; corrections append a superseding record) · `[D]` derived/transient (regenerated, then frozen on first reference)
 
-**Universal fields:** every entity carries `id` and `scope{type: global|organization|team|project|repository|branch|user|session|task, entity_id}`. No entity is ever implicit-global.
+**Universal fields:** every entity carries `id` and `scope{type: global|organization|team|project|repository|branch|user|session|task|entity, entity_id}`. No entity is ever implicit-global.
 
 ---
 
@@ -138,6 +138,10 @@ Evidence:
   content_ref: → Artifact | null
   strength: {score, method}
   independence_group: string                # same-group evidence never counts as independent
+  failure_class:                            # §36 six causes + false_reuse; null until a failure
+    procedure_wrong | implementation_wrong | environment_changed |
+    input_abnormal | verification_wrong | external_failure |
+    false_reuse | null
   created_at: datetime
 ```
 
@@ -190,6 +194,15 @@ Procedure:
   known_failures: [...]
   failure_conditions: [...]
   cost: object
+  # lifecycle / trust — mirrors backend/db/20_procedure_extraction.sql
+  lifecycle: candidate | proposed | tested | verified | reusable | generalized |
+             trusted | degraded | restricted | stale | retired
+  status: active | quarantined | superseded
+  verification_state: unverified | candidate | verified
+  approval_status: none | proposed | approved | rejected
+  evidence_refs: [→ Evidence]              # what lifecycle transitions stand on
+  capability_statement: string             # abstract retrieval surface (V4-checked)
+  extracted_by: extractor_id@version       # §39 invariants 20–21 provenance
 ```
 
 

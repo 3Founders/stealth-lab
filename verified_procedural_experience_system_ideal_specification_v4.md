@@ -68,7 +68,7 @@ definition -- each entity's own schema carries its own `scope` field (§5, §7,
 Scope (on every entity):
   type:
     global | organization | team | project | repository |
-    branch | user | session | task
+    branch | user | session | task | entity | entity
   entity_id: string | null   # what the type points at, when applicable
 ```
 
@@ -333,7 +333,33 @@ Events → Observations → Evidence for / against → Claim evaluation
 
 Consider evidence direction, strength, independence, freshness, scope, source reliability and contradictions.
 
-`belief` is an assessment, not “probability that the claim is true.”
+`belief` is an assessment, not "probability that the claim is true."
+
+### 9b. Belief-aggregation contract
+
+Every belief aggregator, whatever its internal method, must:
+
+1. **Inputs (exactly these):** the set of live Evidence rows linked to the claim,
+   each carrying direction (supports/contradicts), strength `{score, method}`,
+   scope match to the query context, source reliability (separate from claim
+   confidence), freshness (age vs decay class §37), and `independence_group`.
+2. **Independence capping:** within one `independence_group`, evidence counts
+   once — take the strongest member or aggregate sub-linearly; identical-source
+   repetition never inflates belief.
+3. **Required invariants:**
+   - *Monotonicity*: adding independent supporting evidence never lowers belief;
+     adding contradicting evidence never raises it.
+   - *Contradiction dominance*: a single strong contradiction caps supported
+     status — belief cannot reach `supported` while an unresolved strong
+     contradiction exists.
+   - *Effective-n bounding*: belief uncertainty shrinks with the number of
+     **independent** observations, not raw row count.
+4. **Pluggable method:** the aggregation algorithm is named in
+   `belief.method` and versioned like an extractor; swapping methods is a
+   ChangeSet-visible event so belief series remain interpretable across method
+   upgrades.
+
+Until a computed aggregator ships, `method` is `uncomputed` and belief stays null.
 
 ## 10. Claim Families and Cross-Domain Similarity
 
@@ -434,10 +460,14 @@ Evidence:
     score: float
     method: string
   independence_group: string
+  failure_class:
+    procedure_wrong | implementation_wrong | environment_changed |
+    input_abnormal | verification_wrong | external_failure |
+    false_reuse | null
   scope:
     type:
       global | organization | team | project | repository |
-      branch | user | session | task
+      branch | user | session | task | entity
     entity_id: string | null
   created_at: datetime
 ```
@@ -509,7 +539,7 @@ Procedure:
   scope:
     type:
       global | organization | team | project | repository |
-      branch | user | session | task
+      branch | user | session | task | entity
     entity_id: string | null
 
   goal:
@@ -579,11 +609,12 @@ Procedure:
 
   cost:
     tokens: number | null
-    time: number | null
-    money: number | null
+  time: number | null
+  money: number | null
 
-  trust score:
-    score: int
+  # No stored trust/confidence field: confidence is derived from evidence at
+  # read time (closed decision, done.md §4.6). See Capability (§16) and the
+  # belief-aggregation contract (§9).
 
   dependencies:
     procedures: [ProcedureRef]
@@ -666,7 +697,7 @@ ExecutionPlan:
   scope:
     type:
       global | organization | team | project | repository |
-      branch | user | session | task
+      branch | user | session | task | entity
     entity_id: string | null
 
   procedure:
@@ -727,26 +758,36 @@ Capability asks:
 
 > How reliably can this implementation achieve its required outcome under stated conditions?
 
-Conceptually:
+**Single canonical representation:** capability is a continuous conditional
+probability,
 
 ```text
 P(required outcome | state, procedure, implementation)
 ```
 
-Conditional on task, state, environment, inputs, implementation and constraints.
+conditional on task, state, environment, inputs, implementation and constraints.
+The ordinal ladder (levels 0–5: unknown → observed → reproduced → validated →
+generalized → trusted) is **a banding over P**, not a separate representation:
+each level corresponds to a P interval whose bounds tighten as evidence volume
+grows (sequential-testing semantics). All routing thresholds (§23) apply to **P**
+itself; the level label is presentation, never a routing input.
 
 Capability can decrease after failures or environment changes.
 
-## 18. Search
+## 18. Search & Grading
 
-Procedure, and Implementation need to be graded sperately, and there needs to be some non-trivial decay linked with where the failure/error was. 
+Procedure and Implementation are graded **separately** — a procedure can be sound
+while its current implementation is weak, and vice versa — and grading carries a
+non-trivial, failure-location-linked decay: a failure attributable to a step,
+branch, or dependency decays the grade of the object responsible for that
+location (per the failure classification of §36), not uniformly across the graph.
 
 ## 19. Versioning and ChangeSets
 
-There are exactly two mutability classes, and every entity belongs to one of them:
+There are exactly three mutability classes, and every entity belongs to exactly one:
 
 ```text
-VERSIONED-MUTABLE                    HISTORICAL APPEND-ONLY
+VERSIONED-MUTABLE [V]                HISTORICAL APPEND-ONLY [H]
 (change only via ChangeSet)          (never edited, never deleted)
   Claim                                Event / Trace
   Procedure (+ steps)                  Execution / Outcome
@@ -755,11 +796,19 @@ VERSIONED-MUTABLE                    HISTORICAL APPEND-ONLY
   Observation                          Evidence record
   State
   Policy / Permission
+
+DERIVED-FROZEN [D→frozen]
+(regenerated at instantiation, immutable once referenced by an Execution)
+  ExecutionPlan
+  TaskGraph / TaskNode
 ```
 
-A change to anything on the left creates a new version; nothing is overwritten in place.
-A record on the right can never be corrected -- a mistake there is fixed by appending a
-new record that references or supersedes it, not by editing history.
+A change to anything `[V]` creates a new version; nothing is overwritten in place.
+A record `[H]` can never be corrected -- a mistake there is fixed by appending a
+new record that references or supersedes it, not by editing history. A `[D]`
+object is never revised: changed inputs mean regenerate via a new instantiation.
+Computed values (capability, utility) never live on `[V]` objects -- they live on
+derived companions keyed by version, so computation cannot masquerade as mutation.
 
 When a versioned object changes:
 
@@ -853,16 +902,38 @@ Always record the exact Procedure version, ExecutionPlan and implementation.
 ## 23. Capability-Based Routing
 
 Choose the cheapest implementation that meets required capability and safety.
+Thresholds apply to **P** (the continuous conditional probability of §16), never
+to the ordinal level label.
 
 ```text
-Required capability ≥ 0.90
+Required capability P ≥ 0.90
 
-Rule system   0.72 → reject
-SLM           0.93 → use
-Frontier LLM  0.97 → unnecessary
+Rule system   P=0.72 → reject
+SLM           P=0.93 → use
+Frontier LLM  P=0.97 → unnecessary
 ```
 
+## 23b. Utility & Retirement
 
+A procedure library that can only grow is a failure mode. Every reusable object
+carries a computed **utility** on its derived `[D]` companion:
+
+```text
+utility = value_generated_by_reuses
+        − (match_cost + retrieval_overhead + maintenance_cost)
+```
+
+- **Match cost**: preconditions evaluated, claims resolved, binding attempted per
+  retrieval appearance.
+- **Retrieval overhead**: context tokens the procedure injects when surfaced,
+  amortized over whether it was used.
+- **Maintenance cost**: revalidations triggered, dependency updates absorbed.
+
+**Retirement criterion**: when utility is net-negative over its evaluation window
+and no dependents reference it exclusively, the procedure is *demoted* — excluded
+from candidate sets automatically, retained in history with its evidence intact.
+Demotion is reversible: new evidence (a changed environment where the procedure
+wins again) re-admits it through the normal lifecycle. Retirement never deletes.
 
 ## 24. Task DAG
 
@@ -1084,6 +1155,26 @@ Enforce:
 
 A procedure cannot grant authority the user does not have.
 
+### 34b. Deletion vs append-only — resolution
+
+§19 forbids editing history; this section requires deletion/revocation. Both hold
+under one mechanism: **tombstone-with-payload-eviction**.
+
+- An erasure request writes a **tombstone record**: `{target id, scope, reason,
+  timestamp, payload_hash}` — appended like any `[H]` record.
+- The target's *payload* (statement, content, steps, embedded vectors) is then
+  overwritten with a null marker; identity, class, scope, and lineage edges remain
+  so referential integrity and audit survive.
+- Dependents are enqueued through the dependency queue (§20) exactly as for any
+  retraction: claims supported solely by evicted evidence re-evaluate; procedures
+  requiring an evicted claim are demoted per §23b.
+- Crypto-shredding (per-scope encryption keys destroyed on erasure) is the
+  upgrade path once field-level encryption lands (Band 5 residency); until then
+  payload-eviction is the mechanism of record.
+
+Erasure therefore satisfies the right-to-be-forgotten without violating §19:
+history remembers *that something was erased, when, and why* -- never *what*.
+
 ## 35. Peer Review
 
 Reviewers can:
@@ -1129,7 +1220,14 @@ verification wrong
 external failure
 ```
 
-
+**Structural home:** the classification is recorded as `failure_class` on the
+Evidence row produced by the failed execution (one of the six causes above, or
+`false_reuse` when a reuse attempt itself caused the failure). The class drives
+the routing: `procedure wrong` → new procedure version; `implementation wrong` →
+capability demotion on that implementation; `environment changed` → dependent
+claims into the dependency queue; `input abnormal` → applicability narrowing;
+`verification wrong` → verification-plan revision; `external failure` → no
+knowledge update. An unclassified failure is routed to `requires_review`.
 
 ## 37. Knowledge Decay / Revalidation
 
@@ -1142,6 +1240,21 @@ policy → strict
 location → very short-lived
 procedure → evidence/dependency-dependent
 ```
+
+**Mapping to decay classes and default triggers:**
+
+| knowledge category | decay class | default revalidation trigger |
+|---|---|---|
+| user preference | long-lived (D1) | contradiction; sampled |
+| policy | strict (D2) | dependency-triggered (policy version); scheduled |
+| software version / environment fact | short-lived (D3) | environment-triggered; failure-triggered |
+| location / session state | volatile (D4) | session-scoped validity only; never reused across sessions without re-confirmation |
+| procedure | evidence-dependent (D5) | failure-triggered; utility-window expiry (§23b) |
+
+Relationship to proposition types (§8): decay classes are **orthogonal to**
+proposition types — a `causal` claim about a policy (D2) decays differently from
+a `causal` claim about a runtime environment (D3). Scope carries the dominant
+signal for class assignment at ingestion; proposition type refines it.
 
 Revalidation may be:
 
@@ -1218,6 +1331,12 @@ POST /changesets/:id/reject
 17. Instantiation never silently modifies the source Procedure.
 18. A revision or retraction of any versioned object enqueues its dependents for re-evaluation -- propagation is never claim-only.
 19. Historical records (events, executions, outcomes, artifacts, reviews, evidence) are append-only; correcting them means appending a superseding record.
+20. Replayability: every derived object records extractor id + version and can be regenerated from its source traces deterministically.
+21. Extractor identity is versioned: an extraction without `{extractor_id, extractor_version}` provenance is rejected at the boundary.
+
+*(Numbering note: §17 and §21 are intentionally reserved -- the gap is historical;
+cross-references elsewhere use current numbers. §18 has been expanded from its
+fragment into a full section.)*
 
 
 
