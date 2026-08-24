@@ -1,8 +1,9 @@
 # Master Work Plan — Verified Procedural Experience System
 
 Consolidated, prioritized list of all work remaining to take this repository from its
-current state to the system described by `verified_procedural_experience_system_ideal_specification_v4.md`
-("spec v4") and `schema.md`.
+current state to **a usable product built on** the system described by
+`verified_procedural_experience_system_ideal_specification_v4.md`
+("spec v4") and `schema.md` — not merely the system itself.
 
 Companion documents:
 
@@ -27,7 +28,9 @@ Ordering logic: **paper seams first, trust-correctness before corpus growth, mea
 in parallel from day one, expensive machinery as late as possible** — consistent with
 `trial_implementation.md`'s organizing constraint (minimize migration cost; one-way doors
 first). Bands 0–2 and 5–6 are sequential; Band 3 runs continuously and gates the exit
-criteria of Bands 4–5.
+criteria of Bands 4–5. Band P (product) starts during the Band 1–2 window, ships at
+Band 3, and **gates Band 4 onward** — scale work before a working product repeats the
+exact failure mode this plan exists to correct.
 
 ---
 
@@ -211,7 +214,7 @@ Nothing else builds the instrumentation those numbers require. Also the only pat
    because of an execution outcome, traceable end-to-end"). **[S]**
 6. τ³-Banking campaign remainder under this umbrella — second domain for all of the
    above: A2 doc→procedure compiler, A3 HTN-in-conversation, A4 cascade gating, A5 RRF +
-   expansion retrieval, A6 learning-loop curve; B1–B3 paired baselines. Status per
+   expansion retrieval, A6 learning-loop curve; B1–B3 paired baselines.    Status per
    `0xAlphaplan.md`: A1 partial, Phase 1a done, A2–A6 unstarted.
    **⚠️ Blocking alarm (2026-08-24): `phaseO_skillfiles` collapsed to avg reward 0.0155**
    (192/194 runs) vs 0.417 on the identical task set in phaseK. Root-cause required
@@ -221,6 +224,39 @@ Nothing else builds the instrumentation those numbers require. Also the only pat
    our own τ-banking trajectories), cross-family judge roster, position-swap controls,
    quarterly agreement re-test (≥0.85 target). Machine-intuition verdicts are admissible
    only from calibrated judges; see reasons-cites.md § rigor-loop citations. **[M]**
+
+---
+
+## Band P — Product track *(starts in the Band 1–2 window; ships at Band 3; gates Band 4+)*
+
+*Every other band builds inward — contracts, trust, scale. This band builds outward.
+Without it, completing every band yields a trustworthy substrate nobody uses and a SOTA
+claim nobody can check. This band exists to correct a specific observed failure mode:
+plans, audits, and evidence documents accumulating while nothing user-visible shipped.*
+
+1. **P1 — One consumer, chosen now:** the Claude Code hook → collector → substrate path
+   (`trace_collector.py` already targets Claude Code; the MCP server already serves
+   external agents). Artifact: an installable package — connect an agent in minutes,
+   sessions accumulate, verified procedures return as structured blocks with their
+   evidence trail. **[M]**
+2. **P2 — One falsifiable promise:** *"your agent stops repeating solved mistakes, and
+   every reuse shows its evidence trail."* A category ("memory layer for AI") is not a
+   product; this sentence is. All onboarding, copy, and surface area serve exactly this
+   promise and nothing else. **[S]**
+3. **P3 — Acceptance test with a number:** fresh install → one day of real work →
+   ≥1 procedure reused with visible provenance, and §40 arm-C beating arm-B on the
+   user's own task mix. Until this passes, everything else is scaffolding regardless of
+   how correct it is. **[M]**
+4. **P4 — Dogfooding as the product test:** the builder's own daily agent sessions are
+   simultaneously corpus and QA. Daily use surfaces unusability faster than any test
+   suite, and FINDINGS.md already proved how much reality teaches versus assumption.
+5. **P5 — SOTA scoreboard pinned to the harness:** task success and cost vs frontier-solo
+   (arm C vs arm A), plus stale-procedure refusal rate and false-reuse rate; reviewed
+   monthly, published whatever it says — including null results. The honest-negative-
+   results discipline applies to the product claim most of all. **[S] per review**
+
+*Exit criteria:* a stranger installs unaided in <10 minutes and gets the P3 experience
+on their own work; scoreboard public and never more than one month stale.
 
 ---
 
@@ -305,13 +341,14 @@ Band 0 ──► Band 1 ──► Band 2 ──► Band 4 ──► Band 5
               │          │    ▲
               ▼          ▼    │
            Band 3 (parallel, continuous; gates 4/5 exit criteria)
+           Band P (starts in the 1–2 window; P1–P3 gate Band 4+)
 
 Band 6 sprinkled anywhere.
 ```
 
 The single biggest risk remains unchanged from `trial_implementation.md`'s own summary:
 starting Band 4 work before Band 1 lands converts every later `ATTACH PARTITION` /
-`CREATE DISTRIBUTION` back into a rewrite. Two additions to that risk statement:
+`CREATE DISTRIBUTION` back into a rewrite. Three additions to that risk statement:
 
 1. **Band 1.7 (plan persistence) joins Band 1 despite being absent from the original
    phase plan** — executions recorded without exact-plan references are unrecoverable
@@ -319,6 +356,13 @@ starting Band 4 work before Band 1 lands converts every later `ATTACH PARTITION`
 2. **Band 3.2 (the A/B/C harness) starts during the Band 1 timeframe** — every week it
    slips is another week the SOTA claim stays architecture-plus-rhetoric while published
    agent-memory work keeps moving.
+3. **Band P gates Band 4+** — infrastructure hardened for load nobody is generating is
+   the previous failure mode with better tooling. No Band 4 item starts before P3's
+   acceptance test has passed on at least one real user's workflow.
+
+End state when the bands complete: **product in users' hands, substrate hardened under
+real load, scoreboard showing exactly where the SOTA claim stands** — the only version
+of "usable SOTA" that can be true.
 
 ---
 
