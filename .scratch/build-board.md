@@ -44,9 +44,12 @@ Tooling: `research_exa.py` at repo root (key lives in `backend/.env` as EXA_API_
 never committed). Protocol per founder: market/vendor/pain-point evidence via Exa web
 search; technical credibility checks via arXiv / Semantic Scholar / OpenAlex (webfetch);
 single synthesized reports into `.scratch/research/`.
-1. `[ ]` Execute open verification tickets in RESEARCH_INTEGRATION_PLAN.md
+1. `[x]` done @2026-08-25 — research lane (this worktree)
+   Execute open verification tickets in RESEARCH_INTEGRATION_PLAN.md
    (P-M3 leaderboard movement · P-B1 GATS/WorldEvolver/EnvACE numbers · P-C1 FedWorld
    mechanics · P-I1 Molt/ToolVerse/MobileRL maturity).
+   *(All four verified/answered; reports in `.scratch/research/p-*.md`; log appended to
+   RESEARCH_INTEGRATION_PLAN.md. GATS citation corrected — 23.9% is stress-test-only.)*
 2. `[ ]` Competitive sweep: Mem0 / Letta / Zep-Graphiti / HippoRAG / AWM — what they
    ship vs our trust spine; file deltas as board notes.
 3. `[ ]` τ-Knowledge ceiling re-check (arXiv:2603.04370) before harness baselines freeze.
@@ -92,3 +95,5 @@ blocking question in the Log, continue with the next queue item.
 ## Log
 
 - Board rewritten for worktree multi-lane mode (4 lanes + integrator).
+- 2026-08-25 research lane: queue items 2 (competitive sweep → `.scratch/research/competitive-sweep-mem0-letta-zep-hipporag-awm.md`) and 3 (τ-Knowledge re-check → `.scratch/research/tau-knowledge-ceiling-recheck.md`) also done same session.
+- **Blocking question #1 (non-blocking for current work):** `EXA_API_KEY` is not present in any worktree — `backend/.env` is gitignored so it never propagated from the original checkout. Options: (a) founder pastes key into each worktree's `backend/.env` (proposed default), (b) lane falls back to built-in websearch permanently (worked fine today), (c) commit a template only.

@@ -113,5 +113,17 @@ Methodology tags: `[web]` = built-in websearch (market/vendor/pain-point) · `[p
 
 Execution order: P-A1/P-B1/P-C1/P-D1/P-E1 first (credibility gates everything else); market prompts run in parallel pairs; exa prompts only if [web] results are thin.
 
+---
+
+## Verification log (research lane)
+
+- **2026-08-25 — P-B1 CONFIRMED w/ corrections** (`.scratch/research/p-b1-gats-worldevolver-envace.md`): GATS three tiers + zero-LLM-on-covered-actions verified; ⚠ "100% vs ReAct 23.9%" conflates tables — synthetic ReAct = 64%, 23.9% is stress-test-only. WorldEvolver real title "Self-Evolving World Models for LLM Agent Planning" (ALFWorld/ScienceWorld/AgentBoard evals, not τ). EnvACE verified: τ² avg 30.0→36.7 (Qwen3-8B), TTS N=2 → 38.0; case study = invalid-write caught pre-commit; code public.
+- **2026-08-25 — P-C1 CONFIRMED** (`.scratch/research/p-c1-fedworld.md`): M1–M4 mechanics as planned + Theorem 1 protection–transfer trade-off; strict-conflict recovery +16.6 (τ) / +25.0 (ALFWorld) EM pts over naive pooling; online task success 0.512→0.624 / 0.447→0.593 under fixed controller; limitations section leaves execution-based resolution open (our wedge).
+- **2026-08-25 — P-M3 ANSWERED** (`.scratch/research/p-m3-leaderboard-movement.md`): leaderboard movement is model-driven; no memory scaffolds on official boards. τ² telecom saturating (~99% tracker rows); τ³-Banking still open (top 55.2%). Harness implication: report pass^k + disclosed user-sim; treat τ²-telecom as sanity check only.
+- **2026-08-25 — P-I1 ANSWERED** (`.scratch/research/p-i1-molt-toolverse-mobilerl.md`): Molt = real (arXiv:2607.21653, Apache-2.0, ~5 wks old, research-infra framing, 16×H100 floor) — watchlist only. ToolVerse scale claim (~400 MCPs/~4,500 tools) accurate. MobileRL ADAGRPO curriculum transfers to procedure-learning credit assignment; domains otherwise orthogonal.
+- **2026-08-25 — τ-Knowledge re-check** (`.scratch/research/tau-knowledge-ceiling-recheck.md`): paper's 25.5% pass^1 frontier ceiling is stale; official board now tops at 55.2% (Qwen 3.8 Max) — still least-saturated τ surface → keep as headroom benchmark; harness should ship pass^1+pass^3 from day one.
+- **2026-08-25 — Competitive sweep** (`.scratch/research/competitive-sweep-mem0-letta-zep-hipporag-awm.md`): Graphiti owns bi-temporal fact validity only; no vendor ships typed propositions, evidence independence groups, computed capability, or non-compensatory applicability. AWM's documented "procedural drift" failure mode = citable pain-point evidence. Zep CE deprecated Aug 2026 (migration churn).
+- **Tooling note:** `EXA_API_KEY` absent in this worktree (`backend/.env` is gitignored and didn't propagate); built-in websearch used per protocol. Key needs manual placement for future `[exa]` tickets.
+
 
 
