@@ -9,7 +9,7 @@ defined by FILES, not by identity.
 ### Lane CORE (default: Chaitanya's ox-alpha)
 Owns: `backend/db/**` · `backend/app/**` · `backend/tests/**`
 Current queue (in order):
-1. `[ ]` **1.7** Persist ExecutionPlan/TaskGraph `[D→frozen]` tables; bind executions
+1. `[ ] claimed @2026-08-24 — ox-alpha (CORE)` **1.7** Persist ExecutionPlan/TaskGraph `[D→frozen]` tables; bind executions
    to exact plan versions (Appendix C rows #1/#2/#17 proving tests). One-way door —
    highest priority in the repo.
 2. `[ ]` **Real-DB migration verification**: apply full chain (01→22) on a disposable
