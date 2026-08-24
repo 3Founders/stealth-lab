@@ -31,6 +31,34 @@ criteria of Bands 4–5.
 
 ---
 
+## Fresh-start ruling (2026-08-24)
+
+All data currently in the system is **trial-era data and is discarded by decision** —
+not migrated, not quarantined, not flagged. The append-only and provenance invariants
+(spec §19, §39) govern the system being built from the moment real ingestion begins;
+they impose no obligations on artifacts that predate it.
+
+Consequences applied throughout this document:
+
+- **No backfills of any kind.** Columns exist before data does; everything ingested
+  after the contracts land carries scope, provenance, and extractor version natively
+  (V0 gate rejects anything else).
+- **No transition machinery.** Claims are born to schema.md's shape (typed proposition,
+  status machine, belief, scope, structured SPO columns) — no dual-read over the legacy
+  JSONB layout.
+- **Former Band 2 items join the initial build**: Evidence as a first-class table,
+  universal ChangeSet coverage, capability computation. Deferring them only made sense
+  to protect legacy counters that no longer exist.
+- `trial_implementation.md`'s migration-cost ledgers therefore bind **future growth
+  only**; against an empty database every schema change is free. Its one-way-door logic
+  (scope key before volume, plan persistence before executions) matters more, not less.
+- What survives from the past is not data: the code, the empirical lessons recorded in
+  `experiments/episode_assembly/FINDINGS.md`, published experiment results, and source
+  corpora when needed (banking docs live in the vendored τ² package; fresh agent
+  sessions accumulate once the collector runs).
+
+---
+
 ## Band 0 — Spec & schema reconciliation
 
 *Paper only, ~a session. Unblocks everything below; zero code risk.*
@@ -55,23 +83,27 @@ criteria of Bands 4–5.
 *Single Postgres, ~700 procedures + small graph. Additive migrations, minutes each.
 Before any corpus grows.*
 
-1. **Characterization tests first.** Gold-set retrieval A/B harness + provenance-behavior
-   pins. Every later item in this band mutates trust machinery; freeze current behavior so
-   regressions are detected rather than argued about. *(This harness also serves Band 3.)*
-2. Provenance P0 fixes: `backend/app/onboarding/seed.py:167,179,198` hardcodes
-   `'company_ingested'` for third-party benchmark corpora; auto-created proxy nodes carry
-   `'company_debate'` before any debate ran. Seed paths pass explicit provenance; proxy
-   stamping becomes a neutral value until review completes. **[S]**
+1. **Contract tests before ingestion.** With no legacy behavior to freeze, tests assert
+   the new mechanism directly: V0 scope gate, V1–V6 validators, bi-temporal supersession,
+   replayability, plan-persistence invariants #1–2. The gold-set retrieval harness moves
+   to Band 3, where it measures the live system instead of pinning a dead corpus.
+2. Provenance as a parameter end to end — seed and extraction paths accept explicit
+   provenance (`backend/app/onboarding/seed.py` currently hardcodes `'company_ingested'`
+   for third-party corpora; proxy nodes stamp `'company_debate'` before any debate ran).
+   A mechanism-correctness fix; no repair campaign exists under the fresh-start ruling.
+   **[S]**
 3. **Scope columns on every table** — `scope_type`/`scope_entity_id` on knowledge_nodes,
    task_nodes, edges, procedures, observations, episodes, agent_traces; ingestion adapters
    reject scope-less payloads (V0 validator). §3 mandate; future shard key. 🔒 **[S–M]**
-4. Claim shape upgrade: real subject/predicate/object columns extracted alongside JSONB,
-   dual-read transition, JSONB retained; add proposition-type, status-machine, and belief
-   `{score, method}` columns per schema.md. 🔒 **[S]**
-5. UUIDv7 defaults for new rows only; existing ids untouched. Index bloat under insert
-   load otherwise guaranteed. 🔒 **[S]**
-6. Embedding provenance stamps — `embedding_model_id`, `embedding_dim`; backfill as
-   `gemini-embedding-001@1024`. Model transitions become routine instead of gambles. 🔒 **[S]**
+4. Claim shape, born correct: subject/predicate/object, proposition type, status machine,
+   belief `{score, method}`, and scope as native columns per schema.md — no dual-read
+   transition (fresh-start ruling); a JSONB field may remain solely for extractor-specific
+   extension payloads. 🔒 **[S]**
+5. UUIDv7 primary keys everywhere from birth — time-ordered, index-bloat-free under
+   insert load. 🔒 **[S]**
+6. Embedding provenance stamps — `embedding_model_id`, `embedding_dim` on every vector
+   column at table creation; no backfill needed when nothing predates them. Model
+   transitions become routine instead of gambles. 🔒 **[S]**
 7. **Persist ExecutionPlan / TaskGraph `[D→frozen]` tables and bind every execution to an
    exact plan version.** Absent from `trial_implementation.md`'s plan entirely.
    Executions recorded without plan references can never be retrofitted — the purest
@@ -82,26 +114,33 @@ Before any corpus grows.*
    disqualify their row at retrieval time); z3 off the MCP event loop with solver timeout;
    memoized `project_state()` inside the applicability cascade (kills the N+1);
    tenant-scoped cold-start gate. **[M]**
-9. Quick win pulled forward from Phase II: backfill a `synthetic` flag onto banking-seed
-   outcomes now so capability claims stop commingling simulated and real evidence ahead of
-   the full Evidence table. **[S]**
+9. Initial-build trust objects: Evidence as a first-class typed table with independence
+   groups, ChangeSet records produced by every `[V]` mutation, and capability computed
+   from outcome streams — present from day one rather than migrated to (absorbs former
+   Band 2 items 1–3; see fresh-start ruling). Synthetic-vs-real separation is native:
+   evidence rows carry their type, nothing commingles by construction. **[M]**
 
-*Exit criteria:* zero scope-less writes accepted; retrieval precision unchanged-or-better
-on the gold set; all migrations applied to a production-shaped copy in <1 hour; plan
-persistence demonstrated end-to-end.
+*Exit criteria:* zero scope-less writes accepted; V1–V6 green on every ingested row;
+plan persistence demonstrated end-to-end; the replay test regenerates derived objects
+from raw traces deterministically.
 
 ---
 
 ## Band 2 — Trust completion
 
-*Still one Postgres. Purely additive over Band 1 shapes. ≈ Milestone M1 ("close the loop").*
+*Still one Postgres. ≈ Milestone M1 ("close the loop").*
+
+*Fresh-start note: items 1–3 below are **absorbed into the initial build** (Band 1.9) —
+Evidence, ChangeSet coverage, and capability computation ship with the core mechanism.
+They remain numbered here for traceability; their acceptance criteria still apply, their
+"migration from counters/JSONB" framing no longer does.*
 
 1. Universal ChangeSet — extend `backend/app/models/change.py` reach to observations,
    procedures, implementations, applicability rules, states; observation revisions enqueue
    dependents (§20). Every `[V]` mutation produces a ChangeSet record. **[M]**
 2. Evidence as a first-class table — typed rows with independence groups; procedure
-   statistics become views over evidence, ending synthetic/real commingling (Band 1.9's
-   flag retires). This is M1's provenance join key. **[M]**
+   statistics become views over evidence rather than counters on procedure rows.
+   This is M1's provenance join key. Initial-build scope (fresh-start ruling). **[M]**
 3. Capability computation v1 — levels-as-banded-P derived from outcome streams with
    bidirectional demotion on failure; replaces raw counters as the routing input. Uses
    0.4's unified representation. **[M]**
