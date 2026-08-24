@@ -60,6 +60,8 @@ def search(query: str, n: int = 8, domain: str | None = None,
 
 
 def main() -> None:
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     ap = argparse.ArgumentParser()
     ap.add_argument("query")
     ap.add_argument("-n", type=int, default=8)
