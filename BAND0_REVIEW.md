@@ -7,6 +7,11 @@ Rubric: ROADMAP.md Band 0 + BAND0_DECISIONS.md process rules
 Five blocking fixes before Band 0 is declared done, one of them gated on a founder
 ruling you skipped past.**
 
+> **RESOLUTION LOG — reviewer applied the fixable set directly (see final section).**
+> All code/doc fixes below are landed; only the two founder rulings (D1 ratification,
+> D4 choice) remain open. Full offline suite green post-fix: **849 passed, 106 skipped,
+> 0 failed.**
+
 ## Rubric scorecard
 
 | Item | Status | Note |
@@ -107,6 +112,39 @@ message — reviewed-but-not-executed tests don't move exit criteria.
 
 ## Order of operations from here
 
-1. Founder rules D1 + ratifies/overturns D4 (blocks B4/B5 only).
-2. You land B1–B5 + nits in one commit: `Band 0 review fixes: B1-B5, nits 1-6`.
-3. Then continue Band 1 — it was otherwise next anyway.
+1. ~~Founder rules D1 + ratifies/overturns D4~~ — **still the only open items.** Until
+   then, §16/§19/§23b/§34b carry the recommended defaults, explicitly tagged
+   "pending ratification" in place.
+2. ~~You land B1–B5 + nits in one commit~~ — **done by reviewer** (see below).
+3. Band 1 continues.
+
+---
+
+## Resolution log — what the reviewer fixed (all verified by test run)
+
+| Item | Fix | Where |
+|---|---|---|
+| B1 | Deduplicated `entity` token in scope vocabulary | spec §3 |
+| B2 | Procedure trust block now mirrors the **real three-axis backend model** (`verification_state` candidate/verified/retired · `staleness` fresh/stale/revalidating · `availability` active/quarantined/disabled · `approval_status` per `extractor_review_state`) — flat invented lifecycle enum deleted | schema.md |
+| B3 | `time:`/`money:` re-nested under `cost:` | spec §13 |
+| B4 (consistency half) | Erasure carve-out sentence added to §19 so it stops contradicting §34b; §34b tagged "interim mechanism of record, pending D4 ratification". **The ruling itself remains open — founder must answer D4.** | spec §19 + §34b |
+| B5 (default half) | Concrete band table written into §16 from D1's recommended default, tagged "pending ratification". **Founder can still override the numbers.** | spec §16 |
+| Nit 1 | Provenance vocabulary canonicalized incl. `system_pending_review` — documented identically in spec §3 and schema.md header | both docs |
+| Nit 2 | `false reuse` added to §36's cause list; structural-home wording updated to match | spec §36 |
+| Nit 3 | Independence capping pinned to one rule: √n within group, effective-n = distinct groups (D2 default) | spec §9b |
+| Nit 4 | Dead `DERIVED_PROVENANCE` constant removed; regression test added asserting it stays gone | `v0_gate.py`, tests |
+| Nit 5 | Duplicate `valid_from`/`valid_until` dropped via new migration — `t_valid`/`t_invalid` are the canonical worldly-validity pair; Claim validity maps onto them, full stop | `db/22_band1_review_fixes.sql` |
+| Nit 6 | `scope_type` CHECK constraints behind the V0 gate for all seven tables (explicit per-table blocks, statically checkable) | `db/22_band1_review_fixes.sql` |
+
+**Bonus find, fixed:** Chaitanya's own `test_migration_adds_scope_columns_to_all_seven_tables`
+was **already failing before this review** — migration 21 whitespace-aligns `task_nodes`,
+so his single-space substring assertion never matched. Proof the tests had not been run
+before push. Fixed with a whitespace-tolerant regex (SQL column alignment is legal;
+the contract must survive it). Lesson stands: paste pytest output into commit messages.
+
+**New proving tests added:** scope CHECK constraints present per table (7), duplicate
+validity columns dropped (2), dead-constant regression (1).
+
+**Verification:** `cd backend && python -m pytest tests -q` → **849 passed, 106 skipped,
+0 failed** (after installing `z3-solver`, which `requirements.txt` requires but this
+machine's env lacked — pre-existing environment gap, not a code failure).

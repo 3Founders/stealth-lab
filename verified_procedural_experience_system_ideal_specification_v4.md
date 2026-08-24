@@ -68,7 +68,7 @@ definition -- each entity's own schema carries its own `scope` field (§5, §7,
 Scope (on every entity):
   type:
     global | organization | team | project | repository |
-    branch | user | session | task | entity | entity
+    branch | user | session | task | entity
   entity_id: string | null   # what the type points at, when applicable
 ```
 
@@ -76,7 +76,18 @@ Rules:
 
 - An entity without an explicit scope is malformed; default is never implicit-global.
 - Scope participates in retrieval filtering (§27), locality ordering (§28),
-permissions (§33), and TMS propagation (§20) identically for every entity type.
+  permissions (§33), and TMS propagation (§20) identically for every entity type.
+
+Provenance vocabulary (`provenance_source`, canonical — code and docs must match):
+
+```text
+company_ingested       entered from the company's own documents/records
+company_debate         produced by the debate pipeline, human-approved
+prior_library          shipped with the system as seeded corpus
+public_generated       arrived via the public/untrusted surface
+system_pending_review  created mechanically before any review ran (e.g. proxy nodes);
+                       must be re-stamped on review completion
+```
 
 
 
@@ -343,9 +354,10 @@ Every belief aggregator, whatever its internal method, must:
    each carrying direction (supports/contradicts), strength `{score, method}`,
    scope match to the query context, source reliability (separate from claim
    confidence), freshness (age vs decay class §37), and `independence_group`.
-2. **Independence capping:** within one `independence_group`, evidence counts
-   once — take the strongest member or aggregate sub-linearly; identical-source
-   repetition never inflates belief.
+2. **Independence capping:** within one `independence_group`, aggregate weight
+   grows as the square root of member count (√n), never linearly; effective n is
+   the number of distinct groups. Identical-source repetition never inflates
+   belief. *(D2 recommended default per BAND0_DECISIONS.md, pending ratification.)*
 3. **Required invariants:**
    - *Monotonicity*: adding independent supporting evidence never lowers belief;
      adding contradicting evidence never raises it.
@@ -609,8 +621,8 @@ Procedure:
 
   cost:
     tokens: number | null
-  time: number | null
-  money: number | null
+    time: number | null
+    money: number | null
 
   # No stored trust/confidence field: confidence is derived from evidence at
   # read time (closed decision, done.md §4.6). See Capability (§16) and the
@@ -772,6 +784,18 @@ each level corresponds to a P interval whose bounds tighten as evidence volume
 grows (sequential-testing semantics). All routing thresholds (§23) apply to **P**
 itself; the level label is presentation, never a routing input.
 
+Band boundaries (D1 recommended default per BAND0_DECISIONS.md — pending
+ratification):
+
+| Level | P interval | Additional gate |
+|---|---|---|
+| 0 unknown | no evidence | — |
+| 1 observed | > 0 | one recorded execution |
+| 2 reproduced | ≥ 0.50 | ≥ 2 independent executions (distinct independence groups) |
+| 3 validated | ≥ 0.70 | verification plan satisfied |
+| 4 generalized | ≥ 0.85 | holds in ≥ 2 environments |
+| 5 trusted | ≥ 0.95 | reproduction in ≥ 2 environments + completed review |
+
 Capability can decrease after failures or environment changes.
 
 ## 18. Search & Grading
@@ -809,6 +833,11 @@ new record that references or supersedes it, not by editing history. A `[D]`
 object is never revised: changed inputs mean regenerate via a new instantiation.
 Computed values (capability, utility) never live on `[V]` objects -- they live on
 derived companions keyed by version, so computation cannot masquerade as mutation.
+
+Sole erasure exception: payload fields of an `[H]` record may be nullified only
+under an appended erasure tombstone (§34b); identity, class, scope and lineage
+edges persist. *(Wording tied to the §34b mechanism of record, pending D4
+ratification -- BAND0_DECISIONS.md.)*
 
 When a versioned object changes:
 
@@ -929,11 +958,13 @@ utility = value_generated_by_reuses
   amortized over whether it was used.
 - **Maintenance cost**: revalidations triggered, dependency updates absorbed.
 
-**Retirement criterion**: when utility is net-negative over its evaluation window
-and no dependents reference it exclusively, the procedure is *demoted* — excluded
-from candidate sets automatically, retained in history with its evidence intact.
-Demotion is reversible: new evidence (a changed environment where the procedure
-wins again) re-admits it through the normal lifecycle. Retirement never deletes.
+**Retirement criterion**: utility net-negative over a trailing window of ≥ 10
+executions (or 14 days, whichever accumulates that many first), with no dependents
+referencing it exclusively → *quarantine-demote*: excluded from candidate sets
+automatically (a generalization of the existing circuit-breaker semantics),
+retained in history with its evidence intact, reinstated automatically on fresh
+contrary evidence. Retirement never deletes. *(D3 recommended default per
+BAND0_DECISIONS.md, pending ratification.)*
 
 ## 24. Task DAG
 
@@ -1158,7 +1189,9 @@ A procedure cannot grant authority the user does not have.
 ### 34b. Deletion vs append-only — resolution
 
 §19 forbids editing history; this section requires deletion/revocation. Both hold
-under one mechanism: **tombstone-with-payload-eviction**.
+under one mechanism: **tombstone-with-payload-eviction** *(interim mechanism of
+record, pending D4 ratification — BAND0_DECISIONS.md; crypto-shredding remains the
+candidate replacement)*.
 
 - An erasure request writes a **tombstone record**: `{target id, scope, reason,
   timestamp, payload_hash}` — appended like any `[H]` record.
@@ -1218,11 +1251,13 @@ environment changed
 input abnormal
 verification wrong
 external failure
+false reuse
 ```
 
 **Structural home:** the classification is recorded as `failure_class` on the
-Evidence row produced by the failed execution (one of the six causes above, or
-`false_reuse` when a reuse attempt itself caused the failure). The class drives
+Evidence row produced by the failed execution (one of the causes above, mapped to
+snake_case — `false_reuse` marks a reuse attempt itself causing the failure). The
+class drives
 the routing: `procedure wrong` → new procedure version; `implementation wrong` →
 capability demotion on that implementation; `environment changed` → dependent
 claims into the dependency queue; `input abnormal` → applicability narrowing;

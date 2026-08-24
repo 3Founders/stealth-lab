@@ -21,9 +21,6 @@ PROVENANCE_VALUES = (
     "prior_library", "system_pending_review",
 )
 
-# Derived objects must say what made them (§39 invariants 20–21).
-DERIVED_PROVENANCE = ("public_generated", "prior_library")
-
 
 class V0Violation(ValueError):
     """Raised when a payload would enter the substrate without the

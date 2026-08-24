@@ -128,7 +128,10 @@ def test_migration_adds_scope_columns_to_all_seven_tables():
     ddl = _ddl()
     for t in ("knowledge_nodes", "task_nodes", "edges", "procedures",
               "observations", "episodes", "agent_traces"):
-        assert f"ALTER TABLE {t} ADD COLUMN IF NOT EXISTS scope_type" in ddl, t
+        # whitespace-tolerant: SQL column alignment is legal, must not
+        # break the contract assertion (caught via task_nodes padding)
+        pattern = rf"ALTER\s+TABLE\s+{t}\s+ADD COLUMN IF NOT EXISTS scope_type\b"
+        assert re.search(pattern, ddl), t
 
 
 def test_migration_adds_claim_shape_columns():
@@ -152,3 +155,31 @@ def test_migration_has_no_backfill_statements():
     ddl = _ddl()
     assert "UPDATE " not in ddl.upper().replace("UPPER", ""), \
         "fresh-start ruling: migration must not contain data backfills"
+
+
+# --------------------------------------- review-fix migration static checks
+
+def _ddl22() -> str:
+    p = Path(__file__).resolve().parents[1] / "db" / "22_band1_review_fixes.sql"
+    return p.read_text(encoding="utf-8")
+
+
+def test_review_fixes_add_scope_check_constraints_for_all_seven_tables():
+    ddl = _ddl22()
+    for t in ("knowledge_nodes", "task_nodes", "edges", "procedures",
+              "observations", "episodes", "agent_traces"):
+        assert f"scope_type_chk_{t}" in ddl, t
+
+
+def test_review_fixes_drop_duplicate_validity_columns():
+    ddl = _ddl22()
+    assert "DROP COLUMN IF EXISTS valid_from" in ddl
+    assert "DROP COLUMN IF EXISTS valid_until" in ddl
+
+
+def test_v0_gate_no_dead_constants():
+    import app.services.v0_gate as gate
+    assert not hasattr(gate, "DERIVED_PROVENANCE"), (
+        "dead constant removed by review — derived rules live in "
+        "validate_provenance(derived=True), not in unused tuples"
+    )

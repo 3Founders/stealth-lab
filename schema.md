@@ -6,6 +6,8 @@ Source of truth: `verified_procedural_experience_system_ideal_specification_v4.m
 
 **Universal fields:** every entity carries `id` and `scope{type: global|organization|team|project|repository|branch|user|session|task|entity, entity_id}`. No entity is ever implicit-global.
 
+**Provenance vocabulary** (canonical, matches `provenance_source` in `db/01_ontology.sql` + migration 21): `company_ingested` (company's own records) · `company_debate` (debate-approved) · `prior_library` (shipped corpus) · `public_generated` (untrusted surface) · `system_pending_review` (mechanical, pre-review — re-stamped on review completion).
+
 ---
 
 ## Experience Layer
@@ -194,12 +196,12 @@ Procedure:
   known_failures: [...]
   failure_conditions: [...]
   cost: object
-  # lifecycle / trust — mirrors backend/db/20_procedure_extraction.sql
-  lifecycle: candidate | proposed | tested | verified | reusable | generalized |
-             trusted | degraded | restricted | stale | retired
-  status: active | quarantined | superseded
-  verification_state: unverified | candidate | verified
-  approval_status: none | proposed | approved | rejected
+  # lifecycle / trust — three orthogonal axes mirroring db/18_procedures.sql
+  # (ticket 13 deliberately rejects a single flat status enum):
+  verification_state: candidate | verified | retired      # procedure_verification_state
+  staleness: fresh | stale | revalidating                 # procedure_staleness
+  availability: active | quarantined | disabled           # procedure_availability
+  approval_status: proposed | approved | rejected | null  # extractor_review_state (db/20)
   evidence_refs: [→ Evidence]              # what lifecycle transitions stand on
   capability_statement: string             # abstract retrieval surface (V4-checked)
   extracted_by: extractor_id@version       # §39 invariants 20–21 provenance

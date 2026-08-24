@@ -12,3 +12,7 @@ experiments/after/__pycache__backend/.env
 .claude/traces/
 .claude/settings.local.json
 backend/logs/
+
+# Python bytecode
+__pycache__/
+*.pyc
