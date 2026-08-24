@@ -136,7 +136,7 @@ async def create_conflict_trigger_for_pair(
             proxy = await conn.fetchrow(
                 "INSERT INTO task_nodes (name, description, success_criteria, provenance, "
                 "t_valid, t_created, created_by) "
-                "VALUES ($1, $2, $3, 'company_debate', $4, $4, $5) RETURNING id",
+                "VALUES ($1, $2, $3, 'system_pending_review', $4, $4, $5) RETURNING id",
                 f"Reconcile: {name_a!r} vs {name_b!r}",
                 "Created for a pre-selected candidate pair (batch scan), not auto-detection.",
                 {"internal_proxy": True, "proxy_kind": "knowledge_conflict_reconciliation"},

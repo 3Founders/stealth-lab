@@ -150,8 +150,26 @@ class Onboarder:
         result.embedded = len(targets)
 
     async def seed(
-        self, spec: WorkflowSpec, created_by: str = "onboarding", embed: bool = True
+        self, spec: WorkflowSpec, created_by: str = "onboarding", embed: bool = True,
+        provenance: str = "company_ingested",
+        scope_type: str | None = None, scope_entity_id: str | None = None,
     ) -> SeedResult:
+        """Band 1.2/1.3: provenance is a parameter (was hardcoded
+        'company_ingested' — the mislabel that put third-party corpora into
+        company lineage), and the shard-key columns are populated from the
+        spec's locality signal when provided. The V0 gate runs first."""
+        from app.services.v0_gate import validate_provenance, validate_scope
+
+        validate_provenance(provenance)
+        v_scope = None
+        if scope_type or spec.knowledge:
+            # Derive a default scope from the workflow name when the caller
+            # did not pass one explicitly.
+            v_scope = validate_scope(
+                scope_type or "project",
+                scope_entity_id or spec.workflow_name,
+            )
+
         problems = spec.validate_spec()
         if problems:
             raise ValueError("invalid workflow spec:\n  - " + "\n  - ".join(problems))
@@ -163,9 +181,10 @@ class Onboarder:
                 for k in spec.knowledge:
                     row = await conn.fetchrow(
                         "INSERT INTO knowledge_nodes (tenant_id, node_type, name, properties, "
-                        "provenance, created_by) VALUES ($1, $2, $3, $4, "
-                        "'company_ingested', $5) RETURNING id",
-                        self._tenant, k.node_type, k.name, k.properties, created_by,
+                        "provenance, created_by, scope_type, scope_entity_id) "
+                        "VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id",
+                        self._tenant, k.node_type, k.name, k.properties,
+                        provenance, created_by, v_scope[0], v_scope[1],
                     )
                     result.knowledge_ids[k.key] = row["id"]
 
@@ -174,13 +193,14 @@ class Onboarder:
                         "INSERT INTO task_nodes (tenant_id, name, description, io_schema, "
                         "skill_ref, success_criteria, cost_estimate, latency_estimate_ms, "
                         "pert_optimistic_ms, pert_likely_ms, pert_pessimistic_ms, "
-                        "provenance, created_by) "
+                        "provenance, created_by, scope_type, scope_entity_id) "
                         "VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, "
-                        "'company_ingested', $12) RETURNING id",
+                        "$12, $13, $14, $15) RETURNING id",
                         self._tenant, t.name, t.description, t.io_schema,
                         t.skill_ref, t.success_criteria, t.cost_estimate,
                         t.latency_estimate_ms, t.pert_optimistic_ms, t.pert_likely_ms,
-                        t.pert_pessimistic_ms, created_by,
+                        t.pert_pessimistic_ms, provenance, created_by,
+                        v_scope[0], v_scope[1],
                     )
                     result.task_ids[t.key] = row["id"]
 
@@ -193,11 +213,12 @@ class Onboarder:
                     tid, ttable = lookup[e.target]
                     await conn.execute(
                         "INSERT INTO edges (tenant_id, edge_type, source_id, source_table, "
-                        "target_id, target_table, properties, provenance, created_by) "
+                        "target_id, target_table, properties, provenance, created_by, "
+                        "scope_type, scope_entity_id) "
                         "VALUES ($1, $2::edge_type, $3, $4, $5, $6, $7, "
-                        "'company_ingested', $8)",
+                        "$8, $9, $10, $11)",
                         self._tenant, e.edge_type, sid, stable, tid, ttable,
-                        e.properties, created_by,
+                        e.properties, provenance, created_by, v_scope[0], v_scope[1],
                     )
                     result.edge_count += 1
 

@@ -29,6 +29,8 @@ from typing import Any, Optional
 
 import asyncpg
 
+from app.config import settings
+from app.utils.ids import uuid7
 from app.services.embeddings import to_pgvector
 
 CREATED_BY = "procedure_capture"
@@ -83,6 +85,8 @@ async def capture_procedure(
     owner_id: Optional[str] = None,
     visibility: str = "public",
     embedding: Optional[list[float]] = None,
+    scope_type: Optional[str] = None,
+    scope_entity_id: Optional[str] = None,
 ) -> dict:
     """
     Inserts a new procedure, always starting `candidate` / `fresh` /
@@ -90,6 +94,12 @@ async def capture_procedure(
     {"id": ..., "procedure_id": ...}: `id` is this specific version row;
     `procedure_id` is the stable handle a caller uses across the version
     chain (see supersede_procedure() for how a new version is created).
+
+    Band 1.2/1.3: provenance and scope are V0-gated at this boundary --
+    a procedure without explicit provenance or without a derivable scope
+    is rejected before touching the database. The shard-key columns are
+    derived from `domain` (the ingestion adapter's locality signal)
+    unless the caller overrides them.
 
     Real, deliberate omission: this does not compute preconditions from
     a source episode's state_before projection automatically (ticket
@@ -101,20 +111,31 @@ async def capture_procedure(
     if visibility not in ("public", "private"):
         raise ValueError(f"visibility must be 'public' or 'private', got {visibility!r}")
 
+    # --- V0 gate (Band 1.3): nothing enters without provenance + scope ---
+    from app.services.v0_gate import validate_provenance, validate_scope
+
+    validate_provenance(provenance)
+    procedure_scope_type, procedure_scope_entity_id = validate_scope(
+        scope_type, scope_entity_id or domain,
+        allow_global_entity_id=bool(scope_type == "global" and scope_entity_id),
+    )
+
     row = await pool.fetchrow(
         """
         INSERT INTO procedures (
-            name, goal, steps, parameter_schema, preconditions, required_state,
+            id, name, goal, steps, parameter_schema, preconditions, required_state,
             expected_effects, postconditions, invariants, failure_conditions,
             scope, exclusions, family_id, evidence_refs, source_episode_ids,
             provenance, domain, domain_payload, migrated_from_task_node_id,
-            created_by, owner_id, visibility, embedding
+            created_by, owner_id, visibility, embedding,
+            scope_type, scope_entity_id, embedding_model_id, embedding_dim
         ) VALUES (
-            $1, $2, $3::jsonb, $4::jsonb, $5::jsonb, $6::jsonb,
+            $24::uuid, $1, $2, $3::jsonb, $4::jsonb, $5::jsonb, $6::jsonb,
             $7::jsonb, $8::jsonb, $9::jsonb, $10::jsonb,
             $11::jsonb, $12::jsonb, $13, $14::jsonb, $15,
             $16, $17, $18::jsonb, $19,
-            $20, $21, $22::visibility_level, $23::vector
+            $20, $21, $22::visibility_level, $23::vector,
+            $25, $26, $27, $28
         )
         RETURNING id, procedure_id
         """,
@@ -137,6 +158,15 @@ async def capture_procedure(
         migrated_from_task_node_id,
         created_by, owner_id, visibility,
         to_pgvector(embedding) if embedding is not None else None,
+        # Band 1.5: time-ordered id generated app-side (UUIDv7); the DB
+        # default remains as a last-resort fallback for non-repository writes.
+        str(uuid7()),
+        procedure_scope_type,
+        procedure_scope_entity_id,
+        # Band 1.6: embedding provenance stamps — which model produced this
+        # vector, at what dimension. Null iff embedding is null.
+        (settings.embedding_model if embedding is not None else None),
+        (settings.embedding_dimension if embedding is not None else None),
     )
     return {"id": str(row["id"]), "procedure_id": str(row["procedure_id"])}
 
