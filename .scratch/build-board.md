@@ -18,8 +18,10 @@ git worktree add ..\sl-research -b lane/research origin/main
 ## Lanes
 
 ### Lane CORE-A — storage & plans (owns `backend/db/**`, `backend/app/execution/**`, `backend/app/models/**`)
-1. `[ ] claimed @2026-08-24 — ox-alpha (Chaitanya, CORE-A)` **1.7** Persist ExecutionPlan/TaskGraph `[D→frozen]`; bind executions to exact
+1. `[ ]` **1.7** Persist ExecutionPlan/TaskGraph `[D→frozen]`; bind executions to exact
    plan versions (Appendix C #1/#2/#17 proving tests in same change). One-way door.
+   *(Prior claim by Chaitanya withdrawn by founder 2026-08-24 — lane reassigned to
+   local worktree agent.)*
 2. `[ ]` Real-DB migration chain verification (01→22+own) on disposable Postgres;
    paste engine output.
 3. `[ ]` Band 1 exit-criteria sweep; request integrator review.
@@ -58,6 +60,14 @@ single synthesized reports into `.scratch/research/`.
 - Sole writer of ROADMAP.md checkbox updates and review files.
 
 ## Shared rules
+
+**OVERNIGHT MODE (2026-08-24 night): no integrator on duty.** Lanes may push their
+`lane/*` branch and then fast-forward main themselves (`git fetch origin; git rebase
+origin/main; git push origin HEAD:main`) ONLY after the full offline suite passes in
+their worktree. File ownership is the safety net. No force-pushes, no destructive git
+commands, no edits outside owned paths ever. On ambiguity: stop, leave a numbered
+blocking question in the Log, continue with the next queue item.
+
 - **Claims**: claim your task line (`- [ ] claimed @ts — name`) before starting; mark
   `[x] done @ts — branch` after. One claimant per task.
 - **Branches**: lanes commit to their `lane/*` branch only; rebase onto origin/main
