@@ -34,6 +34,40 @@ exact failure mode this plan exists to correct.
 
 ---
 
+## Start here — for any agent or human picking this up cold
+
+**Read order** (≈30 minutes): this file end-to-end → `schema.md` → spec v4 §§0–20, 39 →
+`trial_implementation.md` Part A only (code inventory; its plan is superseded by this
+document).
+
+**Ground rules — violating any of these invalidates the work:**
+
+1. **Fresh-start ruling below is binding**: no migrations, backfills, or transition
+   shims for data that exists today. Existing rows are trial-era; discard by decision.
+2. **Nothing enters the system without scope + provenance + extractor version.** The
+   V0 gate rejects; there are no exceptions for "just testing."
+3. **Contracts before corpus**: Band 1's schema births and their tests land before any
+   real ingestion runs through them.
+4. **No Band 4/5 work before P3's acceptance test passes** on a real workflow.
+5. **Every band's exit criteria are numbers.** Done means the number, not the vibe.
+6. **Tests are written against contracts, not implementations** — when a band item says
+   "proving test," that test lands in the same change as the code it proves.
+
+**First session** (in order): Band 0 items 0.1–0.10 are paper edits — reconcile the
+three Procedure definitions, fix scope vocabulary, unify capability representation,
+add Utility & Retirement + belief-aggregation contract sections, resolve deletion vs
+append-only. Then Band 1.2–1.6 (provenance parameterization, scope columns, claim shape,
+UUIDv7, embedding stamps) as additive DDL on empty tables, with their proving tests.
+Commit per item, message style: `band-item: what changed; which exit criterion moved`.
+
+**Key code map**: `backend/db/*.sql` (migrations, ordered), `backend/app/services/`
+(52 modules — retrieval, applicability, invariants, state, observations,
+procedure_extraction/), `backend/app/execution/htn_agent.py` (DAG engine),
+`backend/app/services/trace_collector.py` + `mcp_server/` (the Band P integration
+points), `experiments/episode_assembly/FINDINGS.md` (segmentation ground truth).
+
+---
+
 ## Fresh-start ruling (2026-08-24)
 
 All data currently in the system is **trial-era data and is discarded by decision** —
@@ -404,3 +438,35 @@ Commodity (deliberately standard, not differentiating): hybrid RRF retrieval, HN
 Behind or unbuilt (hence Bands 2–3): episode assembly still prototype-grade, extraction
 error floor unmeasured, evaluation harness unbuilt, identity/auth minimal. The framework
 is novel in composition; only Band 3's harness converts that into a demonstrated claim.
+
+## Appendix C — Invariant traceability matrix
+
+Spec v4 §39's nineteen minimum invariants → owning band item → test that proves it.
+An agent implementing a band item can read its row and know exactly what "done" means.
+Items marked *shipped* already hold in `backend/` and their tests must stay green.
+
+| §39 invariant | Owning item | Proving test |
+|---|---|---|
+| 1. Every execution references an exact ExecutionPlan | 1.7 | Contract: no nullable `execution_plan_id` on executions; replay test rebinds identical plan |
+| 2. Every ExecutionPlan references an exact Procedure version | 1.7 | Contract: plan carries `{procedure_id, version}`; no versionless references accepted |
+| 3. Every verified procedure has evidence | 1.9 + 2.2 | Lifecycle transition to `verified` rejected when evidence views return zero rows of required types |
+| 4. Every procedure has applicability conditions | *shipped* (`18_procedures.sql` + `applicability.py`) | Extraction validator rejects procedure rows with empty preconditions/scope/exclusions |
+| 5. Every capability has defined task + evaluation criterion | 0.4 → 1.9 | Capability record requires non-null task/state/environment/input context fields |
+| 6. Every claim has provenance | 1.2 + 1.4 | V0 gate: insert without provenance rejected at DB/service boundary |
+| 7. Change to any `[V]` object creates a version/change record | 1.9 | For each `[V]` type: mutate via service layer → assert ChangeSet row exists; raw UPDATE paths fail tests |
+| 8. Invalid dependencies cannot silently leave procedures trusted | 2.7 then 4.5 | Invalidate claim X → dependent procedure leaves retrieval as non-trusted (regression test for the write-only `truth_state` bug) |
+| 9. Private evidence cannot automatically become public | 5.5–5.6; interim `access.py` predicates | Public procedure backed by private evidence → evidence refs filtered in every read path (extends existing private-edge leak test) |
+| 10. Failure can reduce capability | 1.9 / 2.3 | Inject failure outcome → capability level drops; this is M1's traceability gate |
+| 11. The system can refuse reuse | *shipped* (fail-closed cascade, cold-start gate) | Adversarial applicability case stays refused (`test_precondition_gate.py` pattern) |
+| 12. Capability is evidence-based, not model-brand-based | 3.3 + 2.3 | Identical outcome streams from different model brands yield identical capability trajectories; brand field never enters computation |
+| 13. Outcomes distinguishable from self-reports | 2.4 + Outcome schema | Outcome requires explicit success predicate/criteria metrics; bare model-asserted success rejected |
+| 14. Raw events and source material are immutable | *shipped* `[H]` design; formalized 4.1 | UPDATE/DELETE on events/traces denied (role/trigger); supersede-by-append is the only path |
+| 15. Candidate extractions distinguishable from accepted knowledge | 1.4 status machine | Candidate-status objects excluded from routing until verified; visible in review queues |
+| 16. State stores Claim references, not embedded Claims | schema.md `[V]` State, born correct | Schema assertion: state payload contains `{claim_id, version}` refs only |
+| 17. Instantiation never silently modifies the source Procedure | 1.7 frozen plans | Hash procedure version before/after instantiation — identical; changes require new version |
+| 18. Revision/retraction enqueues dependents — propagation never claim-only | 2.1 then 4.5 full fan-out | Revise observation O → derived claims flagged into dependency queue; same for procedure/rule/source changes at 4.5 |
+| 19. Historical records append-only | Fresh-start birth discipline + 4.1 | Same mechanism as #14 across all `[H]` tables; migration-review checklist enforces on new tables |
+
+Maintenance rule: any PR adding an entity, mutation path, or lifecycle transition must
+add or update its row here **in the same change** — an unmapped invariant is a bug, not
+a footnote.
