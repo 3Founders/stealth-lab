@@ -37,3 +37,7 @@ uvicorn
 voyageai
 z3-solver
 google-genai
+
+# undeclared transitive deps relied on by tests/experiments (review 2026-08-24)
+pandas
+pyarrow
