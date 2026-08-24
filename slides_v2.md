@@ -1,130 +1,178 @@
-# StealthLab — YC-First Deck (v2)
+# slides_v2 — YC-first deck (content base + metrics sheet + leave-behind)
 
-Audience: Y Combinator interview (primary). INV.ENT / India audiences (secondary).
-Rule: concrete user + outcome in the first 60 seconds. No jargon, no vision-speak before Slide 9.
+Format note: YC interviews ban decks. This document doubles as (a) our one-page
+metrics sheet and leave-behind, and (b) the content base for verbal answers.
+Voice rule: measured, full sentences, every number traceable to a file or a
+fetched citation. No superlatives.
 
 ---
 
 ## Slide 1 — Title
 
-**StealthLab**
-Verified procedural memory for teams running AI agents.
-
-Chaitanya Deshkar (IIT Bombay) · Anuj Bhadbhade (IISc Bangalore)
-
----
-
-## Slide 2 — Problem
-
-Teams are deploying agents that repeat the same mistakes forever.
-
-- 65% of enterprise agent failures trace to context/procedure drift — not model capability (Value Add VC, Jul 2026)
-- Uber gave 5,000 engineers Claude Code; the annual AI budget burned through in 4 months ("tokenmaxxing," DevRev)
-- Unmanaged context cost grows quadratically with task length (ACM, arXiv:2607.21503)
-- Agents don't learn from experience. Every failure is re-paid at full price.
+**We verify what AI agents learn before anyone reuses it.**
+Peer review + a public journal for agent procedures — globally indexed.
+Chaitanya Deshkar (IIT Bombay) · Anuj Bhadbhade (IISc)
 
 ---
 
-## Slide 3 — Why Now
+## Slide 2 — The problem
 
-Both AI labs standardized the file format for what agents know how to do:
+AI agents save what they learn and share it with each other — but nothing
+anywhere checks if it actually works. So agents re-solve solved tasks from
+scratch, inherit procedures nobody ever validated, and repeat each other's
+mistakes at copy speed.
 
-- Anthropic Agent Skills (Sept 2025) and OpenAI Codex Skills (Nov 2025) converged on `SKILL.md`
-- Adopted by 40+ clients via agentskills.io: Cursor, Copilot, VS Code, Gemini CLI, Goose, Letta…
-- Registries and marketplaces already ship skills; Chainguard ships *hardened* skills (security review only)
-
-The format won. Formats don't verify themselves.
-No one produces outcome evidence, regression signals, or lifecycle management for machine-written procedures.
-
----
-
-## Slide 4 — What We Built
-
-A substrate that turns raw agent experience into verified, retrievable procedures.
-
-- Extracts procedures from agent traces with provenance edges and success criteria
-- Retrieves them under explicit budget control at decision time (`substrate_search` → progressive disclosure)
-- Integrated as a first-class memory in tau2-bench's banking_knowledge domain (MCP server + retrieval mixins)
-- Deterministic scoring: DB-hash state verification, gold-patch grading
+- 65% of enterprise agent failures trace to context drift, not model capability
+- Unmanaged agent context grows quadratically; Uber's 5,000-engineer rollout
+  burned its entire year's AI budget in four months, much of it re-deriving
+  what it already knew
 
 ---
 
-## Slide 5 — Honest Proof
+## Slide 3 — Why now
 
-Measured on 15 paired instances vs baseline pipeline:
+Now is the right time for three reasons that all landed within the last year.
 
-- **74.4% token-cost reduction** (219 vs 330 tool calls per instance)
-- Accuracy unchanged (2/15 vs 0/15 on paired hard cases) — efficiency without accuracy gain yet
-- Failure classes generalize across independent repos: RIGHT_FILE_wrong_fix (12 instances/8 repos), NO_EDIT_at_all (11), LOCALIZATION_miss (9–10)
-- Wall-clock breakdown (dist.md): tests/docker = 65% of instance time — our target surface
-- Known gap, owned openly: method store is a store, not yet a learning loop (success scoring is stubbed). That loop is the next milestone, not a hidden weakness.
+1. **Adoption arrived.** Enterprise agents went from under 5% to a projected
+   40% of applications in twelve months (Gartner), while Gartner projects over
+   40% of agentic projects will be cancelled by 2027 — citing cost, unclear
+   value, and unreliable behavior. Those are exactly what verified memory fixes.
+2. **The ecosystem standardized.** Both major AI labs adopted one open skill
+   format late 2025 (`SKILL.md`, ~40 clients via agentskills.io). Procedures
+   became portable — and sharing unverified knowledge became a global problem.
+3. **Science converged.** Seven serious procedural-memory papers since Dec 2025
+   agree on the mechanisms: test before reuse, record outcomes, retire stale
+   procedures. No shipping product implements any of them.
+
+Historical note (if asked "didn't this fail before?"): the Semantic Web,
+Cyc, and expert systems all died because humans had to write, populate, and
+maintain the knowledge forever, and no reader showed up. All three conditions
+reversed in the last 24 months: agents write it themselves, agents are the
+reader, and upkeep is now statistical automation.
 
 ---
 
-## Slide 6 — Trust Is the Product
+## Slide 4 — What we built
 
-Every procedure carries:
-provenance (which traces produced it) · success criteria (what counts as working) · evidence record (attempts, outcomes, model mix, last failure) · lifecycle status (active / superseded / retired)
+Not a slide-deck idea — a working system.
 
-Resolution by execution, not opinion: procedures are promoted only after passing real task suites (our two benchmark harnesses generalize this).
-Enterprises will not install machine-written procedures without exactly this.
+- ~22,500 lines of working backend code, 500+ automated checks
+- Claim graph with sources, validity dates, and truth states (IN / OUT /
+  superseded)
+- Procedure compiler: verified claims → step-by-step procedures with explicit
+  preconditions, typed tool bindings, numeric safety checks
+- Multi-agent debate/adjudication layer that reviews untrusted machine-generated
+  knowledge before promotion
+- MCP server consumable by any major agent client today
+- Two independently built evaluation harnesses (see Slide 6)
 
 ---
 
-## Slide 7 — The Layer Map
+## Slide 5 — Proof (honest)
+
+Same coding tasks, agent twice: without memory, then with ours.
+
+| Metric | Result |
+|---|---|
+| Tokens on repeat-pattern work | 74.4% fewer (2.58M → 0.66M) |
+| Tool actions | ~34% fewer |
+| Paired instances measured | 15 |
+
+Honest catch: accuracy did not yet improve — we say so rather than hide it.
+What we did find: a repeated failure class across 12 instances and 8 repos
+(RIGHT_FILE_wrong_fix) — generalizable, which makes a train/test learning demo
+possible rather than memorization.
+
+---
+
+## Slide 6 — Why you can trust these numbers
+
+- Third-party benchmarks we did not write and cannot cheat on
+  (τ³-bench scores by deterministic database-state hashing, no judge LLM;
+  SWE-bench graded against gold patches)
+- We measured our own contamination/memorization risk instead of assuming it away
+- Statistics infrastructure already coded: Welch t-tests + Benjamini-Hochberg
+  correction for every claim we will make about the learning loop
+- We report unflattering results (Slide 5) most teams would omit
+
+---
+
+## Slide 7 — Competition: the stack exists except one layer
 
 | Layer | Status |
 |---|---|
-| Skill FORMAT | ✅ Standardized (SKILL.md, both labs) |
-| Transport | ✅ MCP everywhere |
-| Discovery | ✅ Marketplaces live |
-| Security review | 🟡 Chainguard (supply-chain only) |
-| Identity/payments/runtime | ✅ WorkOS, Stripe MPP/x402, hyperscalers |
-| Observability | 🟡 Crowded, converging |
-| **Evidence + Lifecycle** | ❌ **Nobody. This is us.** |
+| Skill format (`SKILL.md`) | ✅ Standardized by both AI labs, ~40 clients |
+| Transport (MCP) | ✅ Everywhere |
+| Memory storage / retrieval | ✅ Funded: Mem0 ($24M, AWS exclusive provider), Zep, Letta |
+| Security hardening | ✅ Chainguard (supply-chain only) |
+| **Evidence + lifecycle (verify → track → retire)** | ❌ Nobody |
 
-Analogy: WorkOS didn't invent auth; it packaged enterprise-readiness when SaaS went up-market. Skills just became portable; enterprises will demand verification before installing them. Every SaaS eventually bought auth from WorkOS. Every agent platform will buy procedure-verification from us.
+Every competitor monetizes storage — publishing their memories' failure rates
+is against their incentive. Verification has no incumbent because incumbency
+requires admitting the problem.
 
----
-
-## Slide 8 — Roadmap & Moat
-
-Now → Next (spec v5 direction):
-1. Close the write-side learning loop: success-scored procedure updates (RL credit assignment over the library)
-2. Layered lookup: exact match → logged statistics → generative fallback (near-zero-cost planning; GATS-style)
-3. Scope-aware sharing across teams/environments: claims classified shared / cluster-specific / private by contradicting evidence (FedWorld validated this direction on τ-bench, Jul 2026)
-
-Moat compounds: every execution adds evidence no competitor has. The registry becomes more correct as it is used.
+Recent market validation: DevRev (structured memory beat fetch-RAG 94.3% vs
+63.6% at 4.4× fewer tokens) and Rippletide ("freeze validated action sequences",
+VentureBeat May 2026) are articulating pieces of this thesis independently.
 
 ---
 
-## Slide 9 — Horizon (only if asked / final slide)
+## Slide 8 — Moat & roadmap
 
-- Today: prove what agents know actually works.
-- The agentic internet needs a verified-knowledge layer: Cloudflare defined readable/discoverable/callable/payable — we are the *trustworthy* primitive underneath "callable."
-- Endgame: a contestation layer where any claim can be attacked and resolved by execution — journals become UI reading from the ledger.
-- One line: "Today we prove what agents know works. Eventually, every claim anywhere gets contested here before anyone trusts it."
+Sequence, each stage gated:
+
+1. **Verify-and-retire loop runs end-to-end** — provenance edge per procedure,
+   outcome feedback, backtest gate before promotion (the word "verified"
+   becomes load-bearing)
+2. **Published learning curves** — pass^k and reward-vs-trial from real
+   benchmark runs; no vendor reports these
+3. **Outcome-provenance API** — any agent queries a procedure's track record
+4. **Cross-domain transfer** — coding → banking policy domain
+
+Distribution rides what exists: SKILL.md import/export + MCP transport +
+OpenTelemetry outcome telemetry. Nothing proprietary is required to adopt us.
 
 ---
 
-## Slide 10 — Team
+## Slide 9 — Team
 
-- **Chaitanya Deshkar** — Final Year AI/ML, Centre for Multidisciplinary Education, IIT Bombay. Built the extraction pipeline, benchmark harnesses, tau2 integration.
-- **Anuj Bhadbhade** — IISc Bangalore. Systems + evaluation.
-- Two public proof artifacts in flight: τ³-banking leaderboard attempt (beat top model pass^1 using small open-weight models + our retrieval) and OSS launch of the registry prototype.
+**Chaitanya Deshkar** — Final Year, AI/ML, Centre for Multidisciplinary
+Education, IIT Bombay. Built the substrate end-to-end pre-funding.
+
+**Anuj Bhadbhade** — Indian Institute of Science (IISc). Research and
+validation lead.
+
+Two-person team, zero outside capital to date, full system plus two benchmark
+harnesses shipped.
 
 ---
 
-## Slide 11 — Market & Milestones
+## Slide 10 — Market
 
-Named-source market numbers (memory infrastructure):
-- $1.2B (2025) → $18.9B (2034) @ 62% CAGR (Market Intelo); APAC fastest region @ 68.5% CAGR
-- Orchestration + memory: $6.27B → $28.45B by 2030 @ 35.3% (Mordor Intelligence)
+Named third-party estimates, not our projections:
 
-Milestones = risk reduction:
-1. ✅ Working substrate + paired-instance evidence
-2. 🔄 Public leaderboard run (τ³) — visibility artifact
-3. 🔄 OSS launch + design partners (5 dev-tool teams)
-4. ⬜ Learning-loop close → accuracy gains, not just cost gains
+- Agent memory infrastructure: **$1.2B (2025) → $18.9B (2034), 62% CAGR**
+  (Market Intelo, Jul 2026)
+- Agentic orchestration + memory systems: $6.27B (2025) → $28.45B (2030),
+  35.3% CAGR (Mordor Intelligence)
+- Asia-Pacific is the fastest-growing region at ~68.5% CAGR — relevant to an
+  India-built company
 
-Ask: YC batch to turn the wedge into the standard evidence layer for the skill economy.
+Agent software overall: $86.4B → $206.5B this year (+139%), the fastest-growing
+segment inside a booming market (compiled Gartner data).
+
+---
+
+## Slide 11 — Milestones = risk reduction
+
+Every stage has a pass/fail test, including the possibility of a "no."
+
+| Stage | Delivers | Pass condition |
+|---|---|---|
+| 1. Close the loop | Learning from real outcomes, not just storing | A stored procedure's track record visibly improves/worsens from real results |
+| 2. Prove reuse | Transfer to unseen problems | Measured improvement on held-out cases |
+| 3. Second domain | Not a coding-specific trick | Same approach on banking/customer-service tasks |
+| 4. Public registry | Global indexing of procedures | Any agent can query a procedure's evidence before reuse |
+
+One line: *We don't make the AI smarter. We make it stop forgetting what
+already worked — and prove it.*

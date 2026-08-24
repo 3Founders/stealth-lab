@@ -1,127 +1,201 @@
-# YC Interview Prep — StealthLab
+# YC Interview Prep — sourced question bank + drafted answers
 
-Format: 10 minutes, ~20% of teams get in, partners score: ship-fast / understand-the-problem / real-market / coachable. Phone call = acceptance, email = rejection. Partners demand contracts/metrics mid-interview (W26 reports). Don't rehearse scripts — make progress visible.
+Research basis (all read): YC's official interview guide, Dalton Caldwell's
+admissions criteria (TechCrunch/YC blog), YC Roaster S26 real-question
+architecture, YC Insights 10-question core, Flowjam 60-question scrape of
+200 recaps, alumni prep repo, and real W26/S26 acceptance post-mortems
+(Sentrial, camelAI, Mark Pothen, Jiangda Wang, Compresr, Reducto).
 
----
+## Format facts
 
-## The One-Liner
+- 10 minutes, Zoom, 2–3 partners who have read the application. Same-day decision.
+- ~20% conversion conditional on interview (vs ~1.5% overall).
+- Partners score four things under every question: can you ship fast, do you
+  understand the problem better than anyone, is the market real, are you
+  coachable when challenged.
+- YC's own #1 advice: make visible progress between application and interview.
+  Over-prepared founders who answer half-asked questions interview worse.
+- Numbers may be written down next to the laptop — explicitly allowed.
 
-> "We give AI agents verified procedural memory — so when an agent figures out how to do something once, your whole team's agents do it right forever. Think npm plus CI for what agents know how to do."
+## The ten guaranteed openers (drafted ≤20-second answers)
 
-## The 20-Second Pitch
+**Q1. What are you building?**
+> "Teams running AI coding agents pay twice for every mistake — their agents
+> re-solve problems they've solved before. We built a system that captures what
+> agents learn, tests whether it actually works, and lets other agents follow
+> procedures that come with proof instead of guesswork."
+(Pattern: concrete user + concrete outcome, no adjectives — YCRoaster.)
 
-> "Teams are burning budgets because agents repeat mistakes and re-derive solutions every run — 65% of enterprise agent failures are context drift, not model capability. We extract procedures from agent experience, attach provenance and success criteria, and retrieve them under budget control at decision time. On paired benchmark instances we cut token cost 74% with accuracy held flat. Both AI labs just standardized the file format for agent skills — nobody verifies them. We're building that evidence layer."
+**Q2. Who are your users?**
+> "Right now, engineering teams running coding agents on production repos — the
+> highest-frequency repeat-work use case. We haven't launched publicly yet; we
+> have spoken with [N] developers this week and here is what they told us."
+(ACTION BEFORE INTERVIEW: complete 5+ real conversations so this sentence has
+a number and a name. Pattern: camelAI ran a 48-hour user-call sprint after the
+invite specifically so real anecdotes were ready.)
 
----
+**Q3. How do you know they want it?**
+> "Behavioral evidence, not opinions: agents consume 5–30× the tokens of
+> chatbots per task, Uber burned its annual AI budget in four months mostly
+> re-deriving known answers, and Gartner forecasts 40% of agentic projects get
+> cancelled by 2027 for cost, value, and reliability reasons — the exact things
+> verified memory fixes. Our paired benchmark shows 74.4% token reduction."
+(Pattern: quantify pain in hours/dollars; never quote encouraging interviews.)
 
-## Metrics Sheet (know these cold)
+**Q4. Your numbers?**
+Use the metrics sheet below. Say absolute numbers first, growth second.
+Small-but-real beats big-and-fuzzy. Never compute live.
 
-| Metric | Number |
-|---|---|
-| Token reduction (paired) | **74.4%** — 219 vs 330 tool calls/instance |
-| Paired instances | 15 |
-| Accuracy | Flat: 2/15 vs htn 0/15 (liability, owned openly) |
-| Wall clock / instance | 880.9s mean; tests+docker = 65%; agent loop 35% |
-| Failure classes | RIGHT_FILE_wrong_fix 12 inst./8 repos · NO_EDIT_at_all 11 · LOCALIZATION_miss 9–10 |
-| Market (memory infra) | $1.2B→$18.9B @62% CAGR (Market Intelo); APAC fastest @68.5% |
-| Orchestration+memory | $6.27B→$28.45B by 2030 @35.3% (Mordor) |
-| Competitor funding | Mem0 $24M A (186M API calls/qtr); Letta $10M seed; Zep YC W24; DevRev Enterprise-Bench: structured memory 94.3% vs fetch-RAG 63.6% @4.4× fewer tokens |
-| Academic anchors | Voyager 3.3× items; AWM +24.6%/+51.1% Mind2Web/WebArena; τ-bench gpt-4o <50%, pass^8 <25% |
+**Q5. Why you two?**
+> "We built the entire substrate before taking any money — 22,500 lines, 500+
+> tests, two independent benchmark harnesses. Anuj handles research and
+> validation design; I handle systems and product. Letta came out of one
+> Berkeley paper; we're showing up with the system already working."
+(Dalton Caldwell: technical excellence + founder/market fit are the filters.)
 
----
+**Q6. How do you make money?**
+> "Usage-based API — charged per verification run and per query — mirroring the
+> category leader's pricing model, which proves enterprises pay for this layer:
+> Mem0's hosted tiers run $19 to $249 a month. Open-source core drives adoption;
+> hosted cloud monetizes; enterprise licensing follows."
 
-## Cluster A — Guaranteed Openers (≤20s drafts)
+**Q7. Competitors, and why will you win?**
+> "Mem0 raised $24M and is AWS's exclusive memory provider — they proved
+> companies buy memory. Zep does temporal knowledge graphs; Letta builds the
+> agent-owned runtime. Credit where due: all three store and retrieve facts.
+> None verify whether stored procedures work, track outcomes after reuse, or
+> retire entries when they go stale. And none can — publishing your memory's
+> failure rate undermines a storage business. Independent work shows flat
+> fact-memory even loses raw recall to plain long-context. Verification is the
+> open problem, and we're structured to own it."
+(Pattern: name 2–3, credit each, state your wedge — YCRoaster. Never "no competitors".)
 
-**1. What do you build?**
-→ One-liner + "we have a working system integrated into a public agent benchmark, with measured results."
+**Q8. Biggest risk?**
+> "Two honest ones. Cold start: a verification library needs accumulated
+> evidence, which we seed from benchmark corpora and close the loop on through
+> extraction. Second: we haven't yet validated willingness to pay. Our way to
+> find out fast is launching the MCP server openly and converting five design
+> partners within the batch."
+(YC guide: candid discussion of obstacles convinces more than glib dismissal.)
 
-**2. Who is it for?**
-→ "Engineering teams running coding and ops agents — starting with dev-tool teams where our two harnesses already speak their language. Five design-partner conversations in flight."
+**Q9. What have you shipped recently?**
+Real list — update before the interview: step-tracker instrumentation across
+agent toolkits, exact-enum rendering fix for procedure steps, phaseH benchmark
+run, Gemini embedding migration, prompt cross-check protocol. Velocity is the
+most legible founder signal.
 
-**3. Why now?**
-→ "Both labs standardized SKILL.md within eight weeks of each other. Portability creates install decisions; enterprises won't install unverified machine-written procedures. The evidence layer doesn't exist yet."
+**Q10. What happens if we don't fund you?**
+> "We keep building. This isn't contingent on YC."
+One sentence, no hedging.
 
-**4. How's it going? What's the traction?**
-→ "Working substrate, 74% cost cut on paired benchmarks, tau2 integration shipped, leaderboard attempt running this month, OSS launch next." *(Have one number that didn't exist last month.)*
+## Questions THEY specifically will ask us
 
-**5. Tell us about the team.**
-→ "IIT Bombay + IISc. I built the pipeline and harnesses end-to-end; Anuj owns systems and evaluation. We've been building this since [date], full-time outside coursework."
+**"Mem0 raised $24M, won AWS, does 186M API calls a quarter — why does the world need another memory layer?"**
+> "Because they won the storage war and left verification unsolved. Their own
+> category's independent evaluation showed flat fact-memory losing raw recall to
+> plain long-context — storing harder isn't the same as knowing what's true. We
+> don't compete for storage; we're the trust layer above every store."
 
-**6. Who are competitors? What if Mem0 adds this?**
-→ "Mem0/Zep/Letta store facts and conversation context — episodic memory. DevRev showed structured memory beats fetch-RAG 94 vs 64 with 4× fewer tokens — validating our direction from inside a $1B company. Nobody does procedures with provenance and lifecycle. If they add it, they validate the category; our registry evidence compounds daily and can't be back-filled."
+**"Isn't this just RAG / a feature?"**
+> "RAG retrieves text; it can't tell you whether retrieved advice worked last
+> time or was superseded last week. We tested this directly: on regulatory
+> documents, graph-based retrieval beat vector RAG by 70% precisely because
+> supersession edges encode what's current. Features get copied; a track-record
+> dataset compounds."
 
-**7. What's your moat?**
-→ "Evidence accumulates per execution. A copy of our code starts empty; ours knows which procedures work in which environments."
+**"You're researchers — can you sell?"**
+> "We've been selling internally for months: to reviewers, to benchmark
+> maintainers, to ourselves — every claim in our repo survives adversarial
+> checking. That discipline is the sales pitch to exactly our buyer: teams who
+> got burned trusting vendor benchmarks."
 
-**8. How do you make money?**
-→ "Per-seat registry + usage-based verification runs; free read API drives adoption. Comparable rails: WorkOS pricing on top of open transport."
+**"Accuracy didn't improve in your experiments — why would anyone adopt?"**
+> "Because the efficiency result alone pays for the system, and the accuracy
+> gap has a diagnosed cause with a shipped fix awaiting measurement — wrong-tool
+> selection, which step-tracking now surfaces mechanically. We'd rather show
+> you an honest 74% than a dressed-up 5%."
 
-**9. What have you learned / biggest surprise?**
-→ "The hard part isn't retrieval, it's the write side — knowing a procedure still works. Our failure classes replicate across independent repos, which means the problem is structural, not ours to wish away."
+**"What stops OpenAI from making context windows infinite?"**
+> "Nothing stops bigger windows, and independent comparison says that's
+> partially right — long-context beats flat fact-memory on recall. But cost
+> still crosses over around ten turns at 100k context, and neither window size
+> nor retrieval verifies anything. Provenance and retirement are orthogonal to
+> both — that's our lane."
 
-**10. What's next / why YC?**
-→ "Close the learning loop, ship the OSS launch, land five design partners in the batch. YC compresses twelve months of enterprise trust-building into ten weeks."
+**Team questions:** biggest disagreement (pick a real resolved technical
+debate, e.g., precondition strictness — show resolution process); equity split
+(clean equal split with standard vesting — know it cold); who codes/sells
+(both code; Chaitanya owns product/GTM, Anuj owns research/validation).
 
----
+**Simultaneous-separate-questions trick:** answers must match identically —
+equity, commitment level, runway, who decided to apply.
 
-## Cluster B — Hard Questions
+## Metrics sheet (know cold; print one page)
 
-**"You're both students. Are you dropping out? Full-time?"**
-→ "Chaitanya graduates [month]; Anuj [month]. We're applying through Early Decision precisely because we planned the company around graduation, not instead of it. Between now and then: [visible progress list]."
+- 74.4% token reduction (2,579,395 → 660,938), ~34% fewer tool actions
+- n = 15 paired instances (rigorous paired set; wider 28-instance pool unpaired)
+- Failure class: RIGHT_FILE_wrong_fix — 12 instances, 8 repos
+- Codebase: ~22,500 LOC backend, 500+ passing checks, 601-test green suite
+- τ³-bench dev12: 11/12 avg reward 0.27 (procedures arm)
+- Market: memory infra $1.2B→$18.9B @62% CAGR (Market Intelo);
+  orchestration+memory $6.27B→$28.45B @35.3% (Mordor); APAC fastest @68.5%
+- Competitor facts: Mem0 $24M total (Basis Set led Series A Oct 2025), 186M
+  API calls/qtr Q3'25, exclusive AWS Agent SDK provider; Zep Graphiti 27k★,
+  LongMemEval 63.8 (GPT-4o); Letta $10M seed Felicis, $70M post
+- Timing: Gartner <5%→40% enterprise apps with agents in one year;
+  >40% project cancellations forecast by end-2027
 
-**"Isn't this just RAG over logs?"**
-→ "RAG fetches text; it has no success criteria, no provenance, no lifecycle, no execution-based promotion. DevRev's numbers prove structured memory beats fetch — 94 vs 64. Fetch is the baseline everyone abandons at scale."
+## Demo script (30 seconds, raw localhost)
 
-**"Your own data shows accuracy flat. Why should anyone believe efficiency alone sells?"**
-→ "Correct — and we say it before you do. Efficiency pays today (tokenmaxxing is a board-level pain), accuracy gains come from closing the learning loop, which is milestone three. We'd rather own the honest baseline than inflate it."
+1. Retrieve a verified procedure for a task (substrate_search) — show the
+   VALID ARGUMENT VALUES block and step list
+2. Agent executes; step-tracker prints "N of M steps done"
+3. Show a superseded procedure being refused (truth_state=OUT filtered)
+Crash-recovery narration (W26 precedent: localhost failed live and recovering
+while narrating what was actually running is what convinced partners):
+if anything breaks, say what IS working and pivot to the benchmark JSONL tab.
+Have ready in tabs: benchmark results JSONL, repo stats page, this metrics sheet.
 
-**"Open-source commoditizes you."**
-→ "The format and transport are already open standards — that's the point. Verification infrastructure is the paid layer on top, like Red Hat on Linux or WorkOS on OAuth."
+## Evidence pack (partners may demand proof mid-interview — W26 precedent)
 
-**"Why Bangalore/Mumbai and not SF?"**
-→ "APAC is the fastest-growing memory-infra region at 68.5% CAGR; both campuses give us design partners and talent. YC batch in SF; GTM follows the customers — dev-tool teams are global from day one."
+Pre-staged shareable links/files: benchmark run logs, test-suite output
+(601 green), repo commit history, spec v4 document. Share in seconds, not minutes.
 
-**"This smells like a research project. Where's the business?"**
-→ "Every artifact doubles as product: the benchmark harnesses are the verification service; the leaderboard run is demand gen; the registry is the SKU. Research credibility is our sales channel into dev-tool buyers."
+## Anti-pattern checklist (from YC official + alumni repo)
 
----
+- No monologues: >20 seconds gets cut; answer in 1–3 sentences, let them dig
+- Never say "we have no competitors"; never dress up early metrics
+- Partners verify numbers post-interview — every figure must be reproducible
+- No live decisions mid-interview ("let me check with my co-founder" = fail signal)
+- Each founder answers ≥1 question minimum; agree topic ownership beforehand
+  (Chaitanya: product/systems/metrics · Anuj: research/validation/methodology;
+  shared: business-model and commitment answers)
+- Don't read tea leaves afterward; tone means nothing — keep building either way
 
-## Demo Script (90 seconds, rehearsed crashes included)
+## Practice protocol
 
-1. Live terminal: run paired instance → show tool-call counters (219 vs 330).
-2. Open substrate: `substrate_search` → progressive disclosure (signature → references) → procedure card with provenance edges.
-3. Show DB-hash deterministic verdict on a banking task.
-4. **If anything crashes:** narrate while recovering — "what you're seeing fail is exactly the LOCALIZATION_miss class we measure; here's the failure record it just wrote." (W26 precedent: recovering while narrating what ran landed the acceptance.)
-5. Close on the layer map slide — point at the ❌ row.
+- Daily 10-minute timed mock with deliberate interruptions until automatic
+- Cut every written answer in half, then again
+- Rehearse stopping: answer, then silence
+- One founder plays hostile partner daily; swap roles
+- Rehearse the one question you fear most first
 
----
+## 72-hour rules (YC Roaster)
 
-## Anti-Pattern Checklist
+No new code the night before. Numbers page printed. Demo tab pre-loaded and
+logged in. Ethernet not Wi-Fi. Sleep. The signal partners seek can't improve in
+72 hours; panic can obscure it.
 
-- ❌ Vision-speak ("agentic internet," "replace journals") in the first 60 seconds — horizon lives on Slide 9, offered only if asked
-- ❌ Jargon without a concrete user+outcome first
-- ❌ Rehearsed-sounding monologues; answers ≤20s, then stop
-- ❌ Hiding the accuracy liability — pre-disclose it
-- ❌ Claiming market numbers without named sources
-- ❌ Talking over partner interruptions — they're testing coachability
+## Vision questions (use sparingly, measured voice)
 
----
+**"Where does this go long-term?"**
+> "Both labs standardized how agents package what they learn. Formats don't
+> verify themselves. We intend to be the peer-review and registry layer for
+> machine-written procedures — the part every platform eventually checks
+> against, the way npm became the default index for packages."
 
-## Practice Protocol
-
-- Daily: 2 mock interviews (one hostile), each answer timed ≤20s
-- Alternate who fields team questions; never answer for each other
-- Record and review: filler words, jargon leaks, vision-speak
-- Before every practice: update one metric — make progress visible
-- T-minus-72h rule: no new prep material; only reps, metrics sheet, demo
-
-## Action Timeline
-
-| When | Action |
-|---|---|
-| Now | Residency BLR Founders Track application (starts Sept 7) · EV India submission (draft ready) |
-| This week | SINE/IISc campus channels · Antler Before Day Zero · 5 dev-tool user calls |
-| Sept–Oct | τ³ leaderboard result public · OSS launch · YC app (ED vs W27 decision by graduation date) |
-| Oct 4 | PearX W27 deadline |
-| Oct 12–Nov 1 | a16z Speedrun SR008 priority window |
-| Late Oct–Nov | Expected YC W27 window |
+**"Is this the Semantic Web again?"**
+> "Fair question — the failure modes were documented: humans had to author,
+> populate, and maintain knowledge forever, with no reader. Here agents generate
+> the content as a byproduct of working, agents are the consumer, and upkeep is
+> statistical automation. Same goal, inverted economics."

@@ -1,4 +1,4 @@
-# Trial Implementation — from `schema.md` to a working system
+# Trial Implementation from `schema.md` to a working system
 
 Companion documents: `schema.md` (data structures + connection map),
 `verified_procedural_experience_system_ideal_specification_v4.md` (spec).
@@ -21,6 +21,7 @@ Status markers used below: **shipped**, **partial**, **absent**.
 > Implementation depth for every subsystem (technology choices, data flow,
 > per-subsystem analysis) lives in `current_stack.md`. This section records
 > functional status only.
+
 
 
 ### Experience layer

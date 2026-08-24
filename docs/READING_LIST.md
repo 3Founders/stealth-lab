@@ -102,6 +102,100 @@ OR-expanded `to_tsvector`/`ts_rank`, fused RRF k=60 in
   (model, task) level, ≥k trials per config, Action Recall + Doc Recall.
 - Why: our phaseN numbers only count if computed per this protocol.
 
+## Added 2026-08-24 — evaluation honesty + small-model clusters
+
+Feeds Part D of `trial_implementation.md`. Ordered by cluster.
+
+### Eval honesty (limitations of every number we produce)
+- Sim2Real gap in user simulation: https://arxiv.org/html/2603.11245 — 451
+  humans replace the LLM user sim on τ-bench; best simulator USI 76.0 vs
+  human 92.9; binary reward orthogonal to human-perceived quality.
+- Lost in Simulation (ACL 2026): https://aclanthology.org/2026.acl-long.2192/
+  — ±9pp agent success from user-sim choice alone; demographic calibration
+  failures (AAVE, Indian English).
+- Reliability science framework: https://arxiv.org/html/2603.29231 — memory
+  scaffolds never help long-horizon reliability across 10 models (overhead
+  tax); variance amplification is a capability signature.
+- Knowledge leakage in RAG benchmarks: https://arxiv.org/html/2605.08838v1
+  (SeedRG) — parametric-answerable questions collapse retrieval signal.
+- Gold ceiling: τ-Knowledge paper Table (arXiv:2603.04370) — gold docs cap at
+  39.69% pass^1 for Opus-High; reasoning binds the frontier ceiling.
+- Substrate routing harness: https://arxiv.org/html/2608.15008 — no substrate
+  dominates; optimal reverses between QA and agentic regimes; trade read
+  breadth for write depth.
+
+### Context engineering (why render truncation works)
+- Context rot / premature termination: https://arxiv.org/html/2606.29718v2
+  (code: github.com/GAIR-NLP/ContextRot) — models give up long before
+  exhausting context; management methods are test-time scaling; method
+  choice is model-dependent.
+- Length alone hurts despite perfect retrieval (EMNLP 2025 Findings):
+  https://aclanthology.org/anthology-files/pdf/findings/2025.findings-emnlp.1264.pdf
+  — 13.9–85% degradation with distractors masked out of attention entirely.
+- Context-length robustness in QA: https://arxiv.org/html/2603.15723 —
+  multi-hop degrades ~2× single-hop under equal expansion.
+- Chroma context-rot study: https://www.trychroma.com/research/context-rot —
+  needle-question similarity modulates degradation rate.
+- Long Context vs RAG revisits: https://arxiv.org/html/2501.01880v1 — chunk
+  retrieval is consistently the worst option; summarization-based ≈ LC.
+
+### Procedural/workflow memory (procedure-layer validation)
+- Agent Workflow Memory (ICML 2025): https://arxiv.org/abs/2409.07429 ·
+  code: https://github.com/zorazrw/agent-workflow-memory — induce reusable
+  workflows online, supervision-free; +51.1% relative on WebArena.
+- Agent Skill Induction: https://arxiv.org/html/2504.06821 — programmatic +
+  execution-verified skills beat text skills (+11.3pp over AWM); skills pay
+  only in the action space.
+
+### Small-model tool-use reliability (τ² bridge constraints)
+- Constraint Tax / Tool Suppression: https://arxiv.org/abs/2606.25605 — JSON
+  schema constraints suppress tool calling entirely in open-weight models;
+  two-pass execution restores it.
+- AgentFloor ladder: https://arxiv.org/html/2605.00334v1 — open-weight ≈
+  GPT-5 through coordination tiers; frontier edge survives only in
+  long-horizon planning under persistent constraints; decomposition prompts
+  regressed every model.
+- Scaffold effects on GAIA: https://arxiv.org/html/2606.08529v1 — scaffold
+  moves accuracy up to 28pp within one model; family-conditioned;
+  single-scaffold numbers are conditional estimates.
+- Natural Language Tools replication: https://arxiv.org/html/2607.03953v1 —
+  NL tool descriptions beat JSON calling +14.9pp / −93% critical errors,
+  largest gains on smaller models.
+- TSCG schema compiler: https://arxiv.org/html/2605.04107v1 — compile JSON
+  schemas to text; Phi-4 14B 0%→84.4% at 20 tools; format is the mechanism.
+
+### Knowledge lifecycle / ripple effects (TMS + ChangeSet design inputs)
+- ChainEdit: https://arxiv.org/pdf/2507.08427 — KG-mined logical rules drive
+  chain updates; baseline logical generalization ~20% on RIPPLEEDITS, >30%
+  improvement with rule-aligned editing.
+- Joint Neighborhood Optimization: https://arxiv.org/abs/2606.01610 —
+  propagation and preservation are coupled pressures; pre-execution gate
+  abstains from risky edits.
+- TRACK (EACL 2026): https://aclanthology.org/2026.eacl-long.273/ —
+  conflicting in-context updates *worsen* multi-step reasoning; more
+  supplied updates = worse. Argues for tombstone-removal over overlay.
+- CLaRE (ACL 2026 Findings): https://aclanthology.org/2026.findings-acl.1469/
+  — forward-activation entanglement graphs predict ripple targets; cheap
+  dependency discovery for audit trails.
+
+### Debate & verification (governance layer guardrails)
+- Multiagent debate (Du et al., ICML 2024):
+  https://proceedings.mlr.press/v235/du24e.html — founding positive result.
+- Should we be going MAD? (ICML 2024):
+  https://proceedings.mlr.press/v235/smit24a.html — MAD does not reliably
+  beat self-consistency; hyperparameter-sensitive.
+- Demystifying MAD (ACL 2026 Findings):
+  https://aclanthology.org/2026.findings-acl.1694/ — homogeneous+uniform
+  debate ≈ majority vote; fixes are diversity-aware init and calibrated
+  confidence updates.
+- The Cost of Consensus: https://arxiv.org/html/2605.00914v1 — unguided
+  homogeneous debate at 7–8B: sycophancy up to 85.5%, consensus collapse to
+  32pp oracle gap, 2.1–3.4× token cost for equal/worse accuracy.
+- GAVEL (ACL 2026 Findings): https://aclanthology.org/2026.findings-acl.1789/
+  — Evidence Contract (subclaims bound to evidence units) + mechanized
+  deterministic citation validation; the shape to copy if debate is ever
+  enabled.
+
 ## Appendix — Free agentic search tooling (zero-key / self-hosted)
 
 Found via Exa + web sweep while hunting Tavily/Brave alternatives. All run
@@ -157,6 +251,19 @@ without paid API keys; maturity varies (many are young repos).
 keyless coverage today; for durable infra, agent-search (its academic modes
 replace the S2-429/OpenAlex workarounds). Caveat: scraping-based engines
 (Google/Startpage) break often — treat SearXNG instance health as ops debt.
+
+## Tier 0 — Primary sources (read before writing anything up)
+
+- **τ-bench** (Sierra): https://arxiv.org/abs/2406.12045 — the base protocol our harness descends from.
+- **τ-Knowledge appendix**: https://arxiv.org/html/2603.04370v1 — exact pass^k definitions, Action/Doc Recall, paired bootstrap at (model, task) level. Our numbers only count if computed this way.
+- **MemGPT**: https://arxiv.org/abs/2310.08560 — virtual-context memory management; foundation of Letta.
+- **HippoRAG 2**: https://arxiv.org/abs/2502.14802 — hippocampal-index retrieval; nearest academic cousin of knowledge_nodes+hierarchy.
+- **Zep/Graphiti**: https://arxiv.org/abs/2501.13956 — temporal knowledge graphs for agent memory; compare against our t_valid/t_invalid provenance model.
+- **A-MEM**: https://arxiv.org/abs/2502.12110 — agentic memory with Zettelkasten-style note linking.
+- **RRF original**: Cormack et al. 2009 — why k=60, why rank-fusion beats score-fusion.
+- **ColBERT**: https://arxiv.org/abs/2004.12832 — late interaction; the middle ground between bi- and cross-encoders.
+- **Lost in the Middle**: https://arxiv.org/abs/2307.03172 — positional attention decay; directly relevant to how we order rendered procedures in prompts.
+- **Anthropic — Building Effective Agents**: https://www.anthropic.com/engineering/building-effective-agents — workflow-vs-agent decision framing.
 
 ---
 
