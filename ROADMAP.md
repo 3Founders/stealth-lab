@@ -72,7 +72,7 @@ Consequences applied throughout this document:
 | 0.5 | Give failure classification a structural home: `failure_class` on Evidence or a dedicated FailureRecord carrying §36's six causes (procedure-wrong / implementation-wrong / environment-changed / input-abnormal / verification-wrong / external) | §36 requires classification-driven updates; neither Outcome nor Evidence has anywhere to record the classification |
 | 0.6 | Freshness mapping table: knowledge category (§37: preference/policy/software-version/location/procedure) → decay class → default revalidation triggers. Map it onto proposition types or declare them orthogonal | §37 keys decay on a typology disjoint from Claim proposition types; unimplementable as written |
 | 0.7 | Belief-aggregation contract: inputs (evidence direction/strength/freshness/scope/source-reliability), independence-group capping, required invariants (monotonicity, contradiction dominance, effective-n bounding), pluggable `method` string | This is the mathematical heart of "verified". Ideal-spec hand-waving is acceptable only if the contract names what any aggregator must satisfy |
-| 0.8 | New spec section: **Utility & Retirement** — match-cost model, retrieval-overhead budget, retirement criterion; add computed utility fields to Procedure | The utility problem (Minton; `done.md` §4.6) is claimed as the signature novel insight but appears nowhere in spec v4 or schema.md. A system that can only grow is precisely the failure mode the project says it avoids |
+| 0.8 | New spec section: **Utility & Retirement** — match-cost model, retrieval-overhead budget, retirement criterion; computed utility lives on a **derived `[D]` companion keyed by procedure version**, not on the Procedure itself (computed fields on a `[V]` object would mutate outside ChangeSets, violating §19 — same reasoning that puts Capability in `[D]`) | The utility problem (Minton; `done.md` §4.6) is claimed as the signature novel insight but appears nowhere in spec v4 or schema.md. A system that can only grow is precisely the failure mode the project says it avoids |
 | 0.9 | Resolve deletion-vs-append-only: §19 forbids editing history; §34 requires deletion/revocation. Choose and specify a mechanism (crypto-shredding keyed per scope; tombstone-with-payload-eviction) | Direct contradiction between two mandated sections; GDPR-shaped exposure for any real deployment. Solving it well is itself differentiating |
 | 0.10 | Add replayability + extractor-versioning to §39 minimum invariants; fix section numbering (§17 and §21 do not exist; §18 is a two-line fragment with a typo) | The redesign brief (`spec.md`) calls replayability "a major design requirement"; v4 dropped it entirely |
 
@@ -119,6 +119,12 @@ Before any corpus grows.*
    from outcome streams — present from day one rather than migrated to (absorbs former
    Band 2 items 1–3; see fresh-start ruling). Synthetic-vs-real separation is native:
    evidence rows carry their type, nothing commingles by construction. **[M]**
+10. **Append-only discipline formalized at birth** — no UPDATE paths on `[H]` objects,
+    enforced by pytest against the repository layer from the first ingested row.
+    Formerly Band 4.1: establishing this at Band 4 meant retrofitting enforcement over
+    accumulated UPDATE paths; under the fresh-start ruling it costs one test module at
+    creation time. Entities managed: Event, Trace, Execution, Outcome, Artifact,
+    Evidence, Review. 🔒 **[S]**
 
 *Exit criteria:* zero scope-less writes accepted; V1–V6 green on every ingested row;
 plan persistence demonstrated end-to-end; the replay test regenerates derived objects
@@ -162,6 +168,23 @@ They remain numbered here for traceability; their acceptance criteria still appl
    because permission semantics block publication features. Paired with an explicit frozen
    posture asserted in code (single-tenant refused to boot once private visibility is on)
    so it cannot silently slip to Band 5. **[L]**
+10. **Rigor loop (verification protocols + relaxed ablations)** — every claim gets an
+    auto-selected verification protocol at extraction (template per proposition type;
+    machine intuition only *schedules*, per AblationBench's 38% design-recovery
+    ceiling); ASSAY-style randomized evidence/procedure masking runs continuously over
+    normal traffic, feeding difference-in-means causal effects into Capability inputs.
+    Verdicts land as Evidence rows — the rigor is the schema, not a side process. **[M]**
+
+### Band 2 exit criteria *(completing the milestone-M1 gate)*
+
+- **Founding loop executed once end-to-end on real data** — a live session flows
+  trace → episode → observation → claim → procedure candidate, hand-audited at each
+  hop. The database currently contains zero inhabitants of every knowledge-layer
+  entity; until this runs once, the substrate's founding thesis is unexercised.
+- Outcome→capability traceability demonstrated (Band 3.5's test passes against the
+  non-synthetic evidence table).
+- TMS readability: OUT/stale claims provably absent from retrieval results (2.7).
+- Replayability: derived objects regenerate deterministically from raw traces (2.8).
 
 ---
 
@@ -190,6 +213,14 @@ Nothing else builds the instrumentation those numbers require. Also the only pat
    above: A2 doc→procedure compiler, A3 HTN-in-conversation, A4 cascade gating, A5 RRF +
    expansion retrieval, A6 learning-loop curve; B1–B3 paired baselines. Status per
    `0xAlphaplan.md`: A1 partial, Phase 1a done, A2–A6 unstarted.
+   **⚠️ Blocking alarm (2026-08-24): `phaseO_skillfiles` collapsed to avg reward 0.0155**
+   (192/194 runs) vs 0.417 on the identical task set in phaseK. Root-cause required
+   before any further variant sweep — numbers collected on a poisoned arm are worse
+   than no numbers.
+7. **Judge-calibration program** — human-labeled gold set (200–500 cases, grown from
+   our own τ-banking trajectories), cross-family judge roster, position-swap controls,
+   quarterly agreement re-test (≥0.85 target). Machine-intuition verdicts are admissible
+   only from calibrated judges; see reasons-cites.md § rigor-loop citations. **[M]**
 
 ---
 
@@ -197,12 +228,10 @@ Nothing else builds the instrumentation those numbers require. Also the only pat
 
 *Tens of millions of rows. Postgres remains the system of record. ≈ enables M2–M3 at scale.*
 
-1. **Append-only discipline formalized.** `trial_implementation.md`'s Phase I ledger
-   credits "append-only discipline" for movement-free partition activation, but no item
-   establishes it. Make it explicit: no UPDATE paths on `[H]` objects, enforced by tests.
-   **[S]**
+1. ~~Append-only discipline formalized~~ — **moved to Band 1.10** (fresh-start ruling:
+   enforcement is free at birth, a retrofit later).
 2. Partition activation on `(scope, t_valid)` for the big tables — ATTACH-based, zero data
-   movement, enabled by Band 1.3 + 4.1. **[M]**
+   movement, enabled by Band 1.3 + 1.10. **[M]**
 3. Read replicas — retrieval reads fan out; writes stay primary. **[S]**
 4. OLAP rollup store beside Postgres (ClickHouse or DuckDB-over-Parquet) fed incrementally
    from append-only evidence/outcomes; capability analytics and family clustering leave
@@ -258,8 +287,10 @@ enforcement passing; sustained ingest above peak collector burst with bounded la
 ## Band 6 — Hygiene *(whenever convenient; never blocks anything)*
 
 - Stale pointers: root README run instructions reference nonexistent `backend_v2/backend_v2`;
-  `0xAlphaplan.md` cites `vendor/tau2-bench` (actual location
-  `experiments/tau3_bench/_tau2_bench_src/`).
+  `0xAlphaplan.md` tau2-path correction is itself wrong — **two tau2 checkouts exist**:
+  the *running harness* is the external `Prog/3Found/vendor/tau2-bench` (editable
+  install, phase launchers, live edits), while `experiments/tau3_bench/_tau2_bench_src/`
+  in-repo is a stale snapshot. `0xAlphaplan.md` should cite the external path.
 - `trial_implementation.md` and other docs cite backend paths without the `backend/` prefix.
 - `backend/README.md` still describes the debate-platform framing and a "Not built" list
   that the services tree has outgrown; rewrite around the substrate reality.

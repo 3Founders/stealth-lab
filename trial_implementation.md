@@ -1,5 +1,10 @@
 # Trial Implementation from `schema.md` to a working system
 
+> **SUPERSEDED by `ROADMAP.md`** — bands replace phases; the fresh-start ruling
+> (2026-08-24, see ROADMAP) discards trial-era data and absorbs former Phase II items
+> into the initial build. Retained for its current-state audit (Parts A/B) and
+> migration-cost reasoning; do not execute its phase sequence directly.
+
 Companion documents: `schema.md` (data structures + connection map),
 `verified_procedural_experience_system_ideal_specification_v4.md` (spec).
 
