@@ -12,6 +12,17 @@ configuration of shapes rather than rewrites.
 
 Status markers used below: **shipped**, **partial**, **absent**.
 
+> **Status update (2026-08-24) — fresh-start ruling supersedes parts of this document.**
+> All data currently in the system is trial-era and will be discarded, not migrated.
+> Part A remains accurate as a code inventory and Part B stands as
+> mechanism-correctness findings, but Part C's migration-cost ledgers now bind
+> **future growth only**: against an empty database every Phase I change is free;
+> transition machinery (dual-read shims, backfills, synthetic flags) is dropped
+> entirely; and Phase II's evidence table, universal ChangeSet, and capability
+> computation join the initial build. The one-way-door logic still applies — scope
+> keys, plan persistence, and embedding stamps must exist before real volume does.
+> Plan of record: `ROADMAP.md`.
+
 ---
 
 
