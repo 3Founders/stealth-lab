@@ -56,9 +56,11 @@ document).
 **First session** (in order): Band 0 items 0.1–0.10 are paper edits — reconcile the
 three Procedure definitions, fix scope vocabulary, unify capability representation,
 add Utility & Retirement + belief-aggregation contract sections, resolve deletion vs
-append-only. Then Band 1.2–1.6 (provenance parameterization, scope columns, claim shape,
-UUIDv7, embedding stamps) as additive DDL on empty tables, with their proving tests.
-Commit per item, message style: `band-item: what changed; which exit criterion moved`.
+append-only. **Founder-owned rulings live in `BAND0_DECISIONS.md` (D1–D5): apply them
+before or alongside the edits; D4 blocks until answered.** Then Band 1.2–1.6
+(provenance parameterization, scope columns, claim shape, UUIDv7, embedding stamps) as
+additive DDL on empty tables, with their proving tests. Commit per item, message style:
+`band-item: what changed; which exit criterion moved`.
 
 **Key code map**: `backend/db/*.sql` (migrations, ordered), `backend/app/services/`
 (52 modules — retrieval, applicability, invariants, state, observations,
