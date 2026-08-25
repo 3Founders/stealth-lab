@@ -62,6 +62,7 @@ Rule: NO new migrations (schema needs route through CORE-A); no edits outside ow
 1. `[x] done 2026-08-25 — lane/measure` §40 harness skeleton adapted from `experiments/swebench_pro/run_graph_experiment.py`;
    arms A/B/C; synthetic fixtures only until CORE-A lands 1.7.
 2. `[x] done 2026-08-25 — lane/measure` Scoreboard script: pass-rate/cost/false-reuse/stale-refusal + power-analysis
+3. [ ] **NEXT WAVE — micro-experiment pack** (founder mandate 2026-08-25): 8–12 tiny real-life scenarios as fixtures — adversarial refund-policy rule violations, dependency-conflict debug, PDF-to-sheet pipeline steps, env-drift staleness case — each run through the harness against the MCP surface; plus ingest this project's own Claude Code sessions as first real corpus. Output: per-scenario pass/fail + evidence-trail assertions. Doubles as the P4 dogfooding seed.
    footer (discordant pairs beside every p-value).
 
 ### Lane RESEARCH (owns `.scratch/research/**`, updates to `RESEARCH_INTEGRATION_PLAN.md`)
