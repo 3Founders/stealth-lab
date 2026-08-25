@@ -21,6 +21,16 @@ pip install -r requirements.txt
 # 2. Database — Postgres 15+ with pgvector (Supabase works). Single entry
 # point (ticket 17, memory-substrate map: replaces the previous by-hand
 # psql loop, which stopped at 05 and never mentioned 06-11):
+#
+# Local throwaway (verified 2026-08-25): stock postgres:15 CANNOT run the
+# chain — migration 01 needs the vector extension. Use the pgvector image:
+#   docker run --name migcheck -e POSTGRES_PASSWORD=... -p 5433:5432 \
+#     -d pgvector/pgvector:pg15
+#   export DATABASE_URL=postgresql://user:pass@127.0.0.1:5433/postgres
+# Use explicit 127.0.0.1, not localhost — asyncpg's IPv6 attempt dies in
+# SSL negotiation through Docker's port proxy. If your setup still resets,
+# append ?sslmode=disable (note: sslmode, not ssl — unknown DSN params are
+# forwarded as server GUCs and fail).
 export DATABASE_URL=postgresql://...   # your real connection string
 python3 scripts/migrate.py             # applies all pending migrations + seeds, in order
 python3 scripts/migrate.py --status    # see what's applied vs. pending, without running anything

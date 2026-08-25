@@ -1,44 +1,56 @@
-# demo.md — The 3-Minute "Earned Memory" Demo
+# demo.md — The Minimal Shippable Product (v0.1 "earned memory" slice)
 
-Goal: one recording (GIF ≤60s cut + full video ≤3min) whose climax is a **provable refusal**. Everything shown must be real — receipts on screen, no staged JSON.
+This file defines the **smallest end-to-end slice of StealthLab that may ship to
+production**, and the exact evidence that proves each claim before release. If a
+claim below lacks its proving command passing on the release commit, the slice
+does not ship. Companion docs: `commLLM.md` (positioning), `demo-fixture` story
+via `backend/scripts/bootstrap_demo.py`, `ROADMAP.md` (band plan).
 
 ---
 
-## 0 · Ground truth for this demo (v0.1 honesty rules)
+## 1 · What ships
 
-- Refusal ships in **audit mode**: the agent is *not* blocked; `check_procedure` returns `WOULD_REFUSE` with cited reasons and the event lands in an audit log. **The demo says exactly that, on screen.** Overclaiming enforcement we don't ship yet would burn HN trust permanently.
-- Every number visible (similarity scores, claim IDs, timestamps) comes from the live graph via real MCP calls.
-- Fixture repo: fresh throwaway repo (`demo-fixture/`) with a scripted two-phase story. No customer data, no fake company names.
+A local-first MCP server that gives one coding agent earned memory:
 
-## 1 · Setup (scripted before recording)
+> ingest the agent's traces → distill evidence-backed procedures → surface them
+> on similar tasks → **refuse stale reuse with cited reasons** (audit mode).
 
-```bash
-docker compose up -d                      # postgres + stealthlab-mcp, migrations auto-run
-python scripts/bootstrap_demo.py          # seeds fixture tasks, clears audit log
-claude mcp add --transport http stealthlab http://127.0.0.1:8765/mcp \
-  --header "Authorization: Bearer $STEALTHLAB_MCP_TOKEN" --scope local
-```
+Five capabilities constitute the whole product for v0.1. Nothing else is
+advertised; everything else is non-goals (§4).
 
-Terminal: 18pt+ font, dark theme, ~110×32 panes (editor left / agent right). Recorder: OBS or `ffmpeg -f gdigrab`; export GIF at 12fps for README embed.
+| # | Capability | Real code path | Proving evidence |
+|---|---|---|---|
+| C1 | Install & boot | `docker compose up -d` (postgres must be **`pgvector/pgvector:pg15`** — plain postgres fails migration 01) + migrations auto-run | `python scripts/migrate.py --status` → all 23 `applied`; first verified engine run 2026-08-25 (`research/claude-code-hooks-v2@429ffa9`) |
+| C2 | Traces flow in | Claude Code hooks → `app/services/trace_collector.py` (redaction choke point, dedup, bounded) → `trace_worker.py` → `agent_traces`/`trace_events`; HTTP path: POST `/v1/traces` per-record fault isolation | offline suite green; collector roundtrip test; worker quarantine behavior tests |
+| C3 | Procedures get distilled | `procedure_extraction/` registry → strategies → derive (load-bearing preconditions) → validators (**V6 authoring-time invariant check**) → `procedures` table born-correct | suite incl. extraction validators; nothing enters without scope+provenance (`services/v0_gate.py`) |
+| C4 | Reuse you can see | `mcp_server/server.py` tool `retrieve_precedent` (hybrid RRF + graph expansion over pgvector HNSW) returns procedure + confidence + provenance chain | retrieval leave-one-out sanity pattern (n=400, p=.0066 [T-24]) |
+| C5 | Refusal with receipts | `check_procedure` → `ALLOW` / `WOULD_REFUSE` citing the exact superseded claim ids + changesets. **Audit mode only**: the agent is informed, not blocked; every refusal lands in the audit log | precondition-gate adversarial tests (fail-closed cascade); refusal payload shape pinned by tests |
 
-## 2 · Beat sheet
+## 2 · Production posture (non-negotiable at ship)
 
-### Beat 0 — The pain (0:00–0:20)
-Narration: *"Every coding agent user knows this: the same problem, re-solved from scratch."*
-Action: run task once ("add pagination to the users endpoint"), watch it fumble through discovery. Cut fast — pain needs only 20 seconds.
+1. **Loopback-first**: server binds `127.0.0.1`; bearer token is authentication,
+   not authorization — documented in SECURITY.md threat model.
+2. **Redaction default-on**: `trace_redaction.py` is the single choke point;
+   no raw-prompt persistence flag exists in v0.1.
+3. **Raw write primitive stays gated**: `apply_change_set` requires explicit
+   opt-in env flag; never advertised in tool listings by default.
+4. **Fresh-start honesty**: no backfills, no legacy shims — a fresh install sees
+   exactly what the schema births (verified by the engine run above).
+5. **Apache-2.0** + plain-language data statement (local-first, opt-in telemetry
+   only, never train on user traces).
 
-### Beat 1 — Memory is born (0:20–0:55)
-Narration: *"Now give it memory. Traces flow in through hooks; procedures get distilled with evidence."*
-Action: show `ingest_trace` landing → terminal split showing graph counts tick up (`tasks: 3 → knowledge_nodes: 4 → procedures: 1`). Show the distilled procedure node: goal, steps, evidence links, applicability rule.
+## 3 · Ship checklist (all must be true on the release commit)
 
-### Beat 2 — Reuse you can see (0:55–1:35)
-Narration: *"Second session, similar bug. It doesn't start over — it cites what it learned."*
-Action: new but related task; agent calls `retrieve_precedent`, on-screen response shows matched procedure + confidence + provenance chain (which past fix supports it). Agent solves visibly faster. Overlay timer comparison if honest (same-task-class, not doctored).
-
-### Beat 3 — THE MOMENT: provable refusal (1:35–2:30)
-Narration: *"Now break the world on purpose."*
-Action: bump the dependency version that the stored procedure's precondition claims (`required_state`: `fastapi<0.100`). Re-run the original task.
-On screen, `check_procedure` returns:
+- [ ] Full offline suite green: `cd backend && python -m pytest tests -q`
+      (last: **914 passed / 106 skipped / 0 failed**, 2026-08-25)
+- [ ] Migration chain applied clean on a throwaway
+      `pgvector/pgvector:pg15` container via `scripts/migrate.py`
+      (engine-verified; static text checks alone do NOT count)
+- [ ] `python scripts/bootstrap_demo.py` runs the scripted two-phase story:
+      phase A produces traces→procedures; phase B retrieves precedent AND
+      triggers a `WOULD_REFUSE` after the fixture breaks a precondition claim
+- [ ] Audit log shows the refusal line with claim ids (`cl_*` → `cl_*`)
+- [ ] `check_procedure` response shape matches the pinned contract:
 
 ```json
 { "verdict": "WOULD_REFUSE",
@@ -48,30 +60,25 @@ On screen, `check_procedure` returns:
   "capability_note": "0 failures recorded, environment changed" }
 ```
 
-Narration: *"It won't blindly reuse last month's fix. It tells you which belief died, when, and why — and adapts instead of breaking your build."* Agent then solves it the new way. Audit-log line appears: `audit: WOULD_REFUSE proc_pagination_v1 (cl_17→cl_23)`.
+- [ ] README quickstart works from a clean clone: compose up → add MCP server →
+      one task solved twice, second time citing precedent
+- [ ] SECURITY.md + data statement published; uninstall = drop volume
 
-### Beat 4 — The receipt (2:30–2:50)
-`explain_failure` on a deliberately broken earlier step OR `explain_decision` on Beat 2: cause chain rendered as `event → observation → claim → procedure` path with IDs. Narration: *"Every answer carries its evidence. Ask it why, always."*
+## 4 · Explicit non-goals for v0.1 (do not claim, do not demo)
 
-### Close (2:50–3:00)
-Card: **StealthLab — agents that earn the right to remember.**
-Sub-line: `pip install git+… · docker compose up · local-first · Apache-2.0`
+- Blocking enforcement of refusals (audit mode only until Band 3)
+- `explain_failure` / `explain_decision` receipts UI (depends on execution-graph
+  backward tracing — lands with Band 1.7 consumers; beta-flag only if wired)
+- Hosted anything; multi-tenant; team scopes beyond single-user local
+- Crypto-shredded deletion (Band 5, D4-ratified design), capability-based
+  auto-routing thresholds (Band 1.9b)
+- Multi-client conformance matrix beyond Claude Code + one OpenAI-compatible client
 
----
+## 5 · Why this is the right minimum
 
-## 3 · Capture checklist
-- [ ] Fresh compose volumes (no stale graph rows leaking into counts)
-- [ ] Clock overlay optional; keep cuts hard, no music (HN mutes it anyway)
-- [ ] Show the MCP tool-call JSON at least twice (credibility > polish)
-- [ ] Say "audit mode" out loud in narration AND caption during Beat 3
-- [ ] Export: `demo.mp4` (1080p, full) + `demo.gif` (<8MB, beats 3 only) — GIF goes in README hero
-
-## 4 · Fallbacks
-| Failure | Fallback |
-|---|---|
-| Refusal loop not green by shoot time | Shoot Beat 3 as audit-log reveal only (still honest); ship video v2 after enforcement |
-| Retrieval match looks weak on camera | Pre-tune threshold on fixture (documented override, like RETRIEVE_PRECEDENT_THRESHOLD note in server.py) |
-| Latency ugly on camera | Cut waiting; never fake progress bars |
-
-## 5 · After the shoot
-Post full video on X + r/mcp; GIF into README + Show-HN first comment; clip Beat 3 alone (45s) as the standalone shareable.
+Every element maps to a differentiator nobody else ships — failure → belief
+revision → capability decay → cited refusal — while every element excluded is
+either unbuilt (honesty rule §0: never ship a claim without its proving test)
+or table stakes competitors already have. The slice demonstrates the closed
+loop end-to-end with zero staged output: same graph, same tools, same audit log
+a real user gets.
