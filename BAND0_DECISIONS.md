@@ -27,7 +27,7 @@ the number defended in due diligence.
 **Recommendation:** B — aligns with spec §23's example threshold (≥0.90 ≈ top of level 4)
 and leaves headroom so "trusted" stays rare enough to mean something.
 
-**Ruling:** _(pick A/B/C or write your own boundaries)_
+**Ruling:** RATIFIED 2026-08-25 via founder quiz — Option B boundaries, plus explicit routing tiers written into §16: auto-route ≥0.90 · offer 0.70–0.90 · refuse <0.70; level 5 requires stats + completed review.
 
 ---
 
@@ -85,7 +85,7 @@ rather than inventing new lifecycle states; deletion never automatic, matching �
 becomes the shredding key too — one concept, two jobs). Requires answering: who holds
 organization-scope keys?
 
-**Ruling:** _ (**mandatory**) — plus key-custody answer: _
+**Ruling:** RATIFIED 2026-08-25 via founder quiz — Crypto-shredding (Option A), shell-visible residue; §34b rewritten as mechanism of record; tombstone-eviction demoted to transitional bridge until Band 5 field-level encryption. Key custody: DEFERRED — company-held default until Band 5 residency decision.
 
 ---
 

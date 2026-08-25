@@ -784,8 +784,7 @@ each level corresponds to a P interval whose bounds tighten as evidence volume
 grows (sequential-testing semantics). All routing thresholds (§23) apply to **P**
 itself; the level label is presentation, never a routing input.
 
-Band boundaries (D1 recommended default per BAND0_DECISIONS.md — pending
-ratification):
+Band boundaries (D1 ratified by founder 2026-08-25):
 
 | Level | P interval | Additional gate |
 |---|---|---|
@@ -795,6 +794,17 @@ ratification):
 | 3 validated | ≥ 0.70 | verification plan satisfied |
 | 4 generalized | ≥ 0.85 | holds in ≥ 2 environments |
 | 5 trusted | ≥ 0.95 | reproduction in ≥ 2 environments + completed review |
+
+Routing semantics (applied to P, never the level label):
+
+```text
+P ≥ 0.90        → auto-route: execute without human contact
+0.70 ≤ P < 0.90 → offer as candidate: suggest with evidence trail, require opt-in
+P < 0.70        → refuse reuse (refusal is a first-class outcome, §25)
+```
+
+Level 5 additionally requires a completed review record — statistics alone never
+confer the highest trust tier.
 
 Capability can decrease after failures or environment changes.
 
@@ -834,10 +844,10 @@ object is never revised: changed inputs mean regenerate via a new instantiation.
 Computed values (capability, utility) never live on `[V]` objects -- they live on
 derived companions keyed by version, so computation cannot masquerade as mutation.
 
-Sole erasure exception: payload fields of an `[H]` record may be nullified only
-under an appended erasure tombstone (§34b); identity, class, scope and lineage
-edges persist. *(Wording tied to the §34b mechanism of record, pending D4
-ratification -- BAND0_DECISIONS.md.)*
+Erasure does not edit history: payloads are encrypted under per-scope keys from
+birth, and erasure destroys the scope key (§34b), leaving every record, edge and
+index entry intact while its content becomes permanently unreadable.
+*(D4 ratified by founder 2026-08-25.)*
 
 When a versioned object changes:
 
@@ -1189,24 +1199,28 @@ A procedure cannot grant authority the user does not have.
 ### 34b. Deletion vs append-only — resolution
 
 §19 forbids editing history; this section requires deletion/revocation. Both hold
-under one mechanism: **tombstone-with-payload-eviction** *(interim mechanism of
-record, pending D4 ratification — BAND0_DECISIONS.md; crypto-shredding remains the
-candidate replacement)*.
+under one mechanism, ratified by founder ruling (D4, 2026-08-25):
+**crypto-shredding with visible shells**.
 
-- An erasure request writes a **tombstone record**: `{target id, scope, reason,
-  timestamp, payload_hash}` — appended like any `[H]` record.
-- The target's *payload* (statement, content, steps, embedded vectors) is then
-  overwritten with a null marker; identity, class, scope, and lineage edges remain
-  so referential integrity and audit survive.
-- Dependents are enqueued through the dependency queue (§20) exactly as for any
-  retraction: claims supported solely by evicted evidence re-evaluate; procedures
-  requiring an evicted claim are demoted per §23b.
-- Crypto-shredding (per-scope encryption keys destroyed on erasure) is the
-  upgrade path once field-level encryption lands (Band 5 residency); until then
-  payload-eviction is the mechanism of record.
+- Payloads are encrypted under per-scope keys from birth. Erasure destroys the
+  scope's key: every row, edge and index entry survives untouched — identity,
+  class, scope and lineage stay queryable — while content becomes permanently
+  undecryptable. History is never edited; §19 and this section hold
+  simultaneously.
+- An appended tombstone record `{target id, scope, reason, timestamp,
+  payload_hash}` records THAT something was erased, when, and why — never what.
+- Dependents enqueue through the dependency queue (§20) exactly as for any
+  retraction: claims supported solely by shredded evidence re-evaluate;
+  procedures requiring an evicted claim are demoted per §23b.
+- Key custody: deferred at ratification — company-held by default until the
+  Band 5 residency decision revisits customer-held KMS.
+- Transitional bridge: until field-level encryption ships (Band 5), payloads are
+  necessarily stored in the clear; erasure requests in that window fall back to
+  tombstone-append plus payload null-eviction, logged as known technical debt
+  against invariant #19 and retired the day encryption lands.
 
-Erasure therefore satisfies the right-to-be-forgotten without violating §19:
-history remembers *that something was erased, when, and why* -- never *what*.
+Right-to-be-forgotten satisfied: history remembers *that something was erased,
+when, and why* — never again *what*.
 
 ## 35. Peer Review
 
