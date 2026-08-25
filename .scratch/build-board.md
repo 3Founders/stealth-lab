@@ -400,7 +400,39 @@ single synthesized reports into `.scratch/research/`.
 3. `[ ]` Ï„-Knowledge ceiling re-check (arXiv:2603.04370) before harness baselines freeze.
 
 ### Lane SHIP (owns `packaging/**`) â€” activates after CORE-A merges 1.7
-2. `[ ]` **P2 - Minimal status surface**: single-page read-only view (serve from packaging/) listing episodes -> claims -> procedures with capability scores and evidence-trail links, backed by existing GET endpoints. No auth surface beyond what authn.py already provides; no backend edits.
+2. `[x]` done @2026-08-26 â€” branch `lane/ship` **P2 - Minimal status surface**:
+   single-page read-only view served from packaging/, listing episodes -> claims ->
+   procedures with capability scores and evidence-trail links.
+   *(Shipped: `packaging/src/stealthlab_connect/status_page.html` — THE one file of
+   HTML/JS/CSS [expandable cards, capability badges `L<level> <label> · P̂=<Wilson
+   lower bound>`, routing verdicts, claim provenance chains, lazy evidence-trail
+   tables, graph deep-links] + `status_server.py` — a tiny FastAPI app [`/`,
+   `/health`, `/api/meta`, `/api/overview?limit=`, `/api/evidence/{claim|procedure}/{id}`]
+   + `status_entry.py` console script `stealthlab-status-page` [loopback 8766
+   default]. READ-ONLY both senses: every SQL statement is a SELECT; backend code
+   is imported as shipped, zero re-implementation — access.py builders for all
+   scoping [scope_predicates on the tenant-bearing core tables knowledge_nodes/
+   task_nodes/episodes; visibility_predicate alone on procedures/evidence/
+   observations, which have NO tenant_id column — the live run caught me assuming
+   otherwise], authn.py's install_actor_middleware + assert_boot_posture +
+   deps.get_scope wired exactly like app/main.py, pool via db/session.create_pool,
+   and capability scores computed by CORE-B's REAL engine
+   procedure_extraction/capability.py::compute_capability over each procedure's
+   outcome evidence [same population as procedure_evidence_stats: supports-direction
+   execution_result/reproduction]; verification-plan/completed-review gates reported
+   unclaimed until anything stores them, so trust tiers above reproduced cannot
+   appear from statistics alone. Pre-migration-24 databases [the documented shared-
+   instance drift] degrade honestly — named banner + level-0 scores, never fake
+   numbers, other DB errors still raise loudly. 27 offline tests in
+   tests/test_status_offline.py + test_status_capability_offline.py: FakePool SQL-
+   content proofs [SELECT-only teeth, builder fragments present per table class,
+   parameterized LIMITs, X-Viewer-Id threading], hand-computed Wilson expectations
+   vs the real engine [n=1 s=1 -> 0.2065/L1/refuse; 95/100 3-group 2-env -> L4/
+   offer; single-env cap -> L2; ungrouped perfect record -> L1 despite auto-route
+   P; review gate blocks L5], drift degradation, entry preflight. LIVE SMOKE against
+   the real shared DATABASE_URL passed [meta/overview/trail/400 paths]. Packaging
+   suite: 55 passed [= 28 prior + 27 new]. Backend diff vs origin/main: ZERO files.)
+   Note: no new auth surface — loopback bind, no write endpoints exist to gate.*
 
 1. `[x]` done @2026-08-25 â€” branch `lane/ship` Installable package wrapping
    `trace_collector` + `mcp_server`.
@@ -744,3 +776,16 @@ Grounded findings from  3_access.sql/ 4_governance.sql/deps.py review. Sequence:
    NOTE for owners of backend/integration_check_v2_governance.py [unowned
    script, not pytest-collected]: its real-DB race/row-count asserts predate
    buffering — needs flush awareness when next run; see Log entry 5.)*
+
+- SHIP (2026-08-26): **P2 minimal status surface** done on `lane/ship` -
+  full record in the SHIP queue item 2. Two notes for other lanes:
+  (a) the status server is a new READ-ONLY consumer of the access
+  builders and capability engine - it imports services/access.py,
+  services/authn.py, api/deps.py, db/session.py, config.py,
+  procedure_extraction/capability.py; if any of those owners change
+  contracts, packaging/tests/test_status_*.py are the tripwires.
+  (b) SCHEMA FACT surfaced by the live run: procedures (18), evidence
+  (24) and observations (14) carry visibility/owner_id but NO tenant_id;
+  only the migration-01/02 core tables are tenant-bearing. Anything that
+  later adds tenancy to those tables should flip the status server's
+  _visibility_call sites to scope_predicates - each site is one line.
