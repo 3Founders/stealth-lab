@@ -18,10 +18,14 @@ git worktree add ..\sl-research -b lane/research origin/main
 ## Lanes
 
 ### Lane CORE-A — storage & plans (owns `backend/db/**`, `backend/app/execution/**`, `backend/app/models/**`)
-1. `[ ]` **1.7** Persist ExecutionPlan/TaskGraph `[D→frozen]`; bind executions to exact
+1. `[x]` **1.7** done @2026-08-25 — branch `lane/core-a`. Persist ExecutionPlan/TaskGraph `[D→frozen]`; bind executions to exact
    plan versions (Appendix C #1/#2/#17 proving tests in same change). One-way door.
    *(Prior claim by Chaitanya withdrawn by founder 2026-08-24 — lane reassigned to
    local worktree agent.)*
+   Shipped: db/23_plan_persistence.sql (execution_plans + task_graphs + executions,
+   frozen by trigger; composite FK procedures(procedure_id,version)); app/execution/plans.py
+   (compile/hash/rebind/binding boundary); app/models/plan.py; 36 proving tests in
+   tests/test_band1_7_plans.py. Full suite: 885 passed, 106 skipped.
 2. `[ ]` Real-DB migration chain verification (01→22+own) on disposable Postgres;
    paste engine output.
 3. `[ ]` Band 1 exit-criteria sweep; request integrator review.
