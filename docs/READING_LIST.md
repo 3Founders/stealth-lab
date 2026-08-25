@@ -196,6 +196,21 @@ Feeds Part D of `trial_implementation.md`. Ordered by cluster.
   deterministic citation validation; the shape to copy if debate is ever
   enabled.
 
+### Assumption stress-test sweep (Exa, 2026-08-24 — feeds `assumptions.md`)
+- Prompt-Induced Waste in Coding Agents: https://arxiv.org/html/2608.01347
+- Scaffold Effect as Hidden Variable (coding agents): https://arxiv.org/html/2607.22585
+- Cross-Component Interference in Agent Scaffolding: https://arxiv.org/html/2605.05716
+- Hidden Cost of Structure / constrained decoding (RANLP 2025): https://aclanthology.org/2025.ranlp-1.124/
+- Skill-optimisation real-cost decomposition: https://arxiv.org/html/2607.03048
+- **Quipu — governed bitemporal KG store (competitive/validation signal):** https://arxiv.org/html/2608.16813
+- Evidence-Gated-Memory (OSS, lineage+gating+audit): https://github.com/yushui2022/Evidence-Gated-Memory
+- SuperLocalMemory 4.0 governed memory OS: https://arxiv.org/html/2608.08253v1
+- GapTime bi-temporal KG memory: https://github.com/davccalcante/gaptime · Bi-temporal edges audit essay: https://javatask.dev/blog/bitemporal-edges-agent-memory/
+- What Deserves Memory (ACL 2026 adaptive distillation): https://aclanthology.org/2026.acl-long.1607.pdf
+- LazyMem retrieve-broadly/construct-selectively: https://arxiv.org/html/2607.22690
+- WhenLoss write vs retrieval bottlenecks: https://arxiv.org/html/2605.24579
+- Retrieval vs utilization bottleneck diagnosis: https://arxiv.org/abs/2603.02473
+
 ## Appendix — Free agentic search tooling (zero-key / self-hosted)
 
 Found via Exa + web sweep while hunting Tavily/Brave alternatives. All run

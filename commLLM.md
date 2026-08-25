@@ -143,3 +143,50 @@ Day-7 gate: ≥1 public asset live. Day-30 gate: {500 installs ∨ 1 enterprise 
 arXiv: 2603.14688 · 2604.23366 · 2605.06716 · 2605.28303 · 2606.01053 · 2606.23127 · 2606.24626 · 2606.26627 · 2606.27154 · 2606.29824 · 2606.29961 · 2607.01480 · 2607.08032 · 2607.08529 · 2607.12180(≠TRAIL-bench) · 2607.13548 · 2607.18754 · 2607.21962 · 2607.26455 · 2607.27290 · 2607.28545 · 2607.29055 · 2608.05212 · 2608.08073 · 2608.08968 · 2608.10775 · 2608.11888 · 2608.14074 · 2608.17756 · 2608.18575 · 2305.14795 · 2307.12976 · 2411.00278(KAN-AD, sibling project)
 Web: learn.microsoft.com/foundry observability + Build'26 BRK252 · galileo.ai RCA-tools roundup · morphllm 12-platform comparison · presenc.ai funding matrix · sentry.io security/privacy/AI-TOS blog · sota.io GDPR analysis · research.swtch.com/telemetry · linuxfoundation.org telemetry guidance · code.visualstudio.com telemetry · docs.sentry.io scrubbing · Gartner agentic-cancellation PR · agentskills.io · developer.nvidia.com verified skills.
 
+## 11 · Risks & mitigations (top practicality problems)
+
+| Risk | Why it bites | Mitigation |
+|---|---|---|
+| Install friction | Postgres+migrations+keys ≠ "<5 min" today | v0.1: docker-compose only; `[agent]` extra isolates LLM-key tools; embedded-DB mode deferred |
+| Cold start | Empty graph ⇒ nothing to refuse/retrieve | Intra-session reuse value day one; bundled seed corpus; "memory report" after day 1 |
+| False refusals | One wrong block kills trust | **Audit-mode refusal** ships first; enforcement is per-procedure opt-in after measured precision |
+| Judge reproducibility | Proprietary-model-scored receipts get torched publicly | Public numbers = deterministic harness + rule-based/open judges only |
+| Review bandwidth | Agent capacity ≠ human review capacity | Contract-file pattern mandatory; ruthless v0.1 surface; SDK versions pinned |
+| Ugly micro-experiment numbers | Narrative collapses if propagation <70% | Pre-register thresholds; commit to publishing regardless (honesty is the brand) |
+
+## 12 · 72-hour launch plan (locked: ~72h window, Docker Postgres install bar)
+
+**Ship definition:** GitHub public + compose install + 4 tools (`ingest_trace`, `retrieve_precedent`, `check_procedure` audit-mode, `explain_failure` lite) + 1 reproducible receipt (ripple-lite % + p95 latency) + refusal GIF. Debate/solve tools unexposed (v0.2 content); PyPI + video + LongMemEval receipt ship as v0.1.1 week-one update.
+
+| Window | Work |
+|---|---|
+| H0–12 | Branch `mcp-release`; freeze surface; gate `apply_change_set`; cut sibling-dir deps for core four; compose file w/ auto-migrations |
+| H12–24 | ME1 loop E2E over real MCP sessions; ripple-lite receipt; p95 latency; blockers only |
+| H24–36 | `stealthlab-mcp` entrypoint; git-install path; CI (linux+win); README hero + limitations + Data Manifesto + AI commitments + SECURITY.md; refusal GIF (audit-mode honest framing) |
+| H36–48 | 5 friends-circle installs; fix top issues; MCP Registry metadata |
+| H48–60 | Buffer (something will break); draft r/mcp + X posts; stage Show-HN for Tue–Thu ET |
+| H60–72 | Public: GitHub → Registry → r/mcp + X same day; HN next window |
+
+Pre-committed de-scopes: loop not green by H30 ⇒ drop `explain_failure` from launch. Packaging slips past H48 ⇒ git-only install, PyPI → week 1. No other cuts.
+Launch-thread standing answers: telemetry local-only by default (manifesto linked first reply) · vs Langfuse = complementary layer, spans sink into it · numbers = one-command script in repo · Windows quirks documented from real CI.
+
+## 13 · One-month horizon (Day 1→30): what we do, what it must have
+
+**Week 1 = the 72h launch + stabilization:** PyPI publish, proper video, triage cadence, v0.1.1 hotfixes, LongMemEval-S(100Q) receipt published reproducibly.
+
+**Weeks 2–4 build list (priority order):**
+1. **Enforced-refusal graduation path**: precision report from audit-mode data → per-procedure opt-in enforcement flag (this is the product's proof point maturing).
+2. **Capability scores v0**: failures → Evidence(contradicts) → belief/capability decay visible via `check_procedure` responses + decay-curve chart (T4 machinery reused).
+3. **`explain_failure` full version**: multi-hop backward walk over execution graph joined with fingerprint families + belief state (AgentTrace-style, sub-second target).
+4. **DCR instrumentation** on our own pipeline (D²ACCI) — internal quality metric, publishable methodology note.
+5. Distribution completion: MCP Registry live listing, Smithery/Glama/PulseMCP, awesome-mcp-servers PR, Show-HN slot.
+6. arXiv preprint draft (substrate evaluation framing) + YC evidence pack refreshed with live install/issue metrics.
+
+**Day-30 definition-of-done (all four required to call the month a success):**
+- ✅ ≥1 external-signal gate hit: {≥500 installs ∨ 1 scheduled enterprise conversation ∨ workshop/paper submission}
+- ✅ Refusal story complete: audit→enforcement path shipped with measured precision report
+- ✅ Receipts page carries ≥3 independently reproducible numbers (ripple, LongMemEval subset, latency)
+- ✅ Wedge decision memo signed from real data (infrastructure vs procedures open-core)
+
+**Explicit month-1 non-goals:** hosted/multi-tenant service, debate-panel UX polish, frontend work, spec v5, second benchmark family beyond LongMemEval. Anything pulling toward these gets deferred to the Day-30 retro.
+
