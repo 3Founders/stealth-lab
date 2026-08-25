@@ -182,6 +182,7 @@ blocking question in the Log, continue with the next queue item.
     property and file ownership is absolute — as written, 1.9c cannot be
     started by this lane without guaranteed revert. Options: (a) reassign
     1.9c to CORE-A alongside its models/db ownership (proposed default),
+**RESOLVED by integrator 2026-08-25: CORE-B is granted a scoped exception for ackend/app/models/change.py alone (1.9c only, this wave). models/** remains CORE-A otherwise. Proceed with 1.9c.**
     (b) grant CORE-B an explicit exception path list for the change-set
     coverage work (models/change.py + the [V] mutation service files),
     (c) split: CORE-A extends the model, CORE-B writes the Appendix C #7
