@@ -8,7 +8,7 @@ are tested against real Postgres in integration_check_v2_governance.py.
 from __future__ import annotations
 
 import asyncio
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -101,10 +101,24 @@ def _failing_pool():
 
 def test_rate_limiter_fails_closed_when_store_unreachable():
     """
-    A limiter that allows everything when its store is down provides no
-    protection while appearing to -- the worst outcome.
+    H3 semantics: the hot path never touches Postgres, so an unreachable
+    store surfaces at DRAIN time — and a failed drain closes the door.
+    The first request is admitted before the failure is knowable (its
+    drain attempt is what discovers it); every subsequent one must be
+    denied, not silently waved through.
     """
-    limiter = RateLimiter(_failing_pool(), limits=DEFAULT_LIMITS)
+    start = datetime(2026, 8, 26, tzinfo=timezone.utc)
+    clock = [start]
+
+    def advance(seconds=0):
+        clock[0] += timedelta(seconds=seconds)
+        return clock[0]
+
+    limiter = RateLimiter(
+        _failing_pool(), limits=DEFAULT_LIMITS, clock=lambda: clock[0]
+    )
+    asyncio.run(limiter.check_and_record("viewer:alice", "/v1/chat"))  # admitted pre-failure
+    advance(5)  # past the degraded-retry throttle so the denial path retries the drain
     with pytest.raises(RateLimitExceeded, match="temporarily unavailable"):
         asyncio.run(limiter.check_and_record("viewer:alice", "/v1/chat"))
 

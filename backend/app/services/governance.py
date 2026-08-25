@@ -16,13 +16,71 @@ separate because they fail differently:
 Both fail *closed* on infrastructure errors. A rate limiter that
 silently allows everything when its backing store is unreachable is
 worse than no rate limiter, because it creates false confidence.
+
+HARDENING H3 (2026-08-26) — collector treatment for the rate limiter:
+
+The V2 limiter enforced straight out of Postgres: every LLM-spending
+request paid an advisory lock + a windowed COUNT + an INSERT. That made
+the database the enforcement point AND the hottest table in the schema.
+It is now the **audit ledger** only, mirroring trace_collector's
+append->drain split:
+
+  - Enforcement is an **in-process token bucket** per (scope_key,
+    endpoint). The hot path performs zero I/O: check tokens, consume
+    one, append the admission to a bounded in-memory pending buffer.
+    Bucket state is shared per pool (a WeakKeyDictionary), so callers
+    that construct a fresh RateLimiter per request — api/deps.py does —
+    still share one limiter.
+
+  - A **buffered drain** flushes pending admissions to
+    rate_limit_events in one batched executemany, triggered when the
+    buffer crosses LEDGER_FLUSH_THRESHOLD, when its oldest event ages
+    past LEDGER_MAX_FLUSH_DELAY (keeps the ledger fresh under trickle
+    traffic), or — while degraded — on the throttled retry cadence.
+
+  - **Replay-or-block, the fail-closed contract:** if a drain fails,
+    the unflushed events are RETAINED in arrival order and replayed
+    verbatim (original admission timestamps) on the next successful
+    drain — and the door CLOSES: every subsequent check_and_record is
+    denied ("temporarily unavailable") until a drain succeeds. No
+    admission is ever granted while the audit trail is known-broken;
+    a request admitted just before a detected failure completes
+    normally, and everything after is denied. This preserves V2's
+    fail-closed-on-infra-error semantics; what changed is *when* the
+    error becomes visible (at drain time rather than per check).
+
+  - Honest, bounded loss windows (same discipline as trace_collector's
+    drop_count): a hard process crash loses at most LEDGER_MAX_FLUSH_
+    DELAY's worth of un-drained audit rows and resets the buckets, so
+    one restart-permitting burst can exceed the pre-crash budget. The
+    ledger remains a complete record of everything the limiter did NOT
+    lose.
+
+  - Multi-process decision: **no Redis.** The documented deployment is
+    a single uvicorn worker (`--workers 1` is load-bearing; render.yaml
+    launches one process), so per-process buckets are exact. Running
+    multiple workers would multiply the effective budget per key and
+    interleave one audit table — at that point Redis becomes the
+    enforcement store (Postgres stays the ledger either way). That is a
+    deliberate future change, not a silent assumption: this paragraph
+    is the tripwire.
+
+  - **Retention:** rate_limit_events is append-only and unbounded, so
+    every successful drain piggybacks a TTL sweep deleting rows older
+    than RATE_EVENT_RETENTION (throttled to once per
+    RATE_EVENT_SWEEP_INTERVAL). Sweep failure is housekeeping — it is
+    logged and never closes the door; only ledger WRITES can.
 """
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+import math
+import threading
+import weakref
+from collections import deque
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
-from typing import Optional
+from typing import Any, Callable, Deque, Optional, Tuple
 
 import asyncpg
 
@@ -120,85 +178,277 @@ def estimate_tokens(text: str) -> int:
     return max(1, len(text) // 4)
 
 
+# --- H3 collector treatment: named, monkeypatch-retunable knobs ---
+# All timing/size decisions are module constants consulted at call time,
+# never inlined literals — proven retunable by the offline suite.
+
+# Pending admissions buffered before a drain is forced. The hot path
+# stays SQL-free below this; one batched executemany amortizes the
+# ledger write across this many requests.
+LEDGER_FLUSH_THRESHOLD = 32
+# Hard ceiling on unflushed events. Reaching it means drains have been
+# failing for a while; admissions deny rather than grow an unauditable
+# backlog. (The closed door normally prevents ever reaching this.)
+LEDGER_MAX_PENDING = 4096
+# Trickle-traffic freshness bound: if the OLDEST pending event is older
+# than this, the next request drains, so rate_limit_events never lags
+# real admissions by more than this much under low traffic.
+LEDGER_MAX_FLUSH_DELAY = timedelta(seconds=30)
+# While degraded (last drain failed), denied requests retry the ledger
+# at most once per this interval — recovery without hammering a down
+# Postgres on every denied request.
+LEDGER_FLUSH_RETRY_INTERVAL = timedelta(seconds=2)
+# Audit-ledger TTL. Matches purge_old's historical default.
+RATE_EVENT_RETENTION = timedelta(days=2)
+# Minimum spacing between retention sweeps (piggybacked on drains).
+RATE_EVENT_SWEEP_INTERVAL = timedelta(hours=1)
+# Retry-After for infrastructure denials. Same value V2 used for
+# "temporarily unavailable", kept for continuity with existing clients.
+DEGRADED_RETRY_AFTER_SECONDS = 60
+
+_LEDGER_INSERT_SQL = (
+    "INSERT INTO rate_limit_events (scope_key, endpoint, occurred_at) "
+    "VALUES ($1, $2, $3)"
+)
+_RETENTION_DELETE_SQL = (
+    "DELETE FROM rate_limit_events WHERE occurred_at < $1"
+)
+
+# One bucket set + buffer per pool for the whole process. deps.py builds
+# a fresh RateLimiter per request; keying state by pool identity makes
+# those instances share enforcement and buffer state (and keeps pools —
+# and therefore tests using distinct fake pools — isolated from each
+# other). WeakKeyDictionary so replacing a pool at shutdown doesn't leak
+# limiter state.
+_STATES: "weakref.WeakKeyDictionary[Any, _LimiterState]" = weakref.WeakKeyDictionary()
+
+
+def _default_clock() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+@dataclass
+class _Bucket:
+    """Token bucket for one (scope_key, endpoint). Starts full."""
+    tokens: float
+    updated: datetime
+
+
+@dataclass
+class _LimiterState:
+    """Per-pool shared state: buckets, the pending audit buffer, and the
+    door. Lock ordering note: held only across synchronous sections —
+    never across an await — so event-loop fairness is preserved."""
+    lock: threading.Lock = field(default_factory=threading.Lock)
+    buckets: dict = field(default_factory=dict)
+    # (occurred_at, scope_key, endpoint) in arrival order; replayed verbatim.
+    pending: Deque[Tuple[datetime, str, str]] = field(default_factory=deque)
+    last_flush_attempt: Optional[datetime] = None
+    last_flush_success: Optional[datetime] = None
+    last_sweep: Optional[datetime] = None
+    flush_failed: bool = False
+    draining: bool = False
+
+    @property
+    def door_closed(self) -> bool:
+        """True while the audit trail is known-broken: a drain has failed
+        and its events are still awaiting replay."""
+        return self.flush_failed
+
+
 class RateLimiter:
-    def __init__(self, pool: asyncpg.Pool, limits: Optional[dict[str, RateLimit]] = None):
+    def __init__(
+        self,
+        pool: asyncpg.Pool,
+        limits: Optional[dict[str, RateLimit]] = None,
+        *,
+        clock: Optional[Callable[[], datetime]] = None,
+    ):
         self._pool = pool
         self._limits = limits if limits is not None else DEFAULT_LIMITS
+        self._clock = clock or _default_clock
+        state = _STATES.get(pool)
+        if state is None:
+            state = _LimiterState()
+            _STATES[pool] = state
+        self._state = state
+
+    # --- observability (used by ops/tests; cheap, lock-guarded reads) ---
+
+    @property
+    def pending_count(self) -> int:
+        with self._state.lock:
+            return len(self._state.pending)
+
+    @property
+    def door_closed(self) -> bool:
+        return self._state.door_closed
+
+    # --- enforcement ---
+
+    def _bucket_for(self, scope_key: str, endpoint: str, limit: RateLimit, now: datetime) -> _Bucket:
+        bucket = self._state.buckets.get((scope_key, endpoint))
+        if bucket is None:
+            bucket = _Bucket(tokens=float(limit.max_requests), updated=now)
+            self._state.buckets[(scope_key, endpoint)] = bucket
+        return bucket
+
+    @staticmethod
+    def _refill(bucket: _Bucket, limit: RateLimit, now: datetime) -> None:
+        elapsed = (now - bucket.updated).total_seconds()
+        if elapsed > 0:
+            rate = limit.max_requests / limit.window.total_seconds()
+            bucket.tokens = min(float(limit.max_requests), bucket.tokens + elapsed * rate)
+        bucket.updated = now
 
     async def check_and_record(self, scope_key: str, endpoint: str) -> None:
         """
         Raise RateLimitExceeded if over the limit; otherwise record this
-        request.
+        request — in memory.
 
-        Check and record happen in one transaction so two concurrent
-        requests can't both observe "9 of 10 used" and both proceed.
+        H3: the check is a token-bucket consume (atomic — the critical
+        section holds no awaits) and the record is an append to the
+        pending audit buffer. Neither touches Postgres. The buffered
+        drain runs opportunistically afterwards; see the module
+        docstring for the fail-closed contract when THAT fails.
         """
         limit = self._limits.get(endpoint)
         if limit is None:
             return
 
-        since = datetime.now(timezone.utc) - limit.window
+        now = self._clock()
+        st = self._state
+        denial: Optional[RateLimitExceeded] = None
+
+        with st.lock:
+            bucket = self._bucket_for(scope_key, endpoint, limit, now)
+            self._refill(bucket, limit, now)
+            if st.flush_failed:
+                # Door closed: the audit ledger last failed to accept our
+                # writes. Deny WITHOUT consuming a token — failing
+                # infrastructure must look like denial, never like free
+                # capacity.
+                denial = RateLimitExceeded(
+                    "rate limiting is temporarily unavailable",
+                    retry_after_seconds=DEGRADED_RETRY_AFTER_SECONDS,
+                )
+            elif len(st.pending) >= LEDGER_MAX_PENDING:
+                denial = RateLimitExceeded(
+                    "rate limit audit buffer is saturated",
+                    retry_after_seconds=DEGRADED_RETRY_AFTER_SECONDS,
+                )
+            elif bucket.tokens >= 1.0:
+                bucket.tokens -= 1.0
+                st.pending.append((now, scope_key, endpoint))
+            else:
+                wait_seconds = (1.0 - bucket.tokens) * (
+                    limit.window.total_seconds() / limit.max_requests
+                )
+                denial = RateLimitExceeded(
+                    f"{limit.max_requests} requests per "
+                    f"{limit.window_seconds // 60} minutes allowed for {endpoint}",
+                    retry_after_seconds=max(1, math.ceil(wait_seconds)),
+                )
+
+        # Drain outside the lock; _drain() re-locks, decides due-ness,
+        # and never raises.
+        await self._drain(now)
+
+        if denial is not None:
+            raise denial
+
+    async def _drain(self, now: datetime) -> None:
+        """
+        Flush pending admissions to the audit ledger in one batch, then
+        piggyback the retention sweep. Never raises: success opens the
+        door, failure closes it (replay retained), and callers above
+        translate a closed door into denials.
+        """
+        st = self._state
+        with st.lock:
+            if st.draining or not st.pending:
+                return
+            oldest = st.pending[0][0]
+            if st.flush_failed:
+                # Degraded: recovery retries run STRICTLY on the throttle
+                # cadence. The reachability/staleness clauses below must
+                # not apply here — last_flush_success stays None for as
+                # long as Postgres stays down, so letting them speak
+                # would retry on every denied call and hammer a dead
+                # store.
+                due = (
+                    st.last_flush_attempt is None
+                    or (now - st.last_flush_attempt) >= LEDGER_FLUSH_RETRY_INTERVAL
+                )
+            else:
+                # The very first drain of the process happens
+                # unconditionally so ledger reachability is established
+                # on the first request, not discovered only after
+                # LEDGER_MAX_FLUSH_DELAY — an unreachable store must
+                # close the door as soon as it can possibly be known,
+                # matching V2's per-check fail-closed.
+                freshness_due = st.last_flush_success is None or (
+                    (now - oldest) >= LEDGER_MAX_FLUSH_DELAY
+                )
+                due = len(st.pending) >= LEDGER_FLUSH_THRESHOLD or freshness_due
+            if not due:
+                return
+            batch = list(st.pending)
+            sweep_due = st.last_sweep is None or (now - st.last_sweep) >= RATE_EVENT_SWEEP_INTERVAL
+            cutoff = now - RATE_EVENT_RETENTION
+            st.draining = True
 
         try:
             async with self._pool.acquire() as conn:
-                async with conn.transaction():
-                    # A transaction alone is NOT sufficient here. Under
-                    # Postgres's default READ COMMITTED isolation, N
-                    # concurrent requests each see a snapshot without the
-                    # others' uncommitted inserts, so all N read the same
-                    # count and all N proceed -- verified failing before
-                    # this lock was added.
-                    #
-                    # The advisory lock serialises checks for one key
-                    # only, so unrelated keys still run concurrently. It
-                    # releases automatically at transaction end, including
-                    # on error. SERIALIZABLE isolation would also work but
-                    # would surface serialisation failures needing retry
-                    # logic at every call site.
-                    await conn.execute(
-                        "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
-                        f"ratelimit:{scope_key}:{endpoint}",
-                    )
-                    count = await conn.fetchval(
-                        "SELECT COUNT(*) FROM rate_limit_events "
-                        "WHERE scope_key = $1 AND endpoint = $2 AND occurred_at >= $3",
-                        scope_key, endpoint, since,
-                    )
-                    if count >= limit.max_requests:
-                        oldest = await conn.fetchval(
-                            "SELECT MIN(occurred_at) FROM rate_limit_events "
-                            "WHERE scope_key = $1 AND endpoint = $2 AND occurred_at >= $3",
-                            scope_key, endpoint, since,
+                await conn.executemany(
+                    _LEDGER_INSERT_SQL,
+                    [(scope_key, endpoint, ts) for ts, scope_key, endpoint in batch],
+                )
+                if sweep_due:
+                    # Marked before attempting so a failing sweep retries
+                    # at sweep cadence, not on every drain.
+                    with st.lock:
+                        st.last_sweep = now
+                    try:
+                        await conn.execute(_RETENTION_DELETE_SQL, cutoff)
+                    except Exception as exc:  # noqa: BLE001
+                        # Housekeeping ONLY: a failed TTL sweep must never
+                        # masquerade as a failed flush (that would close
+                        # the door on good writes and replay duplicates).
+                        log.warning(
+                            "rate_limit_events retention sweep failed "
+                            "(housekeeping only, door stays open): %s", exc,
                         )
-                        retry_after = limit.window_seconds
-                        if oldest:
-                            elapsed = (datetime.now(timezone.utc) - oldest).total_seconds()
-                            retry_after = max(1, int(limit.window_seconds - elapsed))
-                        raise RateLimitExceeded(
-                            f"{limit.max_requests} requests per "
-                            f"{limit.window_seconds // 60} minutes allowed for {endpoint}",
-                            retry_after_seconds=retry_after,
-                        )
-                    await conn.execute(
-                        "INSERT INTO rate_limit_events (scope_key, endpoint) VALUES ($1, $2)",
-                        scope_key, endpoint,
-                    )
-        except RateLimitExceeded:
-            raise
         except Exception as exc:  # noqa: BLE001
-            # Fail closed. A limiter that lets everything through when its
-            # store is unreachable provides no protection while appearing
-            # to, which is the worst of both.
-            log.error("rate limiter unavailable, denying request: %s", exc)
-            raise RateLimitExceeded(
-                "rate limiting is temporarily unavailable", retry_after_seconds=60
-            ) from exc
+            with st.lock:
+                st.draining = False
+                st.last_flush_attempt = now
+                # Replay-or-block, block half: keep every event (the
+                # batch list was a snapshot; pending still holds them),
+                # close the door. Subsequent check_and_record calls deny
+                # until a drain succeeds.
+                st.flush_failed = True
+            log.error("rate limit ledger flush failed, closing admission door: %s", exc)
+            return
 
-    async def purge_old(self, older_than: timedelta = timedelta(days=2)) -> int:
-        """Housekeeping — the events table is append-only and unbounded."""
-        cutoff = datetime.now(timezone.utc) - older_than
+        with st.lock:
+            st.draining = False
+            st.last_flush_attempt = now
+            st.last_flush_success = now
+            st.flush_failed = False
+            # Replay-or-block, replay half: drop exactly the flushed
+            # prefix. Events admitted while we were draining sit behind
+            # it, untouched, in arrival order.
+            for _ in range(len(batch)):
+                st.pending.popleft()
+        log.debug("flushed %d rate limit events to the audit ledger", len(batch))
+
+    async def purge_old(self, older_than: timedelta = RATE_EVENT_RETENTION) -> int:
+        """Manual retention sweep (ops entry point; the drain path sweeps
+        automatically). Returns the number of rows deleted."""
+        cutoff = self._clock() - older_than
         result = await self._pool.execute(
-            "DELETE FROM rate_limit_events WHERE occurred_at < $1", cutoff
+            _RETENTION_DELETE_SQL, cutoff
         )
         return int(result.split()[-1]) if result else 0
 
