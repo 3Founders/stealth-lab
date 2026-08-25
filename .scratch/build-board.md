@@ -706,7 +706,47 @@ blocking question in the Log, continue with the next queue item.
 ### Lane HARDENING (opened by founder referral of Chaitanya-instance audit, 2026-08-25)
 Grounded findings from  3_access.sql/ 4_governance.sql/deps.py review. Sequence: after current OIDC tasks land.
 1. `[x]` done @2026-08-26 â€” branch `lane/core-a` **H1 - Identity tables + tenancy predicate builder** (assigned to CORE-A per 8e09a5c): shipped as CORE-A queue item 5 above; db/28 + TenantScope/tenant_predicate/scope_predicates + authn tenancy resolution + replay adoption + hygiene tooth + 33 offline proving tests. Suite 1147/114/0.
-2. `[ ] claimed @2026-08-26 - CORE-A next wave` **H2 - RLS backstop on [H] tables**: SET LOCAL app.tenant_id per transaction + row-level security policies at minimum on append-only truth. App-layer stays PRIMARY (single policy source - no drift between two enforcers). asyncpg caveat: transaction-scoped only, or it leaks across pooled connections.
+2. `[x] done @2026-08-26 - branch lane/core-a` **H2 - RLS backstop on [H] tables**: SET LOCAL app.tenant_id per transaction + row-level security policies at minimum on append-only truth. App-layer stays PRIMARY (single policy source - no drift between two enforcers). asyncpg caveat: transaction-scoped only, or it leaks across pooled connections.
+   *(Shipped: db/29_rls_backstop.sql — tenant_id born additively on the five
+   [H] truth tables [evidence, executions, change_sets, change_set_operations,
+   failure_routes — the four named minimums + 2.4's routing log, same lane,
+   same class] with the commons-org DEFAULT so every existing row resolves to
+   the seeded organization untouched; ENABLE + FORCE ROW LEVEL SECURITY per
+   table [FORCE because the backend connects AS the owner — without it the
+   backstop is decorative exactly where it matters]; every policy's USING and
+   WITH CHECK delegate to ONE shared STABLE sql function
+   sl_tenant_scope_allows() so policy drift is structurally impossible. The
+   expression is deliberately PERMISSIVE-WHEN-UNSET — unset/empty setting
+   falls back to the row's own tenant, i.e. today's public-commons posture
+   byte-for-byte; enforcement arms exactly where adoption lands and nowhere
+   else, same visible-posture rule as the builders. services/access.py gains
+   the transaction wrapper: TENANT_SETTING constant + tenant_setting_statement()
+   + tenant_transaction() async CM — binds set_config($1,$2,TRUE) ["SET LOCAL's
+   parameterized twin; asyncpg cannot parameterize SET itself"] as the FIRST
+   statement inside conn.transaction(), so the setting dies at COMMIT *and*
+   ROLLBACK — no cleanup path to forget, no exception path that leaks onto the
+   next borrower of the pooled connection. Unrestricted scope opens a plain
+   transaction, binding nothing [explicit maintenance hatch]; refusing to emit
+   a setting for unrestricted is fail-loud. Docs-comment in db/29 names every
+   table left RLS-free and why: commons substrate [V2/H1 app-layer predicates
+   govern it; RLS there = the CUTOVER decision, needs cross-lane-request-#2's
+   adoption sweep first], execution_plans/task_graphs [[D→frozen] derived
+   artifacts, not truth], identity tables [they DEFINE tenants; RLS on them
+   is circular], governance ledgers [key-scoped, H3]. Proving tests offline:
+   22 in tests/test_hardening_h2_rls_backstop.py — FakePool capture proves
+   BEGIN → set_config → caller statements → COMMIT ordering with both args
+   bound; rollback propagates with no COMMIT; a pooled-connection SEMANTICS
+   SIMULATION proves two sequential borrows of one physical connection cannot
+   see each other's tenant AND a deliberate session-scope FALSE misuse IS
+   detected by the same probe [negative control — the apparatus can fail];
+   migration static checks [additive birth, enable+force, idempotent pg_policies
+   guards, single-expression delegation ×10, destructive-op ban, docs-comment
+   presence]; Python↔SQL pin on the setting name. Suite: full offline run on
+   my tree = 1192 passed / 1 skipped / 111 failed, the 111 IDENTICAL per-file
+   to a stashed clean tree of the same commit [live-DB e2e against the drifted
+   shared instance once .env loads mid-run — the documented queue-2 drift;
+   all failing files pass standalone / skip cleanly]. Zero regressions;
+   rebased onto origin/main [incl. core-b's 2.4 handlers] before push.)*
 3. [x] done @2026-08-26 — branch `lane/core-b` **H3 - Rate-limiter collector treatment (pre-public-launch)**: in-process token bucket + buffered ledger flush (reuse trace_collector append->drain pattern); Postgres becomes audit ledger, not enforcement point; Redis only if multi-process strictness demands. CONSTRAINT: must preserve fail-closed-on-infra-error semantics; buffered writes need a replay-or-block rule. Retention/TTL sweep for rate_limit_events.
    *(Shipped: governance.py RateLimiter rewritten — enforcement is an in-process
    token bucket per (scope_key, endpoint) [continuous refill, atomic critical
@@ -744,3 +784,24 @@ Grounded findings from  3_access.sql/ 4_governance.sql/deps.py review. Sequence:
    NOTE for owners of backend/integration_check_v2_governance.py [unowned
    script, not pytest-collected]: its real-DB race/row-count asserts predate
    buffering — needs flush awareness when next run; see Log entry 5.)*
+- CORE-A (2026-08-26, seventh wave): **HARDENING H2 — RLS backstop on [H]
+  tables** done on `lane/core-a` — see HARDENING item 2. Notes:
+  1. db/29 is NOT yet applied to the shared instance (same discipline as
+     db/28: offline proofs needed no live DB, and queue item 2's chain run
+     stays the canonical application point). It is additive + idempotent;
+     applying it to a DB that already has it is a no-op. One behavioral
+     caveat for whoever runs it: FORCE RLS means even owner connections are
+     policy-bound from then on — permissive-when-unset keeps every existing
+     path byte-identical UNLESS a transaction binds app.tenant_id via the
+     new helper.
+  2. Adoption status mirrors H1's shape: the helper exists and is proven,
+     but NO query path wraps its writes in tenant_transaction() yet — the
+     evidence-writer wiring (cross-lane request #1) is the natural first
+     caller, and the remaining sweep is cross-lane request #2 / Question #5.
+     Until then RLS on these five tables stands armed but unkeyed (unset
+     setting = today's posture), by design.
+  3. Full-suite numbers recorded in the queue item: the 111 ordering-
+     dependent live-DB failures reproduce identically on a stashed clean
+     tree — same files, same counts — and every failing file passes (or
+     skips) standalone. This worktree's backend/.env carries DATABASE_URL,
+     so full runs load it mid-ordering; queue item 2 remains the fix.
