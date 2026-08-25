@@ -105,6 +105,33 @@ git worktree add ..\sl-research -b lane/research origin/main
    idempotent) so the live proof could run.
    FINDINGS filed in Log: extract_procedure V0 gap (#4) + shared-instance
    migration state (queue-2 input).)*
+7. `[x]` done @2026-08-25 — branch `lane/core-a` **Band 2.4 failure-classification
+   pipeline**: outcomes classify into §36's causes via Evidence.failure_class;
+   each cause routed to its mandated update.
+   *(Shipped: db/27_failure_routing.sql — failure_routes [H] append-only log
+   [evidence_id FK, class copy, route, typed payload, routed_by stamp;
+   UNIQUE(evidence_id,route) idempotency; engine teeth incl. the §36 pairing
+   rule as a CHECK — NULL class iff requires_review — plus db/24-style
+   tombstone-only freeze trigger]; app/execution/failures.py boundary —
+   FAILURE_ROUTES table verbatim per assignment [procedure_wrong→
+   procedure_version_candidate; implementation_wrong→capability_demotion;
+   environment_changed→dependency_queue; input_abnormal→applicability_narrowing;
+   verification_wrong→plan_revision; external_failure→no_op], unclassified
+   NULL→requires_review, false_reuse→applicability_narrowing as the ONE named
+   judgment call [spec assigns it none; the reuse gate admitted a failure —
+   narrow what may match; monkeypatch-retunable constant]; classify_failure /
+   build_payload / record_routing / classify_and_route one-call API for the
+   evidence writer + fetch_unrouted_failures sweeper / fetch_route_queue
+   consumers. DESIGN: record-don't-execute — mandated updates live in other
+   owners' code; CORE-A owes the durable auditable queue, handlers land with
+   their owners [cross-lane request #1 extended: wire classify_and_route()
+   next to the evidence INSERT]. 24 offline proving tests +
+   schema-probe-gated e2e [classify/idempotence/queues/tamper-teeth/
+   tombstone-cleanup] in tests/test_band2_4_failures.py. Suite: 1084 passed /
+   114 skipped / 0 failed standard [includes CORE-B's latest landed files];
+   e2e skips on shared instance BY PROBE — db/27 FKs evidence (db/24) which
+   the drifted instance lacks; deliberately NOT piecemeal-applied there
+   [queue item 2 owns the chain].)*
 ### Lane CORE-B â€” extraction & gating (owns `backend/app/services/procedure_extraction/**`, `invariants.py`, `applicability.py`, `precondition_gate.py`, `state.py`)
 1. `[x] done 2026-08-25 â€” lane/core-b` **1.8a** Precondition relevance filter (derive gates only load-bearing facts).
 2. `[x] done 2026-08-25 â€” lane/core-b` **1.8b** V6 authoring-time invariant validator + z3 off event loop w/ timeout.
@@ -278,6 +305,13 @@ blocking question in the Log, continue with the next queue item.
    promotion path and Appendix C #3 is proven at contract level only. Proposed
    default: assign services/procedures.py to CORE-A next wave (it is procedure-
    lifecycle storage, squarely CORE-A's "storage & plans" charter).
+   **EXTENDED by Band 2.4:** in that same change, failures get routed too — call
+   `app/execution/failures.py::classify_and_route(pool, evidence_row)` for every
+   failure row right after its INSERT (one-call API, idempotent); successes raise
+   NotClassifiable and must be skipped by the caller. Consumers then read their
+   queues via `fetch_route_queue(pool, route)` — capability demotion consumers,
+   applicability narrowing, plan revision each land with their owner; until then
+   decisions stay durably queued and auditable in failure_routes.
 ## Founder dependencies (blocking nothing currently)
 
 | Ruling | Blocks | State |
@@ -429,6 +463,20 @@ blocking question in the Log, continue with the next queue item.
   session, now aggravated by .env presence turning skip-into-run for
   token-gated e2e. Needs the integrator's disposable-DB decision, not a
   measure fix. (b) Rebased onto origin/main before push per OVERNIGHT MODE.
+
+- CORE-A (2026-08-25, fifth wave): **Band 2.4 failure-classification pipeline**
+  done — see queue item 7. Notes: (a) false_reuse's route is the one value
+  neither §36's routing paragraph nor the assignment names — routed to
+  applicability_narrowing as FALSE_REUSE_ROUTE, a named monkeypatch-retunable
+  constant with the reasoning in its docstring; a future founder ruling
+  changes one line. (b) The routing layer is record-don't-execute BY DESIGN:
+  db/27 is the durable auditable idempotent queue; executing procedure
+  revisions / narrowing / plan revisions belongs to extraction / applicability /
+  plans owners respectively — cross-lane request #1 extended with the exact
+  one-call wiring (`classify_and_route`) for whoever lands the evidence writer.
+  (c) db/27 NOT applied to the shared instance: it FKs evidence (db/24) which
+  is absent there; piecemeal-applying 24+27 would deepen exactly the drift
+  queue item 2 exists to sort. E2E probes and skips with that reason.
 
 ### Lane HARDENING (opened by founder referral of Chaitanya-instance audit, 2026-08-25)
 Grounded findings from  3_access.sql/ 4_governance.sql/deps.py review. Sequence: after current OIDC tasks land.
