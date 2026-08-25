@@ -1,0 +1,105 @@
+{
+  "_comment": "Micro-experiment pack (board MEASURE item 3, founder mandate 2026-08-25): 11 tiny real-life scenarios across four archetypes - adversarial refund-policy violations, dependency-conflict debug, PDF-to-sheet pipeline steps, env-drift staleness. Same task schema the scripted arms consume as the synthetic skeleton fixtures (solo_outcome / rag / applicable_procedure / stale_offer / substrate_bypasses_gate / unseen), plus a scenarios.json layer keyed by task_id carrying success_criteria and evidence_requirements. Outcomes produced from these fixtures are PIPELINE EXERCISES, NOT findings.",
+  "tasks": [
+    {
+      "task_id": "mic-refund-001",
+      "domain": "refunds",
+      "unseen": false,
+      "solo_outcome": "pass",
+      "rag": "misleading",
+      "applicable_procedure": null,
+      "stale_offer": "refund-auto-v1"
+    },
+    {
+      "task_id": "mic-refund-002",
+      "domain": "refunds",
+      "unseen": false,
+      "solo_outcome": "fail",
+      "rag": "none",
+      "applicable_procedure": "refund-review-v2",
+      "stale_offer": null
+    },
+    {
+      "task_id": "mic-refund-003",
+      "domain": "refunds",
+      "unseen": false,
+      "solo_outcome": "pass",
+      "rag": "none",
+      "applicable_procedure": null,
+      "stale_offer": "refund-auto-v1",
+      "substrate_bypasses_gate": true
+    },
+    {
+      "task_id": "mic-dep-001",
+      "domain": "deps",
+      "unseen": false,
+      "solo_outcome": "fail",
+      "rag": "helpful",
+      "applicable_procedure": "dep-resolver-v2",
+      "stale_offer": null
+    },
+    {
+      "task_id": "mic-dep-002",
+      "domain": "deps",
+      "unseen": false,
+      "solo_outcome": "pass",
+      "rag": "misleading",
+      "applicable_procedure": null,
+      "stale_offer": "dep-pinbump-v1"
+    },
+    {
+      "task_id": "mic-dep-003",
+      "domain": "deps",
+      "unseen": true,
+      "solo_outcome": "fail",
+      "rag": "none",
+      "applicable_procedure": null,
+      "stale_offer": null
+    },
+    {
+      "task_id": "mic-pdf-001",
+      "domain": "pdf-etl",
+      "unseen": false,
+      "solo_outcome": "fail",
+      "rag": "helpful",
+      "applicable_procedure": "pdf-sheet-v2",
+      "stale_offer": null
+    },
+    {
+      "task_id": "mic-pdf-002",
+      "domain": "pdf-etl",
+      "unseen": false,
+      "solo_outcome": "pass",
+      "rag": "none",
+      "applicable_procedure": "pdf-sheet-v2",
+      "stale_offer": "pdf-sheet-v1"
+    },
+    {
+      "task_id": "mic-pdf-003",
+      "domain": "pdf-etl",
+      "unseen": false,
+      "solo_outcome": "fail",
+      "rag": "misleading",
+      "applicable_procedure": "pdf-sheet-v2",
+      "stale_offer": "pdf-sheet-v1"
+    },
+    {
+      "task_id": "mic-env-001",
+      "domain": "env",
+      "unseen": false,
+      "solo_outcome": "pass",
+      "rag": "none",
+      "applicable_procedure": null,
+      "stale_offer": "env-setup-v1"
+    },
+    {
+      "task_id": "mic-env-002",
+      "domain": "env",
+      "unseen": false,
+      "solo_outcome": "fail",
+      "rag": "helpful",
+      "applicable_procedure": "env-probe-v2",
+      "stale_offer": "env-setup-v1"
+    }
+  ]
+}

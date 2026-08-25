@@ -81,8 +81,13 @@ class SoloFrontierAgent:
         # Arm A has no retrieval surface of any kind: no procedures are
         # surfaced, so there are no refusal opportunities to score (§40's
         # stale-procedure-detection metric only applies where offers exist).
+        # Arms B and C re-assert the task's offer after super().run() — the
+        # offer IS visible to them; refusing it is the scored behavior.
         ep["stale_offered"] = []
-        ep["resolved"] = task["solo_outcome"] == "pass"
+        # .get (not []): real-corpus tasks ingested by session_corpus.py are
+        # dry-run pipeline exercises with no scripted outcome; they default
+        # to unresolved and are never scored as findings.
+        ep["resolved"] = task.get("solo_outcome") == "pass"
         ep["tokens_in"], ep["tokens_out"] = self.base_in, self.base_out
         ep["tool_calls"] = 22
         ep["latency_seconds"] = round((self.base_in + self.base_out) / 900, 1)
@@ -109,6 +114,9 @@ class ConventionalMemoryAgent(SoloFrontierAgent):
     def run(self, task: dict) -> dict:
         ep = super().run(task)
         ep["arm"] = "B"
+        # Stale offers are surfaced to B too (tasks.json contract) — B just
+        # has no refusal machinery, which is the scored contrast.
+        ep["stale_offered"] = [p for p in [task.get("stale_offer")] if p]
         rag = task.get("rag", "none")
         if rag == "none":
             return ep
@@ -146,6 +154,9 @@ class VerifiedProcedureAgent(SoloFrontierAgent):
         applicable_id = task.get("applicable_procedure")
         stale_offer = task.get("stale_offer")
         bypass = bool(task.get("substrate_bypasses_gate"))
+        # The surface surfaced the offer to C as well (tasks.json contract);
+        # arm A alone sees nothing (no retrieval path at all).
+        ep["stale_offered"] = [p for p in [task.get("stale_offer")] if p]
 
         candidates = [c for c in self.surface.search(domain)]
         ep["tool_calls"] += len(candidates) + 1

@@ -15,11 +15,47 @@ p-value — never a bare point estimate. Full §40 telemetry (unseen-task succes
 transfer, tool calls, tokens, latency, human interventions, capability inputs)
 is written to the JSONL rows so later metrics never require a re-run.
 
-## Status: SKELETON, synthetic fixtures only
+## Status: skeleton + MICRO-EXPERIMENT PACK (still synthetic outcomes)
 
-Until CORE-A lands 1.7 there is no ExecutionPlan persistence to integrate with,
-so tonight everything runs on synthetic fixtures and a scripted agent policy
-(`scripted_arms.py`). The seams are real:
+Board MEASURE items 1-2 landed the skeleton and scoreboard. Item 3 (founder
+mandate 2026-08-25) adds the **micro-experiment pack**: `fixtures/micro/` holds
+11 tiny real-life scenarios across the four mandated archetypes — adversarial
+refund-policy rule violations, dependency-conflict debug, PDF-to-sheet pipeline
+steps, env-drift staleness — each with arm-independent success criteria and
+evidence-trail requirements.
+
+```powershell
+backend\.venv\Scripts\python.exe experiments\harness\run_micro_pack.py
+```
+
+prints a per-scenario verdict table (pass/fail per arm WITH the failing
+requirement ids — never a bare estimate), then the usual scoreboard + power
+footer. Grading lives in `micro_pack.py`; evidence assertions check the episode
+record AND the MCP surface call journal (`StubSurface` logs every
+search/get_procedure/check_applicability/record_refusal). Trail requirements
+waive for arms with no substrate path: arm B lacking a trail is the
+experimental contrast, not a failure. One scenario deliberately poisons the
+gate so arm C trips it — the honest-negative slot.
+
+## First real corpus (Claude Code sessions)
+
+```powershell
+backend\.venv\Scripts\python.exe experiments\harness\session_corpus.py
+backend\.venv\Scripts\python.exe experiments\harness\run_micro_pack.py --corpus-manifest corpus\cc_manifest.jsonl
+```
+
+Ingests every transcript under `~/.claude/projects/**.jsonl` (subagent sibling
+files included) into a LOCATOR-ONLY manifest — session id, line number, char
+length, timestamp; never message text (episode_assembly privacy discipline).
+Manifest rows flow through all three arms as unscored dry-run pipeline
+exercises; they are the P4 dogfooding seed. Manifests are gitignored
+(machine-local paths); regenerate locally.
+
+## Status notes carried from the skeleton phase
+
+Until CORE-A's persistence is wired to a live surface there is no real
+ExecutionPlan integration, so everything runs on synthetic fixtures and the
+scripted agent policy (`scripted_arms.py`). The seams are real:
 
 - `mcp_surface.McpSurface` is the protocol arm C talks through
   (`search`/`check_applicability`/`get_procedure`) — swap the offline stub for

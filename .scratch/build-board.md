@@ -1,8 +1,8 @@
-# Build Coordination Board — multi-lane parallel execution (worktree edition)
+﻿# Build Coordination Board â€” multi-lane parallel execution (worktree edition)
 
 **Run mode: one git worktree per lane, one agent instance per worktree, this main
 checkout = integrator/reviewer.** Lanes push `lane/<name>` branches; the integrator
-runs the full suite on main and merges green branches. File ownership is absolute —
+runs the full suite on main and merges green branches. File ownership is absolute â€”
 a lane that edits outside its paths gets its commit reverted, no discussion.
 
 ## Worktrees
@@ -17,77 +17,77 @@ git worktree add ..\sl-research -b lane/research origin/main
 
 ## Lanes
 
-### Lane CORE-A — storage & plans (owns `backend/db/**`, `backend/app/execution/**`, `backend/app/models/**`)
-1. `[x]` **1.7** done @2026-08-25 — branch `lane/core-a`. Persist ExecutionPlan/TaskGraph `[D→frozen]`; bind executions to exact
+### Lane CORE-A â€” storage & plans (owns `backend/db/**`, `backend/app/execution/**`, `backend/app/models/**`)
+1. `[x]` **1.7** done @2026-08-25 â€” branch `lane/core-a`. Persist ExecutionPlan/TaskGraph `[Dâ†’frozen]`; bind executions to exact
    plan versions (Appendix C #1/#2/#17 proving tests in same change). One-way door.
-   *(Prior claim by Chaitanya withdrawn by founder 2026-08-24 — lane reassigned to
+   *(Prior claim by Chaitanya withdrawn by founder 2026-08-24 â€” lane reassigned to
    local worktree agent.)*
    Shipped: db/23_plan_persistence.sql (execution_plans + task_graphs + executions,
    frozen by trigger; composite FK procedures(procedure_id,version)); app/execution/plans.py
    (compile/hash/rebind/binding boundary); app/models/plan.py; 36 proving tests in
    tests/test_band1_7_plans.py. Full suite: 885 passed, 106 skipped.
-2. `[ ]` **BLOCKED on external** — Real-DB migration chain verification (01→23) on
+2. `[ ]` **BLOCKED on external** â€” Real-DB migration chain verification (01â†’23) on
    disposable Postgres; awaiting Chaitanya's Docker (founder has none locally).
    Paste engine output when run.
-3. `[x]` sweep performed @2026-08-25 (lane/core-a) — Band 1 exit criteria audited,
+3. `[x]` sweep performed @2026-08-25 (lane/core-a) â€” Band 1 exit criteria audited,
    result in Log entry below; formal integrator review requested, full pass pending
    queue 2's real-DB chain run.
-4. `[x] done @2026-08-25 — branch lane/core-a` **NEXT WAVE — 1.9a Evidence
+4. `[x] done @2026-08-25 â€” branch lane/core-a` **NEXT WAVE â€” 1.9a Evidence
    table**: typed rows with independence groups; procedure verification stats become
    views over evidence. Proving tests: Appendix C #3/#12/#13.
-   Shipped: db/24_evidence.sql (evidence [H] table — evidence_kind enum with §11's
+   Shipped: db/24_evidence.sql (evidence [H] table â€” evidence_kind enum with Â§11's
    nine types, strength {score, method} NOT NULL, independence_group capping columns,
-   context_key, §36 seven-value failure_class (Band 0 #0.5's structural home),
+   context_key, Â§36 seven-value failure_class (Band 0 #0.5's structural home),
    named CHECKs incl. evidence_success_criteria_chk banning bare model-asserted
    success at the engine (#13 teeth), tg_evidence_append_only freeze with the
    t_invalid retraction tombstone as the ONE legal update (#19 teeth),
    procedure_evidence_stats view replacing the JSONB counter blob with
    independent_* counts via DISTINCT COALESCE(independence_group, id::text));
    app/execution/evidence.py boundary (validate_evidence / outcome_to_evidence /
-   assert_verified_requires_evidence — #3's contract-level gate; pure, offline-
+   assert_verified_requires_evidence â€” #3's contract-level gate; pure, offline-
    provable, same pattern as plans.py); app/models/evidence.py shapes; 33 proving
    tests in tests/test_band1_9a_evidence.py. Full suite: 947 passed / 106 skipped /
    0 failed. Sequencing note: the verified-requires-evidence ENGINE trigger lands in
     the SAME change that wires evidence writes into the lifecycle path (cross-lane
-    request below) — gate and writer together, never a half-gate.
-5. `[x]` done @2026-08-25 — branch `lane/core-a` **Band 2.7 TMS readability**
+    request below) â€” gate and writer together, never a half-gate.
+5. `[x]` done @2026-08-25 â€” branch `lane/core-a` **Band 2.7 TMS readability**
    (integrator-approved 2026-08-25): `truth_state` is write-only
-   today — OUT/stale claims still surface in retrieval. Filter
+   today â€” OUT/stale claims still surface in retrieval. Filter
    `properties->>'truth_state'='OUT'` out of EVERY retrieval path
    (retrieval.py: vector/lexical/hydrate/graph-expansion;
    local_retrieval.py: structural/temporal tiers) WITHOUT touching the
-   bi-temporal columns — an invalidated claim vanishes from results while its
+   bi-temporal columns â€” an invalidated claim vanishes from results while its
    history stays queryable. Regression tests prove both halves. Scoped file grant
    for this item only: backend/app/services/retrieval.py +
    backend/app/services/local_retrieval.py (both otherwise unowned; integrator
    approval recorded here per OVERNIGHT MODE). No migration: read-time filter
    over existing JSONB properties, fresh-start compliant, nothing backfilled.
-   *(Shipped: NOT_TRUTH_STATE_OUT predicate — `IS DISTINCT FROM 'OUT'`, so
+   *(Shipped: NOT_TRUTH_STATE_OUT predicate â€” `IS DISTINCT FROM 'OUT'`, so
    rows without the key stay visible; bare `<>` would have blanked every
    non-claim node. Applied to all four HybridRetriever stages incl.
-   expansion re-hydration — the SUPERSEDES edge itself was the leak path
-   back to the OUT claim — plus local_retrieval's structural/temporal legs;
+   expansion re-hydration â€” the SUPERSEDES edge itself was the leak path
+   back to the OUT claim â€” plus local_retrieval's structural/temporal legs;
    knowledge_nodes legs only, task_nodes has no properties column. 8 offline
    tests tests/test_tms_readability_offline.py (query-content + write-side
    preservation pins); 5 live-DB regression tests
-   tests/test_tms_readability_e2e.py — vanish from hybrid/lexical-only/
+   tests/test_tms_readability_e2e.py â€” vanish from hybrid/lexical-only/
    expansion/structural-tier + history-stays-queryable (raw row survives,
    subject history read sees both generations, project_state sees only IN).
     LIVE RUN: this worktree NOW HAS backend/.env (Supabase URL; earlier log
-    notes said absent — changed since) and the schema is fully migrated:
+    notes said absent â€” changed since) and the schema is fully migrated:
     all 5 e2e proofs PASSED against the real DB. Full standard suite (no env):
     989 passed / 111 skipped / 0 failed. Full suite WITH DATABASE_URL exported:
-    1059 passed / 40 failed / 1 skipped — the same 40 fail identically on a
+    1059 passed / 40 failed / 1 skipped â€” the same 40 fail identically on a
     STASHED CLEAN TREE (applicability/environment-probe/procedure-extraction/
     procedures/state e2e), i.e. pre-existing shared-instance drift, exactly
     what queue item 2's disposable-DB chain run must sort out; NOT a 2.7
     regression. tms-e2e fixtures self-clean by name prefix; zero rows left.*
-6. `[x]` done @2026-08-25 — branch `lane/core-a` **Band 2.8 end-to-end
+6. `[x]` done @2026-08-25 â€” branch `lane/core-a` **Band 2.8 end-to-end
    replayability**: observations/claims/procedure-candidates regenerate
    deterministically from raw traces, extractor versions stamped.
-   *(Shipped: db/26_replayability.sql — claim_sources join table closing the
-   ONE broken provenance hop (claim→observation), FKs both ways, reverse
-   index, fresh-start compliant; app/execution/replay.py boundary —
+   *(Shipped: db/26_replayability.sql â€” claim_sources join table closing the
+   ONE broken provenance hop (claimâ†’observation), FKs both ways, reverse
+   index, fresh-start compliant; app/execution/replay.py boundary â€”
    fingerprint/extractor_stamps registry pinned to the constants that
    govern each write path / regenerate_observations pure re-run /
    expected_claim_shape mirror of promotion / replay_session verifier over
@@ -98,48 +98,48 @@ git worktree add ..\sl-research -b lane/research origin/main
    or revert-with-replacement). 15 offline proving tests + 2 live e2e in
    tests/test_band2_8_replayability.py: founding loop replays
    bit-identically twice from raw traces, tamper-detection teeth both
-   layers, spec sentence "claim←extractor X←trace E" proven by join.
+   layers, spec sentence "claimâ†extractor Xâ†trace E" proven by join.
    Suite: 1004 passed / 113 skipped / 0 failed (no env); WITH DATABASE_URL:
-   1075 passed / 40 failed / 2 skipped — identical 40 to the 2.7 baseline
+   1075 passed / 40 failed / 2 skipped â€” identical 40 to the 2.7 baseline
    drift set, zero new. db/26 applied to the shared instance (additive,
    idempotent) so the live proof could run.
    FINDINGS filed in Log: extract_procedure V0 gap (#4) + shared-instance
    migration state (queue-2 input).)*
-### Lane CORE-B — extraction & gating (owns `backend/app/services/procedure_extraction/**`, `invariants.py`, `applicability.py`, `precondition_gate.py`, `state.py`)
-1. `[x] done 2026-08-25 — lane/core-b` **1.8a** Precondition relevance filter (derive gates only load-bearing facts).
-2. `[x] done 2026-08-25 — lane/core-b` **1.8b** V6 authoring-time invariant validator + z3 off event loop w/ timeout.
-3. `[x] done 2026-08-25 — lane/core-b` **1.8c** Memoized `project_state()` in applicability cascade; tenant-scoped
+### Lane CORE-B â€” extraction & gating (owns `backend/app/services/procedure_extraction/**`, `invariants.py`, `applicability.py`, `precondition_gate.py`, `state.py`)
+1. `[x] done 2026-08-25 â€” lane/core-b` **1.8a** Precondition relevance filter (derive gates only load-bearing facts).
+2. `[x] done 2026-08-25 â€” lane/core-b` **1.8b** V6 authoring-time invariant validator + z3 off event loop w/ timeout.
+3. `[x] done 2026-08-25 â€” lane/core-b` **1.8c** Memoized `project_state()` in applicability cascade; tenant-scoped
    cold-start gate.
-4. `[x]` done 2026-08-25 — lane/core-b **NEXT WAVE — 1.9b capability computation**: levels-as-banded-P implementing
-   the RATIFIED D1 thresholds (spec §16; routing tiers 0.90/0.70 as named config,
+4. `[x]` done 2026-08-25 â€” lane/core-b **NEXT WAVE â€” 1.9b capability computation**: levels-as-banded-P implementing
+   the RATIFIED D1 thresholds (spec Â§16; routing tiers 0.90/0.70 as named config,
    never magic numbers); bidirectional demotion on failure. Proving tests:
    Appendix C #5/#10/#12.
-   *(Shipped: procedure_extraction/capability.py — CapabilityScope rejects blank
+   *(Shipped: procedure_extraction/capability.py â€” CapabilityScope rejects blank
    context fields [#5]; Wilson-lower-bound P estimate, D1 bands 0.50/0.70/0.85/0.95,
-   per-level gates [independence groups ≥2 for L2, verification plan for L3,
-   ≥2 envs holding successes for L4/L5, completed review for L5]; routing reads P
+   per-level gates [independence groups â‰¥2 for L2, verification plan for L3,
+   â‰¥2 envs holding successes for L4/L5, completed review for L5]; routing reads P
    only, never the label; trajectory API proves failure-drops-level-then-recovers
    [#10] and brand-metadata never enters computation [#12]. 25 tests in
    tests/test_capability_bands.py. Suite: 939 passed / 106 skipped / 0 failed
    (= origin/main baseline + CORE-A's 36 plan tests + these 25). Placement note +
    numbered question #2 in Log.)*
-5. `[x] done 2026-08-25 — by integrator (commit 2505705)` **NEXT WAVE — 1.9c universal ChangeSet coverage**: every `[V]` mutation
+5. `[x] done 2026-08-25 â€” by integrator (commit 2505705)` **NEXT WAVE â€” 1.9c universal ChangeSet coverage**: every `[V]` mutation
    produces a ChangeSet record (extend `models/change.py` reach to observations,
    procedures, implementations, applicability rules, states). Proving test:
    Appendix C #7.
-6. `[x]` done @2026-08-25 — lane/core-b **Band 2 — promote episode segmenter to production**
+6. `[x]` done @2026-08-25 â€” lane/core-b **Band 2 â€” promote episode segmenter to production**
    in `backend/app/services/trace_worker.py`, using the empirically-validated rules from
    `experiments/episode_assembly/FINDINGS.md`: Rule-A genuine-prompt boundaries as the only
-   primary signal; merge rule folding ≤2-event episodes into successors; subdivision of
-   >200-event episodes at internal commit/test sub-boundaries (metadata role per findings —
-   never a top-level cut); nested subagent episodes joined via `sourceToolAssistantUUID` →
+   primary signal; merge rule folding â‰¤2-event episodes into successors; subdivision of
+   >200-event episodes at internal commit/test sub-boundaries (metadata role per findings â€”
+   never a top-level cut); nested subagent episodes joined via `sourceToolAssistantUUID` â†’
    parent assistant `uuid` (sibling-file join); idle-gap signal DROPPED (bimodality does not
-   exist — no temporal threshold anywhere).
-   *(Shipped: trace_worker.py episode-assembly section — pure `assemble_episodes()`
+   exist â€” no temporal threshold anywhere).
+   *(Shipped: trace_worker.py episode-assembly section â€” pure `assemble_episodes()`
    [reference prompt predicate verbatim incl. the four auto-continuation prefixes;
    O(n) merge sweep equivalent to fold-until-stable w/ trailing-trivial folding backward;
    completing commit/test event CLOSES its sub-episode; oversize-without-internal-signal
-   stays whole and flagged `oversize_unsubdivided`, no invented cuts; forest-safe — file
+   stays whole and flagged `oversize_unsubdivided`, no invented cuts; forest-safe â€” file
    order across all parentUuid:null roots, never a chain walk; tolerant of all 16 line
    types + intra-file drift and missing timestamps]; `write_session_episodes()` into the
    EXISTING episodes table via migration-17 columns, NO new migration, idempotent by
@@ -152,17 +152,17 @@ git worktree add ..\sl-research -b lane/research origin/main
    111 skipped / 0 failed (= origin/main baseline 989 + these 29, zero regressions).
    Integrator-approved scoped files for this item only: services/trace_worker.py +
    tests/test_episode_segmentation.py.)*
-7. `[x]` done @2026-08-25 — lane/core-b **Band 2.6 — ClaimFamily resolver v0**: project-scoped blocking +
-   proposition match per spec §10 (similarity is candidate generation, not
+7. `[x]` done @2026-08-25 â€” lane/core-b **Band 2.6 â€” ClaimFamily resolver v0**: project-scoped blocking +
+   proposition match per spec Â§10 (similarity is candidate generation, not
    identity); cross-project families deferred to Band 4. Entities managed:
    ClaimFamily `[V]`. New module `backend/app/services/claim_family.py` +
    proving tests.
-   *(Shipped: pure decision core — normalized subject|predicate|object|type
+   *(Shipped: pure decision core â€” normalized subject|predicate|object|type
    canonical-key as THE identity gate [fails closed on statement-only claims];
    dominant contradiction check [CONTRADICTS edges + negation flips are distinct
-   at ANY similarity — the spec-10 tooth]; condition matching splits
+   at ANY similarity â€” the spec-10 tooth]; condition matching splits
    same_family vs related_family; conservative ontology-overlap ladder
-   [generalizes/specializes only on strictly-nested token sets per §10's own
+   [generalizes/specializes only on strictly-nested token sets per Â§10's own
    hierarchy example, >=2-of-3 shared slots for related]. Blocking = hard
    project-scope-pair filter [nothing implicit-global; a global-scoped twin is
    NOT a v0 candidate], similarity only ranks/caps survivors [BLOCK_LIMIT named
@@ -171,7 +171,7 @@ git worktree add ..\sl-research -b lane/research origin/main
    RESOLVER_VERSION extractor stamp per V0 derived-object rule] + OWNS/
    FAMILY_MEMBER membership edges, fully idempotent re-resolution;
    truth_state='OUT' claims neither anchor nor join families. Related/
-   generalizes verdicts returned but NOT persisted in v0 — family-graph edges
+   generalizes verdicts returned but NOT persisted in v0 â€” family-graph edges
    between hubs are Band 4's LSH wave. Outcome matching honestly absent: claims
    carry no outcome field yet. 27 offline proving tests in
    tests/test_claim_family_offline.py [max-similarity contradicted twin stays
@@ -184,29 +184,46 @@ git worktree add ..\sl-research -b lane/research origin/main
 Rule: NO new migrations (schema needs route through CORE-A); no edits outside owned paths.
 
 ### Lane MEASURE (owns `experiments/harness/**`)
-1. `[x] done 2026-08-25 — lane/measure` §40 harness skeleton adapted from `experiments/swebench_pro/run_graph_experiment.py`;
+1. `[x] done 2026-08-25 â€” lane/measure` Â§40 harness skeleton adapted from `experiments/swebench_pro/run_graph_experiment.py`;
    arms A/B/C; synthetic fixtures only until CORE-A lands 1.7.
-2. `[x] done 2026-08-25 — lane/measure` Scoreboard script: pass-rate/cost/false-reuse/stale-refusal + power-analysis
-3. [ ] **NEXT WAVE — micro-experiment pack** (founder mandate 2026-08-25): 8–12 tiny real-life scenarios as fixtures — adversarial refund-policy rule violations, dependency-conflict debug, PDF-to-sheet pipeline steps, env-drift staleness case — each run through the harness against the MCP surface; plus ingest this project's own Claude Code sessions as first real corpus. Output: per-scenario pass/fail + evidence-trail assertions. Doubles as the P4 dogfooding seed.
+2. `[x] done 2026-08-25 â€” lane/measure` Scoreboard script: pass-rate/cost/false-reuse/stale-refusal + power-analysis
+3. [x] done @2026-08-25 â€” branch `lane/measure` **NEXT WAVE â€” micro-experiment pack** (founder mandate 2026-08-25): 8â€“12 tiny real-life scenarios as fixtures â€” adversarial refund-policy rule violations, dependency-conflict debug, PDF-to-sheet pipeline steps, env-drift staleness case â€” each run through the harness against the MCP surface; plus ingest this project's own Claude Code sessions as first real corpus. Output: per-scenario pass/fail + evidence-trail assertions. Doubles as the P4 dogfooding seed.
    footer (discordant pairs beside every p-value).
+   *(Shipped: fixtures/micro/ = 11 scenarios [refund-policy violation Ã—3,
+   dependency-conflict Ã—3, PDF-to-sheet pipeline Ã—3, env-drift staleness Ã—2]
+   with arm-independent success criteria + per-scenario evidence_requirements;
+   micro_pack.py grading/validation; run_micro_pack.py CLI printing
+   per-scenario verdicts WITH failing requirement ids + scoreboard + power
+   footer; mcp_surface.StubSurface now journals every tool call so evidence
+   assertions check the trail, not self-report; session_corpus.py ingests
+   ~/.claude/projects/**.jsonl into a LOCATOR-ONLY manifest â€” 2 sessions /
+   11 real prompts on this machine, zero message text stored â€” flowing
+   through all three arms as unscored dry-runs, the P4 dogfooding seed.
+   SKELETON BUG FOUND+FIXED en route: SoloFrontierAgent cleared
+   stale_offered for all arms via inheritance, so Â§40's stale-refusal
+   denominator read "no offers" forever in real sweeps; B/C now keep the
+   offer (fixtures' own contract), pinned by test at B 0/7 Â· C 6/7(missed 1)
+   on the micro pack. Hand-derived verdict matrix asserted e2e: A 5/11,
+   B 6/11 (3 false-reuse), C 9/11 (1 false-reuse = the deliberate poisoned-
+   gate honest-negative). Harness suite 78/78 green.)*
 
 ### Lane RESEARCH (owns `.scratch/research/**`, updates to `RESEARCH_INTEGRATION_PLAN.md`)
-Tooling: `research_exa.py` at repo root (key lives in `backend/.env` as EXA_API_KEY —
+Tooling: `research_exa.py` at repo root (key lives in `backend/.env` as EXA_API_KEY â€”
 never committed). Protocol per founder: market/vendor/pain-point evidence via Exa web
 search; technical credibility checks via arXiv / Semantic Scholar / OpenAlex (webfetch);
 single synthesized reports into `.scratch/research/`.
-1. `[x]` done @2026-08-25 — research lane (this worktree)
+1. `[x]` done @2026-08-25 â€” research lane (this worktree)
    Execute open verification tickets in RESEARCH_INTEGRATION_PLAN.md
-   (P-M3 leaderboard movement · P-B1 GATS/WorldEvolver/EnvACE numbers · P-C1 FedWorld
-   mechanics · P-I1 Molt/ToolVerse/MobileRL maturity).
+   (P-M3 leaderboard movement Â· P-B1 GATS/WorldEvolver/EnvACE numbers Â· P-C1 FedWorld
+   mechanics Â· P-I1 Molt/ToolVerse/MobileRL maturity).
    *(All four verified/answered; reports in `.scratch/research/p-*.md`; log appended to
-   RESEARCH_INTEGRATION_PLAN.md. GATS citation corrected — 23.9% is stress-test-only.)*
-2. `[x] done @2026-08-25 - research lane (file: competitive-sweep-mem0-letta-zep-hipporag-awm.md; tick missed before session died)` Competitive sweep: Mem0 / Letta / Zep-Graphiti / HippoRAG / AWM — what they
+   RESEARCH_INTEGRATION_PLAN.md. GATS citation corrected â€” 23.9% is stress-test-only.)*
+2. `[x] done @2026-08-25 - research lane (file: competitive-sweep-mem0-letta-zep-hipporag-awm.md; tick missed before session died)` Competitive sweep: Mem0 / Letta / Zep-Graphiti / HippoRAG / AWM â€” what they
    ship vs our trust spine; file deltas as board notes.
-3. `[ ]` τ-Knowledge ceiling re-check (arXiv:2603.04370) before harness baselines freeze.
+3. `[ ]` Ï„-Knowledge ceiling re-check (arXiv:2603.04370) before harness baselines freeze.
 
-### Lane SHIP (owns `packaging/**`) — activates after CORE-A merges 1.7
-1. `[x]` done @2026-08-25 — branch `lane/ship` Installable package wrapping
+### Lane SHIP (owns `packaging/**`) â€” activates after CORE-A merges 1.7
+1. `[x]` done @2026-08-25 â€” branch `lane/ship` Installable package wrapping
    `trace_collector` + `mcp_server`.
    Shipped: `packaging/` = installable **stealthlab-connect** (pyproject,
    console scripts `stealthlab-mcp-server` [HTTP loopback default / --stdio]
@@ -219,7 +236,7 @@ single synthesized reports into `.scratch/research/`.
    verifier). README: install + 3 smoke tests. Console scripts verified in a
    bare scratch venv (found+fixed a real order-dependent bug there:
    collect_payload wasn't bootstrapping the path). Suite delta vs pristine
-   origin/main = ZERO: identical 103 failed / 974 passed / 1 skipped on both —
+   origin/main = ZERO: identical 103 failed / 974 passed / 1 skipped on both â€”
    same pre-existing fresh-worktree gap MEASURE logged (no local Postgres;
    e2e failures only under full-run ordering; they skip cleanly when run
    individually). Not a SHIP regression. Rebased onto origin/main before push
@@ -239,12 +256,12 @@ their worktree. File ownership is the safety net. No force-pushes, no destructiv
 commands, no edits outside owned paths ever. On ambiguity: stop, leave a numbered
 blocking question in the Log, continue with the next queue item.
 
-- **Claims**: claim your task line (`- [ ] claimed @ts — name`) before starting; mark
-  `[x] done @ts — branch` after. One claimant per task.
+- **Claims**: claim your task line (`- [ ] claimed @ts â€” name`) before starting; mark
+  `[x] done @ts â€” branch` after. One claimant per task.
 - **Branches**: lanes commit to their `lane/*` branch only; rebase onto origin/main
   before signaling done. Never push to main directly from a worktree. Never force-push.
 - **Commit prefix**: `core-a:` / `core-b:` / `measure:` / `research:` / `ship:`.
-- **Migrations**: CORE-A exclusively. Others needing schema → request below.
+- **Migrations**: CORE-A exclusively. Others needing schema â†’ request below.
 - **Docs**: spec v4 / schema.md frozen post-Band-0 (board notes only).
   BAND0_DECISIONS.md founder-owned. ROADMAP checkboxes = integrator.
 - **Session end**: merged/claimed state updated here, or blocking question in Log with
@@ -252,8 +269,8 @@ blocking question in the Log, continue with the next queue item.
 
 ## Cross-lane requests
 
-1. **CORE-A → whoever owns/next touches `backend/app/services/procedures.py`**
-   (unowned file — outside every lane's path list, hence this request instead of an
+1. **CORE-A â†’ whoever owns/next touches `backend/app/services/procedures.py`**
+   (unowned file â€” outside every lane's path list, hence this request instead of an
    edit): wire evidence-row writes into `record_execution_outcome()`'s transaction
    (one `outcome_to_evidence(...)` + INSERT per outcome, fields documented in
    app/execution/evidence.py), then land db/24's verified-requires-evidence engine
@@ -265,18 +282,18 @@ blocking question in the Log, continue with the next queue item.
 
 | Ruling | Blocks | State |
 |---|---|---|
-| D1 capability bands | nothing (default live in §16, tagged) | open |
+| D1 capability bands | nothing (default live in Â§16, tagged) | open |
 | D4 deletion mechanism | Band 5.6 only | open |
 
 ## Log
 
 - Board rewritten for worktree multi-lane mode (4 lanes + integrator).
-- 2026-08-25 research lane: queue items 2 (competitive sweep → `.scratch/research/competitive-sweep-mem0-letta-zep-hipporag-awm.md`) and 3 (τ-Knowledge re-check → `.scratch/research/tau-knowledge-ceiling-recheck.md`) also done same session.
-- **Blocking question #1 (non-blocking for current work):** `EXA_API_KEY` is not present in any worktree — `backend/.env` is gitignored so it never propagated from the original checkout. Options: (a) founder pastes key into each worktree's `backend/.env` (proposed default), (b) lane falls back to built-in websearch permanently (worked fine today), (c) commit a template only.
+- 2026-08-25 research lane: queue items 2 (competitive sweep â†’ `.scratch/research/competitive-sweep-mem0-letta-zep-hipporag-awm.md`) and 3 (Ï„-Knowledge re-check â†’ `.scratch/research/tau-knowledge-ceiling-recheck.md`) also done same session.
+- **Blocking question #1 (non-blocking for current work):** `EXA_API_KEY` is not present in any worktree â€” `backend/.env` is gitignored so it never propagated from the original checkout. Options: (a) founder pastes key into each worktree's `backend/.env` (proposed default), (b) lane falls back to built-in websearch permanently (worked fine today), (c) commit a template only.
 - MEASURE (2026-08-25): harness skeleton + scoreboard landed on `lane/measure`
   (43/43 harness tests green; smoke sweep of all 10 fixture tasks passes
   end-to-end offline). Backend suite delta vs pristine origin/main = ZERO:
-  identical 103 failed / 851 passed / 1 skipped on both — pre-existing gap in
+  identical 103 failed / 851 passed / 1 skipped on both â€” pre-existing gap in
   fresh worktrees (backend/.env absent: STEALTHLAB_MCP_TOKEN collection
   errors when unset; trace_ingestion e2e failures under full-run ordering).
   Not a MEASURE regression; needs an integrator decision on worktree env setup.
@@ -293,7 +310,7 @@ blocking question in the Log, continue with the next queue item.
     satisfiability) behind new validators rule **V6**; `ExtractedProcedure.
     invariants` field now persists via capture_procedure's existing param;
     every z3 Solver bounded by `DEFAULT_SOLVER_TIMEOUT_MS=5000`, `unknown`
-    → `undecidable` (never violation); retrieval path moved off the event
+    â†’ `undecidable` (never violation); retrieval path moved off the event
     loop via `check_invariants_async`/`asyncio.to_thread`.
   - **1.8c** cold-start gate counts through `visibility_predicate()`
     (`access_scope` param, default unrestricted preserves old behavior);
@@ -302,15 +319,15 @@ blocking question in the Log, continue with the next queue item.
     cascade so the memo key is stable. Offline proof: fake-pool call-count +
     SQL-content tests in `tests/test_applicability_cascade_offline.py`.
   - Suite in this worktree (has backend/.env, unlike MEASURE's): baseline
-    **849 passed / 106 skipped / 0 failed** → after **878 passed / 106
+    **849 passed / 106 skipped / 0 failed** â†’ after **878 passed / 106
     skipped / 0 failed** (+29 proving tests, zero regressions). Rebased onto
     origin/main before push per OVERNIGHT MODE.
 - Board hygiene note (CORE-B): origin/main's board file carried a stray
-  conflict marker (`>>>>>>> 35670e7 ...`) at the end of this Log — leftover
+  conflict marker (`>>>>>>> 35670e7 ...`) at the end of this Log â€” leftover
   debris from the measure commit itself. Removed here; integrator please
   sanity-check future board merges.
 - CORE-B (2026-08-25, second wave): **1.9b capability computation** done on
-  `lane/core-b`. Pure module `procedure_extraction/capability.py` — no DB, no
+  `lane/core-b`. Pure module `procedure_extraction/capability.py` â€” no DB, no
   migration, no edits outside owned paths; nothing existing changes behavior
   until a caller adopts it (procedures.py's ticket-13 SPRT lifecycle stays
   authoritative; wiring P into retrieval call sites is deliberately a separate
@@ -321,7 +338,7 @@ blocking question in the Log, continue with the next queue item.
     `procedure_extraction/` because that is this lane's only wholesale-owned
     path (`**`); a new top-level `services/capability.py` would be outside
     every owned path and file ownership is absolute. Options: (a) keep as-is
-    until Band-2 routing integration (proposed default — relocation is a
+    until Band-2 routing integration (proposed default â€” relocation is a
     one-line import change), (b) integrator grants CORE-B
     `services/capability.py` and relocates in a follow-up, (c) fold into
     applicability.py (rejected by me: bloats a focused cascade module).
@@ -330,7 +347,7 @@ blocking question in the Log, continue with the next queue item.
     Rebased onto origin/main before push per OVERNIGHT MODE.
   - **Question #3 (BLOCKS queue item 5 / 1.9c):** that item's own text says
     "extend `models/change.py` reach", but `backend/app/models/**` is CORE-A
-    property and file ownership is absolute — as written, 1.9c cannot be
+    property and file ownership is absolute â€” as written, 1.9c cannot be
     started by this lane without guaranteed revert. Options: (a) reassign
     1.9c to CORE-A alongside its models/db ownership (proposed default),
 **RESOLVED by integrator 2026-08-25: CORE-B is granted a scoped exception for ackend/app/models/change.py alone (1.9c only, this wave). models/** remains CORE-A otherwise. Proceed with 1.9c.**
@@ -341,11 +358,11 @@ blocking question in the Log, continue with the next queue item.
     items until answered; no further queue entries exist for this lane.
 - CORE-A (2026-08-25): queue items 3 (sweep) and 4 (1.9a evidence) done on
   `lane/core-a`.
-  - **Band 1 exit-criteria sweep** (item 3): zero scope-less writes accepted —
-    V0 gate live since 1.2/1.3, tests green. V1–V6 green on every ingested row —
-    V6 shipped via CORE-B's 1.8b. Plan persistence end-to-end — proven at
+  - **Band 1 exit-criteria sweep** (item 3): zero scope-less writes accepted â€”
+    V0 gate live since 1.2/1.3, tests green. V1â€“V6 green on every ingested row â€”
+    V6 shipped via CORE-B's 1.8b. Plan persistence end-to-end â€” proven at
     contract level by 1.7 (36 tests); REAL end-to-end still gated on queue 2
-    (disposable-Postgres chain run). Replay determinism — rebind determinism
+    (disposable-Postgres chain run). Replay determinism â€” rebind determinism
     pinned by test_band1_7_plans (#1/#17); full raw-trace regeneration is Band
     2.8's own item per ROADMAP. Verdict: every criterion that can go green
     without a live DB is green; Band 1 formally exits when queue 2 runs.
@@ -356,38 +373,38 @@ blocking question in the Log, continue with the next queue item.
     brand-blind, independence-aware stats view to consume).
   - Suite in this worktree: **947 passed / 106 skipped / 0 failed**
     (main baseline 914 + 33 new, zero regressions). No backend/.env here, so
-    live-DB e2e tests skip — same env caveat MEASURE recorded; queue 2 remains
+    live-DB e2e tests skip â€” same env caveat MEASURE recorded; queue 2 remains
     the real-DB gate.
   -    Cross-lane request #1 filed above (services/procedures.py wiring).
 
 - CORE-A (2026-08-25, third wave): **Band 2.7 TMS readability** done on
-  `lane/core-a` — first Band 2 item; ROADMAP exit criterion "OUT/stale claims
+  `lane/core-a` â€” first Band 2 item; ROADMAP exit criterion "OUT/stale claims
   provably absent from retrieval results" is now proven by test at four
   retrieval surfaces plus the write-side history guarantee. Details in queue
   item 5 above. Integrator notes: (a) this worktree's backend/.env appeared
-  since the earlier "absent" log entries — with DATABASE_URL exported the
+  since the earlier "absent" log entries â€” with DATABASE_URL exported the
   live-DB suites run here, and my 5 new e2e proofs pass live; (b) 40
   pre-existing failures across six OTHER e2e files reproduce identically on a
-  clean checkout of origin/main against the same shared instance — recorded in
+  clean checkout of origin/main against the same shared instance â€” recorded in
   queue item 5 as input to queue item 2's disposable-DB chain verification;
   (c) experiments/swebench_pro/graph_memory.py consumes HybridRetriever and
   inherits the fix unchanged (YC plan Step 2.3 satisfied for both named sites);
-  (d) knowledge_conflict.py's pair-scan still considers OUT claims — that is
+  (d) knowledge_conflict.py's pair-scan still considers OUT claims â€” that is
   conflict DETECTION over history, not retrieval-for-context, left untouched
   deliberately.
 
-- CORE-A (2026-08-25, fourth wave): **Band 2.8 replayability** done — see
+- CORE-A (2026-08-25, fourth wave): **Band 2.8 replayability** done â€” see
   queue item 6. Two findings for the integrator/other lanes:
   - **Question #4 (non-blocking for 2.8, blocks the founding loop's last
     hop):** `extract_procedure()` (CORE-B path) calls `capture_procedure()`
     without `provenance` or `scope_type`/`scope_entity_id`, but Band 1.3's V0
-    gate rejects both when absent — on any FULLY migrated DB,
+    gate rejects both when absent â€” on any FULLY migrated DB,
     extract_procedure raises V0Violation at persist time. Its capstone e2e
     passes today only where migration 21 is missing (the failure surfaces
     earlier, as UndefinedTable/UndefinedColumn). Static read of both files;
     not exercised end-to-end anywhere green. Options: (a) route to CORE-B to
     pass provenance="public_generated" + scope through extract_procedure
-    (proposed default — their owned pipeline), (b) CORE-A takes it with the
+    (proposed default â€” their owned pipeline), (b) CORE-A takes it with the
     procedures.py storage boundary, (c) relax capture_procedure defaults
     (rejected: reopens the Band 1.3 gate).
   - **Shared-instance drift inventory (queue-2 input):** the long-lived dev
@@ -398,4 +415,17 @@ blocking question in the Log, continue with the next queue item.
     assumed present in any e2e until queue 2 runs the chain on a clean DB.
   - Candidate-replay e2e schema-probes and SKIPs (documented reason) on the
     drifted instance instead of adding red; it asserts full three-layer
-    equality wherever 20–22 are properly applied (CI / post-queue-2 DB).
+    equality wherever 20â€“22 are properly applied (CI / post-queue-2 DB).
+- MEASURE (2026-08-25, second wave): micro-experiment pack done on
+  `lane/measure` (details in queue item 3). Two env notes for the
+  integrator: (a) THIS worktree now HAS backend/.env (contradicts the older
+  "absent" entries) â€” with it present and no DATABASE_URL exported, the
+  standard backend run here is 108 failed / 1020 passed / 1 skipped; a
+  pristine origin/main (17fd338) checkout sharing this venv and .env fails
+  IDENTICALLY in class (110 failed / 1062 passed â€” the +42 passes are
+  exactly core-b's 27 ClaimFamily + core-a's 15 replay tests that postdate
+  this lane's base). MEASURE's diff touches zero backend files, so delta =
+  zero; the failure set is the same fresh-worktree/env gap recorded last
+  session, now aggravated by .env presence turning skip-into-run for
+  token-gated e2e. Needs the integrator's disposable-DB decision, not a
+  measure fix. (b) Rebased onto origin/main before push per OVERNIGHT MODE.

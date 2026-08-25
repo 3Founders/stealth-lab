@@ -41,26 +41,41 @@ class McpSurface:
 
 
 class StubSurface(McpSurface):
-    """Fixture-backed offline stand-in. Deterministic; no network, no DB."""
+    """Fixture-backed offline stand-in. Deterministic; no network, no DB.
+
+    Records every tool call it serves (the EVIDENCE TRAIL): §40's premise is
+    that reuse shows its provenance, so the micro-experiment pack asserts
+    against this journal rather than trusting episode self-report alone.
+    """
 
     def __init__(self, fixtures_dir: Path | str):
         fixtures_dir = Path(fixtures_dir)
         procs = json.loads(
             (fixtures_dir / "procedures.json").read_text(encoding="utf-8"))
         self._by_id = {p["procedure_id"]: p for p in procs["procedures"]}
+        self._journal: list[dict] = []
+
+    def _log(self, tool: str, **fields) -> None:
+        self._journal.append({"tool": tool, **fields})
+
+    def journal(self) -> list[dict]:
+        return [dict(e) for e in self._journal]
 
     def _public(self, p: dict) -> dict:
         # Ground-truth staleness is withheld from agents; grading uses it.
         return {k: v for k, v in p.items() if k not in ("stale", "staleness_reason")}
 
     def search(self, domain: str) -> list[dict]:
-        return [self._public(p) for p in self._by_id.values()
+        hits = [self._public(p) for p in self._by_id.values()
                 if p["domain"] == domain]
+        self._log("search", domain=domain, n_hits=len(hits))
+        return hits
 
     def get_procedure(self, procedure_id: str) -> dict:
         p = self._by_id.get(procedure_id)
         if p is None:
             raise KeyError(procedure_id)
+        self._log("get_procedure", procedure_id=procedure_id)
         return self._public(p)
 
     def check_applicability(self, procedure_id: str, context: dict) -> bool:
@@ -68,11 +83,18 @@ class StubSurface(McpSurface):
         if p is None:
             raise KeyError(procedure_id)
         if context.get("bypasses_gate"):
-            return True  # poisoned case: gate fails open, scorer must catch it
-        return not p["stale"]
+            verdict = True  # poisoned case: gate fails open, scorer must catch it
+        else:
+            verdict = not p["stale"]
+        self._log("check_applicability", procedure_id=procedure_id,
+                  verdict=verdict)
+        return verdict
 
     def record_refusal(self, procedure_id: str, reason: str) -> None:
-        pass  # telemetry only in the stub
+        # Refusals are exactly the events an evidence trail must show (spec
+        # §39 invariant 11), so unlike the other stub methods this one has a
+        # real job even offline: land in the journal.
+        self._log("record_refusal", procedure_id=procedure_id, reason=reason)
 
     def ground_truth_stale(self, procedure_id: str) -> Optional[bool]:
         p = self._by_id.get(procedure_id)

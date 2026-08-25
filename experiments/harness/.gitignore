@@ -1,0 +1,7 @@
+# Run outputs and machine-local artifacts (lane rule: repo carries code +
+# fixtures, never results). Regenerate via run_micro_pack.py / session_corpus.py.
+micro_results.jsonl
+micro_results_detail.json
+harness_results.jsonl
+corpus/*.jsonl
+__pycache__/
