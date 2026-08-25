@@ -1,4 +1,4 @@
-﻿# Build Coordination Board â€” multi-lane parallel execution (worktree edition)
+# Build Coordination Board â€” multi-lane parallel execution (worktree edition)
 
 **Run mode: one git worktree per lane, one agent instance per worktree, this main
 checkout = integrator/reviewer.** Lanes push `lane/<name>` branches; the integrator
@@ -429,3 +429,9 @@ blocking question in the Log, continue with the next queue item.
   session, now aggravated by .env presence turning skip-into-run for
   token-gated e2e. Needs the integrator's disposable-DB decision, not a
   measure fix. (b) Rebased onto origin/main before push per OVERNIGHT MODE.
+
+### Lane HARDENING (opened by founder referral of Chaitanya-instance audit, 2026-08-25)
+Grounded findings from  3_access.sql/ 4_governance.sql/deps.py review. Sequence: after current OIDC tasks land.
+1. [ ] **H1 - Identity tables + tenancy predicate builder**: organizations/users/roles born additively; convert tenant filtering into the same ONE-predicate-builder pattern that made visibility flip-on cheap (03_access.sql's own confession: 'column existed, no query ever filtered'). Extends the in-flight OIDC work.
+2. [ ] **H2 - RLS backstop on [H] tables**: SET LOCAL app.tenant_id per transaction + row-level security policies at minimum on append-only truth. App-layer stays PRIMARY (single policy source - no drift between two enforcers). asyncpg caveat: transaction-scoped only, or it leaks across pooled connections.
+3. [ ] **H3 - Rate-limiter collector treatment (pre-public-launch)**: in-process token bucket + buffered ledger flush (reuse trace_collector append->drain pattern); Postgres becomes audit ledger, not enforcement point; Redis only if multi-process strictness demands. CONSTRAINT: must preserve fail-closed-on-infra-error semantics; buffered writes need a replay-or-block rule. Retention/TTL sweep for rate_limit_events.
