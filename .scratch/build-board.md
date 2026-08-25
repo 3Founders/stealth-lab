@@ -97,7 +97,8 @@ single synthesized reports into `.scratch/research/`.
 3. `[ ]` τ-Knowledge ceiling re-check (arXiv:2603.04370) before harness baselines freeze.
 
 ### Lane SHIP (owns `packaging/**`) — activates after CORE-A merges 1.7
-1. `[ ]` Installable package wrapping `trace_collector` + `mcp_server`.
+1. `[ ]` claimed @2026-08-25 — Lane SHIP (worktree `sl-ship`, branch `lane/ship`)
+   Installable package wrapping `trace_collector` + `mcp_server`.
 
 ## Integrator (= reviewer instance, main checkout)
 - Watches for `lane/*` branch pushes; rebases lane onto origin/main when stale.
