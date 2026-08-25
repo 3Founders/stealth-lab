@@ -402,10 +402,17 @@ def test_ddl_freeze_triggers_cover_all_three_tables():
     assert "sl_raise_frozen" in ddl
 
 
-def test_ddl_scope_constraints_for_all_three_tables():
+def test_ddl_scope_constraints_match_scope_design():
     ddl = _ddl()
-    for t in ("execution_plans", "task_graphs", "executions"):
+    # execution_plans and executions carry their own scope columns + CHECKs;
+    # task_graphs deliberately has NONE — nodes inherit plan scope and may
+    # narrow, never widen (spec §24). Regression pin for the engine-caught bug
+    # where a boilerplate constraint referenced columns task_graphs omits:
+    for t in ("execution_plans", "executions"):
         assert f"scope_type_chk_{t}" in ddl, t
+    assert "scope_type_chk_task_graphs" not in ddl, (
+        "task_graphs inherits plan scope; a scope CHECK here cannot compile"
+    )
 
 
 def test_ddl_has_no_backfill_statements():
