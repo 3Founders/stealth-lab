@@ -637,7 +637,17 @@ blocking question in the Log, continue with the next queue item.
      picks up HARDENING follow-ups, (c) leave as-is; it fails loudly,
      not misleadingly. Enforcement semantics in api/deps.py are
      UNCHANGED at the call site — verified by reading deps.py; no edit
-     was needed or made there.
+      was needed or made there.
+- MEASURE (2026-08-26): error-floor instrument landed on `lane/measure`
+  and fast-forwarded to main per OVERNIGHT MODE (commit f18313c; full
+  record in queue item 4). One observation for the next full-suite runner,
+  NOT a MEASURE regression (my diff touches zero backend files â verified
+  `git diff origin/main -- backend/` empty): post-rebase backend run here
+  = **1167 passed / 114 skipped / 1 failed**, the failure being
+  `test_authn_offline.py::test_tampered_signature_rejected` under FULL-RUN
+  ordering only; it PASSES in isolation. Ordering-sensitive crypto test on
+  main's baseline â H1 owners may want to pin it (e.g. clear module-level
+  JWKS/key cache state) before someone burns a merge cycle on it.
 
 ### Lane HARDENING (opened by founder referral of Chaitanya-instance audit, 2026-08-25)
 Grounded findings from  3_access.sql/ 4_governance.sql/deps.py review. Sequence: after current OIDC tasks land.
