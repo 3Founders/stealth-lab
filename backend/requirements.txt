@@ -41,3 +41,6 @@ google-genai
 # undeclared transitive deps relied on by tests/experiments (review 2026-08-24)
 pandas
 pyarrow
+
+# numeric invariant solver - required by services/invariants.py (was undeclared)
+z3-solver
