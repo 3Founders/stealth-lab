@@ -269,6 +269,58 @@ git worktree add ..\sl-research -b lane/research origin/main
    0 failed (zero regressions; an earlier 1090/113 reading predates the
    last main rebase). Rebased onto origin/main mid-item [board conflict resolved by taking
    main's board wholesale + re-inserting this item].)*
+9. `[x]` done @2026-08-26 — lane/core-b **Band 2.4 completion — failure-route handlers wiring**
+   (founder referral f00915a): consume app/execution/failures.py's
+   fetch_route_queue / fetch_unrouted_failures (READ-import granted;
+   failures.py itself stays untouched) and land the four mandated-update
+   handlers: capability-demotion calls capability.py's demotion trajectory;
+   applicability-narrowing edits procedure rule detail for input_abnormal;
+   dependency-queue enqueuer flags derived claims for environment_changed;
+   requires_review flagger stamps claim_status for unclassified. Proving
+   tests: FakePool SQL capture, idempotent re-consume = one update,
+   unrouted failures never trigger handlers.
+   *(Shipped: services/procedure_extraction/failure_handlers.py —
+   HANDLED_ROUTES = {capability_demotion, applicability_narrowing,
+   dependency_queue, requires_review} + run_failure_handlers() dispatcher +
+   unclassified_backlog() read-only visibility sweep [the ONLY consumer of
+   fetch_unrouted_failures, provably never wired to any handler].
+   IDEMPOTENCY LEDGER: every handler gates its write on ONE query —
+   change_sets.reason = "failure_route:<route>:<fr_id>" — db/25 is [H]
+   append-only so a fired mandate can never be erased; failure_routes rows
+   stay untouched [no processed column exists; tombstone means RETRACTED,
+   not executed]. Per-handler mandates: demotion recomputes the
+   implementation's verdict from its cumulative evidence stream via
+   compute_capability/capability_for_stream [same attempt discipline as
+   db/24's procedure_evidence_stats view: direction='supports',
+   execution_result|reproduction, t_invalid IS NULL] and records it as a
+   ChangeSet status_change op on the TRIGGERING evidence row [no
+   implementations table exists; capability storage stays CORE-A's deferred
+   [D]]; narrowing appends ONE structured exclusion entry {key: context_key,
+   values: [failed_context_key], _source_route_id, _failure_class} to
+   procedures.exclusions — proven to disqualify through applicability._excluded
+   UNCHANGED [ticket-12 machine-writable rule detail]; serves input_abnormal
+   AND false_reuse [both route there]; skips non-procedure targets and
+   contextless payloads honestly [no invented blank bans]; dependency_queue
+   flags derived claims [claim_sources ← observations where
+   properties->>'context_key' = failed_context_key — the one derivation
+   index that exists; richer §20 indexing is Band 4] as
+   claim_status='stale' + properties.revalidation marker [OUT/t_invalid
+   claims skipped; zero dependents found leaves the mandate queued];
+   requires_review stamps target claims claim_status='uncertain' +
+   properties.review marker [prior status preserved in ChangeSet detail;
+   non-claim targets skip — the routing row stays the human worklist].
+   Every [V] mutation goes through changeset_record.record_change_set with
+   author="failure_handlers@1" [invariant #7]. NO migration, NO edits
+   outside owned paths, failures.py untouched [read-import only]. Named
+   judgment calls documented in module header: ledger mechanism, dependents
+   resolution, 'uncertain' stamp value, ChangeSet persistence shape. 17
+   offline proving tests in tests/test_band2_4_handlers.py [FakePool SQL-
+   content pins incl. stream filters/::uuid casts/DISTINCT OUT exclusion/
+   LIMIT param; exact-update proofs per handler; idempotency for all four +
+   dispatcher rerun; unrouted-sweep tripwire proves handlers can never see
+   unclassified rows; claim_status vocabulary statically pinned to db/21's
+   kn_claim_status_chk]. Full suite: **1185 passed / 114 skipped /
+   0 failed** [= pre-existing baseline + 17, zero regressions].)*
 Rule: NO new migrations (schema needs route through CORE-A); no edits outside owned paths.
 
 0. `[x]` **WAVE-2 / HARDENING H3 pre-work swap** -- DONE @2026-08-26 by core-b under the HARDENING section item 3 (same task; canonical record there). Rate-limiter collector treatment: in-process token bucket + buffered ledger flush (trace_collector append->drain pattern) so Postgres becomes audit ledger, not enforcement point. CONSTRAINT: preserve fail-closed-on-infra-error; buffered writes need a replay-or-block rule. Retention sweep for rate_limit_events. NOTE: lands in governance.py -- scoped grant to this lane for backend/app/services/governance.py only.
