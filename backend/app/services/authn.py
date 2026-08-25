@@ -474,3 +474,136 @@ def install_actor_middleware(app: Any, settings: Any, jwks_provider: Any = None)
         )
     )
     app.state.actor_middleware_installed = True
+
+
+# ---------------------------------------------------------------------------
+# Tenancy resolution (HARDENING H1 — CORE-A): Actor -> user row ->
+# memberships -> TenantScope.
+#
+# Deliberately APPENDED, not woven in: everything above validates WHO you
+# are; everything below asks WHICH organization's data that entitles you
+# to. The two halves stay uncoupled so the predicate builder in
+# services/access.py consumes scopes here without this module ever
+# building SQL fragments itself — resolution produces the scope object;
+# only access.py turns scopes into SQL.
+#
+# Posture note: zero memberships resolves to the seeded commons
+# organization (the V0 default tenant every existing row carries), NOT
+# to an error and not to unrestricted. Today's deployment IS the commons;
+# refusing membership-less identities would lock out every valid user
+# until provisioning exists. When real multi-tenancy goes live, flipping
+# zero-memberships to fail-closed is a change to exactly this one
+# function — the flip-on-cheap property, same as visibility.
+# ---------------------------------------------------------------------------
+
+
+class IdentityInactive(Exception):
+    """The users row for a VALID token is deactivated or expired. A valid
+    JWT proves who the caller is, not that they may still act."""
+
+
+class AmbiguousTenant(Exception):
+    """The user holds active memberships in more than one organization.
+    Fails LOUD instead of silently picking one — implicit tenant choice
+    is exactly the decorative-isolation failure H1 exists to end."""
+
+
+@dataclass(frozen=True)
+class ResolvedMembership:
+    organization_id: str
+    organization_name: str
+    organization_slug: str
+    role_name: str
+
+
+_USER_SELECT = (
+    "SELECT id, is_active, t_expired FROM users "
+    "WHERE issuer = $1 AND external_subject = $2"
+)
+_USER_INSERT = (
+    "INSERT INTO users (issuer, external_subject, display_name, email) "
+    "VALUES ($1, $2, $3, $4) "
+    "ON CONFLICT (issuer, external_subject) DO NOTHING RETURNING id"
+)
+_MEMBERSHIP_SELECT = (
+    "SELECT m.organization_id, o.name AS organization_name, "
+    "o.slug AS organization_slug, r.name AS role_name "
+    "FROM org_memberships m "
+    "JOIN organizations o ON o.id = m.organization_id "
+    "JOIN roles r ON r.id = m.role_id "
+    "WHERE m.user_id = $1::uuid "
+    "AND m.t_expired IS NULL AND o.t_expired IS NULL "
+    "ORDER BY m.organization_id, r.name"
+)
+
+
+async def ensure_user(pool: Any, actor: Actor) -> str:
+    """Get-or-create the users row for a validated Actor; returns its id.
+
+    Creation is explicit here rather than a middleware side effect: the
+    first successful login provisions the row, and the INSERT rides
+    ON CONFLICT so a concurrent first login cannot double-create.
+    Raises IdentityInactive when the row exists but has been
+    deactivated — a valid token for a dead account stays dead."""
+    row = await pool.fetchrow(_USER_SELECT, actor.issuer or "", actor.subject)
+    if row is None:
+        inserted = await pool.fetchrow(
+            _USER_INSERT,
+            actor.issuer or "",
+            actor.subject,
+            actor.name,
+            actor.email,
+        )
+        if inserted is not None:
+            return str(inserted["id"])
+        # Lost a create race: the concurrent winner's row is ours to use.
+        row = await pool.fetchrow(_USER_SELECT, actor.issuer or "", actor.subject)
+        if row is None:
+            raise RuntimeError("user row vanished during concurrent provisioning")
+    if not row["is_active"] or row["t_expired"] is not None:
+        raise IdentityInactive(f"user {actor.subject} is inactive")
+    return str(row["id"])
+
+
+async def resolve_memberships(pool: Any, user_id: str) -> list[ResolvedMembership]:
+    """Active memberships of one user, roles joined in."""
+    rows = await pool.fetch(_MEMBERSHIP_SELECT, user_id)
+    return [
+        ResolvedMembership(
+            organization_id=str(r["organization_id"]),
+            organization_name=r["organization_name"],
+            organization_slug=r["organization_slug"],
+            role_name=r["role_name"],
+        )
+        for r in rows
+    ]
+
+
+def tenant_scope_for(memberships: list[ResolvedMembership]) -> "TenantScope":
+    """Pure picker over resolved memberships.
+
+    Zero -> the commons organization (posture note above).
+    One  -> that organization.
+    Many -> AmbiguousTenant naming every candidate: no implicit pick."""
+    from app.services.access import TenantScope
+
+    if not memberships:
+        return TenantScope.commons()
+    orgs = {m.organization_id for m in memberships}
+    if len(orgs) > 1:
+        detail = ", ".join(
+            sorted(f"{m.organization_slug}({m.organization_id})" for m in memberships)
+        )
+        raise AmbiguousTenant(
+            f"active memberships in multiple organizations: {detail}"
+        )
+    return TenantScope.for_tenant(next(iter(orgs)))
+
+
+async def tenant_scope_for_actor(pool: Any, actor: Actor) -> tuple[str, TenantScope]:
+    """One-call seam for request paths: validated Actor in, (user_id,
+    TenantScope) out. This is what deps-style resolvers will call once
+    query paths adopt the builder."""
+    user_id = await ensure_user(pool, actor)
+    memberships = await resolve_memberships(pool, user_id)
+    return user_id, tenant_scope_for(memberships)

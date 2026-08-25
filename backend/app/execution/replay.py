@@ -31,6 +31,8 @@ from typing import Any, Optional
 
 import asyncpg
 
+from app.services.access import TenantScope, tenant_predicate
+
 REPLAY_PIPELINE_VERSION = "1"
 
 # Claim promotion is itself an extraction step with its own version --
@@ -171,12 +173,18 @@ async def replay_session(
     session_id: str,
     episode_ids: Optional[list[str]] = None,
     project_id: Optional[str] = None,
+    tenant_scope: Optional[TenantScope] = None,
 ) -> dict:
     """
     End-to-end replay verifier for one session's raw traces. Loads the
     raw trace_events, REGENERATES each derived layer from them, and
     compares against what is actually stored:
 
+    `tenant_scope` scopes the claims-layer read (knowledge_nodes is a
+    tenant-bearing [V] table — HARDENING H1's builder supplies the
+    fragment). Default None resolves to TenantScope.unrestricted()
+    because this verifier is an internal maintenance path; passing a
+    real scope keeps an integrity audit from crossing tenant lines.
       observations -- multiset equality on content; every stored row
                       must carry non-empty extractor_name+code_version.
       claims       -- every claim linked (via claim_sources) to an
@@ -236,8 +244,13 @@ async def replay_session(
     }
 
     # ---- claims --------------------------------------------------------
+    # knowledge_nodes carries tenant_id (V0 column, H1 predicate): the
+    # fragment is ALWAYS present — `TRUE` when unrestricted — so a
+    # tenant-bounded audit can never quietly widen itself.
+    scope = tenant_scope if tenant_scope is not None else TenantScope.unrestricted()
+    ten_sql, ten_params = tenant_predicate(scope, alias="k", param_index=2)
     claim_rows = await pool.fetch(
-        """
+        f"""
         SELECT k.id AS claim_id, k.properties, cs.observation_id,
                o.observation_type, o.label, o.extractor_kind,
                o.extractor_name, o.code_version, o.model_id
@@ -245,6 +258,7 @@ async def replay_session(
         JOIN claim_sources cs ON cs.claim_id = k.id
         JOIN observations o ON o.id = cs.observation_id
         WHERE k.node_type = 'claim'
+          AND {ten_sql}
           AND EXISTS (
               SELECT 1 FROM observation_events oe
               JOIN trace_events te ON te.id = oe.event_id
@@ -252,6 +266,7 @@ async def replay_session(
         ORDER BY k.t_created ASC
         """,
         session_id,
+        *ten_params,
     )
     claim_mismatches: list[str] = []
     for row in claim_rows:

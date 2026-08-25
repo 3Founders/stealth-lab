@@ -132,7 +132,32 @@ git worktree add ..\sl-research -b lane/research origin/main
    e2e skips on shared instance BY PROBE — db/27 FKs evidence (db/24) which
    the drifted instance lacks; deliberately NOT piecemeal-applied there
    [queue item 2 owns the chain].)*
-5. `[ ]` **WAVE-2 / HARDENING H1 (assigned) -- Identity tables + tenancy predicate builder**: organizations/users/roles born additively (db/28); convert tenant filtering into the ONE-predicate-builder pattern in services/access.py (03_access.sql's own confession: column existed, no query ever filtered). WAVE GRANT extends ownership to services/access.py + services/authn.py. Extends in-flight authn work. Proving: tenant-filter SQL-content tests + predicate unit tests.
+5. `[x]` done @2026-08-26 â€” branch `lane/core-a` **WAVE-2 / HARDENING H1 (assigned) -- Identity tables + tenancy predicate builder**
+   *(Shipped: db/28_identity.sql â€” organizations/users/roles/org_memberships born
+   additively, idempotent, fresh-start compliant; identity key is (issuer,
+   external_subject) not bare sub; roles are catalog ROWS not an enum so adding a
+   role never needs a migration; seeded Commons organization REUSES V0's default
+   tenant uuid '00000000-...-0001' so every existing tenant_id value resolves to a
+   real organization row without touching existing data. services/access.py gains
+   the second axis: TenantScope + tenant_predicate() mirroring visibility's contract
+   exactly [never-empty, unrestricted = visible literal TRUE, alias threading,
+   positional param threading, ::uuid cast explicit in SQL text] + scope_predicates()
+   building BOTH axes with sequenced params in one call [tenant arg deliberately has
+   NO default â€” omitting it is a TypeError, not a silently unscoped query].
+   services/authn.py EXTENDED additively [grant this wave; CORE-B's acquisition
+   surface untouched, their 30 tests green]: Actor -> ensure_user [get-or-create,
+   conflict-safe, IdentityInactive fails closed on deactivated/expired rows] ->
+   resolve_memberships -> tenant_scope_for [0 memberships -> Commons posture, >1 ->
+   AmbiguousTenant naming every candidate, never an implicit pick] -> one-call
+   tenant_scope_for_actor seam for future deps resolvers. ADOPTED QUERY PATH within
+   grant: execution/replay.py claims-layer read over knowledge_nodes now ALWAYS
+   carries the fragment [TRUE when unrestricted]. Enforcement teeth: repo-wide
+   hygiene scan test bans hand-written WHERE/AND tenant filters outside access.py;
+   migration static checks; predicate unit proofs; replay SQL-content proofs. 33
+   proving tests in tests/test_hardening_h1_identity_tenancy.py. Full suite: 1147
+   passed / 114 skipped / 0 failed [= main baseline 1114 + 33, zero regressions].
+   Remaining [V]/[H] query-path adoption outside grant paths -> Question #5 +
+   cross-lane request #2.)*
 
 ### Lane CORE-B â€” extraction & gating (owns `backend/app/services/procedure_extraction/**`, `invariants.py`, `applicability.py`, `precondition_gate.py`, `state.py`)
 1. `[x] done 2026-08-25 â€” lane/core-b` **1.8a** Precondition relevance filter (derive gates only load-bearing facts).
@@ -343,13 +368,30 @@ blocking question in the Log, continue with the next queue item.
    promotion path and Appendix C #3 is proven at contract level only. Proposed
    default: assign services/procedures.py to CORE-A next wave (it is procedure-
    lifecycle storage, squarely CORE-A's "storage & plans" charter).
-   **EXTENDED by Band 2.4:** in that same change, failures get routed too — call
-   `app/execution/failures.py::classify_and_route(pool, evidence_row)` for every
-   failure row right after its INSERT (one-call API, idempotent); successes raise
-   NotClassifiable and must be skipped by the caller. Consumers then read their
-   queues via `fetch_route_queue(pool, route)` — capability demotion consumers,
-   applicability narrowing, plan revision each land with their owner; until then
-   decisions stay durably queued and auditable in failure_routes.
+    **EXTENDED by Band 2.4:** in that same change, failures get routed too — call
+    `app/execution/failures.py::classify_and_route(pool, evidence_row)` for every
+    failure row right after its INSERT (one-call API, idempotent); successes raise
+    NotClassifiable and must be skipped by the caller. Consumers then read their
+    queues via `fetch_route_queue(pool, route)` — capability demotion consumers,
+    applicability narrowing, plan revision each land with their owner; until then
+    decisions stay durably queued and auditable in failure_routes.
+2. **CORE-A â†’ owners of every remaining [V]/[H] query path over tenant-bearing
+   tables** (`app/db/graph_store.py`, `services/retrieval.py`,
+   `services/local_retrieval.py`, `services/state.py`, `services/dedup.py`,
+   `services/reuse_detection.py`, `services/hierarchy.py`,
+   `services/knowledge_conflict.py`, `services/claim_family.py`,
+   `services/applicability.py`, `services/agent_search.py`, `api/graph.py` â€” all
+   outside every lane's granted path list): thread tenancy through
+   `access.scope_predicates(access_scope, tenant_scope, alias, param_index)`
+   exactly where `visibility_predicate()` is already AND-ed in â€” one call
+   supplies both fragments with correctly sequenced params; pass
+   `TenantScope.unrestricted()` to keep today's permissive-in-effect posture
+   visible as literal TRUE rather than absent. The hygiene scan test
+   (test_hardening_h1_identity_tenancy.py) bans hand-written `tenant_id =`
+   filters repo-wide from now on, so adoption must go through the builder.
+   Proposed default: founder grants CORE-A a scoped next-wave sweep of these
+   files so the mechanical change lands uniformly from the pattern's owner
+   (Question #5 below); alternative is per-owner adoption via this request.
 ## Founder dependencies (blocking nothing currently)
 
 | Ruling | Blocks | State |
@@ -512,12 +554,40 @@ blocking question in the Log, continue with the next queue item.
   revisions / narrowing / plan revisions belongs to extraction / applicability /
   plans owners respectively — cross-lane request #1 extended with the exact
   one-call wiring (`classify_and_route`) for whoever lands the evidence writer.
-  (c) db/27 NOT applied to the shared instance: it FKs evidence (db/24) which
-  is absent there; piecemeal-applying 24+27 would deepen exactly the drift
-  queue item 2 exists to sort. E2E probes and skips with that reason.
+   (c) db/27 NOT applied to the shared instance: it FKs evidence (db/24) which
+   is absent there; piecemeal-applying 24+27 would deepen exactly the drift
+   queue item 2 exists to sort. E2E probes and skips with that reason.
+
+- CORE-A (2026-08-26, sixth wave): **HARDENING H1 â€” identity tables + tenancy
+  predicate builder** done on `lane/core-a` â€” see queue item 5 / HARDENING item 1.
+  Notes: (a) db/28 is additive + idempotent and NOT yet applied to the shared
+  drifted instance â€” H1's proofs are all offline per house style, so nothing
+  needed a live DB; applying it is safe whenever convenient but queue item 2's
+  chain run should remain the canonical application point. (b) The authn.py
+  change is strictly APPENDED (new tenancy-resolution section); CORE-B's token-
+  acquisition surface is untouched and their test_authn_offline.py stays green
+  inside the full suite. (c) A repo-wide hygiene scan test now bans hand-written
+  `WHERE/AND ... tenant_id =` filters outside services/access.py â€” tenancy may
+  only enter SQL through the builder from this commit forward.
+  - **Question #5 (non-blocking for H1 itself, blocks FULL retirement of
+    decorative tenancy):** H1's grant covered access.py + authn.py (+ my usual
+    paths), so the builder is adopted at ONE real query path (replay.py's
+    knowledge_nodes claims read, owned by me). The remaining [V]/[H] query
+    paths over tenant-bearing tables live in files NO lane owns
+    (graph_store.py + the retrieval/state/dedup/reuse/hierarchy/conflict/
+    claim_family/applicability/agent_search family + api/graph.py) â€”
+    enumerated in cross-lane request #2. Options: (a) founder grants CORE-A a
+    scoped next-wave sweep of those files so the uniform mechanical adoption
+    lands from the pattern's owner (proposed default; mirrors how the V2
+    visibility threading was one dedicated wave), (b) each future owner adopts
+    via cross-lane request #2 as they touch each file (risk: half-adopted state
+    persists for months), (c) defer enforcement entirely to H2's RLS/SET LOCAL
+    (rejected by H2's own constraint: app-layer stays PRIMARY, single policy
+    source). Until answered, every new query path is still forced through the
+    builder by the hygiene tooth â only the EXISTING unowned paths predate it.
 
 ### Lane HARDENING (opened by founder referral of Chaitanya-instance audit, 2026-08-25)
 Grounded findings from  3_access.sql/ 4_governance.sql/deps.py review. Sequence: after current OIDC tasks land.
-1. [ ] **H1 - Identity tables + tenancy predicate builder**: organizations/users/roles born additively; convert tenant filtering into the same ONE-predicate-builder pattern that made visibility flip-on cheap (03_access.sql's own confession: 'column existed, no query ever filtered'). Extends the in-flight OIDC work.
+1. `[x]` done @2026-08-26 â€” branch `lane/core-a` **H1 - Identity tables + tenancy predicate builder** (assigned to CORE-A per 8e09a5c): shipped as CORE-A queue item 5 above; db/28 + TenantScope/tenant_predicate/scope_predicates + authn tenancy resolution + replay adoption + hygiene tooth + 33 offline proving tests. Suite 1147/114/0.
 2. [ ] **H2 - RLS backstop on [H] tables**: SET LOCAL app.tenant_id per transaction + row-level security policies at minimum on append-only truth. App-layer stays PRIMARY (single policy source - no drift between two enforcers). asyncpg caveat: transaction-scoped only, or it leaks across pooled connections.
 3. [ ] **H3 - Rate-limiter collector treatment (pre-public-launch)**: in-process token bucket + buffered ledger flush (reuse trace_collector append->drain pattern); Postgres becomes audit ledger, not enforcement point; Redis only if multi-process strictness demands. CONSTRAINT: must preserve fail-closed-on-infra-error semantics; buffered writes need a replay-or-block rule. Retention/TTL sweep for rate_limit_events.
