@@ -68,7 +68,7 @@ git worktree add ..\sl-research -b lane/research origin/main
    tests/test_capability_bands.py. Suite: 939 passed / 106 skipped / 0 failed
    (= origin/main baseline + CORE-A's 36 plan tests + these 25). Placement note +
    numbered question #2 in Log.)*
-5. `[ ]` **NEXT WAVE — 1.9c universal ChangeSet coverage**: every `[V]` mutation
+5. `[x] done 2026-08-25 — by integrator (commit 2505705)` **NEXT WAVE — 1.9c universal ChangeSet coverage**: every `[V]` mutation
    produces a ChangeSet record (extend `models/change.py` reach to observations,
    procedures, implementations, applicability rules, states). Proving test:
    Appendix C #7.
