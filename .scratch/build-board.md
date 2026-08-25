@@ -97,8 +97,24 @@ single synthesized reports into `.scratch/research/`.
 3. `[ ]` τ-Knowledge ceiling re-check (arXiv:2603.04370) before harness baselines freeze.
 
 ### Lane SHIP (owns `packaging/**`) — activates after CORE-A merges 1.7
-1. `[ ]` claimed @2026-08-25 — Lane SHIP (worktree `sl-ship`, branch `lane/ship`)
-   Installable package wrapping `trace_collector` + `mcp_server`.
+1. `[x]` done @2026-08-25 — branch `lane/ship` Installable package wrapping
+   `trace_collector` + `mcp_server`.
+   Shipped: `packaging/` = installable **stealthlab-connect** (pyproject,
+   console scripts `stealthlab-mcp-server` [HTTP loopback default / --stdio]
+   and `stealthlab-trace-hook` [Claude Code hook CLI, always exit-0 fail-safe]),
+   import-only wrapping of backend (no vendored logic, no backend edits, no
+   migrations). Backend-root discovery w/ loud explicit-path failures; loads
+   backend/.env; preflight for STEALTHLAB_MCP_TOKEN. 30 offline tests (no DB):
+   bootstrap resolution, collector round-trip/redaction/dedup/drop-count,
+   hook CLI fail-safes, server module imported DB-less (8-tool roster, token
+   verifier). README: install + 3 smoke tests. Console scripts verified in a
+   bare scratch venv (found+fixed a real order-dependent bug there:
+   collect_payload wasn't bootstrapping the path). Suite delta vs pristine
+   origin/main = ZERO: identical 103 failed / 974 passed / 1 skipped on both —
+   same pre-existing fresh-worktree gap MEASURE logged (no local Postgres;
+   e2e failures only under full-run ordering; they skip cleanly when run
+   individually). Not a SHIP regression. Rebased onto origin/main before push
+   per OVERNIGHT MODE.
 
 ## Integrator (= reviewer instance, main checkout)
 - Watches for `lane/*` branch pushes; rebases lane onto origin/main when stale.
