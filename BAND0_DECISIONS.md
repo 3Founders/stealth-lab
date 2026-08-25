@@ -27,7 +27,7 @@ the number defended in due diligence.
 **Recommendation:** B — aligns with spec §23's example threshold (≥0.90 ≈ top of level 4)
 and leaves headroom so "trusted" stays rare enough to mean something.
 
-**Ruling:** RATIFIED 2026-08-25 via founder quiz — Option B boundaries, plus explicit routing tiers written into §16: auto-route ≥0.90 · offer 0.70–0.90 · refuse <0.70; level 5 requires stats + completed review.
+**Ruling:** DECIDED BY ANUJ (founder) via quiz, 2026-08-25 — — Option B boundaries, plus explicit routing tiers written into §16: auto-route ≥0.90 · offer 0.70–0.90 · refuse <0.70; level 5 requires stats + completed review.
 
 ---
 
@@ -85,7 +85,7 @@ rather than inventing new lifecycle states; deletion never automatic, matching �
 becomes the shredding key too — one concept, two jobs). Requires answering: who holds
 organization-scope keys?
 
-**Ruling:** RATIFIED 2026-08-25 via founder quiz — Crypto-shredding (Option A), shell-visible residue; §34b rewritten as mechanism of record; tombstone-eviction demoted to transitional bridge until Band 5 field-level encryption. Key custody: DEFERRED — company-held default until Band 5 residency decision.
+**Ruling:** DECIDED BY ANUJ (founder) via quiz, 2026-08-25 — — Crypto-shredding (Option A), shell-visible residue; §34b rewritten as mechanism of record; tombstone-eviction demoted to transitional bridge until Band 5 field-level encryption. Key custody: DEFERRED — company-held default until Band 5 residency decision.
 
 ---
 
@@ -114,3 +114,13 @@ schema.md Procedure/Claim/scope preamble), update ROADMAP.md Appendix C rows if 
 implications change, commit as `Band 0: decision sheet rulings applied (D1–D5)`, and
 note any ruling you believe is wrong next to its line before proceeding — disagreement
 is recorded, then executed.
+
+---
+
+## Revisit ledger (for future changes)
+
+**D1 alternatives if we re-tune:** Option A conservative (2: >=0.50 · 3: >=0.75 · 4: >=0.90 · 5: >=0.97 + cross-env repro, human-review-first posture) · Option C aggressive (3: >=0.60 · 4: >=0.80 · 5: >=0.90, no review gate). Current choice trades a little speed-of-trust for review-backed level 5. Changing band bounds requires only a spec edit + scoreboard recalibration; changing the routing tiers (0.90/0.70) changes product behavior and must ship behind the scoreboard first.
+
+**D4 alternatives if we re-tune:** Null-eviction (simplest, but edits history rows — currently only permitted as transitional bridge) · Hybrid shred-plus-evict · Custody flip from company-held to customer-held KMS (revisit at Band 5 residency; flipping later requires re-encrypting all scopes, cheap while corpus is young, brutal after).
+
+**D2/D3/D5 status:** proceeding on recommended defaults per the sheet's own rule (unanswered items adopt defaults). Override anytime by answering their Ruling lines; D2's sqrt-capping and D3's 10-execution quarantine window are already written into spec SS9b/SS23b tagged as defaults.

@@ -26,16 +26,28 @@ git worktree add ..\sl-research -b lane/research origin/main
    frozen by trigger; composite FK procedures(procedure_id,version)); app/execution/plans.py
    (compile/hash/rebind/binding boundary); app/models/plan.py; 36 proving tests in
    tests/test_band1_7_plans.py. Full suite: 885 passed, 106 skipped.
-2. `[ ]` Real-DB migration chain verification (01→22+own) on disposable Postgres;
-   paste engine output.
+2. `[ ]` **BLOCKED on external** — Real-DB migration chain verification (01→23) on
+   disposable Postgres; awaiting Chaitanya's Docker (founder has none locally).
+   Paste engine output when run.
 3. `[ ]` Band 1 exit-criteria sweep; request integrator review.
+4. `[ ]` **NEXT WAVE — 1.9a Evidence table**: typed rows with independence groups;
+   procedure verification stats become views over evidence. Proving tests:
+   Appendix C #3/#12/#13.
 
 ### Lane CORE-B — extraction & gating (owns `backend/app/services/procedure_extraction/**`, `invariants.py`, `applicability.py`, `precondition_gate.py`, `state.py`)
 1. `[x] done 2026-08-25 — lane/core-b` **1.8a** Precondition relevance filter (derive gates only load-bearing facts).
 2. `[x] done 2026-08-25 — lane/core-b` **1.8b** V6 authoring-time invariant validator + z3 off event loop w/ timeout.
 3. `[x] done 2026-08-25 — lane/core-b` **1.8c** Memoized `project_state()` in applicability cascade; tenant-scoped
    cold-start gate.
-Rule: NO new migrations (schema unchanged); no edits outside owned paths.
+4. `[ ]` **NEXT WAVE — 1.9b capability computation**: levels-as-banded-P implementing
+   the RATIFIED D1 thresholds (spec §16; routing tiers 0.90/0.70 as named config,
+   never magic numbers); bidirectional demotion on failure. Proving tests:
+   Appendix C #5/#10/#12.
+5. `[ ]` **NEXT WAVE — 1.9c universal ChangeSet coverage**: every `[V]` mutation
+   produces a ChangeSet record (extend `models/change.py` reach to observations,
+   procedures, implementations, applicability rules, states). Proving test:
+   Appendix C #7.
+Rule: NO new migrations (schema needs route through CORE-A); no edits outside owned paths.
 
 ### Lane MEASURE (owns `experiments/harness/**`)
 1. `[x] done 2026-08-25 — lane/measure` §40 harness skeleton adapted from `experiments/swebench_pro/run_graph_experiment.py`;
