@@ -29,13 +29,23 @@ from app.services.governance import (
 )
 
 
-async def get_scope(
-    x_viewer_id: Optional[str] = Header(default=None),
-) -> AccessScope:
+async def get_scope(request: Request, x_viewer_id: Optional[str] = Header(default=None)) -> AccessScope:
     """
     The scope for this request. Anonymous by default — the normal case on
     a public commons, not a failure.
+
+    Band 2.9: a VALIDATED OIDC actor (published by authn's middleware on
+    the contextvar) always wins — its subject is real identity. The
+    X-Viewer-Id header is trusted only when no validated actor exists,
+    which is exactly the public posture where it grants nothing that
+    wasn't already world-readable; the boot guard refuses to run private
+    visibility in that posture.
     """
+    from app.services.authn import current_actor
+
+    actor = current_actor()
+    if actor is not None:
+        return AccessScope.for_user(actor.subject)
     if x_viewer_id:
         return AccessScope.for_user(x_viewer_id)
     return AccessScope.anonymous()

@@ -167,6 +167,17 @@ class Settings(BaseSettings):
     private_visibility_enabled: bool = False
     real_auth_enabled: bool = False
 
+    # --- Band 2.9 identity gate (services/authn.py) ---
+    # OIDC-only authN: issuer + audience configure token validation; the
+    # JWKS URL defaults to <issuer>/.well-known/jwks.json. Both required
+    # before any exposure flag may turn on -- assert_boot_posture refuses
+    # to boot on half-enabled identity. No user management ships with
+    # this: subjects arrive pre-provisioned from the IdP.
+    oidc_issuer: Optional[str] = None
+    oidc_audience: Optional[str] = None
+    oidc_jwks_url: Optional[str] = None
+    multi_user_exposure_enabled: bool = False
+
     # --- V2 governance ---
     # On by default: an unprotected public endpoint that spends money per
     # call is the kind of thing that should require deliberate opt-out,
