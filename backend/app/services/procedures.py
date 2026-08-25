@@ -341,6 +341,16 @@ async def check_quarantine_and_disable(pool: asyncpg.Pool, procedure_row_id: str
         "WHERE id = $1 RETURNING *",
         procedure_row_id,
     )
+    from app.services.changeset_record import record_change_set, status_change
+    await record_change_set(
+        pool, author="system:quarantine_timer",
+        reason=f"14-day quarantine expiry -> availability 'disabled' "
+               f"(entered {entered_at})",
+        operations=[status_change(procedure_row_id, {
+            "availability": "disabled",
+            "quarantine_entered_at": entered_at,
+        })],
+    )
     return dict(updated)
 
 
@@ -420,11 +430,20 @@ async def approve_procedure(pool: asyncpg.Pool, *, procedure_row_id: str, approv
     ORTHOGONAL to verification_state -- an approved procedure with 2
     recorded successes is still, correctly, not verified; approving
     something does not fast-track statistical verification.
+
+    Records a ChangeSet (Band 1.9c, invariant #7): approval is a [V]
+    status mutation and must be auditable after the fact.
     """
     await pool.execute(
         "UPDATE procedures SET approval_status = 'approved', approved_by = $2, "
         "approved_at = now() WHERE id = $1::uuid",
         procedure_row_id, approved_by,
+    )
+    from app.services.changeset_record import record_change_set, status_change
+    await record_change_set(
+        pool, author=approved_by,
+        reason="procedure approval_status -> approved",
+        operations=[status_change(procedure_row_id, {"approval_status": "approved"})],
     )
 
 
@@ -433,4 +452,10 @@ async def reject_procedure(pool: asyncpg.Pool, *, procedure_row_id: str, approve
         "UPDATE procedures SET approval_status = 'rejected', approved_by = $2, "
         "approved_at = now() WHERE id = $1::uuid",
         procedure_row_id, approved_by,
+    )
+    from app.services.changeset_record import record_change_set, status_change
+    await record_change_set(
+        pool, author=approved_by,
+        reason="procedure approval_status -> rejected",
+        operations=[status_change(procedure_row_id, {"approval_status": "rejected"})],
     )
