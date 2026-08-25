@@ -237,9 +237,10 @@ git worktree add ..\sl-research -b lane/research origin/main
    predicate builder can consume Actors uncoupled. 30 offline proving tests in
    tests/test_authn_offline.py [locally-generated RSA vs static JWKS,
    pure-ASGI harness, fake-pool SQL-content proofs of override + fallback +
-   explicit-wins at each surface]. Suite: 1090 passed / 113 skipped /
-   0 failed (= rebased origin/main baseline + 30, zero regressions).
-   Rebased onto origin/main mid-item [board conflict resolved by taking
+   explicit-wins at each surface]. FINAL suite on rebased origin/main
+   (incl. core-a 2.4): 1114 passed / 114 skipped /
+   0 failed (zero regressions; an earlier 1090/113 reading predates the
+   last main rebase). Rebased onto origin/main mid-item [board conflict resolved by taking
    main's board wholesale + re-inserting this item].)*
 Rule: NO new migrations (schema needs route through CORE-A); no edits outside owned paths.
 
