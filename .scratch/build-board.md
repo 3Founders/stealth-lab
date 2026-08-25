@@ -104,6 +104,31 @@ git worktree add ..\sl-research -b lane/research origin/main
    produces a ChangeSet record (extend `models/change.py` reach to observations,
    procedures, implementations, applicability rules, states). Proving test:
    Appendix C #7.
+6. `[x]` done @2026-08-25 — lane/core-b **Band 2 — promote episode segmenter to production**
+   in `backend/app/services/trace_worker.py`, using the empirically-validated rules from
+   `experiments/episode_assembly/FINDINGS.md`: Rule-A genuine-prompt boundaries as the only
+   primary signal; merge rule folding ≤2-event episodes into successors; subdivision of
+   >200-event episodes at internal commit/test sub-boundaries (metadata role per findings —
+   never a top-level cut); nested subagent episodes joined via `sourceToolAssistantUUID` →
+   parent assistant `uuid` (sibling-file join); idle-gap signal DROPPED (bimodality does not
+   exist — no temporal threshold anywhere).
+   *(Shipped: trace_worker.py episode-assembly section — pure `assemble_episodes()`
+   [reference prompt predicate verbatim incl. the four auto-continuation prefixes;
+   O(n) merge sweep equivalent to fold-until-stable w/ trailing-trivial folding backward;
+   completing commit/test event CLOSES its sub-episode; oversize-without-internal-signal
+   stays whole and flagged `oversize_unsubdivided`, no invented cuts; forest-safe — file
+   order across all parentUuid:null roots, never a chain walk; tolerant of all 16 line
+   types + intra-file drift and missing timestamps]; `write_session_episodes()` into the
+   EXISTING episodes table via migration-17 columns, NO new migration, idempotent by
+   per-episode shape fingerprint in metadata JSONB [child links to existing parent row id
+   after crash-between-inserts]; `process_transcript_session()` full path + sibling-file
+   discovery. content_ref is a locator, never message text. Thresholds are named module
+   constants consulted at call time, monkeypatch-proven retunable. 29 proving tests in
+   tests/test_episode_segmentation.py vs synthetic real-schema fixtures [16 line types,
+   timestampless boundary lines, two-root forest, torn writes]. Suite: 1018 passed /
+   111 skipped / 0 failed (= origin/main baseline 989 + these 29, zero regressions).
+   Integrator-approved scoped files for this item only: services/trace_worker.py +
+   tests/test_episode_segmentation.py.)*
 Rule: NO new migrations (schema needs route through CORE-A); no edits outside owned paths.
 
 ### Lane MEASURE (owns `experiments/harness/**`)

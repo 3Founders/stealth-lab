@@ -1,4 +1,4 @@
-"""
+﻿"""
 The worker half of the ingestion pipeline (ticket 16, memory-substrate
 map). Reads what the collector appended to its local file and does the
 actual, durable database write -- this is the boundary ticket 16 calls
@@ -7,19 +7,30 @@ track compilation work." Everything from here downstream (normalization,
 episode assembly) is replayable, per spec.md's own requirement; only the
 raw persistence below is treated as the one irreversible step.
 
-Idempotent by design, not by tracking an offset: every event carries a
-real dedup_key (computed by the collector), and every insert here uses
-INSERT ... ON CONFLICT (dedup_key) DO NOTHING RETURNING id. Re-running
-this against the same file (e.g. after a crash, or just because it's
-simpler than maintaining a separate cursor) re-processes already-seen
-lines harmlessly. Simpler and more robust than a hand-maintained offset
-file that could itself drift or get corrupted.
+Idempotent by design, not by tracking an offset: every collector event
+carries a real dedup_key (computed by the collector), and every insert
+in process_collector_file() uses INSERT ... ON CONFLICT (dedup_key) DO
+NOTHING RETURNING id. Re-running that path against the same file (e.g.
+after a crash) re-processes already-seen lines harmlessly.
+
+As of Band 2 this module is also where episode assembly stopped being a
+prototype: experiments/episode_assembly/segment.py's three candidate rule
+sets were run over 36 real sessions (28,969 lines) and the validated
+survivors -- Rule-A genuine-prompt boundaries, the <=2-event merge, >200-
+event subdivision, sourceToolAssistantUUID subagent joins, idle-gap
+DROPPED -- are promoted below (assemble_episodes /
+process_transcript_session), replacing "a session IS the episode" with
+real segmentation. See that directory's FINDINGS.md for the numbers.
 """
 from __future__ import annotations
 
+import hashlib
 import json
+import re
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any, Mapping, Optional, Sequence
 
 import asyncpg
 
@@ -226,4 +237,602 @@ async def process_collector_file(pool: asyncpg.Pool, file_path: Path, *,
         "inserted": inserted,
         "skipped_duplicate": skipped_duplicate,
         "quarantined": len(quarantined),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Episode assembly (Band 2 promotion of experiments/episode_assembly).
+#
+# Every rule below is an empirically validated survivor from FINDINGS.md
+# (36 real sessions, 28,969 lines, 69 subagent transcripts) -- none is
+# invented here:
+#
+#   PRIMARY BOUNDARY .... Rule-A genuine human prompts only. The reference
+#                         predicate (isMeta/isCompactSummary/isSidechain/
+#                         leading tool_result plus the four auto-continuation
+#                         prefixes) is adopted verbatim; without it every
+#                         background-agent notification opens a spurious
+#                         episode.
+#   MERGE ............... episodes of <= TRIVIAL_MERGE_MAX_EVENTS events fold
+#                         into their SUCCESSOR (a trailing trivial one into
+#                         its predecessor). Prompt-only segmentation produced
+#                         18% trivial episodes on real data; this is the fix.
+#   SUBDIVISION ......... a single prompt can also under-segment (22 prompts
+#                         spawned >200 events each), so episodes over
+#                         OVERSIZE_SUBDIVIDE_EVENTS are subdivided at their
+#                         INTERNAL commit/test completions. Findings measured
+#                         commit/test boundaries as ~97% disjoint from prompt
+#                         boundaries (Jaccard 0.028): "metadata attached to an
+#                         episode, or a sub-boundary within one -- never a
+#                         top-level cut." An oversize episode with no
+#                         internal commit/test signal stays whole and is
+#                         flagged; no arbitrary cuts are invented.
+#   SUBAGENTS ........... subagent work lives in sibling files joined by
+#                         sourceToolAssistantUUID -> the parent assistant
+#                         line's uuid. Each joining file becomes nested child
+#                         episodes under whichever top-level episode contains
+#                         its spawn line. Nested, never co-equal.
+#   IDLE GAPS ........... DROPPED entirely. The prescribed GMM-over-log-gaps
+#                         fit was implemented in the prototype and measured:
+#                         neither raw inter-event nor prompt-to-prompt gaps
+#                         are bimodal (fitted valleys 0.8s / 2.3min are EM
+#                         splitting one skewed long tail, three orders of
+#                         magnitude below the ~1h anticipated). There is NO
+#                         temporal threshold anywhere below; timestamps are
+#                         used only to report start_ts/end_ts.
+#
+# Schema realities baked in (FINDINGS "Schema facts"): 16 distinct line types
+# across 11 CLI versions with INTRA-file drift -- unknown types are tolerated
+# as plain non-boundary events; 9 of the 16 carry no timestamp -- missing
+# timestamps are skipped for range reporting, never fatal; sessions are
+# FORESTS (compaction/resume create extra parentUuid:null roots) -- so this
+# deliberately does NOT walk chains: file order across all roots is kept,
+# which is exactly what a single-chain walk silently truncates.
+#
+# assemble_episodes()/load_transcript() are pure and offline-testable;
+# write_session_episodes()/process_transcript_session() are the only IO.
+# ---------------------------------------------------------------------------
+
+#: an episode this small is a trivial prompt ("ok", "continue") and folds
+#: into its successor. FINDINGS: 147 of 823 Rule-A episodes (18%) were this
+#: small. A module constant consulted at call time -- provably retunable by
+#: monkeypatch, like every threshold in this repo, never an inlined literal.
+TRIVIAL_MERGE_MAX_EVENTS = 2
+
+#: episodes larger than this many events get subdivided at internal
+#: commit/test completions. FINDINGS: 22 prompts spawned >200 events each.
+OVERSIZE_SUBDIVIDE_EVENTS = 200
+
+#: Auto-continuations arriving as `type:"user"` lines that are NOT new human
+#: prompts (reference predicate via segment.py). FINDINGS: these background
+#: notifications are pervasive in real sessions.
+NON_PROMPT_PREFIXES = (
+    "<task-notification",
+    "<scheduled-wakeup",
+    "<background-task",
+    "[Request interrupted",
+)
+
+_COMMIT_COMMAND_RE = re.compile(r"\bgit\s+commit\b")
+_TEST_COMMAND_RE = re.compile(
+    r"\b(pytest|npm\s+(run\s+)?test|yarn\s+test|go\s+test|cargo\s+test|"
+    r"ansible-test|jest|vitest|tox|unittest)\b"
+)
+_AGENT_TOOL_NAME = "Agent"
+
+
+def parse_transcript_timestamp(raw: Any) -> Optional[datetime]:
+    """Tolerant ISO-8601 -> aware datetime, else None.
+
+    Unlike _parse_timestamp() above (the collector-record path, which may
+    fall back to now()), transcript lines legitimately lack timestamps --
+    9 of 16 observed line types carry none -- so "absent" stays a
+    representable answer rather than silently becoming the wall clock.
+    """
+    if not isinstance(raw, str) or not raw:
+        return None
+    try:
+        ts = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except (ValueError, TypeError):
+        return None
+    if ts.tzinfo is None:
+        ts = ts.replace(tzinfo=timezone.utc)
+    return ts
+
+
+def _is_human_prompt(rec: Mapping[str, Any]) -> bool:
+    """Genuine human prompt, per the validated reference predicate."""
+    if rec.get("type") != "user":
+        return False
+    if rec.get("isMeta") or rec.get("isCompactSummary") or rec.get("isSidechain"):
+        return False
+    content = (rec.get("message") or {}).get("content")
+    text: Optional[str] = None
+    if isinstance(content, str):
+        text = content
+    elif isinstance(content, list) and content:
+        first = content[0]
+        if isinstance(first, Mapping):
+            if first.get("type") == "tool_result":
+                return False
+            if first.get("type") == "text":
+                text = first.get("text") or ""
+    if text is None:
+        return False
+    return not text.startswith(NON_PROMPT_PREFIXES)
+
+
+def _line_commands(rec: Mapping[str, Any]) -> Sequence[str]:
+    """Command strings from Bash/PowerShell tool_use blocks. Used only for
+    regex classification; never persisted or logged."""
+    if rec.get("type") != "assistant":
+        return ()
+    content = (rec.get("message") or {}).get("content")
+    if not isinstance(content, list):
+        return ()
+    out = []
+    for block in content:
+        if (
+            isinstance(block, Mapping)
+            and block.get("type") == "tool_use"
+            and block.get("name") in ("Bash", "PowerShell")
+        ):
+            cmd = (block.get("input") or {}).get("command")
+            if isinstance(cmd, str):
+                out.append(cmd)
+    return out
+
+
+@dataclass
+class _Line:
+    """Structural view of one transcript line -- the only things the
+    segmentation rules may look at."""
+
+    ts: Optional[datetime]
+    is_prompt: bool
+    is_commit: bool
+    is_test: bool
+    spawns_agent: bool
+    uuid: Optional[str]
+
+
+def _classify(rec: Mapping[str, Any]) -> _Line:
+    commands = _line_commands(rec)
+    content = (rec.get("message") or {}).get("content")
+    spawns = isinstance(content, list) and any(
+        isinstance(b, Mapping)
+        and b.get("type") == "tool_use"
+        and b.get("name") == _AGENT_TOOL_NAME
+        for b in content
+    )
+    uuid_raw = rec.get("uuid")
+    return _Line(
+        ts=parse_transcript_timestamp(rec.get("timestamp")),
+        is_prompt=_is_human_prompt(rec),
+        is_commit=any(_COMMIT_COMMAND_RE.search(c) for c in commands),
+        is_test=any(_TEST_COMMAND_RE.search(c) for c in commands),
+        spawns_agent=bool(spawns),
+        uuid=uuid_raw if isinstance(uuid_raw, str) else None,
+    )
+
+
+@dataclass
+class Episode:
+    """One assembled episode. Main-session episodes index into the main line
+    list; children (nested subagent transcripts) index into their own source
+    file's line list, named in `source`. Half-open [start, end) spans."""
+
+    start: int
+    end: int
+    start_ts: Optional[datetime] = None
+    end_ts: Optional[datetime] = None
+    flags: frozenset = frozenset()
+    source: str = "main"
+    spawned_by: Optional[str] = None
+    children: list = field(default_factory=list)
+
+    @property
+    def n_events(self) -> int:
+        return self.end - self.start
+
+    def fingerprint(self, session_id: str) -> str:
+        """Deterministic digest of this episode's SHAPE -- session, source,
+        boundaries, spawn join -- never message content. Rides in
+        episodes.metadata JSONB and matched on replay: this is what makes
+        write_session_episodes() idempotent without a schema change."""
+        payload = json.dumps(
+            {
+                "session_id": session_id,
+                "source": self.source,
+                "start": self.start,
+                "end": self.end,
+                "spawned_by": self.spawned_by,
+            },
+            sort_keys=True,
+        )
+        return hashlib.sha256(payload.encode()).hexdigest()
+
+
+@dataclass
+class EpisodeAssembly:
+    """Segmentation result for one session, with honest counters for
+    everything the rules did -- including what they could NOT do
+    (unjoined subagent lines are counted, never silently dropped)."""
+
+    episodes: list
+    main_lines: int
+    unparsed_main_lines: int
+    subagent_files_seen: int
+    subagent_files_joined: int
+    unjoined_subagent_lines: int
+    trivial_folds: int
+    subdivided_episodes: int
+
+
+def _spans(cuts: Sequence[int], n: int) -> list:
+    """Half-open spans from boundary indices. Index 0 always opens the
+    first span; a cut opens a new one."""
+    starts = sorted(set(cuts) | {0})
+    return [
+        (s, starts[i + 1] if i + 1 < len(starts) else n)
+        for i, s in enumerate(starts)
+    ]
+
+
+def assemble_episodes(
+    main_lines: Sequence,
+    subagent_files: Optional[Mapping] = None,
+    *,
+    trivial_merge_max_events: Optional[int] = None,
+    oversize_subdivide_events: Optional[int] = None,
+) -> EpisodeAssembly:
+    """Segment one parsed session transcript into episodes using only the
+    empirically validated rules (see the section banner above).
+
+    Thresholds default to the module constants AT CALL TIME (None ->
+    lookup), so retunability is provable by monkeypatch rather than trusted
+    to an inlined literal.
+    """
+    trivial_max = (
+        TRIVIAL_MERGE_MAX_EVENTS
+        if trivial_merge_max_events is None
+        else trivial_merge_max_events
+    )
+    oversize_at = (
+        OVERSIZE_SUBDIVIDE_EVENTS
+        if oversize_subdivide_events is None
+        else oversize_subdivide_events
+    )
+
+    classified: list = []
+    unparsed = 0
+    for rec in main_lines:
+        if isinstance(rec, Mapping):
+            classified.append(_classify(rec))
+        else:
+            # A JSONL line that parsed to a non-object (or a caller passing
+            # raw junk): counted honestly, treated as a plain event so span
+            # arithmetic still covers every line of the file.
+            unparsed += 1
+            classified.append(_classify({}))
+    n = len(classified)
+    if n == 0:
+        return EpisodeAssembly([], 0, unparsed, 0, 0, 0, 0, 0)
+
+    prompt_cuts = [i for i, ln in enumerate(classified) if ln.is_prompt]
+
+    # -- MERGE pass. One left-to-right sweep, equivalent to "repeat: fold any
+    # <=trivial_max-events episode into its successor until stable", with a
+    # trailing trivial folded backward when it has no successor. O(n), no
+    # fixpoint loop needed: absorbing forward composes transitively.
+    folds = 0
+    pieces: list = []  # (start, end, absorbed_a_trivial)
+    all_spans = _spans(prompt_cuts, n)
+    run_s, run_e = all_spans[0]
+    run_absorbed = False
+    for s, e in all_spans[1:]:
+        if run_e - run_s <= trivial_max:
+            run_e = e
+            run_absorbed = True
+            folds += 1
+        else:
+            pieces.append((run_s, run_e, run_absorbed))
+            run_s, run_e, run_absorbed = s, e, False
+    if run_e - run_s <= trivial_max and pieces:
+        ps, _, p_absorbed = pieces[-1]
+        pieces[-1] = (ps, run_e, p_absorbed)
+        folds += 1
+    else:
+        pieces.append((run_s, run_e, run_absorbed))
+
+    # -- SUBDIVISION pass: oversize episodes split at internal commit/test
+    # completions only; the completing event closes its sub-episode.
+    subdivided_count = 0
+    episodes: list = []
+
+    def build(s: int, e: int, flags: set) -> Episode:
+        tss = [ln.ts for ln in classified[s:e] if ln.ts is not None]
+        return Episode(
+            s, e,
+            min(tss) if tss else None,
+            max(tss) if tss else None,
+            frozenset(flags),
+        )
+
+    base_flags = set()
+    if not prompt_cuts:
+        base_flags.add("zero_prompts")
+
+    for s, e, absorbed in pieces:
+        if e - s <= oversize_at:
+            flags = set(base_flags)
+            if absorbed:
+                flags.add("folded_trivial")
+            episodes.append(build(s, e, flags))
+            continue
+        internal = [
+            j for j in range(s + 1, e)
+            if classified[j].is_commit or classified[j].is_test
+        ]
+        if not internal:
+            episodes.append(build(s, e, base_flags | {"oversize_unsubdivided"}))
+            continue
+        subdivided_count += 1
+        bounds = [s] + [j + 1 for j in internal if j + 1 < e] + [e]
+        for k in range(len(bounds) - 1):
+            ps, pe = bounds[k], bounds[k + 1]
+            if pe - ps > oversize_at:
+                episodes.append(
+                    build(ps, pe, base_flags | {"subdivided", "oversize_unsubdivided"})
+                )
+            else:
+                episodes.append(build(ps, pe, base_flags | {"subdivided"}))
+
+    # -- SUBAGENT joins: sibling-file lines attach via
+    # sourceToolAssistantUUID -> this session's assistant-line uuid, as
+    # nested children of whichever top-level episode holds the spawn line.
+    uuid_to_idx: dict = {}
+    for i, ln in enumerate(classified):
+        if ln.uuid and ln.uuid not in uuid_to_idx:
+            uuid_to_idx[ln.uuid] = i
+
+    def locate(idx: int) -> Optional[Episode]:
+        for ep in episodes:
+            if ep.start <= idx < ep.end:
+                return ep
+        return None
+
+    files_seen = files_joined = unjoined = 0
+    for fname in sorted(subagent_files or {}):
+        lines = list(subagent_files[fname])
+        files_seen += 1
+        groups: dict = {}
+        for i, rec in enumerate(lines):
+            key = rec.get("sourceToolAssistantUUID") if isinstance(rec, Mapping) else None
+            if not isinstance(key, str):
+                continue
+            if key in uuid_to_idx:
+                groups.setdefault(key, []).append(i)
+            else:
+                unjoined += 1
+        if not groups:
+            continue
+        files_joined += 1
+        for key, idxs in sorted(groups.items()):
+            parent = locate(uuid_to_idx[key])
+            if parent is None:  # unreachable while episodes partition [0,n);
+                # defensive only -- never lose the count either way
+                unjoined += len(idxs)
+                continue
+            tss = []
+            for i in idxs:
+                rec = lines[i]
+                if isinstance(rec, Mapping):
+                    ts = parse_transcript_timestamp(rec.get("timestamp"))
+                    if ts is not None:
+                        tss.append(ts)
+            # Real agent-<hex>.jsonl files are single-spawn (one uuid per
+            # file), so min..max+1 covers exactly the group's lines; a
+            # hypothetical multi-spawn file would still join correctly per
+            # group, just with a coarser span.
+            parent.children.append(
+                Episode(
+                    min(idxs), max(idxs) + 1,
+                    min(tss) if tss else None,
+                    max(tss) if tss else None,
+                    frozenset({"subagent"}),
+                    source=fname,
+                    spawned_by=key,
+                )
+            )
+
+    return EpisodeAssembly(
+        episodes=episodes,
+        main_lines=n,
+        unparsed_main_lines=unparsed,
+        subagent_files_seen=files_seen,
+        subagent_files_joined=files_joined,
+        unjoined_subagent_lines=unjoined,
+        trivial_folds=folds,
+        subdivided_episodes=subdivided_count,
+    )
+
+
+def load_transcript(path: Path) -> tuple:
+    """Read one Claude Code session JSONL: returns (records, bad_line_count).
+    Malformed lines (torn writes, future format drift) are skipped and
+    counted, mirroring _read_records()' quarantine posture: one bad line
+    must never stall a healthy file."""
+    records: list = []
+    bad = 0
+    if not path.exists():
+        return records, bad
+    for raw in path.read_text(encoding="utf-8", errors="replace").splitlines():
+        stripped = raw.strip()
+        if not stripped:
+            continue
+        try:
+            records.append(json.loads(stripped))
+        except (json.JSONDecodeError, ValueError):
+            bad += 1
+    return records, bad
+
+
+def _episode_metadata(ep: Episode, session_id: str, fingerprint: str) -> dict:
+    return {
+        "assembly_fingerprint": fingerprint,
+        "segmenter": "trace_worker/episode_assembly.v1",
+        "rules": {
+            "primary_boundary": "rule_a_genuine_prompts",
+            "idle_gap_signal": "dropped_not_tuned",
+            "trivial_merge_max_events": TRIVIAL_MERGE_MAX_EVENTS,
+            "oversize_subdivide_events": OVERSIZE_SUBDIVIDE_EVENTS,
+        },
+        "flags": sorted(ep.flags),
+        "n_events": ep.n_events,
+        "source": ep.source,
+        "spawned_by": ep.spawned_by,
+    }
+
+
+async def write_session_episodes(
+    pool: asyncpg.Pool,
+    *,
+    session_id: str,
+    assembly: EpisodeAssembly,
+    owner_id: Optional[str] = None,
+    visibility: str = "public",
+    project_id: Optional[str] = None,
+    content_ref_prefix: str = "transcript",
+) -> dict:
+    """Persist assembled episodes into the EXISTING episodes table
+    (01_ontology.sql + migration 17's columns) -- no new migration, by lane
+    rule.
+
+    Idempotency without a unique constraint: each episode carries a
+    deterministic shape fingerprint in metadata; rows whose fingerprint is
+    already present for this session_id are skipped. Check-then-insert is
+    race-free enough under this worker's single-writer design (same
+    assumption process_collector_file()'s header upserts already rely on);
+    a DB-level constraint would need CORE-A and is flagged honestly rather
+    than pretended away.
+
+    content_ref is a LOCATOR ("file#start:end"), never message content --
+    same privacy posture as the redaction module and the prototype.
+    """
+    now = datetime.now(timezone.utc)
+    flat: list = []
+    for ep in assembly.episodes:
+        flat.append((ep, None))
+        for child in ep.children:
+            flat.append((child, ep))
+
+    async with pool.acquire() as conn:
+        existing = {
+            row["fp"]: row["id"]
+            for row in await conn.fetch(
+                "SELECT id, metadata->>'assembly_fingerprint' AS fp FROM episodes "
+                "WHERE session_id = $1",
+                session_id,
+            )
+        }
+        parents_inserted = children_inserted = skipped = 0
+        row_ids: dict = {}
+        for ep, parent in flat:
+            fingerprint = ep.fingerprint(session_id)
+            if fingerprint in existing:
+                # Already persisted by a previous run. Keep its real row id:
+                # a child arriving after a crash between its parent's insert
+                # and its own must still link to the EXISTING parent row.
+                skipped += 1
+                row_ids[id(ep)] = existing[fingerprint]
+                continue
+            row_id = await conn.fetchval(
+                """
+                INSERT INTO episodes (
+                    episode_type, content_ref, timestamp, metadata,
+                    session_id, project_id, start_ts, end_ts,
+                    owner_id, visibility, parent_episode_id
+                ) VALUES ($1, $2, $3, $4::jsonb, $5, $6, $7, $8, $9,
+                          $10::visibility_level, $11)
+                RETURNING id
+                """,
+                "trace",
+                f"{content_ref_prefix}#{ep.source}:{ep.start}:{ep.end}",
+                ep.start_ts or now,
+                json.dumps(_episode_metadata(ep, session_id, fingerprint)),
+                session_id,
+                project_id,
+                ep.start_ts,
+                ep.end_ts,
+                owner_id,
+                visibility,
+                row_ids.get(id(parent)) if parent is not None else None,
+            )
+            row_ids[id(ep)] = row_id
+            if parent is None:
+                parents_inserted += 1
+            else:
+                children_inserted += 1
+
+    return {
+        "parents_inserted": parents_inserted,
+        "children_inserted": children_inserted,
+        "skipped_existing": skipped,
+    }
+
+
+def discover_subagent_files(session_file: Path) -> dict:
+    """Sibling subagent transcripts for one session file, per FINDINGS'
+    documented `<session>/subagents/agent-<hex>.jsonl` layout. Both observed
+    placements are probed (subagents/ beside the file, or under a directory
+    named for the file's stem); the join in assemble_episodes() is strict --
+    only lines whose sourceToolAssistantUUID resolves INSIDE this session
+    attach -- so over-globbing cannot misattribute another session's
+    subagents."""
+    files: dict = {}
+    for cand in (
+        session_file.parent / "subagents",
+        session_file.parent / session_file.stem / "subagents",
+    ):
+        if cand.is_dir():
+            for f in sorted(cand.glob("*.jsonl")):
+                files[f.name] = load_transcript(f)[0]
+    return files
+
+
+async def process_transcript_session(
+    pool: asyncpg.Pool,
+    session_file: Path,
+    *,
+    owner_id: Optional[str] = None,
+    visibility: str = "public",
+    project_id: Optional[str] = None,
+) -> dict:
+    """Full production path for one raw session transcript file: load main
+    JSONL + sibling subagent files, assemble episodes with the validated
+    rules, persist idempotently. Replayable end to end -- rerunning against
+    the same files inserts nothing new (fingerprints match), which is the
+    same replay contract process_collector_file() offers upstream."""
+    main_lines, bad = load_transcript(session_file)
+    subagent_files = discover_subagent_files(session_file)
+    assembly = assemble_episodes(main_lines, subagent_files)
+    write_stats = await write_session_episodes(
+        pool,
+        session_id=session_file.stem,
+        assembly=assembly,
+        owner_id=owner_id,
+        visibility=visibility,
+        project_id=project_id,
+        content_ref_prefix=session_file.name,
+    )
+    return {
+        "episodes": len(assembly.episodes),
+        "child_episodes": sum(len(e.children) for e in assembly.episodes),
+        "main_lines": assembly.main_lines,
+        "bad_lines": bad + assembly.unparsed_main_lines,
+        "subagent_files_seen": assembly.subagent_files_seen,
+        "subagent_files_joined": assembly.subagent_files_joined,
+        "unjoined_subagent_lines": assembly.unjoined_subagent_lines,
+        **write_stats,
     }
