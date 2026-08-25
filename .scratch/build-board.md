@@ -271,7 +271,7 @@ git worktree add ..\sl-research -b lane/research origin/main
    main's board wholesale + re-inserting this item].)*
 Rule: NO new migrations (schema needs route through CORE-A); no edits outside owned paths.
 
-0. `[ ]` **WAVE-2 / HARDENING H3 pre-work swap (assigned to whoever frees first)** -- Rate-limiter collector treatment: in-process token bucket + buffered ledger flush (trace_collector append->drain pattern) so Postgres becomes audit ledger, not enforcement point. CONSTRAINT: preserve fail-closed-on-infra-error; buffered writes need a replay-or-block rule. Retention sweep for rate_limit_events. NOTE: lands in governance.py -- scoped grant to this lane for backend/app/services/governance.py only.
+0. `[x]` **WAVE-2 / HARDENING H3 pre-work swap** -- DONE @2026-08-26 by core-b under the HARDENING section item 3 (same task; canonical record there). Rate-limiter collector treatment: in-process token bucket + buffered ledger flush (trace_collector append->drain pattern) so Postgres becomes audit ledger, not enforcement point. CONSTRAINT: preserve fail-closed-on-infra-error; buffered writes need a replay-or-block rule. Retention sweep for rate_limit_events. NOTE: lands in governance.py -- scoped grant to this lane for backend/app/services/governance.py only.
 
 ### Lane MEASURE (owns `experiments/harness/**`)
 1. `[x] done 2026-08-25 â€” lane/measure` Â§40 harness skeleton adapted from `experiments/swebench_pro/run_graph_experiment.py`;
@@ -585,9 +585,63 @@ blocking question in the Log, continue with the next queue item.
     (rejected by H2's own constraint: app-layer stays PRIMARY, single policy
     source). Until answered, every new query path is still forced through the
     builder by the hygiene tooth â only the EXISTING unowned paths predate it.
+- CORE-B (2026-08-26): **HARDENING H3** done on `lane/core-b` — see the
+  HARDENING section item 3 for the full record. Two notes:
+  1. The proving suite caught two real implementation bugs pre-ship
+     (ledger rows written in wrong parameter order; degraded-retry
+     throttle defeated by the reachability clause hammering a down
+     Postgres on every denial) — both fixed and regression-pinned.
+     Recording them because that's the SQL-content/FakePool discipline
+     paying for itself.
+  2. **Note #5 (non-blocking):** `backend/integration_check_v2_governance.py`
+     (unowned root script, not pytest-collected) asserts real-DB
+     row-counts immediately after check_and_record — true under V2's
+     write-through, stale under H3's buffered ledger. Nobody owns it.
+     Options: (a) its next user adds an explicit drain/flush call before
+     asserting (proposed default — one line), (b) assign it to whoever
+     picks up HARDENING follow-ups, (c) leave as-is; it fails loudly,
+     not misleadingly. Enforcement semantics in api/deps.py are
+     UNCHANGED at the call site — verified by reading deps.py; no edit
+     was needed or made there.
 
 ### Lane HARDENING (opened by founder referral of Chaitanya-instance audit, 2026-08-25)
 Grounded findings from  3_access.sql/ 4_governance.sql/deps.py review. Sequence: after current OIDC tasks land.
 1. `[x]` done @2026-08-26 â€” branch `lane/core-a` **H1 - Identity tables + tenancy predicate builder** (assigned to CORE-A per 8e09a5c): shipped as CORE-A queue item 5 above; db/28 + TenantScope/tenant_predicate/scope_predicates + authn tenancy resolution + replay adoption + hygiene tooth + 33 offline proving tests. Suite 1147/114/0.
 2. [ ] **H2 - RLS backstop on [H] tables**: SET LOCAL app.tenant_id per transaction + row-level security policies at minimum on append-only truth. App-layer stays PRIMARY (single policy source - no drift between two enforcers). asyncpg caveat: transaction-scoped only, or it leaks across pooled connections.
-3. [ ] **H3 - Rate-limiter collector treatment (pre-public-launch)**: in-process token bucket + buffered ledger flush (reuse trace_collector append->drain pattern); Postgres becomes audit ledger, not enforcement point; Redis only if multi-process strictness demands. CONSTRAINT: must preserve fail-closed-on-infra-error semantics; buffered writes need a replay-or-block rule. Retention/TTL sweep for rate_limit_events.
+3. [x] done @2026-08-26 — branch `lane/core-b` **H3 - Rate-limiter collector treatment (pre-public-launch)**: in-process token bucket + buffered ledger flush (reuse trace_collector append->drain pattern); Postgres becomes audit ledger, not enforcement point; Redis only if multi-process strictness demands. CONSTRAINT: must preserve fail-closed-on-infra-error semantics; buffered writes need a replay-or-block rule. Retention/TTL sweep for rate_limit_events.
+   *(Shipped: governance.py RateLimiter rewritten — enforcement is an in-process
+   token bucket per (scope_key, endpoint) [continuous refill, atomic critical
+   section with no awaits, state shared per-pool via WeakKeyDictionary so
+   deps.py's fresh-instance-per-request construction keeps working UNCHANGED —
+   zero edits outside the scoped grant]; admissions append to a bounded pending
+   buffer drained by ONE batched executemany on LEDGER_FLUSH_THRESHOLD(32)/
+   freshness staleness(30s oldest-pending)/throttled degraded retry(2s);
+   rate_limit_events is now the AUDIT LEDGER only. REPLAY-OR-BLOCK: failed drain
+   retains events in arrival order and CLOSES THE DOOR — every subsequent
+   admission denied "temporarily unavailable" (Retry-After 60, no bucket token
+   consumed behind the door) until a drain succeeds, which replays the original
+   events VERBATIM (original admission timestamps) then reopens; saturation cap
+   denies rather than growing unauditable backlog. Fail-closed preserved: the
+   process's FIRST request always attempts a drain so an unreachable store
+   closes the door from request #2 onward — no silent detection window. LEDGER
+   writes vs housekeeping separated: retention-sweep failure never closes the
+   door nor duplicates rows (regression-guarded). RETENTION: TTL sweep (2-day
+   TTL, hourly cadence) piggybacked on successful drains + purge_old kept as ops
+   entry point. REDIS DECISION: NOT needed — documented tripwire in module
+   docstring: deployment is single uvicorn worker (--workers 1 load-bearing,
+   render.yaml default); >1 worker/host would multiply budgets per key and is
+   the named trigger for Redis-as-enforcement (Postgres stays ledger either
+   way). Honest bounded crash window documented: hard kill loses <=30s of audit
+   rows + resets buckets (one restart burst) — trace_collector drop_count-style
+   honesty. CostGovernor untouched. NO migration (existing table fits ledger
+   role). SQL-content proofs: FakePool/FakeClock offline suite
+   tests/test_governance_collector_offline.py — 21 tests [bucket behavior incl.
+   continuous-refill + concurrency-exactly-capacity; ZERO-SQL hot path below
+   thresholds; closed door; verbatim replay; retry throttle; mid-flight-drain
+   survival; saturate-deny; sweep SQL/cadence/failure-isolation; purge_old;
+   knob retunability] + test_governance.py's fail-closed test rewritten to the
+   drain-time surface. Suite: **1135 passed / 114 skipped / 0 failed**
+   (= origin/main baseline 1114 + these 21, zero regressions).
+   NOTE for owners of backend/integration_check_v2_governance.py [unowned
+   script, not pytest-collected]: its real-DB race/row-count asserts predate
+   buffering — needs flush awareness when next run; see Log entry 5.)*
