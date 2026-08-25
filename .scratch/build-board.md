@@ -50,7 +50,7 @@ single synthesized reports into `.scratch/research/`.
    mechanics · P-I1 Molt/ToolVerse/MobileRL maturity).
    *(All four verified/answered; reports in `.scratch/research/p-*.md`; log appended to
    RESEARCH_INTEGRATION_PLAN.md. GATS citation corrected — 23.9% is stress-test-only.)*
-2. `[ ]` Competitive sweep: Mem0 / Letta / Zep-Graphiti / HippoRAG / AWM — what they
+2. `[x] done @2026-08-25 - research lane (file: competitive-sweep-mem0-letta-zep-hipporag-awm.md; tick missed before session died)` Competitive sweep: Mem0 / Letta / Zep-Graphiti / HippoRAG / AWM — what they
    ship vs our trust spine; file deltas as board notes.
 3. `[ ]` τ-Knowledge ceiling re-check (arXiv:2603.04370) before harness baselines freeze.
 
