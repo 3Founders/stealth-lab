@@ -348,6 +348,8 @@ single synthesized reports into `.scratch/research/`.
 3. `[ ]` Ï„-Knowledge ceiling re-check (arXiv:2603.04370) before harness baselines freeze.
 
 ### Lane SHIP (owns `packaging/**`) â€” activates after CORE-A merges 1.7
+2. `[ ]` **P2 - Minimal status surface**: single-page read-only view (serve from packaging/) listing episodes -> claims -> procedures with capability scores and evidence-trail links, backed by existing GET endpoints. No auth surface beyond what authn.py already provides; no backend edits.
+
 1. `[x]` done @2026-08-25 â€” branch `lane/ship` Installable package wrapping
    `trace_collector` + `mcp_server`.
    Shipped: `packaging/` = installable **stealthlab-connect** (pyproject,
@@ -652,7 +654,7 @@ blocking question in the Log, continue with the next queue item.
 ### Lane HARDENING (opened by founder referral of Chaitanya-instance audit, 2026-08-25)
 Grounded findings from  3_access.sql/ 4_governance.sql/deps.py review. Sequence: after current OIDC tasks land.
 1. `[x]` done @2026-08-26 â€” branch `lane/core-a` **H1 - Identity tables + tenancy predicate builder** (assigned to CORE-A per 8e09a5c): shipped as CORE-A queue item 5 above; db/28 + TenantScope/tenant_predicate/scope_predicates + authn tenancy resolution + replay adoption + hygiene tooth + 33 offline proving tests. Suite 1147/114/0.
-2. [ ] **H2 - RLS backstop on [H] tables**: SET LOCAL app.tenant_id per transaction + row-level security policies at minimum on append-only truth. App-layer stays PRIMARY (single policy source - no drift between two enforcers). asyncpg caveat: transaction-scoped only, or it leaks across pooled connections.
+2. `[ ] claimed @2026-08-26 - CORE-A next wave` **H2 - RLS backstop on [H] tables**: SET LOCAL app.tenant_id per transaction + row-level security policies at minimum on append-only truth. App-layer stays PRIMARY (single policy source - no drift between two enforcers). asyncpg caveat: transaction-scoped only, or it leaks across pooled connections.
 3. [x] done @2026-08-26 — branch `lane/core-b` **H3 - Rate-limiter collector treatment (pre-public-launch)**: in-process token bucket + buffered ledger flush (reuse trace_collector append->drain pattern); Postgres becomes audit ledger, not enforcement point; Redis only if multi-process strictness demands. CONSTRAINT: must preserve fail-closed-on-infra-error semantics; buffered writes need a replay-or-block rule. Retention/TTL sweep for rate_limit_events.
    *(Shipped: governance.py RateLimiter rewritten — enforcement is an in-process
    token bucket per (scope_key, endpoint) [continuous refill, atomic critical
