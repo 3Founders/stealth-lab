@@ -177,3 +177,13 @@ blocking question in the Log, continue with the next queue item.
   - Suite in this worktree: **939 passed / 106 skipped / 0 failed**
     (+25 proving tests vs the post-CORE-A baseline; zero regressions).
     Rebased onto origin/main before push per OVERNIGHT MODE.
+  - **Question #3 (BLOCKS queue item 5 / 1.9c):** that item's own text says
+    "extend `models/change.py` reach", but `backend/app/models/**` is CORE-A
+    property and file ownership is absolute — as written, 1.9c cannot be
+    started by this lane without guaranteed revert. Options: (a) reassign
+    1.9c to CORE-A alongside its models/db ownership (proposed default),
+    (b) grant CORE-B an explicit exception path list for the change-set
+    coverage work (models/change.py + the [V] mutation service files),
+    (c) split: CORE-A extends the model, CORE-B writes the Appendix C #7
+    proving tests against it from owned test files. CORE-B idle on new
+    items until answered; no further queue entries exist for this lane.
