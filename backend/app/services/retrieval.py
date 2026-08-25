@@ -46,6 +46,38 @@ _NOT_A_HIERARCHY_GROUP = (
     "AND e.source_id = {table}.id AND e.source_table = '{table}')"
 )
 
+# TMS readability (Band 2.7): relate_claims() flips a superseded/contradicted
+# claim's properties->>'truth_state' to 'OUT' while DELIBERATELY leaving
+# t_invalid NULL (claims.py -- the row must stay queryable as history). So the
+# bi-temporal `t_invalid IS NULL` filter cannot catch it, and until this
+# predicate existed truth_state was write-only: a claim the system had stopped
+# believing kept surfacing in every retrieval path as if nothing had happened.
+#
+# IS DISTINCT FROM, never <>: the truth_state KEY is absent on every non-claim
+# knowledge_node (and anything written before claims.py existed), where
+# properties->>'truth_state' is NULL. `NULL <> 'OUT'` evaluates to NULL, which
+# fails WHERE -- using <> here would hide EVERY ordinary node and blank the
+# whole graph. Only an explicit 'OUT' hides a row.
+#
+# Applied to knowledge_nodes query legs ONLY: task_nodes has no properties
+# column at all (db/01_ontology.sql), so there is nothing to filter on --
+# composing the fragment into a task_nodes leg would be a SQL error, not a
+# no-op. Graph expansion needs it too, not just direct search: the SUPERSEDES/
+# CONTRADICTS edge that recorded the invalidation links the OUT claim directly
+# to its live successor, so expansion would otherwise reintroduce through that
+# very edge exactly what search just excluded.
+NOT_TRUTH_STATE_OUT = "(properties->>'truth_state' IS DISTINCT FROM 'OUT')"
+
+
+def _belief_filter(table: str) -> str:
+    """
+    The TMS-readability WHERE fragment for one node table, or '' for tables
+    that carry no belief state (task_nodes has no properties column to
+    filter on). Callers splice the result in so that '' reproduces the
+    pre-2.7 SQL byte-for-byte.
+    """
+    return NOT_TRUTH_STATE_OUT if table == "knowledge_nodes" else ""
+
 
 @dataclass
 class RetrievedNode:
@@ -153,10 +185,12 @@ class HybridRetriever:
         legs = []
         for table in self._tables:
             not_group = _NOT_A_HIERARCHY_GROUP.format(table=table)
+            believed = "" if table == "task_nodes" else f"AND {NOT_TRUTH_STATE_OUT} "
             legs.append(
                 f"SELECT id, '{table}' AS tbl, {self._emb} <=> $1::vector AS dist "
                 f"FROM {table} "
-                f"WHERE {self._emb} IS NOT NULL AND t_invalid IS NULL AND {vis_sql} "
+                f"WHERE {self._emb} IS NOT NULL AND t_invalid IS NULL {believed}"
+                f"AND {vis_sql} "
                 f"AND {not_group}"
             )
         rows = await self._pool.fetch(
@@ -191,7 +225,7 @@ class HybridRetriever:
                 SELECT id, 'knowledge_nodes' AS tbl,
                        ts_rank(to_tsvector('english', name), (SELECT q FROM parsed_query)) AS rank
                 FROM knowledge_nodes
-                WHERE t_invalid IS NULL AND {vis_sql} AND {not_group}
+                WHERE t_invalid IS NULL AND {NOT_TRUTH_STATE_OUT} AND {vis_sql} AND {not_group}
                   AND to_tsvector('english', name) @@ (SELECT q FROM parsed_query)
                 """
             )
@@ -268,9 +302,10 @@ class HybridRetriever:
 
         for (node_id, table), score in ranked:
             hydrate_sql, hydrate_params = visibility_predicate(self._scope, param_index=2)
+            belief = "" if table == "task_nodes" else f"AND {NOT_TRUTH_STATE_OUT} "
             row = await self._pool.fetchrow(
                 f"SELECT id, name, {'description' if table == 'task_nodes' else 'NULL AS description'} "
-                f"FROM {table} WHERE id = $1 AND {hydrate_sql}", node_id, *hydrate_params,
+                f"FROM {table} WHERE id = $1 {belief}AND {hydrate_sql}", node_id, *hydrate_params,
             )
             if row:
                 found[node_id] = RetrievedNode(
@@ -301,10 +336,15 @@ class HybridRetriever:
                         continue
                     not_group = _NOT_A_HIERARCHY_GROUP.format(table=ntable)
                     exp_sql, exp_params = visibility_predicate(self._scope, param_index=2)
+                    # Same belief filter as direct search -- without it the
+                    # SUPERSEDES/CONTRADICTS edge itself would walk expansion
+                    # straight back to the OUT claim search just excluded.
+                    believed = "" if ntable == "task_nodes" else f"AND {NOT_TRUTH_STATE_OUT} "
                     row = await self._pool.fetchrow(
                         f"SELECT id, name, "
                         f"{'description' if ntable == 'task_nodes' else 'NULL AS description'} "
-                        f"FROM {ntable} WHERE id = $1 AND t_invalid IS NULL AND {exp_sql} "
+                        f"FROM {ntable} WHERE id = $1 AND t_invalid IS NULL {believed}"
+                        f"AND {exp_sql} "
                         f"AND {not_group}",
                         nid, *exp_params,
                     )
