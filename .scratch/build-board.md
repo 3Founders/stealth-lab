@@ -132,6 +132,8 @@ git worktree add ..\sl-research -b lane/research origin/main
    e2e skips on shared instance BY PROBE — db/27 FKs evidence (db/24) which
    the drifted instance lacks; deliberately NOT piecemeal-applied there
    [queue item 2 owns the chain].)*
+5. `[ ]` **WAVE-2 / HARDENING H1 (assigned) -- Identity tables + tenancy predicate builder**: organizations/users/roles born additively (db/28); convert tenant filtering into the ONE-predicate-builder pattern in services/access.py (03_access.sql's own confession: column existed, no query ever filtered). WAVE GRANT extends ownership to services/access.py + services/authn.py. Extends in-flight authn work. Proving: tenant-filter SQL-content tests + predicate unit tests.
+
 ### Lane CORE-B â€” extraction & gating (owns `backend/app/services/procedure_extraction/**`, `invariants.py`, `applicability.py`, `precondition_gate.py`, `state.py`)
 1. `[x] done 2026-08-25 â€” lane/core-b` **1.8a** Precondition relevance filter (derive gates only load-bearing facts).
 2. `[x] done 2026-08-25 â€” lane/core-b` **1.8b** V6 authoring-time invariant validator + z3 off event loop w/ timeout.
@@ -243,6 +245,8 @@ git worktree add ..\sl-research -b lane/research origin/main
    last main rebase). Rebased onto origin/main mid-item [board conflict resolved by taking
    main's board wholesale + re-inserting this item].)*
 Rule: NO new migrations (schema needs route through CORE-A); no edits outside owned paths.
+
+0. `[ ]` **WAVE-2 / HARDENING H3 pre-work swap (assigned to whoever frees first)** -- Rate-limiter collector treatment: in-process token bucket + buffered ledger flush (trace_collector append->drain pattern) so Postgres becomes audit ledger, not enforcement point. CONSTRAINT: preserve fail-closed-on-infra-error; buffered writes need a replay-or-block rule. Retention sweep for rate_limit_events. NOTE: lands in governance.py -- scoped grant to this lane for backend/app/services/governance.py only.
 
 ### Lane MEASURE (owns `experiments/harness/**`)
 1. `[x] done 2026-08-25 â€” lane/measure` Â§40 harness skeleton adapted from `experiments/swebench_pro/run_graph_experiment.py`;
