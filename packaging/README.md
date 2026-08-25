@@ -12,6 +12,46 @@ Two surfaces:
 |---|---|
 | `stealthlab-mcp-server` | The StealthLab MCP server (8 tools over the bi-temporal knowledge/task graph) — Streamable HTTP on loopback by default, or `--stdio` |
 | `stealthlab-trace-hook` | Claude Code hook command: reads one hook JSON payload on stdin, redacts it (`trace_redaction`), appends it to the local collector file (`trace_collector.append_event`) |
+| `stealthlab-status-page` | The minimal status surface: one read-only page listing episodes -> claims -> procedures with capability scores and evidence trails (board item P2) |
+
+## Status page (`stealthlab-status-page`)
+
+```bash
+stealthlab-status-page                # serves http://127.0.0.1:8766/
+```
+
+Requires `DATABASE_URL` in `backend/.env` (same as the MCP server's HTTP
+mode). Read-only in both senses: every SQL statement is a SELECT scoped
+through `app/services/access.py`'s predicate builders, and the only
+backend code used is imported as shipped — no backend edits, no new auth
+surface (it reuses `authn.py`'s middleware + boot guards exactly like
+`app/main.py`; pass-through while OIDC is unconfigured).
+
+What you get:
+
+- `/` — one HTML/JS page (`status_page.html`): episodes -> claims ->
+  procedures, expandable cards, capability badges
+  (`L<level> <label> · P̂=<Wilson lower bound>`) plus routing verdicts,
+  claim provenance chains (`claim_sources` -> observations -> extractor
+  stamps), episode link targets, and per-target evidence-trail tables
+  fetched lazily from `/api/evidence/{claim|procedure}/{id}`.
+- Deep links point at the main API's `GET /v1/graph/{id}`; override the
+  target with `STEALTHLAB_API_BASE` if the API does not live at
+  `http://127.0.0.1:8000`.
+
+Honest notes:
+
+- Capability scores are computed by the REAL engine
+  (`app/services/procedure_extraction/capability.py::compute_capability`)
+  over each procedure's recorded outcome evidence (supports-direction
+  `execution_result`/`reproduction` rows — the same population as
+  `procedure_evidence_stats`). Verification-plan / completed-review gates
+  are reported as unclaimed until anything stores them, so trust tiers
+  above "reproduced" cannot appear from statistics alone.
+- Against a pre-migration-24 database (no `evidence` table yet — the
+  known shared-instance drift) the page degrades with a named banner and
+  level-0 scores instead of faking numbers or dying.
+- Loopback-only posture; there are no write endpoints to gate.
 
 ## Prerequisites
 
