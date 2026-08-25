@@ -84,7 +84,9 @@ from uuid import UUID
 import asyncpg
 
 from app.services.access import AccessScope
-from app.services.retrieval import HybridRetriever, RetrievedNode, RetrievalResult
+from app.services.retrieval import (
+    HybridRetriever, NOT_TRUTH_STATE_OUT, RetrievedNode, RetrievalResult,
+)
 
 # Ticket 14's own number: "a knee at ~8k tokens for code tasks, beyond
 # which reported degradation is severe." Configuration, not a literal
@@ -498,9 +500,16 @@ async def _tier_candidates_by_path(
     found: list[RetrievedNode] = []
     for table, desc_col in (("task_nodes", "description"), ("knowledge_nodes", "NULL")):
         vis_sql, vis_params = visibility_predicate(scope, param_index=2)
+        # TMS readability (Band 2.7), same predicate as HybridRetriever's own
+        # legs -- these tiers are independent queries into the same tables, so
+        # an OUT claim excluded from semantic search must not re-enter through
+        # a structural/temporal path match. knowledge_nodes leg only: task_nodes
+        # has no properties column (see NOT_TRUTH_STATE_OUT's full rationale).
+        believed = "" if table == "task_nodes" else f"AND {NOT_TRUTH_STATE_OUT} "
         rows = await pool.fetch(
             f"SELECT id, name, {desc_col} AS description FROM {table} "
-            f"WHERE t_invalid IS NULL AND {vis_sql} "
+            f"WHERE t_invalid IS NULL {believed}"
+            f"AND {vis_sql} "
             f"AND (name ILIKE ANY($1::text[]) "
             f"OR ({desc_col} IS NOT NULL AND {desc_col} ILIKE ANY($1::text[]))) "
             f"LIMIT {limit}",

@@ -48,8 +48,40 @@ git worktree add ..\sl-research -b lane/research origin/main
    provable, same pattern as plans.py); app/models/evidence.py shapes; 33 proving
    tests in tests/test_band1_9a_evidence.py. Full suite: 947 passed / 106 skipped /
    0 failed. Sequencing note: the verified-requires-evidence ENGINE trigger lands in
-   the SAME change that wires evidence writes into the lifecycle path (cross-lane
-   request below) — gate and writer together, never a half-gate.
+    the SAME change that wires evidence writes into the lifecycle path (cross-lane
+    request below) — gate and writer together, never a half-gate.
+5. `[x]` done @2026-08-25 — branch `lane/core-a` **Band 2.7 TMS readability**
+   (integrator-approved 2026-08-25): `truth_state` is write-only
+   today — OUT/stale claims still surface in retrieval. Filter
+   `properties->>'truth_state'='OUT'` out of EVERY retrieval path
+   (retrieval.py: vector/lexical/hydrate/graph-expansion;
+   local_retrieval.py: structural/temporal tiers) WITHOUT touching the
+   bi-temporal columns — an invalidated claim vanishes from results while its
+   history stays queryable. Regression tests prove both halves. Scoped file grant
+   for this item only: backend/app/services/retrieval.py +
+   backend/app/services/local_retrieval.py (both otherwise unowned; integrator
+   approval recorded here per OVERNIGHT MODE). No migration: read-time filter
+   over existing JSONB properties, fresh-start compliant, nothing backfilled.
+   *(Shipped: NOT_TRUTH_STATE_OUT predicate — `IS DISTINCT FROM 'OUT'`, so
+   rows without the key stay visible; bare `<>` would have blanked every
+   non-claim node. Applied to all four HybridRetriever stages incl.
+   expansion re-hydration — the SUPERSEDES edge itself was the leak path
+   back to the OUT claim — plus local_retrieval's structural/temporal legs;
+   knowledge_nodes legs only, task_nodes has no properties column. 8 offline
+   tests tests/test_tms_readability_offline.py (query-content + write-side
+   preservation pins); 5 live-DB regression tests
+   tests/test_tms_readability_e2e.py — vanish from hybrid/lexical-only/
+   expansion/structural-tier + history-stays-queryable (raw row survives,
+   subject history read sees both generations, project_state sees only IN).
+   LIVE RUN: this worktree NOW HAS backend/.env (Supabase URL; earlier log
+   notes said absent — changed since) and the schema is fully migrated:
+   all 5 e2e proofs PASSED against the real DB. Full standard suite (no env):
+   989 passed / 111 skipped / 0 failed. Full suite WITH DATABASE_URL exported:
+   1059 passed / 40 failed / 1 skipped — the same 40 fail identically on a
+   STASHED CLEAN TREE (applicability/environment-probe/procedure-extraction/
+   procedures/state e2e), i.e. pre-existing shared-instance drift, exactly
+   what queue item 2's disposable-DB chain run must sort out; NOT a 2.7
+   regression. tms-e2e fixtures self-clean by name prefix; zero rows left.)*
 ### Lane CORE-B — extraction & gating (owns `backend/app/services/procedure_extraction/**`, `invariants.py`, `applicability.py`, `precondition_gate.py`, `state.py`)
 1. `[x] done 2026-08-25 — lane/core-b` **1.8a** Precondition relevance filter (derive gates only load-bearing facts).
 2. `[x] done 2026-08-25 — lane/core-b` **1.8b** V6 authoring-time invariant validator + z3 off event loop w/ timeout.
@@ -249,4 +281,20 @@ blocking question in the Log, continue with the next queue item.
     (main baseline 914 + 33 new, zero regressions). No backend/.env here, so
     live-DB e2e tests skip — same env caveat MEASURE recorded; queue 2 remains
     the real-DB gate.
-  - Cross-lane request #1 filed above (services/procedures.py wiring).
+  -    Cross-lane request #1 filed above (services/procedures.py wiring).
+
+- CORE-A (2026-08-25, third wave): **Band 2.7 TMS readability** done on
+  `lane/core-a` — first Band 2 item; ROADMAP exit criterion "OUT/stale claims
+  provably absent from retrieval results" is now proven by test at four
+  retrieval surfaces plus the write-side history guarantee. Details in queue
+  item 5 above. Integrator notes: (a) this worktree's backend/.env appeared
+  since the earlier "absent" log entries — with DATABASE_URL exported the
+  live-DB suites run here, and my 5 new e2e proofs pass live; (b) 40
+  pre-existing failures across six OTHER e2e files reproduce identically on a
+  clean checkout of origin/main against the same shared instance — recorded in
+  queue item 5 as input to queue item 2's disposable-DB chain verification;
+  (c) experiments/swebench_pro/graph_memory.py consumes HybridRetriever and
+  inherits the fix unchanged (YC plan Step 2.3 satisfied for both named sites);
+  (d) knowledge_conflict.py's pair-scan still considers OUT claims — that is
+  conflict DETECTION over history, not retrieval-for-context, left untouched
+  deliberately.
