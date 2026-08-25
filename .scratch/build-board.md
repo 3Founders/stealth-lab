@@ -39,10 +39,19 @@ git worktree add ..\sl-research -b lane/research origin/main
 2. `[x] done 2026-08-25 — lane/core-b` **1.8b** V6 authoring-time invariant validator + z3 off event loop w/ timeout.
 3. `[x] done 2026-08-25 — lane/core-b` **1.8c** Memoized `project_state()` in applicability cascade; tenant-scoped
    cold-start gate.
-4. `[ ]` **NEXT WAVE — 1.9b capability computation**: levels-as-banded-P implementing
+4. `[x]` done 2026-08-25 — lane/core-b **NEXT WAVE — 1.9b capability computation**: levels-as-banded-P implementing
    the RATIFIED D1 thresholds (spec §16; routing tiers 0.90/0.70 as named config,
    never magic numbers); bidirectional demotion on failure. Proving tests:
    Appendix C #5/#10/#12.
+   *(Shipped: procedure_extraction/capability.py — CapabilityScope rejects blank
+   context fields [#5]; Wilson-lower-bound P estimate, D1 bands 0.50/0.70/0.85/0.95,
+   per-level gates [independence groups ≥2 for L2, verification plan for L3,
+   ≥2 envs holding successes for L4/L5, completed review for L5]; routing reads P
+   only, never the label; trajectory API proves failure-drops-level-then-recovers
+   [#10] and brand-metadata never enters computation [#12]. 25 tests in
+   tests/test_capability_bands.py. Suite: 939 passed / 106 skipped / 0 failed
+   (= origin/main baseline + CORE-A's 36 plan tests + these 25). Placement note +
+   numbered question #2 in Log.)*
 5. `[ ]` **NEXT WAVE — 1.9c universal ChangeSet coverage**: every `[V]` mutation
    produces a ChangeSet record (extend `models/change.py` reach to observations,
    procedures, implementations, applicability rules, states). Proving test:
@@ -149,3 +158,22 @@ blocking question in the Log, continue with the next queue item.
   conflict marker (`>>>>>>> 35670e7 ...`) at the end of this Log — leftover
   debris from the measure commit itself. Removed here; integrator please
   sanity-check future board merges.
+- CORE-B (2026-08-25, second wave): **1.9b capability computation** done on
+  `lane/core-b`. Pure module `procedure_extraction/capability.py` — no DB, no
+  migration, no edits outside owned paths; nothing existing changes behavior
+  until a caller adopts it (procedures.py's ticket-13 SPRT lifecycle stays
+  authoritative; wiring P into retrieval call sites is deliberately a separate
+  change). Named config only: ROUTE_AUTO_THRESHOLD/ROUTE_OFFER_THRESHOLD and all
+  four band boundaries + gate minima are module constants, proven retunable by
+  monkeypatch tests (an inlined literal would fail them).
+  - **Question #2 (non-blocking, placement):** capability.py lives under
+    `procedure_extraction/` because that is this lane's only wholesale-owned
+    path (`**`); a new top-level `services/capability.py` would be outside
+    every owned path and file ownership is absolute. Options: (a) keep as-is
+    until Band-2 routing integration (proposed default — relocation is a
+    one-line import change), (b) integrator grants CORE-B
+    `services/capability.py` and relocates in a follow-up, (c) fold into
+    applicability.py (rejected by me: bloats a focused cascade module).
+  - Suite in this worktree: **939 passed / 106 skipped / 0 failed**
+    (+25 proving tests vs the post-CORE-A baseline; zero regressions).
+    Rebased onto origin/main before push per OVERNIGHT MODE.
