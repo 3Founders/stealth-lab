@@ -29,11 +29,27 @@ git worktree add ..\sl-research -b lane/research origin/main
 2. `[ ]` **BLOCKED on external** — Real-DB migration chain verification (01→23) on
    disposable Postgres; awaiting Chaitanya's Docker (founder has none locally).
    Paste engine output when run.
-3. `[ ]` Band 1 exit-criteria sweep; request integrator review.
-4. `[ ]` **NEXT WAVE — 1.9a Evidence table**: typed rows with independence groups;
-   procedure verification stats become views over evidence. Proving tests:
-   Appendix C #3/#12/#13.
-
+3. `[x]` sweep performed @2026-08-25 (lane/core-a) — Band 1 exit criteria audited,
+   result in Log entry below; formal integrator review requested, full pass pending
+   queue 2's real-DB chain run.
+4. `[x] done @2026-08-25 — branch lane/core-a` **NEXT WAVE — 1.9a Evidence
+   table**: typed rows with independence groups; procedure verification stats become
+   views over evidence. Proving tests: Appendix C #3/#12/#13.
+   Shipped: db/24_evidence.sql (evidence [H] table — evidence_kind enum with §11's
+   nine types, strength {score, method} NOT NULL, independence_group capping columns,
+   context_key, §36 seven-value failure_class (Band 0 #0.5's structural home),
+   named CHECKs incl. evidence_success_criteria_chk banning bare model-asserted
+   success at the engine (#13 teeth), tg_evidence_append_only freeze with the
+   t_invalid retraction tombstone as the ONE legal update (#19 teeth),
+   procedure_evidence_stats view replacing the JSONB counter blob with
+   independent_* counts via DISTINCT COALESCE(independence_group, id::text));
+   app/execution/evidence.py boundary (validate_evidence / outcome_to_evidence /
+   assert_verified_requires_evidence — #3's contract-level gate; pure, offline-
+   provable, same pattern as plans.py); app/models/evidence.py shapes; 33 proving
+   tests in tests/test_band1_9a_evidence.py. Full suite: 947 passed / 106 skipped /
+   0 failed. Sequencing note: the verified-requires-evidence ENGINE trigger lands in
+   the SAME change that wires evidence writes into the lifecycle path (cross-lane
+   request below) — gate and writer together, never a half-gate.
 ### Lane CORE-B — extraction & gating (owns `backend/app/services/procedure_extraction/**`, `invariants.py`, `applicability.py`, `precondition_gate.py`, `state.py`)
 1. `[x] done 2026-08-25 — lane/core-b` **1.8a** Precondition relevance filter (derive gates only load-bearing facts).
 2. `[x] done 2026-08-25 — lane/core-b` **1.8b** V6 authoring-time invariant validator + z3 off event loop w/ timeout.
@@ -109,8 +125,16 @@ blocking question in the Log, continue with the next queue item.
   numbered options + proposed default.
 
 ## Cross-lane requests
-(none yet)
 
+1. **CORE-A → whoever owns/next touches `backend/app/services/procedures.py`**
+   (unowned file — outside every lane's path list, hence this request instead of an
+   edit): wire evidence-row writes into `record_execution_outcome()`'s transaction
+   (one `outcome_to_evidence(...)` + INSERT per outcome, fields documented in
+   app/execution/evidence.py), then land db/24's verified-requires-evidence engine
+   trigger in the same change. Until then the JSONB counters remain the working
+   promotion path and Appendix C #3 is proven at contract level only. Proposed
+   default: assign services/procedures.py to CORE-A next wave (it is procedure-
+   lifecycle storage, squarely CORE-A's "storage & plans" charter).
 ## Founder dependencies (blocking nothing currently)
 
 | Ruling | Blocks | State |
@@ -189,3 +213,23 @@ blocking question in the Log, continue with the next queue item.
     (c) split: CORE-A extends the model, CORE-B writes the Appendix C #7
     proving tests against it from owned test files. CORE-B idle on new
     items until answered; no further queue entries exist for this lane.
+- CORE-A (2026-08-25): queue items 3 (sweep) and 4 (1.9a evidence) done on
+  `lane/core-a`.
+  - **Band 1 exit-criteria sweep** (item 3): zero scope-less writes accepted —
+    V0 gate live since 1.2/1.3, tests green. V1–V6 green on every ingested row —
+    V6 shipped via CORE-B's 1.8b. Plan persistence end-to-end — proven at
+    contract level by 1.7 (36 tests); REAL end-to-end still gated on queue 2
+    (disposable-Postgres chain run). Replay determinism — rebind determinism
+    pinned by test_band1_7_plans (#1/#17); full raw-trace regeneration is Band
+    2.8's own item per ROADMAP. Verdict: every criterion that can go green
+    without a live DB is green; Band 1 formally exits when queue 2 runs.
+    Integrator review requested.
+  - **1.9a** as detailed in the queue item above: evidence substrate + views +
+    boundary + 33 proving tests, Appendix C #3/#12/#13 covered (the #12
+    capability-trajectory half belongs to CORE-B's 1.9b, which now inherits a
+    brand-blind, independence-aware stats view to consume).
+  - Suite in this worktree: **947 passed / 106 skipped / 0 failed**
+    (main baseline 914 + 33 new, zero regressions). No backend/.env here, so
+    live-DB e2e tests skip — same env caveat MEASURE recorded; queue 2 remains
+    the real-DB gate.
+  - Cross-lane request #1 filed above (services/procedures.py wiring).
