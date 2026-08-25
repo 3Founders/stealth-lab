@@ -266,14 +266,10 @@ BEGIN
                 'global','organization','team','project','repository',
                 'branch','user','session','task','entity')) NOT VALID;
     END IF;
-    IF NOT EXISTS (
-        SELECT 1 FROM pg_constraint WHERE conname = 'scope_type_chk_task_graphs'
-    ) THEN
-        ALTER TABLE task_graphs ADD CONSTRAINT scope_type_chk_task_graphs
-            CHECK (scope_type IS NULL OR scope_type IN (
-                'global','organization','team','project','repository',
-                'branch','user','session','task','entity')) NOT VALID;
-    END IF;
+    -- task_graphs deliberately has NO scope columns: nodes inherit the
+    -- plan's scope and may narrow, never widen it (see section 2 header).
+    -- A scope CHECK here would fail with UndefinedColumnError; the
+    -- boundary validation lives on execution_plans and executions.
     IF NOT EXISTS (
         SELECT 1 FROM pg_constraint WHERE conname = 'scope_type_chk_executions'
     ) THEN
