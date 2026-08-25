@@ -19,9 +19,10 @@ rejects bad output; this module cannot produce one in the first place.
 """
 from __future__ import annotations
 
+import re
 from collections import Counter
 from dataclasses import dataclass
-from typing import Optional
+from typing import Iterable, Optional
 
 import asyncpg
 
@@ -33,10 +34,24 @@ from app.services.state import project_state
 
 async def derive_preconditions(pool: asyncpg.Pool, evidence: ProcedureEvidence) -> list[Predicate]:
     """
-    The state_before projection itself: every claim live for this
-    episode's project as of `evidence.started_at`. Empty, honestly, if
-    project_id or started_at is missing -- no fabricated precondition
-    stands in for a real one.
+    The state_before projection itself, filtered down to the claims this
+    episode's own recorded behavior actually DEPENDED on (see
+    filter_load_bearing_claims below for what counts as dependence).
+    Empty, honestly, if project_id or started_at is missing -- no
+    fabricated precondition stands in for a real one.
+
+    WHY THE FILTER EXISTS (ticket 1.8a). The naive version of this
+    function gated on EVERY live claim for the project. Under CWA every
+    gate is fail-closed at reuse time (applicability.py: "no claim found"
+    == "precondition unsatisfied"), so each additional gate is one more
+    way for a procedure to be permanently rejected -- and most live
+    claims (the language a repo happens to be written in, a dev server
+    nobody started) had nothing to do with why the source episode
+    succeeded. Gating on all of them manufactures procedures that look
+    correct and never fire -- exactly the failure mode V1 exists to
+    prevent -- while adding matching cost to every retrieval. Only a fact
+    the episode demonstrably exercised becomes a gate; everything else is
+    left out rather than guessed in.
 
     REAL, VERIFIED LIMITATION (confirmed against a live database, not
     assumed -- the actual behavior took two wrong hypotheses to pin
@@ -60,12 +75,134 @@ async def derive_preconditions(pool: asyncpg.Pool, evidence: ProcedureEvidence) 
     if not evidence.project_id or evidence.started_at is None:
         return []
     subject = f"project:{evidence.project_id}"
+    # Local import, same precedent __init__.py sets: environment_probe
+    # owns the vocabulary, and importing it lazily keeps this module's
+    # import surface free of DB-write-path coupling.
+    from app.services.environment_probe import PROBE_PREDICATE_VOCABULARY
+
     claims = await project_state(pool, subjects=[subject], as_of=evidence.started_at)
+    kept = filter_load_bearing_claims(claims, evidence, vocabulary=PROBE_PREDICATE_VOCABULARY)
     return [
-        Predicate(subject=subject, predicate=c["predicate"], object=c["object"])
-        for c in claims
-        if c["predicate"] is not None
+        Predicate(subject=c["subject"], predicate=c["predicate"], object=c["object"])
+        for c in kept
     ]
+
+
+# Behavioral signatures: which probe predicates this episode DEMONSTRABLY
+# relied on. Deliberately observation-driven only -- tool NAMES ("Bash")
+# carry no facet information, command/file content does.
+_TEST_RUNNER_RE = re.compile(r"\b(?:pytest|py\.test|jest|vitest|mocha|playwright|unittest)\b")
+_PACKAGE_MANAGER_RE = re.compile(r"\b(?:npm|npx|yarn|pnpm|pip|pip3|poetry|conda|uvx?)\b")
+_BUILD_RE = re.compile(
+    r"\b(?:tsc|webpack|esbuild|swc|make|cmake|gradle|mvn)\b"
+    r"|\b(?:npm|yarn|pnpm)\s+run\s+\S*build"
+)
+_DEV_SERVER_RE = re.compile(
+    r"webpack-dev-server|\bvite\b|\buvicorn\b|\bgunicorn\b"
+    r"|\b(?:next|npm|yarn|pnpm)\s+(?:run\s+)?dev\b"
+)
+# Extensions that count as "the episode edited source code", making the
+# project's `language` claim load-bearing. Manifest/config/data files do
+# NOT qualify -- editing package.json says nothing about needing a
+# particular language runtime to be present.
+_SOURCE_FILE_EXTENSIONS = (
+    ".py", ".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs",
+    ".rb", ".go", ".rs", ".java", ".kt", ".swift", ".php",
+    ".c", ".h", ".cpp", ".hpp", ".cs",
+)
+
+
+def load_bearing_predicates(evidence: ProcedureEvidence) -> frozenset[str]:
+    """
+    Which probe predicates this episode's own observations prove it
+    exercised. Pure function of the evidence -- deterministic, no model,
+    no DB. A predicate lands here ONLY with direct behavioral evidence:
+    ran the test suite -> has_test_runner; invoked a package manager ->
+    package_manager; ran a build -> has_build_tool; started/served a dev
+    server -> has_dev_server; touched source files -> language.
+
+    HONEST GAP: `has_framework` has NO reliable deterministic signature
+    today (using React vs Vue is not visible in a command line or a
+    touched-file path the way runners/managers are), so framework claims
+    are never gated by this pass. That is deliberately asymmetric with
+    the other five: an ungated claim costs nothing at authoring time,
+    while a wrongly-gated one silently disqualifies procedures forever
+    under CWA. When a real framework-usage signal exists (framework-
+    specific file conventions, CLI invocations), add it HERE -- the
+    filter picks it up automatically.
+    """
+    predicates: set[str] = set()
+    commands: list[str] = []
+    touched_source = False
+    for obs in evidence.observations:
+        props = obs.get("properties") or {}
+        obs_type = obs.get("observation_type")
+        if obs_type == "test_run":
+            predicates.add("has_test_runner")
+            cmd = props.get("command")
+            if isinstance(cmd, str):
+                commands.append(cmd)
+        elif obs_type == "command_executed":
+            cmd = props.get("command")
+            if isinstance(cmd, str):
+                commands.append(cmd)
+        elif obs_type == "file_touched":
+            path = props.get("file_path")
+            if isinstance(path, str) and path.lower().endswith(_SOURCE_FILE_EXTENSIONS):
+                touched_source = True
+    if touched_source:
+        predicates.add("language")
+    for cmd in commands:
+        lowered = cmd.lower()
+        if _TEST_RUNNER_RE.search(lowered):
+            predicates.add("has_test_runner")
+        if _PACKAGE_MANAGER_RE.search(lowered):
+            predicates.add("package_manager")
+        if _BUILD_RE.search(lowered):
+            predicates.add("has_build_tool")
+        if _DEV_SERVER_RE.search(lowered):
+            predicates.add("has_dev_server")
+    return frozenset(predicates)
+
+
+def filter_load_bearing_claims(
+    claims: Iterable[dict],
+    evidence: ProcedureEvidence,
+    *,
+    vocabulary: Optional[Iterable[str]] = None,
+) -> list[dict]:
+    """
+    The relevance filter proper, pure and DB-free so it can be proven
+    offline. A claim survives iff:
+      1. its predicate is behaviorally load-bearing for THIS episode
+         (load_bearing_predicates above), and
+      2. its predicate is in `vocabulary` when one is supplied -- a claim
+         nothing can re-check at reuse time must not become a permanent
+         rejection trigger (this is the same closed-vocabulary discipline
+         validators.V1 enforces after extraction; enforcing it here too
+         means derivation can never produce something validation would
+         have to reject), and
+      3. no earlier claim already gated the same
+         (subject, predicate, object) triple -- duplicate rows would add
+         matching cost without changing the gate.
+    Order-preserving: the result reads in project_state()'s own order.
+    """
+    relevant = load_bearing_predicates(evidence)
+    allowed = set(vocabulary) if vocabulary is not None else None
+    kept: list[dict] = []
+    seen: set[tuple] = set()
+    for c in claims:
+        predicate = c.get("predicate") if isinstance(c, dict) else None
+        if not predicate or predicate not in relevant:
+            continue
+        if allowed is not None and predicate not in allowed:
+            continue
+        key = (c.get("subject"), predicate, c.get("object"))
+        if key in seen:
+            continue
+        seen.add(key)
+        kept.append(c)
+    return kept
 
 
 async def derive_scope(pool: asyncpg.Pool, evidence: ProcedureEvidence) -> dict:

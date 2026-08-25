@@ -109,6 +109,15 @@ class ExtractedProcedure(BaseModel):
     exclusions: list[dict] = Field(default_factory=list)
     failure_conditions: list[str] = Field(default_factory=list)
 
+    # Numeric invariants ({"kind": "numeric", "expr": "amount <= balance"}),
+    # persisted into procedures.invariants -- the column db/18_procedures.sql
+    # created and capture_procedure() already writes but nothing produced
+    # until now. Shape is validated by V6 (authoring-time satisfiability),
+    # enforced by applicability.check_hard_constraints at retrieval time.
+    # Defaulted empty: an extraction with no evidence of a numeric
+    # constraint must not invent one.
+    invariants: list[dict] = Field(default_factory=list)
+
     @field_validator("steps")
     @classmethod
     def steps_not_empty(cls, v: list[ProcedureStep]) -> list[ProcedureStep]:

@@ -31,9 +31,9 @@ git worktree add ..\sl-research -b lane/research origin/main
 3. `[ ]` Band 1 exit-criteria sweep; request integrator review.
 
 ### Lane CORE-B — extraction & gating (owns `backend/app/services/procedure_extraction/**`, `invariants.py`, `applicability.py`, `precondition_gate.py`, `state.py`)
-1. `[ ]` **1.8a** Precondition relevance filter (derive gates only load-bearing facts).
-2. `[ ]` **1.8b** V6 authoring-time invariant validator + z3 off event loop w/ timeout.
-3. `[ ]` **1.8c** Memoized `project_state()` in applicability cascade; tenant-scoped
+1. `[x] done 2026-08-25 — lane/core-b` **1.8a** Precondition relevance filter (derive gates only load-bearing facts).
+2. `[x] done 2026-08-25 — lane/core-b` **1.8b** V6 authoring-time invariant validator + z3 off event loop w/ timeout.
+3. `[x] done 2026-08-25 — lane/core-b` **1.8c** Memoized `project_state()` in applicability cascade; tenant-scoped
    cold-start gate.
 Rule: NO new migrations (schema unchanged); no edits outside owned paths.
 
@@ -109,4 +109,31 @@ blocking question in the Log, continue with the next queue item.
   errors when unset; trace_ingestion e2e failures under full-run ordering).
   Not a MEASURE regression; needs an integrator decision on worktree env setup.
   Rebased onto origin/main before push per OVERNIGHT MODE.
->>>>>>> 35670e7 (measure: spec-40 harness skeleton - three-arm runner, scoring, exact-McNemar scoreboard with power footer; synthetic fixtures + 43 harness-local tests)
+- CORE-B (2026-08-25): all three queue items done on `lane/core-b`, one commit.
+  - **1.8a** `derive.filter_load_bearing_claims` + `load_bearing_predicates`:
+    gates only on behaviorally load-bearing claims (ran tests / invoked pkg
+    manager / built / served / touched source), intersected with the probe
+    vocabulary; `has_framework` honestly never gated (no deterministic
+    signal). E2E contract updated from "equals project_state" to "grounded
+    load-bearing subset"; supersession test given build-command evidence so
+    it stays non-vacuous.
+  - **1.8b** `invariants.authoring_problems` (parse whitelist + per-expr
+    satisfiability) behind new validators rule **V6**; `ExtractedProcedure.
+    invariants` field now persists via capture_procedure's existing param;
+    every z3 Solver bounded by `DEFAULT_SOLVER_TIMEOUT_MS=5000`, `unknown`
+    → `undecidable` (never violation); retrieval path moved off the event
+    loop via `check_invariants_async`/`asyncio.to_thread`.
+  - **1.8c** cold-start gate counts through `visibility_predicate()`
+    (`access_scope` param, default unrestricted preserves old behavior);
+    per-cascade `_state_cache` dedupes `project_state()` fetches across
+    candidates AND repeat subjects within one procedure; `as_of` pinned per
+    cascade so the memo key is stable. Offline proof: fake-pool call-count +
+    SQL-content tests in `tests/test_applicability_cascade_offline.py`.
+  - Suite in this worktree (has backend/.env, unlike MEASURE's): baseline
+    **849 passed / 106 skipped / 0 failed** → after **878 passed / 106
+    skipped / 0 failed** (+29 proving tests, zero regressions). Rebased onto
+    origin/main before push per OVERNIGHT MODE.
+- Board hygiene note (CORE-B): origin/main's board file carried a stray
+  conflict marker (`>>>>>>> 35670e7 ...`) at the end of this Log — leftover
+  debris from the measure commit itself. Removed here; integrator please
+  sanity-check future board merges.

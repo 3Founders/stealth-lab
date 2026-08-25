@@ -130,6 +130,7 @@ async def extract_procedure(
         scope=extracted.scope,
         exclusions=extracted.exclusions,
         failure_conditions=extracted.failure_conditions,
+        invariants=list(extracted.invariants),
         source_episode_ids=[evidence.episode_id] if evidence.episode_id else None,
         owner_id=owner_id, visibility=visibility,
     )

@@ -10,6 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Callable
 
+from app.services.invariants import authoring_problems
 from app.services.procedure_extraction.schema import ExtractedProcedure
 from app.services.slot_binders import known_binder_names
 
@@ -201,12 +202,39 @@ def v5_evidence_sufficiency(
     return failures
 
 
+def v6_invariant_authoring(
+    proc: ExtractedProcedure, ctx: ValidationContext,
+) -> list[ValidationFailure]:
+    """
+    Authoring-time gate on proc.invariants (ticket 1.8b): each numeric
+    invariant must parse under invariants.py's whitelist AND be
+    satisfiable by SOME binding. The runtime path already refuses
+    malformed expressions and treats unbound variables as undecidable --
+    but nothing stopped a PERSISTED procedure from carrying an expression
+    that parses yet can never hold ("amount <= balance and amount >
+    balance"), the numeric twin of V1's permanently-unmatchable
+    precondition. This rule rejects it where it is cheap to reject:
+    before capture.
+
+    Deliberately synchronous despite running z3: authoring validation
+    runs once per extraction under a bounded solver timeout (see
+    invariants.DEFAULT_SOLVER_TIMEOUT_MS), not once per candidate at
+    retrieval time. The off-event-loop requirement applies to the
+    retrieval cascade, which goes through check_invariants_async().
+    """
+    return [
+        ValidationFailure("V6_invariant_authoring", problem)
+        for problem in authoring_problems(list(proc.invariants))
+    ]
+
+
 ALL_RULES: tuple[Rule, ...] = (
     v1_precondition_groundedness,
     v2_step_purity,
     v3_slot_integrity,
     v4_capability_abstraction,
     v5_evidence_sufficiency,
+    v6_invariant_authoring,
 )
 
 

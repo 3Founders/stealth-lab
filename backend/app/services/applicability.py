@@ -42,9 +42,9 @@ from typing import Optional
 
 import asyncpg
 
-from app.services.access import AccessScope
+from app.services.access import AccessScope, visibility_predicate
 from app.services.embeddings import to_pgvector
-from app.services.invariants import check_invariants
+from app.services.invariants import check_invariants_async
 from app.services.state import project_state
 
 # Ticket 12's cold-start answer: "disable procedure retrieval entirely
@@ -68,7 +68,9 @@ class ApplicabilityResult:
     similarity_score: Optional[float] = None
 
 
-async def should_disable_procedure_retrieval(pool: asyncpg.Pool) -> bool:
+async def should_disable_procedure_retrieval(
+    pool: asyncpg.Pool, access_scope: Optional[AccessScope] = None,
+) -> bool:
     """
     Ticket 12's cold-start answer, made real and callable rather than
     left as a design note: while too few procedures have real recorded
@@ -76,12 +78,65 @@ async def should_disable_procedure_retrieval(pool: asyncpg.Pool) -> bool:
     entirely and the caller should fall back to generative planning
     (ticket 15's planner-as-default-not-fallback phase). Returns True
     when retrieval should be DISABLED (few verified procedures exist).
+
+    TENANT-SCOPED (ticket 1.8c): the count goes through access.py's
+    visibility_predicate() -- ticket 09's non-negotiable rule that every
+    query carries the visibility filter. The gate must answer "does THIS
+    viewer have enough verified, visible evidence", not "does the whole
+    commons": unlocking retrieval because OTHER tenants' procedures got
+    verified ends this viewer's cold start on evidence they may not be
+    able to reuse, and symmetrically hides real cold-start state behind
+    someone else's progress. Default `unrestricted()` preserves the
+    previous global-count behavior for existing internal callers;
+    request paths must pass a real scope (same convention as
+    project_state()).
     """
+    scope = access_scope or AccessScope.unrestricted()
+    vis_sql, vis_params = visibility_predicate(scope, param_index=1)
     count = await pool.fetchval(
         "SELECT count(*) FROM procedures WHERE verification_state = 'verified' "
-        "AND availability = 'active' AND t_invalid IS NULL"
+        "AND availability = 'active' AND t_invalid IS NULL "
+        f"AND {vis_sql}",
+        *vis_params,
     )
     return count < MIN_VERIFIED_PROCEDURES_TO_ENABLE_RETRIEVAL
+
+
+def _new_state_cache() -> dict:
+    """
+    One memo table per applicability cascade (ticket 1.8c). Every
+    candidate's precondition check used to re-run project_state()
+    per predicate per candidate -- and since derived preconditions are
+    overwhelmingly project-scoped (`project:<id>`), a single cascade
+    re-fetched the SAME projection once per candidate, plus again for
+    each additional precondition sharing a subject inside one candidate.
+    The projection is deterministic within one cascade call: same pool,
+    same as_of, same access scope throughout -- so the first fetch is
+    authoritative and every later hit is free.
+
+    Scope of validity is deliberately narrow: this cache lives for one
+    find_applicable_procedures()/check_hard_constraints() call only.
+    It MUST NOT outlive the request that built it -- a claim written
+    mid-flight would otherwise be invisible until eviction, which is a
+    stale-read bug, not an optimization.
+    """
+    return {}
+
+
+async def _project_state_cached(
+    pool: asyncpg.Pool,
+    state_cache: dict,
+    *,
+    subject: str,
+    as_of: datetime,
+    scope: Optional[AccessScope],
+) -> list[dict]:
+    key = (subject, as_of)
+    cached = state_cache.get(key)
+    if cached is None:
+        cached = await project_state(pool, subjects=[subject], as_of=as_of, scope=scope)
+        state_cache[key] = cached
+    return cached
 
 
 def _scope_matches(procedure_scope: dict, current_scope: dict) -> bool:
@@ -133,6 +188,7 @@ async def check_hard_constraints(
     require_verified: bool = True,
     as_of: Optional[datetime] = None,
     invariant_bindings: Optional[dict[str, float]] = None,
+    state_cache: Optional[dict] = None,
 ) -> ApplicabilityResult:
     """
     The non-compensatory filter cascade itself. Short-circuits on the
@@ -150,11 +206,19 @@ async def check_hard_constraints(
     anything doing automatic candidate selection.
 
     `current_scope`: caller-supplied dict describing the real current
-    task context (e.g. {"repo": [...], "files": [...]})…, checked
+    task context (e.g. {"repo": [...], "files": [...]}), checked
     against the procedure's own `scope`/`exclusions` fields.
+
+    `state_cache`: optional memo table shared across one cascade (see
+    _new_state_cache). Callers that check many candidates against the
+    same subjects should pass ONE cache through the whole loop; a None
+    cache still dedupes repeated subjects WITHIN this procedure. Valid
+    only while pool/as_of/access_scope are unchanged -- which is exactly
+    the contract inside one cascade call.
     """
     current_scope = current_scope or {}
     as_of = as_of or datetime.now(timezone.utc)
+    state_cache = state_cache if state_cache is not None else {}
     row_id = str(procedure["id"])
 
     # Temporal validity.
@@ -206,7 +270,9 @@ async def check_hard_constraints(
         if not subject:
             continue  # malformed precondition entry -- not this function's job to validate authoring
 
-        claims = await project_state(pool, subjects=[subject], as_of=as_of, scope=access_scope)
+        claims = await _project_state_cached(
+            pool, state_cache, subject=subject, as_of=as_of, scope=access_scope,
+        )
         satisfied = any(
             c["properties"].get("predicate") == predicate
             and c["properties"].get("object") == expected_object
@@ -228,6 +294,12 @@ async def check_hard_constraints(
     # empty `invariants`), so it must not sit in front of checks that do
     # real work.
     #
+    # The solve runs OFF the event loop (check_invariants_async ->
+    # asyncio.to_thread) and under a bounded solver timeout
+    # (invariants.DEFAULT_SOLVER_TIMEOUT_MS): a pathological expression
+    # must cost one worker thread for milliseconds, never the loop every
+    # concurrent request multiplexes on.
+    #
     # UNDECIDABLE IS NOT DISQUALIFYING, and that asymmetry is the whole
     # point. At retrieval time nobody has stated an amount yet, so a
     # procedure whose invariant references unbound quantities is the
@@ -236,7 +308,7 @@ async def check_hard_constraints(
     # same "looks correct, never fires" failure V1 exists to prevent.
     # Only a definite violation (all variables bound, relation false)
     # disqualifies.
-    invariant_result = check_invariants(
+    invariant_result = await check_invariants_async(
         procedure.get("invariants") or [], invariant_bindings or {},
     )
     if invariant_result.violated or invariant_result.errors:
@@ -278,7 +350,7 @@ async def find_applicable_procedures(
     is smaller than the true candidate set, the ones skipped are the
     more expensive ones to check, not an arbitrary subset.
     """
-    if await should_disable_procedure_retrieval(pool):
+    if await should_disable_procedure_retrieval(pool, access_scope):
         return []
 
     rows = await pool.fetch(
@@ -289,12 +361,20 @@ async def find_applicable_procedures(
         candidate_pool_size,
     )
 
+    # ONE memo table + ONE pinned timestamp for the whole cascade: same
+    # pool, same as_of, same access scope throughout -- exactly the
+    # validity contract _new_state_cache documents. Letting each
+    # candidate default its own now() would put different microsecond
+    # timestamps in the cache keys and quietly defeat the memo.
+    cascade_as_of = datetime.now(timezone.utc)
+    state_cache = _new_state_cache()
     survivors = []
     for row in rows:
         procedure = dict(row)
         result = await check_hard_constraints(
             pool, procedure, current_scope=current_scope, access_scope=access_scope,
             require_verified=require_verified, invariant_bindings=invariant_bindings,
+            as_of=cascade_as_of, state_cache=state_cache,
         )
         if result.applicable:
             survivors.append(procedure)

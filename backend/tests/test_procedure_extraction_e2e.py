@@ -4,11 +4,14 @@ DB-backed functions (derive_preconditions, derive_scope). Same pattern
 as the other e2e test files: requires a real DATABASE_URL, skips (not
 fails) without one.
 
-THE CORE GROUNDING CLAIM this file tests directly: derive_preconditions
-must produce EXACTLY the claims project_state() itself would return for
-the same subject/timestamp -- not a paraphrase, not a subset, the same
-predicates -- because that identity is what guarantees a derived
-precondition can never fail V1 (groundedness).
+THE CORE GROUNDING CLAIM this file tests directly (updated by 1.8a's
+relevance filter): every precondition derive_preconditions() emits must
+be a claim project_state() itself would return for the same
+subject/timestamp -- never a paraphrase, never an invented predicate --
+because that subset relationship is what guarantees a derived
+precondition can never fail V1 (groundedness). Since 1.8a the output is
+deliberately a SUBSET, not the whole projection: only claims the
+episode's own recorded behavior made load-bearing become gates.
 """
 import asyncio
 import os
@@ -49,10 +52,13 @@ async def _cleanup(pool: asyncpg.Pool) -> None:
         await conn.execute("DELETE FROM knowledge_nodes WHERE properties->>'subject' = $1", SUBJECT)
 
 
-def test_derive_preconditions_matches_project_state_exactly(tmp_path):
-    """The core grounding claim, tested directly: derive_preconditions'
-    output is not an approximation of project_state()'s claims, it IS
-    them -- same predicates, same objects."""
+def test_derive_preconditions_are_a_grounded_load_bearing_subset_of_project_state(tmp_path):
+    """The grounding contract, tested directly: every derived
+    precondition IS a project_state() claim (same predicate, same
+    object, same subject), but only the load-bearing subset -- here the
+    episode ran `npm install`, so package_manager is gated while the
+    equally-live has_framework claim (which has no deterministic
+    behavioral signature, see derive.load_bearing_predicates) is not."""
     import json
     (tmp_path / "package.json").write_text(json.dumps({"dependencies": {"react": "^18.0.0"}}))
     (tmp_path / "package-lock.json").write_text("")
@@ -69,14 +75,27 @@ def test_derive_preconditions_matches_project_state_exactly(tmp_path):
             evidence = ProcedureEvidence(
                 goal_text="g", outcome="success", project_id=PROJECT_ID,
                 started_at=now + timedelta(seconds=5),  # after the claims were asserted
+                observations=[
+                    {"observation_type": "command_executed",
+                     "properties": {"command": "npm install"}},
+                ],
             )
             derived = await derive_preconditions(pool, evidence)
             direct = await project_state(pool, subjects=[SUBJECT], as_of=now + timedelta(seconds=5))
 
             derived_pairs = {(p.predicate, p.object) for p in derived}
             direct_pairs = {(c["predicate"], c["object"]) for c in direct}
-            assert derived_pairs == direct_pairs
-            assert derived_pairs, "fixture should have produced real claims to match against"
+            assert derived_pairs, "fixture should have produced real claims to filter"
+            assert derived_pairs <= direct_pairs, (
+                "groundedness: a derived precondition must be a real live claim, never an invention"
+            )
+            assert ("package_manager", "npm") in derived_pairs, (
+                "behaviorally load-bearing (episode invoked npm) -- this claim MUST gate"
+            )
+            assert ("has_framework", "react") not in derived_pairs, (
+                "live but NOT load-bearing -- no behavioral evidence touched the framework, "
+                "so gating on it would only add a permanent rejection trigger"
+            )
             for p in derived:
                 assert p.subject == SUBJECT
         finally:
@@ -133,6 +152,15 @@ def test_derive_preconditions_drops_a_predicate_entirely_once_superseded(tmp_pat
             evidence = ProcedureEvidence(
                 goal_text="g", outcome="success", project_id=PROJECT_ID,
                 started_at=episode_started_at,
+                # Load-bearing evidence for the build tool specifically
+                # (ticket 1.8a): without it has_build_tool would be absent
+                # from the derivation by relevance filtering, and this
+                # test would pass vacuously instead of proving the
+                # supersession behavior it exists to pin down.
+                observations=[
+                    {"observation_type": "command_executed",
+                     "properties": {"command": "npm run build"}},
+                ],
             )
             derived = await derive_preconditions(pool, evidence)
             build_tool = next((p.object for p in derived if p.predicate == "has_build_tool"), None)

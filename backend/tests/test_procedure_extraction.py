@@ -1,6 +1,8 @@
 """
 DB-free unit tests for procedure_extraction's pure/near-pure pieces:
-derive.py's step/failure-condition derivation, slot_binders.py's
+derive.py's step/failure-condition derivation AND its load-bearing
+relevance filter (ticket 1.8a -- pure functions, proven offline),
+validators.py's rules including V6 (ticket 1.8b), slot_binders.py's
 coverage logic, and schema.py's contract. Live-DB tests for
 derive_preconditions/derive_scope live in
 test_procedure_extraction_e2e.py (they need real project_state()).
@@ -12,7 +14,9 @@ from app.services.procedure_extraction.derive import (
     derive_failure_conditions,
     derive_slots,
     derive_step_skeleton,
+    filter_load_bearing_claims,
     literal_steps_from_skeleton,
+    load_bearing_predicates,
 )
 from app.services.procedure_extraction.evidence import ProcedureEvidence
 from app.services.procedure_extraction.schema import ExtractedProcedure, Predicate, ProcedureStep, SlotSpec
@@ -325,3 +329,190 @@ def test_v3_scans_slot_placeholders_outside_action():
         f.rule == "V3_slot_integrity" and "undeclared_slot" in f.message
         for f in failures
     )
+
+
+# --- ticket 1.8a: load-bearing relevance filter (derive.py, pure) ---
+
+def _claim(predicate, obj="x", subject="project:p"):
+    return {"id": f"{subject}:{predicate}", "subject": subject,
+            "predicate": predicate, "object": obj}
+
+
+def _evidence_with(observations):
+    return ProcedureEvidence(goal_text="g", outcome="success", observations=observations)
+
+
+def test_no_behavioral_evidence_means_no_gates_at_all():
+    """The 1.8a tightening itself: an episode whose observations show
+    nothing was exercised gates on NOTHING -- every live claim stays out
+    rather than becoming a permanent CWA rejection trigger."""
+    claims = [_claim("has_test_runner", "pytest"), _claim("language", "python")]
+    assert filter_load_bearing_claims(claims, _evidence_with([])) == []
+    assert load_bearing_predicates(_evidence_with([])) == frozenset()
+
+
+def test_running_the_test_suite_makes_has_test_runner_load_bearing():
+    claims = [_claim("has_test_runner", "pytest"), _claim("has_dev_server", "vite")]
+    kept = filter_load_bearing_claims(
+        claims,
+        _evidence_with([{"observation_type": "test_run", "properties": {"passed": True}}]),
+    )
+    assert [(c["predicate"], c["object"]) for c in kept] == [("has_test_runner", "pytest")]
+
+
+def test_command_content_promotes_the_facet_it_exercises():
+    ev = _evidence_with([
+        {"observation_type": "command_executed",
+         "properties": {"command": "pip install -r requirements.txt"}},
+        {"observation_type": "command_executed",
+         "properties": {"command": "python -m pytest tests -q"}},
+    ])
+    predicates = load_bearing_predicates(ev)
+    assert "package_manager" in predicates
+    assert "has_test_runner" in predicates
+
+
+def test_build_and_dev_server_commands_map_to_their_own_predicates():
+    ev = _evidence_with([
+        {"observation_type": "command_executed",
+         "properties": {"command": "npm run build && npx vite --port 5173"}},
+    ])
+    predicates = load_bearing_predicates(ev)
+    assert "has_build_tool" in predicates
+    assert "has_dev_server" in predicates
+
+
+def test_touching_source_files_makes_language_load_bearing_but_manifests_do_not():
+    source = _evidence_with([
+        {"observation_type": "file_touched", "properties": {"file_path": "app/services/state.py"}},
+    ])
+    assert "language" in load_bearing_predicates(source)
+
+    manifest = _evidence_with([
+        {"observation_type": "file_touched", "properties": {"file_path": "package.json"}},
+    ])
+    assert "language" not in load_bearing_predicates(manifest), (
+        "editing a manifest says nothing about needing a language runtime -- "
+        "gating `language` on it would be a guess, and guesses fail closed forever"
+    )
+
+
+def test_has_framework_is_never_derived_until_a_real_signal_exists():
+    """The documented honest gap: framework usage has no deterministic
+    signature today, so a live has_framework claim must NOT become a
+    gate no matter what else the episode did."""
+    claims = [_claim("has_framework", "react"), _claim("package_manager", "npm")]
+    ev = _evidence_with([
+        {"observation_type": "command_executed",
+         "properties": {"command": "npm run build"}},
+        {"observation_type": "command_executed",
+         "properties": {"command": "npx jest"}},
+    ])
+    kept = filter_load_bearing_claims(claims, ev)
+    assert [c["predicate"] for c in kept] == ["package_manager"]
+
+
+def test_filter_respects_the_vocabulary_drift_guard():
+    """load_bearing_predicates only ever emits probe vocabulary names
+    TODAY; the explicit vocabulary argument keeps that true by
+    construction even if a future signal names something the probe
+    stopped asserting -- derivation can never emit a gate validation
+    (V1) would have to reject."""
+    claims = [_claim("has_test_runner", "pytest")]
+    ev = _evidence_with([
+        {"observation_type": "command_executed", "properties": {"command": "pytest"}},
+    ])
+    assert filter_load_bearing_claims(claims, ev) == claims
+    assert filter_load_bearing_claims(
+        claims, ev, vocabulary=("language",),
+    ) == [], "a signal outside the caller's stated vocabulary must not gate"
+
+
+def test_filter_dedupes_identical_triples_order_preserving():
+    claims = [
+        _claim("has_test_runner", "pytest"),
+        _claim("language", "python"),
+        _claim("has_test_runner", "pytest"),   # duplicate
+        _claim("language", "python"),          # duplicate
+    ]
+    ev = _evidence_with([
+        {"observation_type": "command_executed", "properties": {"command": "pytest"}},
+        {"observation_type": "file_touched", "properties": {"file_path": "main.py"}},
+    ])
+    kept = filter_load_bearing_claims(claims, ev)
+    assert [(c["predicate"], c["object"]) for c in kept] == [
+        ("has_test_runner", "pytest"), ("language", "python"),
+    ]
+
+
+def test_derive_preconditions_returns_empty_before_any_db_access_without_ids():
+    """The early return must fire before the pool is touched -- provable
+    offline by passing None as the pool."""
+    import asyncio
+
+    from app.services.procedure_extraction.derive import derive_preconditions
+
+    evidence = ProcedureEvidence(goal_text="g", outcome="success",
+                                 project_id=None, started_at=None)
+    assert asyncio.run(derive_preconditions(None, evidence)) == []
+
+
+# --- ticket 1.8b: V6 authoring-time invariant validator ---
+
+def test_extracted_procedure_invariants_default_empty():
+    """No evidence of a numeric constraint -> no invented invariant;
+    every pre-existing construction site keeps working unchanged."""
+    proc = ExtractedProcedure(
+        name="n", goal="g", capability_statement="c",
+        steps=[ProcedureStep(order=1, action="do it")],
+    )
+    assert proc.invariants == []
+
+
+def test_v6_accepts_a_satisfiable_invariant():
+    proc = ExtractedProcedure(
+        name="n", goal="g", capability_statement="c",
+        steps=[ProcedureStep(order=1, action="do it")],
+        invariants=[{"kind": "numeric", "expr": "amount <= balance"}],
+    )
+    failures = validate(proc, _ctx())
+    assert not any(f.rule == "V6_invariant_authoring" for f in failures)
+
+
+def test_v6_rejects_an_invariant_no_binding_can_ever_satisfy():
+    """The numeric twin of V1's permanently-unmatchable precondition:
+    parses fine, runs fine at check time -- and rejects every possible
+    world. Must be caught at AUTHORING time, before persistence."""
+    proc = ExtractedProcedure(
+        name="n", goal="g", capability_statement="c",
+        steps=[ProcedureStep(order=1, action="do it")],
+        invariants=[{"kind": "numeric",
+                     "expr": "amount <= balance and amount > balance"}],
+    )
+    failures = validate(proc, _ctx())
+    v6 = [f for f in failures if f.rule == "V6_invariant_authoring"]
+    assert v6 and "unsatisfiable" in v6[0].message
+
+
+def test_v6_rejects_an_expression_runtime_would_error_on():
+    proc = ExtractedProcedure(
+        name="n", goal="g", capability_statement="c",
+        steps=[ProcedureStep(order=1, action="do it")],
+        invariants=[{"kind": "numeric", "expr": "amount <="}],
+    )
+    failures = validate(proc, _ctx())
+    v6 = [f for f in failures if f.rule == "V6_invariant_authoring"]
+    assert v6 and "could not be parsed" in v6[0].message
+
+
+def test_all_rules_run_collects_v6_alongside_others():
+    """V6 joined the collect-everything chain: its failures surface in
+    the same pass as every other rule's, never one retry at a time."""
+    proc = ExtractedProcedure(
+        name="n", goal="g", capability_statement="c",
+        steps=[ProcedureStep(order=1, action="edit {missing}")],
+        invariants=[{"kind": "numeric", "expr": "x < x"}],
+    )
+    rules_hit = {f.rule for f in validate(proc, _ctx())}
+    assert "V3_slot_integrity" in rules_hit
+    assert "V6_invariant_authoring" in rules_hit

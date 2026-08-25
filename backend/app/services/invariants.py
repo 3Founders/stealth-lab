@@ -35,10 +35,21 @@ general expression evaluator. `expr` is parsed with Python's own `ast`
 module in a whitelist, NOT eval(): procedures can be authored by an LLM
 and stored in a database, so an expression string is untrusted input and
 must never reach eval().
+
+SOLVER RUNTIME IS BOUNDED AND OFF THE EVENT LOOP. Every Solver gets a
+wall-clock timeout (DEFAULT_SOLVER_TIMEOUT_MS), and an expression the
+solver cannot settle inside that budget lands in `undecidable` -- the
+same bucket as unbound variables, and for the same reason: "could not
+decide" is not evidence of violation. The retrieval-time caller
+(applicability.check_hard_constraints) goes through
+check_invariants_async(), which runs the solve on a worker thread via
+asyncio.to_thread -- a pathological expression must never stall the
+event loop every other request multiplexes on.
 """
 from __future__ import annotations
 
 import ast
+import asyncio
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
@@ -47,6 +58,13 @@ from typing import Any, Optional
 _ALLOWED_COMPARE = (ast.Lt, ast.LtE, ast.Gt, ast.GtE, ast.Eq, ast.NotEq)
 _ALLOWED_BINOP = (ast.Add, ast.Sub, ast.Mult, ast.Div)
 _ALLOWED_UNARY = (ast.UAdd, ast.USub)
+
+# Wall-clock budget per z3 query, milliseconds. Generous relative to the
+# whitelist's actual expressiveness (linear arithmetic over a handful of
+# symbols decides in microseconds); tight enough that a pathological or
+# adversarial expression cannot wedge retrieval. Configuration, not a
+# proven-correct number -- flagged as such rather than tuned to a suite.
+DEFAULT_SOLVER_TIMEOUT_MS = 5_000
 
 
 @dataclass
@@ -157,6 +175,7 @@ class _ExprBuilder(ast.NodeVisitor):
 
 def check_invariants(
     invariants: Optional[list[dict]], bindings: Optional[dict[str, float]] = None,
+    *, timeout_ms: int = DEFAULT_SOLVER_TIMEOUT_MS,
 ) -> InvariantResult:
     """
     Decide a procedure's numeric invariants under `bindings`.
@@ -174,6 +193,14 @@ def check_invariants(
     A malformed expression is reported in `errors`, never raised:
     procedures can be LLM-authored, and one bad row must not take down
     retrieval for every other candidate.
+
+    `timeout_ms` bounds each z3 query. A query that comes back
+    `unknown` -- timeout, or genuinely undecidable arithmetic -- is
+    reported in `undecidable`, NOT in violated/errors: "the solver gave
+    up" is no evidence of violation, and reporting it as either would
+    break the satisfied/undecidable asymmetry this module exists to
+    keep. Retrieval-time callers should prefer check_invariants_async()
+    so even a bounded solve never occupies the event loop.
     """
     result = InvariantResult(satisfied=True)
     if not invariants:
@@ -222,12 +249,111 @@ def check_invariants(
         # Fully bound: the term reduced to a concrete Python bool via
         # operator overloading on plain numbers in most cases, but route
         # everything through z3 uniformly so mixed z3/native terms behave
-        # identically. Violation == "the negation is satisfiable" is not
-        # needed here (no free variables remain); a direct check suffices.
+        # identically. Violation == unsat; unknown (timeout or otherwise
+        # undecided) is explicitly NOT a violation.
         solver = z3.Solver()
+        solver.set("timeout", timeout_ms)
         solver.add(term if z3.is_expr(term) else z3.BoolVal(bool(term)))
-        if solver.check() == z3.unsat:
+        outcome = solver.check()
+        if outcome == z3.unsat:
             result.violated.append(expr)
+        elif outcome == z3.unknown:
+            result.undecidable.append(f"{expr} (solver returned unknown within {timeout_ms}ms)")
 
     result.satisfied = not result.violated and not result.errors
     return result
+
+
+async def check_invariants_async(
+    invariants: Optional[list[dict]], bindings: Optional[dict[str, float]] = None,
+    *, timeout_ms: int = DEFAULT_SOLVER_TIMEOUT_MS,
+) -> InvariantResult:
+    """
+    The retrieval-time entry point: identical decision to
+    check_invariants(), computed on a worker thread instead of the event
+    loop. The applicability cascade runs once per candidate procedure --
+    under it, every caller in a concurrent request pays for one slow
+    solve unless the solve leaves the loop.
+    """
+    return await asyncio.to_thread(
+        check_invariants, invariants, bindings, timeout_ms=timeout_ms,
+    )
+
+
+def authoring_problems(
+    invariants: Optional[list[dict]], *, timeout_ms: int = DEFAULT_SOLVER_TIMEOUT_MS,
+) -> list[str]:
+    """
+    Authoring-time validation (validators.V6's engine): what is WRONG
+    with these invariants as authored, before any runtime bindings
+    exist. Returns human-readable problems; empty list means clean.
+
+    Checks two things per numeric invariant:
+      1. it parses under this module's whitelist (same parser the
+         runtime path uses -- authoring must never accept something
+         retrieval will have to error on), and
+      2. it is SATISFIABLE by SOME binding -- proved with free Real
+         symbols, since at authoring time no quantities exist yet. An
+         expression like "amount <= balance and amount > balance" can
+         never hold under ANY binding, so a procedure carrying it can
+         never legitimately run; that is a defect worth rejecting at
+         authoring time, exactly analogous to V1's permanently-
+         unsatisfiable precondition.
+
+    An expression the solver cannot decide within `timeout_ms` IS
+    reported here (unlike the runtime path, where unknown lands in
+    undecidable and stays non-disqualifying): authoring is offline and
+    human-reviewed, and an expression whose satisfiability we could not
+    establish deserves scrutiny before being persisted -- worst case the
+    reviewer sees a false alarm on a weird-but-fine formula, while the
+    silent alternative ships procedures that can never fire.
+    """
+    problems: list[str] = []
+    if not invariants:
+        return problems
+
+    numeric = [
+        inv for inv in invariants
+        if isinstance(inv, dict) and inv.get("kind", "numeric") == "numeric"
+    ]
+    if not numeric:
+        return problems
+
+    if not _z3_available():
+        return ["z3-solver is not installed -- invariants cannot be validated"]
+
+    import z3
+
+    for inv in numeric:
+        expr = inv.get("expr")
+        if not isinstance(expr, str) or not expr.strip():
+            problems.append(f"invariant has no usable 'expr': {inv!r}")
+            continue
+
+        builder = _ExprBuilder({})
+        try:
+            tree = ast.parse(expr, mode="eval")
+            term = builder.visit(tree)
+        except (SyntaxError, ValueError) as exc:
+            problems.append(f"invariant {expr!r} could not be parsed: {exc}")
+            continue
+
+        solver = z3.Solver()
+        solver.set("timeout", timeout_ms)
+        # Same uniform handling as the runtime path: a fully-constant
+        # expression reduces to a plain Python bool, which must be
+        # wrapped before it can be asserted.
+        solver.add(term if z3.is_expr(term) else z3.BoolVal(bool(term)))
+        outcome = solver.check()
+        if outcome == z3.unsat:
+            problems.append(
+                f"invariant {expr!r} is unsatisfiable -- no binding of "
+                f"{sorted(builder.unbound)} can ever make it hold, so the "
+                f"procedure can never legitimately run"
+            )
+        elif outcome == z3.unknown:
+            problems.append(
+                f"invariant {expr!r} could not be decided within {timeout_ms}ms "
+                f"-- review manually before persisting"
+            )
+    return problems
