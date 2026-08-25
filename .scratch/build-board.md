@@ -208,22 +208,39 @@ git worktree add ..\sl-research -b lane/research origin/main
    1018 + 27, zero regressions). Placement note mirrors Question #2: module sits
    at services/ top level under the founder's explicit scoped grant recorded in
    the claim entry above; relocation later is a one-line import change.)*
-8. `[ ]` **Band 2.9 — Identity gate**: OIDC-only authN — real identity before
+8. `[x]` done @2026-08-26 — lane/core-b **Band 2.9 — Identity gate**: OIDC-only authN — real identity before
    multi-user exposure (ROADMAP: single-tenant posture frozen in code until
    enabled, cannot silently slip to Band 5). Token validation middleware,
    actor_id propagation into Events/ChangeSets/Reviews. Scope minimal:
    validation + propagation ONLY, no user management UI.
-   *(claimed @2026-08-25 — lane/core-b (this worktree). Scoped file grant from
-   founder assignment 2026-08-25, recorded here per OVERNIGHT MODE: NEW
-   services/authn.py + tests/test_authn_offline.py; EDITS api/deps.py,
-   main.py, config.py, api/ingest.py [events actor override],
-   services/changeset_record.py [author context resolution],
-   services/agent_review_state_machine.py [review-event actor context
-   fallback], requirements.txt [pyjwt[crypto] for RS256]. All edits outside
-   standing owned paths are disclosed here. No migrations.
-   HARDENING-lane note: H1's tenancy predicate builder extends this work —
-   authn.py keeps identity acquisition and tenancy filtering separate so H1
-   can consume Actors without coupling.)*
+   *(Shipped: services/authn.py — RS256-only OIDC validation vs JWKS [alg
+   whitelist enforced BEFORE key material so none/HS256 confusion dies
+   unexamined; iss/aud/exp/nbf/sub required; TTL-cached JWKS fetched OFF the
+   event loop via asyncio.to_thread with one refresh on unknown kid for IdP
+   rotation]; pure-ASGI actor middleware [same-task contextvar bracketing —
+   deliberately NOT BaseHTTPMiddleware, whose downstream task-split makes
+   attribution a gamble]. Teeth: a PRESENT-but-bad token is always 401 and
+   never degrades to anonymous; missing token is anonymous only in public
+   posture, 401 everywhere except /health+/docs once private visibility is on;
+   assert_boot_posture refuses boot on multi_user_exposure_enabled or
+   real_auth_enabled WITHOUT OIDC configured — every half-enabled posture has
+   a named refusal. Propagation at all three surfaces, validated identity
+   overriding self-asserted: ingest payload actor_id [events], ChangeSet
+   author omission resolves from contextvar or raises "unattributed"
+   [explicit authors incl procedures.py's quarantine timer untouched],
+   agent_review_events.actor falls back to contextvar [scope-key callers
+   unchanged]; get_scope prefers validated subject over X-Viewer-Id. Legacy
+   deps.require_trustworthy_identity kept intact — test_access pins its
+   message. No user management, no migrations; pyjwt[crypto] added to
+   requirements.txt [installed in this worktree's venv]. HARDENING H1 seam:
+   authn keeps identity ACQUISITION separate from tenancy FILTERING so H1's
+   predicate builder can consume Actors uncoupled. 30 offline proving tests in
+   tests/test_authn_offline.py [locally-generated RSA vs static JWKS,
+   pure-ASGI harness, fake-pool SQL-content proofs of override + fallback +
+   explicit-wins at each surface]. Suite: 1090 passed / 113 skipped /
+   0 failed (= rebased origin/main baseline + 30, zero regressions).
+   Rebased onto origin/main mid-item [board conflict resolved by taking
+   main's board wholesale + re-inserting this item].)*
 Rule: NO new migrations (schema needs route through CORE-A); no edits outside owned paths.
 
 ### Lane MEASURE (owns `experiments/harness/**`)
