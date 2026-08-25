@@ -293,9 +293,44 @@ Rule: NO new migrations (schema needs route through CORE-A); no edits outside ow
    stale_offered for all arms via inheritance, so Â§40's stale-refusal
    denominator read "no offers" forever in real sweeps; B/C now keep the
    offer (fixtures' own contract), pinned by test at B 0/7 Â· C 6/7(missed 1)
-   on the micro pack. Hand-derived verdict matrix asserted e2e: A 5/11,
-   B 6/11 (3 false-reuse), C 9/11 (1 false-reuse = the deliberate poisoned-
-   gate honest-negative). Harness suite 78/78 green.)*
+    on the micro pack. Hand-derived verdict matrix asserted e2e: A 5/11,
+    B 6/11 (3 false-reuse), C 9/11 (1 false-reuse = the deliberate poisoned-
+    gate honest-negative). Harness suite 78/78 green.)*
+4. `[x]` done @2026-08-26 â€” branch `lane/measure` **Band 3 prep â€”
+   extraction error-floor instrument**.
+   *(Shipped: `fixtures/error_floor/` = 42 hand-gold trace excerpts in four
+   themed files [files/commands/semantic/negatives] covering all five
+   observation types, each excerpt carrying a notes defense; ambiguous
+   readings excluded by authorship rule. `_rubric.md` IS the grading
+   contract â€” typed canonical-key equality after documented normalization
+   [path separators, whitespace collapse], token-Jaccard >= 0.5 for
+   free-text semantic labels, one-to-one greedy matching in gold order,
+   reason codes on every FP/FN [type_mismatch_vs_gold /
+   type_mismatch_in_predictions / key_mismatch_same_type /
+   missing_no_candidate / extra_no_gold]. `error_floor.py` pure grader +
+   fixture-validation teeth [closed type set, unique ef- ids, notes
+   mandatory, 30â€“50 count band, per-type coverage]. Scoreboard wiring:
+   `scoreboard.format_error_floor()` prints overall + per-type rates WITH
+   numerator/denominator [zero-denominator renders '-', never a fake
+   0.0/1.0], appendable to any Â§40 run via `--error-floor-results`;
+   `run_error_floor.py` CLI takes `--adapter module:function` resolved in
+   the CALLER's environment [harness never imports backend/** â€” lane
+   rule] or `--predictions` JSONL from an out-of-process extractor run;
+   exit 1 iff the adapter errored anywhere â€” a partial run never
+   masquerades as a floor. `demo_extractor.py` mirrors deterministic_v1's
+   published rules INCLUDING quirks so the instrument reads non-trivially
+   fully offline. LANDING BASELINE [demo mirror]: P 22/25 (0.880) Â·
+   R 22/30 (0.733) Â· F1 0.800 over golds=30/preds=25 â five known v1
+   quirks visible AS NUMBERS [compound `cd x && git commit` + flagged
+   `git -c â€¦ commit` mislabeled command_executed; `pip install pytest-cov`
+   substring false test_run; NotebookEdit whitelist miss; semantic layer
+   absent Ã—4 FN]; hand-derived confusion matrix asserted e2e EXACTLY,
+   incl. reason codes per discrepancy. Design note carried to Band 3: the
+   model extractor's NONE contract governs only the SEMANTIC layer â
+   `ls src` keeps its mechanical command_executed gold while warranting no
+   label [excerpts carry both layers wherever both are agreed].
+   Harness suite 126/126 green [78 prior + 48 new]. Zero backend edits;
+   no model calls this session.)*
 
 ### Lane RESEARCH (owns `.scratch/research/**`, updates to `RESEARCH_INTEGRATION_PLAN.md`)
 Tooling: `research_exa.py` at repo root (key lives in `backend/.env` as EXA_API_KEY â€”

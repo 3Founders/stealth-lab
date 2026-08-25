@@ -1,0 +1,216 @@
+{
+  "_comment": "Error-floor excerpts: Bash family (commit_made / test_run / command_executed). ef-cmd-004/005 (compound and flagged git commit) and ef-cmd-014 (pip install pytest-cov) are deliberate agreed-golds that diverge from deterministic_v1's startswith/substring rules — the measurable floor, each defended in notes.",
+  "excerpts": [
+    {
+      "excerpt_id": "ef-cmd-001",
+      "source_hint": "synthetic feature commit",
+      "trace_event": {
+        "event_id": "ev-c001",
+        "tool_name": "Bash",
+        "tool_input": {"command": "git commit -m 'add login flow'"},
+        "tool_output": {"stdout": "[main 1f2a3b4] add login flow", "exit_code": 0}
+      },
+      "gold": [
+        {"observation_type": "commit_made", "label": "Committed: git commit -m 'add login flow'", "properties": {"command": "git commit -m 'add login flow'"}}
+      ],
+      "notes": "Canonical commit."
+    },
+    {
+      "excerpt_id": "ef-cmd-002",
+      "source_hint": "synthetic checkpoint",
+      "trace_event": {
+        "event_id": "ev-c002",
+        "tool_name": "Bash",
+        "tool_input": {"command": "git commit -am \"wip: checkpoint before refactor\""}
+      },
+      "gold": [
+        {"observation_type": "commit_made", "label": "Committed: git commit -am \"wip: checkpoint before refactor\"", "properties": {"command": "git commit -am \"wip: checkpoint before refactor\""}}
+      ],
+      "notes": "-am variant still starts with git commit after strip."
+    },
+    {
+      "excerpt_id": "ef-cmd-003",
+      "source_hint": "synthetic sloppy shell",
+      "trace_event": {
+        "event_id": "ev-c003",
+        "tool_name": "Bash",
+        "tool_input": {"command": "   git commit -m indented"}
+      },
+      "gold": [
+        {"observation_type": "commit_made", "label": "Committed: git commit -m indented", "properties": {"command": "git commit -m indented"}}
+      ],
+      "notes": "Leading whitespace is irrelevant to what happened; normalization collapses it on both sides."
+    },
+    {
+      "excerpt_id": "ef-cmd-004",
+      "source_hint": "synthetic monorepo session",
+      "trace_event": {
+        "event_id": "ev-c004",
+        "tool_name": "Bash",
+        "tool_input": {"command": "cd backend && git commit -m fix tests"},
+        "tool_output": {"stdout": "[main b3c4d5e] fix tests", "exit_code": 0}
+      },
+      "gold": [
+        {"observation_type": "commit_made", "label": "Committed: cd backend && git commit -m fix tests", "properties": {"command": "cd backend && git commit -m fix tests"}}
+      ],
+      "notes": "AGREED: the output proves a commit was made. deterministic_v1's startswith('git commit') mislabels this command_executed — known gap (type_mismatch pair), not opinion."
+    },
+    {
+      "excerpt_id": "ef-cmd-005",
+      "source_hint": "synthetic pinned-identity commit",
+      "trace_event": {
+        "event_id": "ev-c005",
+        "tool_name": "Bash",
+        "tool_input": {"command": "git -c user.name=ci -c user.email=ci@local commit -m release v2"},
+        "tool_output": {"stdout": "[main c4d5e6f] release v2", "exit_code": 0}
+      },
+      "gold": [
+        {"observation_type": "commit_made", "label": "Committed: git -c user.name=ci -c user.email=ci@local commit -m release v2", "properties": {"command": "git -c user.name=ci -c user.email=ci@local commit -m release v2"}}
+      ],
+      "notes": "AGREED: flags between git and commit do not change what happened; same measurable startswith gap as ef-cmd-004."
+    },
+    {
+      "excerpt_id": "ef-cmd-006",
+      "source_hint": "synthetic staging step",
+      "trace_event": {
+        "event_id": "ev-c006",
+        "tool_name": "Bash",
+        "tool_input": {"command": "git add -A && git status --short"}
+      },
+      "gold": [
+        {"observation_type": "command_executed", "label": "Executed: git add -A && git status --short", "properties": {"command": "git add -A && git status --short"}}
+      ],
+      "notes": "Staging without committing is a plain command, not commit_made. Agreed line: no commit, no test."
+    },
+    {
+      "excerpt_id": "ef-cmd-007",
+      "source_hint": "synthetic targeted test run",
+      "trace_event": {
+        "event_id": "ev-c007",
+        "tool_name": "Bash",
+        "tool_input": {"command": "pytest -q tests/test_auth.py", "timeout": 60000},
+        "tool_output": {"stdout": "1 passed in 0.4s", "exit_code": 0}
+      },
+      "gold": [
+        {"observation_type": "test_run", "label": "Ran tests: pytest -q tests/test_auth.py", "properties": {"command": "pytest -q tests/test_auth.py"}}
+      ],
+      "notes": "Canonical pytest."
+    },
+    {
+      "excerpt_id": "ef-cmd-008",
+      "source_hint": "synthetic module invocation",
+      "trace_event": {
+        "event_id": "ev-c008",
+        "tool_name": "Bash",
+        "tool_input": {"command": "python -m pytest -x"}
+      },
+      "gold": [
+        {"observation_type": "test_run", "label": "Ran tests: python -m pytest -x", "properties": {"command": "python -m pytest -x"}}
+      ],
+      "notes": "python -m pytest runs tests; agreed."
+    },
+    {
+      "excerpt_id": "ef-cmd-009",
+      "source_hint": "synthetic js project",
+      "trace_event": {
+        "event_id": "ev-c009",
+        "tool_name": "Bash",
+        "tool_input": {"command": "npm test"}
+      },
+      "gold": [
+        {"observation_type": "test_run", "label": "Ran tests: npm test", "properties": {"command": "npm test"}}
+      ],
+      "notes": "Canonical npm test."
+    },
+    {
+      "excerpt_id": "ef-cmd-010",
+      "source_hint": "synthetic ci-parity run",
+      "trace_event": {
+        "event_id": "ev-c010",
+        "tool_name": "Bash",
+        "tool_input": {"command": "npm run test:ci"}
+      },
+      "gold": [
+        {"observation_type": "test_run", "label": "Ran tests: npm run test:ci", "properties": {"command": "npm run test:ci"}}
+      ],
+      "notes": "The :ci suffix does not stop this being a test run; agreed test_run."
+    },
+    {
+      "excerpt_id": "ef-cmd-011",
+      "source_hint": "synthetic go service",
+      "trace_event": {
+        "event_id": "ev-c011",
+        "tool_name": "Bash",
+        "tool_input": {"command": "go test ./internal/..."}
+      },
+      "gold": [
+        {"observation_type": "test_run", "label": "Ran tests: go test ./internal/...", "properties": {"command": "go test ./internal/..."}}
+      ],
+      "notes": "Canonical go test."
+    },
+    {
+      "excerpt_id": "ef-cmd-012",
+      "source_hint": "synthetic rust crate",
+      "trace_event": {
+        "event_id": "ev-c012",
+        "tool_name": "Bash",
+        "tool_input": {"command": "cargo test --release"}
+      },
+      "gold": [
+        {"observation_type": "test_run", "label": "Ran tests: cargo test --release", "properties": {"command": "cargo test --release"}}
+      ],
+      "notes": "Canonical cargo test."
+    },
+    {
+      "excerpt_id": "ef-cmd-013",
+      "source_hint": "synthetic coverage pass",
+      "trace_event": {
+        "event_id": "ev-c013",
+        "tool_name": "Bash",
+        "tool_input": {"command": "npx jest --coverage"}
+      },
+      "gold": [
+        {"observation_type": "test_run", "label": "Ran tests: npx jest --coverage", "properties": {"command": "npx jest --coverage"}}
+      ],
+      "notes": "npx jest executes jest; agreed test_run."
+    },
+    {
+      "excerpt_id": "ef-cmd-014",
+      "source_hint": "synthetic dependency install",
+      "trace_event": {
+        "event_id": "ev-c014",
+        "tool_name": "Bash",
+        "tool_input": {"command": "pip install pytest-cov"},
+        "tool_output": {"stdout": "Successfully installed pytest-cov-6.0.0", "exit_code": 0}
+      },
+      "gold": [
+        {"observation_type": "command_executed", "label": "Executed: pip install pytest-cov", "properties": {"command": "pip install pytest-cov"}}
+      ],
+      "notes": "AGREED: installing a package runs nothing. Substring 'pytest' makes deterministic_v1 call it test_run — known precision gap, deliberately included."
+    },
+    {
+      "excerpt_id": "ef-cmd-015",
+      "source_hint": "synthetic inspection",
+      "trace_event": {
+        "event_id": "ev-c015",
+        "tool_name": "Bash",
+        "tool_input": {"command": "ls -la /var/log"}
+      },
+      "gold": [
+        {"observation_type": "command_executed", "label": "Executed: ls -la /var/log", "properties": {"command": "ls -la /var/log"}}
+      ],
+      "notes": "Plain command; agreed command_executed."
+    },
+    {
+      "excerpt_id": "ef-cmd-016",
+      "source_hint": "synthetic empty invocation",
+      "trace_event": {
+        "event_id": "ev-c016",
+        "tool_name": "Bash",
+        "tool_input": {"command": ""}
+      },
+      "gold": [],
+      "notes": "An empty command executes nothing; correct output is zero observations."
+    }
+  ]
+}

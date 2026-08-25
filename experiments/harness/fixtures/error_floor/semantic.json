@@ -1,0 +1,110 @@
+{
+  "_comment": "Error-floor excerpts: semantic_label family. Golds 001-005 carry the mechanical observation AND (001-004) the agreed semantic label - one event can warrant one of each (rubric 'What counts as one excerpt'). The NONE contract governs ONLY the semantic layer: 005 keeps its mechanical command_executed but warrants NO label; 006-008 warrant nothing at all. Any semantic label emitted on 005-008 is a false positive. The Jaccard rule (not string equality) grades free-text predictions.",
+  "excerpts": [
+    {
+      "excerpt_id": "ef-sem-001",
+      "source_hint": "synthetic auth work, model-labeled",
+      "trace_event": {
+        "event_id": "ev-s001",
+        "tool_name": "Edit",
+        "tool_input": {"file_path": "src/services/auth_service.py", "old_string": "def verify(token): return True", "new_string": "def verify(token): return validate_signature(token)"}
+      },
+      "gold": [
+        {"observation_type": "file_touched", "label": "Modified src/services/auth_service.py", "properties": {"file_path": "src/services/auth_service.py", "tool_name": "Edit"}},
+        {"observation_type": "semantic_label", "label": "authentication implementation was modified", "properties": {"tool_name": "Edit"}}
+      ],
+      "notes": "The canonical example from the extractor's own prompt spec; both layers agreed."
+    },
+    {
+      "excerpt_id": "ef-sem-002",
+      "source_hint": "synthetic cleanup step",
+      "trace_event": {
+        "event_id": "ev-s002",
+        "tool_name": "Bash",
+        "tool_input": {"command": "rm -rf dist/"},
+        "tool_output": {"exit_code": 0}
+      },
+      "gold": [
+        {"observation_type": "command_executed", "label": "Executed: rm -rf dist/", "properties": {"command": "rm -rf dist/"}},
+        {"observation_type": "semantic_label", "label": "build output directory was deleted", "properties": {"tool_name": "Bash"}}
+      ],
+      "notes": "Mechanical command_executed plus the semantic reading; both agreed."
+    },
+    {
+      "excerpt_id": "ef-sem-003",
+      "source_hint": "synthetic ci authoring",
+      "trace_event": {
+        "event_id": "ev-s003",
+        "tool_name": "Write",
+        "tool_input": {"file_path": ".github/workflows/ci.yml", "content": "on: [push]\njobs: {test: {runs-on: ubuntu-latest}}"}
+      },
+      "gold": [
+        {"observation_type": "file_touched", "label": "Modified .github/workflows/ci.yml", "properties": {"file_path": ".github/workflows/ci.yml", "tool_name": "Write"}},
+        {"observation_type": "semantic_label", "label": "continuous integration pipeline configuration added", "properties": {"tool_name": "Write"}}
+      ],
+      "notes": "New-file creation still counts as touching the file path; semantic layer describes intent."
+    },
+    {
+      "excerpt_id": "ef-sem-004",
+      "source_hint": "synthetic local infra up",
+      "trace_event": {
+        "event_id": "ev-s004",
+        "tool_name": "Bash",
+        "tool_input": {"command": "docker compose up -d db"},
+        "tool_output": {"stdout": "Container db Started", "exit_code": 0}
+      },
+      "gold": [
+        {"observation_type": "command_executed", "label": "Executed: docker compose up -d db", "properties": {"command": "docker compose up -d db"}},
+        {"observation_type": "semantic_label", "label": "database container started", "properties": {"tool_name": "Bash"}}
+      ],
+      "notes": "Both layers agreed."
+    },
+    {
+      "excerpt_id": "ef-sem-005",
+      "source_hint": "synthetic listing",
+      "trace_event": {
+        "event_id": "ev-s005",
+        "tool_name": "Bash",
+        "tool_input": {"command": "ls src"},
+        "tool_output": {"stdout": "auth\nconfig.py\nmain.py"}
+      },
+      "gold": [
+        {"observation_type": "command_executed", "label": "Executed: ls src", "properties": {"command": "ls src"}}
+      ],
+      "notes": "Mechanical layer agreed: a command was executed. Semantic layer agreed: a directory listing says NOTHING semantic (the extractor's own NONE contract) — a label here is a false positive."
+    },
+    {
+      "excerpt_id": "ef-sem-006",
+      "source_hint": "synthetic manifest read",
+      "trace_event": {
+        "event_id": "ev-s006",
+        "tool_name": "Read",
+        "tool_input": {"file_path": "package.json"}
+      },
+      "gold": [],
+      "notes": "Reading a manifest warrants no semantic claim about the project."
+    },
+    {
+      "excerpt_id": "ef-sem-007",
+      "source_hint": "synthetic doc discovery",
+      "trace_event": {
+        "event_id": "ev-s007",
+        "tool_name": "Glob",
+        "tool_input": {"pattern": "**/*.md"}
+      },
+      "gold": [],
+      "notes": "Discovery, not action."
+    },
+    {
+      "excerpt_id": "ef-sem-008",
+      "source_hint": "synthetic planner update",
+      "trace_event": {
+        "event_id": "ev-s008",
+        "tool_name": "TodoWrite",
+        "tool_input": {"todos": [{"content": "write failing test", "status": "in_progress"}]}
+      },
+      "gold": [],
+      "notes": "Plan bookkeeping changes nothing in the world under measurement."
+    }
+  ]
+}

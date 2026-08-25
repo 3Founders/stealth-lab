@@ -119,6 +119,44 @@ def pairwise_comparisons(usable: list[dict], arms=ARMS,
     return lines
 
 
+def format_error_floor(summary: dict) -> list[str]:
+    """Extraction error-floor section (board MEASURE item 4).
+
+    Takes error_floor.summarize()'s detail dict; prints overall and
+    per-type precision/recall WITH numerator/denominator — same
+    no-bare-rates discipline as the arm table. Rendered '-' for a null
+    rate (zero denominator), never a fake 0.0/1.0.
+    """
+    def rate(num: int, den: int | None, val: float | None) -> str:
+        if den is None or val is None:
+            return f"{num}/{'?' if den is None else den} (-)"
+        return f"{num}/{den} ({val:.3f})"
+
+    lines = [
+        "EXTRACTION ERROR FLOOR (observation extraction vs hand-gold)",
+        (
+            f"excerpts={summary['n_excerpts']} "
+            f"adapter_errors={summary['n_error_excerpts']} "
+            f"golds={summary['n_gold']} predictions={summary['n_predictions']} "
+            f"TP={summary['tp']} FP={summary['fp']} FN={summary['fn']}"
+        ),
+        (
+            f"precision {rate(summary['tp'], summary['tp'] + summary['fp'], summary['precision'])}  "
+            f"recall {rate(summary['tp'], summary['tp'] + summary['fn'], summary['recall'])}  "
+            f"f1 ({summary['f1'] if summary['f1'] is not None else '-'})"
+        ),
+        f"{'type':<18}{'gold':>5} {'pred':>5} {'TP':>4} {'FP':>4} {'FN':>4} "
+        f"{'precision':>14} {'recall':>14}",
+    ]
+    for otype, m in summary["per_type"].items():
+        lines.append(
+            f"{otype:<18}{m['gold']:>5} {m['predictions']:>5} {m['tp']:>4} "
+            f"{m['fp']:>4} {m['fn']:>4} "
+            f"{rate(m['tp'], m['predictions'], m['precision']):>14} "
+            f"{rate(m['tp'], m['gold'], m['recall']):>14}")
+    return lines
+
+
 def render(summary_arms: dict[str, dict], pairwise_lines: list[str],
            n_tasks_total: int, n_usable: int, banner: str = "") -> str:
     out = []
@@ -192,11 +230,19 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--alpha", type=float, default=0.05)
     ap.add_argument("--target-power", type=float, default=0.80)
     ap.add_argument("--banner", default="SPEC 40 SCOREBOARD (synthetic fixtures)")
+    ap.add_argument("--error-floor-results", default=None,
+                    help="error_floor detail JSON; prints the extraction "
+                         "precision/recall section after the arm table")
     args = ap.parse_args(argv)
 
     text, detail = build_summary(
         [Path(p) for p in args.jsonl], Path(args.fixtures_dir),
         alpha=args.alpha, target_power=args.target_power, banner=args.banner)
+    if args.error_floor_results:
+        ef = json.loads(Path(args.error_floor_results).read_text(encoding="utf-8"))
+        ef_lines = format_error_floor(ef)
+        text = text.rstrip("\n") + "\n" + "\n".join(ef_lines) + "\n" + "=" * 78 + "\n"
+        detail["error_floor"] = ef
     print(text)
     out_path = Path(args.jsonl[-1]).with_suffix("").with_name(
         Path(args.jsonl[-1]).stem + "_scoreboard.json")

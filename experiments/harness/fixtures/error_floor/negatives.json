@@ -1,0 +1,71 @@
+{
+  "_comment": "Error-floor excerpts: hard negatives. Tools whose events warrant NO observation under any correct reading of ticket 04's taxonomy. These exist to measure precision honestly: an extractor that pads output inflates recall only by paying here.",
+  "excerpts": [
+    {
+      "excerpt_id": "ef-neg-001",
+      "source_hint": "synthetic plan update",
+      "trace_event": {
+        "event_id": "ev-n001",
+        "tool_name": "TodoWrite",
+        "tool_input": {"todos": [{"content": "refactor parser", "status": "completed"}]}
+      },
+      "gold": [],
+      "notes": "No world-change."
+    },
+    {
+      "excerpt_id": "ef-neg-002",
+      "source_hint": "synthetic lookup",
+      "trace_event": {
+        "event_id": "ev-n002",
+        "tool_name": "WebSearch",
+        "tool_input": {"query": "asyncpg pool recycle best practice"}
+      },
+      "gold": [],
+      "notes": "Research is not an observation about the project."
+    },
+    {
+      "excerpt_id": "ef-neg-003",
+      "source_hint": "synthetic delegation",
+      "trace_event": {
+        "event_id": "ev-n003",
+        "tool_name": "Task",
+        "tool_input": {"description": "explore retrieval paths", "subagent_type": "explore"}
+      },
+      "gold": [],
+      "notes": "Spawning a subagent is not itself a file/test/command fact; the SUBAGENT's own events carry those."
+    },
+    {
+      "excerpt_id": "ef-neg-004",
+      "source_hint": "synthetic search",
+      "trace_event": {
+        "event_id": "ev-n004",
+        "tool_name": "Grep",
+        "tool_input": {"pattern": "visibility_predicate", "output_mode": "files_with_matches"}
+      },
+      "gold": [],
+      "notes": "Search, not touch."
+    },
+    {
+      "excerpt_id": "ef-neg-005",
+      "source_hint": "synthetic asset read",
+      "trace_event": {
+        "event_id": "ev-n005",
+        "tool_name": "Read",
+        "tool_input": {"file_path": "assets/logo.png"}
+      },
+      "gold": [],
+      "notes": "Binary read; nothing touched, nothing semantic."
+    },
+    {
+      "excerpt_id": "ef-neg-006",
+      "source_hint": "synthetic background shell check",
+      "trace_event": {
+        "event_id": "ev-n006",
+        "tool_name": "BashOutput",
+        "tool_input": {"bash_id": "shell_7"}
+      },
+      "gold": [],
+      "notes": "Observing a prior shell's output is not a new executed command; the ORIGINAL Bash event owns that fact."
+    }
+  ]
+}

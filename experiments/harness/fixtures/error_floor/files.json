@@ -1,0 +1,149 @@
+{
+  "_comment": "Error-floor excerpts: file_touched family. Gold = agreed-correct observations written by hand per _rubric.md. ef-file-007 (NotebookEdit) and the normalization pair 008/009 are deliberate: v1's tool whitelist and raw-path echo are measurable behaviors, not assumptions.",
+  "excerpts": [
+    {
+      "excerpt_id": "ef-file-001",
+      "source_hint": "synthetic auth-flow session",
+      "trace_event": {
+        "event_id": "ev-f001",
+        "tool_name": "Edit",
+        "tool_input": {"file_path": "src/auth/login.py", "old_string": "def login(): pass", "new_string": "def login(user): return check(user)"}
+      },
+      "gold": [
+        {"observation_type": "file_touched", "label": "Modified src/auth/login.py", "properties": {"file_path": "src/auth/login.py", "tool_name": "Edit"}}
+      ],
+      "notes": "Canonical positive: Edit with a real path."
+    },
+    {
+      "excerpt_id": "ef-file-002",
+      "source_hint": "synthetic docs pass",
+      "trace_event": {
+        "event_id": "ev-f002",
+        "tool_name": "Write",
+        "tool_input": {"file_path": "docs/setup.md", "content": "# Setup\nrun make bootstrap"}
+      },
+      "gold": [
+        {"observation_type": "file_touched", "label": "Modified docs/setup.md", "properties": {"file_path": "docs/setup.md", "tool_name": "Write"}}
+      ],
+      "notes": "Write counts as touching."
+    },
+    {
+      "excerpt_id": "ef-file-003",
+      "source_hint": "synthetic model refactor",
+      "trace_event": {
+        "event_id": "ev-f003",
+        "tool_name": "MultiEdit",
+        "tool_input": {"file_path": "backend/app/models/user.py", "edits": [{"old_string": "class User", "new_string": "class User(Base)"}]}
+      },
+      "gold": [
+        {"observation_type": "file_touched", "label": "Modified backend/app/models/user.py", "properties": {"file_path": "backend/app/models/user.py", "tool_name": "MultiEdit"}}
+      ],
+      "notes": "MultiEdit with one edit; still one file_touched."
+    },
+    {
+      "excerpt_id": "ef-file-004",
+      "source_hint": "synthetic malformed call",
+      "trace_event": {
+        "event_id": "ev-f004",
+        "tool_name": "Edit",
+        "tool_input": {"old_string": "foo()", "new_string": "bar()"}
+      },
+      "gold": [],
+      "notes": "No file_path: nothing identifies WHAT was touched; correct output is zero observations, not a guess."
+    },
+    {
+      "excerpt_id": "ef-file-005",
+      "source_hint": "synthetic code-reading step",
+      "trace_event": {
+        "event_id": "ev-f005",
+        "tool_name": "Read",
+        "tool_input": {"file_path": "src/main.py"}
+      },
+      "gold": [],
+      "notes": "Reading is not touching. A file_touched here is a false positive, full stop."
+    },
+    {
+      "excerpt_id": "ef-file-006",
+      "source_hint": "synthetic discovery step",
+      "trace_event": {
+        "event_id": "ev-f006",
+        "tool_name": "Glob",
+        "tool_input": {"pattern": "**/*.py"}
+      },
+      "gold": [],
+      "notes": "Listing is not touching."
+    },
+    {
+      "excerpt_id": "ef-file-007",
+      "source_hint": "synthetic notebook analysis",
+      "trace_event": {
+        "event_id": "ev-f007",
+        "tool_name": "NotebookEdit",
+        "tool_input": {"notebook_path": "analysis/scratch.ipynb", "new_source": "import pandas"}
+      },
+      "gold": [
+        {"observation_type": "file_touched", "label": "Modified analysis/scratch.ipynb", "properties": {"file_path": "analysis/scratch.ipynb", "tool_name": "NotebookEdit"}}
+      ],
+      "notes": "AGREED: NotebookEdit edits a file like any other. deterministic_v1's Edit/Write/MultiEdit whitelist misses it — known measurable gap (recall), not a rubric opinion."
+    },
+    {
+      "excerpt_id": "ef-file-008",
+      "source_hint": "synthetic windows-checkout session",
+      "trace_event": {
+        "event_id": "ev-f008",
+        "tool_name": "Write",
+        "tool_input": {"file_path": "src\\auth\\tokens.py", "content": "TOKEN_TTL = 3600"}
+      },
+      "gold": [
+        {"observation_type": "file_touched", "label": "Modified src/auth/tokens.py", "properties": {"file_path": "src/auth/tokens.py", "tool_name": "Write"}}
+      ],
+      "notes": "Same file as gold states in forward slashes; separator normalization must match this (rubric rule 2)."
+    },
+    {
+      "excerpt_id": "ef-file-009",
+      "source_hint": "synthetic config tweak",
+      "trace_event": {
+        "event_id": "ev-f009",
+        "tool_name": "Edit",
+        "tool_input": {"file_path": "./src/config.py", "old_string": "DEBUG = False", "new_string": "DEBUG = True"}
+      },
+      "gold": [
+        {"observation_type": "file_touched", "label": "Modified src/config.py", "properties": {"file_path": "src/config.py", "tool_name": "Edit"}}
+      ],
+      "notes": "Leading ./ must normalize away (rubric rule 2)."
+    },
+    {
+      "excerpt_id": "ef-file-010",
+      "source_hint": "synthetic broken tool call",
+      "trace_event": {
+        "event_id": "ev-f010",
+        "tool_name": "Edit",
+        "tool_input": {"file_path": "", "old_string": "a", "new_string": "b"}
+      },
+      "gold": [],
+      "notes": "Empty path = no identified file; empty-string key would fail validation if anyone emitted it."
+    },
+    {
+      "excerpt_id": "ef-file-011",
+      "source_hint": "synthetic search step",
+      "trace_event": {
+        "event_id": "ev-f011",
+        "tool_name": "Grep",
+        "tool_input": {"pattern": "TODO", "path": "src"}
+      },
+      "gold": [],
+      "notes": "Search is not touch."
+    },
+    {
+      "excerpt_id": "ef-file-012",
+      "source_hint": "synthetic reference fetch",
+      "trace_event": {
+        "event_id": "ev-f012",
+        "tool_name": "WebFetch",
+        "tool_input": {"url": "https://docs.python.org/3/library/asyncio.html", "prompt": "timeout semantics"}
+      },
+      "gold": [],
+      "notes": "No local file involved."
+    }
+  ]
+}

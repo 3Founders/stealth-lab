@@ -1,0 +1,173 @@
+{
+  "extractor": "demo_extractor:deterministic_v1_demo",
+  "n_excerpts": 42,
+  "n_error_excerpts": 0,
+  "n_gold": 30,
+  "n_predictions": 25,
+  "tp": 22,
+  "fp": 3,
+  "fn": 8,
+  "precision": 0.88,
+  "recall": 0.7333,
+  "f1": 0.8,
+  "per_type": {
+    "file_touched": {
+      "gold": 8,
+      "predictions": 7,
+      "tp": 7,
+      "fp": 0,
+      "fn": 1,
+      "precision": 1.0,
+      "recall": 0.875,
+      "f1": 0.9333
+    },
+    "commit_made": {
+      "gold": 5,
+      "predictions": 3,
+      "tp": 3,
+      "fp": 0,
+      "fn": 2,
+      "precision": 1.0,
+      "recall": 0.6,
+      "f1": 0.75
+    },
+    "test_run": {
+      "gold": 7,
+      "predictions": 8,
+      "tp": 7,
+      "fp": 1,
+      "fn": 0,
+      "precision": 0.875,
+      "recall": 1.0,
+      "f1": 0.9333
+    },
+    "command_executed": {
+      "gold": 6,
+      "predictions": 7,
+      "tp": 5,
+      "fp": 2,
+      "fn": 1,
+      "precision": 0.7143,
+      "recall": 0.8333,
+      "f1": 0.7692
+    },
+    "semantic_label": {
+      "gold": 4,
+      "predictions": 0,
+      "tp": 0,
+      "fp": 0,
+      "fn": 4,
+      "precision": null,
+      "recall": 0.0,
+      "f1": null
+    }
+  },
+  "discrepancies": [
+    {
+      "excerpt_id": "ef-cmd-004",
+      "fp": [
+        {
+          "observation_type": "command_executed",
+          "key": "cd backend && git commit -m fix tests",
+          "reason": "type_mismatch_vs_gold"
+        }
+      ],
+      "fn": [
+        {
+          "observation_type": "commit_made",
+          "key": "cd backend && git commit -m fix tests",
+          "reason": "type_mismatch_in_predictions"
+        }
+      ]
+    },
+    {
+      "excerpt_id": "ef-cmd-005",
+      "fp": [
+        {
+          "observation_type": "command_executed",
+          "key": "git -c user.name=ci -c user.email=ci@local commit -m release v2",
+          "reason": "type_mismatch_vs_gold"
+        }
+      ],
+      "fn": [
+        {
+          "observation_type": "commit_made",
+          "key": "git -c user.name=ci -c user.email=ci@local commit -m release v2",
+          "reason": "type_mismatch_in_predictions"
+        }
+      ]
+    },
+    {
+      "excerpt_id": "ef-cmd-014",
+      "fp": [
+        {
+          "observation_type": "test_run",
+          "key": "pip install pytest-cov",
+          "reason": "type_mismatch_vs_gold"
+        }
+      ],
+      "fn": [
+        {
+          "observation_type": "command_executed",
+          "key": "pip install pytest-cov",
+          "reason": "type_mismatch_in_predictions"
+        }
+      ]
+    },
+    {
+      "excerpt_id": "ef-file-007",
+      "fp": [],
+      "fn": [
+        {
+          "observation_type": "file_touched",
+          "key": "analysis/scratch.ipynb",
+          "reason": "missing_no_candidate"
+        }
+      ]
+    },
+    {
+      "excerpt_id": "ef-sem-001",
+      "fp": [],
+      "fn": [
+        {
+          "observation_type": "semantic_label",
+          "key": "authentication implementation was modified",
+          "reason": "missing_no_candidate"
+        }
+      ]
+    },
+    {
+      "excerpt_id": "ef-sem-002",
+      "fp": [],
+      "fn": [
+        {
+          "observation_type": "semantic_label",
+          "key": "build output directory was deleted",
+          "reason": "missing_no_candidate"
+        }
+      ]
+    },
+    {
+      "excerpt_id": "ef-sem-003",
+      "fp": [],
+      "fn": [
+        {
+          "observation_type": "semantic_label",
+          "key": "continuous integration pipeline configuration added",
+          "reason": "missing_no_candidate"
+        }
+      ]
+    },
+    {
+      "excerpt_id": "ef-sem-004",
+      "fp": [],
+      "fn": [
+        {
+          "observation_type": "semantic_label",
+          "key": "database container started",
+          "reason": "missing_no_candidate"
+        }
+      ]
+    }
+  ]
+}

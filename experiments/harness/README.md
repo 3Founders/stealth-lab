@@ -37,6 +37,37 @@ waive for arms with no substrate path: arm B lacking a trail is the
 experimental contrast, not a failure. One scenario deliberately poisons the
 gate so arm C trips it — the honest-negative slot.
 
+## Extraction error floor (Band 3 prep)
+
+`fixtures/error_floor/` holds 42 hand-gold trace excerpts (agreed-correct
+observations written by a human, each with a notes defense; ambiguous cases
+excluded by authorship rule) and `_rubric.md`, which IS the grading contract:
+typed canonical-key equality after documented normalization (path separators,
+whitespace collapse), token-Jaccard >= 0.5 for free-text semantic labels,
+one-to-one greedy matching in gold order, reason codes on every FP/FN.
+
+Every future extractor change prints its precision/recall against that floor:
+
+```powershell
+# real extractor (backend on PYTHONPATH in the CALLER's env — this harness
+# never imports backend/**, lane rule):
+backend\.venv\Scripts\python.exe experiments\harness\run_error_floor.py \
+    --adapter app.services.observations:extract_deterministic_observations
+# offline demo baseline (mirror of deterministic_v1's rules incl. quirks):
+backend\.venv\Scripts\python.exe experiments\harness\run_error_floor.py \
+    --adapter demo_extractor:deterministic_v1_demo
+```
+
+prints every discrepancy with its reason code, then the scoreboard section
+(also available standalone: `scoreboard.format_error_floor()`, or appended to
+any §40 run via `scoreboard.main(..., "--error-floor-results <detail.json>")`).
+Exit code 1 iff an adapter errored on any excerpt — a partial run never
+masquerades as a floor. Landing baseline (demo mirror, 2026-08-26):
+P 22/25 (0.880) · R 22/30 (0.733) · F1 0.800; the five deliberate v1 quirks
+(compound/flagged git commit, pip install pytest-cov substring, NotebookEdit
+whitelist, no semantic layer) are pinned by test in
+`tests/test_error_floor_end_to_end.py`.
+
 ## First real corpus (Claude Code sessions)
 
 ```powershell
