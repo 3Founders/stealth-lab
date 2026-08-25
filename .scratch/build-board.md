@@ -34,9 +34,9 @@ git worktree add ..\sl-research -b lane/research origin/main
 Rule: NO new migrations (schema unchanged); no edits outside owned paths.
 
 ### Lane MEASURE (owns `experiments/harness/**`)
-1. `[ ]` §40 harness skeleton adapted from `experiments/swebench_pro/run_graph_experiment.py`;
+1. `[x] done 2026-08-25 — lane/measure` §40 harness skeleton adapted from `experiments/swebench_pro/run_graph_experiment.py`;
    arms A/B/C; synthetic fixtures only until CORE-A lands 1.7.
-2. `[ ]` Scoreboard script: pass-rate/cost/false-reuse/stale-refusal + power-analysis
+2. `[x] done 2026-08-25 — lane/measure` Scoreboard script: pass-rate/cost/false-reuse/stale-refusal + power-analysis
    footer (discordant pairs beside every p-value).
 
 ### Lane RESEARCH (owns `.scratch/research/**`, updates to `RESEARCH_INTEGRATION_PLAN.md`)
@@ -97,3 +97,12 @@ blocking question in the Log, continue with the next queue item.
 - Board rewritten for worktree multi-lane mode (4 lanes + integrator).
 - 2026-08-25 research lane: queue items 2 (competitive sweep → `.scratch/research/competitive-sweep-mem0-letta-zep-hipporag-awm.md`) and 3 (τ-Knowledge re-check → `.scratch/research/tau-knowledge-ceiling-recheck.md`) also done same session.
 - **Blocking question #1 (non-blocking for current work):** `EXA_API_KEY` is not present in any worktree — `backend/.env` is gitignored so it never propagated from the original checkout. Options: (a) founder pastes key into each worktree's `backend/.env` (proposed default), (b) lane falls back to built-in websearch permanently (worked fine today), (c) commit a template only.
+- MEASURE (2026-08-25): harness skeleton + scoreboard landed on `lane/measure`
+  (43/43 harness tests green; smoke sweep of all 10 fixture tasks passes
+  end-to-end offline). Backend suite delta vs pristine origin/main = ZERO:
+  identical 103 failed / 851 passed / 1 skipped on both — pre-existing gap in
+  fresh worktrees (backend/.env absent: STEALTHLAB_MCP_TOKEN collection
+  errors when unset; trace_ingestion e2e failures under full-run ordering).
+  Not a MEASURE regression; needs an integrator decision on worktree env setup.
+  Rebased onto origin/main before push per OVERNIGHT MODE.
+>>>>>>> 35670e7 (measure: spec-40 harness skeleton - three-arm runner, scoring, exact-McNemar scoreboard with power footer; synthetic fixtures + 43 harness-local tests)

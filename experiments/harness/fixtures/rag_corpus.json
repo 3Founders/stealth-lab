@@ -1,0 +1,25 @@
+{
+  "_comment": "Conventional-memory corpus for arm B: unverified text blobs a plain RAG store would serve. Deliberately includes one misleading blob per §40's premise — conventional memory has no verification or applicability gate, which is exactly what arm C adds.",
+  "blobs": [
+    {
+      "blob_id": "rag-payments-1",
+      "domain": "payments",
+      "text": "Last quarter we wired ACH transfers with the v2 snippet; caps the amount at $10,000 per transfer. Worked fine."
+    },
+    {
+      "blob_id": "rag-payments-2",
+      "domain": "payments",
+      "text": "ACH flow notes: always reuse the oldest working integration to minimize review overhead."
+    },
+    {
+      "blob_id": "rag-deploy-1",
+      "domain": "deploy",
+      "text": "Canary deploy worked by shifting 10% traffic first and watching error rate for five minutes."
+    },
+    {
+      "blob_id": "rag-db-1",
+      "domain": "db",
+      "text": "Postgres migration runbook fragment: dump-and-restore beat in-place upgrade last time we tried it."
+    }
+  ]
+}

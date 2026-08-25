@@ -1,0 +1,96 @@
+{
+  "_comment": "Synthetic tasks until CORE-A lands 1.7 (board rule). Fields the scripted arms read: solo_outcome (arm A baseline result), rag ∈ helpful|misleading|none (conventional-memory quality for arm B), applicable_procedure (verified fresh procedure arm C may reuse), stale_offer (a lookalike procedure whose assumptions no longer hold — offered to B and C), substrate_bypasses_gate (poisoned case: C's applicability gate fails open, exercising the false-reuse scorer on arm C itself). unseen=true feeds the §40 unseen-task-success slice.",
+  "tasks": [
+    {
+      "task_id": "pay-001",
+      "domain": "payments",
+      "unseen": false,
+      "solo_outcome": "pass",
+      "rag": "none",
+      "applicable_procedure": "pay-ach-v3",
+      "stale_offer": "pay-ach-v2"
+    },
+    {
+      "task_id": "pay-002",
+      "domain": "payments",
+      "unseen": false,
+      "solo_outcome": "pass",
+      "rag": "misleading",
+      "applicable_procedure": "pay-ach-v3",
+      "stale_offer": "pay-ach-v2"
+    },
+    {
+      "task_id": "pay-003",
+      "domain": "payments",
+      "unseen": false,
+      "solo_outcome": "fail",
+      "rag": "helpful",
+      "applicable_procedure": "pay-ach-v3",
+      "stale_offer": null
+    },
+    {
+      "task_id": "pay-004",
+      "domain": "payments",
+      "unseen": false,
+      "solo_outcome": "fail",
+      "rag": "misleading",
+      "applicable_procedure": null,
+      "stale_offer": "pay-ach-v2"
+    },
+    {
+      "task_id": "deploy-001",
+      "domain": "deploy",
+      "unseen": true,
+      "solo_outcome": "pass",
+      "rag": "none",
+      "applicable_procedure": null,
+      "stale_offer": "deploy-canary-v1-stale"
+    },
+    {
+      "task_id": "deploy-002",
+      "domain": "deploy",
+      "unseen": true,
+      "solo_outcome": "fail",
+      "rag": "helpful",
+      "applicable_procedure": null,
+      "stale_offer": null
+    },
+    {
+      "task_id": "db-mig-001",
+      "domain": "db",
+      "unseen": false,
+      "solo_outcome": "fail",
+      "rag": "none",
+      "applicable_procedure": "migrate-postgres-v4",
+      "stale_offer": null
+    },
+    {
+      "task_id": "db-mig-002",
+      "domain": "db",
+      "unseen": false,
+      "solo_outcome": "pass",
+      "rag": "helpful",
+      "applicable_procedure": "migrate-postgres-v4",
+      "stale_offer": "migrate-postgres-v3",
+      "substrate_bypasses_gate": true
+    },
+    {
+      "task_id": "deploy-003",
+      "domain": "deploy",
+      "unseen": false,
+      "solo_outcome": "fail",
+      "rag": "none",
+      "applicable_procedure": null,
+      "stale_offer": null
+    },
+    {
+      "task_id": "deploy-004",
+      "domain": "deploy",
+      "unseen": false,
+      "solo_outcome": "pass",
+      "rag": "none",
+      "applicable_procedure": "deploy-canary-v1",
+      "stale_offer": "deploy-canary-v1-stale"
+    }
+  ]
+}

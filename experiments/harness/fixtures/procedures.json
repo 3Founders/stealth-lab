@@ -1,0 +1,62 @@
+{
+  "_comment": "Synthetic procedure library. stale=true is GROUND TRUTH used by scoring.py to grade refusals; agents never see this field through the MCP surface stub (they only get assumptions/evidence, so refusing is a real decision in principle).",
+  "procedures": [
+    {
+      "procedure_id": "pay-ach-v3",
+      "domain": "payments",
+      "version": "v3",
+      "verified": true,
+      "stale": false,
+      "assumptions": ["US domestic ACH", "per-transfer limit <= $25,000", "settlement T+1 acceptable"],
+      "evidence": {"executions": 14, "success_rate": 0.93}
+    },
+    {
+      "procedure_id": "pay-ach-v2",
+      "domain": "payments",
+      "version": "v2",
+      "verified": true,
+      "stale": true,
+      "assumptions": ["US domestic ACH", "per-transfer limit <= $10,000"],
+      "evidence": {"executions": 9, "success_rate": 0.88},
+      "staleness_reason": "limit raised to $25k; v2 hardcodes the old cap"
+    },
+    {
+      "procedure_id": "deploy-canary-v1",
+      "domain": "deploy",
+      "version": "v1",
+      "verified": true,
+      "stale": false,
+      "assumptions": ["kubernetes >= 1.24", "service exposes /healthz"],
+      "evidence": {"executions": 6, "success_rate": 0.83}
+    },
+    {
+      "procedure_id": "deploy-canary-v1-stale",
+      "domain": "deploy",
+      "version": "v1",
+      "verified": true,
+      "stale": true,
+      "assumptions": ["service exposes /health on port 8080"],
+      "evidence": {"executions": 6, "success_rate": 0.83},
+      "staleness_reason": "target services moved health endpoint to /healthz; v1 probes /health"
+    },
+    {
+      "procedure_id": "migrate-postgres-v4",
+      "domain": "db",
+      "version": "v4",
+      "verified": true,
+      "stale": false,
+      "assumptions": ["postgres >= 14", "downtime window <= 30 min tolerated"],
+      "evidence": {"executions": 11, "success_rate": 0.91}
+    },
+    {
+      "procedure_id": "migrate-postgres-v3",
+      "domain": "db",
+      "version": "v3",
+      "verified": true,
+      "stale": true,
+      "assumptions": ["postgres 12 only", "pg_upgrade in-place"],
+      "evidence": {"executions": 7, "success_rate": 0.71},
+      "staleness_reason": "fleet is on pg>=14; v3's in-place path corrupts 14+ catalogs"
+    }
+  ]
+}
