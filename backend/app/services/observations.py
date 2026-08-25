@@ -34,6 +34,11 @@ DETERMINISTIC_CODE_VERSION = "1"
 MODEL_EXTRACTOR_NAME = "semantic_label_v1"
 MODEL_CODE_VERSION = "1"
 
+# Band 2.8: claim promotion is itself a versioned extraction step -- this
+# stamp lands in the promoted claim's properties so replay can verify it
+# the same way it verifies every other stage's stamp.
+CLAIM_PROMOTION_STAMP = "claim_promotion@1"
+
 _TEST_COMMAND_MARKERS = ("pytest", "npm test", "npm run test", "go test", "cargo test", "jest")
 
 
@@ -283,7 +288,7 @@ async def promote_observation_to_claim(
         version_parts.append(row["model_id"])
     extraction_version = ":".join(version_parts)
 
-    return await capture_claim(
+    claim_id = await capture_claim(
         pool,
         statement=row["label"],
         task_ids=task_ids,
@@ -291,7 +296,25 @@ async def promote_observation_to_claim(
         claim_type=row["observation_type"],
         epistemic_status=epistemic_status,
         extraction_version=extraction_version,
+        properties={"promoted_by": CLAIM_PROMOTION_STAMP},
         embedder=embedder,
         owner_id=row["owner_id"],
         visibility=row["visibility"],
     )
+
+    # Band 2.8 (replayability): first-class provenance link from the
+    # claim back to the observation it was promoted from. Without this
+    # row the spec's replay sentence -- "claim C was produced by
+    # extractor X from trace E" -- stops at the claim: the extractor
+    # version rode in properties.extraction_version, but nothing joined
+    # a claim to its source observation/events. Written after the
+    # capture (same follow-up-write idiom procedure_extraction/__init__.py
+    # uses for its post-capture_procedure UPDATE), ON CONFLICT DO
+    # NOTHING so a re-promotion of the same pair is idempotent.
+    if claim_id is not None:
+        await pool.execute(
+            "INSERT INTO claim_sources (claim_id, observation_id) "
+            "VALUES ($1::uuid, $2::uuid) ON CONFLICT DO NOTHING",
+            claim_id, observation_id,
+        )
+    return claim_id

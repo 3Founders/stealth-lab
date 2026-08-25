@@ -73,15 +73,38 @@ git worktree add ..\sl-research -b lane/research origin/main
    tests/test_tms_readability_e2e.py — vanish from hybrid/lexical-only/
    expansion/structural-tier + history-stays-queryable (raw row survives,
    subject history read sees both generations, project_state sees only IN).
-   LIVE RUN: this worktree NOW HAS backend/.env (Supabase URL; earlier log
-   notes said absent — changed since) and the schema is fully migrated:
-   all 5 e2e proofs PASSED against the real DB. Full standard suite (no env):
-   989 passed / 111 skipped / 0 failed. Full suite WITH DATABASE_URL exported:
-   1059 passed / 40 failed / 1 skipped — the same 40 fail identically on a
-   STASHED CLEAN TREE (applicability/environment-probe/procedure-extraction/
-   procedures/state e2e), i.e. pre-existing shared-instance drift, exactly
-   what queue item 2's disposable-DB chain run must sort out; NOT a 2.7
-   regression. tms-e2e fixtures self-clean by name prefix; zero rows left.)*
+    LIVE RUN: this worktree NOW HAS backend/.env (Supabase URL; earlier log
+    notes said absent — changed since) and the schema is fully migrated:
+    all 5 e2e proofs PASSED against the real DB. Full standard suite (no env):
+    989 passed / 111 skipped / 0 failed. Full suite WITH DATABASE_URL exported:
+    1059 passed / 40 failed / 1 skipped — the same 40 fail identically on a
+    STASHED CLEAN TREE (applicability/environment-probe/procedure-extraction/
+    procedures/state e2e), i.e. pre-existing shared-instance drift, exactly
+    what queue item 2's disposable-DB chain run must sort out; NOT a 2.7
+    regression. tms-e2e fixtures self-clean by name prefix; zero rows left.*
+6. `[x]` done @2026-08-25 — branch `lane/core-a` **Band 2.8 end-to-end
+   replayability**: observations/claims/procedure-candidates regenerate
+   deterministically from raw traces, extractor versions stamped.
+   *(Shipped: db/26_replayability.sql — claim_sources join table closing the
+   ONE broken provenance hop (claim→observation), FKs both ways, reverse
+   index, fresh-start compliant; app/execution/replay.py boundary —
+   fingerprint/extractor_stamps registry pinned to the constants that
+   govern each write path / regenerate_observations pure re-run /
+   expected_claim_shape mirror of promotion / replay_session verifier over
+   all three layers; promotion now writes claim_sources +
+   properties.promoted_by="claim_promotion@1". SCOPED EDIT DISCLOSED:
+   app/services/observations.py promote_observation_to_claim only (unowned
+   file, writer-and-table-in-one-change per 1.9a's half-gate rule; ratify
+   or revert-with-replacement). 15 offline proving tests + 2 live e2e in
+   tests/test_band2_8_replayability.py: founding loop replays
+   bit-identically twice from raw traces, tamper-detection teeth both
+   layers, spec sentence "claim←extractor X←trace E" proven by join.
+   Suite: 1004 passed / 113 skipped / 0 failed (no env); WITH DATABASE_URL:
+   1075 passed / 40 failed / 2 skipped — identical 40 to the 2.7 baseline
+   drift set, zero new. db/26 applied to the shared instance (additive,
+   idempotent) so the live proof could run.
+   FINDINGS filed in Log: extract_procedure V0 gap (#4) + shared-instance
+   migration state (queue-2 input).)*
 ### Lane CORE-B — extraction & gating (owns `backend/app/services/procedure_extraction/**`, `invariants.py`, `applicability.py`, `precondition_gate.py`, `state.py`)
 1. `[x] done 2026-08-25 — lane/core-b` **1.8a** Precondition relevance filter (derive gates only load-bearing facts).
 2. `[x] done 2026-08-25 — lane/core-b` **1.8b** V6 authoring-time invariant validator + z3 off event loop w/ timeout.
@@ -352,3 +375,27 @@ blocking question in the Log, continue with the next queue item.
   (d) knowledge_conflict.py's pair-scan still considers OUT claims — that is
   conflict DETECTION over history, not retrieval-for-context, left untouched
   deliberately.
+
+- CORE-A (2026-08-25, fourth wave): **Band 2.8 replayability** done — see
+  queue item 6. Two findings for the integrator/other lanes:
+  - **Question #4 (non-blocking for 2.8, blocks the founding loop's last
+    hop):** `extract_procedure()` (CORE-B path) calls `capture_procedure()`
+    without `provenance` or `scope_type`/`scope_entity_id`, but Band 1.3's V0
+    gate rejects both when absent — on any FULLY migrated DB,
+    extract_procedure raises V0Violation at persist time. Its capstone e2e
+    passes today only where migration 21 is missing (the failure surfaces
+    earlier, as UndefinedTable/UndefinedColumn). Static read of both files;
+    not exercised end-to-end anywhere green. Options: (a) route to CORE-B to
+    pass provenance="public_generated" + scope through extract_procedure
+    (proposed default — their owned pipeline), (b) CORE-A takes it with the
+    procedures.py storage boundary, (c) relax capture_procedure defaults
+    (rejected: reopens the Band 1.3 gate).
+  - **Shared-instance drift inventory (queue-2 input):** the long-lived dev
+    DATABASE_URL has migrations through ~18 only: NO procedure_extractors
+    (20), no scope columns on procedures (21), hence no executions/evidence/
+    changesets either. db/26 applied by me (additive, idempotent). The 40-fail
+    env'd baseline is fully explained by this; nothing newer than 18 should be
+    assumed present in any e2e until queue 2 runs the chain on a clean DB.
+  - Candidate-replay e2e schema-probes and SKIPs (documented reason) on the
+    drifted instance instead of adding red; it asserts full three-layer
+    equality wherever 20–22 are properly applied (CI / post-queue-2 DB).
