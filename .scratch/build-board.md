@@ -129,17 +129,35 @@ git worktree add ..\sl-research -b lane/research origin/main
    111 skipped / 0 failed (= origin/main baseline 989 + these 29, zero regressions).
    Integrator-approved scoped files for this item only: services/trace_worker.py +
    tests/test_episode_segmentation.py.)*
-7. `[ ]` **Band 2.6 — ClaimFamily resolver v0**: project-scoped blocking +
+7. `[x]` done @2026-08-25 — lane/core-b **Band 2.6 — ClaimFamily resolver v0**: project-scoped blocking +
    proposition match per spec §10 (similarity is candidate generation, not
    identity); cross-project families deferred to Band 4. Entities managed:
    ClaimFamily `[V]`. New module `backend/app/services/claim_family.py` +
    proving tests.
-   *(claimed @2026-08-25 — lane/core-b (this worktree). Scoped file grant from
-   founder assignment 2026-08-25: backend/app/services/claim_family.py +
-   backend/tests/test_claim_family_offline.py — both otherwise outside every
-   owned path; recorded here per OVERNIGHT MODE. No migration: family hub rides
-   knowledge_nodes node_type='claim_family' + OWNS/FAMILY_MEMBER edges, same
-   generic-table idiom as claims.py/failure_capture.py.)*
+   *(Shipped: pure decision core — normalized subject|predicate|object|type
+   canonical-key as THE identity gate [fails closed on statement-only claims];
+   dominant contradiction check [CONTRADICTS edges + negation flips are distinct
+   at ANY similarity — the spec-10 tooth]; condition matching splits
+   same_family vs related_family; conservative ontology-overlap ladder
+   [generalizes/specializes only on strictly-nested token sets per §10's own
+   hierarchy example, >=2-of-3 shared slots for related]. Blocking = hard
+   project-scope-pair filter [nothing implicit-global; a global-scoped twin is
+   NOT a v0 candidate], similarity only ranks/caps survivors [BLOCK_LIMIT named
+   constant]. DB boundary rides EXISTING generic tables, NO migration:
+   node_type='claim_family' hub [provenance='system_pending_review' +
+   RESOLVER_VERSION extractor stamp per V0 derived-object rule] + OWNS/
+   FAMILY_MEMBER membership edges, fully idempotent re-resolution;
+   truth_state='OUT' claims neither anchor nor join families. Related/
+   generalizes verdicts returned but NOT persisted in v0 — family-graph edges
+   between hubs are Band 4's LSH wave. Outcome matching honestly absent: claims
+   carry no outcome field yet. 27 offline proving tests in
+   tests/test_claim_family_offline.py [max-similarity contradicted twin stays
+   distinct; SQL-content proofs for hard scope terms/TMS exclusion/visibility
+   fragment/LIMIT; write-behavior proofs for stamps/idempotency/no-winner-no-
+   writes]. Suite: 1045 passed / 111 skipped / 0 failed (= prior lane baseline
+   1018 + 27, zero regressions). Placement note mirrors Question #2: module sits
+   at services/ top level under the founder's explicit scoped grant recorded in
+   the claim entry above; relocation later is a one-line import change.)*
 Rule: NO new migrations (schema needs route through CORE-A); no edits outside owned paths.
 
 ### Lane MEASURE (owns `experiments/harness/**`)
