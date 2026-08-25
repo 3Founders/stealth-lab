@@ -129,6 +129,17 @@ git worktree add ..\sl-research -b lane/research origin/main
    111 skipped / 0 failed (= origin/main baseline 989 + these 29, zero regressions).
    Integrator-approved scoped files for this item only: services/trace_worker.py +
    tests/test_episode_segmentation.py.)*
+7. `[ ]` **Band 2.6 — ClaimFamily resolver v0**: project-scoped blocking +
+   proposition match per spec §10 (similarity is candidate generation, not
+   identity); cross-project families deferred to Band 4. Entities managed:
+   ClaimFamily `[V]`. New module `backend/app/services/claim_family.py` +
+   proving tests.
+   *(claimed @2026-08-25 — lane/core-b (this worktree). Scoped file grant from
+   founder assignment 2026-08-25: backend/app/services/claim_family.py +
+   backend/tests/test_claim_family_offline.py — both otherwise outside every
+   owned path; recorded here per OVERNIGHT MODE. No migration: family hub rides
+   knowledge_nodes node_type='claim_family' + OWNS/FAMILY_MEMBER edges, same
+   generic-table idiom as claims.py/failure_capture.py.)*
 Rule: NO new migrations (schema needs route through CORE-A); no edits outside owned paths.
 
 ### Lane MEASURE (owns `experiments/harness/**`)
