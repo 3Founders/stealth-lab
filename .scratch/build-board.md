@@ -181,6 +181,22 @@ git worktree add ..\sl-research -b lane/research origin/main
    1018 + 27, zero regressions). Placement note mirrors Question #2: module sits
    at services/ top level under the founder's explicit scoped grant recorded in
    the claim entry above; relocation later is a one-line import change.)*
+8. `[ ]` **Band 2.9 — Identity gate**: OIDC-only authN — real identity before
+   multi-user exposure (ROADMAP: single-tenant posture frozen in code until
+   enabled, cannot silently slip to Band 5). Token validation middleware,
+   actor_id propagation into Events/ChangeSets/Reviews. Scope minimal:
+   validation + propagation ONLY, no user management UI.
+   *(claimed @2026-08-25 — lane/core-b (this worktree). Scoped file grant from
+   founder assignment 2026-08-25, recorded here per OVERNIGHT MODE: NEW
+   services/authn.py + tests/test_authn_offline.py; EDITS api/deps.py,
+   main.py, config.py, api/ingest.py [events actor override],
+   services/changeset_record.py [author context resolution],
+   services/agent_review_state_machine.py [review-event actor context
+   fallback], requirements.txt [pyjwt[crypto] for RS256]. All edits outside
+   standing owned paths are disclosed here. No migrations.
+   HARDENING-lane note: H1's tenancy predicate builder extends this work —
+   authn.py keeps identity acquisition and tenancy filtering separate so H1
+   can consume Actors without coupling.)*
 Rule: NO new migrations (schema needs route through CORE-A); no edits outside owned paths.
 
 ### Lane MEASURE (owns `experiments/harness/**`)
