@@ -244,7 +244,18 @@ def test_unknown_kid_rejected(config, pem):
 def test_tampered_signature_rejected(config, jwks, pem):
     tok = _token(pem)
     head, body, sig = tok.split(".")
-    tampered = f"{head}.{body}.{sig[:-2]}{'aa'[: len(sig[-2:])]}"
+    import base64
+    # Flip a bit in the DECODED signature. String-slicing tricks (replacing
+    # trailing base64 chars) frequently decode back to IDENTICAL bytes --
+    # trailing zero bits absorb the change -- making this test flaky under
+    # full-run ordering depending on keygen randomness.
+    pad = "=" * (-len(sig) % 4)
+    raw = bytearray(base64.urlsafe_b64decode(sig + pad))
+    assert raw, "signature must not be empty"
+    raw[0] ^= 0xFF
+    tampered_sig = base64.urlsafe_b64encode(bytes(raw)).rstrip(b"=").decode()
+    tampered = f"{head}.{body}.{tampered_sig}"
+    assert tampered != tok, "tamper must change the token"
     with pytest.raises(TokenRejected):
         validate_token(tampered, config=config, jwks_provider=jwks)
 
