@@ -18,6 +18,7 @@ from pydantic import ValidationError
 from app.api.deps import enforce_limits
 from app.config import settings
 from app.models.trace import IngestResult, RejectedRecord, TraceBatch, TraceRecord
+from app.services.authn import current_actor_id
 
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/v1/traces", tags=["ingestion"])
@@ -44,6 +45,11 @@ async def ingest_traces(
     accepted = 0
     duplicates = 0
     rejected: list[RejectedRecord] = []
+    # Band 2.9: a VALIDATED token subject overrides the payload's
+    # self-asserted actor_id -- attribution comes from identity, not from
+    # whatever the client claims. Without an authenticated actor the
+    # payload value stands (public posture; grants nothing world-readable).
+    authenticated_actor = current_actor_id()
 
     async with pool.acquire() as conn:
         for i, raw in enumerate(raw_records):
@@ -61,6 +67,8 @@ async def ingest_traces(
                 rejected.append(RejectedRecord(index=i, error="record must be an object"))
                 continue
 
+            effective_actor_id = authenticated_actor or rec.actor_id
+
             try:
                 result = await conn.execute(
                     "INSERT INTO traces (trace_id, tenant_id, timestamp, task_node_id, "
@@ -68,7 +76,7 @@ async def ingest_traces(
                     "VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) "
                     "ON CONFLICT (trace_id) DO NOTHING",
                     rec.trace_id, tenant, rec.timestamp, rec.task_node_id,
-                    rec.actor_id, rec.action_type, rec.outcome,
+                    effective_actor_id, rec.action_type, rec.outcome,
                     rec.cost, rec.latency_ms, rec.parent_trace_id,
                 )
                 if result.endswith(" 0"):

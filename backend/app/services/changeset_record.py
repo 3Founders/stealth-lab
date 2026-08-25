@@ -25,6 +25,8 @@ import asyncpg
 import json
 from pydantic import BaseModel, Field, ValidationError
 
+from app.services.authn import current_actor_id
+
 # [V] tables that exist today (db/25 CHECK enforces the same list at the
 # engine level; this duplicate exists so producers fail fast with a good
 # message instead of an engine error).
@@ -64,7 +66,7 @@ class ChangesetRecordError(ValueError):
 async def record_change_set(
     pool: asyncpg.Pool,
     *,
-    author: str,
+    author: Optional[str] = None,
     reason: str,
     operations: list[ChangeOperation],
     scope_type: Optional[str] = None,
@@ -75,9 +77,21 @@ async def record_change_set(
     Fails closed: no operations -> refuse (an empty record would let a
     boundary claim coverage it does not have); any invalid operation ->
     refuse before touching the pool.
+
+    Band 2.9 attribution: an explicit `author` always wins (existing
+    callers — procedures.py's lifecycle boundaries, the quarantine timer —
+    are untouched). Omitted, the author resolves from the authenticated
+    request actor (authn contextvar); resolving to nothing raises rather
+    than recording an unattributed mutation — "nothing is born
+    unattributed" now has a propagation path, not just a demand.
     """
+    if author is None:
+        author = current_actor_id()
     if not author or not author.strip():
-        raise ChangesetRecordError("ChangeSet requires an author — nothing is born unattributed")
+        raise ChangesetRecordError(
+            "ChangeSet requires an author — nothing is born unattributed "
+            "(pass one explicitly or call from an authenticated request)"
+        )
     if not operations:
         raise ChangesetRecordError(
             "refusing to record an empty ChangeSet — boundaries must declare "

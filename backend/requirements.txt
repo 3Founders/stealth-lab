@@ -16,20 +16,21 @@
 # 1.29.0 -- 1.x ships FastMCP/Server instead). 2.0.0 is the current stable
 # release on PyPI as of this pin, not a prerelease.
 
-anthropic
-asyncpg
-fastapi
-huggingface-hub
-mcp[cli]>=2.0.0
-numpy
-openai
-openpyxl
-pdfplumber
-pydantic
-pydantic-settings
-pytest
-python-dotenv
-PyYAML
+ anthropic
+ asyncpg
+ fastapi
+ huggingface-hub
+ mcp[cli]>=2.0.0
+ numpy
+ openai
+ openpyxl
+ pdfplumber
+ pydantic
+ pydantic-settings
+ pytest
+ python-dotenv
+ PyJWT[crypto]
+ PyYAML
 reportlab
 scipy
 tree-sitter-language-pack

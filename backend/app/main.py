@@ -10,7 +10,9 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api import admin, agent_store, agents, approval, chat, decompose, graph, ingest
 from app.api.deps import require_trustworthy_identity
+from app.config import settings
 from app.db.session import close_pool, create_pool
+from app.services.authn import assert_boot_posture, install_actor_middleware
 
 logging.basicConfig(
     level=logging.INFO,
@@ -24,6 +26,15 @@ async def lifespan(app: FastAPI):
     # that combination would expose private content to anyone who sets
     # an X-Viewer-Id header.
     require_trustworthy_identity()
+    # Band 2.9 frozen posture: multi-user exposure / real_auth_enabled
+    # without OIDC configured refuses to boot -- the identity gate cannot
+    # silently slip to a later band.
+    assert_boot_posture(
+        private_visibility_enabled=settings.private_visibility_enabled,
+        real_auth_enabled=settings.real_auth_enabled,
+        oidc_configured_=settings.oidc_issuer is not None and settings.oidc_audience is not None,
+        multi_user_exposure_enabled=settings.multi_user_exposure_enabled,
+    )
     app.state.pool = await create_pool()
     try:
         yield
@@ -43,6 +54,11 @@ app.add_middleware(
     allow_methods=["GET", "POST"],
     allow_headers=["*"],
 )
+
+# Band 2.9 identity gate: bearer-token validation + actor propagation on
+# every request. Pass-through no-op while OIDC is unconfigured; the boot
+# posture guard above is what keeps that honest.
+install_actor_middleware(app, settings)
 
 app.include_router(ingest.router)
 app.include_router(approval.router)

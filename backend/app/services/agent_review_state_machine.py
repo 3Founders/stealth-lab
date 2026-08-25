@@ -73,7 +73,16 @@ class AgentReviewStateMachine:
         immutable event. Runs in one transaction with a row lock so two
         concurrent reviewers (or a retry racing a first attempt) can't
         both read the same state and both advance it.
+
+        Band 2.9 attribution: `actor` omitted resolves from the
+        authenticated request actor (authn contextvar) — a review-event's
+        actor comes from identity when identity exists. Explicit callers
+        (scope-key attributions from agents.py) are unchanged.
         """
+        if actor is None:
+            from app.services.authn import current_actor_id
+
+            actor = current_actor_id()
         async with self._pool.acquire() as conn:
             async with conn.transaction():
                 row = await conn.fetchrow(
