@@ -445,6 +445,62 @@ Rule: NO new migrations (schema needs route through CORE-A); no edits outside ow
    Harness suite 126/126 green [78 prior + 48 new]. Zero backend edits;
    no model calls this session.)*
 
+5. `[x]` done @2026-08-26 â€” branch `lane/measure` **real-arms sweeps #2 and
+   #3** (fresh --out per run, --auto-resume; all 11 tasks valid in BOTH
+   files).
+   *(RUN#2: $0.2586 main pass [89 attempts / 45 billed] + two resume
+   passes [$0.0793 + $0.0890] = **$0.4269**, 113 attempts total. Final
+   scoreboard n=11: A 9/11 Â· B 7/11 w/ 2 false-reuse Â· C 6/11 w/ 0;
+   stale-refusal column C 7/7 vs B 0/7 [surface behavior only â€" see Log
+   correction: gate-mechanical for C, no refusal path in B]; no pairwise
+   significant [B-vs-C 1 discordant p=1.0; A-vs-C 3 discordant p=0.25].
+   RUN#3: $0.2839 main [43/37] + one-task resume retry $0.0350 =
+   **$0.3189**, 50 attempts.
+    n=11: A 8/11 Â· B 7/11 w/ 1 false-reuse Â· C 9/11 w/ 0; refusal column
+   repeats the same fixture-determined pattern; B-vs-C 2 discordant both
+   C-favoring p=0.5; nothing significant. SESSION SPEND $0.8732 total
+   incl. item 6's extraction â€" under the ~$1 cap. INSTRUMENT FINDING +
+   FIX: run2's ledger showed billed calls pinned at exactly tokens_out=
+   700 returning unparseable-after-repair JSON â€" MAX_COMPLETION_TOKENS
+   was shearing long replies mid-object. Raised 700â†'1400 as a named
+   constant with regression test [test_openrouter_arms.TestCompletionCap]
+   ; fix applied AFTER run2's main pass, so its two broken tasks were
+   completed under the fixed cap via resume; ALL of run3 + the error-
+   floor pass ran at 1400. Comparability note for RUN#1: it ran entirely
+   at cap 700 [10/10 valid then â€" sampling luck, not robustness].)*
+6. `[x]` done @2026-08-26 â€” branch `lane/measure` **error-floor FIRST LIVE
+   extraction pass** over the 42 labeled fixtures using the OpenRouter-
+   backed observation extractor.
+   *(Shipped: `live_extractor.py` inside experiments/harness only â€"
+   OpenRouterClient reused wholesale [backoff/chain/SpendLog/backend-.env
+   key]; arm tag EX in the spend ledger; one repair round-trip per
+   excerpt mirroring RealAgentBase; prompt encodes ticket 04's published
+   TAXONOMY not the demo mirror's prefix rules + the NONE contract for
+   the semantic layer + hard-negative silence; dict-shaped output passes
+   through to the grader UNVALIDATED so malformed predictions cost
+   precision as the rubric intends [only non-dict array items dropped,
+   counted in row meta]; unparseable rows recorded as empty+flagged and
+   RETRIED by --auto-resume like run_real_arms. 12 offline tests
+   tests/test_live_extractor.py [fake client, zero network]. LIVE RUN:
+   42/42 excerpts extracted, 0 adapter errors, 0 unparseable; 53
+   attempts / 42 billed / **$0.1274**. GRADED FLOOR [error_floor_live_
+   results.jsonl + _detail.json, consumable via scoreboard
+   --error-floor-results]: overall P 25/44 (0.568) Â· R 25/30 (0.833) Â·
+   F1 0.676 [golds=30/preds=44]. Per type: commit_made 5/5Â·5/5,
+   test_run 7/7Â·7/7, file_touched P 8/10 R 8/8, command_executed P 5/5
+   R 5/6, semantic_label P 0/17 R 0/4. FINDINGS: (a) the SEMANTIC layer
+   is the whole error story â€" the model answers verbose detailed
+   sentences where golds are terse ('authentication implementation was
+   modified'), token-Jaccard < 0.5 everywhere, and it pads labels onto
+   hard-negative events; Band-3 model extractor needs terse-label
+   discipline in-prompt or a founder ruling on whether the rubric's
+   threshold should grade information coverage rather than brevity;
+   (b) NONE contract overreach: bare `ls src` got no mechanical gold
+   answer either [ef-sem-005 FN]; (c) one malformed empty observation
+   [ef-file-010]; (d) `rm -rf dist/` typed as file_touched [ef-sem-002].
+   Live vs demo-mirror baseline: P .880â†'.568, R .733â†'.833, F1 .800â†'.
+   676.)*
+
 ### Lane RESEARCH (owns `.scratch/research/**`, updates to `RESEARCH_INTEGRATION_PLAN.md`)
 Tooling: `research_exa.py` at repo root (key lives in `backend/.env` as EXA_API_KEY â€”
 never committed). Protocol per founder: market/vendor/pain-point evidence via Exa web
@@ -1002,11 +1058,11 @@ Grounded findings from  3_access.sql/ 4_governance.sql/deps.py review. Sequence:
      caller, and the remaining sweep is cross-lane request #2 / Question #5.
      Until then RLS on these five tables stands armed but unkeyed (unset
      setting = today's posture), by design.
-  3. Full-suite numbers recorded in the queue item: the 111 ordering-
-     dependent live-DB failures reproduce identically on a stashed clean
-     tree — same files, same counts — and every failing file passes (or
-     skips) standalone. This worktree's backend/.env carries DATABASE_URL,
-     so full runs load it mid-ordering; queue item 2 remains the fix.
+   3. Full-suite numbers recorded in the queue item: the 111 ordering-
+      dependent live-DB failures reproduce identically on a stashed clean
+      tree — same files, same counts — and every failing file passes (or
+      skips) standalone. This worktree's backend/.env carries DATABASE_URL,
+      so full runs load it mid-ordering; queue item 2 remains the fix.
 
 - RESEARCH (2026-08-26, RUN #1 verification): done � see Lane RESEARCH item 4 and
   `.scratch/research/run1-verification.md`. One-line summary for the integrator:
@@ -1044,3 +1100,34 @@ Grounded findings from  3_access.sql/ 4_governance.sql/deps.py review. Sequence:
      updated mechanically (the unrestricted fragment is now the visible
      pair "(TRUE) AND (TRUE)" instead of bare " AND TRUE "); params and
      semantics unchanged, all 27 claim-family tests green in the full run.
+- MEASURE (2026-08-26, third wave): sweeps #2/#3 + live error-floor pass
+  done on `lane/measure` — full records in MEASURE queue items 5/6.
+  1. SPEND LEDGER SUMMARY for the treasurer: run2 $0.4269 [113 attempts],
+     run3 $0.3189 [50 attempts], extraction $0.1274 [53 attempts] —
+     **$0.8732 total**, under the ~$1 lane cap. Per-attempt rows in
+     real_spend_run2.jsonl / real_spend_run3.jsonl /
+     live_extractor_spend.jsonl beside the results files; every 429 and
+     network error is a row.
+  2. STALE-REFUSAL COLUMN = SURFACE BEHAVIOR ONLY (corrected per
+     RESEARCH's run1 verification before pushing): C's 7/7 refusals in
+     BOTH new sweeps are substrate-gate-automatic by construction [a
+     gate-blocked offer becomes a recorded refusal without the card ever
+     reaching the model] and real-B has NO refusal path at all — so
+     7/7-vs-0/7 repeats run1's fixture-determined pattern and is NOT
+     model staleness detection. The model-decided numbers stand
+     separately: resolution run3 C 9/11 vs A 8/11 vs B 7/11, false-reuse
+     B-only [2 then 1]; nothing individually significant this session;
+     no public phrasing yet.
+  3. Instrument correction disclosed in queue item 5: completion-cap 700
+     was shearing JSON mid-reply [run2 ledger evidence: billed rows at
+     exactly tokens_out=700 unparseable-after-repair]; raised to 1400
+     with regression test. RUN#1 comparability caveat recorded there too.
+  4. Error-floor LIVE baseline recorded [queue item 6]: semantic_label
+     layer P 0/17 R 0/4 is the dominant cost — verbosity vs terse golds
+     under Jaccard>=0.5. Needs a founder/integrator ruling before Band 3:
+     (a) prompt-side terse-label discipline [proposed default], (b)
+     rubric recalibration to grade information coverage over brevity,
+     (c) accept as the honest floor and gate model-extractor work on it.
+  5. Harness suite 176/176 green [163 prior + 13 new]; zero backend edits
+     [git diff origin/main -- backend/ empty]. Rebased onto origin/main;
+     fast-forwarded main per OVERNIGHT MODE after suite green.

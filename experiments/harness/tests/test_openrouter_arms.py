@@ -512,3 +512,11 @@ def run_real_arms_main(*, out, extra=None, fake_replies=None):
         finally:
             rra.openrouter_arms.build_agents = real_build
     return rra.main(argv)
+
+class TestCompletionCap:
+    def test_cap_never_returns_to_shearing_700(self):
+        # run2 finding: at 700, four billed calls sat at exactly the cap and
+        # their JSON never closed -> invalid episodes after repair. Pin the
+        # floor so a silent revert trips here first.
+        assert ora.MAX_COMPLETION_TOKENS > 700
+        assert ora.MAX_COMPLETION_TOKENS == 1400

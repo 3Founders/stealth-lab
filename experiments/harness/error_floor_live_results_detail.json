@@ -1,0 +1,305 @@
+{
+  "extractor": "predictions:live_extractor_preds.jsonl",
+  "n_excerpts": 42,
+  "n_error_excerpts": 0,
+  "n_gold": 30,
+  "n_predictions": 44,
+  "tp": 25,
+  "fp": 19,
+  "fn": 5,
+  "precision": 0.5682,
+  "recall": 0.8333,
+  "f1": 0.6757,
+  "per_type": {
+    "file_touched": {
+      "gold": 8,
+      "predictions": 10,
+      "tp": 8,
+      "fp": 2,
+      "fn": 0,
+      "precision": 0.8,
+      "recall": 1.0,
+      "f1": 0.8889
+    },
+    "commit_made": {
+      "gold": 5,
+      "predictions": 5,
+      "tp": 5,
+      "fp": 0,
+      "fn": 0,
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1": 1.0
+    },
+    "test_run": {
+      "gold": 7,
+      "predictions": 7,
+      "tp": 7,
+      "fp": 0,
+      "fn": 0,
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1": 1.0
+    },
+    "command_executed": {
+      "gold": 6,
+      "predictions": 5,
+      "tp": 5,
+      "fp": 0,
+      "fn": 1,
+      "precision": 1.0,
+      "recall": 0.8333,
+      "f1": 0.9091
+    },
+    "semantic_label": {
+      "gold": 4,
+      "predictions": 17,
+      "tp": 0,
+      "fp": 17,
+      "fn": 4,
+      "precision": 0.0,
+      "recall": 0.0,
+      "f1": null
+    }
+  },
+  "discrepancies": [
+    {
+      "excerpt_id": "ef-cmd-001",
+      "fp": [
+        {
+          "observation_type": "semantic_label",
+          "key": "login flow implementation was committed to the repository",
+          "reason": "extra_no_gold"
+        }
+      ],
+      "fn": []
+    },
+    {
+      "excerpt_id": "ef-cmd-002",
+      "fp": [
+        {
+          "observation_type": "semantic_label",
+          "key": "A work-in-progress checkpoint commit was recorded to preserve current state of tracked files before beginning a refactoring effort",
+          "reason": "extra_no_gold"
+        }
+      ],
+      "fn": []
+    },
+    {
+      "excerpt_id": "ef-cmd-003",
+      "fp": [
+        {
+          "observation_type": "semantic_label",
+          "key": "a git commit was created with the message 'indented'",
+          "reason": "extra_no_gold"
+        }
+      ],
+      "fn": []
+    },
+    {
+      "excerpt_id": "ef-cmd-004",
+      "fp": [
+        {
+          "observation_type": "semantic_label",
+          "key": "test-related fixes were committed to the main branch of the backend repository (commit b3c4d5e)",
+          "reason": "extra_no_gold"
+        }
+      ],
+      "fn": []
+    },
+    {
+      "excerpt_id": "ef-cmd-005",
+      "fp": [
+        {
+          "observation_type": "semantic_label",
+          "key": "release v2 was committed to the main branch, marking the v2 release point",
+          "reason": "extra_no_gold"
+        }
+      ],
+      "fn": []
+    },
+    {
+      "excerpt_id": "ef-cmd-006",
+      "fp": [
+        {
+          "observation_type": "semantic_label",
+          "key": "All working-tree changes were staged in preparation for a commit",
+          "reason": "extra_no_gold"
+        }
+      ],
+      "fn": []
+    },
+    {
+      "excerpt_id": "ef-cmd-007",
+      "fp": [
+        {
+          "observation_type": "semantic_label",
+          "key": "authentication test suite passed: 1 test in tests/test_auth.py succeeded with exit code 0",
+          "reason": "extra_no_gold"
+        }
+      ],
+      "fn": []
+    },
+    {
+      "excerpt_id": "ef-cmd-014",
+      "fp": [
+        {
+          "observation_type": "semantic_label",
+          "key": "pytest-cov 6.0.0 was successfully installed, adding test coverage reporting capability to the environment",
+          "reason": "extra_no_gold"
+        }
+      ],
+      "fn": []
+    },
+    {
+      "excerpt_id": "ef-file-001",
+      "fp": [
+        {
+          "observation_type": "semantic_label",
+          "key": "Login function was implemented: replaced empty stub 'def login(): pass' with a version taking a user parameter and delegating validation to check(user)",
+          "reason": "extra_no_gold"
+        }
+      ],
+      "fn": []
+    },
+    {
+      "excerpt_id": "ef-file-002",
+      "fp": [
+        {
+          "observation_type": "semantic_label",
+          "key": "Setup documentation was added, instructing users to run 'make bootstrap' to initialize the project",
+          "reason": "extra_no_gold"
+        }
+      ],
+      "fn": []
+    },
+    {
+      "excerpt_id": "ef-file-003",
+      "fp": [
+        {
+          "observation_type": "semantic_label",
+          "key": "User model class changed to inherit from Base, wiring the model into the ORM declarative base",
+          "reason": "extra_no_gold"
+        }
+      ],
+      "fn": []
+    },
+    {
+      "excerpt_id": "ef-file-008",
+      "fp": [
+        {
+          "observation_type": "semantic_label",
+          "key": "Authentication token TTL constant defined as 3600 seconds in src\\auth\\tokens.py, establishing the token expiry duration",
+          "reason": "extra_no_gold"
+        }
+      ],
+      "fn": []
+    },
+    {
+      "excerpt_id": "ef-file-009",
+      "fp": [
+        {
+          "observation_type": "semantic_label",
+          "key": "Debug mode was enabled in the application configuration by flipping the DEBUG flag from False to True",
+          "reason": "extra_no_gold"
+        }
+      ],
+      "fn": []
+    },
+    {
+      "excerpt_id": "ef-file-010",
+      "fp": [
+        {
+          "observation_type": "file_touched",
+          "key": "<malformed>",
+          "reason": "extra_no_gold"
+        }
+      ],
+      "fn": []
+    },
+    {
+      "excerpt_id": "ef-sem-001",
+      "fp": [
+        {
+          "observation_type": "semantic_label",
+          "key": "Token verification logic in auth_service.py was hardened: verify() now validates the token signature via validate_signature(token) instead of unconditionally returning True",
+          "reason": "extra_no_gold"
+        }
+      ],
+      "fn": [
+        {
+          "observation_type": "semantic_label",
+          "key": "authentication implementation was modified",
+          "reason": "key_mismatch_same_type"
+        }
+      ]
+    },
+    {
+      "excerpt_id": "ef-sem-002",
+      "fp": [
+        {
+          "observation_type": "file_touched",
+          "key": "dist/",
+          "reason": "extra_no_gold"
+        },
+        {
+          "observation_type": "semantic_label",
+          "key": "Build output directory dist/ was removed, clearing previous build artifacts (likely in preparation for a fresh build)",
+          "reason": "extra_no_gold"
+        }
+      ],
+      "fn": [
+        {
+          "observation_type": "semantic_label",
+          "key": "build output directory was deleted",
+          "reason": "key_mismatch_same_type"
+        }
+      ]
+    },
+    {
+      "excerpt_id": "ef-sem-003",
+      "fp": [
+        {
+          "observation_type": "semantic_label",
+          "key": "GitHub Actions CI workflow was added, configuring a test job on ubuntu-latest triggered by pushes, establishing automated test execution for the repository.",
+          "reason": "extra_no_gold"
+        }
+      ],
+      "fn": [
+        {
+          "observation_type": "semantic_label",
+          "key": "continuous integration pipeline configuration added",
+          "reason": "key_mismatch_same_type"
+        }
+      ]
+    },
+    {
+      "excerpt_id": "ef-sem-004",
+      "fp": [
+        {
+          "observation_type": "semantic_label",
+          "key": "The database service container was started in detached mode via Docker Compose, bringing up the local db environment",
+          "reason": "extra_no_gold"
+        }
+      ],
+      "fn": [
+        {
+          "observation_type": "semantic_label",
+          "key": "database container started",
+          "reason": "key_mismatch_same_type"
+        }
+      ]
+    },
+    {
+      "excerpt_id": "ef-sem-005",
+      "fp": [],
+      "fn": [
+        {
+          "observation_type": "command_executed",
+          "key": "ls src",
+          "reason": "missing_no_candidate"
+        }
+      ]
+    }
+  ]
+}

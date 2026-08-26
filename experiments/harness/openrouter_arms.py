@@ -67,7 +67,11 @@ BACKOFF_BASE_S = 1.5
 BACKOFF_CAP_S = 60.0
 MAX_ATTEMPTS_PER_MODEL = 6
 REQUEST_TIMEOUT_S = 120.0
-MAX_COMPLETION_TOKENS = 700
+# 700 sheared live replies mid-object: run2's ledger shows billed calls
+# pinned at exactly tokens_out=700 coming back unparseable even after the
+# repair round-trip (JSON never closes). 1400 gives headroom; the spend
+# ledger keeps the true token bill visible either way.
+MAX_COMPLETION_TOKENS = 1400
 
 # Approximate $/Mtok used ONLY for the spend-log cost column; authoritative
 # billing lives in the OpenRouter dashboard. Unknown models take the default.
