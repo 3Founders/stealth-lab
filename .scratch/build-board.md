@@ -326,7 +326,8 @@ Rule: NO new migrations (schema needs route through CORE-A); no edits outside ow
 0. `[x]` **WAVE-2 / HARDENING H3 pre-work swap** -- DONE @2026-08-26 by core-b under the HARDENING section item 3 (same task; canonical record there). Rate-limiter collector treatment: in-process token bucket + buffered ledger flush (trace_collector append->drain pattern) so Postgres becomes audit ledger, not enforcement point. CONSTRAINT: preserve fail-closed-on-infra-error; buffered writes need a replay-or-block rule. Retention sweep for rate_limit_events. NOTE: lands in governance.py -- scoped grant to this lane for backend/app/services/governance.py only.
 
 ### Lane MEASURE-WAVE (real arms - founder go 2026-08-26, key in backend/.env OPENROUTER_API_KEY)
-0. `[ ]` **Real-model arms**: replace scripted_arms decision logic with live model calls via OpenRouter (OpenAI-compatible, key from env). REQUIRED: exponential backoff+jitter on 429 (upstream shared pool saturates - verified live); model fallback chain (ox-alpha primary; document alternates); resumable sweeps (--auto-resume pattern); spend log per run. Arm A = solo frontier call per step; B/C consume memory surface identically to scripted versions.
+0. `[x]` done @2026-08-26 — branch `lane/measure` **Real-model arms**: replace scripted_arms decision logic with live model calls via OpenRouter (OpenAI-compatible, key from env). REQUIRED: exponential backoff+jitter on 429 (upstream shared pool saturates - verified live); model fallback chain (ox-alpha primary; document alternates); resumable sweeps (--auto-resume pattern); spend log per run. Arm A = solo frontier call per step; B/C consume memory surface identically to scripted versions.
+   *(Shipped: `openrouter_arms.py` + `run_real_arms.py` inside experiments/harness/** only. AgentAdapter contract preserved - episodes drop into the UNCHANGED scoring/scoreboard/micro_pack stack. DECISION CONTRACT: strict-JSON {resolved, reuse[], refuse[], notes}, one repair round-trip then invalid episode [resume retries it]; Arm A = situation-only solo call; B = same rag blob as scripted; C = SAME surface dance [search -> upfront gate consult -> cards] with model deciding reuse/refuse over OFFERED ids only, reuse credited ONLY after a fresh check_applicability verdict - model proposes, gate disposes; refusals recorded either way. GROUND-TRUTH-FREE AGENTS: `stale`/`rag=misleading`/`solo_outcome` never read by real arms [the scripted arms read them - that leak is what a real arm must not have]; attribution mechanical: reuse_caused_failure := leaned-on-memory-or-reuse AND unresolved. BACKOFF: full-jitter exponential ceiling BASE_S=1.5 doubling to CAP_S=60, injectable sleep/rng proven offline; network errors retry like 429s; non-retryable 4xx falls to next model immediately; exhaustion raises AllModelsFailedError with the per-attempt trail. CHAIN: DEFAULT_MODEL_CHAIN=(ox-alpha, openai/gpt-4o-mini, anthropic/claude-3-5-haiku) named + --models override. RESUME: existing results file refuses without --auto-resume [paid history never clobbered]; load_done skips valid all-arm rows, error AND unparseable rows retry; --max-tasks caps fresh spend. SPEND LOG: one JSONL row PER ATTEMPT beside results [successes carry usage/cost, failures carry status], totals print with scoreboard. FINDING fixed en route: scenario narratives leaked scripted verdicts into prompts [mic-dep-003 'Honest outcome: everyone falls back and fails'] - situation_text now strips everything from an 'Honest outcome:' marker; SOFTER framing hints remain in fixture prose, flagged below for ruling before headline data collection. LIVE SMOKE vs real endpoint PASSED end-to-end: mic-dep-003 all three arms valid, scoreboard+power footer rendered from real rows, 429 saturation observed and absorbed [3 of 6 attempts failed, chain held, $0.014 total]. Harness suite 163/163 green [126 prior + 37 new]. Zero backend edits.)*
 
 ### Lane MEASURE (owns `experiments/harness/**`)
 1. `[x] done 2026-08-25 â€” lane/measure` Â§40 harness skeleton adapted from `experiments/swebench_pro/run_graph_experiment.py`;
@@ -734,9 +735,28 @@ blocking question in the Log, continue with the next queue item.
   `git diff origin/main -- backend/` empty): post-rebase backend run here
   = **1167 passed / 114 skipped / 1 failed**, the failure being
   `test_authn_offline.py::test_tampered_signature_rejected` under FULL-RUN
-  ordering only; it PASSES in isolation. Ordering-sensitive crypto test on
-  main's baseline â H1 owners may want to pin it (e.g. clear module-level
-  JWKS/key cache state) before someone burns a merge cycle on it.
+   ordering only; it PASSES in isolation. Ordering-sensitive crypto test on
+   main's baseline â€” H1 owners may want to pin it (e.g. clear module-level
+   JWKS/key cache state) before someone burns a merge cycle on it.
+- MEASURE (2026-08-26, second wave): MEASURE-WAVE item 0 (real-model arms)
+  done on `lane/measure` — full record in the queue item. Two notes:
+  1. **Question #6 (non-blocking, blocks headline data collection, not the
+     instrument):** fixture `situation` prose still carries softer framing
+     hints for the model ("Solo debugging fails", "The verified
+     resolver-based fix available", "A tempting one-click auto-refund
+     procedure is surfaced"). The hard leak (mic-dep-003's explicit verdict
+     sentence) is sanitized in situation_text; these softer hints are part
+     of the scenario design and I did NOT rewrite founder-approved fixtures.
+     Options: (a) founder approves a `situations.json` neutral-overlay file
+     used by real arms only [proposed default — scenarios.json untouched,
+     grading untouched], (b) run as-is and accept comprehension-bias in arm
+     A's baseline, (c) rewrite scenarios.json in place [rejected by me:
+     rewrites history the scripted baselines were pinned against].
+  2. Live smoke spent **$0.014** of founder money (6 attempts, one task ×
+     three arms) proving backoff/chain/spend-log against the saturated
+     shared pool; ledger row-per-attempt shows three consecutive 429s then
+     success on ox-alpha. Full-pack sweep (~33 billed calls at that rate)
+     ≈ $0.15–0.40 per complete pass depending on saturation.
 
 ### Lane HARDENING (opened by founder referral of Chaitanya-instance audit, 2026-08-25)
 Grounded findings from  3_access.sql/ 4_governance.sql/deps.py review. Sequence: after current OIDC tasks land.

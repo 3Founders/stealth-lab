@@ -37,6 +37,48 @@ waive for arms with no substrate path: arm B lacking a trail is the
 experimental contrast, not a failure. One scenario deliberately poisons the
 gate so arm C trips it — the honest-negative slot.
 
+## Real-model arms (MEASURE-WAVE, live OpenRouter)
+
+Board item MEASURE-WAVE 0 (founder go 2026-08-26): the same three arms, with
+`scripted_arms` decision logic replaced by live chat calls through
+`openrouter_arms.py`. The AgentAdapter contract, scoring, scoreboard,
+micro-pack grading and evidence journal are UNCHANGED — episodes from a real
+sweep drop straight into the existing pipeline.
+
+```powershell
+# offline sanity first: validates fixtures + prints each arm's prompt, no network:
+backend\.venv\Scripts\python.exe experiments\harness\run_real_arms.py --dry-run
+
+# real sweep (key: env OPENROUTER_API_KEY, else backend/.env; never printed):
+backend\.venv\Scripts\python.exe experiments\harness\run_real_arms.py
+```
+
+Behavior pinned by `tests/test_openrouter_arms.py`:
+
+- **429 backoff** — exponential ceiling (`BACKOFF_BASE_S` doubling to
+  `BACKOFF_CAP_S`) with FULL jitter per attempt; network errors retry like
+  429s. The upstream shared pool saturates — this is the expected path, not
+  an error path.
+- **Fallback chain** — primary `ox-alpha`, then documented cheap alternates
+  (`DEFAULT_MODEL_CHAIN`; override with `--models`). Non-retryable 4xx skips
+  a model immediately; exhaustion raises with the full per-attempt trail.
+- **Resumable** — an existing results file refuses to run without
+  `--auto-resume` (paid history is never clobbered); resume skips tasks
+  already holding valid all-arm rows and RETRIES error rows and
+  unparseable-decision rows. `--max-tasks` caps fresh spend per invocation.
+- **Spend log** — one JSONL row PER ATTEMPT (successes carry usage/cost,
+  failures carry their status) beside the results file; totals print with
+  the scoreboard, so a saturated-pool run shows its attempt profile.
+- **Decision contract** — the model replies strict-JSON
+  `{resolved, reuse[], refuse[], notes}` (one repair round-trip before the
+  episode is marked invalid). Arm A gets the situation only; arm B the same
+  rag blob as scripted; arm C the same surface dance with procedure cards.
+  Reuse is credited ONLY after a fresh gate verdict — model proposes, gate
+  disposes; refusals are recorded on the surface either way. Agents never
+  read fixture ground truth (`stale`, `rag=misleading`, `solo_outcome`);
+  attribution is mechanical (leaned-on-memory/reuse + failed), so grading
+  truth stays in scoring/micro_pack where it belongs.
+
 ## Extraction error floor (Band 3 prep)
 
 `fixtures/error_floor/` holds 42 hand-gold trace excerpts (agreed-correct
