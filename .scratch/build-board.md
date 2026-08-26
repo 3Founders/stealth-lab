@@ -739,6 +739,7 @@ blocking question in the Log, continue with the next queue item.
    main's baseline â€” H1 owners may want to pin it (e.g. clear module-level
    JWKS/key cache state) before someone burns a merge cycle on it.
 - MEASURE (2026-08-26, second wave): MEASURE-WAVE item 0 (real-model arms)
+- **RUN #1 LOGGED (2026-08-26, integrator)**: first genuine SS40 sweep on ox-alpha via openrouter_arms (95 calls, \$ .2659, auto-resume ledger eal_spend.jsonl). Results on 10 valid tasks: A 6/10 resolved, B 7/10 w/ 1 false-reuse, C 7/10 w/ 0. **Stale-refusal C 6/6 vs B 0/6 -> McNemar p~0.031** (at the k>=6 significance floor - more n required before any public phrasing). Resolution B-vs-C not significant (1-1 discordant: C lost poisoned-gate refund-003 by design, gained pdf-003 adversarial blend). Universal failures dep-003/env-001 = library coverage gaps feeding extraction targets. Repeat sweeps queued (fresh --out per run); Question #6 verdict-leak framing audit assigned to integrator.
   done on `lane/measure` — full record in the queue item. Two notes:
   1. **Question #6 (non-blocking, blocks headline data collection, not the
      instrument):** fixture `situation` prose still carries softer framing
