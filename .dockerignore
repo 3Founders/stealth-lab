@@ -1,0 +1,47 @@
+# Build context for backend/Dockerfile is the REPO ROOT, not backend/ --
+# app/mcp_server/server.py imports Agent/RepoSandbox from
+# experiments/swebench_pro/ as a real sibling of backend/ at MODULE IMPORT
+# TIME (README_MCP_SERVER.md setup step #3; see server.py's own
+# `Path(__file__).resolve().parents[3] / "experiments" / "swebench_pro"`).
+# A backend-only context can't provide that sibling directory, so
+# docker-compose.yml points `build.context` at `.` and this file has to
+# reason about the whole repo, not just backend/.
+#
+# Everything listed below is excluded because it's a virtualenv, secrets,
+# a huge stray result file, or simply irrelevant to running the image --
+# not because it's untrusted.
+
+.git
+
+# Never bake secrets into an image layer -- STEALTHLAB_MCP_TOKEN /
+# VOYAGE_API_KEY etc. reach the container at runtime via docker-compose's
+# env_file, not via COPY.
+backend/.env
+
+# Virtualenv / caches / build artifacts -- large, platform-specific, and
+# the image builds its own with pip install -r requirements.txt anyway.
+backend/.venv
+backend/__pycache__
+backend/**/__pycache__
+backend/.pytest_cache
+backend/stealthlab_backend.egg-info
+
+# Stray large local-only result/log files (backend/conflict_candidates.json
+# alone is ~60MB of scratch output, not source) -- see repo root listing;
+# none of these are imported by anything the MCP server needs to boot.
+backend/conflict_candidates.json
+backend/*_results.json
+backend/experiment_*
+backend/after_*
+backend/*.log
+backend/*.jsonl
+
+experiments/**/__pycache__
+
+# Unrelated large/irrelevant top-level trees -- not needed by the backend
+# or MCP-server import path.
+.scratch
+.claude
+frontend
+plat_v1
+docs

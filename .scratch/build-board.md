@@ -1804,6 +1804,7 @@ Grounded findings from  3_access.sql/ 4_governance.sql/deps.py review. Sequence:
   publishing a personal email — flagging that choice here in case the
   founder wants a dedicated security@ address instead later, one-line
   change. No schema/app code touched.
+
 - RESEARCH (2026-08-27, model-decides sweep verification): done - see Lane
   RESEARCH item 6 and .scratch/research/model-decides-verification.md.
   One-line summary for the integrator: the two headline numbers (sensitivity
@@ -1862,3 +1863,69 @@ Grounded findings from  3_access.sql/ 4_governance.sql/deps.py review. Sequence:
   false-positive-asymmetry finding carried over as a judge-validation
   caution. Full text read via WebFetch on arXiv HTML, methodology sections
   specifically, not abstracts. Pure literature work, no live calls.
+
+- CORE-A (2026-08-27, twelfth wave): **docker-compose.yml** (founder-
+  requested, repo root) closing the remainder of demo.md C1's install
+  claim — `db` (pgvector/pgvector:pg15, healthchecked) + `backend` (new
+  `backend/Dockerfile`, migrates then serves the MCP server). Real,
+  non-obvious finding along the way: `app/mcp_server/server.py` imports
+  `Agent`/`RepoSandbox` from `experiments/swebench_pro/` as a real SIBLING
+  of `backend/` at MODULE IMPORT TIME (`README_MCP_SERVER.md` setup step
+  3's own documented requirement) — a backend-only build context would
+  have crash-looped the container on boot. Fixed by building with
+  `context: .` (repo root) instead of `context: ./backend`, copying both
+  trees preserving the sibling relationship; `.dockerignore` written
+  accordingly (repo-root-scoped, excludes `backend/.venv`,
+  `backend/conflict_candidates.json` [~60MB stray result file],
+  `backend/.env` [never bake secrets into a layer], `.scratch`/`.claude`/
+  `frontend`/`plat_v1`/`docs`). Loopback posture preserved end-to-end
+  per SECURITY.md: the container process binds `0.0.0.0` internally
+  (unavoidable — a container's own loopback interface isn't reachable
+  through Docker's port mapping at all) but the compose `ports:` publish
+  spec is `127.0.0.1:8765:8765` on the HOST side, which is the actual
+  enforcement boundary and keeps the server unreachable from any other
+  machine, same threat model as bare-metal. `STEALTHLAB_MCP_TOKEN` reaches
+  the container via `env_file: backend/.env` with `required: false` (so
+  `docker compose up -d` still brings up `db` on a fresh clone before
+  `.env` exists) — the container itself still hard-fails with its own
+  existing clear error if the token is missing, nothing silently
+  papered over. `DATABASE_URL` is overridden explicitly in compose
+  (`db:5432`, the service name) since whatever's in `backend/.env` is
+  host-side (`127.0.0.1`). Added `backend/scripts/docker_healthcheck.py`
+  (POSTs to `/mcp` unauthenticated, treats 401 as healthy — same signal
+  `packaging/README.md`'s own smoke test uses; a bare 2xx with no token
+  is treated as UNHEALTHY on purpose, so a passing healthcheck can never
+  paper over an auth-gate regression). Filled a real, small, adjacent gap
+  found while tracing the boot path: `backend/.env.example` never had
+  `STEALTHLAB_MCP_TOKEN` even though the server hard-requires it — added
+  with the same generation instruction `README_MCP_SERVER.md` already
+  gives.
+  **VALIDATION, honestly scoped**: Docker is NOT installed in this
+  environment (`docker`/`docker compose` both absent — checked both Bash
+  and PowerShell) — same gap that originally blocked CORE-A's queue item
+  2 (real-DB migration chain verification), and it is NOT resolved by
+  authoring this file; it still needs an environment that actually has
+  Docker to execute. **I did not, and could not, boot-test this stack.**
+  What I did verify statically: `docker-compose.yml` parses as valid YAML
+  and validates clean against the official compose-spec JSON schema
+  (fetched live from compose-spec/compose-spec, checked with `jsonschema`
+  in a real Python 3.14 interpreter found on this machine outside the
+  project venv); every eager (module-top-level) import on the
+  `app.mcp_server.server` import path was traced by hand (`app.config.
+  Settings` — all fields `Optional`, no required env var beyond what's
+  already handled; `app.debate.panel.default_panel`/`default_judge` are
+  functions, not called at import time, so no panel API key is needed to
+  boot either) to confirm nothing beyond `DATABASE_URL` +
+  `STEALTHLAB_MCP_TOKEN` is required just to come up, matching the
+  no-live-model-calls scope of this task. **Still unverified**: whether
+  the image actually builds (a `pip install` failure on some pinned
+  package, a wheel unavailable for the build platform, etc. would only
+  surface at real build time). Whoever next has Docker available should
+  run `docker compose up -d` then `docker compose exec backend python
+  scripts/migrate.py --status` (expect all 30 applied — NOTE: demo.md's
+  own C1 evidence line still says "all 23 applied", stale since the
+  WAVE-2/3 hardening waves added db/24–30; not fixed here, flagging only)
+  and the `curl -X POST .../mcp` → 401 smoke test from the compose
+  file's own header comment as the real proof this task couldn't
+  produce. No schema/app code touched beyond the two new Docker-only
+  files and the `.env.example` addition.

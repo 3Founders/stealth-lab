@@ -1,0 +1,72 @@
+# Matches demo.md C1's install claim: `docker compose up -d` brings up
+# Postgres (must be the pgvector image -- plain postgres fails migration 01,
+# which does `CREATE EXTENSION IF NOT EXISTS vector`) and a backend service
+# that migrates automatically, then serves the MCP server. Verify with:
+#   docker compose up -d
+#   docker compose exec backend python scripts/migrate.py --status   # all applied
+#   curl -s -o /dev/null -w '%{http_code}\n' -X POST http://127.0.0.1:8765/mcp
+#     # expect 401 -- server is up, auth gate is enforced (see SECURITY.md)
+#
+# Before the first run: create backend/.env from backend/.env.example and
+# set STEALTHLAB_MCP_TOKEN (generate with
+# `python -c "import secrets; print(secrets.token_urlsafe(32))"`) --
+# the server refuses to start without it, by design (SECURITY.md).
+# VOYAGE_API_KEY is not required to boot, only to actually generate
+# embeddings once the server is up.
+
+services:
+  db:
+    image: pgvector/pgvector:pg15
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: stealthlab
+      POSTGRES_PASSWORD: stealthlab
+      POSTGRES_DB: stealthlab
+    volumes:
+      - stealthlab-db-data:/var/lib/postgresql/data
+    ports:
+      # host-side only, for local psql/debugging -- 5433 so it never
+      # collides with a real local Postgres already on 5432, matching
+      # backend/README.md's own migration-check convention.
+      - "127.0.0.1:5433:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U stealthlab -d stealthlab"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    env_file:
+      # Optional at the compose level so a fresh clone can still bring up
+      # `db` before this file exists; the backend container itself still
+      # hard-requires STEALTHLAB_MCP_TOKEN and fails loudly (not silently)
+      # if it's missing -- see server.py's _require_mcp_token(). Requires
+      # Docker Compose >= 2.24 for the `required:` key; on an older
+      # Compose, just make sure backend/.env exists before `up`.
+      - path: ./backend/.env
+        required: false
+    environment:
+      # Overrides whatever DATABASE_URL backend/.env has for host-side use
+      # (e.g. 127.0.0.1) -- inside the compose network the Postgres host is
+      # the "db" service name, not localhost.
+      DATABASE_URL: postgresql://stealthlab:stealthlab@db:5432/stealthlab
+    ports:
+      # 127.0.0.1 on the HOST side is the real security boundary here, not
+      # the container-internal bind address. The process inside the
+      # container binds 0.0.0.0 (see backend/Dockerfile's CMD) only because
+      # Docker's bridge network can't route to a process bound to the
+      # container's own loopback interface at all -- publishing as
+      # 127.0.0.1:8765:8765 means the mapped port is still unreachable from
+      # anywhere but this host, matching SECURITY.md's loopback-first
+      # posture as experienced from outside the container.
+      - "127.0.0.1:8765:8765"
+
+volumes:
+  stealthlab-db-data:
