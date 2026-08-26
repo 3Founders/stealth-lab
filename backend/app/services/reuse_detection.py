@@ -35,7 +35,7 @@ from typing import Optional
 
 import asyncpg
 
-from app.services.access import AccessScope, visibility_predicate
+from app.services.access import AccessScope, TenantScope, scope_predicates
 from app.services.embeddings import Embedder, to_pgvector
 from app.services.precondition_gate import extract_postconditions, postconditions_compatible
 
@@ -88,9 +88,11 @@ def _lexical_overlap(a: str, b: str) -> float:
 
 
 async def _vector_candidates(
-    pool: asyncpg.Pool, query_vec: list[float], scope: AccessScope, limit: int = 5
+    pool: asyncpg.Pool, query_vec: list[float], scope: AccessScope, limit: int = 5,
+    tenant_scope: Optional[TenantScope] = None,
 ) -> list[ReusableNode]:
-    vis_sql, vis_params = visibility_predicate(scope, param_index=3)
+    tenant = tenant_scope or TenantScope.unrestricted()
+    scope_sql, scope_params, _ = scope_predicates(scope, tenant, param_index=3)
     vec = to_pgvector(query_vec)
     results: list[ReusableNode] = []
     for table, name_expr, props_col in (
@@ -109,9 +111,9 @@ async def _vector_candidates(
             f"SELECT id, name, {name_expr} AS full_text, {props_col} AS props, "
             f"1 - (embedding <=> $1::vector) AS similarity "
             f"FROM {table} "
-            f"WHERE t_invalid IS NULL AND {vis_sql} AND embedding IS NOT NULL {proxy_filter}"
+            f"WHERE t_invalid IS NULL AND {scope_sql} AND embedding IS NOT NULL {proxy_filter}"
             f"ORDER BY similarity DESC LIMIT $2",
-            vec, limit, *vis_params,
+            vec, limit, *scope_params,
         )
         for r in rows:
             results.append(ReusableNode(
@@ -123,9 +125,11 @@ async def _vector_candidates(
 
 
 async def _lexical_candidates(
-    pool: asyncpg.Pool, problem: str, scope: AccessScope, limit: int = 5
+    pool: asyncpg.Pool, problem: str, scope: AccessScope, limit: int = 5,
+    tenant_scope: Optional[TenantScope] = None,
 ) -> list[ReusableNode]:
-    vis_sql, vis_params = visibility_predicate(scope, param_index=1)
+    tenant = tenant_scope or TenantScope.unrestricted()
+    scope_sql, scope_params, _ = scope_predicates(scope, tenant, param_index=1)
     results: list[ReusableNode] = []
     for table, name_expr, props_col in (
         ("task_nodes", "name || ' ' || COALESCE(description, '')", "success_criteria"),
@@ -137,8 +141,8 @@ async def _lexical_candidates(
         )
         rows = await pool.fetch(
             f"SELECT id, name, {name_expr} AS full_text, {props_col} AS props FROM {table} "
-            f"WHERE t_invalid IS NULL AND {vis_sql} {proxy_filter}LIMIT 200",
-            *vis_params,
+            f"WHERE t_invalid IS NULL AND {scope_sql} {proxy_filter}LIMIT 200",
+            *scope_params,
         )
         for r in rows:
             score = _lexical_overlap(problem, r["full_text"])
@@ -159,6 +163,7 @@ async def find_reusable_nodes(
     embedder: Optional[Embedder] = None,
     query_vec: Optional[list[float]] = None,
     query_postconditions: Optional[list[str]] = None,
+    tenant_scope: Optional[TenantScope] = None,
 ) -> list[ReusableNode]:
     """
     Returns candidates above PARTIAL_MATCH_THRESHOLD, highest similarity
@@ -195,7 +200,7 @@ async def find_reusable_nodes(
         embedder = embedder or Embedder()
         if query_vec is None:
             query_vec = await embedder.embed_one(problem, input_type="query")
-        candidates = await _vector_candidates(pool, query_vec, scope)
+        candidates = await _vector_candidates(pool, query_vec, scope, tenant_scope=tenant_scope)
         if candidates:
             return _gated([c for c in candidates if c.similarity >= PARTIAL_MATCH_THRESHOLD])
     except Exception:  # noqa: BLE001
@@ -204,5 +209,5 @@ async def find_reusable_nodes(
             "vector reuse-check unavailable, falling back to lexical overlap", exc_info=True
         )
 
-    lexical = await _lexical_candidates(pool, problem, scope)
+    lexical = await _lexical_candidates(pool, problem, scope, tenant_scope=tenant_scope)
     return _gated([c for c in lexical if c.similarity >= LEXICAL_PARTIAL_MATCH_THRESHOLD])

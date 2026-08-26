@@ -42,7 +42,7 @@ from uuid import UUID
 
 import asyncpg
 
-from app.services.access import AccessScope, visibility_predicate
+from app.services.access import AccessScope, TenantScope, scope_predicates
 from app.services.dedup import complete_linkage_clusters
 from app.services.embeddings import Embedder
 from app.services.precondition_gate import extract_postconditions, postconditions_compatible
@@ -150,7 +150,10 @@ def _name_expr(table: str, alias: str = "") -> str:
     return f"{prefix}name"
 
 
-async def _fetch_roots(pool: asyncpg.Pool, table: str, scope: AccessScope) -> list[dict]:
+async def _fetch_roots(
+    pool: asyncpg.Pool, table: str, scope: AccessScope,
+    tenant_scope: Optional[TenantScope] = None,
+) -> list[dict]:
     """Nodes with no incoming PARENT_OF edge -- i.e. not yet owned by
     any internal node. These are the current top of whatever tree
     structure exists so far (possibly still a flat, unclustered set).
@@ -159,20 +162,25 @@ async def _fetch_roots(pool: asyncpg.Pool, table: str, scope: AccessScope) -> li
     Y" scaffold nodes) when the table is task_nodes -- same class of
     fix as excluding hierarchy Group nodes from knowledge_conflict
     detection: a synthetic scaffold node was never a real task a user's
-    /v1/decompose call should ever be matched against."""
+    /v1/decompose call should ever be matched against.
+
+    WAVE-3 tenancy adoption: the predicate is BOTH axes via
+    scope_predicates() -- task_nodes/knowledge_nodes/edges are all
+    tenant-bearing; default unrestricted() renders visible TRUE."""
     proxy_filter = (
         "AND (n.success_criteria->>'internal_proxy') IS DISTINCT FROM 'true' "
         if table == "task_nodes" else ""
     )
-    vis_sql, vis_params = visibility_predicate(scope, alias="n", param_index=1)
+    tenant = tenant_scope or TenantScope.unrestricted()
+    scope_sql, scope_params, _ = scope_predicates(scope, tenant, alias="n", param_index=1)
     rows = await pool.fetch(
         f"SELECT n.id, n.name, (n.embedding IS NOT NULL) AS has_embedding, "
         f"{_name_expr(table, alias='n')} AS full_text "
         f"FROM {table} n "
-        f"WHERE n.t_invalid IS NULL AND {vis_sql} {proxy_filter}"
+        f"WHERE n.t_invalid IS NULL AND {scope_sql} {proxy_filter}"
         f"AND NOT EXISTS (SELECT 1 FROM edges e WHERE e.t_invalid IS NULL AND {_OWNS_FILTER} "
         f"  AND e.target_id = n.id AND e.target_table = '{table}')",
-        *vis_params,
+        *scope_params,
     )
     return [dict(r) for r in rows]
 
@@ -272,6 +280,7 @@ async def build_hierarchy_for_table(
     max_levels: int = 6,
     approver_id: str = "hierarchy_builder",
     apply: bool = False,
+    tenant_scope: Optional[TenantScope] = None,
 ) -> HierarchyBuildReport:
     """
     Bottom-up: repeatedly group the current roots of `table` into
@@ -298,7 +307,7 @@ async def build_hierarchy_for_table(
     level = 0
 
     while level < max_levels:
-        roots = await _fetch_roots(pool, table, scope)
+        roots = await _fetch_roots(pool, table, scope, tenant_scope=tenant_scope)
         if len(roots) < min_children:
             break  # nothing left that could form a new internal node
 
@@ -401,6 +410,7 @@ async def hierarchical_search(
     confidence_floor: float = 0.3,
     query_vec: Optional[list[float]] = None,
     query_postconditions: Optional[list[str]] = None,
+    tenant_scope: Optional[TenantScope] = None,
 ) -> SearchResult:
     """
     Beam-descend the tree: mean-vector routing, confidence-adaptive
@@ -430,7 +440,9 @@ async def hierarchical_search(
     from app.services.embeddings import to_pgvector
     vec_str = to_pgvector(query_vec)
 
-    frontier_ids = [str(r["id"]) for r in await _fetch_roots(pool, table, scope)]
+    frontier_ids = [
+        str(r["id"]) for r in await _fetch_roots(pool, table, scope, tenant_scope=tenant_scope)
+    ]
     if not frontier_ids:
         return SearchResult(None, None, None, used_flat_fallback=True, comparisons=0)
 
@@ -516,6 +528,7 @@ async def batch_hierarchical_search(
     expanded_beam: int = 3,
     confidence_floor: float = 0.3,
     query_postconditions: Optional[dict[str, list[str]]] = None,
+    tenant_scope: Optional[TenantScope] = None,
 ) -> dict[str, SearchResult]:
     """
     Same algorithm as hierarchical_search (mean-vector routing,
@@ -562,7 +575,7 @@ async def batch_hierarchical_search(
     # only led to a 0.51 leaf.
     best_leaf: dict[str, tuple[str, str, float]] = {}
 
-    root_rows = await _fetch_roots(pool, table, scope)
+    root_rows = await _fetch_roots(pool, table, scope, tenant_scope=tenant_scope)
     if not root_rows:
         return {ref: SearchResult(None, None, None, True, 0) for ref in refs}
     root_ids = [str(r["id"]) for r in root_rows]

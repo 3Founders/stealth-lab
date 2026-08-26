@@ -39,7 +39,7 @@ from uuid import UUID
 
 import asyncpg
 
-from app.services.access import AccessScope, visibility_predicate
+from app.services.access import AccessScope, TenantScope, scope_predicates
 from app.services.hierarchy import _OWNS_FILTER
 from app.services.reuse_detection import FULL_MATCH_THRESHOLD, PARTIAL_MATCH_THRESHOLD
 from app.services.triggers import TriggerDetector, TriggerHit
@@ -47,6 +47,7 @@ from app.services.triggers import TriggerDetector, TriggerHit
 
 async def find_conflicting_knowledge(
     pool: asyncpg.Pool, new_node_id: str, scope: Optional[AccessScope] = None,
+    tenant_scope: Optional[TenantScope] = None,
 ) -> Optional[dict]:
     """
     Returns the best-matching EXISTING knowledge_node in the
@@ -67,20 +68,25 @@ async def find_conflicting_knowledge(
     a node with an outgoing OWNS/PARENT_OF edge is internal, not a real
     knowledge claim, and must never be a candidate for conflict
     detection or supersession.
+
+    WAVE-3 tenancy adoption (cross-lane request #2): the candidate-side
+    predicate carries BOTH axes via scope_predicates(); default
+    unrestricted() renders the visible literal TRUE.
     """
     scope = scope or AccessScope.unrestricted()
-    vis_sql, vis_params = visibility_predicate(scope, alias="b", param_index=2)
+    tenant = tenant_scope or TenantScope.unrestricted()
+    scope_sql, scope_params, _ = scope_predicates(scope, tenant, alias="b", param_index=2)
     rows = await pool.fetch(
         f"SELECT b.id, b.name, 1 - (a.embedding <=> b.embedding) AS similarity "
         f"FROM knowledge_nodes a JOIN knowledge_nodes b ON a.id != b.id "
         f"WHERE a.id = $1 AND a.t_invalid IS NULL AND b.t_invalid IS NULL "
-        f"AND a.embedding IS NOT NULL AND b.embedding IS NOT NULL AND {vis_sql} "
+        f"AND a.embedding IS NOT NULL AND b.embedding IS NOT NULL AND {scope_sql} "
         f"AND NOT EXISTS (SELECT 1 FROM edges e WHERE e.t_invalid IS NULL AND {_OWNS_FILTER} "
         f"  AND e.source_id = a.id AND e.source_table = 'knowledge_nodes') "
         f"AND NOT EXISTS (SELECT 1 FROM edges e WHERE e.t_invalid IS NULL AND {_OWNS_FILTER} "
         f"  AND e.source_id = b.id AND e.source_table = 'knowledge_nodes') "
         f"ORDER BY similarity DESC LIMIT 1",
-        UUID(new_node_id), *vis_params,
+        UUID(new_node_id), *scope_params,
     )
     if not rows:
         return None

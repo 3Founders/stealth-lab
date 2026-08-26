@@ -32,7 +32,7 @@ from typing import Any, Literal, Optional, Union
 import asyncpg
 from pydantic import BaseModel
 
-from app.services.access import AccessScope, visibility_predicate
+from app.services.access import AccessScope, TenantScope, scope_predicates
 
 
 class GitSha(BaseModel):
@@ -83,6 +83,7 @@ async def project_state(
     subjects: list[str],
     as_of: Optional[datetime] = None,
     scope: Optional[AccessScope] = None,
+    tenant_scope: Optional[TenantScope] = None,
 ) -> list[dict[str, Any]]:
     """
     Real, direct implementation of ticket 10's core decision. Returns
@@ -97,14 +98,21 @@ async def project_state(
     claim, never introduced here as a NULL-shaped return.
 
     `scope` is access-scoped per ticket 09's non-negotiable rule ("every
-    new query goes through access.py's visibility_predicate() -- no
-    hand-written filters, no exceptions"). knowledge_nodes is one of the
-    four tables 03_access.sql already covers, so a claim's real
-    visibility/owner_id columns exist; this function was simply never
-    filtering on them. Defaults to unrestricted() to preserve the
-    previous (internal-caller) behaviour rather than silently break
-    existing callers -- request paths must pass a real scope, same
-    convention as GraphStore.
+    new query goes through access.py's builders -- no hand-written
+    filters, no exceptions"). knowledge_nodes is one of the four tables
+    03_access.sql already covers, so a claim's real visibility/owner_id
+    columns exist; this function was simply never filtering on them.
+    Defaults to unrestricted() to preserve the previous
+    (internal-caller) behaviour rather than silently break existing
+    callers -- request paths must pass a real scope, same convention as
+    GraphStore.
+
+    WAVE-3 tenancy adoption (cross-lane request #2): the second axis
+    rides the same builder call -- scope_predicates() emits BOTH
+    fragments with correctly sequenced params. Default
+    TenantScope.unrestricted() renders the visible literal TRUE (no
+    binding), keeping today's permissive-in-effect posture readable in
+    the query text rather than silently absent.
     """
     if as_of is None:
         as_of = datetime.now(timezone.utc)
@@ -112,7 +120,8 @@ async def project_state(
         return []
 
     scope = scope or AccessScope.unrestricted()
-    vis_sql, vis_params = visibility_predicate(scope, param_index=3)
+    tenant = tenant_scope or TenantScope.unrestricted()
+    scope_sql, scope_params, _ = scope_predicates(scope, tenant, param_index=3)
 
     rows = await pool.fetch(
         "SELECT id, properties, t_valid, t_invalid FROM knowledge_nodes "
@@ -121,8 +130,8 @@ async def project_state(
         "AND properties->>'truth_state' = 'IN' "
         "AND t_valid <= $2 "
         "AND (t_invalid IS NULL OR t_invalid > $2) "
-        f"AND {vis_sql}",
-        subjects, as_of, *vis_params,
+        f"AND {scope_sql}",
+        subjects, as_of, *scope_params,
     )
     return [
         {
@@ -145,6 +154,7 @@ async def state_delta(
     before: datetime,
     after: datetime,
     scope: Optional[AccessScope] = None,
+    tenant_scope: Optional[TenantScope] = None,
 ) -> dict[str, list[dict[str, Any]]]:
     """
     Computed on demand, never stored (ticket 10's own decision):
@@ -159,10 +169,15 @@ async def state_delta(
     `scope` threaded through to both project_state() calls -- a delta
     computed from two differently-scoped snapshots would leak existence
     information (a claim "disappearing" because the viewer lost
-    visibility to it, not because it stopped being true).
+    visibility to it, not because it stopped being true). `tenant_scope`
+    threads identically (WAVE-3 adoption).
     """
-    before_state = await project_state(pool, subjects=subjects, as_of=before, scope=scope)
-    after_state = await project_state(pool, subjects=subjects, as_of=after, scope=scope)
+    before_state = await project_state(
+        pool, subjects=subjects, as_of=before, scope=scope, tenant_scope=tenant_scope,
+    )
+    after_state = await project_state(
+        pool, subjects=subjects, as_of=after, scope=scope, tenant_scope=tenant_scope,
+    )
 
     before_ids = {c["id"] for c in before_state}
     after_ids = {c["id"] for c in after_state}

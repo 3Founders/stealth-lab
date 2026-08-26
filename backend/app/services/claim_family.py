@@ -106,7 +106,7 @@ from typing import Any, Iterable, Mapping, Optional
 
 import asyncpg
 
-from app.services.access import AccessScope, visibility_predicate
+from app.services.access import AccessScope, TenantScope, scope_predicates
 from app.services.v0_gate import V0Violation, validate_scope
 
 CREATED_BY = "claim_family_resolver"
@@ -376,6 +376,7 @@ async def resolve_claim_family(
     access_scope: Optional[AccessScope] = None,
     attach: bool = True,
     limit: int = BLOCK_LIMIT,
+    tenant_scope: Optional[TenantScope] = None,
 ) -> Optional[FamilyResolution]:
     """Resolve (and by default attach) one claim to its project-scoped
     ClaimFamily.
@@ -388,9 +389,15 @@ async def resolve_claim_family(
     Raises V0Violation when the subject claim predates scope stamping
     (fresh-start rows always carry one; legacy rows must not be silently
     resolved against an invented scope).
+
+    WAVE-3 tenancy adoption (cross-lane request #2): knowledge_nodes is
+    tenant-bearing, so every predicate build here goes through
+    scope_predicates(); default unrestricted() renders the visible
+    literal TRUE with no binding.
     """
     scope = access_scope or AccessScope.unrestricted()
-    vis_sql, vis_params = visibility_predicate(scope, param_index=2)
+    tenant = tenant_scope or TenantScope.unrestricted()
+    vis_sql, vis_params, _ = scope_predicates(scope, tenant, param_index=2)
 
     async with pool.acquire() as conn:
         subject_row = await conn.fetchrow(
@@ -466,18 +473,18 @@ async def resolve_claim_family(
         attached = False
         if winner is not None and attach:
             # The hub lookup's placeholders start at $4 ($1..$3 below), so
-            # the visibility predicate is generated for THAT index -- never
+            # the predicate is generated for THAT index -- never
             # string-replace placeholders into a fragment built for another.
-            hub_vis_sql, hub_vis_params = visibility_predicate(scope, param_index=4)
+            hub_sql, hub_params, _ = scope_predicates(scope, tenant, param_index=4)
             async with conn.transaction():
                 hub_id = await conn.fetchval(
                     f"SELECT id FROM knowledge_nodes WHERE node_type = '{FAMILY_NODE_TYPE}' "
                     f"AND t_invalid IS NULL AND scope_type = $1 AND scope_entity_id = $2 "
-                    f"AND properties->>'canonical_key' = $3 AND {hub_vis_sql} LIMIT 1",
+                    f"AND properties->>'canonical_key' = $3 AND {hub_sql} LIMIT 1",
                     subject_row["scope_type"],
                     subject_row["scope_entity_id"],
                     subject_prop.canonical_key,
-                    *hub_vis_params,
+                    *hub_params,
                 )
                 if hub_id is None:
                     display = " ".join(

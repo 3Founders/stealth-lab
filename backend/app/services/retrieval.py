@@ -25,7 +25,7 @@ from uuid import UUID
 import asyncpg
 
 from app.db.graph_store import GraphStore
-from app.services.access import AccessScope, visibility_predicate
+from app.services.access import AccessScope, TenantScope, scope_predicates
 from app.services.embeddings import Embedder, to_pgvector
 
 log = logging.getLogger(__name__)
@@ -158,6 +158,7 @@ class HybridRetriever:
         scope: Optional[AccessScope] = None,
         embedding_column: str = "embedding",
         tables: tuple[str, ...] = ("task_nodes", "knowledge_nodes"),
+        tenant_scope: Optional[TenantScope] = None,
     ):
         if embedding_column not in VALID_EMBEDDING_COLUMNS:
             raise ValueError(
@@ -167,10 +168,17 @@ class HybridRetriever:
         self._pool = pool
         self._embedder = embedder or Embedder()
         self._scope = scope or AccessScope.unrestricted()
-        # The graph store inherits the same scope -- retrieval that
+        # WAVE-3 tenancy adoption (cross-lane request #2): task_nodes and
+        # knowledge_nodes are tenant-bearing, so every predicate build in
+        # this class goes through scope_predicates() -- both axes, one
+        # call. Default unrestricted() renders the visible literal TRUE.
+        self._tenant_scope = tenant_scope or TenantScope.unrestricted()
+        # The graph store inherits the same scopes -- retrieval that
         # filtered its entrypoints but then expanded through unscoped
         # traversal would leak exactly what the filter prevented.
-        self._graph = GraphStore(pool, scope=self._scope)
+        self._graph = GraphStore(
+            pool, scope=self._scope, tenant_scope=self._tenant_scope
+        )
         self._emb = embedding_column
         # embedding_joint only exists on task_nodes -- knowledge_nodes has no
         # alt column, so a caller asking for the joint embedding is
@@ -181,7 +189,9 @@ class HybridRetriever:
     async def _vector_search(self, query_vec: list[float], limit: int) -> list[tuple[UUID, str, int]]:
         """Returns (id, table, rank). Only rank matters downstream, for RRF."""
         vec = to_pgvector(query_vec)
-        vis_sql, vis_params = visibility_predicate(self._scope, param_index=3)
+        scope_sql, scope_params, _ = scope_predicates(
+            self._scope, self._tenant_scope, param_index=3
+        )
         legs = []
         for table in self._tables:
             not_group = _NOT_A_HIERARCHY_GROUP.format(table=table)
@@ -190,7 +200,7 @@ class HybridRetriever:
                 f"SELECT id, '{table}' AS tbl, {self._emb} <=> $1::vector AS dist "
                 f"FROM {table} "
                 f"WHERE {self._emb} IS NOT NULL AND t_invalid IS NULL {believed}"
-                f"AND {vis_sql} "
+                f"AND {scope_sql} "
                 f"AND {not_group}"
             )
         rows = await self._pool.fetch(
@@ -198,12 +208,14 @@ class HybridRetriever:
             SELECT id, tbl FROM ({" UNION ALL ".join(legs)}) combined
             ORDER BY dist ASC LIMIT $2
             """,
-            vec, limit, *vis_params,
+            vec, limit, *scope_params,
         )
         return [(r["id"], r["tbl"], i) for i, r in enumerate(rows)]
 
     async def _lexical_search(self, query: str, limit: int) -> list[tuple[UUID, str, int]]:
-        vis_sql, vis_params = visibility_predicate(self._scope, param_index=3)
+        scope_sql, scope_params, _ = scope_predicates(
+            self._scope, self._tenant_scope, param_index=3
+        )
         legs = []
         if "task_nodes" in self._tables:
             not_group = _NOT_A_HIERARCHY_GROUP.format(table="task_nodes")
@@ -213,7 +225,7 @@ class HybridRetriever:
                        ts_rank(to_tsvector('english', name || ' ' || COALESCE(description,'')),
                                (SELECT q FROM parsed_query)) AS rank
                 FROM task_nodes
-                WHERE t_invalid IS NULL AND {vis_sql} AND {not_group}
+                WHERE t_invalid IS NULL AND {scope_sql} AND {not_group}
                   AND to_tsvector('english', name || ' ' || COALESCE(description,''))
                       @@ (SELECT q FROM parsed_query)
                 """
@@ -225,7 +237,8 @@ class HybridRetriever:
                 SELECT id, 'knowledge_nodes' AS tbl,
                        ts_rank(to_tsvector('english', name), (SELECT q FROM parsed_query)) AS rank
                 FROM knowledge_nodes
-                WHERE t_invalid IS NULL AND {NOT_TRUTH_STATE_OUT} AND {vis_sql} AND {not_group}
+                WHERE t_invalid IS NULL AND {NOT_TRUTH_STATE_OUT}
+                  AND {scope_sql} AND {not_group}
                   AND to_tsvector('english', name) @@ (SELECT q FROM parsed_query)
                 """
             )
@@ -250,7 +263,7 @@ class HybridRetriever:
             SELECT id, tbl FROM ({" UNION ALL ".join(legs)}) combined
             ORDER BY rank DESC LIMIT $2
             """,
-            query, limit, *vis_params,
+            query, limit, *scope_params,
         )
         return [(r["id"], r["tbl"], i) for i, r in enumerate(rows)]
 
@@ -301,7 +314,9 @@ class HybridRetriever:
         found: dict[UUID, RetrievedNode] = {}
 
         for (node_id, table), score in ranked:
-            hydrate_sql, hydrate_params = visibility_predicate(self._scope, param_index=2)
+            hydrate_sql, hydrate_params, _ = scope_predicates(
+                self._scope, self._tenant_scope, param_index=2
+            )
             belief = "" if table == "task_nodes" else f"AND {NOT_TRUTH_STATE_OUT} "
             row = await self._pool.fetchrow(
                 f"SELECT id, name, {'description' if table == 'task_nodes' else 'NULL AS description'} "
@@ -335,7 +350,9 @@ class HybridRetriever:
                     if nid in found or len(found) >= max_context_nodes:
                         continue
                     not_group = _NOT_A_HIERARCHY_GROUP.format(table=ntable)
-                    exp_sql, exp_params = visibility_predicate(self._scope, param_index=2)
+                    exp_sql, exp_params, _ = scope_predicates(
+                        self._scope, self._tenant_scope, param_index=2
+                    )
                     # Same belief filter as direct search -- without it the
                     # SUPERSEDES/CONTRADICTS edge itself would walk expansion
                     # straight back to the OUT claim search just excluded.

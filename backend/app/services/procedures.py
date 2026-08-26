@@ -25,7 +25,7 @@ from __future__ import annotations
 
 import time
 from datetime import datetime, timezone
-from typing import Any, Optional
+from typing import Any, Mapping, Optional
 
 import asyncpg
 
@@ -33,7 +33,29 @@ from app.config import settings
 from app.utils.ids import uuid7
 from app.services.embeddings import to_pgvector
 
+from app.execution.evidence import outcome_to_evidence
+from app.execution.failures import classify_and_route
+from app.services.access import TenantScope, tenant_transaction
+
 CREATED_BY = "procedure_capture"
+
+# WAVE-3 adoption sweep: this module became the FIRST tenant_transaction()
+# caller -- every statement below runs with app.tenant_id bound
+# transaction-locally, so db/29's RLS backstop is armed-and-keyed here
+# rather than permissive-by-absence (cross-lane request #1).
+OUTCOME_WRITER_STAMP = "record_execution_outcome@1"
+
+# Invariant #13 judgment call, named: the lifecycle writer records REAL
+# runs (the executor calls this after an actual execution), but its
+# historical API carries only `success: bool` -- no criteria argument.
+# A bare model-asserted success must never reach the evidence table, so
+# the writer synthesizes explicit criteria from what the call itself
+# measured (the run's step count / costs) unless the caller passes
+# richer criteria. The predicate names the recording provenance; the
+# metrics are the run's own numbers.
+LIFECYCLE_OUTCOME_CRITERIA_PREDICATE = (
+    "procedure execution completed with a recorded terminal outcome"
+)
 
 # Ticket 13's exact numbers -- literature-grounded (Beta-Bernoulli, rule
 # of three), not tuned for this repo. Configuration, not literals
@@ -187,6 +209,11 @@ async def record_execution_outcome(
     steps_used: Optional[int] = None,
     match_cost: float = 0.0,
     realised_savings: float = 0.0,
+    success_criteria: Optional[Mapping[str, Any]] = None,
+    failure_class: Optional[str] = None,
+    owner_id: Optional[str] = None,
+    visibility: str = "public",
+    tenant_scope: Optional[TenantScope] = None,
 ) -> dict:
     """
     Real, single source of truth for every ticket 13 lifecycle
@@ -204,105 +231,205 @@ async def record_execution_outcome(
     not just a counter, so "is this a new context" is answered
     correctly rather than assumed monotonic.
 
+    WAVE-3 (cross-lane request #1 landed): this is now ALSO the
+    evidence writer. One execution_result evidence row per outcome --
+    built by app/execution/evidence.py::outcome_to_evidence(), inserted
+    BEFORE the counters UPDATE so db/30's verified-requires-evidence
+    engine trigger sees it when the promotion transition fires in the
+    same transaction (gate and writer together, never a half-gate).
+    Failed outcomes are classified and routed in that same transaction
+    via classify_and_route() -- pass `failure_class` when the caller
+    knows the §36 cause; leaving it NULL is honest and lands the
+    failure in the requires_review queue ("nobody classified this" is
+    itself a finding), never silently dropped. Successes carry no cause
+    and are never routed.
+
+    `success_criteria` feeds invariant #13's gate for successes; when
+    omitted, explicit criteria are synthesized from the measurements
+    this call actually recorded (see
+    LIFECYCLE_OUTCOME_CRITERIA_PREDICATE) -- bare model-asserted
+    success stays unwritable.
+
+    `tenant_scope` binds app.tenant_id for the whole transaction
+    (db/29's RLS backstop reads it); default Commons matches today's
+    shared-commons posture and the tenant_id DEFAULT every evidence row
+    carries. TenantScope.unrestricted() opens the plain-transaction
+    maintenance hatch.
+
     Returns the procedure row AFTER all transitions have been applied,
     so a caller can observe a promotion/quarantine/circuit-open that
     just happened as a direct result of this call.
     """
-    async with pool.acquire() as conn:
-        async with conn.transaction():
-            row = await conn.fetchrow(
-                "SELECT * FROM procedures WHERE id = $1 FOR UPDATE", procedure_row_id
-            )
-            if row is None:
-                raise ProcedureNotFound(procedure_row_id)
+    scope = tenant_scope if tenant_scope is not None else TenantScope.commons()
+    async with tenant_transaction(pool, scope) as conn:
+        row = await conn.fetchrow(
+            "SELECT * FROM procedures WHERE id = $1 FOR UPDATE", procedure_row_id
+        )
+        if row is None:
+            raise ProcedureNotFound(procedure_row_id)
 
-            stats = dict(row["verification_stats"])
-            stats.setdefault("context_keys_seen", [])
-            stats.setdefault("consecutive_failures", 0)
-            stats.setdefault("quarantine_entered_at", None)
-            stats.setdefault("consecutive_successes_since_quarantine", 0)
+        stats = dict(row["verification_stats"])
+        stats.setdefault("context_keys_seen", [])
+        stats.setdefault("consecutive_failures", 0)
+        stats.setdefault("quarantine_entered_at", None)
+        stats.setdefault("consecutive_successes_since_quarantine", 0)
 
-            stats["attempts"] = stats.get("attempts", 0) + 1
-            stats["match_cost_total"] = stats.get("match_cost_total", 0) + match_cost
-            stats["realised_savings_total"] = stats.get("realised_savings_total", 0) + realised_savings
+        stats["attempts"] = stats.get("attempts", 0) + 1
+        stats["match_cost_total"] = stats.get("match_cost_total", 0) + match_cost
+        stats["realised_savings_total"] = stats.get("realised_savings_total", 0) + realised_savings
 
-            if context_key not in stats["context_keys_seen"]:
-                stats["context_keys_seen"].append(context_key)
-            stats["distinct_contexts"] = len(stats["context_keys_seen"])
+        if context_key not in stats["context_keys_seen"]:
+            stats["context_keys_seen"].append(context_key)
+        stats["distinct_contexts"] = len(stats["context_keys_seen"])
 
+        if success:
+            stats["successes"] = stats.get("successes", 0) + 1
+            stats["consecutive_failures"] = 0
+            if steps_used is not None:
+                prior_mean = stats.get("mean_steps")
+                prior_successes = stats["successes"] - 1
+                stats["mean_steps"] = (
+                    steps_used if prior_mean is None or prior_successes == 0
+                    else (prior_mean * prior_successes + steps_used) / stats["successes"]
+                )
+        else:
+            stats["consecutive_failures"] = stats.get("consecutive_failures", 0) + 1
+
+        verification_state = row["verification_state"]
+        availability = row["availability"]
+
+        # Ticket 13: ">=10 successes, 0 failures, across >=3 distinct
+        # contexts" for verified. "0 failures" means the procedure
+        # has never recorded a failure at all -- not just none
+        # recently -- since a single real failure genuinely
+        # disqualifies the Beta(11,1) argument this threshold rests
+        # on (successes minus failures, not successes alone).
+        total_failures = stats["attempts"] - stats["successes"]
+        if (
+            verification_state == "candidate"
+            and total_failures == 0
+            and stats["successes"] >= MIN_SUCCESSES_FOR_VERIFIED
+            and stats["distinct_contexts"] >= MIN_DISTINCT_CONTEXTS_FOR_VERIFIED
+        ):
+            verification_state = "verified"
+
+        # Ticket 13's circuit breaker: open (quarantine) after 5
+        # failures; close (un-quarantine) after 5 consecutive
+        # successes recorded WHILE quarantined. The half-open probe
+        # itself isn't a separate stored state -- availability=
+        # 'quarantined' already means "don't auto-select this, but
+        # an explicit call here can still record an outcome for
+        # it", which IS the probe; each such call while quarantined
+        # is one probe result.
+        if availability == "quarantined":
             if success:
-                stats["successes"] = stats.get("successes", 0) + 1
-                stats["consecutive_failures"] = 0
-                if steps_used is not None:
-                    prior_mean = stats.get("mean_steps")
-                    prior_successes = stats["successes"] - 1
-                    stats["mean_steps"] = (
-                        steps_used if prior_mean is None or prior_successes == 0
-                        else (prior_mean * prior_successes + steps_used) / stats["successes"]
-                    )
+                stats["consecutive_successes_since_quarantine"] = (
+                    stats.get("consecutive_successes_since_quarantine", 0) + 1
+                )
             else:
-                stats["consecutive_failures"] = stats.get("consecutive_failures", 0) + 1
-
-            verification_state = row["verification_state"]
-            availability = row["availability"]
-
-            # Ticket 13: ">=10 successes, 0 failures, across >=3 distinct
-            # contexts" for verified. "0 failures" means the procedure
-            # has never recorded a failure at all -- not just none
-            # recently -- since a single real failure genuinely
-            # disqualifies the Beta(11,1) argument this threshold rests
-            # on (successes minus failures, not successes alone).
-            total_failures = stats["attempts"] - stats["successes"]
-            if (
-                verification_state == "candidate"
-                and total_failures == 0
-                and stats["successes"] >= MIN_SUCCESSES_FOR_VERIFIED
-                and stats["distinct_contexts"] >= MIN_DISTINCT_CONTEXTS_FOR_VERIFIED
-            ):
-                verification_state = "verified"
-
-            # Ticket 13's circuit breaker: open (quarantine) after 5
-            # failures; close (un-quarantine) after 5 consecutive
-            # successes recorded WHILE quarantined. The half-open probe
-            # itself isn't a separate stored state -- availability=
-            # 'quarantined' already means "don't auto-select this, but
-            # an explicit call here can still record an outcome for
-            # it", which IS the probe; each such call while quarantined
-            # is one probe result.
-            if availability == "quarantined":
-                if success:
-                    stats["consecutive_successes_since_quarantine"] = (
-                        stats.get("consecutive_successes_since_quarantine", 0) + 1
-                    )
-                else:
-                    stats["consecutive_successes_since_quarantine"] = 0
-
-            if not success and stats["consecutive_failures"] >= CIRCUIT_BREAKER_OPEN_AFTER_FAILURES:
-                if availability == "active":
-                    availability = "quarantined"
-                    stats["quarantine_entered_at"] = datetime.now(timezone.utc).isoformat()
-                    stats["consecutive_successes_since_quarantine"] = 0
-            elif (
-                availability == "quarantined"
-                and stats["consecutive_successes_since_quarantine"] >= CIRCUIT_BREAKER_CLOSE_AFTER_SUCCESSES
-            ):
-                availability = "active"
-                stats["quarantine_entered_at"] = None
                 stats["consecutive_successes_since_quarantine"] = 0
 
-            updated = await conn.fetchrow(
-                """
-                UPDATE procedures
-                SET verification_stats = $2::jsonb,
-                    verification_state = $3::procedure_verification_state,
-                    availability = $4::procedure_availability,
-                    updated_at = now()
-                WHERE id = $1
-                RETURNING *
-                """,
-                procedure_row_id, stats, verification_state, availability,
+        if not success and stats["consecutive_failures"] >= CIRCUIT_BREAKER_OPEN_AFTER_FAILURES:
+            if availability == "active":
+                availability = "quarantined"
+                stats["quarantine_entered_at"] = datetime.now(timezone.utc).isoformat()
+                stats["consecutive_successes_since_quarantine"] = 0
+        elif (
+            availability == "quarantined"
+            and stats["consecutive_successes_since_quarantine"] >= CIRCUIT_BREAKER_CLOSE_AFTER_SUCCESSES
+        ):
+            availability = "active"
+            stats["quarantine_entered_at"] = None
+            stats["consecutive_successes_since_quarantine"] = 0
+
+        # ---- evidence write (WAVE-3): one row per outcome, before the
+        # counters UPDATE so migration 30's engine trigger counts THIS
+        # run's evidence when it gates the candidate->verified jump.
+        criteria = None
+        if success:
+            criteria = success_criteria if success_criteria is not None else {
+                "predicate": LIFECYCLE_OUTCOME_CRITERIA_PREDICATE,
+                "metrics": {
+                    key: value
+                    for key, value in (
+                        ("steps_used", steps_used),
+                        ("match_cost", match_cost),
+                        ("realised_savings", realised_savings),
+                    )
+                    if value is not None
+                },
+            }
+        evidence = outcome_to_evidence(
+            evidence_type="execution_result",
+            target={
+                "target_type": "procedure",
+                "target_id": str(row["id"]),
+                "target_version": row["version"],
+            },
+            outcome_status="success" if success else "failure",
+            success_criteria=criteria,
+            failure_class=failure_class,
+            context_key=context_key,
+            created_by=OUTCOME_WRITER_STAMP,
+            visibility=visibility,
+            owner_id=owner_id,
+        )
+        inserted = await conn.fetchrow(
+            """
+            INSERT INTO evidence (
+                id, evidence_type, target_type, target_id, target_version,
+                direction, strength_score, strength_method,
+                independence_group, context_key,
+                outcome_status, success_criteria, failure_class,
+                created_by, visibility, owner_id, tenant_id
+            ) VALUES (
+                $1::uuid, $2, $3, $4::uuid, $5,
+                $6, $7, $8,
+                $9, $10,
+                $11, $12::jsonb, $13,
+                $14, $15, $16, $17::uuid
             )
-            return dict(updated)
+            RETURNING id, target_type, target_id, target_version,
+                      outcome_status, failure_class, context_key,
+                      independence_group
+            """,
+            evidence.id,
+            evidence.evidence_type,
+            evidence.target.target_type,
+            evidence.target.target_id,
+            evidence.target.target_version,
+            evidence.direction,
+            evidence.strength.score,
+            evidence.strength.method,
+            evidence.independence_group,
+            evidence.context_key,
+            evidence.outcome_status,
+            evidence.success_criteria,
+            evidence.failure_class,
+            evidence.created_by,
+            evidence.visibility,
+            evidence.owner_id,
+            scope.tenant_id,
+        )
+        if not success:
+            # Failures route in the SAME transaction (§36); successes
+            # raise NotClassifiable inside classify_failure and must be
+            # skipped by the caller -- which this branch is.
+            await classify_and_route(conn, dict(inserted))
+
+        updated = await conn.fetchrow(
+            """
+            UPDATE procedures
+            SET verification_stats = $2::jsonb,
+                verification_state = $3::procedure_verification_state,
+                availability = $4::procedure_availability,
+                updated_at = now()
+            WHERE id = $1
+            RETURNING *
+            """,
+            procedure_row_id, stats, verification_state, availability,
+        )
+        return dict(updated)
 
 
 async def check_quarantine_and_disable(pool: asyncpg.Pool, procedure_row_id: str) -> dict:

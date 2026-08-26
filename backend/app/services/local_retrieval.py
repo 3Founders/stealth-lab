@@ -83,7 +83,7 @@ from uuid import UUID
 
 import asyncpg
 
-from app.services.access import AccessScope
+from app.services.access import AccessScope, TenantScope
 from app.services.retrieval import (
     HybridRetriever, NOT_TRUTH_STATE_OUT, RetrievedNode, RetrievalResult,
 )
@@ -477,6 +477,7 @@ def _path_matches(node_name: str, node_description: Optional[str], candidates: l
 async def _tier_candidates_by_path(
     pool: asyncpg.Pool, candidates: list[str], *, scope: Optional[AccessScope],
     matched_by_label: str, limit: int = 25,
+    tenant_scope: Optional[TenantScope] = None,
 ) -> list[RetrievedNode]:
     """
     Real, independent tier retrieval -- NOT a filter/boost on the
@@ -496,10 +497,12 @@ async def _tier_candidates_by_path(
     """
     if not candidates or scope is None:
         scope = scope or AccessScope.unrestricted()
-    from app.services.access import visibility_predicate
+    from app.services.access import scope_predicates
+
+    tenant = tenant_scope or TenantScope.unrestricted()
     found: list[RetrievedNode] = []
     for table, desc_col in (("task_nodes", "description"), ("knowledge_nodes", "NULL")):
-        vis_sql, vis_params = visibility_predicate(scope, param_index=2)
+        scope_sql, scope_params, _ = scope_predicates(scope, tenant, param_index=2)
         # TMS readability (Band 2.7), same predicate as HybridRetriever's own
         # legs -- these tiers are independent queries into the same tables, so
         # an OUT claim excluded from semantic search must not re-enter through
@@ -509,11 +512,11 @@ async def _tier_candidates_by_path(
         rows = await pool.fetch(
             f"SELECT id, name, {desc_col} AS description FROM {table} "
             f"WHERE t_invalid IS NULL {believed}"
-            f"AND {vis_sql} "
+            f"AND {scope_sql} "
             f"AND (name ILIKE ANY($1::text[]) "
             f"OR ({desc_col} IS NOT NULL AND {desc_col} ILIKE ANY($1::text[]))) "
             f"LIMIT {limit}",
-            [f"%{c}%" for c in candidates if c], *vis_params,
+            [f"%{c}%" for c in candidates if c], *scope_params,
         )
         for row in rows:
             found.append(RetrievedNode(
@@ -535,6 +538,7 @@ async def retrieve_local_first(
     expand_depth: int = 1,
     max_context_nodes: int = 25,
     token_budget: int = DEFAULT_TOKEN_BUDGET,
+    tenant_scope: Optional[TenantScope] = None,
 ) -> AssembledContext:
     """
     The real ticket-14 pipeline: three genuinely independent tiers,
@@ -566,7 +570,9 @@ async def retrieve_local_first(
     handles an empty or absent tier name without needing a placeholder.
     """
     structural = structural or StructuralContext()
-    retriever = HybridRetriever(pool, embedder=embedder, scope=scope)
+    retriever = HybridRetriever(
+        pool, embedder=embedder, scope=scope, tenant_scope=tenant_scope
+    )
     semantic_result: RetrievalResult = await retriever.retrieve(
         query, top_k=top_k, expand_depth=expand_depth, max_context_nodes=max_context_nodes,
     )
@@ -590,6 +596,7 @@ async def retrieve_local_first(
     structural_nodes = (
         await _tier_candidates_by_path(
             pool, structural_candidates, scope=scope, matched_by_label="structural",
+            tenant_scope=tenant_scope,
         )
         if structural_candidates else []
     )
@@ -597,6 +604,7 @@ async def retrieve_local_first(
     temporal_nodes = (
         await _tier_candidates_by_path(
             pool, structural.recent_commit_files, scope=scope, matched_by_label="temporal",
+            tenant_scope=tenant_scope,
         )
         if structural.recent_commit_files else []
     )

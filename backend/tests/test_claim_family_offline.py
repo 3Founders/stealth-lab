@@ -433,9 +433,10 @@ def test_blocking_sql_carries_every_hard_term():
     assert "AND scope_type = $2 AND scope_entity_id = $3" in sql  # hard pair
     assert "<> 'OUT'" in sql  # TMS readability at the family layer too
     assert "LIMIT $4" in sql  # rank cap, never a gate skip
-    assert "visibility = 'public'" in sql or " AND TRUE " in f" {sql} "  # viewer fragment present
-    # (default scope is unrestricted(), whose predicate is the visible
-    # literal TRUE -- permissiveness must be readable in the query text)
+    assert "(TRUE) AND (TRUE)" in sql or "visibility = 'public'" in sql  # viewer fragment present
+    # (default scope is unrestricted(), whose predicate pair -- visibility
+    # AND tenancy, both axes now via scope_predicates -- is the visible
+    # literal TRUE: permissiveness must be readable in the query text)
     # params bind the subject's real scope pair and the cap
     bparams = [p for s, p in pool.calls if "COALESCE(properties->>'truth_state'" in s][0]
     assert bparams[0] == SUBJ_ID and bparams[1] == "project" and bparams[2] == PROJECT

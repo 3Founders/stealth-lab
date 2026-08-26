@@ -15,7 +15,7 @@ from pydantic import BaseModel
 
 from app.api.deps import get_scope
 from app.db.graph_store import GraphStore
-from app.services.access import AccessScope, visibility_predicate
+from app.services.access import AccessScope, TenantScope, scope_predicates
 
 router = APIRouter(prefix="/v1/graph", tags=["graph"])
 
@@ -50,7 +50,14 @@ async def get_subgraph(
     pool=Depends(get_pool),
     scope: AccessScope = Depends(get_scope),
 ) -> SubgraphResponse:
-    graph = GraphStore(pool, scope=scope)
+    """WAVE-3 tenancy adoption (cross-lane request #2): both the
+    GraphStore traversal and this endpoint's hydrate reads carry BOTH
+    axes via scope_predicates(). Unrestricted() renders the visible
+    literal TRUE -- today's permissive-in-effect posture made explicit
+    in the query text; this becomes a resolved TenantScope once request
+    dependencies supply one (H1's tenant_scope_for_actor seam)."""
+    tenant = TenantScope.unrestricted()
+    graph = GraphStore(pool, scope=scope, tenant_scope=tenant)
 
     # Figure out which table the center node lives in -- callers shouldn't
     # need to know this ahead of time.
@@ -71,9 +78,9 @@ async def get_subgraph(
 
     nodes: list[GraphNode] = []
     for nid, ntable in node_ids.items():
-        vis_sql, vis_params = visibility_predicate(scope, param_index=2)
+        scope_sql, scope_params, _ = scope_predicates(scope, tenant, param_index=2)
         row = await pool.fetchrow(
-            f"SELECT name FROM {ntable} WHERE id = $1 AND {vis_sql}", nid, *vis_params
+            f"SELECT name FROM {ntable} WHERE id = $1 AND {scope_sql}", nid, *scope_params
         )
         # A node the viewer can't see is omitted rather than labelled
         # "?" -- a placeholder would still reveal that something exists.

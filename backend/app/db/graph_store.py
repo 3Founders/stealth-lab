@@ -24,7 +24,7 @@ from uuid import UUID
 import asyncpg
 
 from app.models.ontology import EdgeType, NodeTable
-from app.services.access import AccessScope, visibility_predicate
+from app.services.access import AccessScope, TenantScope, scope_predicates
 
 _EDGE_COLS = """
     id, edge_type::text AS edge_type, custom_edge_type,
@@ -72,14 +72,25 @@ class GraphStore:
     built for one viewer cannot accidentally serve another's private
     content because a single call site forgot to pass it. Forgetting is
     the realistic failure mode, so the design removes the opportunity.
+
+    WAVE-3 tenancy adoption (cross-lane request #2): edges and both node
+    tables are tenant-bearing, so every predicate build goes through
+    scope_predicates() -- BOTH axes from ONE call, the tenant fragment a
+    visible literal TRUE under the default unrestricted() scope.
     """
 
-    def __init__(self, pool: asyncpg.Pool, scope: Optional[AccessScope] = None):
+    def __init__(
+        self,
+        pool: asyncpg.Pool,
+        scope: Optional[AccessScope] = None,
+        tenant_scope: Optional[TenantScope] = None,
+    ):
         self._pool = pool
         # Default unrestricted preserves V1 behaviour for internal
         # callers (backfills, maintenance). Request paths must pass a
         # real scope -- see app/api/deps.py.
         self._scope = scope or AccessScope.unrestricted()
+        self._tenant_scope = tenant_scope or TenantScope.unrestricted()
 
     async def get_neighbors(
         self,
@@ -89,7 +100,9 @@ class GraphStore:
         as_of: Optional[datetime] = None,
     ) -> list[GraphEdge]:
         """One-hop lookup, filtered to edges valid at `as_of` (default now)."""
-        vis_sql, vis_params = visibility_predicate(self._scope, param_index=5)
+        scope_sql, scope_params, _ = scope_predicates(
+            self._scope, self._tenant_scope, param_index=5
+        )
         query = f"""
             SELECT {_EDGE_COLS}
             FROM edges
@@ -100,10 +113,10 @@ class GraphStore:
               AND t_valid <= COALESCE($3::timestamptz, now())
               AND (t_invalid IS NULL OR t_invalid > COALESCE($3::timestamptz, now()))
               AND ($4::text[] IS NULL OR edge_type::text = ANY($4::text[]))
-              AND {vis_sql}
+              AND {scope_sql}
         """
         types = list(edge_types) if edge_types else None
-        rows = await self._pool.fetch(query, node_id, node_table, as_of, types, *vis_params)
+        rows = await self._pool.fetch(query, node_id, node_table, as_of, types, *scope_params)
         return [_row_to_edge(r) for r in rows]
 
     async def traverse_from(
@@ -133,7 +146,9 @@ class GraphStore:
         # final select. Filtering only the output would let traversal walk
         # *through* a private edge to reach nodes beyond it -- leaking the
         # graph's shape even while hiding the edge itself.
-        vis_sql, vis_params = visibility_predicate(self._scope, alias="e", param_index=6)
+        scope_sql, scope_params, _ = scope_predicates(
+            self._scope, self._tenant_scope, alias="e", param_index=6
+        )
         query = f"""
             WITH RECURSIVE frontier(node_id, node_table, depth) AS (
                 SELECT eid, $2::text, 0
@@ -153,7 +168,7 @@ class GraphStore:
                   AND e.t_valid <= COALESCE($5::timestamptz, now())
                   AND (e.t_invalid IS NULL OR e.t_invalid > COALESCE($5::timestamptz, now()))
                   AND ($4::text[] IS NULL OR e.edge_type::text = ANY($4::text[]))
-                  AND {vis_sql}
+                  AND {scope_sql}
             )
             SELECT DISTINCT {_EDGE_COLS}
             FROM edges e
@@ -163,12 +178,12 @@ class GraphStore:
             WHERE e.t_valid <= COALESCE($5::timestamptz, now())
               AND (e.t_invalid IS NULL OR e.t_invalid > COALESCE($5::timestamptz, now()))
               AND ($4::text[] IS NULL OR e.edge_type::text = ANY($4::text[]))
-              AND {vis_sql}
+              AND {scope_sql}
         """
         types = list(edge_types) if edge_types else None
         rows = await self._pool.fetch(
             query, list(entrypoint_ids), entrypoint_table, max_depth, types, as_of,
-            *vis_params,
+            *scope_params,
         )
         return [_row_to_edge(r) for r in rows]
 
@@ -197,11 +212,13 @@ class GraphStore:
         """Used by the groundedness check to resolve citations (Section 8.1)."""
         if node_table not in ("knowledge_nodes", "task_nodes"):
             raise ValueError(f"invalid node_table: {node_table!r}")
-        vis_sql, vis_params = visibility_predicate(self._scope, param_index=2)
+        scope_sql, scope_params, _ = scope_predicates(
+            self._scope, self._tenant_scope, param_index=2
+        )
         row = await self._pool.fetchrow(
             f"SELECT 1 FROM {node_table} WHERE id = $1 AND t_invalid IS NULL "
-            f"AND {vis_sql}",
-            node_id, *vis_params,
+            f"AND {scope_sql}",
+            node_id, *scope_params,
         )
         return row is not None
 

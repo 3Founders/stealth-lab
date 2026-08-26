@@ -161,7 +161,60 @@ git worktree add ..\sl-research -b lane/research origin/main
 
 7. `[ ]` **WAVE-3 / Debate panel OpenRouter wiring**: app/debate/panel.py + config.py (scoped grant) - add OpenRouter as a provider so scan->debate->approve runs locally on the founder key; reuse openrouter_arms backoff pattern; prove with offline FakePool tests + one gated live smoke.
 
-6. `[ ]` **WAVE-3 / HARDENING adoption sweep**: wire tenant_transaction() callers per cross-lane request #1 - evidence-writer is the first caller; sweep remaining unowned query paths (request #2 / Question #5); hygiene scan test must stay green repo-wide.
+6. `[x]` done @2026-08-26 — branch `lane/core-a` **WAVE-3 / HARDENING adoption
+   sweep**: tenant_transaction() callers wired per cross-lane request #1
+   (evidence-writer first) + unowned query-path sweep per request #2 /
+   Question #5; hygiene scan green repo-wide.
+   *(Shipped: db/30_verified_requires_evidence.sql — db/24's promised ENGINE
+   trigger, landed in the SAME change as its writer per the half-gate rule:
+   BEFORE UPDATE on procedures, arms ONLY on the transition INTO 'verified'
+   (OLD IS DISTINCT FROM NEW), requires procedure_evidence_stats.
+   independent_supporting_required >= 1 — independence-capped, view-based,
+   sees the writer's same-transaction INSERT so gate+writer are atomic.
+   services/procedures.py::record_execution_outcome REWIRED (cross-lane
+   request #1 + its Band-2.4 extension, both landed): now the FIRST
+   tenant_transaction() caller — app.tenant_id bound as first statement
+   (default Commons; explicit scope threads through; unrestricted = plain-
+   txn hatch), one outcome_to_evidence() execution_result row per outcome
+   INSERTed BEFORE the counters UPDATE (db/30's trigger must count THIS
+   run's evidence), failures routed via classify_and_route(conn, ...) IN
+   THE SAME TRANSACTION — successes skipped by construction. Named judgment
+   calls: successes synthesize explicit success_criteria from the call's own
+   measurements when the caller passes none (#13 bans bare model-asserted
+   success; criteria=None on failures is validate_evidence's contract);
+   failure_class param added (None -> requires_review queue, honest); rows
+   stamped created_by="record_execution_outcome@1", tenant_id bound to the
+   active scope explicitly. execution/failures.py: record_routing/
+   classify_and_route now accept a transaction-bound Connection alongside
+   Pool (atomicity requirement; SQL unchanged, source-pin tests still green).
+   SWEEP (request #2): scope_predicates() adopted at EVERY remaining
+   visibility_predicate() site over TENANT-BEARING tables — graph_store.py
+   (neighbors/traverse-incl-recursion/node_exists), retrieval.py (vector/
+   lexical/hydrate/expansion), local_retrieval.py (structural/temporal
+   legs), state.py (project_state + state_delta threading), dedup.py (base +
+   aliased a/b pair query, params bound once), reuse_detection.py (vector+
+   lexical), hierarchy.py (_fetch_roots + 3 public entry points),
+   knowledge_conflict.py, claim_family.py (subject/blocking/hub-at-$4),
+   api/graph.py (GraphStore + hydrate). Default posture everywhere =
+   TenantScope.unrestricted() -> visible literal TRUE, zero new bindings,
+   behavior byte-identical; every function gained an optional
+   tenant_scope= param for the cutover. HONEST EXCLUSIONS: applicability.py
+   (counts over `procedures`), agent_search.py (`agents`), observations.py
+   (not in request list) — those tables carry NO tenant_id column today;
+   adding one is schema work needing a founder ruling, disclosed here.
+   api/graph endpoint resolves unrestricted internally (a dataclass kwarg on
+   a GET route would be misread as a query param); becomes a resolved
+   TenantScope when deps grow the seam. Tests: 22 offline proving tests in
+   tests/test_wave3_tenancy_adoption.py [writer: setting-first binding,
+   exact-version targets, criteria teeth, routing-in-transaction ordering
+   evidence->route->counters, unclassified->requires_review, rollback
+   atomicity, unknown-id writes nothing, db/30 static checks; sweep:
+   dual-axis fragment + correctly sequenced params at ten sites incl.
+   aliased/recursion forms]. One mechanical pin updated in CORE-B's
+   test_claim_family_offline.py (unrestricted fragment is now the pair
+   "(TRUE) AND (TRUE)" — semantics preserved, disclosed per file ownership).
+   Full offline suite: 1229 passed / 114 skipped / 0 failed (= post-H2
+   baseline 1207 + 22, zero regressions).)*
 
 ### Lane CORE-B â€” extraction & gating (owns `backend/app/services/procedure_extraction/**`, `invariants.py`, `applicability.py`, `precondition_gate.py`, `state.py`)
 1. `[x] done 2026-08-25 â€” lane/core-b` **1.8a** Precondition relevance filter (derive gates only load-bearing facts).
@@ -967,3 +1020,27 @@ Grounded findings from  3_access.sql/ 4_governance.sql/deps.py review. Sequence:
   2026 neighbors to cite (STALE / TEPA / Library-Drift+Ratchet / AFTER) � details + URLs
   in the report. No files outside lane paths touched; results/spend read from the
   integrator checkout read-only (gitignored machine-local artifacts).
+
+- CORE-A (2026-08-26, eighth wave): **WAVE-3 / HARDENING adoption sweep**
+  done on `lane/core-a` -- see queue item 6 for the full record. Notes:
+  1. Cross-lane request #1 is now RETIRED (both halves): the evidence
+     writer is live in record_execution_outcome and db/30's engine trigger
+     landed with it. Appendix C #3 is no longer contract-level-only.
+     Consequence for OTHER lanes: any code path that promotes a procedure
+     to `verified` WITHOUT evidence rows now fails loudly at the engine on
+     migrated databases; the only sanctioned writer routes through
+     record_execution_outcome. Also: db/24+27 FK chains mean this writer
+     needs migrations through 30 -- the drifted shared instance (~18) will
+     raise UndefinedTable in this path until queue item 2 runs the chain;
+     offline suite unaffected (e2e skips/probes as before).
+  2. Request #2 sweep status: every tenant-bearing query path now carries
+     BOTH axes via scope_predicates() (ten files listed in queue item 6).
+     The three visibility-only survivors sit over tables with NO tenant_id
+     column (procedures/agents/observations) -- if tenancy ever lands on
+     those tables, each site is a one-line flip to scope_predicates, same
+     as SHIP's status-server note. Question #5 can be closed as adopted;
+     the hygiene tooth remains the enforcement going forward.
+  3. CORE-B heads-up: one assertion in test_claim_family_offline.py was
+     updated mechanically (the unrestricted fragment is now the visible
+     pair "(TRUE) AND (TRUE)" instead of bare " AND TRUE "); params and
+     semantics unchanged, all 27 claim-family tests green in the full run.

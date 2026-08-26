@@ -51,7 +51,7 @@ claim_sources' writer.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Mapping, Optional
+from typing import Any, Mapping, Optional, Union
 
 import asyncpg
 
@@ -193,12 +193,19 @@ def build_payload(classification: FailureClassification) -> dict[str, Any]:
 
 
 async def record_routing(
-    pool: asyncpg.Pool, classification: FailureClassification,
+    pool: Union[asyncpg.Pool, asyncpg.Connection],
+    classification: FailureClassification,
 ) -> Optional[str]:
     """Append the routing decision. Idempotent by the table's
     UNIQUE (evidence_id, route): a second call for an already-routed
     failure returns None instead of double-firing the mandate. Returns
-    the new failure_routes.id otherwise."""
+    the new failure_routes.id otherwise.
+
+    `pool` accepts a transaction-bound Connection too -- the WAVE-3
+    evidence writer passes the connection its tenant_transaction()
+    yielded, so a failure's routing row commits or rolls back ATOMICALLY
+    with the evidence row that caused it (Pool and Connection expose the
+    same fetchval surface; no SQL difference)."""
     return await pool.fetchval(
         """
         INSERT INTO failure_routes
@@ -236,12 +243,16 @@ class RoutingOutcome:
 
 
 async def classify_and_route(
-    pool: asyncpg.Pool, evidence_row: Mapping[str, Any],
+    pool: Union[asyncpg.Pool, asyncpg.Connection],
+    evidence_row: Mapping[str, Any],
 ) -> RoutingOutcome:
     """The one-call API the evidence writer uses inside its own
     transaction shape: classify a failed-outcome row, append its route.
     See cross-lane request #1 -- when evidence writes wire into the
-    lifecycle path, THIS is the call that goes next to them."""
+    lifecycle path, THIS is the call that goes next to them. A
+    transaction-bound Connection is accepted (and is what the wired
+    writer passes) so routing is atomic with its evidence row; see
+    record_routing()."""
     classification = classify_failure(evidence_row)
     route_row_id = await record_routing(pool, classification)
     return RoutingOutcome(

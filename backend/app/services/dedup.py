@@ -59,7 +59,7 @@ from app.models.change import (
     CreateKnowledgeNodeOp,
     CreateTaskNodeOp,
 )
-from app.services.access import AccessScope, visibility_predicate
+from app.services.access import AccessScope, TenantScope, scope_predicates
 from app.services.embeddings import Embedder
 from app.services.reuse_detection import (
     FULL_MATCH_THRESHOLD,
@@ -270,6 +270,7 @@ async def find_duplicate_clusters(
     table: str,
     scope: AccessScope,
     embedder: Optional[Embedder] = None,
+    tenant_scope: Optional[TenantScope] = None,
 ) -> list[list[dict]]:
     """
     Scan the current rows of `table` and complete-linkage-cluster them.
@@ -282,17 +283,23 @@ async def find_duplicate_clusters(
     uses and for the same reason (Voyage frequently unconfigured in
     this project's own testing).
 
+    WAVE-3 tenancy adoption (cross-lane request #2): task_nodes/
+    knowledge_nodes are tenant-bearing, so both predicate builds go
+    through scope_predicates(); default unrestricted() renders the
+    visible literal TRUE with no binding.
+
     Returns only clusters with more than one member.
     """
     name_expr = "name || ' ' || COALESCE(description, '')" if table == "task_nodes" else "name"
     props_expr = "properties" if table == "knowledge_nodes" else "NULL"
-    vis_sql, vis_params = visibility_predicate(scope, param_index=1)
+    tenant = tenant_scope or TenantScope.unrestricted()
+    scope_sql, scope_params, _ = scope_predicates(scope, tenant, param_index=1)
 
     rows = await pool.fetch(
         f"SELECT id, name, {name_expr} AS full_text, (embedding IS NOT NULL) AS has_embedding, "
         f"{props_expr} AS properties "
-        f"FROM {table} WHERE t_invalid IS NULL AND {vis_sql}",
-        *vis_params,
+        f"FROM {table} WHERE t_invalid IS NULL AND {scope_sql}",
+        *scope_params,
     )
     if len(rows) < 2:
         return []
@@ -302,14 +309,15 @@ async def find_duplicate_clusters(
     use_vector = all(r["has_embedding"] for r in rows)
 
     if use_vector:
-        vis_sql_a, vis_params = visibility_predicate(scope, alias="a", param_index=1)
-        vis_sql_b, _ = visibility_predicate(scope, alias="b", param_index=1)  # same $1, reused
+        scope_sql_a, pair_params, _ = scope_predicates(scope, tenant, alias="a", param_index=1)
+        scope_sql_b, _, _ = scope_predicates(scope, tenant, alias="b", param_index=1)  # same $1/$2, reused
         pair_rows = await pool.fetch(
             f"SELECT a.id AS id_a, b.id AS id_b, "
             f"1 - (a.embedding <=> b.embedding) AS similarity "
             f"FROM {table} a JOIN {table} b ON a.id < b.id "
-            f"WHERE a.t_invalid IS NULL AND b.t_invalid IS NULL AND {vis_sql_a} AND {vis_sql_b}",
-            *vis_params,
+            f"WHERE a.t_invalid IS NULL AND b.t_invalid IS NULL "
+            f"AND {scope_sql_a} AND {scope_sql_b}",
+            *pair_params,
         )
         sim_lookup: dict[tuple[str, str], float] = {}
         for r in pair_rows:
