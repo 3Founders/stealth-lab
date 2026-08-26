@@ -444,6 +444,132 @@ def test_missing_spend_renders_honest_absence(fixtures_dir):
 
 
 # --------------------------------------------------------------------------
+# Model-decides tier section (MEASURE's separate fixture pack/report)
+# --------------------------------------------------------------------------
+
+MODEL_DECIDES_REPORT = {
+    "n_trap_tasks": 12,
+    "n_trap_valid_both_arms": 12,
+    "sensitivity_pair": ("B vs C: 11 discordant pairs (first-arm-only 1, "
+                         "second-arm-only 10) | exact-p=0.0117"),
+    "sensitivity_discordant": {"B_only": 1, "C_only": 10},
+    "n_control_tasks": 12,
+    "n_control_valid_c": 12,
+    "n_false_refusal": 0,
+    "false_refusal_rate": 0.0,
+    "trap_rows": [],
+    "control_rows": [],
+}
+
+
+def test_load_json_object_tolerant_of_missing_and_malformed(tmp_path):
+    assert sg.load_json_object(None) is None
+    assert sg.load_json_object(tmp_path / "absent.json") is None
+    torn = tmp_path / "torn.json"
+    torn.write_text("{not json", encoding="utf-8")
+    assert sg.load_json_object(torn) is None
+    array = tmp_path / "array.json"
+    array.write_text("[1, 2]", encoding="utf-8")
+    assert sg.load_json_object(array) is None
+    good = tmp_path / "good.json"
+    good.write_text(json.dumps({"a": 1}), encoding="utf-8")
+    assert sg.load_json_object(good) == {"a": 1}
+
+
+MODEL_DECIDES_REPORT_RUN2 = dict(
+    MODEL_DECIDES_REPORT,
+    n_trap_tasks=12, n_trap_valid_both_arms=12,
+    sensitivity_pair=("B vs C: 10 discordant pairs (first-arm-only 1, "
+                      "second-arm-only 9) | exact-p=0.0215"),
+    sensitivity_discordant={"B_only": 1, "C_only": 9})
+
+
+def test_model_decides_absent_renders_honest_note(fixtures_dir):
+    model = _model(scenario_a_rows(), fixtures_dir)
+    assert model["model_decides"]["present"] is False
+    for page in (sg.render_markdown(model), sg.render_html(model)):
+        assert "Model-decides tier" in page
+        assert "No model-decides tier report found" in page
+        assert "0.0117" not in page
+
+
+def test_model_decides_single_sweep_renders_headline_and_caveat(fixtures_dir):
+    model = _model(scenario_a_rows(), fixtures_dir,
+                   model_decides_reports=[
+                       ("run1", MODEL_DECIDES_REPORT,
+                        "model_decides_report.json")])
+    block = model["model_decides"]
+    assert block["present"] is True
+    assert len(block["sweeps"]) == 1
+    assert block["sweeps"][0]["sensitivity_pair"] == \
+        MODEL_DECIDES_REPORT["sensitivity_pair"]
+    assert block["sweeps"][0]["false_refusal_rate"] == 0.0
+    for page in (sg.render_markdown(model), sg.render_html(model)):
+        assert "Model-decides tier" in page
+        assert "0.0117" in page
+        assert "discordant pairs" in page  # no bare p-value, same house rule
+        assert "Pending replication" in page
+        assert "single sweep" in page
+        assert "does not record which model" in page
+        assert "MODEL-DECIDES TIER REPORT" in page  # harness's own canonical text, imported verbatim
+
+
+def test_model_decides_two_sweeps_both_render_with_confirmation_caveat(
+        fixtures_dir):
+    model = _model(scenario_a_rows(), fixtures_dir,
+                   model_decides_reports=[
+                       ("run1", MODEL_DECIDES_REPORT,
+                        "model_decides_report.json"),
+                       ("run2", MODEL_DECIDES_REPORT_RUN2,
+                        "model_decides_report_run2.json")])
+    block = model["model_decides"]
+    assert [s["label"] for s in block["sweeps"]] == ["run1", "run2"]
+    for page in (sg.render_markdown(model), sg.render_html(model)):
+        assert "0.0117" in page and "0.0215" in page
+        assert "confirmed across 2 sweeps" in page
+        assert "single sweep" not in page  # single-sweep wording gone
+        assert "gpt-4o-mini" in page and "ox-alpha" in page
+        assert "HTTP 404" in page
+
+
+def test_model_decides_report_read_as_data_not_recomputed(fixtures_dir):
+    """The page must print exactly what the report says, even a number
+    this module could not derive from scenario_a_rows() (which has no
+    model-decides fixtures at all) - proving it's read, not recomputed."""
+    weird_report = dict(MODEL_DECIDES_REPORT, n_trap_tasks=999)
+    model = _model(scenario_a_rows(), fixtures_dir,
+                   model_decides_reports=[("run1", weird_report, None)])
+    assert "999" in sg.render_markdown(model)
+
+
+def test_model_decides_report_label_from_filename():
+    assert sg.model_decides_report_label(
+        Path("model_decides_report.json")) == "run1"
+    assert sg.model_decides_report_label(
+        Path("model_decides_report_run2.json")) == "run2"
+    assert sg.model_decides_report_label(
+        Path("model_decides_report_run17.json")) == "run17"
+    assert sg.model_decides_report_label(
+        Path("something_else.json")) == "something_else"
+
+
+def test_discover_model_decides_reports_sorted_run1_before_run2(tmp_path):
+    (tmp_path / "model_decides_report_run2.json").write_text(
+        "{}", encoding="utf-8")
+    (tmp_path / "model_decides_report.json").write_text(
+        "{}", encoding="utf-8")
+    (tmp_path / "model_decides_report_run3.json").write_text(
+        "{}", encoding="utf-8")
+    (tmp_path / "unrelated.json").write_text("{}", encoding="utf-8")
+    found = sg.discover_model_decides_reports(tmp_path)
+    assert [p.name for p in found] == [
+        "model_decides_report.json",
+        "model_decides_report_run2.json",
+        "model_decides_report_run3.json",
+    ]
+
+
+# --------------------------------------------------------------------------
 # Page assembly rules
 # --------------------------------------------------------------------------
 

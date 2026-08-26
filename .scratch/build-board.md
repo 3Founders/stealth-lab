@@ -821,6 +821,65 @@ single synthesized reports into `.scratch/research/`.
    itself — that's generated on demand per README). Backend diff: ZERO
    files.)*
 
+5. `[x]` done @2026-08-27 — branch `lane/ship` **Model-decides tier section
+   (founder task)**: add MEASURE's model-decides tier results
+   (`experiments/harness/model_decides_report*.json`, committed) to the
+   public scoreboard as a clearly labeled new section — the project's
+   first genuinely model-decided stale-detection evidence. Kept the
+   existing run1/run2/run3 arms-based evidence untouched; regenerated a
+   NEW demonstration page once MEASURE's second sweep and RESEARCH's
+   independent verification both landed mid-session.
+   *(SHIPPED: `discover_model_decides_reports()` globs every committed
+   `model_decides_report*.json` beside the arms data (run1 = bare name,
+   run2+ = `_run<N>` suffix, MEASURE's own convention — sorts correctly
+   because `.` < `_`), so a future sweep needs no generator change to
+   appear. `build_model_decides_block()` reads each report as DATA (no
+   re-implementation — `model_decides.render_report()` imported verbatim
+   for the canonical block, same discipline as the arms table's harness
+   imports), rendering one sub-section per sweep plus a combined caveat
+   whose wording depends on count: one report → single-sweep hedge; two+
+   → a "confirmed across N sweeps" caveat. New section sits right after
+   the "Read first" caveats and before "## Arms", ahead of the arms
+   tables — it is now the headline, they are the system-level baseline.
+   TIMING, this session: started with only run1's report committed →
+   shipped single-report support → MEASURE's run2 report landed
+   mid-session (commit `1c8b8f2`) → generalized to N reports before
+   shipping → RESEARCH's independent verification landed immediately
+   after (commits `ad209aa`/`1a0939e`) → caveat text updated to the
+   CONFIRMED finding rather than a hedge (see below). Not raised as a
+   blocking question at any point — each new fact was either a strict
+   confirmation or a straightforward "cite it" call.
+   CRITICAL FINDING SURFACED BY THIS WORK: `model_decides_report.json`'s
+   schema has NO `served_by_model` field (unlike the arms A/B/C results),
+   so the generator cannot detect on its own which model a sweep actually
+   used — flagged as a caveat before I knew the answer. RESEARCH's
+   verification then confirmed the concrete fact: **both existing
+   model-decides sweeps ran entirely on `openai/gpt-4o-mini`, not
+   `ox-alpha`** — every `ox-alpha` call returned a non-retryable HTTP 404
+   and the chain fell through silently, spanning >=2h42m across two
+   separate sweeps, undisclosed in either sweep's own board entry (which
+   described the 72 non-billed attempts as "absorbed 429s" — they are
+   100% 404s, a permanent-per-call failure, not transient rate-limiting).
+   The headline numbers themselves are independently reproduced EXACTLY
+   (p=0.0117 and p=0.0215) and the refusals ARE genuinely model-decided
+   (C_journal audit: zero mechanical gate strings, every reason is
+   situation-specific model prose) — the finding is real, just not yet
+   about the project's primary model. The shipped caveat text states this
+   plainly and by name (dated 2026-08-27, hand-written from the merged
+   verification report, not derived from a schema field that doesn't
+   exist) rather than hedging generically — **recommend confirming
+   ox-alpha's current OpenRouter model id before the next model-decides
+   sweep**, or this evidence base stays about the fallback chain
+   indefinitely.
+   7 new offline proving tests (report loading/discovery/labeling,
+   present/absent rendering, single- vs multi-sweep caveat wording,
+   data-not-recomputed proof). Packaging suite: **95 passed / 0 failed**
+   [= 88 prior + 7 new, zero regressions]. Demonstration output (not the committed
+   run1/2/3 evidence, which is untouched):
+   `.scratch/ship/model_decides/public_scoreboard.{md,html}`, built from
+   run3's arms data + both model-decides reports via auto-discovery.
+   Backend diff: ZERO files.)*
+
 1. `[x]` done @2026-08-25 â€” branch `lane/ship` Installable package wrapping
    `trace_collector` + `mcp_server`.
    Shipped: `packaging/` = installable **stealthlab-connect** (pyproject,
@@ -1303,6 +1362,29 @@ Grounded findings from  3_access.sql/ 4_governance.sql/deps.py review. Sequence:
   always under the small-n floor). Packaging suite 88/88 (+8 offline
   tests, zero regressions). Output: `.scratch/ship/{run1,run2,run3}/
   public_scoreboard.{md,html}`.
+- **SHIP (2026-08-27): model-decides tier section** — full record in SHIP
+  queue item 5. Landed the founder's ask to surface MEASURE's
+  model-decides tier (genuinely model-decided stale-refusal evidence, not
+  gate-mechanical) as a clearly labeled new section, kept separate from
+  the untouched run1/run2/run3 arms evidence. Built to auto-discover every
+  committed `model_decides_report*.json` (no generator change needed for
+  future sweeps) — useful sooner than expected: started with 1 report,
+  MEASURE's run2 landed mid-session, RESEARCH's independent verification
+  landed right after. **Headline finding surfaced along the way**: the
+  report schema has no `served_by_model` field, and RESEARCH's
+  verification (merged, `.scratch/research/model-decides-verification.md`)
+  confirmed BOTH existing sweeps actually ran on `openai/gpt-4o-mini`, not
+  `ox-alpha` — every `ox-alpha` call 404'd (non-retryable) across >=2h42m,
+  a fact undisclosed in either sweep's own board entry. The numbers
+  themselves are solid (p=0.0117/p=0.0215 independently reproduced exactly,
+  refusals confirmed genuinely model-decided via journal audit) — this is
+  evidence about `gpt-4o-mini`'s detection behavior specifically, not yet
+  ox-alpha's. Shipped caveat states this by name and by date rather than
+  hedging generically, since it's now a confirmed, merged fact, not a
+  guess. **Recommend confirming ox-alpha's current OpenRouter model id
+  before the next model-decides sweep.** Packaging suite 95/95 (+7 offline
+  tests, zero regressions). Demo output (run1/2/3 untouched):
+  `.scratch/ship/model_decides/public_scoreboard.{md,html}`.
 - CORE-A (2026-08-26, seventh wave): **HARDENING H2 — RLS backstop on [H]
   tables** done on `lane/core-a` — see HARDENING item 2. Notes:
   1. db/29 is NOT yet applied to the shared instance (same discipline as

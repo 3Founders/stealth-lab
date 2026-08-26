@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="generator" content="stealthlab-connect scoreboard_gen">
+<meta name="generated-at" content="2026-08-26T21:15:17+00:00">
+<title>SS40 Public Scoreboard</title>
+<style>
+body{font-family:system-ui,sans-serif;margin:2rem auto;max-width:60rem;
+padding:0 1rem;color:#1a1a2e;background:#fafafa}
+table{border-collapse:collapse;margin:0.5rem 0}
+th,td{border:1px solid #bbb;padding:0.25rem 0.6rem;text-align:right}
+th:first-child,td:first-child{text-align:left}
+pre{background:#efefef;padding:0.75rem;overflow-x:auto;border:1px solid #ddd}
+.caveat{background:#fff3cd;border:1px solid #e0c568;padding:0.5rem 1rem}
+.muted{color:#666}
+</style></head><body>
+<h1>SS40 Public Scoreboard</h1>
+<p class='muted'>Generated: 2026-08-26T21:15:17+00:00</p>
+<p>Sources: <code>C:\Users\user\sl-measure\experiments\harness\real_arms_run3.jsonl</code> (12 task rows) &middot; <code>C:\Users\user\sl-measure\experiments\harness\real_spend_run3.jsonl</code> (50 attempts)</p>
+<p>Fixture pack: micro (8 procedures) &middot; usable paired tasks: 11/12</p>
+<div class='caveat'><strong>Read first:</strong><ul>
+<li>small-n caveat: A vs B (n=1), A vs C (n=3), B vs C (n=2) have fewer than 6 discordant pairs (the RUN #1 k&gt;=6 significance floor) - directional only, not headline evidence.</li>
+<li>1 of 12 task rows excluded from the paired statistics (missing or invalid episode in some arm); a task contributes only when EVERY arm produced a valid episode.</li>
+</ul></div>
+<h2>Model-decides tier (headline evidence)</h2>
+<div class='caveat'><strong>Pending replication:</strong> confirmed across 2 sweeps (same direction, comparable magnitude, not a one-off sampling draw) - independently reproduced exactly by RESEARCH&#x27;s verification pass (.scratch/research/model-decides-verification.md, 2026-08-27), including a C_journal audit confirming every refusal is genuinely model-decided, not gate-mechanical. BUT that same verification found all 2 of these sweeps actually ran on openai/gpt-4o-mini, not ox-alpha: every ox-alpha call returned a non-retryable HTTP 404 and the chain fell through silently (undisclosed on the board both times). Do not present this section as evidence about the project&#x27;s primary model until ox-alpha&#x27;s OpenRouter model id is confirmed valid and a sweep actually lands on it.</div>
+<h3>run1</h3>
+<p>Source: <code>C:\Users\user\sl-ship\experiments\harness\model_decides_report.json</code></p>
+<p>Trap tasks (stale procedure offered directly to the model; correct = refuse): 12/12 valid on both B and C</p><ul><li><strong>sensitivity (B vs C)</strong>: B vs C: 11 discordant pairs (first-arm-only 1, second-arm-only 10) | exact-p=0.0117 | power@observed-split(q=0.909,n=11)=0.74 | MDE@80%: q&gt;=0.924 (~11/11 pairs favoring one arm) | n-for-80%@observed-ratio=9</li></ul>
+<p>Control tasks (fresh, applicable procedure offered; correct = reuse): 12/12 valid on C</p><ul><li><strong>specificity (false-refusal guardrail)</strong>: 0/12 (0.000) - guards against "C refuses everything" masquerading as staleness detection</li></ul>
+<pre>MODEL-DECIDES TIER REPORT (design: .scratch/research/model-decides-tier-design.md)
+trap tasks: 12/12 valid on both B and C
+  B vs C: 11 discordant pairs (first-arm-only 1, second-arm-only 10) | exact-p=0.0117 | power@observed-split(q=0.909,n=11)=0.74 | MDE@80%: q&gt;=0.924 (~11/11 pairs favoring one arm) | n-for-80%@observed-ratio=9
+control tasks: 12/12 valid on C; false_refusal 0/12 (0.000)</pre>
+<h3>run2</h3>
+<p>Source: <code>C:\Users\user\sl-ship\experiments\harness\model_decides_report_run2.json</code></p>
+<p>Trap tasks (stale procedure offered directly to the model; correct = refuse): 12/12 valid on both B and C</p><ul><li><strong>sensitivity (B vs C)</strong>: B vs C: 10 discordant pairs (first-arm-only 1, second-arm-only 9) | exact-p=0.0215 | power@observed-split(q=0.900,n=10)=0.74 | MDE@80%: q&gt;=0.917 (~10/10 pairs favoring one arm) | n-for-80%@observed-ratio=12</li></ul>
+<p>Control tasks (fresh, applicable procedure offered; correct = reuse): 12/12 valid on C</p><ul><li><strong>specificity (false-refusal guardrail)</strong>: 0/12 (0.000) - guards against "C refuses everything" masquerading as staleness detection</li></ul>
+<pre>MODEL-DECIDES TIER REPORT (design: .scratch/research/model-decides-tier-design.md)
+trap tasks: 12/12 valid on both B and C
+  B vs C: 10 discordant pairs (first-arm-only 1, second-arm-only 9) | exact-p=0.0215 | power@observed-split(q=0.900,n=10)=0.74 | MDE@80%: q&gt;=0.917 (~10/10 pairs favoring one arm) | n-for-80%@observed-ratio=12
+control tasks: 12/12 valid on C; false_refusal 0/12 (0.000)</pre>
+<h2>Arms</h2><table><tr><th>arm</th><th>n</th><th>pass</th><th>cost tot/mean $</th><th>false_reuse</th><th>stale_refusal</th><th>unseen</th></tr>
+<tr><td>A (frontier solo)</td><td>11</td><td>8/11 (0.73)</td><td>0.0745/0.0068</td><td>0/11 (0.00)</td><td>no offers</td><td>0/1</td></tr>
+<tr><td>B (+ conventional memory)</td><td>11</td><td>7/11 (0.64)</td><td>0.1137/0.0103</td><td>1/11 (0.09)</td><td>0/7(missed 0)</td><td>0/1</td></tr>
+<tr><td>C (+ verified procedures)</td><td>11</td><td>9/11 (0.82)</td><td>0.0750/0.0068</td><td>0/11 (0.00)</td><td>7/7(missed 0)</td><td>0/1</td></tr>
+</table>
+<p class='muted'>Every rate ships with its numerator/denominator - no bare rates.</p>
+<p class='muted'>Served by: ox-alpha</p>
+<h2>Stale-refusal attribution (gate-mechanical vs model-initiated)</h2>
+<table><tr><th>arm</th><th>gate-mechanical</th><th>model-initiated</th><th>unattributed</th></tr>
+<tr><td>A</td><td>0</td><td>0</td><td>0</td></tr>
+<tr><td>B</td><td>0</td><td>0</td><td>0</td></tr>
+<tr><td>C</td><td>6</td><td>1</td><td>0</td></tr>
+</table>
+<p class='muted'>gate-mechanical = substrate check_applicability decided the refusal (model never saw the card, or a proposed reuse was blocked); model-initiated = the agent refused on its own after seeing the card; unattributed = a correct stale refusal with no journal entry naming the mechanism. A stale_refusal count with zero model-initiated entries reflects the surface's gating design, not detection by the model serving that arm.</p>
+<h2>Pairwise comparisons (exact McNemar on pass/fail)</h2><ul>
+<li><strong>A vs B</strong>: A vs B: 1 discordant pairs (first-arm-only 1, second-arm-only 0) | exact-p=1.0000 | power@observed-split(q=1.000,n=1)=0.00 | MDE@80%: unreachable with 1 discordant pairs | n-for-80%@observed-ratio=beyond planning cap</li>
+<li><strong>A vs C</strong>: A vs C: 3 discordant pairs (first-arm-only 1, second-arm-only 2) | exact-p=1.0000 | power@observed-split(q=0.667,n=3)=0.00 | MDE@80%: unreachable with 3 discordant pairs | n-for-80%@observed-ratio=72</li>
+<li><strong>B vs C</strong>: B vs C: 2 discordant pairs (first-arm-only 0, second-arm-only 2) | exact-p=0.5000 | power@observed-split(q=1.000,n=2)=0.00 | MDE@80%: unreachable with 2 discordant pairs | n-for-80%@observed-ratio=beyond planning cap</li>
+</ul>
+<h2>POWER-ANALYSIS FOOTER</h2>
+<pre>POWER-ANALYSIS FOOTER (exact McNemar, alpha=0.05, target power=0.8)
+  A vs B: 1 discordant pairs (first-arm-only 1, second-arm-only 0) | exact-p=1.0000 | power@observed-split(q=1.000,n=1)=0.00 | MDE@80%: unreachable with 1 discordant pairs | n-for-80%@observed-ratio=beyond planning cap
+  A vs C: 3 discordant pairs (first-arm-only 1, second-arm-only 2) | exact-p=1.0000 | power@observed-split(q=0.667,n=3)=0.00 | MDE@80%: unreachable with 3 discordant pairs | n-for-80%@observed-ratio=72
+  B vs C: 2 discordant pairs (first-arm-only 0, second-arm-only 2) | exact-p=0.5000 | power@observed-split(q=1.000,n=2)=0.00 | MDE@80%: unreachable with 2 discordant pairs | n-for-80%@observed-ratio=beyond planning cap</pre>
+<h2>Spend</h2>
+<p>SPEND: 50 attempts (41 billed, 9 failed) · tokens 11,416in/29,037out · $0.3189 · models: ox-alpha</p><ul>
+<li>shared-pool saturation (HTTP 429) attempts: 9</li>
+<li>billed cost by arm: A $0.0811, B $0.1433, C $0.0942</li>
+<li>models used: ox-alpha</li></ul>
+<h2>Canonical terminal rendering</h2>
+<pre>==============================================================================
+SS40 Public Scoreboard
+tasks total=12 usable(all arms valid)=11
+arm    n        pass      cost tot/mean $     tokens        reuse   false_reuse     stale_refusal    unseen
+-----------------------------------------------------------------------------------------------------------
+A     11 8/11 (0.73)    0.0745/0.0068         9,466  0/11 (0.00)   0/11 (0.00)         no offers       0/1
+B     11 7/11 (0.64)    0.1137/0.0103        14,088  6/11 (0.55)   1/11 (0.09)     0/7(missed 0)       0/1
+C     11 9/11 (0.82)     0.075/0.0068        10,125  6/11 (0.55)   0/11 (0.00)     7/7(missed 0)       0/1
+(A: frontier solo | B: + conventional memory | C: + verified procedures)
+
+PAIRWISE (exact McNemar on pass/fail discordant pairs)
+POWER-ANALYSIS FOOTER (exact McNemar, alpha=0.05, target power=0.8)
+  A vs B: 1 discordant pairs (first-arm-only 1, second-arm-only 0) | exact-p=1.0000 | power@observed-split(q=1.000,n=1)=0.00 | MDE@80%: unreachable with 1 discordant pairs | n-for-80%@observed-ratio=beyond planning cap
+  A vs C: 3 discordant pairs (first-arm-only 1, second-arm-only 2) | exact-p=1.0000 | power@observed-split(q=0.667,n=3)=0.00 | MDE@80%: unreachable with 3 discordant pairs | n-for-80%@observed-ratio=72
+  B vs C: 2 discordant pairs (first-arm-only 0, second-arm-only 2) | exact-p=0.5000 | power@observed-split(q=1.000,n=2)=0.00 | MDE@80%: unreachable with 2 discordant pairs | n-for-80%@observed-ratio=beyond planning cap
+==============================================================================</pre>
+</body></html>

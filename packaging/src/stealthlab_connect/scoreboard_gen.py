@@ -27,6 +27,17 @@ rows that cannot contribute a paired comparison are counted and disclosed
 in a caveat, never silently dropped; and any pairwise comparison below the
 RUN #1 significance floor (k >= MIN_PUBLIC_DISCORDANT_N discordant pairs)
 carries a small-n caveat blocking headline phrasing.
+
+Also renders MEASURE's separate "model-decides tier" (a different fixture
+pack + results file from the arms A/B/C sweep the rest of this page
+covers - see experiments/harness/model_decides.py) as its own clearly
+labeled section, one sub-entry per sweep, reading every committed
+model_decides_report*.json's already-computed numbers as data rather than
+recomputing them. No reports -> honest "not yet available" note. One
+report -> an unconditional single-sweep caveat. Two or more -> a
+mutually-confirming-but-still-unverified caveat - neither caveat clears
+until RESEARCH's independent verification lands AND the report schema
+itself records which model served the calls (it does not yet).
 """
 from __future__ import annotations
 
@@ -34,6 +45,7 @@ import argparse
 import html as _html
 import json
 import os
+import re
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -63,6 +75,58 @@ MIN_PUBLIC_DISCORDANT_N = 6
 # the other imported-contract notes on this module).
 GATE_AUTO_REFUSAL_REASON = "assumptions no longer hold (gate)"
 GATE_BLOCKED_REUSE_REASON = "model proposed reuse; gate blocked"
+
+# MEASURE's model-decides tier (CLAUDE.md 2026-08-27 kickoff task 2, design:
+# .scratch/research/model-decides-tier-design.md) is the project's first
+# tier where check_applicability's outcome is genuinely the MODEL's own
+# reuse/refuse call, not the gate deciding first - the fix for caveat 2
+# above. Each sweep is committed as its own `model_decides_report*.json`
+# file (run1 = the bare name, run2+ = a `_run<N>` suffix - MEASURE's own
+# naming, see the board); GLOB_PATTERN picks up every one that exists so a
+# future sweep needs no generator change to appear.
+#
+# model_decides_report.json has no served_by_model field at all (unlike the
+# arms A/B/C results this page otherwise covers) - the generator cannot
+# detect this on its own. RESEARCH's independent verification
+# (.scratch/research/model-decides-verification.md, 2026-08-27) filled that
+# gap by hand for the two sweeps that exist today: BOTH ran entirely on
+# openai/gpt-4o-mini, not ox-alpha - every ox-alpha call returned a
+# non-retryable HTTP 404 and the chain fell through silently, undisclosed
+# on the board either time (confirmed spanning >=2h42m, not a transient
+# blip). That verification also independently reproduced both sweeps'
+# headline p-values exactly and confirmed via C_journal audit that every
+# refusal is genuinely model-decided (zero mechanical gate strings),
+# so the finding itself is solid - it is evidence about gpt-4o-mini's
+# detection behavior through this surface, not yet about ox-alpha's.
+# These are DATED FACTS about the two sweeps committed as of 2026-08-27,
+# not a data-driven check (no "served_by_model"/"verified" signal exists
+# in the report schema to detect this generically) - if a future sweep
+# lands on ox-alpha as intended, this text needs updating by hand.
+MODEL_DECIDES_GLOB_PATTERN = "model_decides_report*.json"
+MODEL_DECIDES_RUN_SUFFIX_RE = re.compile(r"model_decides_report(?:_(run\d+))?\.json$")
+
+MODEL_DECIDES_SINGLE_SWEEP_CAVEAT = (
+    "single sweep (n=1 per task) - a second sweep and an independent "
+    "verification pass (the same discipline RESEARCH applied to RUN #1) "
+    "are recommended before this is treated as settled. Separately: "
+    "model_decides_report.json does not record which model served the "
+    "calls behind these numbers - confirm the served model (check the raw "
+    "results/spend JSONL) before treating this as evidence about the "
+    "project's primary model rather than a fallback it landed on.")
+MODEL_DECIDES_MULTI_SWEEP_CAVEAT_TEMPLATE = (
+    "confirmed across {n} sweeps (same direction, comparable magnitude, "
+    "not a one-off sampling draw) - independently reproduced exactly by "
+    "RESEARCH's verification pass "
+    "(.scratch/research/model-decides-verification.md, 2026-08-27), "
+    "including a C_journal audit confirming every refusal is genuinely "
+    "model-decided, not gate-mechanical. BUT that same verification found "
+    "all {n} of these sweeps actually ran on openai/gpt-4o-mini, not "
+    "ox-alpha: every ox-alpha call returned a non-retryable HTTP 404 and "
+    "the chain fell through silently (undisclosed on the board both "
+    "times). Do not present this section as evidence about the project's "
+    "primary model until ox-alpha's OpenRouter model id is confirmed "
+    "valid and a sweep actually lands on it.")
+DEFAULT_MODEL_DECIDES_REPORT_NAME = "model_decides_report.json"
 
 MD_FILENAME = "public_scoreboard.md"
 HTML_FILENAME = "public_scoreboard.html"
@@ -145,12 +209,14 @@ def _load_harness(harness_root: Path | str | None):
     import openrouter_arms
     import scoring
     import scoreboard as harness_scoreboard
+    import model_decides
     return {
         "root": root,
         "mcnemar": mcnemar_power,
         "spend_log": openrouter_arms.SpendLog,
         "scoring": scoring,
         "scoreboard": harness_scoreboard,
+        "model_decides": model_decides,
     }
 
 
@@ -170,6 +236,46 @@ def load_jsonl(path: Path | str | None) -> list[dict]:
             if isinstance(obj, dict):
                 out.append(obj)
     return out
+
+
+def load_json_object(path: Path | str | None) -> dict | None:
+    """Tolerant single-JSON-object reader for the model-decides report:
+    missing file, unreadable JSON, or a non-object top level all return
+    None (honest absence - the caller renders an explicit "not yet
+    available" note), same discipline as load_jsonl's torn-line tolerance."""
+    if path is None:
+        return None
+    path = Path(path)
+    if not path.is_file():
+        return None
+    try:
+        obj = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return None
+    return obj if isinstance(obj, dict) else None
+
+
+def default_model_decides_report_path(harness_root: Path | str) -> Path:
+    return Path(harness_root) / DEFAULT_MODEL_DECIDES_REPORT_NAME
+
+
+def discover_model_decides_reports(harness_root: Path | str) -> list[Path]:
+    """Every committed model_decides_report*.json beside this run's arms
+    data, sorted so run1 (the bare name) sorts before run2/run3/... (a
+    "." byte sorts before "_" at the same position) - a future sweep needs
+    no generator change to appear here, only a new committed report file."""
+    return sorted(Path(harness_root).glob(MODEL_DECIDES_GLOB_PATTERN))
+
+
+def model_decides_report_label(path: Path | str) -> str:
+    """`model_decides_report.json` -> "run1"; `..._run2.json` -> "run2";
+    anything else matching the glob but not this exact naming -> its stem,
+    so an unexpected filename still shows SOMETHING rather than raising."""
+    name = Path(path).name
+    m = MODEL_DECIDES_RUN_SUFFIX_RE.match(name)
+    if m:
+        return m.group(1) or "run1"
+    return Path(path).stem
 
 
 def stale_refusal_attribution(usable_rows: list[dict], arm: str,
@@ -255,7 +361,9 @@ def build_model(results_rows: list[dict],
                 harness_root: Path | str | None = None,
                 alpha: float = 0.05,
                 target_power: float = 0.80,
-                arms: tuple[str, ...] = ("A", "B", "C")) -> dict:
+                arms: tuple[str, ...] = ("A", "B", "C"),
+                model_decides_reports: list[tuple[str, dict, str | None]]
+                | None = None) -> dict:
     """Pure transformation: rows in -> page-model dict out. All statistics
     come from the harness modules; this function only sequences them and
     attaches provenance/caveats."""
@@ -400,7 +508,48 @@ def build_model(results_rows: list[dict],
         "caveats": caveats,
         "stale_attribution": stale_attribution,
         "stale_attribution_present": stale_attribution_present,
+        "model_decides": build_model_decides_block(
+            h, model_decides_reports),
     }
+
+
+def build_model_decides_block(
+        h: dict,
+        reports: list[tuple[str, dict, str | None]] | None) -> dict:
+    """MEASURE's model-decides tier (a SEPARATE fixture pack + results
+    file from the arms A/B/C sweep this page is otherwise about - see
+    model_decides.py) as an optional additional section, one sub-entry per
+    sweep. Each report is the already-computed model_decides.analyze()
+    output (model_decides_report*.json, as MEASURE published it) - read as
+    data, not recomputed, same as the spend ledger's SpendLog.summarize()
+    usage above. `reports` is a list of (label, report_dict, source_path)
+    tuples in display order. No reports at all renders an honest "not yet
+    available" note rather than being silently omitted, matching the spend
+    section's discipline; the caveat differs by count (a lone sweep is
+    unconfirmed, two-or-more are mutually confirming but still unverified)
+    - see the two caveat constants' own docs for why neither is data-driven
+    off a "verified" flag."""
+    reports = [r for r in (reports or []) if r[1]]
+    if not reports:
+        return {"present": False, "sweeps": []}
+    sweeps = []
+    for label, report, source in reports:
+        sweeps.append({
+            "label": label,
+            "source": source,
+            "n_trap_tasks": report.get("n_trap_tasks"),
+            "n_trap_valid_both_arms": report.get("n_trap_valid_both_arms"),
+            "sensitivity_pair": report.get("sensitivity_pair"),
+            "n_control_tasks": report.get("n_control_tasks"),
+            "n_control_valid_c": report.get("n_control_valid_c"),
+            "n_false_refusal": report.get("n_false_refusal"),
+            "false_refusal_rate": report.get("false_refusal_rate"),
+            "canonical_text": h["model_decides"].render_report(report),
+        })
+    caveat = (MODEL_DECIDES_SINGLE_SWEEP_CAVEAT if len(sweeps) == 1
+             else MODEL_DECIDES_MULTI_SWEEP_CAVEAT_TEMPLATE.format(
+                 n=len(sweeps)))
+    return {"present": True, "sweeps": sweeps, "caveat": caveat}
 
 
 def _arm_cell_pass(m: dict) -> str:
@@ -444,6 +593,47 @@ def render_markdown(model: dict) -> str:
         out.append("> **Read first:**")
         for c in model["caveats"]:
             out.append(f"> - {c}")
+        out.append("")
+    out.append("## Model-decides tier (headline evidence)")
+    out.append("")
+    md_ = model["model_decides"]
+    if md_["present"]:
+        out.append(f"> **Pending replication:** {md_['caveat']}")
+        out.append("")
+        for sweep in md_["sweeps"]:
+            out.append(f"### {sweep['label']}")
+            out.append("")
+            out.append(f"Source: `{sweep['source'] or 'unknown source'}`")
+            out.append("")
+            out.append(
+                f"Trap tasks (stale procedure offered directly to the "
+                f"model; correct = refuse): "
+                f"{sweep['n_trap_valid_both_arms']}/{sweep['n_trap_tasks']} "
+                f"valid on both B and C")
+            out.append(f"- **sensitivity (B vs C)**: "
+                       f"{sweep['sensitivity_pair']}")
+            fr = sweep["false_refusal_rate"]
+            fr_str = "-" if fr is None else f"{fr:.3f}"
+            out.append(
+                f"Control tasks (fresh, applicable procedure offered; "
+                f"correct = reuse): {sweep['n_control_valid_c']}/"
+                f"{sweep['n_control_tasks']} valid on C")
+            out.append(
+                f"- **specificity (false-refusal guardrail)**: "
+                f"{sweep['n_false_refusal']}/"
+                f"{sweep['n_control_valid_c'] or 0} ({fr_str}) - guards "
+                f"against \"C refuses everything\" masquerading as "
+                f"staleness detection")
+            out.append("")
+            out.append("```")
+            out.append(sweep["canonical_text"])
+            out.append("```")
+            out.append("")
+    else:
+        out.append("_No model-decides tier report found for this page yet "
+                   "- this section appears once one is generated "
+                   "(experiments/harness/run_model_decides.py + "
+                   "model_decides.py)._")
         out.append("")
     out.append("## Arms")
     out.append("")
@@ -562,6 +752,39 @@ pre{background:#efefef;padding:0.75rem;overflow-x:auto;border:1px solid #ddd}
         for c in model["caveats"]:
             parts.append(f"<li>{e(c)}</li>")
         parts.append("</ul></div>")
+    parts.append("<h2>Model-decides tier (headline evidence)</h2>")
+    md_ = model["model_decides"]
+    if md_["present"]:
+        parts.append(f"<div class='caveat'><strong>Pending replication:</strong> "
+                     f"{e(md_['caveat'])}</div>")
+        for sweep in md_["sweeps"]:
+            parts.append(f"<h3>{e(sweep['label'])}</h3>")
+            parts.append(f"<p>Source: <code>"
+                         f"{e(sweep['source'] or 'unknown source')}"
+                         f"</code></p>")
+            parts.append(
+                f"<p>Trap tasks (stale procedure offered directly to the "
+                f"model; correct = refuse): {sweep['n_trap_valid_both_arms']}/"
+                f"{sweep['n_trap_tasks']} valid on both B and C</p>"
+                f"<ul><li><strong>sensitivity (B vs C)</strong>: "
+                f"{e(sweep['sensitivity_pair'])}</li></ul>")
+            fr = sweep["false_refusal_rate"]
+            fr_str = "-" if fr is None else f"{fr:.3f}"
+            parts.append(
+                f"<p>Control tasks (fresh, applicable procedure offered; "
+                f"correct = reuse): {sweep['n_control_valid_c']}/"
+                f"{sweep['n_control_tasks']} valid on C</p>"
+                f"<ul><li><strong>specificity (false-refusal guardrail)"
+                f"</strong>: {sweep['n_false_refusal']}/"
+                f"{sweep['n_control_valid_c'] or 0} ({fr_str}) - guards "
+                f"against \"C refuses everything\" masquerading as "
+                f"staleness detection</li></ul>")
+            parts.append(f"<pre>{e(sweep['canonical_text'])}</pre>")
+    else:
+        parts.append("<p><em>No model-decides tier report found for this "
+                     "page yet - this section appears once one is "
+                     "generated (experiments/harness/run_model_decides.py "
+                     "+ model_decides.py).</em></p>")
     parts.append("<h2>Arms</h2><table><tr><th>arm</th><th>n</th>"
                  "<th>pass</th><th>cost tot/mean $</th><th>false_reuse</th>"
                  "<th>stale_refusal</th><th>unseen</th></tr>")
@@ -652,6 +875,13 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--fixtures-dir", default=None,
                         help="procedure ground-truth pack (default: "
                              "<harness>/fixtures/micro)")
+    parser.add_argument("--model-decides-report", action="append",
+                        default=None,
+                        help=f"model_decides.analyze() JSON report; repeat "
+                             f"for multiple sweeps (default: every "
+                             f"<harness>/{MODEL_DECIDES_GLOB_PATTERN} found, "
+                             f"in run order; the section renders an honest "
+                             f"absence note if none exist)")
     parser.add_argument("--out-dir", default=".",
                         help="directory for public_scoreboard.md/.html")
     parser.add_argument("--title", default=DEFAULT_TITLE)
@@ -690,12 +920,24 @@ def main(argv: list[str] | None = None) -> int:
     generated_at = (args.generated_at
                     or datetime.now(timezone.utc).isoformat(timespec="seconds"))
 
+    model_decides_paths = (
+        [Path(p) for p in args.model_decides_report]
+        if args.model_decides_report
+        else discover_model_decides_reports(harness_root))
+    model_decides_reports = []
+    for p in model_decides_paths:
+        report = load_json_object(p)
+        if report:
+            model_decides_reports.append(
+                (model_decides_report_label(p), report, str(p)))
+
     model = build_model(
         results_rows, spend_rows,
         generated_at=generated_at, title=args.title,
         results_source=str(results_path), spend_source=str(spend_path),
         fixtures_dir=fixtures_dir, harness_root=harness_root,
-        alpha=args.alpha, target_power=args.target_power)
+        alpha=args.alpha, target_power=args.target_power,
+        model_decides_reports=model_decides_reports)
 
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
