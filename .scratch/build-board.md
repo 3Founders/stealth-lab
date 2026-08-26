@@ -653,11 +653,29 @@ single synthesized reports into `.scratch/research/`.
    understates C's true detection rate, not a detection failure, opposite
    in direction from RUN #1's gate-inflation caveat; (c) three control-task
    episodes show correct reasoning without a structured reuse credit — same
-   gap, doesn't corrupt the shipped 0/12 specificity number. No second
-   sweep exists yet to check variance against; re-run this verification
-   once one lands. No files outside lane paths touched; results/spend read
-   from sl-measure's worktree read-only (gitignored machine-local
-   artifacts).)*
+   gap, doesn't corrupt the shipped 0/12 specificity number. No files
+   outside lane paths touched; results/spend read from sl-measure's
+   worktree read-only (gitignored machine-local artifacts).
+   **RUN2 ADDENDUM (same session, landed mid-verification):** MEASURE's
+   run2 (board entry above, this section) also independently re-verified —
+   sensitivity 10 discordant (B-only 1, C-only 9), p=0.02148438, CONFIRMED
+   exactly; specificity 0/12, CONFIRMED exactly. Journal check repeats
+   clean: every check_applicability verdict=True, zero mechanical-gate
+   refusal strings, all 11 refusal reasons situation-specific model prose.
+   THE OX-ALPHA 404 ISSUE PERSISTS IN RUN2 UNCHANGED: 72/72 ox-alpha
+   attempts 404, zero 429s, same as run1 — not a one-off (>=2h42m span,
+   two separate sweeps), and run2's board entry gives no per-model
+   breakdown at all, so the substitution is now twice-undisclosed. The one
+   B-only discordant task (dec-pdf-103) and one control-abstain task
+   (dec-dep-105) repeat IDENTICALLY in run2 — model's own reasoning correct
+   both times, never structured into the credited field both times — a
+   real, repeated instrument gap (understates C, doesn't overstate it),
+   not sampling noise, confirming the board's own "not a fluke" read.
+   Full detail + updated verdict table in
+   `.scratch/research/model-decides-verification.md` (updated in place, not
+   a second file). Standing recommendation for whoever runs a third sweep
+   of anything on this OpenRouter chain: confirm ox-alpha's current model
+   id first.)*
 
 ### Lane SHIP (owns `packaging/**`) â€” activates after CORE-A merges 1.7
 2. `[x]` done @2026-08-26 â€” branch `lane/ship` **P2 - Minimal status surface**:
@@ -1674,3 +1692,17 @@ Grounded findings from  3_access.sql/ 4_governance.sql/deps.py review. Sequence:
   gloss (required_n isn't a monotone power floor for this exact test) and
   a schema-capture gap on dec-pdf-103 that understates, not inflates, C's
   true detection rate. No second sweep exists yet to check variance.
+
+- RESEARCH (2026-08-27, run2 addendum): the run2 sweep landed mid-
+  verification (see MEASURE's entry above and Lane RESEARCH item 6's
+  addendum) and has now also been independently re-verified with the same
+  script - sensitivity p=0.02148438 (10 discordant, 1 B-only/9 C-only) and
+  specificity 0/12 both CONFIRMED exactly, journal confirms genuinely
+  model-decided refusals again. The ox-alpha-404/gpt-4o-mini-fallback issue
+  flagged for run1 persists UNCHANGED in run2 (72/72 404, zero 429) and is
+  still not disclosed in run2's own board entry - two sweeps now, same
+  undisclosed model substitution both times. dec-pdf-103 and dec-dep-105
+  repeat identically across both runs: correct model reasoning, never
+  captured as a structured decision - a real, repeated instrument gap.
+  model-decides-verification.md updated in place with the full run2
+  detail rather than a second file.
