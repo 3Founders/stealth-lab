@@ -19,3 +19,13 @@ __pycache__/
 
 # env files (any location)
 .env
+
+# Fundraising / investor material - LOCAL ONLY, never push to this repo.
+# Lives in the private repo 3Founders/stealth-lab-funding.
+FundingGrants/
+GRANTS/
+YC_*.md
+slides.md
+slides_v2.md
+FUNDRAISE_*.md
+*_DRAFT.md
