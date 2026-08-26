@@ -325,6 +325,9 @@ Rule: NO new migrations (schema needs route through CORE-A); no edits outside ow
 
 0. `[x]` **WAVE-2 / HARDENING H3 pre-work swap** -- DONE @2026-08-26 by core-b under the HARDENING section item 3 (same task; canonical record there). Rate-limiter collector treatment: in-process token bucket + buffered ledger flush (trace_collector append->drain pattern) so Postgres becomes audit ledger, not enforcement point. CONSTRAINT: preserve fail-closed-on-infra-error; buffered writes need a replay-or-block rule. Retention sweep for rate_limit_events. NOTE: lands in governance.py -- scoped grant to this lane for backend/app/services/governance.py only.
 
+### Lane MEASURE-WAVE (real arms - founder go 2026-08-26, key in backend/.env OPENROUTER_API_KEY)
+0. `[ ]` **Real-model arms**: replace scripted_arms decision logic with live model calls via OpenRouter (OpenAI-compatible, key from env). REQUIRED: exponential backoff+jitter on 429 (upstream shared pool saturates - verified live); model fallback chain (ox-alpha primary; document alternates); resumable sweeps (--auto-resume pattern); spend log per run. Arm A = solo frontier call per step; B/C consume memory surface identically to scripted versions.
+
 ### Lane MEASURE (owns `experiments/harness/**`)
 1. `[x] done 2026-08-25 â€” lane/measure` Â§40 harness skeleton adapted from `experiments/swebench_pro/run_graph_experiment.py`;
    arms A/B/C; synthetic fixtures only until CORE-A lands 1.7.
