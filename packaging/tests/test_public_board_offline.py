@@ -238,6 +238,134 @@ def test_significant_pair_and_small_n_caveat(fixtures_dir):
         assert "POWER-ANALYSIS FOOTER" in page
 
 
+# --------------------------------------------------------------------------
+# Interpretive-validity attribution (RUN #1 verification caveat 2)
+# --------------------------------------------------------------------------
+
+def _refusal_row(task_id, reason, arm="C"):
+    row = _row(task_id, _ep(task_id, "A", **FAIL), _ep(task_id, "B", **FAIL),
+              _ep(task_id, "C", resolved=True, tin=100_000, tout=50_000,
+                  offered=["p_stale"], refused=["p_stale"]))
+    row[f"{arm}_journal"] = [
+        {"tool": "check_applicability", "procedure_id": "p_stale",
+         "verdict": False},
+        {"tool": "record_refusal", "procedure_id": "p_stale",
+         "reason": reason},
+    ]
+    return row
+
+
+PROCEDURES_BY_ID = {
+    "p_stale": {"procedure_id": "p_stale", "stale": True},
+    "p_good": {"procedure_id": "p_good", "stale": False},
+}
+
+
+def test_stale_refusal_attribution_splits_gate_vs_model(fixtures_dir):
+    rows = [_refusal_row("t1", sg.GATE_AUTO_REFUSAL_REASON)]
+    att = sg.stale_refusal_attribution(rows, "C", PROCEDURES_BY_ID)
+    assert att == {"gate_mechanical": 1, "model_initiated": 0, "unattributed": 0}
+
+    rows2 = [_refusal_row("t2", sg.GATE_BLOCKED_REUSE_REASON)]
+    att2 = sg.stale_refusal_attribution(rows2, "C", PROCEDURES_BY_ID)
+    assert att2 == {"gate_mechanical": 1, "model_initiated": 0, "unattributed": 0}
+
+    rows3 = [_refusal_row("t3", "agent refusal")]
+    att3 = sg.stale_refusal_attribution(rows3, "C", PROCEDURES_BY_ID)
+    assert att3 == {"gate_mechanical": 0, "model_initiated": 1, "unattributed": 0}
+
+
+def test_stale_refusal_attribution_unattributed_without_journal(fixtures_dir):
+    """scenario_a_rows' t2 has C correctly refuse p_stale but with no
+    C_journal at all - a real correct refusal with no mechanism evidence,
+    reported honestly as unattributed rather than guessed into either
+    bucket."""
+    assert sg.stale_refusal_attribution(
+        scenario_a_rows(), "C", PROCEDURES_BY_ID) == \
+        {"gate_mechanical": 0, "model_initiated": 0, "unattributed": 1}
+
+
+def test_stale_refusal_attribution_ignores_non_stale_procedure_refusals(
+        fixtures_dir):
+    """A gate-blocked reuse of a NON-stale procedure is a different
+    phenomenon (nothing to do with staleness) and must not inflate this
+    table - it would no longer foot to the Arms table's stale_refusal
+    column, which scoring.py scopes to ground-truth-stale ids only."""
+    row = _row("t1", _ep("t1", "A", **FAIL), _ep("t1", "B", **FAIL),
+              _ep("t1", "C", **PASS))
+    row["C_journal"] = [
+        {"tool": "record_refusal", "procedure_id": "p_good",
+         "reason": sg.GATE_BLOCKED_REUSE_REASON},
+    ]
+    att = sg.stale_refusal_attribution([row], "C", PROCEDURES_BY_ID)
+    assert att == {"gate_mechanical": 0, "model_initiated": 0, "unattributed": 0}
+
+
+def test_stale_attribution_ignores_tasks_excluded_from_usable(fixtures_dir):
+    """An excluded task (one arm invalid) can still carry a C_journal
+    refusal entry - it must NOT be counted, or this table stops footing to
+    arms_stats['C']['stale_refusals_correct'] (both must read 1 here, not
+    2)."""
+    rows = [_refusal_row("t_usable", sg.GATE_AUTO_REFUSAL_REASON)]
+    excluded = _refusal_row("t_excluded", sg.GATE_AUTO_REFUSAL_REASON)
+    excluded["B"] = _ep("t_excluded", "B", valid=False)
+    rows.append(excluded)
+    model = _model(rows, fixtures_dir)
+    assert model["counts"]["excluded"] == 1
+    assert model["arms_stats"]["C"]["stale_refusals_correct"] == 1
+    assert model["stale_attribution"]["C"] == \
+        {"gate_mechanical": 1, "model_initiated": 0, "unattributed": 0}
+
+
+def test_stale_attribution_dedupes_resumed_duplicate_task_id(fixtures_dir):
+    """An auto-resumed sweep can leave an earlier INVALID attempt at some
+    task_id in the file alongside its valid retry - same task_id, two rows.
+    Matching by task_id string (instead of by which classified entry is
+    actually in the usable set) would double-count the excluded row's
+    journal entry here. RUN #3 real data hit this exact shape
+    (mic-pdf-003 appeared twice)."""
+    valid_row = _refusal_row("t_dup", sg.GATE_AUTO_REFUSAL_REASON)
+    stale_row = _refusal_row("t_dup", sg.GATE_AUTO_REFUSAL_REASON)
+    stale_row["B"] = _ep("t_dup", "B", valid=False)  # excluded duplicate
+    rows = [stale_row, valid_row]
+    model = _model(rows, fixtures_dir)
+    assert model["counts"]["tasks_classified"] == 2
+    assert model["counts"]["usable"] == 1
+    assert model["arms_stats"]["C"]["stale_refusals_correct"] == 1
+    assert model["stale_attribution"]["C"] == \
+        {"gate_mechanical": 1, "model_initiated": 0, "unattributed": 0}
+
+
+def test_gate_only_stale_refusal_triggers_interpretive_caveat(fixtures_dir):
+    rows = [_refusal_row("t1", sg.GATE_AUTO_REFUSAL_REASON)]
+    model = _model(rows, fixtures_dir)
+    assert model["stale_attribution_present"]
+    assert model["stale_attribution"]["C"] == \
+        {"gate_mechanical": 1, "model_initiated": 0, "unattributed": 0}
+    caveat = [c for c in model["caveats"] if "interpretive-validity" in c]
+    assert caveat and "arm(s) C" in caveat[0]
+    for page in (sg.render_markdown(model), sg.render_html(model)):
+        assert "Stale-refusal attribution" in page
+        assert "interpretive-validity" in page
+
+
+def test_model_initiated_refusal_does_not_trigger_interpretive_caveat(
+        fixtures_dir):
+    rows = [_refusal_row("t1", "agent refusal")]
+    model = _model(rows, fixtures_dir)
+    assert model["stale_attribution"]["C"] == \
+        {"gate_mechanical": 0, "model_initiated": 1, "unattributed": 0}
+    assert not any("interpretive-validity" in c for c in model["caveats"])
+
+
+def test_no_journal_data_renders_honest_absence(fixtures_dir):
+    model = _model(scenario_a_rows(), fixtures_dir)
+    assert not model["stale_attribution_present"]
+    assert not any("interpretive-validity" in c for c in model["caveats"])
+    for page in (sg.render_markdown(model), sg.render_html(model)):
+        assert "attribution not computable" in page
+
+
 def test_unusable_task_excluded_and_disclosed(fixtures_dir):
     rows = scenario_a_rows()
     broken = _ep("t_broken", "B", valid=False)

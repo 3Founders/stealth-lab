@@ -51,6 +51,19 @@ DEFAULT_TITLE = "SS40 Public Scoreboard"
 # an explicit caveat on the public page.
 MIN_PUBLIC_DISCORDANT_N = 6
 
+# RUN #1 independent verification (research lane, 2026-08-26,
+# .scratch/research/run1-verification.md, caveat 2): a small-n caveat is
+# not the only way a comparison can overstate the evidence. C's journal
+# proved every stale-refusal credit it earned came from the SUBSTRATE
+# GATE deciding (or overriding a proposed reuse) before/instead of the
+# model choosing to refuse - openrouter_arms.py's own record_refusal
+# reason strings say so verbatim. These two literal strings are the
+# harness's contract for that distinction; if openrouter_arms.py renames
+# them, test_public_board_offline.py is the tripwire (same discipline as
+# the other imported-contract notes on this module).
+GATE_AUTO_REFUSAL_REASON = "assumptions no longer hold (gate)"
+GATE_BLOCKED_REUSE_REASON = "model proposed reuse; gate blocked"
+
 MD_FILENAME = "public_scoreboard.md"
 HTML_FILENAME = "public_scoreboard.html"
 
@@ -159,6 +172,58 @@ def load_jsonl(path: Path | str | None) -> list[dict]:
     return out
 
 
+def stale_refusal_attribution(usable_rows: list[dict], arm: str,
+                              procedures_by_id: dict[str, dict]) -> dict:
+    """Split an arm's stale_refusals_correct credit by MECHANISM, counted
+    PER TASK (one vote per row) to match scoring.classify's own
+    stale_refusal_correct semantics (`bool(correct_stale_refusals)` - a
+    task with two stale refusals still counts once, not twice; counting
+    raw journal EVENTS instead would not foot to the Arms table's
+    stale_refusal column whenever a task refuses more than one stale id):
+      - gate_mechanical: every stale-refusal reason on the task came from
+        the substrate's check_applicability call deciding it (auto-refusal
+        before the model saw the card, or a blocked reuse the model itself
+        proposed) - GATE_AUTO_REFUSAL_REASON / GATE_BLOCKED_REUSE_REASON.
+      - model_initiated: at least one stale-refusal reason on the task was
+        anything else, i.e. the agent chose to refuse on its own.
+      - unattributed: the episode counts as a correct stale refusal but no
+        "<arm>_journal" entry names the refused stale procedure id at all
+        (no journal for this arm, or a torn/absent entry) - reported
+        honestly rather than guessed into either bucket.
+    gate_mechanical + model_initiated + unattributed always equals
+    arms_stats[arm]['stale_refusals_correct'] PROVIDED usable_rows is
+    exactly the usable (all-arms-valid) task set arms_stats is computed
+    over - a task excluded there can still carry a journal entry and must
+    not be passed in here.
+    """
+    gate_mechanical = 0
+    model_initiated = 0
+    unattributed = 0
+    journal_key = f"{arm}_journal"
+    for row in usable_rows:
+        episode = row.get(arm) or {}
+        stale_refused = [
+            pid for pid in (episode.get("refused_procedure_ids") or [])
+            if procedures_by_id.get(pid, {}).get("stale")]
+        if not stale_refused:
+            continue
+        reasons = [
+            entry.get("reason") or ""
+            for entry in (row.get(journal_key) or [])
+            if isinstance(entry, dict)
+            and entry.get("tool") == "record_refusal"
+            and entry.get("procedure_id") in stale_refused]
+        if not reasons:
+            unattributed += 1
+        elif all(r in (GATE_AUTO_REFUSAL_REASON, GATE_BLOCKED_REUSE_REASON)
+                for r in reasons):
+            gate_mechanical += 1
+        else:
+            model_initiated += 1
+    return {"gate_mechanical": gate_mechanical, "model_initiated": model_initiated,
+            "unattributed": unattributed}
+
+
 def default_spend_path(results_path: Path | str) -> Path:
     """Spend-ledger resolution beside the results file, in the order the
     names actually occur in the wild:
@@ -263,6 +328,27 @@ def build_model(results_rows: list[dict],
         and ep.get("served_by_model")
     })
 
+    # Match by object identity, not task_id: a resumed sweep can leave TWO
+    # raw rows sharing one task_id (an earlier invalid attempt alongside
+    # its valid retry) - classify_rows is 1:1 with results_rows in order,
+    # so this pairs each usable CLASSIFIED entry back to its own specific
+    # raw row instead of re-matching by a task_id that both rows share.
+    usable_ids = {id(c) for c in usable}
+    usable_rows = [r for r, c in zip(results_rows, classified)
+                  if id(c) in usable_ids]
+    stale_attribution = {
+        a: stale_refusal_attribution(usable_rows, a, procedures_by_id)
+        for a in arms}
+    gate_only_arms = [
+        a for a in arms
+        if arms_stats[a]["stale_refusals_correct"] > 0
+        and stale_attribution[a]["gate_mechanical"] > 0
+        and stale_attribution[a]["model_initiated"] == 0
+    ]
+    stale_attribution_present = any(
+        v["gate_mechanical"] + v["model_initiated"] > 0
+        for v in stale_attribution.values())
+
     caveats: list[str] = []
     if small_n_pairs:
         caveats.append(
@@ -278,6 +364,15 @@ def build_model(results_rows: list[dict],
             f"task contributes only when EVERY arm produced a valid episode."
             + (f" Of these, {n_errors} row(s) recorded a runner-level error."
                if n_errors else ""))
+    if gate_only_arms:
+        caveats.append(
+            "interpretive-validity caveat (independent of sample size): "
+            f"arm(s) {', '.join(gate_only_arms)} earned 100% of their "
+            "counted stale_refusal credit from the substrate gate deciding "
+            "before/instead of the model (see 'Stale-refusal attribution' "
+            "below), with zero model-initiated refusals logged - the "
+            "stale_refusal column is descriptive SYSTEM-level behavior "
+            "here, not evidence of per-model staleness detection.")
 
     return {
         "title": title,
@@ -303,6 +398,8 @@ def build_model(results_rows: list[dict],
         "fixture_pack": f"{Path(fixtures_dir).name} "
                         f"({len(procedures_by_id)} procedures)",
         "caveats": caveats,
+        "stale_attribution": stale_attribution,
+        "stale_attribution_present": stale_attribution_present,
     }
 
 
@@ -366,6 +463,32 @@ def render_markdown(model: dict) -> str:
     if model["models_seen"]:
         out.append("")
         out.append(f"Served by: {', '.join(model['models_seen'])}")
+    out.append("")
+    out.append("## Stale-refusal attribution (gate-mechanical vs "
+               "model-initiated)")
+    out.append("")
+    if model["stale_attribution_present"]:
+        out.append("| arm | gate-mechanical | model-initiated | "
+                   "unattributed |")
+        out.append("|---|---:|---:|---:|")
+        for arm in model["arms_stats"]:
+            att = model["stale_attribution"][arm]
+            out.append(f"| {arm} | {att['gate_mechanical']} | "
+                       f"{att['model_initiated']} | "
+                       f"{att['unattributed']} |")
+        out.append("")
+        out.append("gate-mechanical = substrate check_applicability decided "
+                   "the refusal (model never saw the card, or a proposed "
+                   "reuse was blocked); model-initiated = the agent refused "
+                   "on its own after seeing the card; unattributed = a "
+                   "correct stale refusal with no journal entry naming the "
+                   "mechanism. A stale_refusal count with zero "
+                   "model-initiated entries reflects the surface's gating "
+                   "design, not detection by the model serving that arm.")
+    else:
+        out.append("_No refusal-mechanism journal data available for this "
+                   "sweep - attribution not computable; stale_refusal counts "
+                   "above are unattributed._")
     out.append("")
     out.append("## Pairwise comparisons (exact McNemar on pass/fail)")
     out.append("")
@@ -456,6 +579,32 @@ pre{background:#efefef;padding:0.75rem;overflow-x:auto;border:1px solid #ddd}
     if model["models_seen"]:
         parts.append(f"<p class='muted'>Served by: "
                      f"{e(', '.join(model['models_seen']))}</p>")
+    parts.append("<h2>Stale-refusal attribution (gate-mechanical vs "
+                 "model-initiated)</h2>")
+    if model["stale_attribution_present"]:
+        parts.append("<table><tr><th>arm</th><th>gate-mechanical</th>"
+                     "<th>model-initiated</th><th>unattributed</th></tr>")
+        for arm in model["arms_stats"]:
+            att = model["stale_attribution"][arm]
+            parts.append(f"<tr><td>{e(arm)}</td>"
+                         f"<td>{att['gate_mechanical']}</td>"
+                         f"<td>{att['model_initiated']}</td>"
+                         f"<td>{att['unattributed']}</td></tr>")
+        parts.append("</table>")
+        parts.append("<p class='muted'>gate-mechanical = substrate "
+                     "check_applicability decided the refusal (model never "
+                     "saw the card, or a proposed reuse was blocked); "
+                     "model-initiated = the agent refused on its own after "
+                     "seeing the card; unattributed = a correct stale "
+                     "refusal with no journal entry naming the mechanism. "
+                     "A stale_refusal count with zero model-initiated "
+                     "entries reflects the surface's gating "
+                     "design, not detection by the model serving that "
+                     "arm.</p>")
+    else:
+        parts.append("<p><em>No refusal-mechanism journal data available "
+                     "for this sweep - attribution not computable; "
+                     "stale_refusal counts above are unattributed.</em></p>")
     parts.append("<h2>Pairwise comparisons (exact McNemar on pass/fail)"
                  "</h2><ul>")
     for c in model["comparisons"]:
