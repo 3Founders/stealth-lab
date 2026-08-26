@@ -159,6 +159,7 @@ def test_chat_agent_falls_back_to_anthropic_when_nothing_configured():
     with patch("app.debate.panel.settings") as s:
         s.use_local_models = False
         s.use_general_compute = False
+        s.use_openrouter = False  # third provider flag; truthy MagicMock would route here otherwise
         agent = default_chat_agent()
 
     assert agent.family == "anthropic"

@@ -159,7 +159,55 @@ git worktree add ..\sl-research -b lane/research origin/main
    Remaining [V]/[H] query-path adoption outside grant paths -> Question #5 +
    cross-lane request #2.)*
 
-7. `[ ]` **WAVE-3 / Debate panel OpenRouter wiring**: app/debate/panel.py + config.py (scoped grant) - add OpenRouter as a provider so scan->debate->approve runs locally on the founder key; reuse openrouter_arms backoff pattern; prove with offline FakePool tests + one gated live smoke.
+7. `[x]` done @2026-08-26 — branch `lane/core-b` **WAVE-3 / Debate panel OpenRouter wiring**: app/debate/panel.py + config.py (scoped
+   grant) - add OpenRouter as a provider so scan->debate->approve runs locally on the founder key; reuse openrouter_arms backoff
+   pattern; prove with offline FakePool tests + one gated live smoke.
+   *(Shipped: config.py fourth provider posture `use_openrouter` +
+   OPENROUTER_API_KEY/base_url/panel_models/judge_model — defaults are the
+   CHEAP four-family roster PROBED LIVE on the founder account 2026-08-26:
+   ox-alpha | openai/gpt-4o-mini | anthropic/claude-haiku-4.5 panel +
+   google/gemini-2.5-flash judge. panel.py gains OpenRouterAgent [PanelAgent
+   dataclass]: arms-pattern survival ported wholesale — full-jitter
+   exponential backoff uniform in [0, min(cap, base·2^attempt)) on
+   RETRYABLE_STATUSES {408,409,429,500,502,503,504} AND network errors,
+   immediate non-retryable-4xx fallthrough to fallback chain models,
+   AllModelsFailedError carrying the per-attempt trail; injectable
+   transport/sleep/rng proven offline at zero wall-clock; TURN_BUDGET_S=110
+   deliberately under gather_responses' outer 120s wait_for so an exhausted
+   seat raises WITH its trail instead of being cancelled into an anonymous
+   failure. `manages_own_retries` marker makes _call_with_retry STAND DOWN
+   for these seats — stacking both retry ladders = ~4x worst-case sleeps
+   hammering a saturated pool; failure isolation unchanged. THREE live-run
+   findings baked in as named machinery: (1) json_mode=True at the
+   factories [response_format json_object] — real frontier models ramble
+   past completion budgets in prose and get truncated before JSON starts;
+   (2) REASONING_BUDGET_CAPS {ox-alpha: reasoning.max_tokens=400} — ox-alpha
+   burned ANY plain budget on invisible reasoning and returned empty
+   content; cap verified fixing it in one probe; (3) stale-default guard:
+   claude-3-5-haiku had been RETIRED upstream [first smoke: clean 404 trail]
+   and catalog listing ≠ endpoint availability [deepseek-chat-v3.2 listed
+   but rejected] — hence probe-then-pin defaults + a construction-time
+   roster tripwire test. Factories wired into default_panel/default_judge/
+   default_chat_agent/default_layer2_agent; provider-flag conflicts now
+   checked pairwise across all three hosted flags. PROOF: 36 offline tests
+   tests/test_debate_openrouter_offline.py incl. THE FakePool lifecycle —
+   real TriggerDetector.scan+record → LoopOrchestrator.run over three
+   scripted-completion OpenRouterAgent seats + judge against a recording
+   FakePool with STATEFUL debate-state FOR UPDATE reads → scorecard passed /
+   groundedness 1.0 / PENDING_APPROVAL → DebateStateMachine APPROVED, whole
+   legal ladder OPEN→IN_DEBATE→PENDING_EVAL→PENDING_APPROVAL→APPROVED pinned
+   and an illegal jump refused; zero spend, zero sleeps asserted. LIVE SMOKE
+   gated behind SL_DEBATE_LIVE_SMOKE=1 [CI never sets it; module-level
+   skipif]: PASSED end-to-end vs real endpoint — 3 seats × 2 rounds, 6 turns
+   all engine-parsed VADA JSON, 0 transport failures, ~14s wall. Total live
+   spend this item ≈ $0.02 incl. diagnosis probes. Full suite: **1243
+   passed / 115 skipped / 0 failed** [= prior baseline + this item's tests,
+   the +1 skip being the gated smoke]. DISCLOSED out-of-grant touches:
+   tests/test_general_compute.py ONE line [new third flag must read False in
+   the nothing-configured fallback test — truthy MagicMock routed otherwise];
+   requirements.txt untouched by grant but NOTE for its owner: httpx is now
+   load-bearing at first OpenRouter use [lazy import; present transitively
+   today, v0.28.1].)*
 
 6. `[x]` done @2026-08-26 — branch `lane/core-a` **WAVE-3 / HARDENING adoption
    sweep**: tenant_transaction() callers wired per cross-lane request #1
@@ -1131,3 +1179,41 @@ Grounded findings from  3_access.sql/ 4_governance.sql/deps.py review. Sequence:
   5. Harness suite 176/176 green [163 prior + 13 new]; zero backend edits
      [git diff origin/main -- backend/ empty]. Rebased onto origin/main;
      fast-forwarded main per OVERNIGHT MODE after suite green.
+
+- CORE-B (2026-08-26): **WAVE-3 debate-panel OpenRouter wiring** done on
+  `lane/core-b` -- full record in queue item 7. Notes:
+  1. `OpenRouterAgent` reuses the arms-pattern full-jitter backoff wholesale
+     but stands down `_call_with_retry`'s generic wrapper via a
+     `manages_own_retries` marker -- stacking both retry ladders would be
+     ~4x worst-case sleeps against an already-saturated shared pool.
+  2. Three live-run findings pinned as named machinery: `json_mode=True`
+     at the factories (frontier models ramble past completion budgets in
+     prose before JSON starts); `REASONING_BUDGET_CAPS` capping ox-alpha's
+     reasoning tokens (it was burning the entire plain completion budget
+     on invisible chain-of-thought and returning empty content -- verified
+     fixed in one live probe); a stale-default guard (claude-3-5-haiku is
+     RETIRED upstream -- clean 404 on first smoke -- and catalog listing
+     does not imply endpoint availability, deepseek-chat-v3.2 was listed
+     but rejected) -- hence probe-then-pin defaults plus a construction-time
+     roster tripwire test. Roster: ox-alpha / gpt-4o-mini / claude-haiku-4.5
+     panel + gemini-2.5-flash judge, all live-probed on the founder account
+     2026-08-26.
+  3. Full suite: **1243 passed / 115 skipped / 0 failed** (prior baseline +
+     36 offline tests in tests/test_debate_openrouter_offline.py, the +1
+     skip being the gated live smoke). Live smoke PASSED end-to-end against
+     the real endpoint: 3 seats x 2 rounds, 6 turns, all engine-parsed VADA
+     JSON, 0 transport failures, ~14s wall, ~$0.02 total spend incl.
+     diagnosis probes. One disclosed out-of-grant touch:
+     tests/test_general_compute.py, one line (the new third provider flag
+     needed to read False in the nothing-configured fallback test -- a
+     truthy MagicMock was routing otherwise).
+  4. **Recovery note:** this item was finished and written up locally
+     (code + tests + this board entry) but never committed -- the
+     session's free-model access (`x-preview-f-free`) died before CORE-B
+     could run `git add`/`commit`/`push`. Recovered from the uncommitted
+     sl-core-b worktree state by the integrator (Claude, picking up from
+     the dead opencode/ox-alpha session) on 2026-08-26 evening; code and
+     this write-up are exactly as CORE-B left them, unedited. Founder:
+     please re-run the offline suite once in sl-core-b before pushing, as
+     a sanity check on the recovery -- the numbers above are CORE-B's own
+     report, not independently re-verified by the integrator this pass.

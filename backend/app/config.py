@@ -95,6 +95,38 @@ class Settings(BaseSettings):
     general_compute_panel_models: str = ""
     general_compute_judge_model: str = ""
 
+    # --- OpenRouter (WAVE-3 debate panel wiring) ---
+    # Fourth provider posture next to local / General Compute / the paid
+    # closed roster: ONE OpenRouter account serves all four debate seats
+    # from OPENROUTER_API_KEY in backend/.env, so scan -> debate -> approve
+    # runs end-to-end locally without any other vendor credential.
+    # The defaults below are the CHEAP four-family roster PROBED LIVE on
+    # the founder account (2026-08-26): every slug answered a tiny
+    # completion before being pinned here. Two lessons from that probe,
+    # both now load-bearing knowledge:
+    #   - catalog listing != endpoint availability: deepseek-chat-v3.2 was
+    #     listed by GET /models yet rejected as "not a valid model ID" on
+    #     chat; anthropic/claude-3-5-haiku had simply been retired.
+    #   - ox-alpha is a REASONING model: give it real max_tokens or it
+    #     spends the whole budget thinking and returns empty content
+    #     (app/debate/panel.py's OpenRouterAgent passes max_tokens through;
+    #     seats default to 2000, ample for this).
+    # A slug the account stops serving degrades to a RECORDED skipped turn
+    # with its HTTP status in the failure trail -- never silent. Override
+    # OPENROUTER_PANEL_MODELS / OPENROUTER_JUDGE_MODEL to taste
+    # (https://openrouter.ai/models). Backoff/retry constants live in
+    # app/debate/panel.py, not here, so tests prove them retunable without
+    # rebuilding Settings.
+    use_openrouter: bool = False
+    openrouter_api_key: Optional[str] = None
+    openrouter_base_url: str = "https://openrouter.ai/api/v1"
+    # Comma-separated; must be genuinely distinct model families -- the
+    # heterogeneity check enforces this at construction, before any spend.
+    openrouter_panel_models: str = (
+        "ox-alpha,openai/gpt-4o-mini,anthropic/claude-haiku-4.5"
+    )
+    openrouter_judge_model: str = "google/gemini-2.5-flash"
+
     # --- Agent execution: file upload/output handling ---
     agent_upload_dir: str = "/tmp/agent_uploads"
     agent_output_dir: str = "/tmp/agent_outputs"

@@ -14,11 +14,50 @@ from __future__ import annotations
 
 import asyncio
 import json
+import random
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Callable, Optional, Protocol, runtime_checkable
 
 from app.config import settings
+
+
+# --- OpenRouter survival tuning (WAVE-3) ---------------------------------
+#
+# Ported from experiments/harness/openrouter_arms.py (board Lane CORE-B
+# item 7: read-only reference). The pattern is re-implemented here rather
+# than imported because backend/** must not reach into experiments/**.
+# These are named module constants consulted at call time -- proven
+# monkeypatch-retunable by tests, never inlined literals.
+#
+# 429 is the headline failure (the upstream shared pool saturates --
+# verified live per board RUN #1); the rest are the transient set worth a
+# retry. Non-retryable 4xx falls through to the next model in a seat's
+# chain immediately.
+OPENROUTER_RETRYABLE_STATUSES = frozenset({408, 409, 429, 500, 502, 503, 504})
+BACKOFF_BASE_S = 1.5
+BACKOFF_CAP_S = 60.0
+MAX_ATTEMPTS_PER_MODEL = 6
+REQUEST_TIMEOUT_S = 120.0
+
+# Kept deliberately below gather_responses' default 120s outer timeout so an
+# exhausted budget raises WITH its attempt trail instead of being cancelled
+# mid-backoff by the outer wait_for -- a cancellation would be recorded as a
+# failed turn indistinguishable from a network failure, losing the
+# diagnostics entirely.
+TURN_BUDGET_S = 110.0
+
+# Verified live 2026-08-26 (gated smoke diagnosis): ox-alpha is a REASONING
+# model -- under debate-length prompts (~3k tokens of system prompt) its
+# chain-of-thought alone consumes ANY plain completion budget and the visible
+# content comes back EMPTY (completion_tokens == max_tokens, content='').
+# Capping the reasoning window leaves room for the actual JSON reply;
+# verified fixing it in one probe. Models without an entry are passed
+# through untouched -- the reasoning parameter is normalized away by
+# OpenRouter for models that don't support it.
+REASONING_BUDGET_CAPS: dict[str, dict] = {
+    "ox-alpha": {"reasoning": {"max_tokens": 400}},
+}
 
 
 @runtime_checkable
@@ -135,6 +174,202 @@ class MockAgent:
         return out
 
 
+def openrouter_headers(api_key: str) -> dict[str, str]:
+    """
+    OpenRouter attribution headers. Split out for offline proof. The key
+    value itself is never logged or echoed anywhere.
+    """
+    return {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+        "HTTP-Referer": "https://localhost/backend-debate",
+        "X-Title": "stealthlab-debate-panel",
+    }
+
+
+def httpx_openrouter_transport(
+    base_url: str, api_key: str, timeout_s: float
+) -> Callable[[dict], Any]:
+    """
+    One POST per call, HTTP status visible to the retry loop. Raw status
+    codes beat SDK exception hierarchies for retry decisions -- the exact
+    reasoning openrouter_arms recorded when the shared pool saturated.
+    Lazy httpx import: a missing install should surface at first OpenRouter
+    use with a clear ImportError, not at panel import for everyone.
+    """
+    import httpx
+
+    headers = openrouter_headers(api_key)
+    url = base_url.rstrip("/") + "/chat/completions"
+
+    async def _send(payload: dict) -> tuple[int, dict]:
+        async with httpx.AsyncClient(timeout=timeout_s) as client:
+            resp = await client.post(url, headers=headers, json=payload)
+            try:
+                body = resp.json()
+            except Exception:
+                body = {}
+            return resp.status_code, body
+
+    return _send
+
+
+class AllModelsFailedError(RuntimeError):
+    """
+    Every model in a seat's chain exhausted its attempts (or the turn
+    budget ran out). Carries the per-attempt trail so a lost debate turn
+    explains WHY, not just THAT -- same contract as openrouter_arms'
+    error of the same name. gather_responses catches this like any other
+    agent failure: one exhausted seat becomes a recorded skipped turn,
+    never a crashed debate.
+    """
+
+    def __init__(self, attempts: list[dict]):
+        self.attempts = attempts
+        tail = "; ".join(
+            f"{a['model']}#{a['attempt']}:{a.get('status') or a.get('error')}"
+            for a in attempts[-6:]
+        )
+        super().__init__(
+            f"all {len({a['model'] for a in attempts})} chain model(s) "
+            f"exhausted ({len(attempts)} attempt(s)): {tail}"
+        )
+
+
+@dataclass
+class OpenRouterAgent:
+    """
+    One debate seat served through OpenRouter on the founder key.
+
+    Ports the survival strategy MEASURE proved against the saturated
+    shared pool (openrouter_arms.OpenRouterClient): exponential backoff
+    with FULL jitter -- uniform in [0, min(cap, base*2^attempt)), so
+    concurrent seats don't re-align their retries into a thundering herd --
+    on every retryable status and network error; immediate fallthrough to
+    the next model on non-retryable 4xx; exhaustion raises with the whole
+    attempt trail.
+
+    `manages_own_retries` tells _call_with_retry to stand down: backoff
+    already lives INSIDE this seat, and stacking the generic vendor-shaped
+    rate-limit retry on top would multiply worst-case sleeps ~4x while
+    hammering an already-saturated pool. Failure isolation in
+    gather_responses still applies unchanged.
+
+    `fallback_models` is deliberately left EMPTY by the factories below:
+    a seat's declared `family` must stay truthful about whatever actually
+    answered, and enforce_independence reasons statically over families.
+    A caller who opts into a chain accepts that a served fallback may not
+    belong to the family this seat declared.
+
+    transport/sleep/rng are injectables so tests prove every timing
+    behavior offline with zero network and zero wall-clock cost.
+    """
+
+    agent_id: str
+    model_id: str  # primary; head of the fallback chain
+    family: str
+    fallback_models: tuple[str, ...] = ()
+    max_tokens: int = 2000
+    temperature: float = 0.2
+    # OpenRouter-normalized JSON mode ("response_format": {"type":
+    # "json_object"}). The debate engine parses EVERY seat reply as JSON;
+    # without this, real frontier models ramble past their completion
+    # budget in prose and get truncated before the object ever starts --
+    # confirmed live in the first gated smoke (all three seats lost their
+    # turns to truncation). The factories enable it; direct constructors
+    # get raw passthrough behavior unless they opt in.
+    json_mode: bool = False
+    # Escape hatch for provider-specific params (e.g. reasoning limits from
+    # REASONING_BUDGET_CAPS, or provider quirks discovered later).
+    # Shallow-merged OVER the base payload, so it can override anything
+    # except the per-model fields set inside the chain loop.
+    extra_payload: dict = field(default_factory=dict)
+    # None -> consult module constant TURN_BUDGET_S at call time (retunable).
+    turn_budget_s: Optional[float] = None
+    manages_own_retries: bool = True  # read by _call_with_retry
+    transport: Optional[Callable[[dict], Any]] = None
+    sleep: Optional[Callable[[float], Any]] = None
+    rng: Optional[Callable[[], float]] = None
+
+    def _effective_budget(self) -> float:
+        return self.turn_budget_s if self.turn_budget_s is not None else TURN_BUDGET_S
+
+    def _backoff_delay(self, attempt: int, rng: Callable[[], float]) -> float:
+        ceiling = min(BACKOFF_CAP_S, BACKOFF_BASE_S * (2 ** attempt))
+        return rng() * ceiling
+
+    def _chain(self) -> tuple[str, ...]:
+        return (self.model_id, *self.fallback_models)
+
+    async def respond(self, system: str, user: str) -> str:
+        api_key = settings.require("openrouter_api_key")
+        rng = self.rng or random.random
+        sleep = self.sleep or asyncio.sleep
+        if self.transport is not None:
+            transport = self.transport
+        else:
+            transport = httpx_openrouter_transport(
+                settings.openrouter_base_url, api_key, REQUEST_TIMEOUT_S
+            )
+        messages = [
+            {"role": "system", "content": system},
+            {"role": "user", "content": user},
+        ]
+        chain = self._chain()
+        deadline = asyncio.get_running_loop().time() + self._effective_budget()
+        attempts: list[dict] = []
+
+        for chain_pos, model in enumerate(chain):
+            # Past the turn budget, later chain models don't get probed at
+            # all -- the only overrun left is the one already-in-flight
+            # request, so the AllModelsFailedError trail survives well
+            # inside gather_responses' outer timeout instead of being cut
+            # off by cancellation.
+            if chain_pos > 0 and asyncio.get_running_loop().time() >= deadline:
+                break
+            payload = {
+                "model": model,
+                "messages": messages,
+                "max_tokens": self.max_tokens,
+                "temperature": self.temperature,
+            }
+            if self.json_mode:
+                payload["response_format"] = {"type": "json_object"}
+            if self.extra_payload:
+                payload.update(self.extra_payload)
+            more_models_left = chain_pos < len(chain) - 1
+            for attempt in range(MAX_ATTEMPTS_PER_MODEL):
+                try:
+                    status, body = await transport(payload)
+                except Exception as exc:  # noqa: BLE001 -- network layer;
+                    # raised errors are the retryable signal, arms parity.
+                    attempts.append({
+                        "model": model, "attempt": attempt, "status": None,
+                        "error": f"{type(exc).__name__}: {exc}",
+                    })
+                    if not (more_models_left
+                            or attempt < MAX_ATTEMPTS_PER_MODEL - 1):
+                        break
+                    if asyncio.get_running_loop().time() >= deadline:
+                        break
+                    await sleep(self._backoff_delay(attempt, rng))
+                    continue
+                if status == 200:
+                    choices = body.get("choices") or [{}]
+                    return (choices[0].get("message") or {}).get("content") or ""
+                attempts.append({"model": model, "attempt": attempt, "status": status})
+                if status in OPENROUTER_RETRYABLE_STATUSES:
+                    if not (more_models_left
+                            or attempt < MAX_ATTEMPTS_PER_MODEL - 1):
+                        break
+                    if asyncio.get_running_loop().time() >= deadline:
+                        break
+                    await sleep(self._backoff_delay(attempt, rng))
+                    continue
+                break  # non-retryable for THIS model -> next in chain
+        raise AllModelsFailedError(attempts)
+
+
 def local_panel() -> list[PanelAgent]:
     """
     Panel backed by a local OpenAI-compatible server.
@@ -248,26 +483,83 @@ def general_compute_judge() -> PanelAgent:
     )
 
 
+def openrouter_panel() -> list[PanelAgent]:
+    """
+    Panel seated entirely on one OpenRouter account (founder key).
+
+    This is the posture that makes scan -> debate -> approve runnable
+    locally: four seats, four distinct model families, one credential.
+    Slugs come entirely from config because availability is account-
+    dependent; assert_heterogeneous still runs on whatever is configured,
+    so a same-family misconfiguration fails at construction, before any
+    spend. A slug the account doesn't serve degrades to recorded skipped
+    turns for that seat -- visible in the debate transcript's failures,
+    never silent.
+    """
+    models = [m.strip() for m in settings.openrouter_panel_models.split(",") if m.strip()]
+    if len(models) < 3:
+        raise ValueError(
+            f"openrouter_panel_models must list at least 3 models, got {models!r}. "
+            "Set OPENROUTER_PANEL_MODELS to slugs from https://openrouter.ai/models "
+            "that your account serves."
+        )
+    return [
+        OpenRouterAgent(
+            agent_id=f"panelist_{chr(97 + i)}",
+            model_id=model,
+            family=_derive_family(model),
+            json_mode=True,
+            extra_payload=REASONING_BUDGET_CAPS.get(model, {}),
+        )
+        for i, model in enumerate(models)
+    ]
+
+
+def openrouter_judge() -> PanelAgent:
+    model = settings.openrouter_judge_model
+    if not model:
+        raise ValueError(
+            "openrouter_judge_model is not set. Pick a model whose family "
+            "differs from all three panel models."
+        )
+    return OpenRouterAgent(
+        agent_id="judge",
+        model_id=model,
+        family=_derive_family(model),
+        json_mode=True,
+        extra_payload=REASONING_BUDGET_CAPS.get(model, {}),
+    )
+
+
 def default_panel() -> list[PanelAgent]:
     """
     The v0 fixed roster (Section 7): three distinct model families.
 
-    Three sources, checked in order: local (free, weakest, for structural
-    smoke tests), General Compute (hosted, open-weight, cheap, real
-    reasoning quality), the paid closed roster (the actually-designed
-    default). Local and General Compute are mutually exclusive by
-    convention -- set only one flag at a time -- checked here rather than
-    silently preferring one, so a stray leftover flag doesn't quietly
-    route traffic somewhere unintended.
+    Four mutually exclusive sources, checked in order: local (free,
+    weakest, for structural smoke tests), General Compute (hosted,
+    open-weight, cheap, real reasoning quality), OpenRouter (four seats
+    off one founder key -- the local-loop default), the paid closed
+    roster (the actually-designed default). Setting two flags at once is
+    refused rather than silently preferring one, so a stray leftover flag
+    doesn't quietly route traffic somewhere unintended.
     """
-    if settings.use_local_models and settings.use_general_compute:
+    enabled = [
+        name for name, on in (
+            ("use_local_models", settings.use_local_models),
+            ("use_general_compute", settings.use_general_compute),
+            ("use_openrouter", settings.use_openrouter),
+        ) if on
+    ]
+    if len(enabled) > 1:
         raise ValueError(
-            "both use_local_models and use_general_compute are set; pick one"
+            f"multiple provider flags set ({', '.join(enabled)}); pick one"
         )
     if settings.use_local_models:
         return local_panel()
     if settings.use_general_compute:
         return general_compute_panel()
+    if settings.use_openrouter:
+        return openrouter_panel()
     return [
         AnthropicAgent(agent_id="panelist_a"),
         OpenAICompatAgent(
@@ -296,6 +588,8 @@ def default_judge() -> PanelAgent:
         return local_judge()
     if settings.use_general_compute:
         return general_compute_judge()
+    if settings.use_openrouter:
+        return openrouter_judge()
     return OpenAICompatAgent(
         agent_id="judge",
         model_id=settings.gemini_model,
@@ -324,6 +618,8 @@ def default_chat_agent() -> PanelAgent:
         agent = local_judge()
     elif settings.use_general_compute:
         agent = general_compute_judge()
+    elif settings.use_openrouter:
+        agent = openrouter_judge()
     else:
         agent = AnthropicAgent(agent_id="chat")
         return agent
@@ -345,6 +641,8 @@ def default_layer2_agent() -> PanelAgent:
         agent = local_judge()
     elif settings.use_general_compute:
         agent = general_compute_judge()
+    elif settings.use_openrouter:
+        agent = openrouter_judge()
     else:
         agent = OpenAICompatAgent(
             agent_id="layer2",
@@ -414,7 +712,15 @@ async def _call_with_retry(
     can't fix it. On the last attempt, whatever exception occurs
     propagates to the caller unchanged, same as before this wrapper
     existed.
+
+    Agents carrying `manages_own_retries` (OpenRouterAgent) are passed
+    straight through under the same wait_for ceiling: they retry
+    status-aware internally with full-jitter backoff, and wrapping them
+    in this generic vendor-shaped retry would stack two backoff ladders
+    (worst case ~4x the sleeps) against an already-saturated shared pool.
     """
+    if getattr(agent, "manages_own_retries", False):
+        return await asyncio.wait_for(agent.respond(system, user), timeout=timeout)
     last_exc: Optional[Exception] = None
     for attempt in range(max_retries + 1):
         try:
