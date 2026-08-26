@@ -900,23 +900,31 @@ blocking question in the Log, continue with the next queue item.
    Proposed default: founder grants CORE-A a scoped next-wave sweep of these
    files so the mechanical change lands uniformly from the pattern's owner
    (Question #5 below); alternative is per-owner adoption via this request.
-3. **CORE-B -> whoever owns/next touches `backend/app/services/observations.py`**
-   (unowned file, outside every lane's granted path list -- same file CORE-A
-   took a scoped disclosed exception on for Band 2.8's
-   `promote_observation_to_claim`): apply terse-label discipline to
-   `_SEMANTIC_LABEL_SYSTEM_PROMPT` (consumed by `extract_model_observation`),
-   mirroring MEASURE queue item 6's live error-floor finding -- semantic_label
-   P 0/17 R 0/4, token-Jaccard < 0.5 against terse golds like "authentication
-   implementation was modified" because the model answers full descriptive
-   sentences instead. The production prompt shares that exact example
-   verbatim and has the identical gap: "One sentence, plain language" bounds
-   form, not length. `experiments/harness/live_extractor.py`'s SYSTEM_PROMPT
-   has the same open gap (MEASURE-owned, not yet landed as of the item-6
-   commit) -- the two should be fixed together so production and eval don't
-   drift apart. Proposed default: add an explicit length/terseness constraint
-   (e.g. "max ~6 words, noun-phrase style, no filler verbs") to both prompts;
-   fall back to a founder ruling only if the rubric's Jaccard threshold turns
-   out to be the wrong instrument rather than the prompt.
+3. `[x]` done @2026-08-27 -- lane/core-b **CORE-B -> whoever owns/next touches
+   `backend/app/services/observations.py`** (unowned file, outside every
+   lane's granted path list -- same file CORE-A took a scoped disclosed
+   exception on for Band 2.8's `promote_observation_to_claim`): apply terse-
+   label discipline to `_SEMANTIC_LABEL_SYSTEM_PROMPT` (consumed by
+   `extract_model_observation`), mirroring MEASURE queue item 6's live
+   error-floor finding.
+   *(RESOLVED: integrator granted CORE-B a scoped exception for this one
+   prompt. Shipped verbatim-mirrored wording from MEASURE's already-proved-
+   out `live_extractor.py` fix (fourth wave, above): "Aim for 3-6 words,
+   never more than 8: subject + past-tense verb, nothing else" + the same
+   four good-example labels + an explicit ban on quoting file
+   paths/commands/hashes and on parentheticals/explanations "those pad the
+   label without changing its meaning and are wrong even when true." NONE
+   contract and the rest of the surrounding function untouched. Regression
+   test `test_prompt_enforces_terse_gold_style_labels` added to
+   test_observations.py, pinning the wording the same way MEASURE pinned
+   theirs. 16/16 test_observations.py green. Full offline suite: 1268
+   passed / 2 skipped / 111 failed -- the 111 is the same pre-existing
+   drifted-DB e2e gap this board already has on record [H2's entry above:
+   "1192 passed / 1 skipped / 111 failed, the 111 IDENTICAL per-file to a
+   stashed clean tree"; reproduced here even with DATABASE_URL explicitly
+   cleared before invocation, confirming it's env-level (.env loading
+   mid-run) not this change -- zero regressions in the non-DB 1268].
+   Production and eval now share one terse-label contract; no drift.)*
 ## Founder dependencies (blocking nothing currently)
 
 | Ruling | Blocks | State |
@@ -1706,3 +1714,17 @@ Grounded findings from  3_access.sql/ 4_governance.sql/deps.py review. Sequence:
   captured as a structured decision - a real, repeated instrument gap.
   model-decides-verification.md updated in place with the full run2
   detail rather than a second file.
+- CORE-B (2026-08-27): **cross-lane request #3 closed** on `lane/core-b` --
+  full record in the CORE-A/whoever-owns-observations queue item above
+  (now `[x]`). Integrator granted a one-file scoped exception for
+  `_SEMANTIC_LABEL_SYSTEM_PROMPT` in the otherwise-unowned
+  `observations.py`; wording mirrors MEASURE's already-landed
+  `live_extractor.py` fix verbatim (3-6 words, subject+past-tense-verb, no
+  quoted paths/commands/hashes, no parentheticals) rather than reinventing
+  it, per the note left on this board after the fourth-wave rebase.
+  Regression test added, 16/16 test_observations.py green. Full offline
+  suite 1268 passed / 2 skipped / 111 failed -- the 111 is the
+  pre-existing drifted-DB e2e gap on record at H2's entry above [identical
+  count, reproduced even with DATABASE_URL cleared before invocation, so
+  it's env-level (.env loading mid-run) not this change]. No other file
+  touched outside the granted exception.
