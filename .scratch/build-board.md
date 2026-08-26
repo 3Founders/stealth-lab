@@ -744,8 +744,9 @@ blocking question in the Log, continue with the next queue item.
 
 | Ruling | Blocks | State |
 |---|---|---|
-| D1 capability bands | nothing (default live in Â§16, tagged) | open |
-| D4 deletion mechanism | Band 5.6 only | open |
+| D1 capability bands | nothing | **RESOLVED** 2026-08-25 (commit 3c1de7b/ddb3894; spec v4 §16 "D1 ratified by founder 2026-08-25"; live in CORE-B's capability.py). Row was stale — corrected 2026-08-26, see Log. |
+| D4 deletion mechanism | Band 5.6 implementation only | **RESOLVED** (mechanism) 2026-08-25 (commit 3c1de7b/ddb3894; spec v4 §34b). Only the field-level-encryption *implementation* remains, tracked for Band 5 entry, not a founder call. Key custody sub-item deliberately deferred with a default (company-held) and its own revisit trigger (Band 5 residency) — not open either. Row was stale — corrected 2026-08-26, see Log. |
+| `procedures`/`agents`/`observations` tenant_id | nothing currently (schema-consistency gap only) | **OPEN — genuine founder call.** Full tradeoffs in `.scratch/core-a/founder-rulings-needed.md`. Recommended default: add tenant_id to all three, siloed per-org, same pattern as db/28/29. |
 
 ## Log
 
@@ -1217,3 +1218,17 @@ Grounded findings from  3_access.sql/ 4_governance.sql/deps.py review. Sequence:
      please re-run the offline suite once in sl-core-b before pushing, as
      a sanity check on the recovery -- the numbers above are CORE-B's own
      report, not independently re-verified by the integrator this pass.
+
+- CORE-A (2026-08-26, ninth wave): **Founder-rulings write-up** (kickoff
+  task, not a numbered queue item — docs only, no schema/app edits). Wrote
+  `.scratch/core-a/founder-rulings-needed.md` covering the three
+  accumulated founder-only calls. Finding: D1 and D4 were NOT actually
+  open — both were ratified by founder quiz 2026-08-25 (commit
+  3c1de7b/ddb3894) and are already folded into spec v4 (§16, §34b); D1 is
+  already implemented in CORE-B's capability.py. The board's Founder
+  dependencies table simply never got updated after ratification —
+  corrected above. Only the third item (tenant_id on
+  procedures/agents/observations, this lane's own WAVE-3 "honest
+  exclusion") is a genuine open founder call; full tradeoffs + my
+  recommended default (Option A: full tenant_id, siloed per-org, same
+  db/28/29 pattern) are in the doc. No suite to run (docs-only).
