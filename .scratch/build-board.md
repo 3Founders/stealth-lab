@@ -915,43 +915,6 @@ single synthesized reports into `.scratch/research/`.
    run3's arms data + both model-decides reports via auto-discovery.
    Backend diff: ZERO files.)*
 
-6. `[x]` done @2026-08-27 — branch `lane/ship` **Minimal CI (founder task,
-   independent of the real-arms/model-decides work)**: GitHub Actions
-   running the offline test suite on every push/PR, no live calls.
-   *(SHIPPED: `.github/workflows/ci.yml` — two jobs, both `ubuntu-latest` /
-   Python 3.12: `harness-tests` runs `pytest experiments/harness` behind
-   just `pip install pytest httpx` [httpx is imported lazily by
-   `openrouter_arms.httpx_transport()` and exercised by two offline tests
-   that build the client but never call it — confirmed by literally
-   running the suite in a from-scratch venv with only pytest, watching it
-   fail on ModuleNotFoundError for exactly those two tests, then adding
-   httpx and watching all 213 pass — nothing else under experiments/harness
-   imports a third-party package]; `packaging-tests` runs
-   `pytest packaging/tests` after `pip install -r backend/requirements.txt`
-   [needed because `status_server.py` imports `asyncpg` directly at module
-   level — confirmed the same way: a bare `pip install -e packaging[test]`
-   fails collection on that import] + `pip install -e "packaging[test]"`
-   [backend itself needs no install — `_bootstrap.py` finds it by sys.path
-   from a sibling directory, exactly the checkout layout CI produces].
-   Both verified end-to-end in throwaway venvs before shipping, not just
-   assumed from reading imports: harness 213/213, packaging 95/95, neither
-   needing DATABASE_URL/backend/.env/any API key.
-   DELIBERATELY EXCLUDES `backend/tests/**`: every fresh-worktree board
-   entry this whole session (MEASURE 2026-08-25, SHIP 2026-08-25, CORE-A/B
-   multiple waves) has logged the same pre-existing gap — a meaningful
-   slice of that suite FAILS (not skips) without a live Postgres, and
-   CORE-A's queue item 2 [disposable-DB chain run] is the tracked, still-
-   open fix for exactly this. Wiring a Postgres service container into CI
-   for that suite is real, separate follow-on work — CORE-A's new
-   `docker-compose.yml` [pgvector/pgvector:pg15, this session] is the
-   natural foundation for it once queue item 2 lands, but doing that here
-   would have gone well past "minimal" and stepped on in-flight CORE-A
-   territory. Triggers on every push (all refs) and every pull_request,
-   per-ref concurrency cancellation so superseded pushes don't queue.
-   `.github/workflows/**` is unowned by any lane on this board; claiming it
-   here since CI is a natural SHIP/packaging-adjacent concern and the file
-   touches nothing any lane owns. No backend or harness code edits.)*
-
 1. `[x]` done @2026-08-25 â€” branch `lane/ship` Installable package wrapping
    `trace_collector` + `mcp_server`.
    Shipped: `packaging/` = installable **stealthlab-connect** (pyproject,
@@ -1062,6 +1025,104 @@ blocking question in the Log, continue with the next queue item.
 |---|---|---|
 | D1 capability bands | nothing (default live in Â§16, tagged) | open |
 | D4 deletion mechanism | Band 5.6 only | open |
+
+## OpenRouter budget wall (2026-08-27, MEASURE) - READ BEFORE ANY LIVE SWEEP
+
+Two SEPARATE things died, both confirmed this session via zero-cost read-only
+checks (`GET /api/v1/models` needs no key; `GET /api/v1/key` is account-status,
+not a completion call - neither line item below cost anything):
+
+1. **`ox-alpha` (the harness's primary model, `DEFAULT_MODEL_CHAIN[0]` in
+   `openrouter_arms.py`) is GONE from OpenRouter's public catalog as of
+   today**, despite serving BILLED calls as recently as yesterday's
+   model-decides run2 sweep (that run's own spend line named it: "models:
+   openai/gpt-4o-mini, ox-alpha"). `GET /api/v1/models` today returns 417
+   models total and zero of them match `ox` or `alpha` in id or name. Whatever
+   free/promotional access path served `ox-alpha`'s calls is no longer
+   resolvable through the standard catalog - not investigated further (not
+   this lane's account to administer), just recorded so the fallback chain's
+   first entry isn't silently assumed to still work.
+2. **The account itself has no purchased credits** (`GET /api/v1/key` ->
+   `"is_free_tier": true`, `"usage_daily": ~$0.067`, no `limit`/
+   `limit_remaining` set at the key level - there is simply no balance to
+   spend against). This matches the founder's own report of "no spendable
+   balance right now." `openai/gpt-4o-mini` and `anthropic/claude-3-5-haiku`
+   (the fallback chain's other two entries) are BOTH real paid models with
+   per-token pricing - every call this session's sweeps made to them was
+   billed against whatever small balance existed, and that balance is now
+   what's gone. Nothing about this is a code bug; it's an account state.
+
+**Genuinely `:free`-tagged models DO exist** (20 found in today's catalog,
+verified by `pricing.prompt == pricing.completion == "0"` AND id suffix
+`:free` together - `pricing == "0"` alone is NOT sufficient, see the
+`google/lyria-3-*-preview` trap below) - but this account's free-tier status
+caps them at **OpenRouter's documented free-tier rate limit: 20 requests/
+minute, 50 requests/day** (confirmed against OpenRouter's own docs this
+session; the >=$10-lifetime-credit tier gets 1000/day instead - this account
+qualifies for neither escape hatch since it has $0 lifetime purchased). That
+50/day ceiling is the real constraint on any $0 testing path, not model
+availability.
+
+**Quality-usable candidates for OUR shape (text->text or text+image->text,
+JSON-structured extraction/decision output)**, from today's catalog, with the
+lightest/most-on-topic ones marked:
+
+| model id | notably | for our task |
+|---|---|---|
+| `liquid/lfm-2.5-2.6b:free` | 2.6B, own description says "suited for... data extraction" | closest fit, cheapest to run fast |
+| `z-ai/glm-5.2:free` | 1M ctx, `structured_outputs`+`response_format` supported | strong JSON-mode candidate |
+| `nvidia/nemotron-3-super-120b-a12b:free` | 120B/12B-active, `structured_outputs` supported | bigger, still free |
+| `nvidia/nemotron-3.5-lightning:free` | 3B active, "high-throughput agentic workloads" | fast/cheap-quality tradeoff |
+| `cohere/north-mini-code:free` | 30B/3B-active, first-party AGENTIC CODING model | plausible for trace-event reasoning |
+| `poolside/laguna-s-2.1:free` / `laguna-xs-2.1:free` | coding-agent models | untested here, plausible |
+| `minimax/minimax-m2.7:free` | text->text, "autonomous... productivity" | plausible general candidate |
+| `openrouter/free` | meta-router, randomly picks a free model per call | convenient but NON-deterministic served-model per call - breaks `served_by_model` attribution in our spend ledger, use named models above instead |
+
+**NOT usable despite showing `0`/`0` pricing - a silent-cost trap**:
+`google/lyria-3-clip-preview` and `google/lyria-3-pro-preview` are MUSIC
+GENERATION models (`output_modalities: [text, audio]`); their own
+descriptions say "$0.04 per clip" / "$0.08 per song" - billed on a
+non-token dimension the `pricing.prompt`/`pricing.completion` fields don't
+capture at all. A filter on zero token-pricing alone would have picked
+these up as "free"; they are not. Also excluded on relevance, not cost:
+`nvidia/nemotron-3.5-content-safety:free` (a moderation/guardrail
+classifier, wrong tool for extraction) and the omni/multimodal-input-only
+entries where text is just one of several input modalities we don't need.
+
+**Feasibility math against the 50/day cap**: `live_extractor.py`'s
+single-arm, one-call-per-excerpt shape over the 42 error-floor fixtures
+(occasional +1 repair round) fits in ONE day per prompt variant - the
+prompt-variant work above (4 candidates) would need roughly 4-5 days of
+free-tier quota to run all of them, one variant per day, if paid funds
+never return. `run_real_arms.py`'s 3-arm x 24-task model-decides sweep
+(72+ episodes/day minimum even with zero repairs) does NOT fit in one
+day under this cap at all - would need `--auto-resume` splitting across
+at least 2 days, or a `--task-ids` subset per day.
+
+**IMPORTANT CAVEAT if a free model is ever substituted in**: swapping the
+extraction/decision model away from `ox-alpha` breaks apples-to-apples
+comparability with every committed baseline this lane has produced so far
+(the v1/v2 semantic_label error-floor reports, RUN #1/model-decides
+run1/run2) - a free-model run is a DIFFERENT model's performance, useful
+only as a directional signal about PROMPT shape (does few_shot/
+vocab_discipline/strict_noun_phrase move the needle AT ALL, on ANY model),
+never as a continuation of the same ox-alpha-anchored series. Any such run
+should be labeled with its actual served model in the results, never
+folded into the same comparison table as the ox-alpha baselines without
+that label.
+
+**Ready-to-run when authorized** (zero code changes needed - both CLIs
+already expose `--models` as an override; this is exactly the same
+readiness posture as the prompt variants above - prepared, not executed,
+no spend without explicit confirmation first):
+
+    python live_extractor.py --prompt-variant few_shot \
+        --models liquid/lfm-2.5-2.6b:free \
+        --out live_extractor_preds_few_shot_free.jsonl \
+        --spend-log live_extractor_spend_few_shot_free.jsonl
+
+(swap the `--models` value for any id in the table above; swap
+`--prompt-variant` per `semantic_label_prompt_variants.PROMPT_VARIANTS`).
 
 ## Log
 
@@ -1457,22 +1518,6 @@ Grounded findings from  3_access.sql/ 4_governance.sql/deps.py review. Sequence:
   before the next model-decides sweep.** Packaging suite 95/95 (+7 offline
   tests, zero regressions). Demo output (run1/2/3 untouched):
   `.scratch/ship/model_decides/public_scoreboard.{md,html}`.
-- **SHIP (2026-08-27): minimal CI** — full record in SHIP queue item 6.
-  `.github/workflows/ci.yml` runs `experiments/harness` and
-  `packaging/tests` on every push/PR (Python 3.12, ubuntu-latest) — both
-  verified in throwaway venvs first, not assumed from reading imports:
-  harness needs only pytest+httpx (httpx used lazily, two tests build the
-  client but never call it), packaging needs `backend/requirements.txt`
-  installed [status_server.py imports asyncpg directly] but NOT backend
-  installed itself [`_bootstrap.py` finds it by sys.path from the sibling
-  checkout dir]. Deliberately excludes `backend/tests/**` — this whole
-  session's board history (MEASURE/SHIP/CORE-A/CORE-B, repeatedly) logs
-  that suite failing (not skipping) without a live Postgres; CORE-A's
-  queue item 2 is the tracked fix, and their new `docker-compose.yml`
-  [pgvector, this session] is the natural foundation for a live-DB CI job
-  once that lands — out of scope for "minimal" here. `.github/workflows/**`
-  was unowned by any lane; claimed it for this addition since it touches
-  no other lane's paths.
 - CORE-A (2026-08-26, seventh wave): **HARDENING H2 — RLS backstop on [H]
   tables** done on `lane/core-a` — see HARDENING item 2. Notes:
   1. db/29 is NOT yet applied to the shared instance (same discipline as
@@ -1982,3 +2027,50 @@ Grounded findings from  3_access.sql/ 4_governance.sql/deps.py review. Sequence:
   file's own header comment as the real proof this task couldn't
   produce. No schema/app code touched beyond the two new Docker-only
   files and the `.env.example` addition.
+
+- MEASURE (2026-08-27, second wave): **no live calls this wave** (founder:
+  account has no spendable balance right now) - see the new "OpenRouter
+  budget wall" section above for the full account-state writeup. Three
+  things done, zero completions/generations against any model:
+  1. `semantic_label_prompt_variants.py` - 4 candidate semantic_label
+     prompt variants (few_shot, vocab_discipline, strict_noun_phrase,
+     combined) prepared as ready-to-run code alongside the shipped
+     terse_v2 baseline, each targeting one of the two residual failure
+     modes the v2 live pass left visible (vocabulary mismatch on
+     ef-sem-003; one NONE-contract under-fire on ef-sem-002).
+     `live_extractor.py` gained a `--prompt-variant` flag (default
+     `terse_v2`, byte-identical to today's shipped behavior) and a
+     `system_prompt` param threaded through `build_messages`/
+     `LiveExtractor` - deferred import avoids a circular dependency
+     between the two modules. 23 new offline tests total [7 in
+     test_live_extractor.py's new TestPromptVariants class + 16 in the
+     new tests/test_semantic_label_prompt_variants.py]: registry
+     integrity, a mechanical-layer-unchanged-across-variants tripwire,
+     few_shot's exemplar strings verified verbatim against the actual
+     golds, vocab_discipline's CI-ban targeting ef-sem-003 specifically,
+     strict_noun_phrase's tighter ceiling, CLI wiring, and the
+     file-family out-of-scope limitation disclosed in the module
+     docstring so no variant quietly overclaims fixing something a
+     prompt can't fix. Harness suite 236/236 green [213 prior + 23 new].
+  2. OpenRouter catalog + account-status check (both zero-cost reads,
+     no key needed for the catalog, no completion call for the key
+     endpoint): confirmed `ox-alpha` is entirely absent from the current
+     417-model catalog despite billing successfully as recently as
+     yesterday; confirmed the account is `is_free_tier: true` (no
+     lifetime credits purchased); confirmed via OpenRouter's own docs
+     the free-tier rate limit (20/min, 50/day under $10 lifetime credits,
+     1000/day at/above it) that governs any `:free`-model path forward.
+     Catalogued 20 `:free`-tagged models, flagged which are genuinely
+     usable for JSON-structured extraction vs. two that show `0`/`0`
+     token pricing but are actually billed per-clip/per-song on a
+     different dimension (`google/lyria-3-*-preview`, music generation -
+     a real trap for anyone filtering on price fields alone) vs. one
+     that's a moderation classifier, wrong tool for this task.
+  3. Board budget-wall section written (see above) - both dead
+     free-tiers (ox-alpha's own, and the account's) now documented in
+     one place with the exact numbers, so the next session doesn't
+     rediscover this by watching a sweep fail.
+  No spend this wave. No live calls of any kind - only catalog/account-
+  status GETs (see above) and offline test runs. Awaiting explicit
+  confirmation before running anything against a `:free` model (per
+  instruction) or before any paid resumption.

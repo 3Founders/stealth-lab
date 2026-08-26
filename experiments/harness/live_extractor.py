@@ -116,27 +116,32 @@ def parse_observations(content: str) -> tuple[list[dict], int] | None:
     return kept, len(obj["observations"]) - len(kept)
 
 
-def build_messages(trace_event: dict) -> list[dict]:
+def build_messages(trace_event: dict, system_prompt: str = SYSTEM_PROMPT) \
+        -> list[dict]:
     user = ("Trace event:\n"
             + json.dumps(trace_event, ensure_ascii=False)
             + "\n\nExtract the observations.")
-    return [{"role": "system", "content": SYSTEM_PROMPT},
+    return [{"role": "system", "content": system_prompt},
             {"role": "user", "content": user}]
 
 
 class LiveExtractor:
-    """One excerpt in, one predictions list out."""
+    """One excerpt in, one predictions list out. `system_prompt` defaults
+    to the shipped SYSTEM_PROMPT (terse_v2); pass an alternate string - see
+    semantic_label_prompt_variants.PROMPT_VARIANTS - to run a candidate
+    prompt through the exact same call/repair/spend machinery."""
 
-    def __init__(self, client, spend=None):
+    def __init__(self, client, spend=None, system_prompt: str = SYSTEM_PROMPT):
         self.client = client
         self.spend = spend
+        self.system_prompt = system_prompt
         self.usage_totals = {"tokens_in": 0, "tokens_out": 0, "calls": 0}
 
     async def extract_async(self, trace_event: dict, excerpt_id: str = ""):
         """-> (predictions-or-None, meta). One repair round-trip."""
         meta = {"tokens_in": 0, "tokens_out": 0, "calls": 0,
                 "model": None, "nondict_dropped": 0}
-        messages = build_messages(trace_event)
+        messages = build_messages(trace_event, self.system_prompt)
         parsed = None
         rounds = (messages,
                   messages + [{"role": "assistant", "content": "(reply)"},
@@ -184,6 +189,14 @@ def load_done(path: Path) -> set[str]:
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
+    # Deferred import (not at module top): semantic_label_prompt_variants
+    # imports live_extractor to reuse SYSTEM_PROMPT/EXTRACT_SCHEMA verbatim
+    # as its "terse_v2" baseline entry - a top-level import here would make
+    # that a circular import. This runs only when the CLI is actually
+    # invoked, by which point live_extractor's own module body is already
+    # fully loaded.
+    import semantic_label_prompt_variants as variants
+
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--fixtures-dir",
                     default=str(error_floor.DEFAULT_FIXTURES_DIR))
@@ -195,6 +208,13 @@ def build_arg_parser() -> argparse.ArgumentParser:
     ap.add_argument("--auto-resume", action="store_true",
                     help="skip excerpts already predicted; without it an "
                          "existing predictions file is refused")
+    ap.add_argument("--prompt-variant", default="terse_v2",
+                    choices=sorted(variants.PROMPT_VARIANTS),
+                    help="which semantic_label prompt to send - "
+                         "'terse_v2' is the shipped default (byte-"
+                         "identical to running with no flag at all); "
+                         "see semantic_label_prompt_variants.py for the "
+                         "candidates and their hypotheses")
     return ap
 
 
@@ -212,18 +232,23 @@ async def async_main(args) -> int:
               "anonymously.")
         return 2
 
+    import semantic_label_prompt_variants as variants
+    prompt_variant = getattr(args, "prompt_variant", "terse_v2")
+    system_prompt = variants.PROMPT_VARIANTS[prompt_variant]
+
     excerpts = error_floor.load_excerpts(Path(args.fixtures_dir))
     models = (tuple(m.strip() for m in args.models.split(",") if m.strip())
               if args.models else ())
     spend = openrouter_arms.SpendLog(args.spend_log)
     client = openrouter_arms.OpenRouterClient(api_key, models=models,
                                               spend=spend)
-    extractor = LiveExtractor(client, spend=spend)
+    extractor = LiveExtractor(client, spend=spend, system_prompt=system_prompt)
     done = load_done(out)
     todo = [ex for ex in excerpts if ex["excerpt_id"] not in done]
     print(f"live extractor: {len(excerpts)} excerpts, {len(done)} done via "
           f"resume, {len(todo)} to run; chain: "
-          f"{', '.join(models or openrouter_arms.DEFAULT_MODEL_CHAIN)}")
+          f"{', '.join(models or openrouter_arms.DEFAULT_MODEL_CHAIN)}; "
+          f"prompt-variant: {prompt_variant}")
 
     for i, ex in enumerate(todo, 1):
         eid = ex["excerpt_id"]
@@ -240,9 +265,11 @@ async def async_main(args) -> int:
             # under an explicit flag so grading counts the miss honestly
             # instead of crashing or silently dropping the excerpt.
             row = {"excerpt_id": eid, "observations": [],
-                   "unparseable": True, "meta": meta}
+                   "unparseable": True, "meta": meta,
+                   "prompt_variant": prompt_variant}
         else:
-            row = {"excerpt_id": eid, "observations": preds, "meta": meta}
+            row = {"excerpt_id": eid, "observations": preds, "meta": meta,
+                   "prompt_variant": prompt_variant}
         with out.open("a", encoding="utf-8") as f:
             f.write(json.dumps(row, default=str) + "\n")
 

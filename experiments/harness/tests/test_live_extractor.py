@@ -118,6 +118,57 @@ class TestLiveExtractor:
         assert ex.usage_totals["calls"] == 2
 
 
+class TestPromptVariants:
+    """CLAUDE.md follow-up (2026-08-27, no spendable balance this wave):
+    --prompt-variant wiring, prepared but not yet run live. See
+    semantic_label_prompt_variants.py for the candidates themselves."""
+
+    def test_build_messages_defaults_to_shipped_system_prompt(self):
+        msgs = le.build_messages({"tool_name": "Bash"})
+        assert msgs[0]["content"] == le.SYSTEM_PROMPT
+
+    def test_build_messages_accepts_an_override(self):
+        msgs = le.build_messages({"tool_name": "Bash"}, system_prompt="ALT")
+        assert msgs[0]["content"] == "ALT"
+
+    def test_live_extractor_uses_its_configured_system_prompt(self):
+        class RecordingClient:
+            def __init__(self, reply):
+                self.reply = reply
+                self.sent_messages = None
+
+            async def chat(self, messages, *, task_id="", arm=""):
+                self.sent_messages = messages
+                return {"content": self.reply, "model": "fake/one",
+                       "tokens_in": 1, "tokens_out": 1}
+
+        client = RecordingClient(json.dumps({"observations": []}))
+        ex = le.LiveExtractor(client, system_prompt="CUSTOM PROMPT")
+        asyncio.run(ex.extract_async({"tool_name": "Bash"}, "ef-1"))
+        assert client.sent_messages[0]["content"] == "CUSTOM PROMPT"
+
+    def test_live_extractor_default_matches_module_system_prompt(self):
+        ex = le.LiveExtractor(FakeClient([]))
+        assert ex.system_prompt == le.SYSTEM_PROMPT
+
+    def test_cli_default_variant_is_terse_v2(self):
+        ap = le.build_arg_parser()
+        args = ap.parse_args([])
+        assert args.prompt_variant == "terse_v2"
+
+    def test_cli_rejects_unknown_variant(self):
+        ap = le.build_arg_parser()
+        with pytest.raises(SystemExit):
+            ap.parse_args(["--prompt-variant", "not-a-real-variant"])
+
+    def test_cli_accepts_every_registered_variant(self):
+        import semantic_label_prompt_variants as variants
+        ap = le.build_arg_parser()
+        for name in variants.PROMPT_VARIANTS:
+            args = ap.parse_args(["--prompt-variant", name])
+            assert args.prompt_variant == name
+
+
 class TestLoadDone:
     def test_parsed_rows_done_unparseable_rows_retry_torn_skipped(self,
                                                                   tmp_path):
