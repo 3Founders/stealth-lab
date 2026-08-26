@@ -740,6 +740,23 @@ blocking question in the Log, continue with the next queue item.
    Proposed default: founder grants CORE-A a scoped next-wave sweep of these
    files so the mechanical change lands uniformly from the pattern's owner
    (Question #5 below); alternative is per-owner adoption via this request.
+3. **CORE-B -> whoever owns/next touches `backend/app/services/observations.py`**
+   (unowned file, outside every lane's granted path list -- same file CORE-A
+   took a scoped disclosed exception on for Band 2.8's
+   `promote_observation_to_claim`): apply terse-label discipline to
+   `_SEMANTIC_LABEL_SYSTEM_PROMPT` (consumed by `extract_model_observation`),
+   mirroring MEASURE queue item 6's live error-floor finding -- semantic_label
+   P 0/17 R 0/4, token-Jaccard < 0.5 against terse golds like "authentication
+   implementation was modified" because the model answers full descriptive
+   sentences instead. The production prompt shares that exact example
+   verbatim and has the identical gap: "One sentence, plain language" bounds
+   form, not length. `experiments/harness/live_extractor.py`'s SYSTEM_PROMPT
+   has the same open gap (MEASURE-owned, not yet landed as of the item-6
+   commit) -- the two should be fixed together so production and eval don't
+   drift apart. Proposed default: add an explicit length/terseness constraint
+   (e.g. "max ~6 words, noun-phrase style, no filler verbs") to both prompts;
+   fall back to a founder ruling only if the rubric's Jaccard threshold turns
+   out to be the wrong instrument rather than the prompt.
 ## Founder dependencies (blocking nothing currently)
 
 | Ruling | Blocks | State |
@@ -1298,3 +1315,28 @@ Grounded findings from  3_access.sql/ 4_governance.sql/deps.py review. Sequence:
   could not find the "~85% Band 3 done" figure cited in this wave's kickoff
   anywhere in the repo — closest tracked number is proj_status.md's ~65%,
   worth reconciling. No suite to run (docs-only).
+
+- CORE-B (2026-08-26, WAVE-3 terse-label task): **assessed, no CORE-B code
+  change this item** -- read MEASURE queue item 6 in full, then checked
+  `backend/app/services/procedure_extraction/**` (my owned grant) for an
+  equivalent semantic-label prompt. It has none of the kind MEASURE tested:
+  the only prompt in-grant is `strategies.py`'s `_ABSTRACTION_SYSTEM_PROMPT`,
+  a different task (procedure CAPABILITY/STEPS generalization, not graded by
+  the error-floor fixtures, already terse by construction -- one abstract
+  sentence + short generalized phrases) -- left untouched, no invented work.
+  The real production counterpart to MEASURE's finding is
+  `_SEMANTIC_LABEL_SYSTEM_PROMPT` in `backend/app/services/observations.py`
+  (`extract_model_observation`) -- an unowned file outside every lane's
+  granted path list, so out of scope for a CORE-B edit under house rules.
+  Filed as cross-lane request #3 above rather than touching it. No other
+  open CORE-B queue item exists this wave (all queue + HARDENING items above
+  are `[x]`) -- nothing else picked up.
+  **POST-REBASE UPDATE**: MEASURE's fourth-wave entry above (landed after
+  this was written, seen only on rebase) already tightened
+  `live_extractor.py`'s harness-side prompt to 3-6 word terse labels;
+  cross-lane request #3's "not yet landed" clause is now stale for the
+  harness half specifically -- only the production half
+  (`observations.py`'s `_SEMANTIC_LABEL_SYSTEM_PROMPT`, still unowned) is
+  outstanding. Request #3 left as-is otherwise; its owner should match
+  MEASURE's now-landed wording (3-6 word subject+past-tense-verb, no
+  quoted paths/commands/parentheticals) rather than reinvent it.
