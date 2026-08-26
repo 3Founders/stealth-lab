@@ -744,9 +744,8 @@ blocking question in the Log, continue with the next queue item.
 
 | Ruling | Blocks | State |
 |---|---|---|
-| D1 capability bands | nothing | **RESOLVED** 2026-08-25 (commit 3c1de7b/ddb3894; spec v4 §16 "D1 ratified by founder 2026-08-25"; live in CORE-B's capability.py). Row was stale — corrected 2026-08-26, see Log. |
-| D4 deletion mechanism | Band 5.6 implementation only | **RESOLVED** (mechanism) 2026-08-25 (commit 3c1de7b/ddb3894; spec v4 §34b). Only the field-level-encryption *implementation* remains, tracked for Band 5 entry, not a founder call. Key custody sub-item deliberately deferred with a default (company-held) and its own revisit trigger (Band 5 residency) — not open either. Row was stale — corrected 2026-08-26, see Log. |
-| `procedures`/`agents`/`observations` tenant_id | nothing currently (schema-consistency gap only) | **OPEN — genuine founder call.** Full tradeoffs in `.scratch/core-a/founder-rulings-needed.md`. Recommended default: add tenant_id to all three, siloed per-org, same pattern as db/28/29. |
+| D1 capability bands | nothing (default live in Â§16, tagged) | open |
+| D4 deletion mechanism | Band 5.6 only | open |
 
 ## Log
 
@@ -1218,17 +1217,50 @@ Grounded findings from  3_access.sql/ 4_governance.sql/deps.py review. Sequence:
      please re-run the offline suite once in sl-core-b before pushing, as
      a sanity check on the recovery -- the numbers above are CORE-B's own
      report, not independently re-verified by the integrator this pass.
-
-- CORE-A (2026-08-26, ninth wave): **Founder-rulings write-up** (kickoff
-  task, not a numbered queue item — docs only, no schema/app edits). Wrote
-  `.scratch/core-a/founder-rulings-needed.md` covering the three
-  accumulated founder-only calls. Finding: D1 and D4 were NOT actually
-  open — both were ratified by founder quiz 2026-08-25 (commit
-  3c1de7b/ddb3894) and are already folded into spec v4 (§16, §34b); D1 is
-  already implemented in CORE-B's capability.py. The board's Founder
-  dependencies table simply never got updated after ratification —
-  corrected above. Only the third item (tenant_id on
-  procedures/agents/observations, this lane's own WAVE-3 "honest
-  exclusion") is a genuine open founder call; full tradeoffs + my
-  recommended default (Option A: full tenant_id, siloed per-org, same
-  db/28/29 pattern) are in the doc. No suite to run (docs-only).
+- MEASURE (2026-08-26, fourth wave): **CLAUDE.md Task 1 — semantic-label
+  terse-prompt ruling implemented** on `lane/measure`. Per the board's own
+  recommended default (option a), tightened `live_extractor.py`'s
+  `semantic_label` instruction: 3-6 word subject+past-tense-verb labels in
+  the gold house style, explicit examples from the actual golds, and an
+  explicit ban on quoting file paths/commands/hashes or adding
+  parentheticals/explanations — those pad meaning without changing it and
+  are wrong even when true. Re-ran the LIVE extractor over the same 42
+  fixtures fresh [`live_extractor_preds_v2.jsonl`, 42/42 parsed, 0
+  unparseable, $0.0601 / 84 attempts] and re-graded
+  [`error_floor_results_v2.jsonl` + `_detail.json` — v1's committed
+  baseline files left untouched, this is a parallel artifact, not an
+  overwrite]. **DELTA**: semantic_label P 0/17→2/13 (0.0→0.154), R
+  0/4→2/4 (0.0→0.500), F1 0.0→0.236; overall P 25/44→28/46 (.568→.609), R
+  25/30→28/30 (.833→.933), F1 .676→.7368. The needle moved — recall
+  doubled from zero — so no rubric-recalibration escalation needed.
+  Residual analysis (not further prompt-tuned without a ruling, per the
+  house instruction not to guess at rubric changes unilaterally):
+  (a) one clean win — ef-sem-004 "database container started" now matches
+  its gold VERBATIM; ef-sem-001 clears Jaccard 2/4=0.5 exactly (terse
+  synonym overlap) — terseness alone fixed these two; (b) one vocabulary
+  miss survives terseness — ef-sem-003 gold "continuous integration
+  pipeline configuration added" vs terse pred "CI workflow configuration
+  updated" is still Jaccard 1/8=0.125 [synonym/abbreviation choice, not
+  verbosity — terse-prompt discipline cannot fix vocabulary divergence];
+  (c) NONE-contract now UNDER-fires once — ef-sem-002 (`rm -rf dist/`)
+  got no label at all this run [FN missing_no_candidate], the mirror image
+  of over-labeling; (d) precision on the type stays low (2/13) mostly
+  because the model now emits confident terse labels on the FILE family
+  fixtures (ef-file-001/002/003/007/008/009), which the fixture authors
+  never gave semantic golds — an over-application issue orthogonal to
+  wording, flagged here rather than patched into the prompt unasked.
+  CONFOUND DISCLOSED: command_executed also moved P 5/5→6/11 this run
+  [5 test-run commands got a duplicate command_executed observation
+  alongside their test_run one] — inspected the raw predictions, this is
+  live-model sampling variance across a fresh LLM run, NOT caused by the
+  semantic_label prompt edit (that section of the prompt is untouched);
+  reported for honesty, not attributed to this change.
+  SPEND: $0.0601 this pass; **session-to-date total $0.9333**, still under
+  the informal ~$1 mark but tight — flagging for the integrator/founder
+  before any further live-model passes this session. One regression test
+  added (`test_prompt_enforces_terse_gold_style_labels`) pinning the
+  terse-label wording so a future edit can't silently relax it back to
+  free-form prose. Harness suite 177/177 green [176 prior + 1 new]; zero
+  backend edits. Checked for RESEARCH's model-decides-tier design doc
+  (CLAUDE.md Task 2) — not yet landed in `.scratch/research/`; not
+  blocking, will check again next wave per the kickoff instructions.

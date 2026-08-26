@@ -40,6 +40,15 @@ class TestPrompt:
         assert "NO label" in le.SYSTEM_PROMPT
         assert "observations" in le.EXTRACT_SCHEMA
 
+    def test_prompt_enforces_terse_gold_style_labels(self):
+        # Board ruling (option a): tighten the semantic_label instruction
+        # to require terse gold-style labels rather than verbose sentences
+        # -> Jaccard>=0.5 against terse golds. Regression pin so a future
+        # edit can't silently relax this back to free-form prose.
+        assert "3-6 words" in le.SYSTEM_PROMPT
+        assert "Do NOT quote file paths, commands, commit hashes" \
+            in le.SYSTEM_PROMPT
+
     def test_user_message_embeds_event_verbatim(self):
         ev = {"tool_name": "Bash", "tool_input": {"command": "ls src"}}
         msgs = le.build_messages(ev)
