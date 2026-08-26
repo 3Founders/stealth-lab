@@ -1,0 +1,58 @@
+name: CI
+
+# Minimal offline CI: runs the two test suites that are proven to need no
+# database, no API key, and no network I/O (see each job's comment). Does
+# NOT run backend/tests/** - that suite has a long-standing, board-logged
+# dependency on a live Postgres instance (many tests fail rather than skip
+# without DATABASE_URL/backend/.env in a fresh checkout); wiring a
+# disposable-Postgres service container for it is a separate, larger piece
+# of work tracked on the project board, not part of this minimal setup.
+
+on:
+  push:
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  harness-tests:
+    name: Harness suite (experiments/harness)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # Pure-stdlib harness code + pytest; httpx is imported (lazily) by
+      # openrouter_arms.py's default transport constructor, exercised by
+      # two offline tests that never perform an actual request - no other
+      # third-party dependency exists anywhere under experiments/harness.
+      - run: pip install pytest httpx
+
+      - run: pytest experiments/harness -q
+
+  packaging-tests:
+    name: Packaging suite (packaging/)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      # packaging/ imports backend/ modules by path (see _bootstrap.py -
+      # no install of backend itself needed, just its dependencies on
+      # sys.path) for status_server.py's read-only FastAPI app; every
+      # offline test doubles the database (FakePool), so nothing here
+      # ever opens a real connection.
+      - run: pip install -r backend/requirements.txt
+      - run: pip install -e "packaging[test]"
+
+      - run: pytest packaging/tests -q

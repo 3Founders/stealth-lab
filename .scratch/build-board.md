@@ -915,6 +915,43 @@ single synthesized reports into `.scratch/research/`.
    run3's arms data + both model-decides reports via auto-discovery.
    Backend diff: ZERO files.)*
 
+6. `[x]` done @2026-08-27 — branch `lane/ship` **Minimal CI (founder task,
+   independent of the real-arms/model-decides work)**: GitHub Actions
+   running the offline test suite on every push/PR, no live calls.
+   *(SHIPPED: `.github/workflows/ci.yml` — two jobs, both `ubuntu-latest` /
+   Python 3.12: `harness-tests` runs `pytest experiments/harness` behind
+   just `pip install pytest httpx` [httpx is imported lazily by
+   `openrouter_arms.httpx_transport()` and exercised by two offline tests
+   that build the client but never call it — confirmed by literally
+   running the suite in a from-scratch venv with only pytest, watching it
+   fail on ModuleNotFoundError for exactly those two tests, then adding
+   httpx and watching all 213 pass — nothing else under experiments/harness
+   imports a third-party package]; `packaging-tests` runs
+   `pytest packaging/tests` after `pip install -r backend/requirements.txt`
+   [needed because `status_server.py` imports `asyncpg` directly at module
+   level — confirmed the same way: a bare `pip install -e packaging[test]`
+   fails collection on that import] + `pip install -e "packaging[test]"`
+   [backend itself needs no install — `_bootstrap.py` finds it by sys.path
+   from a sibling directory, exactly the checkout layout CI produces].
+   Both verified end-to-end in throwaway venvs before shipping, not just
+   assumed from reading imports: harness 213/213, packaging 95/95, neither
+   needing DATABASE_URL/backend/.env/any API key.
+   DELIBERATELY EXCLUDES `backend/tests/**`: every fresh-worktree board
+   entry this whole session (MEASURE 2026-08-25, SHIP 2026-08-25, CORE-A/B
+   multiple waves) has logged the same pre-existing gap — a meaningful
+   slice of that suite FAILS (not skips) without a live Postgres, and
+   CORE-A's queue item 2 [disposable-DB chain run] is the tracked, still-
+   open fix for exactly this. Wiring a Postgres service container into CI
+   for that suite is real, separate follow-on work — CORE-A's new
+   `docker-compose.yml` [pgvector/pgvector:pg15, this session] is the
+   natural foundation for it once queue item 2 lands, but doing that here
+   would have gone well past "minimal" and stepped on in-flight CORE-A
+   territory. Triggers on every push (all refs) and every pull_request,
+   per-ref concurrency cancellation so superseded pushes don't queue.
+   `.github/workflows/**` is unowned by any lane on this board; claiming it
+   here since CI is a natural SHIP/packaging-adjacent concern and the file
+   touches nothing any lane owns. No backend or harness code edits.)*
+
 1. `[x]` done @2026-08-25 â€” branch `lane/ship` Installable package wrapping
    `trace_collector` + `mcp_server`.
    Shipped: `packaging/` = installable **stealthlab-connect** (pyproject,
@@ -1420,6 +1457,22 @@ Grounded findings from  3_access.sql/ 4_governance.sql/deps.py review. Sequence:
   before the next model-decides sweep.** Packaging suite 95/95 (+7 offline
   tests, zero regressions). Demo output (run1/2/3 untouched):
   `.scratch/ship/model_decides/public_scoreboard.{md,html}`.
+- **SHIP (2026-08-27): minimal CI** — full record in SHIP queue item 6.
+  `.github/workflows/ci.yml` runs `experiments/harness` and
+  `packaging/tests` on every push/PR (Python 3.12, ubuntu-latest) — both
+  verified in throwaway venvs first, not assumed from reading imports:
+  harness needs only pytest+httpx (httpx used lazily, two tests build the
+  client but never call it), packaging needs `backend/requirements.txt`
+  installed [status_server.py imports asyncpg directly] but NOT backend
+  installed itself [`_bootstrap.py` finds it by sys.path from the sibling
+  checkout dir]. Deliberately excludes `backend/tests/**` — this whole
+  session's board history (MEASURE/SHIP/CORE-A/CORE-B, repeatedly) logs
+  that suite failing (not skipping) without a live Postgres; CORE-A's
+  queue item 2 is the tracked fix, and their new `docker-compose.yml`
+  [pgvector, this session] is the natural foundation for a live-DB CI job
+  once that lands — out of scope for "minimal" here. `.github/workflows/**`
+  was unowned by any lane; claimed it for this addition since it touches
+  no other lane's paths.
 - CORE-A (2026-08-26, seventh wave): **HARDENING H2 — RLS backstop on [H]
   tables** done on `lane/core-a` — see HARDENING item 2. Notes:
   1. db/29 is NOT yet applied to the shared instance (same discipline as
