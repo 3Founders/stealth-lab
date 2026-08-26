@@ -9,6 +9,7 @@ import asyncio
 import json
 
 from app.services.observations import (
+    _SEMANTIC_LABEL_SYSTEM_PROMPT,
     extract_deterministic_observations,
     extract_model_observation,
     _looks_like_test_command,
@@ -158,3 +159,13 @@ class TestModelExtractor:
             result = await extract_model_observation(event, client)
             assert result is not None  # did not crash on the string-shaped output
         asyncio.run(_run())
+
+    def test_prompt_enforces_terse_gold_style_labels(self):
+        # Cross-lane request #3 / MEASURE queue item 6: terse gold-style
+        # labels (Jaccard>=0.5 against terse golds) rather than verbose
+        # sentences, mirroring the harness fix already proved out in
+        # experiments/harness/live_extractor.py. Regression pin so a
+        # future edit can't silently relax this back to free-form prose.
+        assert "3-6 words" in _SEMANTIC_LABEL_SYSTEM_PROMPT
+        assert "Do NOT quote file paths, commands, commit hashes" \
+            in _SEMANTIC_LABEL_SYSTEM_PROMPT

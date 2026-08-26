@@ -99,12 +99,16 @@ def extract_deterministic_observations(trace_event: dict) -> list[dict]:
 
 
 _SEMANTIC_LABEL_SYSTEM_PROMPT = """You interpret a single coding-agent tool call and produce a
-short, semantic label describing what it actually did, in the same spirit as this real example:
+TERSE semantic label describing what it actually did, in the same spirit as this real example:
 "edit file X" -> "authentication implementation was modified".
 
 Rules:
-- One sentence, plain language, no code, no quotes.
-- Describe what changed or happened, not how (no tool names, no file-format details).
+- Aim for 3-6 words, never more than 8: subject + past-tense verb, nothing else. Good:
+  "authentication implementation was modified", "build output directory was deleted",
+  "continuous integration pipeline configuration added", "database container started".
+- Do NOT quote file paths, commands, commit hashes, or other exact strings from the event.
+- Do NOT add parentheticals, clauses, or explanations of why/how/for-what-purpose -- those pad
+  the label without changing its meaning and are wrong even when true.
 - If the tool call is too generic to say anything semantic (e.g. a directory listing), reply
   with exactly: NONE
 """
