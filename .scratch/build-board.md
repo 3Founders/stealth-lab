@@ -807,6 +807,7 @@ blocking question in the Log, continue with the next queue item.
 - MEASURE (2026-08-26, second wave): MEASURE-WAVE item 0 (real-model arms)
 - **RUN #1 LOGGED (2026-08-26, integrator)**: first genuine SS40 sweep on ox-alpha via openrouter_arms (95 calls, \$ .2659, auto-resume ledger 
 eal_spend.jsonl). Results on 10 valid tasks: A 6/10 resolved, B 7/10 w/ 1 false-reuse, C 7/10 w/ 0. **Stale-refusal C 6/6 vs B 0/6 -> McNemar p~0.031** (at the k>=6 significance floor - more n required before any public phrasing). Resolution B-vs-C not significant (1-1 discordant: C lost poisoned-gate refund-003 by design, gained pdf-003 adversarial blend). Universal failures dep-003/env-001 = library coverage gaps feeding extraction targets. Repeat sweeps queued (fresh --out per run); Question #6 verdict-leak framing audit assigned to integrator.
+- **RUN #1 CORRECTION (2026-08-26, post independent verification - research lane ee2913f)**: (1) headline p is FRAME-DEPENDENT: 6 discordant pairs (p=0.03125) only when B's single unparseable decision counts as missed-refusal; strict frames give 5 pairs p=0.0625. Honest statement: direction unanimous (B 0-of-7 vs C 6-of-7 refused), p in [0.031,0.0625], n too small either way. (2) MECHANISM NOTE: journal proof shows all six C refusals were SUBSTRATE-GATE-AUTOMATIC before the model saw the card - the result demonstrates the structural gating system works end-to-end, not model-level detection. Full audit: .scratch/research/run1-verification.md (+ rerunnable run1_verify.py). Integrator's original flat 'p~0.031' phrasing is superseded by this entry.
   done on `lane/measure` â€” full record in the queue item. Two notes:
   1. **Question #6 (non-blocking, blocks headline data collection, not the
      instrument):** fixture `situation` prose still carries softer framing
@@ -954,15 +955,15 @@ Grounded findings from  3_access.sql/ 4_governance.sql/deps.py review. Sequence:
      skips) standalone. This worktree's backend/.env carries DATABASE_URL,
      so full runs load it mid-ordering; queue item 2 remains the fix.
 
-- RESEARCH (2026-08-26, RUN #1 verification): done — see Lane RESEARCH item 4 and
+- RESEARCH (2026-08-26, RUN #1 verification): done ï¿½ see Lane RESEARCH item 4 and
   `.scratch/research/run1-verification.md`. One-line summary for the integrator:
   the RUN #1 numbers reproduce, but (a) the stale-refusal p=0.031 requires counting an
   invalid arm-B episode as a missed refusal [strict frames: 5 pairs, p=0.0625], and (b)
-  every C "correct refusal" was substrate-gate-automatic per C_journal — the model never
+  every C "correct refusal" was substrate-gate-automatic per C_journal ï¿½ the model never
   saw a stale card except on poisoned refund-003, where it returned unparseable. Treat
   6-vs-0 as descriptive system-level surface behavior; no model-level staleness evidence
   exists yet (n=1, invalid). Suggests a model-decides tier before headline collection;
   competitive refresh found NO published stale-procedure-refusal metric but four close
-  2026 neighbors to cite (STALE / TEPA / Library-Drift+Ratchet / AFTER) — details + URLs
+  2026 neighbors to cite (STALE / TEPA / Library-Drift+Ratchet / AFTER) ï¿½ details + URLs
   in the report. No files outside lane paths touched; results/spend read from the
   integrator checkout read-only (gitignored machine-local artifacts).
