@@ -1034,14 +1034,23 @@ not a completion call - neither line item below cost anything):
 
 1. **`ox-alpha` (the harness's primary model, `DEFAULT_MODEL_CHAIN[0]` in
    `openrouter_arms.py`) is GONE from OpenRouter's public catalog as of
-   today**, despite serving BILLED calls as recently as yesterday's
-   model-decides run2 sweep (that run's own spend line named it: "models:
-   openai/gpt-4o-mini, ox-alpha"). `GET /api/v1/models` today returns 417
-   models total and zero of them match `ox` or `alpha` in id or name. Whatever
-   free/promotional access path served `ox-alpha`'s calls is no longer
-   resolvable through the standard catalog - not investigated further (not
-   this lane's account to administer), just recorded so the fallback chain's
-   first entry isn't silently assumed to still work.
+   today** - `GET /api/v1/models` returns 417 models total and zero of them
+   match `ox` or `alpha` in id or name. CORRECTED TIMELINE (per RESEARCH's
+   independent verification of this lane's own model-decides sweeps,
+   `.scratch/research/model-decides-verification.md` - this lane's own prior
+   board text got this wrong, see the correction Log entry below): `ox-alpha`
+   served real billed calls normally as recently as sweep #3 (commit
+   `40121b6`, 18:17 yesterday - 41 successes / 9 retried-429s / zero 404s),
+   but had ALREADY gone to HTTP 404 on 100% of attempts by the model-decides
+   run1 sweep (23:47) and stayed that way through run2 (02:29) - two
+   sweeps, 144 attempts, zero successes, zero 429s, all 404 (model not
+   found), immediately falling through to `openai/gpt-4o-mini` every time.
+   Today's catalog check (this entry) independently corroborates that dead
+   window from the other direction: whatever `ox-alpha` was, it is not
+   resolvable AT ALL right now, hours after the last observed 404. Not
+   investigated further (not this lane's account to administer), just
+   recorded so the fallback chain's first entry isn't silently assumed to
+   still work.
 2. **The account itself has no purchased credits** (`GET /api/v1/key` ->
    `"is_free_tier": true`, `"usage_daily": ~$0.067`, no `limit`/
    `limit_remaining` set at the key level - there is simply no balance to
@@ -2074,3 +2083,54 @@ Grounded findings from  3_access.sql/ 4_governance.sql/deps.py review. Sequence:
   status GETs (see above) and offline test runs. Awaiting explicit
   confirmation before running anything against a `:free` model (per
   instruction) or before any paid resumption.
+
+- **MEASURE CORRECTION (2026-08-27)**, after reading RESEARCH's independent
+  verification of the model-decides sweeps
+  (`.scratch/research/model-decides-verification.md`): this lane's own
+  fifth-wave board entry (commit `5929904`) mischaracterized run1's 72
+  non-billed attempts as **"72 absorbed 429s/network retries"** - they were
+  actually **100% HTTP 404 on `ox-alpha`** (model not found, non-retryable),
+  **zero 429s**, and the same is true of run2 (never disclosed there at all -
+  the run2 board entry gave no per-model breakdown). Corrected plainly:
+  1. **Neither model-decides sweep is evidence about `ox-alpha`** - both ran
+     100% on the fallback, `openai/gpt-4o-mini`. The two sweeps are two
+     samples of gpt-4o-mini's behavior at whatever temperature/sampling
+     variance it has, not "two independent confirmations of the target
+     model's behavior" - a narrower claim than this lane's original framing
+     implied. The sensitivity result itself (p=0.0117 run1, p=0.0215 run2,
+     both 0/12 false-refusal) is still real and correctly computed; it says
+     "gpt-4o-mini detects staleness better through the verified surface than
+     through prose RAG," not "ox-alpha does."
+  2. **Power-framing correction**: this lane's run1 write-up said run1
+     "already exceeds n-for-80%-power@this-ratio=9" (n=11 > 9) - true as a
+     bare number comparison, but exact-test power is NOT monotonic in n
+     (`power(q=0.909)`: n=9 -> 0.806, n=10 -> 0.771, n=11 -> 0.736, n=12 ->
+     0.911). At n=11 this sweep does NOT actually have 80% power against its
+     own observed effect size (0.736 < 0.8), even though it already clears
+     significance (p=0.0117 < 0.05) - those are two different claims and only
+     the significance one is unambiguously true here.
+  3. **`dec-pdf-103` (the one discordant loss, both runs) and `dec-dep-105`
+     (the one control abstain, both runs) both show CORRECT model reasoning
+     in free-text `decision_notes`** ("the assumptions... do not hold due to
+     the version mismatch" / "...do not align with the current environment"
+     for pdf-103; "the assumptions... hold true, as pip 24.2 is installed..."
+     for dep-105) that never became a structured `refuse[]`/`reuse[]` entry -
+     a repeatable SCHEMA-CAPTURE gap, not a detection failure. This means
+     C's true detection rate is understated by the strict metric, not
+     inflated - the opposite bias from RUN #1's Caveat 2 (where the
+     mechanical gate made C's refusal rate look inflated relative to genuine
+     model reasoning). Not a defect in the metric (it's doing exactly what
+     design §5 specified); flagged as a possible future refinement (scoring
+     whether `decision_notes` names the violated assumption as a secondary
+     signal), not acted on this session.
+  4. Every other headline number (11/10 discordant pairs, exact p-values,
+     0/12 false-refusal both runs, genuinely-model-decided journal check)
+     was recomputed independently and **CONFIRMED EXACTLY** - this is a
+     characterization/comparability correction, not a retraction of the
+     finding itself.
+  **Standing recommendation adopted**: any future sweep on this chain
+  confirms which model actually served each arm from the spend log's
+  per-attempt `model`/`status` fields before reporting a result against
+  `ox-alpha` by name - "appears in the models: summary line" is NOT the same
+  claim as "served a billed call," the exact conflation that caused this
+  correction.
