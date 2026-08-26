@@ -676,6 +676,41 @@ single synthesized reports into `.scratch/research/`.
    a second file). Standing recommendation for whoever runs a third sweep
    of anything on this OpenRouter chain: confirm ox-alpha's current model
    id first.)*
+7. `[x]` done @2026-08-27 — research lane (this worktree) **Observation/event
+   labeling technique brief for MEASURE** (founder request): read STALE,
+   TEPA, Library-Drift+Ratchet, AFTER full text specifically for
+   observation/event labeling methodology (not abstracts, not just
+   citation) — brief on any real technique worth trying.
+   *(Report: `.scratch/research/observation-labeling-technique-brief.md`.
+   HEADLINE RECOMMENDATION: swap `error_floor.py`'s literal token-Jaccard
+   `semantic_label` match rule for an LLM-judge adjudication pass on
+   Jaccard-FAILING pairs only (Jaccard stays the free first pass) — this is
+   STALE's own move ("LLM judge... rather than against synthetic reference
+   strings", validated at 95.8% human agreement, Appendix E.3), applied
+   directly against MEASURE's OWN diagnosed failure ("CI workflow
+   configuration updated" vs gold "continuous integration pipeline
+   configuration added" = Jaccard 0.125, a correct label scored wrong by
+   vocabulary choice, per the fourth-wave board note). Ratchet's
+   false-positive/false-negative asymmetry finding folded in as a
+   deployment caution: validate the judge's false-positive rate
+   specifically before trusting it, majority-vote-of-3 if it ever backs a
+   public number. SECOND recommendation, buildable on infrastructure
+   MEASURE already has: AFTER's Collect-Diagnose-Revise-Promote refinement
+   loop — group error_floor's own typed FP/FN reason codes (already
+   computed), one reflector call proposes ONE additive prompt change,
+   promote only if the floor improves without regressing other types
+   (systematizes the terse-label ruling MEASURE already did once by hand
+   into a repeatable, audited loop). THIRD idea flagged as speculative, not
+   a quick win: TEPA's key/value extraction split (canonical closed-key +
+   free value) — paper itself admits this is "a harder problem for
+   open-ended memories," so scoped as a later-wave taxonomy idea, not
+   next-sprint. Library-Drift/Ratchet's skill-retirement governance
+   correctly identified as a DIFFERENT problem (library lifecycle, not
+   single-observation labeling) — cite-only beyond the false-positive
+   caution. Source table in the report distinguishes what was confirmed
+   from full paper text vs what the papers genuinely don't show (e.g. none
+   of the four publish their actual judge/reflector prompt text — checked
+   directly, not assumed). No live model calls; pure literature work.)*
 
 ### Lane SHIP (owns `packaging/**`) â€” activates after CORE-A merges 1.7
 2. `[x]` done @2026-08-26 â€” branch `lane/ship` **P2 - Minimal status surface**:
@@ -1810,3 +1845,20 @@ Grounded findings from  3_access.sql/ 4_governance.sql/deps.py review. Sequence:
   count, reproduced even with DATABASE_URL cleared before invocation, so
   it's env-level (.env loading mid-run) not this change]. No other file
   touched outside the granted exception.
+
+- RESEARCH (2026-08-27, observation-labeling brief): done - see Lane
+  RESEARCH item 7 and
+  .scratch/research/observation-labeling-technique-brief.md. One-line
+  summary for MEASURE: swap error_floor.py's literal-Jaccard semantic_label
+  match for an LLM-judge second pass on Jaccard-failing pairs only - this is
+  STALE's own validated move (95.8% human agreement), aimed directly at the
+  vocabulary-divergence failure MEASURE already diagnosed on ef-sem-003.
+  Second, buildable-now idea: AFTER's diagnose-revise-promote loop over
+  error_floor's own typed FP/FN reason codes, to systematize prompt tuning
+  instead of repeating ad hoc edits each wave. TEPA's key/value split noted
+  as speculative (paper admits it's unsolved for open-ended labels);
+  Library-Drift/Ratchet correctly scoped as skill-retirement governance, a
+  different problem from observation labeling - only Ratchet's
+  false-positive-asymmetry finding carried over as a judge-validation
+  caution. Full text read via WebFetch on arXiv HTML, methodology sections
+  specifically, not abstracts. Pure literature work, no live calls.
