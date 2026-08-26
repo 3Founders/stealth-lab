@@ -442,6 +442,48 @@ single synthesized reports into `.scratch/research/`.
    suite: 55 passed [= 28 prior + 27 new]. Backend diff vs origin/main: ZERO files.)
    Note: no new auth surface — loopback bind, no write endpoints exist to gate.*
 
+3. `[x]` done @2026-08-26 — branch `lane/ship` **P5 groundwork - public
+   scoreboard generator**: generator in packaging/ reading
+   experiments/harness/real_arms_results.jsonl + real_spend.jsonl and emitting
+   a static scoreboard page (markdown + HTML) with the power-analysis footer -
+   discordant pairs beside every p-value, spend line, generated-timestamp.
+   Offline tests for the transformation logic. No backend edits.
+   *(Shipped: `packaging/src/stealthlab_connect/scoreboard_gen.py` — CLI
+   console script `stealthlab-public-board` [pyproject] producing static
+   `public_scoreboard.md` + `.html`. ZERO re-implementation: classification,
+   arm aggregation, exact-McNemar p-values/power analysis and spend
+   aggregation are imported from experiments/harness as shipped
+   [scoring.py / scoreboard.py / mcnemar_power.py / openrouter_arms.SpendLog;
+   stdlib-only chain], so the public page cannot drift from the terminal
+   scoreboard. Harness-root discovery mirrors _bootstrap.py: --harness-root >
+   $STEALTHLAB_HARNESS_ROOT > walk-from-package/cwd, loud failure naming
+   candidates. STRUCTURAL GUARANTEES, each test-pinned: comparison lines are
+   rendered ONLY by mcnemar_power.format_pair whose signature makes a bare
+   p-value unrepresentable [test asserts every exact-p= line on BOTH pages
+   carries "discordant pairs" — 9 renderings/pair-set: bullets + footer +
+   embedded canonical terminal block]; POWER-ANALYSIS FOOTER section on both
+   pages; SPEND section via SpendLog.summarize/render semantics verbatim +
+   429 count + per-arm billed cost; missing ledger renders an honest-absence
+   note, never a fabricated $0.0000 run; Generated UTC timestamp on both +
+   meta tag + source-file provenance w/ row counts; unusable tasks counted &
+   disclosed in a caveat, never silently dropped; comparisons under
+   MIN_PUBLIC_DISCORDANT_N=6 [RUN #1's k>=6 public-phrasing floor, codified
+   as a named constant] carry a small-n caveat blocking headline phrasing.
+   Spend-ledger resolution order matches the wild: <results stem>_spend.jsonl
+   [run_real_arms code default] > real_arms_spend.jsonl [harness .gitignore]
+   > real_spend.jsonl [RUN #1 log name]. CLI refuses exit-2 on missing/empty
+   results — no page from absent data. HTML escapes all model-controlled
+   text. 23 offline proving tests in
+   packaging/tests/test_public_board_offline.py [hand-computed matrices incl.
+   an 11-task scenario proving exact p=0.01171875/0.001953125, torn-line
+   tolerance, error-row disclosure, spend math vs runner semantics, escaping,
+   CLI e2e + refusal paths]. Packaging suite: **80 passed / 0 failed** [= 57
+   prior + 23 new, zero regressions]. Backend diff vs origin/main: ZERO
+   files. Live smoke on synthetic sweep data rendered all guarantees; real
+   RUN #1 artifacts are machine-local to their worktree [gitignored] so the
+   generator ships proven against the formats, first real regeneration is
+   one command wherever the ledger lives.)*
+
 1. `[x]` done @2026-08-25 â€” branch `lane/ship` Installable package wrapping
    `trace_collector` + `mcp_server`.
    Shipped: `packaging/` = installable **stealthlab-connect** (pyproject,
@@ -858,6 +900,18 @@ Grounded findings from  3_access.sql/ 4_governance.sql/deps.py review. Sequence:
   only the migration-01/02 core tables are tenant-bearing. Anything that
   later adds tenancy to those tables should flip the status server's
   _visibility_call sites to scope_predicates - each site is one line.
+- SHIP (2026-08-26): **P5 public scoreboard generator** done on `lane/ship` —
+  full record in the SHIP queue item 3. Notes for other lanes:
+  (a) the generator imports experiments/harness modules [scoring/scoreboard/
+  mcnemar_power/openrouter_arms] at call time — if MEASURE changes those
+  contracts, packaging/tests/test_public_board_offline.py is the tripwire.
+  (b) Spend-ledger filenames in the wild differ [code default
+  real_arms_results_spend.jsonl vs .gitignore's real_arms_spend.jsonl vs
+  RUN #1 log's real_spend.jsonl] — resolution order handles all three;
+  keep new names out or extend default_spend_path.
+  (c) MIN_PUBLIC_DISCORDANT_N=6 codifies RUN #1's "k>=6 significance floor"
+  as the small-n caveat trigger on public pages; founder ruling can retune
+  one constant.
 - CORE-A (2026-08-26, seventh wave): **HARDENING H2 — RLS backstop on [H]
   tables** done on `lane/core-a` — see HARDENING item 2. Notes:
   1. db/29 is NOT yet applied to the shared instance (same discipline as

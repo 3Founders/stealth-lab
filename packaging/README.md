@@ -13,6 +13,42 @@ Two surfaces:
 | `stealthlab-mcp-server` | The StealthLab MCP server (8 tools over the bi-temporal knowledge/task graph) — Streamable HTTP on loopback by default, or `--stdio` |
 | `stealthlab-trace-hook` | Claude Code hook command: reads one hook JSON payload on stdin, redacts it (`trace_redaction`), appends it to the local collector file (`trace_collector.append_event`) |
 | `stealthlab-status-page` | The minimal status surface: one read-only page listing episodes -> claims -> procedures with capability scores and evidence trails (board item P2) |
+| `stealthlab-public-board` | The public scoreboard generator: static markdown + HTML page from a real-arms sweep's results + spend JSONL, power-analysis footer with discordant pairs beside every p-value (board item P5) |
+
+## Public scoreboard generator (`stealthlab-public-board`)
+
+```bash
+# after a real-arms sweep wrote experiments/harness/real_arms_results.jsonl:
+stealthlab-public-board                  # writes ./public_scoreboard.md + .html
+stealthlab-public-board --out-dir site/  # anywhere you like
+```
+
+Reads the sweep's two artifacts — `real_arms_results.jsonl` and its spend
+ledger (resolved automatically: `<results stem>_spend.jsonl`, then
+`real_arms_spend.jsonl`, then `real_spend.jsonl`; override with `--spend`) —
+and emits a **static** page in both formats. No server, no database, no
+backend imports: statistics come from `experiments/harness/` as shipped
+(scoring, McNemar exact test, power analysis, spend-log aggregation), so the
+public page cannot drift from the terminal scoreboard.
+
+Structural guarantees:
+
+- every `exact-p=` on either page travels with its discordant-pair counts —
+  comparison lines are rendered by harness `mcnemar_power.format_pair()`,
+  whose signature makes a bare p-value unrepresentable;
+- a POWER-ANALYSIS FOOTER section on every page;
+- a SPEND line (attempts / billed / failed / tokens / cost, 429 count,
+  per-arm billed cost); a missing ledger renders an honest-absence note,
+  never a fabricated zero-cost claim;
+- `Generated:` UTC timestamp plus source-file provenance;
+- tasks excluded from paired stats (missing/invalid arm episode or runner
+  error) are counted and disclosed; comparisons under the RUN #1 floor of 6
+  discordant pairs carry a small-n caveat.
+
+Refuses to run (exit 2) when the results file is missing or empty — a public
+page is never generated from absent data. Offline tests:
+`tests/test_public_board_offline.py`.
+
 
 ## Status page (`stealthlab-status-page`)
 

@@ -23,6 +23,7 @@ test = ["pytest>=8"]
 stealthlab-mcp-server = "stealthlab_connect.server_entry:main"
 stealthlab-trace-hook = "stealthlab_connect.collector_entry:main"
 stealthlab-status-page = "stealthlab_connect.status_entry:main"
+stealthlab-public-board = "stealthlab_connect.scoreboard_gen:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
