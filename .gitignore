@@ -29,3 +29,11 @@ slides.md
 slides_v2.md
 FUNDRAISE_*.md
 *_DRAFT.md
+
+# Per-worktree lane kickoff instructions (opencode AGENTS.md / Claude Code
+# CLAUDE.md auto-load) -- local to each worktree's assignment, never shared
+# history. (Integrator note 2026-08-26: AGENTS.md was missing from this file
+# despite the house rule; caught after a near-miss where one was committed
+# and manually cleaned out. Adding both conventions defensively.)
+AGENTS.md
+CLAUDE.md
