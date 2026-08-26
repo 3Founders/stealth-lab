@@ -1484,3 +1484,82 @@ Grounded findings from  3_access.sql/ 4_governance.sql/deps.py review. Sequence:
   exist. Sizing is reasoned from mcnemar_power.py's own math since no run2/run3
   data exists yet (CLAUDE.md's kickoff assumed it would - flagged, not
   fabricated). No files outside lane paths touched.
+
+- MEASURE (2026-08-26, fifth wave): **model-decides stale-procedure tier
+  implemented and swept live** on `lane/measure` (CLAUDE.md Task 2,
+  implementing RESEARCH's `.scratch/research/model-decides-tier-design.md`).
+  Design's own §2/§5 claim held: zero changes needed to mcp_surface.py or
+  scoring.py — `substrate_bypasses_gate` already makes the model's own
+  reuse/refuse choice, not the gate, decide the outcome. ONE small,
+  disclosed exception to "purely fixture content": `openrouter_arms.
+  situation_text()` gained a fallback to a task-embedded `situation` field
+  (checked AFTER the existing scenario lookup, so mic-* behavior is
+  byte-identical) — necessary because this tier's 24 tasks would blow past
+  the micro pack's mandated 8-12 scenario count (test_micro_fixtures.py's
+  `test_scenario_count_within_mandate` / `test_every_task_has_a_scenario_
+  and_vice_versa`) if they shared fixtures/micro/scenarios.json. Kept the
+  whole tier in a NEW `fixtures/model_decides/` directory instead — its own
+  tasks.json (24 tasks, no scenarios.json at all) plus content-identical,
+  drift-tripwire-tested copies of procedures.json/rag_corpus.json — so
+  fixtures/micro/** is untouched (verified: `git diff` there is empty).
+  SHAPE: 3 trap (stale_offer = the domain's stale:true procedure, correct
+  =refuse) + 3 control (applicable_procedure = the domain's stale:false
+  procedure, correct=reuse — deliberately NOT authored via `stale_offer`,
+  which the micro pack's own validator requires to be ground-truth stale;
+  `applicable_procedure` is offered identically from the model's POV and
+  needs no gate bypass to begin with, so it's the semantically correct
+  field) per domain x 4 domains, situational specifics varied per
+  replicate (near-boundary dollar amounts/days, pip/pdfplumber/python
+  versions) so the model must check the stated assumption rather than
+  pattern-match an extreme number. `model_decides.py`: pure analysis layer
+  reusing mcnemar_power.discordant_counts/format_pair VERBATIM (zero
+  changes there either) for the paired B-vs-C sensitivity metric over trap
+  tasks, plus a C-only false-refusal specificity guardrail over control
+  tasks — both computed from raw episodes + procedures.json ground truth,
+  never from task-schema role alone (defense-in-depth mirroring
+  scoring.classify's own discipline). `run_model_decides.py` CLI
+  (--validate-only / --results). 34 offline proving tests
+  (tests/test_model_decides.py): fixture contract + breakage detection
+  (dual-offer rejected, wrong prefix rejected, non-stale stale_offer
+  rejected, missing bypass/situation rejected), hand-computed row-level
+  and analyze()-level verdicts incl. a hand-verified McNemar scenario,
+  zero-denominator honesty, cross-tier row skipping. Harness suite
+  213/213 green [177 prior + 2 situation_text-fallback pins + 34 new].
+  **LIVE SWEEP** (all 24 tasks, single pass, no resume needed — 24/24
+  valid first try): **$0.0725** (144 attempts, 72 billed, 72 absorbed
+  429s/network retries under the existing backoff). RESULT:
+  sensitivity — B vs C on the 12 trap tasks: **11 discordant pairs (C-only
+  avoided 10, B-only avoided 1), exact p=0.0117** (significant at α=0.05,
+  q_observed=0.909, already exceeds n-for-80%-power@this-ratio=9).
+  Specificity — C's false-refusal rate on the 12 control tasks: **0/12
+  (0.000)** — C never refused a procedure it should have reused, so "C
+  refuses everything" is ruled out as the explanation for its trap
+  performance. Hand-verified every one of the 24 raw episodes against the
+  report's discordant-pair accounting before trusting the number (detailed
+  in this session's own audit, not just the script's say-so): the single
+  B-only-avoided case is `dec-pdf-103`, where C neither refused nor reused
+  the offered stale card at all (silently routed around it) while B's
+  memory-following happened not to cause that particular failure — a real,
+  disclosed edge case the strict refusal-based metric scores as "C did not
+  avoid," which is the metric working as designed (design §5), not a bug.
+  Committed: `model_decides_report.json` (the `analyze()` output, same
+  "graded results tracked" precedent as error_floor's committed grading
+  output); raw `model_decides_results.jsonl` / `model_decides_spend.jsonl`
+  stay local/gitignored like every other run-output file, same as
+  real_arms_results.jsonl.
+  CAVEATS before any public phrasing (same discipline run1-verification.md
+  demanded of the original tier): (1) this is a SINGLE sweep, n=1 per
+  task — no repeat-sweep variance data for THIS tier yet; a second sweep
+  (~$0.07 at this rate) before any headline claim is cheap and
+  recommended, not yet run this session; (2) unlike the original RUN #1
+  tier, every one of these 12 trap refusals is genuinely model-decided
+  (bypass verified on, journal/episode fields hand-checked above) — this
+  is the real thing the design set out to produce, not another
+  gate-mechanical artifact, but it is still ONE sweep of 12 discordant
+  pairs, not a settled result.
+  SPEND: $0.0725 this pass; **session-to-date total $1.0058** — over the
+  informal ~$1 mark now (was $0.9333 after Task 1); flagging plainly
+  rather than burying it, per the same spend-discipline house rule as
+  every prior entry. Rebase-then-push pending; harness suite 213/213
+  green throughout; zero backend edits; zero edits to fixtures/micro/**
+  or any other lane's owned paths.

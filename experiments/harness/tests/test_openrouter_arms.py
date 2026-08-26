@@ -265,6 +265,24 @@ class TestRealSoloAgent:
         assert "Honest outcome" not in text
         assert "unseen toolchain conflict" in text
 
+    def test_task_embedded_situation_used_when_no_scenario_entry(self):
+        # model-decides tier tasks carry their own `situation` field and
+        # have no scenarios.json row at all (that file's 8-12 count cap
+        # belongs to the micro pack, not this tier) - situation_text must
+        # still find their prose.
+        task = {"task_id": "dec-refund-101", "domain": "refunds",
+                "situation": "Customer requests a $540 refund."}
+        assert ora.situation_text(task, {}) == \
+            "Customer requests a $540 refund."
+
+    def test_scenario_situation_wins_over_task_embedded_one(self):
+        # Existing micro-pack behavior is unchanged: when BOTH exist, the
+        # scenarios.json entry (the richer, evidence_requirements-linked
+        # authoring surface) still takes precedence.
+        task = {"task_id": "t", "situation": "task-level text"}
+        scenarios = {"t": {"situation": "scenario-level text"}}
+        assert ora.situation_text(task, scenarios) == "scenario-level text"
+
     def test_unparseable_after_repair_is_invalid_retryable(self, tmp_path):
         agent, client = self._agent([reply("I think maybe?"),
                                      reply("still not json")])

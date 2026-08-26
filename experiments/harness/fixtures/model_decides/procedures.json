@@ -1,0 +1,81 @@
+{
+  "_comment": "Model-decides tier procedure library (research design doc: .scratch/research/model-decides-tier-design.md, board Lane MEASURE CLAUDE.md Task 2). CONTENT-IDENTICAL COPY of fixtures/micro/procedures.json's `procedures` array - the design's own point (§2) is that no new procedure cards need authoring for wave 1, the existing four stale/fresh pairs already cover it. Kept as a separate file (not a shared path) so this tier's tasks.json can live outside the micro pack's mandated 8-12 scenario count without touching fixtures/micro/** at all. A drift tripwire test (tests/test_model_decides.py) asserts the `procedures` array here stays byte-identical to the micro copy; if one changes, the other should too or the test explains why not.",
+  "procedures": [
+    {
+      "procedure_id": "refund-auto-v1",
+      "domain": "refunds",
+      "version": "v1",
+      "verified": true,
+      "stale": true,
+      "assumptions": ["purchase age <= 90 days", "amount < $500", "policy revision 2025-11 in force"],
+      "evidence": {"executions": 31, "success_rate": 0.94},
+      "staleness_reason": "policy revision 2026-06-01: refunds >= $500 or past 90 days require manual review; auto-approval path deprecated"
+    },
+    {
+      "procedure_id": "refund-review-v2",
+      "domain": "refunds",
+      "version": "v2",
+      "verified": true,
+      "stale": false,
+      "assumptions": ["support ticket exists", "customer identity verified"],
+      "evidence": {"executions": 12, "success_rate": 0.92}
+    },
+    {
+      "procedure_id": "dep-resolver-v2",
+      "domain": "deps",
+      "version": "v2",
+      "verified": true,
+      "stale": false,
+      "assumptions": ["pip >= 23.1 (resolver emits conflict report)", "project uses a lockfile-compatible constraints file"],
+      "evidence": {"executions": 9, "success_rate": 0.89}
+    },
+    {
+      "procedure_id": "dep-pinbump-v1",
+      "domain": "deps",
+      "version": "v1",
+      "verified": true,
+      "stale": true,
+      "assumptions": ["pip legacy resolver still default", "no PEP 517 build isolation"],
+      "evidence": {"executions": 15, "success_rate": 0.80},
+      "staleness_reason": "resolver semantics changed: force-pinning the transitive dep now fights the new resolver and re-corrupts the env"
+    },
+    {
+      "procedure_id": "pdf-sheet-v2",
+      "domain": "pdf-etl",
+      "version": "v2",
+      "verified": true,
+      "stale": false,
+      "assumptions": ["pdfplumber >= 0.10 API", "sheets are single-table per page", "output workbook writable"],
+      "evidence": {"executions": 7, "success_rate": 0.86}
+    },
+    {
+      "procedure_id": "pdf-sheet-v1",
+      "domain": "pdf-etl",
+      "version": "v1",
+      "verified": true,
+      "stale": true,
+      "assumptions": ["pdfplumber 0.7 table.extract() API"],
+      "evidence": {"executions": 5, "success_rate": 0.80},
+      "staleness_reason": "pdfplumber renamed/reshaped the table API after 0.7; v1 calls removed methods and crashes on import-time checks"
+    },
+    {
+      "procedure_id": "env-probe-v2",
+      "domain": "env",
+      "version": "v2",
+      "verified": true,
+      "stale": false,
+      "assumptions": ["python launcher on PATH", "venv module available"],
+      "evidence": {"executions": 10, "success_rate": 0.90}
+    },
+    {
+      "procedure_id": "env-setup-v1",
+      "domain": "env",
+      "version": "v1",
+      "verified": true,
+      "stale": true,
+      "assumptions": ["system python is 3.9", "pip 21 resolves editable installs"],
+      "evidence": {"executions": 22, "success_rate": 0.95},
+      "staleness_reason": "workstation image moved to python 3.12 / pip 24; v1's pinned interpreter path and editable-install flags no longer exist"
+    }
+  ]
+}

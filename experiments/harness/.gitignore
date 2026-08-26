@@ -5,5 +5,7 @@ micro_results_detail.json
 harness_results.jsonl
 real_arms_results.jsonl
 real_arms_spend.jsonl
+model_decides_results.jsonl
+model_decides_spend.jsonl
 corpus/*.jsonl
 __pycache__/

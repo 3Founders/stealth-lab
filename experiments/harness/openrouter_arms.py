@@ -350,8 +350,12 @@ def parse_decision(content: str) -> dict | None:
 
 def situation_text(task: dict, scenarios_by_id: dict[str, dict]) -> str:
     """Task goal for the prompt: the scenario's written `situation` when the
-    fixture pack carries one, else a neutral synthesis (real-corpus dry-run
-    tasks have no narrative; they stay unscored pipeline exercises anyway).
+    fixture pack carries one, else the TASK's own embedded `situation` field
+    (fixture packs with no scenarios.json layer - e.g. the model-decides
+    tier, whose task count would blow past the micro pack's mandated 8-12
+    scenario cap if it shared that file), else a neutral synthesis
+    (real-corpus dry-run tasks have no narrative; they stay unscored
+    pipeline exercises anyway).
 
     KNOWN BIAS, sanitized here: some scenario narratives state the expected
     conclusion outright (mic-dep-003 ends 'Honest outcome: everyone falls
@@ -360,8 +364,9 @@ def situation_text(task: dict, scenarios_by_id: dict[str, dict]) -> str:
     Softer framing hints remain in the prose; flagged on the board for a
     founder ruling before any headline data collection."""
     sc = scenarios_by_id.get(task["task_id"]) or {}
-    if sc.get("situation"):
-        return sc["situation"].split("Honest outcome:")[0].rstrip()
+    situation = sc.get("situation") or task.get("situation")
+    if situation:
+        return situation.split("Honest outcome:")[0].rstrip()
     return (f"Domain: {task.get('domain', 'general')}. "
             f"Handle task {task['task_id']} end to end.")
 

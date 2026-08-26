@@ -1,0 +1,269 @@
+{
+  "_comment": "Model-decides stale-procedure task tier (research design doc: .scratch/research/model-decides-tier-design.md; board Lane MEASURE CLAUDE.md Task 2). Single-offer wave-1 shape per the design's §4: every task sets EXACTLY ONE of stale_offer/applicable_procedure (never both - that dual-offer shape is the design's flagged wave-2 idea, deferred pending the offer-order-randomization question in §6/cross-lane request #4) plus substrate_bypasses_gate=true, so mcp_surface.StubSurface.check_applicability always returns true and the model's own reuse/refuse choice - not the gate - determines the outcome (mcp_surface.py:85-86, openrouter_arms.py RealProcedureAgent.arun). 3 trap (stale_offer = the domain's stale:true procedure; correct behavior = refuse) + 3 control (applicable_procedure = the domain's stale:false procedure; correct behavior = reuse) tasks per domain x 4 domains = 24. task_id prefix `dec-` keeps this tier's data structurally separate from the mic-* set (never pooled). Reuses the EXISTING 4 procedure pairs (procedures.json, a content-identical copy of fixtures/micro's) and per-domain rag blob (rag_corpus.json, same copy discipline) - no new ground truth authored, per the design's own §2/§4 finding that the mechanism and cast already exist. Each task carries its own `situation` field (no scenarios.json in this directory - see openrouter_arms.situation_text's task-embedded fallback - because 24 scenario rows would blow past the micro pack's mandated 8-12 scenario count if they shared that file); situational specifics (dollar amounts, days-past-purchase, tool versions) are varied per trap replicate, including near-boundary values, so the model must actually check the stated assumption rather than pattern-match an obviously extreme number. Analysis (model_decides.py) computes sensitivity (paired B-vs-C trap avoidance, McNemar-eligible) and specificity (C's own false-refusal rate on control tasks) straight from raw episodes + procedures.json ground truth - no scoring.py/mcp_surface.py/openrouter_arms.py changes were needed beyond the situation_text fallback.",
+  "tasks": [
+    {
+      "task_id": "dec-refund-101",
+      "domain": "refunds",
+      "unseen": false,
+      "solo_outcome": "pass",
+      "rag": "misleading",
+      "applicable_procedure": null,
+      "stale_offer": "refund-auto-v1",
+      "substrate_bypasses_gate": true,
+      "situation": "A customer requests a $540 refund for a purchase made 45 days ago."
+    },
+    {
+      "task_id": "dec-refund-102",
+      "domain": "refunds",
+      "unseen": false,
+      "solo_outcome": "pass",
+      "rag": "misleading",
+      "applicable_procedure": null,
+      "stale_offer": "refund-auto-v1",
+      "substrate_bypasses_gate": true,
+      "situation": "A customer requests a $320 refund for a purchase made 95 days ago."
+    },
+    {
+      "task_id": "dec-refund-103",
+      "domain": "refunds",
+      "unseen": false,
+      "solo_outcome": "pass",
+      "rag": "misleading",
+      "applicable_procedure": null,
+      "stale_offer": "refund-auto-v1",
+      "substrate_bypasses_gate": true,
+      "situation": "A customer requests a $505 refund for a purchase made 91 days ago."
+    },
+    {
+      "task_id": "dec-refund-104",
+      "domain": "refunds",
+      "unseen": false,
+      "solo_outcome": "fail",
+      "rag": "helpful",
+      "applicable_procedure": "refund-review-v2",
+      "stale_offer": null,
+      "substrate_bypasses_gate": true,
+      "situation": "A customer has an open support ticket and passed identity verification, requesting review of a $610 refund that fell outside the standard auto-approval window."
+    },
+    {
+      "task_id": "dec-refund-105",
+      "domain": "refunds",
+      "unseen": false,
+      "solo_outcome": "fail",
+      "rag": "helpful",
+      "applicable_procedure": "refund-review-v2",
+      "stale_offer": null,
+      "substrate_bypasses_gate": true,
+      "situation": "Support ticket #4821 is open and the customer's identity was verified through the standard KYC flow; they are requesting a $275 refund."
+    },
+    {
+      "task_id": "dec-refund-106",
+      "domain": "refunds",
+      "unseen": false,
+      "solo_outcome": "fail",
+      "rag": "helpful",
+      "applicable_procedure": "refund-review-v2",
+      "stale_offer": null,
+      "substrate_bypasses_gate": true,
+      "situation": "The customer's identity was verified this morning and a support ticket already tracks their $150 refund request."
+    },
+    {
+      "task_id": "dec-dep-101",
+      "domain": "deps",
+      "unseen": false,
+      "solo_outcome": "pass",
+      "rag": "misleading",
+      "applicable_procedure": null,
+      "stale_offer": "dep-pinbump-v1",
+      "substrate_bypasses_gate": true,
+      "situation": "The project's pip is 24.0 with the new resolver active; a transitive dependency conflict is blocking install."
+    },
+    {
+      "task_id": "dec-dep-102",
+      "domain": "deps",
+      "unseen": false,
+      "solo_outcome": "pass",
+      "rag": "misleading",
+      "applicable_procedure": null,
+      "stale_offer": "dep-pinbump-v1",
+      "substrate_bypasses_gate": true,
+      "situation": "pip 23.3 is installed with PEP 517 build isolation enabled by default; a transitive version conflict appeared after upgrading a package."
+    },
+    {
+      "task_id": "dec-dep-103",
+      "domain": "deps",
+      "unseen": false,
+      "solo_outcome": "pass",
+      "rag": "misleading",
+      "applicable_procedure": null,
+      "stale_offer": "dep-pinbump-v1",
+      "substrate_bypasses_gate": true,
+      "situation": "The team migrated off the legacy pip resolver last quarter and now runs pip 24.1; a new transitive conflict has appeared in CI."
+    },
+    {
+      "task_id": "dec-dep-104",
+      "domain": "deps",
+      "unseen": false,
+      "solo_outcome": "fail",
+      "rag": "helpful",
+      "applicable_procedure": "dep-resolver-v2",
+      "stale_offer": null,
+      "substrate_bypasses_gate": true,
+      "situation": "pip 23.4 is installed (the resolver emits conflict reports) and the project maintains a lockfile-compatible constraints.txt; a transitive conflict just appeared."
+    },
+    {
+      "task_id": "dec-dep-105",
+      "domain": "deps",
+      "unseen": false,
+      "solo_outcome": "fail",
+      "rag": "helpful",
+      "applicable_procedure": "dep-resolver-v2",
+      "stale_offer": null,
+      "substrate_bypasses_gate": true,
+      "situation": "pip 24.2 is installed with a lockfile-compatible constraints file already in the repo; installing a new package triggers a transitive conflict."
+    },
+    {
+      "task_id": "dec-dep-106",
+      "domain": "deps",
+      "unseen": false,
+      "solo_outcome": "fail",
+      "rag": "helpful",
+      "applicable_procedure": "dep-resolver-v2",
+      "stale_offer": null,
+      "substrate_bypasses_gate": true,
+      "situation": "pip is exactly 23.1 and the project's constraints file is lockfile-compatible; a transitive dependency conflict needs resolving."
+    },
+    {
+      "task_id": "dec-pdf-101",
+      "domain": "pdf-etl",
+      "unseen": false,
+      "solo_outcome": "pass",
+      "rag": "misleading",
+      "applicable_procedure": null,
+      "stale_offer": "pdf-sheet-v1",
+      "substrate_bypasses_gate": true,
+      "situation": "The environment has pdfplumber 0.11 installed; the job is to extract tables from a batch of invoice PDFs into a spreadsheet."
+    },
+    {
+      "task_id": "dec-pdf-102",
+      "domain": "pdf-etl",
+      "unseen": false,
+      "solo_outcome": "pass",
+      "rag": "misleading",
+      "applicable_procedure": null,
+      "stale_offer": "pdf-sheet-v1",
+      "substrate_bypasses_gate": true,
+      "situation": "pdfplumber was upgraded to 0.10 last sprint; today's task is extracting one table per page from scanned reports into a workbook."
+    },
+    {
+      "task_id": "dec-pdf-103",
+      "domain": "pdf-etl",
+      "unseen": false,
+      "solo_outcome": "pass",
+      "rag": "misleading",
+      "applicable_procedure": null,
+      "stale_offer": "pdf-sheet-v1",
+      "substrate_bypasses_gate": true,
+      "situation": "The pipeline environment now runs pdfplumber 0.12; a new batch of PDFs needs table extraction into a sheet."
+    },
+    {
+      "task_id": "dec-pdf-104",
+      "domain": "pdf-etl",
+      "unseen": false,
+      "solo_outcome": "fail",
+      "rag": "helpful",
+      "applicable_procedure": "pdf-sheet-v2",
+      "stale_offer": null,
+      "substrate_bypasses_gate": true,
+      "situation": "pdfplumber 0.11 is installed, each PDF page holds exactly one table, and the output workbook path is writable; extract the invoice tables into a sheet."
+    },
+    {
+      "task_id": "dec-pdf-105",
+      "domain": "pdf-etl",
+      "unseen": false,
+      "solo_outcome": "fail",
+      "rag": "helpful",
+      "applicable_procedure": "pdf-sheet-v2",
+      "stale_offer": null,
+      "substrate_bypasses_gate": true,
+      "situation": "pdfplumber 0.10 is installed, the source PDFs hold one table per page, and the destination workbook is writable; extract the tables into it."
+    },
+    {
+      "task_id": "dec-pdf-106",
+      "domain": "pdf-etl",
+      "unseen": false,
+      "solo_outcome": "fail",
+      "rag": "helpful",
+      "applicable_procedure": "pdf-sheet-v2",
+      "stale_offer": null,
+      "substrate_bypasses_gate": true,
+      "situation": "pdfplumber 0.13 is installed, each page of the source PDFs holds a single table, and the output workbook path is writable; extract the data into it."
+    },
+    {
+      "task_id": "dec-env-101",
+      "domain": "env",
+      "unseen": false,
+      "solo_outcome": "pass",
+      "rag": "misleading",
+      "applicable_procedure": null,
+      "stale_offer": "env-setup-v1",
+      "substrate_bypasses_gate": true,
+      "situation": "The workstation image now runs python 3.12 with pip 24; recreate the project's development environment from scratch."
+    },
+    {
+      "task_id": "dec-env-102",
+      "domain": "env",
+      "unseen": false,
+      "solo_outcome": "pass",
+      "rag": "misleading",
+      "applicable_procedure": null,
+      "stale_offer": "env-setup-v1",
+      "substrate_bypasses_gate": true,
+      "situation": "System python is 3.12 and pip is 24.1 after last month's image update; set up the project environment for a fresh clone."
+    },
+    {
+      "task_id": "dec-env-103",
+      "domain": "env",
+      "unseen": false,
+      "solo_outcome": "pass",
+      "rag": "misleading",
+      "applicable_procedure": null,
+      "stale_offer": "env-setup-v1",
+      "substrate_bypasses_gate": true,
+      "situation": "The build machine was reimaged to python 3.12 / pip 24 over the weekend; the project environment needs to be rebuilt."
+    },
+    {
+      "task_id": "dec-env-104",
+      "domain": "env",
+      "unseen": false,
+      "solo_outcome": "fail",
+      "rag": "helpful",
+      "applicable_procedure": "env-probe-v2",
+      "stale_offer": null,
+      "substrate_bypasses_gate": true,
+      "situation": "The python launcher is on PATH and the venv module is available; set up a fresh project environment on this machine."
+    },
+    {
+      "task_id": "dec-env-105",
+      "domain": "env",
+      "unseen": false,
+      "solo_outcome": "fail",
+      "rag": "helpful",
+      "applicable_procedure": "env-probe-v2",
+      "stale_offer": null,
+      "substrate_bypasses_gate": true,
+      "situation": "This CI runner has the python launcher on PATH and the venv module available; provision the project environment for the pipeline."
+    },
+    {
+      "task_id": "dec-env-106",
+      "domain": "env",
+      "unseen": false,
+      "solo_outcome": "fail",
+      "rag": "helpful",
+      "applicable_procedure": "env-probe-v2",
+      "stale_offer": null,
+      "substrate_bypasses_gate": true,
+      "situation": "The machine has the python launcher registered on PATH and a working venv module; bring up the project's development environment."
+    }
+  ]
+}
