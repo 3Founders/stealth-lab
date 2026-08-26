@@ -159,6 +159,10 @@ git worktree add ..\sl-research -b lane/research origin/main
    Remaining [V]/[H] query-path adoption outside grant paths -> Question #5 +
    cross-lane request #2.)*
 
+7. `[ ]` **WAVE-3 / Debate panel OpenRouter wiring**: app/debate/panel.py + config.py (scoped grant) - add OpenRouter as a provider so scan->debate->approve runs locally on the founder key; reuse openrouter_arms backoff pattern; prove with offline FakePool tests + one gated live smoke.
+
+6. `[ ]` **WAVE-3 / HARDENING adoption sweep**: wire tenant_transaction() callers per cross-lane request #1 - evidence-writer is the first caller; sweep remaining unowned query paths (request #2 / Question #5); hygiene scan test must stay green repo-wide.
+
 ### Lane CORE-B â€” extraction & gating (owns `backend/app/services/procedure_extraction/**`, `invariants.py`, `applicability.py`, `precondition_gate.py`, `state.py`)
 1. `[x] done 2026-08-25 â€” lane/core-b` **1.8a** Precondition relevance filter (derive gates only load-bearing facts).
 2. `[x] done 2026-08-25 â€” lane/core-b` **1.8b** V6 authoring-time invariant validator + z3 off event loop w/ timeout.
@@ -739,7 +743,8 @@ blocking question in the Log, continue with the next queue item.
    main's baseline â€” H1 owners may want to pin it (e.g. clear module-level
    JWKS/key cache state) before someone burns a merge cycle on it.
 - MEASURE (2026-08-26, second wave): MEASURE-WAVE item 0 (real-model arms)
-- **RUN #1 LOGGED (2026-08-26, integrator)**: first genuine SS40 sweep on ox-alpha via openrouter_arms (95 calls, \$ .2659, auto-resume ledger eal_spend.jsonl). Results on 10 valid tasks: A 6/10 resolved, B 7/10 w/ 1 false-reuse, C 7/10 w/ 0. **Stale-refusal C 6/6 vs B 0/6 -> McNemar p~0.031** (at the k>=6 significance floor - more n required before any public phrasing). Resolution B-vs-C not significant (1-1 discordant: C lost poisoned-gate refund-003 by design, gained pdf-003 adversarial blend). Universal failures dep-003/env-001 = library coverage gaps feeding extraction targets. Repeat sweeps queued (fresh --out per run); Question #6 verdict-leak framing audit assigned to integrator.
+- **RUN #1 LOGGED (2026-08-26, integrator)**: first genuine SS40 sweep on ox-alpha via openrouter_arms (95 calls, \$ .2659, auto-resume ledger 
+eal_spend.jsonl). Results on 10 valid tasks: A 6/10 resolved, B 7/10 w/ 1 false-reuse, C 7/10 w/ 0. **Stale-refusal C 6/6 vs B 0/6 -> McNemar p~0.031** (at the k>=6 significance floor - more n required before any public phrasing). Resolution B-vs-C not significant (1-1 discordant: C lost poisoned-gate refund-003 by design, gained pdf-003 adversarial blend). Universal failures dep-003/env-001 = library coverage gaps feeding extraction targets. Repeat sweeps queued (fresh --out per run); Question #6 verdict-leak framing audit assigned to integrator.
   done on `lane/measure` — full record in the queue item. Two notes:
   1. **Question #6 (non-blocking, blocks headline data collection, not the
      instrument):** fixture `situation` prose still carries softer framing
