@@ -406,6 +406,26 @@ single synthesized reports into `.scratch/research/`.
 2. `[x] done @2026-08-25 - research lane (file: competitive-sweep-mem0-letta-zep-hipporag-awm.md; tick missed before session died)` Competitive sweep: Mem0 / Letta / Zep-Graphiti / HippoRAG / AWM â€” what they
    ship vs our trust spine; file deltas as board notes.
 3. `[ ]` Ï„-Knowledge ceiling re-check (arXiv:2603.04370) before harness baselines freeze.
+4. `[x]` done @2026-08-26 — RUN #1 independent verification complete; report at
+   `.scratch/research/run1-verification.md` (+ script `run1_verify.py`, competitive
+   addendum in the sweep file).
+   *(VERDICTS: spend \$0.2659/95 calls CONFIRMED exactly; marginals A 6/10, B 7/10+1FR,
+   C 7/10 CONFIRMED under per-arm-valid denominators [different task sets per arm —
+   shipped scoreboard default prints 9-task frame A5/B6/C6]. Stale-refusal "C 6/6 vs
+   B 0/6, p≈0.031" REPRODUCES ARITHMETICALLY (p=0.03125) but only under an
+   invalid-counts-as-non-refusal frame that charges B's unparseable mic-pdf-003 decision
+   as a missed refusal; validity-restricted frames give 5 pairs, p=0.0625 > α — report
+   p∈[0.031,0.062] or drop the inferential claim. BIGGER FINDING: C's journal proves ALL
+   SIX correct stale refusals were recorded mechanically by the StubSurface gate before
+   the model saw any card [mcp_surface verdict = not stale, deterministic]; on the ONE
+   model-decides task [refund-003 poisoned gate] real-C returned unparseable, and arm B's
+   prompt contains no procedure ids so it structurally cannot refuse. The 6-vs-0 outcome
+   is fixture-determined surface design, not model behavior — no inferential reading
+   survives, and it is NOT evidence ox-alpha detects staleness. Competitive refresh: NO
+   published system reports decision-time stale-procedure-refusal as a metric, but STALE
+   arXiv:2605.06527 / TEPA arXiv:2608.07429 / Library-Drift+Ratchet arXiv:2605.19576 +
+   2605.22148 / AFTER arXiv:2606.23127 converge from adjacent directions — cite STALE's
+   Premise Resistance in any novelty claim; URLs in the report.)*
 
 ### Lane SHIP (owns `packaging/**`) â€” activates after CORE-A merges 1.7
 2. `[x]` done @2026-08-26 â€” branch `lane/ship` **P2 - Minimal status surface**:
@@ -933,3 +953,16 @@ Grounded findings from  3_access.sql/ 4_governance.sql/deps.py review. Sequence:
      tree — same files, same counts — and every failing file passes (or
      skips) standalone. This worktree's backend/.env carries DATABASE_URL,
      so full runs load it mid-ordering; queue item 2 remains the fix.
+
+- RESEARCH (2026-08-26, RUN #1 verification): done � see Lane RESEARCH item 4 and
+  `.scratch/research/run1-verification.md`. One-line summary for the integrator:
+  the RUN #1 numbers reproduce, but (a) the stale-refusal p=0.031 requires counting an
+  invalid arm-B episode as a missed refusal [strict frames: 5 pairs, p=0.0625], and (b)
+  every C "correct refusal" was substrate-gate-automatic per C_journal � the model never
+  saw a stale card except on poisoned refund-003, where it returned unparseable. Treat
+  6-vs-0 as descriptive system-level surface behavior; no model-level staleness evidence
+  exists yet (n=1, invalid). Suggests a model-decides tier before headline collection;
+  competitive refresh found NO published stale-procedure-refusal metric but four close
+  2026 neighbors to cite (STALE / TEPA / Library-Drift+Ratchet / AFTER) � details + URLs
+  in the report. No files outside lane paths touched; results/spend read from the
+  integrator checkout read-only (gitignored machine-local artifacts).

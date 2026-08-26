@@ -50,3 +50,25 @@ Market context worth keeping: memory layers are consolidating into platform infr
 1. Positioning line for decks: "Graphiti knows when facts were true. We know whether a procedure still works — proven by execution, gated non-compensatorily."
 2. Watch item: Mem0's AWS exclusivity blocks the obvious enterprise channel; our wedge should assume Zep/Graphiti-shaped incumbents at prospects, not vector stores.
 3. AWM failure modes ("procedural drift", FutureAGI doc) are citable pain-point evidence for RIGHT_FILE_wrong_fix-class pollution.
+
+## Addendum 2026-08-26 — RUN #1 refresh: is stale-procedure-refusal a published metric?
+
+Re-checked during RUN #1 verification (full analysis: `run1-verification.md`). **Still no
+published system reports decision-time refusal of a ground-truth-stale OFFERED PROCEDURE
+as a named metric** — but the 2026 literature has converged on the problem from four
+adjacent directions and must be cited before any novelty claim:
+
+| Work | What it does | What it measures | Gap vs our §40 metric |
+|---|---|---|---|
+| STALE (arXiv:2605.06527) | 400 implicit-conflict memory scenarios; Premise Resistance = reject stale-presupposing queries | model-level stale detection over personalization FACTS, QA accuracy (best 55.2%) | facts, not procedures; QA framing, not execution loop |
+| TEPA (arXiv:2608.07429) | revocable keyed-precedent memory; validity as explicit state; audit-preserving revocation | post-drift retrieval accuracy (0.950 vs 0.210 append-only) | memory-layer mechanism; no agent-facing refusal metric |
+| Library Drift + Ratchet (arXiv:2605.19576 / 2605.22148, AWS, FAGEN@ICML 2026) | skill-library lifecycle governance: contribution scores, outcome-driven retirement, eviction bounds | pass@1 + retirement-statistic reliability | library-side retirement policy, not the facing-agent refusal act |
+| AFTER (arXiv:2606.23127) | procedural-memory transfer benchmark, 382 enterprise tasks | cross-task/role/model transfer accuracy | no staleness axis at all |
+
+Positioning line update for decks: cite STALE by name — its Premise Resistance is the
+field's nearest framing of this capability — and claim the difference precisely:
+procedure-level refusals inside an execution loop, graded against withheld staleness
+ground truth, with a substrate-audited evidence trail. Also note the verification finding:
+in OUR OWN RUN #1 the substrate gate (not the model) performed every recorded stale
+refusal — closing that gap (model-decides tier) is what would make our number comparable
+to STALE's probe rather than to nobody's.
