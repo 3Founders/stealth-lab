@@ -85,3 +85,7 @@ def main(argv: list[str] | None = None) -> int:
 
     uvicorn.run(create_status_app(), host=args.host, port=args.port, log_level="info")
     return 0
+
+
+if __name__ == "__main__":  # enables `python -m stealthlab_connect.status_entry`
+    raise SystemExit(main())
