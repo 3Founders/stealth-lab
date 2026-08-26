@@ -2134,3 +2134,46 @@ Grounded findings from  3_access.sql/ 4_governance.sql/deps.py review. Sequence:
   `ox-alpha` by name - "appears in the models: summary line" is NOT the same
   claim as "served a billed call," the exact conflation that caused this
   correction.
+- CORE-B (2026-08-27, second wave): **offline coverage-gap closure** across
+  every owned module (no live calls, no schema changes; full record in the
+  commit message). applicability.py/invariants.py/precondition_gate.py/
+  state.py went to 100% offline-covered (were 72/83/95/81%);
+  procedure_extraction/registry.py 26%->82% and evidence.py 62%->100%. Six
+  new/extended offline test files, all FakePool or pure-function, no DB:
+  test_applicability_hard_constraints_offline.py (new, 24 tests -- every
+  disqualification branch in check_hard_constraints plus the pure
+  _scope_matches/_excluded helpers and find_applicable_procedures' two
+  early-return paths, all previously proven ONLY against the shared,
+  repeatedly-drifted Postgres instance test_applicability_e2e.py needs),
+  test_invariants.py (+15 -- every whitelisted operator, non-numeric-
+  constant/chained-comparison/disallowed-operator refusals, the
+  z3-unavailable degradation path via both a real forced ImportError and a
+  monkeypatched check, and the genuine solver-unknown outcome mocked at
+  Solver.check to stay deterministic), test_precondition_gate.py (+1),
+  test_state_offline.py (new -- state_delta had zero offline coverage
+  before this), test_registry_offline.py (new -- select_extractor's
+  version-sort/kind-tiebreak/scope-filter logic, extractor_stats' div-by-
+  zero guards), test_evidence_offline.py (new -- both EvidenceSource
+  implementations). DEFERRED, disclosed rather than silently skipped:
+  procedure_extraction/__init__.py (21%), strategies.py (50%, its pure
+  _parse_abstraction_response half already 100%), derive.py's remaining
+  pool-touching branches (88%, untouched) -- each needs a multi-query
+  FakePool harness (strategies.py additionally the scripted-client LLM
+  pattern) sized more like its own queue item than a quick close-now pass.
+  Full suite: **1327 passed / 2 skipped / 111 failed** -- the 111 is the
+  same pre-existing drifted-DB gap on record at H2's entry (identical
+  count), +59 over the prior 1268-passed baseline matching every test
+  added, zero regressions.
+  **Standing by on MEASURE's semantic_label prompt-variant prep** per this
+  session's kickoff instruction: read `semantic_label_prompt_variants.py`
+  (four candidates -- few_shot/vocab_discipline/strict_noun_phrase/
+  combined, targeting the two residual failure modes terse_v2 left open)
+  and the OpenRouter budget-wall entry above in full. None of the four are
+  live-tested yet (MEASURE is blocked on both ox-alpha's disappearance from
+  the catalog and the account's zero spendable balance, explicitly awaiting
+  confirmation before any run). Correctly nothing to mirror into
+  observations.py's `_SEMANTIC_LABEL_SYSTEM_PROMPT` yet -- last wave's rule
+  (mirror the ALREADY-PROVED-OUT wording, never a hypothesis) applies the
+  same way to these four candidates. Will pick whichever variant MEASURE's
+  live run actually validates, once one exists, the same way terse_v2 was
+  mirrored verbatim rather than reinvented.
