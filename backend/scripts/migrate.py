@@ -143,6 +143,15 @@ async def run(dsn: str, dry_run: bool = False, status_only: bool = False) -> int
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    # Load backend/.env if python-dotenv is available, so the documented
+    # workflow works without manual environment exports (matches
+    # scripts/bootstrap_demo.py behavior). Silent no-op when dotenv or the
+    # file are absent -- --dsn / $DATABASE_URL still win.
+    try:
+        from dotenv import load_dotenv
+        load_dotenv(Path(__file__).resolve().parents[1] / ".env")
+    except ImportError:
+        pass
     ap.add_argument("--dsn", default=os.environ.get("DATABASE_URL"),
                      help="defaults to $DATABASE_URL")
     ap.add_argument("--dry-run", action="store_true", help="show what would run, apply nothing")
