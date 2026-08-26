@@ -281,7 +281,7 @@ CREATE INDEX IF NOT EXISTS idx_evidence_scope
 -- streams tagged with different model brands yield byte-identical
 -- rows from this view, which the proving tests pin statically.
 -- ============================================================
-CREATE VIEW IF NOT EXISTS procedure_evidence_stats AS
+CREATE OR REPLACE VIEW procedure_evidence_stats AS
 SELECT
     p.id                        AS procedure_row_id,
     p.procedure_id,

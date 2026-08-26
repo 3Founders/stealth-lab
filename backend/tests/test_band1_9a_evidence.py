@@ -105,7 +105,9 @@ def _ddl() -> str:
 
 def _view_sql() -> str:
     ddl = _ddl()
-    start = ddl.index("CREATE VIEW IF NOT EXISTS procedure_evidence_stats AS")
+    # PG has no CREATE VIEW IF NOT EXISTS -- idempotency comes from
+    # CREATE OR REPLACE (engine-verified fix, was a real chain-run failure).
+    start = ddl.index("CREATE OR REPLACE VIEW procedure_evidence_stats AS")
     end = ddl.index(";", start)
     return ddl[start:end]
 
