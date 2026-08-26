@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="generator" content="stealthlab-connect scoreboard_gen">
+<meta name="generated-at" content="2026-08-26T17:56:31+00:00">
+<title>SS40 Public Scoreboard</title>
+<style>
+body{font-family:system-ui,sans-serif;margin:2rem auto;max-width:60rem;
+padding:0 1rem;color:#1a1a2e;background:#fafafa}
+table{border-collapse:collapse;margin:0.5rem 0}
+th,td{border:1px solid #bbb;padding:0.25rem 0.6rem;text-align:right}
+th:first-child,td:first-child{text-align:left}
+pre{background:#efefef;padding:0.75rem;overflow-x:auto;border:1px solid #ddd}
+.caveat{background:#fff3cd;border:1px solid #e0c568;padding:0.5rem 1rem}
+.muted{color:#666}
+</style></head><body>
+<h1>SS40 Public Scoreboard</h1>
+<p class='muted'>Generated: 2026-08-26T17:56:31+00:00</p>
+<p>Sources: <code>C:\Users\user\sl-measure\experiments\harness\real_arms_run2.jsonl</code> (15 task rows) &middot; <code>C:\Users\user\sl-measure\experiments\harness\real_spend_run2.jsonl</code> (113 attempts)</p>
+<p>Fixture pack: micro (8 procedures) &middot; usable paired tasks: 11/15</p>
+<div class='caveat'><strong>Read first:</strong><ul>
+<li>small-n caveat: A vs B (n=2), A vs C (n=3), B vs C (n=1) have fewer than 6 discordant pairs (the RUN #1 k&gt;=6 significance floor) - directional only, not headline evidence.</li>
+<li>4 of 15 task rows excluded from the paired statistics (missing or invalid episode in some arm); a task contributes only when EVERY arm produced a valid episode.</li>
+</ul></div>
+<h2>Arms</h2><table><tr><th>arm</th><th>n</th><th>pass</th><th>cost tot/mean $</th><th>false_reuse</th><th>stale_refusal</th><th>unseen</th></tr>
+<tr><td>A (frontier solo)</td><td>11</td><td>9/11 (0.82)</td><td>0.0850/0.0077</td><td>0/11 (0.00)</td><td>no offers</td><td>0/1</td></tr>
+<tr><td>B (+ conventional memory)</td><td>11</td><td>7/11 (0.64)</td><td>0.1166/0.0106</td><td>2/11 (0.18)</td><td>0/7(missed 0)</td><td>0/1</td></tr>
+<tr><td>C (+ verified procedures)</td><td>11</td><td>6/11 (0.55)</td><td>0.0841/0.0076</td><td>0/11 (0.00)</td><td>7/7(missed 0)</td><td>0/1</td></tr>
+</table>
+<p class='muted'>Every rate ships with its numerator/denominator - no bare rates.</p>
+<p class='muted'>Served by: openai/gpt-4o-mini, ox-alpha</p>
+<h2>Stale-refusal attribution (gate-mechanical vs model-initiated)</h2>
+<table><tr><th>arm</th><th>gate-mechanical</th><th>model-initiated</th><th>unattributed</th></tr>
+<tr><td>A</td><td>0</td><td>0</td><td>0</td></tr>
+<tr><td>B</td><td>0</td><td>0</td><td>0</td></tr>
+<tr><td>C</td><td>6</td><td>1</td><td>0</td></tr>
+</table>
+<p class='muted'>gate-mechanical = substrate check_applicability decided the refusal (model never saw the card, or a proposed reuse was blocked); model-initiated = the agent refused on its own after seeing the card; unattributed = a correct stale refusal with no journal entry naming the mechanism. A stale_refusal count with zero model-initiated entries reflects the surface's gating design, not detection by the model serving that arm.</p>
+<h2>Pairwise comparisons (exact McNemar on pass/fail)</h2><ul>
+<li><strong>A vs B</strong>: A vs B: 2 discordant pairs (first-arm-only 2, second-arm-only 0) | exact-p=0.5000 | power@observed-split(q=1.000,n=2)=0.00 | MDE@80%: unreachable with 2 discordant pairs | n-for-80%@observed-ratio=beyond planning cap</li>
+<li><strong>A vs C</strong>: A vs C: 3 discordant pairs (first-arm-only 3, second-arm-only 0) | exact-p=0.2500 | power@observed-split(q=1.000,n=3)=0.00 | MDE@80%: unreachable with 3 discordant pairs | n-for-80%@observed-ratio=beyond planning cap</li>
+<li><strong>B vs C</strong>: B vs C: 1 discordant pairs (first-arm-only 1, second-arm-only 0) | exact-p=1.0000 | power@observed-split(q=1.000,n=1)=0.00 | MDE@80%: unreachable with 1 discordant pairs | n-for-80%@observed-ratio=beyond planning cap</li>
+</ul>
+<h2>POWER-ANALYSIS FOOTER</h2>
+<pre>POWER-ANALYSIS FOOTER (exact McNemar, alpha=0.05, target power=0.8)
+  A vs B: 2 discordant pairs (first-arm-only 2, second-arm-only 0) | exact-p=0.5000 | power@observed-split(q=1.000,n=2)=0.00 | MDE@80%: unreachable with 2 discordant pairs | n-for-80%@observed-ratio=beyond planning cap
+  A vs C: 3 discordant pairs (first-arm-only 3, second-arm-only 0) | exact-p=0.2500 | power@observed-split(q=1.000,n=3)=0.00 | MDE@80%: unreachable with 3 discordant pairs | n-for-80%@observed-ratio=beyond planning cap
+  B vs C: 1 discordant pairs (first-arm-only 1, second-arm-only 0) | exact-p=1.0000 | power@observed-split(q=1.000,n=1)=0.00 | MDE@80%: unreachable with 1 discordant pairs | n-for-80%@observed-ratio=beyond planning cap</pre>
+<h2>Spend</h2>
+<p>SPEND: 113 attempts (64 billed, 49 failed) · tokens 18,447in/38,088out · $0.4270 · models: openai/gpt-4o-mini, ox-alpha</p><ul>
+<li>shared-pool saturation (HTTP 429) attempts: 44</li>
+<li>billed cost by arm: A $0.1227, B $0.1666, C $0.1373</li>
+<li>models used: openai/gpt-4o-mini, ox-alpha</li></ul>
+<h2>Canonical terminal rendering</h2>
+<pre>==============================================================================
+SS40 Public Scoreboard
+tasks total=15 usable(all arms valid)=11
+arm    n        pass      cost tot/mean $     tokens        reuse   false_reuse     stale_refusal    unseen
+-----------------------------------------------------------------------------------------------------------
+A     11 9/11 (0.82)     0.085/0.0077        11,214  0/11 (0.00)   0/11 (0.00)         no offers       0/1
+B     11 7/11 (0.64)    0.1166/0.0106        15,148  6/11 (0.55)   2/11 (0.18)     0/7(missed 0)       0/1
+C     11 6/11 (0.55)    0.0841/0.0076        11,455  6/11 (0.55)   0/11 (0.00)     7/7(missed 0)       0/1
+(A: frontier solo | B: + conventional memory | C: + verified procedures)
+
+PAIRWISE (exact McNemar on pass/fail discordant pairs)
+POWER-ANALYSIS FOOTER (exact McNemar, alpha=0.05, target power=0.8)
+  A vs B: 2 discordant pairs (first-arm-only 2, second-arm-only 0) | exact-p=0.5000 | power@observed-split(q=1.000,n=2)=0.00 | MDE@80%: unreachable with 2 discordant pairs | n-for-80%@observed-ratio=beyond planning cap
+  A vs C: 3 discordant pairs (first-arm-only 3, second-arm-only 0) | exact-p=0.2500 | power@observed-split(q=1.000,n=3)=0.00 | MDE@80%: unreachable with 3 discordant pairs | n-for-80%@observed-ratio=beyond planning cap
+  B vs C: 1 discordant pairs (first-arm-only 1, second-arm-only 0) | exact-p=1.0000 | power@observed-split(q=1.000,n=1)=0.00 | MDE@80%: unreachable with 1 discordant pairs | n-for-80%@observed-ratio=beyond planning cap
+==============================================================================</pre>
+</body></html>

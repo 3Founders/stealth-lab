@@ -697,6 +697,73 @@ single synthesized reports into `.scratch/research/`.
    generator ships proven against the formats, first real regeneration is
    one command wherever the ledger lives.)*
 
+4. `[x]` done @2026-08-26 — branch `lane/ship` **First real public scoreboard
+   regeneration (CLAUDE.md kickoff task)**: ran `stealthlab-public-board`
+   against all three real sweeps that exist so far — RUN #1
+   (integrator checkout, `C:\Users\user\stealth-lab\experiments\harness\`)
+   and MEASURE's run2/run3 (`C:\Users\user\sl-measure\experiments\harness\`,
+   gitignored, read-only).
+   *(Read `.scratch/research/run1-verification.md` (research lane) first per
+   instructions — caveat 2: C's stale-refusal headline was gate-mechanical
+   (StubSurface.check_applicability decided every refusal before the model
+   saw the card, or blocked a proposed reuse), not model-level detection.
+   ANSWERING the kickoff's open question directly: yes, the generator needed
+   a second caveat type distinct from MIN_PUBLIC_DISCORDANT_N — that one is
+   about SAMPLE SIZE, this one about CONSTRUCT VALIDITY (a comparison can
+   clear the n-floor and still not mean what the raw numbers suggest). Not
+   raised as a blocking founder question: the research report's code-level
+   evidence (openrouter_arms.py's own `record_refusal` reason strings) made
+   this an engineering call, not a real ambiguity — flagged here non-blocking
+   for founder override on phrasing/threshold.
+   SHIPPED: `stale_refusal_attribution()` in scoreboard_gen.py classifies
+   each arm's stale-refusal credit as gate-mechanical / model-initiated /
+   unattributed, counted PER TASK (mirrors scoring.classify's own boolean
+   semantics — a task refusing two stale ids still counts once) and scoped
+   to ground-truth-stale procedure ids only, via the `<arm>_journal` reason
+   strings the harness already writes. New "Stale-refusal attribution" table
+   on both pages (research recommendation #4); a new interpretive-validity
+   caveat renders in "Read first" only when an arm's ENTIRE stale_refusal
+   credit is gate-mechanical with zero model-initiated cases. TWO real bugs
+   caught and fixed while proving this against all three real sweeps (not
+   synthetic fixtures) before shipping:
+     1. counting raw journal EVENTS instead of per-task booleans overcounted
+        whenever one task refused more than one stale id;
+     2. matching usable rows by task_id STRING instead of by which specific
+        classified entry is in the usable set: run3's real data has TWO
+        `mic-pdf-003` rows (an earlier invalid attempt left beside its
+        --auto-resume retry) sharing one task_id — string matching pulled
+        the excluded row's journal entry back in. Fixed via object-identity
+        pairing between raw rows and their classified entries (both lists
+        are 1:1 in order). Both bugs were invisible against the offline
+        fixtures (which never has richer multi-stale-id tasks or duplicate
+        rows) and only surfaced by running against real data — recording
+        here as a reminder that "23/80/85 tests green" does not substitute
+        for a live-data run before calling a generator done.
+     8 new offline proving tests cover the attribution feature end-to-end
+     plus both fixes specifically (non-stale-procedure exclusion, excluded-
+     row exclusion, and the exact run3 duplicate-task-id shape). Packaging
+     suite: **88 passed / 0 failed** [= 80 prior + 8 new, zero regressions].
+   REAL RESULT, confirmed after both fixes (every arm's attribution total
+   now foots exactly to its Arms-table stale_refusal count on all three
+   runs): the interpretive-validity caveat fires on RUN #1 (C 5/5, all
+   gate-mechanical, 0 model-initiated) but NOT on run2 or run3 (C 6
+   gate-mechanical + 1 model-initiated each) — because in both later
+   sweeps the model actually returned a parseable, self-reasoned refusal on
+   the one poisoned-gate task (mic-refund-003) where research's report says
+   "the model itself faced the staleness decision"; RUN #1's attempt at
+   that same task was unparseable (0 model-initiated credit there). The
+   caveat is therefore precise, not blanket — it tracks whether THIS sweep
+   produced any genuine model-level evidence, self-documenting the exact
+   distinction research's report asked for. Separately: the shipped
+   generator's own McNemar comparisons never reproduced the old "p~0.031"
+   figure on any of the three runs — pass/fail only, always under the
+   small-n floor (RUN #1: A-B/A-C p=1.0 n=1, B-C p=N/A n=0; run2/run3
+   similar) — that number was always an out-of-band computation outside
+   this instrument. Output: `.scratch/ship/{run1,run2,run3}/
+   public_scoreboard.{md,html}` (evidence trail, not the packaged artifact
+   itself — that's generated on demand per README). Backend diff: ZERO
+   files.)*
+
 1. `[x]` done @2026-08-25 â€” branch `lane/ship` Installable package wrapping
    `trace_collector` + `mcp_server`.
    Shipped: `packaging/` = installable **stealthlab-connect** (pyproject,
@@ -1143,6 +1210,34 @@ Grounded findings from  3_access.sql/ 4_governance.sql/deps.py review. Sequence:
   (c) MIN_PUBLIC_DISCORDANT_N=6 codifies RUN #1's "k>=6 significance floor"
   as the small-n caveat trigger on public pages; founder ruling can retune
   one constant.
+- **SHIP (2026-08-26, second wave): first real public scoreboard run** — full
+  record in SHIP queue item 4. Read RESEARCH's `run1-verification.md` first
+  per the kickoff instructions and answered its open question: yes, the
+  generator needed a second, non-n caveat type for INTERPRETIVE validity
+  (construct validity of the stale_refusal metric, not sample size) —
+  shipped as `stale_refusal_attribution()`, which reads openrouter_arms.py's
+  own `record_refusal` reason strings to split gate-mechanical from
+  model-initiated stale-refusal credit, plus a "Stale-refusal attribution"
+  table on both pages and a caveat that fires only when an arm's entire
+  stale_refusal credit is gate-mechanical. Not raised as a blocking
+  question — the research report's code-level evidence made this a clear
+  engineering call; flagged non-blocking for founder override on
+  phrasing/threshold. Ran against all three real sweeps that exist
+  (RUN #1 + MEASURE's run2/run3, gitignored/machine-local) instead of only
+  synthetic fixtures, which caught two real correctness bugs before ship
+  (raw-event vs per-task counting; task_id-string vs object-identity row
+  matching — the latter hit for real on run3's duplicated `mic-pdf-003`
+  resume artifact). Confirmed after both fixes: every arm's attribution
+  total foots exactly to its stale_refusal count on all three runs; the
+  interpretive caveat fires on RUN #1 only (C's one model-facing task,
+  mic-refund-003, came back unparseable there) and correctly does NOT fire
+  on run2/run3 (same task returned a genuine self-reasoned model refusal in
+  both later sweeps) — the caveat tracks real evidence per sweep, not a
+  RUN #1-specific rule. The shipped generator's own McNemar comparisons
+  never reproduced the old "p~0.031" figure on any run (pass/fail only,
+  always under the small-n floor). Packaging suite 88/88 (+8 offline
+  tests, zero regressions). Output: `.scratch/ship/{run1,run2,run3}/
+  public_scoreboard.{md,html}`.
 - CORE-A (2026-08-26, seventh wave): **HARDENING H2 — RLS backstop on [H]
   tables** done on `lane/core-a` — see HARDENING item 2. Notes:
   1. db/29 is NOT yet applied to the shared instance (same discipline as

@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="generator" content="stealthlab-connect scoreboard_gen">
+<meta name="generated-at" content="2026-08-26T17:56:30+00:00">
+<title>SS40 Public Scoreboard</title>
+<style>
+body{font-family:system-ui,sans-serif;margin:2rem auto;max-width:60rem;
+padding:0 1rem;color:#1a1a2e;background:#fafafa}
+table{border-collapse:collapse;margin:0.5rem 0}
+th,td{border:1px solid #bbb;padding:0.25rem 0.6rem;text-align:right}
+th:first-child,td:first-child{text-align:left}
+pre{background:#efefef;padding:0.75rem;overflow-x:auto;border:1px solid #ddd}
+.caveat{background:#fff3cd;border:1px solid #e0c568;padding:0.5rem 1rem}
+.muted{color:#666}
+</style></head><body>
+<h1>SS40 Public Scoreboard</h1>
+<p class='muted'>Generated: 2026-08-26T17:56:30+00:00</p>
+<p>Sources: <code>C:\Users\user\stealth-lab\experiments\harness\real_arms_results.jsonl</code> (11 task rows) &middot; <code>C:\Users\user\stealth-lab\experiments\harness\real_spend.jsonl</code> (95 attempts)</p>
+<p>Fixture pack: micro (8 procedures) &middot; usable paired tasks: 9/11</p>
+<div class='caveat'><strong>Read first:</strong><ul>
+<li>small-n caveat: A vs B (n=1), A vs C (n=1), B vs C (n=0) have fewer than 6 discordant pairs (the RUN #1 k&gt;=6 significance floor) - directional only, not headline evidence.</li>
+<li>2 of 11 task rows excluded from the paired statistics (missing or invalid episode in some arm); a task contributes only when EVERY arm produced a valid episode.</li>
+<li>interpretive-validity caveat (independent of sample size): arm(s) C earned 100% of their counted stale_refusal credit from the substrate gate deciding before/instead of the model (see &#x27;Stale-refusal attribution&#x27; below), with zero model-initiated refusals logged - the stale_refusal column is descriptive SYSTEM-level behavior here, not evidence of per-model staleness detection.</li>
+</ul></div>
+<h2>Arms</h2><table><tr><th>arm</th><th>n</th><th>pass</th><th>cost tot/mean $</th><th>false_reuse</th><th>stale_refusal</th><th>unseen</th></tr>
+<tr><td>A (frontier solo)</td><td>9</td><td>5/9 (0.56)</td><td>0.0568/0.0063</td><td>0/9 (0.00)</td><td>no offers</td><td>0/1</td></tr>
+<tr><td>B (+ conventional memory)</td><td>9</td><td>6/9 (0.67)</td><td>0.0730/0.0081</td><td>1/9 (0.11)</td><td>0/5(missed 0)</td><td>0/1</td></tr>
+<tr><td>C (+ verified procedures)</td><td>9</td><td>6/9 (0.67)</td><td>0.0598/0.0066</td><td>0/9 (0.00)</td><td>5/5(missed 0)</td><td>0/1</td></tr>
+</table>
+<p class='muted'>Every rate ships with its numerator/denominator - no bare rates.</p>
+<p class='muted'>Served by: ox-alpha</p>
+<h2>Stale-refusal attribution (gate-mechanical vs model-initiated)</h2>
+<table><tr><th>arm</th><th>gate-mechanical</th><th>model-initiated</th><th>unattributed</th></tr>
+<tr><td>A</td><td>0</td><td>0</td><td>0</td></tr>
+<tr><td>B</td><td>0</td><td>0</td><td>0</td></tr>
+<tr><td>C</td><td>5</td><td>0</td><td>0</td></tr>
+</table>
+<p class='muted'>gate-mechanical = substrate check_applicability decided the refusal (model never saw the card, or a proposed reuse was blocked); model-initiated = the agent refused on its own after seeing the card; unattributed = a correct stale refusal with no journal entry naming the mechanism. A stale_refusal count with zero model-initiated entries reflects the surface's gating design, not detection by the model serving that arm.</p>
+<h2>Pairwise comparisons (exact McNemar on pass/fail)</h2><ul>
+<li><strong>A vs B</strong>: A vs B: 1 discordant pairs (first-arm-only 0, second-arm-only 1) | exact-p=1.0000 | power@observed-split(q=1.000,n=1)=0.00 | MDE@80%: unreachable with 1 discordant pairs | n-for-80%@observed-ratio=beyond planning cap</li>
+<li><strong>A vs C</strong>: A vs C: 1 discordant pairs (first-arm-only 0, second-arm-only 1) | exact-p=1.0000 | power@observed-split(q=1.000,n=1)=0.00 | MDE@80%: unreachable with 1 discordant pairs | n-for-80%@observed-ratio=beyond planning cap</li>
+<li><strong>B vs C</strong>: B vs C: no discordant pairs — the test has no input | p=N/A</li>
+</ul>
+<h2>POWER-ANALYSIS FOOTER</h2>
+<pre>POWER-ANALYSIS FOOTER (exact McNemar, alpha=0.05, target power=0.8)
+  A vs B: 1 discordant pairs (first-arm-only 0, second-arm-only 1) | exact-p=1.0000 | power@observed-split(q=1.000,n=1)=0.00 | MDE@80%: unreachable with 1 discordant pairs | n-for-80%@observed-ratio=beyond planning cap
+  A vs C: 1 discordant pairs (first-arm-only 0, second-arm-only 1) | exact-p=1.0000 | power@observed-split(q=1.000,n=1)=0.00 | MDE@80%: unreachable with 1 discordant pairs | n-for-80%@observed-ratio=beyond planning cap
+  B vs C: no discordant pairs — the test has no input | p=N/A</pre>
+<h2>Spend</h2>
+<p>SPEND: 95 attempts (44 billed, 51 failed) · tokens 12,444in/23,479out · $0.2659 · models: ox-alpha</p><ul>
+<li>shared-pool saturation (HTTP 429) attempts: 51</li>
+<li>billed cost by arm: A $0.0798, B $0.1032, C $0.0831</li>
+<li>models used: ox-alpha</li></ul>
+<h2>Canonical terminal rendering</h2>
+<pre>==============================================================================
+SS40 Public Scoreboard
+tasks total=11 usable(all arms valid)=9
+arm    n        pass      cost tot/mean $     tokens        reuse   false_reuse     stale_refusal    unseen
+-----------------------------------------------------------------------------------------------------------
+A      9  5/9 (0.56)    0.0568/0.0063         7,812   0/9 (0.00)    0/9 (0.00)         no offers       0/1
+B      9  6/9 (0.67)     0.073/0.0081         9,845   5/9 (0.56)    1/9 (0.11)     0/5(missed 0)       0/1
+C      9  6/9 (0.67)    0.0598/0.0066         8,368   5/9 (0.56)    0/9 (0.00)     5/5(missed 0)       0/1
+(A: frontier solo | B: + conventional memory | C: + verified procedures)
+
+PAIRWISE (exact McNemar on pass/fail discordant pairs)
+POWER-ANALYSIS FOOTER (exact McNemar, alpha=0.05, target power=0.8)
+  A vs B: 1 discordant pairs (first-arm-only 0, second-arm-only 1) | exact-p=1.0000 | power@observed-split(q=1.000,n=1)=0.00 | MDE@80%: unreachable with 1 discordant pairs | n-for-80%@observed-ratio=beyond planning cap
+  A vs C: 1 discordant pairs (first-arm-only 0, second-arm-only 1) | exact-p=1.0000 | power@observed-split(q=1.000,n=1)=0.00 | MDE@80%: unreachable with 1 discordant pairs | n-for-80%@observed-ratio=beyond planning cap
+  B vs C: no discordant pairs — the test has no input | p=N/A
+==============================================================================</pre>
+</body></html>
