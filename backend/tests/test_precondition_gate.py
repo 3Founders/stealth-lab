@@ -55,3 +55,11 @@ def test_extract_postconditions_reads_the_optional_jsonb_field():
 
 def test_tag_normalization_is_case_and_whitespace_insensitive():
     assert postconditions_compatible(["Schema_Conformance "], [" schema_conformance"]) is True
+
+
+def test_whitespace_only_tags_normalize_to_empty_and_pass_trivially():
+    """A non-empty list that carries nothing real after normalization
+    (e.g. every tag was blank/whitespace) hits the same 'can't check what
+    isn't there' rule as a genuinely empty list -- distinct from the
+    top-level None/[] check, since the outer list itself is truthy here."""
+    assert postconditions_compatible(["   ", ""], ["schema_conformance"]) is True

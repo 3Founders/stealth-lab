@@ -88,6 +88,155 @@ def test_arithmetic_and_boolean_composition():
     assert not check_invariants(compound, {"amount": -5, "balance": 100}).satisfied
 
 
+# --- every whitelisted operator, not just the two exercised above ---
+# (_ExprBuilder's Eq/NotEq comparisons, Sub/Mult/Div binops, and unary
+# +/- branches had zero test coverage before this -- only Lt/LtE/Gt/GtE
+# and Add were ever exercised, which is most of the actual security/
+# correctness surface of the whitelist.)
+
+def test_equality_and_inequality_comparisons():
+    eq = [{"kind": "numeric", "expr": "amount == balance"}]
+    assert check_invariants(eq, {"amount": 100, "balance": 100}).satisfied
+    assert check_invariants(eq, {"amount": 100, "balance": 200}).violated == ["amount == balance"]
+
+    neq = [{"kind": "numeric", "expr": "amount != balance"}]
+    assert check_invariants(neq, {"amount": 100, "balance": 200}).satisfied
+    assert check_invariants(neq, {"amount": 100, "balance": 100}).violated == ["amount != balance"]
+
+
+def test_subtraction_multiplication_and_division_binops():
+    sub = [{"kind": "numeric", "expr": "balance - amount >= 0"}]
+    assert check_invariants(sub, {"balance": 100, "amount": 40}).satisfied
+    assert not check_invariants(sub, {"balance": 100, "amount": 200}).satisfied
+
+    mult = [{"kind": "numeric", "expr": "quantity * unit_price <= budget"}]
+    assert check_invariants(mult, {"quantity": 3, "unit_price": 10, "budget": 100}).satisfied
+    assert not check_invariants(mult, {"quantity": 3, "unit_price": 40, "budget": 100}).satisfied
+
+    div = [{"kind": "numeric", "expr": "total / count <= max_average"}]
+    assert check_invariants(div, {"total": 90, "count": 3, "max_average": 30}).satisfied
+    assert not check_invariants(div, {"total": 90, "count": 3, "max_average": 20}).satisfied
+
+
+def test_unary_plus_and_minus():
+    minus = [{"kind": "numeric", "expr": "-balance <= 0"}]
+    assert check_invariants(minus, {"balance": 5}).satisfied
+
+    plus = [{"kind": "numeric", "expr": "+amount <= limit"}]
+    assert check_invariants(plus, {"amount": 5, "limit": 10}).satisfied
+    assert not check_invariants(plus, {"amount": 15, "limit": 10}).satisfied
+
+
+def test_non_numeric_constant_is_refused():
+    result = check_invariants(
+        [{"kind": "numeric", "expr": "status == 'closed'"}], {"status": 1},
+    )
+    assert not result.satisfied
+    assert any("only numeric constants" in e for e in result.errors)
+    assert not result.violated
+
+
+def test_chained_comparison_is_refused_not_silently_reinterpreted():
+    """`a <= b <= c` is a real Python chain, not two comparisons -- the
+    whitelist explicitly refuses it rather than guessing an intent."""
+    result = check_invariants(
+        [{"kind": "numeric", "expr": "0 <= amount <= balance"}], {"amount": 5, "balance": 10},
+    )
+    assert not result.satisfied
+    assert any("single comparisons" in e for e in result.errors)
+
+
+def test_disallowed_comparison_operator_is_refused():
+    result = check_invariants(
+        [{"kind": "numeric", "expr": "amount in balance"}], {"amount": 1, "balance": 2},
+    )
+    assert not result.satisfied
+    assert any("is not allowed" in e for e in result.errors)
+
+
+def test_disallowed_binop_operator_is_refused():
+    result = check_invariants(
+        [{"kind": "numeric", "expr": "amount % 3 <= 1"}], {"amount": 7},
+    )
+    assert not result.satisfied
+    assert any("is not allowed" in e for e in result.errors)
+
+
+def test_disallowed_unary_operator_is_refused():
+    result = check_invariants(
+        [{"kind": "numeric", "expr": "~amount <= 0"}], {"amount": 5},
+    )
+    assert not result.satisfied
+    assert any("is not allowed" in e for e in result.errors)
+
+
+def test_z3_unavailable_via_a_real_import_failure_not_just_a_monkeypatched_check(monkeypatch):
+    """_z3_available()'s own try/except ImportError branch, exercised
+    with a genuinely-failing import rather than the higher-level
+    monkeypatch used below -- sys.modules[name] = None is the documented
+    way to make `import z3` itself raise ImportError."""
+    import sys
+    monkeypatch.setitem(sys.modules, "z3", None)
+
+    result = check_invariants(AMOUNT_LE_BALANCE, {"amount": 1, "checking_balance": 2})
+
+    assert not result.satisfied
+    assert any("z3-solver is not installed" in e for e in result.errors)
+
+
+def test_solver_returned_unknown_is_undecidable_not_violated_or_satisfied(monkeypatch):
+    """The genuine-timeout branch, forced deterministically: mock
+    Solver.check() itself to return z3.unknown rather than relying on a
+    real query being slow enough to hit the timeout, which would be
+    flaky across machines for arithmetic this simple."""
+    import z3
+    monkeypatch.setattr(z3.Solver, "check", lambda self: z3.unknown)
+
+    result = check_invariants(AMOUNT_LE_BALANCE, {"amount": 500, "checking_balance": 1200})
+
+    assert not result.violated
+    assert result.undecidable
+    assert "solver returned unknown" in result.undecidable[0]
+
+
+def test_authoring_reports_solver_unknown_for_manual_review(monkeypatch):
+    import z3
+    monkeypatch.setattr(z3.Solver, "check", lambda self: z3.unknown)
+
+    problems = authoring_problems(AMOUNT_LE_BALANCE)
+
+    assert len(problems) == 1
+    assert "could not be decided" in problems[0]
+
+
+# --- honest degradation: missing z3 dependency ---
+# (_z3_available()'s own False branch, and both check_invariants' and
+# authoring_problems' handling of it, were never exercised -- z3 is
+# always installed in every environment this suite runs in, so the only
+# way to prove the degradation path is to monkeypatch the availability
+# check itself rather than actually uninstall the dependency.)
+
+def test_missing_z3_is_reported_as_an_error_not_silently_satisfied(monkeypatch):
+    import app.services.invariants as invariants_module
+    monkeypatch.setattr(invariants_module, "_z3_available", lambda: False)
+
+    result = invariants_module.check_invariants(AMOUNT_LE_BALANCE, {"amount": 1, "checking_balance": 2})
+
+    assert not result.satisfied
+    assert any("z3-solver is not installed" in e for e in result.errors)
+    assert not result.violated
+
+
+def test_missing_z3_makes_authoring_validation_report_one_problem(monkeypatch):
+    import app.services.invariants as invariants_module
+    monkeypatch.setattr(invariants_module, "_z3_available", lambda: False)
+
+    problems = invariants_module.authoring_problems(AMOUNT_LE_BALANCE)
+
+    assert len(problems) == 1
+    assert "z3-solver is not installed" in problems[0]
+
+
 # --- ticket 1.8b: bounded solver runtime + off-event-loop entry point ---
 
 def test_solver_timeout_is_a_plumbed_keyword_not_an_implicit_global():
@@ -149,6 +298,11 @@ def test_authoring_rejects_constant_contradictions_too():
 def test_authoring_rejects_what_runtime_would_error_on():
     problems = authoring_problems([{"kind": "numeric", "expr": "amount <="}])
     assert problems and "could not be parsed" in problems[0]
+
+
+def test_authoring_reports_a_missing_expr_key():
+    problems = authoring_problems([{"kind": "numeric"}])
+    assert problems and "no usable 'expr'" in problems[0]
 
 
 def test_authoring_reports_each_defective_invariant_individually():
