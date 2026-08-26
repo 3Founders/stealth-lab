@@ -1217,6 +1217,7 @@ Grounded findings from  3_access.sql/ 4_governance.sql/deps.py review. Sequence:
      please re-run the offline suite once in sl-core-b before pushing, as
      a sanity check on the recovery -- the numbers above are CORE-B's own
      report, not independently re-verified by the integrator this pass.
+
 - MEASURE (2026-08-26, fourth wave): **CLAUDE.md Task 1 — semantic-label
   terse-prompt ruling implemented** on `lane/measure`. Per the board's own
   recommended default (option a), tightened `live_extractor.py`'s
@@ -1264,3 +1265,36 @@ Grounded findings from  3_access.sql/ 4_governance.sql/deps.py review. Sequence:
   backend edits. Checked for RESEARCH's model-decides-tier design doc
   (CLAUDE.md Task 2) — not yet landed in `.scratch/research/`; not
   blocking, will check again next wave per the kickoff instructions.
+
+- CORE-A (2026-08-26, ninth wave): **Founder-rulings write-up** (kickoff
+  task, not a numbered queue item — docs only, no schema/app edits). Wrote
+  `.scratch/core-a/founder-rulings-needed.md` covering the three
+  accumulated founder-only calls. Finding: D1 and D4 were NOT actually
+  open — both were ratified by founder quiz 2026-08-25 (commit
+  3c1de7b/ddb3894) and are already folded into spec v4 (§16, §34b); D1 is
+  already implemented in CORE-B's capability.py. The board's Founder
+  dependencies table simply never got updated after ratification —
+  corrected above. Only the third item (tenant_id on
+  procedures/agents/observations, this lane's own WAVE-3 "honest
+  exclusion") is a genuine open founder call; full tradeoffs + my
+  recommended default (Option A: full tenant_id, siloed per-org, same
+  db/28/29 pattern) are in the doc. No suite to run (docs-only).
+
+- CORE-A (2026-08-26, tenth wave): **Band 4 entry scoping note** (kickoff
+  task, remainder of the wave — docs only). Wrote
+  `.scratch/core-a/band4-entry-scoping.md`. Headline finding: Band 4 entry
+  is gated by ROADMAP's own ground rule 4 + Band P's exit criteria — P3's
+  acceptance test ("fresh install → 1 day real work → ≥1 procedure reused
+  with visible provenance + §40 arm-C beating arm-B") — not by a Band 1
+  technical checklist. P3 is `⬜` in proj_status.md and, per RUN #1's
+  independent verification, doesn't have a clean pass available yet either
+  (the arm-C-beats-arm-B evidence was frame-dependent and gate-automatic,
+  not model-level). Band 1 prerequisites Band 4 items actually name (1.3
+  scope columns, 1.10 append-only-at-birth, 1.6 embedding stamps) are all
+  already shipped, so once the P3 gate opens, items 2/3 (partitioning, read
+  replicas) are the cheapest entry points; item 8 (utility-based
+  retirement) stays separately blocked on Band 3.4 (utility accounting,
+  still open per proj_status.md) regardless of the gate. Also flagged: I
+  could not find the "~85% Band 3 done" figure cited in this wave's kickoff
+  anywhere in the repo — closest tracked number is proj_status.md's ~65%,
+  worth reconciling. No suite to run (docs-only).
