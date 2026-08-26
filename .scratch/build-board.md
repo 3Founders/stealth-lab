@@ -583,6 +583,42 @@ single synthesized reports into `.scratch/research/`.
    arXiv:2605.06527 / TEPA arXiv:2608.07429 / Library-Drift+Ratchet arXiv:2605.19576 +
    2605.22148 / AFTER arXiv:2606.23127 converge from adjacent directions — cite STALE's
    Premise Resistance in any novelty claim; URLs in the report.)*
+5. `[x]` done @2026-08-26 — research lane (this worktree) **Model-decides
+   stale-procedure task tier design** (CLAUDE.md kickoff, Claude Code takeover):
+   design (not implement) a fixture/task spec where staleness is present in
+   the procedure card but NOT pre-filtered by `mcp_surface.StubSurface`'s
+   gate — the model must decide from context whether to reuse or refuse —
+   fixing the gap `run1-verification.md` found (all 6 of RUN #1's C stale
+   refusals were substrate-gate-automatic, not model decisions).
+   *(Report: `.scratch/research/model-decides-tier-design.md`. KEY FINDING:
+   the mechanism already exists and is switched off — `mcp_surface.py`'s
+   `bypasses_gate` context flag (unconditional `verdict=True`) plus
+   `openrouter_arms.py`'s `RealProcedureAgent` gate-threading already support
+   a model-decides episode end to end; it was used exactly once
+   (`mic-refund-003`, an unrelated poisoned-gate honest-negative slot) and
+   returned unparseable. DESIGN: single-offer trap tasks (stale procedure
+   offered, correct=refuse) + control tasks (current procedure offered via
+   the same bypass mechanism, correct=reuse — the missing specificity half;
+   nothing today tests whether C just refuses everything) across the
+   existing 4 domains, reusing all 4 existing procedure pairs and rag blobs —
+   ZERO harness code changes needed for wave 1 (mcp_surface.py,
+   openrouter_arms.py, AND scoring.py all support it as-is; the two new
+   metrics — trap-avoidance paired B-vs-C and C's own false-refusal rate —
+   are both derivable from existing episode fields + procedures.json ground
+   truth, report-layer only, same pattern as run1_verify.py). SIZING: 24
+   single-offer tasks (3 trap + 3 control × 4 domains) recommended for wave
+   1, reasoned from mcnemar_power.py's own required_n()/binomial-floor math
+   since NO run2/run3 data exists to reason from despite the kickoff text
+   assuming it would (flagged explicitly, not papered over) — table shows
+   ~67-100% chance of clearing MIN_PUBLIC_DISCORDANT_N=6 at n=16-20 valid
+   episodes under d=0.4-0.7 discordant-rate assumptions, but likely
+   UNDERPOWERED for significance unless the true effect is large (q>=0.85);
+   recommends wave-1-then-sized-wave-2 via required_n(q_observed), not a
+   single-shot collection. Cross-lane request to MEASURE filed in the report
+   §7: fixture-content-only ask (new tasks.json/scenarios.json rows), zero
+   required code changes, one open question flagged (dual-offer serial-
+   position-bias risk, deliberately NOT used in wave 1's design) rather than
+   silently assumed away.)*
 
 ### Lane SHIP (owns `packaging/**`) â€” activates after CORE-A merges 1.7
 2. `[x]` done @2026-08-26 â€” branch `lane/ship` **P2 - Minimal status surface**:
@@ -1340,3 +1376,16 @@ Grounded findings from  3_access.sql/ 4_governance.sql/deps.py review. Sequence:
   outstanding. Request #3 left as-is otherwise; its owner should match
   MEASURE's now-landed wording (3-6 word subject+past-tense-verb, no
   quoted paths/commands/parentheticals) rather than reinvent it.
+- RESEARCH (2026-08-26, model-decides tier design): done - see Lane RESEARCH
+  item 5 and `.scratch/research/model-decides-tier-design.md`. One-line summary
+  for the integrator: RUN #1's stale-refusal split was gate-decided, not model
+  evidence (this lane's own prior finding); the fix - `substrate_bypasses_gate`
+  - already exists in the harness and was used exactly once, for an unrelated
+  purpose (mic-refund-003, unparseable). This design proposes a 24-task
+  single-offer trap+control tier reusing that exact mechanism across all 4
+  existing domains, needing ZERO changes to mcp_surface.py, openrouter_arms.py,
+  or scoring.py - purely fixture content (cross-lane request to MEASURE, not an
+  edit) plus a report-layer analysis script this lane can write once real rows
+  exist. Sizing is reasoned from mcnemar_power.py's own math since no run2/run3
+  data exists yet (CLAUDE.md's kickoff assumed it would - flagged, not
+  fabricated). No files outside lane paths touched.
