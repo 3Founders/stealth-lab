@@ -619,6 +619,45 @@ single synthesized reports into `.scratch/research/`.
    required code changes, one open question flagged (dual-offer serial-
    position-bias risk, deliberately NOT used in wave 1's design) rather than
    silently assumed away.)*
+6. `[x]` done @2026-08-27 — research lane (this worktree) **Independent
+   verification of MEASURE's model-decides live sweep** (founder request,
+   same discipline as `run1-verification.md`). Recomputed sensitivity/
+   specificity from raw `model_decides_results.jsonl` (sl-measure worktree,
+   read-only, gitignored) with an independent classifier + hand-read every
+   `C_journal` entry for genuine model-decision evidence.
+   *(Report: `.scratch/research/model-decides-verification.md` + rerunnable
+   `model_decides_verify.py`. HEADLINE NUMBERS CONFIRMED EXACTLY: sensitivity
+   11 discordant pairs (B-only 1, C-only 10), p=0.01171875; specificity 0/12
+   false refusals — both bit-for-bit against the shipped
+   `model_decides_report.json`. JOURNAL CONFIRMS GENUINELY MODEL-DECIDED:
+   every `check_applicability` verdict=True (bypass working), zero refusals
+   carry the mechanical gate string, all 11 refusal reasons are
+   situation-specific model prose (e.g. "purchase age exceeds the maximum
+   allowed of 90 days") — exactly the missing evidence run1-verification.md
+   asked for. NEW FINDING, more consequential than any single number: the
+   ENTIRE sweep ran on `openai/gpt-4o-mini`, not `ox-alpha` — every one of
+   72 `ox-alpha` attempts returned HTTP 404 (non-retryable, immediate
+   fallthrough), zero 429s anywhere in the spend log; the board's own
+   write-up describes these as "72 absorbed 429s/network retries", which is
+   factually wrong (counts match, failure KIND doesn't) — this sweep is not
+   comparable to RUN #1/#2/#3 on the model axis (those were majority
+   ox-alpha successes) and needs MEASURE/founder to confirm whether
+   ox-alpha's OpenRouter model id is still valid before any second sweep.
+   Secondary findings: (a) the board's "already exceeds n-for-80%-power@
+   this-ratio=9" line is misleading, not wrong — required_n() is not a
+   monotone floor for this exact test (power dips to 0.74 at n=11 despite
+   clearing 80% at n=9), the correctly-caveated number is already printed
+   earlier on the same board line; (b) the one B-only discordant task
+   (dec-pdf-103) shows C's own reasoning correctly named the staleness in
+   prose but never became a structured refusal — a schema-capture gap that
+   understates C's true detection rate, not a detection failure, opposite
+   in direction from RUN #1's gate-inflation caveat; (c) three control-task
+   episodes show correct reasoning without a structured reuse credit — same
+   gap, doesn't corrupt the shipped 0/12 specificity number. No second
+   sweep exists yet to check variance against; re-run this verification
+   once one lands. No files outside lane paths touched; results/spend read
+   from sl-measure's worktree read-only (gitignored machine-local
+   artifacts).)*
 
 ### Lane SHIP (owns `packaging/**`) â€” activates after CORE-A merges 1.7
 2. `[x]` done @2026-08-26 â€” branch `lane/ship` **P2 - Minimal status surface**:
@@ -1622,3 +1661,16 @@ Grounded findings from  3_access.sql/ 4_governance.sql/deps.py review. Sequence:
   publishing a personal email — flagging that choice here in case the
   founder wants a dedicated security@ address instead later, one-line
   change. No schema/app code touched.
+- RESEARCH (2026-08-27, model-decides sweep verification): done - see Lane
+  RESEARCH item 6 and .scratch/research/model-decides-verification.md.
+  One-line summary for the integrator: the two headline numbers (sensitivity
+  p=0.0117, specificity 0/12) are confirmed exactly, and the refusals are
+  genuinely model-decided this time (journal-verified) - the design's core
+  goal is met. But the sweep ran entirely on openai/gpt-4o-mini, not
+  ox-alpha - every ox-alpha attempt 404'd (not 429, contra the board's own
+  description) - so it is not comparable to RUN #1/#2/#3 on the model axis;
+  MEASURE/founder should confirm ox-alpha's OpenRouter model id before any
+  second sweep. Two smaller nuances also filed: a power-presentation
+  gloss (required_n isn't a monotone power floor for this exact test) and
+  a schema-capture gap on dec-pdf-103 that understates, not inflates, C's
+  true detection rate. No second sweep exists yet to check variance.
