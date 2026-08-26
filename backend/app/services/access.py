@@ -22,8 +22,9 @@ default tenant), so both predicates are permissive — but they are
 """
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
-from typing import Optional
+from typing import Any, Optional
 
 
 @dataclass(frozen=True)
@@ -216,3 +217,87 @@ def scope_predicates(
         [*vis_params, *ten_params],
         after_vis + len(ten_params),
     )
+
+
+# ---------------------------------------------------------------------------
+# Tenancy ENFORCEMENT backstop (HARDENING H2): the transaction-scoped
+# setting db/29's row-level-security policies read.
+#
+# The builders above remain the PRIMARY policy — one predicate source,
+# threaded into every query path; RLS is the belt under that suspender,
+# not a license to drop WHERE clauses. The setting name lives HERE (not
+# in the migration, not in a caller) for the same one-module reason the
+# builders do: if the policy's vocabulary ever changes, this is the one
+# file that changes with it.
+#
+# THE ASYNCPG CAVEAT IS BINDING. A pooled connection outlives any one
+# borrower, so a session-scoped `SET app.tenant_id` would leak onto the
+# NEXT query that rents the connection — cross-tenant visibility in one
+# direction, silent data-blinding in the other. Hence: bind INSIDE the
+# transaction, transaction-locally. Postgres discards SET LOCAL at COMMIT
+# *and* ROLLBACK, so there is no cleanup path to forget and no exception
+# path that leaves residue on the connection when it returns to the pool.
+#
+# Spelling note: asyncpg cannot parameterize `SET LOCAL x = $1` — SET is
+# a utility statement. set_config(name, value, is_local => TRUE) is its
+# exact parameterized twin (same transaction-local scope), so that is
+# what gets emitted, with both arguments bound like any other statement.
+# ---------------------------------------------------------------------------
+
+TENANT_SETTING = "app.tenant_id"
+
+
+def tenant_setting_statement(
+    tenant_scope: TenantScope,
+) -> tuple[str, tuple[str, str]]:
+    """
+    The (sql, args) pair that binds the tenant inside an open transaction.
+
+    Raises on TenantScope.unrestricted(): binding nothing must be a
+    DELIBERATE act (tenant_transaction()'s hatch below), never a
+    fall-through of an unset scope — same fail-loud rule as
+    scope_predicates()' missing tenant argument.
+    """
+    if tenant_scope.is_unrestricted:
+        raise ValueError(
+            "TenantScope.unrestricted() must not bind "
+            f"{TENANT_SETTING}; use tenant_transaction()'s unrestricted "
+            "hatch instead"
+        )
+    return (
+        "SELECT set_config($1, $2, TRUE)",
+        (TENANT_SETTING, str(tenant_scope.tenant_id)),
+    )
+
+
+@asynccontextmanager
+async def tenant_transaction(pool: Any, tenant_scope: TenantScope):
+    """
+    Open a connection + transaction with the tenant bound INSIDE it.
+
+    Yields the connection; every statement executed in the body runs
+    under row-level security keyed to this tenant (db/29), with the
+    setting guaranteed dead by the time the connection returns to the
+    pool — commit or rollback, see the section note above. The binding
+    is the FIRST statement after BEGIN, so no caller statement can run
+    unscoped-by-setting even momentarily.
+
+    TenantScope.unrestricted() opens the identical plain transaction and
+    binds nothing — the maintenance hatch (integrity provers, backfills),
+    same contract as everywhere else in this module: explicit, visible,
+    never serving a user-originated request.
+
+    Callers STILL build their predicates with the builders above. This
+    wrapper is the backstop's armature, not the primary filter.
+    """
+    if tenant_scope.is_unrestricted:
+        async with pool.acquire() as conn:
+            async with conn.transaction():
+                yield conn
+        return
+
+    sql, args = tenant_setting_statement(tenant_scope)
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            await conn.execute(sql, *args)
+            yield conn
