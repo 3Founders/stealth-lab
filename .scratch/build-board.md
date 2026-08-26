@@ -1600,3 +1600,25 @@ Grounded findings from  3_access.sql/ 4_governance.sql/deps.py review. Sequence:
   original tier). Harness suite unchanged, still 213/213 green (no code
   touched this pass, sweep + analysis only).
   SPEND: $0.0722 this pass; **session-to-date total $1.0780**.
+
+- CORE-A (2026-08-27, eleventh wave): **SECURITY.md + DATA_STATEMENT.md**
+  (founder-requested, repo root — docs only). Closes `demo.md` §3's last
+  unchecked ship-checklist line; box checked there with a pointer.
+  Threat model grounded in real code, not aspirational: bearer token gates
+  WHO reaches the MCP server, not WHAT they can do once in — named the two
+  concrete gaps this actually means (`apply_change_set` ungated write,
+  `solve_task`'s caller-controlled `repo_path`) straight from
+  `server.py`'s own docstrings, plus stdio's by-design no-auth. Redaction
+  section states the module's own honesty verbatim: best-effort known-token
+  + sensitive-path floor, not exhaustive — never softened for the public
+  doc. Data statement's one real disclosure: embedding generation sends
+  already-redacted text to a third-party provider (Voyage/Gemini, caller's
+  own key) — the one network egress point v0.1's shipped path has;
+  distinguished explicitly from telemetry-to-us, of which there is none
+  (no phone-home code path exists at all in v0.1, not even opt-in — so
+  "never train on user traces" is trivially true today and stated as a
+  durable forward commitment, not a feature description). Vulnerability
+  reporting defaults to GitHub private security advisories rather than
+  publishing a personal email — flagging that choice here in case the
+  founder wants a dedicated security@ address instead later, one-line
+  change. No schema/app code touched.

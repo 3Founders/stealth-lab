@@ -62,7 +62,8 @@ advertised; everything else is non-goals (§4).
 
 - [ ] README quickstart works from a clean clone: compose up → add MCP server →
       one task solved twice, second time citing precedent
-- [ ] SECURITY.md + data statement published; uninstall = drop volume
+- [x] SECURITY.md + data statement published; uninstall = drop volume
+      (`SECURITY.md` + `DATA_STATEMENT.md`, repo root, 2026-08-27)
 
 ## 4 · Explicit non-goals for v0.1 (do not claim, do not demo)
 
