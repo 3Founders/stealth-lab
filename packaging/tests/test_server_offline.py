@@ -21,11 +21,12 @@ def test_server_module_imports_without_a_database():
     assert module.app is not None
 
 
-def test_all_eight_tools_registered():
+def test_all_nine_tools_registered():
     module = slc.load_mcp_server_module()
     names = sorted(tool.name for tool in module.server._tool_manager.list_tools())
     assert names == [
         "apply_change_set",
+        "check_procedure",
         "decide_decomposition",
         "decompose_task",
         "detect_conflict_trigger",
