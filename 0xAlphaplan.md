@@ -102,7 +102,7 @@ collide with. Did the cheap parts of A1 + Phase 1a directly instead of waiting:
 
 - Primary channel: board file `.scratch/tau3/board.md` (claims + status; both agents read/write)
 - Strict file ownership — A touches `backend/app/services/*` +
-  `vendor/tau2-bench/src/tau2/domains/banking_knowledge/{retrieval*, stealthlab_bridge, prompts/*}`;
+  `experiments/tau3_bench/_tau2_bench_src/src/tau2/domains/banking_knowledge/{retrieval*, stealthlab_bridge, prompts/*}`;
   B touches only `data/simulations/phase*`, logs, `.scratch/tau3/`. Zero overlap
 - Worktree isolation if either side needs branch-level separation
 - Optional live messaging: claude-peers-mcp; optional collision guard: claude-presence MCP

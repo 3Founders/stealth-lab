@@ -2375,3 +2375,44 @@ Grounded findings from  3_access.sql/ 4_governance.sql/deps.py review. Sequence:
   changed this wave (only new test files plus one stale docstring pointer
   fixed in test_procedure_extraction.py), so this is exactly the expected
   clean result, not a surprise.
+
+- CORE-A (2026-08-27, thirteenth wave): **Band 6 hygiene sweep** (founder-
+  requested, docs only) — four known-stale references closed:
+  (1) `demo.md` C1's evidence line — flagged as stale in the twelfth-wave
+  entry above ("all 23 applied") — now says 30, matching the real
+  `db/` migration count (01–30, WAVE-2/3 hardening added 24–30).
+  (2) `0xAlphaplan.md`'s file-ownership line pointed at
+  `vendor/tau2-bench/...`, a path that doesn't exist in this tree;
+  `git ls-files -s` shows the τ²-bench code is actually a gitlink
+  (mode 160000) at `experiments/tau3_bench/_tau2_bench_src` — updated
+  the anchor to match (submodule isn't initialized in this worktree so
+  the internal `src/tau2/domains/...` subpath past the anchor is
+  unverified, carried forward as-is). (3) `backend/README.md` opened
+  with "# Workflow Debate Platform" and framed the debate/decompose
+  system as the whole product — stale since the pivot to StealthLab
+  (confirmed against `commLLM.md` + root `README.md`/`demo.md`): the
+  debate loop is real and still lives at `app/debate/` (still wired
+  into the MCP tool surface as `detect_conflict_trigger`/
+  `propose_synthesis`/`submit_approval` per `commLLM.md`'s tool table),
+  it just isn't the top-level product anymore. Re-titled to "Backend —
+  debate & decomposition subsystem" with a pointer to root
+  `README.md`/`demo.md` for current framing; left the rest of the doc
+  (setup steps, API table, protocol writeup) untouched — auditing every
+  technical claim in it is a separate, non-zero-cost task, not this one.
+  (4) Root `README.md` had three leftover `backend_v2/backend_v2` /
+  `frontend_v2/frontend_v2` nested-path references (two `cd` lines, one
+  deploy note) from before the repo flattened to plain `backend/` /
+  `frontend/` (confirmed: `backend_v2`/`frontend_v2` don't exist at
+  root) — all three now point at the real paths.
+  **Scope notes (both superseded by this second rebase)**: this entry
+  originally also flagged `backend/README.md` line 49's "frontend_v2
+  folder" wording as the same stale pattern, left out of scope — the
+  first rebase (onto the SHIP/CORE-B/MEASURE batch) showed another lane
+  had already fixed that line concurrently. This second rebase (onto
+  RESEARCH's outside-eye pass, entry directly above) goes further: item
+  (4) itself is now moot — RESEARCH fully rewrote root `README.md` in
+  place, and the rewrite has no `backend_v2`/`frontend_v2` references
+  left anywhere to fix. Net effect after both rebases: items (1)-(3)
+  stand as landed by this wave; item (4)'s specific line-level fix was
+  overtaken by a superseding rewrite before it could matter, which is a
+  fine outcome, not a conflict. No schema/app code touched.

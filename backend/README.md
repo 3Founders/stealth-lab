@@ -1,6 +1,9 @@
-# Workflow Debate Platform
+# Backend — debate & decomposition subsystem
 
-Detect a bottleneck in a company's workflows → debate the fix among
+This backend now serves StealthLab (see root `README.md` / `demo.md` for the
+current product framing: a local-first MCP server giving coding agents earned
+memory). What this doc describes is the debate/decompose subsystem living
+inside it: detect a bottleneck in a company's workflows → debate the fix among
 heterogeneous AI models → evaluate the fix rigorously → apply it only
 after a human approves, fully auditable. V2 adds a public-facing half:
 anyone can describe a problem in plain language and get back a proposed
