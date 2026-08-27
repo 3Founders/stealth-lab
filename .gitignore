@@ -1,6 +1,14 @@
 backend/.env
 experiments/swebench_pro/__pycache__
-experiments/after/__pycache__backend/.env
+experiments/after/__pycache__
+
+# Large local-only media (founder/investor video etc.) -- never push binary
+# media to this repo. Previously asserted as already-ignored in per-worktree
+# CLAUDE.md kickoff files, but no such pattern actually existed here (caught
+# 2026-08-27, infra lane audit -- a 56MB FounderVideo.mov was sitting
+# untracked at repo root with nothing stopping a future `git add -A` from
+# sweeping it in).
+*.mov
 
 # Real hook collector output (backend/scripts/hook_wrapper.py,
 # example_hook_settings.json) -- session tool_input/tool_output content,
