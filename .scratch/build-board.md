@@ -711,6 +711,52 @@ single synthesized reports into `.scratch/research/`.
    from full paper text vs what the papers genuinely don't show (e.g. none
    of the four publish their actual judge/reflector prompt text — checked
    directly, not assumed). No live model calls; pure literature work.)*
+8. `[x]` claimed+done @2026-08-27 — research lane (this worktree)
+   **Outside-eye pass on demo.md/README for first-time-user/investor
+   clarity** (founder request, direct chat, repo-root docs, not board-queued
+   before this wave).
+   *(Report: `.scratch/research/outside-eye-demo-readme-pass.md`. TOP
+   FINDING: repo-root `README.md` (untouched since pre-pivot commit
+   `2ce3c7e`) describes a completely different, superseded product —
+   "Task Graph + Ontology" workflow-debate platform, zero mention of MCP/
+   traces/procedures/refusal — while `demo.md` defines the current v0.1
+   earned-memory MCP product; a first-time reader or investor gets two
+   unreconciled stories with no link between them. `backend/README.md` +
+   `backend/README_MCP_SERVER.md` carry the SAME old-product description
+   but are accurate to the code that runs today — grepped every
+   `@server.tool()` in `backend/app/mcp_server/server.py`: the 8 real tools
+   ARE the old workflow-debate surface (retrieve_precedent/apply_change_set/
+   propose_synthesis/solve_task/detect_conflict_trigger/decompose_task/
+   decide_decomposition/submit_approval), matching those two docs and
+   `packaging/README.md` (SHIP, accurate) exactly. SECOND FINDING:
+   `demo.md`'s own headline differentiator C5 (`check_procedure` ->
+   `ALLOW`/`WOULD_REFUSE`) has zero code matches for either identifier
+   anywhere in `backend/` — the mechanism is real and independently
+   verified (this lane's own model-decides-verification.md, a genuine model
+   refusing with situation-specific reasons) but runs inside
+   `experiments/harness/mcp_surface.py`'s stub, not the production server;
+   `commLLM.md`'s own tool table already marks check_procedure "**new**"
+   but demo.md's C1-C5 table doesn't carry that distinction forward. Same
+   pattern smaller: C1's `docker compose up -d` has no docker-compose.yml
+   anywhere in the repo (checklist's own `[ ]` already honest about this;
+   the C1 row wasn't). THIRD: demo.md claims Apache-2.0 at ship, no LICENSE
+   file exists anywhere — flagged, not fabricated (founder/legal call).
+   BONUS: commLLM.md (demo.md's own positioning companion link) was saved
+   as UTF-16LE, rendering as unreadable spaced garbage in any UTF-8 reader
+   — fixed the encoding (content otherwise untouched); a separate, older
+   layer of mojibake on em-dashes/arrows/section-marks survives (~12 distinct
+   garbled sequences, couldn't confidently map all back without guessing) —
+   flagged for the owner to regenerate rather than guessed at. CHANGES MADE
+   DIRECTLY: commLLM.md encoding fix; demo.md — one non-restructuring note
+   added under the C1-C5 table naming both gaps, table itself untouched;
+   README.md — full rewrite, two-layer honest structure (what's runnable
+   today = the real 8-tool server + packaging CLI, both verified against
+   server.py; what it's becoming = demo.md's v0.1 story, explicitly labeled
+   as such), links out to backend/README_MCP_SERVER.md + packaging/README.md
+   rather than re-deriving their setup detail. NOT committed to lane/research
+   — repo-root docs, no lane owns README.md today (same posture as CORE-A's
+   SECURITY.md/DATA_STATEMENT.md landing), flagging for founder to route
+   rather than assuming this lane's normal commit path applies.)*
 
 ### Lane SHIP (owns `packaging/**`) â€” activates after CORE-A merges 1.7
 2. `[x]` done @2026-08-26 â€” branch `lane/ship` **P2 - Minimal status surface**:
@@ -2252,3 +2298,28 @@ Grounded findings from  3_access.sql/ 4_governance.sql/deps.py review. Sequence:
   priced after the fix above); session-to-date PAID total unchanged at
   $1.0780. Harness suite 241/241 green [236 prior + 5 new]. Zero backend
   edits.
+
+- RESEARCH (2026-08-27, outside-eye pass on demo.md/README): done - see
+  Lane RESEARCH item 8 and
+  .scratch/research/outside-eye-demo-readme-pass.md. One-line summary for
+  the founder: repo-root README.md described a completely different,
+  pre-pivot product with no link to demo.md's current earned-memory
+  positioning (last touched pre-pivot, commit 2ce3c7e) - rewritten in place
+  with an honest two-layer structure (what's actually runnable today = the
+  real 8-tool workflow-debate MCP server, verified against server.py's own
+  @server.tool() decorators, vs. what demo.md's v0.1 slice is building
+  toward). Second finding: demo.md's own C5 differentiator claim
+  (check_procedure / WOULD_REFUSE) has zero code matches anywhere in
+  backend/ - real and independently verified in the harness
+  (model-decides-verification.md) but not yet wired into the production MCP
+  server; added one non-restructuring note under demo.md's table naming
+  this plus the C1 docker-compose gap, left the table itself untouched
+  since which fix is right (build the wrapper vs. relabel the claim) is a
+  product call, not mine. Also: no LICENSE file despite demo.md's
+  Apache-2.0 claim (flagged, not fabricated); commLLM.md was saved as
+  UTF-16LE and unreadable - fixed the encoding, left a separate older layer
+  of punctuation mojibake (~12 sequences) unfixed rather than guess. Changes
+  made directly: commLLM.md (encoding), demo.md (one added note),
+  README.md (full rewrite) - none committed to lane/research since no lane
+  owns README.md today; routing/commit is the founder's call, same posture
+  as CORE-A's SECURITY.md/DATA_STATEMENT.md landing.

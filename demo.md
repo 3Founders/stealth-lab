@@ -26,6 +26,19 @@ advertised; everything else is non-goals (§4).
 | C4 | Reuse you can see | `mcp_server/server.py` tool `retrieve_precedent` (hybrid RRF + graph expansion over pgvector HNSW) returns procedure + confidence + provenance chain | retrieval leave-one-out sanity pattern (n=400, p=.0066 [T-24]) |
 | C5 | Refusal with receipts | `check_procedure` → `ALLOW` / `WOULD_REFUSE` citing the exact superseded claim ids + changesets. **Audit mode only**: the agent is informed, not blocked; every refusal lands in the audit log | precondition-gate adversarial tests (fail-closed cascade); refusal payload shape pinned by tests |
 
+**Known doc-accuracy gaps (outside-eye pass, 2026-08-27 — full detail in
+`.scratch/research/outside-eye-demo-readme-pass.md`):** repo-wide grep found
+no `check_procedure` / `WOULD_REFUSE` identifiers anywhere in `backend/`
+today — the C5 mechanism is proven in `experiments/harness/`'s
+model-decides sweep (a real model genuinely refusing, independently
+verified) but is not yet wired into `backend/app/mcp_server/server.py` as a
+callable tool, so an agent can't reach it through the server this table
+otherwise describes as live. Separately, C1's `docker compose up -d` has no
+`docker-compose.yml` anywhere in the repo yet (checklist's own `[ ]` box
+already reflects this; the C1 row above didn't). Neither gap changes what's
+real — the underlying engine work is genuinely shipped and tested — but a
+reader shouldn't come away thinking either is reachable by an agent today.
+
 ## 2 · Production posture (non-negotiable at ship)
 
 1. **Loopback-first**: server binds `127.0.0.1`; bearer token is authentication,
