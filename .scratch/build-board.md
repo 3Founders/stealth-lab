@@ -1424,6 +1424,64 @@ single synthesized reports into `.scratch/research/`.
    reproducible now on main and will surface in every full-suite CI-style
    run, not just occasionally.
 
+8. `[x]` done @2026-08-28 — branch `lane/ship` **exclude root-level
+   `test_*_live.py` scripts from pytest collection** (direct kickoff,
+   scoped grant on `backend/conftest.py` — otherwise-unowned root-of-tree
+   file, plus one new test in `backend/tests/`). Same DATABASE_URL-leak
+   FAMILY as item 7's post-push finding and `1897abc` (session-wide
+   `tests/conftest.py` guard) — a DIFFERENT, still-open root cause,
+   confirmed by independently re-reading the actual files before writing
+   anything: `1897abc` patches `dotenv.load_dotenv` so `.env`'s real
+   DATABASE_URL can't leak in via `app/mcp_server/server.py`'s
+   module-level `load_dotenv()` call; this bug never touches
+   `load_dotenv` at all. 7 of the 8 root-level `backend/test_*_live.py`
+   manual live-DB smoke scripts (all but `test_tasks_extension_live.py`)
+   set a hardcoded, unconditional
+   `os.environ["DATABASE_URL"] = "postgresql://postgres:stealthlab@localhost:5432/stealthlab_local"`
+   at MODULE level, no restore guard — fires the instant pytest *imports*
+   the file to look for tests, even though none of the 8 define any
+   `test_*` function pytest would collect (they're meant to be run
+   directly via `python test_whatever_live.py`, never via pytest).
+   `1897abc`'s fix lives under `backend/tests/conftest.py`, which only
+   loads when pytest collects `backend/tests/` — never protected the
+   OTHER invocation shape, a bare `pytest -q`/`pytest .` from `backend/`,
+   which both CORE-A (payload-cap wave note) and CORE-B (item 12) hit by
+   accident and board-flagged without fixing.
+   CLEAN-TREE REPRO FIRST, before any fix (per kickoff's proof
+   requirement): bare `pytest -q` from `backend/` on the rebased,
+   pre-fix tree — **112 failed, 1400 passed, 2 skipped** (292.84s),
+   matching CORE-A's ~111-112 estimate.
+   *(Shipped: `backend/conftest.py` — `collect_ignore_glob =
+   ["test_*_live.py"]`, pytest's own standard exclusion mechanism, loaded
+   during initial conftest discovery before any `backend/` test module is
+   imported, so it can't lose a collection-order race regardless of
+   invocation directory. Did NOT touch any of the 7 scripts' own logic —
+   the optional defense-in-depth `if __name__ == "__main__":` follow-up
+   (Question #2 in the kickoff) was skipped per its own stated default;
+   flagging it here as a nice-to-have for whoever next touches those 7
+   files. AFTER the fix: bare `pytest -q` from `backend/` — **1399
+   passed, 115 skipped, 1 failed** (381.23s), the one failure
+   (`test_sandbox_executor.py::test_tmp_directory_is_cleaned_up_after_run`)
+   confirmed pre-existing/flaky and unrelated — passes clean in isolation
+   (0.16s), a Windows tmp-cleanup timing test, no DATABASE_URL/collection
+   connection to this fix. Documented ship-checklist command (`pytest
+   tests -q`) unaffected as predicted: **1400 passed / 115 skipped / 0
+   failed** (379.48s) — identical scope, zero regressions, matches
+   `1897abc`'s own last clean number. New regression test
+   `tests/test_live_scripts_not_collected.py` (offline, no DB): runs a
+   real `pytest --collect-only -q` in a subprocess scoped to `backend/`
+   with no path filter — the exact bare-invocation shape that used to
+   leak — asserts none of the 8 root-level `*_live.py` filenames appear
+   in collected output while `backend/tests/` items still do (glob
+   doesn't over-exclude). Diff is exactly `backend/conftest.py` +
+   `backend/tests/test_live_scripts_not_collected.py`, confirmed via
+   `git status --porcelain`; none of the 7 live scripts edited.
+   Blocking questions from the kickoff: both defaults applied, no
+   deviation — (1) left `tests/conftest.py`'s load_dotenv guard separate
+   from this root conftest, no load_dotenv-style leakage seen post-fix,
+   so no reason to revisit; (2) skipped the optional
+   `if __name__ == "__main__":` moves, flagged above as follow-up.)*
+
 ### Lane INFRA - Docker boot test (opened 2026-08-27, scoped grant for this task)
 
 Scoped ownership for this task only: `docker-compose.yml`, `backend/Dockerfile`,
