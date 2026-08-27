@@ -3,9 +3,10 @@ DB-free unit tests for procedure_extraction's pure/near-pure pieces:
 derive.py's step/failure-condition derivation AND its load-bearing
 relevance filter (ticket 1.8a -- pure functions, proven offline),
 validators.py's rules including V6 (ticket 1.8b), slot_binders.py's
-coverage logic, and schema.py's contract. Live-DB tests for
-derive_preconditions/derive_scope live in
-test_procedure_extraction_e2e.py (they need real project_state()).
+coverage logic, and schema.py's contract. FakePool coverage of
+derive_preconditions/derive_scope's real project_state() round trip
+lives in test_derive_offline.py; live-DB proof against a real Postgres
+instance is test_procedure_extraction_e2e.py.
 """
 import pytest
 from pydantic import ValidationError
