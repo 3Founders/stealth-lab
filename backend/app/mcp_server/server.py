@@ -8,6 +8,13 @@ StealthLab MCP server. Four tools:
     section. Reuses RepoSandbox/Agent verbatim but adds real new
     orchestration (a generic, non-SWE-bench-specific instance/prompt path)
     on top.
+  - check_procedure: demo.md C5's audit-mode ALLOW/WOULD_REFUSE tool; thin
+    wrapper around app.services.applicability.check_procedure_reuse().
+
+("Four tools" above is stale relative to the full @server.tool() list this
+file actually defines today -- a pre-existing doc-drift gap, not one this
+addition introduces or fixes; flagged on the board rather than silently
+expanded into an out-of-scope rewrite.)
 
 Built against the real, installed mcp==2.0.0 SDK (2026-07-28 spec),
 verified by direct introspection of the installed package -- not against
@@ -784,6 +791,62 @@ async def detect_conflict_trigger(new_node_id: str, ctx: Context) -> str:
         f"Conflict detected -- trigger created: {trigger_id}\n"
         f"Hand this trigger_id to propose_synthesis to open the debate."
     )
+
+
+@server.tool()
+async def check_procedure(procedure_id: str, query: str, ctx: Context) -> str:
+    """
+    demo.md C5: ALLOW or WOULD_REFUSE reuse of a NAMED procedure right now,
+    citing the real hard-constraint / capability evidence behind the
+    verdict. AUDIT MODE ONLY (demo.md §2 item 3 / §4) -- this INFORMS the
+    calling agent, it never blocks a call; nothing here stops you from
+    proceeding, the verdict is yours to act on.
+
+    Thin wrapper, same discipline as retrieve_precedent/apply_change_set:
+    ALL decision logic is app.services.applicability.check_procedure_reuse(),
+    which reuses (does not reinvent) the SAME non-compensatory
+    check_hard_constraints() cascade find_applicable_procedures() runs, plus
+    procedure_extraction/failure_handlers.capability_for_stream() -- the
+    SAME evidence-stream recompute the capability_demotion failure handler
+    already uses. See that function's own docstring for exactly what is and
+    isn't reused (incl. why precondition_gate.py's postcondition check does
+    NOT apply here).
+
+    procedure_id: the STABLE procedure handle (`procedures.procedure_id`,
+    constant across a version chain) -- NOT a per-version row id. Resolved
+    here to its current live version (t_invalid IS NULL).
+    query: plain-language description of what you're about to do with this
+    procedure. Accepted for audit-log / future scope-narrowing use; HONEST
+    LIMIT stated plainly -- it does not (yet) feed the decision itself, since
+    scope/exclusion matching needs STRUCTURED scope, not free text, and
+    nothing here extracts structure from a natural-language query (same
+    honest limit check_procedure_reuse's own docstring states for
+    precondition_gate.py).
+
+    Returns the pinned demo.md §3 JSON contract exactly:
+    {"verdict": "ALLOW"|"WOULD_REFUSE", "procedure": ..., "reason": ...,
+     "evidence": [...], "capability_note": ...}
+    On a bad/unknown procedure_id: "REFUSED: ..." (a caller error, not a
+    verdict about a real procedure).
+    """
+    pool = ctx.request_context.lifespan_context["pool"]
+
+    from app.services.applicability import ProcedureNotFound, check_procedure_reuse
+
+    try:
+        result = await check_procedure_reuse(
+            pool, procedure_id=procedure_id, access_scope=AccessScope.unrestricted(),
+        )
+    except ProcedureNotFound as exc:
+        return f"REFUSED: {exc}"
+
+    return json.dumps({
+        "verdict": result.verdict,
+        "procedure": result.procedure,
+        "reason": result.reason,
+        "evidence": result.evidence,
+        "capability_note": result.capability_note,
+    })
 
 
 @server.tool()

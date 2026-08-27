@@ -39,6 +39,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Optional
+from uuid import UUID
 
 import asyncpg
 
@@ -410,3 +411,270 @@ async def find_applicable_procedures(
     # they're still real, hard-filter-passing candidates.
     unranked_survivors = [s for s in survivors if str(s["id"]) not in ranked_ids]
     return result_list + unranked_survivors[: max(0, limit - len(result_list))]
+
+
+# ===========================================================================
+# demo.md C5 -- "refusal with receipts": ALLOW / WOULD_REFUSE a SPECIFICALLY
+# NAMED procedure right now, for the MCP server's check_procedure tool
+# (backend/app/mcp_server/server.py -- thin wrapper, no decision logic of
+# its own). Audit mode only (demo.md §2 item 3 / §4): this is diagnostic
+# output for the calling agent, it never blocks anything.
+#
+# Deliberately reuses, not reinvents:
+#   - check_hard_constraints() above IS the applicability decision -- same
+#     non-compensatory cascade an automatic find_applicable_procedures()
+#     call would run, just against ONE named procedure instead of a
+#     candidate pool.
+#   - procedure_extraction/failure_handlers.capability_for_stream() for the
+#     capability_note -- the SAME evidence-stream recompute
+#     handle_capability_demotion already uses over the SAME
+#     target_type='procedure' rows procedure_evidence_stats (db/24) counts,
+#     imported lazily below to avoid a real import cycle: that package's
+#     __init__.py itself imports THIS module (`_scope_matches`), so a
+#     module-level import here would try to finish loading applicability.py
+#     before it has, which Python cannot do.
+#
+# NOT reused: precondition_gate.py's postcondition Jaccard check. That gate
+# needs STRUCTURED postcondition tags on BOTH sides (candidate AND query);
+# `query` here is free natural-language text with no extracted tags, so
+# calling postconditions_compatible(tags, None) would trivially return True
+# every time (query_postconditions=None short-circuits it) -- dead code
+# dressed up as a check, not a real gate. It stays a real gate at its
+# actual call site (hierarchy.py's batch match, where both sides really do
+# carry structured tags).
+# ===========================================================================
+
+# Ticket 13's own named exception: "verified gates automatic retrieval; a
+# candidate procedure remains explicitly invocable." check_procedure's
+# whole point is a caller naming ONE procedure_id explicitly -- exactly
+# that case, not automatic candidate selection -- so require_verified is
+# deliberately False here, unlike find_applicable_procedures' default.
+# Refusing on verification_state/approval_status alone would conflate "not
+# yet promoted" with "actively unsafe to reuse", which is exactly the
+# distinction ticket 13 draws; the unresolved "not enough evidence yet"
+# question is answered separately, honestly, by capability_note below.
+CHECK_PROCEDURE_REQUIRE_VERIFIED = False
+
+
+class ProcedureNotFound(Exception):
+    """procedure_id didn't resolve to a live (t_invalid IS NULL) procedures
+    row -- a caller error (wrong/stale id), distinct from a WOULD_REFUSE
+    verdict about a real procedure that does exist."""
+
+
+@dataclass
+class ProcedureVerdict:
+    """demo.md §3's pinned check_procedure response shape, field for
+    field -- the MCP tool json.dumps()'s this directly, unmodified."""
+
+    verdict: str            # "ALLOW" | "WOULD_REFUSE"
+    procedure: str
+    reason: str
+    evidence: list[str]
+    capability_note: str
+
+
+def _parse_precondition_constraint(constraint: str) -> dict[str, Optional[str]]:
+    """Reverses ApplicabilityResult's own
+    f"precondition:subject={s},predicate={p},object={o}" format string.
+    v1, deliberately narrow like precondition_gate.py's own tag matching:
+    a subject/predicate/object containing a literal ',' or '=' would
+    confuse this parser -- no real procedure data does today (confirmed by
+    the same grep discipline this codebase already applies elsewhere), so
+    this is a disclosed limit, not silently assumed safe."""
+    body = constraint[len("precondition:"):]
+    parts: dict[str, Optional[str]] = {}
+    for piece in body.split(","):
+        if "=" not in piece:
+            continue
+        key, _, value = piece.partition("=")
+        parts[key] = value if value != "None" else None
+    return parts
+
+
+async def _precondition_narrative(
+    pool: asyncpg.Pool, constraint: str, procedure_row_id: str,
+) -> tuple[str, list[str]]:
+    """Builds the demo.md-style rich reason for a failed precondition:
+    names the real current claim and, when one exists, the real claim
+    that superseded it (claims.py's relate_claims() SUPERSEDES edge --
+    read-only here, no new write logic).
+
+    HONEST GAP, disclosed rather than papered over: 1.9c's universal
+    ChangeSet coverage explicitly scoped supersession of knowledge_nodes
+    OUT of v1 (db/25_universal_changesets.sql's own header: "Supersession
+    and revision paths for knowledge_nodes... arrive with their §20
+    revision machinery"). relate_claims() writes the SUPERSEDES edge
+    directly, with no change_sets row -- so there is no changeset id to
+    cite for a claim supersession today. evidence cites the real claim
+    ids (edges.source_id/target_id) instead of a changeset id in that
+    case; it is honest, verifiable evidence, just not the SAME kind
+    demo.md's illustrative example shows.
+    """
+    parts = _parse_precondition_constraint(constraint)
+    subject, predicate, expected = parts.get("subject"), parts.get("predicate"), parts.get("object")
+
+    claim_row = await pool.fetchrow(
+        "SELECT id, properties FROM knowledge_nodes "
+        "WHERE node_type = 'claim' AND properties->>'subject' = $1 "
+        "AND properties->>'predicate' = $2 AND t_invalid IS NULL "
+        "ORDER BY t_valid DESC LIMIT 1",
+        subject, predicate,
+    )
+    if claim_row is None:
+        return (
+            f"no claim satisfies precondition subject={subject!r} predicate={predicate!r} "
+            f"object={expected!r} -- CWA fail-closed (state.py/ticket 10: 'no claim found' "
+            f"and 'precondition unsatisfied' are the same answer)",
+            [f"procedure:{procedure_row_id}"],
+        )
+
+    claim_id = str(claim_row["id"])
+    props = dict(claim_row["properties"] or {})
+    if props.get("truth_state") != "OUT":
+        # Believed IN, but the recorded object disagrees with what this
+        # procedure's precondition requires -- a real mismatch, not a
+        # supersession story.
+        return (
+            f"precondition subject={subject!r} predicate={predicate!r} currently holds "
+            f"object={props.get('object')!r}, not the required {expected!r} (claim {claim_id})",
+            [f"claim:{claim_id}"],
+        )
+
+    superseder = await pool.fetchrow(
+        "SELECT source_id FROM edges WHERE edge_type = 'SUPERSEDES' "
+        "AND target_id = $1::uuid AND target_table = 'knowledge_nodes' "
+        "ORDER BY id DESC LIMIT 1",
+        claim_row["id"],
+    )
+    if superseder is None:
+        return (
+            f"precondition claim {claim_id} (subject={subject!r} predicate={predicate!r} "
+            f"object={expected!r}) is no longer believed (truth_state=OUT) -- no SUPERSEDES "
+            f"edge recorded against it",
+            [f"claim:{claim_id}"],
+        )
+
+    superseder_id = str(superseder["source_id"])
+    return (
+        f"precondition claim {claim_id} (subject={subject!r} predicate={predicate!r} "
+        f"object={expected!r}) superseded by {superseder_id}",
+        [f"claim:{claim_id}", f"claim:{superseder_id}"],
+    )
+
+
+async def _verdict_narrative(
+    pool: asyncpg.Pool, procedure: dict, result: ApplicabilityResult,
+) -> tuple[str, list[str]]:
+    row_id = str(procedure["id"])
+    if result.applicable:
+        n_preconditions = len(procedure.get("preconditions") or [])
+        return (
+            f"all real hard constraints satisfied (temporal validity, staleness, "
+            f"availability, scope/exclusions, {n_preconditions} precondition(s), "
+            f"invariants) -- require_verified={CHECK_PROCEDURE_REQUIRE_VERIFIED} "
+            f"(explicit invocation, ticket 13)",
+            [f"procedure:{row_id}"],
+        )
+
+    constraint = result.failed_constraints[0] if result.failed_constraints else "unknown"
+
+    if constraint == "staleness":
+        return (f"procedure is marked stale (applicability.py's staleness axis, ticket 13)",
+                [f"procedure:{row_id}"])
+    if constraint == "temporal_validity":
+        return (f"procedure version is no longer temporally valid as of this call "
+                f"(t_invalid={procedure.get('t_invalid')})", [f"procedure:{row_id}"])
+    if constraint == "availability":
+        return (f"procedure availability is {procedure.get('availability')!r}, not 'active'",
+                [f"procedure:{row_id}"])
+    if constraint == "scope":
+        return (f"caller's current context does not satisfy this procedure's required "
+                f"scope ({procedure.get('scope')})", [f"procedure:{row_id}"])
+    if constraint == "exclusions":
+        return ("caller's current context matches a recorded exclusion on this procedure",
+                [f"procedure:{row_id}"])
+    if constraint.startswith("precondition:"):
+        return await _precondition_narrative(pool, constraint, row_id)
+    if constraint.startswith("invariant:"):
+        return (f"numeric invariant violated: {constraint[len('invariant:'):]}",
+                [f"procedure:{row_id}"])
+    return (f"hard constraint failed: {constraint}", [f"procedure:{row_id}"])
+
+
+async def check_procedure_reuse(
+    pool: asyncpg.Pool,
+    *,
+    procedure_id: str,
+    access_scope: Optional[AccessScope] = None,
+) -> ProcedureVerdict:
+    """
+    demo.md C5's real decision core. ALLOW or WOULD_REFUSE reuse of the
+    procedure named by `procedure_id` (the STABLE `procedures.procedure_id`
+    handle, constant across a version chain -- NOT a per-version row id),
+    resolved to its current live version (t_invalid IS NULL).
+
+    Raises ProcedureNotFound if procedure_id is not a valid UUID or does
+    not resolve to a live row -- the MCP tool wrapper turns that into a
+    plain "REFUSED: ..." string, same style as this server's other tools'
+    bad-input handling.
+    """
+    # Lazy import -- see this section's header comment for why a
+    # module-level import here would be circular.
+    from app.services.procedure_extraction.failure_handlers import (
+        DEMOTION_EVIDENCE_TYPES, DEMOTION_STREAM_LIMIT, capability_for_stream,
+    )
+
+    try:
+        proc_uuid = UUID(str(procedure_id))
+    except (ValueError, AttributeError, TypeError) as exc:
+        raise ProcedureNotFound(f"{procedure_id!r} is not a valid procedure id (UUID)") from exc
+
+    row = await pool.fetchrow(
+        "SELECT * FROM procedures WHERE procedure_id = $1::uuid AND t_invalid IS NULL",
+        proc_uuid,
+    )
+    if row is None:
+        raise ProcedureNotFound(f"no live procedure for procedure_id={procedure_id}")
+    procedure = dict(row)
+
+    result = await check_hard_constraints(
+        pool, procedure, current_scope={}, access_scope=access_scope,
+        require_verified=CHECK_PROCEDURE_REQUIRE_VERIFIED,
+    )
+    reason, evidence = await _verdict_narrative(pool, procedure, result)
+
+    # Same attempt discipline procedure_evidence_stats (db/24) and
+    # handle_capability_demotion already use: target_type='procedure',
+    # joined on THIS version row's own (id, version) pair.
+    types_sql = ", ".join(f"'{t}'" for t in DEMOTION_EVIDENCE_TYPES)
+    stream_rows = await pool.fetch(
+        f"""
+        SELECT outcome_status, context_key, independence_group
+        FROM evidence
+        WHERE target_type = 'procedure'
+          AND target_id = $1::uuid AND target_version = $2
+          AND t_invalid IS NULL
+          AND direction = 'supports'
+          AND evidence_type IN ({types_sql})
+          AND outcome_status IN ('success', 'failure')
+        ORDER BY t_created ASC, id ASC
+        LIMIT {int(DEMOTION_STREAM_LIMIT)}
+        """,
+        procedure["id"], procedure["version"],
+    )
+    capability = capability_for_stream("procedure", str(procedure["id"]), stream_rows)
+    routing = capability.routing.value if hasattr(capability.routing, "value") else str(capability.routing)
+    capability_note = (
+        f"{capability.success_count} successes / {capability.evidence_count} attempts "
+        f"recorded (P_lower={capability.p_estimate:.2f}, level={capability.level_label}, "
+        f"routing={routing})"
+    )
+
+    return ProcedureVerdict(
+        verdict="ALLOW" if result.applicable else "WOULD_REFUSE",
+        procedure=procedure.get("name") or str(procedure_id),
+        reason=reason,
+        evidence=evidence,
+        capability_note=capability_note,
+    )
