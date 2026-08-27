@@ -178,8 +178,16 @@ async def phase_b(pool, embedder, procedure_row: dict) -> None:
     # role here: both are cold-start-gated off system-wide until >=1
     # VERIFIED procedure exists, which is never true immediately after a
     # fresh extraction, regardless of which retrieval function is called.
+    # A real current_scope satisfying whatever `scope` derive_scope() put
+    # on this procedure (language derived from the repo probe, ticket 12
+    # is python here) -- without this, check_hard_constraints' scope gate
+    # (which runs BEFORE the precondition cascade) would always fail
+    # first against a real scoped procedure, hiding Phase B's actual
+    # precondition-break story behind an unrelated scope mismatch.
+    current_scope = {"language": ["python"]}
     before = await check_procedure_reuse(
-        pool, procedure_id=procedure_row["procedure_id"], access_scope=AccessScope.unrestricted(),
+        pool, procedure_id=procedure_row["procedure_id"], current_scope=current_scope,
+        access_scope=AccessScope.unrestricted(),
     )
     print(f"Phase B: check_procedure BEFORE breaking anything -> {before.verdict} "
           f"({before.reason})")
@@ -246,7 +254,8 @@ async def phase_b(pool, embedder, procedure_row: dict) -> None:
           f"{retirement_claim_id} (SUPERSEDES edge written, truth_state flipped IN -> OUT)")
 
     after = await check_procedure_reuse(
-        pool, procedure_id=procedure_row["procedure_id"], access_scope=AccessScope.unrestricted(),
+        pool, procedure_id=procedure_row["procedure_id"], current_scope=current_scope,
+        access_scope=AccessScope.unrestricted(),
     )
     print(f"Phase B: check_procedure AFTER breaking the precondition -> {after.verdict}")
     print(f"  reason: {after.reason}")

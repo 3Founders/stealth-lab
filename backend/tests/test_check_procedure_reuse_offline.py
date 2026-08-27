@@ -231,6 +231,48 @@ def test_precondition_claim_superseded_names_both_claims_demo_md_style():
     assert result.evidence == [f"claim:{CLAIM_ID}", f"claim:{SUPERSEDER_ID}"]
 
 
+def test_scoped_procedure_with_no_current_scope_refuses_on_scope_not_precondition():
+    """Pins the OLD (still-correct-in-isolation) behavior: caller supplies
+    no current_scope (the default), procedure has a real scope
+    requirement -- the scope gate fails FIRST, before the precondition
+    cascade ever runs. This is the contrast case for
+    test_scoped_procedure_with_matching_current_scope_reaches_precondition_cascade
+    below: same procedure, only current_scope differs, and the verdict's
+    failing constraint must differ too."""
+    procedure = _procedure(
+        scope={"language": ["python"]},
+        preconditions=[{"subject": "project:p", "predicate": "has_test_runner", "object": "pytest"}],
+    )
+    pool = FakePool(procedure=procedure)
+    result = _run(check_procedure_reuse(pool, procedure_id=PROC_STABLE_ID))
+    assert result.verdict == "WOULD_REFUSE"
+    assert "required scope" in result.reason
+    # Scope short-circuits before the precondition claim lookup ever runs.
+    assert not any("FROM knowledge_nodes WHERE node_type = 'claim'" in sql
+                   for sql, _ in pool.fetchrow_calls)
+
+
+def test_scoped_procedure_with_matching_current_scope_reaches_precondition_cascade():
+    """The real bug this test pins (found running bootstrap_demo.py): a
+    caller that DOES supply a current_scope satisfying the procedure's
+    scope requirement must have that scope gate pass and fall through to
+    the real precondition cascade -- not get short-circuited on scope
+    regardless of what current_scope says. Same procedure as the test
+    above, only current_scope now matches; the failing constraint must
+    flip from scope to the real broken precondition."""
+    procedure = _procedure(
+        scope={"language": ["python"]},
+        preconditions=[{"subject": "project:p", "predicate": "has_test_runner", "object": "pytest"}],
+    )
+    pool = FakePool(procedure=procedure, project_state_claims=[], claim=None)
+    result = _run(check_procedure_reuse(
+        pool, procedure_id=PROC_STABLE_ID, current_scope={"language": ["python"]},
+    ))
+    assert result.verdict == "WOULD_REFUSE"
+    assert "no claim satisfies precondition" in result.reason
+    assert "CWA fail-closed" in result.reason
+
+
 def test_precondition_claim_out_with_no_superseder_edge_discloses_the_gap_honestly():
     procedure = _procedure(preconditions=[
         {"subject": "project:p", "predicate": "pydantic_version", "object": "v1"},

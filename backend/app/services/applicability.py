@@ -606,6 +606,7 @@ async def check_procedure_reuse(
     pool: asyncpg.Pool,
     *,
     procedure_id: str,
+    current_scope: Optional[dict] = None,
     access_scope: Optional[AccessScope] = None,
 ) -> ProcedureVerdict:
     """
@@ -613,6 +614,16 @@ async def check_procedure_reuse(
     procedure named by `procedure_id` (the STABLE `procedures.procedure_id`
     handle, constant across a version chain -- NOT a per-version row id),
     resolved to its current live version (t_invalid IS NULL).
+
+    `current_scope`: caller's real current task context, forwarded
+    unchanged to check_hard_constraints()'s own `current_scope` param
+    (see that function's docstring). Defaults to None/{} -- unrestricted
+    -- so existing callers that don't have a real scope to supply (and
+    the offline test suite) are unaffected. A procedure with a real
+    `scope` requirement WILL fail the scope gate before ever reaching the
+    precondition cascade if the caller doesn't supply a current_scope
+    that satisfies it -- pass the real one when the point of the call is
+    to exercise preconditions, not scope.
 
     Raises ProcedureNotFound if procedure_id is not a valid UUID or does
     not resolve to a live row -- the MCP tool wrapper turns that into a
@@ -639,7 +650,7 @@ async def check_procedure_reuse(
     procedure = dict(row)
 
     result = await check_hard_constraints(
-        pool, procedure, current_scope={}, access_scope=access_scope,
+        pool, procedure, current_scope=current_scope, access_scope=access_scope,
         require_verified=CHECK_PROCEDURE_REQUIRE_VERIFIED,
     )
     reason, evidence = await _verdict_narrative(pool, procedure, result)
@@ -670,6 +681,13 @@ async def check_procedure_reuse(
         f"recorded (P_lower={capability.p_estimate:.2f}, level={capability.level_label}, "
         f"routing={routing})"
     )
+    # At 0 recorded attempts, `routing` is just capability_for_stream's
+    # generic no-evidence-yet default -- it does NOT drive this verdict
+    # (result.applicable does, above), but sat next to a fresh ALLOW it
+    # reads as self-contradictory ("ALLOW ... routing=refuse_reuse").
+    # Disclose the non-relationship rather than let it look like a typo.
+    if capability.evidence_count == 0:
+        capability_note += " -- routing is evidence-based guidance, unrelated to this verdict"
 
     return ProcedureVerdict(
         verdict="ALLOW" if result.applicable else "WOULD_REFUSE",
