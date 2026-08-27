@@ -821,6 +821,48 @@ single synthesized reports into `.scratch/research/`.
    — repo-root docs, no lane owns README.md today (same posture as CORE-A's
    SECURITY.md/DATA_STATEMENT.md landing), flagging for founder to route
    rather than assuming this lane's normal commit path applies.)*
+9. `[x]` claimed+done @2026-08-27 — research lane (this worktree) **Verdict on
+   Chaitanya's infra-report knock-on claim** ("Band 2's founding-loop exit
+   criterion is still unexercised on a fresh DB", from `bootstrap_demo.py`'s
+   gap — founder request, direct chat).
+   *(Report: `.scratch/research/band2-founding-loop-exit-criterion-review.md`.
+   VERDICT: genuine gap, narrowly scoped. `ROADMAP.md`'s Band 2 exit-criteria
+   list has exactly 4 bullets; bullets 3 (TMS readability) and 4
+   (replayability) map cleanly onto `BAND2_CLOSURE_REVIEW.md`'s items 7 and 8
+   — those are correctly closed, no issue found. Bullet 1 ("founding loop
+   executed once end-to-end on real data... database currently contains zero
+   inhabitants... until this runs once, the substrate's founding thesis is
+   unexercised") has NO corresponding scorecard item — grepped the review for
+   "founding"/"real data"/"hand-audited"/"end-to-end"/"inhabitant": zero
+   matches, not even in its own honest "Deferreds / carried" section where
+   other known gaps are listed. Yet the review's summary verdict ("Every
+   ROADMAP Band 2 item is implemented" / "BAND 2 CLOSED") reads as covering
+   it. Checked whether item 8's cited live e2e tests
+   (`test_founding_loop_replays_bit_identically_from_raw_traces` — the name
+   is why this likely looked closed at a glance —
+   `test_procedure_candidate_replays_bit_identically_from_raw_traces`) secretly
+   satisfy bullet 1 anyway: they don't. Read directly: (a) both run against
+   "the long-lived shared dev instance" per the test file's own comment, the
+   opposite of a fresh zero-inhabitant DB; (b) both skip the episode-assembly
+   hop entirely — raw `trace_events` seeded directly into
+   `process_pending_jobs()`, and the procedure-candidate test's `episode_id`
+   is a bare `uuid.uuid4()`, never a row from `trace_worker.
+   assemble_episodes()`; (c) their actual proof target is replay
+   *determinism* (run once, replay twice, byte-compare, catch tampering) —
+   bullet 4's claim, correctly cited there, not bullet 1's "one hand-audited
+   live run" ask. Causality note: bullet 1 was unexercised BEFORE this
+   infra-report run too — `bootstrap_demo.py` didn't newly break an
+   already-closed criterion, it's simply the vehicle that would have closed
+   it and turned out not to attempt it; the closure review silently never
+   covered it either way. Recommendation (not a cross-lane code request — no
+   harness/backend paths implicated, pure documentation/closure-bookkeeping
+   finding): (1) amend `BAND2_CLOSURE_REVIEW.md` to explicitly carry bullet 1
+   as open/deferred rather than silently absorbed into "CLOSED 9/9"; (2) real
+   close-out is exactly what `PRODUCTION_READINESS.md`'s current #1 priority
+   — rewriting `bootstrap_demo.py` to run the real two-phase story
+   hand-audited on a fresh DB — would already deliver; flagging for whoever
+   picks that item up (CORE-B/product-owned, not this lane) to explicitly
+   tick this ROADMAP box when it lands.)*
 
 ### Lane SHIP (owns `packaging/**`) â€” activates after CORE-A merges 1.7
 2. `[x]` done @2026-08-26 â€” branch `lane/ship` **P2 - Minimal status surface**:
@@ -2571,3 +2613,35 @@ Grounded findings from  3_access.sql/ 4_governance.sql/deps.py review. Sequence:
   stand as landed by this wave; item (4)'s specific line-level fix was
   overtaken by a superseding rewrite before it could matter, which is a
   fine outcome, not a conflict. No schema/app code touched.
+
+- RESEARCH (2026-08-27, Band 2 founding-loop exit-criterion verdict): done -
+  see Lane RESEARCH item 9 and
+  .scratch/research/band2-founding-loop-exit-criterion-review.md. Answering
+  Chaitanya's infra-report knock-on claim (bootstrap_demo.py's fresh-DB run
+  leaves episodes/observations/procedures/evidence at 0 rows, therefore
+  "Band 2's founding-loop exit criterion is still unexercised on a fresh
+  DB"): genuine gap, but narrowly scoped - not a false claim
+  BAND2_CLOSURE_REVIEW.md made, since it never actually engaged this
+  specific ROADMAP bullet at all (grepped for founding/real
+  data/hand-audited/end-to-end/inhabitant - zero matches, not even in its
+  own Deferreds section). The two live e2e tests under the review's item 8
+  that could be mistaken for covering it
+  (test_founding_loop_replays_bit_identically_from_raw_traces and its
+  procedure-candidate sibling) run on the shared dev instance, not a fresh
+  DB, and skip the episode-assembly hop entirely (fabricated
+  uuid.uuid4() episode_id, no assemble_episodes() call) - they prove replay
+  determinism (ROADMAP bullet 4, correctly cited there), not "one
+  hand-audited live run from zero" (ROADMAP bullet 1, the actual founding-
+  loop criterion). So the review's summary verdict ("Every ROADMAP Band 2
+  item is implemented" / "BAND 2 CLOSED") overclaims relative to what its
+  own scorecard checked - one of ROADMAP's four named Band-2 exit-criteria
+  bullets was silently never covered, positive or negative. This predates
+  bootstrap_demo.py's gap; that script didn't break an already-closed
+  criterion, it's the vehicle that would have closed it and turns out not
+  to attempt it. Recommendation boarded, not executed (outside this lane's
+  paths): amend BAND2_CLOSURE_REVIEW.md to carry the bullet as open, and
+  note that PRODUCTION_READINESS.md's current #1 priority (rewriting
+  bootstrap_demo.py's real two-phase story) already closes it as a side
+  effect once landed. Item 2 of the founder's two-thread request (outside-
+  eye pass on CORE-B's new bootstrap_demo.py once it lands) queued, not
+  started - nothing to review yet.
