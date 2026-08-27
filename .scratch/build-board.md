@@ -2645,3 +2645,78 @@ Grounded findings from  3_access.sql/ 4_governance.sql/deps.py review. Sequence:
   effect once landed. Item 2 of the founder's two-thread request (outside-
   eye pass on CORE-B's new bootstrap_demo.py once it lands) queued, not
   started - nothing to review yet.
+
+- MEASURE (2026-08-27, fourth wave): **free-tier cap confirmed still NOT
+  reset - prep-only work this wave, zero live extraction calls** (founder
+  instruction: check the cap directly rather than assume a reset just
+  because a day's passed; if not reset, stand by / prep only).
+  **CAP CHECK (live, zero-cost as far as billing goes - one real request,
+  correctly rejected before generating any tokens)**: `GET
+  https://openrouter.ai/api/v1/key` showed `usage_daily: 0` but carries no
+  free-tier request-count field, so it can't answer the question by itself;
+  a real probe call to `liquid/lfm-2.5-2.6b:free` (1-token "reply OK"
+  prompt) came back **HTTP 429** with `X-RateLimit-Limit: 50`,
+  `X-RateLimit-Remaining: 0`, `X-RateLimit-Reset: 1787875200000` ->
+  **2026-08-28T00:00:00Z**, i.e. still ~11h45m away from this check
+  (12:14 UTC same day). Error body confirms the specific limiter:
+  `"Rate limit exceeded: free-models-per-day"`. **Cap has NOT reset** -
+  boarding this either way per instruction, not just on a reset.
+  Per instruction, did NOT proceed to option (a) or (b) live - did
+  prep-only work instead, picking (b)'s design (RESEARCH's LLM-judge
+  second-pass idea, `.scratch/research/observation-labeling-technique-
+  brief.md`) since it has a concrete, ungated adoption shape ready to code
+  (option (a), a second free-model cross-validation of `combined`, needs
+  no new code at all - it's a `--models` swap on the existing live_
+  extractor.py CLI, already "ready-to-run when authorized" per the prior
+  wave's own board note - so there was nothing to *prepare* for it beyond
+  what already exists; picking a second-wave-worthy free model for it is a
+  quick catalog lookup, not a coding task, and is better done live so the
+  choice can be sanity-checked against that day's actual catalog rather
+  than staged now and going stale).
+  **Shipped (offline only, zero network calls beyond the one cap-check
+  probe above)**: `semantic_judge.py` (new) - implements the brief's exact
+  §1 adoption shape: `error_floor.py`'s Jaccard rule stays the free
+  deterministic first pass, unchanged; a Jaccard-*failing* semantic_label
+  pair of the same observation_type can now be routed to ONE adjudicating
+  LLM-judge call (`{"match": true|false}`, closed yes/no, not open
+  scoring) via a `judge` param threaded through `error_floor.semantic_
+  match`/`observations_match`/`grade_excerpt` (`judge=None` default is
+  BYTE-IDENTICAL to every prior grading run - regression-tested). Ratchet's
+  false-positive/false-negative asymmetry caution (cited in the brief) is
+  encoded directly: an unparseable judge reply defaults to NO MATCH, never
+  match-by-default, since a false positive silently corrupts the metric
+  while a false negative just costs recoverable recall.
+  `run_error_floor.py` gained `--judge-model` (optional; off by default,
+  deferred-imports `openrouter_arms`/`semantic_judge` only when set, so the
+  CLI's default path stays exactly as pure as before) + `--judge-spend-log`,
+  wired through a real `SemanticJudge` built on the SAME `OpenRouterClient`
+  backoff/chain/SpendLog machinery every other live component here uses -
+  no new HTTP code. 13 new offline tests (`tests/test_semantic_judge.py`):
+  verdict parsing (JSON/code-fence/bare-yes-no/unparseable), message
+  construction, the unparseable-defaults-to-NO-MATCH policy, the `JUDGE`
+  arm tag, and four `error_floor.py` integration cases proving the
+  composition end-to-end with a fake client - a Jaccard-failing synonym
+  pair (`ef-sem-003`'s real gold/pred strings) becomes a TP under a
+  matching judge, stays FP+FN with `judge=None`, the judge is NEVER called
+  when Jaccard already matches (asserted via a fake client with zero
+  queued replies, that would IndexError if called), and a genuine
+  mismatch stays correctly refused even with a judge wired in. Harness
+  suite **254/254 green** [241 prior + 13 new].
+  **NOT done this wave, staying correctly undone**: no live judge calls
+  (cap exhausted, confirmed above); brief's step 3 validation (judge-vs-
+  human agreement on a hand sample) therefore also not done - this module
+  is unvalidated code, not yet a trusted grading path, and its own
+  docstring says so; the brief's step 4 (3-call majority vote before this
+  backs any headline number) intentionally NOT implemented, single-call
+  only. Nothing mirrored into `observations.py`'s live
+  `_SEMANTIC_LABEL_SYSTEM_PROMPT` (unrelated to this module, and that bar
+  was never about the judge anyway) and nothing mirrored into
+  `error_floor.py`'s DEFAULT grading behavior (`judge=None` unless a
+  caller opts in with `--judge-model`). $0.00 spend this wave (the one
+  cap-check probe was rejected by OpenRouter before any tokens were
+  generated - a 429 does not bill). Next session with quota: run
+  `run_error_floor.py --judge-model <a :free id> --predictions live_
+  extractor_preds_free_combined.jsonl --excerpt-ids <the semantic subset>`
+  (or wire it into a fresh `live_extractor.py` pass) and report judge-vs-
+  Jaccard delta P/R/F1, plus do the brief's step-3 validation before
+  trusting the number.

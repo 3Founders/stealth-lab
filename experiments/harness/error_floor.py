@@ -13,6 +13,13 @@ This module is PURE: no I/O beyond fixture loading, no backend import
 callable adapter: trace_event dict -> list[{observation_type, label,
 properties}] -- the same shape app/services/observations.py's extractors
 return, without this harness depending on them.
+
+`grade_excerpt`/`observations_match`/`semantic_match` accept an optional
+`judge` (sync `(gold_label, pred_label) -> bool`) consulted ONLY when a
+semantic_label pair fails the Jaccard rule -- purity is preserved by
+default (`judge=None` is byte-identical to every prior grading run); a
+live judge is wired up one layer out, in run_error_floor.py + the new
+semantic_judge.py, never inside this module.
 """
 from __future__ import annotations
 
@@ -82,12 +89,22 @@ def label_tokens(text: str) -> frozenset[str]:
     )
 
 
-def semantic_match(gold_label: str, pred_label: str) -> bool:
+def semantic_match(gold_label: str, pred_label: str, judge=None) -> bool:
+    """Token-Jaccard first pass (free, deterministic). `judge`, when given,
+    is a sync `(gold_label, pred_label) -> bool` callable consulted ONLY on
+    a Jaccard miss - a paraphrase/synonym adjudicator, never a replacement
+    for the cheap default (see semantic_judge.py for the live implementation
+    and the design rationale). `judge=None` is byte-identical to the
+    pre-judge grading behavior."""
     gt, pt = label_tokens(gold_label), label_tokens(pred_label)
     if not gt or not pt:
         return False
     j = len(gt & pt) / len(gt | pt)
-    return j >= SEMANTIC_JACCARD_THRESHOLD
+    if j >= SEMANTIC_JACCARD_THRESHOLD:
+        return True
+    if judge is None:
+        return False
+    return bool(judge(gold_label, pred_label))
 
 
 def observation_key(obs: dict) -> str | None:
@@ -106,14 +123,14 @@ def observation_key(obs: dict) -> str | None:
     return normalize_path(val) if field == "file_path" else normalize_command(val)
 
 
-def observations_match(gold: dict, pred: dict) -> bool:
+def observations_match(gold: dict, pred: dict, judge=None) -> bool:
     gk, pk = observation_key(gold), observation_key(pred)
     if gk is None or pk is None:
         return False
     if gold["observation_type"] != pred["observation_type"]:
         return False
     if gold["observation_type"] == SEMANTIC_TYPE:
-        return semantic_match(gold["label"], pred["label"])
+        return semantic_match(gold["label"], pred["label"], judge=judge)
     return gk == pk
 
 
@@ -182,13 +199,15 @@ def load_excerpts(fixtures_dir: Path = DEFAULT_FIXTURES_DIR) -> list[dict]:
 # grading
 # --------------------------------------------------------------------------
 
-def grade_excerpt(excerpt: dict, predictions: list[dict]) -> dict:
+def grade_excerpt(excerpt: dict, predictions: list[dict], judge=None) -> dict:
     """One-to-one greedy match in gold order (rubric 'Confusion accounting').
 
     Returns {tp, fp, fn, tp_ids, fp_items, fn_items}; reasons per rubric.
     Malformed predictions (unknown type / missing key) count as FPs of
     their claimed type -- emitting junk costs precision even when it is
-    not even well-formed.
+    not even well-formed. `judge` (optional) is forwarded to
+    `observations_match` for semantic_label Jaccard-miss adjudication;
+    omitted, grading is unchanged from the pre-judge rubric.
     """
     used: set[int] = set()
     pairs: list[tuple[int, int]] = []
@@ -196,7 +215,7 @@ def grade_excerpt(excerpt: dict, predictions: list[dict]) -> dict:
         for pi, pred in enumerate(predictions):
             if pi in used:
                 continue
-            if observations_match(gold, pred):
+            if observations_match(gold, pred, judge=judge):
                 pairs.append((gi, pi))
                 used.add(pi)
                 break

@@ -13,6 +13,12 @@ results + detail files for the scoreboard to re-consume later.
 
 Exit code 1 iff any excerpt's adapter raised — a partial floor is not a
 floor.
+
+Optional `--judge-model`: routes Jaccard-failing semantic_label pairs to
+one adjudicating LLM-judge call each (semantic_judge.py; design + caveats
+in that module's docstring, brief behind it in
+.scratch/research/observation-labeling-technique-brief.md). Default: off,
+byte-identical to grading with no flag at all.
 """
 from __future__ import annotations
 
@@ -51,8 +57,10 @@ def load_predictions(path: Path) -> dict[str, list[dict]]:
     return by_id
 
 
-def run(excerpts: list[dict], get_preds, extractor_name: str):
-    """get_preds: excerpt dict -> prediction list (adapter or lookup)."""
+def run(excerpts: list[dict], get_preds, extractor_name: str, judge=None):
+    """get_preds: excerpt dict -> prediction list (adapter or lookup).
+    `judge`: optional sync (gold_label, pred_label) -> bool, forwarded to
+    error_floor.grade_excerpt unchanged; None preserves prior behavior."""
     graded, errors = [], []
     for ex in excerpts:
         try:
@@ -60,7 +68,7 @@ def run(excerpts: list[dict], get_preds, extractor_name: str):
             if not isinstance(preds, list):
                 raise TypeError(
                     f"adapter returned {type(preds).__name__}, want list")
-            graded.append(error_floor.grade_excerpt(ex, preds))
+            graded.append(error_floor.grade_excerpt(ex, preds, judge=judge))
         except Exception as exc:  # noqa: BLE001 - instrument reports, never dies mid-run
             errors.append({
                 "excerpt_id": ex["excerpt_id"],
@@ -103,6 +111,15 @@ def main(argv: list[str] | None = None) -> int:
                          "mode the missing-predictions check is scoped "
                          "to this subset too, so a partial predictions "
                          "file no longer needs the whole 42-excerpt set")
+    ap.add_argument("--judge-model", default=None,
+                    help="optional OpenRouter model id (e.g. a ':free' "
+                         "id) - when set, semantic_label pairs that fail "
+                         "the Jaccard rule get ONE adjudicating LLM-judge "
+                         "call before being scored as a miss (see "
+                         "semantic_judge.py). Requires OPENROUTER_API_KEY "
+                         "(process env or backend/.env). Default: off, "
+                         "byte-identical to today's shipped grading.")
+    ap.add_argument("--judge-spend-log", default=str(HERE / "judge_spend.jsonl"))
     args = ap.parse_args(argv)
 
     excerpts = error_floor.load_excerpts(Path(args.fixtures_dir))
@@ -130,7 +147,24 @@ def main(argv: list[str] | None = None) -> int:
         get_preds = lambda ex: by_id[ex["excerpt_id"]]  # noqa: E731
         extractor_name = f"predictions:{args.predictions}"
 
-    graded, errors, summary = run(excerpts, get_preds, extractor_name)
+    judge_obj = None
+    if args.judge_model:
+        import openrouter_arms
+        import semantic_judge
+
+        api_key = openrouter_arms.resolve_api_key()
+        if not api_key:
+            print("OPENROUTER_API_KEY not found; cannot run --judge-model.",
+                  file=sys.stderr)
+            return 2
+        judge_spend = openrouter_arms.SpendLog(args.judge_spend_log)
+        judge_client = openrouter_arms.OpenRouterClient(
+            api_key, models=(args.judge_model,), spend=judge_spend)
+        judge_obj = semantic_judge.SemanticJudge(judge_client)
+
+    graded, errors, summary = run(
+        excerpts, get_preds, extractor_name,
+        judge=judge_obj.as_error_floor_judge() if judge_obj else None)
 
     out_path = Path(args.out)
     body = "".join(json.dumps(g) + "\n" for g in graded)
@@ -143,6 +177,11 @@ def main(argv: list[str] | None = None) -> int:
     print()
     print("\n".join(scoreboard.format_error_floor(summary)))
     print(f"[detail -> {detail_path}]")
+    if judge_obj:
+        s = judge_spend.summarize()
+        print(f"JUDGE: {judge_obj.calls} call(s), {judge_obj.unparseable} "
+              f"unparseable (scored NO MATCH) · ${s['cost_usd']:.4f} "
+              f"[spend log -> {args.judge_spend_log}]")
     return 1 if errors else 0
 
 
