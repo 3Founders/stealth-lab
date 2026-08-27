@@ -59,17 +59,25 @@ against real traffic, for about 14 seconds. It has never processed a real
 backlog of trace-triggered proposals. Unchanged this wave — no new live runs
 attempted, correctly, given the OpenRouter budget wall below.
 
-**Install path — now real, but never boot-tested.** `docker-compose.yml`,
-`backend/Dockerfile`, `.dockerignore`, and a healthcheck script were added this
-wave (closing what was previously a documented-but-nonexistent install path).
-The build context correctly points at the repo root, not `backend/`, because
-`app/mcp_server/server.py` imports from the sibling `experiments/swebench_pro/`
-at module import time — a naive `context: ./backend` would have crash-looped.
-**Caveat, stated plainly: Docker is not installed anywhere in this build.**
-The compose file has been validated as syntactically correct YAML against the
-compose-spec schema and its import paths traced by hand — it has never
-actually been booted. Treat it as "should work," not "confirmed works," until
-someone runs `docker compose up -d` for real.
+**Install path — now real, and boot-tested clean.** `docker-compose.yml`,
+`backend/Dockerfile`, `.dockerignore`, and a healthcheck script were added
+earlier this arc (closing what was previously a documented-but-nonexistent
+install path). The build context correctly points at the repo root, not
+`backend/`, because `app/mcp_server/server.py` imports from the sibling
+`experiments/swebench_pro/` at module import time — a naive
+`context: ./backend` would have crash-looped, and it didn't.
+**Correction to an earlier version of this document**, which stated "Docker
+is not installed anywhere in this build" — that was wrong in a specific way:
+Docker CLI and Compose were already present on the infra lane's machine, only
+Desktop's Linux engine was stopped. Starting it took ten seconds. Once
+running, `docker compose up -d` came up healthy with zero fixes needed to any
+of the four files above, and the auth-enforcement contract was spot-checked
+from the host (not just the container's own healthcheck): `POST /mcp` →
+HTTP 401, the documented "serving and auth enforced" signal. **Caveat: this
+result is reported by the infra lane (2026-08-27) and sits on an unpushed
+local branch pending the founder's call on pushing to the public remote —
+treat as strong, detailed evidence, not yet independently re-verified by the
+integrator against `main`.**
 
 **CI — now exists.** A minimal GitHub Actions workflow runs the offline test
 suite on every push/PR. This was the single biggest gap in the previous
@@ -86,14 +94,20 @@ live there. Whether this Render service is *currently* running, and for how
 long the free-tier Postgres actually retains data, can't be verified from the
 repo alone — worth confirming directly in Render's dashboard.
 
-**The one gap that actually blocks calling this "shippable"**, separate from
-infra: `check_procedure` / `WOULD_REFUSE` — the refusal-with-receipts
-capability `demo.md` advertises as C5 — is proven in the evaluation harness
-against a live model, but is **not wired into `backend/app/mcp_server/server.py`**
-as a callable tool. An agent using the real server today cannot reach it. This
-is a product-completeness gap, not an infra gap, but it's the one thing that
-would make a demo dishonest if shown as-is. Currently assigned as this wave's
-headline task (see `proj_status.md`).
+**The one gap that actually blocks calling this "shippable"** is no longer
+`check_procedure` wiring — that landed and is confirmed on `main`. It's now
+`bootstrap_demo.py`: `demo.md`'s entire "what ships" narrative rests on this
+script proving the two-phase story (traces → procedures, then a real
+`WOULD_REFUSE`) in one command. Directly reading the script on `main` (82
+lines) confirms it: zero references to `procedure`, `refus`, `check_procedure`,
+or `WOULD_REFUSE` anywhere in it. It's the older debate/bottleneck-era seeder
+— it inserts 10 traces shaped to trigger a *debate*, not the earned-memory
+substrate. Run end-to-end (infra lane, 2026-08-27): exits 0, looks successful,
+and leaves `episodes`, `observations`, `procedures`, and `evidence` all at
+zero rows. This is not "blocked" or "not yet run" — **the script this
+checklist item depends on does not implement what the checklist item
+describes.** It needs to be written, not just executed. Also unexercised as a
+result: Band 2's founding-loop exit criterion, on a fresh database.
 
 ---
 
@@ -101,32 +115,33 @@ headline task (see `proj_status.md`).
 
 | Requirement | Status |
 |---|---|
-| Full offline suite green | **Met** — 1353 passed / 115 skipped / 0 failed |
-| Migration chain applied clean on a throwaway `pgvector/pg15` container | **Not done** — blocked on Docker access |
-| `docker-compose` setup for `docker compose up -d` | **Exists now, not boot-tested** (see above) |
-| `bootstrap_demo.py` scripted two-phase story proven on the release commit | Script exists; not run this wave |
-| `check_procedure` refusal payload shape pinned by tests | Met *in the harness*; **not reachable through the real server** (see above) |
+| Full offline suite green | **Met** — 1368 passed / 115 skipped / 0 failed |
+| Migration chain applied clean on a throwaway `pgvector/pg15` container | **Reported met** — 30/30 applied, idempotency confirmed (infra lane, unpushed, pending verification) |
+| `docker-compose` setup for `docker compose up -d` | **Reported met** — boot-tested clean, zero fixes (infra lane, unpushed, pending verification) |
+| `bootstrap_demo.py` scripted two-phase story proven on the release commit | **Unmet — script doesn't implement the story** (see above; needs to be written) |
+| `check_procedure` refusal payload shape pinned by tests | **Met** — real tool on `main`, tested against the actual server |
 | `SECURITY.md` + plain-language data statement published | **Met** |
 | README quickstart works from a clean clone | **Met** — verified by SHIP against current commit |
 
-Since the last version of this document: 3 of 7 previously-unmet items closed
-(compose files, SECURITY.md/data statement, README verification). Two remain
-genuinely open (Docker-dependent DB verification, the `check_procedure` wiring);
-`bootstrap_demo.py` is untried, not known-broken.
+Since the last version of this document: `check_procedure` wiring closed for
+real, and the Docker-dependent items came back positive (pending push +
+independent verification). But this pass also demoted `bootstrap_demo.py`
+from "untried" to "known incomplete" — a more serious finding than what it
+replaced, since it's the thing the whole v0.1 story is supposed to prove in
+one command.
 
 ---
 
 ## What's planned (documented elsewhere in the repo, not speculation)
 
 - Real OIDC auth flip-on, once an identity provider is actually configured
-- Migration chain verification on a disposable database, the moment Docker is available
 - Redis-backed rate limiting, with the trigger condition (>1 worker) already
   written into the code as a tripwire
 - Crypto-shredded deletion (Band 5, needs a founder ruling — D4)
 - Capability-based auto-routing thresholds (Band 1.9b, needs founder ruling D1)
 - Bands 4/5 generally — correctly not started; ROADMAP's own rule is that no
   Band 4 item starts before P3's acceptance test has passed on a real user's
-  workflow, and P3 is still blocked on the `check_procedure` wiring above
+  workflow, and P3 is still blocked on `bootstrap_demo.py` above
 
 ---
 
@@ -142,24 +157,38 @@ genuinely open (Docker-dependent DB verification, the `check_procedure` wiring);
   policy if any real data is meant to persist there.
 - **A live-traffic run of the debate/governance loop.** One 14-second smoke
   test is still the entire track record.
-- **A booted, verified Docker install.** The files exist; nobody has run them.
+- **The real `bootstrap_demo.py` two-phase story.** See above — this needs
+  to be written, not run.
+
+**Flagged this wave, not yet fixed** (found by the infra lane, outside its
+scoped file grant, so correctly left for someone with the right ownership):
+`CLAUDE.md` asserts `*.mov` is gitignored — it isn't. A 56MB
+`FounderVideo.mov` currently sits untracked at repo root, in what is a
+**public** GitHub repo. It hasn't been committed yet, but a broad `git add`
+would sweep it in. Worth fixing the `.gitignore` (or moving the file
+somewhere outside the tracked tree entirely) before anyone runs a wide `git
+add` in that checkout.
 
 ---
 
 ## Overall plan, in the order I'd actually do it
 
-1. **Wire `check_procedure` into the real MCP server.** This is the one item
-   that turns "we have evidence" into "a user can actually see it." In flight now.
-2. **Get Docker running somewhere** (Docker Desktop on any machine in the
-   fleet is enough) and use it to boot-test `docker-compose.yml`, verify the
-   migration chain on a throwaway container, and run `bootstrap_demo.py`'s
-   full scripted story. All three of the remaining checklist gaps share this
-   one blocker.
-3. **Add baseline error tracking** (Sentry's free tier is enough) on the
+1. **Write the real `bootstrap_demo.py` two-phase story.** This is now the
+   single item that most blocks calling v0.1 shippable — everything else on
+   this list is either done or infra. Ingest traces → run the real
+   extraction pipeline → produce procedures → retrieve precedent →
+   deliberately break a precondition claim → call `check_procedure` and get
+   a real `WOULD_REFUSE`, all in one command, on a fresh database.
+2. **Fix the `.gitignore` `*.mov` gap** before any wide `git add` happens in
+   a checkout that has `FounderVideo.mov` sitting in it.
+3. **Push and independently re-verify the infra lane's Docker results**
+   (compose boot, migration chain) once the founder decides how the infra
+   lane's work should reach the public remote.
+4. **Add baseline error tracking** (Sentry's free tier is enough) on the
    hosted instance, so failures are visible instead of silent.
-4. **Confirm the Render Postgres retention story explicitly**, in the
+5. **Confirm the Render Postgres retention story explicitly**, in the
    dashboard, before treating anything stored there as durable.
-5. **Only after 1–4:** revisit turning on real auth/multi-tenant mode. It's
+6. **Only after 1–5:** revisit turning on real auth/multi-tenant mode. It's
    correctly gated off right now — that's a decision to make deliberately
    once the above is solid, not a gap to rush.
 

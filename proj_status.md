@@ -12,9 +12,11 @@ traces become episodes → observations → claims → evidence-backed reusable 
 with applicability gating, Wilson-bound capability scores on founder-ratified routing
 tiers, universal ChangeSet auditing, and bi-temporal invalidate-and-append semantics.
 Three phases are formally CLOSED and reviewed (contracts / trust floor / trust
-completion), hardening is landed, and this wave closed most of the gap between
-"we have evidence this works" and "we have a shippable v0.1." **Backend suite: 1353
-passed / 115 skipped / 0 failed. Harness suite: 241/241 green.**
+completion), hardening is landed, `check_procedure` is now a real callable
+tool, and the Docker-dependent infra items came back positive (pending
+push). One gap remains between "we have evidence this works" and "we have a
+shippable v0.1" — see below. **Backend suite: 1368 passed / 115 skipped /
+0 failed. Harness suite: 241/241 green.**
 
 ## Phase position
 
@@ -25,33 +27,39 @@ passed / 115 skipped / 0 failed. Harness suite: 241/241 green.**
 | Band 2 — trust completion | ✅ CLOSED | `BAND2_CLOSURE_REVIEW.md` — 9/9 items incl. OIDC identity, replay E2E |
 | HARDENING | ✅ landed | H1 identity tables + tenancy predicate builder · H2 RLS backstop · H3 rate-limiter buffering (adoption sweeps remain, see board) |
 | Band 3 — measurement | 🟡 advancing | §40 harness + real-model arms BUILT; Run #1 complete; semantic-label extraction-quality track opened this wave (see below); repeats + error-floor run + utility-in-routing remain |
-| P — product (v0.1 shippability) | 🟡 close | P1 `stealthlab-connect` ✅ · P2 status surface ✅ · **v0.1 ship checklist: 6/8 items done this wave (see below)** · P3 founder acceptance test ⬜ (blocked on the one real gap below) |
+| P — product (v0.1 shippability) | 🟡 close | P1 `stealthlab-connect` ✅ · P2 status surface ✅ · **v0.1 ship checklist: 7/8 items ✅/reported (see below)** · P3 founder acceptance test ⬜ (blocked on `bootstrap_demo.py`, the one real gap below) |
 | Bands 4/5 — scale/distribution | ⛔ gated, correctly | Do not start before P3 passes on a real user workflow (ROADMAP rule) |
 
 ## v0.1 ship checklist snapshot (per `demo.md` §3 — the project's own bar)
 
 | Item | Status |
 |---|---|
-| Offline suite green | ✅ 1353 passed / 115 skipped / 0 failed |
+| Offline suite green | ✅ 1368 passed / 115 skipped / 0 failed |
 | `SECURITY.md` + `DATA_STATEMENT.md` published | ✅ |
 | README quickstart works from a clean clone | ✅ |
-| Doc accuracy (migration count, stale paths, stale product framing) | ✅ closed this wave (Band 6 hygiene sweep) |
-| `docker-compose.yml` / `Dockerfile` exist | ✅ built this wave — **never boot-tested, no Docker installed anywhere in the fleet yet** |
-| Migration chain verified on a disposable DB | ❌ blocked on Docker access |
-| `bootstrap_demo.py` scripted two-phase story | ❌ not attempted this wave |
-| **`check_procedure` / `WOULD_REFUSE` reachable through the MCP server** | ❌ **the one real gap — see below** |
+| Doc accuracy (migration count, stale paths, stale product framing) | ✅ closed (Band 6 hygiene sweep) |
+| **`check_procedure` / `WOULD_REFUSE` reachable through the MCP server** | ✅ closed — real tool #9, tested against the actual server |
+| `docker-compose.yml` boots clean | ✅ **reported** by the infra lane (zero fixes needed) — unpushed, pending independent re-verification |
+| Migration chain verified on a disposable DB | ✅ **reported** — 30/30 applied, idempotency confirmed — unpushed, pending independent re-verification |
+| `bootstrap_demo.py` scripted two-phase story | ❌ **the one real gap — see below** |
 
 ## The one real gap right now
 
-`demo.md`'s C5 capability ("refusal with receipts") is genuinely proven — a real
-model, live, correctly refuses a stale procedure and cites the superseded claim
-(`experiments/harness/model_decides.py`'s `refused_procedure_ids` mechanism,
-independently verified). But repo-wide grep confirms `check_procedure` as a
-literal callable tool does not exist in `backend/app/mcp_server/server.py` (8
-tools live today, none named this). An agent using StealthLab today cannot
-actually reach the refusal capability — only the harness can. This is the
-current headline task (assigned to CORE-B, which owns the closest logic —
-`precondition_gate.py` / `applicability.py` / `state.py`).
+Not `check_procedure` anymore — that's closed and confirmed on `main`
+(`backend/app/mcp_server/server.py`, tool #9, reusing `applicability.py`'s
+existing decision logic, 15 new proving tests). The gap is `bootstrap_demo.py`.
+`demo.md`'s entire v0.1 story rests on this one script proving, in a single
+command, that traces become procedures and a broken precondition produces a
+real `WOULD_REFUSE`. Direct read of the script on `main` (82 lines) confirms:
+it contains no reference to `procedure`, `refus`, `check_procedure`, or
+`WOULD_REFUSE` anywhere. It's the older debate/bottleneck-era seeder — it
+inserts 10 traces shaped to trip a *debate* threshold, unrelated to the
+earned-memory substrate. Run end-to-end (infra lane, 2026-08-27): exits 0,
+looks successful, and leaves `episodes`/`observations`/`procedures`/`evidence`
+all at zero rows on a fresh database. This isn't "not yet run" — the script
+doesn't implement what the checklist item describes, and needs to be written.
+Knock-on effect: Band 2's founding-loop exit criterion is still unexercised
+on a fresh DB as a result.
 
 ## OpenRouter budget — explicit limitation, read this before assigning live-model work
 
@@ -118,10 +126,20 @@ before public phrasing). Full log: `.scratch/build-board.md` RUN #1 entry.
 ..\..\backend\.venv\Scripts\python.exe run_real_arms.py --auto-resume --out <fresh-name>.jsonl --spend-log <fresh-name>.jsonl
 ```
 
+## Known repo hygiene flag — read before a wide `git add`
+
+The infra lane found (2026-08-27, flagged not fixed — outside its file grant):
+`CLAUDE.md` claims `*.mov` is gitignored; it isn't. A 56MB `FounderVideo.mov`
+sits untracked at repo root in what is a **public** GitHub repo. Not yet
+committed, but `git add -A` would sweep it in. Fix the `.gitignore` (or move
+the file out of the tracked tree) before that happens.
+
 ## Who's who
 
 - Founders: Anuj — owns D-rulings, acceptance tests, spend decisions. Chaitanya — co-founder.
 - Lane agents: Claude Code instances in worktrees (`sl-core-a/b`, `sl-measure/research/ship`),
-  coordinated by the integrator via `.scratch/build-board.md`.
+  coordinated by the integrator via `.scratch/build-board.md`. `lane/infra`
+  (Chaitanya, 2026-08-27) is the newest — Docker-equipped, took the
+  compose-boot/migration-chain items that had been blocked since Band 1.
 - Integrator: reviews every landing, verifies git state independently (never trusts
   terminal output alone), runs closure reviews, owns ROADMAP checkboxes.
