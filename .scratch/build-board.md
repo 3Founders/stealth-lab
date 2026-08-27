@@ -2720,3 +2720,41 @@ Grounded findings from  3_access.sql/ 4_governance.sql/deps.py review. Sequence:
   (or wire it into a fresh `live_extractor.py` pass) and report judge-vs-
   Jaccard delta P/R/F1, plus do the brief's step-3 validation before
   trusting the number.
+
+- CORE-A (2026-08-27, parallel assist for CORE-B's bootstrap_demo.py phase
+  B): **confirmed — nothing about the current schema blocks a genuine
+  claim-supersession write; no new migration needed.** Checked directly
+  against `app/services/claims.py`'s `relate_claims()` (the function CORE-B
+  plans to call): it inserts one `edges` row with `edge_type='SUPERSEDES'`
+  (already a real value in the `edge_type` enum, `backend/db/01_ontology.sql`
+  lines 12-15 — no ALTER TYPE needed) and does one
+  `UPDATE knowledge_nodes SET properties = properties ||
+  '{"truth_state":"OUT"}'::jsonb` on the target claim. `knowledge_nodes` has
+  no freeze trigger (append-only enforcement per the board's own [H] list is
+  evidence/executions/change_sets/change_set_operations/failure_routes only
+  — knowledge_nodes was never one of them), so that UPDATE is a normal
+  write, not a fight with a trigger. `truth_state` lives in the existing
+  `properties` JSONB column, not a typed column, so there's no DDL surface
+  to migrate in the first place. This isn't a fresh read either:
+  `test_claims.py` lines 283-317 already offline-test this exact call shape
+  (SUPERSEDES flipping target truth_state to OUT, CONTRADICTS riding the
+  SUPERSEDES enum bucket via `custom_edge_type` same as FAILURE_MODE does
+  elsewhere) against a fake pool, and `state.py`'s `project_state()`
+  (`backend/db/16_state_projection_index.sql`) already filters live belief
+  on `properties->>'truth_state' = 'IN'` — so a flipped claim already stops
+  counting as currently-believed for any downstream consumer today, no
+  schema change needed on that side either.
+  **One adjacent gap, not a blocker for this specific ask:** `bootstrap_demo.py`
+  as it exists right now (read in full) is the older single-phase debate/
+  decompose seeder (seeds `example_workflow.json`, inserts 10 traces to trip
+  `_DEMO_RULES`'s error-rate threshold) — no phase A/B structure, no
+  `relate_claims`/`check_procedure` references anywhere in it yet, so CORE-B
+  is building this fresh rather than extending an existing phase B. Separately,
+  RESEARCH's outside-eye pass (entry above) already flagged that
+  `check_procedure`/`WOULD_REFUSE` have zero matches in `backend/` today —
+  real in `experiments/harness/`, not yet wired into
+  `app/mcp_server/server.py`. That's a real gap CORE-B's phase B will run
+  into if it expects a callable `check_procedure` MCP tool, but it's an
+  MCP-server wiring question, not a schema one — doesn't change the answer
+  to what was actually asked here. No schema/app code touched for this
+  confirmation.
