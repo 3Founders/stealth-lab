@@ -1044,6 +1044,97 @@ single synthesized reports into `.scratch/research/`.
    individually). Not a SHIP regression. Rebased onto origin/main before push
    per OVERNIGHT MODE.
 
+### Lane INFRA - Docker boot test (opened 2026-08-27, scoped grant for this task)
+
+Scoped ownership for this task only: `docker-compose.yml`, `backend/Dockerfile`,
+`.dockerignore`, `backend/scripts/docker_healthcheck.py` (otherwise-unowned files).
+No edits outside those four. Commit prefix `infra:`.
+
+1. `[x]` **DONE @2026-08-27** - `docker compose up -d` boot test. The compose
+   stack was written and schema-validated last wave but never booted (see
+   `PRODUCTION_READINESS.md` "Install path - now real, but never boot-tested").
+   Fix whatever breaks.
+   FINDING (pre-work, corrects a doc claim): `PRODUCTION_READINESS.md` states
+   "Docker is not installed anywhere in this build" and the v0.1 checklist in
+   `proj_status.md` blames Docker access for two open items. That is stale as of
+   today on this machine - Docker 29.7.2 + Compose v5.3.1 are installed; only the
+   Desktop daemon was stopped. Both docs need a one-line correction; not doing it
+   here because neither file is in this lane's grant (see the correction note at the end of this section).
+   RESULT: booted clean on the FIRST attempt - zero fixes required to
+   `docker-compose.yml`, `backend/Dockerfile`, `.dockerignore`, or
+   `docker_healthcheck.py`. The repo-root build context reasoning held: the
+   `experiments/swebench_pro/` sibling import resolved and the server did not
+   crash-loop. Image `stealthlab-backend` built in ~59s (pip layer). Both
+   containers report `(healthy)`; `stealthlab-db-1` on 127.0.0.1:5433,
+   `stealthlab-backend-1` on 127.0.0.1:8765.
+   Auth gate verified from the HOST, not just the container healthcheck:
+   `curl -X POST http://127.0.0.1:8765/mcp` -> **HTTP 401**, which is the
+   documented "healthy" signal (serving AND auth enforced).
+2. `[x]` **DONE @2026-08-27** - Migration chain 01->30 on the disposable
+   compose DB. This closes the item CORE-A queue 2 has carried as "BLOCKED on
+   external - awaiting Chaitanya's Docker" since Band 1. CORE-A's entry says
+   01->23; main has 30. Not editing CORE-A's queue - integrator can close it
+   from the engine output below.
+   ENGINE OUTPUT (`python scripts/migrate.py --status`, in-container, against
+   a volume created seconds earlier):
+   all 30 files report `applied`, 0 pending, 0 errors -
+   01_ontology, 02_loop, 03_access, 04_governance, 05_decomposition,
+   06_generated_files, 07_agents, 08a_graph_workflow_execution_type,
+   08b_graph_workflow_execution_rest, 09_seed_internal_agents,
+   10_code_sourced_agents, 11_fix_embedding_joint_drift,
+   12_trace_ingestion_pipeline, 13_claim_subject_index, 14_observations,
+   16_state_projection_index, 17_episode_project_columns, 18_procedures,
+   19_procedures_embedding, 20_procedure_extraction, 21_band1_contracts,
+   22_band1_review_fixes, 23_plan_persistence, 24_evidence,
+   25_universal_changesets, 26_replayability, 27_failure_routing,
+   28_identity, 29_rls_backstop, 30_verified_requires_evidence.
+   (Numbering skips 15 on purpose; 30 files, not 31.)
+   Idempotency proven: a second bare `migrate.py` apply against the same DB is
+   a silent no-op, exit 0. Resulting schema: 41 base tables, extensions
+   `vector 0.8.6` + `btree_gist 1.7` + `pgcrypto 1.3`. Migration 01's
+   `CREATE EXTENSION vector` succeeded, confirming the pgvector image pin is
+   doing real work.
+3. `[x]` **RUN @2026-08-27, but it does NOT test what the brief assumed** -
+   `python scripts/bootstrap_demo.py` completed clean, **exit 0, no error, no
+   stop**. It did not reach a WOULD_REFUSE step because the script contains no
+   such step. See blocking question #1.
+   What it actually did: `Seeded 'example_generic_pipeline': 3 tasks, 4 edges`
+   + `Inserted 10 traces ... 80% error rate`. Post-run row counts on the fresh
+   DB: traces 10, task_nodes 3, knowledge_nodes 2, and **episodes 0,
+   observations 0, procedures 0, evidence 0, agent_traces 0, trace_events 0**.
+   So it seeds the debate/bottleneck product demo and leaves every
+   substrate/knowledge-layer table empty.
+
+**BLOCKING QUESTION #1 (INFRA -> integrator/founder). Proposed default: treat
+`demo.md` checklist line 62 as UNMET rather than met-by-exit-0.**
+`demo.md:62` specifies `bootstrap_demo.py` should run "the scripted two-phase
+story: phase A produces traces->procedures; phase B retrieves precedent AND
+triggers a `WOULD_REFUSE` after the fixture breaks a precondition claim." The
+script on main (82 lines, `backend/scripts/bootstrap_demo.py`) is the older
+debate-era seeder: it writes a workflow + 10 traces to cross `_DEMO_RULES`'
+error-rate threshold, and grep finds no occurrence of `refus`, `WOULD_REFUSE`,
+`check_procedure`, or `procedure` anywhere in it. Phase A and phase B are not
+implemented, not merely blocked on CORE-B's `check_procedure` wiring.
+Consequence if defaulted the wrong way: this item could be marked green on an
+exit code that proves nothing about the capability demo.md is selling. Note the
+row counts above also mean Band 2's founding-loop exit criterion (trace ->
+episode -> observation -> claim -> procedure, hand-audited) remains unexercised
+on a fresh DB - the substrate tables are born empty and nothing on main fills
+them in one command.
+
+**Correction to two integrator-owned docs (flagged, not edited - not this
+lane's grant).** `PRODUCTION_READINESS.md` says "Docker is not installed
+anywhere in this build" and lists the migration-chain item as "blocked on
+Docker access"; `proj_status.md`'s v0.1 checklist says the same and marks the
+compose files "never boot-tested, no Docker installed anywhere in the fleet
+yet." All of that is now false: Docker 29.7.2 + Compose v5.3.1 are installed on
+this machine (only the Desktop daemon was stopped), and both items are now
+verified green. Suggested: flip both checklist rows and drop the
+Docker-availability caveat.
+
+Lane INFRA status: all three assigned items executed. No fix was needed to
+any of the four granted files - the boot test passed as written.
+
 ## Integrator (= reviewer instance, main checkout)
 - Watches for `lane/*` branch pushes; rebases lane onto origin/main when stale.
 - Runs full suite on the merge candidate; merges green, rejects red with notes here.
