@@ -490,6 +490,107 @@ git worktree add ..\sl-research -b lane/research origin/main
     suite after the fix: **1368 passed / 115 skipped / 0 failed** (zero
     regressions; the jump from the WAVE-3 baseline of 1243/115 is other
     lanes' already-landed work on this branch, not this item alone).)*
+11. `[x]` done @2026-08-27 — lane/core-b **bootstrap_demo.py real two-phase
+    story** (this wave's kickoff item, direct chat instruction, scoped
+    exception on `backend/scripts/bootstrap_demo.py` — unowned by any
+    lane, integrator-approved for this wave): the checked-in script was
+    the OLD debate-seeder (raw SQL trace rows tripping `_DEMO_RULES`'
+    bottleneck threshold) — unrelated to this pipeline, produces zero
+    procedures, and demo.md doesn't reference that behavior at all.
+    Replaced outright, per the kickoff's own stated default (nobody
+    flagged a dependency on the old behavior).
+    *(Shipped: Phase A builds an `AgentRunEvidenceSource` by hand — same
+    shape `server.py`'s `solve_task()` builds at its own
+    `extract_procedure()` call site — over a REAL probe of this repo's
+    own `backend/` checkout (`environment_probe.assert_environment_claims`,
+    zero fixtures: real `pyproject.toml`/`requirements.txt`/`tests/` ->
+    real `language`/`has_test_runner`/`package_manager` claims), then
+    calls `extract_procedure(pool, evidence_source, client=None, ...)` —
+    deterministic path, zero API calls. Phase B picks one real derived
+    precondition, genuinely invalidates the claim behind it via a real,
+    separately-captured claim + `claims.relate_claims()`'s real
+    SUPERSEDES edge (deliberately a DIFFERENT predicate than the one
+    being invalidated — sharing it would make `_precondition_narrative`'s
+    own newest-claim lookup find the NEW claim instead of the superseded
+    OLD one, hiding the exact "superseded by" narrative), then proves
+    `check_procedure_reuse()` flips ALLOW -> WOULD_REFUSE citing BOTH
+    real claim ids, demo.md §3's exact pinned shape.
+
+    REAL BUG FOUND AND FIXED EN ROUTE (in-scope, `procedure_extraction/
+    __init__.py`): `extract_procedure()` never passed `provenance` or
+    `scope_type` to `capture_procedure()`, which unconditionally requires
+    both (`v0_gate.py`'s V0 gate) — every real call would raise
+    `V0Violation` before reaching the INSERT, on EVERY caller including
+    `solve_task()` itself, never caught because the offline suite
+    monkeypatches `capture_procedure` entirely (see
+    `test_procedure_extraction_init_offline.py`'s own docstring) and no
+    worktree has had a working `DATABASE_URL` until this wave. Fixed:
+    `provenance="system_pending_review"` (this codebase's existing
+    convention for a system-derived, not-yet-approved object —
+    `claim_family.py`/`knowledge_conflict.py` use the same value,
+    matching the follow-up UPDATE that stamps `approval_status='proposed'`
+    on the same row) + `scope_type="project"`/`scope_entity_id=
+    evidence.project_id` when known, `"global"` otherwise. VALIDATED
+    LIVE: the existing (pre-existing, self-cleaning, already-scoped)
+    `test_procedure_extraction_init_e2e.py` — previously never actually
+    exercised — now passes 3/3 against the real Supabase DATABASE_URL in
+    `backend/.env`.
+
+    HONEST FINDING, numbered per house rules (non-blocking — proceeded on
+    the stated default, kept moving): the kickoff text says Phase B
+    should "call `retrieve_precedent` (should surface it)" before
+    breaking the precondition. Traced `retrieve_precedent`'s real
+    implementation (`reuse_detection._vector_candidates`): it only ever
+    queries `task_nodes`/`knowledge_nodes` — it CANNOT return a
+    `procedures` row, regardless of verification state (a real, disclosed
+    drift from demo.md C4's own description of that tool — separate
+    pre-existing gap, not touched here). Even `find_applicable_procedures`
+    (the function that DOES retrieve procedures) is cold-start-gated OFF
+    (`should_disable_procedure_retrieval`) whenever fewer than
+    `MIN_VERIFIED_PROCEDURES_TO_ENABLE_RETRIEVAL` verified procedures
+    exist system-wide — true by construction for ANY freshly-extracted
+    procedure on a fresh DB, no matter which retrieval function is
+    called. **Question #7 (non-blocking, default applied):** "reuse
+    you can see" for a not-yet-verified procedure is therefore
+    necessarily EXPLICIT invocation (`check_procedure_reuse`, which
+    deliberately bypasses both gates per ticket 13's own named
+    exception), not automatic retrieval. Default applied: the script
+    calls `check_procedure_reuse` for a real pre-break ALLOW proof, AND
+    calls `find_applicable_procedures` for real, printing its honest
+    (empty, cold-start-gated) result rather than claiming it "surfaced"
+    something it structurally cannot yet. Options if this reading is
+    wrong: (a) keep as shipped (proposed default — matches how
+    `check_procedure`'s own docstring already frames explicit-invocation
+    as the answer for this exact situation), (b) mark the procedure
+    verified+approved before Phase B to force automatic retrieval to
+    fire too (rejected by me: fabricates evidence demo.md §2 item 4
+    explicitly forbids — "no backfills... a fresh install sees exactly
+    what the schema births"), (c) treat this as a real product gap
+    (`retrieve_precedent` should search `procedures` too) and file it as
+    separate follow-on work, out of scope for this wave.
+
+    PROOF STATUS, same standard as the migration-chain item — not
+    claiming more than actually run: offline coverage is solid (13
+    `test_procedure_extraction_init_offline.py` tests unaffected by the
+    fix + 45 across the check_procedure/derive/bootstrap_demo cluster,
+    all green; new `tests/test_bootstrap_demo_offline.py` — 10 tests —
+    covers the script's own new pure logic: `select_target_precondition`,
+    `verdict_cites_both_claims`, the OBSERVATIONS fixture's own
+    load-bearing shape, phase function signatures). Full offline suite
+    unaffected: **1368 passed / 115 skipped / 0 failed**, unchanged
+    (the fix only adds kwargs an already-monkeypatched call site doesn't
+    assert on). The script itself has NOT been run live yet — this
+    worktree has no Docker (confirmed: `docker`/`docker compose` both
+    "command not found"), but DOES have a real, populated
+    `backend/.env` pointing at a live (shared, NOT fresh/disposable)
+    Supabase `DATABASE_URL` — used above only to validate the V0-gate fix
+    via the pre-existing, self-cleaning, narrowly-scoped e2e test file,
+    not to run the new script itself. Per the kickoff's own instruction
+    ("flag it and I'll route the live fresh-DB run to Chaitanya... or
+    point you at the shared dev DB, whichever's faster") — flagging here
+    rather than unilaterally running a brand-new data-writing script
+    against shared infra. Script is ready to run as-is the moment either
+    path is confirmed.)*
 Rule: NO new migrations (schema needs route through CORE-A); no edits outside owned paths.
 
 0. `[x]` **WAVE-2 / HARDENING H3 pre-work swap** -- DONE @2026-08-26 by core-b under the HARDENING section item 3 (same task; canonical record there). Rate-limiter collector treatment: in-process token bucket + buffered ledger flush (trace_collector append->drain pattern) so Postgres becomes audit ledger, not enforcement point. CONSTRAINT: preserve fail-closed-on-infra-error; buffered writes need a replay-or-block rule. Retention sweep for rate_limit_events. NOTE: lands in governance.py -- scoped grant to this lane for backend/app/services/governance.py only.
@@ -2758,3 +2859,55 @@ Grounded findings from  3_access.sql/ 4_governance.sql/deps.py review. Sequence:
   MCP-server wiring question, not a schema one — doesn't change the answer
   to what was actually asked here. No schema/app code touched for this
   confirmation.
+
+- CORE-B (2026-08-27, next wave): **bootstrap_demo.py real two-phase
+  story** — full detail in CORE-B queue item 11 above. Summary: replaced
+  the old debate-seeder script outright (unrelated pipeline, zero
+  procedures, demo.md silent on it — kickoff's own default, nobody
+  flagged a dependency); new script's Phase A extracts a real procedure
+  via `extract_procedure(client=None)` from a real probe of this repo's
+  own `backend/` checkout; Phase B genuinely supersedes the claim behind
+  one real precondition via `claims.relate_claims()` and proves
+  `check_procedure_reuse()` flips ALLOW -> WOULD_REFUSE citing both real
+  claim ids. Found and fixed a real, previously-unexercised bug in owned
+  code: `extract_procedure()` never passed `provenance`/`scope_type` to
+  `capture_procedure()`, so every real (non-monkeypatched) call raised
+  `V0Violation` — invisible to the offline suite, never caught because no
+  worktree had a working `DATABASE_URL` until this wave. Fixed
+  (`provenance="system_pending_review"`, `scope_type` from
+  `evidence.project_id`) and validated LIVE against the real Supabase
+  `DATABASE_URL` via the pre-existing, self-cleaning
+  `test_procedure_extraction_init_e2e.py` (3/3 passed — previously never
+  actually run). **Question #7 (non-blocking, default applied):** kickoff
+  text assumed `retrieve_precedent` would "surface" the fresh procedure
+  before Phase B breaks it; traced its real implementation
+  (`reuse_detection._vector_candidates`) and found it structurally cannot
+  return a `procedures` row at all (task_nodes/knowledge_nodes only —
+  separate, pre-existing drift from demo.md C4's description, not fixed
+  here), and separately that `find_applicable_procedures` is cold-start-
+  gated off for any freshly-extracted procedure regardless. Default
+  applied: script proves the "reuse you can see" half via
+  `check_procedure_reuse`'s explicit-invocation ALLOW instead, and prints
+  `find_applicable_procedures`'s honest empty result rather than
+  overclaiming. Full detail + options in the queue item.
+  PROOF STATUS (same standard as the migration-chain item): offline
+  suite green throughout (**1368 passed / 115 skipped / 0 failed**,
+  unchanged — the V0-gate fix only adds kwargs an already-monkeypatched
+  test doesn't assert on) plus 10 new offline tests for the script's own
+  pure logic (`tests/test_bootstrap_demo_offline.py`). The script itself
+  has NOT been run live: no Docker in this worktree (confirmed), and
+  `backend/.env`'s real `DATABASE_URL` points at a SHARED (not fresh/
+  disposable) Supabase instance — used above only to validate the V0-gate
+  fix via a pre-existing, self-cleaning, narrowly-scoped test, not to run
+  this new data-writing script. Flagging per the kickoff's own routing
+  instruction rather than unilaterally running it against shared infra —
+  ready to run the moment either the disposable-DB path or "go ahead on
+  the shared DB" is confirmed. **Note re: RESEARCH's entry directly
+  above (Band 2 founding-loop exit-criterion) — resolved by this item**:
+  Chaitanya's infra report (cited there) already ran the OLD
+  bootstrap_demo.py against a real disposable DB and found it left
+  episodes/observations/procedures/evidence at 0 rows — exactly the gap
+  this rewrite closes. That same disposable-DB pipeline is the natural
+  next step for this item's own flagged live run: it would simultaneously
+  produce demo.md §3's proof AND the "one hand-audited live run from
+  zero" evidence ROADMAP bullet 1 asks for.

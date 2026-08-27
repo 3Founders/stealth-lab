@@ -118,6 +118,20 @@ async def extract_procedure(
     if dry_run:
         return ExtractionResult(extracted=extracted, extracted_by=extracted_by)
 
+    # REAL BUG FOUND while wiring bootstrap_demo.py's first genuine
+    # engine-verified call to this function (never caught by the offline
+    # suite, which monkeypatches capture_procedure entirely -- see
+    # test_procedure_extraction_init_offline.py's own docstring): neither
+    # `provenance` nor `scope_type` was ever passed through, and
+    # capture_procedure's V0 gate (app/services/v0_gate.py) unconditionally
+    # requires both, so every real call raised V0Violation before this fix,
+    # never exercised end-to-end. `system_pending_review` is this
+    # codebase's existing convention for a system-derived, not-yet-approved
+    # object (claim_family.py, knowledge_conflict.py use the same value) --
+    # matches the follow-up UPDATE below, which stamps approval_status
+    # 'proposed' on the same row. scope_type follows evidence.project_id
+    # when known (the real locality this episode ran in); 'global' with no
+    # entity_id is the honest fallback when it isn't.
     result = await capture_procedure(
         pool,
         name=extracted.name, goal=extracted.goal,
@@ -133,6 +147,9 @@ async def extract_procedure(
         invariants=list(extracted.invariants),
         source_episode_ids=[evidence.episode_id] if evidence.episode_id else None,
         owner_id=owner_id, visibility=visibility,
+        provenance="system_pending_review",
+        scope_type="project" if evidence.project_id else "global",
+        scope_entity_id=evidence.project_id,
     )
 
     # The migration-20 columns capture_procedure() does not carry --
