@@ -26,24 +26,26 @@ advertised; everything else is non-goals (§4).
 | C4 | Reuse you can see | `mcp_server/server.py` tool `retrieve_precedent` (hybrid RRF + graph expansion over pgvector HNSW) returns procedure + confidence + provenance chain | retrieval leave-one-out sanity pattern (n=400, p=.0066 [T-24]) |
 | C5 | Refusal with receipts | `check_procedure` → `ALLOW` / `WOULD_REFUSE` citing the superseded claim id (+ changeset id, where one is tracked). **Audit mode only**: the agent is informed, not blocked; every refusal lands in the audit log | precondition-gate adversarial tests (fail-closed cascade); refusal payload shape pinned by tests, incl. new offline tests against the real server tool |
 
-**Doc-accuracy note (updated 2026-08-27):** the two gaps flagged by the
-same-day outside-eye pass (previously recorded here, full detail in
+**Doc-accuracy note (updated 2026-08-27):** the gaps flagged by the same-day
+outside-eye pass (previously recorded here, full detail in
 `.scratch/research/outside-eye-demo-readme-pass.md`) are now closed.
 `check_procedure` landed as a real tool (#9) in
 `backend/app/mcp_server/server.py`, a thin wrapper reusing the existing
 decision logic in `app/services/applicability.py` rather than reinventing
-it (15 new proving tests — the first offline tests `mcp_server/` has ever
-had). `docker-compose.yml` / `backend/Dockerfile` now exist at repo root.
-Two things worth knowing about what actually shipped: (1) `check_procedure`'s
-`evidence` field always cites the superseded claim id, but only cites a
-changeset id when one exists — v1 never scoped ChangeSet coverage to
-knowledge-node supersession (a pre-existing, disclosed limitation, not a
-new one), so the two-item evidence array in §3's pinned example below is
-the changeset-backed case, not the only shape `evidence` can take. (2)
-`docker-compose.yml` has been validated as syntactically correct YAML with
-its import paths traced by hand, but has never actually been booted — no
-Docker was available anywhere in the build fleet until now; boot
-verification is in progress.
+it. `docker-compose.yml` / `backend/Dockerfile` exist, have been boot-tested
+clean on real Docker (zero fixes needed), and the 30-migration chain applies
+clean on a genuinely fresh disposable DB — confirmed twice, on two separate
+fresh volumes. `check_procedure`'s `evidence` field always cites the
+superseded claim id, but only cites a changeset id when one exists — v1
+never scoped ChangeSet coverage to knowledge-node supersession (a
+pre-existing, disclosed limitation), so the two-item evidence array in §3's
+pinned contract example is the changeset-backed case; §3 now also carries a
+real engine-verified example of the claim-id-only case.
+
+One install-flow gap found running this for real, not yet fixed in the
+README: `docker compose up -d` after a `git pull` silently keeps running
+the OLD image unless you add `--build` — worth fixing in the quickstart
+before anyone else hits it.
 
 ## 2 · Production posture (non-negotiable at ship)
 
@@ -62,18 +64,22 @@ verification is in progress.
 
 - [x] Full offline suite green: `cd backend && python -m pytest tests -q`
       (last: **1368 passed / 115 skipped / 0 failed**, 2026-08-27)
-- [ ] Migration chain applied clean on a throwaway
+- [x] Migration chain applied clean on a throwaway
       `pgvector/pgvector:pg15` container via `scripts/migrate.py`
-      (engine-verified; static text checks alone do NOT count — in progress,
-      first Docker-equipped run underway 2026-08-27)
-- [ ] `python scripts/bootstrap_demo.py` runs the scripted two-phase story:
-      phase A produces traces→procedures; phase B retrieves precedent AND
-      triggers a `WOULD_REFUSE` after the fixture breaks a precondition claim
-- [ ] Audit log shows the refusal line with claim ids (`cl_*` → `cl_*`)
+      (engine-verified — 30/30 applied, 0 pending, 0 errors, confirmed on
+      two separate fresh volumes, 2026-08-27)
+- [x] `python scripts/bootstrap_demo.py` runs the scripted two-phase story:
+      phase A produces a real procedure with real preconditions derived
+      from `project_state()`; phase B genuinely invalidates the claim
+      behind one precondition and `check_procedure` flips ALLOW ->
+      WOULD_REFUSE citing it. Engine-verified on a fresh DB, 2026-08-27 —
+      independently checked against the raw rows (the `SUPERSEDES` edge
+      and both claims' `truth_state`), not just the script's own output.
+- [x] Audit log shows the refusal line with claim ids (`cl_*` → `cl_*`) —
+      real example below, from the same run
 - [x] `check_procedure` response shape matches the pinned contract, pinned by
-      tests against the real server tool (2026-08-27). Example below is the
-      changeset-backed evidence case — see the doc-accuracy note above for
-      the claim-id-only case:
+      tests against the real server tool (2026-08-27). Contract example
+      (illustrative, the changeset-backed evidence case):
 
 ```json
 { "verdict": "WOULD_REFUSE",
@@ -83,8 +89,21 @@ verification is in progress.
   "capability_note": "0 failures recorded, environment changed" }
 ```
 
+  Real engine-verified example (2026-08-27, claim-id-only case — the more
+  common shape in practice, per the doc-accuracy note above):
+
+```
+WOULD_REFUSE cf7b2b55-0bdf-4f33-8eb6-f007b5842c00: precondition claim
+6942ee6f-22ac-435c-923d-2763a2d0282c (subject='project:bootstrap-demo-project'
+predicate='has_test_runner' object='pytest') superseded by
+cefb6b7e-e6f0-4e31-883b-ce04da8e0fd0
+evidence: ['claim:6942ee6f-22ac-435c-923d-2763a2d0282c',
+           'claim:cefb6b7e-e6f0-4e31-883b-ce04da8e0fd0']
+```
+
 - [ ] README quickstart works from a clean clone: compose up → add MCP server →
-      one task solved twice, second time citing precedent
+      one task solved twice, second time citing precedent (pending: needs
+      one live model call, budget decision outstanding)
 - [x] SECURITY.md + data statement published; uninstall = drop volume
       (`SECURITY.md` + `DATA_STATEMENT.md`, repo root, 2026-08-27)
 
