@@ -426,6 +426,70 @@ git worktree add ..\sl-research -b lane/research origin/main
    unclassified rows; claim_status vocabulary statically pinned to db/21's
    kn_claim_status_chk]. Full suite: **1185 passed / 114 skipped /
    0 failed** [= pre-existing baseline + 17, zero regressions].)*
+10. `[x]` done @2026-08-27 — lane/core-b **check_procedure MCP tool** (this
+    wave's kickoff item, direct chat instruction): demo.md's C5 row and its
+    pinned §3 payload contract described a tool that didn't exist in
+    `backend/app/mcp_server/server.py` — 8 tools, no `check_procedure`.
+    Added it as tool #9, audit-mode only (informs, never blocks).
+    *(Shipped: ALL decision logic lives in the OWNED file
+    `app/services/applicability.py` — `check_procedure_reuse()` +
+    `ProcedureVerdict`/`ProcedureNotFound` — with `server.py`'s
+    `check_procedure` a genuinely thin wrapper (json.dumps the verdict,
+    turn `ProcedureNotFound` into a `"REFUSED: ..."` string), same
+    discipline as `retrieve_precedent`/`apply_change_set`. Reuses, does not
+    reinvent: `check_hard_constraints()` (this module, unchanged) is the
+    ALLOW/WOULD_REFUSE cascade itself, called with
+    `require_verified=False` — ticket 13's own named exception ("a
+    candidate procedure remains explicitly invocable"), since naming
+    `procedure_id` IS explicit invocation, not automatic selection; and
+    `procedure_extraction/failure_handlers.capability_for_stream()`
+    (imported lazily — module-level would be a real import cycle, that
+    package's `__init__.py` itself imports `_scope_matches` from this
+    module) for `capability_note`, over the SAME `target_type='procedure'`
+    evidence rows `procedure_evidence_stats` (db/24) counts. NOT reused:
+    `precondition_gate.py`'s postcondition Jaccard gate — it needs
+    STRUCTURED tags on both sides, `query` is free text with none
+    extracted, so calling it would be dead code (`postconditions_compatible
+    (tags, None)` trivially True); stays real at its actual call site
+    (hierarchy.py). CORRECTION to the kickoff brief: it named `state.py`
+    as one of the three pieces implementing "capability-decay tracking" —
+    that logic actually lives in `procedure_extraction/capability.py`
+    (Band 1.9b), not `state.py`; `state.py` contributes only via the
+    EXISTING `project_state()` call inside `check_hard_constraints`'s own
+    precondition loop, untouched here. Real reason-building, not a
+    canned string: a failed precondition triggers a direct
+    `knowledge_nodes`/`edges` lookup (read-only, no new write logic) to
+    name the actual current claim and, when truth_state=OUT, the actual
+    claim that superseded it via the real SUPERSEDES edge
+    (`claims.py::relate_claims`'s own mechanism) — proves demo.md §3's
+    exact headline shape ("precondition claim cl_17 ... superseded by
+    cl_23") against a real (fake-pool) edge lookup, not fabricated.
+    HONEST GAP disclosed in the module docstring: `evidence` cites real
+    claim ids, not changeset ids, for a claim supersession — 1.9c's
+    universal ChangeSet coverage explicitly scoped knowledge_node
+    supersession OUT of v1 (db/25's own header), and `relate_claims()`
+    writes the SUPERSEDES edge with no change_sets row, so there is
+    honestly no changeset id to cite yet. 15 new offline proving tests:
+    12 in `tests/test_check_procedure_reuse_offline.py` (not-found/bad-
+    uuid, ALLOW incl. explicit-invocation-bypasses-verification, every
+    WOULD_REFUSE branch incl. all three precondition sub-cases, capability
+    equality vs `capability_for_stream` directly, exact SQL-content pin on
+    the evidence-stream query) + 3 in
+    `tests/test_mcp_check_procedure_offline.py` (thin-wrapper JSON-shape
+    pin against demo.md §3's exact contract, procedure_id pass-through,
+    REFUSED-string mapping) — first offline tests `mcp_server/` has ever
+    had; scoped file grant for server.py only, otherwise unowned,
+    integrator-approved per kickoff. REAL BUG FOUND AND FIXED EN ROUTE:
+    the MCP wiring test file's own import of `app.mcp_server.server`
+    triggers that module's `load_dotenv()`, a process-wide `os.environ`
+    mutation that set `DATABASE_URL` for the first time in an offline
+    run — every `*_e2e.py` module collected alphabetically afterward saw
+    it and stopped skipping, attempting real (unreachable) connections:
+    69 failures on the first full-suite run, gone (env snapshot/restore
+    immediately after the import, at collection time) on the second. Full
+    suite after the fix: **1368 passed / 115 skipped / 0 failed** (zero
+    regressions; the jump from the WAVE-3 baseline of 1243/115 is other
+    lanes' already-landed work on this branch, not this item alone).)*
 Rule: NO new migrations (schema needs route through CORE-A); no edits outside owned paths.
 
 0. `[x]` **WAVE-2 / HARDENING H3 pre-work swap** -- DONE @2026-08-26 by core-b under the HARDENING section item 3 (same task; canonical record there). Rate-limiter collector treatment: in-process token bucket + buffered ledger flush (trace_collector append->drain pattern) so Postgres becomes audit ledger, not enforcement point. CONSTRAINT: preserve fail-closed-on-infra-error; buffered writes need a replay-or-block rule. Retention sweep for rate_limit_events. NOTE: lands in governance.py -- scoped grant to this lane for backend/app/services/governance.py only.
