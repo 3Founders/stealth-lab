@@ -58,6 +58,7 @@ from app.api.approval import decide, ApprovalRequest
 from app.api.decompose import decompose, decide as decide_decomposition_fn, DecomposeRequest, DecideRequest
 from app.models.change import ChangeSet
 from app.services.access import AccessScope
+from app.services.applicability import verified_procedure_candidates
 from app.services.decomposition import DecompositionService
 from app.services.embeddings import Embedder
 from app.services.knowledge_conflict import detect_and_create_conflict_trigger
@@ -66,7 +67,7 @@ from app.services.local_retrieval import assemble_structural_context, retrieve_l
 from app.services.procedure_extraction import extract_procedure
 from app.services.procedure_extraction.evidence import AgentRunEvidenceSource
 from app.services.retrieval import HybridRetriever
-from app.services.reuse_detection import _vector_candidates
+from app.services.reuse_detection import ReusableNode, _vector_candidates
 from app.config import settings
 from fastapi import HTTPException
 
@@ -233,6 +234,17 @@ async def retrieve_precedent(query: str, ctx: Context) -> str:
     specifically to apply RETRIEVE_PRECEDENT_THRESHOLD instead of the
     shared platform default -- see that constant's comment for why.
 
+    Fused with applicability.verified_procedure_candidates() (2026-08-27
+    fix): _vector_candidates only ever queries task_nodes/knowledge_nodes
+    -- `procedures` was never in this tool's candidate set at all, a real
+    gap bootstrap_demo.py's own findings named. Procedures show up here
+    ONLY once verified -- see verified_procedure_candidates' own
+    docstring for the founder ruling on why an unverified/candidate
+    procedure deliberately does NOT bypass that gate to appear here
+    (considered and rejected: it would let a caller read "similar
+    precedent found" as an implicit reuse signal without ever going
+    through check_procedure's real applicability/precondition cascade).
+
     query: a natural-language description of the problem to find a
     precedent for -- ordinary conversational phrasing is the expected,
     normal case for this tool, not a special query syntax.
@@ -242,7 +254,18 @@ async def retrieve_precedent(query: str, ctx: Context) -> str:
     embedder = Embedder()
     query_vec = await embedder.embed_one(query, input_type="query")
     raw_candidates = await _vector_candidates(pool, query_vec, AccessScope.unrestricted())
-    candidates = [c for c in raw_candidates if c.similarity >= RETRIEVE_PRECEDENT_THRESHOLD]
+    procedure_rows = await verified_procedure_candidates(pool, query_vec, AccessScope.unrestricted())
+    raw_candidates = raw_candidates + [
+        ReusableNode(
+            id=str(r["id"]), table="procedures", name=r["name"], description=r["goal"],
+            similarity=float(r["similarity"]), method="vector",
+        )
+        for r in procedure_rows
+    ]
+    candidates = sorted(
+        (c for c in raw_candidates if c.similarity >= RETRIEVE_PRECEDENT_THRESHOLD),
+        key=lambda c: c.similarity, reverse=True,
+    )
 
     if not candidates:
         return (

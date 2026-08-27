@@ -43,7 +43,7 @@ from uuid import UUID
 
 import asyncpg
 
-from app.services.access import AccessScope, visibility_predicate
+from app.services.access import AccessScope, next_param_index, visibility_predicate
 from app.services.embeddings import to_pgvector
 from app.services.invariants import check_invariants_async
 from app.services.state import project_state
@@ -411,6 +411,79 @@ async def find_applicable_procedures(
     # they're still real, hard-filter-passing candidates.
     unranked_survivors = [s for s in survivors if str(s["id"]) not in ranked_ids]
     return result_list + unranked_survivors[: max(0, limit - len(result_list))]
+
+
+# ===========================================================================
+# demo.md C4 -- retrieve_precedent (MCP server, backend/app/mcp_server/
+# server.py): a real, disclosed gap (bootstrap_demo.py's own "HONEST
+# FINDING" / Question #7) is that retrieve_precedent's candidate set --
+# reuse_detection._vector_candidates -- only ever queries task_nodes and
+# knowledge_nodes; `procedures` is never in it, even though the embedding
+# column, HNSW index, and a real vector-similarity query over procedures
+# all already exist (right above, inside find_applicable_procedures).
+# This function is the procedures-table counterpart retrieve_precedent
+# fuses in alongside _vector_candidates' results, closing that gap
+# without duplicating either query path.
+# ===========================================================================
+
+
+async def verified_procedure_candidates(
+    pool: asyncpg.Pool,
+    query_vec: list[float],
+    access_scope: Optional[AccessScope] = None,
+    limit: int = 5,
+) -> list[dict]:
+    """
+    Verified-only procedure candidates for retrieve_precedent. Reuses,
+    does not duplicate:
+      - should_disable_procedure_retrieval() -- the SAME cold-start gate
+        find_applicable_procedures() itself opens with, called here
+        verbatim rather than reimplemented, so retrieve_precedent and
+        automatic candidate selection can never disagree about "is
+        retrieval unlocked yet."
+      - the verified-only WHERE shape check_hard_constraints'
+        require_verified=True branch enforces everywhere else
+        (verification_state='verified', approval_status='approved',
+        availability='active', not stale, live) -- and the SAME
+        `1 - (embedding <=> $1::vector)` ranking query shape used just
+        above in find_applicable_procedures.
+
+    2026-08-27 founder ruling: considered surfacing unverified/candidate
+    procedures here too -- REJECTED. Letting retrieve_precedent surface a
+    not-yet-verified procedure would let a caller treat "similar
+    precedent found" as an implicit reuse signal without ever going
+    through check_procedure_reuse's real applicability/precondition
+    cascade -- exactly the false-reuse failure mode this whole substrate
+    exists to prevent. See .scratch/build-board.md's CORE-B queue (this
+    item) for the full reasoning; revisit only with an explicit new
+    founder ruling, not unilaterally.
+
+    Deliberately NOT find_applicable_procedures(): that runs the full
+    hard-constraint cascade (scope/exclusions/preconditions/invariants
+    evaluated against a caller-supplied `current_scope`), and
+    retrieve_precedent's only input is free-text `query` -- it has no
+    current_scope to supply. Calling find_applicable_procedures() with an
+    empty one would silently exclude every procedure with a non-empty
+    `scope` field (_scope_matches treats an unsupplied key as a hard
+    fail, not "unconstrained") -- a second, different bug, not this one.
+    """
+    if await should_disable_procedure_retrieval(pool, access_scope):
+        return []
+
+    scope = access_scope or AccessScope.unrestricted()
+    vis_sql, vis_params = visibility_predicate(scope, param_index=2)
+    limit_index = next_param_index(scope, 2)
+    rows = await pool.fetch(
+        f"SELECT id, name, goal, 1 - (embedding <=> $1::vector) AS similarity "
+        f"FROM procedures "
+        f"WHERE verification_state = 'verified' AND approval_status = 'approved' "
+        f"AND availability = 'active' AND staleness != 'stale' "
+        f"AND t_invalid IS NULL AND embedding IS NOT NULL "
+        f"AND {vis_sql} "
+        f"ORDER BY similarity DESC LIMIT ${limit_index}",
+        to_pgvector(query_vec), *vis_params, limit,
+    )
+    return [dict(r) for r in rows]
 
 
 # ===========================================================================

@@ -647,6 +647,112 @@ git worktree add ..\sl-research -b lane/research origin/main
     rather than unilaterally running a brand-new data-writing script
     against shared infra. Script is ready to run as-is the moment either
     path is confirmed.)*
+12. `[x]` done @2026-08-28 — lane/core-b **retrieve_precedent surfaces
+    VERIFIED procedures** (this wave's kickoff item, direct chat
+    instruction, founder ruling 2026-08-27): closed item 11's own HONEST
+    FINDING / Question #7 — `retrieve_precedent` (MCP server) could not
+    return a `procedures` row at all, even though the embedding column,
+    HNSW index, and a real vector-similarity query over `procedures`
+    already existed (`applicability.py`'s `find_applicable_procedures`).
+    The gap was narrower than it first looked: `retrieve_precedent`'s
+    candidate set (`reuse_detection._vector_candidates`) simply never
+    queried `procedures` at all — it only ever queried
+    task_nodes/knowledge_nodes.
+    *(Shipped: `applicability.verified_procedure_candidates()` — new
+    function, cold-start-gated via `should_disable_procedure_retrieval()`
+    called VERBATIM (not reimplemented, so retrieve_precedent and
+    automatic candidate selection can never disagree about "is retrieval
+    unlocked yet"), WHERE clause mirrors the SAME verified+approved rule
+    `check_hard_constraints`' `require_verified=True` branch enforces
+    everywhere else (`verification_state='verified'`,
+    `approval_status='approved'`, `availability='active'`, not stale,
+    live), same `1 - (embedding <=> $1::vector)` ranking shape used just
+    above it in `find_applicable_procedures`. Deliberately NOT
+    `find_applicable_procedures()` itself: that runs the full
+    scope/exclusions/preconditions/invariants cascade against a
+    caller-supplied `current_scope`, which `retrieve_precedent`'s
+    free-text `query` has no way to supply — an empty `current_scope`
+    would silently exclude every procedure with a non-empty `scope`
+    field (`_scope_matches` treats an unsupplied key as a hard fail, not
+    "unconstrained"), a second, different bug. FOUNDER RULING recorded
+    directly in code (both `verified_procedure_candidates`' docstring and
+    `retrieve_precedent`'s own): surfacing unverified/candidate
+    procedures here too was considered and REJECTED — false-reuse risk,
+    an agent could read "similar precedent found" as an implicit signal
+    without ever going through `check_procedure`'s real
+    applicability/precondition cascade. `server.py`'s `retrieve_precedent`
+    (scoped grant, same precedent as item 10's `check_procedure` grant)
+    fuses `verified_procedure_candidates()`'s rows into the existing
+    `_vector_candidates` results as `ReusableNode(table="procedures", ...)`
+    entries — zero changes to `reuse_detection.py` itself, which stays
+    unowned/untouched — then applies `RETRIEVE_PRECEDENT_THRESHOLD` and
+    sorts the fused set, same as before. `demo.md` C4 fixed: was claiming
+    "hybrid RRF + graph expansion over pgvector HNSW" (simply wrong for
+    this tool — that's `HybridRetriever`, a different code path;
+    `retrieve_precedent` has always been a direct cosine-similarity query)
+    and "returns procedure + confidence + provenance chain" (overclaim —
+    no confidence score, no provenance chain, and a `procedures` match is
+    now real but VERIFIED-ONLY). New Doc-accuracy note paragraph states
+    precisely: a freshly-extracted (candidate) procedure — exactly what
+    `bootstrap_demo.py`'s Phase A produces — still will NOT show up via
+    `retrieve_precedent`, by design; `check_procedure` remains the only
+    path for reasoning about one specific, not-yet-verified procedure. 10
+    new offline proving tests in
+    `tests/test_retrieve_precedent_procedures_offline.py`: both directions
+    pinned on `verified_procedure_candidates` itself (a VERIFIED procedure
+    with a real embedding-similarity value is returned; a CANDIDATE
+    procedure with a HIGHER similarity is excluded, via a FakePool that
+    actually simulates the WHERE-clause semantics in Python rather than
+    just echoing configured rows — the only honest way to prove exclusion
+    offline; also pins verified-but-unapproved and stale/quarantined
+    exclusion, the cold-start gate short-circuiting before any candidate
+    query, the exact WHERE-clause SQL text, and visibility-scope
+    threading) + 3 wiring tests on the MCP tool itself (fuses a verified
+    procedure into the rendered output; the similarity threshold still
+    applies post-fuse, not just to `_vector_candidates`' own results;
+    falls back to "No precedent found" when both sources are empty).
+
+    OUT-OF-SCOPE FINDING, disclosed rather than silently worked around:
+    a full bare `python -m pytest -q` from `backend/` (not the documented
+    ship-checklist scope `pytest tests -q`) collects `backend/`'s
+    ROOT-LEVEL `test_*_live.py` scripts too (e.g.
+    `test_solve_task_live.py`, `test_apply_change_set_live.py` — six
+    others), several of which import `app.mcp_server.server` with NO
+    restore guard around its module-level `load_dotenv()` (unlike
+    `tests/test_mcp_check_procedure_offline.py`'s own documented guard,
+    itself already flagged on this board as "not fully effective" per
+    0f1fc95). That leaks a real `DATABASE_URL` process-wide, and every
+    `*_e2e.py` module collected afterward stops skipping and attempts a
+    real connection against the shared Supabase instance — same failure
+    KIND as 0f1fc95's finding and CORE-A's WAVE-3 "40 fail identically on
+    a stashed clean tree" shared-instance-drift note, just triggered by a
+    different (also-real, also pre-existing) leak source this time, and a
+    bigger blast radius (111-112 failures under this exact repro, not 15)
+    — NOT a regression from this item, confirmed by running the full
+    suite with BOTH of this item's `mcp_server.server`-importing files
+    excluded (`--ignore` on `test_mcp_check_procedure_offline.py` AND
+    this item's new file): identical 111 failures, proving the root-level
+    scripts are the actual source, not anything in `tests/`. UPDATE, same
+    session: another session landed `1897abc` (`backend/tests/conftest.py`
+    `pytest_configure` guard) mid-item, fixing the SAME leak family for
+    the documented ship-checklist scope (`pytest tests/`) — rebased onto
+    it. Re-confirmed the root-level-script leak this note describes is a
+    DIFFERENT, still-open path: `1897abc`'s conftest.py lives under
+    `backend/tests/`, so it only loads when pytest collects that
+    directory; a bare `pytest -q` from `backend/` still reproduces 112
+    failures post-`1897abc` (re-run after the rebase, not stale). PROOF
+    STATUS, run correctly scoped (`pytest tests/`, the documented ship-
+    checklist command, post-rebase onto origin/main incl. `1897abc` +
+    CORE-A's newly-landed trace-payload work): natural environment,
+    **1399 passed / 115 skipped / 0 failed** — this item's real,
+    authoritative offline-suite number, zero regressions (also confirmed
+    identical with `DATABASE_URL` forced empty, ruling out the item-12
+    files themselves as a leak source for this scope too). Flagging the
+    root-level-script leak here for whoever owns test hygiene across
+    `backend/`'s root-level live scripts (out of this lane's owned paths
+    — `procedure_extraction/**`, `invariants.py`, `applicability.py`,
+    `precondition_gate.py`, `state.py` — same disclose-not-fix posture
+    0f1fc95 itself used).)*
 Rule: NO new migrations (schema needs route through CORE-A); no edits outside owned paths.
 
 0. `[x]` **WAVE-2 / HARDENING H3 pre-work swap** -- DONE @2026-08-26 by core-b under the HARDENING section item 3 (same task; canonical record there). Rate-limiter collector treatment: in-process token bucket + buffered ledger flush (trace_collector append->drain pattern) so Postgres becomes audit ledger, not enforcement point. CONSTRAINT: preserve fail-closed-on-infra-error; buffered writes need a replay-or-block rule. Retention sweep for rate_limit_events. NOTE: lands in governance.py -- scoped grant to this lane for backend/app/services/governance.py only.

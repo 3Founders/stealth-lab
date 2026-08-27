@@ -23,7 +23,7 @@ advertised; everything else is non-goals (§4).
 | C1 | Install & boot | `docker compose up -d` (postgres must be **`pgvector/pgvector:pg15`** — plain postgres fails migration 01) + migrations auto-run | `python scripts/migrate.py --status` → all 30 `applied`; first verified engine run 2026-08-25 (`research/claude-code-hooks-v2@429ffa9`) |
 | C2 | Traces flow in | Claude Code hooks → `app/services/trace_collector.py` (redaction choke point, dedup, bounded) → `trace_worker.py` → `agent_traces`/`trace_events`; HTTP path: POST `/v1/traces` per-record fault isolation | offline suite green; collector roundtrip test; worker quarantine behavior tests |
 | C3 | Procedures get distilled | `procedure_extraction/` registry → strategies → derive (load-bearing preconditions) → validators (**V6 authoring-time invariant check**) → `procedures` table born-correct | suite incl. extraction validators; nothing enters without scope+provenance (`services/v0_gate.py`) |
-| C4 | Reuse you can see | `mcp_server/server.py` tool `retrieve_precedent` (hybrid RRF + graph expansion over pgvector HNSW) returns procedure + confidence + provenance chain | retrieval leave-one-out sanity pattern (n=400, p=.0066 [T-24]) |
+| C4 | Reuse you can see | `mcp_server/server.py` tool `retrieve_precedent` (direct cosine-similarity match over task_nodes/knowledge_nodes AND, as of 2026-08-27, `procedures` — real `1 - (embedding <=> ...)` pgvector HNSW query, not RRF/graph expansion; see Doc-accuracy note) returns similarity-ranked name/id/similarity — a `procedures` match is always a VERIFIED, approved one | retrieval leave-one-out sanity pattern (n=400, p=.0066 [T-24]) |
 | C5 | Refusal with receipts | `check_procedure` → `ALLOW` / `WOULD_REFUSE` citing the superseded claim id (+ changeset id, where one is tracked). **Audit mode only**: the agent is informed, not blocked; every refusal lands in the audit log | precondition-gate adversarial tests (fail-closed cascade); refusal payload shape pinned by tests, incl. new offline tests against the real server tool |
 
 **Doc-accuracy note (updated 2026-08-27):** the gaps flagged by the same-day
@@ -41,6 +41,32 @@ never scoped ChangeSet coverage to knowledge-node supersession (a
 pre-existing, disclosed limitation), so the two-item evidence array in §3's
 pinned contract example is the changeset-backed case; §3 now also carries a
 real engine-verified example of the claim-id-only case.
+
+**C4 fix (2026-08-27):** `retrieve_precedent` previously could not return a
+`procedures` row at all — its candidate set (`reuse_detection.
+_vector_candidates`) only ever queried `task_nodes`/`knowledge_nodes`, even
+though the embedding column, HNSW index, and a real vector-similarity query
+over `procedures` already existed elsewhere in this codebase
+(`applicability.py`'s `find_applicable_procedures`). This was bootstrap_demo.
+py's own disclosed "HONEST FINDING" (Question #7). Fixed by fusing in
+`applicability.verified_procedure_candidates()`, which reuses the SAME
+cold-start gate (`should_disable_procedure_retrieval`) and the SAME
+verified+approved rule `check_hard_constraints` enforces everywhere else —
+**not** a new, looser path. The row above's older "hybrid RRF + graph
+expansion" description was also simply wrong for this tool (that's
+`HybridRetriever`, a different code path); corrected to describe what
+`retrieve_precedent` actually runs.
+
+The claim is still not "any procedure, plus confidence and a provenance
+chain" — worded precisely now: a `procedures` match here is always
+VERIFIED and approved, ranked by raw similarity (no "confidence" score, no
+provenance chain — those are name/id/similarity only, same shape as the
+task_nodes/knowledge_nodes candidates it's fused with). A freshly-extracted
+(candidate) procedure — exactly what bootstrap_demo.py's Phase A produces —
+still will NOT show up via `retrieve_precedent`, by design (2026-08-27
+founder ruling: surfacing unverified procedures here was considered and
+rejected as a false-reuse risk). `check_procedure` remains the only path
+for reasoning about one specific, not-yet-verified procedure.
 
 One install-flow gap found running this for real, now fixed: `docker
 compose up -d` after a `git pull` used to silently keep running the OLD
