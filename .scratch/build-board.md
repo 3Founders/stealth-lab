@@ -2323,3 +2323,55 @@ Grounded findings from  3_access.sql/ 4_governance.sql/deps.py review. Sequence:
   README.md (full rewrite) - none committed to lane/research since no lane
   owns README.md today; routing/commit is the founder's call, same posture
   as CORE-A's SECURITY.md/DATA_STATEMENT.md landing.
+
+- CORE-B (2026-08-27, third wave): **closed the three deferred coverage
+  gaps from the second wave** -- procedure_extraction/__init__.py (21%),
+  strategies.py (50%), derive.py's remaining pool-touching branches (88%)
+  all now at **100%**. Turned out smaller than the second wave's own
+  sizing note feared: each of derive.py's two pool-touching functions
+  (derive_preconditions, derive_scope) issues exactly ONE project_state()
+  call, so the same single-purpose FakePool test_state_offline.py already
+  established covers both -- no "several real queries at once" harness was
+  actually needed there. And since strategies.py's/init.py's own test
+  evidence carries no project_id, derive_preconditions/derive_scope
+  short-circuit before ever reaching the pool (proven directly in the new
+  derive suite), so THEIR tests needed no FakePool at all, only a
+  pool-that-raises-if-touched sentinel -- reserving capture_procedure() as
+  the one thing actually monkeypatched (same precedent registry.py's own
+  entry set: fake the persistence BOUNDARY, never the INSERT/UPDATE SQL
+  itself). Three new files, 28 tests: test_derive_offline.py (7 --
+  derive_preconditions/derive_scope's real project_state() round trip both
+  ways, plus two small pure sub-branches no existing test had hit: a
+  test_run observation whose own command string also feeds the package-
+  manager/build/dev-server regexes, and a command_executed observation
+  with a genuine nonzero exit code); test_strategies_offline.py (8 --
+  DeterministicExtractor's literal output, GroundedHybridExtractor's full
+  fallback ladder [no client / empty skeleton / client exception /
+  malformed response / step-count mismatch] and its real abstraction path
+  incl. model/temperature threading); test_procedure_extraction_init_offline.py
+  (13 -- extract_procedure's V5 pre-check both ways, a validation-failure
+  report that never reaches capture_procedure, dry_run's persistence skip,
+  the real persist-plus-migration-20-UPDATE path, _select_strategy's full
+  registry-driven branch matrix incl. the no-client-even-for-an-llm-row
+  case, evaluate_extractor's unknown-id/skip-episodes/per-rule-failure-
+  counting/llm-strategy paths). REAL BUG SURFACED, documented not fixed
+  (out of scope for a coverage-only pass): evidence with real observations
+  but an empty tool_sequence is possible per evidence.py's shape (the two
+  lists are populated independently) and would raise an uncaught pydantic
+  ValidationError all the way up through extract_procedure -- schema.py's
+  ExtractedProcedure refuses zero steps unconditionally, so BOTH extractors
+  crash identically on it rather than degrading; extract_procedure's own
+  V5 pre-check only inspects has_observations(), never tool_sequence, so
+  nothing upstream catches this today. Pinned as a documented
+  pytest.raises in test_strategies_offline.py rather than silently
+  avoided. procedure_extraction package-wide offline coverage (excl. e2e):
+  483 stmts / 10 missed / 98% -- the 10 remaining are registry.py's
+  disclosed pure-DB-write plumbing (7, deferred at the second wave for the
+  same reason capture_procedure is monkeypatched here, not faked) plus two
+  pre-existing minor gaps in schema.py/validators.py never in scope. Local
+  package suite (offline + e2e, no regressions): 86 passed / 19 skipped /
+  0 failed. Full-repo suite pending in background; will append the number
+  once it lands, but zero production code changed this wave -- only new
+  test files plus one stale docstring pointer fixed in
+  test_procedure_extraction.py -- so regression risk outside this package
+  is nil.
