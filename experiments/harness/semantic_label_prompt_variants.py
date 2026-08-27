@@ -77,6 +77,74 @@ was reported. Full 42-excerpt run per variant costs about what the v2 pass
 cost ($0.0601 / 84 attempts) - four variants is roughly a quarter, well
 inside the informal ~$1 lane mark on its own, but see the board's budget-
 wall note before spending anything.
+
+RESULTS - RUN AGAINST A FREE-TIER MODEL, 2026-08-27 (see the board's
+"OpenRouter budget wall" section): the account had zero purchased
+balance, so this pass ran on `liquid/lfm-2.5-2.6b:free` (the catalog
+audit's own top pick for extraction), NOT ox-alpha or any other paid
+model this lane's other committed results are anchored to. TREAT AS A
+DIRECTIONAL SIGNAL ABOUT PROMPT SHAPE ONLY - it is a different model, on
+a small subset, and is NOT comparable to the ox-alpha-anchored v1/v2
+error-floor numbers cited two paragraphs up. Also ran under OpenRouter's
+free-tier rate limit (20/min, 50/day - this pass alone used the ENTIRE
+50/day allotment across all five prompts below, ending exactly at 50
+attempts with zero 429s), so there was no headroom left the same day to
+also try RESEARCH's LLM-judge second-pass idea (observation-labeling-
+technique-brief.md) as a fifth approach - deferred, not attempted, purely
+a budget-exhaustion call, not a rejection of the idea.
+
+Scope, to fit inside that 50/day ceiling: only the 8 `ef-sem-*` excerpts
+(fixtures/error_floor/semantic.json) were called - the ONLY family in the
+42-excerpt corpus with any semantic_label gold at all (confirmed by
+grepping every fixture file's gold observation_types before running
+anything); the file/command/negative families would have spent budget on
+excerpts this comparison cannot use. `live_extractor.py` gained a new
+`--excerpt-ids` flag for this (`run_error_floor.py` gained the matching
+grading-side flag) - the full 42-excerpt corpus is still loaded and
+VALIDATED both ways, only the network calls / grading scope narrow. A
+same-model `terse_v2` run was added as the baseline anchor (the shipped
+default was never run against this particular model before), so the
+deltas below are prompt-only, not confounded with the ox-alpha->free-tier
+model swap. Local, untracked result files (lane convention - not
+committed, same as every other run-output JSONL): `live_extractor_preds_
+free_<variant>.jsonl` / `_spend_free_<variant>.jsonl` /
+`error_floor_results_free_<variant>.jsonl` (+ `_detail.json`).
+
+  variant             | sem P     | sem R    | sem F1 | overall P/R/F1
+  --------------------|-----------|----------|--------|------------------
+  terse_v2 (baseline)  | 1/8=0.125 | 1/4=0.25 | 0.167  | 0.375/0.667/0.48
+  few_shot              | 2/6=0.333 | 2/4=0.5  | 0.4    | 0.462/0.667/0.545
+  vocab_discipline      | 2/6=0.333 | 2/4=0.5  | 0.4    | 0.333/0.444/0.381
+  strict_noun_phrase    | 1/7=0.143 | 1/4=0.25 | 0.182  | 0.4/0.667/0.5
+  combined              | 2/5=0.4   | 2/4=0.5  | 0.444  | 0.636/0.778/0.7
+
+All five rows above graded on the identical 8-excerpt subset (combined's
+first pass only covered 4; the remaining 4 were run separately with
+--auto-resume to make it comparable to the other rows, not left at the
+smaller, easier-looking subset).
+
+READING THIS HONESTLY: `combined` is the best performer on THIS model, on
+both semantic_label F1 and overall F1 - the two-hypotheses-layered
+variant the docstring above predicted "would be the single most
+promising blend if the first two each move the needle independently"
+does move the needle further than either alone, on this model. But
+`vocab_discipline` alone is a real caution, not just a semantic-layer
+story: it also COLLAPSED command_executed to 0/3 TP (0.0/0.0) on this
+free model, a mechanical-layer regression neither terse_v2 nor any other
+variant showed - plausibly this smaller/cheaper model bleeding the
+prompt's added vocabulary instructions into unrelated observation types,
+not something seen on ox-alpha's near-perfect mechanical layer per the
+board's original live pass. Whether that's a property of this specific
+cheap model or would reproduce on the production model is UNKNOWN from
+this data alone - flagging rather than guessing. No variant fixed the
+ef-sem-002 "under-fire" mode the module intro describes; NEW failure
+modes specific to this model surfaced instead (ef-sem-006/007 - a
+file-read and a glob - spuriously earned file_touched/command_executed/
+semantic_label observations under every variant tested, a hard-negative
+violation ox-alpha did not commit in the earlier live pass). This is
+evidence the free-tier substitution changes MORE than just the metric
+being tuned; read the P/R numbers above as "which prompt wins on THIS
+model", not as a preview of what any variant will do on ox-alpha.
 """
 from __future__ import annotations
 

@@ -215,6 +215,13 @@ def build_arg_parser() -> argparse.ArgumentParser:
                          "identical to running with no flag at all); "
                          "see semantic_label_prompt_variants.py for the "
                          "candidates and their hypotheses")
+    ap.add_argument("--excerpt-ids", default=None,
+                    help="comma-separated excerpt_ids to call the model "
+                         "for (e.g. a rate-limited free-tier budget "
+                         "pass) - the FULL fixture corpus is still "
+                         "loaded and validated first, only the network "
+                         "calls are restricted; unknown ids are a hard "
+                         "error, not a silent skip")
     return ap
 
 
@@ -237,6 +244,15 @@ async def async_main(args) -> int:
     system_prompt = variants.PROMPT_VARIANTS[prompt_variant]
 
     excerpts = error_floor.load_excerpts(Path(args.fixtures_dir))
+    excerpt_ids = getattr(args, "excerpt_ids", None)
+    if excerpt_ids:
+        wanted = [e.strip() for e in excerpt_ids.split(",") if e.strip()]
+        by_id = {ex["excerpt_id"]: ex for ex in excerpts}
+        unknown = [w for w in wanted if w not in by_id]
+        if unknown:
+            print(f"--excerpt-ids names unknown excerpt_id(s): {unknown}")
+            return 2
+        excerpts = [by_id[w] for w in wanted]
     models = (tuple(m.strip() for m in args.models.split(",") if m.strip())
               if args.models else ())
     spend = openrouter_arms.SpendLog(args.spend_log)

@@ -221,6 +221,15 @@ class TestSpendLedger:
         assert len(rows) == 2 and rows[1]["status"] == 429
         assert rows[1]["tokens_in"] == 0 and rows[1]["cost_usd"] == 0.0
 
+    def test_free_suffix_prices_zero_regardless_of_provider(self, tmp_path):
+        log = ora.SpendLog(tmp_path / "spend.jsonl")
+        log.record(task_id="t", arm="EX", model="liquid/lfm-2.5-2.6b:free",
+                   attempt=0, status=200, latency_s=1.0,
+                   tokens_in=1_000_000, tokens_out=1_000_000)
+        assert log.summarize()["cost_usd"] == 0.0
+        row = json.loads((tmp_path / "spend.jsonl").read_text("utf-8"))
+        assert row["cost_usd"] == 0.0
+
     def test_render_names_models(self):
         log = ora.SpendLog(None)
         log.record(task_id="t", arm="C", model="ox-alpha", attempt=0,

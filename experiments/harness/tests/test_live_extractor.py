@@ -246,4 +246,35 @@ class TestEndToEndOffline:
         monkeypatch.setattr(ora, "httpx_transport", boom)
         rc = asyncio.run(le.async_main(args))
         assert rc == 2
-        assert not called
+
+    def test_excerpt_ids_restricts_which_excerpts_get_called(
+            self, tmp_path, monkeypatch):
+        reply = json.dumps({"observations": []})
+        args = self._args(tmp_path)
+        args.excerpt_ids = "ef-sem-001,ef-sem-002"
+        monkeypatch.setattr(ora, "resolve_api_key", lambda **k: "k")
+        import openrouter_arms
+
+        def fake_transport(api_key):
+            async def send(payload):
+                return 200, {
+                    "choices": [{"message": {"content": reply}}],
+                    "usage": {"prompt_tokens": 1, "completion_tokens": 1}}
+            return send
+
+        monkeypatch.setattr(openrouter_arms, "httpx_transport",
+                            fake_transport)
+        rc = asyncio.run(le.async_main(args))
+        assert rc == 0
+        rows = [json.loads(l) for l in
+                Path(args.out).read_text(encoding="utf-8").splitlines() if l]
+        assert {r["excerpt_id"] for r in rows} == {"ef-sem-001", "ef-sem-002"}
+
+    def test_unknown_excerpt_id_is_a_hard_error(self, tmp_path, monkeypatch):
+        args = self._args(tmp_path)
+        args.excerpt_ids = "ef-not-a-real-id"
+        monkeypatch.setattr(ora, "resolve_api_key", lambda **k: "k")
+        rc = asyncio.run(le.async_main(args))
+        assert rc == 2
+        assert not Path(args.out).exists() or \
+            Path(args.out).read_text(encoding="utf-8") == ""

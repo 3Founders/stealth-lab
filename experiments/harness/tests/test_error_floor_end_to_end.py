@@ -167,6 +167,34 @@ class TestCliModes:
         rc = run_error_floor.main(["--predictions", str(preds)])
         assert rc == 2
 
+    def test_excerpt_ids_grades_only_the_named_subset(self, tmp_path):
+        preds = tmp_path / "subset_preds.jsonl"
+        excerpts = error_floor.load_excerpts(ERROR_FLOOR_FIXTURES)
+        sem_ids = {"ef-sem-001", "ef-sem-002", "ef-sem-003", "ef-sem-004",
+                   "ef-sem-005", "ef-sem-006", "ef-sem-007", "ef-sem-008"}
+        with preds.open("w", encoding="utf-8") as f:
+            for e in excerpts:
+                if e["excerpt_id"] in sem_ids:
+                    f.write(json.dumps({"excerpt_id": e["excerpt_id"],
+                                        "observations": e["gold"]}) + "\n")
+        out = tmp_path / "subset.jsonl"
+        rc = run_error_floor.main([
+            "--predictions", str(preds),
+            "--excerpt-ids", ",".join(sorted(sem_ids)),
+            "--out", str(out)])
+        assert rc == 0
+        detail = json.loads(
+            out.with_name("subset_detail.json").read_text("utf-8"))
+        assert detail["n_excerpts"] == len(sem_ids)
+        assert (detail["precision"], detail["recall"]) == (1.0, 1.0)
+
+    def test_excerpt_ids_unknown_id_exits_2(self, tmp_path):
+        rc = run_error_floor.main([
+            "--adapter", "demo_extractor:deterministic_v1_demo",
+            "--excerpt-ids", "ef-not-a-real-id",
+            "--out", str(tmp_path / "x.jsonl")])
+        assert rc == 2
+
     def test_raising_adapter_never_scores_as_zero_observations(
             self, tmp_path, capsys):
         out = tmp_path / "boom.jsonl"

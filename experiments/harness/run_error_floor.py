@@ -95,9 +95,26 @@ def main(argv: list[str] | None = None) -> int:
     src.add_argument("--adapter", help="dotted 'module:function' extractor")
     src.add_argument("--predictions", help="predictions JSONL from an offline run")
     ap.add_argument("--out", default=str(HERE / "error_floor_results.jsonl"))
+    ap.add_argument("--excerpt-ids", default=None,
+                    help="comma-separated excerpt_ids to grade only this "
+                         "subset (e.g. a rate-limited free-tier partial "
+                         "predictions file) - the FULL corpus is still "
+                         "loaded and validated first; in --predictions "
+                         "mode the missing-predictions check is scoped "
+                         "to this subset too, so a partial predictions "
+                         "file no longer needs the whole 42-excerpt set")
     args = ap.parse_args(argv)
 
     excerpts = error_floor.load_excerpts(Path(args.fixtures_dir))
+    if args.excerpt_ids:
+        wanted = [e.strip() for e in args.excerpt_ids.split(",") if e.strip()]
+        by_id = {ex["excerpt_id"]: ex for ex in excerpts}
+        unknown = [w for w in wanted if w not in by_id]
+        if unknown:
+            print(f"--excerpt-ids names unknown excerpt_id(s): {unknown}",
+                  file=sys.stderr)
+            return 2
+        excerpts = [by_id[w] for w in wanted]
 
     if args.adapter:
         adapter = resolve_adapter(args.adapter)

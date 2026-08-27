@@ -2177,3 +2177,78 @@ Grounded findings from  3_access.sql/ 4_governance.sql/deps.py review. Sequence:
   same way to these four candidates. Will pick whichever variant MEASURE's
   live run actually validates, once one exists, the same way terse_v2 was
   mirrored verbatim rather than reinvented.
+
+- MEASURE (2026-08-27, third wave): **4 prompt-variant candidates run live
+  against a `:free` model** (founder: test the 4 prepared variants against
+  a real free-tier model, pick the best-suited one from the catalog audit,
+  stay mindful of the 50/day cap, prefer a semantic-focused subset first).
+  Used `liquid/lfm-2.5-2.6b:free` (the catalog audit's own top pick - "own
+  description says suited for... data extraction"). Scoped to the 8
+  `ef-sem-*` excerpts (`fixtures/error_floor/semantic.json`) - confirmed by
+  grep that this is the ONLY fixture family in the 42-excerpt corpus with
+  any `semantic_label` gold at all, so it is the correct minimal subset for
+  a semantic-label prompt comparison, not an arbitrary cut. Two new CLI
+  flags to support this without weakening the fixture contract:
+  `live_extractor.py --excerpt-ids` and `run_error_floor.py --excerpt-ids`
+  (comma-separated) - both still load+validate the FULL 42-excerpt corpus
+  first (fixture contract unchanged), only the network calls / grading
+  scope narrow to the named subset. 4 new offline tests (2 per script:
+  subset restriction + unknown-id hard error), plus 1 more from the pricing
+  fix below (5 new total this wave). Ran all five prompts
+  (terse_v2 as a same-model baseline anchor, plus the four candidates) on
+  the identical 8-excerpt subset - **RESULTS TABLE, FREE-TIER MODEL, NOT
+  ox-alpha, DIRECTIONAL SIGNAL ONLY** (full caveat + per-variant discussion
+  now lives as a comment block in `semantic_label_prompt_variants.py`,
+  right next to the variants it grades, so this is discoverable by anyone
+  reading the code, not just this log entry):
+
+  | variant | sem P | sem R | sem F1 | overall P/R/F1 |
+  |---|---|---|---|---|
+  | terse_v2 (baseline) | 1/8=0.125 | 1/4=0.25 | 0.167 | 0.375/0.667/0.48 |
+  | few_shot | 2/6=0.333 | 2/4=0.5 | 0.4 | 0.462/0.667/0.545 |
+  | vocab_discipline | 2/6=0.333 | 2/4=0.5 | 0.4 | 0.333/0.444/0.381 |
+  | strict_noun_phrase | 1/7=0.143 | 1/4=0.25 | 0.182 | 0.4/0.667/0.5 |
+  | combined | 2/5=0.4 | 2/4=0.5 | 0.444 | 0.636/0.778/0.7 |
+
+  `combined` wins on both semantic_label F1 and overall F1 on this model -
+  the module's own hypothesis ("the single most promising blend if the
+  first two each move the needle independently") held up here. Real
+  caution surfaced too: `vocab_discipline` alone COLLAPSED command_executed
+  to 0/3 TP on this model - a mechanical-layer regression no variant showed
+  on ox-alpha's earlier live pass, plausibly this cheaper model bleeding
+  the added vocabulary instructions into unrelated observation types.
+  New model-specific failure modes also appeared that ox-alpha's pass never
+  showed (ef-sem-006/007 - a file read and a glob - spuriously earned
+  observations under every variant), reinforcing that this is a DIFFERENT
+  model's behavior, not a preview of what any variant does on the
+  production model.
+  **BUG FOUND + FIXED en route**: `openrouter_arms.SpendLog.record` priced
+  every model by `PRICE_PER_MTOK.get(model.split("/",1)[0], ...["default"])`
+  - `liquid` isn't a keyed provider, so it silently fell through to the
+  DEFAULT PAID rate ($2.50/$10.00 per Mtok), logging a fictitious $0.0743
+  for the first (terse_v2) run even though the model is genuinely free.
+  Fixed: any `model` ending `:free` now prices at $0 regardless of provider
+  prefix, provider-agnostic per OpenRouter's own suffix convention (their
+  provider-keyed pricing table only ever covered paid entries anyway). 1
+  new regression test (`TestSpendLedger.
+  test_free_suffix_prices_zero_regardless_of_provider`). The one already-
+  written terse_v2 spend ledger was corrected in place (its `observations`
+  predictions were unaffected by the bug, only cost accounting was) rather
+  than re-spending 8 more requests to regenerate it.
+  **BUDGET**: 50/50 free-tier requests used today, zero 429s, zero non-
+  billed attempts - ended EXACTLY at the daily cap (8 terse_v2 + 9 few_shot
+  + 12 vocab_discipline + 12 strict_noun_phrase + 9 combined [4+5, split
+  across two `--auto-resume` passes to stay inside budget before
+  completing the comparable 8-excerpt set]). RESEARCH's LLM-judge second-
+  pass idea (observation-labeling-technique-brief.md) was NOT attempted
+  this wave - deferred purely because the daily allotment was gone by the
+  time the four variants + baseline finished, not a decision against the
+  idea; next session can pick it up once the free-tier day resets. All
+  result JSONL/detail files stay LOCAL/untracked (`live_extractor_preds_
+  free_<variant>.jsonl` etc.), same convention as every other run-output
+  file this lane produces - the numbers above plus the full narrative live
+  in this log entry and in `semantic_label_prompt_variants.py`'s docstring,
+  not in a committed data file. $0.00 real spend (free-tier model, correctly
+  priced after the fix above); session-to-date PAID total unchanged at
+  $1.0780. Harness suite 241/241 green [236 prior + 5 new]. Zero backend
+  edits.

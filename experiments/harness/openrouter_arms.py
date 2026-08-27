@@ -139,8 +139,15 @@ class SpendLog:
                status: int | None, latency_s: float,
                tokens_in: int = 0, tokens_out: int = 0,
                error: str | None = None) -> None:
-        price = PRICE_PER_MTOK.get(model.split("/", 1)[0],
-                                   PRICE_PER_MTOK["default"])
+        # OpenRouter's own ":free" suffix is authoritative and provider-
+        # agnostic (unlike PRICE_PER_MTOK's provider-prefix keys, which
+        # only cover paid entries) - without this check a free-tier model
+        # from an unlisted provider (e.g. "liquid/lfm-2.5-2.6b:free")
+        # silently priced at PRICE_PER_MTOK["default"]'s PAID rate, logging
+        # a fictitious non-zero cost for a call that billed nothing.
+        price = ({"input": 0.0, "output": 0.0} if model.endswith(":free")
+                 else PRICE_PER_MTOK.get(model.split("/", 1)[0],
+                                         PRICE_PER_MTOK["default"]))
         row = {
             "ts": round(time.time(), 3),
             "task_id": task_id,
