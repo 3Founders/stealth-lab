@@ -38,6 +38,25 @@ from app.services.trace_collector import mark_worker_seen, read_drop_count
 
 SCHEMA_VERSION = "1"
 
+#: Above this many JSON-serialized bytes, one tool_input/tool_output field
+#: gets written to disk instead of inlined. Ticket 06's raw_payload_ref
+#: column (12_trace_ingestion_pipeline.sql) existed for exactly this --
+#: "large tool outputs get a pointer, not inlined -- same idiom as
+#: episodes.content_ref" -- but had zero references anywhere in Python
+#: (confirmed: schema file + the original design doc only) while
+#: Chaitanya's dogfooding pilot started producing real hook traces with no
+#: limit at all. 32KB is a conservative default for one tool call's I/O --
+#: a module constant consulted at call time (None -> lookup), same
+#: monkeypatch-retunable discipline as TRIVIAL_MERGE_MAX_EVENTS/
+#: OVERSIZE_SUBDIVIDE_EVENTS below.
+MAX_INLINE_PAYLOAD_BYTES = 32 * 1024
+
+#: Where overflowing payloads land. Local disk only, gitignored -- these
+#: are already-redacted (trace_redaction.py runs at the collector, upstream
+#: of every call in this module) but still real transcript content, same
+#: posture as .claude/traces/ in .gitignore.
+RAW_PAYLOAD_DIR = Path(__file__).resolve().parent.parent.parent / "data" / "raw_payloads"
+
 
 def _parse_timestamp(ts_raw: str | None) -> datetime:
     """
@@ -103,6 +122,72 @@ def _write_quarantine(file_path: Path, quarantined: list[tuple[int, str, str]]) 
             f.write(json.dumps({"line": line_no, "raw": raw_line, "error": error}) + "\n")
 
 
+def _prepare_payload_columns(
+    event: Mapping[str, Any],
+    dedup_key: str,
+    *,
+    max_inline_bytes: Optional[int] = None,
+    raw_payload_dir: Optional[Path] = None,
+) -> tuple[Optional[str], Optional[str], Optional[str]]:
+    """
+    Returns (tool_input_column, tool_output_column, raw_payload_ref) for
+    the INSERT below.
+
+    Under the cap (the common case, unchanged from before this fix): each
+    field gets the ordinary json.dumps() round-trip, raw_payload_ref stays
+    None.
+
+    Over the cap: the schema gives one row exactly one raw_payload_ref
+    column, not one per field, so when either or both of tool_input/
+    tool_output overflow, their full (already-redacted) values are written
+    together to ONE pointer file for this row, keyed by field name --
+    named judgment call, since ticket 06's own column comment only ever
+    described a single oversized value, not two independent ones on the
+    same row. The inline column for an overflowing field gets a small
+    {"_overflow": true, "size_bytes": N} marker so a caller reading
+    tool_input/tool_output directly sees a real signal instead of
+    silently-truncated data with no indication anything was cut.
+    """
+    max_bytes = MAX_INLINE_PAYLOAD_BYTES if max_inline_bytes is None else max_inline_bytes
+    payload_dir = RAW_PAYLOAD_DIR if raw_payload_dir is None else raw_payload_dir
+
+    columns: dict[str, Optional[str]] = {}
+    overflow: dict[str, Any] = {}
+    for field_name in ("tool_input", "tool_output"):
+        value = event.get(field_name)
+        if value is None:
+            columns[field_name] = None
+            continue
+        serialized = json.dumps(value)
+        size_bytes = len(serialized.encode("utf-8"))
+        if size_bytes <= max_bytes:
+            columns[field_name] = serialized
+        else:
+            columns[field_name] = json.dumps({"_overflow": True, "size_bytes": size_bytes})
+            overflow[field_name] = value
+
+    raw_payload_ref = None
+    if overflow:
+        payload_dir.mkdir(parents=True, exist_ok=True)
+        file_path = payload_dir / f"{dedup_key}.json"
+        file_path.write_text(json.dumps(overflow), encoding="utf-8")
+        raw_payload_ref = str(file_path)
+
+    return columns["tool_input"], columns["tool_output"], raw_payload_ref
+
+
+def read_overflow_payload(raw_payload_ref: str) -> dict:
+    """
+    Read-back helper: reconstructs the full (still-redacted) field
+    value(s) captured for one row whose tool_input/tool_output overflowed
+    MAX_INLINE_PAYLOAD_BYTES. Returns the {field_name: original_value}
+    dict _prepare_payload_columns() wrote at raw_payload_ref -- callers
+    already have that string from their own row read, so this stays a
+    small, direct file read rather than a general ref-resolution API.
+    """
+    return json.loads(Path(raw_payload_ref).read_text(encoding="utf-8"))
+
+
 async def _ensure_trace_header(conn: asyncpg.Connection, trace_id: str, session_id: str,
                                 started_at: datetime, owner_id: str | None = None,
                                 visibility: str = "public") -> None:
@@ -115,7 +200,9 @@ async def _ensure_trace_header(conn: asyncpg.Connection, trace_id: str, session_
 
 
 async def _insert_event(conn: asyncpg.Connection, record: dict, owner_id: str | None = None,
-                         visibility: str = "public") -> str | None:
+                         visibility: str = "public", *,
+                         max_inline_bytes: Optional[int] = None,
+                         raw_payload_dir: Optional[Path] = None) -> str | None:
     """Returns the real inserted trace_events.id, or None if this
     dedup_key was already present (a real, confirmed no-op, not assumed).
 
@@ -128,14 +215,19 @@ async def _insert_event(conn: asyncpg.Connection, record: dict, owner_id: str | 
     """
     event = record["event"]
     timestamp = _parse_timestamp(event.get("timestamp"))
+    tool_input_col, tool_output_col, raw_payload_ref = _prepare_payload_columns(
+        event, record["dedup_key"],
+        max_inline_bytes=max_inline_bytes, raw_payload_dir=raw_payload_dir,
+    )
 
     return await conn.fetchval(
         """
         INSERT INTO trace_events (
             trace_id, session_id, sequence, event_type, "timestamp",
             actor_id, tool_name, tool_call_id, tool_input, tool_output,
-            success, dedup_key, schema_version, owner_id, visibility
-        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15::visibility_level)
+            success, dedup_key, schema_version, owner_id, visibility,
+            raw_payload_ref
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15::visibility_level,$16)
         ON CONFLICT (dedup_key) DO NOTHING
         RETURNING id
         """,
@@ -147,19 +239,22 @@ async def _insert_event(conn: asyncpg.Connection, record: dict, owner_id: str | 
         event.get("actor_id"),
         event.get("tool_name"),
         event.get("tool_call_id"),
-        json.dumps(event.get("tool_input")) if event.get("tool_input") is not None else None,
-        json.dumps(event.get("tool_output")) if event.get("tool_output") is not None else None,
+        tool_input_col,
+        tool_output_col,
         event.get("success"),
         record["dedup_key"],
         SCHEMA_VERSION,
         owner_id,
         visibility,
+        raw_payload_ref,
     )
 
 
 async def process_collector_file(pool: asyncpg.Pool, file_path: Path, *,
                                   owner_id: str | None = None,
-                                  visibility: str = "public") -> dict:
+                                  visibility: str = "public",
+                                  max_inline_bytes: Optional[int] = None,
+                                  raw_payload_dir: Optional[Path] = None) -> dict:
     """
     Real, testable entry point. Processes every record currently in the
     collector file: ensures a trace header exists, inserts the event
@@ -199,7 +294,10 @@ async def process_collector_file(pool: asyncpg.Pool, file_path: Path, *,
                         owner_id=owner_id, visibility=visibility,
                     )
                     headers_ensured.add(trace_id)
-                new_id = await _insert_event(conn, record, owner_id=owner_id, visibility=visibility)
+                new_id = await _insert_event(
+                    conn, record, owner_id=owner_id, visibility=visibility,
+                    max_inline_bytes=max_inline_bytes, raw_payload_dir=raw_payload_dir,
+                )
                 if new_id is not None:
                     inserted += 1
                     await conn.execute(

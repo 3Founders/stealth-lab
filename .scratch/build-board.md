@@ -263,6 +263,62 @@ git worktree add ..\sl-research -b lane/research origin/main
    "(TRUE) AND (TRUE)" — semantics preserved, disclosed per file ownership).
    Full offline suite: 1229 passed / 114 skipped / 0 failed (= post-H2
    baseline 1207 + 22, zero regressions).)*
+7. `[x]` done @2026-08-27 — branch `lane/core-a` **inline trace payload size
+   cap** (this wave's kickoff item, direct chat instruction, time-sensitive:
+   Chaitanya's dogfooding pilot running live). `trace_events.tool_input`/
+   `tool_output` (12_trace_ingestion_pipeline.sql) stored every tool call's
+   payload fully inline as JSONB with no size limit; the schema's own
+   `raw_payload_ref TEXT` column existed for exactly this ("large tool
+   outputs get a pointer, not inlined -- same idiom as episodes.content_ref")
+   but had zero references anywhere in Python (confirmed: schema file + the
+   original design doc only).
+   *(Shipped: trace_worker.py — `MAX_INLINE_PAYLOAD_BYTES = 32 * 1024`
+   (module constant, consulted at call time, same monkeypatch-retunable
+   discipline as `TRIVIAL_MERGE_MAX_EVENTS`/`OVERSIZE_SUBDIVIDE_EVENTS` in
+   this same file — no reason found to pick a different default, so no
+   numbered question raised) + `RAW_PAYLOAD_DIR = backend/data/raw_payloads/`
+   (gitignored, added to .gitignore alongside `.claude/traces/`).
+   `_prepare_payload_columns()` is the new boundary `_insert_event()` calls:
+   under the cap, `tool_input`/`tool_output` round-trip inline exactly as
+   before; over the cap, the column gets a small `{"_overflow": true,
+   "size_bytes": N}` marker (never silently-truncated data with no signal)
+   and the full (already-redacted — this runs downstream of
+   trace_redaction.py's collector-side redaction, confirmed by reading
+   trace_collector.py's `append_event()`, never upstream of it) value is
+   written to a real pointer file. NAMED JUDGMENT CALL: the schema gives one
+   row exactly one `raw_payload_ref` column, not one per field, so when both
+   tool_input AND tool_output overflow on the same row they share ONE
+   pointer file keyed by field name — ticket 06's own column comment only
+   ever described a single oversized value, not two independent ones on one
+   row. `max_inline_bytes`/`raw_payload_dir` threaded as optional params
+   through `_insert_event()`/`process_collector_file()` for test injection,
+   same convention as the existing `owner_id`/`visibility` params. Small
+   read-back helper included per the assignment's own scoping guard (`if
+   it's turning into its own feature, stop`): `read_overflow_payload(ref)`
+   does one file read + `json.loads`, nothing more — nowhere near feature
+   territory, so no follow-up item needed. 8 new offline proving tests in
+   `tests/test_trace_payload_cap.py`: under-cap regression (byte-identical
+   round-trip, zero disk writes), over-cap caps-inline + real pointer file
+   with the FULL content, custom-threshold retunability, both-fields-
+   overflow-share-one-file, read-back round-trip, plus the same three
+   proofs again at the `_insert_event`/`process_collector_file` INSERT
+   boundary via a FakeConn/FakePool (same pattern as
+   `test_episode_segmentation.py`'s writer tests) — confirms the oversized
+   value never reaches the actual INSERT args, only the marker does.
+   ENVIRONMENT FINDING, not a code bug, flagged for whoever next needs a
+   clean full-suite number in this worktree: bare `pytest` from `backend/`
+   also collects the root-level `test_*_live.py` scripts (manual live-DB
+   smoke scripts, e.g. `test_solve_task_live.py`), which unconditionally
+   set `os.environ["DATABASE_URL"]` to a local dev Postgres URL at import
+   time — this clobbers any DATABASE_URL pin (even one exported before
+   invocation) and produces ~111 unrelated `InvalidPasswordError` failures
+   across `tests/*_e2e.py`/`test_procedures_e2e.py`/etc., a DIFFERENT root
+   cause than the previously-documented mid-collection `load_dotenv()` leak
+   (H1/CORE-B wave 10's fix). Scoping the run to `pytest tests/` (excludes
+   the root-level `*_live.py` files entirely) gives the real, clean number.
+   Full offline suite (`pytest tests/`, no DATABASE_URL): **1376 passed /
+   115 skipped / 0 failed** in 339s (= prior baseline 1368 + this item's 8,
+   zero regressions).)*
 
 ### Lane CORE-B â€” extraction & gating (owns `backend/app/services/procedure_extraction/**`, `invariants.py`, `applicability.py`, `precondition_gate.py`, `state.py`)
 1. `[x] done 2026-08-25 â€” lane/core-b` **1.8a** Precondition relevance filter (derive gates only load-bearing facts).

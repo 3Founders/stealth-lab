@@ -21,6 +21,12 @@ experiments/after/__pycache__
 .claude/settings.local.json
 backend/logs/
 
+# Overflowing trace_events.tool_input/tool_output payloads (trace_worker.py's
+# MAX_INLINE_PAYLOAD_BYTES cap) -- already-redacted but real transcript
+# content pointed to by trace_events.raw_payload_ref, same posture as
+# .claude/traces/ above.
+backend/data/raw_payloads/
+
 # Python bytecode
 __pycache__/
 *.pyc
