@@ -24,20 +24,26 @@ advertised; everything else is non-goals (§4).
 | C2 | Traces flow in | Claude Code hooks → `app/services/trace_collector.py` (redaction choke point, dedup, bounded) → `trace_worker.py` → `agent_traces`/`trace_events`; HTTP path: POST `/v1/traces` per-record fault isolation | offline suite green; collector roundtrip test; worker quarantine behavior tests |
 | C3 | Procedures get distilled | `procedure_extraction/` registry → strategies → derive (load-bearing preconditions) → validators (**V6 authoring-time invariant check**) → `procedures` table born-correct | suite incl. extraction validators; nothing enters without scope+provenance (`services/v0_gate.py`) |
 | C4 | Reuse you can see | `mcp_server/server.py` tool `retrieve_precedent` (hybrid RRF + graph expansion over pgvector HNSW) returns procedure + confidence + provenance chain | retrieval leave-one-out sanity pattern (n=400, p=.0066 [T-24]) |
-| C5 | Refusal with receipts | `check_procedure` → `ALLOW` / `WOULD_REFUSE` citing the exact superseded claim ids + changesets. **Audit mode only**: the agent is informed, not blocked; every refusal lands in the audit log | precondition-gate adversarial tests (fail-closed cascade); refusal payload shape pinned by tests |
+| C5 | Refusal with receipts | `check_procedure` → `ALLOW` / `WOULD_REFUSE` citing the superseded claim id (+ changeset id, where one is tracked). **Audit mode only**: the agent is informed, not blocked; every refusal lands in the audit log | precondition-gate adversarial tests (fail-closed cascade); refusal payload shape pinned by tests, incl. new offline tests against the real server tool |
 
-**Known doc-accuracy gaps (outside-eye pass, 2026-08-27 — full detail in
-`.scratch/research/outside-eye-demo-readme-pass.md`):** repo-wide grep found
-no `check_procedure` / `WOULD_REFUSE` identifiers anywhere in `backend/`
-today — the C5 mechanism is proven in `experiments/harness/`'s
-model-decides sweep (a real model genuinely refusing, independently
-verified) but is not yet wired into `backend/app/mcp_server/server.py` as a
-callable tool, so an agent can't reach it through the server this table
-otherwise describes as live. Separately, C1's `docker compose up -d` has no
-`docker-compose.yml` anywhere in the repo yet (checklist's own `[ ]` box
-already reflects this; the C1 row above didn't). Neither gap changes what's
-real — the underlying engine work is genuinely shipped and tested — but a
-reader shouldn't come away thinking either is reachable by an agent today.
+**Doc-accuracy note (updated 2026-08-27):** the two gaps flagged by the
+same-day outside-eye pass (previously recorded here, full detail in
+`.scratch/research/outside-eye-demo-readme-pass.md`) are now closed.
+`check_procedure` landed as a real tool (#9) in
+`backend/app/mcp_server/server.py`, a thin wrapper reusing the existing
+decision logic in `app/services/applicability.py` rather than reinventing
+it (15 new proving tests — the first offline tests `mcp_server/` has ever
+had). `docker-compose.yml` / `backend/Dockerfile` now exist at repo root.
+Two things worth knowing about what actually shipped: (1) `check_procedure`'s
+`evidence` field always cites the superseded claim id, but only cites a
+changeset id when one exists — v1 never scoped ChangeSet coverage to
+knowledge-node supersession (a pre-existing, disclosed limitation, not a
+new one), so the two-item evidence array in §3's pinned example below is
+the changeset-backed case, not the only shape `evidence` can take. (2)
+`docker-compose.yml` has been validated as syntactically correct YAML with
+its import paths traced by hand, but has never actually been booted — no
+Docker was available anywhere in the build fleet until now; boot
+verification is in progress.
 
 ## 2 · Production posture (non-negotiable at ship)
 
@@ -54,16 +60,20 @@ reader shouldn't come away thinking either is reachable by an agent today.
 
 ## 3 · Ship checklist (all must be true on the release commit)
 
-- [ ] Full offline suite green: `cd backend && python -m pytest tests -q`
-      (last: **914 passed / 106 skipped / 0 failed**, 2026-08-25)
+- [x] Full offline suite green: `cd backend && python -m pytest tests -q`
+      (last: **1368 passed / 115 skipped / 0 failed**, 2026-08-27)
 - [ ] Migration chain applied clean on a throwaway
       `pgvector/pgvector:pg15` container via `scripts/migrate.py`
-      (engine-verified; static text checks alone do NOT count)
+      (engine-verified; static text checks alone do NOT count — in progress,
+      first Docker-equipped run underway 2026-08-27)
 - [ ] `python scripts/bootstrap_demo.py` runs the scripted two-phase story:
       phase A produces traces→procedures; phase B retrieves precedent AND
       triggers a `WOULD_REFUSE` after the fixture breaks a precondition claim
 - [ ] Audit log shows the refusal line with claim ids (`cl_*` → `cl_*`)
-- [ ] `check_procedure` response shape matches the pinned contract:
+- [x] `check_procedure` response shape matches the pinned contract, pinned by
+      tests against the real server tool (2026-08-27). Example below is the
+      changeset-backed evidence case — see the doc-accuracy note above for
+      the claim-id-only case:
 
 ```json
 { "verdict": "WOULD_REFUSE",
