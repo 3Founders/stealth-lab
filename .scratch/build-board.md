@@ -2370,8 +2370,8 @@ Grounded findings from  3_access.sql/ 4_governance.sql/deps.py review. Sequence:
   same reason capture_procedure is monkeypatched here, not faked) plus two
   pre-existing minor gaps in schema.py/validators.py never in scope. Local
   package suite (offline + e2e, no regressions): 86 passed / 19 skipped /
-  0 failed. Full-repo suite pending in background; will append the number
-  once it lands, but zero production code changed this wave -- only new
-  test files plus one stale docstring pointer fixed in
-  test_procedure_extraction.py -- so regression risk outside this package
-  is nil.
+  0 failed. Full backend suite confirms it: **1353 passed / 115 skipped /
+  0 failed** (`pytest -m "not e2e" tests/`, 13m19s) -- zero production code
+  changed this wave (only new test files plus one stale docstring pointer
+  fixed in test_procedure_extraction.py), so this is exactly the expected
+  clean result, not a surprise.
