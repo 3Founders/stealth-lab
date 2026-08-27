@@ -22,7 +22,7 @@ statement of what ships and what proves it.
 
 ## What runs today
 
-A local-first MCP server exposing **8 tools** over a bi-temporal
+A local-first MCP server exposing **9 tools** over a bi-temporal
 knowledge/task graph: ingest execution traces, detect a bottleneck, run a
 multi-model debate to propose a fix, evaluate it statistically, and apply it
 only after a human approves — every state change auditable and reversible
@@ -38,6 +38,7 @@ via the graph's supersede-not-delete history.
 | `decide_decomposition` | Approve or reject a decomposition proposal |
 | `apply_change_set` | Apply a change set directly, no approval gate (ungated — use narrowly) |
 | `solve_task` | Retrieval-grounded coding agent against a real repo on disk |
+| `check_procedure` | Applicability check → `ALLOW` or structured `WOULD_REFUSE` with a cited reason (audit mode only) |
 
 Full setup, the stdio vs. hosted-HTTP split, and the known v1 limitations
 (no job queue, `apply_change_set` is an ungated write, `repo_path` is
@@ -72,10 +73,12 @@ keys required for the bulk of the suite.
 → **refuse stale reuse with cited reasons**, in audit mode (the agent is
 informed, never blocked, until Band 3). Every capability in that document
 ships with the exact command that proves it — nothing is claimed without a
-passing test on the release commit. `commLLM.md` carries the full
+passing test on the release commit. `check_procedure` (refuse stale reuse
+with a cited reason, audit mode only) is now part of what runs today, not
+what's becoming — see the tool table above. `commLLM.md` carries the full
 positioning: the research base, the competitive landscape, and the tool
-surface this is expanding into (`ingest_trace`, `check_procedure`,
-`explain_decision`, `explain_failure`).
+surface this is still expanding into (`explain_decision`,
+`explain_failure`).
 
 The engine behind that story is real and extensively tested — evidence
 tracking, capability scoring, precondition/applicability gating, failure

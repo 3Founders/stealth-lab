@@ -1168,6 +1168,37 @@ single synthesized reports into `.scratch/research/`.
    run3's arms data + both model-decides reports via auto-discovery.
    Backend diff: ZERO files.)*
 
+6. `[ ]` **HELD @2026-08-27 — branch `lane/ship`, blocked on external access.**
+   Task: dry-run the real README quickstart end-to-end — `docker compose up`
+   → add MCP server → `solve_task` twice, second citing precedent (the last
+   genuinely unverified checklist row; independent of CORE-B's
+   `bootstrap_demo.py` work). Blocked before starting: this machine (the
+   `sl-ship` worktree's host) has no Docker anywhere — no `docker` binary, no
+   Docker Desktop install, no Docker Windows service, no WSL distro installed
+   (`wsl -l -v` reports none). Confirmed via `Get-Service *docker*` (empty),
+   `Get-Command docker` (not found), and a filesystem check for `Docker
+   Desktop.exe` (absent) — not just a `docker --version` PATH miss.
+   Correction to Lane INFRA's entry above: that entry's "Docker 29.7.2 +
+   Compose v5.3.1 are installed ... only the Desktop daemon was stopped"
+   finding is true on *whichever machine INFRA ran on* (Chaitanya's, per
+   `proj_status.md`'s "who's who"), not on this one — both worktrees happen
+   to sit under a `C:\Users\user\...` path so the two are easy to conflate;
+   this lane's own filesystem/service checks above are specific to the
+   `sl-ship` host and found nothing.
+   Founder asked directly (AskUserQuestion, not guessed): get access to
+   Chaitanya's Docker machine, install Docker locally here, or dry-run the
+   MCP-server/solve_task half only against the real (non-Docker) credentials
+   already sitting in `backend/.env` (populated `DATABASE_URL` +
+   `STEALTHLAB_MCP_TOKEN` on this host, likely hosted Postgres per
+   `backend/README.md`'s Supabase note) and flag `docker compose up` as
+   still unverified from this lane. Founder chose: **hold** — do not proceed
+   on any of those paths yet, wait for coordination with Chaitanya.
+   Resuming this: needs either (a) remote/SSH access or credentials to
+   Chaitanya's Docker-equipped machine, or (b) an explicit founder go-ahead
+   to install Docker on this host, or (c) a founder go-ahead to dry-run only
+   the non-Docker half and report the compose gap as still Chaitanya-only-
+   verified.
+
 1. `[x]` done @2026-08-25 â€” branch `lane/ship` Installable package wrapping
    `trace_collector` + `mcp_server`.
    Shipped: `packaging/` = installable **stealthlab-connect** (pyproject,
@@ -1186,6 +1217,27 @@ single synthesized reports into `.scratch/research/`.
    e2e failures only under full-run ordering; they skip cleanly when run
    individually). Not a SHIP regression. Rebased onto origin/main before push
    per OVERNIGHT MODE.
+
+7. `[x]` done @2026-08-27 — branch `lane/ship` **doc-accuracy sweep** (direct
+   kickoff, three mechanical fixes, all independently verified before commit):
+   (a) commLLM.md cp437/UTF-8 mojibake — `text.encode('cp437').decode('utf-8')`
+   on the whole file; git diff shows exactly 78 changed lines, every one a
+   plain dash/arrow/middle-dot/other real punctuation, nothing else moved;
+   post-fix grep for 'Γ'/'┬'/'├' returns zero matches. (b) root README.md:
+   "8 tools" → "9" (confirmed against
+   packaging/tests/test_server_offline.py::test_all_nine_tools_registered's
+   9-name list), added a `check_procedure` table row (description matches
+   demo.md C5's language), reworded "What it's becoming" so only
+   explain_decision/explain_failure are described as forthcoming —
+   check_procedure folded into "what runs today". (c) commLLM.md §1 table:
+   check_procedure Status "**new**" → "built" (explain_decision/
+   explain_failure untouched, still "**new**"); "Last updated" header bumped
+   2026-08-25 → 2026-08-27. Scoped grant for this task only: root `README.md`
+   + `commLLM.md` (both otherwise unowned). Full offline suite:
+   **1368 passed / 115 skipped / 0 failed** — identical to the pre-existing
+   baseline (CORE-B's check_procedure item above), confirming zero
+   regressions from a pure doc/text change. No blocking questions hit —
+   everything in the kickoff held up exactly as described.
 
 ### Lane INFRA - Docker boot test (opened 2026-08-27, scoped grant for this task)
 
