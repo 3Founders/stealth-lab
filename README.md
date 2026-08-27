@@ -208,7 +208,7 @@ DATABASE_URL=postgresql://localhost/workflow_db python3 scripts/migrate.py
 ```
 
 ```bash
-cd backend_v2/backend_v2
+cd backend
 pip install -r requirements.txt
 cp .env.example .env               # DATABASE_URL at minimum
 uvicorn app.main:app --reload
@@ -216,7 +216,7 @@ python scripts/bootstrap_demo.py   # seeds a workflow + traces at an 80% error r
 ```
 
 ```bash
-cd frontend_v2/frontend_v2
+cd frontend
 npm install && cp .env.local.example .env.local && npm run dev
 ```
 
@@ -244,12 +244,13 @@ default to $10/day globally and $1/day per identity.
 
 Frontend: `/workbench`, `/approvals`, `/approvals/[id]`, `/archive`.
 
-Deploying: set Root Directory to the inner path — `backend_v2/backend_v2` and
-`frontend_v2/frontend_v2`. Not ready for a public URL, see below.
+Deploying: set Root Directory to `backend` and `frontend` respectively. Not
+ready for a public URL, see below.
 
 ## What's actually been checked
 
-148 offline tests pass. Seven scripts run the same code against a real,
+1266 offline tests pass (115 more skip without a database or API keys, by
+design). Seven scripts run the same code against a real,
 disposable Postgres, because several of the bugs we hit only show up against a
 real engine. Two worth naming: every JSONB write was pre-serialising in Python
 and casting in SQL, which silently corrupted how the connection decoded JSON on

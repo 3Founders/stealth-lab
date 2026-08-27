@@ -41,12 +41,12 @@ cp .env.example .env
 
 # 4. Run
 uvicorn app.main:app --reload      # http://localhost:8000/health
-python -m pytest tests/ -q         # 168 tests, no DB or API keys needed
+python -m pytest tests/ -q         # 1266 pass offline (115 more skip without a DB or API keys)
 
 # 5. Demo data (an empty graph does nothing)
 python scripts/bootstrap_demo.py
 
-# 6. Frontend, from the matching frontend_v2 folder
+# 6. Frontend, from the matching frontend folder
 npm install && npm run dev         # http://localhost:3000
 ```
 
@@ -135,7 +135,7 @@ can't escalate.
 ## Testing
 
 ```bash
-python -m pytest tests/ -q          # 168 tests, offline, no DB needed
+python -m pytest tests/ -q          # 1266 pass offline, no DB needed (115 more skip without one)
 ```
 
 Plus 7 scripts against a real (disposable) Postgres, because several
