@@ -1,11 +1,18 @@
-# Matches demo.md C1's install claim: `docker compose up -d` brings up
-# Postgres (must be the pgvector image -- plain postgres fails migration 01,
-# which does `CREATE EXTENSION IF NOT EXISTS vector`) and a backend service
-# that migrates automatically, then serves the MCP server. Verify with:
-#   docker compose up -d
+# Matches demo.md C1's install claim: `docker compose up -d --build` brings
+# up Postgres (must be the pgvector image -- plain postgres fails migration
+# 01, which does `CREATE EXTENSION IF NOT EXISTS vector`) and a backend
+# service that migrates automatically, then serves the MCP server. Verify
+# with:
+#   docker compose up -d --build
 #   docker compose exec backend python scripts/migrate.py --status   # all applied
 #   curl -s -o /dev/null -w '%{http_code}\n' -X POST http://127.0.0.1:8765/mcp
 #     # expect 401 -- server is up, auth gate is enforced (see SECURITY.md)
+#
+# Always pass --build, not just on the first run. Without it, `docker
+# compose up -d` after a `git pull` silently keeps running whatever backend
+# image was already built locally -- your code changes are on disk but not
+# in the running container, and nothing warns you. Confirmed as a real
+# gap running this for real (2026-08-27), not theoretical.
 #
 # Before the first run: create backend/.env from backend/.env.example and
 # set STEALTHLAB_MCP_TOKEN (generate with

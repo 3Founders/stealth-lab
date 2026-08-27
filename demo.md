@@ -42,10 +42,11 @@ pre-existing, disclosed limitation), so the two-item evidence array in §3's
 pinned contract example is the changeset-backed case; §3 now also carries a
 real engine-verified example of the claim-id-only case.
 
-One install-flow gap found running this for real, not yet fixed in the
-README: `docker compose up -d` after a `git pull` silently keeps running
-the OLD image unless you add `--build` — worth fixing in the quickstart
-before anyone else hits it.
+One install-flow gap found running this for real, now fixed: `docker
+compose up -d` after a `git pull` used to silently keep running the OLD
+image unless you added `--build`. The canonical `docker compose up`
+instructions, in `docker-compose.yml`'s header comment, now always say
+`--build`, with a note explaining why (2026-08-27).
 
 ## 2 · Production posture (non-negotiable at ship)
 
