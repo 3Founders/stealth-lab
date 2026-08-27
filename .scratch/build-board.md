@@ -1238,6 +1238,29 @@ single synthesized reports into `.scratch/research/`.
    baseline (CORE-B's check_procedure item above), confirming zero
    regressions from a pure doc/text change. No blocking questions hit —
    everything in the kickoff held up exactly as described.
+   POST-PUSH FINDING (not a SHIP regression — this commit touches zero
+   backend/** files, mathematically cannot affect Python runtime behavior):
+   two subsequent full-suite runs (post-rebase, same command, same tree)
+   BOTH reproduced identically — 1461 passed / 19 skipped / **15 failed**
+   (test_procedures_e2e.py x14 + test_schema_drift.py's real-DB-enum check),
+   not the clean 1368/115/0 baseline. Same failing set both times, so this
+   is a deterministic order-dependent leak on the CURRENT main state, not
+   network flakiness. Root cause: `app/mcp_server/server.py`'s module-level
+   `load_dotenv()` sets a real DATABASE_URL (this worktree's Supabase
+   credential) process-wide on import; `tests/test_mcp_check_procedure_offline.py`
+   carries a documented env-snapshot/restore guard specifically to stop this
+   leaking into later-collected e2e modules (see that file's own docstring,
+   check_procedure item above — fixed a 69-failure version of this exact
+   bug once already) but it is evidently NOT fully effective: confirmed the
+   leaked DATABASE_URL survives into test_procedures_e2e.py/test_schema_drift.py
+   collection two full runs running. Isolated re-run of one affected test
+   skips cleanly (no leak outside full-suite collection order), consistent
+   with an incomplete restore rather than a standalone bug in either failing
+   file. Out of this lane's scoped grant to fix (owns README.md/commLLM.md
+   only this task; the guard lives in backend/tests, CORE-B/integrator
+   territory) — flagging here for whoever owns that guard next, since it's
+   reproducible now on main and will surface in every full-suite CI-style
+   run, not just occasionally.
 
 ### Lane INFRA - Docker boot test (opened 2026-08-27, scoped grant for this task)
 
