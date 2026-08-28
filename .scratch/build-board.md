@@ -3601,3 +3601,73 @@ Grounded findings from  3_access.sql/ 4_governance.sql/deps.py review. Sequence:
   Branch was 4 commits behind `origin/main` (this test file's own commit
   plus 3 unrelated others) — rebased before starting, per house rules,
   which is how the test file became visible in this worktree at all.
+
+- CORE-B (2026-08-28): **integration_check_v2_governance.py fixed for
+  real H3 design, plus a real RateLimiter(pool) production crash found
+  and fixed along the way.** Paste-in asked for two stale checks in the
+  script (predates the H3 rate-limiter rewrite):
+  - "recorded events match what was allowed" queried `rate_limit_events`
+    immediately after concurrent `check_and_record` calls, but H3 made
+    ledger writes buffered (drained at `LEDGER_FLUSH_THRESHOLD` pending
+    or `LEDGER_MAX_FLUSH_DELAY` staleness) — could read short. Fixed by
+    forcing a real drain first via `RateLimiter._drain()`, handing it a
+    synthetic "now" past the staleness threshold rather than waiting on
+    real timers.
+  - "events outside the window do not count against the limit" tested
+    the old DB-row-window-counting design; enforcement is now an
+    in-process token bucket that never consults `rate_limit_events` for
+    admission decisions, so the check passed for the wrong reason.
+    Replaced with a real property of the current design: preloaded
+    three *recent* ledger rows for a never-before-seen key (which would
+    have outright exhausted the old window-based limit) and confirmed a
+    fresh bucket still admits — proving enforcement doesn't consult the
+    ledger, not just asserting `True`.
+  Other checks (basic limiting, isolation, concurrency, cost governance,
+  purge_old) read as still testing real current behavior — confirmed,
+  not assumed.
+  **Found blocking this: `RateLimiter.__init__` crashed against any
+  real `asyncpg.Pool`** — `TypeError: cannot create weak reference to
+  'Pool' object`. `_STATES` is a `WeakKeyDictionary` keyed by the pool,
+  but `asyncpg.Pool` declares `__slots__` with neither `__weakref__`
+  nor `__dict__`, so it can never be weakly referenced or tagged with
+  an attribute. Unit tests never caught it (they construct `RateLimiter`
+  with `MagicMock`/`AsyncMock` pools, which do support weakrefs). Since
+  `api/deps.py:107` does `RateLimiter(pool).check_and_record(...)` with
+  the real app pool on every request and `governance_enabled` defaults
+  to `True`, this looked like it was breaking every governed production
+  endpoint outright — asked the founder how to handle an out-of-scope
+  fix this severe rather than either silently patching a file outside
+  CORE-B's owned paths or leaving it broken; got "fix it, then validate
+  live." Fixed by keying `_STATES` on `id(pool)` in a plain `dict`,
+  holding a **strong reference to the pool alongside its state** so the
+  id can't be recycled onto an unrelated pool while the entry lives —
+  confirmed this part mattered, not just theoretical: a bare
+  `id(pool)`-keyed dict without the strong ref made two unrelated
+  `FakePool()`s in the offline suite collide and leak state within
+  milliseconds (`test_ledger_insert_sql_content_and_row_fidelity`
+  caught it — one test's admissions leaked into another's drain).
+  Trades the old WeakKeyDictionary's auto-cleanup-on-pool-replacement
+  for entries that live as long as the process, which is fine given one
+  long-lived pool per process (`--workers 1`, per H3's own docstring).
+  **Validated LIVE** against the real Supabase `DATABASE_URL` in this
+  worktree's `backend/.env`: all 16 checks pass end to end, including
+  the two rewritten ones. Note the script unconditionally
+  `DELETE`s `rate_limit_events`/`llm_spend` at startup (pre-existing
+  behavior) — this ran against the real shared Supabase instance per
+  the paste-in's own instruction to run it for real; flagging since a
+  prior board note (bootstrap_demo.py item) noted this DB is shared,
+  not disposable.
+  **Full backend offline suite**: 1434 passed / 115 skipped / 0 failed
+  via the documented `python -m pytest tests/ -q` (README's own command)
+  — clean, both before and after this change. Caught and self-corrected
+  a false alarm along the way: an earlier bare `python -m pytest -q`
+  (no path) from `backend/` additionally collected 8 root-level
+  `test_*_live.py` files (`test_solve_task_live.py` etc., outside
+  `tests/`) that set `os.environ["DATABASE_URL"]` directly and
+  persisted it process-wide for the rest of that run, turning
+  downstream `*_e2e.py` skips into live-DB failures depending on
+  collection order (112 failed) — reproduced identically on the
+  pre-fix baseline via `git stash`, confirming it was an invocation
+  mistake on my part, not a real regression or pre-existing repo bug.
+  Rebased onto `origin/main` (was 10 commits behind), pushed as
+  `c088855`.
