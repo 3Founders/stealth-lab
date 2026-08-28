@@ -7,16 +7,34 @@ ruling), and `/` (redirects to the docket).
 
 ## What was actually verified here
 
-`npm run build` — production build, TypeScript type-checking, and static
-generation all confirmed clean. One thing this sandbox genuinely
-couldn't check: `next/font/google` needs to reach `fonts.googleapis.com`
-at build time, and that domain isn't reachable from this environment.
-Isolated by temporarily stripping font loading and confirming everything
-*else* compiled — it did, cleanly, all three routes. The font-loading
-layout has been restored and is what's shipped; it just hasn't built
-successfully in *this* sandbox specifically. It will on Vercel, which has
-normal internet access. Worth running `npm run build` yourself once,
-first thing, rather than taking that on faith.
+**Confirmed clean, verified with real network access on 2026-08-29**
+(Node v24.18.1, npm 11.16.0). A prior pass through this repo, done from
+inside a sandbox with no outbound network access, reported two problems
+on a fresh clone: (1) `npm install` completing but leaving
+`node_modules/.bin` unpopulated, and (2) `npm run build` failing
+TypeScript type-checking on a clean install. Neither reproduced here.
+Root-caused by actually trying it, not guessed at:
+
+- **`.bin` population**: deleted `node_modules` entirely and ran both
+  `npm ci` and, separately, a from-scratch `npm install` — each
+  populated `node_modules/.bin` fully and identically (51 entries,
+  including `next`, `tsc`, `tsserver`). No lockfile drift (`npm ci`
+  succeeded against `package-lock.json` unmodified), no AV/Defender
+  interference observed. The earlier report was very likely an artifact
+  of the sandboxed environment it ran in, not a real bug in this repo.
+- **Type-checking**: with the real shipped `app/layout.tsx` (genuine
+  `next/font/google` loading — `IBM_Plex_Mono`, `IBM_Plex_Sans`,
+  `Source_Serif_4`, unstripped) and real access to
+  `fonts.googleapis.com`, `npm run build` completed cleanly through
+  compilation, type-checking, and static generation for all ten routes.
+  No `tsc` error to chase — there wasn't one. The earlier "sandbox
+  couldn't verify this" caveat from the previous pass is resolved: it's
+  now been run for real, on Vercel-equivalent network access, and it
+  works.
+
+Worth running `npm run build` yourself once too, rather than taking this
+on faith — but as of this date, on a genuinely fresh `node_modules`, it
+is confirmed working end to end.
 
 One dependency note: `npm install` initially resolved a Next.js version
 with a published critical CVE (cache poisoning / RCE-adjacent, per `npm
