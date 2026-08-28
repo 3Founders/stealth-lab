@@ -17,6 +17,17 @@ FROM python:3.12-slim
 # add build-essential here first if a future dependency needs one.
 WORKDIR /repo
 
+# git is a RUNTIME dependency, not a build convenience. solve_task seeds
+# its structural-retrieval tier from `git diff --name-only HEAD` against
+# the caller's repo_path. That call is try/except-guarded, so without git
+# it does not crash -- it silently returns seed_files=[], and one of the
+# tool's two independent retrieval tiers is dead with no error anywhere.
+# Confirmed missing from this image on 2026-08-28 while proving the core
+# loop; the failure is invisible precisely because it degrades politely.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends git \
+    && rm -rf /var/lib/apt/lists/*
+
 COPY backend/requirements.txt backend/requirements.txt
 RUN pip install --no-cache-dir -r backend/requirements.txt
 

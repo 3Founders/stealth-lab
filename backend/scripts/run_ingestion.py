@@ -39,6 +39,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from dotenv import load_dotenv
 load_dotenv()
 
+from app import observability
 from app.db.session import create_pool
 from app.services.ingestion_jobs import process_pending_jobs
 from app.services.trace_worker import process_collector_file
@@ -80,6 +81,11 @@ async def _run_once(trace_dir: Path) -> dict:
 
 
 def main() -> None:
+    # The headless third surface. It has no HTTP layer, so nothing else
+    # would ever report its failures: 32 jobs failed silently here on
+    # 2026-08-28 and were only found by reading the job table by hand.
+    # No-op without SENTRY_DSN.
+    observability.init("worker")
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--trace-dir", type=Path, default=None,

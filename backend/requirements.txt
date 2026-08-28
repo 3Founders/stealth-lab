@@ -45,3 +45,8 @@ pyarrow
 
 # numeric invariant solver - required by services/invariants.py (was undeclared)
 z3-solver
+
+# Observability (app/observability.py) - errors + traces for the two ASGI
+# apps and the headless worker. Optional at runtime: no SENTRY_DSN means
+# init() is a no-op and this is never imported.
+sentry-sdk[fastapi]

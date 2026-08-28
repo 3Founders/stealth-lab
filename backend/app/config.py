@@ -221,6 +221,20 @@ class Settings(BaseSettings):
     # Single-tenant placeholder (Section 12 auth seam).
     default_tenant_id: str = "00000000-0000-0000-0000-000000000001"
 
+    # --- Observability (app/observability.py) ---
+    # Optional like every other secret here: absent DSN means Sentry stays
+    # off and init() is a no-op, so nothing about local or offline work
+    # changes. PRODUCTION_READINESS.md's "What does not exist at all"
+    # names observability first -- a hosted failure is currently silent.
+    sentry_dsn: Optional[str] = None
+    # Sampled, not 1.0: traces are the expensive half and the useful
+    # signal here is errors. Overridable per deployment.
+    sentry_traces_sample_rate: float = 0.1
+    # Tags every event so api/mcp/worker errors are separable in one
+    # project rather than three.
+    environment: str = "local"
+    release: Optional[str] = None
+
     def require(self, field: str) -> str:
         value = getattr(self, field, None)
         if not value:

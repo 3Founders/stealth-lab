@@ -68,6 +68,7 @@ from app.services.procedure_extraction import extract_procedure
 from app.services.procedure_extraction.evidence import AgentRunEvidenceSource
 from app.services.retrieval import HybridRetriever
 from app.services.reuse_detection import ReusableNode, _vector_candidates
+from app import observability
 from app.config import settings
 from fastapi import HTTPException
 
@@ -218,6 +219,11 @@ server = MCPServer(
 # store (tasks_extension.py) is in-memory, so a second worker process
 # would serve a tasks/get poll from a process that never saw the task
 # propose_synthesis/solve_task created -- the call would appear to hang.
+# The SECOND ASGI app in this project -- instrumenting only main.py would
+# leave all 9 MCP tools dark, which is the surface external agents
+# actually call. No-op without SENTRY_DSN.
+observability.init("mcp")
+
 app = server.streamable_http_app()
 
 
