@@ -16,6 +16,7 @@ from __future__ import annotations
 import os
 import time
 import uuid
+from datetime import datetime, timezone
 
 _last = {"ms": 0, "rand": b""}
 
@@ -44,3 +45,40 @@ def uuid7() -> uuid.UUID:
 
 def uuid7_str() -> str:
     return str(uuid7())
+
+
+def uuid7_timestamp_ms(value: uuid.UUID | str) -> int:
+    """Read the unix-ms timestamp back out of a UUIDv7's top 48 bits.
+
+    Useful when debugging insert ordering: given only a row id, recover
+    roughly when it was written without joining to a timestamp column.
+
+    HONEST LIMIT: this reads the bits, it does not authenticate them. The
+    value is whatever the generating process's clock said -- a machine with
+    a skewed clock produces a skewed timestamp here, and nothing in the id
+    records which machine that was. Treat it as a debugging aid, never as
+    provenance; `t_created` columns remain the source of truth.
+
+    Raises ValueError on a non-v7 UUID rather than returning a meaningless
+    number from bits that were never a timestamp.
+    """
+    u = uuid.UUID(str(value)) if not isinstance(value, uuid.UUID) else value
+    if u.version != 7:
+        raise ValueError(f"not a UUIDv7 (version={u.version}); no embedded timestamp")
+    return int.from_bytes(u.bytes[0:6], "big")
+
+
+def uuid7_to_datetime(value: uuid.UUID | str) -> datetime:
+    """The same embedded timestamp as `uuid7_timestamp_ms`, as an aware UTC
+    datetime -- the form that compares directly against this schema's
+    `timestamptz` columns without a caller-side conversion.
+
+    Deliberately built on `uuid7_timestamp_ms` rather than re-reading the
+    bytes: one parser, so the version check and the byte layout cannot
+    drift apart between the two functions.
+
+    HONEST LIMIT: inherits the clock-trust caveat in full. UUIDv7 carries
+    millisecond resolution, so the returned datetime is never more precise
+    than that regardless of what the microsecond field displays.
+    """
+    return datetime.fromtimestamp(uuid7_timestamp_ms(value) / 1000, tz=timezone.utc)

@@ -1361,6 +1361,64 @@ single synthesized reports into `.scratch/research/`.
    the non-Docker half and report the compose gap as still Chaitanya-only-
    verified.
 
+   **UNBLOCKED IN PART @2026-08-28 (infra, founder's Docker-equipped host).**
+   Docker half: DONE and green. The compose half of the quickstart is now
+   verified on a genuinely fresh volume, not reused dogfood state:
+   `docker compose down -v` (removed `stealthlab_stealthlab-db-data`), then
+   `docker compose up -d --build`. `docker compose exec backend python
+   scripts/migrate.py --status` -> all 30 rows `applied`, auto-migrated on
+   boot. Auth gate per README_MCP_SERVER.md: unauthenticated `POST /mcp`
+   -> **401**, authenticated -> **400** (not 401; 400 is just the empty
+   non-JSON-RPC body). `claude mcp list` -> `stealthlab ... Connected`.
+   No port collision: compose publishes db on 5433, the host's native
+   PG 17.5 keeps 5432.
+   Doc drift confirmed: `README_MCP_SERVER.md` still says "7 MCP tools" and
+   its table lists 7; `server.py` has **9** `@server.tool()` decorators --
+   missing `check_procedure` (l.819) and `decide_decomposition` (l.964).
+   Commit 90130f9's "README 8->9 tools" fixed the ROOT `README.md`, not this
+   doc. Not edited here (SHIP owns it); flagged for a doc pass.
+
+   **STILL NOT DONE: the two-task precedent proof. Two real blockers,
+   not worked around.**
+   (a) *Session binding.* Claude Code binds MCP tools at session start. This
+   session started while the container was down, so its `stealthlab` entry
+   is ConnectionRefused and `mcp__stealthlab__*` is unavailable for the whole
+   session -- confirmed by tool lookup, not assumed. `claude mcp list`
+   showing Connected does NOT retroactively expose the tools. Needs a NEW
+   session against the now-running container. Mechanical, not a design gap.
+   (b) *The proof's premise is wrong as paraphrased, and this is the real
+   finding.* The task was handed over as "solve a task through normal tool
+   use, twice, zero API spend". Normal tool use (Read/Edit/Bash) writes
+   **zero** rows to `procedures`. Grepped: the only writer is
+   `procedures.py:147`, reached via `capture_procedure()` <-
+   `procedure_extraction/__init__.py:135` <- `extract_procedure()`, whose
+   ONLY live non-test caller is inside `solve_task` (`server.py:719`).
+   `check_procedure(procedure_id, query)` needs a `procedure_id`; the fresh
+   DB has `procedures=0` (also `episodes=0`, `evidence=0`,
+   `trace_events=0`), so there is nothing for it to check. This item's OWN
+   text says "`solve_task` twice" -- that wording is correct and the
+   "normal tool use" paraphrase is not. Consequence: the proof cannot be
+   zero-spend. `solve_task` runs the retrieval-grounded coding agent with a
+   real LLM `client`, so closing this box costs API money. The "zero API
+   spend" framing and this checklist row are mutually exclusive.
+
+   Two further code facts, verified rather than paraphrased, for whoever
+   resumes this:
+   - `CHECK_PROCEDURE_REQUIRE_VERIFIED = False` (`applicability.py:529`), so
+     `check_procedure` CAN return ALLOW on a freshly-extracted unverified
+     procedure. That half of the plan is sound -- it is the contrast to
+     `retrieve_precedent`, which at 4f5c838 fuses
+     `verified_procedure_candidates()` and surfaces verified rows only.
+   - `check_procedure`'s `query` arg does **not** feed the decision. Its
+     docstring states this plainly ("does not (yet) feed the decision
+     itself"); the wrapper calls `check_procedure_reuse(pool,
+     procedure_id=..., access_scope=unrestricted())` and never passes
+     `current_scope`. So there is no query/context matching, and any
+     procedure carrying a real `scope` requirement fails the scope gate
+     through this tool regardless of caller context. "Second time cites
+     precedent" via `check_procedure` is therefore a NAMED-handle re-check,
+     not a retrieval.
+
 1. `[x]` done @2026-08-25 â€” branch `lane/ship` Installable package wrapping
    `trace_collector` + `mcp_server`.
    Shipped: `packaging/` = installable **stealthlab-connect** (pyproject,
@@ -1573,6 +1631,78 @@ Docker-availability caveat.
 Lane INFRA status: all three assigned items executed. No fix was needed to
 any of the four granted files - the boot test passed as written.
 
+
+### Lane INFRA - README quickstart live dry-run (2026-08-28)
+
+Closes **SHIP's HELD item 6** (line ~1333) on its infrastructure half, and
+resolves that item's stated blocker: SHIP was held because the `sl-ship`
+host has no Docker. This run used the Docker-equipped host, so the
+`docker compose up` half is no longer unverified from *some* lane.
+
+Ran at `4f01c6b` on a genuinely fresh volume (`down -v` first, not reused
+dogfooding state). `docker compose up -d --build` -- the `--build` is
+load-bearing and NOT in demo.md's C1 row: without it compose silently
+reuses a stale image, which produced a false pass earlier this session.
+
+VERIFIED GREEN:
+- 30/30 migrations `applied`, 0 pending, on a volume seconds old.
+- README_MCP_SERVER.md's own auth checks, host-side: unauthenticated
+  `POST /mcp` -> **401**; authenticated -> **200**. Token 43 chars
+  (`token_urlsafe(32)`), served from the container, never printed.
+- `claude mcp list` -> `stealthlab ... - OK Connected`, over Streamable
+  HTTP on 127.0.0.1:8765, as a REAL client (this Claude Code instance).
+- Tool count **9**, matching `server.py`'s `@server.tool()` list. The
+  README's "The 7 tools" table is stale -- missing `check_procedure` and
+  `decide_decomposition`. Doc-only defect, filed not fixed (SHIP owns it).
+- Both MCP tools returned real, correct output:
+  `retrieve_precedent("add a small utility function ...")` ->
+  `{"result":"No precedent found above this tool's real similarity
+  threshold (0.6) for this query."}`
+  `check_procedure(<well-formed but absent uuid>, ...)` ->
+  `{"result":"REFUSED: no live procedure for procedure_id=..."}`
+  Both are the documented contracts. The tools work.
+
+THE REAL GAP -- item 6's "second citing precedent" half is NOT closed,
+and cannot be by this path. Not a budget problem, a structural one:
+
+Two real tasks were solved through ordinary tool use (added
+`uuid7_timestamp_ms` then `uuid7_to_datetime` to `app/utils/ids.py`, each
+with a docstring and passing tests). Substrate AFTER both tasks, on the
+fresh DB:
+
+    procedures 0 | knowledge_nodes 0 | task_nodes 0 | episodes 0
+    observations 0 | evidence 0 | agent_traces 0 | trace_events 0
+
+Nothing. The collector IS working -- this session's hook trace file is
+1.1 MB, written today -- but `hook_wrapper.py` writes to
+`.claude/traces/<session>.jsonl` FILES, and no ingestion step moves those
+into Postgres. Separately, `server.py:719` is the ONLY live caller of
+`extract_procedure()` anywhere in `app/` or `scripts/`, and it sits inside
+`solve_task`, which needs a real model.
+
+So on a clean install: ordinary agent work creates no procedure, therefore
+`check_procedure` has no `procedure_id` to be given, therefore the
+two-task "second run cites the first" story has no non-spend path. Item 6
+as written ("`solve_task` twice") was right that solve_task is required.
+
+Consequence for demo.md C4 "Reuse you can see": on a fresh install it is
+unreachable without API spend. Recommend the checklist row be split --
+infrastructure/connection half PASSES, reuse-demonstration half remains
+open -- rather than marked green off this run.
+
+UNRELATED PRE-EXISTING FAILURE, flagged loudly because dogfooding is
+starting: full suite is **1406 passed / 115 skipped / 0 failed** on the
+committed tree (includes the 6 new tests above). But the UNTRACKED
+`backend/tests/test_band1_11_redaction.py` has **3 real failures** in the
+redaction chokepoint -- an AWS-key-shaped token (`AKIA...`) persisting
+unredacted, `.ssh` paths not wholesale-excluded, and a `NoneType` crash on
+tool-response normalization. Untracked, so not mine and not in the gate,
+but that is the exact component standing between real traces and stored
+data. Someone should own it before volume arrives.
+
+Not fixed here (outside this lane's grant): README_MCP_SERVER.md's stale
+7-tool table; the redaction failures; the ingestion gap.
+
 ## Integrator (= reviewer instance, main checkout)
 - Watches for `lane/*` branch pushes; rebases lane onto origin/main when stale.
 - Runs full suite on the merge candidate; merges green, rejects red with notes here.
@@ -1658,12 +1788,14 @@ blocking question in the Log, continue with the next queue item.
    cleared before invocation, confirming it's env-level (.env loading
    mid-run) not this change -- zero regressions in the non-DB 1268].
    Production and eval now share one terse-label contract; no drift.)*
-## Founder dependencies (blocking nothing currently)
+## Founder dependencies (2 now BLOCKING v0.1 launch, 2026-08-28)
 
 | Ruling | Blocks | State |
 |---|---|---|
 | D1 capability bands | nothing (default live in Â§16, tagged) | open |
 | D4 deletion mechanism | Band 5.6 only | open |
+| OpenRouter / live-model budget decision | v0.1 README quickstart live-model box | open, **BLOCKING** -- see budget-wall section below |
+| Chaitanya dogfooding pilot report | v0.1 launch; must confirm his traces run through a real `assemble_episodes()` call, not a fixture path | open, **BLOCKING** |
 
 ## OpenRouter budget wall (2026-08-27, MEASURE) - READ BEFORE ANY LIVE SWEEP
 
@@ -2008,6 +2140,28 @@ eal_spend.jsonl). Results on 10 valid tasks: A 6/10 resolved, B 7/10 w/ 1 false-
      shared pool; ledger row-per-attempt shows three consecutive 429s then
      success on ox-alpha. Full-pack sweep (~33 billed calls at that rate)
      ≈ $0.15–0.40 per complete pass depending on saturation.
+
+- 2026-08-28 integrator: last known zero-cost bug closed. **SHIP, CORE-A and
+  CORE-B are all IDLE** -- no claimable queue items remain in any of the three.
+  Full v0.1 launch is now blocked on exactly two founder dependencies, both
+  outside lane control (rows added to the Founder dependencies table above):
+  (1) the OpenRouter/budget decision, which gates the README quickstart's
+  live-model box, and (2) Chaitanya's dogfooding pilot report confirming his
+  own traces actually run through a real `assemble_episodes()` rather than a
+  fixture path. Neither is actionable by a lane. Do not open new work against
+  either until they come back; everything shippable without them has shipped.
+
+- 2026-08-28 infra: SHIP item 6 (README quickstart end-to-end) is now
+  PART-verified on the founder's Docker host at `4f01c6b`. Green: fresh-volume
+  `docker compose down -v` + `up -d --build`, all 30 migrations applied,
+  401/not-401 auth checks, `claude mcp list` Connected, 9 tools confirmed
+  against `server.py` (README_MCP_SERVER.md's table still says 7). NOT green
+  and not faked: the two-task precedent proof. `extract_procedure()`'s only
+  live caller is inside `solve_task`, so ordinary tool use creates no
+  `procedures` row and `check_procedure` has no handle to check on a fresh DB
+  -- and `solve_task` spends real LLM money, so this box cannot be closed at
+  zero API spend as the request assumed. Item 6 stays unchecked; full detail
+  in the item itself. Honest gap, not a workaround.
 
 ### Lane HARDENING (opened by founder referral of Chaitanya-instance audit, 2026-08-25)
 Grounded findings from  3_access.sql/ 4_governance.sql/deps.py review. Sequence: after current OIDC tasks land.
