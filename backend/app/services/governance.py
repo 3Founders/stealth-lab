@@ -76,7 +76,6 @@ from __future__ import annotations
 import logging
 import math
 import threading
-import weakref
 from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
@@ -218,9 +217,28 @@ _RETENTION_DELETE_SQL = (
 # a fresh RateLimiter per request; keying state by pool identity makes
 # those instances share enforcement and buffer state (and keeps pools —
 # and therefore tests using distinct fake pools — isolated from each
-# other). WeakKeyDictionary so replacing a pool at shutdown doesn't leak
-# limiter state.
-_STATES: "weakref.WeakKeyDictionary[Any, _LimiterState]" = weakref.WeakKeyDictionary()
+# other).
+#
+# Keyed by id(pool), not the pool object itself: asyncpg.Pool declares
+# __slots__ with neither __weakref__ nor __dict__, so it can be neither
+# weakly referenced (WeakKeyDictionary, weakref.finalize both raise
+# TypeError: cannot create weak reference to 'Pool' object) nor tagged
+# with an attribute. A real asyncpg.Pool could therefore never be a
+# RateLimiter's pool at all before this fix.
+#
+# The entry holds a STRONG reference to the pool alongside its state,
+# not just the state -- id() is only safe as a key while the object it
+# names is kept alive, because CPython freely reuses a dead object's id
+# for the next allocation. Confirmed the hard way: a bare dict[id(pool),
+# state] made two unrelated FakePool()s in the test suite collide within
+# milliseconds, leaking one test's admissions into another's drain. In
+# this deployment a pool is created once per process and lives until
+# shutdown (see the H3 note above on --workers 1), so this trades the
+# WeakKeyDictionary's old auto-cleanup-on-pool-replacement for entries
+# that live as long as the process -- acceptable for one long-lived
+# pool, and bounded (one small dataclass per pool ever constructed) for
+# tests/scripts that build many.
+_STATES: dict[int, Tuple[Any, "_LimiterState"]] = {}
 
 
 def _default_clock() -> datetime:
@@ -267,11 +285,12 @@ class RateLimiter:
         self._pool = pool
         self._limits = limits if limits is not None else DEFAULT_LIMITS
         self._clock = clock or _default_clock
-        state = _STATES.get(pool)
-        if state is None:
-            state = _LimiterState()
-            _STATES[pool] = state
-        self._state = state
+        pool_key = id(pool)
+        entry = _STATES.get(pool_key)
+        if entry is None:
+            entry = (pool, _LimiterState())
+            _STATES[pool_key] = entry
+        self._state = entry[1]
 
     # --- observability (used by ops/tests; cheap, lock-guarded reads) ---
 

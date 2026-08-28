@@ -14,7 +14,7 @@ Run:
 import asyncio
 import os
 import sys
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 
 sys.path.insert(0, os.path.dirname(__file__))
 
@@ -22,6 +22,7 @@ from app.db.session import create_pool
 from app.services.governance import (
     BudgetExceeded,
     CostGovernor,
+    LEDGER_MAX_FLUSH_DELAY,
     RateLimit,
     RateLimiter,
     RateLimitExceeded,
@@ -82,20 +83,35 @@ async def main():
     check("the remainder were rejected, not errored",
           allowed + rejected == 10, f"{allowed} allowed + {rejected} rejected of 10")
 
+    # H3: ledger writes are buffered (drained at LEDGER_FLUSH_THRESHOLD
+    # pending or LEDGER_MAX_FLUSH_DELAY staleness), so counting
+    # rate_limit_events immediately after check_and_record can read short.
+    # Force a real drain by handing _drain() a "now" past the staleness
+    # threshold, rather than waiting on the threshold/staleness timers.
+    await limiter._drain(datetime.now(timezone.utc) + LEDGER_MAX_FLUSH_DELAY + timedelta(seconds=1))
+
     recorded = await pool.fetchval(
         "SELECT COUNT(*) FROM rate_limit_events WHERE scope_key = 'viewer:racer'"
     )
     check("recorded events match what was allowed",
           recorded == allowed, f"recorded {recorded}, allowed {allowed}")
 
-    print("\n-- window expiry --")
+    print("\n-- ledger independence (H3: enforcement doesn't consult the ledger) --")
     await pool.execute("DELETE FROM rate_limit_events")
     await pool.execute(
         "INSERT INTO rate_limit_events (scope_key, endpoint, occurred_at) "
-        "VALUES ('viewer:old', '/test', now() - interval '2 hours')"
+        "VALUES ('viewer:preloaded', '/test', now()), "
+        "('viewer:preloaded', '/test', now()), "
+        "('viewer:preloaded', '/test', now())"
     )
-    await limiter.check_and_record("viewer:old", "/test")
-    check("events outside the window do not count against the limit", True)
+    # Pre-H3, these three *recent* ledger rows would already exhaust the
+    # /test limit (max_requests=3) for this key before a single
+    # check_and_record call -- the old design counted rows in the window.
+    # Since H3, enforcement is an in-process token bucket keyed by
+    # (scope_key, endpoint) that starts full the first time a key is seen,
+    # regardless of what the audit ledger already holds for it.
+    await limiter.check_and_record("viewer:preloaded", "/test")
+    check("a fresh bucket is not pre-exhausted by preexisting ledger rows", True)
 
     print("\n-- cost governance --")
     governor = CostGovernor(pool, daily_cap_usd=1.0, per_viewer_daily_cap_usd=0.10)
