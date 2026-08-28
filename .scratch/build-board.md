@@ -1700,8 +1700,24 @@ tool-response normalization. Untracked, so not mine and not in the gate,
 but that is the exact component standing between real traces and stored
 data. Someone should own it before volume arrives.
 
+CORRECTION to the paragraph above, same run, found before reporting: an
+ingestion path DOES exist and is tracked -- `backend/scripts/run_ingestion.py`
+drives collector file -> trace_events -> observations. Saying "no ingestion
+step" was too strong. Two things remain true and are the actual defect:
+(a) `run_ingestion` appears ZERO times in README.md, README_MCP_SERVER.md,
+and demo.md, so nobody following the documented quickstart ever runs it;
+(b) even after running it you get trace_events + observations, NOT
+procedures -- `extract_procedure()` is still only reachable via
+`solve_task`. So the chain breaks at observation -> procedure, one hop
+later than first written, and the no-spend conclusion is unchanged.
+(Also noted: untracked `scripts/ingest_transcripts.py` is someone's WIP
+closing the separate transcript -> `assemble_episodes()` hop, which its
+own docstring says had zero callers before it -- the same Band 2
+founding-loop hop RESEARCH flagged.)
+
 Not fixed here (outside this lane's grant): README_MCP_SERVER.md's stale
-7-tool table; the redaction failures; the ingestion gap.
+7-tool table; the redaction failures; the documented-quickstart ingestion
+omission.
 
 ## Integrator (= reviewer instance, main checkout)
 - Watches for `lane/*` branch pushes; rebases lane onto origin/main when stale.
