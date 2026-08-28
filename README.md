@@ -64,7 +64,10 @@ gotchas (stock `postgres:15` cannot run the migration chain; use
 `pgvector/pgvector:pg15`).
 
 Tests: `cd backend && python -m pytest tests -q` — offline, no DB or API
-keys required for the bulk of the suite.
+keys required for the bulk of the suite. Needs `backend/.env` to exist first
+(`cp backend/.env.example backend/.env`, then set `STEALTHLAB_MCP_TOKEN` —
+see the generation command inside that file) — without it, two test files
+fail to even collect and the whole run aborts before anything executes.
 
 ### Ingesting collected traces
 
