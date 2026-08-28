@@ -49,7 +49,10 @@ async def _make_verified_procedure(pool, name: str, **kwargs) -> str:
     real path a verified procedure actually took to get there."""
     from app.services.procedures import MIN_DISTINCT_CONTEXTS_FOR_VERIFIED, MIN_SUCCESSES_FOR_VERIFIED
 
-    result = await capture_procedure(pool, name=name, goal="g", **kwargs)
+    result = await capture_procedure(
+        pool, name=name, goal="g",
+        provenance="system_pending_review", scope_type="global", **kwargs,
+    )
     row_id = result["id"]
     for i in range(MIN_SUCCESSES_FOR_VERIFIED):
         await record_execution_outcome(
@@ -255,7 +258,10 @@ def test_candidate_procedure_excluded_from_automatic_selection_but_explicitly_in
         pool = await create_pool(DATABASE_URL, min_size=1, max_size=2)
         try:
             await _cleanup(pool, "app-test-candidate")
-            result = await capture_procedure(pool, name="app-test-candidate-1", goal="g")
+            result = await capture_procedure(
+                pool, name="app-test-candidate-1", goal="g",
+                provenance="system_pending_review", scope_type="global",
+            )
             row = await pool.fetchrow("SELECT * FROM procedures WHERE id = $1", result["id"])
 
             automatic = await check_hard_constraints(pool, dict(row), require_verified=True)
@@ -288,7 +294,10 @@ def test_verified_but_unapproved_procedure_excluded_from_automatic_selection():
         try:
             await _cleanup(pool, "app-test-unapproved")
             from app.services.procedures import MIN_DISTINCT_CONTEXTS_FOR_VERIFIED, MIN_SUCCESSES_FOR_VERIFIED
-            result = await capture_procedure(pool, name="app-test-unapproved-1", goal="g")
+            result = await capture_procedure(
+                pool, name="app-test-unapproved-1", goal="g",
+                provenance="system_pending_review", scope_type="global",
+            )
             row_id = result["id"]
             for i in range(MIN_SUCCESSES_FOR_VERIFIED):
                 await record_execution_outcome(
@@ -323,7 +332,10 @@ def test_quarantined_procedure_is_never_applicable():
         pool = await create_pool(DATABASE_URL, min_size=1, max_size=2)
         try:
             await _cleanup(pool, "app-test-quarantine")
-            result = await capture_procedure(pool, name="app-test-quarantine-1", goal="g")
+            result = await capture_procedure(
+                pool, name="app-test-quarantine-1", goal="g",
+                provenance="system_pending_review", scope_type="global",
+            )
             row_id = result["id"]
             for i in range(5):
                 await record_execution_outcome(

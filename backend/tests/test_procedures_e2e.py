@@ -46,7 +46,10 @@ def test_approve_procedure_is_orthogonal_to_verification_state():
         pool = await create_pool(DATABASE_URL, min_size=1, max_size=2)
         try:
             await _cleanup(pool, "proc-test-approve")
-            result = await capture_procedure(pool, name="proc-test-approve-1", goal="g")
+            result = await capture_procedure(
+                pool, name="proc-test-approve-1", goal="g",
+                provenance="system_pending_review", scope_type="global",
+            )
             row_id = result["id"]
 
             row = await pool.fetchrow("SELECT * FROM procedures WHERE id = $1", row_id)
@@ -73,7 +76,10 @@ def test_reject_procedure_sets_rejected_status():
         pool = await create_pool(DATABASE_URL, min_size=1, max_size=2)
         try:
             await _cleanup(pool, "proc-test-reject")
-            result = await capture_procedure(pool, name="proc-test-reject-1", goal="g")
+            result = await capture_procedure(
+                pool, name="proc-test-reject-1", goal="g",
+                provenance="system_pending_review", scope_type="global",
+            )
             row_id = result["id"]
 
             await reject_procedure(pool, procedure_row_id=row_id, approved_by="tester")
@@ -95,6 +101,7 @@ def test_capture_procedure_starts_candidate_fresh_active():
             result = await capture_procedure(
                 pool, name="proc-test-capture-1", goal="fix a failing test",
                 steps=[{"action": "locate"}, {"action": "fix"}],
+                provenance="system_pending_review", scope_type="global",
             )
             assert result["id"]
             assert result["procedure_id"]
@@ -119,7 +126,10 @@ def test_promotion_requires_the_real_threshold_not_just_any_successes():
         pool = await create_pool(DATABASE_URL, min_size=1, max_size=2)
         try:
             await _cleanup(pool, "proc-test-promo")
-            result = await capture_procedure(pool, name="proc-test-promo-1", goal="g")
+            result = await capture_procedure(
+                pool, name="proc-test-promo-1", goal="g",
+                provenance="system_pending_review", scope_type="global",
+            )
             row_id = result["id"]
 
             # Below the success threshold, even with enough contexts.
@@ -132,7 +142,10 @@ def test_promotion_requires_the_real_threshold_not_just_any_successes():
             assert row["verification_state"] == "candidate", "must not promote below the success threshold"
 
             # Cross the success threshold but keep contexts too narrow.
-            result2 = await capture_procedure(pool, name="proc-test-promo-2", goal="g")
+            result2 = await capture_procedure(
+                pool, name="proc-test-promo-2", goal="g",
+                provenance="system_pending_review", scope_type="global",
+            )
             row_id2 = result2["id"]
             for i in range(MIN_SUCCESSES_FOR_VERIFIED):
                 await record_execution_outcome(
@@ -169,7 +182,10 @@ def test_a_single_failure_before_promotion_permanently_blocks_it():
         pool = await create_pool(DATABASE_URL, min_size=1, max_size=2)
         try:
             await _cleanup(pool, "proc-test-onefail")
-            result = await capture_procedure(pool, name="proc-test-onefail-1", goal="g")
+            result = await capture_procedure(
+                pool, name="proc-test-onefail-1", goal="g",
+                provenance="system_pending_review", scope_type="global",
+            )
             row_id = result["id"]
 
             # One real failure early, before the threshold is anywhere close.
@@ -203,7 +219,10 @@ def test_a_verified_procedure_is_never_demoted_by_a_later_failure():
         pool = await create_pool(DATABASE_URL, min_size=1, max_size=2)
         try:
             await _cleanup(pool, "proc-test-noreset")
-            result = await capture_procedure(pool, name="proc-test-noreset-1", goal="g")
+            result = await capture_procedure(
+                pool, name="proc-test-noreset-1", goal="g",
+                provenance="system_pending_review", scope_type="global",
+            )
             row_id = result["id"]
 
             outcome = None
@@ -232,7 +251,10 @@ def test_circuit_breaker_opens_after_five_consecutive_failures():
         pool = await create_pool(DATABASE_URL, min_size=1, max_size=2)
         try:
             await _cleanup(pool, "proc-test-breaker")
-            result = await capture_procedure(pool, name="proc-test-breaker-1", goal="g")
+            result = await capture_procedure(
+                pool, name="proc-test-breaker-1", goal="g",
+                provenance="system_pending_review", scope_type="global",
+            )
             row_id = result["id"]
 
             outcome = None
@@ -259,7 +281,10 @@ def test_circuit_breaker_closes_after_five_consecutive_successes_while_quarantin
         pool = await create_pool(DATABASE_URL, min_size=1, max_size=2)
         try:
             await _cleanup(pool, "proc-test-close")
-            result = await capture_procedure(pool, name="proc-test-close-1", goal="g")
+            result = await capture_procedure(
+                pool, name="proc-test-close-1", goal="g",
+                provenance="system_pending_review", scope_type="global",
+            )
             row_id = result["id"]
 
             for i in range(5):
@@ -298,7 +323,10 @@ def test_a_failure_during_probe_resets_the_close_counter():
         pool = await create_pool(DATABASE_URL, min_size=1, max_size=2)
         try:
             await _cleanup(pool, "proc-test-probefail")
-            result = await capture_procedure(pool, name="proc-test-probefail-1", goal="g")
+            result = await capture_procedure(
+                pool, name="proc-test-probefail-1", goal="g",
+                provenance="system_pending_review", scope_type="global",
+            )
             row_id = result["id"]
             for i in range(5):
                 await record_execution_outcome(
@@ -332,7 +360,10 @@ def test_quarantine_disables_after_14_days():
         pool = await create_pool(DATABASE_URL, min_size=1, max_size=2)
         try:
             await _cleanup(pool, "proc-test-quarantine-disable")
-            result = await capture_procedure(pool, name="proc-test-quarantine-disable-1", goal="g")
+            result = await capture_procedure(
+                pool, name="proc-test-quarantine-disable-1", goal="g",
+                provenance="system_pending_review", scope_type="global",
+            )
             row_id = result["id"]
             for i in range(5):
                 await record_execution_outcome(
@@ -368,7 +399,10 @@ def test_utility_is_none_before_any_execution():
         pool = await create_pool(DATABASE_URL, min_size=1, max_size=2)
         try:
             await _cleanup(pool, "proc-test-utility-none")
-            result = await capture_procedure(pool, name="proc-test-utility-none-1", goal="g")
+            result = await capture_procedure(
+                pool, name="proc-test-utility-none-1", goal="g",
+                provenance="system_pending_review", scope_type="global",
+            )
             utility = await compute_utility(pool, result["id"])
             assert utility is None
         finally:
@@ -387,7 +421,10 @@ def test_negative_utility_procedure_gets_retired_even_if_verified():
         pool = await create_pool(DATABASE_URL, min_size=1, max_size=2)
         try:
             await _cleanup(pool, "proc-test-negutil")
-            result = await capture_procedure(pool, name="proc-test-negutil-1", goal="g")
+            result = await capture_procedure(
+                pool, name="proc-test-negutil-1", goal="g",
+                provenance="system_pending_review", scope_type="global",
+            )
             row_id = result["id"]
 
             # Drive it to verified with real, cheap successes.
@@ -431,7 +468,10 @@ def test_positive_utility_procedure_is_not_retired():
         pool = await create_pool(DATABASE_URL, min_size=1, max_size=2)
         try:
             await _cleanup(pool, "proc-test-posutil")
-            result = await capture_procedure(pool, name="proc-test-posutil-1", goal="g")
+            result = await capture_procedure(
+                pool, name="proc-test-posutil-1", goal="g",
+                provenance="system_pending_review", scope_type="global",
+            )
             row_id = result["id"]
             await record_execution_outcome(
                 pool, procedure_row_id=row_id, success=True, context_key="ctx-1",
@@ -478,7 +518,10 @@ def test_concurrent_outcome_recording_does_not_lose_updates():
         pool = await create_pool(DATABASE_URL, min_size=2, max_size=10)
         try:
             await _cleanup(pool, "proc-test-concurrent")
-            result = await capture_procedure(pool, name="proc-test-concurrent-1", goal="g")
+            result = await capture_procedure(
+                pool, name="proc-test-concurrent-1", goal="g",
+                provenance="system_pending_review", scope_type="global",
+            )
             row_id = result["id"]
 
             N = 30
