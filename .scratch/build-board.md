@@ -1540,6 +1540,28 @@ single synthesized reports into `.scratch/research/`.
    so no reason to revisit; (2) skipped the optional
    `if __name__ == "__main__":` moves, flagged above as follow-up.)*
 
+9. `[x]` done @2026-08-28 — branch `lane/ship` **quickstart docs mention
+   `run_ingestion.py`** (direct kickoff). Before this, `README.md`,
+   `backend/README_MCP_SERVER.md`, and `demo.md` mentioned it zero times —
+   confirmed by grep, matching the finding INFRA's `211c81a` landed the
+   same day in `demo.md`'s reuse-demonstration checklist item (rebased in
+   before this commit; picked up its exact wording rather than duplicating
+   a separate, looser description).
+   Added a short mention to each doc: what it does (ingests collector
+   `.jsonl` files into `trace_events`/`observations` via
+   `process_collector_file()`/`process_pending_jobs()`, free, no model
+   calls), and the same measured limit `211c81a` recorded — episode
+   assembly bypassed entirely, break is at observation → claim, so a fresh
+   install's own prior work won't show up via `retrieve_precedent` from
+   this script alone. Cited `demo.md`'s own §3 measurement rather than
+   `ROADMAP.md`'s Band 2 founding-loop exit criterion (my first draft's
+   citation, written before the rebase pulled in `211c81a` — corrected
+   once the more precise, already-landed source existed).
+   *(Shipped: `README.md` + `backend/README_MCP_SERVER.md` + `demo.md`,
+   docs only. Suite unaffected — confirmed `pytest --collect-only -q`
+   still collects 1526 tests clean post-change. No blocking questions;
+   this task had no real ambiguity once `211c81a` landed.)*
+
 ### Lane INFRA - Docker boot test (opened 2026-08-27, scoped grant for this task)
 
 Scoped ownership for this task only: `docker-compose.yml`, `backend/Dockerfile`,
