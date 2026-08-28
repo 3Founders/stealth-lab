@@ -10,7 +10,7 @@ Two surfaces:
 
 | Command | What it launches |
 |---|---|
-| `stealthlab-mcp-server` | The StealthLab MCP server (8 tools over the bi-temporal knowledge/task graph) — Streamable HTTP on loopback by default, or `--stdio` |
+| `stealthlab-mcp-server` | The StealthLab MCP server (9 tools over the bi-temporal knowledge/task graph) — Streamable HTTP on loopback by default, or `--stdio` |
 | `stealthlab-trace-hook` | Claude Code hook command: reads one hook JSON payload on stdin, redacts it (`trace_redaction`), appends it to the local collector file (`trace_collector.append_event`) |
 | `stealthlab-status-page` | The minimal status surface: one read-only page listing episodes -> claims -> procedures with capability scores and evidence trails (board item P2) |
 | `stealthlab-public-board` | The public scoreboard generator: static markdown + HTML page from a real-arms sweep's results + spend JSONL, power-analysis footer with discordant pairs beside every p-value (board item P5) |

@@ -204,7 +204,7 @@ retrieval grounding, no multi-step governance loop needed.
 
 ## Getting collector traces into Postgres
 
-None of the 7 tools above load `.claude/traces/*.jsonl` collector files into
+None of the 9 tools above load `.claude/traces/*.jsonl` collector files into
 the database themselves. Run `scripts/run_ingestion.py` for that:
 
 ```bash

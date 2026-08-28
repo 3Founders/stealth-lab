@@ -36,7 +36,7 @@ def preflight_http() -> list[str]:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="stealthlab-mcp-server",
-        description="Launch the StealthLab MCP server (8 tools over the bi-temporal "
+        description="Launch the StealthLab MCP server (9 tools over the bi-temporal "
         "knowledge/task graph) for an external agent. Default: Streamable HTTP on "
         "loopback, bearer-token gated. Use --stdio for a stdio-transport client.",
     )

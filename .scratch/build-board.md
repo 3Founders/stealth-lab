@@ -760,12 +760,15 @@ Rule: NO new migrations (schema needs route through CORE-A); no edits outside ow
 8. `[x]` done @2026-08-28 -- lane/core-b **KICKOFF: fresh-clone new-user dry run**. Deleting the actual
    worktree would have destroyed shared git-worktree infra used by every other active lane, so instead
    cloned fresh into an isolated scratch dir and followed root `README.md` top to bottom as a genuine
-   new user, no shortcuts. Two trivial fixes applied inline (both scoped to docs/deps, outside this
-   lane's owned code paths, ported back here and committed under `core-b:`):
+   new user, no shortcuts. Ran BEFORE rebasing onto this session's `origin/main` (9 commits ahead,
+   incl. `3ffbe16` "ship: fix README_MCP_SERVER.md's stale 7-tool table"), so some findings below were
+   already independently fixed upstream by the time this rebased -- noted inline where that happened.
+   Trivial fixes applied inline (docs/deps only, outside this lane's owned code paths, ported back
+   here and committed under `core-b:`):
    - `backend/requirements.txt` was missing `pytest-asyncio` despite several test files using
      `@pytest.mark.asyncio`. On a bare fresh install this silently breaks 23 tests
      (`async def functions are not natively supported`) -- contradicts every README's "offline suite
-     passes" claim. Added it. Full offline suite went 23 failed -> 2 failed (see below).
+     passes" claim. Added it. Full offline suite (pre-rebase tree) went 23 failed -> 2 failed (see below).
    - `backend/README.md`'s DB-migration step told users to run `python3 scripts/migrate.py`. On Windows,
      `python3` resolves to the Microsoft Store execution-alias stub, not a real interpreter (confirmed:
      `python3 --version` prints a Store-install prompt, doesn't run) -- silently breaks migrations. This
@@ -776,23 +779,32 @@ Rule: NO new migrations (schema needs route through CORE-A); no edits outside ow
      (`cd backend && python -m pytest tests -q`) crashes at COLLECTION time on a bare fresh clone
      (`RuntimeError: STEALTHLAB_MCP_TOKEN not set`) with zero mention anywhere in root README that
      `backend/.env` needs to exist first.
+   - Tool-count drift (see FRICTION below) had TWO stray "8"/"7" mentions nobody had caught, both
+     fixed here as trivial single-number corrections: `packaging/README.md`'s table row AND the actual
+     `packaging/src/stealthlab_connect/server_entry.py` argparse `description=` (the real `--help`
+     text a user sees) both said "8 tools" -- bumped to 9. `backend/README_MCP_SERVER.md` line 207
+     ("None of the 7 tools above load...") survived the table-level fix in `3ffbe16` as a leftover
+     stray reference -- bumped to 9 too.
 
-   FRICTION LIST (real, reproducible, not fixed -- flagging per house rules rather than rabbit-holing):
-   - **Tool-count drift across 3 sources**: root `README.md`'s tool table says **9** tools; both
-     `stealthlab-mcp-server --help` and `packaging/README.md` say **8**; `backend/README_MCP_SERVER.md`
-     says **7** and its own table only lists 7 (missing `decide_decomposition` and `check_procedure`).
-     `demo.md`'s 2026-08-27 note confirms `check_procedure` landed as tool **#9** -- so root README (9)
-     is current-truth and the other three are stale. Multi-file, one of them generated CLI help text,
-     not a trivial fix -- needs an owner.
+   FRICTION LIST (real, reproducible; the rest deliberately NOT fixed here -- flagging per house rules
+   rather than rabbit-holing into other lanes' owned files):
+   - **Tool-count drift**, mostly pre-existing and already tracked at length elsewhere on this board
+     (search "7 MCP tools" / "8->9 tools" above) -- this pass's only new information is the two strays
+     fixed above. `packaging/README.md` and `server_entry.py --help` are now consistent with root
+     README and `README_MCP_SERVER.md` (all say 9). Not independently re-verified against whatever
+     `origin/main` looks like after this rebase beyond what's shown by `grep`, above.
    - Root README structurally contradicts itself: it says to follow `backend/README_MCP_SERVER.md`
      "over anything below," then immediately keeps giving its OWN Quick-Install instructions right
      after that sentence, with no signal which parts of "below" are superseded and which aren't.
    - `backend/README.md`'s "Testing" section states an exact stale count ("1266 pass offline"). Real
-     current count after the `pytest-asyncio` fix above: **1458 passed / 115 skipped / 2 failed**.
-     The 2 failures (`test_procedure_extraction.py::test_v6_accepts_a_satisfiable_invariant` --
-     inside this lane's own owned surface -- and `test_trace_collector.py::
+     count after the `pytest-asyncio` fix above, measured on the pre-rebase dry-run clone (i.e. against
+     `origin/main` as of before this session's rebase, NOT the current 9-commits-later tree --
+     not re-run post-rebase, that pass already took ~20min once): **1458 passed / 115 skipped /
+     2 failed**. The 2 failures (`test_procedure_extraction.py::test_v6_accepts_a_satisfiable_invariant`
+     -- inside this lane's own owned surface -- and `test_trace_collector.py::
      test_concurrent_appends_do_not_lose_updates`) both PASS individually; order-dependent flakes
-     under the full run, not real bugs, but worth whoever owns test-isolation knowing about.
+     under the full run, not real bugs, but worth whoever owns test-isolation knowing about. Either
+     way, "1266" is stale regardless of exact current number -- real count is well over that now.
    - Frontend (root README step 6, `npm install && npm run dev`): fresh `npm install` completes
      (469M, 92 top-level packages, exit 0) but never creates `node_modules/.bin` on this Windows
      setup -- so the documented `npm run dev`/`npm run build` fail immediately with `'next' is not
