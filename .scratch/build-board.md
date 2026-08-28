@@ -4084,3 +4084,26 @@ Grounded findings from  3_access.sql/ 4_governance.sql/deps.py review. Sequence:
   CORE-B's rate-limiter fix, updated suite counts) touch claims made in
   the scope doc — re-verified and the doc updated in place against the
   post-rebase tree before pushing, not left stale.
+
+- MEASURE (2026-08-29, kickoff outside the CLAUDE.md wave — testing guide +
+  licensing decision formalized): landed `TESTING_GUIDE_V0.1.md` at the repo
+  root (15-module runbook, tiered by cost/dependency) and added **D6 —
+  Repository license** to `BAND0_DECISIONS.md` as a formal ⛔ blocks-until-
+  answered founder ruling. **The licensing gap RESEARCH flagged earlier on
+  this board (2026-08-27, outside-eye pass entry) is now tracked there, not
+  just here** — once this board gets archived/trimmed, D6 is the durable
+  record; don't re-discover this as a new finding. Guide content was
+  supplied by the founder as-is per the kickoff (not authored by this
+  lane); before landing, cross-checked every script path/test filename/
+  tool count/route list it cites directly against this `origin/main` tree
+  (this task's local `lane/measure` worktree was 28 commits behind and
+  missing several sibling-lane merges — `observability.py`,
+  `ingest_transcripts.py`, `test_band1_11_redaction.py` — that already
+  exist here) — everything checked out except Module 14's frontend route
+  list, genuinely stale (3 routes listed, 8 now live: `archive`, `tasks`,
+  `tasks/medical-report-extraction`, `visualize`, `workbench` all landed
+  since the guide was drafted) — fixed inline, noted in the guide's own
+  changelog and the commit message. Built and pushed directly from a fresh
+  worktree on `origin/main` rather than rebasing `lane/measure` forward,
+  since this board file itself had diverged too far between the two for a
+  safe mechanical rebase.

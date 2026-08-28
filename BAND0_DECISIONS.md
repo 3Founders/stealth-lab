@@ -107,6 +107,31 @@ painful migration the day entity-scoped claims arrive.
 
 ---
 
+## D6 — Repository license (release blocker) ⛔ BLOCKS UNTIL ANSWERED
+
+**Question:** the license is specified three different ways, one of them is
+nothing:
+- `demo.md:99` — "Apache-2.0 + plain-language data statement"
+- `packaging/pyproject.toml:11` — `license = { text = "Proprietary" }`
+- repo root — no `LICENSE` file at all
+
+A public repo with no `LICENSE` file is legally all-rights-reserved by default,
+which contradicts `demo.md` and makes the repo unshippable as publicly documented.
+The two docs also directly contradict each other.
+
+| Option | License | Consequence |
+|---|---|---|
+| A. Apache-2.0 | Open, per `demo.md`'s existing claim | Matches the doc already written; commercial users can build on it freely; standard OSS choice for this kind of tooling |
+| B. Proprietary | Closed, per `pyproject.toml`'s existing claim | `demo.md` needs rewriting; a public GitHub repo with a proprietary license needs an explicit `LICENSE` file stating that, not silence |
+| C. Something else (dual-license, source-available, etc.) | New | Needs its own `LICENSE` file and both docs rewritten to match |
+
+**Recommendation:** none — a license is a one-way door with real commercial
+consequences. This is explicitly a founder ruling, not a lane assumption.
+
+**Ruling:** _
+
+---
+
 ## After you rule
 
 Implementing agent: fold each ruling into the target document (spec v4 §§13/16/19/23/34;
