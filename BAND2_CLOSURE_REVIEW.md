@@ -1,4 +1,4 @@
-# Band 2 Closure Review — VERDICT: CLOSED ✅ (9/9 items)
+# Band 2 Closure Review — VERDICT: CLOSED ✅ (9/9 items, see amendment below)
 
 Reviewer: integrator ox-alpha · Review range: `8fd83e1`…`461f07c`
 Integrator verification: **backend suite 1114 passed / 114 skipped / 0 failed** on merged main — matches the final lane-claimed counts exactly.
@@ -21,6 +21,37 @@ families, failure routing, and deterministic replay.
 | 7 TMS readable | ✅ | OUT/stale filtered across every retrieval leg; history untouched (5 live-DB regressions) |
 | 8 Replayability E2E | ✅ | db/26 claim_sources closes the provenance hop; bit-identical double-replay + tamper teeth both layers; spec sentence provable by join |
 | 9 OIDC identity gate | ✅ | RS256-only vs JWKS (alg whitelist BEFORE key material — none/HS256 confusion killed); pure-ASGI middleware (contextvar bracketing); present-but-bad always 401, never degrades; frozen-posture boot guard; actor propagated to Events/ChangeSets/Reviews overriding spoofable headers |
+
+## Amendment (2026-08-27, integrator)
+
+Item 8's "Replayability E2E" ✅ is correct on its own stated scope — bit-identical
+double-replay and tamper detection, both proved by two live-DB e2e tests. But a
+separate ROADMAP acceptance bullet got silently treated as covered by item 8
+because one of those tests has "founding_loop" in its name
+(`test_founding_loop_replays_bit_identically_from_raw_traces`). It isn't the same
+claim. ROADMAP's founding-loop bullet 1 asks for one hand-audited live run, on a
+**fresh** database, that actually exercises trace → episode → observation →
+claim → procedure-candidate end to end. Read directly (2026-08-27 review,
+`.scratch/research/band2-founding-loop-exit-criterion-review.md`): both
+replayability tests run against a long-lived shared dev instance, not a fresh
+one, and both skip the episode-assembly hop — they seed `trace_events`/synthetic
+`episode_id`s directly rather than calling `trace_worker.assemble_episodes()`.
+They prove replay determinism (item 8's real claim), not "the founding thesis
+was exercised from raw traces at all" (a different, still-open claim).
+
+**Status: open, not closed.** Not fixed by the bootstrap_demo.py rewrite either
+(2026-08-27) — that script builds an evidence object by hand and calls
+`extract_procedure()` directly, which also skips real episode assembly. This
+bullet stays open until one real run, on a fresh DB, goes through the actual
+pipeline from raw trace_events onward and is hand-audited against the raw rows.
+Chaitanya's dogfooding pilot (started 2026-08-27, real Claude Code hook traces +
+Terminal-Bench tasks) may close this for real as a side effect — check
+specifically whether his traces flow through `assemble_episodes()` for real
+before treating it as closed, don't assume it from volume alone.
+
+Not reopening the item 8 verdict itself — its own stated scope is genuinely
+done — this amendment exists so nobody reads "9/9 CLOSED" and assumes the
+founding-loop bullet went with it.
 
 ## Cross-cutting wins this band
 
