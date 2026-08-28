@@ -28,6 +28,7 @@
  pydantic
  pydantic-settings
  pytest
+ pytest-asyncio
  python-dotenv
  PyJWT[crypto]
  PyYAML

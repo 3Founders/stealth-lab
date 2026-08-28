@@ -35,8 +35,8 @@ pip install -r requirements.txt
 # append ?sslmode=disable (note: sslmode, not ssl — unknown DSN params are
 # forwarded as server GUCs and fail).
 export DATABASE_URL=postgresql://...   # your real connection string
-python3 scripts/migrate.py             # applies all pending migrations + seeds, in order
-python3 scripts/migrate.py --status    # see what's applied vs. pending, without running anything
+python scripts/migrate.py              # applies all pending migrations + seeds, in order
+python scripts/migrate.py --status     # see what's applied vs. pending, without running anything
 
 # 3. Config
 cp .env.example .env

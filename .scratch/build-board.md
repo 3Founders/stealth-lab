@@ -757,6 +757,66 @@ Rule: NO new migrations (schema needs route through CORE-A); no edits outside ow
 
 0. `[x]` **WAVE-2 / HARDENING H3 pre-work swap** -- DONE @2026-08-26 by core-b under the HARDENING section item 3 (same task; canonical record there). Rate-limiter collector treatment: in-process token bucket + buffered ledger flush (trace_collector append->drain pattern) so Postgres becomes audit ledger, not enforcement point. CONSTRAINT: preserve fail-closed-on-infra-error; buffered writes need a replay-or-block rule. Retention sweep for rate_limit_events. NOTE: lands in governance.py -- scoped grant to this lane for backend/app/services/governance.py only.
 
+8. `[x]` done @2026-08-28 -- lane/core-b **KICKOFF: fresh-clone new-user dry run**. Deleting the actual
+   worktree would have destroyed shared git-worktree infra used by every other active lane, so instead
+   cloned fresh into an isolated scratch dir and followed root `README.md` top to bottom as a genuine
+   new user, no shortcuts. Two trivial fixes applied inline (both scoped to docs/deps, outside this
+   lane's owned code paths, ported back here and committed under `core-b:`):
+   - `backend/requirements.txt` was missing `pytest-asyncio` despite several test files using
+     `@pytest.mark.asyncio`. On a bare fresh install this silently breaks 23 tests
+     (`async def functions are not natively supported`) -- contradicts every README's "offline suite
+     passes" claim. Added it. Full offline suite went 23 failed -> 2 failed (see below).
+   - `backend/README.md`'s DB-migration step told users to run `python3 scripts/migrate.py`. On Windows,
+     `python3` resolves to the Microsoft Store execution-alias stub, not a real interpreter (confirmed:
+     `python3 --version` prints a Store-install prompt, doesn't run) -- silently breaks migrations. This
+     directly contradicts the repo's OWN documented rule ("Windows: use python/py, not python3" --
+     `IMPLEMENTATION_HANDOFF.md`, echoed in `run_ingestion.py --help`). Changed both lines to `python`.
+   - Also added one line to root `README.md`'s Tests section pointing at `backend/.env.example` ->
+     `.env` + `STEALTHLAB_MCP_TOKEN`, since the literal documented test command
+     (`cd backend && python -m pytest tests -q`) crashes at COLLECTION time on a bare fresh clone
+     (`RuntimeError: STEALTHLAB_MCP_TOKEN not set`) with zero mention anywhere in root README that
+     `backend/.env` needs to exist first.
+
+   FRICTION LIST (real, reproducible, not fixed -- flagging per house rules rather than rabbit-holing):
+   - **Tool-count drift across 3 sources**: root `README.md`'s tool table says **9** tools; both
+     `stealthlab-mcp-server --help` and `packaging/README.md` say **8**; `backend/README_MCP_SERVER.md`
+     says **7** and its own table only lists 7 (missing `decide_decomposition` and `check_procedure`).
+     `demo.md`'s 2026-08-27 note confirms `check_procedure` landed as tool **#9** -- so root README (9)
+     is current-truth and the other three are stale. Multi-file, one of them generated CLI help text,
+     not a trivial fix -- needs an owner.
+   - Root README structurally contradicts itself: it says to follow `backend/README_MCP_SERVER.md`
+     "over anything below," then immediately keeps giving its OWN Quick-Install instructions right
+     after that sentence, with no signal which parts of "below" are superseded and which aren't.
+   - `backend/README.md`'s "Testing" section states an exact stale count ("1266 pass offline"). Real
+     current count after the `pytest-asyncio` fix above: **1458 passed / 115 skipped / 2 failed**.
+     The 2 failures (`test_procedure_extraction.py::test_v6_accepts_a_satisfiable_invariant` --
+     inside this lane's own owned surface -- and `test_trace_collector.py::
+     test_concurrent_appends_do_not_lose_updates`) both PASS individually; order-dependent flakes
+     under the full run, not real bugs, but worth whoever owns test-isolation knowing about.
+   - Frontend (root README step 6, `npm install && npm run dev`): fresh `npm install` completes
+     (469M, 92 top-level packages, exit 0) but never creates `node_modules/.bin` on this Windows
+     setup -- so the documented `npm run dev`/`npm run build` fail immediately with `'next' is not
+     recognized as an internal or external command`. Not mentioned anywhere.
+   - Bypassing that (invoking `next`'s own `dist/bin/next` directly) reproduces a real, fresh-install
+     TypeScript failure: `next/dist/lib/metadata/types/metadata-interface.js` has no declaration file,
+     breaking the `/approvals/[id]` route's generated types on Next.js 15.5.22. This directly
+     contradicts `frontend/README.md`'s explicit claim that "npm run build -- production build,
+     TypeScript type-checking, and static generation all confirmed clean." Not something this lane
+     should fix blind -- flagging for whoever owns `frontend/`.
+   - `npm audit` on the same fresh install: 4 high-severity CVEs (postcss XSS/path-traversal, sharp/
+     libvips via Next). `frontend/README.md` claims "the remaining npm audit findings are in sharp" --
+     no longer true, postcss now carries its own separate high-severity advisories.
+   - Python 3.14 (very new, unpinned anywhere in the repo) happened to work cleanly for every `pip
+     install` in this pass -- but nothing pins or tests against it, so this is a live compatibility
+     risk that simply hasn't bitten yet, not a verified-safe combination.
+   - DB-dependent steps (`scripts/migrate.py`, `uvicorn app.main:app`, `bootstrap_demo.py`, real MCP
+     server boot) were NOT exercised -- no Docker on this machine, same known gap as CORE-A's queue-2
+     item above. Not new information, noted for completeness only.
+   - What worked cleanly, no notes: `git clone`, `pip install -e packaging/` and all 4 resulting CLI
+     entry points' `--help`, `backend/requirements.txt` install, the `experiments/swebench_pro`
+     sibling-directory claim in `README_MCP_SERVER.md` (accurate), `run_ingestion.py --help`,
+     `SECURITY.md`/`demo.md` reading cleanly and matching what's actually shipped.
+
 ### Lane MEASURE-WAVE (real arms - founder go 2026-08-26, key in backend/.env OPENROUTER_API_KEY)
 0. `[x]` done @2026-08-26 — branch `lane/measure` **Real-model arms**: replace scripted_arms decision logic with live model calls via OpenRouter (OpenAI-compatible, key from env). REQUIRED: exponential backoff+jitter on 429 (upstream shared pool saturates - verified live); model fallback chain (ox-alpha primary; document alternates); resumable sweeps (--auto-resume pattern); spend log per run. Arm A = solo frontier call per step; B/C consume memory surface identically to scripted versions.
    *(Shipped: `openrouter_arms.py` + `run_real_arms.py` inside experiments/harness/** only. AgentAdapter contract preserved - episodes drop into the UNCHANGED scoring/scoreboard/micro_pack stack. DECISION CONTRACT: strict-JSON {resolved, reuse[], refuse[], notes}, one repair round-trip then invalid episode [resume retries it]; Arm A = situation-only solo call; B = same rag blob as scripted; C = SAME surface dance [search -> upfront gate consult -> cards] with model deciding reuse/refuse over OFFERED ids only, reuse credited ONLY after a fresh check_applicability verdict - model proposes, gate disposes; refusals recorded either way. GROUND-TRUTH-FREE AGENTS: `stale`/`rag=misleading`/`solo_outcome` never read by real arms [the scripted arms read them - that leak is what a real arm must not have]; attribution mechanical: reuse_caused_failure := leaned-on-memory-or-reuse AND unresolved. BACKOFF: full-jitter exponential ceiling BASE_S=1.5 doubling to CAP_S=60, injectable sleep/rng proven offline; network errors retry like 429s; non-retryable 4xx falls to next model immediately; exhaustion raises AllModelsFailedError with the per-attempt trail. CHAIN: DEFAULT_MODEL_CHAIN=(ox-alpha, openai/gpt-4o-mini, anthropic/claude-3-5-haiku) named + --models override. RESUME: existing results file refuses without --auto-resume [paid history never clobbered]; load_done skips valid all-arm rows, error AND unparseable rows retry; --max-tasks caps fresh spend. SPEND LOG: one JSONL row PER ATTEMPT beside results [successes carry usage/cost, failures carry status], totals print with scoreboard. FINDING fixed en route: scenario narratives leaked scripted verdicts into prompts [mic-dep-003 'Honest outcome: everyone falls back and fails'] - situation_text now strips everything from an 'Honest outcome:' marker; SOFTER framing hints remain in fixture prose, flagged below for ruling before headline data collection. LIVE SMOKE vs real endpoint PASSED end-to-end: mic-dep-003 all three arms valid, scoreboard+power footer rendered from real rows, 429 saturation observed and absorbed [3 of 6 attempts failed, chain held, $0.014 total]. Harness suite 163/163 green [126 prior + 37 new]. Zero backend edits.)*
