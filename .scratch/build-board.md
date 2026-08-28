@@ -2061,6 +2061,67 @@ Flagged, not fixed.
 
 Suite: **1465 passed / 115 skipped / 0 failed** (+5 new offline tests).
 
+### Lane INFRA -> INTEGRATOR: status deltas + a BLOCKING founder decision (2026-08-28)
+
+Surfaced, NOT applied. The Integrator section of this board says "Sole
+writer of ROADMAP.md checkbox updates and review files", and
+proj_status.md is integrator-authored, so this lane does not touch either.
+Everything below is a proposed delta with its evidence.
+
+--- BLOCKING QUESTION #2 (FOUNDER, blocks any public release) ---
+The licence is specified three different ways and one of them is nothing:
+    demo.md:99                  "**Apache-2.0** + plain-language data statement"
+    packaging/pyproject.toml:11  license = { text = "Proprietary" }
+    repo root                    NO LICENSE FILE
+A public GitHub repo with no LICENSE is legally all-rights-reserved --
+nobody may use, fork, or redistribute it, which contradicts demo.md
+outright and makes `stealthlab-connect` unshippable as written. The two
+docs also contradict EACH OTHER, so this cannot be resolved by picking
+whichever a lane happens to read first.
+NO DEFAULT PROPOSED, deliberately: licence choice is a one-way door with
+commercial consequences (BAND0_DECISIONS.md is the right home for it),
+not an ambiguity a lane should resolve with a stated assumption. Needs a
+founder ruling, then one LICENSE file plus a pyproject edit.
+
+--- PROPOSED proj_status.md DELTAS (evidence attached) ---
+1. Suite count is stale. Header and the v0.1 checklist row both read
+   "1368 passed / 115 skipped / 0 failed". Actual on f7262a5:
+   **1465 passed / 115 skipped / 0 failed**.
+
+2. Band P row is stale in its blocker. It reads "P3 founder acceptance
+   test [ ] (blocked on bootstrap_demo.py, the one real gap below)".
+   bootstrap_demo.py is FIXED and green (verified on a fresh volume: real
+   procedure, real derived preconditions, ALLOW -> WOULD_REFUSE citing
+   both real claim ids, checked against raw rows). It is no longer the
+   blocker. The remaining v0.1 gap is demo.md §3's reuse-demonstration
+   half, which 211c81a split out explicitly.
+
+3. Band 3 row does not record what f7262a5 actually moved. Three things
+   went from NEVER EXERCISED to exercised, on real data with a real model
+   (gemma-4-31B-it, confirmed live):
+     - Band 3.5 outcome->capability traceability
+     - spec v4 §39 invariant #10 "failure can reduce capability"
+     - M1's falsifiable gate
+   Evidence: evidence table now holds supports/success 1 AND
+   contradicts/failure 1, both real execution_result rows with
+   target_version pinned and strength_method=recorded_outcome; procedure
+   28b03897 carries attempts 2, successes 1, distinct_contexts 2,
+   context_keys_seen ["scratch","scratch2"]. Appendix C's invariant-#10
+   row is the one that should change, per its own maintenance rule.
+
+4. demo.md §3 is now 7 of 8 (211c81a) -- that edit IS inside this lane's
+   grant and is already on main; noting it only so the phase table's
+   "7/8 items" line and the checklist stay in step.
+
+--- FORK COORDINATION NOTE ---
+Session [09c652] is a fork of [57455d]; shared history to ~16:44. The six
+infra commits 0e2f53d..f7262a5 were authored in [57455d] BEFORE the fork,
+not by the fork afterwards -- recorded so neither session double-counts
+them in a later review. Split agreed between the two sessions: Sentry/OTel
+here, ContainerSandboxExecutor + the missing-git Dockerfile line in the
+other, V4/extraction in NEITHER (procedure_extraction/** is CORE-B's
+granted path -- board request, not a patch).
+
 Not fixed here (outside this lane's grant): README_MCP_SERVER.md's stale
 7-tool table; the redaction test's layer; the subagent-join failure; the
 transcript-dir CWD mangling.
