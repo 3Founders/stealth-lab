@@ -52,13 +52,30 @@ from app.services.trace_worker import (
 )
 
 
+def _find_repo_root(start: Path) -> Path:
+    """Walk up from `start` looking for a `.git` directory. Falls back to
+    `start` itself if none is found (e.g. running outside a git checkout)."""
+    for candidate in [start, *start.parents]:
+        if (candidate / ".git").exists():
+            return candidate
+    return start
+
+
 def _default_transcript_dir() -> Path:
     """Claude Code stores session transcripts under a per-project directory
     whose name is the absolute project path with every separator and colon
     flattened to '-'. Mirrored here rather than imported: no library exposes
     it, and hard-coding one user's path would make the script unusable for
-    anyone else."""
-    project = Path(os.environ.get("CLAUDE_PROJECT_DIR", Path.cwd())).resolve()
+    anyone else.
+
+    The project path Claude Code mangles is the repo root, not whatever
+    directory the script happens to be invoked from -- this script is
+    documented to run from backend/, which would otherwise mangle to a
+    sibling directory that never receives transcripts."""
+    if "CLAUDE_PROJECT_DIR" in os.environ:
+        project = Path(os.environ["CLAUDE_PROJECT_DIR"]).resolve()
+    else:
+        project = _find_repo_root(Path.cwd().resolve())
     mangled = str(project).replace("\\", "-").replace("/", "-").replace(":", "-")
     return Path.home() / ".claude" / "projects" / mangled
 
