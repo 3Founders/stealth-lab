@@ -4193,3 +4193,109 @@ Grounded findings from  3_access.sql/ 4_governance.sql/deps.py review. Sequence:
   ingestion) and needs its own pass by whichever lane owns those paths --
   flagging here rather than fixing blind, since untangling it wasn't
   this wave's task.
+
+- CORE-A (2026-08-29, follow-up wave -- V0-provenance drift + shared-DB
+  flaky job-count assertions, both surfaced by e8f8522's live-DB run):
+  **two separate fixes, two commits, both confirmed with a real DB run
+  twice back to back.**
+
+  **PART A -- V0Violation: provenance is required (mechanical).** 20
+  `capture_procedure()` call sites across `test_procedures_e2e.py` (15),
+  `test_applicability_e2e.py` (4, one of which -- `_make_verified_
+  procedure`'s own single call site -- fans out to every test that uses
+  that shared fixture, so 4 edits cover far more than 4 tests), and
+  `test_band2_8_replayability.py` (1) predate the V0 gate (`b43e6c2`)
+  and were missing `provenance`/`scope_type`. Added
+  `provenance="system_pending_review", scope_type="global"` to all 20 --
+  matches `procedure_extraction/__init__.py`'s own existing convention
+  for a system-derived, not-yet-approved procedure. No shared test
+  helper introduced; kept as 20 boring, independent edits per the
+  kickoff's own instruction. **One discrepancy found and flagged, not
+  forced**: `test_band2_8_replayability.py`'s line-460 site already had
+  `provenance="public_generated", scope_type="project"` set -- it was
+  never actually missing them (its real, only failure was Part B's job-
+  count issue, confirmed separately below) -- left untouched rather than
+  editing code that was already correct.
+
+  **PART B -- process_pending_jobs() count assertions, shared-DB flaky
+  (judgment call).** ~9 assertions across `test_ingestion_jobs_e2e.py`
+  and `test_band2_8_replayability.py` trusted `process_pending_jobs()`'s
+  aggregate claimed/done/failed counts, which include whatever else is
+  pending in this shared, concurrently-used queue at that moment, not
+  just the jobs each test itself seeded. Rescoped every one to query the
+  specific job_id(s) each test's own `_seed_event`/`_seed_raw_traces`
+  call already produces. Representative before/after shapes:
+  - `test_normalize_trace_event_job_produces_a_real_observation`
+    (1 seeded job): before -- `assert result["claimed"]==1`,
+    `result["done"]==1`, `result["failed"]==0`, THEN a redundant per-job
+    `SELECT status ... WHERE id = job_id` check. After -- dropped the
+    three aggregate asserts entirely; the existing per-job check is now
+    the only proof, and it already said everything the aggregate counts
+    were trying to say, just correctly scoped.
+  - `test_a_bad_event_id_does_not_stall_the_batch` (this test's whole
+    point IS a batch of 2 specific jobs): before -- `assert
+    result["claimed"]==2`, `result["done"]==2`, then a per-job status
+    loop over `{good_job_id, bad_job_id}` that was ALREADY the real
+    proof. After -- dropped the two aggregate asserts, kept the loop
+    unchanged; the test's real claim ("a bad row is a no-op, not a
+    failure, and doesn't stall its neighbor") is exactly as strong,
+    immune to whatever else is in the queue.
+  - `test_founding_loop_replays_bit_identically_from_raw_traces` (this
+    test's whole point IS the aggregate -- 4 specific jobs claimed and
+    finished together): before -- `assert result["done"]==4`,
+    `result["failed"]==0` off `process_pending_jobs()`'s return dict.
+    After -- `_seed_raw_traces` now also returns `job_ids` (mirrors
+    `test_ingestion_jobs_e2e.py`'s `_seed_event` pattern), and the count
+    query is `SELECT status, count(*) ... WHERE id = ANY($1::bigint[])
+    GROUP BY status` scoped to exactly those 4 ids, asserting
+    `counts.get("done")==4` / `counts.get("failed")==0`. Same real
+    property proven (all 4 of THIS run's jobs reached done, zero
+    failed), now provably independent of whatever else is mid-flight on
+    this shared instance.
+  **Real landmine hit while rescoping, not just theorized**: first
+  attempt scoped the last two cases via `payload->>'trace_event_id' =
+  ANY($1::text[])` (no job_id was captured at seed time in
+  `_seed_raw_traces`, unlike `_seed_event`) -- returned an empty result
+  set even though the row visibly existed with the right value.
+  `jsonb_typeof(payload)` on the live row came back `'string'`, not
+  `'object'`: these fixtures' own `json.dumps(...)` call double-encodes
+  before handing off to asyncpg's own jsonb codec, so `payload` is
+  stored as a JSON STRING containing JSON text, and `->>'key'` on a
+  scalar JSONB value is NULL by definition. `process_pending_jobs()`
+  itself never notices because its handler dispatch already defensively
+  guards `if isinstance(payload, str): payload = json.loads(payload)`
+  (`ingestion_jobs.py:322-323`) -- silently tolerated on the read side,
+  invisible until something (this rescoping) tried to query payload
+  content directly in SQL. **Not fixed here** -- out of scope for this
+  task, and the double-encoding is likely load-bearing-by-accident
+  elsewhere in this same fixture file; flagging for whoever touches
+  `_seed_raw_traces`'s encoding next. Sidestepped entirely by having
+  `_seed_raw_traces` return `job_ids` (captured via `RETURNING id` at
+  insert time) instead of matching through the broken payload column --
+  same fix shape the kickoff's own `_seed_event` precedent pointed at.
+
+  **Proof.** Offline suite (`DATABASE_URL` unset, documented command):
+  unaffected either way, **1505 passed / 115 skipped / 0 failed**, both
+  before and after. Live-DB suite (`DATABASE_URL` exported) run twice
+  back to back: **3 failed / 1615 passed / 2 skipped, identical both
+  times** -- down from the 33-34 failures e8f8522's board entry
+  reported. All three remaining failures confirmed (grepped against the
+  pre-Part-A/B baseline run's own output) to have been already failing
+  before this wave, entirely unrelated to provenance or job queues:
+  `test_band2_4_failures.py::test_failures_classify_route_and_land_in_queryable_queues`
+  (out of scope, not touched -- different pre-existing drift, flagging
+  for whichever lane owns `band2_4`), `test_env_guard_offline.py::
+  test_load_dotenv_never_leaves_database_url_behind` (an artifact of
+  THIS session's own invocation -- exporting `DATABASE_URL` globally
+  before the whole `pytest tests/` run defeats that test's own "was
+  DATABASE_URL present before dotenv ran" premise; the documented
+  invocation never hits this), and `test_schema_drift.py::
+  test_provenance_source_matches_real_db_enum` (the real DB
+  `provenance_source` enum already contains `'system_pending_review'`
+  as a member -- from whatever migration first used that value -- but
+  `app/models/ontology.py`'s `ProvenanceSource` type was never updated
+  to declare it; genuine drift, but static and independent of any test
+  data, confirmed present in the pre-Part-A/B baseline too, not
+  something this wave's 20 new provenance="system_pending_review" call
+  sites caused). Two commits pushed straight to main per house rules:
+  Part A (mechanical), then Part B (judgment).

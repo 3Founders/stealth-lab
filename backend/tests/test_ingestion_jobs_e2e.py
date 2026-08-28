@@ -86,10 +86,11 @@ def test_normalize_trace_event_job_produces_a_real_observation():
                 tool_input={"file_path": "ingjob_test_file.py"},
             )
 
-            result = await process_pending_jobs(pool, limit=10)
-            assert result["claimed"] == 1
-            assert result["done"] == 1
-            assert result["failed"] == 0
+            # Scoped to this test's own job_id, not process_pending_jobs()'s
+            # aggregate claimed/done/failed counts -- those count whatever
+            # else is pending in this shared, concurrently-used queue at
+            # the moment this runs, not just the one job this test seeded.
+            await process_pending_jobs(pool, limit=10)
 
             job_status = await pool.fetchval(
                 "SELECT status FROM ingestion_jobs WHERE id = $1", job_id,
@@ -124,8 +125,10 @@ def test_unknown_job_type_is_marked_failed_not_stuck():
                 "some_future_job_type", '{"marker": "' + SESSION_ID + '"}',
             )
 
-            result = await process_pending_jobs(pool, limit=10)
-            assert result["unknown_type"] == 1
+            # Scoped to this test's own job_id -- result["unknown_type"]
+            # would count any other unknown-type job pending in this
+            # shared queue too, not just this test's.
+            await process_pending_jobs(pool, limit=10)
 
             row = await pool.fetchrow(
                 "SELECT status, last_error FROM ingestion_jobs WHERE id = $1", job_id,
@@ -163,9 +166,15 @@ def test_a_bad_event_id_does_not_stall_the_batch():
                 __import__("json").dumps({"trace_event_id": str(uuid.uuid4()), "dedup_key": "nonexistent"}),
             )
 
-            result = await process_pending_jobs(pool, limit=10)
-            assert result["claimed"] == 2
-            assert result["done"] == 2  # missing row is a no-op, not a failure
+            # Scoped to this test's own two job_ids, not process_pending_
+            # jobs()'s aggregate claimed/done counts -- this shared,
+            # concurrently-used queue may hold other pending jobs at the
+            # same moment, which would make an aggregate count flaky
+            # without this test's own point (a missing row is a no-op,
+            # not a failure, and does not stall its neighbor) being any
+            # less true. Querying exactly {good_job_id, bad_job_id} is
+            # this test's real batch-of-2 proof.
+            await process_pending_jobs(pool, limit=10)
 
             statuses = {
                 good_job_id: None, bad_job_id: None,
@@ -175,7 +184,7 @@ def test_a_bad_event_id_does_not_stall_the_batch():
                     "SELECT status FROM ingestion_jobs WHERE id = $1", jid,
                 )
             assert statuses[good_job_id] == "done"
-            assert statuses[bad_job_id] == "done"
+            assert statuses[bad_job_id] == "done"  # missing row is a no-op, not a failure
         finally:
             await _cleanup(pool)
             await pool.close()

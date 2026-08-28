@@ -261,10 +261,16 @@ async def _cleanup(pool: asyncpg.Pool) -> None:
         await conn.execute("DELETE FROM task_nodes WHERE skill_ref = $1", SKILL_REF)
 
 
-async def _seed_raw_traces(pool: asyncpg.Pool) -> list[str]:
+async def _seed_raw_traces(pool: asyncpg.Pool) -> tuple[list[str], list[int]]:
     """Raw layer ONLY: agent_traces header + trace_events rows + the
     ingestion_jobs rows process_collector_file() would have written.
-    Everything downstream is produced by running the real pipeline."""
+    Everything downstream is produced by running the real pipeline.
+
+    Returns (event_ids, job_ids) -- job_ids lets callers scope a
+    post-processing status check to exactly the jobs THIS call seeded
+    (same pattern test_ingestion_jobs_e2e.py's _seed_event uses), rather
+    than trusting process_pending_jobs()'s aggregate counts on this
+    shared, concurrently-used queue."""
     await pool.execute(
         "INSERT INTO agent_traces (trace_id, session_id, started_at, schema_version) "
         "VALUES ($1, $2, now(), '1') ON CONFLICT (trace_id) DO NOTHING",
@@ -277,6 +283,7 @@ async def _seed_raw_traces(pool: asyncpg.Pool) -> list[str]:
         (3, "Bash", {"command": "npm install"}),
     ]
     event_ids: list[str] = []
+    job_ids: list[int] = []
     for seq, tool, tool_input in raw:
         event_id = await pool.fetchval(
             "INSERT INTO trace_events (trace_id, session_id, sequence, event_type, "
@@ -286,11 +293,13 @@ async def _seed_raw_traces(pool: asyncpg.Pool) -> list[str]:
             f"replay28-dedup-{seq}",
         )
         event_ids.append(str(event_id))
-        await pool.execute(
-            "INSERT INTO ingestion_jobs (job_type, payload) VALUES ('normalize_trace_event', $1)",
+        job_id = await pool.fetchval(
+            "INSERT INTO ingestion_jobs (job_type, payload) VALUES ('normalize_trace_event', $1) "
+            "RETURNING id",
             json.dumps({"trace_event_id": str(event_id), "dedup_key": f"replay28-dedup-{seq}"}),
         )
-    return event_ids
+        job_ids.append(job_id)
+    return event_ids, job_ids
 
 
 @e2e
@@ -307,16 +316,37 @@ def test_founding_loop_replays_bit_identically_from_raw_traces():
         pool = await create_pool(DATABASE_URL, min_size=1, max_size=2)
         try:
             await _cleanup(pool)
-            await _seed_raw_traces(pool)
+            event_ids, job_ids = await _seed_raw_traces(pool)
             await pool.execute(
                 "INSERT INTO task_nodes (name, skill_ref) VALUES "
                 "('replay28 task', $1) RETURNING id", SKILL_REF,
             )
 
             # --- run the REAL pipeline over the raw traces ----------
-            result = await process_pending_jobs(pool, limit=10)
-            assert result["done"] == 4, result
-            assert result["failed"] == 0
+            # Scoped to this test's own 4 job_ids, not process_pending_
+            # jobs()'s aggregate done/failed counts -- this shared,
+            # concurrently-used queue may hold other pending jobs at the
+            # same moment. This test's whole point IS the aggregate (all 4
+            # of ITS jobs got claimed and finished together), so the count
+            # query itself is scoped to just those job_ids rather than
+            # trusting the queue's global state. (NOT scoped via payload
+            # ->>'trace_event_id' -- that column is double-JSON-encoded by
+            # this fixture's own json.dumps() call over asyncpg's jsonb
+            # codec, confirmed via jsonb_typeof(payload) == 'string', so
+            # ->>'key' resolves to NULL for every row; the handler already
+            # tolerates this via its own `if isinstance(payload, str):
+            # json.loads()` guard, but it makes payload unusable as a SQL
+            # join key. Flagged on the board -- pre-existing, unrelated to
+            # this task, real fix belongs in _seed_raw_traces's encoding.)
+            await process_pending_jobs(pool, limit=10)
+            job_statuses = await pool.fetch(
+                "SELECT status, count(*) AS n FROM ingestion_jobs "
+                "WHERE id = ANY($1::bigint[]) GROUP BY status",
+                job_ids,
+            )
+            counts = {r["status"]: r["n"] for r in job_statuses}
+            assert counts.get("done", 0) == 4, counts
+            assert counts.get("failed", 0) == 0, counts
 
             obs_ids = [
                 str(r["id"]) for r in await pool.fetch(
@@ -434,10 +464,20 @@ def test_procedure_candidate_replays_bit_identically_from_raw_traces():
                 )
 
             await _cleanup(pool)
-            await _seed_raw_traces(pool)
+            event_ids, job_ids = await _seed_raw_traces(pool)
 
-            result = await process_pending_jobs(pool, limit=10)
-            assert result["done"] == 4 and result["failed"] == 0
+            # Same rescoping as test_founding_loop_replays_bit_identically_
+            # from_raw_traces above -- see its comment for why the count
+            # query is scoped to this test's own job_ids rather than
+            # process_pending_jobs()'s aggregate return.
+            await process_pending_jobs(pool, limit=10)
+            job_statuses = await pool.fetch(
+                "SELECT status, count(*) AS n FROM ingestion_jobs "
+                "WHERE id = ANY($1::bigint[]) GROUP BY status",
+                job_ids,
+            )
+            counts = {r["status"]: r["n"] for r in job_statuses}
+            assert counts.get("done", 0) == 4 and counts.get("failed", 0) == 0, counts
 
             # --- candidate leg: deterministic extraction over shapes
             # REGENERATED from the raw events, persisted V0-clean -----
