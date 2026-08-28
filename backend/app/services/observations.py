@@ -47,6 +47,40 @@ def _looks_like_test_command(command: str) -> bool:
     return any(marker in lowered for marker in _TEST_COMMAND_MARKERS)
 
 
+_MAX_JSON_UNWRAP = 4
+
+
+def _decode_json_field(value: Any) -> dict:
+    """Decode a JSONB column that may have been encoded once, twice, or not
+    at all, into a dict -- returning {} for anything that isn't one.
+
+    WHY A LOOP AND NOT A SINGLE json.loads(): RUNBOOK.md's own documented
+    pitfall -- "asyncpg jsonb codec is registered on app pools; passing
+    pre-dumped JSON strings to $n::jsonb DOUBLE-ENCODES them (stored as
+    json-string)". A double-encoded column decodes to a *str*, not a dict,
+    so the previous single-shot `if isinstance(str): json.loads()` handed
+    a str to the caller and every `.get()` after it raised
+    `'str' object has no attribute 'get'`. That is not hypothetical: it
+    failed 32 of 3313 real ingestion jobs on 2026-08-28.
+
+    Bounded rather than `while True` so a pathological value cannot spin;
+    _MAX_JSON_UNWRAP is far above the two levels any real double-encode
+    produces. Undecodable or non-dict input yields {} -- an observation
+    extractor must skip a malformed event, never crash the job that owns
+    a whole trace_event.
+    """
+    for _ in range(_MAX_JSON_UNWRAP):
+        if isinstance(value, dict):
+            return value
+        if not isinstance(value, str):
+            return {}
+        try:
+            value = json.loads(value)
+        except (ValueError, TypeError):
+            return {}
+    return value if isinstance(value, dict) else {}
+
+
 def extract_deterministic_observations(trace_event: dict) -> list[dict]:
     """
     Pure function, no I/O, no LLM call: given one real trace_event row
@@ -61,9 +95,7 @@ def extract_deterministic_observations(trace_event: dict) -> list[dict]:
     """
     observations: list[dict] = []
     tool_name = trace_event.get("tool_name")
-    tool_input = trace_event.get("tool_input") or {}
-    if isinstance(tool_input, str):
-        tool_input = json.loads(tool_input)
+    tool_input = _decode_json_field(trace_event.get("tool_input"))
 
     if tool_name in ("Edit", "Write", "MultiEdit") and tool_input.get("file_path"):
         observations.append({
@@ -139,12 +171,10 @@ async def extract_model_observation(
     for a different field.
     """
     tool_name = trace_event.get("tool_name") or "unknown tool"
-    tool_input = trace_event.get("tool_input") or {}
-    if isinstance(tool_input, str):
-        tool_input = json.loads(tool_input)
-    tool_output = trace_event.get("tool_output") or {}
-    if isinstance(tool_output, str):
-        tool_output = json.loads(tool_output)
+    # Same double-encode hazard as the deterministic extractor above --
+    # one shared decoder so the two cannot drift apart.
+    tool_input = _decode_json_field(trace_event.get("tool_input"))
+    tool_output = _decode_json_field(trace_event.get("tool_output"))
 
     user_prompt = (
         f"Tool: {tool_name}\n"

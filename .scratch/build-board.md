@@ -1748,9 +1748,67 @@ prose *about* the failing test, not a key. Conclusion: the 3 failures in
 `trace_worker._insert_event`; the chokepoint is `trace_collector.py:314`),
 NOT a production leak. Committed separately as db7a5a4 for triage.
 
+### Lane INFRA - observation->claim wiring (2026-08-28, same session)
+
+Episode assembly deliberately NOT touched this round (input-format
+mismatch + silent-garbage failure mode; deferred by founder).
+
+1. DOUBLE-ENCODE BUG - FIXED AND VERIFIED ON REAL DATA.
+   `observations.py` decoded a JSONB field with a single-shot
+   `if isinstance(str): json.loads()`. RUNBOOK.md line 53's own documented
+   pitfall (asyncpg jsonb double-encoding) means that yields a *str*, and
+   the next `.get()` raised `'str' object has no attribute 'get'`.
+   Replaced both sites (deterministic + model extractor) with one shared
+   bounded `_decode_json_field()`; malformed input now yields {} so a bad
+   event is skipped instead of failing the whole job.
+   REAL BEFORE/AFTER, not "should work": reset the 32 failed jobs to
+   pending, re-ran -> 90 claimed, **90 done, 0 failed**. Job table now
+   shows ZERO failed rows. observations 2697 -> 2753 (+56).
+
+2. OBSERVATION->CLAIM WIRING - BOTH HALVES LANDED.
+   `promote_observation_to_claim()` had zero production callers; and a
+   handler alone would have stayed inert because nothing created work for
+   it. Registered `promote_observation_to_claim` in JOB_HANDLERS AND
+   added the enqueue in `handle_normalize_trace_event` after each
+   `persist_observation()`, using the identical INSERT idiom
+   trace_worker.py:303-307 already uses.
+   NAMING NOTE (founder asked to reuse an existing convention): there was
+   none. The three test files that exercise the function call it directly
+   and never enqueue; the only job_type string in the repo was
+   'normalize_trace_event'. Name chosen to mirror that pairing exactly.
+
+3. THE HONEST RESULT - **0 CLAIMS. The loop is still 3 of 5 hops, NOT 4.**
+   Backfilled all existing observations (INSERT..SELECT, skipping any
+   already promoted or already queued): 2753 jobs enqueued, drained over
+   7 passes -> 2779 done, **0 failed**. Claims produced: **0**.
+   knowledge_nodes 0 | claim_sources 0.
+   Not a wiring defect - a genuine unmet precondition found by doing it:
+   `capture_claim` (claims.py:184-189) requires `task_ids` to resolve to a
+   live `task_nodes.skill_ref`, and **task_nodes = 0** on a
+   trace-ingestion-only substrate. Nothing maps a trace-derived
+   observation to a task_node: the observations table has no task, trace,
+   or session column at all.
+   COST TRAP FOUND AND GUARDED: claims.py:179-180 computes an embedding
+   (`embedder or Embedder()` -- a real Voyage call) BEFORE the task_nodes
+   check that returns None. Naive wiring would have spent 2753 Voyage
+   calls to produce zero claims. The handler pre-checks and skips first,
+   so this backfill cost nothing.
+
+WHAT THE NEXT AGENT NEEDS for the 4th hop: either (a) an
+observation->task_node mapping so `task_ids` can be populated at the
+enqueue site (only that site changes -- the handler already takes it from
+the payload), or (b) a founder ruling that trace-derived claims may exist
+without a task_node, which is a `capture_claim` contract change, not a
+wiring change.
+
+Suite: **1428 passed / 115 skipped / 0 failed** on the committed gate
+(+22 new offline tests). With the untracked-but-now-committed
+test_band1_11_redaction.py: 1431 / 115 / 3 - same 3 pre-existing
+wrong-layer failures as db7a5a4, unrelated to this change.
+
 Not fixed here (outside this lane's grant): README_MCP_SERVER.md's stale
-7-tool table; the redaction test's layer; the 28 normalize_trace_event
-failures; the documented-quickstart ingestion omission.
+7-tool table; the redaction test's layer; the documented-quickstart
+ingestion omission.
 
 ## Integrator (= reviewer instance, main checkout)
 - Watches for `lane/*` branch pushes; rebases lane onto origin/main when stale.

@@ -34,6 +34,7 @@ import asyncpg
 from app.services.observations import (
     extract_deterministic_observations,
     persist_observation,
+    promote_observation_to_claim,
 )
 
 log = logging.getLogger(__name__)
@@ -85,13 +86,15 @@ async def handle_normalize_trace_event(pool: asyncpg.Pool, payload: dict) -> Non
 
     trace_event = dict(row)
     # tool_input comes back from asyncpg as a str (JSONB decoded to text
-    # by default in this codebase's connection setup) or already a dict
-    # depending on codec registration -- extract_deterministic_
-    # observations() already handles both (observations.py:60-61), so no
-    # decoding is duplicated here.
+    # by default in this codebase's connection setup), already a dict
+    # depending on codec registration, or -- the case this comment used
+    # to miss -- a DOUBLE-encoded str, which decodes to a str again and
+    # was throwing 'str' object has no attribute 'get' on 32 of 3313 real
+    # jobs. extract_deterministic_observations() now routes all three
+    # through _decode_json_field(), so no decoding is duplicated here.
     observations = extract_deterministic_observations(trace_event)
     for obs in observations:
-        await persist_observation(
+        observation_id = await persist_observation(
             pool,
             observation_type=obs["observation_type"],
             label=obs["label"],
@@ -101,10 +104,94 @@ async def handle_normalize_trace_event(pool: asyncpg.Pool, payload: dict) -> Non
             owner_id=row["owner_id"],
             visibility=row["visibility"],
         )
+        # The other half of the observation -> claim hop. Same enqueue
+        # idiom trace_worker.py:303-307 uses to create THIS job, kept
+        # deliberately identical so there is one pattern to learn.
+        # task_ids is empty until an observation->task_node mapping
+        # exists (see handle_promote_observation_to_claim's honest
+        # limit); the job is still enqueued so the queue reflects the
+        # real backlog rather than silently dropping the work.
+        await pool.execute(
+            "INSERT INTO ingestion_jobs (job_type, payload) VALUES ($1, $2)",
+            "promote_observation_to_claim",
+            json.dumps({
+                "observation_id": observation_id,
+                "trace_event_id": str(trace_event_id),
+                "task_ids": [],
+            }),
+        )
+
+
+async def handle_promote_observation_to_claim(pool: asyncpg.Pool, payload: dict) -> None:
+    """
+    The observation -> claim hop, previously the break in the founding
+    loop. promote_observation_to_claim() (observations.py) was real and
+    tested but had ZERO production callers -- and registering it alone
+    would not have helped, because nothing ever created work for it
+    either. This handler plus handle_normalize_trace_event's enqueue are
+    the two halves; one without the other is inert.
+
+    NAMING: no job_type for this existed anywhere -- the three test files
+    that exercise promote_observation_to_claim() call the function
+    directly and never enqueue it, and the only job_type string in the
+    repo is 'normalize_trace_event'. So this name is new by necessity,
+    chosen to mirror the established handler/job_type pairing exactly
+    rather than to invent a scheme.
+
+    WHY THE PRE-CHECK BEFORE CALLING PROMOTE: claims.py:179-180 computes
+    an embedding (`embedder or Embedder()` -- a real Voyage call) BEFORE
+    claims.py:184-189 checks that `task_ids` resolve to live task_nodes
+    and returns None if they don't. So an unresolvable promotion spends
+    one API call per observation to produce nothing. Checking here first
+    keeps a task-less observation free rather than merely useless.
+
+    HONEST LIMIT, stated plainly because it bounds what this closes:
+    nothing currently maps a trace-derived observation to a task_node.
+    The observations table carries no task, trace, or session column, and
+    capture_claim() hard-requires at least one live `task_nodes.skill_ref`
+    match. So on a substrate populated only by trace ingestion this
+    handler correctly promotes nothing. `task_ids` therefore rides in the
+    job payload: when a real observation->task mapping exists, only the
+    ENQUEUE site changes, not this handler.
+    """
+    observation_id = payload.get("observation_id")
+    if not observation_id:
+        raise ValueError(
+            f"promote_observation_to_claim payload missing observation_id: {payload!r}"
+        )
+
+    task_ids = payload.get("task_ids") or []
+    if not task_ids:
+        log.debug(
+            "promote_observation_to_claim: observation %s has no task_ids; "
+            "skipping before embedding spend", observation_id,
+        )
+        return
+
+    live = await pool.fetch(
+        "SELECT 1 FROM task_nodes WHERE skill_ref = ANY($1::text[]) AND t_invalid IS NULL",
+        task_ids,
+    )
+    if not live:
+        log.debug(
+            "promote_observation_to_claim: none of %r resolve to a live task_node; "
+            "skipping observation %s before embedding spend", task_ids, observation_id,
+        )
+        return
+
+    claim_id = await promote_observation_to_claim(
+        pool, observation_id=str(observation_id), task_ids=list(task_ids),
+    )
+    if claim_id is None:
+        log.info(
+            "promote_observation_to_claim: observation %s produced no claim "
+            "(missing or out of scope)", observation_id,
+        )
 
 
 JOB_HANDLERS: dict[str, JobHandler] = {
     "normalize_trace_event": handle_normalize_trace_event,
+    "promote_observation_to_claim": handle_promote_observation_to_claim,
 }
 
 
