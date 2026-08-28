@@ -68,6 +68,18 @@ founder ruling: surfacing unverified procedures here was considered and
 rejected as a false-reuse risk). `check_procedure` remains the only path
 for reasoning about one specific, not-yet-verified procedure.
 
+**C2 entry-point note (2026-08-28):** the runnable entry point behind the C2
+row above is `backend/scripts/run_ingestion.py` (`--once` or `--interval N`)
+— it reads collector `.jsonl` files and drives them through
+`process_collector_file()`/`process_pending_jobs()` into `trace_events` and
+`observations`, free of charge (no model calls). It does not go further on
+its own: §3's reuse-demonstration checklist item below has the
+engine-verified measurement (episode assembly bypassed entirely, break is at
+observation → claim). Quickstart mentions for this script were missing from
+`README.md`, `README_MCP_SERVER.md`, and this file until now — added
+alongside this note (2026-08-28), closing the gap that same checklist item
+flagged.
+
 One install-flow gap found running this for real, now fixed: `docker
 compose up -d` after a `git pull` used to silently keep running the OLD
 image unless you added `--build`. The canonical `docker compose up`

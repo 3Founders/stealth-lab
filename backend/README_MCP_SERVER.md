@@ -171,6 +171,24 @@ For the coding-assistant use case, it's just one call:
 `solve_task(task_description, repo_path)` -- internally does its own
 retrieval grounding, no multi-step governance loop needed.
 
+## Getting collector traces into Postgres
+
+None of the 7 tools above load `.claude/traces/*.jsonl` collector files into
+the database themselves. Run `scripts/run_ingestion.py` for that:
+
+```bash
+cd backend
+python scripts/run_ingestion.py --once
+```
+
+Free (no model calls); drives collector files through
+`process_collector_file()`/`process_pending_jobs()` into `trace_events` and
+`observations`. It stops there today — episode assembly is bypassed
+entirely and the break is at observation → claim, so `retrieve_precedent`
+won't see anything new from a run of this script alone (see `demo.md`'s C2
+entry-point note and §3 reuse-demonstration checklist item for the
+engine-verified measurement).
+
 ## Known v1 limitations, stated plainly
 
 - **Layer 2 (empirical replay evaluation) is not wired.** `propose_synthesis`

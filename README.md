@@ -66,6 +66,25 @@ gotchas (stock `postgres:15` cannot run the migration chain; use
 Tests: `cd backend && python -m pytest tests -q` — offline, no DB or API
 keys required for the bulk of the suite.
 
+### Ingesting collected traces
+
+`stealthlab-trace-hook` above only writes collector files
+(`.claude/traces/*.jsonl`) — something still has to load them into Postgres.
+That's `backend/scripts/run_ingestion.py`:
+
+```bash
+cd backend
+python scripts/run_ingestion.py --once            # single pass, then exit
+python scripts/run_ingestion.py --interval 30      # loop every 30s
+```
+
+It's free (no model calls) and gets each trace event as far as `trace_events`
+and `observations`. It does not go further yet — episode assembly is
+bypassed entirely and the break is at observation → claim, so a fresh
+install's own prior work won't show up via `retrieve_precedent` from this
+script alone (see `demo.md`'s C2 entry-point note and §3 reuse-demonstration
+checklist item for the engine-verified measurement).
+
 ## What it's becoming
 
 `demo.md` defines the minimal shippable v0.1 slice: ingest an agent's traces
