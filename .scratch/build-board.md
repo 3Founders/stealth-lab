@@ -1126,6 +1126,37 @@ single synthesized reports into `.scratch/research/`.
    hand-audited on a fresh DB — would already deliver; flagging for whoever
    picks that item up (CORE-B/product-owned, not this lane) to explicitly
    tick this ROADMAP box when it lands.)*
+10. `[x]` claimed+done @2026-08-28 — research lane (this worktree) **Honest
+    v0.1 scope doc + full-history secrets pass** (founder kickoff, direct
+    chat, repo-root-facing not code-facing).
+    *(Report: `.scratch/research/v0.1-honest-scope.md` — plain-language
+    companion to `demo.md`/`PRODUCTION_READINESS.md` pulling the real,
+    current caveats (verified-procedure evidence bar gating automatic
+    reuse behind `allow_unverified_procedures`; episode segmenter's
+    measured 18% trivial-episode rate + unsubdivided-oversize-episode
+    flag + no gold-boundary score; `bootstrap_demo.py` still not
+    implementing the two-phase story as of `main`@`ba892b9`; stale
+    README tool count). **SECRETS PASS VERDICT: NOT CLEAN.** Full
+    `git log --all -G'<pattern>'` sweep (branches + all `origin/*` +
+    `refs/stash`, 307 commits, not sampled) found real credentials
+    committed in `backend/.env` at commit `5e2f9bd` ("make 1+3 better",
+    2026-08-11) and its child `c00b72f`: a live Supabase `DATABASE_URL`
+    with real password, plus real-shaped Voyage/General Compute/
+    Anthropic/Groq API keys. Ancestry-checked against every ref
+    (`git for-each-ref` + `merge-base --is-ancestor`): **reachable ONLY
+    from `refs/stash`, not from any local or `origin/*` branch — never
+    pushed to GitHub** — but the objects are real and sit on disk in the
+    shared stash stack today. Did NOT touch the stash (shared across all
+    worktrees; not this lane's call to drop/rewrite it). Everything else
+    that matched secret-shaped patterns across the full sweep was a
+    confirmed false positive (redaction-module test fixtures using
+    AWS's own published example key / dummy `ghp_`/PEM values, non-secret
+    local-dev Postgres defaults, one `api_key="not-needed-for-local"`
+    literal) — checked directly, not assumed clean. **Recommendation
+    filed in the report, not executed: rotate all five leaked credentials
+    now regardless of push status; stash cleanup is the founder's call
+    once rotation makes the old values worthless.** Full detail, exact
+    patterns, exact commits in the report.)*
 
 ### Lane SHIP (owns `packaging/**`) â€” activates after CORE-A merges 1.7
 2. `[x]` done @2026-08-26 â€” branch `lane/ship` **P2 - Minimal status surface**:
@@ -3618,6 +3649,7 @@ Grounded findings from  3_access.sql/ 4_governance.sql/deps.py review. Sequence:
   effect once landed. Item 2 of the founder's two-thread request (outside-
   eye pass on CORE-B's new bootstrap_demo.py once it lands) queued, not
   started - nothing to review yet.
+<<<<<<< HEAD
 
 - MEASURE (2026-08-27, fourth wave): **free-tier cap confirmed still NOT
   reset - prep-only work this wave, zero live extraction calls** (founder
@@ -3965,3 +3997,18 @@ Grounded findings from  3_access.sql/ 4_governance.sql/deps.py review. Sequence:
   mistake on my part, not a real regression or pre-existing repo bug.
   Rebased onto `origin/main` (was 10 commits behind), pushed as
   `c088855`.
+- RESEARCH (2026-08-28, honest v0.1 scope doc + secrets pass): done -
+  `.scratch/research/v0.1-honest-scope.md`. **Founder attention needed:**
+  secrets pass verdict is NOT CLEAN — real Supabase DB password + Voyage/
+  General Compute/Anthropic/Groq API keys sit in this machine's local git
+  stash (commits `5e2f9bd`/`c00b72f`), confirmed unreachable from `main`
+  or any `origin/*` branch (never pushed), confirmed reachable from
+  `refs/stash` only. Rotate all five credentials regardless of push
+  status; stash cleanup deliberately left for the founder since the stash
+  stack is shared across every worktree on this machine. Full detail in
+  the report. **Doc note:** this entry was written before rebasing onto
+  the 29 commits landed while it was in progress, several of which
+  (CORE-B's bootstrap_demo.py rewrite, CORE-A's redaction chokepoint fix,
+  CORE-B's rate-limiter fix, updated suite counts) touch claims made in
+  the scope doc — re-verified and the doc updated in place against the
+  post-rebase tree before pushing, not left stale.
