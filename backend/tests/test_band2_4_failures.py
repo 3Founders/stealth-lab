@@ -31,6 +31,7 @@ import re
 import uuid
 from pathlib import Path
 
+import asyncpg
 import pytest
 
 DATABASE_URL = os.environ.get("DATABASE_URL")
@@ -271,10 +272,11 @@ async def _seed(pool, *, failure_class, status, context_key=None):
     ev = validate_evidence(**kwargs)
     row = ev.to_row()
     cols = list(row.keys())
-    placeholders = ", ".join(f"${i+1}" for i in range(len(cols)))
     jsonb_cols = {"success_criteria"}
-    col_sql = ", ".join(
-        f"{c}::jsonb" if c in jsonb_cols else c for c in cols
+    col_sql = ", ".join(cols)
+    placeholders = ", ".join(
+        f"${i+1}::jsonb" if c in jsonb_cols else f"${i+1}"
+        for i, c in enumerate(cols)
     )
     await pool.execute(
         f"INSERT INTO evidence ({col_sql}) VALUES ({placeholders})",
@@ -372,12 +374,12 @@ def test_failures_classify_route_and_land_in_queryable_queues():
             assert str(unclassified_id) not in unrouted
 
             # --- engine teeth: this log is [H] ------------------------
-            with pytest.raises(asyncpg.exceptions.RaiseException, match="append-only"):
+            with pytest.raises(asyncpg.exceptions.RaiseError, match="append-only"):
                 await pool.execute(
                     "UPDATE failure_routes SET route = 'no_op' "
                     "WHERE evidence_id = $1::uuid", classified_id,
                 )
-            with pytest.raises(asyncpg.exceptions.RaiseException, match="append-only"):
+            with pytest.raises(asyncpg.exceptions.RaiseError, match="append-only"):
                 await pool.execute(
                     "DELETE FROM failure_routes WHERE evidence_id = $1::uuid",
                     classified_id,

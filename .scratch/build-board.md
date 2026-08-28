@@ -319,6 +319,51 @@ git worktree add ..\sl-research -b lane/research origin/main
    Full offline suite (`pytest tests/`, no DATABASE_URL): **1376 passed /
    115 skipped / 0 failed** in 339s (= prior baseline 1368 + this item's 8,
    zero regressions).)*
+8. `[x]` done @2026-08-29 — branch `lane/core-a` **fix live-DB test
+   `test_band2_4_failures.py::test_failures_classify_route_and_land_in_
+   queryable_queues`** (assigned by direct chat instruction after a8d9a90
+   flagged it failing, not yet diagnosed — instructed not to assume a code
+   fix until the traceback said so).
+   *(Ran alone against the shared Supabase instance with `DATABASE_URL`
+   exported, `-v --tb=long` as instructed. Root cause was three latent bugs
+   in the TEST FILE itself, none in app code — matches what the assignment
+   predicted after checking the evidence schema / Evidence model /
+   classify_and_route / record_routing signatures found nothing wrong: (1)
+   `_seed()`'s helper built `INSERT INTO evidence (..., success_criteria
+   ::jsonb, ...)` — the `::jsonb` cast was appended to the COLUMN NAME in
+   the column list, not the placeholder in VALUES, which is invalid SQL
+   (`PostgresSyntaxError: syntax error at or near "::"`, exactly the
+   traceback). Moved the cast onto the matching `$N` placeholder instead,
+   same pattern procedures.py's own INSERT already uses. (2) `asyncpg` was
+   referenced (`asyncpg.exceptions...`) but never imported in this file —
+   added the import. (3) the append-only-log assertions expected
+   `asyncpg.exceptions.RaiseException`, which doesn't exist in this
+   asyncpg version; the real class is `RaiseError` (confirmed via
+   `dir(asyncpg.exceptions)`) — swapped both occurrences. All three are
+   test-only edits in `tests/test_band2_4_failures.py`; zero app-code
+   touched. Proven with two consecutive standalone runs against the live
+   DB, both green (6.25s, 6.36s) — no shared-state flakiness. NOT the same
+   class as the `process_pending_jobs` flakiness a8d9a90 fixed (that was
+   shared-DB aggregate state; this was pure test-file SQL/import bugs that
+   would fail identically on any DB).
+   ENVIRONMENT FINDING, not fixed (out of this item's scope and outside
+   CORE-A's owned paths): a full `pytest tests/` run (no DATABASE_URL) now
+   shows **29 failed / 1476 passed / 115 skipped** in 380s, all 29 in six
+   files CORE-A doesn't own (`test_band1_11_redaction.py`,
+   `test_coldstart_optin_offline.py`, `test_container_sandbox_offline.py`,
+   `test_episode_justified_claims_offline.py`,
+   `test_episode_metadata_encoding_offline.py`,
+   `test_promote_observation_job_offline.py`) — up from the item-7 baseline
+   of 1376/115/0. Spot-checked one file: `pytest-asyncio` is not installed
+   in this worktree's venv (`pip show pytest-asyncio` → not found), so
+   every `@pytest.mark.asyncio` test in those six files fails/warns
+   (`PytestUnknownMarkWarning: Unknown pytest.mark.asyncio`) instead of
+   actually running as a coroutine. `test_band2_4_failures.py` itself
+   drives its async test via a manual `asyncio.run()` wrapper, not the
+   `pytest.mark.asyncio` decorator, which is why it's unaffected either
+   way. Whoever owns those six files (or `requirements.txt`) needs to add
+   `pytest-asyncio` to get a clean full-suite number again — flagging here
+   per house convention rather than fixing outside my paths.)*
 
 ### Lane CORE-B â€” extraction & gating (owns `backend/app/services/procedure_extraction/**`, `invariants.py`, `applicability.py`, `precondition_gate.py`, `state.py`)
 1. `[x] done 2026-08-25 â€” lane/core-b` **1.8a** Precondition relevance filter (derive gates only load-bearing facts).
