@@ -22,8 +22,24 @@ One dependency note: `npm install` initially resolved a Next.js version
 with a published critical CVE (cache poisoning / RCE-adjacent, per `npm
 audit`). Bumped to the patched release before writing any app code
 against it — check `npm audit` yourself after `npm install` if you add
-or change dependencies later. The remaining `npm audit` findings are in
-`sharp`, which only matters for `next/image`; this app doesn't use it.
+or change dependencies later.
+
+`postcss` (transitive, via `next` — this app has no `postcss.config.js`
+of its own) later showed 4 high-severity advisories: XSS via unescaped
+`</style>` in its stringifier, and three rounds of arbitrary-file-read via
+attacker-controlled `sourceMappingURL` in CSS comments. Both classes only
+matter when postcss stringifies or resolves source maps for
+*attacker-controlled* CSS; this app only ever runs it over its own
+checked-in `app/globals.css` at build time, so neither path was actually
+reachable — but since `next@15.5.22` pins `postcss` to an exact vulnerable
+version (`8.4.31`) rather than a range, `npm audit fix` alone can't move
+it without a breaking `next` major bump. Fixed properly instead, via an
+`overrides` entry in `package.json` pinning `postcss` to `^8.5.26`
+(patched, same 8.x API `next` already targets) — confirmed clean with a
+fresh `npm install` + `npm audit`.
+
+The remaining `npm audit` finding is in `sharp`, which only matters for
+`next/image`; this app doesn't use it.
 
 ## Setup
 
