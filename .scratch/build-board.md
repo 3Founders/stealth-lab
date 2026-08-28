@@ -3206,3 +3206,76 @@ Grounded findings from  3_access.sql/ 4_governance.sql/deps.py review. Sequence:
   next step for this item's own flagged live run: it would simultaneously
   produce demo.md §3's proof AND the "one hand-audited live run from
   zero" evidence ROADMAP bullet 1 asks for.
+- MEASURE (2026-08-28, fifth wave): **model-decides RUN #3 on a confirmed-
+  live free model — started, cap-exhausted at 12/24 tasks, resume pending**
+  (founder go-ahead: run Claim 1 — architecture-only, same model all three
+  arms — on OpenRouter's free tier; zero-spend-if-it-holds). Live catalog
+  re-checked fresh rather than trusting yesterday's board note (`GET /api/v1/
+  models`, 381 models, 18 `:free`-suffixed): `z-ai/glm-5.2:free` confirmed
+  present with `pricing.prompt==pricing.completion=="0"` (both, not just
+  one — the `lyria-3` trap check), context_length now reads 256000 not the
+  1M the prior note logged (catalog drift between checks, noted not
+  chased). **Did NOT use it**: three probe attempts (~14s apart) all came
+  back HTTP 429 with `"limit_source":"upstream_provider_shared_pool"`,
+  provider `Decart`, `retry_after_seconds:5` — this is the model's own
+  backing provider being saturated by other OpenRouter users, a DIFFERENT
+  failure mode from our account's daily cap (that one carries
+  `X-RateLimit-*` headers and `"free-models-per-day"` in the message; this
+  one carries neither). Persisted across all three tries, so treated as
+  "misbehaves" per the kickoff's own fallback clause and switched to
+  `liquid/lfm-2.5-2.6b:free` — also re-confirmed live, `:free`-suffixed,
+  pricing 0/0, one real 200 probe response before committing the full
+  sweep to it.
+  Ran `run_real_arms.py --fixtures-dir fixtures/model_decides --out
+  model_decides_results_run3.jsonl --auto-resume --models liquid/
+  lfm-2.5-2.6b:free --spend-log model_decides_spend_run3.jsonl` (24 tasks,
+  72+ calls needed — matches the kickoff's own sizing). **Result: 12/24
+  tasks completed with valid data (all 6 `dec-refund-*` + all 6
+  `dec-dep-*`), then the account's daily free-tier cap hit and every
+  remaining task (all 6 `dec-pdf-*` + all 6 `dec-env-*`) failed with
+  `AllModelsFailedError` after 6 retry attempts each** — confirmed via a
+  direct probe AFTER the sweep exited: `X-RateLimit-Limit: 50`,
+  `X-RateLimit-Remaining: 0`, `X-RateLimit-Reset: 1787961600000` ->
+  **2026-08-29T00:00:00Z** (same midnight-UTC daily-reset pattern as the
+  prior wave's cap-check, this time hit mid-run instead of pre-run). Spend
+  ledger: 159 attempts logged this wave (53 HTTP 200 / 106 HTTP 429),
+  **$0.00 real spend** — free-suffix pricing fix from the third wave holds,
+  confirmed by reading `cost_usd` directly off every spend row, not
+  inferred from the model name.
+  **served_by_model check (standing recommendation from the 2026-08-27
+  correction, applied before writing any number here)**: read
+  `served_by_model` off every arm of every valid result row directly —
+  100% `liquid/lfm-2.5-2.6b:free`, zero silent substitution to any other
+  model. The one `None` value found (`dec-dep-105` arm B) is honestly a
+  post-repair `unparseable_decision_after_repair` invalid row, not a model
+  swap — matches the exact same task/arm that showed the identical failure
+  mode in RUN #1/#2 on gpt-4o-mini, now reproduced on a third, unrelated
+  model.
+  **THIS IS ITS OWN SERIES, not a RUN #4 of the ox-alpha/gpt-4o-mini-
+  anchored run1/run2 line**: same model (`liquid/lfm-2.5-2.6b:free`) served
+  every arm of every completed task — internally consistent as a
+  standalone Claim 1 data point — but a 2.6B-parameter model is not
+  comparable to gpt-4o-mini's numbers, and the run is INCOMPLETE (12/24),
+  so no sensitivity/specificity numbers are reported this wave; computing
+  them now on half the fixture would silently misrepresent statistical
+  power. Did NOT run `run_model_decides.py` — that's for a complete run
+  only, per the kickoff's own sequencing ("once complete").
+  **NOT done, correctly deferred**: no retry attempted after the cap-hit
+  probe confirmed the reset time — burning backoff cycles against a known
+  account-level daily wall wastes wall-clock for zero chance of success,
+  unlike the upstream-provider 429 above which was worth retrying because
+  it's a different, sometimes-transient failure class.
+  **NEXT SESSION (after 2026-08-29T00:00:00Z)**: re-run the identical
+  command with `--auto-resume` added (results/spend files already exist
+  and are non-empty, so `--auto-resume` is required or the CLI refuses to
+  overwrite paid history) — `load_done` will skip the 12 valid tasks and
+  retry only the 12 error rows. Given 12 tasks × up to 6 calls each (repair
+  round-trips included) against a 50/day cap, this may need a SECOND
+  resume pass the following day too — don't treat a second cap-hit as a
+  failure, it's the expected shape given the kickoff's own "will not finish
+  in one sitting" framing. Once all 24 tasks read valid, run
+  `run_model_decides.py --results model_decides_results_run3.jsonl`, save
+  as `model_decides_report_run3.json`, re-verify `served_by_model` on the
+  full set (not just the 12 checked here), and board-note the real
+  sensitivity/specificity numbers labeled explicitly as the
+  `liquid/lfm-2.5-2.6b:free` series — not folded into the run1/run2 table.
