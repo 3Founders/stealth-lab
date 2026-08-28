@@ -351,7 +351,31 @@ async def find_applicable_procedures(
     is smaller than the true candidate set, the ones skipped are the
     more expensive ones to check, not an arbitrary subset.
     """
-    if await should_disable_procedure_retrieval(pool, access_scope):
+    # COLD-START GATE -- skipped on an explicit unverified opt-in.
+    #
+    # The gate exists so that BY DEFAULT a substrate with too little
+    # verification evidence falls back to generative planning rather than
+    # surfacing procedures nothing has earned trust in. That default is
+    # right and is unchanged: every require_verified=True caller still
+    # hits it, including retrieve_precedent's own path below.
+    #
+    # But require_verified=False is not the default -- it is a caller
+    # explicitly asking to consider unverified candidates on their own
+    # merits (solve_task's `allow_unverified_procedures`, ticket 13's
+    # named opt-in). Running the gate first made that flag UNREACHABLE and
+    # created a chicken-and-egg the loop cannot bootstrap out of:
+    #     retrieval is disabled until >=1 VERIFIED procedure exists
+    #  -> a procedure is verified only by accruing execution evidence
+    #  -> evidence accrues only when a matched procedure is actually USED
+    #  -> nothing can ever match, so nothing can ever become verified.
+    #
+    # Measured 2026-08-28 with a real model (gemma-4-31B-it) against a
+    # real repo: a freshly-extracted procedure stayed invisible to
+    # solve_task even with allow_unverified_procedures=True, and matched
+    # immediately once this gate was bypassed -- one blocker, isolated.
+    # Opting in IS the cold-start case, so the opt-in must win over the
+    # gate that exists to manage cold start.
+    if require_verified and await should_disable_procedure_retrieval(pool, access_scope):
         return []
 
     rows = await pool.fetch(

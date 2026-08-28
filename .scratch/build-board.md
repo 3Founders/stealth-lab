@@ -1984,6 +1984,83 @@ new handler contract (FakePool gained fetchval, fake_promote gained the
 new kwarg, the fake trace row gained the real session_id/timestamp
 columns) - updated, not deleted.
 
+### Lane INFRA - CORE LOOP PROVEN END TO END WITH A REAL MODEL (2026-08-28)
+
+GO. The loop works. It needed one one-line fix, found by running it.
+
+MODEL: gemma-4-31B-it confirmed LIVE on General Compute (5 models
+available). Real paid calls, 4 solve_task runs, ~90s of model time total.
+
+BLOCKER 1 (found, diagnosed, NOT a substrate bug).
+Run 1 succeeded (7 tool calls, correct diff) but wrote NO procedure:
+    extraction_skipped: V4_capability_abstraction
+Cause is a structural conflict, not a model failure. Only `deterministic_v1`
+is registered in `procedure_extractors`, and `kind == "deterministic"`
+short-circuits to DeterministicExtractor IGNORING the client entirely.
+That extractor sets `capability_statement = goal_text[:200]` VERBATIM (a
+deliberate choice - "reads as exactly what it is"). v4_capability_
+abstraction then rejects any evidence token appearing in that field.
+So whenever a user names a file in the task description - the normal case -
+extraction is STRUCTURALLY IMPOSSIBLE.
+Proven decisively: same repo, same model, same everything, only the task
+wording changed.
+    "...in src/geometry.py"  -> extraction_skipped, procedures 0
+    (no filename)            -> extracted_procedure 28b03897, procedures 1
+Not fixed here: the fix is either a registered grounded_hybrid extractor
+row (the LLM path, which the prompt DOES correctly forbid file names in)
+or a DeterministicExtractor that abstracts its capability_statement.
+That is CORE-B's call, not this lane's.
+
+BLOCKER 2 (the real one) - CHICKEN-AND-EGG, FIXED.
+`allow_unverified_procedures=True` was an UNREACHABLE flag.
+find_applicable_procedures ran should_disable_procedure_retrieval()
+BEFORE consulting require_verified (applicability.py:354):
+    retrieval disabled until >=1 VERIFIED procedure exists
+ -> verified only by accruing execution evidence
+ -> evidence accrues only when a matched procedure is USED
+ -> nothing can match, so nothing can ever be verified.
+Isolated to ONE cause by neutralising only the gate in-process: the
+procedure matched immediately. The NULL embedding on the same row was NOT
+what stopped it (0 -> 1 match with `goal_embedding=None` too).
+FIX: `if require_verified and await should_disable_procedure_retrieval(...)`.
+Default is unchanged - every require_verified=True caller still gates, and
+retrieve_precedent's separate gate at :470 is deliberately UNTOUCHED
+(surfacing unverified procedures there would let a caller read "precedent
+found" as implicit reuse without check_procedure's cascade).
+
+THE PROOF - real numbers, all four runs against real repos in-container:
+  run 1  /scratch  finished   diff OK  -> extraction REFUSED (V4)
+  run 2  /scratch  finished   diff OK  -> procedure 28b03897 WRITTEN
+  run 3  /scratch  step_budget diff OK -> MATCHED; evidence contradicts/failure
+  run 4  /scratch2 finished   diff OK  -> MATCHED; evidence supports/success
+                                          + procedure f2e2e1fe extracted
+After the fix, with 0 verified procedures still in the system:
+    require_verified=True  -> 0 matches   (default preserved)
+    require_verified=False -> 1 match     (opt-in now reachable)
+Evidence table: supports/success 1 | contradicts/failure 1 - BOTH
+directions. Real rows: evidence_type=execution_result, target_type=
+procedure, target_version=1 (pinned), strength_method=recorded_outcome,
+created_by=record_execution_outcome@1.
+Capability statistics moved on the matched procedure:
+    28b03897: attempts 2, successes 1, distinct_contexts 2,
+              context_keys_seen ["scratch","scratch2"]
+
+**This is trace -> procedure -> reuse -> evidence -> capability, running
+end to end on real data for the first time.** ROADMAP Band 3.5 /
+invariant #10 ("failure can reduce capability") / M1's falsifiable gate -
+all three were unexercised before this run and are now exercised. Run 3
+recorded a FAILURE because stop_reason=step_budget at max_steps=12 even
+though the diff was correct; the success proxy is strict. Honest note,
+not a defect - but the proxy is worth a look.
+
+ALSO FOUND: the shipped container has NO `git`. solve_task's
+`git diff --name-only HEAD` structural seeding therefore always yields
+seed_files=[] in Docker. It is try/except-guarded so nothing breaks, but
+one of the two retrieval tiers is silently dead in the released image.
+Flagged, not fixed.
+
+Suite: **1465 passed / 115 skipped / 0 failed** (+5 new offline tests).
+
 Not fixed here (outside this lane's grant): README_MCP_SERVER.md's stale
 7-tool table; the redaction test's layer; the subagent-join failure; the
 transcript-dir CWD mangling.
