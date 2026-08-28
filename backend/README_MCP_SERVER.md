@@ -1,7 +1,7 @@
 # StealthLab MCP Server — v1
 
 Exposes StealthLab's bi-temporal knowledge/task graph, debate-based conflict
-resolution, and a retrieval-grounded coding agent as 7 MCP tools.
+resolution, and a retrieval-grounded coding agent as 9 MCP tools.
 
 ## Setup
 
@@ -21,32 +21,53 @@ resolution, and a retrieval-grounded coding agent as 7 MCP tools.
 3. `experiments/swebench_pro/` must exist as a real sibling directory of
    `backend/` -- `solve_task` imports `Agent`/`RepoSandbox` from there.
 
-## The 7 tools
+## The 9 tools
 
 | Tool | What it does | Writes to the graph? |
 |---|---|---|
 | `retrieve_precedent` | Find prior solved patterns relevant to a query | No -- read-only |
-| `decompose_task` | Turn an unstructured problem into a structured proposal (new nodes/edges) | No -- returns a proposal only |
+| `check_procedure` | Audit-mode ALLOW/WOULD_REFUSE verdict on reusing a named procedure right now, with evidence | No -- read-only, informs the caller, never blocks |
+| `decompose_task` | Turn an unstructured problem into a structured proposal (new nodes/edges), persisted but not yet applied | No -- returns a proposal only |
+| `decide_decomposition` | Approve/reject a `decompose_task` proposal: re-runs the capability-boundary check at apply time | **Yes, gated** -- the correct path for `decompose_task`'s output |
 | `apply_change_set` | Apply a change_set directly, no approval gate | **Yes, ungated** |
 | `detect_conflict_trigger` | Find a real conflict between knowledge_nodes, open a debate trigger | Yes -- creates a proxy task node + trigger, doesn't touch existing content |
 | `propose_synthesis` | Run a real multi-round debate on a trigger, produce scorecards | No -- drives debate state to `PENDING_APPROVAL`, doesn't write graph content |
 | `submit_approval` | Approve/reject a scorecard: applies + audits + finalizes debate state | **Yes, gated** -- the correct path for debate-originated changes |
 | `solve_task` | Retrieval-grounded coding agent against a real repo on disk | Yes -- to the filesystem, not the graph |
 
-### Important: `apply_change_set` vs `submit_approval`
+### Important: which gated tool goes with which proposal
 
-`apply_change_set` is a raw write primitive with **no approval gate** --
-it doesn't check debate state, doesn't require `APPROVED`, doesn't write
-an audit row. Use it only for `decompose_task`'s output, which never goes
-through a debate.
+Two different tools produce proposals, and each has its own required
+apply step -- do not cross them:
 
-**Anything that came from `propose_synthesis` should go through
-`submit_approval` instead.** That's the real, gated path: it applies the
-change_set, writes a row to the `approvals` table, and transitions the
-debate to `APPROVED`/`REJECTED` -- all atomically, so there's never a
-false audit trail (an approval recorded against a change that didn't
-actually apply). Skipping this and calling `apply_change_set` directly on
-a debate scorecard's change_set bypasses human approval entirely.
+- **`decompose_task` output → `decide_decomposition`, never `apply_change_set`.**
+  `apply_change_set` uses `KnowledgeUpdater.apply()`, which never calls
+  `validate_generative()` -- the capability-boundary check that is this
+  project's stated only real guarantee against a prompt-injected/hijacked
+  model (generated content may only *create* new nodes and connect them
+  to each other, never modify or invalidate anything that already
+  exists). `decide_decomposition` calls the real `app.api.decompose.decide()`,
+  which re-runs `validate_generative()` at apply time, so a proposal
+  tampered with in storage between propose and decide still can't
+  escalate. This was a real bug in an earlier version of this server
+  (`decompose_task` used to tell callers to apply via `apply_change_set`)
+  -- fixed, but `apply_change_set`'s own docstring in `server.py` still
+  describes decomposition proposals as its "intended case" and has not
+  been updated to match; flagged here rather than silently rewritten
+  in-code.
+- **`propose_synthesis` output → `submit_approval`, never `apply_change_set`.**
+  `apply_change_set` is a raw write primitive with **no approval gate** --
+  it doesn't check debate state, doesn't require `APPROVED`, doesn't write
+  an audit row. `submit_approval` is the real, gated path: it applies the
+  change_set, writes a row to the `approvals` table, and transitions the
+  debate to `APPROVED`/`REJECTED` -- all atomically, so there's never a
+  false audit trail (an approval recorded against a change that didn't
+  actually apply). Skipping this and calling `apply_change_set` directly on
+  a debate scorecard's change_set bypasses human approval entirely.
+
+`apply_change_set` itself is for change_sets that never went through
+either proposal flow -- e.g. a manually constructed change_set for
+testing.
 
 ## Quickstart -- MCP Inspector
 
@@ -103,6 +124,15 @@ cd backend
 uvicorn app.mcp_server.server:app --host 127.0.0.1 --port 8765 --workers 1
 ```
 
+**Windows, multiple Python installs:** if this fails with
+`ModuleNotFoundError: No module named 'mcp'` even though step 1's install
+succeeded, the bare `uvicorn` on `PATH` is resolving to a *different*
+Python install than the one `pip`/`python` point at (verified 2026-08-28:
+`uvicorn.exe` on `PATH` came from a separate Python 3.11 install with no
+project deps, while `pip install -r requirements.txt` had gone to a 3.14
+install). Use `python -m uvicorn ...` instead -- it always runs under
+whichever `python` resolves to.
+
 `app` is `server.streamable_http_app()`, exposed at module level; it serves
 `/mcp`. **`--workers 1` is load-bearing**, not a default left alone: the
 Tasks extension's backing store (`tasks_extension.py`) is in-memory, so a
@@ -158,7 +188,8 @@ either uvicorn or the database is not actually up.
 ## Example workflow -- knowledge-conflict governance loop
 
 1. `decompose_task("we updated our vacation policy to 20 days")` → proposal
-2. `apply_change_set(<that change_set>)` → commits the new node
+2. `decide_decomposition(<decomposition_id>, approver_id, "approved")` →
+   commits the new node
 3. `detect_conflict_trigger(<new_node_id>)` → finds the old "15 days" node,
    opens a real trigger
 4. `propose_synthesis(<trigger_id>)` → real debate, produces a scorecard
