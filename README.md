@@ -44,7 +44,8 @@ Full setup, the stdio vs. hosted-HTTP split, and the known v1 limitations
 (no job queue, `apply_change_set` is an ungated write, `repo_path` is
 caller-controlled) are documented in
 [`backend/README_MCP_SERVER.md`](backend/README_MCP_SERVER.md) — that's the
-accurate, current setup doc; follow it over anything below.
+accurate, current setup doc; if anything below disagrees with it, trust it
+instead.
 
 **Quick install**, via the packaging layer
 ([`packaging/README.md`](packaging/README.md)), which imports the same
@@ -61,7 +62,11 @@ stealthlab-public-board          # static scoreboard page from a real-arms sweep
 Needs a Postgres 15+ instance with the `pgvector` extension (Supabase
 works) — see `backend/README.md` for the exact image/connection-string
 gotchas (stock `postgres:15` cannot run the migration chain; use
-`pgvector/pgvector:pg15`).
+`pgvector/pgvector:pg15`) — plus `backend/.env` set with at minimum
+`DATABASE_URL` and `VOYAGE_API_KEY`, and `STEALTHLAB_MCP_TOKEN` for HTTP
+mode (`--stdio` skips auth by protocol design), before `stealthlab-mcp-server`
+above will actually start; full variable list in `packaging/README.md`'s
+Configure section or `backend/README_MCP_SERVER.md`'s Setup section.
 
 Tests: `cd backend && python -m pytest tests -q` — offline, no DB or API
 keys required for the bulk of the suite. Needs `backend/.env` to exist first
