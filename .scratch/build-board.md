@@ -1715,9 +1715,42 @@ closing the separate transcript -> `assemble_episodes()` hop, which its
 own docstring says had zero callers before it -- the same Band 2
 founding-loop hop RESEARCH flagged.)
 
+FOLLOW-UP, same day: ran `scripts/run_ingestion.py` against this session's
+own 1.1MB hook trace, pointed at the fresh compose DB (NOT the dev DB --
+DATABASE_URL overridden so `load_dotenv()` could not send it to
+localhost:5432/postgres). Free, no model calls. 13 files, 3811 collector
+records inserted, 0 skipped, 0 quarantined; job queue drained over 7
+passes (500/pass cap): 3313 claimed, 3285 done, 28 failed
+(`normalize_trace_event`: `'str' object has no attribute 'get'` -- a real
+bug, ~0.85% of jobs, not triaged here).
+
+HOW FAR THE REAL CHAIN GETS, measured not assumed:
+
+    agent_traces 13 -> trace_events 3813 -> observations 2697 -> STOPS
+    episodes 0 | knowledge_nodes 0 | claim_sources 0 | procedures 0 | evidence 0
+
+So the break is at **observation -> claim**, one hop further than the
+correction above guessed, and EPISODES ARE BYPASSED ENTIRELY -- consistent
+with `ingest_transcripts.py`'s docstring ("run_ingestion.py drives a
+different chain ... which never assembles episodes at all"). Band 2's
+founding loop is trace -> episode -> observation -> claim -> procedure;
+this path does 3 of 5 hops and skips the episode one.
+
+REDACTION, empirically settled on real data (stronger than the unit test):
+3813 real events ingested. `AKIA[0-9A-Z]{16}` matches: **0**. Full fixture
+key: **0**. `sk-ant-api` tokens: **0**. `.ssh/` references: **0**.
+Redaction markers present: 5 rows; sensitive-path exclusions: 32 rows.
+The raw hook file itself carries 4 REDACTED markers and zero raw keys, so
+redaction fires at COLLECTION time and works. An earlier `like '%AKIA%'`
+count of 4 was a false alarm -- those rows are this lane's own commit
+prose *about* the failing test, not a key. Conclusion: the 3 failures in
+`test_band1_11_redaction.py` are a wrong-layer test (it targets
+`trace_worker._insert_event`; the chokepoint is `trace_collector.py:314`),
+NOT a production leak. Committed separately as db7a5a4 for triage.
+
 Not fixed here (outside this lane's grant): README_MCP_SERVER.md's stale
-7-tool table; the redaction failures; the documented-quickstart ingestion
-omission.
+7-tool table; the redaction test's layer; the 28 normalize_trace_event
+failures; the documented-quickstart ingestion omission.
 
 ## Integrator (= reviewer instance, main checkout)
 - Watches for `lane/*` branch pushes; rebases lane onto origin/main when stale.

@@ -128,9 +128,44 @@ evidence: ['claim:6942ee6f-22ac-435c-923d-2763a2d0282c',
            'claim:cefb6b7e-e6f0-4e31-883b-ce04da8e0fd0']
 ```
 
-- [ ] README quickstart works from a clean clone: compose up → add MCP server →
-      one task solved twice, second time citing precedent (pending: needs
-      one live model call, budget decision outstanding)
+- [x] README quickstart, **connection/infrastructure half** — clean clone →
+      `docker compose up -d --build` → 30/30 migrations applied → MCP server
+      added → real client connected. Engine-verified 2026-08-28 on a fresh
+      volume, with this Claude Code instance as the real MCP client (not a
+      stub): README_MCP_SERVER.md's own auth checks pass (unauthenticated
+      `POST /mcp` → 401, authenticated → 200), `claude mcp list` reports
+      Connected over Streamable HTTP, and 9 tools resolve — matching
+      `server.py`'s `@server.tool()` list. Two caveats found in the doing:
+      **`--build` is load-bearing and was missing from C1** (without it
+      `docker compose up -d` silently reuses a stale image and yields a
+      false pass), and README_MCP_SERVER.md's "The 7 tools" table is stale
+      (missing `check_procedure`, `decide_decomposition`).
+- [ ] README quickstart, **reuse-demonstration half** — one task solved
+      twice, second citing precedent. OPEN, and structurally so rather
+      than merely untried: on a fresh install ordinary agent tool use
+      creates no procedure, so `check_procedure` has no `procedure_id` to
+      receive and `retrieve_precedent` correctly returns "No precedent
+      found". Measured 2026-08-28 by solving two real tasks through normal
+      tool use, then running the real ingestion chain
+      (`scripts/run_ingestion.py`, 3811 collector records, 3313 jobs) over
+      this session's own 1.1MB hook trace. The chain reaches
+      `agent_traces` 13 → `trace_events` 3813 → `observations` 2697, then
+      stops: `episodes` 0, `knowledge_nodes` 0, `claim_sources` 0,
+      `procedures` 0, `evidence` 0. The break is at
+      **observation → claim**, with episodes bypassed entirely by this
+      path (`run_ingestion` never calls `assemble_episodes`), and
+      `extract_procedure()` still reachable only via `solve_task`
+      (`server.py:719`, its sole live caller). Closing this needs either a
+      live model call or a documented zero-cost path.
+      **Partial credit, cite rather than reading this as fully red:**
+      `bootstrap_demo.py` already covers the *decision* half of C4 "reuse
+      you can see" on a fresh DB — a real extracted procedure, real
+      derived preconditions, and ALLOW → WOULD_REFUSE citing real claim
+      ids. What it does not cover is precedent arriving from the agent's
+      *own prior work*, which is what this row is for.
+      Also undocumented regardless: `run_ingestion.py` appears **zero**
+      times in `README.md`, `README_MCP_SERVER.md`, or this file, so
+      nobody following the quickstart ever runs it.
 - [x] SECURITY.md + data statement published; uninstall = drop volume
       (`SECURITY.md` + `DATA_STATEMENT.md`, repo root, 2026-08-27)
 
