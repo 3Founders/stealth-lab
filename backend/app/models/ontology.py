@@ -15,7 +15,8 @@ from uuid import UUID, uuid4
 from pydantic import BaseModel, Field
 
 ProvenanceSource = Literal[
-    "company_ingested", "company_debate", "prior_library", "public_generated"
+    "company_ingested", "company_debate", "prior_library", "public_generated",
+    "system_pending_review",
 ]
 """
 Real fix (ticket 17, memory-substrate map): `public_generated` is written by
