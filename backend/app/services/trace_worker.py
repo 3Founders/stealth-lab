@@ -35,6 +35,7 @@ from typing import Any, Mapping, Optional, Sequence
 import asyncpg
 
 from app.services.trace_collector import mark_worker_seen, read_drop_count
+from app.services.trace_redaction import redact_event
 
 SCHEMA_VERSION = "1"
 
@@ -213,7 +214,7 @@ async def _insert_event(conn: asyncpg.Connection, record: dict, owner_id: str | 
     produced it, the exact tenant_id cautionary case 03_access.sql's own
     docstring warns about. Now real parameters, not decorative columns.
     """
-    event = record["event"]
+    event = redact_event(record["event"])
     timestamp = _parse_timestamp(event.get("timestamp"))
     tool_input_col, tool_output_col, raw_payload_ref = _prepare_payload_columns(
         event, record["dedup_key"],

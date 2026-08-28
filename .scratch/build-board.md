@@ -3562,3 +3562,42 @@ Grounded findings from  3_access.sql/ 4_governance.sql/deps.py review. Sequence:
   full set (not just the 12 checked here), and board-note the real
   sensitivity/specificity numbers labeled explicitly as the
   `liquid/lfm-2.5-2.6b:free` series — not folded into the run1/run2 table.
+
+- CORE-A (2026-08-28, fourteenth wave): **Band 1.11 redaction chokepoint —
+  built, not relabeled.** `backend/tests/test_band1_11_redaction.py` (only
+  committed for visibility, 3 failing, explicitly not-triaged per its own
+  commit `db7a5a4`) was testing a real, reasonable contract nobody had
+  built yet: `_insert_event` in `trace_worker.py` trusted the collector's
+  client-side redaction completely and never redacted server-side, so a
+  hand-crafted collector file from any source reached the one irreversible
+  persistence step unredacted. Fixed with the one-line chokepoint the
+  kickoff specified: `trace_worker.py:217`, `event = record["event"]` ->
+  `event = redact_event(record["event"])`, importing `redact_event` from
+  the already-proven-idempotent `trace_redaction.py`. Zero changes to the
+  test file — all 3 previously-failing tests now pass on the strength of
+  this one line, confirmed by running the suite before and after rather
+  than assuming.
+  **Idempotency confirmed explicitly**, not just inherited from the
+  module's docstring claim: ran `redact_event` twice on the same
+  AWS-key/Anthropic-key fixture in a throwaway REPL check — `once ==
+  twice` is `True`, output shown as `[REDACTED:aws_access_key]` /
+  `[REDACTED:anthropic_key]`, no double-wrapping, no metadata growth.
+  **Checked for unredacted reads ahead of this point**: the only other
+  place in `trace_worker.py` that touches `record["event"]` before
+  `_insert_event` runs is `process_collector_file`'s own `event =
+  record["event"]` (line 288), used solely for
+  `_parse_timestamp(event.get("timestamp"))` to compute the trace
+  header's `started_at` — timestamp is a structural/identity field
+  `redact_event`'s own docstring explicitly excludes from redaction
+  (never secret-shaped), so this reads nothing the fix would have
+  changed. No other caller reads `tool_input`/`tool_output` off the raw
+  event before the new redact call.
+  **Full suite green**: 1412 passed / 115 skipped / 0 failed (skips are
+  pre-existing env-gated integration tests, unrelated), up from whatever
+  baseline had the 3 real failures — confirmed by running
+  `test_band1_11_redaction.py` in isolation both before (3 failed / 3
+  passed) and after (6/6 passed) the fix, then the full suite once more
+  for the whole-repo check.
+  Branch was 4 commits behind `origin/main` (this test file's own commit
+  plus 3 unrelated others) — rebased before starting, per house rules,
+  which is how the test file became visible in this worktree at all.
