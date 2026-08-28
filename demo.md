@@ -151,7 +151,14 @@ evidence: ['claim:6942ee6f-22ac-435c-923d-2763a2d0282c',
       **`--build` is load-bearing and was missing from C1** (without it
       `docker compose up -d` silently reuses a stale image and yields a
       false pass), and README_MCP_SERVER.md's "The 7 tools" table is stale
-      (missing `check_procedure`, `decide_decomposition`).
+      (missing `check_procedure`, `decide_decomposition`). **Fixed
+      2026-08-28**: table now lists all 9, and the `apply_change_set` vs.
+      `submit_approval` section grew a second case for `decompose_task` →
+      `decide_decomposition` (the doc previously told callers to apply
+      `decompose_task`'s output via `apply_change_set`, which `server.py`'s
+      own `decompose_task`/`decide_decomposition` docstrings already say is
+      wrong — `apply_change_set`'s own docstring in `server.py` still says
+      the opposite and has not been corrected).
 - [ ] README quickstart, **reuse-demonstration half** — one task solved
       twice, second citing precedent. OPEN, and structurally so rather
       than merely untried: on a fresh install ordinary agent tool use
@@ -175,9 +182,10 @@ evidence: ['claim:6942ee6f-22ac-435c-923d-2763a2d0282c',
       derived preconditions, and ALLOW → WOULD_REFUSE citing real claim
       ids. What it does not cover is precedent arriving from the agent's
       *own prior work*, which is what this row is for.
-      Also undocumented regardless: `run_ingestion.py` appears **zero**
-      times in `README.md`, `README_MCP_SERVER.md`, or this file, so
-      nobody following the quickstart ever runs it.
+      Also undocumented regardless (**since fixed 2026-08-28**, see the C2
+      entry-point note above): `run_ingestion.py` used to appear zero times
+      in `README.md`, `README_MCP_SERVER.md`, or this file, so nobody
+      following the quickstart would have run it; all three now document it.
 - [x] SECURITY.md + data statement published; uninstall = drop volume
       (`SECURITY.md` + `DATA_STATEMENT.md`, repo root, 2026-08-27)
 
