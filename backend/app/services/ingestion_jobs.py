@@ -107,10 +107,16 @@ async def handle_normalize_trace_event(pool: asyncpg.Pool, payload: dict) -> Non
         # The other half of the observation -> claim hop. Same enqueue
         # idiom trace_worker.py:303-307 uses to create THIS job, kept
         # deliberately identical so there is one pattern to learn.
-        # task_ids is empty until an observation->task_node mapping
-        # exists (see handle_promote_observation_to_claim's honest
-        # limit); the job is still enqueued so the queue reflects the
-        # real backlog rather than silently dropping the work.
+        #
+        # Option B: resolve the containing episode HERE, at enqueue time,
+        # so the job payload carries a real anchor. task_ids stays empty
+        # until an observation->task_node mapping exists; the episode is
+        # what makes the claim writable in the meantime. A None episode
+        # (assembly hasn't run for this session yet) is enqueued anyway so
+        # the queue reflects the real backlog -- the handler no-ops on it.
+        justification_episode_id = await resolve_justification_episode(
+            pool, observation_id,
+        )
         await pool.execute(
             "INSERT INTO ingestion_jobs (job_type, payload) VALUES ($1, $2)",
             "promote_observation_to_claim",
@@ -118,8 +124,57 @@ async def handle_normalize_trace_event(pool: asyncpg.Pool, payload: dict) -> Non
                 "observation_id": observation_id,
                 "trace_event_id": str(trace_event_id),
                 "task_ids": [],
+                "justification_episode_id": (
+                    str(justification_episode_id) if justification_episode_id else None
+                ),
             }),
         )
+
+
+async def resolve_justification_episode(pool: asyncpg.Pool, observation_id: str):
+    """The episode that contains an observation's earliest event, or None.
+
+    Option B's new hop: an observation is anchored to the episode its
+    events fall inside, which is what lets a trace-derived claim exist at
+    all without a task_node.
+
+    NESTING -- the design call, and a CORRECTION to the kickoff's proposed
+    SQL. Episodes nest (parent + child covering the same instant), and the
+    intent is that the INNERMOST/most specific one wins. The kickoff
+    proposed `ORDER BY parent_episode_id NULLS FIRST, start_ts DESC`, but
+    that is inverted: a PARENT is exactly the row whose parent_episode_id
+    IS NULL, so NULLS FIRST selects the OUTERMOST episode. Ordering here is
+    therefore NULLS LAST -- children (non-null parent) sort ahead of
+    parents -- with start_ts DESC as the tiebreaker among siblings, picking
+    the latest-starting and thus tightest-fitting span. Proven by a test
+    against a real nested fixture rather than trusted.
+
+    Returns None when nothing contains the event -- e.g. the trace was
+    ingested but episode assembly has not run for that session yet. That
+    is a legitimate no-op (blocking question 2's stated default), not an
+    error and not a retry trigger.
+    """
+    anchor = await pool.fetchrow(
+        "SELECT te.session_id, te.timestamp "
+        "FROM observation_events oe "
+        "JOIN trace_events te ON te.id = oe.event_id "
+        "WHERE oe.observation_id = $1::uuid "
+        "ORDER BY te.timestamp ASC LIMIT 1",
+        observation_id,
+    )
+    if anchor is None:
+        return None
+
+    return await pool.fetchval(
+        "SELECT id FROM episodes "
+        "WHERE session_id = $1 "
+        "  AND start_ts <= $2 "
+        "  AND (end_ts IS NULL OR $2 <= end_ts) "
+        "  AND t_invalid IS NULL "
+        "ORDER BY parent_episode_id NULLS LAST, start_ts DESC "
+        "LIMIT 1",
+        anchor["session_id"], anchor["timestamp"],
+    )
 
 
 async def handle_promote_observation_to_claim(pool: asyncpg.Pool, payload: dict) -> None:
@@ -161,26 +216,47 @@ async def handle_promote_observation_to_claim(pool: asyncpg.Pool, payload: dict)
         )
 
     task_ids = payload.get("task_ids") or []
-    if not task_ids:
+    justification_episode_id = payload.get("justification_episode_id")
+
+    # Option B: EITHER anchor is sufficient. Bail only when there is nothing
+    # to anchor the claim to at all -- capture_claim would return None in
+    # that case anyway, but only AFTER computing an embedding (a real Voyage
+    # call), so checking here keeps an unanchorable observation free rather
+    # than merely useless.
+    if not task_ids and not justification_episode_id:
         log.debug(
-            "promote_observation_to_claim: observation %s has no task_ids; "
-            "skipping before embedding spend", observation_id,
+            "promote_observation_to_claim: observation %s has neither task_ids "
+            "nor a justification episode; skipping before embedding spend",
+            observation_id,
         )
         return
 
-    live = await pool.fetch(
-        "SELECT 1 FROM task_nodes WHERE skill_ref = ANY($1::text[]) AND t_invalid IS NULL",
-        task_ids,
-    )
-    if not live:
-        log.debug(
-            "promote_observation_to_claim: none of %r resolve to a live task_node; "
-            "skipping observation %s before embedding spend", task_ids, observation_id,
+    # Only the task_node path needs pre-validating: an episode id came from
+    # our own resolution query against a live episodes row, whereas task_ids
+    # are caller-supplied skill_refs that may match nothing. When task_ids
+    # resolve to nothing but an episode IS present, that is the ordinary
+    # episode-justified case -- proceed with an empty task list rather than
+    # skipping.
+    if task_ids:
+        live = await pool.fetch(
+            "SELECT 1 FROM task_nodes WHERE skill_ref = ANY($1::text[]) AND t_invalid IS NULL",
+            task_ids,
         )
-        return
+        if not live:
+            if not justification_episode_id:
+                log.debug(
+                    "promote_observation_to_claim: none of %r resolve to a live "
+                    "task_node and no episode; skipping observation %s before "
+                    "embedding spend", task_ids, observation_id,
+                )
+                return
+            task_ids = []
 
     claim_id = await promote_observation_to_claim(
-        pool, observation_id=str(observation_id), task_ids=list(task_ids),
+        pool,
+        observation_id=str(observation_id),
+        task_ids=list(task_ids),
+        justification_episode_id=justification_episode_id,
     )
     if claim_id is None:
         log.info(

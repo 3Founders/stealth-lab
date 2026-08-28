@@ -43,11 +43,22 @@ class FakePool:
         self.fetched.append((sql, args))
         return self._fetch_rows
 
+    async def fetchval(self, sql, *args):
+        # Added when Option B introduced resolve_justification_episode():
+        # the enqueue path now resolves a containing episode first. None
+        # here means "no episode covers this event", which is the ordinary
+        # case for a session episode assembly hasn't processed yet.
+        self.fetched.append((sql, args))
+        return None
+
     async def execute(self, sql, *args):
         self.executed.append((sql, args))
 
 
 def _trace_row(tool_input):
+    # session_id/timestamp are real trace_events columns; Option B's
+    # resolve_justification_episode() reads them off the anchor row, so the
+    # fake carries them rather than pretending the schema is narrower.
     return {
         "id": "11111111-1111-1111-1111-111111111111",
         "event_type": "tool_call",
@@ -56,6 +67,8 @@ def _trace_row(tool_input):
         "tool_output": None,
         "owner_id": None,
         "visibility": "public",
+        "session_id": "sess-fake",
+        "timestamp": 1_700_000_000,
     }
 
 
@@ -100,6 +113,10 @@ async def test_persisting_an_observation_enqueues_a_promotion_job(monkeypatch):
     payload = json.loads(args[1])
     assert payload["observation_id"] == "obs-abc"
     assert payload["task_ids"] == []
+    # Option B: the payload now carries an episode anchor. None here --
+    # this FakePool resolves no episode -- but the key must be present,
+    # because the handler distinguishes "absent" from "resolved to None".
+    assert "justification_episode_id" in payload
 
 
 @pytest.mark.asyncio
@@ -160,7 +177,8 @@ async def test_unresolvable_task_ids_skip_before_any_spend(monkeypatch):
 async def test_resolvable_task_ids_do_call_promote(monkeypatch):
     seen = {}
 
-    async def fake_promote(pool, *, observation_id, task_ids):
+    async def fake_promote(pool, *, observation_id, task_ids,
+                           justification_episode_id=None):
         seen["observation_id"] = observation_id
         seen["task_ids"] = task_ids
         return "claim-1"

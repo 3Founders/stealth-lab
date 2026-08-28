@@ -186,7 +186,21 @@ async def capture_claim(
                 "AND t_invalid IS NULL",
                 task_ids,
             )
-            if not rows:
+            # Option B (approved 2026-08-28): a claim may be justified by an
+            # EPISODE instead of by a task_node. Before this, `not rows`
+            # returned unconditionally, which fired ahead of the
+            # `justification_episode_id is not None` branch below and made
+            # that branch dead code on the task-less path -- so a
+            # trace-derived observation, which has no task_node to resolve
+            # against, could never become a claim at all.
+            #
+            # Both inputs missing is still nothing to anchor to, and still
+            # returns None: that safety net is deliberate and must not
+            # regress. The PRODUCES/CLAIM_OF loop below no-ops naturally on
+            # an empty `rows`, so an episode-justified claim simply carries
+            # no task edge -- which is the real provenance shape, not a
+            # degraded one.
+            if not rows and justification_episode_id is None:
                 return None
             node_id = await conn.fetchval(
                 "INSERT INTO knowledge_nodes "

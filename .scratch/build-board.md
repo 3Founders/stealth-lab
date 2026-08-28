@@ -1902,6 +1902,88 @@ Suite: **1443 passed / 115 skipped / 0 failed** on the committed gate
 (+13 new offline tests). With the untriaged test_band1_11_redaction.py:
 1446 / 115 / 3 - same pre-existing wrong-layer failures as db7a5a4.
 
+### Lane INFRA - Option B (APPROVED): episode-justified claims (2026-08-28)
+
+Decision record: founder kickoff `kickoff_option_b_episode_claims.md`
+approved Option B - a claim may be anchored by an EPISODE instead of a
+task_node. Implemented as specified, with one correction (below).
+
+THREE BLOCKERS, all verified in the real code before touching anything:
+  1. handle_normalize_trace_event always enqueued "task_ids": [], never
+     looked up an episode.
+  2. handle_promote_observation_to_claim bailed on empty task_ids before
+     ever considering justification_episode_id.
+  3. claims.py `if not rows: return None` fired AHEAD of the
+     `justification_episode_id is not None` branch, making that branch
+     dead code on the task-less path.
+All three fixed in that order. The both-anchors-missing safety net still
+returns None and has its own regression test.
+
+CORRECTION TO THE KICKOFF - the proposed nesting SQL was INVERTED.
+It specified `ORDER BY parent_episode_id NULLS FIRST, start_ts DESC` for
+"innermost wins". But a PARENT is exactly the row whose
+parent_episode_id IS NULL, so NULLS FIRST selects the OUTERMOST episode.
+Checked against the live database rather than reasoned about:
+    parent_episode_id NULLS FIRST -> PARENT
+    parent_episode_id NULLS LAST  -> CHILD
+Shipped as NULLS LAST, with a test pinning the SQL so nobody restores the
+inverted form, plus pure-Python sort-key tests for nesting and sibling
+tiebreak. The kickoff explicitly asked for this to be sanity-checked
+rather than trusted; it did not survive the check.
+
+REAL NUMBERS, not assertions.
+Episode-resolution coverage across all already-ingested observations:
+    resolves to an episode : 428
+    no episode resolves    : 2351   (2779 total, 15.4% coverage)
+That 15.4% is not a defect - it is blocking question 2's documented
+no-op. Broken down by session it is exactly the expected shape:
+    64f766fa (the ONE transcript ingested, 50 episodes): 441 obs, 428
+      resolve = 97%
+    all 7 other sessions (0 episodes ingested): 2338 obs, 0 resolve
+Coverage is bounded by how many sessions episode assembly has run for,
+not by the resolver.
+
+Then a real run on a handful (10 episode-anchored jobs), draining
+through run_ingestion.py against the fresh compose DB:
+    BEFORE: claims 0 | claim_sources 0 | episode_links 0
+    AFTER : claims 10 | claim_sources 10 | episode_links 10 | jobs failed 0
+One real claim, verified end to end (proof requirement 4 - the
+claim_sources half is untouched code, so it was checked rather than
+assumed):
+    node_type=claim | claim_type=command_executed
+    epistemic_status=observed  (correct: deterministic extractor)
+    extraction_version=deterministic_v1:1 | embedding present
+    joined to BOTH its source observation AND its justifying episode
+**The founding loop is now 4 of 5 hops: trace -> observation -> claim.**
+Only claim -> procedure remains, and that still needs solve_task/a model.
+
+BLOCKING QUESTIONS - both defaults applied as written:
+  1. No special epistemic_status or properties flag for the episode-only
+     path; the episode_links row already carries the distinction.
+  2. An observation whose event falls inside no episode is a no-op, not a
+     retry. No scheduling mechanism added.
+
+COST NOTE: capture_claim computes the embedding BEFORE its anchor check,
+so the handler's pre-check (skip when NEITHER anchor is present) is what
+keeps unanchorable observations free. Preserved and tested. The 10 real
+claims did spend 10 Voyage embedding calls; the 2351 unanchorable
+observations spent nothing.
+
+CORRECTION I OWE ON MY OWN EARLIER TRIAGE: db7a5a4's note argued the 3
+test_band1_11_redaction.py failures were "a wrong-layer test rather than
+a production regression". That was WRONG. CORE-A's 1ab978d
+("server-side redaction chokepoint in _insert_event, Band 1.11") added
+the missing chokepoint and all 3 now pass. The test was right and the
+gap was real; my reading of it was not. Full suite is now clean WITH
+that file included.
+
+Suite: **1454 passed / 115 skipped / 0 failed** on the gate; **1460 /
+115 / 0** including test_band1_11_redaction.py, which is now green.
+Three of this lane's own earlier offline tests needed updating for the
+new handler contract (FakePool gained fetchval, fake_promote gained the
+new kwarg, the fake trace row gained the real session_id/timestamp
+columns) - updated, not deleted.
+
 Not fixed here (outside this lane's grant): README_MCP_SERVER.md's stale
 7-tool table; the redaction test's layer; the subagent-join failure; the
 transcript-dir CWD mangling.
