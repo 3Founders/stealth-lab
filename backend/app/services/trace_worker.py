@@ -578,12 +578,20 @@ def _spans(cuts: Sequence[int], n: int) -> list:
     ]
 
 
+class TranscriptFormatError(ValueError):
+    """Raised when a file parses cleanly but carries no transcript structure
+    at all -- the wrong-path / format-drift signature. A ValueError subclass
+    so existing `except ValueError` handlers still catch it, but nameable on
+    its own for callers that want to distinguish it."""
+
+
 def assemble_episodes(
     main_lines: Sequence,
     subagent_files: Optional[Mapping] = None,
     *,
     trivial_merge_max_events: Optional[int] = None,
     oversize_subdivide_events: Optional[int] = None,
+    allow_unclassified: bool = False,
 ) -> EpisodeAssembly:
     """Segment one parsed session transcript into episodes using only the
     empirically validated rules (see the section banner above).
@@ -617,6 +625,61 @@ def assemble_episodes(
     n = len(classified)
     if n == 0:
         return EpisodeAssembly([], 0, unparsed, 0, 0, 0, 0, 0)
+
+    # -- WRONG-FORMAT GUARD (the silent-garbage failure mode).
+    #
+    # ingest_transcripts.py's own docstring names the hazard: pointing a
+    # transcript reader at the collector directory (or any other JSONL)
+    # "parses without error and yields silent garbage -- every line
+    # classifying to an empty _Line, so one undifferentiated episode".
+    # Nothing caught that, so the wrong path produced a confident,
+    # plausible-looking single episode with a real fingerprint and a real
+    # content_ref, and write_session_episodes() persisted it.
+    #
+    # A real Claude Code session transcript always carries at least one
+    # structural signal: it opens with a user prompt, and long sessions
+    # additionally commit, run tests, or spawn subagents. A file with
+    # records but ZERO of all four is not a one-episode session -- it is
+    # the wrong file, or a format that drifted past _classify(). Failing
+    # loudly here is strictly better than writing a fake episode, because
+    # the fake is idempotent: its fingerprint matches on re-run, so a
+    # later corrected run would silently insert nothing.
+    #
+    # TWO conditions, both required, because "no prompts" alone is a real
+    # and already-handled case: a zero-prompt session is a legitimate
+    # transcript fragment (a resumed or compacted session) and the
+    # segmenter already marks it with a `zero_prompts` flag rather than
+    # rejecting it. That behaviour is deliberate and stays.
+    #
+    # What distinguishes the wrong-format case is that the records are not
+    # transcript records AT ALL. Every Claude Code transcript line carries
+    # a `type` (one of the 16 observed kinds) and usually a `message`;
+    # a hook collector envelope carries dedup_key/event_type/event/
+    # sequence/session_id and none of those. So: raise only when no line
+    # carries a structural signal AND nothing is even transcript-shaped.
+    #
+    # Requiring ALL FOUR signals absent (not just prompts) keeps a
+    # genuinely unusual-but-real session from tripping on one axis, and
+    # the shape test keeps the zero_prompts contract intact.
+    # `allow_unclassified=True` is the explicit escape hatch -- an opt-in,
+    # never a silent default.
+    transcript_shaped = any(
+        isinstance(rec, Mapping) and ("message" in rec or "type" in rec)
+        for rec in main_lines
+    )
+    if not allow_unclassified and not transcript_shaped and not any(
+        ln.is_prompt or ln.is_commit or ln.is_test or ln.spawns_agent
+        for ln in classified
+    ):
+        raise TranscriptFormatError(
+            f"{n} record(s) parsed but none classified as a prompt, commit, "
+            f"test, or subagent spawn. This is the signature of a wrong path "
+            f"or a format mismatch, not a single-episode session -- refusing "
+            f"to assemble a fake episode. Check the file really is a Claude "
+            f"Code session transcript from ~/.claude/projects/<mangled-path>/ "
+            f"and not a hook collector file from .claude/traces/. Pass "
+            f"allow_unclassified=True to override deliberately."
+        )
 
     prompt_cuts = [i for i, ln in enumerate(classified) if ln.is_prompt]
 
@@ -859,7 +922,21 @@ async def write_session_episodes(
                 "trace",
                 f"{content_ref_prefix}#{ep.source}:{ep.start}:{ep.end}",
                 ep.start_ts or now,
-                json.dumps(_episode_metadata(ep, session_id, fingerprint)),
+                # NOT json.dumps(...): app pools register a jsonb codec whose
+                # encoder is already json.dumps (db/session.py:23-25), so
+                # pre-dumping here encodes TWICE and the column stores a JSON
+                # *string* instead of an object. RUNBOOK.md line 53's exact
+                # documented pitfall ("pass Python objects, not
+                # json.dumps(...) strings").
+                #
+                # This silently broke the replay contract this function's own
+                # docstring promises: the dedup SELECT above reads
+                # metadata->>'assembly_fingerprint', which returns NULL on a
+                # double-encoded value, so NO fingerprint ever matched,
+                # skipped_existing was always 0, and every re-run duplicated
+                # every episode. Measured 2026-08-28: a second run over one
+                # unchanged transcript took episodes 50 -> 100.
+                _episode_metadata(ep, session_id, fingerprint),
                 session_id,
                 project_id,
                 ep.start_ts,

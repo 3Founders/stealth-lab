@@ -1828,9 +1828,83 @@ Suite: **1428 passed / 115 skipped / 0 failed** on the committed gate
 test_band1_11_redaction.py: 1431 / 115 / 3 - same 3 pre-existing
 wrong-layer failures as db7a5a4, unrelated to this change.
 
+### Lane INFRA - episode assembly hardened + run for real (2026-08-28)
+
+`ingest_transcripts.py` committed UNCHANGED first (b1042dc) so the
+starting point is on the record, then hardened here.
+
+CHAIN VERIFIED against the real code, not assumed:
+process_transcript_session() -> load_transcript() -> discover_subagent_files()
+-> assemble_episodes() -> write_session_episodes(). Exactly as described.
+
+1. WRONG-FORMAT GUARD (the silent-garbage failure mode) - LANDED.
+   New `TranscriptFormatError` (a ValueError subclass, so existing
+   handlers still catch it). assemble_episodes() now raises when records
+   parse cleanly but carry NO structural signal AND are not even
+   transcript-shaped. `allow_unclassified=True` is an explicit opt-out.
+   IMPORTANT REFINEMENT found by the suite, not by inspection: the first
+   version broke `test_zero_prompt_session_is_one_flagged_episode`. A
+   zero-prompt session is a LEGITIMATE fragment (resumed/compacted) and
+   already carries a `zero_prompts` flag - that contract is deliberate
+   and stays. The discriminator is therefore two-part: no signal AND no
+   transcript shape (`message`/`type` keys; collector envelopes carry
+   dedup_key/event_type/event instead). Both behaviours now coexist,
+   with a test naming the other so neither is broken silently again.
+
+2. REAL RUN against this lane's OWN Claude Code transcript, into the same
+   fresh compose DB run_ingestion.py already populated:
+     main_lines 2245 | bad_lines 0 | episodes 50 | child_episodes 0
+     subagent_files_seen 2 | subagent_files_joined 0
+     unjoined_subagent_lines 89
+   FLAGS (12 episodes carry one): subdivided 9, folded_trivial 3,
+   oversize_unsubdivided 1. Episode size min 5 / avg 46 / max 239 events,
+   2304 events total. First time the segmentation rules have ever run on
+   real data.
+   OPEN QUESTION for whoever takes episode assembly next: 2 subagent
+   files were SEEN and 0 JOINED, orphaning 89 lines. The
+   sourceToolAssistantUUID join is not matching. Not investigated here.
+
+3. PRIVACY POSTURE - VERIFIED INDEPENDENTLY. This path reads the native
+   UNREDACTED transcript, so this mattered:
+     50/50 episodes `content IS NULL`; 50/50 `content_ref` set;
+     50/50 visibility=private.
+     content_ref form: `<session>.jsonl#main:<start>:<end>` (max 57 chars).
+     metadata is purely structural (fingerprint/segmenter/rules/flags/
+     n_events/source/spawned_by), max 446 chars - too small to hold
+     content. Zero rows match distinctive session prose. No leak.
+
+4. BUG FOUND BY RUNNING IT - BROKEN REPLAY CONTRACT, NOW FIXED.
+   process_transcript_session's docstring promises "rerunning against the
+   same files inserts nothing new (fingerprints match)". It did not: a
+   second run took episodes 50 -> 100, parents_inserted 50,
+   skipped_existing 0.
+   ROOT CAUSE, same class as this morning's observations fix and the same
+   RUNBOOK.md line 53 pitfall: write_session_episodes passed
+   `json.dumps(_episode_metadata(...))` into a `$4::jsonb` param, but app
+   pools register a jsonb codec whose encoder IS json.dumps
+   (db/session.py:23-25). Double-encoded, the column stored a JSON
+   *string*, so the dedup SELECT's `metadata->>'assembly_fingerprint'`
+   returned NULL for every row, nothing ever matched, and every re-run
+   duplicated everything.
+   FIXED by passing the dict. Verified end to end after wiping the 100
+   rows: run 1 = 50 inserted / 0 skipped; run 2 = **0 inserted / 50
+   skipped**. `jsonb_typeof(metadata)` is now `object` (was `string`) for
+   all 50, and the 12 segmentation flags above became readable for the
+   first time - the double-encode had been hiding them behind a NULL.
+
+5. USABILITY NOTE: run from `backend/` (as every documented repo command
+   is), `_default_transcript_dir()` mangles the CWD and yields
+   `...StealthLab-backend`, then reports "no matching transcripts" and
+   exits 1. Needs `CLAUDE_PROJECT_DIR` or an explicit `--transcript-dir`.
+   Flagged, not changed.
+
+Suite: **1443 passed / 115 skipped / 0 failed** on the committed gate
+(+13 new offline tests). With the untriaged test_band1_11_redaction.py:
+1446 / 115 / 3 - same pre-existing wrong-layer failures as db7a5a4.
+
 Not fixed here (outside this lane's grant): README_MCP_SERVER.md's stale
-7-tool table; the redaction test's layer; the documented-quickstart
-ingestion omission.
+7-tool table; the redaction test's layer; the subagent-join failure; the
+transcript-dir CWD mangling.
 
 ## Integrator (= reviewer instance, main checkout)
 - Watches for `lane/*` branch pushes; rebases lane onto origin/main when stale.
