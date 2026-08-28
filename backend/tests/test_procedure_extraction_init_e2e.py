@@ -112,16 +112,25 @@ def test_real_session_produces_an_unapproved_procedure_the_approval_gate_blocks(
                 outcome="success", project_id=PROJECT_ID,
             )
 
-            result = await extract_procedure(pool, source, client=None)  # no client -> deterministic
+            # no client -> DeterministicExtractor actually runs (see
+            # strategies.py), but migration 31 seeds grounded_hybrid_v1
+            # tied on version with deterministic_v1, and it wins
+            # select_extractor()'s own documented tiebreak regardless of
+            # whether a client is available -- extracted_by reflects
+            # which row was NOMINALLY chosen by the registry
+            # (_select_strategy's own contract, pinned by
+            # test_select_strategy_falls_back_to_deterministic_with_no_client_even_for_an_llm_row),
+            # not which strategy object happened to execute it.
+            result = await extract_procedure(pool, source, client=None)
             assert result.procedure_id is not None, f"extraction failed: {result.validation_failures}"
-            assert result.extracted_by == "deterministic_v1@1"
+            assert result.extracted_by == "grounded_hybrid_v1@1"
 
             row = await pool.fetchrow(
                 "SELECT approval_status, extracted_by, capability_statement "
                 "FROM procedures WHERE id = $1::uuid", result.version_row_id,
             )
             assert row["approval_status"] == "proposed"
-            assert row["extracted_by"] == "deterministic_v1@1"
+            assert row["extracted_by"] == "grounded_hybrid_v1@1"
             assert row["capability_statement"]
 
             # THE GATE: applicability.py's own, untouched

@@ -33,18 +33,31 @@ async def _cleanup(pool: asyncpg.Pool) -> None:
     await pool.execute("DELETE FROM procedure_extractors WHERE name = $1", TEST_NAME)
 
 
-def test_the_seeded_deterministic_baseline_is_selectable():
-    """Migration 20's own seed row -- must be selectable with an
-    unrestricted scope out of the box, no setup required. This is what
-    makes deterministic extraction the real, always-available fallback
-    rather than an unreachable code path."""
+def test_grounded_hybrid_wins_the_tiebreak_and_deterministic_baseline_stays_selectable():
+    """Migration 31 seeds grounded_hybrid_v1 tied on version ("1") with
+    migration 20's deterministic_v1 baseline. select_extractor()'s own
+    documented tiebreak (registry.py: prefer non-deterministic when
+    version is tied) means an unrestricted scope now correctly resolves
+    to grounded_hybrid_v1, not deterministic_v1 -- this is the fix for
+    f7262a5's BLOCKER 1, not a regression of this test's original intent.
+    Separately confirms deterministic_v1 is still a real, enabled,
+    approved row -- it only stopped being the tiebreak winner, it was
+    never retired."""
     async def _run():
         pool = await _real_create_pool(DATABASE_URL, min_size=1, max_size=2)
         try:
             selected = await select_extractor(pool, current_scope={})
             assert selected is not None
-            assert selected["name"] == "deterministic_v1"
-            assert selected["kind"] == "deterministic"
+            assert selected["name"] == "grounded_hybrid_v1"
+            assert selected["kind"] == "llm"
+
+            baseline = await pool.fetchrow(
+                "SELECT enabled, review_state FROM procedure_extractors "
+                "WHERE name = 'deterministic_v1' AND version = '1'",
+            )
+            assert baseline is not None
+            assert baseline["enabled"] is True
+            assert baseline["review_state"] == "approved"
         finally:
             await pool.close()
 

@@ -4107,3 +4107,89 @@ Grounded findings from  3_access.sql/ 4_governance.sql/deps.py review. Sequence:
   worktree on `origin/main` rather than rebasing `lane/measure` forward,
   since this board file itself had diverged too far between the two for a
   safe mechanical rebase.
+
+- CORE-A (2026-08-29, kickoff outside the CLAUDE.md wave -- closes
+  f7262a5's BLOCKER 1): **grounded_hybrid_v1 seeded as a real, selectable
+  extractor -- extraction from a task naming a file no longer structurally
+  refused.** f7262a5 diagnosed but explicitly left this to CORE-B
+  ("BLOCKER 1 -- found and diagnosed, NOT fixed here (CORE-B's call)");
+  picked up here instead after confirming with the founder that CORE-A
+  should take it this wave, since nothing had claimed it days later.
+  Root cause, confirmed by reading procedure_extraction/__init__.py,
+  registry.py, strategies.py, and mcp_server/server.py:660-725 directly:
+  GroundedHybridExtractor and its real client (server.py's `client`,
+  already passed into extract_procedure at the solve_task call site) were
+  both already correctly wired -- the ONLY missing piece was data, not
+  code. `select_extractor()` requires `enabled AND review_state=
+  'approved'`, and migration 20 seeds only `deterministic_v1` that way;
+  no llm-kind row had ever existed, so every extraction fell through to
+  DeterministicExtractor, whose `capability_statement` is `goal_text`
+  verbatim (deliberate) -- exactly what V4_capability_abstraction rejects
+  whenever a task names a file.
+  Shipped: `db/31_seed_grounded_hybrid_extractor.sql` -- one INSERT,
+  `grounded_hybrid_v1`/kind=llm/version="1", enabled+approved,
+  idempotent (`ON CONFLICT DO NOTHING`), same convention as every other
+  migration here. Ran `migrate.py` twice against the real (shared, not
+  disposable) DB -- applies clean once, second run is a silent no-op via
+  the ledger; confirmed `procedure_extractors` now holds exactly two
+  live rows (`deterministic_v1` still enabled/approved, `grounded_hybrid_v1`
+  newly enabled/approved).
+  Tied on version ("1") with `deterministic_v1`, `grounded_hybrid_v1` wins
+  `select_extractor()`'s own documented tiebreak (prefer non-deterministic).
+  Updated `tests/test_procedure_extraction_registry_e2e.py`'s
+  `test_the_seeded_deterministic_baseline_is_selectable` (renamed
+  `test_grounded_hybrid_wins_the_tiebreak_and_deterministic_baseline_stays_selectable`):
+  asserts the new tiebreak winner AND separately queries the table to
+  confirm `deterministic_v1` is still a real, enabled, approved row --
+  it only stopped winning the tiebreak, never retired.
+  **Nearly shipped a real mislabeling bug**, caught before commit: first
+  instinct was that `_select_strategy`'s `client is None` branch
+  mis-tags a deterministic-executed procedure with the llm row's name.
+  Wrong -- `test_procedure_extraction_init_offline.py`'s own
+  `test_select_strategy_falls_back_to_deterministic_with_no_client_even_for_an_llm_row`
+  (pre-existing, offline, unrelated to this migration) already pins the
+  opposite as the deliberate contract: `extracted_by` reports which row
+  was *nominally selected* by the registry, not which strategy object
+  happened to execute -- so callers can see which extractor was chosen
+  even when it degrades. Reverted the `__init__.py` edit back to
+  original (zero net diff there) and fixed the actually-stale side
+  instead: `test_procedure_extraction_init_e2e.py`'s
+  `test_real_session_produces_an_unapproved_procedure_the_approval_gate_blocks`
+  asserted `extracted_by == "deterministic_v1@1"` for a `client=None`
+  call, which was only ever true because `deterministic_v1` was the sole
+  selectable row before this migration -- same tiebreak logic as the
+  registry test above, updated to expect `grounded_hybrid_v1@1` with a
+  comment pointing at the offline test that pins the contract. Recording
+  this misstep here rather than quietly fixing it, since a different
+  reader hitting the same tag might reach the same wrong conclusion.
+  **REAL end-to-end proof** (same discipline as f7262a5): ran a script
+  mirroring `bootstrap_demo.py`'s Phase A exactly, but with a REAL
+  General Compute client (same `OpenAI(...)` construction as
+  `server.py`'s `solve_task`) and `goal_text="Fix the pagination cursor
+  bug in app/api/reports.py"` -- the exact BLOCKER 1 shape (a task naming
+  a file). Real output: extraction was NOT rejected by
+  V4_capability_abstraction, `extracted_by == "grounded_hybrid_v1@1"`,
+  `capability_statement = "Fix a logic bug in an API endpoint by
+  modifying the source code and verifying the fix."` -- genuinely
+  abstracted, no filename/symbol leaked, confirmed by eye against the
+  literal goal text.
+  **Full backend suite**: documented offline command (`python -m pytest
+  tests/ -q`, no `DATABASE_URL` exported) -- **1505 passed / 115 skipped
+  / 0 failed**, clean both before and after this change. Also ran the
+  full suite WITH `DATABASE_URL` exported for extra live-DB coverage;
+  surfaced 33-34 failures, ALL traced individually and confirmed
+  unrelated to this change -- `V0Violation: provenance is required` in
+  `test_procedures_e2e.py`/`test_applicability_e2e.py`/etc. (test
+  fixtures pre-dating a V0 gate requirement `capture_procedure()` now
+  enforces) and a `process_pending_jobs` count assertion sensitive to
+  this shared, concurrently-used DB's live queue contents -- same
+  pre-existing-drift class this board's own 2.7 wave entry documented
+  ("the same 40 fail identically on a STASHED CLEAN TREE"). Zero
+  failures in any `procedure_extraction`/registry file either way; all
+  19 e2e + offline tests in that surface pass individually and in
+  combination, both before and after the mislabeling-bug near-miss above.
+  **Not done, out of scope**: the V0-provenance-gate drift affects
+  several unrelated test files repo-wide (applicability/band2.4/band2.8/
+  ingestion) and needs its own pass by whichever lane owns those paths --
+  flagging here rather than fixing blind, since untangling it wasn't
+  this wave's task.
