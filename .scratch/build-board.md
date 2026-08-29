@@ -2532,6 +2532,78 @@ without eligibility gates, which is exactly the half of a procedure the
 applicability cascade needs. Worth a lane's attention: procedures with
 no preconditions can never be disqualified, only matched.
 
+
+### Lane INFRA - preconditions can finally derive; two bugs, one fixed (2026-08-29)
+
+Commit `cbe5ce4`. Suite 1548 passed / 115 skipped / 0 failed (+9).
+
+--- WHY THIS MATTERED ---
+The applicability cascade is this substrate's central claim: "a violated
+precondition is a DISQUALIFICATION, not a low score". It was inert for
+the entire corpus, because NOTHING had preconditions. Measured before the
+fix: 0 of 18 agent_traces carried a project_id, 0 claims existed with a
+'project:' subject, and every extracted procedure (live or retired) had
+preconditions = 0. A procedure with zero preconditions can be matched but
+never refused.
+
+--- BUG 1 (FIXED): the collector computed project_id and threw it away ---
+hook_wrapper.py:
+    project_dir = os.environ.get("CLAUDE_PROJECT_DIR") or payload.get("cwd")
+    project_id = project_dir
+    ...
+    _ = project_id     # "not part of the collector's file-level record"
+derive_preconditions() (derive.py:75) returns [] the moment
+evidence.project_id is missing -- deliberately, so nothing is fabricated.
+That one discarded line made preconditions structurally impossible.
+
+Fixed across three files: append_event() takes project_id and writes it at
+RECORD level (outside `event`, so compute_dedup_key() is untouched and
+replay stays idempotent -- pinned by a test); hook_wrapper passes it; and
+_ensure_trace_header() binds it with
+  ON CONFLICT (trace_id) DO UPDATE
+    SET project_id = COALESCE(agent_traces.project_id, EXCLUDED.project_id)
+rather than DO NOTHING, so headers written before this change get
+backfilled once, and an existing value is never overwritten.
+
+PROVEN END TO END on the real DB:
+  collector record   project_id = 'stealthlab-precon-proof2'
+  agent_traces       project_id = 'stealthlab-precon-proof2'  (always NULL before)
+  probe_environment  3 facts: language=python, package_manager=pip,
+                     has_test_runner=pytest
+  project_state      3 live claims
+  derive_preconditions -> 3 REAL preconditions -- the first this substrate
+                     has ever produced from trace evidence.
+
+--- BUG 2 (NOT FIXED, needs a design call): probe_environment is non-recursive ---
+It reads manifests only at the exact root handed to it. project_id from
+the hook is CLAUDE_PROJECT_DIR = the REPO ROOT. StealthLab is a monorepo
+with no root manifest, so:
+    probe_environment(<repo root>) -> 0 facts
+    probe_environment(<repo>/backend)  -> 3 (language=python, pip, pytest)
+    probe_environment(<repo>/frontend) -> 4 (next x3, npm)
+So on this repo -- and any monorepo -- the chain STILL yields nothing
+end-to-end even with project_id threaded correctly. Bug 1 was necessary
+but not sufficient.
+
+NOT PATCHED because it is a real design question, not a typo: if a repo
+has a Python backend and a Node frontend, is "language=python" a fact
+about the PROJECT? Either the probe becomes sub-project aware (and
+project_id stops being one string per repo), or the scope subject gets a
+sub-path component, or the probe merges facts across children and accepts
+that some gates will be irrelevant to any given episode -- which is
+exactly the over-gating failure filter_load_bearing_claims() was written
+to prevent. environment_probe.py is shared services code; flagging for
+whoever owns that call rather than picking one silently.
+
+--- ALSO STILL OPEN, unchanged ---
+- The 690 distilled tau3 procedures: 603 have NO preconditions, 87 have
+  free-text ones that are not checkable predicates (e.g.
+  {"predicate": "Reason is:"} -- a list header that survived a bullet
+  split). All 690 are verification_state='verified' with ZERO evidence
+  rows.
+- Nothing in the ingestion pipeline calls assert_environment_claims();
+  today only bootstrap_demo.py does. Even with bugs 1 and 2 fixed, a real
+  session still needs something to probe its repo and assert the facts.
 ## Integrator (= reviewer instance, main checkout)
 - Watches for `lane/*` branch pushes; rebases lane onto origin/main when stale.
 - Runs full suite on the merge candidate; merges green, rejects red with notes here.
