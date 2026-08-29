@@ -3766,7 +3766,6 @@ Grounded findings from  3_access.sql/ 4_governance.sql/deps.py review. Sequence:
   effect once landed. Item 2 of the founder's two-thread request (outside-
   eye pass on CORE-B's new bootstrap_demo.py once it lands) queued, not
   started - nothing to review yet.
-<<<<<<< HEAD
 
 - MEASURE (2026-08-27, fourth wave): **free-tier cap confirmed still NOT
   reset - prep-only work this wave, zero live extraction calls** (founder
