@@ -91,27 +91,40 @@ async def section_ingestion(pool):
 
 
 async def section_episodes(pool):
-    # "roughly what fraction of ingested sessions have been processed" --
-    # distinct session_id on each side. Deliberately rough: an episode may
-    # cover a session only partially, and this does not try to detect that.
-    ingested = await _val(
-        pool, "SELECT count(DISTINCT session_id) FROM trace_events"
-    )
+    # Coverage MUST be the INTERSECTION, not a ratio of two independent
+    # counts. Ingestion reads .claude/traces/ (hook events -> trace_events)
+    # while episode assembly reads ~/.claude/projects/ (transcripts ->
+    # episodes); the two populate the same session_id namespace but from
+    # different sources, so they can drift apart completely. The first cut
+    # of this panel divided one total by the other and rendered "100%" over
+    # sets with ZERO sessions in common, then "300%" once assembly ran
+    # ahead -- a number that actively hid the exact break the founding-loop
+    # audit was looking for. Overlap is the only honest denominator: an
+    # observation can only resolve a justification episode when its own
+    # session appears on BOTH sides.
+    ingested = await _val(pool, "SELECT count(DISTINCT session_id) FROM trace_events")
     assembled = await _val(
         pool,
         "SELECT count(DISTINCT session_id) FROM episodes WHERE session_id IS NOT NULL",
     )
+    overlap = await _val(
+        pool,
+        "SELECT count(*) FROM ("
+        " SELECT session_id FROM episodes WHERE session_id IS NOT NULL"
+        " INTERSECT SELECT session_id FROM trace_events) x",
+    )
     pct = "-"
     try:
-        i, a = int(ingested.replace(",", "")), int(assembled.replace(",", ""))
-        pct = f"{(100.0 * a / i):.0f}%" if i else "n/a (no sessions ingested)"
+        i, o = int(ingested.replace(",", "")), int(overlap.replace(",", ""))
+        pct = f"{(100.0 * o / i):.0f}%" if i else "n/a (no sessions ingested)"
     except ValueError:
         pass
     return [
         ("episodes", await _val(pool, "SELECT count(*) FROM episodes")),
         ("sessions in trace_events", ingested),
         ("sessions with an episode", assembled),
-        ("coverage", pct),
+        ("sessions on BOTH sides", overlap),
+        ("coverage (overlap / ingested)", pct),
     ]
 
 
