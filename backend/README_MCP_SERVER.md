@@ -157,16 +157,39 @@ effect and the endpoint is open to anything that can reach that port.
 
 ### 3. Connect Claude Code
 
+**The repo already ships a committed `.mcp.json`** registering this server
+at `http://127.0.0.1:8765/mcp`, so a fresh clone needs no `claude mcp add`
+at all. It carries no secret -- the header is written as
+
+```json
+"Authorization": "Bearer ${STEALTHLAB_MCP_TOKEN}"
+```
+
+and Claude Code expands `${VAR}` from the environment at load time. The
+only requirement is that **`STEALTHLAB_MCP_TOKEN` is exported in the shell
+you launch `claude` from** -- putting it in `backend/.env` is enough for
+the server, but NOT for the client, which never reads that file.
+
+```bash
+export STEALTHLAB_MCP_TOKEN=...   # same value the server was started with
+claude   # `/mcp` should now list stealthlab as connected
+```
+
+If you would rather register it yourself instead of using the committed
+file, use **`--scope local`, not `project`**:
+
 ```bash
 claude mcp add --transport http stealthlab http://127.0.0.1:8765/mcp \
   --header "Authorization: Bearer $STEALTHLAB_MCP_TOKEN" \
   --scope local
 ```
 
-**Use `--scope local`, not `project`.** Project scope writes to `.mcp.json`
-in the repo root, which is meant to be checked into version control --
-that would commit the bearer token. Local scope keeps the entry in
-`~/.claude.json`.
+`--scope project` would have the CLI write your **literal, expanded** token
+into `.mcp.json` and overwrite the env-var placeholder above -- committing
+a live credential. Local scope keeps the entry in `~/.claude.json` instead.
+That is also where an existing local registration lives, and a local entry
+takes precedence over the committed one, so if `/mcp` shows a stale URL or
+token, check `~/.claude.json` first.
 
 `propose_synthesis` and `solve_task` are genuinely long-running; raise the
 per-server tool timeout past Claude Code's default by adding a `timeout`
