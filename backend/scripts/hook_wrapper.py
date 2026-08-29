@@ -176,18 +176,24 @@ def main() -> int:
 
         from app.services.trace_collector import append_event
 
+        # project_id IS threaded through now. It used to be computed here
+        # and discarded (`_ = project_id`), which made it structurally
+        # impossible for any trace-derived procedure to carry a
+        # precondition: derive_preconditions() returns [] immediately when
+        # evidence.project_id is missing (procedure_extraction/derive.py),
+        # so the applicability cascade -- the thing that makes a violated
+        # precondition a DISQUALIFICATION rather than a low score -- had
+        # nothing to gate on for the entire corpus. Measured 2026-08-29:
+        # 0 of 18 agent_traces carried a project_id, and every extracted
+        # procedure had zero preconditions.
         append_event(
             event,
             file_path,
             session_id=session_id,
             event_type=hook_event_name,
             sequence=None,  # real payloads carry no native sequence -- see append_event()'s docstring
+            project_id=project_id,
         )
-        # project_id is not part of the collector's file-level record
-        # today (agent_traces/episodes carry it, not trace_events/the
-        # collector file) -- intentionally not threaded through here;
-        # the worker or a later step would need it if that changes.
-        _ = project_id
     except Exception as exc:  # noqa: BLE001 -- fail-safe: a bug in this
         # wrapper must never block the user's actual tool call.
         print(f"hook_wrapper: append_event failed: {exc!r}", file=sys.stderr)

@@ -252,6 +252,7 @@ def append_event(
     event_type: str,
     sequence: int | None = None,
     max_lines: int = DEFAULT_MAX_LINES,
+    project_id: str | None = None,
 ) -> dict:
     """
     Redacts, keys, and appends one event to the local collector file.
@@ -338,6 +339,15 @@ def append_event(
             "sequence": resolved_sequence,
             "event": redacted,
         }
+        # project_id rides at RECORD level, deliberately outside `event`.
+        # compute_dedup_key() hashes the event payload only (see its own
+        # docstring on why post-redaction hashing was a bug), so adding
+        # this cannot shift any existing dedup_key -- replay stays
+        # idempotent and already-collected files keep matching. Omitted
+        # entirely when unknown rather than written as null, so old files
+        # and new ones have the same shape for a reader.
+        if project_id:
+            record["project_id"] = project_id
         line = json.dumps(record)
 
         # The real, O(1) append. fsync so a crash immediately after

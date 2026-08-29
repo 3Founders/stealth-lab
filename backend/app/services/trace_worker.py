@@ -191,12 +191,28 @@ def read_overflow_payload(raw_payload_ref: str) -> dict:
 
 async def _ensure_trace_header(conn: asyncpg.Connection, trace_id: str, session_id: str,
                                 started_at: datetime, owner_id: str | None = None,
-                                visibility: str = "public") -> None:
+                                visibility: str = "public",
+                                project_id: str | None = None) -> None:
+    """
+    project_id was a real column (migration 17) that nothing ever wrote --
+    the collector computed it and discarded it, so 0 of 18 agent_traces
+    carried one and derive_preconditions() short-circuited to [] for the
+    entire corpus. Now threaded from the collector record.
+
+    The ON CONFLICT deliberately UPDATEs project_id when the stored value
+    is NULL: headers written before this change already exist, and a plain
+    DO NOTHING would leave them permanently project-less even once the
+    collector starts supplying one. COALESCE keeps it a one-way fill --
+    an existing non-null value is never overwritten by a later, possibly
+    different, cwd for the same trace.
+    """
     await conn.execute(
         "INSERT INTO agent_traces (trace_id, session_id, started_at, schema_version, "
-        "owner_id, visibility) "
-        "VALUES ($1, $2, $3, $4, $5, $6::visibility_level) ON CONFLICT (trace_id) DO NOTHING",
-        trace_id, session_id, started_at, SCHEMA_VERSION, owner_id, visibility,
+        "owner_id, visibility, project_id) "
+        "VALUES ($1, $2, $3, $4, $5, $6::visibility_level, $7) "
+        "ON CONFLICT (trace_id) DO UPDATE "
+        "SET project_id = COALESCE(agent_traces.project_id, EXCLUDED.project_id)",
+        trace_id, session_id, started_at, SCHEMA_VERSION, owner_id, visibility, project_id,
     )
 
 
@@ -293,6 +309,7 @@ async def process_collector_file(pool: asyncpg.Pool, file_path: Path, *,
                     await _ensure_trace_header(
                         conn, trace_id, session_id, started_at,
                         owner_id=owner_id, visibility=visibility,
+                        project_id=record.get("project_id"),
                     )
                     headers_ensured.add(trace_id)
                 new_id = await _insert_event(
