@@ -2274,6 +2274,106 @@ Not fixed here (outside this lane's grant): README_MCP_SERVER.md's stale
 7-tool table; the redaction test's layer; the subagent-join failure; the
 transcript-dir CWD mangling.
 
+
+### Lane INFRA - DOGFOODING PILOT REPORT: founding loop closed on real data (2026-08-29)
+
+Answers the BLOCKING founder dependency: "confirm whether your real traces
+are actually flowing through a genuine trace_events -> assemble_episodes()
+-> observation -> claim -> procedure chain, not a fixture/synthetic path."
+
+ANSWER: they were NOT. They are now, and one full chain is hand-audited
+with real ids. Full write-up: `.scratch/research/founding-loop-real-data-proof.md`
+Commit: `bc2028b`.
+
+--- WHAT WAS ACTUALLY IN THE DB (before this session) ---
+trace_events held 1,390 rows and NONE of them were dogfooding data. They
+were two synthetic script runs -- `precond-populate-20260826-000810` (700
+events, tool_name populate_preconditions) and
+`distill-banking-20260824-150601` (690, distill_policy) -- with every
+event in each run carrying one identical timestamp, i.e. batch-written by
+a script, not emitted by a live session. The 62 ingestion_jobs marked
+`done` were test fixtures from 2026-08-20 (`dedup_key:
+"ingjob-test-dedup-1"`, `"nonexistent"`) whose trace_event_ids do not
+exist in trace_events -- they processed nothing.
+observations 0 · observation_events 0 · claims 0 · episode_links 0 ·
+claim_sources 0.
+
+The decisive query:
+    episodes.session_id INTERSECT trace_events.session_id  =  0
+The two halves of the pipeline were reading disjoint session sets and had
+never met. Ingestion reads `.claude/traces/` (hook events); assembly reads
+`~/.claude/projects/` (transcripts). Same session_id namespace, different
+sources, zero overlap in practice.
+
+This is precisely the failure mode the exit-criterion review warned about.
+1,390 events + 11 episodes LOOK like a working loop. "Lots of real trace
+volume" was not "the loop is exercised." Flagging it explicitly because
+the criterion has already been tripped once by exactly this.
+
+The real data was on disk the whole time, never ingested: 14 hook-trace
+files in `.claude/traces/` (~14.8MB, sessions through 08-29) and 47 Claude
+Code transcripts (~122MB).
+
+--- THE FIX: RUN THE PIPELINE. NO PRODUCTION CODE CHANGED. ---
+run_ingestion.py over .claude/traces, drained to `claimed: 0`, then
+ingest_transcripts.py:
+    trace_events   1,390 -> 5,731   (16 real sessions, real
+                                     PreToolUse/PostToolUse mix, 08-20..08-29)
+    observations       0 -> 3,106   (deterministic_v1@1)
+    episodes          11 -> 1,187   (48 sessions; session overlap 0 -> 10)
+Replay contract: second ingest_transcripts run = 0 inserted / 106 skipped.
+Privacy: all 1,182 assembled episodes have content IS NULL (the only 5
+rows with content are pre-existing hand-seeded `visitor-local` ones).
+Metadata double-encode histogram {1: 1181, 2: 6} -- the 6 are stale
+08-15/16 rows predating the fix; no NEW episode is double-encoded.
+
+--- THE HAND-AUDITED CHAIN (every hop read back from the DB) ---
+    trace_event 86f38820-29a4-42a3-abf5-60700872982a  (seq 135, Write)
+ -> episode     a08548b1-4fdc-427f-b912-c3c7ced852be
+       metadata.segmenter = "trace_worker/episode_assembly.v1"
+       content NULL, n_events 156, content_ref ...jsonl#main:1875:2031
+       (resolved by calling the REAL resolve_justification_episode(),
+        not hand-picked)
+ -> observation 42bbf38c-7716-4bc8-8970-4cad62dfd4e6  (file_touched)
+ -> claim       182d6278-0f03-4550-a1e5-f46cff671300  (truth_state IN)
+       claim_sources AND episode_links rows both present
+ -> procedure   01a04c6a-edcb-7e21-b74f-eb3ef2efc63f
+       candidate / proposed, extracted_by deterministic_v1@1, 39 steps,
+       source_episode_ids = [a08548b1-...] -- closes back to hop 2 by id.
+
+--- PROPOSED ROADMAP DELTA (surfaced, NOT applied -- Integrator owns it) ---
+Band 2 exit bullet 1 ("founding loop executed once end-to-end on real
+data, hand-audited at each hop") can be ticked CLOSED, citing the ids
+above, WITH the Part D caveats. Also recommend amending
+BAND2_CLOSURE_REVIEW.md per option 1 of
+`.scratch/research/band2-founding-loop-exit-criterion-review.md`, so the
+9/9 scorecard stops implying this bullet was covered all along.
+
+--- WHAT IT DOES NOT CLOSE (do not let this get rounded up) ---
+1. HIGHEST-VALUE FOLLOW-UP -- hops 4/5 were invoked BY HAND. There is an
+   ordering dependency with no recovery path: ingestion ran before
+   assembly, so all 3,106 promote_observation_to_claim jobs resolved
+   justification_episode_id = NULL, completed as `done`, and produced ZERO
+   claims. Nothing re-enqueues them once the episodes exist. That is why
+   the DB shows 1 claim and not ~3,106. Needs a backfill/re-enqueue path.
+2. extract_procedure() has NO caller anywhere in the ingestion pipeline.
+   Claim -> procedure is not wired as a job at all.
+3. The claim's `statement` is the observation label verbatim. Real
+   provenance, near-zero semantic value. The plumbing is proven; the value
+   of what flows through it is not.
+4. Hop 5 passed V4 only because I chose a goal naming no file or command.
+   capability_statement = goal_text verbatim is still unfixed (CORE-B,
+   procedure_extraction/**). A goal naming a file still fails.
+5. Not a fresh DB -- ran alongside the 698 seeded tau3 procedures. The
+   cold-start framing of bullet 1 is still better served by
+   bootstrap_demo.py on a fresh volume.
+
+--- ALSO FIXED (code, same commit) ---
+backend/scripts/dev_dashboard.py's episode-coverage panel divided two
+INDEPENDENT session counts and rendered "100%" over sets with zero
+sessions in common, then "300%" once assembly ran ahead. It actively hid
+the exact break this audit existed to find. Now reports the INTERSECT plus
+a "sessions on BOTH sides" row: currently 10/16 = 62%.
 ## Integrator (= reviewer instance, main checkout)
 - Watches for `lane/*` branch pushes; rebases lane onto origin/main when stale.
 - Runs full suite on the merge candidate; merges green, rejects red with notes here.
