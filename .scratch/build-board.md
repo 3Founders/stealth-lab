@@ -2604,6 +2604,46 @@ whoever owns that call rather than picking one silently.
 - Nothing in the ingestion pipeline calls assert_environment_claims();
   today only bootstrap_demo.py does. Even with bugs 1 and 2 fixed, a real
   session still needs something to probe its repo and assert the facts.
+### Lane MEASURE - task_002 matched A/B, 10 trials/arm: 10/10 vs 1/10, p=0.0001 (2026-08-29)
+
+Full writeup: `.scratch/research/task002-matched-ab-10trials.md`.
+
+substrate (stealthlab_procedures) 10/10 · bm25 same-corpus control 1/10 ·
+Fisher exact two-sided p = 0.0001. Matched on task, agent model
+(gemma-4-31B-it), user model (gpt-oss-120b), corpus, step/timeout budget.
+Agent temp 0.7 so ten trials are ten samples, not ten copies; user temp
+0.0 so the persona cannot volunteer the $50k/month spend -- that
+volunteering was the confound that made the earlier single run
+uninterpretable. All 20 sims terminated `user_stop`; no timeouts.
+
+DO NOT QUOTE 10/10 vs 1/10 WITHOUT THESE. Three uncontrolled confounds:
+ 1. top_k 18 (substrate) vs 10 (bm25) -- substrate sees ~80% more material.
+ 2. Different system prompts (stealthlab_procedures.md vs
+    classic_rag_bm25_no_grep.md).
+ 3. The 690 substrate procedures were LLM-distilled from these same docs.
+    bm25 got no such pass. Part of the delta may be "LLM-preprocessed
+    corpus beats raw chunks", not "verified procedural memory works".
+    Needs openai_embeddings + golden_retrieval arms to separate.
+
+AND THE METRIC FLATTERS US. reward_basis is ["DB"] -- it checks only that
+apply_for_credit_card fired with card_type="Platinum Rewards Card". It
+does not score what the agent said. 5 of the 10 WINNING substrate trials
+told the customer the Platinum annual fee is $150 and never said $200.
+Truth is a $200 fee with a $150 rebate above $7,500/mo spend, and the
+procedure block we handed the agent said `Note $200.00 annual fee`
+correctly. The agent collapsed rebate into fee. That is a mis-statement of
+price, and it scores 1.0. Honest read: the substrate reliably fixes the
+ACTION, not the EXPLANATION.
+
+Two known defects confirmed visible in the live agent prompt:
+ - `ELIGIBILITY: none recorded -- standard policy applies`
+ - `(verified: 10 prior successes)` on a procedure with ZERO evidence rows
+
+Next to make this defensible: equalise top_k, add openai_embeddings and
+golden_retrieval arms, extend past n=1 task (phaseN across 71 tasks was
+2.8%), and add a communicate/nl_assertions check so the $150 error costs
+something.
+
 ## Integrator (= reviewer instance, main checkout)
 - Watches for `lane/*` branch pushes; rebases lane onto origin/main when stale.
 - Runs full suite on the merge candidate; merges green, rejects red with notes here.
