@@ -2617,14 +2617,14 @@ blocking question in the Log, continue with the next queue item.
    cleared before invocation, confirming it's env-level (.env loading
    mid-run) not this change -- zero regressions in the non-DB 1268].
    Production and eval now share one terse-label contract; no drift.)*
-## Founder dependencies (2 now BLOCKING v0.1 launch, 2026-08-28)
+## Founder dependencies (0 now BLOCKING v0.1 launch, 2026-08-29 update)
 
 | Ruling | Blocks | State |
 |---|---|---|
 | D1 capability bands | nothing (default live in Â§16, tagged) | open |
 | D4 deletion mechanism | Band 5.6 only | open |
-| OpenRouter / live-model budget decision | v0.1 README quickstart live-model box | open, **BLOCKING** -- see budget-wall section below |
-| Chaitanya dogfooding pilot report | v0.1 launch; must confirm his traces run through a real `assemble_episodes()` call, not a fixture path | open, **BLOCKING** |
+| OpenRouter / live-model budget decision | v0.1 README quickstart live-model box | resolved -- see budget-wall section below |
+| Chaitanya dogfooding pilot report | v0.1 launch | resolved -- ca75d22, real founding-loop data, see below |
 
 ## OpenRouter budget wall (2026-08-27, MEASURE) - READ BEFORE ANY LIVE SWEEP
 
