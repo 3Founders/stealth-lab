@@ -268,6 +268,10 @@ async def handle_promote_observation_to_claim(pool: asyncpg.Pool, payload: dict)
 JOB_HANDLERS: dict[str, JobHandler] = {
     "normalize_trace_event": handle_normalize_trace_event,
     "promote_observation_to_claim": handle_promote_observation_to_claim,
+    # 'extract_procedure_from_episode' is registered further down, right
+    # after its handler is defined -- that handler sits below the sweep it
+    # belongs with, and a forward reference here would be a NameError at
+    # import time. Registration is asserted by a test either way.
 }
 
 
@@ -392,6 +396,301 @@ async def enqueue_pending_claim_promotions(
         "enqueued": enqueued,
         "still_unanchored": unanchored,
     }
+
+
+# ---------------------------------------------------------------------
+# claim -> procedure candidate. The last manual hop in the founding loop.
+#
+# THE QUALITY GATE, and why it is this and not a round number.
+#
+# Measured over all 230 episodes on the real corpus that contain at least
+# one observation (2026-08-29):
+#     n_obs        p25=4  median=8  p75=20  max=517
+#     >=2 distinct observation_types :  79
+#     containing a test_run          :  15
+#     containing a commit_made       :   3
+#     completion signal (either)     :  17
+#     this gate, all three clauses   :  16   (7% of episodes)
+#
+# 1. COMPLETION SIGNAL REQUIRED (a test_run or commit_made observation
+#    inside the episode). This is not a quality heuristic, it is a
+#    correctness requirement: extract_procedure() refuses anything whose
+#    evidence.outcome != "success" (V5_evidence_sufficiency), and
+#    SessionEvidenceSource takes `outcome` as a CALLER-SUPPLIED argument.
+#    So a sweep that hardcodes outcome="success" is asserting something it
+#    has not observed -- fabricating the one field V5 exists to check. A
+#    test that ran or a commit that landed is the only real completion
+#    evidence this substrate actually records, so it is the only honest
+#    basis on which this sweep may claim success. Everything else is
+#    "some tool calls happened", which is not an outcome.
+#
+# 2. n_obs >= 5. p25 is 4, so this drops the bottom quartile. Below five
+#    observations there is not enough tool sequence for
+#    derive_step_skeleton() to produce a step list worth reviewing.
+#
+# 3. n_types >= 2. THE FILTER THAT KILLS THE GARBAGE. A single-type
+#    episode is "edited six files" or "ran six commands" -- no task shape
+#    at all. This is what excludes the "Modified check3.py"-shaped claims
+#    the corpus audit flagged as near-worthless: those live in
+#    file_touched-only episodes and would burn a real LLM call to produce
+#    a candidate nobody would approve.
+#
+# The V4 validator is a deliberate SECOND line of defence behind this
+# gate, not a replacement for it: if grounded_hybrid_v1 degrades to
+# deterministic_v1 (no client, API failure, ABSTAIN), capability_statement
+# becomes goal_text verbatim, V4 sees the evidence token in it and
+# refuses, and no procedures row is written. Garbage in therefore costs at
+# most one call and still cannot produce a garbage row -- but the gate is
+# what stops us making the call at all.
+#
+# ONE EXTRACTION PER EPISODE, not per claim: the episode is the unit of
+# work extract_procedure() actually consumes (SessionEvidenceSource reads
+# the whole session window). Several claims sharing an episode would
+# otherwise each pay for the same extraction.
+_PENDING_EXTRACTION_SQL = """
+WITH claim_episode AS (
+    -- claims that have a justifying episode and no procedure yet
+    SELECT DISTINCT el.episode_id
+    FROM episode_links el
+    JOIN knowledge_nodes k ON k.id = el.target_id
+     AND k.node_type = 'claim' AND k.t_invalid IS NULL
+    WHERE el.target_table = 'knowledge_nodes'
+),
+profile AS (
+    SELECT ep.id AS episode_id, ep.session_id,
+           count(DISTINCT o.id) AS n_obs,
+           count(DISTINCT o.observation_type) AS n_types,
+           count(DISTINCT o.id) FILTER (
+               WHERE o.observation_type IN ('test_run', 'commit_made')) AS completion
+    FROM episodes ep
+    JOIN trace_events te ON te.session_id = ep.session_id
+         AND te."timestamp" >= ep.start_ts
+         AND (ep.end_ts IS NULL OR te."timestamp" <= ep.end_ts)
+    JOIN observation_events oe ON oe.event_id = te.id
+    JOIN observations o ON o.id = oe.observation_id
+    WHERE ep.t_invalid IS NULL
+      AND ep.id IN (SELECT episode_id FROM claim_episode)
+    GROUP BY ep.id, ep.session_id
+)
+SELECT p.episode_id, p.session_id, p.n_obs, p.n_types, p.completion
+FROM profile p
+WHERE p.completion > 0          -- clause 1: real outcome evidence
+  AND p.n_obs   >= $2           -- clause 2: enough sequence to derive from
+  AND p.n_types >= $3           -- clause 3: an actual task shape
+  AND NOT EXISTS (
+        -- idempotency: this episode already produced a procedure
+        SELECT 1 FROM procedures pr
+         WHERE pr.t_invalid IS NULL
+           AND pr.source_episode_ids @> ARRAY[p.episode_id])
+  AND NOT EXISTS (
+        -- never double-enqueue: each job is a real paid LLM call
+        SELECT 1 FROM ingestion_jobs j
+         WHERE j.job_type = 'extract_procedure_from_episode'
+           AND j.status IN ('pending', 'processing')
+           AND j.payload->>'episode_id' = p.episode_id::text)
+ORDER BY p.n_obs DESC
+LIMIT $1
+"""
+
+MIN_OBSERVATIONS_TO_EXTRACT = 5
+MIN_OBSERVATION_TYPES_TO_EXTRACT = 2
+
+
+async def enqueue_pending_procedure_extractions(
+    pool: asyncpg.Pool, *, limit: int = 10,
+) -> dict:
+    """Enqueue procedure extraction for claim-justifying episodes that
+    clear the quality gate above. Returns {"examined", "enqueued"}.
+
+    BOUNDED AND OPT-IN, same shape as enqueue_pending_claim_promotions:
+    every job this creates ends in one real grounded_hybrid_v1 LLM call,
+    so the caller must choose a limit and run_ingestion.py only reaches
+    this behind an explicit --extract-limit flag. Richest episodes first
+    (n_obs DESC): if the budget is small, spend it where there is most to
+    extract from.
+
+    Idempotent: an episode that already produced a live procedure, or that
+    already has an extraction pending/processing, is skipped.
+    """
+    if limit <= 0:
+        return {"examined": 0, "enqueued": 0}
+
+    rows = await pool.fetch(
+        _PENDING_EXTRACTION_SQL, limit,
+        MIN_OBSERVATIONS_TO_EXTRACT, MIN_OBSERVATION_TYPES_TO_EXTRACT,
+    )
+    for r in rows:
+        await pool.execute(
+            "INSERT INTO ingestion_jobs (job_type, payload) VALUES ($1, $2)",
+            "extract_procedure_from_episode",
+            json.dumps({
+                "episode_id": str(r["episode_id"]),
+                "session_id": r["session_id"],
+                # Carried for the audit trail: which numbers let this
+                # episode through the gate at enqueue time.
+                "gate": {
+                    "n_obs": r["n_obs"],
+                    "n_types": r["n_types"],
+                    "completion_observations": r["completion"],
+                },
+            }),
+        )
+    return {"examined": len(rows), "enqueued": len(rows)}
+
+
+async def handle_extract_procedure_from_episode(
+    pool: asyncpg.Pool, payload: dict,
+) -> None:
+    """Run the real extract_procedure() over a gated episode.
+
+    outcome="success" is asserted here ONLY because the enqueue gate
+    required a test_run or commit_made observation inside this episode --
+    see _PENDING_EXTRACTION_SQL's clause 1. If that gate is ever loosened,
+    this line becomes a fabrication and V5 stops meaning anything.
+    """
+    episode_id = payload.get("episode_id")
+    session_id = payload.get("session_id")
+    if not episode_id or not session_id:
+        raise ValueError(
+            f"extract_procedure_from_episode payload missing ids: {payload!r}")
+
+    from app.services.procedure_extraction import extract_procedure
+    from app.services.procedure_extraction.evidence import AgentRunEvidenceSource
+
+    # EPISODE-WINDOWED, not session-wide. SessionEvidenceSource would be
+    # the obvious choice and it is the WRONG one here: it reads every
+    # observation and every tool call for the whole session_id and treats
+    # episode_id as a label only. Proved by running it -- three different
+    # gated episodes from one session produced three byte-identical
+    # procedures (178 steps each, same capability_statement), because all
+    # three extractions saw exactly the same session-wide evidence. A
+    # multi-hour session flattened into one tool histogram also has no
+    # semantic shape for grounded_hybrid_v1 to abstract, so even a
+    # working LLM call returned the goal text unchanged.
+    #
+    # AgentRunEvidenceSource takes the evidence in memory, which lets the
+    # window be applied HERE, in this lane, using the same public API
+    # mcp_server/server.py already calls -- rather than reaching into
+    # procedure_extraction/evidence.py, which this lane does not own.
+    ep = await pool.fetchrow(
+        "SELECT session_id, start_ts, end_ts, project_id FROM episodes "
+        "WHERE id = $1::uuid AND t_invalid IS NULL",
+        str(episode_id),
+    )
+    if ep is None:
+        log.info("extract_procedure_from_episode: episode %s is gone; skipping",
+                 episode_id)
+        return
+
+    window = (
+        'te.session_id = $1 AND te."timestamp" >= $2 '
+        'AND ($3::timestamptz IS NULL OR te."timestamp" <= $3)'
+    )
+    obs_rows = await pool.fetch(
+        "SELECT DISTINCT o.id, o.observation_type, o.label, o.properties "
+        "FROM observations o "
+        "JOIN observation_events oe ON oe.observation_id = o.id "
+        "JOIN trace_events te ON te.id = oe.event_id "
+        f"WHERE {window} ORDER BY o.id",
+        ep["session_id"], ep["start_ts"], ep["end_ts"],
+    )
+    tool_rows = await pool.fetch(
+        "SELECT te.tool_name FROM trace_events te "
+        f"WHERE {window} AND te.tool_name IS NOT NULL ORDER BY te.sequence ASC",
+        ep["session_id"], ep["start_ts"], ep["end_ts"],
+    )
+
+    observations = [
+        {"observation_type": r["observation_type"], "label": r["label"],
+         "properties": dict(r["properties"] or {})}
+        for r in obs_rows
+    ]
+    tool_sequence = [r["tool_name"] for r in tool_rows]
+
+    # goal_text seeds the extractor; grounded_hybrid_v1 abstracts a real
+    # capability_statement off the tool-call summary rather than trusting
+    # it. Deliberately generic and evidence-token-free -- a goal string
+    # naming a file would be rejected by V4 the moment the extractor
+    # degrades to deterministic_v1.
+    goal_text = "Recurring engineering task observed in this episode"
+
+    source = AgentRunEvidenceSource(
+        goal_text=goal_text, outcome="success", observations=observations,
+        tool_sequence=tool_sequence, started_at=ep["start_ts"],
+        project_id=ep["project_id"], episode_id=str(episode_id),
+        session_id=ep["session_id"], steps_used=len(tool_sequence),
+    )
+    result = await extract_procedure(pool, source, client=_extraction_client())
+
+    if result.validation_failures:
+        # Not an error: the validators refusing a weak candidate is the
+        # system working. Logged so a sweep's real yield is visible.
+        log.info(
+            "extract_procedure_from_episode: episode %s refused by validators: %s",
+            episode_id, result.validation_failures,
+        )
+        return
+    # ABSTENTION, caught after the fact on purpose. grounded_hybrid_v1
+    # degrades to deterministic behaviour on ABSTAIN / unparseable
+    # response, and deterministic_v1 sets capability_statement =
+    # goal_text verbatim -- so an abstained extraction is exactly the row
+    # whose capability_statement still equals the seed. V4 does not catch
+    # it here because the seed is deliberately generic (a goal naming a
+    # file WOULD be caught), so the check belongs to the caller that chose
+    # the seed. Observed 1 of 3 on the real corpus: a 42-Bash-call episode
+    # with no shape for the model to abstract.
+    #
+    # Closed rather than never-written because extract_procedure() persists
+    # before returning and this lane does not own that function. Closing
+    # the validity window is the substrate's own idiom anyway (nothing is
+    # deleted), and it leaves the abstention itself on the record.
+    if (result.extracted is not None
+            and result.extracted.capability_statement == goal_text):
+        await pool.execute(
+            "UPDATE procedures SET t_invalid = now(), verification_state = 'retired' "
+            "WHERE id = $1::uuid AND t_invalid IS NULL",
+            str(result.version_row_id),
+        )
+        log.info(
+            "extract_procedure_from_episode: episode %s ABSTAINED "
+            "(capability_statement == goal seed); row %s retired immediately",
+            episode_id, result.version_row_id,
+        )
+        return
+
+    log.info(
+        "extract_procedure_from_episode: episode %s -> procedure %s (by %s)",
+        episode_id, result.procedure_id, result.extracted_by,
+    )
+
+
+def _extraction_client():
+    """The same OpenAI-compatible client mcp_server/server.py builds for
+    its own extract_procedure() call. Returns None when no key is
+    configured, which makes GroundedHybridExtractor degrade to
+    deterministic_v1 rather than fail -- and V4 then refuses the weak
+    candidate, so a missing key costs nothing and writes nothing.
+    """
+    try:
+        from openai import OpenAI
+
+        from app.config import settings
+
+        key = settings.general_compute_api_key
+        if not key:
+            return None
+        return OpenAI(
+            max_retries=0, api_key=key,
+            base_url=settings.general_compute_base_url,
+        )
+    except Exception as exc:  # noqa: BLE001 -- never block ingestion on this
+        log.warning("extraction client unavailable (%s); degrading to deterministic", exc)
+        return None
+
+
+# Registered here rather than in the literal above: the handler is defined
+# below that dict, beside the sweep that feeds it.
+JOB_HANDLERS["extract_procedure_from_episode"] = handle_extract_procedure_from_episode
 
 
 async def claim_jobs(pool: asyncpg.Pool, *, limit: int) -> list[dict]:
