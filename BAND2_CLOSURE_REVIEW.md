@@ -87,3 +87,23 @@ identity real, replay provable.
 **BAND 3 formally OPEN** — measurement against reality: MEASURE's real-corpus
 ingestion is seeded; next increments are real-model arms and extraction error-
 floor measurement. HARDENING runs parallel ahead of any public exposure.
+
+## Amendment 2 (2026-08-29, integrator)
+
+Closed, with caveats. Chaitanya's dogfooding-pilot audit found the loop had
+never actually run (1,390 `trace_events` were synthetic script batches;
+`episodes.session_id ∩ trace_events.session_id = 0`), then ran the real
+pipeline against real hook-trace data and produced a genuine, hand-audited
+chain: `trace_event 86f38820… → episode a08548b1… (real assemble_episodes()
+output) → observation 42bbf38c… → claim 182d6278… → procedure 01a04c6a…`,
+each hop read back from the DB. Full write-up:
+`.scratch/research/founding-loop-real-data-proof.md` (`bc2028b`).
+
+Real, disclosed limits, not swept under: the chain is not yet self-sustaining
+(claim→procedure has no pipeline caller, still manual), the claim's content
+is currently near-worthless (observation label verbatim), and this ran
+against the long-lived dev DB, not a fresh one. A separate fix (`27c931b`)
+closed the claim-promotion re-enqueue gap this audit surfaced as its
+highest-value follow-up (claims 1 → 26 on the real corpus).
+
+Tick ROADMAP Band 2 exit bullet 1 closed on this basis.
