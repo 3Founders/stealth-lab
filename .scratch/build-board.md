@@ -2464,6 +2464,74 @@ gate a release on this module". Left open with the reason stated rather
 than spent-without-mandate or faked. Say the word and either runs.
 Module 7b (the expensive half of the founding loop) WAS proven tonight
 without paid inference -- deterministic_v1@1 needs no model call.
+
+### Lane INFRA - claim -> procedure wired into the pipeline (2026-08-29)
+
+The last manual hop in the founding loop is now automated, bounded, and
+off by default. Commit `dd3ce3a`. Mirrors 27c931b's safety shape rather
+than inventing a new one.
+
+--- WHAT LANDED ---
+enqueue_pending_procedure_extractions(pool, limit=N) + job_type
+'extract_procedure_from_episode' + handler, and run_ingestion.py's
+--extract-limit N (default 0, proved by an AST test on the parser so a
+future edit cannot quietly turn real LLM spend on).
+
+--- THE GATE, chosen from measured distribution, not invented ---
+Over all 230 episodes holding >=1 observation:
+    n_obs p25=4 median=8 p75=20 max=517 Â· >=2 types 79 Â· test_run 15 Â·
+    commit_made 3 Â· completion signal 17 Â· all three clauses 16 (7%)
+1. completion signal (test_run|commit_made) REQUIRED -- correctness, not
+   taste: the handler asserts outcome="success" and V5_evidence_
+   sufficiency is what that assertion has to earn. Without this clause
+   the sweep fabricates the one field V5 checks.
+2. n_obs >= 5 (drops the bottom quartile)
+3. n_types >= 2 -- kills the "Modified check3.py"-shaped, single-type
+   episodes the corpus audit flagged as near-worthless.
+
+--- TWO BUGS FOUND BY RUNNING IT ---
+(a) SessionEvidenceSource reads the WHOLE SESSION, treating episode_id as
+    a label. Three gated episodes from one session produced three
+    BYTE-IDENTICAL procedures (178 steps each). Fixed in-lane by
+    windowing evidence to the episode span and using
+    AgentRunEvidenceSource (the same public API server.py calls) rather
+    than editing procedure_extraction/evidence.py, which INFRA does not
+    own.
+(b) An ABSTAIN still wrote a live row: grounded_hybrid_v1 degrades to
+    deterministic, which sets capability_statement = goal_text verbatim,
+    and V4 misses it because the goal seed is generic. Handler now
+    closes that row's validity window immediately. 1 of 3 on real data.
+
+--- REAL RESULT ---
+701 -> 704 procedures, then bugs found and rows retired; after the fix,
+FINAL = 2 live episode-sourced procedures, 4 retired. Both live ones are
+real grounded_hybrid_v1@1 output with distinct evidence and distinct
+statements:
+  "Implement a new feature or fix a bug through an iterative cycle of
+   exploration, implementation, and rigorous testing."     (12 steps)
+  "Iteratively debugging and refining a feature through a cycle of
+   exploration, targeted modification, and extensive verification."
+Idempotency confirmed: the re-run examined 1, not 3 -- the two good
+procedures block their own episodes.
+Suite 1539 passed / 115 skipped / 0 failed (+21 proving tests).
+
+--- CROSS-LANE REQUEST -> CORE-B (procedure_extraction/**) ---
+V4_capability_abstraction does not catch an ABSTAIN when the goal seed
+carries no evidence token, so a degraded extraction persists a row whose
+capability_statement is just the seed. INFRA works around it by retiring
+the row after the fact, which costs the LLM call anyway. Suggest V4 (or
+a new validator) refuse `capability_statement == goal` outright, so the
+row is never written. Not patched here -- CORE-B's granted path.
+
+--- CARRIED, NOT FIXED ---
+Both extracted procedures have ZERO preconditions. derive_preconditions/
+derive_scope need project_state, and these dogfooding episodes carry no
+project_id (agent_traces.project_id is NULL across the whole corpus --
+the collector never sets it). So extraction currently produces steps
+without eligibility gates, which is exactly the half of a procedure the
+applicability cascade needs. Worth a lane's attention: procedures with
+no preconditions can never be disqualified, only matched.
+
 ## Integrator (= reviewer instance, main checkout)
 - Watches for `lane/*` branch pushes; rebases lane onto origin/main when stale.
 - Runs full suite on the merge candidate; merges green, rejects red with notes here.
