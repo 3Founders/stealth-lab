@@ -271,6 +271,129 @@ JOB_HANDLERS: dict[str, JobHandler] = {
 }
 
 
+# The episode-arrived-late recovery path. Ordering matters here and there
+# is no way around it: resolve_justification_episode() runs at ENQUEUE
+# time, so an observation whose session has not been through episode
+# assembly yet resolves None, the job completes as 'done' having correctly
+# done nothing, and nothing ever revisits it.
+#
+# Measured on real dogfooding data 2026-08-29: ingestion ran before
+# assembly, so all 3,106 promotion jobs resolved a NULL episode and the
+# substrate ended with ONE claim instead of ~3,106. The handler was right,
+# the queue was right, and the loop still did not run -- the gap was
+# purely that nothing re-offers work once the missing anchor appears.
+#
+# Deliberately a re-ENQUEUE rather than a retry: the original jobs are
+# genuinely 'done' (they did the correct thing with the information that
+# existed), and rewriting terminal job rows would destroy the record of
+# what actually happened. A new job for new information is the honest
+# shape, and it keeps ingestion_jobs append-only in spirit with the rest
+# of the substrate.
+_PENDING_PROMOTION_SQL = """
+WITH anchor AS (
+    -- The observation's EARLIEST event, matching
+    -- resolve_justification_episode()'s own anchor choice exactly.
+    SELECT DISTINCT ON (oe.observation_id)
+           oe.observation_id, oe.event_id, te.session_id, te."timestamp"
+    FROM observation_events oe
+    JOIN trace_events te ON te.id = oe.event_id
+    ORDER BY oe.observation_id, te."timestamp" ASC
+)
+, candidate AS (
+    SELECT a.observation_id, a.event_id, a."timestamp",
+           (SELECT ep.id FROM episodes ep
+             WHERE ep.session_id = a.session_id
+               AND ep.start_ts <= a."timestamp"
+               AND (ep.end_ts IS NULL OR a."timestamp" <= ep.end_ts)
+               AND ep.t_invalid IS NULL
+             -- Same NULLS LAST / start_ts DESC innermost-wins ordering as
+             -- resolve_justification_episode(). If one changes, both must.
+             ORDER BY ep.parent_episode_id NULLS LAST, ep.start_ts DESC
+             LIMIT 1) AS episode_id
+    FROM anchor a
+    WHERE NOT EXISTS (
+            -- already produced a claim: nothing owed
+            SELECT 1 FROM claim_sources cs WHERE cs.observation_id = a.observation_id)
+      AND NOT EXISTS (
+            -- a promotion is already queued for it: never double-enqueue,
+            -- because each promotion costs one real embedding call
+            SELECT 1 FROM ingestion_jobs j
+             WHERE j.job_type = 'promote_observation_to_claim'
+               AND j.status IN ('pending', 'processing')
+               AND j.payload->>'observation_id' = a.observation_id::text)
+)
+SELECT observation_id, event_id, episode_id
+FROM candidate
+-- ANCHORED ROWS FIRST, and this ordering is load-bearing, not cosmetic.
+-- Found by running the first cut against the real corpus: ordering purely
+-- by newest-first spent the entire budget on the live session's own tail
+-- (examined 25, enqueued 0, still_unanchored 25) because the newest
+-- observations are exactly the ones episode assembly has not reached yet.
+-- A bounded sweep must spend its limit on work it can actually complete;
+-- the unanchored frontier is still counted and reported, just not
+-- allowed to crowd out the backlog.
+ORDER BY (episode_id IS NULL), "timestamp" DESC
+LIMIT $1
+"""
+
+
+async def enqueue_pending_claim_promotions(
+    pool: asyncpg.Pool, *, limit: int = 100
+) -> dict:
+    """Re-offer observations whose justifying episode arrived after their
+    original promotion job already completed.
+
+    Returns real counts: {"examined", "enqueued", "still_unanchored"}.
+
+    BOUNDED AND OPT-IN ON PURPOSE. Every job this creates ends in
+    capture_claim(), which computes an embedding -- a real, paid Voyage
+    call, one per observation. An unbounded sweep over a dogfooding
+    corpus is thousands of calls nobody asked for, so the caller must
+    choose a limit and `run_ingestion.py` only calls this behind an
+    explicit flag. `limit` caps rows examined AND enqueued together;
+    newest observations first, since those are the ones a user is most
+    likely to be waiting on.
+
+    Idempotent: an observation with a claim, or with a promotion already
+    pending/processing, is skipped. Running it twice in a row enqueues
+    nothing the second time.
+    """
+    if limit <= 0:
+        # A true no-op, not an empty result: the default path must not
+        # even pay for the sweep query.
+        return {"examined": 0, "enqueued": 0, "still_unanchored": 0}
+
+    rows = await pool.fetch(_PENDING_PROMOTION_SQL, limit)
+    enqueued = 0
+    unanchored = 0
+    for r in rows:
+        if r["episode_id"] is None:
+            # Assembly still has not covered this session. Correct no-op,
+            # counted rather than hidden so the caller can see the real
+            # size of the remaining backlog.
+            unanchored += 1
+            continue
+        await pool.execute(
+            "INSERT INTO ingestion_jobs (job_type, payload) VALUES ($1, $2)",
+            "promote_observation_to_claim",
+            json.dumps({
+                "observation_id": str(r["observation_id"]),
+                "trace_event_id": str(r["event_id"]),
+                "task_ids": [],
+                "justification_episode_id": str(r["episode_id"]),
+                # Distinguishes a recovery enqueue from the original
+                # inline one when reading the job table by hand later.
+                "requeued_after_episode_assembly": True,
+            }),
+        )
+        enqueued += 1
+    return {
+        "examined": len(rows),
+        "enqueued": enqueued,
+        "still_unanchored": unanchored,
+    }
+
+
 async def claim_jobs(pool: asyncpg.Pool, *, limit: int) -> list[dict]:
     """
     Real SKIP LOCKED claim: marks up to `limit` pending jobs 'processing'

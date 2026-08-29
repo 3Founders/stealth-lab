@@ -41,7 +41,10 @@ load_dotenv()
 
 from app import observability
 from app.db.session import create_pool
-from app.services.ingestion_jobs import process_pending_jobs
+from app.services.ingestion_jobs import (
+    enqueue_pending_claim_promotions,
+    process_pending_jobs,
+)
 from app.services.trace_worker import process_collector_file
 
 
@@ -58,7 +61,7 @@ def _default_trace_dir() -> Path:
     return Path(os.environ.get("CLAUDE_PROJECT_DIR", Path.cwd())) / ".claude" / "traces"
 
 
-async def _run_once(trace_dir: Path) -> dict:
+async def _run_once(trace_dir: Path, promote_limit: int = 0) -> dict:
     pool = await create_pool()
     try:
         collector_totals = {"records_seen": 0, "inserted": 0, "skipped_duplicate": 0, "quarantined": 0}
@@ -68,14 +71,27 @@ async def _run_once(trace_dir: Path) -> dict:
             for k in collector_totals:
                 collector_totals[k] += result.get(k, 0)
 
+        # BEFORE draining, re-offer observations whose justifying episode
+        # only showed up after their original promotion job already ran
+        # (see enqueue_pending_claim_promotions' docstring -- this is the
+        # ordering gap that left the real corpus at 1 claim instead of
+        # ~3,106). Off unless --promote-limit is passed: each job it
+        # creates costs one real embedding call.
+        requeued = None
+        if promote_limit > 0:
+            requeued = await enqueue_pending_claim_promotions(pool, limit=promote_limit)
+
         job_totals = await process_pending_jobs(pool)
 
-        return {
+        summary = {
             "trace_dir": str(trace_dir),
             "files_processed": len(files),
             "collector": collector_totals,
             "jobs": job_totals,
         }
+        if requeued is not None:
+            summary["requeued_promotions"] = requeued
+        return summary
     finally:
         await pool.close()
 
@@ -96,6 +112,14 @@ def main() -> None:
         "--interval", type=float, default=None,
         help="Loop, sleeping this many seconds between passes. Runs until Ctrl-C.",
     )
+    parser.add_argument(
+        "--promote-limit", type=int, default=0, metavar="N",
+        help="Re-enqueue up to N observations whose justifying episode arrived "
+             "after their original promotion job ran. COSTS ONE REAL EMBEDDING "
+             "CALL PER OBSERVATION -- 0 (the default) disables it entirely. "
+             "Run episode assembly (scripts/ingest_transcripts.py) first, or "
+             "there will be no new episode for anything to anchor to.",
+    )
     args = parser.parse_args()
 
     if not args.once and args.interval is None:
@@ -104,7 +128,7 @@ def main() -> None:
     trace_dir = args.trace_dir or _default_trace_dir()
 
     while True:
-        summary = asyncio.run(_run_once(trace_dir))
+        summary = asyncio.run(_run_once(trace_dir, args.promote_limit))
         print(json.dumps(summary))
         if args.once:
             break
