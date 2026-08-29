@@ -161,7 +161,7 @@ class Onboarder:
         from app.services.v0_gate import validate_provenance, validate_scope
 
         validate_provenance(provenance)
-        v_scope = None
+        v_scope = (None, None)
         if scope_type or spec.knowledge:
             # Derive a default scope from the workflow name when the caller
             # did not pass one explicitly.
