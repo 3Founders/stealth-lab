@@ -45,3 +45,9 @@ experiments/**/__pycache__
 frontend
 plat_v1
 docs
+
+# Local-only dev tool: a no-auth, read-only dashboard bound to 127.0.0.1
+# (backend/scripts/dev_dashboard.py's own docstring). backend/scripts/ is
+# otherwise copied into the image, so this has to be named explicitly --
+# a no-auth page must not exist inside a shipped container at all.
+backend/scripts/dev_dashboard.py
