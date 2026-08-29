@@ -2374,6 +2374,96 @@ INDEPENDENT session counts and rendered "100%" over sets with zero
 sessions in common, then "300%" once assembly ran ahead. It actively hid
 the exact break this audit existed to find. Now reports the INTERSECT plus
 a "sessions on BOTH sides" row: currently 10/16 = 62%.
+
+### Lane INFRA - TESTING_GUIDE_V0.1.md full run (2026-08-29)
+
+Full results: `.scratch/research/testing-guide-v0.1-run-2026-08-29.md`
+
+14 of 15 modules run. 12 PASS, 2 PARTIAL (real defects below), 2 NOT RUN
+(need a founder call on spend). Module 14 frontend PASS: fresh npm install,
+Compiled successfully in 75s with real type-checking, 10/10 static pages,
+all 8 routes built.
+Also: harness suite 254 passed, packaging suite 95 passed.
+
+PASS: 1 (1505 passed / 115 skipped / 0 failed), 2 (migration 31 applied;
+01-31 auto-applied on a fresh compose volume), 4 (9 tools live), 5, 6,
+7a, 7b, 8, 9, 10 (off-by-default half), 13.
+
+--- NEW FINDING #1 (Module 11): sandbox isolation is unavailable in the
+    SHIPPED compose config, not just on the host ---
+integration_check_v2_sandbox.py fails 6 checks in BOTH environments:
+  Windows host      -> [WinError 2], `unshare` does not exist. Expected.
+  INSIDE the container -> `unshare` IS installed at /usr/bin/unshare but
+     `unshare: unshare failed: Operation not permitted` -- no
+     CAP_SYS_ADMIN, so app/services/sandbox.py cannot create namespaces.
+It FAILS CLOSED ("failing closed, not falling back to unsandboxed
+execution"), so nothing untrusted runs unisolated -- that part works.
+BUT: the guide's "Known, accepted gaps" documents only that
+ContainerSandboxExecutor can't reach solve_task. It does NOT say the
+OTHER path -- unshare-based run_sandboxed() behind decide_agent -- is
+also dead in the shipped config. So in the configuration a user actually
+runs, agent code execution is DISABLED ENTIRELY, not degraded.
+FOUNDER CALL NEEDED: whether the compose backend service gets
+`cap_add: [SYS_ADMIN]`. That weakens the container boundary -- same class
+of trade-off as the docker-socket question, explicitly not a lane call.
+Offline sandbox tests are fine: 30 passed.
+
+--- NEW FINDING #2 (Module 3): a real bug in app/onboarding/seed.py ---
+integration_check.py, _2.py and _3.py all crash identically:
+    TypeError: 'NoneType' object is not subscriptable
+    app/onboarding/seed.py:203  ->  v_scope[0], v_scope[1],
+At seed.py:164-171 `v_scope` is populated only `if scope_type or
+spec.knowledge`, but the task_nodes INSERT at line 203 dereferences
+v_scope[0] UNCONDITIONALLY. Any spec with tasks but no knowledge and no
+explicit scope_type crashes. The knowledge insert at 187 is safe only by
+construction (it runs only when spec.knowledge is truthy -- the same
+thing that sets v_scope); the task loop has no such protection.
+Proposed one-line fix, NOT APPLIED (app/onboarding/** is outside this
+lane's granted paths, hard rule 4) -- cross-lane request:
+    if scope_type or spec.knowledge or spec.tasks:
+integration_check_v2.py (access control) PASSES against real Postgres.
+
+--- NEW FINDING #3 (Module 3): two dead scripts in the guide's catalog ---
+Both listed as runnable, both fail at import:
+  integration_check_graph_overview.py -> ImportError: cannot import name
+     'get_whole_graph' from 'app.api.graph'
+  integration_check_v2_repo_execution.py -> ModuleNotFoundError:
+     No module named 'app.services.repo_execution'
+Recommend the guide mark them stale, or delete them.
+
+--- NEW FINDING #4 (Module 4): the grep the guide recommends over-counts ---
+Module 4 says "grep for @server.tool() and update every doc that states a
+count". A naive grep over server.py returns 10, not 9 -- the tenth match
+is PROSE in the module docstring (line 14) discussing the count. The live
+server answers 9 (verified: authenticated tools/list -> 200, 9 names).
+Anyone re-checking by grep alone gets a false drift alarm. Worth one line
+in the guide.
+
+--- MODULE 9 SWEEP: CLEAN, nothing to rotate ---
+Went past the three listed commands: scanned all 3,983 objects reachable
+from EVERY ref -- including the 103 local-only refs/cline/checkpoints/*
+commits -- against 10 credential patterns with placeholder filtering.
+NO real credential in any reachable object. Every hit is a test fixture
+(AKIAABCDEFGHIJKLMNOP is in test_band1_11_redaction; ghp_aaaa... is in a
+README smoke command; the only DSN password is the compose dev default
+`stealthlab`). Also confirmed: git stash list EMPTY (the earlier leak is
+gone); a real .env was NEVER added on any ref; backend/.env is ignored
+(.gitignore:35); FundingGrants/ has NEVER been tracked; the cline
+checkpoints are not ancestors of origin/main.
+ONE THING FOR A FOUNDER GLANCE: `origin/fundraising-strategy` IS a pushed
+branch (1,169 files). It contains no FundingGrants/ path and no real .env
+-- only .env.example files -- so it is clean, but the branch name implies
+otherwise and someone should confirm it is meant to be public.
+
+--- NOT RUN, deliberately: Modules 12 and 15 ---
+Both need real model spend. The board's OpenRouter budget wall note and
+the standing :free-only instruction are still in force, and tonight's
+brief did not authorise spend. Module 12 is a RE-RUN of an
+already-recorded proof (f7262a5); Module 15 the guide itself says "do not
+gate a release on this module". Left open with the reason stated rather
+than spent-without-mandate or faked. Say the word and either runs.
+Module 7b (the expensive half of the founding loop) WAS proven tonight
+without paid inference -- deterministic_v1@1 needs no model call.
 ## Integrator (= reviewer instance, main checkout)
 - Watches for `lane/*` branch pushes; rebases lane onto origin/main when stale.
 - Runs full suite on the merge candidate; merges green, rejects red with notes here.
