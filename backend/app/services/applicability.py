@@ -378,6 +378,88 @@ async def _fetch_candidate_pool(
     return [by_id[i] for i in ids if i in by_id]
 
 
+async def _capability_ranked_hits(
+    pool: asyncpg.Pool, survivors: list[dict],
+) -> list[tuple[UUID, str, int]]:
+    """
+    Phase 3 capability wiring (procedure_extraction/capability.py, real
+    Wilson-lower-bound math, previously ZERO real callers): a ranking
+    signal over hard-cascade SURVIVORS only -- capability never
+    disqualifies (that stays check_hard_constraints' job, unchanged), it
+    only ranks among procedures already proven applicable, exactly like
+    the similarity signal it is fused against in find_applicable_
+    procedures below. This is the founder's own G2 example made real:
+    a lower-similarity, higher-capability applicable procedure can now
+    outrank a higher-similarity, weak-capability one.
+
+    Reuses, does not reinvent:
+      - procedure_extraction/failure_handlers.py::capability_for_stream(),
+        the SAME recompute check_procedure_reuse's capability_note (this
+        module, below) and handle_capability_demotion already call over
+        the SAME target_type='procedure' evidence rows
+        procedure_evidence_stats (db/24) counts -- not a second
+        capability computation living in two places.
+      - the query shape (evidence_type IN DEMOTION_EVIDENCE_TYPES,
+        direction='supports', outcome_status IN ('success','failure'))
+        copied verbatim from check_procedure_reuse's own stream fetch a
+        few hundred lines below, so the two call sites can never
+        silently disagree about what counts as an attempt.
+      - retrieval.py::fuse_rrf() at the call site below -- no second
+        ranking mechanism, per Rule 6.
+
+    Lazy import for the same reason check_procedure_reuse's is lazy:
+    failure_handlers.py imports THIS module (`_scope_matches`) at its
+    own module level, so a module-level import here would be circular.
+
+    BATCHED: one evidence query for the whole survivor set, not one
+    round trip per candidate -- the candidate pool can be dozens of rows
+    and this ranking step must not turn into an N+1.
+    """
+    from app.services.procedure_extraction.failure_handlers import (
+        DEMOTION_EVIDENCE_TYPES, DEMOTION_STREAM_LIMIT, capability_for_stream,
+    )
+    if not survivors:
+        return []
+
+    ids = [s["id"] for s in survivors]
+    types_sql = ", ".join(f"'{t}'" for t in DEMOTION_EVIDENCE_TYPES)
+    rows = await pool.fetch(
+        f"""
+        SELECT target_id, target_version, outcome_status, context_key, independence_group
+        FROM evidence
+        WHERE target_type = 'procedure'
+          AND target_id = ANY($1::uuid[])
+          AND t_invalid IS NULL
+          AND direction = 'supports'
+          AND evidence_type IN ({types_sql})
+          AND outcome_status IN ('success', 'failure')
+        ORDER BY t_created ASC, id ASC
+        LIMIT {int(DEMOTION_STREAM_LIMIT)}
+        """,
+        ids,
+    )
+    # Evidence is pinned to the procedure's OWN version (evidence.py's
+    # hard rule -- "procedure-targeted evidence pins target_version") --
+    # group by (target_id, target_version), never target_id alone, so a
+    # candidate never inherits a prior version's outcome stream.
+    by_key: dict[tuple[str, object], list] = {}
+    for row in rows:
+        key = (str(row["target_id"]), row["target_version"])
+        by_key.setdefault(key, []).append(row)
+
+    scored: list[tuple[str, float]] = []
+    for s in survivors:
+        stream = by_key.get((str(s["id"]), s.get("version")), [])
+        record = capability_for_stream("procedure", str(s["id"]), stream)
+        scored.append((str(s["id"]), record.p_estimate))
+
+    # Highest P first; Python's sort is stable so ties (e.g. all-zero,
+    # no evidence anywhere) preserve the cascade's own survivor order
+    # rather than reshuffling arbitrarily.
+    scored.sort(key=lambda kv: kv[1], reverse=True)
+    return [(UUID(pid), "procedures", i) for i, (pid, _) in enumerate(scored)]
+
+
 async def find_applicable_procedures(
     pool: asyncpg.Pool,
     *,
@@ -476,6 +558,12 @@ async def find_applicable_procedures(
         # No query embedding supplied -- return hard-filter survivors
         # unranked rather than fabricating a similarity order. Real,
         # honest degradation, not silently swapped for e.g. recency.
+        # Capability's own signal is deliberately NOT fused here either:
+        # it costs a real evidence query, and the byte-for-byte "no
+        # embedding -> no extra round trip" contract this cascade already
+        # keeps for _fetch_candidate_pool's own pre-filter (proven by
+        # test_full_cascade_shares_one_cache_and_scopes_its_gate's pinned
+        # fetch-call count) extends the same way to this ranking step.
         return survivors[:limit]
 
     survivor_ids = [s["id"] for s in survivors]
@@ -487,19 +575,39 @@ async def find_applicable_procedures(
         to_pgvector(goal_embedding), survivor_ids, limit,
     )
     ranked_ids = {str(r["id"]): r["similarity"] for r in ranked}
+
+    # Phase 3 -- fuse similarity with the real capability signal via the
+    # SAME fuse_rrf primitive this module's own _fetch_candidate_pool
+    # already reuses for its cost/relevance pre-filter, rather than a
+    # second ranking mechanism (Rule 6). similarity_hits carries only the
+    # survivors the embedding query actually ranked; capability_hits
+    # covers EVERY survivor (capability_for_stream degrades honestly to
+    # p_estimate=0.0 on an empty stream), so a survivor with no stored
+    # embedding at all is no longer silently unranked -- it now ranks on
+    # capability alone instead of being appended last unconditionally.
+    similarity_order = sorted(ranked_ids.items(), key=lambda kv: kv[1], reverse=True)
+    similarity_hits: list[tuple[UUID, str, int]] = [
+        (UUID(rid), "procedures", i) for i, (rid, _sim) in enumerate(similarity_order)
+    ]
+    capability_hits = await _capability_ranked_hits(pool, survivors)
+    fused_scores, _matched = fuse_rrf(
+        [(similarity_hits, "relevance"), (capability_hits, "capability")]
+    )
+    fused_order = sorted(fused_scores.items(), key=lambda kv: kv[1], reverse=True)
+
     survivors_by_id = {str(s["id"]): s for s in survivors}
-
     result_list = []
-    for rid, similarity in ranked_ids.items():
+    for (pid, _table), _score in fused_order:
+        rid = str(pid)
+        if rid not in survivors_by_id:
+            continue
         proc = dict(survivors_by_id[rid])
-        proc["_similarity_score"] = similarity
+        if rid in ranked_ids:
+            proc["_similarity_score"] = ranked_ids[rid]
         result_list.append(proc)
-
-    # Survivors with no embedding at all can't be ranked -- append them
-    # after the ranked ones rather than silently dropping them, since
-    # they're still real, hard-filter-passing candidates.
-    unranked_survivors = [s for s in survivors if str(s["id"]) not in ranked_ids]
-    return result_list + unranked_survivors[: max(0, limit - len(result_list))]
+        if len(result_list) >= limit:
+            break
+    return result_list
 
 
 # ===========================================================================

@@ -66,7 +66,12 @@ INVALID_PARAMS = -32602
 # augmenting the tool at all would break polling the moment a call falls
 # through to tier 2. Splitting task-augmentation per-tier would need two
 # separate tool names; not done here (see find_best_way's own docstring).
-TASK_AUGMENTABLE_TOOLS: frozenset[str] = frozenset({"propose_synthesis", "find_best_way"})
+TASK_AUGMENTABLE_TOOLS: frozenset[str] = frozenset({
+    "propose_synthesis", "find_best_way", "reproduce_procedure",
+})
+# reproduce_procedure has no lookup tier at all (unlike find_best_way) --
+# every call runs a real sandboxed agent loop, so it always needs the same
+# polling augmentation find_best_way's tier 2 needs.
 
 DEFAULT_TTL_MS = 3_600_000  # 1 hour -- long enough for a multi-round debate or agent loop
 DEFAULT_POLL_INTERVAL_MS = 3_000

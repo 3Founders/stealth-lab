@@ -10,9 +10,11 @@ import asyncio
 import os
 from datetime import datetime, timedelta, timezone
 
+import asyncpg
 import pytest
 
 from app.db.session import create_pool
+from app.services.applicability import check_hard_constraints
 from app.services.procedures import (
     MIN_DISTINCT_CONTEXTS_FOR_VERIFIED,
     MIN_SUCCESSES_FOR_VERIFIED,
@@ -21,6 +23,8 @@ from app.services.procedures import (
     capture_procedure,
     check_quarantine_and_disable,
     compute_utility,
+    get_procedure,
+    mark_procedure_stale,
     record_execution_outcome,
     reject_procedure,
     retire_negative_utility_procedures,
@@ -538,6 +542,191 @@ def test_concurrent_outcome_recording_does_not_lose_updates():
             assert row["verification_stats"]["distinct_contexts"] == N
         finally:
             await _cleanup(pool, "proc-test-concurrent")
+            await pool.close()
+
+    asyncio.run(_run())
+
+
+def test_verified_transition_engine_trigger_actually_fires_live():
+    """Phase 1 (memory-substrate map, this pass): db/30's
+    `tg_procedures_verified_requires_evidence` trigger was previously only
+    proven by reading its SQL text (test_wave3_tenancy_adoption.py) --
+    never fired against a real running Postgres. Real proof: a raw UPDATE
+    to `verified` with zero supporting evidence must be rejected by the
+    ENGINE itself (not just application code choosing not to attempt it),
+    and the identical UPDATE must succeed once real supporting evidence
+    exists for that exact procedure version."""
+    async def _run():
+        pool = await create_pool(DATABASE_URL, min_size=1, max_size=2)
+        try:
+            await _cleanup(pool, "proc-test-trigger")
+            result = await capture_procedure(
+                pool, name="proc-test-trigger-1", goal="g",
+                provenance="system_pending_review", scope_type="global",
+            )
+            row_id = result["id"]
+            version = (await pool.fetchrow(
+                "SELECT version FROM procedures WHERE id = $1", row_id
+            ))["version"]
+
+            # No evidence at all yet -- the engine itself must refuse.
+            with pytest.raises(asyncpg.exceptions.RaiseError, match="invariant #3"):
+                await pool.execute(
+                    "UPDATE procedures SET verification_state = 'verified' WHERE id = $1",
+                    row_id,
+                )
+
+            # Real supporting evidence for THIS exact version.
+            await pool.execute(
+                """
+                INSERT INTO evidence (
+                    id, evidence_type, target_type, target_id, target_version,
+                    direction, strength_score, strength_method,
+                    outcome_status, success_criteria, created_by, visibility
+                ) VALUES (
+                    gen_random_uuid(), 'execution_result', 'procedure', $1, $2,
+                    'supports', 1.0, 'recorded_outcome',
+                    'success', '{"predicate": "test-recorded"}'::jsonb,
+                    'test_verified_trigger', 'public'
+                )
+                """,
+                row_id, version,
+            )
+
+            # Same UPDATE, now with real evidence backing it -- must succeed.
+            await pool.execute(
+                "UPDATE procedures SET verification_state = 'verified' WHERE id = $1",
+                row_id,
+            )
+            row = await pool.fetchrow("SELECT verification_state FROM procedures WHERE id = $1", row_id)
+            assert row["verification_state"] == "verified"
+        finally:
+            await _cleanup(pool, "proc-test-trigger")
+            await pool.close()
+
+    asyncio.run(_run())
+
+
+def test_mark_procedure_stale_is_one_directional_and_audited():
+    """Phase 4 (memory-substrate map, this pass): `mark_procedure_stale`
+    must actually flip the real `staleness` column, be idempotent (a
+    second real-world drift detection against an already-stale procedure
+    is a no-op, not a duplicate ChangeSet entry), and leave a real
+    ChangeSet audit row -- same convention as approve_procedure/
+    reject_procedure/check_quarantine_and_disable."""
+    async def _run():
+        pool = await create_pool(DATABASE_URL, min_size=1, max_size=2)
+        try:
+            await _cleanup(pool, "proc-test-stale")
+            result = await capture_procedure(
+                pool, name="proc-test-stale-1", goal="g",
+                invariants=[{"kind": "numeric", "expr": "pandas_version >= 2.0"}],
+                provenance="system_pending_review", scope_type="global",
+            )
+            row_id = result["id"]
+
+            row = await pool.fetchrow("SELECT staleness FROM procedures WHERE id = $1", row_id)
+            assert row["staleness"] == "fresh"
+
+            updated = await mark_procedure_stale(
+                pool, procedure_row_id=row_id,
+                reason="pandas_version >= 2.0 contradicted by probed bindings {'pandas_version': 1.5}",
+                detected_by="test_mark_procedure_stale",
+            )
+            assert updated["staleness"] == "stale"
+
+            # Idempotent: an already-stale procedure stays a no-op, not a
+            # second ChangeSet entry.
+            again = await mark_procedure_stale(
+                pool, procedure_row_id=row_id, reason="re-detected",
+                detected_by="test_mark_procedure_stale",
+            )
+            assert again["staleness"] == "stale"
+
+            changesets = await pool.fetch(
+                "SELECT cs.reason FROM change_sets cs "
+                "JOIN change_set_operations op ON op.change_set_id = cs.id "
+                "WHERE op.target_table = 'procedures' AND op.target_id = $1 "
+                "ORDER BY cs.created_at",
+                row_id,
+            )
+            assert len(changesets) == 1, (
+                "the second (no-op) call must not append a duplicate ChangeSet "
+                f"for THIS procedure -- got {len(changesets)}"
+            )
+            assert "fresh -> stale" in changesets[0]["reason"]
+
+            # The real, load-bearing consequence: applicability.py's hard
+            # cascade already excludes staleness='stale' rows (this was
+            # always enforced) -- now confirm a REAL row this function
+            # marked stale is actually caught by it, closing the loop
+            # between "a producer exists" and "the existing consumer
+            # actually sees what it produces".
+            full_row = await get_procedure(pool, row_id)
+            outcome = await check_hard_constraints(pool, full_row, require_verified=False)
+            assert outcome.applicable is False
+            assert "staleness" in outcome.failed_constraints
+        finally:
+            await _cleanup(pool, "proc-test-stale")
+            await pool.close()
+
+    asyncio.run(_run())
+
+
+def test_reproduction_evidence_is_recorded_distinctly_from_execution_result():
+    """Phase 2 (memory-substrate map, this pass): `record_execution_outcome`'s
+    new `evidence_type` parameter must actually reach the stored evidence
+    row, not just be accepted and silently coerced back to the default.
+    Real proof, not a mock: query the `evidence` table directly and confirm
+    both the default `execution_result` row and an explicit `reproduction`
+    row exist, each independently countable toward
+    `procedure_evidence_stats.independent_supporting_required` -- the exact
+    view db/30's verified-requires-evidence engine trigger reads."""
+    async def _run():
+        pool = await create_pool(DATABASE_URL, min_size=1, max_size=2)
+        try:
+            await _cleanup(pool, "proc-test-repro")
+            result = await capture_procedure(
+                pool, name="proc-test-repro-1", goal="g",
+                provenance="system_pending_review", scope_type="global",
+            )
+            row_id = result["id"]
+
+            # Organic reuse -- the default, unchanged behavior.
+            await record_execution_outcome(
+                pool, procedure_row_id=row_id, success=True, context_key="ctx-organic",
+            )
+            # Deliberate reproduction attempt -- the new path.
+            await record_execution_outcome(
+                pool, procedure_row_id=row_id, success=True, context_key="ctx-reproduce",
+                evidence_type="reproduction",
+            )
+
+            rows = await pool.fetch(
+                "SELECT evidence_type, outcome_status, direction FROM evidence "
+                "WHERE target_type = 'procedure' AND target_id = $1 ORDER BY evidence_type",
+                row_id,
+            )
+            types = sorted(r["evidence_type"] for r in rows)
+            assert types == ["execution_result", "reproduction"], (
+                "both evidence_type values must be persisted verbatim, "
+                f"not silently collapsed to one -- got {types}"
+            )
+            for r in rows:
+                assert r["outcome_status"] == "success"
+                assert r["direction"] == "supports"
+
+            stats = await pool.fetchrow(
+                "SELECT independent_supporting_required FROM procedure_evidence_stats "
+                "WHERE procedure_row_id = $1", row_id,
+            )
+            # Two ungrouped rows of the required types -> two independent
+            # supporting rows (COALESCE(independence_group, id::text)
+            # self-groups each), confirming db/30's gate sees BOTH kinds
+            # of evidence, not just execution_result.
+            assert stats["independent_supporting_required"] == 2
+        finally:
+            await _cleanup(pool, "proc-test-repro")
             await pool.close()
 
     asyncio.run(_run())

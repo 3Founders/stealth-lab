@@ -146,7 +146,21 @@ async def check_novelty(
     does something >=0.90 similar already exist? Reuses
     find_applicable_procedures directly rather than re-describing the
     mechanism -- returns the existing match if novelty fails, None if
-    genuinely novel."""
+    genuinely novel.
+
+    Refuse-only, and structurally so: this only ever sees ONE candidate
+    at a time, before it is written, so it can reject an incoming near-
+    duplicate but can never reconcile two rows that are already both
+    persisted (e.g. the same capability ingested once via this module
+    with provenance='prior_library' and once via organic extraction with
+    provenance='system_pending_review'). That later-stage real merge --
+    survivor selection off the ticket-13 verification ladder, tombstone
+    (never delete) the loser(s), union their evidence_refs/
+    source_episode_ids onto the survivor -- is
+    procedures.py::merge_duplicate_procedures() /
+    run_procedure_dedup_sweep() (Phase 5, memory-substrate map, gap #8),
+    a separate, later-stage path built specifically because this
+    function cannot do it. This function's own behavior is unchanged."""
     goal_vec = await embedder.embed_one(goal_text, input_type="query")
     matches = await find_applicable_procedures(
         pool, goal_embedding=goal_vec, require_verified=False, limit=1,

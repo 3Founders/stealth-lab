@@ -286,11 +286,27 @@ async def find_duplicate_clusters(
     WAVE-3 tenancy adoption (cross-lane request #2): task_nodes/
     knowledge_nodes are tenant-bearing, so both predicate builds go
     through scope_predicates(); default unrestricted() renders the
-    visible literal TRUE with no binding.
+    visible literal TRUE with no binding. `procedures` (Phase 5,
+    memory-substrate map) carries no tenant_id column at all (db/18
+    never added one -- procedures predate WAVE-3's tenancy sweep and
+    weren't in its scope), so a caller must pass either
+    `tenant_scope=None`/omitted (renders unrestricted TRUE, the only
+    safe default for this table) or `TenantScope.unrestricted()`
+    explicitly; passing a real tenant would build SQL referencing a
+    column procedures does not have and fail loudly at query time
+    rather than silently scoping wrong.
 
     Returns only clusters with more than one member.
     """
-    name_expr = "name || ' ' || COALESCE(description, '')" if table == "task_nodes" else "name"
+    if table == "task_nodes":
+        name_expr = "name || ' ' || COALESCE(description, '')"
+    elif table == "procedures":
+        # goal is the substantive content on this table (task_nodes'
+        # analogue is description) -- title alone would under-cluster
+        # two procedures phrased differently but pursuing the same goal.
+        name_expr = "name || ' ' || COALESCE(goal, '')"
+    else:
+        name_expr = "name"
     props_expr = "properties" if table == "knowledge_nodes" else "NULL"
     tenant = tenant_scope or TenantScope.unrestricted()
     scope_sql, scope_params, _ = scope_predicates(scope, tenant, param_index=1)

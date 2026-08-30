@@ -26,6 +26,7 @@ from __future__ import annotations
 import time
 from datetime import datetime, timezone
 from typing import Any, Mapping, Optional
+from uuid import UUID as UUIDType
 
 import asyncpg
 
@@ -35,7 +36,7 @@ from app.services.embeddings import to_pgvector
 
 from app.execution.evidence import outcome_to_evidence
 from app.execution.failures import classify_and_route
-from app.services.access import TenantScope, tenant_transaction
+from app.services.access import AccessScope, TenantScope, tenant_transaction
 
 CREATED_BY = "procedure_capture"
 
@@ -72,6 +73,15 @@ CIRCUIT_BREAKER_CLOSE_AFTER_SUCCESSES = 5
 QUARANTINE_FAILURE_RATE_THRESHOLD = 0.5
 QUARANTINE_WINDOW_DAYS = 7
 QUARANTINE_DISABLE_AFTER_DAYS = 14
+
+# Phase 5 (memory-substrate map, gap #8) -- merge_duplicate_procedures'
+# survivor rule. Ticket 13's own ladder ("candidate", "verified") plus
+# "retired" as strictly weaker than either live state -- a retired
+# procedure only survives a merge against another retired one. Not a
+# DB enum ORDER; a plain dict keeps this local to the one function that
+# needs it rather than teaching the schema a total order it doesn't
+# otherwise care about.
+_VERIFICATION_STATE_RANK = {"retired": -1, "candidate": 0, "verified": 1}
 
 
 class ProcedureNotFound(Exception):
@@ -214,6 +224,7 @@ async def record_execution_outcome(
     owner_id: Optional[str] = None,
     visibility: str = "public",
     tenant_scope: Optional[TenantScope] = None,
+    evidence_type: str = "execution_result",
 ) -> dict:
     """
     Real, single source of truth for every ticket 13 lifecycle
@@ -222,6 +233,22 @@ async def record_execution_outcome(
     row-locked transaction (same `SELECT ... FOR UPDATE` discipline
     knowledge_update.py already established for non-destructive
     updates elsewhere in this codebase).
+
+    `evidence_type` defaults to `"execution_result"` (organic reuse --
+    the procedure was selected to accomplish a real task and its outcome
+    is recorded as a side effect). Pass `"reproduction"` when the caller
+    is not organically reusing the procedure but deliberately re-running
+    it specifically to test whether it still reproduces its claimed
+    result (app/execution/reproduction.py::reproduce_procedure()). Both
+    are OUTCOME_BEARING_TYPES (execution/evidence.py) and both count
+    toward `procedure_evidence_stats.independent_supporting_required`
+    (db/24_evidence.sql) -- today `execution_result` is the only type
+    any caller actually produces, which is honest (real, recorded
+    outcomes) but weaker than the founder's spec envisions: a procedure
+    can reach `verified` on repeated successful *use* alone, never on an
+    independent reproduction attempt. This parameter is what lets a
+    caller record the stronger kind honestly, without duplicating this
+    function's counter/circuit-breaker/quarantine logic.
 
     `context_key` is the caller's own notion of "distinct context"
     (ticket 13: "different files, environments, dependency sets") --
@@ -360,7 +387,7 @@ async def record_execution_outcome(
                 },
             }
         evidence = outcome_to_evidence(
-            evidence_type="execution_result",
+            evidence_type=evidence_type,
             target={
                 "target_type": "procedure",
                 "target_id": str(row["id"]),
@@ -548,6 +575,60 @@ async def retire_negative_utility_procedures(pool: asyncpg.Pool, *, min_attempts
     return retired_ids
 
 
+async def mark_procedure_stale(
+    pool: asyncpg.Pool, *, procedure_row_id: str, reason: str, detected_by: str,
+) -> dict:
+    """
+    Phase 4 (memory-substrate map): the narrowest real staleness signal --
+    a procedure's own bound numeric invariant (e.g. `pandas_version >=
+    2.0`) genuinely contradicted by a fresh environment probe of a real
+    repo. `staleness` (db/18_procedures.sql) has existed since Band 1 and
+    is already a real, enforced hard constraint in
+    applicability.py::check_hard_constraints() -- staleness='stale' rows
+    are excluded from retrieval -- but until this pass nothing in
+    production code ever SET it away from 'fresh'; only test fixtures did
+    (confirmed by repo-wide search this session).
+
+    Deliberately one-directional and narrow, per the founder's own "start
+    deterministic... do not build the complete TMS yet": this function
+    only ever moves 'fresh' -> 'stale'. It does not attempt to un-stale a
+    procedure automatically -- a procedure whose invariant later holds
+    again deserves a real re-verification pass (the 'revalidating' state
+    already modeled in the DB enum), not a silent auto-reversal, which is
+    real, separate, larger work this pass does not attempt.
+
+    A no-op, returning the row unchanged, if the procedure is already
+    'stale' or 'revalidating' -- repeated real-world drift detection
+    against the same already-flagged procedure must not spam the
+    ChangeSet audit trail with duplicate transitions.
+
+    Records a ChangeSet (same convention as approve_procedure/
+    reject_procedure/check_quarantine_and_disable): a staleness
+    transition is a [V] status mutation and must be auditable after the
+    fact, including WHY (`reason` -- e.g. which invariant was violated
+    under which real probed bindings) and WHO/WHAT detected it
+    (`detected_by` -- e.g. "reproduce_procedure:<repo_path basename>").
+    """
+    row = await pool.fetchrow("SELECT * FROM procedures WHERE id = $1", procedure_row_id)
+    if row is None:
+        raise ProcedureNotFound(procedure_row_id)
+    if row["staleness"] != "fresh":
+        return dict(row)
+
+    updated = await pool.fetchrow(
+        "UPDATE procedures SET staleness = 'stale', updated_at = now() "
+        "WHERE id = $1 RETURNING *",
+        procedure_row_id,
+    )
+    from app.services.changeset_record import record_change_set, status_change
+    await record_change_set(
+        pool, author=detected_by,
+        reason=f"staleness fresh -> stale: {reason}",
+        operations=[status_change(procedure_row_id, {"staleness": "stale"})],
+    )
+    return dict(updated)
+
+
 async def approve_procedure(pool: asyncpg.Pool, *, procedure_row_id: str, approved_by: str) -> None:
     """
     The missing counterpart to migration 20's approval_status column --
@@ -586,3 +667,227 @@ async def reject_procedure(pool: asyncpg.Pool, *, procedure_row_id: str, approve
         reason="procedure approval_status -> rejected",
         operations=[status_change(procedure_row_id, {"approval_status": "rejected"})],
     )
+
+
+# ---------------------------------------------------------------------------
+# Phase 5 (memory-substrate map, gap #8): procedure-level canonicalization.
+#
+# check_novelty() (skill_ingestion.py) is refuse-only and only ever sees ONE
+# candidate at admission time, before it is written -- it cannot merge two
+# rows that are already both persisted (e.g. the same real capability
+# ingested once via ingest_skill_md with provenance='prior_library' and once
+# via extraction/organic capture with provenance='system_pending_review').
+# This is the separate, later-stage real-merge path check_novelty structurally
+# cannot provide. It reuses dedup.py's clustering primitive
+# (find_duplicate_clusters(table="procedures")) but deliberately NOT
+# dedup.py's merge_cluster: that function's "earliest"/"latest" survivor
+# rule, hard-coded edge provenance, and unconditional tombstone-with-no-
+# provenance-preservation are the right shape for task_nodes/knowledge_nodes
+# (Part A's actual use case -- accidental re-creation / policy supersession)
+# but wrong for procedures, which carry ticket-13 verification state,
+# evidence_refs, and source_episode_ids that a merge must not silently drop.
+#
+# Survivor rule (principled, reuses verification_stats already on the row --
+# no new scoring pass): highest verification_state on the ticket-13 ladder
+# (verified > candidate > retired), tie-broken by most recorded successes,
+# then most distinct_contexts, then earliest t_created (same "first real one
+# wins" tie-break dedup.py's own merge_cluster uses for "earliest").
+#
+# Losers are NEVER hard-deleted -- t_invalid = now() (this table's own
+# bi-temporal invalidate-and-append convention, db/18_procedures.sql), same
+# tombstone-not-delete discipline retire_negative_utility_procedures() and
+# every other lifecycle transition in this module already uses. The
+# survivor's evidence_refs/source_episode_ids absorb the losers' (union, not
+# overwrite); a loser's own `provenance` string cannot be losslessly merged
+# into the survivor's single TEXT provenance column, so it is preserved
+# honestly as a structured entry inside evidence_refs instead of silently
+# discarded or silently overwriting the survivor's own provenance. A
+# DUPLICATE_OF edge (same SUPERSEDES/custom_edge_type convention
+# dedup.py::merge_cluster uses for task_nodes/knowledge_nodes -- procedures
+# became a valid edge source_table/target_table in db/18) records the merge
+# for graph-side discoverability, and a ChangeSet (same convention as
+# approve_procedure/mark_procedure_stale/check_quarantine_and_disable above)
+# records it for audit.
+# ---------------------------------------------------------------------------
+
+def _procedure_rank_key(row: Mapping[str, Any]) -> tuple:
+    stats = row["verification_stats"] or {}
+    state_rank = _VERIFICATION_STATE_RANK.get(row["verification_state"], 0)
+    successes = stats.get("successes", 0)
+    distinct_contexts = stats.get("distinct_contexts", 0)
+    t_created = row["t_created"]
+    # Higher is better on the first three; for t_created, EARLIER wins a
+    # full tie, so its contribution is negated (a smaller/earlier
+    # timestamp must sort as "more preferred" under reverse=True below).
+    return (state_rank, successes, distinct_contexts, -t_created.timestamp())
+
+
+async def merge_duplicate_procedures(
+    pool: asyncpg.Pool,
+    *,
+    cluster_ids: list[str],
+    merged_by: str,
+) -> Optional[dict]:
+    """
+    Merge one cluster of near-duplicate procedure ids (from
+    dedup.find_duplicate_clusters(pool, "procedures", ...)) into a single
+    survivor, inside a transaction this function owns.
+
+    Returns None if fewer than 2 members of `cluster_ids` are still live
+    (t_invalid IS NULL) -- a concurrent merge or edit already reconciled
+    this cluster, a valid no-op, not an error (same contract
+    dedup.py::merge_cluster uses).
+
+    Otherwise returns {"table": "procedures", "canonical_id",
+    "canonical_name", "merged_ids", "merged_names", "change_set_id"}.
+
+    Does NOT rewire edges pointing at a loser's row (unlike
+    dedup.py::merge_cluster) -- no producer creates edges with
+    source_table/target_table='procedures' yet (gap #9, task
+    composability, is explicitly deferred per the memory-substrate map),
+    so there is nothing real to rewire; adding that machinery ahead of a
+    real producer would be exactly the "second dedup system" Rule 6
+    forbids building preemptively.
+    """
+    now = datetime.now(timezone.utc)
+
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            rows = await conn.fetch(
+                "SELECT * FROM procedures WHERE id = ANY($1::uuid[]) AND t_invalid IS NULL FOR UPDATE",
+                [UUIDType(i) for i in cluster_ids],
+            )
+            if len(rows) < 2:
+                return None
+
+            ordered = sorted(rows, key=_procedure_rank_key, reverse=True)
+            canonical = ordered[0]
+            duplicates = ordered[1:]
+            canonical_id = canonical["id"]
+
+            merged_evidence_refs = list(canonical["evidence_refs"] or [])
+            merged_source_episode_ids = list(canonical["source_episode_ids"] or [])
+            seen_source_ids = {str(x) for x in merged_source_episode_ids}
+
+            for dup in duplicates:
+                dup_id = dup["id"]
+
+                for ref in (dup["evidence_refs"] or []):
+                    if ref not in merged_evidence_refs:
+                        merged_evidence_refs.append(ref)
+                merged_evidence_refs.append({
+                    "merged_from_procedure_row_id": str(dup_id),
+                    "merged_from_provenance": dup["provenance"],
+                    "merged_from_name": dup["name"],
+                    "merged_at": now.isoformat(),
+                    "merge_reason": "duplicate cluster merge (embedding-similarity complete-linkage)",
+                })
+
+                for sid in (dup["source_episode_ids"] or []):
+                    if str(sid) not in seen_source_ids:
+                        merged_source_episode_ids.append(sid)
+                        seen_source_ids.add(str(sid))
+
+                await conn.execute(
+                    "UPDATE procedures SET t_invalid = $2, t_expired = $2, updated_at = $2 WHERE id = $1",
+                    dup_id, now,
+                )
+                # provenance is edges' real ENUM (provenance_source,
+                # db/01_ontology.sql) -- 'company_debate' is the exact
+                # value dedup.py::merge_cluster already reuses for this
+                # same internal-maintenance-write shape (there is no
+                # 'dedup'/'maintenance' enum member), so this follows
+                # that established convention rather than adding a new
+                # ad hoc string that the ENUM would reject anyway.
+                await conn.execute(
+                    "INSERT INTO edges (edge_type, custom_edge_type, source_id, source_table, "
+                    "target_id, target_table, properties, provenance, t_valid, t_created, created_by) "
+                    "VALUES ('SUPERSEDES', 'DUPLICATE_OF', $1, 'procedures', $2, 'procedures', "
+                    "$3::jsonb, 'company_debate', $4, $4, $5)",
+                    canonical_id, dup_id,
+                    {"reason": "procedure dedup: complete-linkage merge"}, now, merged_by,
+                )
+
+            await conn.execute(
+                "UPDATE procedures SET evidence_refs = $2::jsonb, source_episode_ids = $3, "
+                "updated_at = $4 WHERE id = $1",
+                canonical_id, merged_evidence_refs, merged_source_episode_ids, now,
+            )
+
+    from app.services.changeset_record import record_change_set, ChangeOperation
+    operations = [
+        ChangeOperation(
+            operation="invalidate", target_table="procedures", target_id=str(dup["id"]),
+            detail={
+                "merged_into": str(canonical_id),
+                "reason": "duplicate cluster merge (embedding-similarity complete-linkage)",
+            },
+        )
+        for dup in duplicates
+    ]
+    operations.append(ChangeOperation(
+        operation="revise", target_table="procedures", target_id=str(canonical_id),
+        detail={
+            "absorbed_procedure_row_ids": [str(dup["id"]) for dup in duplicates],
+            "evidence_refs_count": len(merged_evidence_refs),
+            "source_episode_ids_count": len(merged_source_episode_ids),
+        },
+    ))
+    change_set_id = await record_change_set(
+        pool, author=merged_by,
+        reason=f"procedure dedup merge: {len(duplicates)} duplicate(s) merged into "
+               f"{canonical['name']!r} ({canonical_id})",
+        operations=operations,
+    )
+
+    return {
+        "table": "procedures",
+        "canonical_id": str(canonical_id),
+        "canonical_name": canonical["name"],
+        "merged_ids": [str(dup["id"]) for dup in duplicates],
+        "merged_names": [dup["name"] for dup in duplicates],
+        "change_set_id": str(change_set_id),
+    }
+
+
+async def run_procedure_dedup_sweep(
+    pool: asyncpg.Pool,
+    *,
+    scope: Optional[AccessScope] = None,
+    embedder: Optional[Any] = None,
+    merged_by: str = "procedure_dedup_sweep",
+    apply: bool = False,
+) -> list[dict]:
+    """
+    Batch counterpart to merge_duplicate_procedures(), same cautious-by-
+    default posture as dedup.py::run_dedup_sweep (dry run unless
+    `apply=True`) -- an internal/admin operation only, not a request-path
+    call. Finds clusters via dedup.find_duplicate_clusters(table=
+    "procedures"), which needs no tenant_scope argument here: procedures
+    carries no tenant_id column (see that function's own docstring), so
+    the only correct scope for this table is the unrestricted default it
+    already falls back to.
+    """
+    from app.services.dedup import find_duplicate_clusters
+
+    scope = scope or AccessScope.unrestricted()
+    clusters = await find_duplicate_clusters(pool, "procedures", scope, embedder)
+
+    reports: list[dict] = []
+    for cluster in clusters:
+        ids = [c["id"] for c in cluster]
+        if not apply:
+            reports.append({
+                "table": "procedures",
+                "canonical_id": ids[0],
+                "canonical_name": cluster[0]["name"],
+                "merged_ids": ids[1:],
+                "merged_names": [c["name"] for c in cluster[1:]],
+                "change_set_id": None,
+            })
+            continue
+        report = await merge_duplicate_procedures(pool, cluster_ids=ids, merged_by=merged_by)
+        if report is not None:
+            reports.append(report)
+
+    return reports

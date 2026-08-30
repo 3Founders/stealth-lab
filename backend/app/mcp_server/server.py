@@ -989,6 +989,202 @@ async def find_best_way(task_description: str, ctx: Context,
 
 
 @server.tool()
+async def reproduce_procedure(procedure_id: str, repo_path: str, ctx: Context,
+                               model: str = "gemma-4-31B-it", max_steps: int = 25) -> str:
+    """
+    Deliberately re-run an EXISTING procedure's own steps against a real
+    repo to test whether it still reproduces its claimed result, and
+    record a real `reproduction` evidence row -- not another
+    `execution_result` row.
+
+    WHY THIS TOOL EXISTS (memory-substrate gap, this pass): every
+    `verified` procedure today stands ONLY on `execution_result` evidence
+    -- organic reuse recorded as a side effect of `find_best_way`'s
+    tier-2 runs (see `record_execution_outcome`). `procedure_evidence_
+    stats` (db/24_evidence.sql) has always accepted `reproduction` as an
+    equally-qualifying evidence type toward the verified-transition gate
+    (db/30's engine trigger, `independent_supporting_required >= 1`), but
+    until this tool nothing ever produced one -- repeated successful USE
+    is real evidence, but it is not the same claim as "this was
+    independently re-run specifically to check it still works," which is
+    what the founder's spec means by reproduction/replay. This is
+    deliberately the narrowest real slice of that idea (founder's own
+    "Replay A -- same instance" tier): re-run against the SAME repo the
+    caller points at, not a perturbed or different one. Cross-repo
+    transfer validation is a real, separate, larger gap -- not attempted
+    here.
+
+    Reuses the exact execution machinery `find_best_way`'s tier 2 already
+    proves live (compile_plan -> persist_compiled_plan -> RepoSandbox +
+    Agent per real step via execute_task_graph -> record_plan_execution),
+    with one difference: the procedure is NOT looked up by task
+    description or ad-hoc captured -- it's fetched by its own
+    `procedure_id` and its OWN stored steps are what get re-executed, and
+    the outcome is written via `record_execution_outcome(...,
+    evidence_type="reproduction")` instead of the default
+    `"execution_result"`.
+
+    STALENESS CHECK (Phase 4, runs BEFORE any agent call, only when the
+    procedure carries numeric invariants): probes `repo_path`'s real
+    environment (same `probe_environment`/`invariant_bindings_from_facts`
+    machinery `find_best_way` and `search_procedures` already use) and
+    checks the procedure's own invariants against it via
+    `invariants.py::check_invariants_async`. A genuine contradiction (not
+    an unbound/undecidable variable) marks the procedure
+    `staleness='stale'` and returns immediately -- no agent run, since
+    re-running a procedure whose environment assumptions the probe just
+    disproved would not be testing reproduction, it would be confirming
+    what the probe already found.
+
+    procedure_id: a procedures row `id` (not `procedure_id`'s stable
+    handle) -- the exact version row being reproduced, matching evidence's
+    own version-pinning requirement (V-EVD: "evidence targeting a
+    procedure must pin its exact version").
+    repo_path: absolute path to an existing repo checkout on this
+    server's filesystem, same security posture as `find_best_way`
+    (caller-controlled, RepoSandbox path-traversal guarded, not a
+    multi-tenant-safe boundary yet).
+    """
+    pool = ctx.request_context.lifespan_context["pool"]
+
+    if not os.path.isdir(repo_path):
+        return f"REFUSED: repo_path {repo_path!r} is not a directory on this server."
+
+    from app.services.procedures import (
+        get_procedure, mark_procedure_stale, record_execution_outcome, ProcedureNotFound,
+    )
+
+    procedure_payload = await get_procedure(pool, procedure_id)
+    if procedure_payload is None:
+        raise ProcedureNotFound(procedure_id)
+
+    steps = procedure_payload.get("steps") or []
+    if not steps:
+        return (
+            f"REFUSED: procedure {procedure_id} has no steps to reproduce "
+            "(empty steps list -- nothing to re-run)."
+        )
+    task_description = procedure_payload.get("goal") or procedure_payload.get("name") or procedure_id
+
+    # Phase 4 (memory-substrate map, this pass): before spending an agent
+    # run, check whether the procedure's OWN bound numeric invariants
+    # (e.g. "pandas_version >= 2.0") are still satisfied by THIS repo's
+    # real, freshly-probed environment -- the same invariant-checking
+    # primitive applicability.py's retrieval-time cascade already uses,
+    # applied here as a staleness *detector* rather than a retrieval
+    # disqualifier. A genuine contradiction means re-running the
+    # procedure's steps would not be testing reproduction at all (the
+    # environment has moved past what the procedure claims to need) --
+    # so this marks the procedure stale and returns early instead of
+    # wasting a sandboxed run on a foregone conclusion. `staleness`
+    # (db/18_procedures.sql) is a real, enforced hard constraint in
+    # applicability.py's cascade already; until this pass nothing in
+    # production ever SET it away from 'fresh' -- this is that producer.
+    invariants = procedure_payload.get("invariants") or []
+    if invariants:
+        from app.services.environment_probe import invariant_bindings_from_facts, probe_environment
+        from app.services.invariants import check_invariants_async
+
+        facts = probe_environment(repo_path)
+        bindings = invariant_bindings_from_facts(facts)
+        invariant_result = await check_invariants_async(invariants, bindings)
+        if invariant_result.violated:
+            updated = await mark_procedure_stale(
+                pool, procedure_row_id=procedure_id,
+                reason=f"invariant(s) {invariant_result.violated} contradicted by "
+                       f"probed bindings {bindings} at {repo_path}",
+                detected_by=f"reproduce_procedure:{os.path.basename(os.path.abspath(repo_path))}",
+            )
+            return (
+                f"STALE: procedure {procedure_id}'s invariant(s) "
+                f"{invariant_result.violated} are contradicted by this repo's real, "
+                f"probed environment ({bindings}) -- marking staleness="
+                f"'{updated['staleness']}' instead of reproducing against a known-"
+                "incompatible environment. No agent run was attempted."
+            )
+
+    sandbox = RepoSandbox(repo_path)
+    client = OpenAI(
+        max_retries=0,
+        api_key=settings.require("general_compute_api_key"),
+        base_url=settings.general_compute_base_url,
+    )
+
+    from app.execution.graph_executor import NodeResult, execute_task_graph
+    from app.execution.plan_persistence import persist_compiled_plan, record_plan_execution
+    from app.execution.plans import compile_plan
+    from app.execution.procedure_graph import steps_to_linear_nodes
+
+    compiled_plan = compile_plan(
+        procedure_id=procedure_payload["procedure_id"],
+        procedure_version=procedure_payload["version"],
+        procedure_row_id=UUID(procedure_id),
+        procedure_payload=procedure_payload,
+        task_description=task_description,
+        nodes=steps_to_linear_nodes(steps),
+        extractor_version="reproduce_procedure_plan_compiler@1",
+        created_by="reproduce_procedure",
+    )
+    compiled_plan, _ = await persist_compiled_plan(pool, compiled_plan)
+
+    node_runs: dict[int, "AgentRun"] = {}  # noqa: F821
+    node_notes: list[str] = []
+
+    async def run_node(node):
+        prior_context = ("\n\nPrior steps completed:\n" + "\n".join(node_notes)) if node_notes else ""
+        node_instance = {
+            "instance_id": f"mcp_reproduce_procedure_{secrets.token_hex(6)}_step{node.order}",
+            "repo": os.path.basename(os.path.abspath(repo_path)),
+            "problem_statement": f"{task_description}\n\nCurrent step: {node.goal}",
+        }
+        node_agent = Agent(client, model, max_steps=max_steps)
+        node_run = await asyncio.to_thread(
+            node_agent.run, node_instance, sandbox, "mcp_reproduce_procedure", prior_context,
+        )
+        node_runs[node.order] = node_run
+        succeeded = node_run.stop_reason == "finished"
+        note = f"step {node.order} ({node.goal}): stop_reason={node_run.stop_reason}, tool_calls={len(node_run.tool_calls)}"
+        node_notes.append(note)
+        return NodeResult(status="success" if succeeded else "failure", notes=note)
+
+    graph_result = await execute_task_graph(compiled_plan.graph, run_node=run_node)
+
+    all_tool_calls = [tc for r in node_runs.values() for tc in r.tool_calls]
+    all_files_edited = sorted({f for r in node_runs.values() for f in r.files_edited})
+    combined_patch = "\n".join(r.patch for r in node_runs.values() if r.patch)
+    total_calls = sum(r.usage.calls for r in node_runs.values())
+
+    # Same real success proxy as find_best_way's tier 2: the whole graph
+    # finished AND produced a non-empty diff -- "finished" alone can mean
+    # "gave up cleanly", not "reproduced".
+    run_succeeded = graph_result.outcome == "success" and bool(combined_patch)
+
+    updated = await record_execution_outcome(
+        pool, procedure_row_id=procedure_id, success=run_succeeded,
+        context_key=f"reproduction:{os.path.basename(os.path.abspath(repo_path))}",
+        steps_used=total_calls,
+        evidence_type="reproduction",
+    )
+
+    await record_plan_execution(
+        pool, compiled=compiled_plan,
+        outcome=graph_result.outcome, created_by="reproduce_procedure",
+    )
+
+    lines = [
+        f"reproduction_outcome: {'REPRODUCED' if run_succeeded else 'FAILED_TO_REPRODUCE'}",
+        f"graph_outcome: {graph_result.outcome}",
+        f"steps: {len(compiled_plan.graph.nodes)} total, {len(node_runs)} executed",
+        *[f"  {note}" for note in node_notes],
+        f"files_edited: {all_files_edited}",
+        f"verification_state_after: {updated['verification_state']} "
+        f"(availability: {updated['availability']})",
+    ]
+    lines.append("\n--- COMBINED DIFF ---\n" + combined_patch if combined_patch else "\n(no changes made)")
+    return "\n".join(lines)
+
+
+@server.tool()
 async def detect_conflict_trigger(new_node_id: str, ctx: Context) -> str:
     """
     Check whether an existing knowledge_node conflicts with something else
