@@ -10,6 +10,7 @@ from pathlib import Path
 from app.services.environment_probe import (
     PROBE_PREDICATE_VOCABULARY,
     EnvironmentFact,
+    invariant_bindings_from_facts,
     probe_environment,
 )
 
@@ -106,6 +107,48 @@ def test_against_this_repos_own_backend():
     facts = {(f.predicate, f.object) for f in probe_environment(backend_root)}
     assert ("language", "python") in facts
     assert ("has_test_runner", "pytest") in facts
+
+
+def test_pinned_requirements_produce_package_version_facts(tmp_path):
+    """Phase 3, Step 1: the failing probe test the plan calls for --
+    a real requirements.txt pin must produce a real package_version
+    fact, using the fixed 'package_version' predicate (not a
+    per-package predicate name, which would need one vocabulary entry
+    per package ever seen)."""
+    _write(tmp_path, "requirements.txt", "pandas==2.1.0\nrequests>=2.28.0\n")
+    facts = {(f.predicate, f.object) for f in probe_environment(str(tmp_path))}
+    assert ("package_version", "pandas:2.1.0") in facts
+    # requests is a range spec (>=), not an exact pin -- states no single
+    # real version, so it must NOT be guessed at as a package_version fact.
+    assert not any(obj.startswith("requests:") for pred, obj in facts if pred == "package_version")
+
+
+def test_unpinned_or_ranged_requirements_produce_no_version_fact(tmp_path):
+    _write(tmp_path, "requirements.txt", "pandas\npandas~=2.0\npandas>=2.0,<3.0\n")
+    facts = [f for f in probe_environment(str(tmp_path)) if f.predicate == "package_version"]
+    assert facts == []
+
+
+def test_package_version_predicate_is_in_the_vocabulary():
+    assert "package_version" in PROBE_PREDICATE_VOCABULARY
+
+
+def test_invariant_bindings_from_pandas_pin():
+    facts = [EnvironmentFact("package_version", "pandas:2.1.0")]
+    assert invariant_bindings_from_facts(facts) == {"pandas_version": 2.1}
+
+
+def test_invariant_bindings_ignores_non_version_facts():
+    facts = [EnvironmentFact("language", "python"), EnvironmentFact("package_manager", "pip")]
+    assert invariant_bindings_from_facts(facts) == {}
+
+
+def test_invariant_bindings_from_multiple_packages():
+    facts = [
+        EnvironmentFact("package_version", "pandas:2.1.0"),
+        EnvironmentFact("package_version", "numpy:1.26.0"),
+    ]
+    assert invariant_bindings_from_facts(facts) == {"pandas_version": 2.1, "numpy_version": 1.26}
 
 
 def test_against_this_repos_own_frontend():

@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from dataclasses import dataclass
 from typing import Optional
 
@@ -54,6 +55,7 @@ PROBE_PREDICATE_VOCABULARY: tuple[str, ...] = (
     "has_dev_server",
     "package_manager",
     "language",
+    "package_version",
 )
 
 
@@ -208,6 +210,88 @@ def _python_facts(root: str) -> list[EnvironmentFact]:
     return facts
 
 
+# Exact pins only (`name==X.Y[.Z]`) -- a range spec (`>=`, `~=`, unpinned)
+# states no single real version and is skipped, honestly, rather than
+# guessed at. Deterministic text parsing, same discipline as the rest of
+# this module: no pip/package-manager execution just to learn a version.
+_REQUIREMENTS_PIN_RE = re.compile(
+    r"^\s*([A-Za-z0-9_.\-]+)\s*==\s*([0-9]+(?:\.[0-9]+){1,2})\s*(?:[;#].*)?$"
+)
+
+
+def _requirements_pinned_versions(root: str) -> list[EnvironmentFact]:
+    """
+    package_version facts from requirements.txt exact pins. One
+    predicate ("package_version"), many objects -- "{name}:{version}" --
+    so multiple packages can each get their own fact without the fixed
+    PROBE_PREDICATE_VOCABULARY tuple needing one entry per package name.
+
+    NOT wired through assert_environment_claims()'s DB write path in
+    this pass: that function is idempotent per (subject, predicate),
+    i.e. ONE current value per predicate per project -- fine for
+    has_framework/language, wrong for package_version, where a repo
+    legitimately pins many packages at once. These facts are consumed
+    in-memory (see invariant_bindings_from_facts below) by the one real
+    caller that needs them (find_best_way); persisting them as claims is
+    a real follow-up, not solved here.
+    """
+    path = os.path.join(root, "requirements.txt")
+    if not os.path.isfile(path):
+        return []
+    try:
+        with open(path, encoding="utf-8") as f:
+            lines = f.readlines()
+    except OSError:
+        return []
+
+    facts: list[EnvironmentFact] = []
+    for line in lines:
+        match = _REQUIREMENTS_PIN_RE.match(line)
+        if not match:
+            continue
+        name, version = match.group(1).lower(), match.group(2)
+        facts.append(EnvironmentFact("package_version", f"{name}:{version}"))
+    return facts
+
+
+_VERSION_MAJOR_MINOR_RE = re.compile(r"^(\d+)\.(\d+)")
+
+
+def invariant_bindings_from_facts(facts: list[EnvironmentFact]) -> dict[str, float]:
+    """
+    The connective tissue this substrate was missing: converts probed
+    package_version facts into the `invariant_bindings` dict
+    check_hard_constraints()/invariants.py actually consumes, so a
+    procedure's real numeric invariant (e.g.
+    {"kind": "numeric", "expr": "pandas_version >= 2.0"}) can be
+    evaluated against a real repository -- NOT via preconditions'
+    exact-equality matching, which cannot express `>=` at all (see
+    invariants.py's module docstring for why).
+
+    Binding name convention: "{package}_version" (e.g. "pandas_version"),
+    matching the plain identifier invariants.py's expression parser
+    requires (no dots, no colons -- ast.Name only allows [A-Za-z_][\\w]*).
+
+    REAL, STATED LIMITATION: only major.minor is kept, as a plain float
+    (2.1.0 -> 2.1). Correct for the common "compare against a
+    major.minor threshold" case this module was built to prove, but it
+    collapses patch versions (2.1.0 and 2.1.9 bind identically) and
+    breaks ordering once minor reaches two digits (2.10 parses as the
+    float 2.1, sorting behind 2.9). A real limitation of this first
+    pass, not a hidden one -- full semver comparison is a real follow-up.
+    """
+    bindings: dict[str, float] = {}
+    for fact in facts:
+        if fact.predicate != "package_version":
+            continue
+        name, _, version = fact.object.partition(":")
+        match = _VERSION_MAJOR_MINOR_RE.match(version)
+        if not match or not name:
+            continue
+        bindings[f"{name}_version"] = float(f"{match.group(1)}.{match.group(2)}")
+    return bindings
+
+
 def probe_environment(repo_root: str) -> list[EnvironmentFact]:
     """
     Pure, synchronous, filesystem-only. Every predicate returned here is
@@ -217,7 +301,7 @@ def probe_environment(repo_root: str) -> list[EnvironmentFact]:
     """
     if not os.path.isdir(repo_root):
         return []
-    facts = _js_facts(repo_root) + _python_facts(repo_root)
+    facts = _js_facts(repo_root) + _python_facts(repo_root) + _requirements_pinned_versions(repo_root)
     # De-duplicate same (predicate, object) pairs a repo might trigger
     # from more than one heuristic (e.g. package_manager asserted once
     # is enough); order-preserving, not a set, so facts stay reproducible

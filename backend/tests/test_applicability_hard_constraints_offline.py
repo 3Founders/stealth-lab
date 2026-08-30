@@ -171,6 +171,36 @@ def test_unbound_invariant_does_not_disqualify():
     assert result.applicable
 
 
+def test_pandas_version_invariant_resolves_against_a_real_probed_repo(tmp_path):
+    """Phase 3's end-to-end predicate resolution (imperative-twirling-plum
+    .md, Step 3): a real requirements.txt pin, probed for real by
+    probe_environment(), converted for real by
+    invariant_bindings_from_facts(), decided for real by z3 through the
+    SAME check_hard_constraints() cascade find_applicable_procedures()
+    uses -- no mocking of any of these three functions.
+
+    This is the honest version of the plan's literal claim: `pandas >=
+    2.0` is expressed as a numeric invariant, NOT a precondition --
+    Tier-1 preconditions only do exact-equality matching and cannot
+    express `>=` at all (invariants.py's own module docstring)."""
+    from app.services.environment_probe import invariant_bindings_from_facts, probe_environment
+
+    procedure = _procedure(invariants=[{"kind": "numeric", "expr": "pandas_version >= 2.0"}])
+
+    (tmp_path / "requirements.txt").write_text("pandas==2.1.0\n")
+    bindings = invariant_bindings_from_facts(probe_environment(str(tmp_path)))
+    result = _run(check_hard_constraints(FakePool(), procedure, invariant_bindings=bindings))
+    assert result.applicable, f"pandas 2.1.0 should satisfy >= 2.0, got: {result.failed_constraints}"
+
+    stale_root = tmp_path / "stale_repo"
+    stale_root.mkdir()
+    (stale_root / "requirements.txt").write_text("pandas==1.5.3\n")
+    stale_bindings = invariant_bindings_from_facts(probe_environment(str(stale_root)))
+    stale_result = _run(check_hard_constraints(FakePool(), procedure, invariant_bindings=stale_bindings))
+    assert not stale_result.applicable
+    assert stale_result.failed_constraints == ["invariant:pandas_version >= 2.0"]
+
+
 # --- pure helpers: _scope_matches / _excluded, no pool involved at all ---
 
 def test_scope_matches_true_when_procedure_scope_is_empty():

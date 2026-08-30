@@ -709,7 +709,7 @@ async def find_best_way(task_description: str, ctx: Context,
         return "REFUSED: mode='full_run' requires repo_path."
 
     from app.services.applicability import find_applicable_procedures
-    from app.services.environment_probe import probe_environment
+    from app.services.environment_probe import invariant_bindings_from_facts, probe_environment
     from app.services.procedures import capture_procedure, get_procedure, record_execution_outcome
 
     embedder = Embedder()
@@ -719,6 +719,7 @@ async def find_best_way(task_description: str, ctx: Context,
     # narrowing (below) is repo-dependent and simply skipped without one;
     # a repo-less call still gets a real, if less-narrowed, match attempt.
     procedure_scope: dict = {}
+    invariant_bindings: dict = {}
     if repo_path is not None:
         # Synchronous filesystem reads (a handful of specific top-level
         # files -- package.json/lockfiles/requirements.txt/pyproject.toml,
@@ -728,6 +729,12 @@ async def find_best_way(task_description: str, ctx: Context,
         lang = next((f.object for f in facts if f.predicate == "language"), None)
         if lang:
             procedure_scope = {"language": [lang]}
+        # Phase 3: real package_version facts, converted to the numeric
+        # bindings check_hard_constraints()'s invariant stage actually
+        # consumes -- the connective tissue that was missing (invariants
+        # existed and were already wired through find_applicable_procedures,
+        # but nothing real ever populated invariant_bindings before this).
+        invariant_bindings = invariant_bindings_from_facts(facts)
 
     # require_verified DEFAULTS TO TRUE and is deliberately left there, not
     # weakened to False to make something show up here today. Ticket 13's
@@ -741,6 +748,7 @@ async def find_best_way(task_description: str, ctx: Context,
     matched_procedures = await find_applicable_procedures(
         pool, goal_embedding=query_vec, current_scope=procedure_scope, limit=1,
         require_verified=not allow_unverified_procedures,
+        invariant_bindings=invariant_bindings,
     )
     matched_procedure = matched_procedures[0] if matched_procedures else None
 
