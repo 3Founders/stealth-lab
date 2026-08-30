@@ -482,22 +482,37 @@ def _render_step(step) -> str:
 
 
 async def _respond_tier1_hit(pool, task_description: str, matched_procedure: dict) -> str:
-    """Tier-1 lookup hit: return the match immediately, no sandboxed run.
+    """Tier-1 lookup hit: REAL execution now, not just a returned text
+    listing -- one real, cheap LLM call per real stored step, in real
+    dependency order, via the same graph_executor.py the tier-2 coding
+    demo proved live. This is genuinely still the "seamless, callable
+    anywhere" tier: no repo_path, no sandbox, no tool-calling loop -- just
+    the procedure's own steps, reasoned through for real, in order.
 
-    Still compiles and persists a real execution_plans/task_graphs pair
-    (a plan is "this task instantiated against this procedure", independent
-    of whether it then executes) -- but writes no `executions` row, since
-    nothing actually ran. That distinction is the schema's own: ExecutionPlan
-    is the compiled artifact, Execution is the record of a real run.
+    A stored procedure's steps are linear by construction (no branching
+    field exists -- db/18_procedures.sql's own DDL comment), so
+    `steps_to_linear_nodes()` derives deps=[i-1] straight from the
+    existing `order` field. No schema change, no fabrication -- proven
+    against the real corpus in test_stored_procedure_multistep_live.py.
+
+    Compiles and persists a real execution_plans/task_graphs/executions
+    triplet, matching what tier-2 does -- a plan is real whether it then
+    runs lightweight reasoning or a full sandboxed agent. What this
+    deliberately does NOT do: call record_execution_outcome() (ticket-13
+    verification evidence). Evidence.py's own invariant #13 is explicit --
+    "the model said it worked is not criteria" -- and per-step reasoning
+    here has no objective, externally-checkable success signal the way
+    tier-2's real diff/stop_reason check does. Recording it as
+    verification evidence would be exactly the self-report evidence.py
+    exists to refuse. The Execution row's outcome records "did the graph
+    finish running", a materially weaker and more honest claim.
     """
-    from app.execution.plan_persistence import persist_compiled_plan
+    from app.execution.graph_executor import NodeResult, execute_task_graph
+    from app.execution.plan_persistence import persist_compiled_plan, record_plan_execution
     from app.execution.plans import compile_plan
-    from app.models.plan import PlanNode, ProcedureRef
+    from app.execution.procedure_graph import steps_to_linear_nodes
 
-    steps_text = "\n".join(
-        f"  {i+1}. {_render_step(s)}"
-        for i, s in enumerate(matched_procedure.get("steps") or [])
-    )
+    steps = matched_procedure.get("steps") or [{"order": 0, "goal": task_description}]
     is_verified = matched_procedure.get("verification_state") == "verified"
     status = (
         f"verified, {matched_procedure['verification_stats'].get('successes', 0)} prior successes"
@@ -505,30 +520,55 @@ async def _respond_tier1_hit(pool, task_description: str, matched_procedure: dic
         else "UNVERIFIED -- opted in via allow_unverified_procedures, use at your own judgment"
     )
 
-    plan_node = PlanNode(
-        order=0, goal=task_description,
-        step_ref=ProcedureRef(
-            procedure_id=matched_procedure["procedure_id"],
-            version=matched_procedure["version"],
-        ),
-    )
     compiled_plan = compile_plan(
         procedure_id=matched_procedure["procedure_id"],
         procedure_version=matched_procedure["version"],
         procedure_row_id=matched_procedure["id"],
         procedure_payload=matched_procedure,
         task_description=task_description,
-        nodes=[plan_node],
+        nodes=steps_to_linear_nodes(steps),
         extractor_version="find_best_way_plan_compiler@1",
         created_by="find_best_way",
     )
-    await persist_compiled_plan(pool, compiled_plan)
+    compiled_plan, _ = await persist_compiled_plan(pool, compiled_plan)
+
+    client = OpenAI(
+        max_retries=0,
+        api_key=settings.require("general_compute_api_key"),
+        base_url=settings.general_compute_base_url,
+    )
+
+    async def run_node(node) -> NodeResult:
+        resp = await asyncio.to_thread(
+            client.chat.completions.create,
+            model="gemma-4-31B-it",
+            messages=[
+                {"role": "system", "content": f"Overall task: {task_description}"},
+                {"role": "user", "content": node.goal + " Answer concretely, in 1-3 sentences."},
+            ],
+            max_tokens=150,
+        )
+        text = (resp.choices[0].message.content or "").strip()
+        return NodeResult(status="success" if text else "failure", notes=text)
+
+    result = await execute_task_graph(compiled_plan.graph, run_node=run_node)
+    await record_plan_execution(
+        pool, compiled=compiled_plan,
+        outcome=result.outcome, created_by="find_best_way",
+    )
+
+    steps_text = "\n".join(
+        f"  {order + 1}. {node.goal}\n"
+        f"     -> {result.node_results[order].notes if order in result.node_results else '(skipped -- blocked by an earlier failed step)'}"
+        for order, node in enumerate(sorted(compiled_plan.graph.nodes, key=lambda n: n.order))
+    )
 
     return (
         f"Found existing best-known way ({status}): {matched_procedure['name']}\n"
-        f"{steps_text}\n\n"
-        "(lookup only -- no sandboxed run performed; pass mode='full_run' "
-        "with a repo_path to execute instead)"
+        f"Reasoned through {len(compiled_plan.graph.nodes)} real step(s) "
+        f"(outcome: {result.outcome}):\n{steps_text}\n\n"
+        "(lookup-tier reasoning only -- no sandboxed run, no file edits; "
+        "pass mode='full_run' with a repo_path for that)"
     )
 
 

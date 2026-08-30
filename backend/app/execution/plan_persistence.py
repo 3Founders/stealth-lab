@@ -23,8 +23,15 @@ from app.execution.plans import CompiledPlan, validate_execution_binding
 from app.models.plan import Execution, ExecutionPlan, TaskGraph
 
 _PLAN_COLUMNS = (
+    # NOTE: no task_graph_id here -- execution_plans has no such column
+    # (db/23_plan_persistence.sql confirmed directly). The FK points the
+    # OTHER way: task_graphs.execution_plan_id -> execution_plans.id.
+    # ExecutionPlan (models/plan.py) carries task_graph_id as an in-memory
+    # convenience link; to_row() includes it, but this INSERT must not --
+    # a real bug this pass found, live, against real Postgres (offline
+    # fakes never had a real column list to be wrong against).
     "id", "procedure_id", "procedure_version", "procedure_row_id",
-    "task_graph_id", "scope_type", "scope_entity_id", "task_description",
+    "scope_type", "scope_entity_id", "task_description",
     "parameters", "starting_state_id", "resolved_claims", "selected_branches",
     "implementations", "safety_check", "verification_plan",
     "extractor_version", "procedure_content_hash", "content_hash",
@@ -66,8 +73,15 @@ async def _find_existing_plan(pool: asyncpg.Pool, content_hash: str) -> Optional
         raise RuntimeError(
             f"execution_plans row {plan_row['id']} has no matching task_graphs row"
         )
+    # ExecutionPlan.from_row() requires task_graph_id (a real, non-optional
+    # field on the model -- the in-memory convenience link), but it is not
+    # a real column on execution_plans (see _PLAN_COLUMNS' note above) --
+    # inject it from the graph row actually fetched, the only place it's
+    # available now that the two tables' real FK direction is respected.
+    plan_dict = dict(plan_row)
+    plan_dict["task_graph_id"] = graph_row["id"]
     return CompiledPlan(
-        plan=ExecutionPlan.from_row(dict(plan_row)),
+        plan=ExecutionPlan.from_row(plan_dict),
         graph=TaskGraph.from_row(dict(graph_row)),
     )
 

@@ -28,7 +28,9 @@ LIVE_SCRIPTS = [
     "test_propose_synthesis_live.py",
     "test_find_best_way_live.py",
     "test_graph_executor_live.py",
+    "test_stored_procedure_multistep_live.py",
     "test_submit_approval_live.py",
+    "test_tier1_execution_live.py",
     "test_tasks_extension_live.py",
 ]
 
