@@ -19,6 +19,27 @@ network, a real LLM, or a real sandbox:
 Swapping both lets the offline test prove the CALL SEQUENCE (search ->
 get -> execute -> report) and the no-match short-circuit, independent of
 whether the real mechanisms underneath ever change.
+
+UNIFIED LOCAL+GLOBAL RETRIEVAL (product spec Phase 1+2, wired in here):
+when `repo_path` is a real, existing directory, `run()` checks that
+workspace's own private `LocalProcedureStore` (app.local_agent.local_store)
+ALONGSIDE the remote global corpus, via
+app.local_agent.unified_retrieval.orchestrate_unified_search, before
+falling through to the prior global-only call sequence for a fake/
+nonexistent path (offline tests, a bare sandbox with no real workspace).
+A `local`-sourced match never leaves this process: its outcome is
+recorded into the SAME local store (record_local_execution_outcome), never
+reported to the remote server -- Rule 6, no implicit private->global
+promotion, evidence included. NOTE this module now transitively imports
+`app.services.procedures` (for its real, shared verification-threshold
+constants, not a second copy -- Rule 6) which itself imports `asyncpg` as
+a library; that import never opens a connection or touches
+`app.db.session`, so the structural "no database dependency" contract the
+offline test below actually checks (direct imports of asyncpg/app.db.session
+in THIS file) still holds -- but it's a real, worth-noting change in what
+"zero database dependency" means for this module, from "doesn't even
+import the driver" to "imports the driver as a library, never a live
+connection."
 """
 from __future__ import annotations
 
@@ -37,6 +58,8 @@ from mcp.client.streamable_http import streamable_http_client
 
 from app.execution.graph_executor import NodeResult, execute_task_graph
 from app.execution.procedure_graph import steps_to_linear_nodes
+from app.local_agent.local_store import LocalProcedureStore
+from app.local_agent.unified_retrieval import orchestrate_unified_search
 from app.models.plan import TaskGraph
 from app.services.environment_facts import invariant_bindings_from_facts, probe_environment
 
@@ -48,6 +71,11 @@ class LocalRunResult:
     files_edited: list[str] = field(default_factory=list)
     combined_patch: str = ""
     node_notes: list[str] = field(default_factory=list)
+    # "local" | "global" | None (no match) -- which store the executed
+    # procedure came from. Added when unified local+global retrieval was
+    # wired in; a caller ignoring this field (all pre-existing ones did)
+    # sees unchanged behavior, since it's a trailing field with a default.
+    source: Optional[str] = None
 
 
 @asynccontextmanager
@@ -146,7 +174,16 @@ class LocalAgentRunner:
         self.max_steps = max_steps
 
     async def run(self, task_description: str, repo_path: str, *,
-                   allow_unverified: bool = True) -> LocalRunResult:
+                   allow_unverified: bool = False) -> LocalRunResult:
+        """allow_unverified: default False -- production default is
+        verified + approved procedures only (require_verified=True on the
+        remote search_procedures call), matching find_best_way's own
+        already-correct allow_unverified_procedures=False default
+        server-side (app/mcp_server/server.py). Pass True only for
+        explicit development/experimentation use, never as a silent
+        default -- a `candidate` (unverified/unapproved) procedure must
+        never be selected for real execution unless the caller opted in
+        by name."""
         async with _open_client_session(self.server_url, self.token) as session:
             await session.initialize()
 
@@ -161,22 +198,51 @@ class LocalAgentRunner:
             local_facts = await asyncio.to_thread(probe_environment, repo_path)
             invariant_bindings = invariant_bindings_from_facts(local_facts)
 
-            search_result = await session.call_tool(
-                "search_procedures",
-                {
-                    "task": task_description, "require_verified": not allow_unverified,
-                    "limit": 3, "invariant_bindings": json.dumps(invariant_bindings),
-                },
-            )
-            matches = json.loads(search_result.content[0].text)
-            if not matches:
-                return LocalRunResult(matched_procedure=None, graph_outcome="no_match")
-            matched = matches[0]
+            # Phase 1+2 (memory-substrate map): check the workspace's own
+            # private procedure library ALONGSIDE the remote global corpus,
+            # ranked by one real policy (unified_retrieval.py) -- rather
+            # than always going straight to global. Real, existing
+            # directory only: a fake/nonexistent repo_path (offline tests,
+            # a bare CI sandbox with no real workspace) skips the local
+            # store entirely and falls back to the prior global-only
+            # behavior verbatim, rather than trying to create a store file
+            # under a path that was never a real workspace.
+            store = LocalProcedureStore(repo_path) if os.path.isdir(repo_path) else None
+            if store is not None:
+                ranked = await orchestrate_unified_search(
+                    session, store,
+                    task_description=task_description,
+                    invariant_bindings=invariant_bindings,
+                    require_verified=not allow_unverified,
+                    limit=3,
+                )
+                if not ranked:
+                    return LocalRunResult(matched_procedure=None, graph_outcome="no_match")
+                best = ranked[0]
+                matched, source = best.procedure, best.source
+            else:
+                search_result = await session.call_tool(
+                    "search_procedures",
+                    {
+                        "task": task_description, "require_verified": not allow_unverified,
+                        "limit": 3, "invariant_bindings": json.dumps(invariant_bindings),
+                    },
+                )
+                matches = json.loads(search_result.content[0].text)
+                if not matches:
+                    return LocalRunResult(matched_procedure=None, graph_outcome="no_match")
+                matched, source = matches[0], "global"
 
-            proc_result = await session.call_tool(
-                "get_procedure", {"procedure_id": matched["procedure_id"]},
-            )
-            procedure = json.loads(proc_result.content[0].text)
+            if source == "local":
+                # Already has full steps/etc from LocalProcedureStore --
+                # no remote round trip needed, and nothing about this
+                # workspace's private procedure is ever sent out.
+                procedure = matched
+            else:
+                proc_result = await session.call_tool(
+                    "get_procedure", {"procedure_id": matched["procedure_id"]},
+                )
+                procedure = json.loads(proc_result.content[0].text)
 
             steps = procedure.get("steps") or [{"order": 0, "goal": task_description}]
             nodes = steps_to_linear_nodes(steps)
@@ -203,13 +269,24 @@ class LocalAgentRunner:
             )
             total_tool_calls = sum(r.data.get("tool_calls", 0) for r in node_results.values())
             run_succeeded = graph_result.outcome == "success" and bool(combined_patch)
+            context_key = os.path.basename(os.path.abspath(repo_path))
 
-            await session.call_tool("report_execution", {
-                "procedure_id": matched["procedure_id"],
-                "success": run_succeeded,
-                "context_key": os.path.basename(os.path.abspath(repo_path)),
-                "steps_used": total_tool_calls,
-            })
+            if source == "local":
+                # Stays entirely in this process -- a local procedure's
+                # outcome is never reported to the remote server (Rule 6:
+                # no implicit private -> global promotion, evidence
+                # included).
+                store.record_local_execution_outcome(
+                    row_id=matched["id"], success=run_succeeded,
+                    context_key=context_key, steps_used=total_tool_calls,
+                )
+            else:
+                await session.call_tool("report_execution", {
+                    "procedure_id": matched["procedure_id"],
+                    "success": run_succeeded,
+                    "context_key": context_key,
+                    "steps_used": total_tool_calls,
+                })
 
             return LocalRunResult(
                 matched_procedure=matched,
@@ -217,4 +294,5 @@ class LocalAgentRunner:
                 files_edited=all_files_edited,
                 combined_patch=combined_patch,
                 node_notes=node_notes,
+                source=source,
             )

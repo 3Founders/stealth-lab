@@ -136,6 +136,58 @@ async def test_runner_probes_its_own_repo_and_sends_invariant_bindings(monkeypat
 
 
 @pytest.mark.asyncio
+async def test_runner_prefers_and_stays_local_when_only_a_local_procedure_matches(monkeypatch, tmp_path):
+    """Phase 1+2 integration (product spec, unified local+global retrieval):
+    a real LocalProcedureStore captured procedure, with nothing matching
+    remotely, must be selected, executed, and have its outcome recorded
+    LOCALLY (record_local_execution_outcome) -- and `report_execution`
+    must never be called, proving a local-sourced run's evidence never
+    leaves this process (Rule 6)."""
+    import json
+
+    from app.local_agent.local_store import LocalProcedureStore
+
+    store = LocalProcedureStore(str(tmp_path))
+    captured = store.capture_local_procedure(
+        name="fix-calc-bug-local", goal="fix the calc bug",
+        steps=[{"order": 0, "goal": "fix the bug in calc.py"}],
+        provenance="system_pending_review", scope_type="repository",
+        scope_entity_id=str(tmp_path),
+    )
+
+    fake_session = FakeClientSession({
+        "search_procedures": json.dumps([]),  # nothing matches remotely
+    })
+
+    async def fake_run_node(node, **kwargs):
+        return NodeResult(status="success", notes=f"ran {node.goal}",
+                           data={"files_edited": ["calc.py"], "patch": "diff --git ..."})
+
+    monkeypatch.setattr(runner_module, "_open_client_session", lambda url, token: fake_session)
+    monkeypatch.setattr(runner_module, "_run_local_node", fake_run_node)
+
+    result = await runner_module.LocalAgentRunner(
+        server_url="http://fake/mcp", token="fake-token",
+    ).run(task_description="fix the calc bug", repo_path=str(tmp_path), allow_unverified=True)
+
+    assert result.source == "local"
+    assert result.matched_procedure["procedure_id"] == captured["procedure_id"]
+    assert result.graph_outcome == "success"
+
+    called_tools = [c[0] for c in fake_session.calls]
+    assert "report_execution" not in called_tools, (
+        "a local-sourced run's outcome must never be reported to the remote server"
+    )
+    assert "get_procedure" not in called_tools, (
+        "a local match already has its full steps -- no remote fetch needed"
+    )
+
+    updated = store.get_local_procedure(captured["id"])
+    assert updated["verification_stats"]["attempts"] == 1
+    assert updated["verification_stats"]["successes"] == 1
+
+
+@pytest.mark.asyncio
 async def test_runner_reports_no_match_without_crashing(monkeypatch):
     import json
 

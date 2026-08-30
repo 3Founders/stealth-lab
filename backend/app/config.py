@@ -221,6 +221,24 @@ class Settings(BaseSettings):
     # Single-tenant placeholder (Section 12 auth seam).
     default_tenant_id: str = "00000000-0000-0000-0000-000000000001"
 
+    # --- MCP task-state single-worker guard (Phase 34 / MCP TASK STATE) ---
+    # TasksExtension's task store is in-memory and single-process (see
+    # app/mcp_server/tasks_extension.py's module docstring: a tasks/get poll
+    # routed to a different worker than the one that created the task 404s).
+    # This is the explicit, operator-declared MCP server worker count --
+    # checked at boot by tasks_extension.assert_single_worker(), mirroring
+    # app/services/authn.py's assert_boot_posture(): an explicit settings
+    # check that refuses to boot on a bad combination, not runtime process
+    # introspection (which uvicorn's --workers does not expose to the app
+    # by default). Default 1 matches the documented, load-bearing
+    # `uvicorn app.mcp_server.server:app --workers 1` deployment command
+    # (README_MCP_SERVER.md, server.py). Set MCP_WORKER_COUNT to whatever a
+    # deployment actually launches with -- a mismatch between this and the
+    # real `--workers` flag is a deployment-config bug this guard cannot see
+    # (see its own docstring's honest limit), but a value >1 here is always
+    # refused.
+    mcp_worker_count: int = 1
+
     # --- Observability (app/observability.py) ---
     # Optional like every other secret here: absent DSN means Sentry stays
     # off and init() is a no-op, so nothing about local or offline work

@@ -32,6 +32,39 @@ across multiple server replicas (a poll routed to a different replica than
 the one running the task will 404). This is fine for a single-process dev
 deployment, genuinely not fine for production multi-replica -- flagged here,
 not discovered later.
+
+ENFORCED, NOT JUST DOCUMENTED (Phase 34 / "MCP TASK STATE"): the paragraph
+above used to be the whole story -- a comment nobody has to obey. That is
+exactly the shape of the rate limiter's own ">1 worker" paragraph in
+app/services/governance.py (search "Multi-process decision" there): real
+prose, a real deployment claim ("render.yaml launches one process"), and
+literally the sentence "this paragraph is the tripwire" -- but no code
+anywhere actually checks it. Confirmed by grepping the whole backend for a
+runtime worker-count assertion before writing this: there isn't one: no
+env-var read, no boot-time raise, nothing wired to `--workers`. Governance's
+own guard is titled a tripwire and is not one.
+
+This module chooses Option B for real ("Explicitly constrain deployment to
+one worker/process and ensure the production deployment does that") by
+mirroring the codebase's one guard of this exact SHAPE that IS wired up:
+app/services/authn.py::assert_boot_posture, called from app/main.py's
+lifespan. That function does not introspect whether OIDC is *actually*
+reachable either -- it checks an explicit, operator-set settings value
+against another and raises RuntimeError on a bad combination, at import/
+boot time, before any request is served. assert_single_worker() below does
+the same thing for settings.mcp_worker_count (config.py), and
+TasksExtension.__init__ calls it unconditionally -- so constructing a
+TasksExtension (which server.py does at module scope, `extensions=[
+TasksExtension()]`) is itself the boot-time check. A deployment that sets
+MCP_WORKER_COUNT above 1 -- or that runs `--workers N>1` without ever
+declaring it via MCP_WORKER_COUNT and gets caught some other way -- refuses
+to start instead of quietly 404ing tasks/get polls in production. The one
+honest gap this shares with assert_boot_posture: both check a DECLARED
+value, not the OS's actual process count (uvicorn does not hand the app
+that number), so a deployment config that runs multiple workers and never
+sets MCP_WORKER_COUNT to match is a config bug this guard cannot see by
+itself -- render.yaml is the other half of closing that gap (see its own
+comment).
 """
 from __future__ import annotations
 
@@ -150,6 +183,38 @@ class _TaskRecord:
     _asyncio_task: asyncio.Task | None = None
 
 
+def assert_single_worker(worker_count: int) -> None:
+    """Refuse to start if configured for more than one process.
+
+    Real, wired enforcement of this module's HONEST LIMITATION (see the
+    module docstring's "ENFORCED, NOT JUST DOCUMENTED" section for why this
+    exists and what it mirrors). InMemoryTaskStore lives in one process's
+    memory; a tasks/get or tasks/cancel poll routed to a different worker
+    than the one that ran create() will never find the task -- the spec-
+    mandated "Task not found" (INVALID_PARAMS) error, indistinguishable
+    from a real bad task_id, is the silent failure mode this closes off
+    before it can happen.
+
+    Mirrors app/services/authn.py::assert_boot_posture: a pure function
+    over an explicit, operator-declared value (settings.mcp_worker_count,
+    config.py), raising RuntimeError rather than booting into a lie.
+    """
+    if worker_count > 1:
+        raise RuntimeError(
+            f"TasksExtension's task store is in-memory and single-process "
+            f"(see tasks_extension.py's module docstring), but "
+            f"MCP_WORKER_COUNT={worker_count} declares more than one "
+            f"worker. Refusing to boot rather than silently 404ing "
+            f"tasks/get polls routed to a worker that never ran the task. "
+            f"Persisting task state to a shared store (Option A) is out of "
+            f"scope for this slice -- either set MCP_WORKER_COUNT=1 and "
+            f"launch with `uvicorn ... --workers 1` (the documented, "
+            f"load-bearing deployment shape; see README_MCP_SERVER.md and "
+            f"server.py), or implement a shared task store before running "
+            f"more than one worker."
+        )
+
+
 class InMemoryTaskStore:
     """See module docstring's HONEST LIMITATION -- single-process only."""
 
@@ -228,7 +293,17 @@ class TasksExtension(Extension):
 
     identifier = EXTENSION_ID
 
-    def __init__(self) -> None:
+    def __init__(self, *, worker_count: int | None = None) -> None:
+        # worker_count is injectable for tests (mirrors assert_boot_posture's
+        # explicit-params style); real callers (server.py's module-scope
+        # `extensions=[TasksExtension()]`) get it from settings, so this
+        # constructor call IS the boot-time check -- no separate wiring step
+        # to forget.
+        if worker_count is None:
+            from app.config import settings
+
+            worker_count = settings.mcp_worker_count
+        assert_single_worker(worker_count)
         self.store = InMemoryTaskStore()
 
     def settings(self) -> dict[str, Any]:

@@ -27,6 +27,11 @@ backend/logs/
 # .claude/traces/ above.
 backend/data/raw_payloads/
 
+# Per-workspace local procedure library (backend/app/local_agent/local_store.py) --
+# a SQLite file holding one workspace's private procedure captures. Never
+# shared history: it's this checkout's own local substrate, not global data.
+.stealthlab/
+
 # Python bytecode
 __pycache__/
 *.pyc

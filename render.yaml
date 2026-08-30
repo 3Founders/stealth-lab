@@ -1,3 +1,23 @@
+# NOTE (Phase 34 / "MCP TASK STATE"): the MCP server
+# (app/mcp_server/server.py) has no service entry below -- it is not
+# deployed here today. README_MCP_SERVER.md's own posture is explicit:
+# "treat this as a way to reach the server from another process/machine
+# you already trust, not as a public deployment." That is a real,
+# current fact about this file, not an oversight: adding a `web` service
+# for it here would assert a deployment that does not exist.
+#
+# If/when the MCP server does get a service entry here, its startCommand
+# MUST pin `--workers 1` explicitly (uvicorn app.mcp_server.server:app
+# --workers 1 -- see server.py's own comment on why this is load-bearing:
+# TasksExtension's task store is in-memory and single-process). That
+# pin is now also enforced in code, not just documentation: constructing
+# TasksExtension() checks settings.mcp_worker_count
+# (app/mcp_server/tasks_extension.py::assert_single_worker) and refuses to
+# boot if it is set above 1 -- so a render.yaml that forgot the pin would
+# still be caught by the app itself as long as MCP_WORKER_COUNT is set to
+# match the real `--workers` value at deploy time (that match is a
+# deployment-config responsibility this in-process guard cannot verify by
+# itself -- see assert_single_worker's own docstring).
 databases:
   - name: stealthlab-db
     plan: free

@@ -49,6 +49,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from mcp.server import MCPServer
+from mcp.server.auth.middleware.auth_context import get_access_token
 from mcp.server.auth.provider import AccessToken, TokenVerifier
 from mcp.server.auth.settings import AuthSettings
 from mcp.server.mcpserver import Context
@@ -60,6 +61,7 @@ from app.api.decompose import decompose, decide as decide_decomposition_fn, Deco
 from app.models.change import ChangeSet
 from app.services.access import AccessScope
 from app.services.applicability import verified_procedure_candidates
+from app.services.authn import current_actor_id
 from app.services.decomposition import DecompositionService
 from app.services.embeddings import Embedder
 from app.services.knowledge_conflict import detect_and_create_conflict_trigger
@@ -226,6 +228,63 @@ server = MCPServer(
 observability.init("mcp")
 
 app = server.streamable_http_app()
+
+
+def _resolve_caller_identity(fallback: str) -> str:
+    """Real caller-identity resolution for write-path attribution
+    (created_by / approved_by / author), instead of the static,
+    tool-name-derived strings this file used unconditionally before this
+    function existed -- the exact "architecture assumes a single shared
+    identity" gap product spec Phase 33 names.
+
+    Two REAL, already-installed identity sources are checked, in order.
+    Neither lives on `ctx`/`ctx.request_context` -- confirmed by reading
+    mcp.server.mcpserver.Context and ServerRequestContext: both carry
+    session/lifespan/request-id, no auth field. Both real sources are
+    contextvars instead, so a tool body reads them directly; there is no
+    ctx plumbing to add.
+
+    1. mcp.server.auth.middleware.auth_context.get_access_token() -- the
+       MCP SDK's own contextvar, auto-wired into this server's ASGI stack
+       by AuthContextMiddleware because `server` above is constructed
+       with token_verifier=StaticTokenVerifier(...) (confirmed by reading
+       mcp/server/mcpserver/server.py: passing token_verifier makes
+       create_app() add BearerAuthBackend + AuthContextMiddleware to the
+       Starlette stack). Its AccessToken.subject (RFC 7662/9068 `sub`) is
+       real per-request identity, when the verifier sets one.
+
+       HONEST GAP, not fixed here: StaticTokenVerifier (this file, above)
+       validates ONE shared STEALTHLAB_MCP_TOKEN for every caller and
+       never sets .subject -- every caller today gets the same
+       client_id="stealthlab-local" and no subject, so in the current
+       deployment this branch is always empty. That IS the single-
+       shared-identity gap; closing it for real needs per-caller tokens
+       or an OIDC-verifying TokenVerifier (a real identity provider),
+       explicitly out of scope for this change. What this function does
+       is make the seam real: the moment a verifier ever sets .subject,
+       every call site below picks it up with zero further change.
+
+    2. app.services.authn.current_actor_id() -- the real OIDC actor
+       contextvar authn.py's ASGI middleware populates on app.main:app
+       (port 8000, install_actor_middleware). Checked here too because
+       it is the other real identity mechanism this codebase has, and
+       because this MCP server runs as its OWN separate ASGI app/process
+       (uvicorn app.mcp_server.server:app, port 8765) which never calls
+       install_actor_middleware -- so today this branch is also always
+       empty in this process. A future deployment that serves MCP from
+       inside the same ASGI app as app.main would get this for free.
+
+    Neither present -> the unchanged, honest `fallback` (the pre-existing
+    hardcoded string, or a caller-supplied parameter this replaces only
+    when a REAL identity was resolved) -- never a fabricated identity.
+    """
+    token = get_access_token()
+    if token is not None and token.subject:
+        return token.subject
+    actor_id = current_actor_id()
+    if actor_id:
+        return actor_id
+    return fallback
 
 
 @server.tool()
@@ -836,7 +895,7 @@ async def find_best_way(task_description: str, ctx: Context,
             pool, name=f"ad-hoc: {task_description[:80]}", goal=task_description,
             steps=[{"order": 0, "goal": task_description}],
             provenance="system_pending_review", scope_type="global",
-            created_by="find_best_way_adhoc",
+            created_by=_resolve_caller_identity(fallback="find_best_way_adhoc"),
         )
         plan_procedure_row_id = adhoc["id"]
     procedure_payload = await get_procedure(pool, plan_procedure_row_id)
@@ -1592,7 +1651,7 @@ async def submit_procedure(name: str, goal: str, steps_json: str, ctx: Context,
             pool, name=name, goal=goal, steps=steps,
             provenance=provenance, domain=domain,
             scope_type="entity" if domain else "global",
-            created_by="mcp_submit_procedure",
+            created_by=_resolve_caller_identity(fallback="mcp_submit_procedure"),
             embedding=goal_vec,
         )
     except V0Violation as exc:
@@ -1649,10 +1708,19 @@ async def decide_procedure(procedure_id: str, approver_id: str, decision: str, c
     except ProcedureNotFound as exc:
         return f"REFUSED: {exc}"
 
+    # `approver_id` is a caller-supplied, self-asserted parameter -- the
+    # exact spoofable shape authn.py's own contextvar override already
+    # closes for ingest's payload actor_id (see authn.py's module
+    # docstring). A REAL resolved identity, when one is available, wins
+    # over that self-assertion the same way; the self-asserted value
+    # survives only as the honest fallback when no real identity was
+    # resolved (today: always, for the reasons _resolve_caller_identity
+    # documents).
+    resolved_approver = _resolve_caller_identity(fallback=approver_id)
     if decision == "approved":
-        await approve_procedure(pool, procedure_row_id=str(procedure["id"]), approved_by=approver_id)
+        await approve_procedure(pool, procedure_row_id=str(procedure["id"]), approved_by=resolved_approver)
     else:
-        await reject_procedure(pool, procedure_row_id=str(procedure["id"]), approved_by=approver_id)
+        await reject_procedure(pool, procedure_row_id=str(procedure["id"]), approved_by=resolved_approver)
 
     updated = await _resolve_live_procedure(pool, procedure_id)
     return json.dumps({
