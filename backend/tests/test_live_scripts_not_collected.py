@@ -26,6 +26,7 @@ LIVE_SCRIPTS = [
     "test_detect_conflict_trigger_live.py",
     "test_local_agent_runner_live.py",
     "test_six_tool_mcp_surface_live.py",
+    "test_skill_ingestion_live.py",
     "test_orphan_cleanup_live.py",
     "test_propose_synthesis_live.py",
     "test_real_mcp_client_live.py",
