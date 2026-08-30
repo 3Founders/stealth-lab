@@ -46,6 +46,7 @@ import asyncpg
 from app.services.access import AccessScope, next_param_index, visibility_predicate
 from app.services.embeddings import to_pgvector
 from app.services.invariants import check_invariants_async
+from app.services.retrieval import fuse_rrf
 from app.services.state import project_state
 
 # Ticket 12's cold-start answer: "disable procedure retrieval entirely
@@ -321,6 +322,62 @@ async def check_hard_constraints(
     return ApplicabilityResult(row_id, True, [])
 
 
+_CANDIDATE_BASE_WHERE = (
+    "t_invalid IS NULL AND staleness != 'stale' AND availability = 'active'"
+)
+
+
+async def _fetch_candidate_pool(
+    pool: asyncpg.Pool, goal_embedding: Optional[list[float]], candidate_pool_size: int,
+) -> list[asyncpg.Record]:
+    """The pre-filter feeding find_applicable_procedures' cascade -- see
+    that function's own docstring for why this fuses cost and relevance
+    rather than ranking by cost alone.
+
+    Without a goal_embedding, there is no relevance signal to fuse with,
+    so this is EXACTLY the old single-query cost-only fetch, byte for
+    byte -- a caller that never had an embedding sees no change at all,
+    not even an extra round trip (proven by
+    test_full_cascade_shares_one_cache_and_scopes_its_gate, which pins
+    the exact fetch-call count)."""
+    if goal_embedding is None:
+        return await pool.fetch(
+            f"SELECT * FROM procedures WHERE {_CANDIDATE_BASE_WHERE} "
+            "ORDER BY jsonb_array_length(preconditions) ASC LIMIT $1",
+            candidate_pool_size,
+        )
+
+    cost_rows = await pool.fetch(
+        f"SELECT id FROM procedures WHERE {_CANDIDATE_BASE_WHERE} "
+        "ORDER BY jsonb_array_length(preconditions) ASC LIMIT $1",
+        candidate_pool_size,
+    )
+    similarity_rows = await pool.fetch(
+        f"SELECT id FROM procedures WHERE {_CANDIDATE_BASE_WHERE} "
+        "AND embedding IS NOT NULL "
+        "ORDER BY embedding <=> $1::vector ASC LIMIT $2",
+        to_pgvector(goal_embedding), candidate_pool_size,
+    )
+    cost_hits = [(r["id"], "procedures", i) for i, r in enumerate(cost_rows)]
+    similarity_hits = [(r["id"], "procedures", i) for i, r in enumerate(similarity_rows)]
+    scores, _ = fuse_rrf([(cost_hits, "cost"), (similarity_hits, "relevance")])
+    ranked = sorted(scores.items(), key=lambda kv: kv[1], reverse=True)
+    ids = [key[0] for key, _ in ranked[:candidate_pool_size]]
+
+    if not ids:
+        return []
+    rows = await pool.fetch(
+        f"SELECT * FROM procedures WHERE id = ANY($1::uuid[]) AND {_CANDIDATE_BASE_WHERE}",
+        ids,
+    )
+    by_id = {row["id"]: row for row in rows}
+    # Preserve fused order -- a row can be legitimately absent here if it
+    # went stale/inactive between the id-only fetch and this one; skip it
+    # rather than raise, same tolerance the rest of this cascade has for
+    # a candidate disappearing mid-match.
+    return [by_id[i] for i in ids if i in by_id]
+
+
 async def find_applicable_procedures(
     pool: asyncpg.Pool,
     *,
@@ -344,12 +401,26 @@ async def find_applicable_procedures(
     holds -- an empty list is the caller's real signal to fall back to
     generative planning (ticket 15), not an error.
 
-    `candidate_pool_size`: ticket 15's match-cost-aware ordering
-    ("order candidate procedures cheapest-to-match first") -- candidates
-    are fetched ordered by their own precondition count ascending (fewer
-    predicates to evaluate = cheaper to match), so if candidate_pool_size
-    is smaller than the true candidate set, the ones skipped are the
-    more expensive ones to check, not an arbitrary subset.
+    `candidate_pool_size`: ticket 15's match-cost-aware ordering ("order
+    candidate procedures cheapest-to-match first") is preserved, but it is
+    no longer the ONLY signal choosing which candidates are even fetched.
+
+    BUG FIX (this pass): the candidate pre-filter used to rank by
+    precondition-count ALONE, with zero embedding term -- at N procedures,
+    a `LIMIT candidate_pool_size` on that ordering makes most of the
+    corpus permanently unreachable regardless of relevance, and the
+    exclusion gets WORSE as the corpus grows, not better. This does not
+    touch this module's own "not semantic similarity" principle (module
+    docstring, top of file) -- the hard-constraint cascade below still
+    decides pass/fail on constraints alone, unchanged. What changes is
+    only WHICH candidates are even offered to that cascade: when a
+    `goal_embedding` is available, this now RRF-fuses two independent
+    candidate rankings (cost-cheapest, and embedding-nearest) via
+    `retrieval.py::fuse_rrf` -- the same fusion primitive `retrieval.py`
+    already uses for its own soft-signal ranking, reused here rather than
+    reinvented, applied at the pre-filter stage where fusing signals is
+    legitimate (deciding what to LOOK AT), not at the cascade stage where
+    it would not be (deciding what PASSES).
     """
     # COLD-START GATE -- skipped on an explicit unverified opt-in.
     #
@@ -378,13 +449,7 @@ async def find_applicable_procedures(
     if require_verified and await should_disable_procedure_retrieval(pool, access_scope):
         return []
 
-    rows = await pool.fetch(
-        "SELECT * FROM procedures "
-        "WHERE t_invalid IS NULL AND staleness != 'stale' AND availability = 'active' "
-        "ORDER BY jsonb_array_length(preconditions) ASC "
-        "LIMIT $1",
-        candidate_pool_size,
-    )
+    rows = await _fetch_candidate_pool(pool, goal_embedding, candidate_pool_size)
 
     # ONE memo table + ONE pinned timestamp for the whole cascade: same
     # pool, same as_of, same access scope throughout -- exactly the
