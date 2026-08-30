@@ -21,19 +21,24 @@ def test_server_module_imports_without_a_database():
     assert module.app is not None
 
 
-def test_all_nine_tools_registered():
+def test_all_registered_tools():
     module = slc.load_mcp_server_module()
     names = sorted(tool.name for tool in module.server._tool_manager.list_tools())
     assert names == [
         "apply_change_set",
+        "check_applicability",
         "check_procedure",
         "decide_decomposition",
         "decompose_task",
         "detect_conflict_trigger",
         "find_best_way",
+        "get_procedure",
         "propose_synthesis",
+        "report_execution",
         "retrieve_precedent",
+        "search_procedures",
         "submit_approval",
+        "submit_procedure",
     ]
 
 

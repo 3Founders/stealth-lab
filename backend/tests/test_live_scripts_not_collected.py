@@ -24,6 +24,7 @@ LIVE_SCRIPTS = [
     "test_apply_change_set_live.py",
     "test_decompose_decide_live.py",
     "test_detect_conflict_trigger_live.py",
+    "test_five_tool_mcp_surface_live.py",
     "test_orphan_cleanup_live.py",
     "test_propose_synthesis_live.py",
     "test_find_best_way_live.py",

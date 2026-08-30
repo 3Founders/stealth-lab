@@ -1072,6 +1072,288 @@ async def check_procedure(procedure_id: str, query: str, ctx: Context) -> str:
     })
 
 
+# ---------------------------------------------------------------------------
+# Minimal library-primitive surface (architecture audit, section J:
+# .scratch/research/global-procedural-memory-architecture-audit-2026-08-30.md).
+# Each tool below is a thin wrapper -- zero new decision logic -- around a
+# function that already exists and is already exercised by find_best_way's
+# own two tiers. The point of exposing them standalone is that a caller who
+# already has a procedure_id (from a prior search, or from another harness
+# entirely) can search/check/report/submit without find_best_way's own
+# bundled task-description-driven flow.
+# ---------------------------------------------------------------------------
+
+
+async def _resolve_live_procedure(pool, procedure_id: str) -> dict:
+    """Shared resolver: a stable procedure_id -> its current live version
+    row. The exact query applicability.py::check_procedure_reuse() already
+    uses -- reused here, not duplicated, so both paths agree by
+    construction on what "the current live version" means."""
+    from app.services.applicability import ProcedureNotFound
+
+    try:
+        proc_uuid = UUID(str(procedure_id))
+    except (ValueError, AttributeError, TypeError) as exc:
+        raise ProcedureNotFound(f"{procedure_id!r} is not a valid procedure id (UUID)") from exc
+    row = await pool.fetchrow(
+        "SELECT * FROM procedures WHERE procedure_id = $1::uuid AND t_invalid IS NULL",
+        proc_uuid,
+    )
+    if row is None:
+        raise ProcedureNotFound(f"no live procedure for procedure_id={procedure_id}")
+    return dict(row)
+
+
+@server.tool()
+async def search_procedures(task: str, ctx: Context, state: str = "{}", limit: int = 5,
+                             require_verified: bool = True) -> str:
+    """
+    Find procedures applicable to a task/state -- lookup only, nothing
+    executes. Thin wrapper: all decision logic is
+    app.services.applicability.find_applicable_procedures(), the SAME
+    non-compensatory cascade find_best_way's own tier-1 calls internally.
+
+    task: plain-language description of what's being attempted, same
+    phrasing style as retrieve_precedent's query.
+    state: JSON object of current-scope predicates (e.g.
+    '{"language": ["python"]}') -- structured, not free text. "{}" (the
+    default) means no scope narrowing.
+    require_verified: real ticket-13 gate, default True unchanged from
+    every other caller in this codebase -- pass False to also see
+    candidates that haven't earned verification evidence yet.
+
+    Returns a JSON array of {id, procedure_id, version, name, goal,
+    verification_state, similarity}. `similarity` is null for a
+    hard-filter survivor that couldn't be ranked (no goal embedding
+    supplied, or the row has none) -- never fabricated.
+    """
+    pool = ctx.request_context.lifespan_context["pool"]
+    from app.services.applicability import find_applicable_procedures
+    from app.services.embeddings import Embedder
+
+    try:
+        current_scope = json.loads(state) if state else {}
+    except json.JSONDecodeError as exc:
+        return f"REFUSED: state must be a JSON object ({exc})"
+
+    embedder = Embedder()
+    goal_vec = await embedder.embed_one(task, input_type="query")
+    matches = await find_applicable_procedures(
+        pool, goal_embedding=goal_vec, current_scope=current_scope,
+        require_verified=require_verified, limit=limit,
+    )
+    return json.dumps([
+        {
+            "id": str(m["id"]), "procedure_id": str(m["procedure_id"]),
+            "version": m["version"], "name": m["name"], "goal": m["goal"],
+            "verification_state": m["verification_state"],
+            "similarity": m.get("_similarity_score"),
+        }
+        for m in matches
+    ])
+
+
+@server.tool()
+async def get_procedure(procedure_id: str, ctx: Context) -> str:
+    """
+    Fetch one procedure's full current detail by its stable handle.
+    Thin wrapper around the same live-version resolver
+    check_procedure/check_applicability/report_execution all share.
+
+    procedure_id: the STABLE handle (`procedures.procedure_id`), not a
+    per-version row id -- resolved here to its current live version
+    (t_invalid IS NULL).
+    """
+    pool = ctx.request_context.lifespan_context["pool"]
+    from app.services.applicability import ProcedureNotFound
+
+    try:
+        procedure = await _resolve_live_procedure(pool, procedure_id)
+    except ProcedureNotFound as exc:
+        return f"REFUSED: {exc}"
+
+    return json.dumps(procedure, default=str)
+
+
+@server.tool()
+async def check_applicability(procedure_id: str, ctx: Context, state: str = "{}",
+                               require_verified: bool = True) -> str:
+    """
+    Is this NAMED procedure applicable right now, given this state?
+    Thin wrapper around app.services.applicability.check_hard_constraints()
+    -- the SAME non-compensatory cascade find_applicable_procedures()/
+    find_best_way run internally, exposed standalone for a caller that
+    already has a procedure_id (e.g. from search_procedures) and just
+    wants a yes/no plus the reason, without re-running a full search.
+
+    state: JSON object of current-scope predicates, same shape as
+    search_procedures' `state` argument.
+    require_verified: real ticket-13 gate, default True -- a `candidate`
+    procedure (not yet earned verification evidence) correctly reports
+    applicable=False with failed_constraints=["verification_state"]
+    under the default, same as it would inside find_best_way's own
+    automatic-selection path. Pass False to check hard constraints alone
+    (preconditions/scope/exclusions/temporal validity), the same
+    explicit opt-in find_best_way's `allow_unverified_procedures` is.
+
+    Returns {"applicable": bool, "failed_constraints": [...],
+    "similarity_score": float|null}. A violated hard constraint is a
+    disqualification here, never a low score -- this module's own
+    defining principle, unchanged by being exposed standalone.
+    """
+    pool = ctx.request_context.lifespan_context["pool"]
+    from app.services.applicability import ProcedureNotFound, check_hard_constraints
+
+    try:
+        procedure = await _resolve_live_procedure(pool, procedure_id)
+    except ProcedureNotFound as exc:
+        return f"REFUSED: {exc}"
+
+    try:
+        current_scope = json.loads(state) if state else {}
+    except json.JSONDecodeError as exc:
+        return f"REFUSED: state must be a JSON object ({exc})"
+
+    result = await check_hard_constraints(
+        pool, procedure, current_scope=current_scope, require_verified=require_verified,
+    )
+    return json.dumps({
+        "applicable": result.applicable,
+        "failed_constraints": result.failed_constraints,
+        "similarity_score": result.similarity_score,
+    })
+
+
+@server.tool()
+async def report_execution(procedure_id: str, success: bool, context_key: str, ctx: Context,
+                            steps_used: int | None = None,
+                            success_criteria: str | None = None,
+                            failure_class: str | None = None) -> str:
+    """
+    Report a real execution outcome for a NAMED procedure. Thin wrapper
+    around app.services.procedures.record_execution_outcome() -- the
+    real, single source of truth for every ticket-13 lifecycle
+    transition AND the real evidence writer (one execution_result row
+    per call, invariant-#13-gated: a success needs real, explicit
+    success_criteria, never bare model-asserted success).
+
+    context_key: caller's own notion of "distinct context" (different
+    repo/environment/dependency set). Ticket 13's verified threshold
+    needs >=3 DISTINCT keys across >=10 successes with 0 failures -- a
+    caller that always passes the same string can never reach verified
+    regardless of how many times it reports success.
+    success_criteria: JSON object with a non-empty 'predicate' string
+    and/or a non-empty 'metrics' object -- REQUIRED shape whenever
+    success=true (invariant #13); omit to let
+    record_execution_outcome() synthesize one from steps_used alone.
+    failure_class: one of evidence.py's real failure_class values, when
+    success=false and the caller knows the cause. Omitted is honest
+    (lands in the requires_review queue) rather than guessed.
+
+    Returns the procedure row's state AFTER any transition this call
+    caused (promotion to verified, quarantine opening/closing) -- so a
+    caller can observe a state change as a direct result of its own report.
+    """
+    pool = ctx.request_context.lifespan_context["pool"]
+    from app.services.applicability import ProcedureNotFound
+    from app.services.procedures import record_execution_outcome
+
+    try:
+        procedure = await _resolve_live_procedure(pool, procedure_id)
+    except ProcedureNotFound as exc:
+        return f"REFUSED: {exc}"
+
+    try:
+        criteria = json.loads(success_criteria) if success_criteria else None
+    except json.JSONDecodeError as exc:
+        return f"REFUSED: success_criteria must be a JSON object ({exc})"
+
+    try:
+        updated = await record_execution_outcome(
+            pool, procedure_row_id=str(procedure["id"]), success=success,
+            context_key=context_key, steps_used=steps_used,
+            success_criteria=criteria, failure_class=failure_class,
+        )
+    except Exception as exc:  # noqa: BLE001 -- a producer-side contract
+        # violation (e.g. invariant #13's bare-success refusal, or an
+        # unknown failure_class) must reach the caller as a real
+        # refusal, not an unhandled 500.
+        return f"REFUSED: {exc}"
+
+    return json.dumps({
+        "procedure_id": procedure_id,
+        "verification_state": updated["verification_state"],
+        "availability": updated["availability"],
+        "verification_stats": updated["verification_stats"],
+    }, default=str)
+
+
+@server.tool()
+async def submit_procedure(name: str, goal: str, steps_json: str, ctx: Context,
+                            domain: str | None = None,
+                            provenance: str = "system_pending_review") -> str:
+    """
+    Submit a new candidate procedure. Thin wrapper around
+    app.services.procedures.capture_procedure() -- lands
+    verification_state='candidate' (schema default, ticket 13's "nothing
+    is born verified"), never fabricated as verified. It earns 'verified'
+    exactly the way every other procedure in this substrate does: real
+    reuse via report_execution, accruing real evidence.
+
+    steps_json: JSON array of {"order": int, "goal": str} -- planner-
+    neutral step descriptions (db/18_procedures.sql's own convention; no
+    dependency/branching fields exist on steps today, so a submitted
+    procedure is a straight, ordered sequence).
+    domain: optional free-form locality signal (e.g. "coding"); also
+    becomes the scope entity when set (scope_type="entity"), or the
+    procedure is scoped "global" when omitted.
+    provenance: real, gated enum (v0_gate.py) -- defaults to
+    'system_pending_review', this codebase's existing convention for
+    system/user-submitted, not-yet-approved content (extract_procedure()
+    uses the same default for the same reason).
+
+    REAL BUG THIS SESSION'S OWN LIVE TEST FOUND: a procedure captured
+    with no embedding is not just "unranked" in search_procedures --
+    find_applicable_procedures() fills its `limit` quota from ranked
+    (embedded) survivors FIRST and only appends unranked ones into
+    whatever slots are left, so an embedding-less procedure can be
+    completely starved out by irrelevant-but-embedded rows the moment
+    the corpus has >= `limit` of those. A real embedding is therefore
+    not an optimization here, it's required for the procedure to be
+    reachable at all once the corpus has any real size -- computed here,
+    same Embedder + input_type="document" convention method_library.py's
+    persist_plan() already uses for stored (not query-time) text.
+    """
+    pool = ctx.request_context.lifespan_context["pool"]
+    from app.services.embeddings import Embedder
+    from app.services.procedures import capture_procedure
+    from app.services.v0_gate import V0Violation
+
+    try:
+        steps = json.loads(steps_json)
+    except json.JSONDecodeError as exc:
+        return f"REFUSED: steps_json must be a JSON array ({exc})"
+
+    embedder = Embedder()
+    goal_vec = await embedder.embed_one(goal, input_type="document")
+
+    try:
+        result = await capture_procedure(
+            pool, name=name, goal=goal, steps=steps,
+            provenance=provenance, domain=domain,
+            scope_type="entity" if domain else "global",
+            created_by="mcp_submit_procedure",
+            embedding=goal_vec,
+        )
+    except V0Violation as exc:
+        return f"REFUSED: {exc}"
+
+    return json.dumps({
+        "id": result["id"], "procedure_id": result["procedure_id"],
+        "verification_state": "candidate",
+    })
+
+
 @server.tool()
 async def decompose_task(problem: str, ctx: Context) -> str:
     """
