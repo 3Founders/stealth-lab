@@ -361,7 +361,7 @@ async def find_applicable_procedures(
     #
     # But require_verified=False is not the default -- it is a caller
     # explicitly asking to consider unverified candidates on their own
-    # merits (solve_task's `allow_unverified_procedures`, ticket 13's
+    # merits (find_best_way's `allow_unverified_procedures`, ticket 13's
     # named opt-in). Running the gate first made that flag UNREACHABLE and
     # created a chicken-and-egg the loop cannot bootstrap out of:
     #     retrieval is disabled until >=1 VERIFIED procedure exists
@@ -371,7 +371,7 @@ async def find_applicable_procedures(
     #
     # Measured 2026-08-28 with a real model (gemma-4-31B-it) against a
     # real repo: a freshly-extracted procedure stayed invisible to
-    # solve_task even with allow_unverified_procedures=True, and matched
+    # find_best_way even with allow_unverified_procedures=True, and matched
     # immediately once this gate was bypassed -- one blocker, isolated.
     # Opting in IS the cold-start case, so the opt-in must win over the
     # gate that exists to manage cold start.

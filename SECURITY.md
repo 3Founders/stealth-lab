@@ -43,7 +43,7 @@ threat model.
      holding a valid token can call it directly, bypassing human review of
      anything that would normally flow through `propose_synthesis`'s
      approval path.
-   - `solve_task`'s `repo_path` argument is **caller-controlled**. The
+   - `find_best_way`'s `repo_path` argument is **caller-controlled**. The
      sandbox stops edits from escaping the given path; nothing stops a
      caller from pointing it at a sensitive real directory in the first
      place.
@@ -58,7 +58,7 @@ threat model.
    give them the token.
 
 3. **Single process, in-memory task state.** The Tasks-extension backing
-   store (`propose_synthesis` / `solve_task` progress) lives in one
+   store (`propose_synthesis` / `find_best_way` progress) lives in one
    process's memory. Don't run multiple replicas behind a load balancer
    expecting shared state — `--workers 1` is load-bearing, not a default
    left alone.
@@ -93,7 +93,7 @@ These are accepted-for-now tradeoffs for a single-user local tool, not bugs
 to be quietly patched:
 
 - `apply_change_set` is an ungated write primitive (above).
-- `solve_task`'s `repo_path` is caller-controlled (above).
+- `find_best_way`'s `repo_path` is caller-controlled (above).
 - No per-user, per-scope, or per-tool authorization model exists in v0.1 —
   a valid token grants everything a token can grant.
 - `stdio` transport has no authentication at all, by protocol design.

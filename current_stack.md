@@ -50,7 +50,7 @@ features on the identity decision.
 ## 3. MCP server — the substrate's external face
 
 `app/mcp_server/server.py` exposes the substrate over Model Context Protocol:
-`solve_task` (a full retrieval-grounded coding agent — RepoSandbox and the
+`find_best_way` (a full retrieval-grounded coding agent — RepoSandbox and the
 tool-calling Agent reused verbatim from `experiments/swebench_pro/agent.py`),
 `retrieve_precedent`, debate tools, and decomposition. After a successful run
 it feeds the episode back through `extract_procedure()` — the first live

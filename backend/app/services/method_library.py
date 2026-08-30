@@ -15,19 +15,19 @@ knowledge_nodes together with no content-type filter) -- it runs its own
 query, scoped to CREATED_BY, reusing that module's thresholds and lexical
 fallback rather than its query.
 
-WHY THIS IS A SEPARATE ASYNC MODULE, NOT PART OF HTNAgent ITSELF
+WHY THIS IS A SEPARATE ASYNC MODULE, HISTORICALLY NOT PART OF HTNAgent
 
-htn_agent.py's HTNAgent is deliberately synchronous with no database
-dependency -- every call in it is `self._client.chat.completions.create`.
-run_graph_experiment.py calls `runner.run(...)` synchronously from inside an
-async function; starting an event loop inside that call (to await asyncpg)
-would raise "asyncio.run() cannot be called from a running event loop". The
-existing graph-memory bridge (this file's sibling, graph_memory.py) solves
-this the same way: retrieval happens BEFORE `.run()`, as a plain async call
-the harness awaits, and the result is handed to the agent as plain data.
-This module follows that exact pattern -- see ResearchHTNAgent._synthesize_method
-in htn_agent.py for the glue that hands a match to HTNAgent.run() via its
-(synchronous) `_seed_plan` hook.
+This module's async/sync split originally existed because htn_agent.py's
+HTNAgent was deliberately synchronous with no database dependency, and
+run_graph_experiment.py called `runner.run(...)` synchronously from inside
+an async function -- starting an event loop inside that call (to await
+asyncpg) would have raised "asyncio.run() cannot be called from a running
+event loop". HTNAgent, run_graph_experiment.py, and the ResearchHTNAgent
+glue this docstring used to point to have all since been deleted (the
+research measurement harness moved to experiments/harness/); this module's
+own split predates that and stays as-is on its own merits -- retrieval
+happens BEFORE any synchronous agent work, as a plain async call the
+harness awaits, same pattern this file's sibling graph_memory.py uses.
 """
 from __future__ import annotations
 

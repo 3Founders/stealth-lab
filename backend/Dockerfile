@@ -17,7 +17,7 @@ FROM python:3.12-slim
 # add build-essential here first if a future dependency needs one.
 WORKDIR /repo
 
-# git is a RUNTIME dependency, not a build convenience. solve_task seeds
+# git is a RUNTIME dependency, not a build convenience. find_best_way seeds
 # its structural-retrieval tier from `git diff --name-only HEAD` against
 # the caller's repo_path. That call is try/except-guarded, so without git
 # it does not crash -- it silently returns seed_files=[], and one of the

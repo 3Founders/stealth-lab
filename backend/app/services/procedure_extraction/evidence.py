@@ -10,7 +10,7 @@ context, not derived from the database. agent_traces.intent exists in
 the schema (spec.md's Intent group) but has zero real writers today
 (confirmed this session while reviewing the ingestion pipeline) -- this
 module does not invent a read against a column nothing populates. A
-caller that has just run an episode (the HTN executor, solve_task, a
+caller that has just run an episode (the HTN executor, find_best_way, a
 test) knows its own goal and outcome directly; that is real information,
 not something worth re-deriving badly from partial trace data.
 

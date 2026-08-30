@@ -173,7 +173,7 @@ evidence: ['claim:6942ee6f-22ac-435c-923d-2763a2d0282c',
       `procedures` 0, `evidence` 0. The break is at
       **observation → claim**, with episodes bypassed entirely by this
       path (`run_ingestion` never calls `assemble_episodes`), and
-      `extract_procedure()` still reachable only via `solve_task`
+      `extract_procedure()` still reachable only via `find_best_way`
       (`server.py:719`, its sole live caller). Closing this needs either a
       live model call or a documented zero-cost path.
       **Partial credit, cite rather than reading this as fully red:**

@@ -25,7 +25,7 @@ Layers (spec §2): Events/Traces/Episodes → Observations → Claims/State/Grap
 | `explain_decision` | **new** | provenance receipt from graph |
 | `explain_failure` | **new** | execution-graph backward tracing → cause chain w/ beliefs. **Hard dependency: Band 1.7 plan/execution persistence** (migration 23 — executions bound to exact frozen plans); nothing to walk until that lands |
 | `detect_conflict_trigger`, `propose_synthesis`, `submit_approval` | built | debate-gated knowledge change loop |
-| `solve_task` | built | retrieval-grounded coding agent (RepoSandbox) |
+| `find_best_way` | built | retrieval-grounded coding agent (RepoSandbox) |
 | ~~`apply_change_set` ungated~~ | gate behind opt-in flag | raw write primitive must not ship public |
 
 Transport: stdio + Streamable HTTP (`mcp==2.0.0` `MCPServer`, hand-built SEP-2663 Tasks extension for long-running tools). Bearer token = authentication only; threat model documented; loopback-first posture.

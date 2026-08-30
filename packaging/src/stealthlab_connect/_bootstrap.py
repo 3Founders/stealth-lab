@@ -98,7 +98,7 @@ def load_mcp_server_module():
     root = get_backend_root()
     if not (root.parent / "experiments" / "swebench_pro" / "agent.py").is_file():
         raise BackendRootNotFound(
-            f"solve_task needs {root.parent / 'experiments' / 'swebench_pro' / 'agent.py'} "
+            f"find_best_way needs {root.parent / 'experiments' / 'swebench_pro' / 'agent.py'} "
             f"(experiments/swebench_pro must be a sibling of backend/) -- see "
             f"backend/README_MCP_SERVER.md setup step 3"
         )

@@ -14,10 +14,10 @@ plan specifically, see `experiments/swebench_pro/PROCEDURE_MEMORY_EVAL_PLAN.md`
 ## What changed since the last version (5 real commits, 2 authors)
 
 1. **`assemble_structural_context()` was blocking the entire MCP server's
-   event loop** — found during integration review after `solve_task` was
+   event loop** — found during integration review after `find_best_way` was
    wired to call it for real. Measured, not assumed: `get_call_graph_ranked_names`
    alone took 4.2 real seconds; with `--workers 1`, that's the whole
-   server frozen for every concurrent user, once per `solve_task` call.
+   server frozen for every concurrent user, once per `find_best_way` call.
    Fixed with `run_in_executor()`, and — real finding, not the obvious
    fix — SEQUENTIAL awaits, not `asyncio.gather()`'d concurrently: gathering
    made it worse (1 heartbeat vs 19), since several CPU-bound tree-sitter
@@ -55,7 +55,7 @@ plan specifically, see `experiments/swebench_pro/PROCEDURE_MEMORY_EVAL_PLAN.md`
    **untouched** approval gate.
 
 4. **Procedure retrieval has its first real caller**, and wiring it
-   surfaced a real gap that's now closed too. `solve_task` retrieves an
+   surfaced a real gap that's now closed too. `find_best_way` retrieves an
    applicable procedure (environment-derived scope) and renders it into
    `memory_block` for the flat `Agent` — `require_verified` stays at its
    real default (`True`), not weakened to make something show up

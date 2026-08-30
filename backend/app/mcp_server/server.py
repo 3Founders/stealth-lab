@@ -4,10 +4,11 @@ StealthLab MCP server. Four tools:
     logic, wrap already-tested read/write functions.
   - propose_synthesis: thin wrapper around LoopOrchestrator.run(), the real
     debate orchestration used throughout this project.
-  - solve_task: NOT a pure wrapper -- see its own docstring's HONEST STATUS
-    section. Reuses RepoSandbox/Agent verbatim but adds real new
-    orchestration (a generic, non-SWE-bench-specific instance/prompt path)
-    on top.
+  - find_best_way (renamed from solve_task): NOT a pure wrapper -- see its
+    own docstring's HONEST STATUS section. Reuses RepoSandbox/Agent
+    verbatim for its tier-2 execution path, but adds real new orchestration
+    (a generic, non-SWE-bench-specific instance/prompt path, plus the
+    tier-1 fast-lookup path) on top.
   - check_procedure: demo.md C5's audit-mode ALLOW/WOULD_REFUSE tool; thin
     wrapper around app.services.applicability.check_procedure_reuse().
 
@@ -22,7 +23,7 @@ remembered pre-2.0 API names. Confirmed real: MCPServer (not FastMCP,
 renamed in v2), the .tool() decorator, Context.lifespan for accessing the
 DB pool from within a tool call.
 
-propose_synthesis/solve_task are genuinely long-running (multi-round
+propose_synthesis/find_best_way are genuinely long-running (multi-round
 debate / multi-step agent loop). Long-run semantics come from
 tasks_extension.py, a real, hand-built implementation of SEP-2663 -- see
 that module's own docstring for why (mcp==2.0.0 ships no Tasks runtime at
@@ -151,7 +152,7 @@ class StaticTokenVerifier(TokenVerifier):
     matching prefix length. `secrets` is already imported above (used for
     instance_id generation); this is its second, more load-bearing use.
 
-    Deliberately NOT sufficient on its own: solve_task's repo_path is
+    Deliberately NOT sufficient on its own: find_best_way's repo_path is
     caller-controlled and apply_change_set is an ungated write (see
     README_MCP_SERVER.md's "Known v1 limitations"). This gates WHO can
     reach those tools, it does not make either tool safe against a caller
@@ -188,7 +189,7 @@ server = MCPServer(
     instructions=(
         "Retrieval, debate, and knowledge-graph tools for StealthLab's "
         "bi-temporal task/knowledge graph, plus a retrieval-grounded coding "
-        "agent. propose_synthesis and solve_task are genuinely long-running "
+        "agent. propose_synthesis and find_best_way are genuinely long-running "
         "(multi-round debate / multi-step agent loop) -- clients that "
         "declare the io.modelcontextprotocol/tasks extension capability get "
         "a CreateTaskResult back immediately and poll tasks/get; clients "
@@ -218,7 +219,7 @@ server = MCPServer(
 # --workers 1 is load-bearing, not incidental: TasksExtension's backing
 # store (tasks_extension.py) is in-memory, so a second worker process
 # would serve a tasks/get poll from a process that never saw the task
-# propose_synthesis/solve_task created -- the call would appear to hang.
+# propose_synthesis/find_best_way created -- the call would appear to hang.
 # The SECOND ASGI app in this project -- instrumenting only main.py would
 # leave all 9 MCP tools dark, which is the surface external agents
 # actually call. No-op without SENTRY_DSN.
@@ -480,12 +481,96 @@ def _render_step(step) -> str:
     return f"{text}  [tool: {', '.join(tools)}]" if tools else text
 
 
-@server.tool()
-async def solve_task(task_description: str, repo_path: str, ctx: Context,
-                      model: str = "gemma-4-31B-it", max_steps: int = 25,
-                      session_id: Optional[str] = None,
-                      allow_unverified_procedures: bool = False) -> str:
+async def _respond_tier1_hit(pool, task_description: str, matched_procedure: dict) -> str:
+    """Tier-1 lookup hit: return the match immediately, no sandboxed run.
+
+    Still compiles and persists a real execution_plans/task_graphs pair
+    (a plan is "this task instantiated against this procedure", independent
+    of whether it then executes) -- but writes no `executions` row, since
+    nothing actually ran. That distinction is the schema's own: ExecutionPlan
+    is the compiled artifact, Execution is the record of a real run.
     """
+    from app.execution.plan_persistence import persist_compiled_plan
+    from app.execution.plans import compile_plan
+    from app.models.plan import PlanNode, ProcedureRef
+
+    steps_text = "\n".join(
+        f"  {i+1}. {_render_step(s)}"
+        for i, s in enumerate(matched_procedure.get("steps") or [])
+    )
+    is_verified = matched_procedure.get("verification_state") == "verified"
+    status = (
+        f"verified, {matched_procedure['verification_stats'].get('successes', 0)} prior successes"
+        if is_verified
+        else "UNVERIFIED -- opted in via allow_unverified_procedures, use at your own judgment"
+    )
+
+    plan_node = PlanNode(
+        order=0, goal=task_description,
+        step_ref=ProcedureRef(
+            procedure_id=matched_procedure["procedure_id"],
+            version=matched_procedure["version"],
+        ),
+    )
+    compiled_plan = compile_plan(
+        procedure_id=matched_procedure["procedure_id"],
+        procedure_version=matched_procedure["version"],
+        procedure_row_id=matched_procedure["id"],
+        procedure_payload=matched_procedure,
+        task_description=task_description,
+        nodes=[plan_node],
+        extractor_version="find_best_way_plan_compiler@1",
+        created_by="find_best_way",
+    )
+    await persist_compiled_plan(pool, compiled_plan)
+
+    return (
+        f"Found existing best-known way ({status}): {matched_procedure['name']}\n"
+        f"{steps_text}\n\n"
+        "(lookup only -- no sandboxed run performed; pass mode='full_run' "
+        "with a repo_path to execute instead)"
+    )
+
+
+@server.tool()
+async def find_best_way(task_description: str, ctx: Context,
+                         repo_path: Optional[str] = None,
+                         mode: str = "auto",
+                         model: str = "gemma-4-31B-it", max_steps: int = 25,
+                         session_id: Optional[str] = None,
+                         allow_unverified_procedures: bool = False) -> str:
+    """
+    Two-tier: find the best known way to do this, seamlessly callable at
+    any point in a workflow -- not just as a heavyweight task entrypoint.
+
+    TIER 1 (lookup, always runs first, no repo_path required): checks
+    `find_applicable_procedures()` for a strong existing match and, if one
+    exists, returns it immediately -- sub-second, no sandboxed agent run.
+    This is what makes the tool safe to call opportunistically mid-workflow
+    ("is there a known best way to do this?") rather than only as a
+    committing, expensive action.
+
+    TIER 2 (execution, needs repo_path): the real, sandboxed, tool-calling
+    agent loop -- runs only when tier 1 found nothing strong enough, or
+    `mode="full_run"` asks for it explicitly. This is everything
+    `solve_task` (this tool's previous name) used to always do
+    unconditionally.
+
+    `mode`: "auto" (default) -- tier 1, falling back to tier 2 if needed
+    and `repo_path` is given. "lookup_only" -- tier 1 only, ever; an honest
+    "no strong match" is a normal answer, not an error. "full_run" -- skip
+    tier 1, go straight to tier 2 (requires `repo_path`).
+
+    EVERY tier-2 run persists a real execution plan (Band 1.7:
+    `execution_plans`/`task_graphs`/`executions`, see
+    `app/execution/plan_persistence.py`) -- matched runs reference the
+    matched procedure; unmatched runs first capture a fresh ad-hoc
+    `candidate` procedure from the task itself (via `capture_procedure()`)
+    so the plan always has a real procedure to reference, never a
+    workaround. This also means an unmatched run leaves the substrate a
+    real, reusable candidate it didn't have before, same "candidate first,
+    earn verified later" discipline used everywhere else in this codebase.
+
     Retrieval-grounded coding agent: find prior solved patterns relevant to
     this task, then run a real, sandboxed, tool-calling agent loop against
     an on-disk repo to solve it.
@@ -531,7 +616,7 @@ async def solve_task(task_description: str, repo_path: str, ctx: Context,
         non-empty patch) is fed to extract_procedure() afterward, via
         AgentRunEvidenceSource built from this run's own files_edited/
         tool_calls. This is the first live caller extract_procedure() has
-        ever had outside its own tests -- a successful solve_task call now
+        ever had outside its own tests -- a successful find_best_way tier-2 call now
         can, not always will (V5/validators can still refuse), produce a
         real procedures row. That row is NOT verified on creation
         (verification_state defaults unverified; ticket 13's >=10
@@ -576,11 +661,66 @@ async def solve_task(task_description: str, repo_path: str, ctx: Context,
     """
     pool = ctx.request_context.lifespan_context["pool"]
 
-    if not os.path.isdir(repo_path):
+    if mode not in ("auto", "lookup_only", "full_run"):
+        return f"REFUSED: mode must be one of 'auto', 'lookup_only', 'full_run' (got {mode!r})."
+    if repo_path is not None and not os.path.isdir(repo_path):
         return f"REFUSED: repo_path {repo_path!r} is not a directory on this server."
+    if mode == "full_run" and repo_path is None:
+        return "REFUSED: mode='full_run' requires repo_path."
+
+    from app.services.applicability import find_applicable_procedures
+    from app.services.environment_probe import probe_environment
+    from app.services.procedures import capture_procedure, get_procedure, record_execution_outcome
 
     embedder = Embedder()
     query_vec = await embedder.embed_one(task_description, input_type="query")
+
+    # TIER 1 -- lookup, always attempted, no repo_path required. Scope
+    # narrowing (below) is repo-dependent and simply skipped without one;
+    # a repo-less call still gets a real, if less-narrowed, match attempt.
+    procedure_scope: dict = {}
+    if repo_path is not None:
+        # Synchronous filesystem reads (a handful of specific top-level
+        # files -- package.json/lockfiles/requirements.txt/pyproject.toml,
+        # not a repo walk) -- off the event loop regardless of how cheap,
+        # same discipline as every other blocking call in this tool.
+        facts = await asyncio.to_thread(probe_environment, repo_path)
+        lang = next((f.object for f in facts if f.predicate == "language"), None)
+        if lang:
+            procedure_scope = {"language": [lang]}
+
+    # require_verified DEFAULTS TO TRUE and is deliberately left there, not
+    # weakened to False to make something show up here today. Ticket 13's
+    # own wording: "verified gates automatic retrieval; a candidate
+    # procedure remains explicitly invocable." This IS automatic selection
+    # (the system chose to look, nothing named this procedure by id), so
+    # the honest behavior is: nothing is returned until a procedure has
+    # real evidence (>=10 successes, 0 failures, >=3 distinct contexts) --
+    # which this exact call path is what will, over repeated real use,
+    # accumulate.
+    matched_procedures = await find_applicable_procedures(
+        pool, goal_embedding=query_vec, current_scope=procedure_scope, limit=1,
+        require_verified=not allow_unverified_procedures,
+    )
+    matched_procedure = matched_procedures[0] if matched_procedures else None
+
+    if matched_procedure is not None and mode != "full_run":
+        return await _respond_tier1_hit(pool, task_description, matched_procedure)
+    if mode == "lookup_only":
+        return (
+            "No strong existing match found (this is a normal, honest "
+            "answer, not a failure) -- pass mode='full_run' with a "
+            "repo_path to solve it fresh."
+        )
+    if repo_path is None:
+        return (
+            "No strong existing match found, and no repo_path was given -- "
+            "pass repo_path to run a full solve (mode='auto' or 'full_run')."
+        )
+
+    # TIER 2 -- execution. Everything below is what this tool always did
+    # unconditionally under its previous name (solve_task); it now only
+    # runs when tier 1 didn't already answer the question.
     raw_candidates = await _vector_candidates(pool, query_vec, AccessScope.unrestricted())
     candidates = [c for c in raw_candidates if c.similarity >= RETRIEVE_PRECEDENT_THRESHOLD]
     memory_block = ""
@@ -618,44 +758,6 @@ async def solve_task(task_description: str, repo_path: str, ctx: Context,
             f"(tiers: {structural_result.tiers_included}):\n{structural_result.text}"
         )
         memory_block = f"{memory_block}\n\n{structural_block}" if memory_block else structural_block
-
-    # Procedure retrieval + instantiation (closes the extraction ->
-    # applicability -> use -> outcome loop end to end, for the first
-    # time). Scope narrowed by the SAME environment_probe.py extraction
-    # itself derives from -- a procedure extracted with scope={"language":
-    # ["python"]} only matches a call whose current_scope agrees, real
-    # narrowing on both sides, not a coincidence.
-    #
-    # require_verified DEFAULTS TO TRUE and is deliberately left there,
-    # not weakened to False to make something show up here today. Ticket
-    # 13's own wording: "verified gates automatic retrieval; a candidate
-    # procedure remains explicitly invocable." This IS automatic
-    # selection (the system chose to look, nothing named this procedure
-    # by id), so the honest behavior is: nothing is returned until a
-    # procedure has real evidence (>=10 successes, 0 failures, >=3
-    # distinct contexts) -- which this exact call path is what will,
-    # over repeated real use, accumulate.
-    from app.services.applicability import find_applicable_procedures
-    from app.services.environment_probe import probe_environment
-    from app.services.procedures import record_execution_outcome
-
-    # Synchronous filesystem reads (a handful of specific top-level
-    # files -- package.json/lockfiles/requirements.txt/pyproject.toml,
-    # not a repo walk, so far cheaper than the structural producers
-    # AnujB's fix above addresses) -- off the event loop for the same
-    # reason regardless: consistency with that fix, not a measured
-    # stall of its own.
-    procedure_scope: dict = {}
-    facts = await asyncio.to_thread(probe_environment, repo_path)
-    lang = next((f.object for f in facts if f.predicate == "language"), None)
-    if lang:
-        procedure_scope = {"language": [lang]}
-
-    matched_procedures = await find_applicable_procedures(
-        pool, goal_embedding=query_vec, current_scope=procedure_scope, limit=1,
-        require_verified=not allow_unverified_procedures,
-    )
-    matched_procedure = matched_procedures[0] if matched_procedures else None
     if matched_procedure:
         steps_text = "\n".join(
             f"  {i+1}. {_render_step(s)}"
@@ -672,6 +774,25 @@ async def solve_task(task_description: str, repo_path: str, ctx: Context,
         )
         memory_block = f"{memory_block}\n\n{procedure_block}" if memory_block else procedure_block
 
+    # Every tier-2 run gets a real procedure to reference (find_best_way's
+    # "every run gets a persisted plan" decision) -- a matched run uses the
+    # match; an unmatched run captures a fresh ad-hoc `candidate` now,
+    # BEFORE executing, from the task itself. No evidence exists yet (the
+    # run hasn't happened), so this is capture_procedure() directly, not
+    # extract_procedure() -- same distinction extract_procedure()'s own
+    # module docstring draws between capture-time and extraction-time.
+    if matched_procedure is not None:
+        plan_procedure_row_id = str(matched_procedure["id"])
+    else:
+        adhoc = await capture_procedure(
+            pool, name=f"ad-hoc: {task_description[:80]}", goal=task_description,
+            steps=[{"goal": task_description}],
+            provenance="system_pending_review", scope_type="global",
+            created_by="find_best_way_adhoc",
+        )
+        plan_procedure_row_id = adhoc["id"]
+    procedure_payload = await get_procedure(pool, plan_procedure_row_id)
+
     sandbox = RepoSandbox(repo_path)
     client = OpenAI(
         max_retries=0,
@@ -680,7 +801,7 @@ async def solve_task(task_description: str, repo_path: str, ctx: Context,
     )
     agent = Agent(client, model, max_steps=max_steps)
     instance = {
-        "instance_id": f"mcp_solve_task_{secrets.token_hex(6)}",
+        "instance_id": f"mcp_find_best_way_{secrets.token_hex(6)}",
         "repo": os.path.basename(os.path.abspath(repo_path)),
         "problem_statement": task_description,
     }
@@ -690,7 +811,7 @@ async def solve_task(task_description: str, repo_path: str, ctx: Context,
     # thread so it doesn't block the event loop everything else on this
     # server shares, same reasoning TasksExtension's own docstring gives
     # for why this tool needs task-augmentation in the first place.
-    run_result = await asyncio.to_thread(agent.run, instance, sandbox, "mcp_solve_task", memory_block)
+    run_result = await asyncio.to_thread(agent.run, instance, sandbox, "mcp_find_best_way", memory_block)
 
     # Real success proxy, reusing run_graph_experiment.py's own
     # invalid-run marker ("api_error") in the negative direction: the
@@ -703,6 +824,39 @@ async def solve_task(task_description: str, repo_path: str, ctx: Context,
             context_key=os.path.basename(os.path.abspath(repo_path)),
             steps_used=len(run_result.tool_calls),
         )
+
+    # Real execution-plan persistence (Band 1.7) -- every tier-2 run,
+    # matched or ad-hoc, regardless of outcome: a failed run is still real
+    # history worth keeping, not just successes. See
+    # app/execution/plan_persistence.py for why this is two/three plain
+    # INSERTs and not a transaction.
+    from app.execution.plan_persistence import persist_compiled_plan, record_plan_execution
+    from app.execution.plans import compile_plan
+    from app.models.plan import PlanNode, ProcedureRef
+
+    plan_node = PlanNode(
+        order=0, goal=task_description,
+        step_ref=ProcedureRef(
+            procedure_id=procedure_payload["procedure_id"],
+            version=procedure_payload["version"],
+        ),
+    )
+    compiled_plan = compile_plan(
+        procedure_id=procedure_payload["procedure_id"],
+        procedure_version=procedure_payload["version"],
+        procedure_row_id=UUID(plan_procedure_row_id),
+        procedure_payload=procedure_payload,
+        task_description=task_description,
+        nodes=[plan_node],
+        extractor_version="find_best_way_plan_compiler@1",
+        created_by="find_best_way",
+    )
+    compiled_plan, _ = await persist_compiled_plan(pool, compiled_plan)
+    await record_plan_execution(
+        pool, compiled=compiled_plan,
+        outcome="success" if run_succeeded else "failure",
+        created_by="find_best_way",
+    )
 
     # Procedure extraction (memory-substrate blocker #1: extract_procedure()
     # otherwise has zero non-test callers, so nothing a developer does

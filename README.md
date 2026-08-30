@@ -37,7 +37,7 @@ via the graph's supersede-not-delete history.
 | `decompose_task` | Turn an unstructured problem into a structured change proposal |
 | `decide_decomposition` | Approve or reject a decomposition proposal |
 | `apply_change_set` | Apply a change set directly, no approval gate (ungated — use narrowly) |
-| `solve_task` | Retrieval-grounded coding agent against a real repo on disk |
+| `find_best_way` | Retrieval-grounded coding agent against a real repo on disk |
 | `check_procedure` | Applicability check → `ALLOW` or structured `WOULD_REFUSE` with a cited reason (audit mode only) |
 
 Full setup, the stdio vs. hosted-HTTP split, and the known v1 limitations

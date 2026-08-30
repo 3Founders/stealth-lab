@@ -159,7 +159,7 @@ async def extract_model_observation(
     Real LLM call -- NOT testable live in this environment (no network
     path to General Compute from this sandbox, confirmed the same way
     every other LLM-calling function in this codebase was this session).
-    `client` is injected (same pattern as solve_task/decompose_task) so
+    `client` is injected (same pattern as find_best_way/decompose_task) so
     the surrounding logic -- prompt construction, response parsing,
     version-component hashing -- is fully testable with a scripted fake
     client, even though the real call itself isn't verified here.

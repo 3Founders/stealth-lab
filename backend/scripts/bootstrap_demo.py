@@ -3,7 +3,7 @@ Zero-to-docket in one command -- demo.md §3's two-phase story, for real,
 on a fresh database, in one command, with no live model calls.
 
 Phase A: build an AgentRunEvidenceSource by hand -- the exact same shape
-server.py's solve_task() builds at its own extract_procedure() call site
+server.py's find_best_way() builds at its own extract_procedure() call site
 (goal_text, outcome="success", a small realistic observations list,
 tool_sequence, session_id) -- then call extract_procedure(pool,
 evidence_source, client=None, ...). client=None takes the deterministic

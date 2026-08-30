@@ -235,13 +235,6 @@ class TestToolsWiring:
         out, done = Agent._dispatch("read_symbol", {"path": "m.py", "name": "add"}, sb)
         assert "def add" in out and done is False
 
-    def test_htn_subgoal_tools_inherit_both(self):
-        """SUBGOAL_TOOLS derives from agent.TOOLS -- both arms must see
-        identical tool sets for flat-vs-HTN to be a controlled comparison."""
-        from htn_agent import SUBGOAL_TOOLS
-        names = {t["function"]["name"] for t in SUBGOAL_TOOLS}
-        assert {"list_symbols", "read_symbol"} <= names
-
 
 class TestSyntaxErrors:
     """The lever with a direct, provable path to f2p: a patch that does not

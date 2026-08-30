@@ -30,9 +30,9 @@ def test_all_nine_tools_registered():
         "decide_decomposition",
         "decompose_task",
         "detect_conflict_trigger",
+        "find_best_way",
         "propose_synthesis",
         "retrieve_precedent",
-        "solve_task",
         "submit_approval",
     ]
 

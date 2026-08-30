@@ -8,7 +8,7 @@ resolution, and a retrieval-grounded coding agent as 9 MCP tools.
 1. `pip install -r requirements.txt --break-system-packages` (or `uv run
    --with-editable .` for the Inspector, which picks up `pyproject.toml`
    automatically). Note: `tree-sitter-language-pack` is a real dependency
-   introduced by `solve_task` -- make sure it's actually installed, not
+   introduced by `find_best_way` -- make sure it's actually installed, not
    just listed.
 2. `backend/.env` needs real values for at minimum: `DATABASE_URL`,
    `VOYAGE_API_KEY`. `propose_synthesis`/`decompose_task`/`submit_approval`
@@ -19,7 +19,7 @@ resolution, and a retrieval-grounded coding agent as 9 MCP tools.
    to get fully working). Run `diagnose_panel_connectivity.py` to confirm
    your panel actually responds before relying on any debate tool.
 3. `experiments/swebench_pro/` must exist as a real sibling directory of
-   `backend/` -- `solve_task` imports `Agent`/`RepoSandbox` from there.
+   `backend/` -- `find_best_way` imports `Agent`/`RepoSandbox` from there.
 
 ## The 9 tools
 
@@ -33,7 +33,7 @@ resolution, and a retrieval-grounded coding agent as 9 MCP tools.
 | `detect_conflict_trigger` | Find a real conflict between knowledge_nodes, open a debate trigger | Yes -- creates a proxy task node + trigger, doesn't touch existing content |
 | `propose_synthesis` | Run a real multi-round debate on a trigger, produce scorecards | No -- drives debate state to `PENDING_APPROVAL`, doesn't write graph content |
 | `submit_approval` | Approve/reject a scorecard: applies + audits + finalizes debate state | **Yes, gated** -- the correct path for debate-originated changes |
-| `solve_task` | Retrieval-grounded coding agent against a real repo on disk | Yes -- to the filesystem, not the graph |
+| `find_best_way` | Retrieval-grounded coding agent against a real repo on disk | Yes -- to the filesystem, not the graph |
 
 ### Important: which gated tool goes with which proposal
 
@@ -82,7 +82,7 @@ a genuine multi-round debate.)
 
 Test order, cheapest/safest first: `retrieve_precedent` → `apply_change_set`
 with deliberately malformed input → `detect_conflict_trigger` → only then
-`propose_synthesis`/`submit_approval`/`decompose_task`/`solve_task`, since
+`propose_synthesis`/`submit_approval`/`decompose_task`/`find_best_way`, since
 those cost real API spend.
 
 ## Hosting -- Streamable HTTP, for real clients (Claude Code included)
@@ -100,7 +100,7 @@ against 1.29.0, not assumed from changelogs.
 
 **Why this stays loopback-only.** `DATABASE_URL` is a local Postgres
 instance -- a cloud-hosted server could not reach it. More importantly,
-`solve_task`'s `repo_path` is caller-controlled and `apply_change_set` is an
+`find_best_way`'s `repo_path` is caller-controlled and `apply_change_set` is an
 **ungated write** (see "Known v1 limitations" below); a bearer token gates
 *who* can call these tools, it does not make either tool safe against
 *anyone* holding a valid token. Treat this as a way to reach the server from
@@ -137,7 +137,7 @@ whichever `python` resolves to.
 `/mcp`. **`--workers 1` is load-bearing**, not a default left alone: the
 Tasks extension's backing store (`tasks_extension.py`) is in-memory, so a
 second worker would sometimes answer a `tasks/get` poll from a process that
-never saw the task `propose_synthesis`/`solve_task` created, and that call
+never saw the task `propose_synthesis`/`find_best_way` created, and that call
 would appear to hang. Port 8765 avoids colliding with `app/main.py`'s
 FastAPI app, which already uses uvicorn's conventional 8000.
 
@@ -191,7 +191,7 @@ That is also where an existing local registration lives, and a local entry
 takes precedence over the committed one, so if `/mcp` shows a stale URL or
 token, check `~/.claude.json` first.
 
-`propose_synthesis` and `solve_task` are genuinely long-running; raise the
+`propose_synthesis` and `find_best_way` are genuinely long-running; raise the
 per-server tool timeout past Claude Code's default by adding a `timeout`
 (milliseconds) field to the server's entry in `~/.claude.json`:
 
@@ -222,7 +222,7 @@ either uvicorn or the database is not actually up.
    audits + closes the debate, atomically
 
 For the coding-assistant use case, it's just one call:
-`solve_task(task_description, repo_path)` -- internally does its own
+`find_best_way(task_description, repo_path)` -- internally does its own
 retrieval grounding, no multi-step governance loop needed.
 
 ## Getting collector traces into Postgres
@@ -256,10 +256,10 @@ engine-verified measurement).
   workflow specs) and `POST /v1/traces` (OTel-shaped agentic workflow trace
   ingestion -- a real, working endpoint, just not MCP-wrapped) both require
   going around the MCP server directly.
-- **`solve_task`'s Tasks-extension backing store is in-memory.** Task state
+- **`find_best_way`'s Tasks-extension backing store is in-memory.** Task state
   doesn't survive a server restart and doesn't work across multiple server
   replicas. Fine for single-process use, not for production multi-replica.
-- **`repo_path` in `solve_task` is caller-controlled.** `RepoSandbox` prevents
+- **`repo_path` in `find_best_way` is caller-controlled.** `RepoSandbox` prevents
   edits from escaping `repo_path` itself, but nothing stops a caller from
   pointing `repo_path` at a sensitive real directory in the first place.
   Fine for trusted/internal use (this project's current, explicit posture),
@@ -278,7 +278,7 @@ real infra to close that gap):
 - `test_apply_change_set_live.py`
 - `test_tasks_extension_live.py`
 - `test_propose_synthesis_live.py`
-- `test_solve_task_live.py`
+- `test_find_best_way_live.py`
 - `test_orphan_cleanup_live.py`
 - `test_detect_conflict_trigger_live.py`
 - `test_submit_approval_live.py`

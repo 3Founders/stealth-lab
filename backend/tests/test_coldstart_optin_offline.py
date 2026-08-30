@@ -9,7 +9,7 @@ CONTEXT -- the chicken-and-egg this fixes, measured with a real model
  -> nothing can ever match, so nothing can ever become verified.
 
 find_applicable_procedures ran should_disable_procedure_retrieval() BEFORE
-consulting require_verified, so solve_task's `allow_unverified_procedures`
+consulting require_verified, so find_best_way's `allow_unverified_procedures`
 opt-in (ticket 13's named path) was unreachable: a freshly-extracted
 procedure stayed invisible even with the flag set, and matched immediately
 once only that gate was bypassed. One blocker, isolated -- the NULL

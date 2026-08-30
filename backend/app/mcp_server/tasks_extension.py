@@ -58,7 +58,15 @@ INVALID_PARAMS = -32602
 # Tools this extension is allowed to task-ify. Deliberately NOT every tool --
 # retrieve_precedent and apply_change_set are fast enough to stay synchronous;
 # task-ifying them would only add polling overhead for no real benefit.
-TASK_AUGMENTABLE_TOOLS: frozenset[str] = frozenset({"propose_synthesis", "solve_task"})
+#
+# find_best_way (renamed from solve_task) is task-augmented as a whole
+# because its tier-2 execution path is still a genuinely long-running
+# sandboxed agent run -- its tier-1 lookup path is fast, but tasks/get
+# polling overhead on an already-sub-second call is harmless, whereas NOT
+# augmenting the tool at all would break polling the moment a call falls
+# through to tier 2. Splitting task-augmentation per-tier would need two
+# separate tool names; not done here (see find_best_way's own docstring).
+TASK_AUGMENTABLE_TOOLS: frozenset[str] = frozenset({"propose_synthesis", "find_best_way"})
 
 DEFAULT_TTL_MS = 3_600_000  # 1 hour -- long enough for a multi-round debate or agent loop
 DEFAULT_POLL_INTERVAL_MS = 3_000

@@ -328,10 +328,10 @@ async def assemble_structural_context(
         # 20s, not milliseconds). Calling them directly, unawaited,
         # inside this async function blocks the ENTIRE event loop for
         # that whole duration -- and since the MCP server this feeds
-        # (server.py's solve_task) runs with `--workers 1`, that is not
+        # (server.py's find_best_way) runs with `--workers 1`, that is not
         # "one slow request", it is the WHOLE SERVER going unresponsive
         # to every concurrent user for several real seconds, once per
-        # solve_task call. run_in_executor() moves each call to a real
+        # find_best_way call. run_in_executor() moves each call to a real
         # OS thread, off the event loop, fixing that.
         #
         # SEQUENTIAL awaits, deliberately NOT asyncio.gather()-ed

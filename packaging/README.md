@@ -158,7 +158,7 @@ claude mcp list        # expect: stealthlab ✔ Connected
 
 Cheapest-first tool order: `retrieve_precedent` → `apply_change_set` with
 malformed input (expect a REFUSED message) → everything else costs real API
-spend. `propose_synthesis` / `solve_task` are long-running; raise client
+spend. `propose_synthesis` / `find_best_way` are long-running; raise client
 timeouts (see `backend/README_MCP_SERVER.md`).
 
 ## Smoke test B — MCP server over stdio (no token)
@@ -250,7 +250,7 @@ touching `app.*`.
 ## Honest scope, inherited limitations stated plainly
 
 - **Loopback-only deployment posture.** The token gates who can call;
-  `apply_change_set` remains an ungated write and `solve_task`'s `repo_path`
+  `apply_change_set` remains an ungated write and `find_best_way`'s `repo_path`
   is caller-controlled — same accepted-for-now posture as
   `backend/README_MCP_SERVER.md`.
 - **Single process only.** Tasks-extension state is in-memory; run exactly one

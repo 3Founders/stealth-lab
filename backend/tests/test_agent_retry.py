@@ -1,6 +1,6 @@
 """
-Tests for the retry policy shared by Agent._complete (agent.py) and
-HTNAgent._chat (htn_agent.py): is_transient()/backoff_seconds() in agent.py.
+Tests for the retry policy in Agent._complete (agent.py):
+is_transient()/backoff_seconds().
 
 This path had NO coverage, which is exactly why it shipped a bug that
 silently discarded whole benchmark instances: openai constructs
@@ -12,13 +12,17 @@ spent. summarise() only counts an instance when every arm is valid, so
 one such timeout threw away the whole instance, including tokens already
 spent by arms that had resolved it.
 
-WHY BOTH AGENTS ARE TESTED HERE, NOT JUST Agent. is_transient/
+HISTORICAL NOTE, kept for the regression story: is_transient/
 backoff_seconds used to be two separately-maintained inline copies -- one
-in Agent._complete, one in HTNAgent._chat -- and they drifted: the first
-copy got fixed for the "timed out" bug and the second did not, so a
-Stage 5 sweep died on every htn_memory arm at "tok=0 tools=0" while the
-SAME instance's no_memory arm, calling the fixed copy, completed
-normally. Testing only Agent is exactly the gap that let that ship.
+in Agent._complete, one in HTNAgent._chat (app/execution/htn_agent.py)
+-- and they drifted: the first copy got fixed for the "timed out" bug and
+the second did not, so a Stage 5 sweep died on every htn_memory arm at
+"tok=0 tools=0" while the SAME instance's no_memory arm, calling the fixed
+copy, completed normally. HTNAgent and its whole call graph were later
+deleted from this project (the drift risk it posed no longer exists --
+there is exactly one copy of this policy now), so the tests that used to
+pin both agents' agreement on it are gone too; this file now covers only
+the surviving Agent.
 
 The exception classes here are STUBS named after openai's, not imports:
 agent.py takes an injected client and never imports openai, and the fix
@@ -39,9 +43,7 @@ sys.path.insert(
 )
 
 import agent as agent_mod  # noqa: E402
-import htn_agent as htn_agent_mod  # noqa: E402
-from agent import MAX_RETRIES, Agent, Usage, backoff_seconds, is_transient  # noqa: E402
-from htn_agent import HTNAgent  # noqa: E402
+from agent import MAX_RETRIES, Agent, backoff_seconds, is_transient  # noqa: E402
 
 
 # --- stand-ins for the provider SDK's exception hierarchy -------------------
@@ -106,26 +108,14 @@ class ScriptedClient:
 
 @pytest.fixture
 def no_sleep(monkeypatch):
-    """Record backoff durations instead of actually waiting -- patched in
-    BOTH modules, since each has its own `import time` and its own call
-    site for the shared backoff_seconds()."""
+    """Record backoff durations instead of actually waiting."""
     slept: list[float] = []
     monkeypatch.setattr(agent_mod.time, "sleep", lambda s: slept.append(s))
-    monkeypatch.setattr(htn_agent_mod.time, "sleep", lambda s: slept.append(s))
     return slept
 
 
 def _agent(client):
     return Agent(client, "m")
-
-
-def _htn_agent(client):
-    return HTNAgent(client, "m")
-
-
-def _ctx():
-    from htn_agent import RunContext
-    return RunContext(t0=0.0, usage=Usage())
 
 
 class TestTimeoutIsRetried:
@@ -201,56 +191,11 @@ class TestBackoffChoice:
         assert all(s <= agent_mod.MAX_BACKOFF for s in no_sleep)
 
 
-class TestHTNAgentChatUsesTheSamePolicy:
-    """HTNAgent._chat used to carry its own inline copy of this filter,
-    and it never got the "timed out" fix -- this is the direct regression
-    for the Stage 5 sweep where every htn_memory arm died at
-    "tok=0 tools=0" via APITimeoutError while no_memory, calling the
-    fixed Agent._complete, ran the same instance to completion."""
-
-    def test_request_timed_out_is_retried_not_raised_immediately(self, no_sleep):
-        client = ScriptedClient([APITimeoutError() for _ in range(MAX_RETRIES)],
-                                then_ok=False)
-        with pytest.raises(APITimeoutError):
-            _htn_agent(client)._chat([{"role": "user", "content": "x"}], Usage(), _ctx())
-        assert client.calls == MAX_RETRIES
-
-    def test_a_timeout_that_clears_returns_the_response_and_records_usage_once(
-            self, no_sleep):
-        client = ScriptedClient([APITimeoutError()])
-        usage = Usage()
-        resp = _htn_agent(client)._chat([{"role": "user", "content": "x"}], usage, _ctx())
-        assert resp.choices[0].message.content == "ok"
-        assert client.calls == 2
-        # Usage is recorded once, from the call that actually returned --
-        # not once per attempt.
-        assert usage.calls == 1
-
-    def test_a_real_bug_is_not_retried(self, no_sleep):
-        client = ScriptedClient([ValueError("bad request shape")], then_ok=False)
-        with pytest.raises(ValueError):
-            _htn_agent(client)._chat([{"role": "user", "content": "x"}], Usage(), _ctx())
-        assert client.calls == 1
-        assert no_sleep == []
-
-    def test_rate_limit_waits_most_of_a_window(self, no_sleep):
-        client = ScriptedClient([RateLimitError()])
-        _htn_agent(client)._chat([{"role": "user", "content": "x"}], Usage(), _ctx())
-        assert no_sleep == [25.0]
-
-    def test_everything_else_gets_the_short_capped_backoff(self, no_sleep):
-        client = ScriptedClient([APITimeoutError()])
-        _htn_agent(client)._chat([{"role": "user", "content": "x"}], Usage(), _ctx())
-        assert no_sleep == [4.0]
-
-
-class TestBothAgentsAgreeOnClassification:
-    """The test that would have caught the drift itself: is_transient must
-    give the SAME verdict regardless of which agent is asking, since both
-    now call the one function in agent.py rather than keeping their own
-    copy. This does not re-drive either agent -- it pins the shared
-    function's contract directly, which is what makes drift impossible to
-    reintroduce silently."""
+class TestClassificationContract:
+    """Pins is_transient/backoff_seconds' own contract directly -- what
+    used to also guard against HTNAgent's now-deleted separate copy
+    drifting from this one; kept because the contract itself is still
+    worth pinning even with only one caller left."""
 
     @pytest.mark.parametrize("exc_factory,expected", [
         (APITimeoutError, True),

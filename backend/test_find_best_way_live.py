@@ -1,11 +1,13 @@
 """
-Real test of solve_task's wiring: RepoSandbox file operations are 100% real
-(no stub). Only the LLM call itself is scripted -- this sandbox has no
-network path to General Compute's real API (same class of limitation as
-Voyage earlier), so a canned response stands in, CLEARLY labeled. Anuj
-needs to run this same tool against a real repo + real API key to verify
-the actual model's tool-calling behavior; this test verifies the plumbing
-around it.
+Real test of find_best_way's tier-2 (execution) wiring -- renamed from
+solve_task; see app/mcp_server/server.py's docstring for the rename and
+the new two-tier (lookup/execution) design. RepoSandbox file operations
+are 100% real (no stub). Only the LLM call itself is scripted -- this
+sandbox has no network path to General Compute's real API (same class of
+limitation as Voyage earlier), so a canned response stands in, CLEARLY
+labeled. Anuj needs to run this same tool against a real repo + real API
+key to verify the actual model's tool-calling behavior; this test verifies
+the plumbing around it.
 """
 import asyncio
 import json
@@ -86,7 +88,7 @@ async def main():
 
     # HONEST STUB (same real, confirmed wall as apply_change_set's test):
     # this sandbox cannot reach api.voyageai.com. Retrieval itself is not
-    # verified by this script -- only solve_task's downstream wiring
+    # verified by this script -- only find_best_way's downstream wiring
     # (RepoSandbox + Agent.run + diff) is. Anuj: this same stub is not
     # needed on real infra with real network access.
     async def _fake_embed_one(self, text, input_type="query"):
@@ -98,9 +100,13 @@ async def main():
     pool = await create_pool(os.environ["DATABASE_URL"])
     ctx = FakeContext(pool)
 
-    result = await srv.solve_task(
+    # mode="full_run": this script tests tier-2 execution specifically, not
+    # tier-1 lookup -- explicit rather than relying on an empty local DB to
+    # make "auto" fall through the same way.
+    result = await srv.find_best_way(
         task_description="Fix the bug in calc.add -- it subtracts instead of adding.",
         repo_path="/tmp/test_repo",
+        mode="full_run",
         ctx=ctx,
     )
     print(result)
@@ -108,7 +114,7 @@ async def main():
     assert "stop_reason: finish" in result, "FAIL: agent did not reach finish"
     assert "calc.py" in result, "FAIL: expected calc.py in files_edited"
     real_content = open("/tmp/test_repo/calc.py").read()
-    print("\n--- real file content on disk after solve_task ---")
+    print("\n--- real file content on disk after find_best_way ---")
     print(real_content)
     assert "return a + b" in real_content, "FAIL: real file on disk was not actually fixed"
     assert "a - b" not in real_content, "FAIL: buggy line still present"

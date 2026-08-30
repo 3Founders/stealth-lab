@@ -119,7 +119,7 @@ python -m app.mcp_server.server   # Streamable HTTP on loopback
 
 Then, from a client (or `claude mcp list` if using Claude Code as the caller):
 confirm all 9 tools resolve — `retrieve_precedent`, `apply_change_set`,
-`propose_synthesis`, `solve_task`, `detect_conflict_trigger`, `check_procedure`,
+`propose_synthesis`, `find_best_way`, `detect_conflict_trigger`, `check_procedure`,
 `decompose_task`, `decide_decomposition`, `submit_approval`. An unauthenticated
 `POST /mcp` should return 401.
 
@@ -207,7 +207,7 @@ cd backend
 # via the MCP tool, or directly:
 python -c "
 import asyncio
-from app.mcp_server.server import solve_task
+from app.mcp_server.server import find_best_way
 # call with a real repo_path and task_description, model=<a real, live model>
 "
 ```
@@ -306,7 +306,7 @@ python integration_check_v2_repo_execution.py          # needs a real Docker dae
 **Pass, and an honest limit to know about:** `ContainerSandboxExecutor` gives real
 isolation (`--network none`, read-only rootfs, resource limits, no fallback to
 unsafe execution) but **only works host-side** — the shipped backend container has
-no Docker socket, so `solve_task` (which runs server-side inside that container)
+no Docker socket, so `find_best_way` (which runs server-side inside that container)
 cannot actually reach it in the deployed configuration. This is deliberate, not a
 bug — mounting the Docker socket into that container would be a bigger security
 problem than the one it solves (documented in `sandbox_executor.py`'s own
@@ -345,7 +345,7 @@ Then confirm: `POST /mcp` unauthenticated → 401, authenticated → 200; `claud
 list` reports Connected; all 9 tools resolve; migrations applied automatically (or
 run Module 2 against the compose Postgres). Also confirm `git` is present in the
 container (`docker compose exec backend git --version`) — its absence silently
-degraded `solve_task`'s structural retrieval before this was caught.
+degraded `find_best_way`'s structural retrieval before this was caught.
 
 **Pass:** clean boot, no manual intervention beyond `.env` setup, all of the above
 true. Tear down after with `docker compose down -v` if the volumes were disposable.
@@ -408,7 +408,7 @@ numbers from a partial run — that misrepresents statistical power.
   OIDC is actually configured.
 - Rate limiting only works correctly with exactly one worker process
   (`--workers 1`).
-- `ContainerSandboxExecutor` can't reach `solve_task` in the shipped compose
+- `ContainerSandboxExecutor` can't reach `find_best_way` in the shipped compose
   config (Module 11) — deliberate, needs a founder call to change.
 - Claim → procedure extraction is structurally refused whenever a task
   description names a specific file (Module 7b) — diagnosed, not yet fixed,

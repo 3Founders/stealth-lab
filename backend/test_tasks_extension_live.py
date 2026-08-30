@@ -2,7 +2,7 @@
 Real test of TasksExtension -- exercises the actual, installed
 mcp.server.extension.compose_tool_call_handler machinery (not a
 reimplementation), with a fake slow "tool" standing in for
-propose_synthesis/solve_task's real long-running work.
+propose_synthesis/find_best_way's real long-running work.
 """
 import asyncio
 import sys
@@ -35,7 +35,7 @@ def make_ctx(*, declares_tasks: bool) -> ServerRequestContext:
 
 
 async def slow_tool_handler(ctx, params):
-    """Stands in for propose_synthesis/solve_task's real, slow work."""
+    """Stands in for propose_synthesis/find_best_way's real, slow work."""
     await asyncio.sleep(0.3)
     from mcp_types import CallToolResult
     from mcp_types._types import TextContent
@@ -93,7 +93,7 @@ async def main():
     # === Case 4: cancellation ===
     print("\n=== CASE 4: real cancellation ===")
     handler_cancel = compose_tool_call_handler([ext], cancellable_tool_handler)
-    result4 = await handler_cancel(ctx, CallToolRequestParams(name="solve_task", arguments={}))
+    result4 = await handler_cancel(ctx, CallToolRequestParams(name="find_best_way", arguments={}))
     assert isinstance(result4, CreateTaskResult)
     cancel_binding = next(m for m in ext.methods() if m.method == "tasks/cancel")
     ack = await cancel_binding.handler(ctx, _TaskIdParams(task_id=result4.task_id))

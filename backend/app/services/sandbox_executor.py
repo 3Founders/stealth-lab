@@ -205,7 +205,7 @@ class ContainerSandboxExecutor:
     isolation and silently got none is the exact failure this class exists
     to remove.
 
-    DEPLOYMENT REALITY -- READ BEFORE CLAIMING THIS PROTECTS solve_task.
+    DEPLOYMENT REALITY -- READ BEFORE CLAIMING THIS PROTECTS find_best_way.
     This works when the backend runs on a HOST with a Docker daemon (the
     dev setup, and how Experiment 4 actually ran). It does NOT work in the
     shipped docker-compose configuration, verified against the running
@@ -213,7 +213,7 @@ class ContainerSandboxExecutor:
         backend container:  no /var/run/docker.sock
         backend container:  no docker CLI
         docker-compose.yml: socket not mounted (0 references)
-    solve_task is an MCP tool, so it executes server-side -- inside that
+    find_best_way is an MCP tool, so it executes server-side -- inside that
     container -- where there is no daemon to talk to. In that configuration
     this executor fails loudly on every call (see the FileNotFoundError
     path below). That is deliberate: a visible gap beats a latent one, and
@@ -222,7 +222,7 @@ class ContainerSandboxExecutor:
 
     DO NOT "FIX" THIS BY MOUNTING /var/run/docker.sock INTO THE BACKEND.
     Socket access is effectively root on the host, and that same container
-    serves apply_change_set (an ungated raw write) and solve_task (whose
+    serves apply_change_set (an ungated raw write) and find_best_way (whose
     repo_path is caller-controlled). Granting those a Docker socket turns a
     contained bad outcome into host compromise -- arguably a worse posture
     than the unisolated executor this class replaces. If it ever goes that

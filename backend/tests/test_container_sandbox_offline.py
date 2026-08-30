@@ -140,11 +140,11 @@ async def test_failure_path_still_cleans_up_its_temp_dir(monkeypatch):
 
 
 def test_docstring_states_the_in_container_deployment_limit():
-    """Pins the honest scope note. solve_task runs server-side, inside the
+    """Pins the honest scope note. find_best_way runs server-side, inside the
     backend container, which has no docker socket and no docker CLI
     (verified against the running stack 2026-08-28). A future edit that
     quietly drops this warning would let the class read as protecting
-    solve_task in the shipped configuration, which it does not."""
+    find_best_way in the shipped configuration, which it does not."""
     doc = ContainerSandboxExecutor.__doc__
     assert "DEPLOYMENT REALITY" in doc
     assert "docker-compose" in doc
