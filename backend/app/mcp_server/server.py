@@ -826,7 +826,7 @@ async def find_best_way(task_description: str, ctx: Context,
     else:
         adhoc = await capture_procedure(
             pool, name=f"ad-hoc: {task_description[:80]}", goal=task_description,
-            steps=[{"goal": task_description}],
+            steps=[{"order": 0, "goal": task_description}],
             provenance="system_pending_review", scope_type="global",
             created_by="find_best_way_adhoc",
         )
@@ -839,63 +839,93 @@ async def find_best_way(task_description: str, ctx: Context,
         api_key=settings.require("general_compute_api_key"),
         base_url=settings.general_compute_base_url,
     )
-    agent = Agent(client, model, max_steps=max_steps)
-    instance = {
-        "instance_id": f"mcp_find_best_way_{secrets.token_hex(6)}",
-        "repo": os.path.basename(os.path.abspath(repo_path)),
-        "problem_statement": task_description,
-    }
-
-    # Agent.run is SYNCHRONOUS and genuinely blocking (real retry/backoff
-    # sleeps included, up to tens of seconds on a 429) -- run it in a
-    # thread so it doesn't block the event loop everything else on this
-    # server shares, same reasoning TasksExtension's own docstring gives
-    # for why this tool needs task-augmentation in the first place.
-    run_result = await asyncio.to_thread(agent.run, instance, sandbox, "mcp_find_best_way", memory_block)
-
-    # Real success proxy, reusing run_graph_experiment.py's own
-    # invalid-run marker ("api_error") in the negative direction: the
-    # agent explicitly signalled done AND actually produced a diff --
-    # "finished" alone can mean "gave up cleanly", not "succeeded".
-    run_succeeded = run_result.stop_reason == "finished" and bool(run_result.patch)
-    if matched_procedure:
-        await record_execution_outcome(
-            pool, procedure_row_id=str(matched_procedure["id"]), success=run_succeeded,
-            context_key=os.path.basename(os.path.abspath(repo_path)),
-            steps_used=len(run_result.tool_calls),
-        )
 
     # Real execution-plan persistence (Band 1.7) -- every tier-2 run,
     # matched or ad-hoc, regardless of outcome: a failed run is still real
     # history worth keeping, not just successes. See
     # app/execution/plan_persistence.py for why this is two/three plain
     # INSERTs and not a transaction.
+    from app.execution.graph_executor import NodeResult, execute_task_graph
     from app.execution.plan_persistence import persist_compiled_plan, record_plan_execution
     from app.execution.plans import compile_plan
-    from app.models.plan import PlanNode, ProcedureRef
+    from app.execution.procedure_graph import steps_to_linear_nodes
 
-    plan_node = PlanNode(
-        order=0, goal=task_description,
-        step_ref=ProcedureRef(
-            procedure_id=procedure_payload["procedure_id"],
-            version=procedure_payload["version"],
-        ),
-    )
+    steps = procedure_payload.get("steps") or [{"order": 0, "goal": task_description}]
     compiled_plan = compile_plan(
         procedure_id=procedure_payload["procedure_id"],
         procedure_version=procedure_payload["version"],
         procedure_row_id=UUID(plan_procedure_row_id),
         procedure_payload=procedure_payload,
         task_description=task_description,
-        nodes=[plan_node],
+        nodes=steps_to_linear_nodes(steps),
         extractor_version="find_best_way_plan_compiler@1",
         created_by="find_best_way",
     )
     compiled_plan, _ = await persist_compiled_plan(pool, compiled_plan)
+
+    # REAL PER-STEP EXECUTION, not one monolithic call over the whole
+    # task -- one real Agent.run() per real step, against the SAME
+    # sandbox so edits persist between steps, exactly the pattern proven
+    # live in test_graph_executor_coding_live.py. Each node's own
+    # AgentRun is kept (keyed by order) so the response and the
+    # extraction/outcome logic below can aggregate over the real,
+    # multi-step run instead of a single call.
+    node_runs: dict[int, "AgentRun"] = {}  # noqa: F821 -- forward ref, real type from agent.py
+    node_notes: list[str] = []
+
+    async def run_node(node) -> NodeResult:
+        prior_context = ("\n\nPrior steps completed:\n" + "\n".join(node_notes)) if node_notes else ""
+        node_instance = {
+            "instance_id": f"mcp_find_best_way_{secrets.token_hex(6)}_step{node.order}",
+            "repo": os.path.basename(os.path.abspath(repo_path)),
+            "problem_statement": f"{task_description}\n\nCurrent step: {node.goal}",
+        }
+        node_agent = Agent(client, model, max_steps=max_steps)
+        # Agent.run is SYNCHRONOUS and genuinely blocking (real
+        # retry/backoff sleeps included) -- run it in a thread so it
+        # doesn't block the event loop, same reasoning TasksExtension's
+        # own docstring gives for why this tool needs task-augmentation.
+        node_run = await asyncio.to_thread(
+            node_agent.run, node_instance, sandbox, "mcp_find_best_way",
+            memory_block + prior_context,
+        )
+        node_runs[node.order] = node_run
+        # Per-STEP success is just "the agent finished cleanly" -- unlike
+        # the old single-call check, requiring a real diff per node would
+        # be wrong here: an investigate-only step (e.g. "locate the bug")
+        # never produces a patch, and that is not a failure.
+        succeeded = node_run.stop_reason == "finished"
+        note = f"step {node.order} ({node.goal}): stop_reason={node_run.stop_reason}, tool_calls={len(node_run.tool_calls)}"
+        node_notes.append(note)
+        return NodeResult(status="success" if succeeded else "failure", notes=note)
+
+    graph_result = await execute_task_graph(compiled_plan.graph, run_node=run_node)
+
+    # Aggregate across every real node that actually ran (skipped nodes
+    # contribute nothing -- they never called the agent at all).
+    all_tool_calls = [tc for r in node_runs.values() for tc in r.tool_calls]
+    all_files_edited = sorted({f for r in node_runs.values() for f in r.files_edited})
+    combined_patch = "\n".join(r.patch for r in node_runs.values() if r.patch)
+    total_prompt_tokens = sum(r.usage.prompt_tokens for r in node_runs.values())
+    total_completion_tokens = sum(r.usage.completion_tokens for r in node_runs.values())
+    total_calls = sum(r.usage.calls for r in node_runs.values())
+    total_wall_seconds = sum(r.wall_seconds for r in node_runs.values())
+
+    # Real success proxy, same spirit as the old single-call check --
+    # the WHOLE graph must have finished (not partial/needs_rework) AND
+    # produced a real, non-empty combined diff. "finished" alone can mean
+    # "gave up cleanly", not "succeeded".
+    run_succeeded = graph_result.outcome == "success" and bool(combined_patch)
+    if matched_procedure:
+        await record_execution_outcome(
+            pool, procedure_row_id=str(matched_procedure["id"]), success=run_succeeded,
+            context_key=os.path.basename(os.path.abspath(repo_path)),
+            steps_used=total_calls,
+        )
+
     await record_plan_execution(
         pool, compiled=compiled_plan,
-        outcome="success" if run_succeeded else "failure",
-        created_by="find_best_way",
+        outcome=graph_result.outcome, created_by="find_best_way",
     )
 
     # Procedure extraction (memory-substrate blocker #1: extract_procedure()
@@ -909,12 +939,12 @@ async def find_best_way(task_description: str, ctx: Context,
     if run_succeeded:
         observations = [
             {"observation_type": "file_touched", "label": f, "properties": {"file_path": f}}
-            for f in run_result.files_edited
+            for f in all_files_edited
         ]
         evidence_source = AgentRunEvidenceSource(
             goal_text=task_description, outcome="success",
-            observations=observations, tool_sequence=run_result.tool_calls,
-            session_id=session_id, steps_used=len(run_result.tool_calls),
+            observations=observations, tool_sequence=all_tool_calls,
+            session_id=session_id, steps_used=total_calls,
         )
         extraction = await extract_procedure(
             pool, evidence_source, client=client, repo_root=repo_path,
@@ -931,21 +961,22 @@ async def find_best_way(task_description: str, ctx: Context,
                 "extraction_skipped: " + "; ".join(extraction.validation_failures)
             )
 
+    errors = [r.error for r in node_runs.values() if r.error]
     lines = [
-        f"stop_reason: {run_result.stop_reason}",
-        f"tool_calls: {len(run_result.tool_calls)}",
-        f"files_edited: {run_result.files_edited}",
-        f"tokens: prompt={run_result.usage.prompt_tokens}, "
-        f"completion={run_result.usage.completion_tokens}, "
-        f"calls={run_result.usage.calls}",
-        f"wall_seconds: {run_result.wall_seconds:.1f}",
+        f"graph_outcome: {graph_result.outcome}",
+        f"steps: {len(compiled_plan.graph.nodes)} total, {len(node_runs)} executed "
+        f"({len(compiled_plan.graph.nodes) - len(node_runs)} skipped)",
+        *[f"  {note}" for note in node_notes],
+        f"tool_calls: {len(all_tool_calls)}",
+        f"files_edited: {all_files_edited}",
+        f"tokens: prompt={total_prompt_tokens}, completion={total_completion_tokens}, calls={total_calls}",
+        f"wall_seconds: {total_wall_seconds:.1f}",
     ]
-    if run_result.error:
-        lines.append(f"error: {run_result.error}")
+    if errors:
+        lines.append(f"errors: {errors}")
     if extraction_note:
         lines.append(extraction_note)
-    diff = run_result.patch
-    lines.append("\n--- DIFF ---\n" + diff if diff else "\n(no changes made)")
+    lines.append("\n--- COMBINED DIFF ---\n" + combined_patch if combined_patch else "\n(no changes made)")
     return "\n".join(lines)
 
 
@@ -1352,6 +1383,65 @@ async def submit_procedure(name: str, goal: str, steps_json: str, ctx: Context,
         "id": result["id"], "procedure_id": result["procedure_id"],
         "verification_state": "candidate",
     })
+
+
+@server.tool()
+async def decide_procedure(procedure_id: str, approver_id: str, decision: str, ctx: Context) -> str:
+    """
+    THE 6TH PRIMITIVE this session's own production-level test of the
+    5-tool surface found missing: a real human sign-off action.
+    approval_status='approved' is a real, separate gate
+    (applicability.py's own documented design -- "only AUTOMATIC
+    selection requires both real evidence AND a human sign-off"), and
+    until this tool, nothing exposed app.services.procedures.
+    approve_procedure()/reject_procedure() over MCP at all -- a fully
+    'verified' procedure (real ticket-13 evidence, 10+ successes, 3+
+    distinct contexts) was STILL correctly refused by
+    check_applicability's default gate with no way to clear it.
+
+    Deliberately ORTHOGONAL to verification_state, matching
+    approve_procedure()'s own docstring: approving a procedure does not
+    fast-track statistical verification, and a verified procedure is not
+    auto-approved. The two axes stay independent on purpose -- real
+    evidence answers "does this work", a human sign-off answers "is this
+    safe/appropriate to auto-select", and neither substitutes for the
+    other.
+
+    Same "approved"/"rejected" vocabulary and idempotency-adjacent shape
+    as decide_decomposition/submit_approval, for consistency across this
+    server's approval-shaped tools -- this one records a real ChangeSet
+    (Band 1.9c, invariant #7: approval is a [V] status mutation and must
+    be auditable), same as the underlying function already does.
+
+    procedure_id: the STABLE handle, resolved to its current live version.
+    approver_id: who is deciding -- stored as approved_by, and in the
+    real ChangeSet's author field.
+    decision: "approved" or "rejected".
+    """
+    pool = ctx.request_context.lifespan_context["pool"]
+    from app.services.applicability import ProcedureNotFound
+    from app.services.procedures import approve_procedure, reject_procedure
+
+    if decision not in ("approved", "rejected"):
+        return f"REFUSED: decision must be 'approved' or 'rejected', got {decision!r}."
+
+    try:
+        procedure = await _resolve_live_procedure(pool, procedure_id)
+    except ProcedureNotFound as exc:
+        return f"REFUSED: {exc}"
+
+    if decision == "approved":
+        await approve_procedure(pool, procedure_row_id=str(procedure["id"]), approved_by=approver_id)
+    else:
+        await reject_procedure(pool, procedure_row_id=str(procedure["id"]), approved_by=approver_id)
+
+    updated = await _resolve_live_procedure(pool, procedure_id)
+    return json.dumps({
+        "procedure_id": procedure_id,
+        "approval_status": updated["approval_status"],
+        "approved_by": updated["approved_by"],
+        "verification_state": updated["verification_state"],
+    }, default=str)
 
 
 @server.tool()

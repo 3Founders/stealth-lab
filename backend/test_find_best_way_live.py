@@ -13,10 +13,14 @@ import asyncio
 import json
 import os
 import sys
+import tempfile
 import types
 
-os.environ["DATABASE_URL"] = "postgresql://postgres:stealthlab@localhost:5432/stealthlab_local"
+from dotenv import load_dotenv
+
+load_dotenv()
 sys.path.insert(0, os.path.dirname(__file__))
+REPO_PATH = os.path.join(tempfile.gettempdir(), "find_best_way_regression_repo")
 
 import app.mcp_server.server as srv
 
@@ -105,15 +109,15 @@ async def main():
     # make "auto" fall through the same way.
     result = await srv.find_best_way(
         task_description="Fix the bug in calc.add -- it subtracts instead of adding.",
-        repo_path="/tmp/test_repo",
+        repo_path=REPO_PATH,
         mode="full_run",
         ctx=ctx,
     )
     print(result)
 
-    assert "stop_reason: finish" in result, "FAIL: agent did not reach finish"
+    assert "graph_outcome: success" in result, "FAIL: graph did not report success"
     assert "calc.py" in result, "FAIL: expected calc.py in files_edited"
-    real_content = open("/tmp/test_repo/calc.py").read()
+    real_content = open(os.path.join(REPO_PATH, "calc.py")).read()
     print("\n--- real file content on disk after find_best_way ---")
     print(real_content)
     assert "return a + b" in real_content, "FAIL: real file on disk was not actually fixed"

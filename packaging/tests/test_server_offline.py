@@ -29,6 +29,7 @@ def test_all_registered_tools():
         "check_applicability",
         "check_procedure",
         "decide_decomposition",
+        "decide_procedure",
         "decompose_task",
         "detect_conflict_trigger",
         "find_best_way",

@@ -274,3 +274,77 @@ async def test_submit_procedure_always_computes_a_real_embedding(monkeypatch):
         "storage-time embedding must use input_type='document', matching "
         "the convention method_library.py's persist_plan() already uses"
     )
+
+
+# --------------------------------------------------------------- decide_procedure
+# The 6th primitive, found missing by this file's own live counterpart
+# (test_six_tool_mcp_surface_live.py): a real human sign-off action,
+# deliberately orthogonal to verification_state.
+
+
+@pytest.mark.asyncio
+async def test_decide_procedure_rejects_invalid_decision():
+    ctx = FakeContext(FakePool(procedure_row=PROCEDURE_ROW))
+    result = await srv.decide_procedure(
+        procedure_id=PROC_ID, approver_id="reviewer", decision="maybe", ctx=ctx,
+    )
+    assert result.startswith("REFUSED:")
+
+
+@pytest.mark.asyncio
+async def test_decide_procedure_refuses_unknown_id():
+    ctx = FakeContext(FakePool(procedure_row=None))
+    result = await srv.decide_procedure(
+        procedure_id=str(uuid4()), approver_id="reviewer", decision="approved", ctx=ctx,
+    )
+    assert result.startswith("REFUSED:")
+
+
+@pytest.mark.asyncio
+async def test_decide_procedure_approved_calls_the_real_approve_function(monkeypatch):
+    calls = []
+
+    async def fake_approve(pool, *, procedure_row_id, approved_by):
+        calls.append(("approve", procedure_row_id, approved_by))
+
+    async def fake_reject(pool, *, procedure_row_id, approved_by):
+        calls.append(("reject", procedure_row_id, approved_by))
+
+    monkeypatch.setattr("app.services.procedures.approve_procedure", fake_approve)
+    monkeypatch.setattr("app.services.procedures.reject_procedure", fake_reject)
+
+    approved_row = dict(PROCEDURE_ROW, approval_status="approved", approved_by="reviewer")
+    ctx = FakeContext(FakePool(procedure_row=approved_row))
+
+    result = json.loads(await srv.decide_procedure(
+        procedure_id=PROC_ID, approver_id="reviewer", decision="approved", ctx=ctx,
+    ))
+    assert calls == [("approve", ROW_ID, "reviewer")], (
+        "decision='approved' must call approve_procedure(), never reject_procedure()"
+    )
+    assert result["approval_status"] == "approved"
+
+
+@pytest.mark.asyncio
+async def test_decide_procedure_rejected_calls_the_real_reject_function(monkeypatch):
+    calls = []
+
+    async def fake_approve(pool, *, procedure_row_id, approved_by):
+        calls.append(("approve", procedure_row_id, approved_by))
+
+    async def fake_reject(pool, *, procedure_row_id, approved_by):
+        calls.append(("reject", procedure_row_id, approved_by))
+
+    monkeypatch.setattr("app.services.procedures.approve_procedure", fake_approve)
+    monkeypatch.setattr("app.services.procedures.reject_procedure", fake_reject)
+
+    rejected_row = dict(PROCEDURE_ROW, approval_status="rejected", approved_by="reviewer")
+    ctx = FakeContext(FakePool(procedure_row=rejected_row))
+
+    result = json.loads(await srv.decide_procedure(
+        procedure_id=PROC_ID, approver_id="reviewer", decision="rejected", ctx=ctx,
+    ))
+    assert calls == [("reject", ROW_ID, "reviewer")], (
+        "decision='rejected' must call reject_procedure(), never approve_procedure()"
+    )
+    assert result["approval_status"] == "rejected"

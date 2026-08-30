@@ -1,10 +1,10 @@
 """
-Real, live, end-to-end proof of the 5-tool minimal MCP surface
+Real, live, end-to-end proof of the full 6-tool MCP surface
 (search_procedures, get_procedure, check_applicability, report_execution,
-submit_procedure) against the real database -- the stale-API use case
-grounded in this session's own research (arXiv 2604.09515, "context-memory
-conflict": an LLM keeps emitting a deprecated library call after the API
-changed underneath it).
+submit_procedure, decide_procedure) against the real database -- the
+stale-API use case grounded in this session's own research (arXiv
+2604.09515, "context-memory conflict": an LLM keeps emitting a deprecated
+library call after the API changed underneath it).
 
 Concrete scenario, continuing the same one from earlier this session's
 offline tests: pandas removed `DataFrame.append()`; the fix is
@@ -20,10 +20,15 @@ weren't: it drives the FULL real loop --
         -> get_procedure (confirms the REAL ticket-13 promotion fired:
            verification_state flips candidate -> verified from real
            accumulated evidence, not asserted)
+        -> check_applicability again (correctly STILL refused --
+           approval_status is a real, separate human-sign-off gate)
+        -> decide_procedure (the 6th tool this very test found missing
+           on its first run, since built to close the gap)
+        -> check_applicability once more (now applicable)
 
 -- proving "experience -> procedure -> verification -> capability
 measurement -> reuse" closes end to end for one concrete procedure, for
-real, not just that five endpoints individually respond.
+real, not just that six endpoints individually respond.
 
 Hand-run, not part of pytest (registered in test_live_scripts_not_collected.py).
 """
@@ -131,17 +136,14 @@ async def main():
     print(f"final verification_state: {final['verification_state']}")
     print(f"final verification_stats: {final['verification_stats']}")
 
-    # ---- 6. check_applicability again -- REAL GAP FOUND HERE --------------
+    # ---- 6. check_applicability again -- the gap THIS test found, now
+    # closed by the 6th tool, decide_procedure -----------------------------
     # Statistical verification alone is NOT enough for the default gate --
     # applicability.py:254 deliberately ALSO requires approval_status=
     # 'approved', a real, separate human sign-off, by design ("only
     # AUTOMATIC selection requires both real evidence AND a human
-    # sign-off"). A real approve_procedure() function exists
-    # (procedures.py) -- but nothing in the 5-tool surface exposes it.
-    # The loop this test set out to prove ("submit -> verify -> reuse")
-    # cannot reach "automatically applicable" through these 5 tools
-    # alone; a 6th, human-approval action is a real, honest gap this
-    # production-level test surfaced, not papered over.
+    # sign-off"). This test originally found that gap unclosable through
+    # the 5-tool surface; decide_procedure is the 6th tool built to close it.
     print("\n=== 6. check_applicability (after verification, default gate) ===")
     still_gated = json.loads(await srv.check_applicability(
         procedure_id=procedure_id, state="{}", ctx=ctx,  # require_verified=True, the default
@@ -153,10 +155,14 @@ async def main():
         "approval_status check in applicability.py has been weakened"
     )
 
-    # Simulating the missing 6th action directly (not exposed via MCP
-    # today) so the full loop can still be demonstrated end to end.
-    from app.services.procedures import approve_procedure
-    await approve_procedure(pool, procedure_row_id=final["id"], approved_by="test-human-reviewer")
+    # ---- 6b. decide_procedure -- the real 6th tool, over the real surface -
+    print("\n=== 6b. decide_procedure ===")
+    decision_result = json.loads(await srv.decide_procedure(
+        procedure_id=procedure_id, approver_id="test-human-reviewer",
+        decision="approved", ctx=ctx,
+    ))
+    print(decision_result)
+    assert decision_result["approval_status"] == "approved"
 
     verified_check = json.loads(await srv.check_applicability(
         procedure_id=procedure_id, state="{}", ctx=ctx,
@@ -176,15 +182,14 @@ async def main():
     assert final["verification_stats"]["successes"] == 10
     assert final["verification_stats"]["distinct_contexts"] == 3
 
-    print("\nPASS: the 5-tool loop closed for real -- a procedure submitted as an "
-          "unverified candidate was found by search, accrued 10 real execution "
-          "reports across 3 distinct contexts, and was promoted to 'verified' by "
-          "the real ticket-13 threshold, read back from the database after the "
-          "fact, not asserted. REAL GAP SURFACED, not hidden: reaching the "
-          "default automatic-applicability gate additionally needed a real human "
-          "approval action (approve_procedure()) that exists in the codebase but "
-          "is not exposed by any of the 5 tools -- a genuine 6th primitive this "
-          "production-level test found missing.")
+    print("\nPASS: the full 6-tool loop closed for real -- a procedure submitted as "
+          "an unverified candidate was found by search, accrued 10 real execution "
+          "reports across 3 distinct contexts, was promoted to 'verified' by the "
+          "real ticket-13 threshold, correctly STILL refused by the applicability "
+          "gate until a real human sign-off via decide_procedure landed, and only "
+          "then became applicable -- every step read back from the database after "
+          "the fact, not asserted. decide_procedure itself only exists because "
+          "this test's first run found it missing.")
 
 
 if __name__ == "__main__":
