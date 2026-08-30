@@ -22,6 +22,7 @@ whether the real mechanisms underneath ever change.
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import secrets
@@ -37,6 +38,7 @@ from mcp.client.streamable_http import streamable_http_client
 from app.execution.graph_executor import NodeResult, execute_task_graph
 from app.execution.procedure_graph import steps_to_linear_nodes
 from app.models.plan import TaskGraph
+from app.services.environment_facts import invariant_bindings_from_facts, probe_environment
 
 
 @dataclass
@@ -148,9 +150,23 @@ class LocalAgentRunner:
         async with _open_client_session(self.server_url, self.token) as session:
             await session.initialize()
 
+            # Phase 3: probe the LOCAL repo (never sent to the remote
+            # server as raw filesystem data, only as derived numeric
+            # bindings) so a remote procedure's real invariant (e.g.
+            # "pandas_version >= 2.0") can be evaluated against this
+            # repo's actual pinned versions -- the same real mechanism
+            # find_best_way's own repo_path path uses server-side,
+            # applied here because THIS is the process with a real repo
+            # to probe. Pure, synchronous, off the event loop.
+            local_facts = await asyncio.to_thread(probe_environment, repo_path)
+            invariant_bindings = invariant_bindings_from_facts(local_facts)
+
             search_result = await session.call_tool(
                 "search_procedures",
-                {"task": task_description, "require_verified": not allow_unverified, "limit": 3},
+                {
+                    "task": task_description, "require_verified": not allow_unverified,
+                    "limit": 3, "invariant_bindings": json.dumps(invariant_bindings),
+                },
             )
             matches = json.loads(search_result.content[0].text)
             if not matches:

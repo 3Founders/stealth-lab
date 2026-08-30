@@ -1145,7 +1145,8 @@ async def _resolve_live_procedure(pool, procedure_id: str) -> dict:
 
 @server.tool()
 async def search_procedures(task: str, ctx: Context, state: str = "{}", limit: int = 5,
-                             require_verified: bool = True) -> str:
+                             require_verified: bool = True,
+                             invariant_bindings: str = "{}") -> str:
     """
     Find procedures applicable to a task/state -- lookup only, nothing
     executes. Thin wrapper: all decision logic is
@@ -1160,6 +1161,15 @@ async def search_procedures(task: str, ctx: Context, state: str = "{}", limit: i
     require_verified: real ticket-13 gate, default True unchanged from
     every other caller in this codebase -- pass False to also see
     candidates that haven't earned verification evidence yet.
+    invariant_bindings: JSON object of real numeric quantities the CALLER
+    already knows (e.g. '{"pandas_version": 2.1}') -- fed straight into
+    check_hard_constraints' numeric-invariant stage (invariants.py). This
+    is a remote tool with no filesystem of its own to probe; a caller
+    that has a real local repo (see app.local_agent.runner, which probes
+    it via environment_probe.probe_environment +
+    invariant_bindings_from_facts) computes these locally and sends the
+    result here, exactly as find_best_way's own repo_path path does
+    server-side when it has a repo to probe directly.
 
     Returns a JSON array of {id, procedure_id, version, name, goal,
     verification_state, similarity}. `similarity` is null for a
@@ -1174,12 +1184,17 @@ async def search_procedures(task: str, ctx: Context, state: str = "{}", limit: i
         current_scope = json.loads(state) if state else {}
     except json.JSONDecodeError as exc:
         return f"REFUSED: state must be a JSON object ({exc})"
+    try:
+        bindings = json.loads(invariant_bindings) if invariant_bindings else {}
+    except json.JSONDecodeError as exc:
+        return f"REFUSED: invariant_bindings must be a JSON object ({exc})"
 
     embedder = Embedder()
     goal_vec = await embedder.embed_one(task, input_type="query")
     matches = await find_applicable_procedures(
         pool, goal_embedding=goal_vec, current_scope=current_scope,
         require_verified=require_verified, limit=limit,
+        invariant_bindings=bindings,
     )
     return json.dumps([
         {

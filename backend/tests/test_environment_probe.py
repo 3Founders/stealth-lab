@@ -133,6 +133,32 @@ def test_package_version_predicate_is_in_the_vocabulary():
     assert "package_version" in PROBE_PREDICATE_VOCABULARY
 
 
+def test_environment_facts_module_never_imports_the_database():
+    """Structural boundary test, same discipline as
+    test_local_agent_runner_offline.py's AST check: environment_facts.py
+    is the pure half app.local_agent.runner depends on, so it must never
+    import asyncpg or app.services.claims/state/embeddings -- any of
+    which would drag asyncpg back in transitively and reintroduce the
+    exact bug this split fixed (see environment_facts.py's own
+    docstring)."""
+    import ast
+    import inspect
+
+    import app.services.environment_facts as ef_module
+
+    tree = ast.parse(inspect.getsource(ef_module))
+    imported_names = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            imported_names.update(alias.name for alias in node.names)
+        elif isinstance(node, ast.ImportFrom) and node.module:
+            imported_names.add(node.module)
+
+    forbidden = {"asyncpg", "app.services.claims", "app.services.state", "app.services.embeddings"}
+    hit = forbidden & imported_names
+    assert not hit, f"environment_facts.py must stay dependency-free, found: {hit}"
+
+
 def test_invariant_bindings_from_pandas_pin():
     facts = [EnvironmentFact("package_version", "pandas:2.1.0")]
     assert invariant_bindings_from_facts(facts) == {"pandas_version": 2.1}

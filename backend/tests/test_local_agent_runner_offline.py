@@ -110,6 +110,32 @@ async def test_runner_calls_search_then_execute_then_report(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_runner_probes_its_own_repo_and_sends_invariant_bindings(monkeypatch, tmp_path):
+    """Phase 3's remaining real gap, closed: the runner has a real
+    repo_path and must probe it ITSELF (never send raw filesystem data
+    to the remote server) and forward the derived numeric bindings on
+    search_procedures -- the same mechanism find_best_way's own
+    repo_path path uses server-side, applied client-side because this is
+    the process with a real repo to look at."""
+    import json as json_mod
+
+    (tmp_path / "requirements.txt").write_text("pandas==2.1.0\n")
+
+    fake_session = FakeClientSession({
+        "search_procedures": json_mod.dumps([]),
+    })
+    monkeypatch.setattr(runner_module, "_open_client_session", lambda url, token: fake_session)
+
+    await runner_module.LocalAgentRunner(
+        server_url="http://fake/mcp", token="fake-token",
+    ).run(task_description="migrate pandas append", repo_path=str(tmp_path))
+
+    search_call = next(c for c in fake_session.calls if c[0] == "search_procedures")
+    sent_bindings = json_mod.loads(search_call[1]["invariant_bindings"])
+    assert sent_bindings == {"pandas_version": 2.1}
+
+
+@pytest.mark.asyncio
 async def test_runner_reports_no_match_without_crashing(monkeypatch):
     import json
 

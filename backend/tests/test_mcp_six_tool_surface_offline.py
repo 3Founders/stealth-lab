@@ -71,7 +71,8 @@ async def test_search_procedures_returns_real_matches(monkeypatch):
     async def fake_embed_one(self, text, input_type="query"):
         return [0.1] * 1024
 
-    async def fake_find(pool, *, goal_embedding, current_scope, require_verified, limit):
+    async def fake_find(pool, *, goal_embedding, current_scope, require_verified, limit,
+                         invariant_bindings=None):
         return [dict(PROCEDURE_ROW, _similarity_score=0.9)]
 
     import app.services.embeddings as emb_mod
@@ -85,6 +86,44 @@ async def test_search_procedures_returns_real_matches(monkeypatch):
         "name": "pandas-append-fix", "goal": "fix removed DataFrame.append",
         "verification_state": "candidate", "similarity": 0.9,
     }]
+
+
+@pytest.mark.asyncio
+async def test_search_procedures_threads_invariant_bindings_through(monkeypatch):
+    """Phase 3's remaining real gap: LocalAgentRunner (the actual local
+    MCP client) calls search_procedures, not find_best_way -- so the
+    invariant_bindings a local probe computes must reach
+    find_applicable_procedures from THIS tool too, not just find_best_way's
+    server-side repo_path path."""
+    async def fake_embed_one(self, text, input_type="query"):
+        return [0.1] * 1024
+
+    captured = {}
+
+    async def fake_find(pool, *, goal_embedding, current_scope, require_verified, limit,
+                         invariant_bindings=None):
+        captured["invariant_bindings"] = invariant_bindings
+        return [dict(PROCEDURE_ROW, _similarity_score=0.9)]
+
+    import app.services.embeddings as emb_mod
+    monkeypatch.setattr(emb_mod.Embedder, "embed_one", fake_embed_one)
+    monkeypatch.setattr("app.services.applicability.find_applicable_procedures", fake_find)
+
+    ctx = FakeContext(FakePool())
+    await srv.search_procedures(
+        task="migrate pandas append", ctx=ctx,
+        invariant_bindings=json.dumps({"pandas_version": 2.1}),
+    )
+    assert captured["invariant_bindings"] == {"pandas_version": 2.1}
+
+
+@pytest.mark.asyncio
+async def test_search_procedures_refuses_bad_invariant_bindings_json():
+    ctx = FakeContext(FakePool())
+    result = await srv.search_procedures(
+        task="fix a bug", ctx=ctx, invariant_bindings="not json",
+    )
+    assert result.startswith("REFUSED:")
 
 
 # --------------------------------------------------------------- get_procedure
