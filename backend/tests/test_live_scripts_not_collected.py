@@ -27,6 +27,7 @@ LIVE_SCRIPTS = [
     "test_six_tool_mcp_surface_live.py",
     "test_orphan_cleanup_live.py",
     "test_propose_synthesis_live.py",
+    "test_real_mcp_client_live.py",
     "test_find_best_way_live.py",
     "test_graph_executor_live.py",
     "test_stored_procedure_multistep_live.py",
