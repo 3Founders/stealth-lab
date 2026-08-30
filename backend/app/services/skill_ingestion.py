@@ -162,6 +162,7 @@ async def ingest_skill_md(
     domain: Optional[str] = None,
     created_by: str = "skill_md_ingestion",
     embedder: Optional[Embedder] = None,
+    invariants: Optional[list[dict]] = None,
 ) -> dict:
     """
     Parse + dedup-check + write, end to end. Returns
@@ -174,6 +175,19 @@ async def ingest_skill_md(
     uses the same value for the same reason) -- distinct from
     'system_pending_review' (this substrate's own generated/extracted
     content) and 'company_ingested' (the company's own documents).
+
+    invariants: an OPTIONAL, explicit, structured passthrough to
+    capture_procedure()'s own `invariants` param (e.g.
+    [{"kind": "numeric", "expr": "pandas_version >= 2.0"}]) -- NOT parsed
+    out of the document's `applies_when` prose. That line stays raw
+    prose by design (module docstring: real "applies when" text is
+    scenario-shaped, not a comparison this module can safely turn into a
+    z3 expression without risking a fabricated predicate). This
+    parameter exists for a caller that already knows the real structured
+    invariant a given skill encodes and wants it to land on the
+    procedure it captures, same "real structure passes through, prose
+    stays prose unless something with actual knowledge supplies
+    structure" discipline the rest of this codebase uses.
     """
     parsed = parse_skill_md(content, fallback_name=fallback_name)
     embedder = embedder or Embedder()
@@ -205,5 +219,6 @@ async def ingest_skill_md(
         scope_type="entity" if domain else "global",
         created_by=created_by,
         embedding=goal_vec,
+        invariants=invariants,
     )
     return {"status": "captured", "id": result["id"], "procedure_id": result["procedure_id"]}

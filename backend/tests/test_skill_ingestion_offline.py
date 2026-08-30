@@ -158,6 +158,27 @@ async def test_ingest_reports_duplicate_and_does_not_write(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_ingest_passes_through_an_explicit_structured_invariant(monkeypatch):
+    """Phase 3's bridge: applies_when stays raw prose (unchanged,
+    test_applies_when_kept_as_prose_not_a_predicate above), but a caller
+    that already knows the real structured invariant a skill encodes can
+    supply it explicitly and have it land on the captured procedure --
+    never parsed out of the prose itself."""
+    async def fake_find(pool, *, goal_embedding, require_verified, limit):
+        return []
+
+    monkeypatch.setattr("app.services.skill_ingestion.find_applicable_procedures", fake_find)
+    pool = FakePool()
+    invariant = [{"kind": "numeric", "expr": "pandas_version >= 2.0"}]
+    result = await ingest_skill_md(
+        pool, PANDAS_APPEND_SKILL_MD, embedder=FakeEmbedder(), invariants=invariant,
+    )
+    assert result["status"] == "captured"
+    written_invariants = pool.captured[0][8]  # positional index of `invariants` in the INSERT
+    assert written_invariants == invariant
+
+
+@pytest.mark.asyncio
 async def test_ingest_writes_with_a_real_embedding_when_novel(monkeypatch):
     """Regression pin for the exact bug this session's own production
     test found: a captured procedure with no embedding is later
