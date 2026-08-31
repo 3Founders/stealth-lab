@@ -301,7 +301,8 @@ async def relate_claims(
     to_claim_id: str,
     relation: str,
     created_by: str = CREATED_BY,
-) -> None:
+    propagate: bool = True,
+) -> list[str]:
     """
     Record that `from_claim_id` SUPERSEDES or CONTRADICTS `to_claim_id`,
     and flip the target's truth_state to OUT. This is the actual Truth
@@ -309,6 +310,28 @@ async def relate_claims(
     NULL, it still exists and is still queryable as history) -- only its
     truth_state changes, so "what did we once believe" and "what do we
     believe now" stay separately answerable from the same row.
+
+    IMPACT PROPAGATION (wired in after the write commits, not inside the
+    same transaction as the belief-revision write above -- a downstream
+    procedure-staleness side effect must never roll back an otherwise-
+    successful truth-maintenance write, and `app.services.claim_impact`'s
+    `mark_procedure_stale` calls acquire their own connections from
+    `pool`, which would deadlock nested inside this function's own
+    `conn.transaction()` block): once `to_claim_id`'s truth_state is OUT,
+    any LIVE procedure whose precondition names `to_claim_id` specifically
+    (via the `claim_id` field a precondition can carry --
+    `procedure_extraction/derive.py::precondition_with_claim`, now
+    auto-populated by `derive_preconditions()`) is marked stale via the
+    real, existing `mark_procedure_stale` -- that claim's own predicate/
+    object can no longer be relied on to still hold. `propagate=False`
+    opts out (a caller that already knows no procedure could reference
+    this claim, or that wants propagation done separately/batched, is
+    free to skip it) -- default `True` is the safe, honest default: a
+    superseded/contradicted claim silently leaving a dependent procedure
+    looking valid is exactly the gap CONSOLIDATED Phase 3 exists to close.
+
+    Returns the list of procedure row ids marked stale as a result (empty
+    if `propagate=False` or nothing referenced this claim).
     """
     if relation not in RELATIONS:
         raise ValueError(f"relation must be one of {RELATIONS}, got {relation!r}")
@@ -329,6 +352,15 @@ async def relate_claims(
                 "WHERE id = $1::uuid",
                 to_claim_id,
             )
+
+    if not propagate:
+        return []
+    from app.services.claim_impact import propagate_claim_change
+    return await propagate_claim_change(
+        pool, to_claim_id,
+        reason=f"claim {to_claim_id} was {relation.lower()} by {from_claim_id} ({created_by})",
+        detected_by="claim_impact.relate_claims",
+    )
 
 
 async def supersede_claim(

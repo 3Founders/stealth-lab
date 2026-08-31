@@ -144,6 +144,12 @@ class FakeDB:
                     out.append({"id": UUID(nid), "properties": node["properties"]})
             out.sort(key=lambda r: r["properties"].get("claim_version", 1))
             return out
+        if q.startswith("SELECT id, name FROM procedures"):
+            # claim_impact.find_procedures_referencing_claim(), called by
+            # relate_claims()'s real impact-propagation step -- this
+            # FakeDB models no procedures at all, so the honest answer is
+            # always "nothing references this claim".
+            return []
         raise AssertionError(f"FakeDB.fetch: unrecognized query\n{q}")
 
     async def fetchrow(self, query: str, *params):

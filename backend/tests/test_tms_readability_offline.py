@@ -259,6 +259,15 @@ class TmsWriteFakeDB:
             return "UPDATE 1"
         raise AssertionError(f"TmsWriteFakeDB.execute: unrecognized query\n{sql}")
 
+    async def fetch(self, query: str, *params):
+        # relate_claims()'s real impact-propagation step
+        # (claim_impact.find_procedures_referencing_claim) -- this fake
+        # models no procedures at all, so nothing ever references a claim.
+        sql = " ".join(query.split())
+        if sql.startswith("SELECT id, name FROM procedures"):
+            return []
+        raise AssertionError(f"TmsWriteFakeDB.fetch: unrecognized query\n{sql}")
+
 
 def test_relate_claims_flips_belief_without_touching_existence_or_history():
     db = TmsWriteFakeDB()
