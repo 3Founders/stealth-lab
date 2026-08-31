@@ -82,17 +82,34 @@ state, exactly like any other fresh capture. The local row's real track
 record is still visible -- it just stays where it was earned, on the
 local row, not laundered onto the global one.
 
-NAMED GAP (not fixed in this pass): there is no field on
-`local_procedures` (`local_store.py`'s schema) that marks a row as
-"already published" or links it forward to the global row it became.
-This module deliberately does not add one -- `local_store.py` is owned
-by another lane this pass and out of this module's touched-files list.
-A caller of `publish_local_procedure` today can re-publish the same
-local row more than once (each call produces a new, independent global
-`procedures` row); nothing here detects or prevents that. Fixing it
-needs a small schema addition on the local side (e.g. a
-`published_procedure_id` / `published_at` column) -- flagged here as a
-real, named follow-up for `local_store.py`'s owner, not worked around.
+GAP CLOSED THIS PASS (previously named above, now fixed): `local_store.py`
+now carries a durable publish link on `local_procedures`
+(`published_procedure_id` / `published_procedure_row_id` / `published_by`
+/ `published_at`, added additively via `LocalProcedureStore`'s own
+PRAGMA-table_info-then-ALTER migration -- see that module's
+`_PUBLISH_LINK_COLUMNS` comment). This module now takes the local store
+and row id directly (rather than a bare, already-fetched dict) so it can
+both read that link BEFORE publishing (to refuse a silent duplicate) and
+write it AFTER a successful global capture (so the local row durably
+records what it became).
+
+REPEATED-PUBLISH DECISION: refuse by default. If the local row's
+`published_procedure_row_id` is already set, `publish_local_procedure`
+raises `AlreadyPublishedError` instead of silently minting a second,
+independent global candidate for the same local work -- an uncontrolled
+duplicate is worse than a caller having to notice and decide. A caller
+who genuinely wants to re-publish (e.g. the local procedure changed
+materially since its first publish and the author wants a fresh
+independent-review candidate for the new version) must pass
+`force=True` explicitly -- same "explicit opt-in, never a silent
+default" posture the rest of this module already uses for
+`published_by`. A forced re-publish still creates a brand-new global
+`procedures` candidate row (zero inherited evidence, same as any first
+publish -- see VERIFICATION STATS DECISION above) and overwrites the
+local row's publish link to point at that newest global row; it does not
+touch or retire the previously-published global row, which is a real,
+independent row now living its own life in the commons and out of this
+module's authority to alter.
 """
 from __future__ import annotations
 
@@ -101,10 +118,17 @@ from typing import Any, Optional
 
 import asyncpg
 
+from app.local_agent.local_store import LocalProcedureNotFound, LocalProcedureStore
 from app.services.procedures import capture_procedure
 from app.services.trace_redaction import redact_value
 
 PUBLISHED_PROVENANCE = "system_pending_review"
+
+
+class AlreadyPublishedError(Exception):
+    """Raised when `publish_local_procedure` is called against a local
+    row that already has a durable publish link and the caller did not
+    pass `force=True`. See module docstring's REPEATED-PUBLISH DECISION."""
 
 
 def _redact_text(value: str) -> str:
@@ -125,31 +149,50 @@ def _redact_json(value: Any) -> Any:
 async def publish_local_procedure(
     pool: asyncpg.Pool,
     *,
-    local_procedure: dict,
+    local_store: LocalProcedureStore,
+    local_row_id: str,
     published_by: str,
     scope_type: str = "global",
     scope_entity_id: Optional[str] = None,
+    force: bool = False,
 ) -> dict:
     """
-    Publishes one local procedure (the dict shape
-    `LocalProcedureStore.get_local_procedure()` / `list_local_procedures()`
-    return -- see `local_store.py::_row_to_dict`) into the global
-    `procedures` table as a fresh candidate, via the real
-    `capture_procedure()` write path. See the module docstring for the
-    provenance, redaction-primitive, and verification-stats decisions
-    this function embodies.
+    Publishes one local procedure -- identified by `local_row_id` against
+    the caller's real `local_store` -- into the global `procedures` table
+    as a fresh candidate, via the real `capture_procedure()` write path.
+    See the module docstring for the provenance, redaction-primitive,
+    verification-stats, and repeated-publish decisions this function
+    embodies.
 
     `published_by` is the real, explicit publishing user -- required,
     never defaulted to an anonymous constant, matching the spec's
     "author/owner preserved" requirement. It becomes both `created_by`
     and `owner_id` on the new row.
 
+    Raises `LocalProcedureNotFound` if `local_row_id` doesn't resolve to
+    a live local row, and `AlreadyPublishedError` if that row was already
+    published and `force` is not True (see REPEATED-PUBLISH DECISION
+    above).
+
     Returns the same `{"id": ..., "procedure_id": ...}` shape
     `capture_procedure()` returns, identifying the new GLOBAL row (not
-    the local one).
+    the local one) -- the local row's own durable publish link is
+    updated as a side effect before this returns.
     """
     if not published_by:
         raise ValueError("publish_local_procedure requires an explicit published_by (no anonymous publish)")
+
+    local_procedure = local_store.get_local_procedure(local_row_id)
+    if local_procedure is None:
+        raise LocalProcedureNotFound(local_row_id)
+
+    if local_procedure.get("published_procedure_row_id") and not force:
+        raise AlreadyPublishedError(
+            f"local procedure {local_row_id!r} was already published as global "
+            f"procedure {local_procedure['published_procedure_row_id']!r} "
+            f"(at {local_procedure.get('published_at')!r}); pass force=True to "
+            "publish it again as a new, independent global candidate."
+        )
 
     redacted_name = _redact_text(local_procedure["name"])
     redacted_goal = _redact_text(local_procedure["goal"])
@@ -186,4 +229,16 @@ async def publish_local_procedure(
         # no such parameter; the row gets the DB's own zero-evidence
         # default, same as every other fresh capture.
     )
+
+    # Write the durable local-side link only AFTER the global write
+    # succeeded (capture_procedure would have raised above on failure) --
+    # a local row must never be marked published against a global row
+    # that doesn't actually exist.
+    local_store.mark_local_procedure_published(
+        local_row_id,
+        global_procedure_id=result["procedure_id"],
+        global_procedure_row_id=result["id"],
+        published_by=published_by,
+    )
+
     return result

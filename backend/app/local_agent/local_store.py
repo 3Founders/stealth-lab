@@ -102,6 +102,42 @@ CREATE INDEX IF NOT EXISTS idx_local_procedures_procedure_id ON local_procedures
 CREATE INDEX IF NOT EXISTS idx_local_procedures_live ON local_procedures(t_invalid);
 """
 
+# Phase 19 follow-up (local<->global publish linkage): columns added via
+# the idempotent PRAGMA-table_info-then-ALTER pattern below, NOT baked
+# into `_SCHEMA`'s CREATE TABLE, so an already-created local db from an
+# earlier test/dev run this session (or any prior session) picks them up
+# on next open rather than needing to be deleted and recreated. This is
+# the SQLite-appropriate equivalent of this repo's own Postgres migration
+# discipline (additive, idempotent, never destructive of existing rows) --
+# see module docstring's "WHY SQLITE" section and CLAUDE.md's "Migrations
+# are immutable once applied ... fully idempotent" rule, applied to a
+# single-file store that has no migration runner of its own.
+#
+# `sqlite3.Connection.execute("ALTER TABLE ... ADD COLUMN IF NOT EXISTS")`
+# is NOT used here on purpose: `ADD COLUMN ... IF NOT EXISTS` syntax only
+# exists in SQLite >= 3.35 (2021-03), and this module targets "whatever
+# sqlite3 the running Python's stdlib links against" with no version floor
+# asserted anywhere else in this file -- silently depending on a syntax
+# addition that recent-but-not-universal would reintroduce exactly the
+# "assume equivalence, don't verify" bug class this repo's own
+# redact_value/PurePosixPath fix (trace_redaction.py) was written to catch.
+# `PRAGMA table_info` has been supported since SQLite's earliest versions,
+# so the check-then-add form below is correct everywhere, not just on a
+# recent build.
+#
+# Four flat TEXT columns (not one JSON blob): each is independently
+# queryable/filterable ("which local rows have never been published"),
+# and unlike `verification_stats` (real evolving instrumentation, per its
+# own comment above) this is a fixed, small, unlikely-to-grow linkage
+# record -- the same reasoning `procedures.created_by`/`owner_id` on the
+# global table are plain columns, not folded into `domain_payload`.
+_PUBLISH_LINK_COLUMNS: list[tuple[str, str]] = [
+    ("published_procedure_id", "TEXT"),       # global procedures.procedure_id (stable handle across the global version chain)
+    ("published_procedure_row_id", "TEXT"),   # global procedures.id (the exact version row this local row became)
+    ("published_by", "TEXT"),                 # the explicit publishing user (mirrors publish.py's published_by)
+    ("published_at", "TEXT"),                 # ISO timestamp of the publish event
+]
+
 _VERIFICATION_STATS_DEFAULT = {
     "attempts": 0,
     "successes": 0,
@@ -181,8 +217,22 @@ class LocalProcedureStore:
         try:
             conn.executescript(_SCHEMA)
             conn.commit()
+            self._migrate_publish_link_columns(conn)
         finally:
             conn.close()
+
+    def _migrate_publish_link_columns(self, conn: sqlite3.Connection) -> None:
+        """Additive, idempotent: adds the `_PUBLISH_LINK_COLUMNS` (see
+        their own comment above) to an already-existing `local_procedures`
+        table if they aren't there yet. Safe to call on every open,
+        including against a db file created before this column set
+        existed -- never touches existing rows, never drops/recreates the
+        table."""
+        existing = {row[1] for row in conn.execute("PRAGMA table_info(local_procedures)").fetchall()}
+        for col_name, col_type in _PUBLISH_LINK_COLUMNS:
+            if col_name not in existing:
+                conn.execute(f"ALTER TABLE local_procedures ADD COLUMN {col_name} {col_type}")
+        conn.commit()
 
     # -----------------------------------------------------------------
     # Capture -- mirrors procedures.py::capture_procedure's real param
@@ -377,6 +427,52 @@ class LocalProcedureStore:
             conn.execute(
                 "UPDATE local_procedures SET staleness = 'stale', updated_at = ? WHERE id = ?",
                 (now, row_id),
+            )
+            conn.commit()
+            updated = conn.execute(
+                "SELECT * FROM local_procedures WHERE id = ?", (row_id,),
+            ).fetchone()
+        finally:
+            conn.close()
+        return _row_to_dict(updated)
+
+    # -----------------------------------------------------------------
+    # Publish linkage -- durable local-side record of whether/where this
+    # row was published to the global `procedures` table. Written by
+    # `app/services/publish.py::publish_local_procedure` AFTER a
+    # successful global `capture_procedure()` call, never before (so a
+    # failed global write never leaves a local row falsely marked
+    # published). See `_PUBLISH_LINK_COLUMNS`'s own comment for the
+    # schema-change rationale.
+    # -----------------------------------------------------------------
+    def mark_local_procedure_published(
+        self,
+        row_id: str,
+        *,
+        global_procedure_id: str,
+        global_procedure_row_id: str,
+        published_by: str,
+    ) -> dict:
+        """Records a real publish event against this local row. Callable
+        more than once on the same row (a `force=True` re-publish
+        overwrites the prior link with the newest global row it now
+        points at) -- this method itself does not decide whether a
+        re-publish is allowed; that policy lives in
+        `publish_local_procedure`, which reads the fields this method
+        writes to enforce it."""
+        conn = self._connect()
+        try:
+            row = conn.execute(
+                "SELECT * FROM local_procedures WHERE id = ?", (row_id,),
+            ).fetchone()
+            if row is None:
+                raise LocalProcedureNotFound(row_id)
+            now = _now_iso()
+            conn.execute(
+                "UPDATE local_procedures SET published_procedure_id = ?, "
+                "published_procedure_row_id = ?, published_by = ?, published_at = ?, "
+                "updated_at = ? WHERE id = ?",
+                (global_procedure_id, global_procedure_row_id, published_by, now, now, row_id),
             )
             conn.commit()
             updated = conn.execute(
