@@ -640,6 +640,87 @@ async def _respond_tier1_hit(pool, task_description: str, matched_procedure: dic
     )
 
 
+async def _respond_plan_only(pool, task_description: str, matched_procedure: dict) -> str:
+    """`mode='plan_only'`: compile and persist the real execution graph
+    (same expand_procedure_steps -> compile_plan -> persist_compiled_plan
+    pipeline `_respond_tier1_hit` uses) and hand it back as structured
+    data -- WITHOUT calling this server's own LLM even once. No
+    `client.chat.completions.create`, no `execute_task_graph`, no
+    `record_plan_execution` (nothing ran yet, there is no outcome to
+    record).
+
+    WHY THIS EXISTS: a caller that is itself an LLM-driven agent host
+    (Claude Code, Cursor, any MCP-embedded client) already pays for its
+    own reasoning/tool-calling -- `_respond_tier1_hit`'s per-step
+    reasoning call and tier-2's sandboxed Agent loop both spend THIS
+    server's own configured LLM credentials
+    (settings.require("general_compute_api_key")) redundantly on top of
+    that. This mode returns the real, composed step plan (subprocedure
+    references already expanded, dependencies already resolved) as data
+    the caller executes with its OWN LLM and its OWN native file/tool
+    capabilities, then reports back via `report_execution` -- StealthLab
+    stays pure procedural memory for this call, never an executor.
+
+    The compiled plan IS still persisted (a real execution_plans/
+    task_graphs row -- cheap, DB-only, no LLM) so a later `report_execution`
+    call has a real plan to attach evidence to, same content-hash dedup
+    contract every other compile_plan caller gets.
+    """
+    from app.execution.plan_persistence import persist_compiled_plan
+    from app.execution.plans import compile_plan
+    from app.execution.procedure_graph import expand_procedure_steps
+
+    steps = matched_procedure.get("steps") or [{"order": 0, "goal": task_description}]
+    nodes = await expand_procedure_steps(
+        pool, procedure_id=matched_procedure["procedure_id"],
+        procedure_version=matched_procedure["version"], steps=steps,
+    )
+    compiled_plan = compile_plan(
+        procedure_id=matched_procedure["procedure_id"],
+        procedure_version=matched_procedure["version"],
+        procedure_row_id=matched_procedure["id"],
+        procedure_payload=matched_procedure,
+        task_description=task_description,
+        nodes=nodes,
+        extractor_version="find_best_way_plan_compiler@1",
+        created_by="find_best_way",
+    )
+    compiled_plan, _ = await persist_compiled_plan(pool, compiled_plan)
+
+    payload = {
+        "mode": "plan_only",
+        "procedure_id": str(matched_procedure["procedure_id"]),
+        "procedure_row_id": str(matched_procedure["id"]),
+        "version": matched_procedure["version"],
+        "name": matched_procedure["name"],
+        "verification_state": matched_procedure.get("verification_state"),
+        "invariants": matched_procedure.get("invariants") or [],
+        "preconditions": matched_procedure.get("preconditions") or [],
+        "steps": [
+            {
+                "order": node.order, "goal": node.goal,
+                "deps": node.deps,
+                "step_ref": (
+                    {"procedure_id": str(node.step_ref.procedure_id), "version": node.step_ref.version}
+                    if node.step_ref else None
+                ),
+            }
+            for node in sorted(compiled_plan.graph.nodes, key=lambda n: n.order)
+        ],
+        "execution_plan_id": str(compiled_plan.plan.id),
+        "instructions": (
+            "No StealthLab-side LLM call was made for this plan. Execute "
+            "these steps yourself, in dependency order, using your own "
+            "reasoning and tools against the real repository. When done, "
+            "call report_execution(procedure_id=<procedure_id above>, "
+            "success=<bool>, context_key=<a real identifier for this run's "
+            "environment, e.g. the repo name>, steps_used=<int>) so the "
+            "outcome becomes real evidence."
+        ),
+    }
+    return json.dumps(payload, indent=2)
+
+
 @server.tool()
 async def find_best_way(task_description: str, ctx: Context,
                          repo_path: Optional[str] = None,
@@ -667,7 +748,13 @@ async def find_best_way(task_description: str, ctx: Context,
     `mode`: "auto" (default) -- tier 1, falling back to tier 2 if needed
     and `repo_path` is given. "lookup_only" -- tier 1 only, ever; an honest
     "no strong match" is a normal answer, not an error. "full_run" -- skip
-    tier 1, go straight to tier 2 (requires `repo_path`).
+    tier 1, go straight to tier 2 (requires `repo_path`). "plan_only" --
+    like "lookup_only" (tier 1, never falls to tier 2), but returns the
+    real compiled step plan as structured JSON instead of running this
+    server's own LLM to reason through it -- for a caller that is itself
+    an LLM-driven agent (Claude Code, Cursor, any MCP-embedded host) and
+    would rather spend its OWN reasoning on the steps than pay for a
+    redundant server-side pass. See `_respond_plan_only`'s own docstring.
 
     EVERY tier-2 run persists a real execution plan (Band 1.7:
     `execution_plans`/`task_graphs`/`executions`, see
@@ -769,8 +856,11 @@ async def find_best_way(task_description: str, ctx: Context,
     """
     pool = ctx.request_context.lifespan_context["pool"]
 
-    if mode not in ("auto", "lookup_only", "full_run"):
-        return f"REFUSED: mode must be one of 'auto', 'lookup_only', 'full_run' (got {mode!r})."
+    if mode not in ("auto", "lookup_only", "full_run", "plan_only"):
+        return (
+            "REFUSED: mode must be one of 'auto', 'lookup_only', 'full_run', "
+            f"'plan_only' (got {mode!r})."
+        )
     if repo_path is not None and not os.path.isdir(repo_path):
         return f"REFUSED: repo_path {repo_path!r} is not a directory on this server."
     if mode == "full_run" and repo_path is None:
@@ -820,9 +910,11 @@ async def find_best_way(task_description: str, ctx: Context,
     )
     matched_procedure = matched_procedures[0] if matched_procedures else None
 
+    if matched_procedure is not None and mode == "plan_only":
+        return await _respond_plan_only(pool, task_description, matched_procedure)
     if matched_procedure is not None and mode != "full_run":
         return await _respond_tier1_hit(pool, task_description, matched_procedure)
-    if mode == "lookup_only":
+    if mode in ("lookup_only", "plan_only"):
         return (
             "No strong existing match found (this is a normal, honest "
             "answer, not a failure) -- pass mode='full_run' with a "
