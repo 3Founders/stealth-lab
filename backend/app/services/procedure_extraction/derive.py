@@ -68,6 +68,27 @@ def precondition_with_claim(
     return precondition
 
 
+class _PredicateWithClaim(Predicate):
+    """
+    Local-only subclass (task 37), not a schema.py change: derive.py is
+    the sole file in scope for this task, and every existing consumer of
+    derive_preconditions()'s return value needs it to keep being real
+    `Predicate` instances -- synthesis.py's `_find_predicate_contradiction`/
+    `_intersect_predicates` read `.subject`/`.predicate`/`.object` off
+    each item, and procedure_extraction/__init__.py's extract_procedure()
+    calls `.model_dump()` on each one to build the JSONB payload. A plain
+    dict (precondition_with_claim()'s own return shape) would satisfy
+    applicability.py's `.get("claim_id")` read at CHECK time but break
+    both of those real, already-shipped AUTHOR-time callers, which this
+    task's scope forbids touching. Subclassing keeps every existing
+    attribute/`.model_dump()` call working unchanged and only adds the
+    one new field. Instances are always built FROM
+    precondition_with_claim()'s own dict (via `**`), so this file still
+    has exactly one place that knows the precondition shape's key names.
+    """
+    claim_id: Optional[str] = None
+
+
 async def derive_preconditions(pool: asyncpg.Pool, evidence: ProcedureEvidence) -> list[Predicate]:
     """
     The state_before projection itself, filtered down to the claims this
@@ -75,6 +96,28 @@ async def derive_preconditions(pool: asyncpg.Pool, evidence: ProcedureEvidence) 
     filter_load_bearing_claims below for what counts as dependence).
     Empty, honestly, if project_id or started_at is missing -- no
     fabricated precondition stands in for a real one.
+
+    AUTO-POPULATED claim_id (task 37, closing the gap §9 of the
+    architecture audit names -- applicability.py already honors
+    precondition.claim_id when present, per `_claim_matches_precondition`,
+    but nothing wrote it). For each derived precondition, this function
+    counts how many rows in the FULL (pre-filter) `project_state()` result
+    for this subject share that precondition's exact
+    (subject, predicate, object) triple:
+      - exactly ONE live claim carries that triple -> real, unambiguous
+        provenance -- the precondition is built via
+        `precondition_with_claim(..., claim_id=<that claim's real id>)`.
+      - ZERO (unreachable here -- the precondition itself was derived
+        FROM a claim row, so at least one always matches) or, the real
+        possible case, MULTIPLE claims independently asserting the same
+        triple -> no way to know which specific row justified this
+        precondition, so this deliberately does NOT guess: the
+        precondition falls back to the claim_id-less shape, byte-
+        identical to what this function produced before this change.
+        Silently picking an arbitrary one of several matching claims
+        would be false precision -- an unresolvable ambiguity, honestly
+        left unresolved, is safer than a provenance pointer that might be
+        wrong.
 
     WHY THE FILTER EXISTS (ticket 1.8a). The naive version of this
     function gated on EVERY live claim for the project. Under CWA every
@@ -118,10 +161,32 @@ async def derive_preconditions(pool: asyncpg.Pool, evidence: ProcedureEvidence) 
 
     claims = await project_state(pool, subjects=[subject], as_of=evidence.started_at)
     kept = filter_load_bearing_claims(claims, evidence, vocabulary=PROBE_PREDICATE_VOCABULARY)
-    return [
-        Predicate(subject=c["subject"], predicate=c["predicate"], object=c["object"])
-        for c in kept
-    ]
+
+    # Ambiguity check is against the FULL (unfiltered) claim set for this
+    # subject, not `kept` -- filter_load_bearing_claims already de-dupes
+    # identical triples down to one row (see its own docstring, point 3),
+    # so counting against `kept` would always see "1" and could never
+    # detect a real duplicate.
+    triple_counts = Counter(
+        (c.get("subject"), c.get("predicate"), c.get("object")) for c in claims
+    )
+
+    preconditions: list[Predicate] = []
+    for c in kept:
+        triple = (c["subject"], c["predicate"], c["object"])
+        if triple_counts[triple] == 1:
+            preconditions.append(
+                _PredicateWithClaim(**precondition_with_claim(
+                    c["subject"], c["predicate"], c["object"], claim_id=c["id"],
+                ))
+            )
+        else:
+            # Zero is unreachable (this triple came from `c` itself);
+            # multiple means real ambiguity -- fall back, unchanged.
+            preconditions.append(
+                Predicate(subject=c["subject"], predicate=c["predicate"], object=c["object"])
+            )
+    return preconditions
 
 
 # Behavioral signatures: which probe predicates this episode DEMONSTRABLY

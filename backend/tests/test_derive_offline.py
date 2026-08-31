@@ -82,6 +82,69 @@ def test_derive_preconditions_empty_when_nothing_survives_the_filter():
     assert _run(derive_preconditions(pool, ev)) == []
 
 
+# --- task 37: auto-populated claim_id ---
+
+def test_derive_preconditions_populates_claim_id_on_a_real_single_match():
+    """Exactly one live claim carries this precondition's triple -> the
+    derived precondition carries that claim's real id, and every
+    pre-existing field/attribute stays exactly as before."""
+    ev = _evidence([{"observation_type": "test_run", "properties": {"passed": True}}])
+    pool = FakePool(rows=[_row("c1", "has_test_runner", "pytest")])
+    preconditions = _run(derive_preconditions(pool, ev))
+    assert len(preconditions) == 1
+    p = preconditions[0]
+    assert (p.subject, p.predicate, p.object) == (SUBJECT, "has_test_runner", "pytest")
+    assert p.claim_id == "c1"
+    # model_dump() must be the exact legacy shape PLUS the new key --
+    # this is what actually reaches procedures.preconditions (JSONB) via
+    # procedure_extraction/__init__.py's `.model_dump()` call.
+    assert p.model_dump() == {
+        "subject": SUBJECT, "predicate": "has_test_runner", "object": "pytest", "claim_id": "c1",
+    }
+
+
+def test_derive_preconditions_omits_claim_id_when_multiple_claims_are_ambiguous():
+    """Two live claims independently assert the exact same
+    (subject, predicate, object) triple -- a real, possible case (e.g.
+    two independently-captured claims saying the same thing). Since
+    filter_load_bearing_claims de-dupes identical triples down to one
+    kept row, this exercises the ambiguity check against the FULL
+    project_state() result, not the deduped one. No claim_id must be
+    guessed; the precondition falls back to the exact legacy shape."""
+    ev = _evidence([{"observation_type": "test_run", "properties": {"passed": True}}])
+    pool = FakePool(rows=[
+        _row("c1", "has_test_runner", "pytest"),
+        _row("c2", "has_test_runner", "pytest"),  # same triple, different real claim row
+    ])
+    preconditions = _run(derive_preconditions(pool, ev))
+    assert len(preconditions) == 1
+    p = preconditions[0]
+    assert (p.subject, p.predicate, p.object) == (SUBJECT, "has_test_runner", "pytest")
+    # Ambiguous fallback is a plain Predicate -- the exact pre-existing
+    # type, which has no claim_id field at all (not claim_id=None).
+    assert getattr(p, "claim_id", None) is None
+    assert p.model_dump() == {
+        "subject": SUBJECT, "predicate": "has_test_runner", "object": "pytest",
+    }
+    assert "claim_id" not in p.model_dump()
+
+
+def test_derive_preconditions_ambiguity_does_not_leak_across_distinct_triples():
+    """A duplicate triple on ONE predicate must not suppress claim_id on
+    an unrelated, genuinely-unambiguous precondition derived in the same
+    call."""
+    ev = _evidence([{"observation_type": "test_run", "properties": {"passed": True, "command": "npm test"}}])
+    pool = FakePool(rows=[
+        _row("c1", "has_test_runner", "pytest"),
+        _row("c2", "has_test_runner", "pytest"),  # ambiguous
+        _row("c3", "package_manager", "npm"),  # unambiguous
+    ])
+    preconditions = _run(derive_preconditions(pool, ev))
+    by_predicate = {p.predicate: p for p in preconditions}
+    assert getattr(by_predicate["has_test_runner"], "claim_id", None) is None
+    assert by_predicate["package_manager"].claim_id == "c3"
+
+
 # --- derive_scope: the real project_state() round trip ---
 
 def test_derive_scope_returns_empty_without_ids_and_never_touches_the_pool():
