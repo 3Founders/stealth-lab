@@ -169,6 +169,7 @@ def maybe_capture_local_candidate(
     environment_facts: Optional[list[EnvironmentFact]] = None,
     source_episode_ids: Optional[list[str]] = None,
     client: Optional[Any] = None,
+    embedding: Optional[list[float]] = None,
 ) -> Optional[dict]:
     """
     Capture a candidate LOCAL procedure directly from a successful ad-hoc
@@ -220,6 +221,19 @@ def maybe_capture_local_candidate(
     NO LLM call itself when `client` is omitted (the default), and never
     fabricates a placeholder statement when the call abstains or fails.
 
+    `embedding`, if supplied, is forwarded verbatim to
+    `store.capture_local_procedure` -- this function never computes one
+    itself (no network call belongs in a pure capture path). Omitted
+    (the default, unchanged from before this parameter existed): the
+    captured row's `embedding` column stays NULL, same as always. A
+    caller that already has a real embedding of `task_description` in
+    hand (e.g. `LocalAgentRunner.run()`, which already computes one for
+    its own search step) should pass it here so the candidate this
+    function writes is findable by real semantic similarity later, not
+    just by lexical substring match -- `search_local_procedures` already
+    supports ranking by a stored embedding, this was simply never given
+    one on the ad-hoc-capture path.
+
     Returns the same `{"id", "procedure_id"}` shape
     `capture_local_procedure` returns, or `None`.
     """
@@ -266,6 +280,7 @@ def maybe_capture_local_candidate(
         provenance="system_pending_review",
         scope_type="repository",
         scope_entity_id=repo_root,
+        embedding=embedding,
     )
 
 

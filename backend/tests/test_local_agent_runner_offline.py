@@ -347,6 +347,88 @@ async def test_runner_does_not_capture_a_candidate_from_a_failed_adhoc_run(monke
 
 
 @pytest.mark.asyncio
+async def test_runner_refuses_a_node_naming_only_an_unimplemented_kind(monkeypatch, tmp_path):
+    """P1 (product spec: 'Complete implementation abstraction') wired into
+    the real local runner: a step naming an implementation kind with no
+    real registered executor (e.g. 'slm') must produce an honest,
+    explicit failure -- NEVER a silent frontier run masquerading as
+    something else, and never a silent no-op. Proven by never letting
+    `_run_local_node` (the real Agent+RepoSandbox mechanism) get called
+    at all for this node."""
+    import json
+
+    from app.local_agent.local_store import LocalProcedureStore
+
+    store = LocalProcedureStore(str(tmp_path))
+    store.capture_local_procedure(
+        name="fix-calc-bug-local", goal="fix the calc bug",
+        steps=[{"order": 0, "goal": "fix the bug in calc.py", "implementation_hint": "slm"}],
+        provenance="system_pending_review", scope_type="repository",
+        scope_entity_id=str(tmp_path),
+    )
+
+    fake_session = FakeClientSession({"search_procedures": json.dumps([])})
+
+    run_local_node_calls: list = []
+
+    async def fake_run_node(node, **kwargs):
+        run_local_node_calls.append(node.order)
+        return NodeResult(status="success", notes="should never be reached")
+
+    monkeypatch.setattr(runner_module, "_open_client_session", lambda url, token: fake_session)
+    monkeypatch.setattr(runner_module, "_run_local_node", fake_run_node)
+
+    result = await runner_module.LocalAgentRunner(
+        server_url="http://fake/mcp", token="fake-token",
+    ).run(task_description="fix the calc bug", repo_path=str(tmp_path), allow_unverified=True)
+
+    assert run_local_node_calls == [], (
+        "the real sandboxed execution mechanism must never run for a node "
+        "naming only an unimplemented kind"
+    )
+    assert result.graph_outcome == "failure"
+    assert any("not yet implemented" in note for note in result.node_notes)
+
+
+@pytest.mark.asyncio
+async def test_runner_still_runs_a_hintless_node_through_the_real_mechanism(monkeypatch, tmp_path):
+    """The registry must not change behavior for the overwhelming common
+    case (a step naming no implementation_hint at all) -- it resolves to
+    'frontier', the one real supported kind, and `_run_local_node` runs
+    exactly as it always has."""
+    import json
+
+    from app.local_agent.local_store import LocalProcedureStore
+
+    store = LocalProcedureStore(str(tmp_path))
+    store.capture_local_procedure(
+        name="fix-calc-bug-local-2", goal="fix the calc bug",
+        steps=[{"order": 0, "goal": "fix the bug in calc.py"}],
+        provenance="system_pending_review", scope_type="repository",
+        scope_entity_id=str(tmp_path),
+    )
+
+    fake_session = FakeClientSession({"search_procedures": json.dumps([])})
+
+    run_local_node_calls: list = []
+
+    async def fake_run_node(node, **kwargs):
+        run_local_node_calls.append(node.order)
+        return NodeResult(status="success", notes="ran for real",
+                           data={"files_edited": ["calc.py"], "patch": "diff --git ..."})
+
+    monkeypatch.setattr(runner_module, "_open_client_session", lambda url, token: fake_session)
+    monkeypatch.setattr(runner_module, "_run_local_node", fake_run_node)
+
+    result = await runner_module.LocalAgentRunner(
+        server_url="http://fake/mcp", token="fake-token",
+    ).run(task_description="fix the calc bug", repo_path=str(tmp_path), allow_unverified=True)
+
+    assert run_local_node_calls == [0]
+    assert result.graph_outcome == "success"
+
+
+@pytest.mark.asyncio
 async def test_runner_reports_no_match_without_crashing(monkeypatch):
     import json
 

@@ -73,6 +73,7 @@ from __future__ import annotations
 from typing import Any, Awaitable, Callable, Mapping, Optional
 from uuid import UUID
 
+from app.execution.implementations import validate_implementation_hint
 from app.models.plan import PlanNode, ProcedureRef
 
 DEFAULT_MAX_COMPOSITION_DEPTH = 8
@@ -123,12 +124,22 @@ def _step_ref(step: dict) -> Optional[ProcedureRef]:
     return ProcedureRef(**raw)
 
 
+def _step_implementation_hint(step: dict) -> Optional[tuple[str, ...]]:
+    """Lift a step's `implementation_hint` (if present) into a real,
+    validated tuple -- a single kind string or a preference-ordered list
+    are both accepted (see app.execution.implementations module
+    docstring); a hint naming a kind outside the closed vocabulary raises
+    here (ImplementationViolation), before any storage boundary is
+    reached, rather than being silently accepted or silently dropped."""
+    return validate_implementation_hint(step.get("implementation_hint"))
+
+
 def steps_to_linear_nodes(steps: list[dict]) -> list[PlanNode]:
     """`steps`: a procedure's stored steps, each `{"order": int, "goal": str, ...}`
-    (extra keys ignored, except `subprocedure_ref` -- see module docstring).
-    Returns PlanNodes in order, each depending on the PREVIOUS element in
-    sorted sequence -- a straight chain, matching exactly what a linear
-    procedure already is.
+    (extra keys ignored, except `subprocedure_ref` and `implementation_hint`
+    -- see module docstring). Returns PlanNodes in order, each depending
+    on the PREVIOUS element in sorted sequence -- a straight chain,
+    matching exactly what a linear procedure already is.
 
     REAL BUG this fixed, found live against a real stored procedure:
     deriving deps as `order - 1` assumes `order` is contiguous, 0-indexed,
@@ -146,6 +157,7 @@ def steps_to_linear_nodes(steps: list[dict]) -> list[PlanNode]:
     return [
         PlanNode(
             order=s["order"], goal=_step_goal(s), step_ref=_step_ref(s),
+            implementation_hint=_step_implementation_hint(s),
             deps=[ordered[i - 1]["order"]] if i > 0 else [],
         )
         for i, s in enumerate(ordered)

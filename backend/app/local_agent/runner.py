@@ -58,6 +58,7 @@ from mcp import ClientSession
 from mcp.client.streamable_http import streamable_http_client
 
 from app.execution.graph_executor import NodeResult, execute_task_graph
+from app.execution.implementations import resolve_implementation
 from app.execution.procedure_graph import steps_to_linear_nodes
 from app.local_agent.local_learning import maybe_capture_local_candidate
 from app.local_agent.local_store import LocalProcedureStore
@@ -154,8 +155,30 @@ async def _run_local_node(node, *, task_description: str, repo_path: str,
     Constructing per-node is cheap (both are lightweight objects) and
     keeps every requirement for "a fake run_node needs zero real
     dependencies" true structurally, not by discipline.
+
+    REAL GAP CLOSED (audit pass): every other real repo_path-accepting
+    call site in this codebase (server.py's find_best_way and
+    reproduce_procedure) refuses upfront with os.path.isdir(repo_path)
+    before doing anything else -- this was the one real execution
+    boundary that didn't. RepoSandbox.__init__ (experiments/swebench_pro/
+    agent.py) never validates root exists; without this check, a
+    nonexistent repo_path silently reached a real, billed OpenAI call
+    (Agent.run()) that could only ever fail deep inside the tool-calling
+    loop with a confusing raw OS error, rather than refusing cleanly and
+    for free. Not a path-traversal issue (RepoSandbox._resolve already
+    guards that regardless of whether root exists) -- a wasted-real-work
+    /honest-refusal gap, closed the same way the other call sites already
+    close it. run()'s own top-level orchestration deliberately still does
+    NOT gate on this (see run()'s own os.path.isdir use for the LOCAL
+    STORE decision only) -- this function, where RepoSandbox/Agent/OpenAI
+    are actually constructed, is the correct, single real boundary.
     """
     import asyncio
+
+    if not os.path.isdir(repo_path):
+        note = f"REFUSED: repo_path {repo_path!r} is not a directory on this machine."
+        node_notes.append(note)
+        return NodeResult(status="failure", notes=note)
 
     _ensure_swebench_pro_on_path()
     from agent import Agent, RepoSandbox
@@ -223,6 +246,28 @@ class LocalAgentRunner:
         node_results: dict[int, NodeResult] = {}
 
         async def run_node(node) -> NodeResult:
+            # P1 (product spec: "Complete implementation abstraction"):
+            # before spending a real Agent+RepoSandbox run on this node,
+            # ask the real registry whether the node's own declared
+            # implementation_hint is one this process can actually
+            # satisfy. A hint-less node (every stored procedure today)
+            # resolves to "frontier", which IS what _run_local_node does
+            # -- so this changes nothing for any node writing this pass
+            # found in the real corpus. A node that names ONLY an
+            # unimplemented kind (e.g. "slm") gets an honest, explicit
+            # failure -- never a silent no-op, and never a silent
+            # frontier run pretending to be something else.
+            resolution = resolve_implementation(node.implementation_hint)
+            if not resolution.supported:
+                note = (
+                    f"step {node.order} ({node.goal}): implementation kind "
+                    f"{resolution.kind!r} not yet implemented -- {resolution.reason}"
+                )
+                node_notes.append(note)
+                result = NodeResult(status="failure", notes=note)
+                node_results[node.order] = result
+                return result
+
             result = await _run_local_node(
                 node, task_description=task_description, repo_path=repo_path,
                 model=self.model, max_steps=self.max_steps, node_notes=node_notes,
@@ -324,11 +369,24 @@ class LocalAgentRunner:
                     r.data["patch"] for r in node_results.values() if r.data.get("patch")
                 )
                 run_succeeded = graph_result.outcome == "success" and bool(combined_patch)
+                # REAL GAP CLOSED: an ad-hoc-captured candidate previously
+                # got no embedding at all (local_learning.py never computed
+                # or accepted one), so it was only ever findable by lexical
+                # substring match against its own name/goal text -- a later
+                # task worded differently could never match it even though
+                # search_local_procedures has supported real cosine-
+                # similarity ranking since Phase 1+2. Same real Embedder
+                # this function already uses for its own search step above,
+                # storage-time convention (input_type="document"), matching
+                # submit_procedure's own real-embedding-at-storage precedent
+                # (app/mcp_server/server.py::submit_procedure).
+                capture_embedding = await Embedder().embed_one(task_description, input_type="document")
                 captured = maybe_capture_local_candidate(
                     store, task_description=task_description, node_notes=node_notes,
                     files_edited=all_files_edited, combined_patch=combined_patch,
                     run_succeeded=run_succeeded, repo_root=repo_path,
                     node_results=node_results, environment_facts=local_facts,
+                    embedding=capture_embedding,
                 )
                 # REAL GAP CLOSED: the run that JUST succeeded and produced
                 # this candidate is the run's own first real evidence --

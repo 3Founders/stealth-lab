@@ -27,6 +27,13 @@ from pydantic import BaseModel, Field
 # typed here only as documentation.
 ScopeType = str
 
+# Implementation-kind strings are validated at the boundary
+# (app.execution.implementations.IMPLEMENTATION_KINDS /
+# validate_implementation_hint), same discipline as ScopeType above --
+# typed here only as documentation. A tuple, not a single str: a step may
+# advertise several acceptable kinds in preference order.
+ImplementationHint = tuple[str, ...]
+
 SafetyCheck = Literal["passed", "failed", "requires_review"]
 NodeClass = Literal["predictable", "uncertain", "high-risk"]
 ExecutionOutcome = Literal["success", "failure", "needs_rework"]
@@ -68,6 +75,14 @@ class PlanNode(BaseModel):
     parameters: dict[str, Any] = Field(default_factory=dict)
     node_class: NodeClass = "predictable"
     implementation_id: Optional[str] = None
+    # Advisory sibling of `step_ref` (composition): which real
+    # implementation kind(s) could satisfy this node's own work, once it
+    # is an ordinary (non-composed) node. None means the step named no
+    # preference -- app.execution.implementations.resolve_implementation
+    # treats that as "frontier", matching every real caller's current
+    # unconditional behavior. Never embeds an executor CHOICE -- only a
+    # preference a registry/executor may honor, ignore, or reinterpret.
+    implementation_hint: Optional[ImplementationHint] = None
     cost_budget: dict[str, Any] = Field(default_factory=dict)
     verification_gate: dict[str, Any] = Field(default_factory=dict)
     deps: list[int] = Field(default_factory=list)
