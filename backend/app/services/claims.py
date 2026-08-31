@@ -42,6 +42,7 @@ from typing import Any, Literal, Optional
 import asyncpg
 from pydantic import BaseModel, Field
 
+from app.services.access import AccessScope, TenantScope, scope_predicates
 from app.services.embeddings import Embedder, to_pgvector
 
 CREATED_BY = "claim_capture"
@@ -263,3 +264,100 @@ async def relate_claims(
                 "WHERE id = $1::uuid",
                 to_claim_id,
             )
+
+
+# Phase 31: "a claim that is contradicted should not continue appearing as
+# current truth." Two belief-revision mechanisms already exist and both stay
+# untouched here:
+#   - relate_claims() above flips properties->>'truth_state' to 'OUT' -- a
+#     RESOLVED contradiction/supersession.
+#   - KnowledgeUpdater's debate-approval path (knowledge_update.py) sets
+#     t_invalid on an approved REPLACE.
+# Neither fires while a knowledge_conflict.py trigger is merely OPEN: the
+# debate hasn't concluded, so truth_state is still 'IN' and t_invalid is
+# still NULL, and the claim silently keeps reading as live truth even
+# though a conflict against it is under active review. Deliberately NOT
+# auto-invalidating on trigger creation -- the debate may conclude the
+# flagged claim was right, or that neither side actually conflicts, and
+# guessing wrong here would be a worse error than temporarily hiding a
+# claim that turns out fine (same "borderline cases get reviewed, not
+# auto-resolved" posture BAND0_DECISIONS.md takes elsewhere). Instead, a
+# claim under active dispute is excluded from "current truth" queries
+# until its debate resolves one way or the other.
+#
+# "Unresolved" is defined identically to triggers.py's own
+# TriggerDetector.record() ("a trigger row exists whose debate is not yet
+# APPROVED/REJECTED, including no debate opened at all") -- one
+# definition, spelled out once here, not reinvented and risking drift.
+# {alias} is the knowledge_nodes table alias in the enclosing query.
+_DISPUTED_CLAIM_SQL = (
+    "EXISTS (SELECT 1 FROM edges e "
+    "JOIN triggers t ON t.task_node_id = e.source_id "
+    "LEFT JOIN debates d ON d.trigger_id = t.id "
+    "WHERE e.t_invalid IS NULL AND e.edge_type = 'VALIDATED_BY' "
+    "AND e.custom_edge_type = 'CONFLICTS_WITH' "
+    "AND e.source_table = 'task_nodes' "
+    "AND e.target_table = 'knowledge_nodes' AND e.target_id = {alias}.id "
+    "AND (d.id IS NULL OR d.state NOT IN ('APPROVED', 'REJECTED')))"
+)
+
+
+async def has_open_conflict_trigger(pool: asyncpg.Pool, claim_id: str) -> bool:
+    """
+    Point-check: does `claim_id` have an open, unresolved
+    knowledge_conflict.py trigger against it right now? Same predicate
+    `list_current_claims` uses internally, exposed standalone for a
+    caller (or a test) that only has one claim id and doesn't want to
+    run the full listing query.
+    """
+    return bool(await pool.fetchval(
+        f"SELECT {_DISPUTED_CLAIM_SQL.format(alias='k')} "
+        "FROM knowledge_nodes k WHERE k.id = $1::uuid",
+        claim_id,
+    ))
+
+
+async def list_current_claims(
+    pool: asyncpg.Pool,
+    *,
+    task_id: Optional[str] = None,
+    scope: Optional[AccessScope] = None,
+    tenant_scope: Optional[TenantScope] = None,
+) -> list[dict]:
+    """
+    "Current truth" claims: live (t_invalid IS NULL), not superseded/
+    contradicted-and-resolved (truth_state <> 'OUT'), and not presently
+    under active, unresolved dispute (see `_DISPUTED_CLAIM_SQL` above).
+    `task_id` optionally restricts to claims PRODUCES/CLAIM_OF-linked to
+    one task_node (task_nodes.skill_ref, same key capture_claim() itself
+    resolves task_ids against).
+
+    Tenant/visibility SQL comes only from scope_predicates() per this
+    repo's own rule; default unrestricted() renders literal TRUE.
+    """
+    scope = scope or AccessScope.unrestricted()
+    tenant = tenant_scope or TenantScope.unrestricted()
+    vis_sql, vis_params, next_index = scope_predicates(
+        scope, tenant, alias="k", param_index=1,
+    )
+    params: list[Any] = list(vis_params)
+    task_join = ""
+    if task_id is not None:
+        params.append(task_id)
+        task_join = (
+            "JOIN edges ce ON ce.source_id = k.id AND ce.source_table = 'knowledge_nodes' "
+            "AND ce.target_table = 'task_nodes' AND ce.edge_type = 'PRODUCES' "
+            "AND ce.custom_edge_type = 'CLAIM_OF' AND ce.t_invalid IS NULL "
+            f"JOIN task_nodes tn ON tn.id = ce.target_id AND tn.skill_ref = ${next_index}"
+        )
+
+    rows = await pool.fetch(
+        f"SELECT k.id, k.name, k.properties FROM knowledge_nodes k "
+        f"{task_join} "
+        f"WHERE k.node_type = 'claim' AND k.t_invalid IS NULL "
+        f"AND COALESCE(k.properties->>'truth_state', 'IN') <> 'OUT' "
+        f"AND NOT {_DISPUTED_CLAIM_SQL.format(alias='k')} "
+        f"AND {vis_sql}",
+        *params,
+    )
+    return [dict(r) for r in rows]
