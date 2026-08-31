@@ -19,8 +19,10 @@ from app.services.claims import (
     GENERAL_RELATIONS,
     capture_claim as _real_capture_claim,
     get_claim_relations,
+    get_claim_version_chain,
     link_claims,
     relate_claims,
+    supersede_claim as _real_supersede_claim,
 )
 
 
@@ -37,6 +39,13 @@ async def capture_claim(db, **kwargs):
     file goes through here so none of them need to remember to pass
     a fake embedder individually."""
     return await _real_capture_claim(db, embedder=FakeEmbedder(), **kwargs)
+
+
+async def supersede_claim(db, **kwargs):
+    """Same wrapper idiom as capture_claim() above -- supersede_claim()
+    forwards its embedder kwarg straight into the capture_claim() call
+    it reuses internally."""
+    return await _real_supersede_claim(db, embedder=FakeEmbedder(), **kwargs)
 
 
 class FakeDB:
@@ -92,7 +101,31 @@ class FakeDB:
                         "t_valid": None, "properties": e["properties"],
                     })
             return out
+        if q.startswith("SELECT id, properties FROM knowledge_nodes"):
+            # get_claim_version_chain(): family_id passed once, bound to
+            # $1 twice in the real query (id = $1::uuid OR properties->>
+            # 'claim_family_id' = $1::text) -- FakeDB only receives the
+            # one positional param either way.
+            (family_id,) = params
+            out = []
+            for nid, node in self.knowledge_nodes.items():
+                if node["node_type"] != "claim":
+                    continue
+                if nid == str(family_id) or node["properties"].get("claim_family_id") == str(family_id):
+                    out.append({"id": UUID(nid), "properties": node["properties"]})
+            out.sort(key=lambda r: r["properties"].get("claim_version", 1))
+            return out
         raise AssertionError(f"FakeDB.fetch: unrecognized query\n{q}")
+
+    async def fetchrow(self, query: str, *params):
+        q = query.strip()
+        if q.startswith("SELECT properties FROM knowledge_nodes"):
+            (claim_id,) = params
+            node = self.knowledge_nodes.get(str(claim_id))
+            if node is None or node["node_type"] != "claim":
+                return None
+            return {"properties": node["properties"]}
+        raise AssertionError(f"FakeDB.fetchrow: unrecognized query\n{q}")
 
     async def fetchval(self, query: str, *params):
         q = query.strip()
@@ -523,3 +556,130 @@ class TestGetClaimRelations:
             "CONDITIONAL_ON", "GENERALIZES", "SPECIALIZES", "DERIVED_FROM",
             "INSTANTIATES", "APPLIES_TO",
         }
+
+
+class TestSupersedeClaim:
+    """Claims get the same version-chain concept procedures already have
+    (family_id + version), but living inside properties JSONB rather than
+    real columns -- claims share knowledge_nodes with 6 other virtual
+    node types, so no migration for this."""
+
+    def test_first_supersession_starts_a_new_family_rooted_at_the_prior_claim(self):
+        db = FakeDB()
+        db.add_task_node("instance_x")
+        old_id = asyncio.run(capture_claim(db, statement="old claim", task_ids=["instance_x"]))
+
+        new_id = asyncio.run(supersede_claim(
+            db, prior_claim_id=old_id, statement="new claim", task_ids=["instance_x"],
+        ))
+
+        assert new_id is not None
+        assert new_id != old_id
+        new_props = db.knowledge_nodes[new_id]["properties"]
+        assert new_props["claim_family_id"] == old_id
+        assert new_props["claim_version"] == 2
+        # The prior claim itself carries no family_id yet -- it IS the
+        # family root, implicitly version 1.
+        assert "claim_family_id" not in db.knowledge_nodes[old_id]["properties"]
+
+    def test_reuses_relate_claims_to_link_and_flip_truth_state(self):
+        db = FakeDB()
+        db.add_task_node("instance_x")
+        old_id = asyncio.run(capture_claim(db, statement="old claim", task_ids=["instance_x"]))
+
+        new_id = asyncio.run(supersede_claim(
+            db, prior_claim_id=old_id, statement="new claim", task_ids=["instance_x"],
+        ))
+
+        assert db.knowledge_nodes[old_id]["properties"]["truth_state"] == "OUT"
+        assert db.knowledge_nodes[new_id]["properties"]["truth_state"] == "IN"
+        edge = [e for e in db.edges if e["custom_edge_type"] == "SUPERSEDES"][0]
+        assert edge["source_id"] == UUID(new_id)
+        assert edge["target_id"] == UUID(old_id)
+
+    def test_second_supersession_increments_version_and_keeps_the_same_family(self):
+        db = FakeDB()
+        db.add_task_node("instance_x")
+        v1 = asyncio.run(capture_claim(db, statement="v1", task_ids=["instance_x"]))
+        v2 = asyncio.run(supersede_claim(
+            db, prior_claim_id=v1, statement="v2", task_ids=["instance_x"],
+        ))
+        v3 = asyncio.run(supersede_claim(
+            db, prior_claim_id=v2, statement="v3", task_ids=["instance_x"],
+        ))
+
+        v3_props = db.knowledge_nodes[v3]["properties"]
+        assert v3_props["claim_family_id"] == v1  # same root as v2
+        assert v3_props["claim_version"] == 3
+
+    def test_reason_is_recorded_on_the_new_claim_when_given(self):
+        db = FakeDB()
+        db.add_task_node("instance_x")
+        old_id = asyncio.run(capture_claim(db, statement="old claim", task_ids=["instance_x"]))
+        new_id = asyncio.run(supersede_claim(
+            db, prior_claim_id=old_id, statement="new claim", task_ids=["instance_x"],
+            reason="pandas 2.0 removed DataFrame.append",
+        ))
+        assert db.knowledge_nodes[new_id]["properties"]["supersession_reason"] == (
+            "pandas 2.0 removed DataFrame.append"
+        )
+
+    def test_missing_prior_claim_raises(self):
+        db = FakeDB()
+        with pytest.raises(ValueError):
+            asyncio.run(supersede_claim(
+                db, prior_claim_id=str(uuid4()), statement="orphan supersession",
+                task_ids=["instance_x"],
+            ))
+
+    def test_statement_and_structured_fields_reach_the_new_claim(self):
+        """supersede_claim reuses capture_claim -- it must not lose any
+        of capture_claim's own fields in the process."""
+        db = FakeDB()
+        db.add_task_node("instance_x")
+        old_id = asyncio.run(capture_claim(db, statement="old claim", task_ids=["instance_x"]))
+        new_id = asyncio.run(supersede_claim(
+            db, prior_claim_id=old_id, statement="new claim", task_ids=["instance_x"],
+            subject="s", predicate="p", object="o", confidence=0.9,
+        ))
+        props = db.knowledge_nodes[new_id]["properties"]
+        assert props["statement"] == "new claim"
+        assert props["subject"] == "s"
+        assert props["predicate"] == "p"
+        assert props["object"] == "o"
+        assert props["confidence"] == 0.9
+
+
+class TestGetClaimVersionChain:
+    def test_single_version_claim_returns_only_itself(self):
+        db = FakeDB()
+        db.add_task_node("instance_x")
+        only_id = asyncio.run(capture_claim(db, statement="only version", task_ids=["instance_x"]))
+
+        chain = asyncio.run(get_claim_version_chain(db, only_id))
+        assert [str(r["id"]) for r in chain] == [only_id]
+
+    def test_chain_is_returned_oldest_to_newest(self):
+        db = FakeDB()
+        db.add_task_node("instance_x")
+        v1 = asyncio.run(capture_claim(db, statement="v1", task_ids=["instance_x"]))
+        v2 = asyncio.run(supersede_claim(db, prior_claim_id=v1, statement="v2", task_ids=["instance_x"]))
+        v3 = asyncio.run(supersede_claim(db, prior_claim_id=v2, statement="v3", task_ids=["instance_x"]))
+
+        chain = asyncio.run(get_claim_version_chain(db, v1))
+        assert [str(r["id"]) for r in chain] == [v1, v2, v3]
+        assert [r["properties"]["statement"] for r in chain] == ["v1", "v2", "v3"]
+
+    def test_chain_is_the_same_regardless_of_which_version_id_is_queried(self):
+        db = FakeDB()
+        db.add_task_node("instance_x")
+        v1 = asyncio.run(capture_claim(db, statement="v1", task_ids=["instance_x"]))
+        v2 = asyncio.run(supersede_claim(db, prior_claim_id=v1, statement="v2", task_ids=["instance_x"]))
+        v3 = asyncio.run(supersede_claim(db, prior_claim_id=v2, statement="v3", task_ids=["instance_x"]))
+
+        from_root = asyncio.run(get_claim_version_chain(db, v1))
+        from_middle = asyncio.run(get_claim_version_chain(db, v2))
+        from_tip = asyncio.run(get_claim_version_chain(db, v3))
+        assert [str(r["id"]) for r in from_root] == [v1, v2, v3]
+        assert [str(r["id"]) for r in from_middle] == [v1, v2, v3]
+        assert [str(r["id"]) for r in from_tip] == [v1, v2, v3]

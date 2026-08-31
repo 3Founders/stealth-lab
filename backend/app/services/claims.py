@@ -330,6 +330,159 @@ async def relate_claims(
             )
 
 
+async def supersede_claim(
+    pool: asyncpg.Pool,
+    *,
+    prior_claim_id: str,
+    statement: str,
+    task_ids: list[str],
+    justification_episode_id: Optional[str] = None,
+    created_by: str = CREATED_BY,
+    reason: Optional[str] = None,
+    subject: Optional[str] = None,
+    predicate: Optional[str] = None,
+    object: Optional[str] = None,  # noqa: A002 -- matches capture_claim's own field name
+    claim_type: Optional[str] = None,
+    confidence: Optional[float] = None,
+    extraction_version: Optional[str] = None,
+    epistemic_status: Optional[str] = None,
+    properties: Optional[dict[str, Any]] = None,
+    embedder: Optional[Embedder] = None,
+    owner_id: Optional[str] = None,
+    visibility: str = "public",
+    scope_type: Optional[str] = None,
+    scope_entity_id: Optional[str] = None,
+) -> Optional[str]:
+    """
+    Give claims the same version-chain concept `procedures` already has
+    (`family_id` + `version`, `supersede_procedure()` in procedures.py) --
+    but living inside `properties` JSONB rather than real columns:
+    claims share `knowledge_nodes` with 6 other virtual node types, so a
+    new `claim_family_id`/`claim_version` column pair would only ever
+    serve one of them. No migration for this.
+
+    Mechanics -- deliberately NOT a rewrite of either primitive it
+    composes, both already correct and left untouched:
+      1. Read `prior_claim_id`'s own properties. If it already carries a
+         `claim_family_id` (it is itself a non-root version), the family
+         is that value and the new version is `prior.claim_version + 1`.
+         Otherwise `prior_claim_id` IS the family root (this is its
+         first-ever supersession) -- the family id becomes
+         `prior_claim_id` itself, and the new version is 2 (the root is
+         implicitly version 1, never written explicitly onto the root
+         row -- `get_claim_version_chain` below knows this convention).
+      2. Create the new claim via the EXISTING `capture_claim()` --
+         reused, not duplicated -- with `claim_family_id`/`claim_version`
+         folded into `properties`. `reason`, when given, rides along in
+         `properties['supersession_reason']`: `relate_claims()` itself
+         takes no properties argument and is not touched to add one.
+      3. Call the EXISTING `relate_claims(relation="SUPERSEDES")` to
+         write the new->prior edge and flip the prior claim's
+         `truth_state` to OUT -- the real Truth Maintenance step, already
+         correct, not reinvented here.
+
+    Returns the new claim's id, or None if `capture_claim()` itself
+    returned None (none of `task_ids` resolved to a live task_node and
+    no `justification_episode_id` was given -- capture_claim's own
+    no-op contract, unchanged by going through this wrapper).
+
+    Raises ValueError if `prior_claim_id` does not resolve to a live
+    claim row -- unlike `supersede_procedure()`'s silent-None-on-missing
+    (a valid concurrent-supersede race there), a caller superseding a
+    claim that was never captured is a real caller error, not a race
+    this function is expected to absorb.
+    """
+    prior = await pool.fetchrow(
+        "SELECT properties FROM knowledge_nodes WHERE id = $1::uuid "
+        "AND node_type = 'claim' AND t_invalid IS NULL",
+        prior_claim_id,
+    )
+    if prior is None:
+        raise ValueError(
+            f"supersede_claim: no live claim found with id {prior_claim_id!r}"
+        )
+    prior_props = dict(prior["properties"])
+    family_id = prior_props.get("claim_family_id") or str(prior_claim_id)
+    new_version = prior_props.get("claim_version", 1) + 1
+
+    merged_properties: dict[str, Any] = {
+        **(properties or {}),
+        "claim_family_id": family_id,
+        "claim_version": new_version,
+    }
+    if reason is not None:
+        merged_properties["supersession_reason"] = reason
+
+    new_claim_id = await capture_claim(
+        pool,
+        statement=statement,
+        task_ids=task_ids,
+        justification_episode_id=justification_episode_id,
+        created_by=created_by,
+        subject=subject,
+        predicate=predicate,
+        object=object,
+        claim_type=claim_type,
+        confidence=confidence,
+        extraction_version=extraction_version,
+        epistemic_status=epistemic_status,
+        properties=merged_properties,
+        embedder=embedder,
+        owner_id=owner_id,
+        visibility=visibility,
+        scope_type=scope_type,
+        scope_entity_id=scope_entity_id,
+    )
+    if new_claim_id is None:
+        return None
+
+    await relate_claims(
+        pool,
+        from_claim_id=new_claim_id,
+        to_claim_id=prior_claim_id,
+        relation="SUPERSEDES",
+        created_by=created_by,
+    )
+    return new_claim_id
+
+
+async def get_claim_version_chain(pool: asyncpg.Pool, claim_id: str) -> list[dict]:
+    """
+    Walk one claim's version chain (`supersede_claim()`, above) and
+    return every version, oldest to newest -- bounded by definition
+    (a version chain is a strictly linear structure, not a general
+    graph traversal like `get_claim_relations`).
+
+    Works from ANY version id in the chain, not just the root: resolves
+    `claim_id`'s own family (its `claim_family_id` if it has one,
+    otherwise its own id -- the same root convention `supersede_claim`
+    establishes), then reads every live claim row that either IS that
+    root or carries that root as its `claim_family_id`.
+
+    Returns `[]` if `claim_id` does not resolve to a live claim at all
+    (matches `has_open_conflict_trigger`'s posture of tolerating an
+    unresolvable id for a read rather than raising, unlike
+    `supersede_claim`'s write-path ValueError).
+    """
+    anchor = await pool.fetchrow(
+        "SELECT properties FROM knowledge_nodes WHERE id = $1::uuid "
+        "AND node_type = 'claim' AND t_invalid IS NULL",
+        claim_id,
+    )
+    if anchor is None:
+        return []
+    family_id = anchor["properties"].get("claim_family_id") or str(claim_id)
+
+    rows = await pool.fetch(
+        "SELECT id, properties FROM knowledge_nodes "
+        "WHERE node_type = 'claim' AND t_invalid IS NULL "
+        "AND (id = $1::uuid OR properties->>'claim_family_id' = $1::text) "
+        "ORDER BY COALESCE((properties->>'claim_version')::int, 1) ASC",
+        family_id,
+    )
+    return [dict(r) for r in rows]
+
+
 async def link_claims(
     pool: asyncpg.Pool,
     *,
