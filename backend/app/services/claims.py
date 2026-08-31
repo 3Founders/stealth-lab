@@ -48,7 +48,45 @@ from app.services.embeddings import Embedder, to_pgvector
 CREATED_BY = "claim_capture"
 
 TRUTH_STATES = {"IN", "OUT"}
+
+# Truth-maintenance relations (relate_claims, below): these two assert
+# the TARGET claim is no longer current belief (truth_state flips OUT).
 RELATIONS = {"SUPERSEDES", "CONTRADICTS"}
+
+# General epistemic/structural relations (link_claims, below; CONSOLIDATED
+# directive Phase 2's relation vocabulary). None of these assert the
+# target is no longer believed -- they describe HOW two claims relate,
+# not a revision of current truth. Deliberately a flat set, not a richer
+# taxonomy: the directive names exactly these, no more.
+GENERAL_RELATIONS = {
+    "SUPPORTS", "REFINES", "DEPENDS_ON", "CONDITIONAL_ON",
+    "GENERALIZES", "SPECIALIZES", "DERIVED_FROM", "INSTANTIATES",
+    "APPLIES_TO",
+}
+
+ALL_CLAIM_RELATIONS = RELATIONS | GENERAL_RELATIONS
+
+
+def _edge_type_for_relation(relation: str) -> str:
+    """`SUPERSEDES` is the only claim relation with a literal matching
+    `edge_type` ENUM member (`db/01_ontology.sql` -- frozen, schema.md,
+    CLAUDE.md hard rule 3: no ALTER TYPE here). Every OTHER relation --
+    CONTRADICTS included -- rides the existing `VALIDATED_BY` bucket with
+    `custom_edge_type` carrying the real relation name: the same
+    precedent this file's own `_DISPUTED_CLAIM_SQL` already established
+    for `VALIDATED_BY`/`CONFLICTS_WITH`, reused rather than reinvented.
+
+    REAL BUG FIXED (found during the CONSOLIDATED-directive Phase 0
+    audit): `relate_claims()` previously wrote `edge_type='SUPERSEDES'`
+    UNCONDITIONALLY regardless of which of the two relations was passed
+    -- a stored CONTRADICTS edge was indistinguishable from a genuine
+    SUPERSEDES edge by `edge_type` alone; a caller had to already know to
+    additionally filter `custom_edge_type` to tell them apart. Fixed
+    here so `edge_type` carries real signal for the one relation that
+    has a real enum member, and every relation is queryable uniformly
+    via `custom_edge_type` regardless of which bucket it lives in (see
+    `get_claim_relations`, below)."""
+    return "SUPERSEDES" if relation == "SUPERSEDES" else "VALIDATED_BY"
 
 
 class ClaimProperties(BaseModel):
@@ -273,15 +311,16 @@ async def relate_claims(
     """
     if relation not in RELATIONS:
         raise ValueError(f"relation must be one of {RELATIONS}, got {relation!r}")
+    edge_type = _edge_type_for_relation(relation)
     async with pool.acquire() as conn:
         async with conn.transaction():
             await conn.execute(
                 "INSERT INTO edges (edge_type, custom_edge_type, "
                 " source_id, source_table, target_id, target_table, "
                 " properties, created_by, provenance) "
-                "VALUES ('SUPERSEDES', $1, $2::uuid, 'knowledge_nodes', "
-                " $3::uuid, 'knowledge_nodes', $4, $5, 'company_ingested')",
-                relation, from_claim_id, to_claim_id, {}, created_by,
+                "VALUES ($1::edge_type, $2, $3::uuid, 'knowledge_nodes', "
+                " $4::uuid, 'knowledge_nodes', $5, $6, 'company_ingested')",
+                edge_type, relation, from_claim_id, to_claim_id, {}, created_by,
             )
             await conn.execute(
                 "UPDATE knowledge_nodes SET properties = "
@@ -289,6 +328,114 @@ async def relate_claims(
                 "WHERE id = $1::uuid",
                 to_claim_id,
             )
+
+
+async def link_claims(
+    pool: asyncpg.Pool,
+    *,
+    from_claim_id: str,
+    to_claim_id: str,
+    relation: str,
+    created_by: str = CREATED_BY,
+    properties: Optional[dict[str, Any]] = None,
+) -> None:
+    """
+    Record a general epistemic/structural relation between two claims
+    (CONSOLIDATED directive Phase 2's relation vocabulary --
+    SUPPORTS/REFINES/DEPENDS_ON/CONDITIONAL_ON/GENERALIZES/SPECIALIZES/
+    DERIVED_FROM/INSTANTIATES/APPLIES_TO).
+
+    Deliberately separate from `relate_claims()`: these relations do NOT
+    assert `to_claim_id` is no longer current belief -- no `truth_state`
+    side effect. `relate_claims()` stays the one and only Truth
+    Maintenance operation (SUPERSEDES/CONTRADICTS specifically); mixing
+    a truth-revising and a non-truth-revising write into one function
+    would make the truth-maintenance guarantee ("only these two relations
+    can ever flip truth_state") a convention instead of a structural fact.
+
+    Rides the same `edges` table, same `VALIDATED_BY` + `custom_edge_type`
+    idiom `_edge_type_for_relation` establishes for CONTRADICTS -- no
+    migration, no parallel graph table (CLAUDE.md Rule 2 / directive
+    Rule 2: extend the existing abstraction, don't create a parallel
+    one). Does not validate that either claim id currently exists or is
+    live -- same posture `relate_claims()` already has; a caller wanting
+    that guarantee resolves it before calling, same as elsewhere in this
+    file.
+    """
+    if relation not in GENERAL_RELATIONS:
+        raise ValueError(f"relation must be one of {GENERAL_RELATIONS}, got {relation!r}")
+    await pool.execute(
+        "INSERT INTO edges (edge_type, custom_edge_type, "
+        " source_id, source_table, target_id, target_table, "
+        " properties, created_by, provenance) "
+        "VALUES ('VALIDATED_BY'::edge_type, $1, $2::uuid, 'knowledge_nodes', "
+        " $3::uuid, 'knowledge_nodes', $4, $5, 'company_ingested')",
+        relation, from_claim_id, to_claim_id, properties or {}, created_by,
+    )
+
+
+async def get_claim_relations(
+    pool: asyncpg.Pool,
+    claim_id: str,
+    *,
+    direction: str = "both",
+    relations: Optional[set[str]] = None,
+) -> list[dict]:
+    """
+    Bounded, single-hop read of the real relation edges touching one
+    claim -- the primitive a bounded multi-hop traversal service
+    (CONSOLIDATED directive's EXPLAIN/DECIDE/RESEARCH modes, a later
+    Phase-2 increment) composes over, not the traversal itself (the
+    directive's own "do not perform unbounded BFS" rule applies to that
+    later layer, not this single-hop read).
+
+    `direction`: "outgoing" (`claim_id` is the edge's source -- e.g. this
+    claim SUPERSEDES/SUPPORTS/etc. another), "incoming" (`claim_id` is
+    the target), or "both" (default).
+
+    `relations`: optional filter to a subset of `ALL_CLAIM_RELATIONS`
+    (mixing RELATIONS and GENERAL_RELATIONS is fine -- both idioms are
+    queryable uniformly via `custom_edge_type` regardless of which
+    `edge_type` bucket a given relation happens to live in, per
+    `_edge_type_for_relation`). Defaults to every known claim relation.
+
+    Returns only LIVE edges (`t_invalid IS NULL`) between two
+    `knowledge_nodes` -- this deliberately cannot return the trigger/
+    dispute mechanism's own `VALIDATED_BY`/`CONFLICTS_WITH` edges
+    (`_DISPUTED_CLAIM_SQL`, above), which run `task_nodes -> knowledge_
+    nodes`, not `knowledge_nodes -> knowledge_nodes` -- no collision.
+    """
+    if direction not in ("outgoing", "incoming", "both"):
+        raise ValueError(
+            f"direction must be 'outgoing', 'incoming', or 'both', got {direction!r}"
+        )
+    wanted = relations if relations is not None else ALL_CLAIM_RELATIONS
+    unknown = wanted - ALL_CLAIM_RELATIONS
+    if unknown:
+        raise ValueError(
+            f"unknown relation(s) {unknown}, must be a subset of {ALL_CLAIM_RELATIONS}"
+        )
+
+    clauses = []
+    if direction in ("outgoing", "both"):
+        clauses.append(
+            "(e.source_id = $1::uuid AND e.source_table = 'knowledge_nodes' "
+            "AND e.target_table = 'knowledge_nodes')"
+        )
+    if direction in ("incoming", "both"):
+        clauses.append(
+            "(e.target_id = $1::uuid AND e.target_table = 'knowledge_nodes' "
+            "AND e.source_table = 'knowledge_nodes')"
+        )
+    where = " OR ".join(clauses)
+    rows = await pool.fetch(
+        f"SELECT e.id, e.source_id, e.target_id, e.custom_edge_type AS relation, "
+        f"e.created_by, e.t_valid, e.properties "
+        f"FROM edges e WHERE ({where}) "
+        f"AND e.custom_edge_type = ANY($2::text[]) AND e.t_invalid IS NULL",
+        claim_id, list(wanted),
+    )
+    return [dict(r) for r in rows]
 
 
 # Phase 31: "a claim that is contradicted should not continue appearing as

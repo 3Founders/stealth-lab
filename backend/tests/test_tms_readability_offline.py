@@ -241,10 +241,13 @@ class TmsWriteFakeDB:
     async def execute(self, query: str, *params):
         sql = " ".join(query.split())
         self.statements.append(sql)
-        if sql.startswith("INSERT INTO edges") and "SUPERSEDES" in sql:
-            relation, from_id, to_id, properties, created_by = params
+        if sql.startswith("INSERT INTO edges") and "$1::edge_type" in sql:
+            # relate_claims(): edge_type is a real parameter now
+            # (_edge_type_for_relation) -- SUPERSEDES for
+            # relation='SUPERSEDES', VALIDATED_BY for CONTRADICTS.
+            edge_type, relation, from_id, to_id, properties, created_by = params
             self.edges.append({
-                "edge_type": "SUPERSEDES", "custom_edge_type": relation,
+                "edge_type": edge_type, "custom_edge_type": relation,
                 "source_id": from_id, "target_id": to_id,
                 "properties": properties, "created_by": created_by,
             })

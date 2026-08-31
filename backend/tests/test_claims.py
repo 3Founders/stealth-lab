@@ -13,7 +13,15 @@ from uuid import UUID, uuid4
 
 import pytest
 
-from app.services.claims import CREATED_BY, capture_claim as _real_capture_claim, relate_claims
+from app.services.claims import (
+    ALL_CLAIM_RELATIONS,
+    CREATED_BY,
+    GENERAL_RELATIONS,
+    capture_claim as _real_capture_claim,
+    get_claim_relations,
+    link_claims,
+    relate_claims,
+)
 
 
 class FakeEmbedder:
@@ -61,6 +69,29 @@ class FakeDB:
             wanted = set(params[0])
             return [{"id": UUID(tid)} for tid, row in self.task_nodes.items()
                      if row["skill_ref"] in wanted and row["t_invalid"] is None]
+        if q.startswith("SELECT e.id, e.source_id, e.target_id, e.custom_edge_type"):
+            # get_claim_relations(): claim_id is always $1, wanted-relations
+            # list is always $2 -- direction is baked into which OR-clause(s)
+            # the real query text contains, so match on substring presence.
+            claim_id, wanted = params
+            outgoing_ok = "e.source_id = $1::uuid" in q
+            incoming_ok = "e.target_id = $1::uuid" in q
+            wanted_set = set(wanted)
+            out = []
+            for e in self.edges:
+                if e["source_table"] != "knowledge_nodes" or e["target_table"] != "knowledge_nodes":
+                    continue
+                if e["custom_edge_type"] not in wanted_set:
+                    continue
+                is_out = outgoing_ok and str(e["source_id"]) == str(claim_id)
+                is_in = incoming_ok and str(e["target_id"]) == str(claim_id)
+                if is_out or is_in:
+                    out.append({
+                        "id": uuid4(), "source_id": e["source_id"], "target_id": e["target_id"],
+                        "relation": e["custom_edge_type"], "created_by": e["created_by"],
+                        "t_valid": None, "properties": e["properties"],
+                    })
+            return out
         raise AssertionError(f"FakeDB.fetch: unrecognized query\n{q}")
 
     async def fetchval(self, query: str, *params):
@@ -90,10 +121,24 @@ class FakeDB:
                 "properties": properties, "created_by": created_by,
             })
             return "INSERT 0 1"
-        if q.startswith("INSERT INTO edges") and "SUPERSEDES" in q:
+        if q.startswith("INSERT INTO edges") and "$1::edge_type" in q:
+            # relate_claims(): edge_type is now a real parameter, not an
+            # inline literal -- SUPERSEDES for relation='SUPERSEDES',
+            # VALIDATED_BY for CONTRADICTS (_edge_type_for_relation).
+            edge_type, relation, from_id, to_id, properties, created_by = params
+            self.edges.append({
+                "edge_type": edge_type, "custom_edge_type": relation,
+                "source_id": UUID(from_id), "source_table": "knowledge_nodes",
+                "target_id": UUID(to_id), "target_table": "knowledge_nodes",
+                "properties": properties, "created_by": created_by,
+            })
+            return "INSERT 0 1"
+        if q.startswith("INSERT INTO edges") and "'VALIDATED_BY'::edge_type" in q:
+            # link_claims(): always VALIDATED_BY, custom_edge_type carries
+            # the general relation (SUPPORTS/REFINES/etc.).
             relation, from_id, to_id, properties, created_by = params
             self.edges.append({
-                "edge_type": "SUPERSEDES", "custom_edge_type": relation,
+                "edge_type": "VALIDATED_BY", "custom_edge_type": relation,
                 "source_id": UUID(from_id), "source_table": "knowledge_nodes",
                 "target_id": UUID(to_id), "target_table": "knowledge_nodes",
                 "properties": properties, "created_by": created_by,
@@ -300,7 +345,13 @@ class TestRelateClaims:
         asyncio.run(relate_claims(db, from_claim_id=b, to_claim_id=a, relation="CONTRADICTS"))
         assert db.knowledge_nodes[a]["properties"]["truth_state"] == "OUT"
         edge = [e for e in db.edges if e["custom_edge_type"] == "CONTRADICTS"][0]
-        assert edge["edge_type"] == "SUPERSEDES"  # the enum bucket; CONTRADICTS is the refinement
+        # REAL BUG FIXED (Phase 0 audit of the consolidated directive):
+        # this used to be edge_type='SUPERSEDES' unconditionally,
+        # indistinguishable from a real SUPERSEDES edge by edge_type
+        # alone. CONTRADICTS has no matching edge_type ENUM member (the
+        # enum is frozen), so it rides the VALIDATED_BY bucket instead --
+        # the same idiom this file's own CONFLICTS_WITH edges already use.
+        assert edge["edge_type"] == "VALIDATED_BY"
 
     def test_the_original_claim_row_is_not_invalidated_only_its_truth_state(self):
         """t_invalid is a bi-temporal concern (does this row still exist);
@@ -320,3 +371,155 @@ class TestRelateClaims:
                 db, from_claim_id=str(uuid4()), to_claim_id=str(uuid4()),
                 relation="AGREES_WITH",
             ))
+
+
+class TestLinkClaims:
+    """CONSOLIDATED directive Phase 2: general epistemic/structural claim
+    relations, deliberately separate from relate_claims()'s Truth
+    Maintenance semantics."""
+
+    def test_supports_writes_an_edge_without_touching_truth_state(self):
+        db = FakeDB()
+        db.add_task_node("instance_x")
+        a = asyncio.run(capture_claim(db, statement="claim A", task_ids=["instance_x"]))
+        b = asyncio.run(capture_claim(db, statement="claim B", task_ids=["instance_x"]))
+        asyncio.run(link_claims(db, from_claim_id=b, to_claim_id=a, relation="SUPPORTS"))
+        edge = [e for e in db.edges if e["custom_edge_type"] == "SUPPORTS"][0]
+        assert edge["source_id"] == UUID(b)
+        assert edge["target_id"] == UUID(a)
+        assert edge["edge_type"] == "VALIDATED_BY"
+        # The defining difference from relate_claims(): no truth_state
+        # side effect on either claim.
+        assert db.knowledge_nodes[a]["properties"]["truth_state"] == "IN"
+        assert db.knowledge_nodes[b]["properties"]["truth_state"] == "IN"
+
+    def test_every_general_relation_in_the_directive_vocabulary_is_accepted(self):
+        db = FakeDB()
+        db.add_task_node("instance_x")
+        a = asyncio.run(capture_claim(db, statement="claim A", task_ids=["instance_x"]))
+        b = asyncio.run(capture_claim(db, statement="claim B", task_ids=["instance_x"]))
+        for relation in GENERAL_RELATIONS:
+            asyncio.run(link_claims(db, from_claim_id=a, to_claim_id=b, relation=relation))
+        stored = {
+            e["custom_edge_type"] for e in db.edges
+            if e["source_id"] == UUID(a) and e["target_table"] == "knowledge_nodes"
+        }
+        assert stored == GENERAL_RELATIONS
+
+    def test_supersedes_is_not_a_valid_link_claims_relation(self):
+        """SUPERSEDES/CONTRADICTS are relate_claims()'s exclusively --
+        link_claims() must refuse them rather than silently accept a
+        truth-maintenance relation with no truth_state side effect."""
+        db = FakeDB()
+        with pytest.raises(ValueError):
+            asyncio.run(link_claims(
+                db, from_claim_id=str(uuid4()), to_claim_id=str(uuid4()),
+                relation="SUPERSEDES",
+            ))
+
+    def test_invalid_relation_is_rejected(self):
+        db = FakeDB()
+        with pytest.raises(ValueError):
+            asyncio.run(link_claims(
+                db, from_claim_id=str(uuid4()), to_claim_id=str(uuid4()),
+                relation="AGREES_WITH",
+            ))
+
+    def test_properties_are_stored_when_given(self):
+        db = FakeDB()
+        db.add_task_node("instance_x")
+        a = asyncio.run(capture_claim(db, statement="claim A", task_ids=["instance_x"]))
+        b = asyncio.run(capture_claim(db, statement="claim B", task_ids=["instance_x"]))
+        asyncio.run(link_claims(
+            db, from_claim_id=a, to_claim_id=b, relation="DEPENDS_ON",
+            properties={"reason": "pandas>=2.0 removes DataFrame.append"},
+        ))
+        edge = [e for e in db.edges if e["custom_edge_type"] == "DEPENDS_ON"][0]
+        assert edge["properties"]["reason"] == "pandas>=2.0 removes DataFrame.append"
+
+
+class TestGetClaimRelations:
+    def test_returns_outgoing_and_incoming_by_default(self):
+        db = FakeDB()
+        db.add_task_node("instance_x")
+        a = asyncio.run(capture_claim(db, statement="claim A", task_ids=["instance_x"]))
+        b = asyncio.run(capture_claim(db, statement="claim B", task_ids=["instance_x"]))
+        c = asyncio.run(capture_claim(db, statement="claim C", task_ids=["instance_x"]))
+        asyncio.run(link_claims(db, from_claim_id=a, to_claim_id=b, relation="SUPPORTS"))
+        asyncio.run(link_claims(db, from_claim_id=c, to_claim_id=a, relation="REFINES"))
+
+        relations = asyncio.run(get_claim_relations(db, a))
+        found = {(r["relation"], str(r["source_id"]), str(r["target_id"])) for r in relations}
+        assert found == {("SUPPORTS", a, b), ("REFINES", c, a)}
+
+    def test_direction_outgoing_only(self):
+        db = FakeDB()
+        db.add_task_node("instance_x")
+        a = asyncio.run(capture_claim(db, statement="claim A", task_ids=["instance_x"]))
+        b = asyncio.run(capture_claim(db, statement="claim B", task_ids=["instance_x"]))
+        c = asyncio.run(capture_claim(db, statement="claim C", task_ids=["instance_x"]))
+        asyncio.run(link_claims(db, from_claim_id=a, to_claim_id=b, relation="SUPPORTS"))
+        asyncio.run(link_claims(db, from_claim_id=c, to_claim_id=a, relation="REFINES"))
+
+        relations = asyncio.run(get_claim_relations(db, a, direction="outgoing"))
+        assert len(relations) == 1
+        assert relations[0]["relation"] == "SUPPORTS"
+
+    def test_direction_incoming_only(self):
+        db = FakeDB()
+        db.add_task_node("instance_x")
+        a = asyncio.run(capture_claim(db, statement="claim A", task_ids=["instance_x"]))
+        b = asyncio.run(capture_claim(db, statement="claim B", task_ids=["instance_x"]))
+        c = asyncio.run(capture_claim(db, statement="claim C", task_ids=["instance_x"]))
+        asyncio.run(link_claims(db, from_claim_id=a, to_claim_id=b, relation="SUPPORTS"))
+        asyncio.run(link_claims(db, from_claim_id=c, to_claim_id=a, relation="REFINES"))
+
+        relations = asyncio.run(get_claim_relations(db, a, direction="incoming"))
+        assert len(relations) == 1
+        assert relations[0]["relation"] == "REFINES"
+
+    def test_relations_filter_narrows_the_result(self):
+        db = FakeDB()
+        db.add_task_node("instance_x")
+        a = asyncio.run(capture_claim(db, statement="claim A", task_ids=["instance_x"]))
+        b = asyncio.run(capture_claim(db, statement="claim B", task_ids=["instance_x"]))
+        asyncio.run(link_claims(db, from_claim_id=a, to_claim_id=b, relation="SUPPORTS"))
+        asyncio.run(link_claims(db, from_claim_id=a, to_claim_id=b, relation="GENERALIZES"))
+
+        relations = asyncio.run(get_claim_relations(db, a, relations={"SUPPORTS"}))
+        assert len(relations) == 1
+        assert relations[0]["relation"] == "SUPPORTS"
+
+    def test_mixing_truth_maintenance_and_general_relations_both_findable(self):
+        """RELATIONS (SUPERSEDES/CONTRADICTS) and GENERAL_RELATIONS live
+        in different edge_type buckets internally but must both be
+        queryable uniformly through this one reader -- that's the whole
+        point of ALL_CLAIM_RELATIONS."""
+        db = FakeDB()
+        db.add_task_node("instance_x")
+        a = asyncio.run(capture_claim(db, statement="claim A", task_ids=["instance_x"]))
+        b = asyncio.run(capture_claim(db, statement="claim B", task_ids=["instance_x"]))
+        c = asyncio.run(capture_claim(db, statement="claim C", task_ids=["instance_x"]))
+        asyncio.run(relate_claims(db, from_claim_id=a, to_claim_id=b, relation="CONTRADICTS"))
+        asyncio.run(link_claims(db, from_claim_id=a, to_claim_id=c, relation="SUPPORTS"))
+
+        relations = asyncio.run(get_claim_relations(db, a, direction="outgoing"))
+        found = {r["relation"] for r in relations}
+        assert found == {"CONTRADICTS", "SUPPORTS"}
+
+    def test_invalid_direction_is_rejected(self):
+        db = FakeDB()
+        with pytest.raises(ValueError):
+            asyncio.run(get_claim_relations(db, str(uuid4()), direction="sideways"))
+
+    def test_unknown_relation_filter_is_rejected(self):
+        db = FakeDB()
+        with pytest.raises(ValueError):
+            asyncio.run(get_claim_relations(db, str(uuid4()), relations={"AGREES_WITH"}))
+
+    def test_all_claim_relations_is_the_real_union(self):
+        assert ALL_CLAIM_RELATIONS == {
+            "SUPERSEDES", "CONTRADICTS", "SUPPORTS", "REFINES", "DEPENDS_ON",
+            "CONDITIONAL_ON", "GENERALIZES", "SPECIALIZES", "DERIVED_FROM",
+            "INSTANTIATES", "APPLIES_TO",
+        }
