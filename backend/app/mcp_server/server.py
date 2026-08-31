@@ -569,7 +569,7 @@ async def _respond_tier1_hit(pool, task_description: str, matched_procedure: dic
     from app.execution.graph_executor import NodeResult, execute_task_graph
     from app.execution.plan_persistence import persist_compiled_plan, record_plan_execution
     from app.execution.plans import compile_plan
-    from app.execution.procedure_graph import steps_to_linear_nodes
+    from app.execution.procedure_graph import expand_procedure_steps
 
     steps = matched_procedure.get("steps") or [{"order": 0, "goal": task_description}]
     is_verified = matched_procedure.get("verification_state") == "verified"
@@ -579,13 +579,22 @@ async def _respond_tier1_hit(pool, task_description: str, matched_procedure: dic
         else "UNVERIFIED -- opted in via allow_unverified_procedures, use at your own judgment"
     )
 
+    # Phase 10 (memory-substrate map): expand any subprocedure_ref steps
+    # into their referenced procedure's own real steps BEFORE compiling --
+    # compile_plan itself stays pure/pool-free (its own documented
+    # invariant); expansion is the async, DB-touching step that runs
+    # before it, same as every other real caller of compile_plan.
+    nodes = await expand_procedure_steps(
+        pool, procedure_id=matched_procedure["procedure_id"],
+        procedure_version=matched_procedure["version"], steps=steps,
+    )
     compiled_plan = compile_plan(
         procedure_id=matched_procedure["procedure_id"],
         procedure_version=matched_procedure["version"],
         procedure_row_id=matched_procedure["id"],
         procedure_payload=matched_procedure,
         task_description=task_description,
-        nodes=steps_to_linear_nodes(steps),
+        nodes=nodes,
         extractor_version="find_best_way_plan_compiler@1",
         created_by="find_best_way",
     )
@@ -915,16 +924,23 @@ async def find_best_way(task_description: str, ctx: Context,
     from app.execution.graph_executor import NodeResult, execute_task_graph
     from app.execution.plan_persistence import persist_compiled_plan, record_plan_execution
     from app.execution.plans import compile_plan
-    from app.execution.procedure_graph import steps_to_linear_nodes
+    from app.execution.procedure_graph import expand_procedure_steps
 
     steps = procedure_payload.get("steps") or [{"order": 0, "goal": task_description}]
+    # Phase 10: same real expansion as the tier-1 lookup path above --
+    # a composed procedure's referenced sub-procedure steps are spliced
+    # in before compile_plan sees them.
+    nodes = await expand_procedure_steps(
+        pool, procedure_id=procedure_payload["procedure_id"],
+        procedure_version=procedure_payload["version"], steps=steps,
+    )
     compiled_plan = compile_plan(
         procedure_id=procedure_payload["procedure_id"],
         procedure_version=procedure_payload["version"],
         procedure_row_id=UUID(plan_procedure_row_id),
         procedure_payload=procedure_payload,
         task_description=task_description,
-        nodes=steps_to_linear_nodes(steps),
+        nodes=nodes,
         extractor_version="find_best_way_plan_compiler@1",
         created_by="find_best_way",
     )
@@ -1049,7 +1065,8 @@ async def find_best_way(task_description: str, ctx: Context,
 
 @server.tool()
 async def reproduce_procedure(procedure_id: str, repo_path: str, ctx: Context,
-                               model: str = "gemma-4-31B-it", max_steps: int = 25) -> str:
+                               model: str = "gemma-4-31B-it", max_steps: int = 25,
+                               transfer_repo_path: Optional[str] = None) -> str:
     """
     Deliberately re-run an EXISTING procedure's own steps against a real
     repo to test whether it still reproduces its claimed result, and
@@ -1066,12 +1083,49 @@ async def reproduce_procedure(procedure_id: str, repo_path: str, ctx: Context,
     until this tool nothing ever produced one -- repeated successful USE
     is real evidence, but it is not the same claim as "this was
     independently re-run specifically to check it still works," which is
-    what the founder's spec means by reproduction/replay. This is
-    deliberately the narrowest real slice of that idea (founder's own
-    "Replay A -- same instance" tier): re-run against the SAME repo the
-    caller points at, not a perturbed or different one. Cross-repo
-    transfer validation is a real, separate, larger gap -- not attempted
-    here.
+    what the founder's spec means by reproduction/replay.
+
+    REPLAY/TRANSFER TIERS (spec's Phase 9 vocabulary -- "Replay A",
+    "Replay B", "Transfer C", "Transfer D"): this tool covers exactly two
+    of the four, honestly:
+      - Replay A (same instance) -- ALWAYS run: re-run against `repo_path`,
+        the same repo/instance the caller points at.
+      - Transfer C (different repository, same task family) -- run ONLY
+        when `transfer_repo_path` is supplied: re-run the SAME procedure's
+        SAME stored steps against a second, different real repo checkout.
+        "Same task family" is the caller's responsibility to satisfy by
+        choosing a `transfer_repo_path` that plausibly needs the same
+        procedure -- this tool does not infer task-family membership.
+      - Replay B (perturbed same domain -- change irrelevant details,
+        still work?) and Transfer D (OOD where reasonable) are explicitly
+        DEFERRED, not attempted here. Both need a notion of "perturb this
+        repo without changing task-relevance" (B) or a deliberately
+        dissimilar-domain corpus (D) that this tool has no machinery for
+        yet -- claiming either would be dishonest scope inflation.
+
+    Each tier that actually runs is recorded as its OWN, SEPARATE
+    `reproduction` evidence row (never merged into one), distinguished by
+    a real, queryable `context_key` convention rather than a new DB
+    `evidence_type`: same-instance rows keep the tool's original
+    `context_key=f"reproduction:{repo_basename}"` (byte-for-byte
+    unchanged from before `transfer_repo_path` existed -- no caller
+    observes a behavior change by this tool alone growing a new
+    parameter), and a transfer-tier row is written with
+    `context_key=f"reproduction:transfer:{repo_basename}->{transfer_basename}"`.
+    This is a deliberate "no new schema" choice: `context_key` (db/24_
+    evidence.sql) already exists specifically to let downstream capability
+    math distinguish "ran here" from "ran there" (see
+    `procedure_extraction/failure_handlers.py::capability_for_stream`,
+    which already reads `context_key` as the outcome's "environment");
+    the `reproduction:transfer:` prefix is a *convention* on that real
+    column, queryable with a plain `LIKE 'reproduction:transfer:%'`, not a
+    parallel evidence_type that every downstream consumer would need to
+    learn about. A first-class `evidence_type` axis was considered and
+    rejected for this pass: nothing downstream currently needs "N
+    transfer-tier reproductions" to compute differently from "N same-repo
+    reproductions" at the SQL aggregate level (both are equally
+    `independent_supporting_required` toward `verified` today) -- if that
+    changes, the prefix is still there to filter on.
 
     Reuses the exact execution machinery `find_best_way`'s tier 2 already
     proves live (compile_plan -> persist_compiled_plan -> RepoSandbox +
@@ -1081,7 +1135,8 @@ async def reproduce_procedure(procedure_id: str, repo_path: str, ctx: Context,
     `procedure_id` and its OWN stored steps are what get re-executed, and
     the outcome is written via `record_execution_outcome(...,
     evidence_type="reproduction")` instead of the default
-    `"execution_result"`.
+    `"execution_result"`. When `transfer_repo_path` is given, this whole
+    machinery runs a SECOND time against it, independently.
 
     STALENESS CHECK (Phase 4, runs BEFORE any agent call, only when the
     procedure carries numeric invariants): probes `repo_path`'s real
@@ -1093,7 +1148,12 @@ async def reproduce_procedure(procedure_id: str, repo_path: str, ctx: Context,
     `staleness='stale'` and returns immediately -- no agent run, since
     re-running a procedure whose environment assumptions the probe just
     disproved would not be testing reproduction, it would be confirming
-    what the probe already found.
+    what the probe already found. When `transfer_repo_path` is supplied,
+    this SAME check also runs against the transfer target's OWN probed
+    environment before attempting a transfer run -- a procedure whose
+    invariant the transfer repo's real environment contradicts is a real,
+    meaningful "transfer failed because the environment doesn't qualify"
+    signal, and is reported as such rather than silently skipped.
 
     procedure_id: a procedures row `id` (not `procedure_id`'s stable
     handle) -- the exact version row being reproduced, matching evidence's
@@ -1103,11 +1163,17 @@ async def reproduce_procedure(procedure_id: str, repo_path: str, ctx: Context,
     server's filesystem, same security posture as `find_best_way`
     (caller-controlled, RepoSandbox path-traversal guarded, not a
     multi-tenant-safe boundary yet).
+    transfer_repo_path: optional absolute path to a SECOND, different
+    real repo checkout -- "different repository/instance, same task
+    family" per the spec's Transfer C tier. When omitted (the default),
+    this tool's behavior is unchanged from before this parameter existed.
     """
     pool = ctx.request_context.lifespan_context["pool"]
 
     if not os.path.isdir(repo_path):
         return f"REFUSED: repo_path {repo_path!r} is not a directory on this server."
+    if transfer_repo_path is not None and not os.path.isdir(transfer_repo_path):
+        return f"REFUSED: transfer_repo_path {transfer_repo_path!r} is not a directory on this server."
 
     from app.services.procedures import (
         get_procedure, mark_procedure_stale, record_execution_outcome, ProcedureNotFound,
@@ -1139,107 +1205,191 @@ async def reproduce_procedure(procedure_id: str, repo_path: str, ctx: Context,
     # (db/18_procedures.sql) is a real, enforced hard constraint in
     # applicability.py's cascade already; until this pass nothing in
     # production ever SET it away from 'fresh' -- this is that producer.
-    invariants = procedure_payload.get("invariants") or []
-    if invariants:
-        from app.services.environment_probe import invariant_bindings_from_facts, probe_environment
-        from app.services.invariants import check_invariants_async
+    from app.services.environment_probe import invariant_bindings_from_facts, probe_environment
+    from app.services.invariants import check_invariants_async
 
-        facts = probe_environment(repo_path)
+    invariants = procedure_payload.get("invariants") or []
+
+    async def _staleness_report(target_repo_path: str) -> Optional[str]:
+        """Same Phase 4 staleness check, factored so both the same-
+        instance repo and (when supplied) the transfer-tier repo run it
+        against THEIR OWN real, freshly-probed environment -- a
+        contradiction discovered on the transfer target is a real,
+        meaningful "transfer failed because the environment doesn't
+        qualify" signal, not something to silently skip. Returns a
+        formatted STALE report (and marks the procedure stale as a side
+        effect) on a genuine contradiction; None when invariants are
+        absent, satisfied, or undecidable."""
+        if not invariants:
+            return None
+        facts = probe_environment(target_repo_path)
         bindings = invariant_bindings_from_facts(facts)
         invariant_result = await check_invariants_async(invariants, bindings)
-        if invariant_result.violated:
-            updated = await mark_procedure_stale(
-                pool, procedure_row_id=procedure_id,
-                reason=f"invariant(s) {invariant_result.violated} contradicted by "
-                       f"probed bindings {bindings} at {repo_path}",
-                detected_by=f"reproduce_procedure:{os.path.basename(os.path.abspath(repo_path))}",
-            )
-            return (
-                f"STALE: procedure {procedure_id}'s invariant(s) "
-                f"{invariant_result.violated} are contradicted by this repo's real, "
-                f"probed environment ({bindings}) -- marking staleness="
-                f"'{updated['staleness']}' instead of reproducing against a known-"
-                "incompatible environment. No agent run was attempted."
-            )
+        if not invariant_result.violated:
+            return None
+        updated = await mark_procedure_stale(
+            pool, procedure_row_id=procedure_id,
+            reason=f"invariant(s) {invariant_result.violated} contradicted by "
+                   f"probed bindings {bindings} at {target_repo_path}",
+            detected_by=f"reproduce_procedure:{os.path.basename(os.path.abspath(target_repo_path))}",
+        )
+        return (
+            f"STALE: procedure {procedure_id}'s invariant(s) "
+            f"{invariant_result.violated} are contradicted by this repo's real, "
+            f"probed environment ({bindings}) -- marking staleness="
+            f"'{updated['staleness']}' instead of reproducing against a known-"
+            "incompatible environment. No agent run was attempted."
+        )
 
-    sandbox = RepoSandbox(repo_path)
+    same_repo_stale = await _staleness_report(repo_path)
+    if same_repo_stale is not None:
+        # Byte-for-byte unchanged early return from before transfer_repo_path
+        # existed: a stale primary repo means no run of ANY tier was
+        # attempted, transfer included.
+        return same_repo_stale
+
+    from app.execution.graph_executor import NodeResult, execute_task_graph
+    from app.execution.plan_persistence import persist_compiled_plan, record_plan_execution
+    from app.execution.plans import compile_plan
+    from app.execution.procedure_graph import expand_procedure_steps
+
     client = OpenAI(
         max_retries=0,
         api_key=settings.require("general_compute_api_key"),
         base_url=settings.general_compute_base_url,
     )
 
-    from app.execution.graph_executor import NodeResult, execute_task_graph
-    from app.execution.plan_persistence import persist_compiled_plan, record_plan_execution
-    from app.execution.plans import compile_plan
-    from app.execution.procedure_graph import steps_to_linear_nodes
-
-    compiled_plan = compile_plan(
-        procedure_id=procedure_payload["procedure_id"],
-        procedure_version=procedure_payload["version"],
-        procedure_row_id=UUID(procedure_id),
-        procedure_payload=procedure_payload,
-        task_description=task_description,
-        nodes=steps_to_linear_nodes(steps),
-        extractor_version="reproduce_procedure_plan_compiler@1",
-        created_by="reproduce_procedure",
+    # Phase 10: expand once, reused by both the same-repo and (when
+    # requested) transfer-tier runs below -- both replay the SAME
+    # procedure's same steps, just against different target repos.
+    expanded_nodes = await expand_procedure_steps(
+        pool, procedure_id=procedure_payload["procedure_id"],
+        procedure_version=procedure_payload["version"], steps=steps,
     )
-    compiled_plan, _ = await persist_compiled_plan(pool, compiled_plan)
 
-    node_runs: dict[int, "AgentRun"] = {}  # noqa: F821
-    node_notes: list[str] = []
-
-    async def run_node(node):
-        prior_context = ("\n\nPrior steps completed:\n" + "\n".join(node_notes)) if node_notes else ""
-        node_instance = {
-            "instance_id": f"mcp_reproduce_procedure_{secrets.token_hex(6)}_step{node.order}",
-            "repo": os.path.basename(os.path.abspath(repo_path)),
-            "problem_statement": f"{task_description}\n\nCurrent step: {node.goal}",
-        }
-        node_agent = Agent(client, model, max_steps=max_steps)
-        node_run = await asyncio.to_thread(
-            node_agent.run, node_instance, sandbox, "mcp_reproduce_procedure", prior_context,
+    async def _run_tier(target_repo_path: str, context_key: str) -> dict:
+        """One full replay/transfer run of the procedure's OWN stored
+        steps against `target_repo_path`, recorded as its own
+        `reproduction` evidence row under `context_key`. Identical
+        machinery for both tiers -- only the target repo and the
+        context_key convention differ."""
+        sandbox = RepoSandbox(target_repo_path)
+        compiled_plan = compile_plan(
+            procedure_id=procedure_payload["procedure_id"],
+            procedure_version=procedure_payload["version"],
+            procedure_row_id=UUID(procedure_id),
+            procedure_payload=procedure_payload,
+            task_description=task_description,
+            nodes=expanded_nodes,
+            extractor_version="reproduce_procedure_plan_compiler@1",
+            created_by="reproduce_procedure",
         )
-        node_runs[node.order] = node_run
-        succeeded = node_run.stop_reason == "finished"
-        note = f"step {node.order} ({node.goal}): stop_reason={node_run.stop_reason}, tool_calls={len(node_run.tool_calls)}"
-        node_notes.append(note)
-        return NodeResult(status="success" if succeeded else "failure", notes=note)
+        compiled_plan, _ = await persist_compiled_plan(pool, compiled_plan)
 
-    graph_result = await execute_task_graph(compiled_plan.graph, run_node=run_node)
+        node_runs: dict[int, "AgentRun"] = {}  # noqa: F821
+        node_notes: list[str] = []
 
-    all_tool_calls = [tc for r in node_runs.values() for tc in r.tool_calls]
-    all_files_edited = sorted({f for r in node_runs.values() for f in r.files_edited})
-    combined_patch = "\n".join(r.patch for r in node_runs.values() if r.patch)
-    total_calls = sum(r.usage.calls for r in node_runs.values())
+        async def run_node(node):
+            prior_context = ("\n\nPrior steps completed:\n" + "\n".join(node_notes)) if node_notes else ""
+            node_instance = {
+                "instance_id": f"mcp_reproduce_procedure_{secrets.token_hex(6)}_step{node.order}",
+                "repo": os.path.basename(os.path.abspath(target_repo_path)),
+                "problem_statement": f"{task_description}\n\nCurrent step: {node.goal}",
+            }
+            node_agent = Agent(client, model, max_steps=max_steps)
+            node_run = await asyncio.to_thread(
+                node_agent.run, node_instance, sandbox, "mcp_reproduce_procedure", prior_context,
+            )
+            node_runs[node.order] = node_run
+            succeeded = node_run.stop_reason == "finished"
+            note = f"step {node.order} ({node.goal}): stop_reason={node_run.stop_reason}, tool_calls={len(node_run.tool_calls)}"
+            node_notes.append(note)
+            return NodeResult(status="success" if succeeded else "failure", notes=note)
 
-    # Same real success proxy as find_best_way's tier 2: the whole graph
-    # finished AND produced a non-empty diff -- "finished" alone can mean
-    # "gave up cleanly", not "reproduced".
-    run_succeeded = graph_result.outcome == "success" and bool(combined_patch)
+        graph_result = await execute_task_graph(compiled_plan.graph, run_node=run_node)
 
-    updated = await record_execution_outcome(
-        pool, procedure_row_id=procedure_id, success=run_succeeded,
-        context_key=f"reproduction:{os.path.basename(os.path.abspath(repo_path))}",
-        steps_used=total_calls,
-        evidence_type="reproduction",
-    )
+        all_files_edited = sorted({f for r in node_runs.values() for f in r.files_edited})
+        combined_patch = "\n".join(r.patch for r in node_runs.values() if r.patch)
+        total_calls = sum(r.usage.calls for r in node_runs.values())
 
-    await record_plan_execution(
-        pool, compiled=compiled_plan,
-        outcome=graph_result.outcome, created_by="reproduce_procedure",
-    )
+        # Same real success proxy as find_best_way's tier 2: the whole
+        # graph finished AND produced a non-empty diff -- "finished"
+        # alone can mean "gave up cleanly", not "reproduced".
+        run_succeeded = graph_result.outcome == "success" and bool(combined_patch)
+
+        updated = await record_execution_outcome(
+            pool, procedure_row_id=procedure_id, success=run_succeeded,
+            context_key=context_key,
+            steps_used=total_calls,
+            evidence_type="reproduction",
+        )
+
+        await record_plan_execution(
+            pool, compiled=compiled_plan,
+            outcome=graph_result.outcome, created_by="reproduce_procedure",
+        )
+
+        return {
+            "run_succeeded": run_succeeded,
+            "graph_outcome": graph_result.outcome,
+            "total_nodes": len(compiled_plan.graph.nodes),
+            "executed_nodes": len(node_runs),
+            "node_notes": node_notes,
+            "files_edited": all_files_edited,
+            "updated": updated,
+            "combined_patch": combined_patch,
+        }
+
+    same_repo_basename = os.path.basename(os.path.abspath(repo_path))
+    same_result = await _run_tier(repo_path, f"reproduction:{same_repo_basename}")
 
     lines = [
-        f"reproduction_outcome: {'REPRODUCED' if run_succeeded else 'FAILED_TO_REPRODUCE'}",
-        f"graph_outcome: {graph_result.outcome}",
-        f"steps: {len(compiled_plan.graph.nodes)} total, {len(node_runs)} executed",
-        *[f"  {note}" for note in node_notes],
-        f"files_edited: {all_files_edited}",
-        f"verification_state_after: {updated['verification_state']} "
-        f"(availability: {updated['availability']})",
+        f"reproduction_outcome: {'REPRODUCED' if same_result['run_succeeded'] else 'FAILED_TO_REPRODUCE'}",
+        f"graph_outcome: {same_result['graph_outcome']}",
+        f"steps: {same_result['total_nodes']} total, {same_result['executed_nodes']} executed",
+        *[f"  {note}" for note in same_result["node_notes"]],
+        f"files_edited: {same_result['files_edited']}",
+        f"verification_state_after: {same_result['updated']['verification_state']} "
+        f"(availability: {same_result['updated']['availability']})",
     ]
-    lines.append("\n--- COMBINED DIFF ---\n" + combined_patch if combined_patch else "\n(no changes made)")
+    lines.append(
+        "\n--- COMBINED DIFF ---\n" + same_result["combined_patch"]
+        if same_result["combined_patch"] else "\n(no changes made)"
+    )
+
+    # Transfer C tier (spec: "different repository/instance, same task
+    # family") -- only attempted when the caller asked for it. Recorded
+    # as a wholly separate reproduction evidence row (own context_key,
+    # own transaction via record_execution_outcome) so a same-repo
+    # success and a transfer failure (or vice versa) are never conflated
+    # into one number.
+    if transfer_repo_path is not None:
+        transfer_repo_basename = os.path.basename(os.path.abspath(transfer_repo_path))
+        lines.append(f"\n--- TRANSFER TIER (Transfer C: {same_repo_basename} -> {transfer_repo_basename}) ---")
+
+        transfer_stale = await _staleness_report(transfer_repo_path)
+        if transfer_stale is not None:
+            lines.append(transfer_stale.replace(
+                "STALE:", "TRANSFER STALE:",
+            ))
+        else:
+            transfer_context_key = f"reproduction:transfer:{same_repo_basename}->{transfer_repo_basename}"
+            transfer_result = await _run_tier(transfer_repo_path, transfer_context_key)
+            lines.extend([
+                f"transfer_outcome: {'REPRODUCED' if transfer_result['run_succeeded'] else 'FAILED_TO_REPRODUCE'}",
+                f"transfer_graph_outcome: {transfer_result['graph_outcome']}",
+                f"transfer_steps: {transfer_result['total_nodes']} total, {transfer_result['executed_nodes']} executed",
+                *[f"  {note}" for note in transfer_result["node_notes"]],
+                f"transfer_files_edited: {transfer_result['files_edited']}",
+                f"transfer_verification_state_after: {transfer_result['updated']['verification_state']} "
+                f"(availability: {transfer_result['updated']['availability']})",
+                f"transfer_context_key: {transfer_context_key}",
+            ])
+            lines.append(
+                "\n--- TRANSFER DIFF ---\n" + transfer_result["combined_patch"]
+                if transfer_result["combined_patch"] else "\n(no changes made on transfer repo)"
+            )
+
     return "\n".join(lines)
 
 

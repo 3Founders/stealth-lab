@@ -8,6 +8,8 @@ asserting the function "does something reasonable".
 """
 import asyncio
 import os
+import shutil
+import tempfile
 from datetime import datetime, timedelta, timezone
 
 import asyncpg
@@ -728,5 +730,140 @@ def test_reproduction_evidence_is_recorded_distinctly_from_execution_result():
         finally:
             await _cleanup(pool, "proc-test-repro")
             await pool.close()
+
+    asyncio.run(_run())
+
+
+def test_transfer_tier_reproduction_is_distinguishable_from_same_repo_reproduction():
+    """V1 spec Phase 9 ("Replay A / Replay B / Transfer C / Transfer D",
+    tracked as SEPARATE evidence): `reproduce_procedure`'s new
+    `transfer_repo_path` slice (Transfer C -- "different repository,
+    same task family") must produce a real, separately-queryable
+    `reproduction` evidence row from any same-repo (Replay A)
+    reproduction that ran in the same call, using the chosen design --
+    the EXISTING `reproduction` evidence_type plus a structured
+    `context_key` tier convention (`reproduction:<basename>` for
+    same-instance, `reproduction:transfer:<basename>-><basename>` for
+    transfer), not a new DB evidence_type.
+
+    Tests at the level `reproduce_procedure` itself calls into
+    (`record_execution_outcome` + the real `check_invariants_async` /
+    `probe_environment` staleness primitives) rather than running a full
+    sandboxed agent -- the sandboxed execution path is already proven
+    live (test_full_chain_live.py); the goal here is proving the
+    EVIDENCE DISTINCTION is real and queryable.
+
+    Also proves the staleness check the tool runs per-repo is genuinely
+    per-repo, not a shared/stale binding: seeds a 'same' repo pinning a
+    satisfying pandas version and a 'transfer' repo pinning a violating
+    one, and confirms `check_invariants_async` disagrees between them
+    when each is probed independently -- exactly what `reproduce_procedure`
+    does before attempting a transfer run against a target whose real
+    environment doesn't qualify.
+    """
+    from app.services.environment_facts import invariant_bindings_from_facts, probe_environment
+    from app.services.invariants import check_invariants_async
+
+    async def _run():
+        pool = await create_pool(DATABASE_URL, min_size=1, max_size=2)
+        same_dir = tempfile.mkdtemp(prefix="proc_test_transfer_same_")
+        transfer_dir = tempfile.mkdtemp(prefix="proc_test_transfer_xfer_")
+        try:
+            await _cleanup(pool, "proc-test-transfer")
+            invariants = [{"kind": "numeric", "expr": "pandas_version >= 2.0"}]
+            result = await capture_procedure(
+                pool, name="proc-test-transfer-1", goal="g",
+                invariants=invariants,
+                provenance="system_pending_review", scope_type="global",
+            )
+            row_id = result["id"]
+
+            # Seed two REAL, distinct repo checkouts on disk -- same
+            # FRESH_REPO/STALE_REPO pattern as test_full_chain_live.py,
+            # one satisfying the procedure's invariant, one violating it.
+            with open(os.path.join(same_dir, "requirements.txt"), "w") as f:
+                f.write("pandas==2.1.0\n")
+            with open(os.path.join(transfer_dir, "requirements.txt"), "w") as f:
+                f.write("pandas==1.5.3\n")
+
+            # Prove the staleness primitive reproduce_procedure calls is
+            # genuinely per-repo: each target probes its OWN real
+            # filesystem, not a shared binding.
+            same_bindings = invariant_bindings_from_facts(probe_environment(same_dir))
+            transfer_bindings = invariant_bindings_from_facts(probe_environment(transfer_dir))
+            assert same_bindings.get("pandas_version") == 2.1
+            assert transfer_bindings.get("pandas_version") == 1.5
+            same_check = await check_invariants_async(invariants, same_bindings)
+            transfer_check = await check_invariants_async(invariants, transfer_bindings)
+            assert not same_check.violated, (
+                "the same-instance repo satisfies pandas_version >= 2.0 -- "
+                "reproduce_procedure would proceed to a real agent run here"
+            )
+            assert transfer_check.violated == ["pandas_version >= 2.0"], (
+                "the transfer repo's OWN probed environment violates the "
+                "invariant -- reproduce_procedure must detect this against "
+                "the TRANSFER target specifically, not skip the check"
+            )
+
+            same_basename = os.path.basename(same_dir)
+            transfer_basename = os.path.basename(transfer_dir)
+
+            # Replay A (same-instance) -- byte-for-byte the same
+            # context_key convention reproduce_procedure has always used.
+            await record_execution_outcome(
+                pool, procedure_row_id=row_id, success=True,
+                context_key=f"reproduction:{same_basename}",
+                evidence_type="reproduction",
+            )
+            # Transfer C -- the new tier's context_key convention.
+            transfer_context_key = f"reproduction:transfer:{same_basename}->{transfer_basename}"
+            await record_execution_outcome(
+                pool, procedure_row_id=row_id, success=True,
+                context_key=transfer_context_key,
+                evidence_type="reproduction",
+            )
+
+            # Real SQL proof, not prose: both rows exist, both are typed
+            # `reproduction` (no new evidence_type), and the tier is
+            # queryable back out via context_key alone.
+            rows = await pool.fetch(
+                "SELECT context_key, evidence_type, outcome_status, direction "
+                "FROM evidence WHERE target_type = 'procedure' AND target_id = $1 "
+                "ORDER BY context_key",
+                row_id,
+            )
+            assert len(rows) == 2
+            for r in rows:
+                assert r["evidence_type"] == "reproduction"
+                assert r["outcome_status"] == "success"
+                assert r["direction"] == "supports"
+
+            same_repo_rows = await pool.fetch(
+                "SELECT context_key FROM evidence WHERE target_type = 'procedure' "
+                "AND target_id = $1 AND context_key LIKE 'reproduction:%' "
+                "AND context_key NOT LIKE 'reproduction:transfer:%'",
+                row_id,
+            )
+            transfer_rows = await pool.fetch(
+                "SELECT context_key FROM evidence WHERE target_type = 'procedure' "
+                "AND target_id = $1 AND context_key LIKE 'reproduction:transfer:%'",
+                row_id,
+            )
+            assert [r["context_key"] for r in same_repo_rows] == [f"reproduction:{same_basename}"]
+            assert [r["context_key"] for r in transfer_rows] == [transfer_context_key]
+
+            # Both independently count toward the verified gate's
+            # required-evidence statistic -- a transfer-tier row is not
+            # a second-class citizen next to a same-repo one.
+            stats = await pool.fetchrow(
+                "SELECT independent_supporting_required FROM procedure_evidence_stats "
+                "WHERE procedure_row_id = $1", row_id,
+            )
+            assert stats["independent_supporting_required"] == 2
+        finally:
+            await _cleanup(pool, "proc-test-transfer")
+            await pool.close()
+            shutil.rmtree(same_dir, ignore_errors=True)
+            shutil.rmtree(transfer_dir, ignore_errors=True)
 
     asyncio.run(_run())
