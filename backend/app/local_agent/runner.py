@@ -58,6 +58,7 @@ from mcp.client.streamable_http import streamable_http_client
 
 from app.execution.graph_executor import NodeResult, execute_task_graph
 from app.execution.procedure_graph import steps_to_linear_nodes
+from app.local_agent.local_learning import maybe_capture_local_candidate
 from app.local_agent.local_store import LocalProcedureStore
 from app.local_agent.unified_retrieval import orchestrate_unified_search
 from app.models.plan import TaskGraph
@@ -71,11 +72,18 @@ class LocalRunResult:
     files_edited: list[str] = field(default_factory=list)
     combined_patch: str = ""
     node_notes: list[str] = field(default_factory=list)
-    # "local" | "global" | None (no match) -- which store the executed
-    # procedure came from. Added when unified local+global retrieval was
-    # wired in; a caller ignoring this field (all pre-existing ones did)
-    # sees unchanged behavior, since it's a trailing field with a default.
+    # "local" | "global" | "local_adhoc" | None (no match, no ad-hoc
+    # attempted or captured) -- which store the executed procedure came
+    # from. Added when unified local+global retrieval was wired in; a
+    # caller ignoring this field (all pre-existing ones did) sees
+    # unchanged behavior, since it's a trailing field with a default.
     source: Optional[str] = None
+    # Phase 12 (personal learning loop): set when an ad-hoc (no-match)
+    # run succeeded well enough to be captured as a new local candidate
+    # procedure -- see local_learning.py::maybe_capture_local_candidate.
+    # None on every other path (a match was used, or the ad-hoc run
+    # didn't clear the real success bar).
+    captured_candidate: Optional[dict] = None
 
 
 @asynccontextmanager
@@ -173,6 +181,31 @@ class LocalAgentRunner:
         self.model = model
         self.max_steps = max_steps
 
+    async def _execute_steps(
+        self, steps: list[dict], *, task_description: str, repo_path: str,
+    ) -> tuple[list[str], dict[int, NodeResult], Any]:
+        """Real per-step Agent+RepoSandbox execution over `steps` -- the
+        SAME machinery for a matched procedure's real steps or a single
+        ad-hoc step, factored out so both paths in `run()` share one real
+        implementation rather than two copies. Returns (node_notes,
+        node_results, graph_result)."""
+        nodes = steps_to_linear_nodes(steps)
+        graph = TaskGraph(execution_plan_id=uuid4(), graph_hash="local-agent-run", nodes=nodes)
+
+        node_notes: list[str] = []
+        node_results: dict[int, NodeResult] = {}
+
+        async def run_node(node) -> NodeResult:
+            result = await _run_local_node(
+                node, task_description=task_description, repo_path=repo_path,
+                model=self.model, max_steps=self.max_steps, node_notes=node_notes,
+            )
+            node_results[node.order] = result
+            return result
+
+        graph_result = await execute_task_graph(graph, run_node=run_node)
+        return node_notes, node_results, graph_result
+
     async def run(self, task_description: str, repo_path: str, *,
                    allow_unverified: bool = False) -> LocalRunResult:
         """allow_unverified: default False -- production default is
@@ -216,10 +249,7 @@ class LocalAgentRunner:
                     require_verified=not allow_unverified,
                     limit=3,
                 )
-                if not ranked:
-                    return LocalRunResult(matched_procedure=None, graph_outcome="no_match")
-                best = ranked[0]
-                matched, source = best.procedure, best.source
+                matched, source = (ranked[0].procedure, ranked[0].source) if ranked else (None, None)
             else:
                 search_result = await session.call_tool(
                     "search_procedures",
@@ -229,9 +259,43 @@ class LocalAgentRunner:
                     },
                 )
                 matches = json.loads(search_result.content[0].text)
-                if not matches:
+                matched, source = (matches[0], "global") if matches else (None, None)
+
+            # Phase 12 (personal learning loop): nothing matched, local or
+            # global -- rather than giving up (the prior behavior), run
+            # the task ad-hoc as a single real step, mirroring find_best_
+            # way's own server-side ad-hoc-run precedent. A real success
+            # becomes a new local candidate procedure (never global --
+            # Rule 6), so future similar tasks in this workspace have
+            # something to match against.
+            if matched is None:
+                if store is None:
                     return LocalRunResult(matched_procedure=None, graph_outcome="no_match")
-                matched, source = matches[0], "global"
+                steps = [{"order": 0, "goal": task_description}]
+                node_notes, node_results, graph_result = await self._execute_steps(
+                    steps, task_description=task_description, repo_path=repo_path,
+                )
+                all_files_edited = sorted({
+                    f for r in node_results.values() for f in r.data.get("files_edited", [])
+                })
+                combined_patch = "\n".join(
+                    r.data["patch"] for r in node_results.values() if r.data.get("patch")
+                )
+                run_succeeded = graph_result.outcome == "success" and bool(combined_patch)
+                captured = maybe_capture_local_candidate(
+                    store, task_description=task_description, node_notes=node_notes,
+                    files_edited=all_files_edited, combined_patch=combined_patch,
+                    run_succeeded=run_succeeded, repo_root=repo_path,
+                )
+                return LocalRunResult(
+                    matched_procedure=None,
+                    graph_outcome=graph_result.outcome,
+                    files_edited=all_files_edited,
+                    combined_patch=combined_patch,
+                    node_notes=node_notes,
+                    source="local_adhoc" if captured else None,
+                    captured_candidate=captured,
+                )
 
             if source == "local":
                 # Already has full steps/etc from LocalProcedureStore --
@@ -245,21 +309,9 @@ class LocalAgentRunner:
                 procedure = json.loads(proc_result.content[0].text)
 
             steps = procedure.get("steps") or [{"order": 0, "goal": task_description}]
-            nodes = steps_to_linear_nodes(steps)
-            graph = TaskGraph(execution_plan_id=uuid4(), graph_hash="local-agent-run", nodes=nodes)
-
-            node_notes: list[str] = []
-            node_results: dict[int, NodeResult] = {}
-
-            async def run_node(node) -> NodeResult:
-                result = await _run_local_node(
-                    node, task_description=task_description, repo_path=repo_path,
-                    model=self.model, max_steps=self.max_steps, node_notes=node_notes,
-                )
-                node_results[node.order] = result
-                return result
-
-            graph_result = await execute_task_graph(graph, run_node=run_node)
+            node_notes, node_results, graph_result = await self._execute_steps(
+                steps, task_description=task_description, repo_path=repo_path,
+            )
 
             all_files_edited = sorted({
                 f for r in node_results.values() for f in r.data.get("files_edited", [])

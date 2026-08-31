@@ -116,7 +116,13 @@ async def test_runner_probes_its_own_repo_and_sends_invariant_bindings(monkeypat
     to the remote server) and forward the derived numeric bindings on
     search_procedures -- the same mechanism find_best_way's own
     repo_path path uses server-side, applied client-side because this is
-    the process with a real repo to look at."""
+    the process with a real repo to look at.
+
+    No match, local or global -- Phase 12's ad-hoc path attempts a real
+    execution now (see test_runner_prefers_and_stays_local_when_only_a_
+    local_procedure_matches for that path's own dedicated test), so
+    _run_local_node is faked here too -- this test's own concern is the
+    search call's bindings, not execution."""
     import json as json_mod
 
     (tmp_path / "requirements.txt").write_text("pandas==2.1.0\n")
@@ -124,7 +130,12 @@ async def test_runner_probes_its_own_repo_and_sends_invariant_bindings(monkeypat
     fake_session = FakeClientSession({
         "search_procedures": json_mod.dumps([]),
     })
+
+    async def fake_run_node(node, **kwargs):
+        return NodeResult(status="failure", notes="no real work in this test")
+
     monkeypatch.setattr(runner_module, "_open_client_session", lambda url, token: fake_session)
+    monkeypatch.setattr(runner_module, "_run_local_node", fake_run_node)
 
     await runner_module.LocalAgentRunner(
         server_url="http://fake/mcp", token="fake-token",
@@ -185,6 +196,68 @@ async def test_runner_prefers_and_stays_local_when_only_a_local_procedure_matche
     updated = store.get_local_procedure(captured["id"])
     assert updated["verification_stats"]["attempts"] == 1
     assert updated["verification_stats"]["successes"] == 1
+
+
+@pytest.mark.asyncio
+async def test_runner_captures_a_local_candidate_from_a_successful_adhoc_run(monkeypatch, tmp_path):
+    """Phase 12 (personal learning loop) wired into the real runner: no
+    match anywhere (local or global) must no longer just give up -- a
+    real, successful ad-hoc run becomes a new local candidate procedure,
+    never reported/published globally (Rule 6)."""
+    import json
+
+    from app.local_agent.local_store import LocalProcedureStore
+
+    fake_session = FakeClientSession({"search_procedures": json.dumps([])})
+
+    async def fake_run_node(node, **kwargs):
+        return NodeResult(status="success", notes=f"ran {node.goal}",
+                           data={"files_edited": ["new_thing.py"], "patch": "diff --git ..."})
+
+    monkeypatch.setattr(runner_module, "_open_client_session", lambda url, token: fake_session)
+    monkeypatch.setattr(runner_module, "_run_local_node", fake_run_node)
+
+    result = await runner_module.LocalAgentRunner(
+        server_url="http://fake/mcp", token="fake-token",
+    ).run(task_description="add a new utility function", repo_path=str(tmp_path))
+
+    assert result.matched_procedure is None, "nothing existed to match -- this was a fresh ad-hoc run"
+    assert result.source == "local_adhoc"
+    assert result.graph_outcome == "success"
+    assert result.captured_candidate is not None
+    assert result.captured_candidate["procedure_id"]
+
+    called_tools = [c[0] for c in fake_session.calls]
+    assert called_tools == ["search_procedures"], (
+        "an ad-hoc local capture must never call get_procedure/report_execution/"
+        "any global-publishing tool -- it stays entirely local"
+    )
+
+    store = LocalProcedureStore(str(tmp_path))
+    row = store.get_local_procedure(result.captured_candidate["id"])
+    assert row["goal"] == "add a new utility function"
+    assert row["verification_state"] == "candidate"
+    assert row["provenance"] == "system_pending_review"
+
+
+@pytest.mark.asyncio
+async def test_runner_does_not_capture_a_candidate_from_a_failed_adhoc_run(monkeypatch, tmp_path):
+    import json
+
+    fake_session = FakeClientSession({"search_procedures": json.dumps([])})
+
+    async def fake_run_node(node, **kwargs):
+        return NodeResult(status="failure", notes="gave up", data={"files_edited": [], "patch": ""})
+
+    monkeypatch.setattr(runner_module, "_open_client_session", lambda url, token: fake_session)
+    monkeypatch.setattr(runner_module, "_run_local_node", fake_run_node)
+
+    result = await runner_module.LocalAgentRunner(
+        server_url="http://fake/mcp", token="fake-token",
+    ).run(task_description="a task that fails", repo_path=str(tmp_path))
+
+    assert result.captured_candidate is None
+    assert result.source is None
 
 
 @pytest.mark.asyncio
