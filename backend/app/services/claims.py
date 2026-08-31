@@ -37,6 +37,7 @@ fold in.
 """
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
 from typing import Any, Literal, Optional
 
 import asyncpg
@@ -686,3 +687,148 @@ async def list_current_claims(
         *params,
     )
     return [dict(r) for r in rows]
+
+
+# CONSOLIDATED directive §5's 7-state claim lifecycle (proposed/supported/
+# current/disputed/contradicted/stale/retired), computed at read time --
+# not a stored column. This is a direct extension of the precedent this
+# file already established with `_DISPUTED_CLAIM_SQL`/
+# `has_open_conflict_trigger`: "disputed" is real, live-queryable status
+# derived from an open conflict trigger, never a cached value that can
+# itself drift out of sync with the truth it's supposed to reflect. The
+# prior architecture audit (.scratch/final_architecture_audit.md §5)
+# explicitly recommends extending that pattern for the remaining states
+# rather than adding a new stored `status` column -- done here, no
+# migration, no new column.
+#
+# First, deliberately simple threshold for what counts as "stale": a
+# claim's `t_valid` older than this many days with nothing having
+# reaffirmed it since. Future work may want this to vary per domain
+# (a fast-moving API-compatibility claim staling faster than a stable
+# architectural one) -- not attempted in this pass, a single global
+# constant is the honest scope of what's built today.
+CLAIM_STALE_THRESHOLD_DAYS = 180
+
+# Relations that count as "this claim has been reaffirmed since it was
+# captured" for the staleness/supported checks below -- the subset of
+# GENERAL_RELATIONS that assert epistemic backing of the target claim,
+# not just structural association (DEPENDS_ON/CONDITIONAL_ON/
+# APPLIES_TO/etc. describe a relationship, not a reaffirmation).
+_REAFFIRMING_RELATIONS = {"SUPPORTS", "GENERALIZES", "DERIVED_FROM"}
+
+
+async def get_claim_lifecycle_state(
+    pool: asyncpg.Pool,
+    claim_id: str,
+    *,
+    as_of: Optional[datetime] = None,
+) -> str:
+    """
+    Compute one claim's lifecycle state from real, existing signals only
+    -- `truth_state`, `has_open_conflict_trigger` (the existing disputed
+    check, reused verbatim), live `SUPERSEDES`/`CONTRADICTS` edges
+    targeting this claim, `t_valid` age, and incoming reaffirming
+    relations (`get_claim_relations`). No new stored column; nothing here
+    is cached, so this can never itself drift stale.
+
+    Precedence (first match wins -- checked in exactly this order):
+
+      1. `disputed`      -- truth_state == 'IN' AND has_open_conflict_trigger()
+                             is True. Reuses that function verbatim.
+      2. `retired`        -- truth_state == 'OUT' AND a live SUPERSEDES edge
+                             targets this claim (it was superseded, not
+                             contradicted).
+      3. `contradicted`   -- truth_state == 'OUT', not retired, AND a live
+                             CONTRADICTS edge targets this claim. If truth_state
+                             is 'OUT' but NEITHER a SUPERSEDES nor a CONTRADICTS
+                             edge is found (should not happen given
+                             `relate_claims` is the only truth_state writer,
+                             handled defensively anyway), this falls back to
+                             `retired` as the honest default for "no longer
+                             believed, cause unknown" rather than raising.
+      4. `stale`          -- truth_state == 'IN', not disputed, AND `t_valid`
+                             is older than `CLAIM_STALE_THRESHOLD_DAYS` (relative
+                             to `as_of`, default `datetime.now(timezone.utc)`)
+                             AND no live incoming SUPPORTS/GENERALIZES/
+                             DERIVED_FROM edge exists (nothing has reaffirmed it
+                             since).
+      5. `supported`      -- truth_state == 'IN', not disputed, not stale, AND
+                             at least one live incoming SUPPORTS/GENERALIZES/
+                             DERIVED_FROM edge exists.
+      6. `current`        -- default: truth_state == 'IN', none of the above
+                             apply. The overwhelmingly common case today, and
+                             that is expected/correct.
+      7. `proposed`       -- NOT reachable from this function. Claims have no
+                             approval-like workflow today (unlike procedures'
+                             `approval_status` column) -- there is no real,
+                             honest signal to compute "proposed" from. A future
+                             approval workflow for claims (mirroring
+                             `procedures.approval_status`) would be the real
+                             prerequisite; that is explicitly out of scope for
+                             this pass. This function must never silently
+                             invent a "proposed" result for what is actually
+                             just `current` -- it simply cannot return
+                             "proposed" at all right now.
+
+    `as_of` lets a caller pin "now" for the staleness check (default
+    `None` -> `datetime.now(timezone.utc)`) -- tests can pass a fixed
+    `t_valid` plus a controlled `as_of` instead of waiting 180 real days.
+
+    Raises `ValueError` if `claim_id` does not resolve to a live claim --
+    there is no honest lifecycle state for a claim that does not exist,
+    matching `supersede_claim`'s write-path posture (a real caller error,
+    not a race this read is expected to silently absorb).
+    """
+    row = await pool.fetchrow(
+        "SELECT properties, t_valid FROM knowledge_nodes "
+        "WHERE id = $1::uuid AND node_type = 'claim' AND t_invalid IS NULL",
+        claim_id,
+    )
+    if row is None:
+        raise ValueError(
+            f"get_claim_lifecycle_state: no live claim found with id {claim_id!r}"
+        )
+    truth_state = row["properties"].get("truth_state", "IN")
+
+    if truth_state == "IN":
+        if await has_open_conflict_trigger(pool, claim_id):
+            return "disputed"
+
+        reaffirmations = await get_claim_relations(
+            pool, claim_id, direction="incoming", relations=_REAFFIRMING_RELATIONS,
+        )
+        if reaffirmations:
+            return "supported"
+
+        t_valid = row["t_valid"]
+        now = as_of or datetime.now(timezone.utc)
+        if t_valid is not None and (now - t_valid) > timedelta(days=CLAIM_STALE_THRESHOLD_DAYS):
+            return "stale"
+
+        return "current"
+
+    # truth_state == 'OUT'
+    retired = await pool.fetchval(
+        "SELECT EXISTS (SELECT 1 FROM edges WHERE source_table = 'knowledge_nodes' "
+        "AND target_id = $1::uuid AND target_table = 'knowledge_nodes' "
+        "AND custom_edge_type = 'SUPERSEDES' AND t_invalid IS NULL)",
+        claim_id,
+    )
+    if retired:
+        return "retired"
+
+    contradicted = await pool.fetchval(
+        "SELECT EXISTS (SELECT 1 FROM edges WHERE source_table = 'knowledge_nodes' "
+        "AND target_id = $1::uuid AND target_table = 'knowledge_nodes' "
+        "AND custom_edge_type = 'CONTRADICTS' AND t_invalid IS NULL)",
+        claim_id,
+    )
+    if contradicted:
+        return "contradicted"
+
+    # Defensive fallback: truth_state is OUT but neither edge was found.
+    # relate_claims() is the only truth_state writer and always creates
+    # one of the two edges, so this should be unreachable -- but "no
+    # longer believed, cause unknown" is honestly closer to `retired`
+    # than to crashing a caller that just wants a lifecycle string.
+    return "retired"

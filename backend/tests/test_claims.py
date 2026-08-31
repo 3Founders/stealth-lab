@@ -9,15 +9,18 @@ from __future__ import annotations
 
 import asyncio
 from contextlib import asynccontextmanager
+from datetime import datetime, timedelta, timezone
 from uuid import UUID, uuid4
 
 import pytest
 
 from app.services.claims import (
     ALL_CLAIM_RELATIONS,
+    CLAIM_STALE_THRESHOLD_DAYS,
     CREATED_BY,
     GENERAL_RELATIONS,
     capture_claim as _real_capture_claim,
+    get_claim_lifecycle_state,
     get_claim_relations,
     get_claim_version_chain,
     link_claims,
@@ -54,11 +57,37 @@ class FakeDB:
         self.knowledge_nodes: dict[str, dict] = {}
         self.edges: list[dict] = []
         self.episode_links: list[dict] = []
+        # get_claim_lifecycle_state's disputed check (has_open_conflict_
+        # trigger) joins edges -> triggers -> debates; modeled minimally
+        # here, just enough to drive that one predicate.
+        self.triggers: dict[str, dict] = {}
+        self.debates: dict[str, dict] = {}
 
     def add_task_node(self, skill_ref: str, *, invalid: bool = False) -> str:
         tid = str(uuid4())
         self.task_nodes[tid] = {"skill_ref": skill_ref, "t_invalid": "x" if invalid else None}
         return tid
+
+    def add_trigger(self, task_node_id: str) -> str:
+        trig_id = str(uuid4())
+        self.triggers[trig_id] = {"task_node_id": str(task_node_id)}
+        return trig_id
+
+    def add_debate(self, trigger_id: str, state: str) -> str:
+        debate_id = str(uuid4())
+        self.debates[debate_id] = {"trigger_id": trigger_id, "state": state}
+        return debate_id
+
+    def add_conflict_edge(self, task_node_id: str, claim_id: str) -> None:
+        """The VALIDATED_BY/CONFLICTS_WITH edge `_DISPUTED_CLAIM_SQL`
+        looks for -- task_nodes -> knowledge_nodes, same shape
+        knowledge_conflict.py's TriggerDetector writes for real."""
+        self.edges.append({
+            "edge_type": "VALIDATED_BY", "custom_edge_type": "CONFLICTS_WITH",
+            "source_id": UUID(task_node_id), "source_table": "task_nodes",
+            "target_id": UUID(claim_id), "target_table": "knowledge_nodes",
+            "properties": {}, "created_by": "test",
+        })
 
     def acquire(self):
         @asynccontextmanager
@@ -119,6 +148,12 @@ class FakeDB:
 
     async def fetchrow(self, query: str, *params):
         q = query.strip()
+        if q.startswith("SELECT properties, t_valid FROM knowledge_nodes"):
+            (claim_id,) = params
+            node = self.knowledge_nodes.get(str(claim_id))
+            if node is None or node["node_type"] != "claim":
+                return None
+            return {"properties": node["properties"], "t_valid": node.get("t_valid")}
         if q.startswith("SELECT properties FROM knowledge_nodes"):
             (claim_id,) = params
             node = self.knowledge_nodes.get(str(claim_id))
@@ -139,8 +174,46 @@ class FakeDB:
                 "created_by": created_by, "owner_id": owner_id,
                 "visibility": visibility,
                 "scope_type": scope_type, "scope_entity_id": scope_entity_id,
+                # Fresh by default -- a test wanting a `stale` fixture
+                # overwrites this directly on db.knowledge_nodes[nid].
+                "t_valid": datetime.now(timezone.utc),
             }
             return UUID(nid)
+        if q.startswith("SELECT EXISTS (SELECT 1 FROM edges e") and "triggers t" in q:
+            # has_open_conflict_trigger()'s _DISPUTED_CLAIM_SQL: an open,
+            # unresolved conflict trigger against this claim.
+            (claim_id,) = params
+            for e in self.edges:
+                if not (
+                    e["custom_edge_type"] == "CONFLICTS_WITH"
+                    and e["edge_type"] == "VALIDATED_BY"
+                    and e["source_table"] == "task_nodes"
+                    and e["target_table"] == "knowledge_nodes"
+                    and str(e["target_id"]) == str(claim_id)
+                ):
+                    continue
+                task_node_id = str(e["source_id"])
+                for trig_id, trig in self.triggers.items():
+                    if trig["task_node_id"] != task_node_id:
+                        continue
+                    debates = [d for d in self.debates.values() if d["trigger_id"] == trig_id]
+                    if not debates:
+                        return True
+                    if any(d["state"] not in ("APPROVED", "REJECTED") for d in debates):
+                        return True
+            return False
+        if q.startswith("SELECT EXISTS (SELECT 1 FROM edges WHERE source_table = 'knowledge_nodes'"):
+            # get_claim_lifecycle_state()'s retired/contradicted checks --
+            # a live SUPERSEDES or CONTRADICTS edge targeting this claim.
+            (claim_id,) = params
+            wanted_relation = "SUPERSEDES" if "'SUPERSEDES'" in q else "CONTRADICTS"
+            return any(
+                e["source_table"] == "knowledge_nodes"
+                and e["target_table"] == "knowledge_nodes"
+                and str(e["target_id"]) == str(claim_id)
+                and e["custom_edge_type"] == wanted_relation
+                for e in self.edges
+            )
         raise AssertionError(f"FakeDB.fetchval: unrecognized query\n{q}")
 
     async def execute(self, query: str, *params):
@@ -683,3 +756,161 @@ class TestGetClaimVersionChain:
         assert [str(r["id"]) for r in from_root] == [v1, v2, v3]
         assert [str(r["id"]) for r in from_middle] == [v1, v2, v3]
         assert [str(r["id"]) for r in from_tip] == [v1, v2, v3]
+
+
+class TestGetClaimLifecycleState:
+    """One real fixture per reachable lifecycle state -- each constructed
+    through the real underlying signals (relate_claims/link_claims/direct
+    edge+trigger+debate fixtures), never by mocking
+    get_claim_lifecycle_state's own internals. `proposed` is exempt: the
+    function's own docstring documents it as not currently reachable from
+    real data, and there is no test for it here on purpose."""
+
+    def test_missing_claim_raises(self):
+        db = FakeDB()
+        with pytest.raises(ValueError):
+            asyncio.run(get_claim_lifecycle_state(db, str(uuid4())))
+
+    def test_default_case_is_current(self):
+        """truth_state IN, no dispute, no reaffirming relations, fresh
+        t_valid -- the overwhelmingly common real case."""
+        db = FakeDB()
+        db.add_task_node("instance_x")
+        claim_id = asyncio.run(capture_claim(db, statement="claim A", task_ids=["instance_x"]))
+
+        state = asyncio.run(get_claim_lifecycle_state(db, claim_id))
+        assert state == "current"
+
+    def test_open_conflict_trigger_makes_it_disputed(self):
+        """Real signal: an open, unresolved trigger (no debate at all)
+        against a live, truth_state=IN claim -- has_open_conflict_trigger
+        reused verbatim, precedence position 1."""
+        db = FakeDB()
+        task_id = db.add_task_node("instance_x")
+        claim_id = asyncio.run(capture_claim(db, statement="disputed claim", task_ids=["instance_x"]))
+        db.add_conflict_edge(task_id, claim_id)
+        db.add_trigger(task_id)  # no debate -> unresolved
+
+        state = asyncio.run(get_claim_lifecycle_state(db, claim_id))
+        assert state == "disputed"
+
+    def test_open_debate_also_makes_it_disputed(self):
+        """A trigger with a debate that hasn't reached APPROVED/REJECTED
+        is still open, same as no debate at all."""
+        db = FakeDB()
+        task_id = db.add_task_node("instance_x")
+        claim_id = asyncio.run(capture_claim(db, statement="disputed claim 2", task_ids=["instance_x"]))
+        db.add_conflict_edge(task_id, claim_id)
+        trig_id = db.add_trigger(task_id)
+        db.add_debate(trig_id, "OPEN")
+
+        state = asyncio.run(get_claim_lifecycle_state(db, claim_id))
+        assert state == "disputed"
+
+    def test_resolved_debate_is_not_disputed(self):
+        """A trigger whose debate concluded APPROVED/REJECTED is resolved
+        -- has_open_conflict_trigger correctly returns False, so this
+        falls through to `current`."""
+        db = FakeDB()
+        task_id = db.add_task_node("instance_x")
+        claim_id = asyncio.run(capture_claim(db, statement="resolved claim", task_ids=["instance_x"]))
+        db.add_conflict_edge(task_id, claim_id)
+        trig_id = db.add_trigger(task_id)
+        db.add_debate(trig_id, "APPROVED")
+
+        state = asyncio.run(get_claim_lifecycle_state(db, claim_id))
+        assert state == "current"
+
+    def test_superseded_claim_is_retired(self):
+        """Real signal: truth_state OUT via relate_claims(SUPERSEDES) --
+        a live SUPERSEDES edge targets this claim, precedence position 2."""
+        db = FakeDB()
+        db.add_task_node("instance_x")
+        old_id = asyncio.run(capture_claim(db, statement="old claim", task_ids=["instance_x"]))
+        new_id = asyncio.run(capture_claim(db, statement="new claim", task_ids=["instance_x"]))
+        asyncio.run(relate_claims(db, from_claim_id=new_id, to_claim_id=old_id, relation="SUPERSEDES"))
+
+        state = asyncio.run(get_claim_lifecycle_state(db, old_id))
+        assert state == "retired"
+
+    def test_contradicted_claim_is_contradicted(self):
+        """Real signal: truth_state OUT via relate_claims(CONTRADICTS) --
+        a live CONTRADICTS edge targets this claim, no SUPERSEDES edge,
+        precedence position 3."""
+        db = FakeDB()
+        db.add_task_node("instance_x")
+        a = asyncio.run(capture_claim(db, statement="claim A", task_ids=["instance_x"]))
+        b = asyncio.run(capture_claim(db, statement="claim B", task_ids=["instance_x"]))
+        asyncio.run(relate_claims(db, from_claim_id=a, to_claim_id=b, relation="CONTRADICTS"))
+
+        state = asyncio.run(get_claim_lifecycle_state(db, b))
+        assert state == "contradicted"
+
+    def test_out_with_no_edge_falls_back_to_retired(self):
+        """Defensive fallback: truth_state flipped OUT (e.g. by direct
+        properties mutation, bypassing relate_claims) with neither a
+        SUPERSEDES nor CONTRADICTS edge present -- documented as
+        shouldn't-happen-in-practice, and this proves the fallback branch
+        without crashing the caller."""
+        db = FakeDB()
+        db.add_task_node("instance_x")
+        claim_id = asyncio.run(capture_claim(db, statement="orphan OUT claim", task_ids=["instance_x"]))
+        db.knowledge_nodes[claim_id]["properties"]["truth_state"] = "OUT"
+
+        state = asyncio.run(get_claim_lifecycle_state(db, claim_id))
+        assert state == "retired"
+
+    def test_old_unreaffirmed_claim_is_stale(self):
+        """Real signal: t_valid older than CLAIM_STALE_THRESHOLD_DAYS
+        (relative to a controlled `as_of`) with no incoming SUPPORTS/
+        GENERALIZES/DERIVED_FROM edge -- precedence position 4. Uses a
+        fake t_valid + controlled as_of, not a real 180-day wait."""
+        db = FakeDB()
+        db.add_task_node("instance_x")
+        claim_id = asyncio.run(capture_claim(db, statement="old unsupported claim", task_ids=["instance_x"]))
+        as_of = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        db.knowledge_nodes[claim_id]["t_valid"] = as_of - timedelta(days=CLAIM_STALE_THRESHOLD_DAYS + 1)
+
+        state = asyncio.run(get_claim_lifecycle_state(db, claim_id, as_of=as_of))
+        assert state == "stale"
+
+    def test_old_but_reaffirmed_claim_is_supported_not_stale(self):
+        """Same age as the stale fixture above, but with a live incoming
+        SUPPORTS edge -- reaffirmation beats staleness, precedence
+        position 5 wins over position 4."""
+        db = FakeDB()
+        db.add_task_node("instance_x")
+        old_claim = asyncio.run(capture_claim(db, statement="old but reaffirmed claim", task_ids=["instance_x"]))
+        supporter = asyncio.run(capture_claim(db, statement="supporting claim", task_ids=["instance_x"]))
+        as_of = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        db.knowledge_nodes[old_claim]["t_valid"] = as_of - timedelta(days=CLAIM_STALE_THRESHOLD_DAYS + 1)
+        asyncio.run(link_claims(db, from_claim_id=supporter, to_claim_id=old_claim, relation="SUPPORTS"))
+
+        state = asyncio.run(get_claim_lifecycle_state(db, old_claim, as_of=as_of))
+        assert state == "supported"
+
+    def test_fresh_claim_with_reaffirmation_is_supported(self):
+        """Real signal: at least one live incoming SUPPORTS/GENERALIZES/
+        DERIVED_FROM edge, fresh t_valid (not stale at all) --
+        precedence position 5."""
+        db = FakeDB()
+        db.add_task_node("instance_x")
+        base = asyncio.run(capture_claim(db, statement="base claim", task_ids=["instance_x"]))
+        derived = asyncio.run(capture_claim(db, statement="derived claim", task_ids=["instance_x"]))
+        asyncio.run(link_claims(db, from_claim_id=derived, to_claim_id=base, relation="DERIVED_FROM"))
+
+        state = asyncio.run(get_claim_lifecycle_state(db, base))
+        assert state == "supported"
+
+    def test_non_reaffirming_relation_does_not_count_as_supported(self):
+        """DEPENDS_ON is a real GENERAL_RELATIONS member but not in the
+        reaffirming subset -- a claim with only a DEPENDS_ON incoming
+        edge and fresh t_valid stays `current`."""
+        db = FakeDB()
+        db.add_task_node("instance_x")
+        a = asyncio.run(capture_claim(db, statement="claim A", task_ids=["instance_x"]))
+        b = asyncio.run(capture_claim(db, statement="claim B", task_ids=["instance_x"]))
+        asyncio.run(link_claims(db, from_claim_id=b, to_claim_id=a, relation="DEPENDS_ON"))
+
+        state = asyncio.run(get_claim_lifecycle_state(db, a))
+        assert state == "current"
