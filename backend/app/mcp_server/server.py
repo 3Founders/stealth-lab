@@ -308,6 +308,16 @@ def _resolve_caller_identity(fallback: str) -> str:
         previously a bare hardcoded string with no resolution attempt at
         all (the same "no resolution attempt" bug this invariant guards
         against); now wired the same as every other site.
+      - decide_decomposition: DecideRequest's approver_id (the real
+        decompositions.approver_id audit column) -- fallback=approver_id.
+        A real audit gap this same identity-hardening pass missed the
+        first time: found and closed during a later hardening audit
+        (this pass), same "no resolution attempt" bug as apply_change_set
+        above, at a different call site.
+      - submit_approval: ApprovalRequest's approver_id (the real
+        approvals.approver_id audit column) -- fallback=approver_id.
+        Same gap, same fix, found in the same pass as decide_decomposition
+        above.
     """
     token = get_access_token()
     if token is not None and token.subject:
@@ -2123,6 +2133,14 @@ async def decide_decomposition(decomposition_id: str, approver_id: str, decision
 
     decomposition_id: the real id from decompose_task's output.
     approver_id: who is deciding -- stored in the real decompositions row.
+    SELF-ASSERTED, and only used as-is when no real identity is
+    resolvable (see `_resolve_caller_identity`'s own docstring's
+    invariant) -- a resolved real identity always overrides it, the same
+    spoofing-proof discipline every other write-path attribution site in
+    this file already follows. This is the one site the identity-
+    hardening pass this session missed: it wrote `approver_id` straight
+    into `DecideRequest` unconditionally, the exact "no resolution
+    attempt" gap that invariant exists to close.
     decision: "approved" or "rejected".
 
     Real idempotency guard (from the underlying decide()): re-deciding an
@@ -2140,7 +2158,8 @@ async def decide_decomposition(decomposition_id: str, approver_id: str, decision
     if decision not in ("approved", "rejected"):
         return f"REFUSED: decision must be 'approved' or 'rejected', got {decision!r}."
 
-    body = DecideRequest(approver_id=approver_id, decision=decision)
+    resolved_approver = _resolve_caller_identity(fallback=approver_id)
+    body = DecideRequest(approver_id=resolved_approver, decision=decision)
     try:
         result = await decide_decomposition_fn(decomposition_uuid, body, pool)
     except HTTPException as exc:
@@ -2186,6 +2205,14 @@ async def submit_approval(scorecard_id: str, approver_id: str, decision: str, ct
 
     scorecard_id: id of a scorecard from propose_synthesis's real output.
     approver_id: who is deciding -- stored in the real audit row.
+    SELF-ASSERTED, and only used as-is when no real identity is
+    resolvable -- same spoofing-proof discipline as decide_procedure's
+    own approver_id handling (see `_resolve_caller_identity`'s
+    docstring). This was the other site the identity-hardening pass this
+    session missed: `approver_id` went straight into `ApprovalRequest`
+    unconditionally, letting a caller self-assert the identity written to
+    the real `approvals` audit row this system was explicitly built to
+    make trustworthy.
     decision: "approved" or "rejected".
     note: optional reason, stored in the real audit row and used as the
     real state-machine transition's reason if given.
@@ -2200,7 +2227,8 @@ async def submit_approval(scorecard_id: str, approver_id: str, decision: str, ct
     if decision not in ("approved", "rejected"):
         return f"REFUSED: decision must be 'approved' or 'rejected', got {decision!r}."
 
-    body = ApprovalRequest(approver_id=approver_id, decision=decision, note=note)
+    resolved_approver = _resolve_caller_identity(fallback=approver_id)
+    body = ApprovalRequest(approver_id=resolved_approver, decision=decision, note=note)
     try:
         result = await decide(scorecard_uuid, body, pool)
     except HTTPException as exc:

@@ -21,7 +21,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
-from app.debate.state_machine import DebateStateMachine, IllegalTransition
+from app.debate.state_machine import DebateStateMachine, IllegalTransition, assert_transition
 from app.export.markdown_diff import render_export
 from app.models.change import ChangeSet
 from app.models.debate import Layer1Result, Scorecard
@@ -84,6 +84,21 @@ class ApprovalResponse(BaseModel):
 async def decide(
     scorecard_id: UUID, body: ApprovalRequest, pool=Depends(get_pool)
 ) -> ApprovalResponse:
+    """
+    HONEST LIMIT on the state check added below: it reads current_state()
+    without a row lock, then applies, then transitions (machine.transition()
+    itself DOES take a real FOR UPDATE lock, but only at that later point).
+    Two decide() calls landing at almost exactly the same instant can both
+    pass the early check before either has committed a transition -- a
+    narrower window than the pre-fix bug (which had no early check at
+    all), not a fully serialized one. Closing that fully would mean
+    KnowledgeUpdater.apply() running inside the SAME locked transaction
+    DebateStateMachine.transition() uses, which needs that module's own
+    connection-reuse API to extend without duplicating its transition SQL
+    outside the state-machine module (CLAUDE.md: "state transitions live
+    in the state-machine modules only") -- out of scope for this pass;
+    flagged here rather than silently left unstated.
+    """
     if body.decision not in ("approved", "rejected"):
         raise HTTPException(400, "decision must be 'approved' or 'rejected'")
 
@@ -103,6 +118,30 @@ async def decide(
     export_md: Optional[str] = None
 
     change_set = ChangeSet(**(row["change_set"] or {"ops": []}))
+
+    # REAL GAP CLOSED: this used to call updater.apply() unconditionally,
+    # BEFORE ever checking whether the debate's own state actually
+    # supports this decision -- the state-machine gate only ran AFTER the
+    # write, via machine.transition() below. That meant re-deciding an
+    # already-decided (or not-yet-PENDING_APPROVAL) scorecard still
+    # applied the change_set and inserted a second `approvals` audit row
+    # -- for change sets containing create_task_node/create_knowledge_node/
+    # create_edge ops (no natural idempotency guard, unlike
+    # invalidate_edge/update_*_node's t_invalid-IS-NULL checks), this
+    # silently duplicated real graph content -- and ONLY THEN failed with
+    # a 409 from the transition check, after the damage was already done.
+    # This is exactly the "gate and writer together" half-gate CLAUDE.md's
+    # own hard rule 6 names: the enforcement trigger (the state check) must
+    # land with its writer, not after it. Checking current_state() here,
+    # before any write, closes the deterministic case (a retried/replayed/
+    # already-decided decide() call) -- see this function's own docstring
+    # note below for the narrower race window this does not close.
+    to_state = "APPROVED" if body.decision == "approved" else "REJECTED"
+    current_state = await machine.current_state(row["debate_id"])
+    try:
+        assert_transition(current_state, to_state)
+    except IllegalTransition as exc:
+        raise HTTPException(409, str(exc)) from exc
 
     if body.decision == "approved":
         try:
