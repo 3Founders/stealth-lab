@@ -38,6 +38,7 @@ import asyncpg
 
 from app.services.access import AccessScope
 from app.services.applicability import ApplicabilityResult, check_hard_constraints
+from app.services.claim_evidence import get_claim_evidence
 from app.services.claims import get_claim_relations
 from app.services.procedures import get_procedure
 from app.services.state import project_state
@@ -80,6 +81,13 @@ class PreconditionExplanation:
     # this precondition -- the same equality check
     # applicability.check_hard_constraints performs, reused verbatim.
     supporting_claims: list[dict] = field(default_factory=list)
+    # Live evidence rows (target_type='claim') for every claim in
+    # `supporting_claims`, oldest first, via the real
+    # `claim_evidence.get_claim_evidence()` reader. Empty for an
+    # unsatisfied precondition (no supporting claims to fetch evidence
+    # for) or for a claim nobody has recorded evidence against yet --
+    # both are honest empties, not a missing feature.
+    evidence: list[dict] = field(default_factory=list)
 
 
 @dataclass
@@ -105,15 +113,14 @@ async def explain(
     `check_hard_constraints` uses. Does NOT re-derive applicability;
     that is DECIDE's job.
 
-    Bonus evidence-per-claim was scoped out deliberately: no existing
-    reader function fetches evidence keyed by claim id anywhere in this
-    codebase today (evidence.py exposes validation/classification
-    helpers, not a claim-keyed reader; the only `FROM evidence` queries
-    that exist are ad hoc, procedure-target-specific SQL inline in
-    applicability.py/failure_handlers.py). The task instructions are
-    explicit that this module must call existing machinery, not build
-    new evidence-reading machinery -- so this stays out rather than grow
-    a new query here.
+    Also attaches real evidence: for each precondition's
+    `supporting_claims`, fetches that claim's live evidence rows via
+    `app.services.claim_evidence.get_claim_evidence()` (the bounded,
+    real reader over `target_type = 'claim'` evidence, oldest first)
+    and attaches the combined list on `PreconditionExplanation.evidence`.
+    An unsatisfied precondition (no supporting claims) or a claim with
+    no recorded evidence yet both surface as an honest empty list, not
+    an error.
     """
     procedure = await get_procedure(pool, procedure_row_id)
     if procedure is None:
@@ -140,9 +147,12 @@ async def explain(
             c for c in claims
             if c["predicate"] == predicate and c["object"] == expected_object
         ]
+        evidence: list[dict] = []
+        for claim in matching:
+            evidence.extend(await get_claim_evidence(pool, claim["id"]))
         explanations.append(PreconditionExplanation(
             subject=subject, predicate=predicate, expected_object=expected_object,
-            satisfied=bool(matching), supporting_claims=matching,
+            satisfied=bool(matching), supporting_claims=matching, evidence=evidence,
         ))
 
     return ExplainResult(procedure_row_id=str(procedure_row_id), preconditions=explanations)

@@ -67,10 +67,12 @@ def _edge(edge_id, source_id, target_id, relation, properties=None):
 
 
 class FakePool:
-    def __init__(self, *, procedures=(), claims=(), edges=()):
+    def __init__(self, *, procedures=(), claims=(), edges=(), evidence=()):
         self._procedures = {p["id"]: p for p in procedures}
         self._claims = list(claims)
         self._edges = list(edges)
+        # keyed by target_id (claim id) -> list of evidence dict rows
+        self._evidence = dict(evidence)
         self.fetch_calls = []
         self.fetchrow_calls = []
 
@@ -92,6 +94,9 @@ class FakePool:
                 e for e in self._edges
                 if e["relation"] in wanted and (e["source_id"] == claim_id or e["target_id"] == claim_id)
             ]
+        if "FROM evidence" in sql:
+            claim_id = params[0]
+            return list(self._evidence.get(claim_id, []))
         raise AssertionError(f"unexpected fetch: {sql}")
 
 
@@ -136,6 +141,48 @@ def test_explain_raises_for_unknown_procedure_row():
     pool = FakePool()
     with pytest.raises(ValueError):
         _run(explain(pool, "does-not-exist"))
+
+
+def test_explain_attaches_evidence_for_a_claim_that_has_some():
+    """Fails without the wiring: `evidence` would stay []
+    even though get_claim_evidence has a real row for this claim."""
+    procedure = _procedure([{"subject": "project:p", "predicate": "uses", "object": "pandas"}])
+    claim = _claim("claim-1", "project:p", "uses", "pandas")
+    evidence_row = {"id": "ev-1", "target_type": "claim", "target_id": "claim-1", "outcome_status": "success"}
+    pool = FakePool(procedures=[procedure], claims=[claim], evidence={"claim-1": [evidence_row]})
+
+    result = _run(explain(pool, PROC_ID))
+
+    pc = result.preconditions[0]
+    assert pc.satisfied is True
+    assert pc.evidence == [evidence_row]
+
+
+def test_explain_evidence_is_empty_list_for_a_claim_with_none():
+    procedure = _procedure([{"subject": "project:p", "predicate": "uses", "object": "pandas"}])
+    claim = _claim("claim-1", "project:p", "uses", "pandas")
+    pool = FakePool(procedures=[procedure], claims=[claim])  # no evidence registered
+
+    result = _run(explain(pool, PROC_ID))
+
+    pc = result.preconditions[0]
+    assert pc.satisfied is True
+    assert pc.evidence == []
+
+
+def test_explain_evidence_is_empty_list_for_unsatisfied_precondition():
+    """No supporting_claims -> nothing to fetch evidence for -> [] --
+    and no evidence query should even be attempted."""
+    procedure = _procedure([{"subject": "project:p", "predicate": "uses", "object": "pandas"}])
+    claim = _claim("claim-2", "project:p", "uses", "numpy")
+    pool = FakePool(procedures=[procedure], claims=[claim])
+
+    result = _run(explain(pool, PROC_ID))
+
+    pc = result.preconditions[0]
+    assert pc.satisfied is False
+    assert pc.evidence == []
+    assert not any("FROM evidence" in sql for sql, _ in pool.fetch_calls)
 
 
 # --- RESEARCH ------------------------------------------------------------

@@ -15,6 +15,7 @@ import os
 import pytest
 
 from app.db.session import create_pool
+from app.services.claim_evidence import record_claim_evidence
 from app.services.claim_traversal import decide, explain, research
 from app.services.claims import capture_claim, link_claims, relate_claims
 from app.services.procedures import capture_procedure
@@ -34,6 +35,15 @@ class FakeEmbedder:
 
 
 async def _cleanup(pool) -> None:
+    # evidence is [H] append-only (db/24_evidence.sql, invariant #19):
+    # DELETE is refused outright, so a rerun retracts via the same
+    # t_invalid tombstone the engine itself enforces, rather than
+    # deleting the row.
+    await pool.execute(
+        "UPDATE evidence SET t_invalid = now() WHERE target_type = 'claim' "
+        "AND t_invalid IS NULL AND target_id IN "
+        "(SELECT id FROM knowledge_nodes WHERE name LIKE $1)", f"{PREFIX}%",
+    )
     await pool.execute(
         "DELETE FROM edges WHERE source_id IN "
         "(SELECT id FROM knowledge_nodes WHERE name LIKE $1)", f"{PREFIX}%",
@@ -84,6 +94,76 @@ def test_explain_finds_the_real_claim_satisfying_a_real_precondition():
             pc = outcome.preconditions[0]
             assert pc.satisfied is True
             assert {c["id"] for c in pc.supporting_claims} == {claim_id}
+        finally:
+            await _cleanup(pool)
+            await pool.close()
+
+    asyncio.run(_run())
+
+
+def test_explain_surfaces_real_evidence_recorded_against_the_supporting_claim():
+    """The task's own round-trip proof: record_claim_evidence ->
+    get_claim_evidence -> explain()'s new `evidence` field, against a
+    real claim/procedure pair, no mocks."""
+    async def _run():
+        pool = await create_pool(DATABASE_URL, min_size=1, max_size=2)
+        try:
+            await _cleanup(pool)
+            task = await _task_node(pool, f"{PREFIX}-task5")
+            claim_id = await _claim(
+                pool, f"{PREFIX} pandas installed 5", task,
+                subject=f"{PREFIX}:project:p5", predicate="uses", obj="pandas",
+            )
+            evidence_id = await record_claim_evidence(
+                pool, claim_id=claim_id, evidence_type="execution_result",
+                outcome_status="success",
+                success_criteria={"predicate": "pip show pandas exited 0"},
+                context_key=f"{PREFIX}-ctx5",
+            )
+            result = await capture_procedure(
+                pool, name=f"{PREFIX}-proc5", goal="do a thing",
+                preconditions=[{"subject": f"{PREFIX}:project:p5", "predicate": "uses", "object": "pandas"}],
+                provenance="system_pending_review", scope_type="global",
+            )
+            row_id = result["id"]
+
+            outcome = await explain(pool, row_id)
+
+            pc = outcome.preconditions[0]
+            assert pc.satisfied is True
+            assert {c["id"] for c in pc.supporting_claims} == {claim_id}
+            assert len(pc.evidence) == 1
+            assert str(pc.evidence[0]["id"]) == evidence_id
+            assert pc.evidence[0]["outcome_status"] == "success"
+        finally:
+            await _cleanup(pool)
+            await pool.close()
+
+    asyncio.run(_run())
+
+
+def test_explain_evidence_is_empty_for_a_real_claim_with_none_recorded():
+    async def _run():
+        pool = await create_pool(DATABASE_URL, min_size=1, max_size=2)
+        try:
+            await _cleanup(pool)
+            task = await _task_node(pool, f"{PREFIX}-task6")
+            await _claim(
+                pool, f"{PREFIX} pandas installed 6", task,
+                subject=f"{PREFIX}:project:p6", predicate="uses", obj="pandas",
+            )
+            result = await capture_procedure(
+                pool, name=f"{PREFIX}-proc6", goal="do a thing",
+                preconditions=[{"subject": f"{PREFIX}:project:p6", "predicate": "uses", "object": "pandas"}],
+                provenance="system_pending_review", scope_type="global",
+            )
+            row_id = result["id"]
+
+            outcome = await explain(pool, row_id)
+
+            pc = outcome.preconditions[0]
+            assert pc.satisfied is True
+            assert pc.evidence == []
         finally:
             await _cleanup(pool)
             await pool.close()
