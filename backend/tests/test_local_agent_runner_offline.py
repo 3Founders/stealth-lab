@@ -238,6 +238,92 @@ async def test_runner_captures_a_local_candidate_from_a_successful_adhoc_run(mon
     assert row["goal"] == "add a new utility function"
     assert row["verification_state"] == "candidate"
     assert row["provenance"] == "system_pending_review"
+    # P0 fix: the run that just succeeded and produced this candidate is
+    # its own first real evidence -- must not start at attempts=0 despite
+    # one genuine, already-known-successful execution existing for it.
+    assert row["verification_stats"]["attempts"] == 1
+    assert row["verification_stats"]["successes"] == 1
+
+
+def test_local_context_key_reflects_real_environment_not_just_repo_name():
+    """P0 fix: a bare repo folder name collapsed every run against the
+    same checkout into ONE context. Two DIFFERENT real environments (here,
+    different probed package versions) for the SAME repo folder name must
+    produce DIFFERENT context keys; the SAME environment probed twice must
+    produce the SAME key (no artificial diversity)."""
+    from app.services.environment_facts import EnvironmentFact
+
+    facts_a = [EnvironmentFact(predicate="language", object="python"),
+               EnvironmentFact(predicate="pandas_version", object="1.5.3")]
+    facts_b = [EnvironmentFact(predicate="language", object="python"),
+               EnvironmentFact(predicate="pandas_version", object="2.1.0")]
+
+    key_a1 = runner_module._local_context_key("/repo", facts_a)
+    key_a2 = runner_module._local_context_key("/repo", list(reversed(facts_a)))
+    key_b = runner_module._local_context_key("/repo", facts_b)
+
+    assert key_a1.startswith("repo:")
+    assert key_a1 == key_a2, "fact order must not affect the derived key"
+    assert key_a1 != key_b, "a genuinely different probed environment must yield a different context"
+
+    # Different repo, same facts -> different key (repo identity still matters).
+    key_other_repo = runner_module._local_context_key("/other-repo", facts_a)
+    assert key_other_repo != key_a1
+
+
+@pytest.mark.asyncio
+async def test_runner_finds_a_local_procedure_via_semantic_similarity_not_lexical_overlap(monkeypatch, tmp_path):
+    """P0 fix: local search must actually use the store's real cosine-
+    similarity ranking, not silently fall back to lexical-only matching
+    because no query embedding was ever supplied. Real embedding calls
+    (this repo's existing Embedder, no mock) prove genuine semantic
+    retrieval: the query shares NO words with the stored procedure's
+    name/goal, so a lexical-only search would find nothing."""
+    import json
+
+    from app.local_agent.local_store import LocalProcedureStore
+    from app.services.embeddings import Embedder
+
+    embedder = Embedder()
+    goal = "resolve a failing login attempt caused by an expired session token"
+    goal_vec = await embedder.embed_one(goal, input_type="document")
+
+    store = LocalProcedureStore(str(tmp_path))
+    captured = store.capture_local_procedure(
+        name="fix-auth-issue", goal=goal,
+        steps=[{"order": 0, "goal": "inspect the session store"}],
+        provenance="system_pending_review", scope_type="repository",
+        scope_entity_id=str(tmp_path), embedding=goal_vec,
+    )
+    # A real, verified row so require_verified=True (the default) surfaces it.
+    for i in range(10):
+        store.record_local_execution_outcome(
+            row_id=captured["id"], success=True, context_key=f"ctx-{i % 3}",
+        )
+
+    fake_session = FakeClientSession({"search_procedures": json.dumps([])})
+
+    async def fake_run_node(node, **kwargs):
+        return NodeResult(status="success", notes=f"ran {node.goal}",
+                           data={"files_edited": ["session.py"], "patch": "diff --git ..."})
+
+    monkeypatch.setattr(runner_module, "_open_client_session", lambda url, token: fake_session)
+    monkeypatch.setattr(runner_module, "_run_local_node", fake_run_node)
+
+    result = await runner_module.LocalAgentRunner(
+        server_url="http://fake/mcp", token="fake-token",
+    ).run(
+        # Deliberately zero vocabulary overlap with "resolve/failing/login/
+        # attempt/expired/session/token" above.
+        task_description="authentication broke for users whose credentials timed out",
+        repo_path=str(tmp_path),
+    )
+
+    assert result.source == "local"
+    assert result.matched_procedure["procedure_id"] == captured["procedure_id"], (
+        "semantic similarity must have found this procedure -- lexical "
+        "matching alone shares zero words with the query"
+    )
 
 
 @pytest.mark.asyncio

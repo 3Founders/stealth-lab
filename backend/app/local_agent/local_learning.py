@@ -55,15 +55,35 @@ private -> global promotion).
 """
 from __future__ import annotations
 
-from typing import Optional
+from typing import Any, Optional
 
+from app.execution.graph_executor import NodeResult
+from app.local_agent.local_episode_evidence import (
+    LocalEpisodeEvidence,
+    build_local_episode_evidence,
+)
 from app.local_agent.local_store import LocalProcedureStore
+from app.services.environment_facts import EnvironmentFact
 
 # Reused, not re-invented: the exact success proxy find_best_way and
 # LocalAgentRunner.run() already gate on. Documented here as named
 # constants purely so a caller/test can assert against them by name
 # rather than re-deriving the bar from prose.
 SUCCESS_BAR_DESCRIPTION = "graph_outcome == 'success' and bool(combined_patch)"
+
+# Same real, ABSTAIN-preferring precedent app/services/skill_ingestion.py's
+# _abstract_capability_statement() already established for its own optional
+# LLM pass -- mirrored here, not re-invented, so both call sites degrade
+# identically. See _abstract_capability_statement_local()'s own docstring.
+_CAPABILITY_ABSTRACTION_SYSTEM_PROMPT = """\
+You are given a task description and the real steps a coding agent took to complete it.
+Produce exactly one line:
+CAPABILITY: <one sentence naming the general skill this represents, with NO specific file names, \
+repository names, tool names, package names, command strings, or version numbers -- it must \
+describe something that would apply to a DIFFERENT project doing a similar kind of work>
+
+If you cannot produce a genuinely abstract statement, reply with exactly: ABSTAIN
+"""
 
 
 def _is_real_success(*, run_succeeded: bool) -> bool:
@@ -77,30 +97,63 @@ def _is_real_success(*, run_succeeded: bool) -> bool:
     return bool(run_succeeded)
 
 
-def _steps_from_node_notes(node_notes: list[str]) -> list[dict]:
-    """One step per real node note, in the order the run actually
-    produced them -- no fabricated steps, no re-ordering, no
-    generalization. A node note has the real shape
-    `"step {order} ({goal}): stop_reason=..., tool_calls=..."` (see
-    `_run_local_node` / `run_node` in both find_best_way and
-    LocalAgentRunner.run()); the goal is pulled back out of that note's
-    own text where the shape matches, and the raw note text is kept
-    verbatim as `properties.raw_note` either way so nothing is silently
-    dropped even when a caller supplies notes in a different shape."""
+def _steps_from_evidence(evidence: LocalEpisodeEvidence) -> list[dict]:
+    """One step per real `LocalStep` in `evidence.steps` -- itself one per
+    real `NodeResult`, in the run's own order (see
+    local_episode_evidence.py). Each step's own real
+    stop_reason/tool_calls/files_edited/patch verification lands in
+    `properties.verification`/`properties` for THAT step specifically,
+    not just the run's aggregate -- the richer replacement for the old
+    flattened-note-only shape."""
     steps = []
-    for i, note in enumerate(node_notes):
-        goal = note
-        if "(" in note and ")" in note:
-            try:
-                goal = note.split("(", 1)[1].rsplit(")", 1)[0].strip() or note
-            except (IndexError, ValueError):
-                goal = note
-        steps.append({
-            "order": i,
-            "goal": goal,
-            "properties": {"raw_note": note},
-        })
+    for step in evidence.steps:
+        properties = dict(step.properties)
+        properties["verification"] = dict(step.verification)
+        steps.append({"order": step.order, "goal": step.goal, "properties": properties})
     return steps
+
+
+def _abstract_capability_statement_local(
+    client: Any, *, task_description: str, step_goals: list[str],
+    model: str = "gemma-4-31B-it",
+) -> Optional[str]:
+    """Optional, injectable, LLM-assisted abstraction pass -- mirrors
+    skill_ingestion.py's `_abstract_capability_statement()` ABSTAIN
+    discipline verbatim (same degrade-on-anything-uncertain posture):
+    returns None -- never a fabricated string -- on no client, an API
+    error, an explicit ABSTAIN, or a malformed response. This module
+    itself makes NO LLM call unless a caller explicitly supplies `client`;
+    the default path (no client) never touches this function's body
+    beyond the `client is None` check, so `maybe_capture_local_candidate`
+    stays synchronous/derivation-only for every existing caller."""
+    if client is None:
+        return None
+    user_prompt = (
+        f"Task: {task_description}\n"
+        "Steps taken:\n" + "\n".join(f"- {g}" for g in step_goals)
+    )
+    try:
+        response = client.chat.completions.create(
+            model=model,
+            messages=[
+                {"role": "system", "content": _CAPABILITY_ABSTRACTION_SYSTEM_PROMPT},
+                {"role": "user", "content": user_prompt},
+            ],
+            temperature=0.2,
+            max_tokens=160,
+        )
+        text = (response.choices[0].message.content or "").strip()
+    except Exception:  # noqa: BLE001 -- a model call's own failure degrades to None, never raises
+        return None
+    if text == "ABSTAIN":
+        return None
+    capability: Optional[str] = None
+    for line in text.splitlines():
+        line = line.strip()
+        if line.startswith("CAPABILITY:"):
+            capability = line[len("CAPABILITY:"):].strip()
+            break
+    return capability or None
 
 
 def maybe_capture_local_candidate(
@@ -112,7 +165,10 @@ def maybe_capture_local_candidate(
     combined_patch: str,
     run_succeeded: bool,
     repo_root: str,
+    node_results: Optional[dict[int, NodeResult]] = None,
+    environment_facts: Optional[list[EnvironmentFact]] = None,
     source_episode_ids: Optional[list[str]] = None,
+    client: Optional[Any] = None,
 ) -> Optional[dict]:
     """
     Capture a candidate LOCAL procedure directly from a successful ad-hoc
@@ -136,11 +192,33 @@ def maybe_capture_local_candidate(
     unsurprising case (most ad-hoc runs don't produce a keepable
     procedure), not an error.
 
-    Steps are built ONE PER `node_notes` ENTRY, in the run's own order --
-    never fabricated. `files_edited` is folded into the captured
-    procedure's `scope` as an observation-like note (not a step) so the
-    provenance of what the procedure actually touched survives without
-    inventing a step that never happened.
+    Steps are built ONE PER real `NodeResult` (via
+    `local_episode_evidence.build_local_episode_evidence`), in the run's
+    own order -- never fabricated, never re-ordered. Each step carries its
+    OWN real verification (`declared_finished`, `produced_patch`) and its
+    own `files_edited`/`patch_present`/`tool_calls` -- richer than the
+    prior flattened-note-per-step shape, still never inventing anything
+    the run itself didn't produce. `node_results`/`environment_facts` are
+    optional: when omitted (the pre-existing call shape), steps still
+    build correctly from `node_notes` alone with each step's per-node
+    verification honestly defaulted to "no richer signal available"
+    rather than fabricated as true.
+
+    `files_edited` lands in the captured procedure's `scope` (as before)
+    AND the run's real probed `environment_facts`, if supplied, are
+    folded into `scope["environment"]` as informational context ONLY --
+    this function deliberately never synthesizes a formal invariant
+    expression (e.g. "pandas_version >= X") from a single run's observed
+    environment values; `invariants` stays `[]` (see
+    local_episode_evidence.py's own docstring for why this is a
+    deliberate, documented scope limit, not an oversight).
+
+    `client`, if supplied, is used for ONE optional, injectable,
+    ABSTAIN-preferring capability-abstraction call
+    (`_abstract_capability_statement_local`) whose result lands in
+    `scope["capability_statement"]` when it succeeds; this function makes
+    NO LLM call itself when `client` is omitted (the default), and never
+    fabricates a placeholder statement when the call abstains or fails.
 
     Returns the same `{"id", "procedure_id"}` shape
     `capture_local_procedure` returns, or `None`.
@@ -150,19 +228,40 @@ def maybe_capture_local_candidate(
     if not (combined_patch or "").strip():
         return None
 
-    steps = _steps_from_node_notes(node_notes)
+    evidence = build_local_episode_evidence(
+        task_description=task_description,
+        node_notes=node_notes,
+        node_results=node_results or {},
+        files_edited=files_edited,
+        combined_patch=combined_patch,
+        run_succeeded=run_succeeded,
+        environment_facts=environment_facts,
+    )
+
+    steps = _steps_from_evidence(evidence)
     name = f"local candidate: {task_description[:80]}"
+
+    scope: dict = {"files_edited": list(files_edited)}
+    if evidence.environment:
+        scope["environment"] = evidence.environment
+
+    capability_statement = _abstract_capability_statement_local(
+        client, task_description=task_description,
+        step_goals=[s["goal"] for s in steps],
+    )
+    if capability_statement:
+        scope["capability_statement"] = capability_statement
+
+    evidence_ref = dict(evidence.evidence_ref)
+    evidence_ref["declared_success"] = evidence.verification["declared_success"]
+    evidence_ref["verified_success"] = evidence.verification["verified_success"]
 
     return store.capture_local_procedure(
         name=name,
         goal=task_description,
         steps=steps,
-        scope={"files_edited": list(files_edited)},
-        evidence_refs=[{
-            "kind": "local_ad_hoc_run",
-            "combined_patch_present": True,
-            "files_edited": list(files_edited),
-        }],
+        scope=scope,
+        evidence_refs=[evidence_ref],
         source_episode_ids=source_episode_ids or [],
         provenance="system_pending_review",
         scope_type="repository",

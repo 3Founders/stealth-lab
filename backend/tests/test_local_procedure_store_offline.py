@@ -228,6 +228,49 @@ def test_local_applicability_numeric_invariant():
     assert undecided.applicable is True
 
 
+def test_local_applicability_unknown_precondition_is_neither_pass_nor_fail():
+    """Product spec's own explicit rule: 'Unknown must not silently become
+    true.' local_applicability.py's own module docstring already states it
+    does NOT evaluate `preconditions` at all (no claims graph locally to
+    project state from) -- a precondition-bearing local procedure is
+    neither disqualified NOR passed on that basis, it is simply not
+    checked. This test proves that honest scope limit holds in both
+    directions: a procedure with real preconditions that a global,
+    DB-backed cascade WOULD need to check must still pass this local
+    cascade when every OTHER real gate is satisfied (preconditions never
+    silently disqualify it), and must NOT be treated as satisfying those
+    preconditions either -- `failed_constraints` never mentions
+    'precondition' in either case, proving it was genuinely skipped, not
+    silently resolved true or false."""
+    row_with_preconditions = {
+        "id": "row-precond", "t_invalid": None, "staleness": "fresh",
+        "availability": "active", "verification_state": "verified",
+        "scope": {}, "exclusions": [], "invariants": [],
+        "preconditions": [
+            {"subject": "repo", "predicate": "has_test_suite", "object": "true"},
+        ],
+    }
+    result = check_local_hard_constraints(row_with_preconditions, current_scope={})
+    assert result.applicable is True, (
+        "a real precondition this local cascade cannot evaluate must not "
+        "disqualify an otherwise-applicable procedure"
+    )
+    assert not any("precondition" in c for c in result.failed_constraints), (
+        "preconditions must be genuinely SKIPPED (never checked), not "
+        "silently resolved to a pass -- this assertion would also catch "
+        "a future accidental precondition check being added without the "
+        "real claims-graph machinery to back it"
+    )
+
+    # Same row, but staleness genuinely does disqualify it -- proves the
+    # precondition-skip isn't masking a broken cascade; other real gates
+    # still fire correctly on the SAME row shape.
+    stale_row = dict(row_with_preconditions, staleness="stale")
+    stale_result = check_local_hard_constraints(stale_row, current_scope={})
+    assert stale_result.applicable is False
+    assert stale_result.failed_constraints == ["staleness"]
+
+
 # ---------------------------------------------------------------------------
 # Unified retrieval ranking policy -- product spec's required scenarios.
 # Global candidates are hand-built dicts (faked "as if returned by the

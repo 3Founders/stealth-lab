@@ -44,6 +44,7 @@ connection."
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import os
 import secrets
@@ -62,6 +63,7 @@ from app.local_agent.local_learning import maybe_capture_local_candidate
 from app.local_agent.local_store import LocalProcedureStore
 from app.local_agent.unified_retrieval import orchestrate_unified_search
 from app.models.plan import TaskGraph
+from app.services.embeddings import Embedder
 from app.services.environment_facts import invariant_bindings_from_facts, probe_environment
 
 
@@ -96,6 +98,31 @@ async def _open_client_session(server_url: str, token: str):
     async with streamable_http_client(server_url, http_client=http_client) as (read, write):
         async with ClientSession(read, write, read_timeout_seconds=60) as session:
             yield session
+
+
+def _local_context_key(repo_path: str, facts: list) -> str:
+    """Meaningful context identity (product spec P0: 'Fix context
+    identity'). A bare repo folder name collapses every run against the
+    same checkout into ONE context regardless of which branch/dependency
+    set was actually active -- so ten runs against the same repo on ten
+    different days, with a package upgraded partway through, silently
+    counted as ten repeats of the SAME context, undermining ticket 13's
+    real ">=3 DISTINCT contexts" requirement.
+
+    Real and deterministic, never randomized: repo folder name + a stable
+    hash of every real fact `probe_environment` actually returned
+    (language, package versions -- exactly what feeds invariant_bindings
+    already) -- so the SAME repo checked out with the SAME dependency
+    state always reduces to the SAME context_key (no artificial
+    diversity), while a genuinely different environment (a branch with a
+    different pandas pin, say) produces a genuinely different one. Facts
+    are sorted before hashing so key order never affects the result."""
+    repo_name = os.path.basename(os.path.abspath(repo_path))
+    fact_parts = sorted(f"{fact.predicate}={fact.object}" for fact in facts)
+    if not fact_parts:
+        return f"{repo_name}:no-probed-facts"
+    fact_hash = hashlib.sha256("|".join(fact_parts).encode("utf-8")).hexdigest()[:12]
+    return f"{repo_name}:{fact_hash}"
 
 
 def _ensure_swebench_pro_on_path() -> None:
@@ -242,12 +269,27 @@ class LocalAgentRunner:
             # under a path that was never a real workspace.
             store = LocalProcedureStore(repo_path) if os.path.isdir(repo_path) else None
             if store is not None:
+                # REAL GAP CLOSED: orchestrate_unified_search's
+                # query_embedding param has existed since Phase 1+2, and
+                # LocalProcedureStore.search_local_procedures() only ranks
+                # by real cosine similarity when one is supplied -- this
+                # call site never supplied it, so every local search was
+                # silently lexical-only, substring-matching the task
+                # description against stored name/goal text no matter how
+                # differently a real procedure's own wording described the
+                # same capability. One real embedding call (the same
+                # Embedder every other real caller in this codebase uses,
+                # no second provider) now makes semantic ranking real here
+                # too, matching what the store has supported since it was
+                # built.
+                query_embedding = await Embedder().embed_one(task_description, input_type="query")
                 ranked = await orchestrate_unified_search(
                     session, store,
                     task_description=task_description,
                     invariant_bindings=invariant_bindings,
                     require_verified=not allow_unverified,
                     limit=3,
+                    query_embedding=query_embedding,
                 )
                 matched, source = (ranked[0].procedure, ranked[0].source) if ranked else (None, None)
             else:
@@ -286,7 +328,25 @@ class LocalAgentRunner:
                     store, task_description=task_description, node_notes=node_notes,
                     files_edited=all_files_edited, combined_patch=combined_patch,
                     run_succeeded=run_succeeded, repo_root=repo_path,
+                    node_results=node_results, environment_facts=local_facts,
                 )
+                # REAL GAP CLOSED: the run that JUST succeeded and produced
+                # this candidate is the run's own first real evidence --
+                # leaving it uncounted meant every freshly captured
+                # candidate started at attempts=0 despite one genuine,
+                # already-known-successful execution existing for it. This
+                # is the SAME record_local_execution_outcome real reuse
+                # already calls for a MATCHED local procedure below, applied
+                # here to the procedure's own originating run. Uses the same
+                # meaningful context_key this module now derives (see
+                # _local_context_key) rather than a bare repo folder name.
+                if captured is not None:
+                    adhoc_tool_calls = sum(r.data.get("tool_calls", 0) for r in node_results.values())
+                    store.record_local_execution_outcome(
+                        row_id=captured["id"], success=True,
+                        context_key=_local_context_key(repo_path, local_facts),
+                        steps_used=adhoc_tool_calls,
+                    )
                 return LocalRunResult(
                     matched_procedure=None,
                     graph_outcome=graph_result.outcome,
@@ -321,7 +381,11 @@ class LocalAgentRunner:
             )
             total_tool_calls = sum(r.data.get("tool_calls", 0) for r in node_results.values())
             run_succeeded = graph_result.outcome == "success" and bool(combined_patch)
-            context_key = os.path.basename(os.path.abspath(repo_path))
+            # REAL GAP CLOSED: a bare repo folder name collapses every run
+            # against the same checkout into ONE context regardless of
+            # which branch/dependency set was actually active -- see
+            # _local_context_key.
+            context_key = _local_context_key(repo_path, local_facts)
 
             if source == "local":
                 # Stays entirely in this process -- a local procedure's
