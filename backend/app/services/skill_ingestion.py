@@ -28,13 +28,18 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from typing import Any, Optional
 
 import asyncpg
 
 from app.services.applicability import find_applicable_procedures
 from app.services.embeddings import Embedder
-from app.services.procedures import capture_procedure
+from app.services.procedures import (
+    capture_procedure,
+    mark_procedure_stale,
+    supersede_procedure,
+)
 
 NOVELTY_THRESHOLD = 0.90
 """Same value applicability.py's own retrieval code treats as "confidently
@@ -236,3 +241,501 @@ async def ingest_skill_md(
         invariants=invariants,
     )
     return {"status": "captured", "id": result["id"], "procedure_id": result["procedure_id"]}
+
+
+# ---------------------------------------------------------------------------
+# Phase 2 ingestion compiler (.scratch/phase2_ingestion_plan.md section 2b).
+#
+# ingest_skill_md() above is the raw "here is a string, make a procedure"
+# entry point. compile_skill_artifact() is the real compiler: it takes a
+# SourceArtifact (from app/services/ingestion_sources/), and additionally
+#   - abstracts a capability_statement when a model client is available,
+#     ABSTAINING rather than fabricating one (brief section 6),
+#   - detects an unchanged / changed source by content hash against the
+#     ingested_artifacts provenance table -- unchanged is a no-op, changed
+#     produces a NEW procedure version via supersede_procedure (brief 10/11),
+#   - materializes each parsed step as a real task_nodes row + an
+#     OWNS/DECOMPOSES_TO edge, keeping the procedure's own `steps` JSON
+#     planner-neutral and untouched (brief section 4),
+#   - records a row in ingested_artifacts for provenance/freshness, and
+#   - run_skill_ingestion() drives an adapter end to end and writes one
+#     ingestion_runs manifest row with the brief section 14 metrics.
+#
+# None of this is a parallel store: procedures / task_nodes / edges are the
+# existing substrate tables; ingested_artifacts + ingestion_runs are
+# provenance/telemetry side tables only (migration 32).
+# ---------------------------------------------------------------------------
+
+EXTRACTOR_VERSION_DETERMINISTIC = "skill_md_v1"
+EXTRACTOR_VERSION_GROUNDED = "skill_md_grounded_v1"
+
+_SKILL_ABSTRACTION_SYSTEM_PROMPT = """You restate a software skill's capability as ONE abstract, \
+reusable sentence.
+
+You are given the skill's name, its description, and its steps. Produce exactly one line:
+CAPABILITY: <one sentence naming the general skill this represents, with NO specific file names, \
+repository names, tool names, package names, command strings, or version numbers -- it must \
+describe something that would apply to a DIFFERENT project doing a similar kind of work>
+
+If you cannot produce a genuinely abstract statement, reply with exactly: ABSTAIN
+"""
+
+# Light heuristic for brief section 11 / section 12's migrate_deprecated_api
+# case: a source that talks about a removed/deprecated API or pins a version
+# is a signal that the PRIOR procedure version it replaces is now stale.
+_DEPRECATED_SIGNAL_RE = re.compile(
+    r"deprecat|removed in|no longer|has no attribute|"
+    r"(?:>=|<=|==|<|>)\s*\d|version\s*\d",
+    re.IGNORECASE,
+)
+
+_BACKTICK_RE = re.compile(r"`([^`]+)`")
+_DOTTED_TOKEN_RE = re.compile(r"\b[\w-]+(?:\.[\w-]+)+\b")
+_NON_SLUG_RE = re.compile(r"[^a-z0-9]+")
+
+
+@dataclass
+class IngestOutcome:
+    """The result of compiling one SourceArtifact. `status` is one of
+    "captured" (new procedure), "new_version" (source changed -> superseded
+    version), "duplicate" (a >=0.90-similar procedure already exists --
+    provenance attached, nothing inserted), "unchanged" (byte-identical
+    source already ingested -- last_seen bumped, nothing else), or
+    "rejected" (the document had no extractable structure)."""
+
+    status: str
+    procedure_id: Optional[str] = None
+    version_row_id: Optional[str] = None
+    task_node_ids: list[str] = field(default_factory=list)
+    artifact_id: Optional[str] = None
+    capability_abstained: bool = False
+    marked_stale: bool = False
+    reason: Optional[str] = None
+
+
+def _slugify(text: str, *, maxlen: int = 80) -> str:
+    s = _NON_SLUG_RE.sub("-", text.lower()).strip("-")
+    return s[:maxlen].rstrip("-") or "step"
+
+
+def _artifact_fallback_name(artifact: Any) -> str:
+    ref = (artifact.path or artifact.uri or "").replace("\\", "/").rstrip("/")
+    parts = [p for p in ref.split("/") if p]
+    if not parts:
+        return "unnamed-skill"
+    last = parts[-1]
+    if last.lower() == "skill.md" and len(parts) >= 2:
+        # `.../research/SKILL.md` -> the meaningful name is the folder.
+        return parts[-2]
+    return re.sub(r"\.skill\.md$", "", last, flags=re.IGNORECASE) or "unnamed-skill"
+
+
+def _concrete_tokens(parsed: ParsedSkill) -> set[str]:
+    """Tokens that must NOT appear in an abstracted capability statement --
+    backtick-quoted spans and dotted identifiers (df.append, pandas 2.0,
+    foo/bar.py) drawn from the skill's own name and steps. Same "did you
+    leak something concrete" discipline procedure_extraction's V4 applies,
+    scoped to what this document itself mentions."""
+    tokens: set[str] = set()
+    haystack = " ".join([parsed.name, parsed.description, *parsed.steps])
+    for m in _BACKTICK_RE.finditer(haystack):
+        tokens.add(m.group(1).strip())
+    for m in _DOTTED_TOKEN_RE.finditer(haystack):
+        tokens.add(m.group(0))
+    return {t for t in tokens if len(t) >= 3}
+
+
+def _abstract_capability(
+    client: Any, parsed: ParsedSkill, *,
+    model: str = "gemma-4-31B-it", temperature: float = 0.2,
+) -> Optional[str]:
+    """One focused model call for an abstract capability_statement, or None.
+
+    Returns None -- never a fabricated string -- on any of: no client, an
+    API error, an explicit ABSTAIN, a response with no CAPABILITY line, or
+    a statement that echoes a concrete token from the skill's own text
+    (brief section 6: "prefer ABSTAIN/rejection over hallucinated
+    structure"). The caller records capability_abstained=True and the
+    procedure's capability_statement column stays NULL."""
+    if client is None:
+        return None
+    user_prompt = (
+        f"Name: {parsed.name}\n"
+        f"Description: {parsed.description}\n"
+        "Steps:\n" + "\n".join(f"- {s}" for s in parsed.steps)
+    )
+    try:
+        response = client.chat.completions.create(
+            model=model,
+            messages=[
+                {"role": "system", "content": _SKILL_ABSTRACTION_SYSTEM_PROMPT},
+                {"role": "user", "content": user_prompt},
+            ],
+            temperature=temperature,
+            max_tokens=160,
+        )
+        text = (response.choices[0].message.content or "").strip()
+    except Exception:  # noqa: BLE001 -- a model call's own failure degrades
+        return None
+    if text.strip() == "ABSTAIN":
+        return None
+    capability: Optional[str] = None
+    for line in text.splitlines():
+        line = line.strip()
+        if line.startswith("CAPABILITY:"):
+            capability = line[len("CAPABILITY:"):].strip()
+            break
+    if not capability:
+        return None
+    lowered = capability.lower()
+    if any(tok.lower() in lowered for tok in _concrete_tokens(parsed)):
+        return None
+    return capability
+
+
+def _mentions_deprecated_api(parsed: ParsedSkill) -> bool:
+    hay = " ".join([parsed.description, parsed.applies_when or "", *parsed.steps])
+    return bool(_DEPRECATED_SIGNAL_RE.search(hay))
+
+
+def _source_provenance(artifact: Any) -> dict:
+    return {
+        "source_type": artifact.source_type,
+        "uri": artifact.uri,
+        "repository": artifact.repository,
+        "path": artifact.path,
+        "commit": artifact.commit,
+        "content_hash": artifact.content_hash,
+        "ingested_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+def _domain_payload(artifact: Any, parsed: ParsedSkill) -> dict:
+    return {
+        "source": _source_provenance(artifact),
+        "applies_when": parsed.applies_when,  # PROSE, never a fabricated Predicate
+        "frontmatter": parsed.frontmatter,
+    }
+
+
+async def _write_task_nodes(
+    pool: asyncpg.Pool, *, procedure_row_id: str, steps: list[str], created_by: str,
+) -> list[str]:
+    """One task_nodes row per parsed step + an OWNS/DECOMPOSES_TO edge from
+    the procedure version row to each. Brief section 4: the external skill's
+    step list becomes real Task nodes in the EXISTING table; the procedure's
+    own `steps` JSON is left planner-neutral and is not touched here.
+
+    Edge shape follows this codebase's established base-enum + custom-subtype
+    convention (hierarchy.py's OWNS/PARENT_OF, dedup.py's SUPERSEDES/
+    DUPLICATE_OF) -- edge_type is the real enum value 'OWNS', the specific
+    relation rides custom_edge_type='DECOMPOSES_TO'."""
+    task_node_ids: list[str] = []
+    for i, step_text in enumerate(steps):
+        row = await pool.fetchrow(
+            "INSERT INTO task_nodes (id, name, description, provenance, created_by) "
+            "VALUES (gen_random_uuid(), $1, $2, 'prior_library', $3) RETURNING id",
+            _slugify(step_text), step_text, created_by,
+        )
+        task_node_id = str(row["id"])
+        task_node_ids.append(task_node_id)
+        await pool.execute(
+            "INSERT INTO edges (edge_type, custom_edge_type, source_id, source_table, "
+            "target_id, target_table, properties, provenance, t_valid, t_created, created_by) "
+            "VALUES ('OWNS', 'DECOMPOSES_TO', $1::uuid, 'procedures', $2::uuid, 'task_nodes', "
+            "$3::jsonb, 'prior_library', now(), now(), $4)",
+            procedure_row_id, task_node_id, {"order": i}, created_by,
+        )
+    return task_node_ids
+
+
+async def _write_artifact_row(
+    pool: asyncpg.Pool, artifact: Any, *,
+    run_id: Optional[str], procedure_id: Optional[str],
+    procedure_row_id: Optional[str], extractor_version: str,
+    owner_id: Optional[str] = None,
+) -> str:
+    row = await pool.fetchrow(
+        "INSERT INTO ingested_artifacts (id, source_type, uri, repository, path, "
+        "\"commit\", content_hash, extractor_version, procedure_id, procedure_row_id, "
+        "run_id, first_seen, last_seen, owner_id) "
+        "VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, $6, $7, $8::uuid, $9::uuid, "
+        "$10::uuid, now(), now(), $11) RETURNING id",
+        artifact.source_type, artifact.uri, artifact.repository, artifact.path,
+        artifact.commit, artifact.content_hash, extractor_version,
+        procedure_id, procedure_row_id, run_id, owner_id,
+    )
+    return str(row["id"])
+
+
+async def compile_skill_artifact(
+    pool: asyncpg.Pool,
+    artifact: Any,
+    *,
+    embedder: Optional[Embedder] = None,
+    client: Any = None,
+    domain: Optional[str] = None,
+    run_id: Optional[str] = None,
+    created_by: str = "skill_md_ingestion",
+    invariants: Optional[list[dict]] = None,
+    owner_id: Optional[str] = None,
+) -> IngestOutcome:
+    """Compile one SourceArtifact into the substrate. See the section
+    comment above for the full contract. Never raises for an
+    unstructured document -- returns status="rejected" instead."""
+    try:
+        parsed = parse_skill_md(
+            artifact.content, fallback_name=_artifact_fallback_name(artifact),
+        )
+    except SkillMdParseError as exc:
+        return IngestOutcome(status="rejected", reason=str(exc))
+
+    embedder = embedder or Embedder()
+    capability_statement = _abstract_capability(client, parsed)
+    capability_abstained = capability_statement is None
+    extractor_version = (
+        EXTRACTOR_VERSION_GROUNDED if capability_statement is not None
+        else EXTRACTOR_VERSION_DETERMINISTIC
+    )
+
+    # --- staleness / version detection against the provenance table ---
+    exact = await pool.fetchrow(
+        "SELECT id, procedure_id FROM ingested_artifacts "
+        "WHERE source_type = $1 AND uri = $2 AND content_hash = $3 "
+        "AND t_invalid IS NULL ORDER BY first_seen DESC LIMIT 1",
+        artifact.source_type, artifact.uri, artifact.content_hash,
+    )
+    if exact is not None:
+        await pool.execute(
+            "UPDATE ingested_artifacts SET last_seen = now() WHERE id = $1::uuid",
+            str(exact["id"]),
+        )
+        return IngestOutcome(
+            status="unchanged",
+            procedure_id=str(exact["procedure_id"]) if exact["procedure_id"] else None,
+            artifact_id=str(exact["id"]),
+            capability_abstained=capability_abstained,
+        )
+
+    prior_art = await pool.fetchrow(
+        "SELECT id, procedure_id, procedure_row_id, content_hash FROM ingested_artifacts "
+        "WHERE source_type = $1 AND uri = $2 AND procedure_row_id IS NOT NULL "
+        "AND t_invalid IS NULL ORDER BY first_seen DESC LIMIT 1",
+        artifact.source_type, artifact.uri,
+    )
+
+    steps_json = [{"order": i, "goal": s} for i, s in enumerate(parsed.steps)]
+
+    if prior_art is not None:
+        changed_fields: dict[str, Any] = {
+            "name": parsed.name,
+            "goal": parsed.description,
+            "steps": steps_json,
+            "parameter_schema": {"source": "skill_md"},
+            "domain_payload": _domain_payload(artifact, parsed),
+            # A superseding version is fresh even if the one it replaces was
+            # flagged stale below -- supersede_procedure carries `staleness`
+            # forward otherwise.
+            "staleness": "fresh",
+        }
+        if capability_statement is not None:
+            changed_fields["capability_statement"] = capability_statement
+        if invariants is not None:
+            changed_fields["invariants"] = invariants
+
+        superseded = await supersede_procedure(
+            pool,
+            prior_row_id=str(prior_art["procedure_row_id"]),
+            changed_fields=changed_fields,
+            superseded_by=created_by,
+            reason=(
+                f"source content changed for {artifact.uri}: "
+                f"{str(prior_art['content_hash'])[:12]} -> {artifact.content_hash[:12]}"
+            ),
+        )
+        if superseded is not None:
+            marked_stale = False
+            if _mentions_deprecated_api(parsed):
+                await mark_procedure_stale(
+                    pool,
+                    procedure_row_id=str(prior_art["procedure_row_id"]),
+                    reason=(
+                        "replaced by a newer source revision that references "
+                        "updated or deprecated APIs"
+                    ),
+                    detected_by=created_by,
+                )
+                marked_stale = True
+
+            task_node_ids = await _write_task_nodes(
+                pool, procedure_row_id=superseded["id"],
+                steps=parsed.steps, created_by=created_by,
+            )
+            artifact_id = await _write_artifact_row(
+                pool, artifact, run_id=run_id,
+                procedure_id=superseded["procedure_id"],
+                procedure_row_id=superseded["id"],
+                extractor_version=extractor_version, owner_id=owner_id,
+            )
+            return IngestOutcome(
+                status="new_version",
+                procedure_id=superseded["procedure_id"],
+                version_row_id=superseded["id"],
+                task_node_ids=task_node_ids,
+                artifact_id=artifact_id,
+                capability_abstained=capability_abstained,
+                marked_stale=marked_stale,
+            )
+        # prior row already gone (concurrent merge/supersede) -- fall
+        # through and treat this as a fresh capture.
+
+    # --- novelty / dedup ---
+    existing = await check_novelty(pool, embedder, parsed.description)
+    if existing is not None:
+        provenance_entry = {
+            "source": _source_provenance(artifact),
+            "note": "additional source observed for an already-ingested procedure",
+        }
+        await pool.execute(
+            "UPDATE procedures SET evidence_refs = evidence_refs || $2::jsonb, "
+            "updated_at = now() WHERE procedure_id = $1::uuid AND t_invalid IS NULL",
+            str(existing["procedure_id"]), [provenance_entry],
+        )
+        artifact_id = await _write_artifact_row(
+            pool, artifact, run_id=run_id,
+            procedure_id=str(existing["procedure_id"]),
+            procedure_row_id=None,
+            extractor_version=extractor_version, owner_id=owner_id,
+        )
+        return IngestOutcome(
+            status="duplicate",
+            procedure_id=str(existing["procedure_id"]),
+            artifact_id=artifact_id,
+            capability_abstained=capability_abstained,
+            reason=f"similarity {existing.get('_similarity_score')}",
+        )
+
+    # --- fresh capture ---
+    goal_vec = await embedder.embed_one(
+        capability_statement or parsed.description, input_type="document",
+    )
+    result = await capture_procedure(
+        pool, name=parsed.name, goal=parsed.description, steps=steps_json,
+        provenance="prior_library", domain=domain,
+        domain_payload=_domain_payload(artifact, parsed),
+        scope_type="entity" if domain else "global",
+        scope_entity_id=domain,
+        created_by=created_by,
+        embedding=goal_vec,
+        invariants=invariants,
+        owner_id=owner_id,
+    )
+    if capability_statement is not None:
+        await pool.execute(
+            "UPDATE procedures SET capability_statement = $2 WHERE id = $1::uuid",
+            result["id"], capability_statement,
+        )
+    task_node_ids = await _write_task_nodes(
+        pool, procedure_row_id=result["id"], steps=parsed.steps, created_by=created_by,
+    )
+    artifact_id = await _write_artifact_row(
+        pool, artifact, run_id=run_id,
+        procedure_id=result["procedure_id"], procedure_row_id=result["id"],
+        extractor_version=extractor_version, owner_id=owner_id,
+    )
+    return IngestOutcome(
+        status="captured",
+        procedure_id=result["procedure_id"],
+        version_row_id=result["id"],
+        task_node_ids=task_node_ids,
+        artifact_id=artifact_id,
+        capability_abstained=capability_abstained,
+    )
+
+
+_ACCEPTED_STATUSES = frozenset({"captured", "new_version"})
+
+
+async def run_skill_ingestion(
+    pool: asyncpg.Pool,
+    adapter: Any,
+    *,
+    embedder: Optional[Embedder] = None,
+    client: Any = None,
+    domain: Optional[str] = None,
+    created_by: str = "skill_md_ingestion",
+    invariants: Optional[list[dict]] = None,
+    owner_id: Optional[str] = None,
+) -> dict:
+    """Drive one source adapter end to end and record a manifest.
+
+    Writes an ingestion_runs row up front, compiles every artifact the
+    adapter discovers (a per-artifact failure is counted, never aborts the
+    batch -- same discipline as ingestion_jobs.process_pending_jobs), then
+    finalizes the row with the brief section 14 metrics. Returns
+    {"run_id", "metrics", "outcomes"}."""
+    embedder = embedder or Embedder()
+    source_spec = {
+        "adapter": type(adapter).__name__,
+        "source_type": getattr(adapter, "source_type", None),
+        "domain": domain,
+    }
+    run_row = await pool.fetchrow(
+        "INSERT INTO ingestion_runs (started_at, source_spec, created_by) "
+        "VALUES (now(), $1::jsonb, $2) RETURNING run_id",
+        source_spec, created_by,
+    )
+    run_id = str(run_row["run_id"])
+
+    metrics = {
+        "sources_seen": 1,
+        "artifacts_seen": 0,
+        "candidates": 0,
+        "accepted": 0,
+        "duplicates": 0,
+        "unchanged": 0,
+        "stale": 0,
+        "rejected": 0,
+        "errors": 0,
+    }
+    outcomes: list[IngestOutcome] = []
+
+    for ref in adapter.discover():
+        metrics["artifacts_seen"] += 1
+        try:
+            artifact = adapter.fetch(ref)
+            outcome = await compile_skill_artifact(
+                pool, artifact, embedder=embedder, client=client, domain=domain,
+                run_id=run_id, created_by=created_by, invariants=invariants,
+                owner_id=owner_id,
+            )
+        except Exception as exc:  # noqa: BLE001 -- one bad artifact must not
+            # sink the run; the failure is counted and surfaced.
+            metrics["errors"] += 1
+            outcomes.append(IngestOutcome(status="error", reason=repr(exc)))
+            continue
+
+        outcomes.append(outcome)
+        # `candidates` counts every artifact that reached the compiler,
+        # rejected ones included (brief section 14: candidates == accepted +
+        # duplicates + rejected + ...); only a fetch/compile exception is
+        # excluded, and that is what `errors` is for. So:
+        #   artifacts_seen == candidates + errors, and
+        #   candidates == accepted + duplicates + unchanged + rejected.
+        metrics["candidates"] += 1
+        if outcome.status == "rejected":
+            metrics["rejected"] += 1
+        elif outcome.status in _ACCEPTED_STATUSES:
+            metrics["accepted"] += 1
+        elif outcome.status == "duplicate":
+            metrics["duplicates"] += 1
+        elif outcome.status == "unchanged":
+            metrics["unchanged"] += 1
+        if outcome.marked_stale:
+            metrics["stale"] += 1
+
+    await pool.execute(
+        "UPDATE ingestion_runs SET finished_at = now(), metrics = $2::jsonb WHERE run_id = $1::uuid",
+        run_id, metrics,
+    )
+    return {"run_id": run_id, "metrics": metrics, "outcomes": outcomes}

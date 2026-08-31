@@ -210,6 +210,194 @@ async def get_procedure(pool: asyncpg.Pool, procedure_row_id: str) -> Optional[d
     return dict(row) if row else None
 
 
+# Columns copied from the prior version row onto the new one unless the
+# caller overrides them in `changed_fields`. Deliberately omits the
+# identity/lifetime columns supersede_procedure() forces itself (id,
+# procedure_id, version, the four bitemporal stamps, created_at,
+# updated_at) -- everything else about a procedure version is carried
+# forward so a source-content change that only touches `steps` doesn't
+# silently drop hard-won verification_stats or evidence_refs.
+_SUPERSEDE_CARRY_COLUMNS: tuple[str, ...] = (
+    "family_id", "name", "goal", "steps", "parameter_schema",
+    "preconditions", "required_state", "expected_effects", "postconditions",
+    "invariants", "failure_conditions", "scope", "exclusions",
+    "verification_state", "staleness", "availability", "verification_stats",
+    "evidence_refs", "source_episode_ids", "migrated_from_task_node_id",
+    "provenance", "domain", "domain_payload", "created_by", "visibility",
+    "owner_id", "embedding", "embedding_model_id", "embedding_dim",
+    "scope_type", "scope_entity_id", "approval_status", "approved_by",
+    "approved_at", "capability_statement", "extracted_by",
+)
+
+# Per-column SQL cast for the carry-forward INSERT. asyncpg infers scalar
+# text/int/timestamptz from the INSERT target, so only the structured
+# types need an explicit cast -- same set capture_procedure()'s own INSERT
+# casts.
+_SUPERSEDE_COLUMN_CASTS: dict[str, str] = {
+    "steps": "jsonb", "parameter_schema": "jsonb", "preconditions": "jsonb",
+    "required_state": "jsonb", "expected_effects": "jsonb",
+    "postconditions": "jsonb", "invariants": "jsonb",
+    "failure_conditions": "jsonb", "scope": "jsonb", "exclusions": "jsonb",
+    "verification_stats": "jsonb", "evidence_refs": "jsonb",
+    "domain_payload": "jsonb",
+    "source_episode_ids": "uuid[]",
+    "verification_state": "procedure_verification_state",
+    "staleness": "procedure_staleness",
+    "availability": "procedure_availability",
+    "visibility": "visibility_level",
+    "embedding": "vector",
+}
+
+
+def _supersede_embedding_value(v: Any) -> Optional[str]:
+    """A prior row's embedding comes back from `SELECT *` as pgvector's
+    text form (asyncpg has no vector codec -- see embeddings.to_pgvector);
+    a caller override in `changed_fields` may be a raw float sequence.
+    Normalize both to the text form the `::vector` cast accepts."""
+    if v is None:
+        return None
+    if isinstance(v, str):
+        return v
+    return to_pgvector(v)
+
+
+async def supersede_procedure(
+    pool: asyncpg.Pool,
+    *,
+    prior_row_id: str,
+    changed_fields: Optional[Mapping[str, Any]] = None,
+    superseded_by: str = "skill_md_ingestion",
+    reason: Optional[str] = None,
+) -> Optional[dict]:
+    """
+    Create the next version of an existing logical procedure.
+
+    Referenced by capture_procedure()'s own docstring since Band 1 but
+    never implemented until Phase 2's ingestion compiler needed it: a
+    changed public source (a new SKILL.md content hash for the same URI)
+    must produce a NEW version of the same `procedure_id`, never an
+    in-place overwrite (brief §10 -- "Never silently replace a prior
+    version").
+
+    Mechanics, all inside one transaction this function owns:
+      1. Lock the prior version row (`FOR UPDATE`, live rows only). Fewer
+         than one live row -> return None (a concurrent supersede/merge
+         already moved it -- a valid no-op, same contract
+         merge_duplicate_procedures() uses).
+      2. INSERT a new row reusing the prior `procedure_id`, `version =
+         prior.version + 1`, every _SUPERSEDE_CARRY_COLUMNS value copied
+         forward unless `changed_fields` overrides it, fresh bitemporal
+         stamps, a fresh UUIDv7 `id`.
+      3. Close the prior row's validity window (`t_invalid = t_expired =
+         now()`) -- tombstone, never delete, this table's own idiom.
+      4. Write a `SUPERSEDES` edge new -> prior ('company_debate'
+         provenance, the value merge_duplicate_procedures() already reuses
+         for internal-maintenance edge writes -- the enum has no
+         'maintenance' member).
+      5. Record a ChangeSet (invariant #7): a create_version op for the
+         new row + an invalidate op for the prior one.
+
+    Returns {"id", "procedure_id", "version"} for the new version, or
+    None if the prior row was already gone.
+    """
+    changed = dict(changed_fields or {})
+    unknown = set(changed) - set(_SUPERSEDE_CARRY_COLUMNS)
+    if unknown:
+        raise ValueError(
+            f"supersede_procedure: changed_fields has non-carry columns {sorted(unknown)} "
+            f"(allowed: {list(_SUPERSEDE_CARRY_COLUMNS)})"
+        )
+
+    now = datetime.now(timezone.utc)
+    new_id = str(uuid7())
+
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            prior = await conn.fetchrow(
+                "SELECT * FROM procedures WHERE id = $1::uuid AND t_invalid IS NULL FOR UPDATE",
+                prior_row_id,
+            )
+            if prior is None:
+                return None
+
+            new_version = prior["version"] + 1
+            procedure_id = prior["procedure_id"]
+
+            # Build the carry-forward column list + params in a fixed order.
+            insert_cols = ["id", "procedure_id", "version"]
+            placeholders = ["$1::uuid", "$2::uuid", "$3"]
+            params: list[Any] = [new_id, procedure_id, new_version]
+            idx = 4
+            for col in _SUPERSEDE_CARRY_COLUMNS:
+                value = changed[col] if col in changed else prior[col]
+                if col == "embedding":
+                    value = _supersede_embedding_value(value)
+                cast = _SUPERSEDE_COLUMN_CASTS.get(col)
+                insert_cols.append(col)
+                placeholders.append(f"${idx}::{cast}" if cast else f"${idx}")
+                params.append(value)
+                idx += 1
+
+            sql = (
+                f"INSERT INTO procedures ({', '.join(insert_cols)}, "
+                f"t_valid, t_invalid, t_created, t_expired, created_at, updated_at) "
+                f"VALUES ({', '.join(placeholders)}, "
+                f"now(), NULL, now(), NULL, now(), now()) "
+                f"RETURNING id, procedure_id, version"
+            )
+            inserted = await conn.fetchrow(sql, *params)
+
+            await conn.execute(
+                "UPDATE procedures SET t_invalid = $2, t_expired = $2, updated_at = $2 "
+                "WHERE id = $1::uuid",
+                prior_row_id, now,
+            )
+
+            await conn.execute(
+                "INSERT INTO edges (edge_type, source_id, source_table, "
+                "target_id, target_table, properties, provenance, "
+                "t_valid, t_created, created_by) "
+                "VALUES ('SUPERSEDES', $1, 'procedures', $2, 'procedures', "
+                "$3::jsonb, 'company_debate', $4, $4, $5)",
+                inserted["id"], prior_row_id,
+                {"reason": reason or f"source content changed ({superseded_by})",
+                 "prior_version": prior["version"], "new_version": new_version},
+                now, superseded_by,
+            )
+
+    from app.services.changeset_record import record_change_set, ChangeOperation
+    await record_change_set(
+        pool, author=superseded_by,
+        reason=reason or (
+            f"procedure {procedure_id} superseded: version {prior['version']} -> {new_version}"
+        ),
+        operations=[
+            ChangeOperation(
+                operation="create_version", target_table="procedures",
+                target_id=str(inserted["id"]),
+                detail={
+                    "procedure_id": str(procedure_id),
+                    "version": new_version,
+                    "supersedes_row_id": str(prior_row_id),
+                    "changed_fields": sorted(changed),
+                },
+            ),
+            ChangeOperation(
+                operation="invalidate", target_table="procedures",
+                target_id=str(prior_row_id),
+                detail={"superseded_by_row_id": str(inserted["id"]),
+                        "new_version": new_version},
+            ),
+        ],
+    )
+
+    return {
+        "id": str(inserted["id"]),
+        "procedure_id": str(inserted["procedure_id"]),
+        "version": inserted["version"],
+    }
+
+
 async def record_execution_outcome(
     pool: asyncpg.Pool,
     *,

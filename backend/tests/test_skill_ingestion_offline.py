@@ -192,3 +192,416 @@ async def test_ingest_writes_with_a_real_embedding_when_novel(monkeypatch):
     assert result["status"] == "captured"
     assert result["procedure_id"] == "new-procedure-id"
     assert len(pool.captured) == 1
+
+
+# ===========================================================================
+# Phase 2 ingestion compiler: compile_skill_artifact() / run_skill_ingestion()
+# (.scratch/phase2_ingestion_plan.md section 2b; prompts.md sections 4/9/10/14).
+# ===========================================================================
+
+from app.services.ingestion_sources import (  # noqa: E402
+    SourceArtifact,
+    SourceRef,
+    compute_content_hash,
+)
+from app.services.skill_ingestion import (  # noqa: E402
+    IngestOutcome,
+    compile_skill_artifact,
+    run_skill_ingestion,
+)
+
+# procedures INSERT: positional param order is fixed by capture_procedure()'s
+# own INSERT statement. index 8 == invariants (pinned by an existing test
+# above); index 17 == domain_payload.
+_PROC_INVARIANTS_IX = 8
+_PROC_DOMAIN_PAYLOAD_IX = 17
+
+
+def _skill_artifact(
+    content: str = PANDAS_APPEND_SKILL_MD,
+    *,
+    uri: str = "file:///skills/pandas-append/SKILL.md",
+    path: str = "pandas-append/SKILL.md",
+    repository: str = "skills",
+    commit: str | None = None,
+) -> SourceArtifact:
+    return SourceArtifact(
+        source_type="skill_md",
+        uri=uri,
+        content=content,
+        content_hash=compute_content_hash(content),
+        repository=repository,
+        path=path,
+        commit=commit,
+    )
+
+
+class FakeLLMClient:
+    """Minimal stand-in for the OpenAI-compatible client
+    _abstract_capability() calls -- one canned completion body."""
+
+    def __init__(self, text: str):
+        self._text = text
+
+    @property
+    def chat(self):
+        return self
+
+    @property
+    def completions(self):
+        return self
+
+    def create(self, **_kwargs):
+        message = type("M", (), {"content": self._text})()
+        choice = type("C", (), {"message": message})()
+        return type("R", (), {"choices": [choice]})()
+
+
+class CompilerFakePool:
+    """Captures every SQL the compiler emits, dispatched by substring.
+    Deliberately not shared with the FakePool above -- per this repo's
+    'fakes are hand-rolled per file' convention."""
+
+    def __init__(self, *, exact_artifact=None, prior_artifact=None):
+        self.exact_artifact = exact_artifact
+        self.prior_artifact = prior_artifact
+        self.calls: list[tuple] = []
+        self.captured: dict[str, list] = {
+            "procedures": [], "task_nodes": [], "edges": [],
+            "ingested_artifacts": [], "ingestion_runs": [], "updates": [],
+        }
+        self._seq = {"proc": 0, "task": 0, "art": 0}
+
+    @staticmethod
+    def _norm(sql: str) -> str:
+        return " ".join(sql.split())
+
+    async def fetch(self, sql, *params):
+        self.calls.append(("fetch", self._norm(sql), params))
+        return []
+
+    async def fetchrow(self, sql, *params):
+        s = self._norm(sql)
+        self.calls.append(("fetchrow", s, params))
+        if "SELECT id, procedure_id FROM ingested_artifacts" in s:
+            return self.exact_artifact
+        if "SELECT id, procedure_id, procedure_row_id, content_hash FROM ingested_artifacts" in s:
+            return self.prior_artifact
+        if "INSERT INTO procedures" in s:
+            self._seq["proc"] += 1
+            n = self._seq["proc"]
+            self.captured["procedures"].append(params)
+            return {"id": f"proc-row-{n}", "procedure_id": f"proc-{n}"}
+        if "INSERT INTO task_nodes" in s:
+            self._seq["task"] += 1
+            self.captured["task_nodes"].append(params)
+            return {"id": f"task-{self._seq['task']}"}
+        if "INSERT INTO ingested_artifacts" in s:
+            self._seq["art"] += 1
+            self.captured["ingested_artifacts"].append(params)
+            return {"id": f"artifact-{self._seq['art']}"}
+        if "INSERT INTO ingestion_runs" in s:
+            self.captured["ingestion_runs"].append(params)
+            return {"run_id": "run-1"}
+        return None
+
+    async def execute(self, sql, *params):
+        s = self._norm(sql)
+        self.calls.append(("execute", s, params))
+        if "INSERT INTO edges" in s:
+            self.captured["edges"].append(params)
+        elif "UPDATE ingested_artifacts SET last_seen" in s:
+            self.captured["updates"].append(("ingested_artifacts.last_seen", params))
+        elif "UPDATE procedures SET capability_statement" in s:
+            self.captured["updates"].append(("procedures.capability_statement", params))
+        elif "UPDATE procedures SET evidence_refs" in s:
+            self.captured["updates"].append(("procedures.evidence_refs", params))
+        elif "UPDATE ingestion_runs SET finished_at" in s:
+            self.captured["updates"].append(("ingestion_runs.finish", params))
+        return "OK"
+
+
+@pytest.fixture
+def no_dup(monkeypatch):
+    """Default: the corpus has nothing similar, so the novel-insert path runs."""
+    async def _none(pool, embedder, goal_text):
+        return None
+
+    monkeypatch.setattr("app.services.skill_ingestion.check_novelty", _none)
+
+
+@pytest.mark.asyncio
+async def test_compile_emits_one_task_node_and_edge_per_step(no_dup):
+    pool = CompilerFakePool()
+    outcome = await compile_skill_artifact(
+        pool, _skill_artifact(), embedder=FakeEmbedder(), client=None,
+    )
+    assert outcome.status == "captured"
+    # PANDAS_APPEND_SKILL_MD has exactly three numbered steps.
+    assert len(pool.captured["task_nodes"]) == 3
+    assert len(pool.captured["edges"]) == 3
+    assert len(outcome.task_node_ids) == 3
+
+    proc_row_id = outcome.version_row_id
+    for i, edge_params in enumerate(pool.captured["edges"]):
+        source_id, target_id, properties, _created_by = edge_params
+        assert source_id == proc_row_id            # edge points procedure -> task
+        assert target_id == outcome.task_node_ids[i]
+        assert properties == {"order": i}          # step order preserved
+
+
+@pytest.mark.asyncio
+async def test_compile_carries_full_source_provenance(no_dup):
+    art = _skill_artifact(commit="abc123")
+    pool = CompilerFakePool()
+    await compile_skill_artifact(pool, art, embedder=FakeEmbedder(), client=None)
+
+    # (a) into the procedure's domain_payload
+    dp = pool.captured["procedures"][0][_PROC_DOMAIN_PAYLOAD_IX]
+    src = dp["source"]
+    assert src["uri"] == art.uri
+    assert src["repository"] == art.repository
+    assert src["path"] == art.path
+    assert src["commit"] == "abc123"
+    assert src["content_hash"] == art.content_hash
+    assert dp["applies_when"] and "AttributeError" in dp["applies_when"]
+
+    # (b) into the ingested_artifacts provenance row
+    (
+        source_type, uri, repository, path, commit, content_hash,
+        extractor_version, procedure_id, procedure_row_id, run_id, owner_id,
+    ) = pool.captured["ingested_artifacts"][0]
+    assert (source_type, uri, repository, path, commit) == (
+        "skill_md", art.uri, art.repository, art.path, "abc123",
+    )
+    assert content_hash == art.content_hash
+    assert extractor_version == "skill_md_v1"          # deterministic: no client
+    assert procedure_id is not None
+    assert procedure_row_id is not None
+    assert run_id is None and owner_id is None         # standalone compile, no run
+
+
+@pytest.mark.asyncio
+async def test_compile_without_client_abstains_capability(no_dup):
+    pool = CompilerFakePool()
+    outcome = await compile_skill_artifact(
+        pool, _skill_artifact(), embedder=FakeEmbedder(), client=None,
+    )
+    assert outcome.status == "captured"
+    assert outcome.capability_abstained is True
+    assert len(pool.captured["procedures"]) == 1
+    assert not any(
+        kind == "procedures.capability_statement"
+        for kind, _ in pool.captured["updates"]
+    )
+
+
+@pytest.mark.asyncio
+async def test_compile_with_client_sets_capability_and_grounded_extractor(no_dup):
+    pool = CompilerFakePool()
+    client = FakeLLMClient(
+        "CAPABILITY: Migrate a data-manipulation library call to its supported "
+        "replacement across a codebase and confirm via the test suite."
+    )
+    outcome = await compile_skill_artifact(
+        pool, _skill_artifact(), embedder=FakeEmbedder(), client=client,
+    )
+    assert outcome.status == "captured"
+    assert outcome.capability_abstained is False
+    cap_updates = [p for kind, p in pool.captured["updates"] if kind == "procedures.capability_statement"]
+    assert len(cap_updates) == 1
+    assert "Migrate a data-manipulation library call" in cap_updates[0][1]
+    assert pool.captured["ingested_artifacts"][0][6] == "skill_md_grounded_v1"
+
+
+@pytest.mark.asyncio
+async def test_compile_capability_that_leaks_a_concrete_token_abstains(no_dup):
+    pool = CompilerFakePool()
+    # Echoes `df.append(...)` straight from the skill's own steps -> rejected,
+    # capability stays NULL rather than being persisted as an "abstraction".
+    client = FakeLLMClient("CAPABILITY: Replace every df.append call with pd.concat.")
+    outcome = await compile_skill_artifact(
+        pool, _skill_artifact(), embedder=FakeEmbedder(), client=client,
+    )
+    assert outcome.capability_abstained is True
+    assert not any(k == "procedures.capability_statement" for k, _ in pool.captured["updates"])
+
+
+@pytest.mark.asyncio
+async def test_compile_unchanged_source_is_a_noop(no_dup):
+    pool = CompilerFakePool(
+        exact_artifact={"id": "art-existing", "procedure_id": "proc-existing"},
+    )
+    outcome = await compile_skill_artifact(
+        pool, _skill_artifact(), embedder=FakeEmbedder(), client=None,
+    )
+    assert outcome.status == "unchanged"
+    assert outcome.procedure_id == "proc-existing"
+    assert pool.captured["procedures"] == []
+    assert pool.captured["task_nodes"] == []
+    assert pool.captured["edges"] == []
+    assert pool.captured["ingested_artifacts"] == []
+    assert pool.captured["updates"] == [
+        ("ingested_artifacts.last_seen", ("art-existing",)),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_compile_changed_source_produces_a_new_version(no_dup, monkeypatch):
+    seen = {}
+
+    async def fake_supersede(pool, *, prior_row_id, changed_fields=None,
+                             superseded_by="skill_md_ingestion", reason=None):
+        seen["prior_row_id"] = prior_row_id
+        seen["changed_fields"] = changed_fields
+        seen["reason"] = reason
+        return {"id": "proc-row-v2", "procedure_id": "proc-logical", "version": 2}
+
+    stale_calls = []
+
+    async def fake_mark_stale(pool, *, procedure_row_id, reason, detected_by):
+        stale_calls.append(procedure_row_id)
+        return {}
+
+    monkeypatch.setattr("app.services.skill_ingestion.supersede_procedure", fake_supersede)
+    monkeypatch.setattr("app.services.skill_ingestion.mark_procedure_stale", fake_mark_stale)
+
+    pool = CompilerFakePool(prior_artifact={
+        "id": "art-prior", "procedure_id": "proc-logical",
+        "procedure_row_id": "proc-row-v1", "content_hash": "oldhash0000",
+    })
+    outcome = await compile_skill_artifact(
+        pool, _skill_artifact(), embedder=FakeEmbedder(), client=None,
+    )
+    assert outcome.status == "new_version"
+    assert outcome.version_row_id == "proc-row-v2"
+    assert seen["prior_row_id"] == "proc-row-v1"
+    assert seen["changed_fields"]["goal"]  # new content flowed through
+    assert seen["changed_fields"]["staleness"] == "fresh"  # new version is fresh
+    # PANDAS skill text mentions "pandas >= 2.0" / "has no attribute" -> the
+    # superseded row is flagged stale (brief sections 11/12).
+    assert outcome.marked_stale is True
+    assert stale_calls == ["proc-row-v1"]
+    # task nodes + provenance row hang off the NEW version row.
+    assert len(pool.captured["task_nodes"]) == 3
+    for edge_params in pool.captured["edges"]:
+        assert edge_params[0] == "proc-row-v2"
+    assert pool.captured["ingested_artifacts"][0][8] == "proc-row-v2"  # procedure_row_id
+
+
+@pytest.mark.asyncio
+async def test_compile_duplicate_attaches_provenance_without_inserting(monkeypatch):
+    async def fake_check_novelty(pool, embedder, goal_text):
+        return {"procedure_id": "proc-existing", "_similarity_score": 0.96}
+
+    monkeypatch.setattr("app.services.skill_ingestion.check_novelty", fake_check_novelty)
+    pool = CompilerFakePool()
+    outcome = await compile_skill_artifact(
+        pool, _skill_artifact(), embedder=FakeEmbedder(), client=None,
+    )
+    assert outcome.status == "duplicate"
+    assert outcome.procedure_id == "proc-existing"
+    assert pool.captured["procedures"] == []            # nothing inserted
+    # provenance appended to the existing procedure, not merged on name
+    ev_updates = [p for k, p in pool.captured["updates"] if k == "procedures.evidence_refs"]
+    assert len(ev_updates) == 1
+    assert ev_updates[0][0] == "proc-existing"
+    assert isinstance(ev_updates[0][1], list) and ev_updates[0][1][0]["source"]["uri"]
+    # one ingested_artifacts row, pointing at the existing procedure, no version row
+    (_st, _uri, *_rest) = pool.captured["ingested_artifacts"][0]
+    assert pool.captured["ingested_artifacts"][0][7] == "proc-existing"   # procedure_id
+    assert pool.captured["ingested_artifacts"][0][8] is None             # procedure_row_id
+
+
+@pytest.mark.asyncio
+async def test_compile_rejects_unstructured_document(no_dup):
+    pool = CompilerFakePool()
+    outcome = await compile_skill_artifact(
+        pool, _skill_artifact(content=""), embedder=FakeEmbedder(), client=None,
+    )
+    assert outcome.status == "rejected"
+    assert pool.captured["procedures"] == []
+    assert pool.captured["ingested_artifacts"] == []
+
+
+class _FakeAdapter:
+    source_type = "skill_md"
+
+    def __init__(self, artifacts: list[SourceArtifact]):
+        self._artifacts = artifacts
+
+    def discover(self):
+        for a in self._artifacts:
+            yield SourceRef(uri=a.uri, repository=a.repository, path=a.path, commit=a.commit)
+
+    def fetch(self, ref: SourceRef) -> SourceArtifact:
+        for a in self._artifacts:
+            if a.uri == ref.uri:
+                return a
+        raise KeyError(ref.uri)
+
+
+DUPLICATE_SKILL_MD = """---
+name: DUPLICATE-capability
+description: DUPLICATE marker so the fake novelty check flags this one.
+---
+
+1. Do the thing.
+2. Verify the thing.
+"""
+
+
+@pytest.mark.asyncio
+async def test_run_skill_ingestion_writes_a_manifest(monkeypatch):
+    async def fake_check_novelty(pool, embedder, goal_text):
+        if "DUPLICATE" in goal_text:
+            return {"procedure_id": "proc-dup", "_similarity_score": 0.97}
+        return None
+
+    monkeypatch.setattr("app.services.skill_ingestion.check_novelty", fake_check_novelty)
+
+    artifacts = [
+        _skill_artifact(uri="file:///skills/a/SKILL.md", path="a/SKILL.md"),
+        _skill_artifact(DUPLICATE_SKILL_MD, uri="file:///skills/b/SKILL.md", path="b/SKILL.md"),
+        _skill_artifact("", uri="file:///skills/c/SKILL.md", path="c/SKILL.md"),  # unparseable
+    ]
+    pool = CompilerFakePool()
+    result = await run_skill_ingestion(
+        pool, _FakeAdapter(artifacts), embedder=FakeEmbedder(), client=None,
+    )
+
+    m = result["metrics"]
+    assert m["sources_seen"] == 1
+    assert m["artifacts_seen"] == 3
+    assert m["accepted"] == 1
+    assert m["duplicates"] == 1
+    assert m["rejected"] == 1
+    assert m["errors"] == 0
+    assert m["candidates"] == m["accepted"] + m["duplicates"] + m["unchanged"] + m["rejected"]
+
+    # manifest row written up front, finalized at the end
+    assert len(pool.captured["ingestion_runs"]) == 1
+    finish = [p for k, p in pool.captured["updates"] if k == "ingestion_runs.finish"]
+    assert len(finish) == 1
+    assert finish[0][0] == "run-1"           # run_id
+    assert finish[0][1] == m                 # metrics persisted verbatim
+
+
+@pytest.mark.asyncio
+async def test_run_skill_ingestion_counts_a_fetch_failure_as_error(monkeypatch):
+    async def _none(pool, embedder, goal_text):
+        return None
+
+    monkeypatch.setattr("app.services.skill_ingestion.check_novelty", _none)
+
+    class _BoomAdapter(_FakeAdapter):
+        def fetch(self, ref):
+            raise RuntimeError("network down")
+
+    pool = CompilerFakePool()
+    result = await run_skill_ingestion(
+        pool, _BoomAdapter([_skill_artifact()]), embedder=FakeEmbedder(), client=None,
+    )
+    assert result["metrics"]["errors"] == 1
+    assert result["metrics"]["candidates"] == 0
+    assert result["outcomes"][0].status == "error"
