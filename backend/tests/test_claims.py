@@ -66,13 +66,15 @@ class FakeDB:
     async def fetchval(self, query: str, *params):
         q = query.strip()
         if q.startswith("INSERT INTO knowledge_nodes"):
-            name, properties, embedding, created_by, owner_id, visibility = params
+            (name, properties, embedding, created_by, owner_id, visibility,
+             scope_type, scope_entity_id) = params
             nid = str(uuid4())
             self.knowledge_nodes[nid] = {
                 "id": UUID(nid), "node_type": "claim", "name": name,
                 "properties": dict(properties), "embedding": embedding,
                 "created_by": created_by, "owner_id": owner_id,
                 "visibility": visibility,
+                "scope_type": scope_type, "scope_entity_id": scope_entity_id,
             }
             return UUID(nid)
         raise AssertionError(f"FakeDB.fetchval: unrecognized query\n{q}")

@@ -420,6 +420,7 @@ def _domain_payload(artifact: Any, parsed: ParsedSkill) -> dict:
 
 async def _write_task_nodes(
     pool: asyncpg.Pool, *, procedure_row_id: str, steps: list[str], created_by: str,
+    scope_type: Optional[str] = None, scope_entity_id: Optional[str] = None,
 ) -> list[str]:
     """One task_nodes row per parsed step + an OWNS/DECOMPOSES_TO edge from
     the procedure version row to each. Brief section 4: the external skill's
@@ -429,13 +430,23 @@ async def _write_task_nodes(
     Edge shape follows this codebase's established base-enum + custom-subtype
     convention (hierarchy.py's OWNS/PARENT_OF, dedup.py's SUPERSEDES/
     DUPLICATE_OF) -- edge_type is the real enum value 'OWNS', the specific
-    relation rides custom_edge_type='DECOMPOSES_TO'."""
+    relation rides custom_edge_type='DECOMPOSES_TO'.
+
+    `scope_type`/`scope_entity_id` (found missing this pass): task_nodes
+    has carried these columns since migration 21, but nothing here ever
+    set them -- every task_node this compiler created was scope_type=NULL,
+    invisible to any real scope-based query even though the PARENT
+    procedure it was decomposed from carries a real scope. Callers pass
+    the parent procedure's own scope_type/scope_entity_id through
+    verbatim (inheritance, not independent derivation -- a step is only
+    ever as scoped as the procedure that owns it)."""
     task_node_ids: list[str] = []
     for i, step_text in enumerate(steps):
         row = await pool.fetchrow(
-            "INSERT INTO task_nodes (id, name, description, provenance, created_by) "
-            "VALUES (gen_random_uuid(), $1, $2, 'prior_library', $3) RETURNING id",
-            _slugify(step_text), step_text, created_by,
+            "INSERT INTO task_nodes (id, name, description, provenance, created_by, "
+            "scope_type, scope_entity_id) "
+            "VALUES (gen_random_uuid(), $1, $2, 'prior_library', $3, $4, $5) RETURNING id",
+            _slugify(step_text), step_text, created_by, scope_type, scope_entity_id,
         )
         task_node_id = str(row["id"])
         task_node_ids.append(task_node_id)
@@ -570,6 +581,7 @@ async def compile_skill_artifact(
             task_node_ids = await _write_task_nodes(
                 pool, procedure_row_id=superseded["id"],
                 steps=parsed.steps, created_by=created_by,
+                scope_type="entity" if domain else "global", scope_entity_id=domain,
             )
             artifact_id = await _write_artifact_row(
                 pool, artifact, run_id=run_id,
@@ -637,6 +649,7 @@ async def compile_skill_artifact(
         )
     task_node_ids = await _write_task_nodes(
         pool, procedure_row_id=result["id"], steps=parsed.steps, created_by=created_by,
+        scope_type="entity" if domain else "global", scope_entity_id=domain,
     )
     artifact_id = await _write_artifact_row(
         pool, artifact, run_id=run_id,

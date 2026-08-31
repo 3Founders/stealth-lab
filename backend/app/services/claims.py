@@ -119,6 +119,8 @@ async def capture_claim(
     embedder: Optional[Embedder] = None,
     owner_id: Optional[str] = None,
     visibility: str = "public",
+    scope_type: Optional[str] = None,
+    scope_entity_id: Optional[str] = None,
 ) -> Optional[str]:
     """
     Write one claim knowledge_node plus one PRODUCES/CLAIM_OF edge to
@@ -155,11 +157,34 @@ async def capture_claim(
     never see anything as "theirs", because nothing had ever recorded
     whose it was. `owner_id`/`visibility` are now real parameters here,
     not decorative columns.
+
+    `scope_type`/`scope_entity_id` (found missing this pass): `knowledge_
+    nodes` has carried these columns since migration 21 (CHECK-constrained
+    in 22 against v0_gate.SCOPE_TYPES), but this writer never set them --
+    every real claim was captured with scope_type=NULL, unlike
+    capture_procedure() which hard-requires scope via v0_gate.validate_
+    scope(). Deliberately kept OPTIONAL here rather than made mandatory
+    outright: ~40 existing test callers across 7 files construct claims
+    with no scope concept at all, and forcing all of them through the V0
+    gate in one pass is real, separate, larger work (and risks masking
+    genuine test failures behind a wave of mechanical scope-value
+    additions). When a caller DOES supply scope_type, it is validated via
+    the SAME v0_gate.validate_scope() capture_procedure uses -- no
+    weaker check. Real production inheritance is wired at the two call
+    sites that actually have a real scope value available:
+    observations.py::promote_observation_to_claim() (derives
+    scope_type='project' from the justified episode's project_id when
+    present) and skill_ingestion.py::_write_task_nodes() (inherits the
+    parent procedure's own scope_type/scope_entity_id onto the task_nodes
+    it creates from that procedure's steps).
     """
     if truth_state not in TRUTH_STATES:
         raise ValueError(f"truth_state must be one of {TRUTH_STATES}, got {truth_state!r}")
     if visibility not in ("public", "private"):
         raise ValueError(f"visibility must be 'public' or 'private', got {visibility!r}")
+    if scope_type is not None:
+        from app.services.v0_gate import validate_scope
+        scope_type, scope_entity_id = validate_scope(scope_type, scope_entity_id)
 
     validated = ClaimProperties(
         statement=statement,
@@ -206,11 +231,11 @@ async def capture_claim(
             node_id = await conn.fetchval(
                 "INSERT INTO knowledge_nodes "
                 "(node_type, name, properties, embedding, created_by, provenance, "
-                " owner_id, visibility) "
-                "VALUES ('claim', $1, $2, $3::vector, $4, 'company_ingested', $5, $6::visibility_level) "
+                " owner_id, visibility, scope_type, scope_entity_id) "
+                "VALUES ('claim', $1, $2, $3::vector, $4, 'company_ingested', $5, $6::visibility_level, $7, $8) "
                 "RETURNING id",
                 statement[:200], props, to_pgvector(embedding), created_by,
-                owner_id, visibility,
+                owner_id, visibility, scope_type, scope_entity_id,
             )
             for row in rows:
                 await conn.execute(

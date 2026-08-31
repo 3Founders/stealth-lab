@@ -278,6 +278,8 @@ async def promote_observation_to_claim(
     justification_episode_id: Optional[str] = None,
     embedder: Optional[Embedder] = None,
     scope: Optional[AccessScope] = None,
+    scope_type: Optional[str] = None,
+    scope_entity_id: Optional[str] = None,
 ) -> Optional[str]:
     """
     Real wiring ticket 04 owns per ticket 10's amendment: reads a real
@@ -304,8 +306,22 @@ async def promote_observation_to_claim(
     owner_id/visibility rather than silently reverting to public -- a
     private observation promoted to a claim must not leak into the
     shared commons just because capture_claim()'s defaults are public.
+
+    `scope_type`/`scope_entity_id`: an explicit caller value always wins.
+    When omitted and `justification_episode_id` is given, derived from
+    that episode's own `project_id` (db/17_episode_project_columns.sql --
+    a real, existing column, populated by trace_worker.py where it's
+    known) as scope_type='project'. When neither an explicit value nor a
+    derivable project_id exists, left None -- same as capture_claim()'s
+    own honest default, not silently promoted to 'global'.
     """
     scope = scope or AccessScope.unrestricted()
+    if scope_type is None and justification_episode_id is not None:
+        project_id = await pool.fetchval(
+            "SELECT project_id FROM episodes WHERE id = $1::uuid", justification_episode_id,
+        )
+        if project_id:
+            scope_type, scope_entity_id = "project", project_id
     vis_sql, vis_params = visibility_predicate(scope, param_index=2)
     row = await pool.fetchrow(
         "SELECT observation_type, label, extractor_kind, extractor_name, "
@@ -334,6 +350,8 @@ async def promote_observation_to_claim(
         embedder=embedder,
         owner_id=row["owner_id"],
         visibility=row["visibility"],
+        scope_type=scope_type,
+        scope_entity_id=scope_entity_id,
     )
 
     # Band 2.8 (replayability): first-class provenance link from the
