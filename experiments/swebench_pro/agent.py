@@ -125,7 +125,14 @@ class RepoSandbox:
 
     def _resolve(self, path: str) -> str:
         full = os.path.abspath(os.path.join(self.root, path.lstrip("/\\")))
-        if not full.startswith(self.root):
+        # `full.startswith(self.root)` alone is a STRING prefix check, not a
+        # path-component check: root=".../repo" also matches
+        # ".../repo-secret/anything" because "repo-secret" starts with
+        # "repo". Confirmed live -- "../repo-secret/secret.txt" resolved
+        # cleanly and read a sibling directory's file with the old check.
+        # `full == self.root` covers the "." case (list_dir(".") etc);
+        # anything else must fall strictly UNDER root, separator included.
+        if full != self.root and not full.startswith(self.root + os.sep):
             raise ValueError(f"path escapes repository: {path}")
         return full
 

@@ -128,6 +128,34 @@ class TestEditAndDiff:
         with pytest.raises(ValueError):
             repo._resolve("../../etc/passwd")
 
+    def test_sibling_directory_prefix_bypass_is_refused(self, tmp_path):
+        """Regression: a bare `full.startswith(self.root)` string check lets
+        a sandbox rooted at `.../repo` reach `.../repo-secret/...` because
+        the STRING "repo-secret" starts with "repo" -- no ".." needed past
+        the root's own parent. Confirmed live before the fix: `_resolve`
+        returned the sibling's absolute path instead of raising, and every
+        tool (read_file, search, edit_file, create_file, delete_file) trusts
+        `_resolve`'s answer, so this reached real file content outside the
+        repo the caller granted."""
+        repo_dir = tmp_path / "repo"
+        repo_dir.mkdir()
+        sibling = tmp_path / "repo-secret"
+        sibling.mkdir()
+        (sibling / "secret.txt").write_text("TOP SECRET", encoding="utf-8")
+
+        sb = RepoSandbox(str(repo_dir))
+        with pytest.raises(ValueError):
+            sb._resolve("../repo-secret/secret.txt")
+        # And through the actual tool surface the model calls, not just the
+        # internal helper.
+        with pytest.raises(ValueError):
+            sb.read_file("../repo-secret/secret.txt")
+
+    def test_root_itself_still_resolves(self, repo):
+        """The fix must not break the legitimate case: `.` (used by
+        list_dir(".") and friends) resolves to exactly the root."""
+        assert repo._resolve(".") == repo.root
+
 
 class TestFileCreationAndDeletion:
     """
@@ -364,3 +392,41 @@ class TestToolsExposedToTheModel:
         names = {t["function"]["name"] for t in TOOLS}
         assert {"create_file", "delete_file"} <= names
         assert {"list_dir", "search", "read_file", "edit_file", "finish"} <= names
+
+    def test_no_shell_or_network_capable_tool_is_declared(self):
+        """V1 product spec Phase 36: an untrusted procedure's steps must not
+        be able to run arbitrary commands or exfiltrate data over the
+        network. This repo's actual mitigation for both is ABSENCE, not a
+        sandbox/allowlist -- there is no bash/exec/http/curl-shaped tool in
+        TOOLS at all, so there is nothing for a malicious step to invoke.
+        This test pins that absence: adding a shell- or network-shaped tool
+        name here without a matching allow/deny boundary is exactly the
+        regression this pass is guarding against."""
+        from agent import TOOLS
+        names = {t["function"]["name"] for t in TOOLS}
+        assert names == {
+            "list_dir", "search", "read_file", "list_symbols",
+            "read_symbol", "edit_file", "create_file", "delete_file",
+            "finish",
+        }
+        forbidden_substrings = ("bash", "shell", "exec", "command", "http",
+                                "curl", "fetch", "request", "network",
+                                "socket", "url")
+        for name in names:
+            lowered = name.lower()
+            assert not any(f in lowered for f in forbidden_substrings), name
+
+    def test_dispatch_has_no_unknown_tool_fallthrough_to_python_eval(self):
+        """`_dispatch` is a closed if/elif ladder over the fixed TOOLS list,
+        not a generic `getattr(sandbox, name)` or `eval`/`exec` dispatch --
+        so a procedure step naming an arbitrary method or expression cannot
+        reach anything beyond the nine declared tools."""
+        from agent import Agent, RepoSandbox
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            sb = RepoSandbox(d)
+            result, done = Agent._dispatch("__import__('os').system", {}, sb)
+            assert "unknown tool" in result
+            assert done is False
+            result, done = Agent._dispatch("os.environ", {}, sb)
+            assert "unknown tool" in result
