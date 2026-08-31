@@ -141,6 +141,56 @@ async def _project_state_cached(
     return cached
 
 
+async def _claim_matches_precondition(
+    pool: asyncpg.Pool,
+    claim_id: str,
+    *,
+    predicate: Optional[str],
+    expected_object: Optional[str],
+    as_of: datetime,
+    scope: Optional[AccessScope],
+) -> bool:
+    """
+    Real-claim-provenance narrowing (the "confirmed gap" §9 of the
+    architecture audit names): when a precondition entry carries a
+    claim_id, the check narrows from "does ANY live claim with this
+    subject exist that happens to match predicate/object" (the
+    claim_id-less, still-default path in check_hard_constraints' loop)
+    to "does THIS SPECIFIC claim exist, remain live, and itself carry
+    the expected predicate/object" -- a real narrowing, not an ignored
+    hint. Only called when precondition.get("claim_id") is truthy;
+    claim_id-less preconditions never reach this function, which is
+    exactly what keeps that path byte-identical to before.
+
+    "Live" mirrors project_state()'s own bi-temporal + epistemic
+    definition exactly (t_valid <= as_of, t_invalid NULL or still in
+    the future, truth_state == 'IN') -- a superseded/contradicted claim
+    must fail this the same way it disappears from project_state()'s
+    projection, not by some looser or stricter rule invented here.
+    Fails closed (False) on a malformed/missing claim_id, same CWA
+    posture as the rest of this cascade.
+    """
+    try:
+        claim_uuid = str(UUID(str(claim_id)))
+    except (ValueError, TypeError, AttributeError):
+        return False  # malformed claim_id -- fail closed, never a raised DB error
+
+    scope = scope or AccessScope.unrestricted()
+    vis_sql, vis_params = visibility_predicate(scope, param_index=3)
+    rows = await pool.fetch(
+        f"SELECT properties, t_valid, t_invalid FROM knowledge_nodes "
+        f"WHERE id = $1::uuid AND node_type = 'claim' "
+        f"AND properties->>'truth_state' = 'IN' "
+        f"AND t_valid <= $2 AND (t_invalid IS NULL OR t_invalid > $2) "
+        f"AND {vis_sql}",
+        claim_uuid, as_of, *vis_params,
+    )
+    if not rows:
+        return False
+    properties = dict(rows[0]["properties"])
+    return properties.get("predicate") == predicate and properties.get("object") == expected_object
+
+
 def _scope_matches(procedure_scope: dict, current_scope: dict) -> bool:
     """
     A procedure's `scope` narrows where it applies (ticket 12: "scope
@@ -269,17 +319,33 @@ async def check_hard_constraints(
         subject = precondition.get("subject")
         predicate = precondition.get("predicate")
         expected_object = precondition.get("object")
+        claim_id = precondition.get("claim_id")
         if not subject:
             continue  # malformed precondition entry -- not this function's job to validate authoring
 
-        claims = await _project_state_cached(
-            pool, state_cache, subject=subject, as_of=as_of, scope=access_scope,
-        )
-        satisfied = any(
-            c["properties"].get("predicate") == predicate
-            and c["properties"].get("object") == expected_object
-            for c in claims
-        )
+        # AUTHOR-TIME PROVENANCE narrowing: when this precondition entry
+        # names the specific claim that justified it, check THAT claim
+        # (real, live, own predicate/object matching) rather than "some
+        # claim with this subject happens to match" -- claim_id, when
+        # present, disqualifies on its own even if another claim with
+        # the same subject/predicate/object exists. Absent (the
+        # overwhelmingly common case today -- nothing populates it yet),
+        # this falls through to the exact pre-existing subject-based
+        # check, unchanged.
+        if claim_id:
+            satisfied = await _claim_matches_precondition(
+                pool, claim_id, predicate=predicate, expected_object=expected_object,
+                as_of=as_of, scope=access_scope,
+            )
+        else:
+            claims = await _project_state_cached(
+                pool, state_cache, subject=subject, as_of=as_of, scope=access_scope,
+            )
+            satisfied = any(
+                c["properties"].get("predicate") == predicate
+                and c["properties"].get("object") == expected_object
+                for c in claims
+            )
         if not satisfied:
             return ApplicabilityResult(
                 row_id, False,

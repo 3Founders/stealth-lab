@@ -32,6 +32,42 @@ from app.services.slot_binders import best_binder_for
 from app.services.state import project_state
 
 
+def precondition_with_claim(
+    subject: str, predicate: str, object: Optional[str] = None, *, claim_id: Optional[str] = None,
+) -> dict:
+    """
+    Author-time provenance helper (real, confirmed gap the architecture
+    audit's §9 names: grounding happens at CHECK time via
+    applicability.py's project_state() query, but nothing records
+    "this precondition came from claim X specifically" at AUTHOR time).
+
+    NOT wired into derive_preconditions() below -- that would require
+    this module to query the claims graph for which specific claim row
+    justified a derived predicate, which it does not do today and is
+    real, separate, larger future work. This is deliberately the small
+    honest piece: a correctly-shaped precondition dict for a caller that
+    DOES already have a real claim_id in hand (future extraction code
+    once it queries the claims graph, or a human/tool authoring a
+    procedure by hand) to construct one without having to know the exact
+    key name or reimplement the shape.
+
+    Returns a plain dict, not a Predicate -- procedures.preconditions is
+    stored as raw JSONB (procedures.py's capture_procedure takes
+    `preconditions: Optional[list]`, no Predicate coercion at that
+    boundary) and applicability.py's check_hard_constraints reads these
+    back with `.get()`, never through the Predicate model. `claim_id` is
+    genuinely optional: omitted entirely (not set to None) when not
+    given, so a precondition built by this helper without one is
+    byte-identical in shape to the {subject, predicate, object} dicts
+    every existing caller already produces -- no new key for anything
+    that doesn't ask for one.
+    """
+    precondition: dict = {"subject": subject, "predicate": predicate, "object": object}
+    if claim_id is not None:
+        precondition["claim_id"] = claim_id
+    return precondition
+
+
 async def derive_preconditions(pool: asyncpg.Pool, evidence: ProcedureEvidence) -> list[Predicate]:
     """
     The state_before projection itself, filtered down to the claims this

@@ -25,6 +25,7 @@ from app.services.procedure_extraction.derive import (
     derive_preconditions,
     derive_scope,
     load_bearing_predicates,
+    precondition_with_claim,
 )
 from app.services.procedure_extraction.evidence import ProcedureEvidence
 
@@ -122,6 +123,33 @@ def test_test_run_observations_own_command_also_feeds_the_regex_checks():
     predicates = load_bearing_predicates(ev)
     assert "has_test_runner" in predicates
     assert "package_manager" in predicates
+
+
+# --- precondition_with_claim: the new optional claim_id shape helper ---
+
+def test_precondition_with_claim_omits_claim_id_entirely_when_not_given():
+    """Backward-compatibility proof (task 31, part 1): a caller that
+    doesn't pass claim_id gets back the exact legacy
+    {subject, predicate, object} shape -- no claim_id key at all, not
+    claim_id=None -- byte-identical to what every existing caller
+    (derive_preconditions below) already produces."""
+    precondition = precondition_with_claim("project:p", "has_test_runner", "pytest")
+    assert precondition == {"subject": "project:p", "predicate": "has_test_runner", "object": "pytest"}
+    assert "claim_id" not in precondition
+
+
+def test_precondition_with_claim_includes_claim_id_when_given():
+    precondition = precondition_with_claim(
+        "project:p", "has_test_runner", "pytest", claim_id="c1",
+    )
+    assert precondition == {
+        "subject": "project:p", "predicate": "has_test_runner", "object": "pytest", "claim_id": "c1",
+    }
+
+
+def test_precondition_with_claim_default_object_is_none():
+    precondition = precondition_with_claim("project:p", "language")
+    assert precondition == {"subject": "project:p", "predicate": "language", "object": None}
 
 
 def test_command_executed_with_a_real_nonzero_exit_becomes_a_failure_condition():

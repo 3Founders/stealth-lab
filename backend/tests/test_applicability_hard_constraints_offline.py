@@ -153,6 +153,129 @@ def test_malformed_precondition_missing_subject_is_skipped_not_disqualifying():
     assert pool.fetch_calls == []
 
 
+class ClaimAwareFakePool:
+    """A second FakePool shape, needed only for the claim_id precondition
+    tests below: they require project_state()'s subject-based query and
+    _claim_matches_precondition's claim-id-based query to answer
+    DIFFERENTLY within the same cascade call (a different claim with the
+    same subject/predicate/object exists, but the specifically-named
+    claim_id does not) -- the shared FakePool above can't express that
+    because it answers every non-procedure, non-ranking fetch identically
+    regardless of which query issued it. Distinguishes purely by SQL
+    shape, same technique the shared FakePool already uses for its own
+    two branches."""
+
+    def __init__(self, *, claims_by_subject=(), claim_rows_by_id=None):
+        self._claims_by_subject = list(claims_by_subject)
+        self._claim_rows_by_id = dict(claim_rows_by_id or {})
+        self.fetch_calls = []
+
+    async def fetch(self, sql, *params):
+        self.fetch_calls.append((" ".join(sql.split()), params))
+        if "FROM knowledge_nodes" in sql and "id = $1::uuid" in sql:
+            row = self._claim_rows_by_id.get(params[0])
+            return [row] if row is not None else []
+        return self._claims_by_subject
+
+
+def test_precondition_without_claim_id_uses_the_exact_subject_based_check_unchanged():
+    """Backward-compatibility proof (task 31 part 2): a claim_id-less
+    precondition entry -- the overwhelmingly common shape today, since
+    nothing populates claim_id yet -- must be satisfied/disqualified
+    exactly as before: ANY live claim with the right subject/predicate/
+    object satisfies it, no matter which specific claim row it is."""
+    satisfied_pool = ClaimAwareFakePool(
+        claims_by_subject=[{
+            "id": "c1", "properties": {"predicate": "has_test_runner", "object": "pytest"},
+            "t_valid": None, "t_invalid": None,
+        }],
+    )
+    procedure = _procedure(preconditions=[
+        {"subject": SUBJECT, "predicate": "has_test_runner", "object": "pytest"},
+    ])
+    result = _run(check_hard_constraints(satisfied_pool, procedure))
+    assert result.applicable
+    # Never reaches the claim-id-specific query -- no claim_id was given.
+    assert all("id = $1::uuid" not in sql for sql, _ in satisfied_pool.fetch_calls)
+
+    unsatisfied_pool = ClaimAwareFakePool(claims_by_subject=[])
+    result_missing = _run(check_hard_constraints(unsatisfied_pool, procedure))
+    assert not result_missing.applicable
+    assert result_missing.failed_constraints == [
+        f"precondition:subject={SUBJECT},predicate=has_test_runner,object=pytest",
+    ]
+
+
+def test_precondition_with_claim_id_narrows_to_that_specific_claim():
+    """The reverse proof: a precondition WITH a claim_id fails
+    applicability if that specific claim doesn't exist/isn't live/
+    doesn't match, even though some OTHER claim with the same
+    subject+predicate+object DOES exist -- claim_id, when present, is a
+    real narrowing, not an optional hint that gets ignored."""
+    missing_claim_id = "00000000-0000-4000-8000-0000000000aa"
+    pool = ClaimAwareFakePool(
+        # A different, unrelated claim with the same subject/predicate/
+        # object DOES exist and would satisfy the old subject-only check.
+        claims_by_subject=[{
+            "id": "c1", "properties": {"predicate": "has_test_runner", "object": "pytest"},
+            "t_valid": None, "t_invalid": None,
+        }],
+        # But the SPECIFIC claim this precondition names does not exist.
+        claim_rows_by_id={},
+    )
+    procedure = _procedure(preconditions=[
+        {
+            "subject": SUBJECT, "predicate": "has_test_runner", "object": "pytest",
+            "claim_id": missing_claim_id,
+        },
+    ])
+    result = _run(check_hard_constraints(pool, procedure))
+    assert not result.applicable
+    assert result.failed_constraints == [
+        f"precondition:subject={SUBJECT},predicate=has_test_runner,object=pytest",
+    ]
+    # Proves the claim-id path was actually taken, not a silent fallback.
+    assert any("id = $1::uuid" in sql for sql, _ in pool.fetch_calls)
+
+
+def test_precondition_with_claim_id_is_satisfied_when_that_specific_claim_matches():
+    real_claim_id = "00000000-0000-4000-8000-0000000000bb"
+    pool = ClaimAwareFakePool(
+        claims_by_subject=[],  # deliberately empty: proves this isn't a fallback to the old path
+        claim_rows_by_id={
+            real_claim_id: {"properties": {"predicate": "has_test_runner", "object": "pytest"}},
+        },
+    )
+    procedure = _procedure(preconditions=[
+        {
+            "subject": SUBJECT, "predicate": "has_test_runner", "object": "pytest",
+            "claim_id": real_claim_id,
+        },
+    ])
+    result = _run(check_hard_constraints(pool, procedure))
+    assert result.applicable
+
+
+def test_precondition_with_claim_id_disqualifies_on_a_predicate_object_mismatch():
+    """The named claim exists and is live, but its OWN predicate/object
+    don't match what the precondition expects -- still a disqualification,
+    not "close enough because the subject matched"."""
+    real_claim_id = "00000000-0000-4000-8000-0000000000cc"
+    pool = ClaimAwareFakePool(
+        claim_rows_by_id={
+            real_claim_id: {"properties": {"predicate": "has_test_runner", "object": "jest"}},
+        },
+    )
+    procedure = _procedure(preconditions=[
+        {
+            "subject": SUBJECT, "predicate": "has_test_runner", "object": "pytest",
+            "claim_id": real_claim_id,
+        },
+    ])
+    result = _run(check_hard_constraints(pool, procedure))
+    assert not result.applicable
+
+
 def test_invariant_violation_disqualifies_with_no_preconditions_involved():
     procedure = _procedure(invariants=[{"kind": "numeric", "expr": "amount <= balance"}])
     result = _run(check_hard_constraints(
