@@ -277,6 +277,37 @@ def _resolve_caller_identity(fallback: str) -> str:
     Neither present -> the unchanged, honest `fallback` (the pre-existing
     hardcoded string, or a caller-supplied parameter this replaces only
     when a REAL identity was resolved) -- never a fabricated identity.
+
+    INVARIANT (the thing this function exists to guarantee, restated
+    explicitly so a future call site can't silently reintroduce the bug
+    this closes): a caller-supplied, identity-shaped tool PARAMETER
+    (`approver_id`, or anything `actor_id`/`created_by`-shaped) must
+    NEVER be trusted as the attributed identity when a real one is
+    resolvable here. Every write-path call site below passes such a
+    parameter, if it has one, as `fallback=` -- never as the returned
+    value directly. Proven end-to-end against a real, persisted row (not
+    just in isolation) by test_mcp_server_identity_e2e.py::
+    test_decide_procedure_resolved_identity_overrides_spoofed_approver_id,
+    which calls decide_procedure with both a mocked-real resolved
+    identity AND a different, attacker-supplied approver_id and asserts
+    the PERSISTED `procedures.approved_by` row shows the resolved
+    identity, never the spoofed one.
+
+    Full current call-site list (write-path attribution only; read-only
+    tools don't call this):
+      - find_best_way: capture_procedure's created_by (ad-hoc capture),
+        both record_plan_execution's created_by (tier-1 and tier-2 runs).
+      - reproduce_procedure: mark_procedure_stale's detected_by,
+        compile_plan's created_by, record_plan_execution's created_by.
+      - submit_procedure: capture_procedure's created_by.
+      - decide_procedure: approve_procedure/reject_procedure's
+        approved_by -- fallback=approver_id (the caller-supplied,
+        self-asserted parameter), so a resolved real identity OVERRIDES
+        it rather than being overridden by it.
+      - apply_change_set: KnowledgeUpdater.apply's approver_id --
+        previously a bare hardcoded string with no resolution attempt at
+        all (the same "no resolution attempt" bug this invariant guards
+        against); now wired the same as every other site.
     """
     token = get_access_token()
     if token is not None and token.subject:
@@ -409,7 +440,10 @@ async def apply_change_set(change_set_json: str, ctx: Context) -> str:
 
     updater = KnowledgeUpdater(pool)
     try:
-        applied = await updater.apply(change_set, approver_id="mcp_apply_change_set")
+        applied = await updater.apply(
+            change_set,
+            approver_id=_resolve_caller_identity(fallback="mcp_apply_change_set"),
+        )
     except ChangeApplicationError as exc:
         return f"REFUSED by KnowledgeUpdater itself -- {exc}"
 
@@ -622,7 +656,8 @@ async def _respond_tier1_hit(pool, task_description: str, matched_procedure: dic
     result = await execute_task_graph(compiled_plan.graph, run_node=run_node)
     await record_plan_execution(
         pool, compiled=compiled_plan,
-        outcome=result.outcome, created_by="find_best_way",
+        outcome=result.outcome,
+        created_by=_resolve_caller_identity(fallback="find_best_way"),
     )
 
     steps_text = "\n".join(
@@ -1100,7 +1135,8 @@ async def find_best_way(task_description: str, ctx: Context,
 
     await record_plan_execution(
         pool, compiled=compiled_plan,
-        outcome=graph_result.outcome, created_by="find_best_way",
+        outcome=graph_result.outcome,
+        created_by=_resolve_caller_identity(fallback="find_best_way"),
     )
 
     # Procedure extraction (memory-substrate blocker #1: extract_procedure()
@@ -1323,7 +1359,9 @@ async def reproduce_procedure(procedure_id: str, repo_path: str, ctx: Context,
             pool, procedure_row_id=procedure_id,
             reason=f"invariant(s) {invariant_result.violated} contradicted by "
                    f"probed bindings {bindings} at {target_repo_path}",
-            detected_by=f"reproduce_procedure:{os.path.basename(os.path.abspath(target_repo_path))}",
+            detected_by=_resolve_caller_identity(
+                fallback=f"reproduce_procedure:{os.path.basename(os.path.abspath(target_repo_path))}"
+            ),
         )
         return (
             f"STALE: procedure {procedure_id}'s invariant(s) "
@@ -1374,7 +1412,7 @@ async def reproduce_procedure(procedure_id: str, repo_path: str, ctx: Context,
             task_description=task_description,
             nodes=expanded_nodes,
             extractor_version="reproduce_procedure_plan_compiler@1",
-            created_by="reproduce_procedure",
+            created_by=_resolve_caller_identity(fallback="reproduce_procedure"),
         )
         compiled_plan, _ = await persist_compiled_plan(pool, compiled_plan)
 
@@ -1418,7 +1456,8 @@ async def reproduce_procedure(procedure_id: str, repo_path: str, ctx: Context,
 
         await record_plan_execution(
             pool, compiled=compiled_plan,
-            outcome=graph_result.outcome, created_by="reproduce_procedure",
+            outcome=graph_result.outcome,
+            created_by=_resolve_caller_identity(fallback="reproduce_procedure"),
         )
 
         return {
