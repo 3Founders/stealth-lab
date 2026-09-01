@@ -56,6 +56,7 @@ from mcp.server.mcpserver import Context
 from pydantic import AnyHttpUrl
 
 from app.db.session import create_pool
+from app.execution import implementation_registry
 from app.api.approval import decide, ApprovalRequest
 from app.api.decompose import decompose, decide as decide_decomposition_fn, DecomposeRequest, DecideRequest
 from app.models.change import ChangeSet
@@ -2242,6 +2243,179 @@ async def submit_approval(scorecard_id: str, approver_id: str, decision: str, ct
     if result.export_markdown:
         lines.append(f"\n--- export ---\n{result.export_markdown}")
     return "\n".join(lines)
+
+
+@server.tool()
+async def resolve_implementation(task_node_id: str, ctx: Context,
+                                  hint_kinds_json: str | None = None) -> str:
+    """
+    Directive Sec 44/76: "which concrete, durable implementation should
+    satisfy this task node?" Thin wrapper around
+    `app.execution.implementation_registry.resolve()` -- no new business
+    logic, same read-only/public posture as `find_best_way`/
+    `get_procedure` (scope=AccessScope.unrestricted(), matching every
+    other read tool in this file).
+
+    task_node_id: the task_nodes row id to resolve against.
+    hint_kinds_json: optional JSON array of kind strings, an ordered
+    preference (same shape `PlanNode.implementation_hint` uses). Omit
+    for no preference -- the most recently registered active
+    implementation wins.
+
+    Returns the same honest shape the REST endpoint
+    (POST /v1/tasks/{id}/resolve-implementation) returns: implementation_id
+    is null with a real reason when nothing resolves -- never a
+    fabricated pick, never a 404-shaped refusal for a genuine "nothing is
+    linked" answer. Never echoes a credential value -- none is ever
+    stored (see implementation_registry.py's own docstring).
+    """
+    pool = ctx.request_context.lifespan_context["pool"]
+
+    hint_kinds = None
+    if hint_kinds_json:
+        try:
+            parsed = json.loads(hint_kinds_json)
+        except json.JSONDecodeError as exc:
+            return f"REFUSED: hint_kinds_json must be a JSON array of strings ({exc})"
+        if not isinstance(parsed, list):
+            return "REFUSED: hint_kinds_json must be a JSON array of strings."
+        hint_kinds = tuple(parsed)
+
+    resolved = await implementation_registry.resolve(
+        pool, task_node_id, scope=AccessScope.unrestricted(), hint_kinds=hint_kinds,
+    )
+    if resolved is None:
+        reason = (
+            "no active implementation is linked to this task"
+            if hint_kinds is None else
+            f"no active implementation matching hint kinds {list(hint_kinds)} is linked to this task"
+        )
+        return json.dumps({
+            "implementation_id": None, "provider": None, "kind": None,
+            "requirements": None, "invocation": None, "reason": reason,
+        })
+
+    reason = (
+        "resolved to most recent active implementation, no hint given"
+        if hint_kinds is None else "resolved via hint preference order"
+    )
+    return json.dumps({
+        "implementation_id": resolved["id"],
+        "provider": resolved["provider"],
+        "kind": resolved["kind"],
+        "requirements": resolved.get("requirements"),
+        "invocation": resolved.get("invocation"),
+        "reason": reason,
+    }, default=str)
+
+
+@server.tool()
+async def inspect_implementation(implementation_id: str, ctx: Context) -> str:
+    """
+    Directive Sec 76: fetch one durable implementation row by id. Thin
+    wrapper around `implementation_registry.get()` -- public/read-only,
+    same anti-enumeration posture as the REST endpoint (a missing or
+    invisible row REFUSES the same way, never distinguishing the two).
+    """
+    pool = ctx.request_context.lifespan_context["pool"]
+    row = await implementation_registry.get(pool, implementation_id, scope=AccessScope.unrestricted())
+    if row is None:
+        return f"REFUSED: no implementation found for id {implementation_id!r}."
+    return json.dumps(row, default=str)
+
+
+@server.tool()
+async def list_task_implementations(task_node_id: str, ctx: Context, status: str = "active") -> str:
+    """
+    Directive Sec 76: every implementation linked to a task_node. Thin
+    wrapper around `implementation_registry.get_for_task()`. `status`
+    defaults to 'active'; pass 'all' to see every lifecycle state (an
+    inspection view, same sentinel the REST endpoint uses).
+    """
+    pool = ctx.request_context.lifespan_context["pool"]
+    resolved_status = None if status == "all" else status
+    if resolved_status is not None and resolved_status not in implementation_registry.STATUS_VALUES:
+        return (
+            f"REFUSED: unknown status {resolved_status!r} "
+            f"(valid: {implementation_registry.STATUS_VALUES}, or 'all')."
+        )
+    rows = await implementation_registry.get_for_task(
+        pool, task_node_id, scope=AccessScope.unrestricted(), status=resolved_status,
+    )
+    return json.dumps(rows, default=str)
+
+
+@server.tool()
+async def get_implementation_capability(implementation_id: str, ctx: Context) -> str:
+    """
+    Directive Sec 76: capability estimate for one durable implementation.
+    Prefers the sibling `app.services.capabilities.get_implementation_
+    capability` when it exists (parallel workstream this same wave);
+    falls back to the same honest, clearly-labeled provisional Wilson-
+    interval computation `app/api/implementations.py::
+    _inline_capability_fallback` uses, duplicated here rather than
+    imported across the api/mcp_server boundary (this file imports no
+    app.api.* modules today -- keeping that boundary intact rather than
+    introducing the first such cross-import). Public/read-only, no
+    credential exposure -- same posture as every read tool in this file.
+    """
+    pool = ctx.request_context.lifespan_context["pool"]
+    scope = AccessScope.unrestricted()
+
+    parent = await implementation_registry.get(pool, implementation_id, scope=scope)
+    if parent is None:
+        return f"REFUSED: no implementation found for id {implementation_id!r}."
+
+    try:
+        from app.services.capabilities import (  # type: ignore[import-not-found]
+            get_implementation_capability as _sibling_get_capability,
+        )
+    except ImportError:
+        from app.services.access import visibility_predicate
+        from app.services.procedure_extraction.capability import (
+            band_for_p, route_for_p, wilson_interval,
+        )
+
+        vis_sql, vis_params = visibility_predicate(scope, param_index=2)
+        rows = await pool.fetch(
+            f"""
+            SELECT * FROM evidence
+            WHERE target_type = 'implementation' AND target_id = $1::uuid
+              AND t_invalid IS NULL AND {vis_sql}
+            ORDER BY t_valid ASC
+            """,
+            implementation_id, *vis_params,
+        )
+        evidence = [dict(row) for row in rows]
+
+        outcome_bearing = [
+            e for e in evidence
+            if e.get("direction") == "supports"
+            and e.get("evidence_type") in ("execution_result", "reproduction")
+            and e.get("outcome_status") in ("success", "failure")
+        ]
+        total = len(outcome_bearing)
+        successes = sum(1 for e in outcome_bearing if e["outcome_status"] == "success")
+        p_lower, p_upper = wilson_interval(successes, total)
+        independent_groups = len({
+            e["independence_group"] for e in outcome_bearing if e.get("independence_group")
+        })
+        band = band_for_p(p_lower) if (total > 0 and successes > 0) else 0
+        result = {
+            "p_estimate": p_lower, "p_lower": p_lower, "p_upper": p_upper,
+            "evidence_count": total, "success_count": successes,
+            "independent_groups": independent_groups, "band": band,
+            "routing": route_for_p(p_lower).value, "level_gated": None,
+            "provisional": True,
+        }
+        return json.dumps(result, default=str)
+
+    # The sibling module's own signature takes no `scope` -- it reads
+    # evidence unfiltered by visibility (its own design choice, not
+    # altered here). We've already confirmed the parent row itself is
+    # visible above.
+    result = await _sibling_get_capability(pool, implementation_id)
+    return json.dumps(result, default=str)
 
 
 if __name__ == "__main__":

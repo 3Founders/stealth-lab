@@ -10,7 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app import observability
 from app.api import admin, agent_store, agents, approval, chat, decompose, graph, ingest
-from app.api import claims, me, procedures, projects, repositories, search, solutions, tasks
+from app.api import claims, implementations, me, procedures, projects, repositories, search, solutions, tasks
 from app.api.deps import require_trustworthy_identity
 from app.config import settings
 from app.db.session import close_pool, create_pool
@@ -86,6 +86,11 @@ app.include_router(projects.router)
 app.include_router(tasks.router)
 app.include_router(me.router)
 app.include_router(search.router)
+
+# Implementation Registry wave (2026-09-01): durable implementation
+# identity + REST surface, migration 33. See
+# .scratch/implementation_registry_architecture.md.
+app.include_router(implementations.router)
 
 
 @app.get("/health")
