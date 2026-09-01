@@ -1,7 +1,8 @@
 # StealthLab MCP Server — v1
 
 Exposes StealthLab's bi-temporal knowledge/task graph, debate-based conflict
-resolution, and a retrieval-grounded coding agent as 9 MCP tools.
+resolution, procedure lifecycle, Implementation Registry, and a
+retrieval-grounded coding agent as 20 MCP tools.
 
 ## Setup
 
@@ -21,7 +22,7 @@ resolution, and a retrieval-grounded coding agent as 9 MCP tools.
 3. `experiments/swebench_pro/` must exist as a real sibling directory of
    `backend/` -- `find_best_way` imports `Agent`/`RepoSandbox` from there.
 
-## The 9 tools
+## The 20 tools
 
 | Tool | What it does | Writes to the graph? |
 |---|---|---|
@@ -34,6 +35,17 @@ resolution, and a retrieval-grounded coding agent as 9 MCP tools.
 | `propose_synthesis` | Run a real multi-round debate on a trigger, produce scorecards | No -- drives debate state to `PENDING_APPROVAL`, doesn't write graph content |
 | `submit_approval` | Approve/reject a scorecard: applies + audits + finalizes debate state | **Yes, gated** -- the correct path for debate-originated changes |
 | `find_best_way` | Retrieval-grounded coding agent against a real repo on disk | Yes -- to the filesystem, not the graph |
+| `search_procedures` | Find procedures applicable to a task/state -- lookup only, nothing executes | No -- read-only |
+| `get_procedure` | Fetch one procedure's full current detail by its stable handle | No -- read-only |
+| `check_applicability` | Is this NAMED procedure applicable right now, given this state? | No -- read-only |
+| `report_execution` | Report a real execution outcome for a NAMED procedure | Yes -- appends evidence/verification stats |
+| `submit_procedure` | Submit a new candidate procedure | Yes -- lands as `system_pending_review` by default |
+| `decide_procedure` | The real human sign-off action for a candidate procedure: approve/reject | **Yes, gated** |
+| `reproduce_procedure` | Re-run an EXISTING procedure's own steps against a real repo (optionally a different, transfer-tier repo) to test whether it still reproduces its claimed result | Yes -- appends reproduction evidence |
+| `resolve_implementation` | Which concrete, durable implementation should satisfy this task node? | No -- read/resolve only |
+| `inspect_implementation` | Fetch one durable implementation row by id | No -- read-only |
+| `list_task_implementations` | Every implementation linked to a task_node | No -- read-only |
+| `get_implementation_capability` | Capability estimate for one durable implementation | No -- read-only |
 
 ### Important: which gated tool goes with which proposal
 
@@ -227,7 +239,7 @@ retrieval grounding, no multi-step governance loop needed.
 
 ## Getting collector traces into Postgres
 
-None of the 9 tools above load `.claude/traces/*.jsonl` collector files into
+None of the 20 tools above load `.claude/traces/*.jsonl` collector files into
 the database themselves. Run `scripts/run_ingestion.py` for that:
 
 ```bash
