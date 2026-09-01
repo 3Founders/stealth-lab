@@ -17,7 +17,7 @@ from pydantic import BaseModel, Field
 from app.api.deps import get_scope
 from app.debate.panel import default_judge, default_panel
 from app.services.authn import current_actor_id
-from app.services.access import AccessScope
+from app.services.access import AccessScope, visibility_predicate
 from app.services.agent_decision import AgentNotPendingApproval, decide_agent
 from app.services.agent_promotion import (
     DecompositionNotApproved,
@@ -214,8 +214,23 @@ async def decide(agent_id: UUID, body: DecideRequest, pool=Depends(get_pool)) ->
 
 
 @router.get("/{agent_id}")
-async def get_agent(agent_id: UUID, pool=Depends(get_pool)):
-    row = await pool.fetchrow("SELECT * FROM agents WHERE id = $1", agent_id)
+async def get_agent(
+    agent_id: UUID,
+    pool=Depends(get_pool),
+    scope: AccessScope = Depends(get_scope),
+) -> dict:
+    """
+    One agent row by id, visibility-filtered -- `agents` carries the
+    same `visibility`/`owner_id` columns (db/07_agents.sql) every other
+    Wave-1 reader in this codebase scopes by (`implementations.py::
+    get_implementation`, `claim_graph_api.get_claim`); this endpoint was
+    the one outlier doing a raw unscoped `SELECT * ... WHERE id = $1`.
+    404 for missing OR invisible alike -- same anti-enumeration posture.
+    """
+    vis_sql, vis_params = visibility_predicate(scope, param_index=2)
+    row = await pool.fetchrow(
+        f"SELECT * FROM agents WHERE id = $1 AND {vis_sql}", agent_id, *vis_params,
+    )
     if row is None:
         raise HTTPException(404, "agent not found")
     return dict(row)
