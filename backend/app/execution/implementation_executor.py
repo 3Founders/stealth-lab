@@ -34,21 +34,44 @@ both already establish for this exact seam):
   offline-provable contract for every existing caller and test, for a
   registry that, per the audit, almost nothing is registered against yet.
   The two primitives here (`resolve_implementation_for_node` +
-  `bind_implementation`) are real, standalone, and fully tested; wiring
-  them into `compile_plan`'s own call sites (there is exactly one real
-  compile pipeline caller today, `find_best_way`'s tier-2 path) is a
-  follow-up integration change for whichever lane owns that call site,
-  not a change to `compile_plan` itself.
+  `bind_implementation`) are real, standalone, and fully tested.
+
+  `bind_plan_implementations()` (below) is the follow-up: a separate
+  async pass that runs AFTER `compile_plan()` and BEFORE
+  `persist_compiled_plan()`, composing the two primitives above over
+  every node of an already-compiled (not yet persisted) `CompiledPlan`.
+  It is honest, standalone, real durable-id binding -- but it is NOT
+  wired into any of `server.py`'s four real compile+persist call sites in
+  this change. Why: every one of those call sites builds its `PlanNode`s
+  from `procedure_graph.py::expand_procedure_steps()`, and a stored
+  procedure step names a goal string, not a real `task_nodes.id` --
+  `PlanNode` itself has no first-class field for one (see
+  `resolve_implementation_for_node`'s own docstring). Wiring a real call
+  site would mean either (a) fabricating a task_node_id from a goal
+  string -- a guess this module's whole "never fabricate" posture
+  refuses, or (b) adding real step<->task_node linkage to the procedure/
+  step schema -- new schema-level work outside a "wire the binding stage"
+  change, and squarely a `schema.md`/spec-v4 concern (frozen) this lane
+  does not own. `bind_plan_implementations()` accepts an explicit
+  `task_node_ids` mapping (`{node.order: task_node_id}`) for exactly the
+  callers who DO already know the linkage (a future compile-time
+  integration once step<->task_node linkage is real, or a test
+  constructing one directly) -- with no mapping entry for a node, it
+  resolves nothing for that node, matching today's real behavior exactly
+  (see `execute_implementation`'s outcome 1: `implementation_id is None`
+  falls back to the frontier provider, unchanged).
 """
 from __future__ import annotations
 
-from typing import Any, Optional
+from dataclasses import replace as _dataclasses_replace
+from typing import Any, Mapping, Optional
 
 import asyncpg
 
 from app.execution import implementation_registry
 from app.execution import providers
 from app.execution.graph_executor import NodeResult
+from app.execution.plans import CompiledPlan, _graph_content, _plan_content, canonical_json, sha256_hex
 from app.models.plan import PlanNode
 from app.services.access import AccessScope
 
@@ -124,6 +147,102 @@ def bind_implementation(node: PlanNode, implementation: Optional[dict]) -> PlanN
     """
     new_id = str(implementation["id"]) if implementation is not None else None
     return node.model_copy(update={"implementation_id": new_id})
+
+
+async def bind_plan_implementations(
+    pool: asyncpg.Pool,
+    compiled: CompiledPlan,
+    *,
+    scope: AccessScope,
+    task_node_ids: Optional[Mapping[int, str]] = None,
+) -> CompiledPlan:
+    """
+    The binding STAGE (directive Sec 20's "planning -> resolve -> bind ->
+    persist -> execute" ordering, run for real): given an already-compiled,
+    not-yet-persisted `CompiledPlan`, resolves and freezes a durable
+    `implementation_id` onto every node it can, and hands back a NEW
+    `CompiledPlan` -- never mutates `compiled` or anything inside it
+    (this codebase's models are immutable-by-convention; see
+    `bind_implementation`'s own docstring).
+
+    Callers run this AFTER `compile_plan()` and BEFORE
+    `persist_compiled_plan()` (module docstring explains why this is a
+    separate pass rather than threaded into `compile_plan` itself).
+    `compile_plan()` is never called from here, never imported for its
+    behavior beyond the `CompiledPlan` shape it produces, and this
+    function does not change anything about how it works -- proven by
+    `tests/test_plan_implementation_binding_offline.py`, which asserts a
+    `compile_plan()` output run back through this function with no
+    resolvable task_node_ids comes back byte-identical (same object,
+    since there is nothing to change -- see the early-return below).
+
+    `task_node_ids`: an explicit `{node.order: task_node_id}` mapping --
+    a plan node has no first-class field naming its real `task_nodes.id`
+    today (see module docstring), so this function never guesses one; a
+    node whose `order` has no entry (the default, `task_node_ids=None`,
+    means EVERY node) simply resolves nothing for that node, which
+    composes with `resolve_implementation_for_node`'s own honest `None`
+    for "no task node link is known" and `bind_implementation`'s own
+    honest "no id to freeze" no-op.
+
+    Nodes that resolve nothing keep `implementation_id=None` exactly as
+    `compile_plan()` left them -- today's real, unchanged fallback
+    (`execute_implementation` still dispatches those to the frontier
+    provider). When NOT ONE node in the graph resolves anything, this
+    function returns `compiled` itself, unchanged -- there is nothing to
+    freeze, so there is nothing to re-hash either.
+
+    When at least one node DOES resolve a durable implementation, the
+    resulting graph's node content is real, new content the original
+    `compile_plan()` call could not have hashed (it had no pool, so it
+    never looked up the registry) -- `graph_hash` and the plan's
+    `content_hash` are recomputed over the bound nodes using the exact
+    same recipe `compile_plan()` itself uses (`plans.py`'s own
+    `_graph_content`/`_plan_content`/`canonical_json`/`sha256_hex`,
+    imported rather than reimplemented, so the two can never drift
+    apart). This is a deliberate, honest consequence: two compiles of the
+    identical procedure/task, run against a registry that has since
+    changed (a new implementation activated in between), now bind
+    differently and are correctly DIFFERENT plan content -- the dedup
+    contract (`find_rebindable_plan`) still holds, it just now also
+    accounts for the durable identity actually bound, which is real
+    content of what will execute, not merely a resolution detail.
+    """
+    task_node_ids = task_node_ids or {}
+    bound_nodes: list[PlanNode] = []
+    any_bound = False
+    for node in compiled.graph.nodes:
+        task_node_id = task_node_ids.get(node.order)
+        resolved = await resolve_implementation_for_node(pool, node, task_node_id, scope=scope)
+        bound = bind_implementation(node, resolved)
+        if bound.implementation_id is not None:
+            any_bound = True
+        bound_nodes.append(bound)
+
+    if not any_bound:
+        return compiled
+
+    new_graph_hash = sha256_hex(canonical_json(_graph_content(bound_nodes)))
+    new_content_hash = sha256_hex(canonical_json(_plan_content(
+        procedure=compiled.plan.procedure,
+        procedure_content_hash=compiled.plan.procedure_content_hash,
+        scope_type=compiled.plan.scope_type,
+        scope_entity_id=compiled.plan.scope_entity_id,
+        task_description=compiled.plan.task_description,
+        parameters=compiled.plan.parameters,
+        starting_state_id=compiled.plan.starting_state_id,
+        resolved_claims=compiled.plan.resolved_claims,
+        selected_branches=compiled.plan.selected_branches,
+        implementations=compiled.plan.implementations,
+        safety_check=compiled.plan.safety_check,
+        verification_plan=compiled.plan.verification_plan,
+        graph_hash=new_graph_hash,
+        extractor_version=compiled.plan.extractor_version,
+    )))
+
+    new_graph = compiled.graph.model_copy(update={"nodes": bound_nodes, "graph_hash": new_graph_hash})
+    new_plan = compiled.plan.model_copy(update={"content_hash": new_content_hash})
+    return _dataclasses_replace(compiled, plan=new_plan, graph=new_graph)
 
 
 async def execute_implementation(
