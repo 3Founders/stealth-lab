@@ -10,6 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app import observability
 from app.api import admin, agent_store, agents, approval, chat, decompose, graph, ingest
+from app.api import claims, me, procedures, projects, repositories, search, solutions, tasks
 from app.api.deps import require_trustworthy_identity
 from app.config import settings
 from app.db.session import close_pool, create_pool
@@ -73,6 +74,18 @@ app.include_router(chat.router)
 app.include_router(decompose.router)
 app.include_router(agents.router)
 app.include_router(agent_store.router)
+
+# Backend Master Build Wave 1 (2026-09-01): read-only domain API layer,
+# pure composition over the existing substrate -- no new schema. See
+# .scratch/backend_architecture_audit.md §4 for what each router composes.
+app.include_router(claims.router)
+app.include_router(procedures.router)
+app.include_router(solutions.router)
+app.include_router(repositories.router)
+app.include_router(projects.router)
+app.include_router(tasks.router)
+app.include_router(me.router)
+app.include_router(search.router)
 
 
 @app.get("/health")
