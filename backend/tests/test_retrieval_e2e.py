@@ -359,3 +359,47 @@ def test_embedding_joint_column_restricts_tables_to_task_nodes_only():
         tables=("task_nodes", "knowledge_nodes"),
     )
     assert retriever._tables == ("task_nodes",)
+
+
+def test_graph_expansion_survives_a_procedures_linked_edge():
+    """Regression: migration 18 added 'procedures' as a valid edges
+    source_table/target_table (skill_ingestion.py's real DECOMPOSES_TO
+    writer links a procedures row straight to a task_nodes row). Graph
+    expansion's belief-filter branch used to assume every edge endpoint
+    was either 'task_nodes' or 'knowledge_nodes' and applied the
+    knowledge_nodes-only `properties->>'truth_state'` filter to anything
+    else -- including 'procedures', which has no properties column at
+    all. Any expansion that crossed such an edge crashed with
+    asyncpg.exceptions.UndefinedColumnError instead of returning results.
+    Found live, not synthesized: running the real e2e suite surfaced
+    this before this test did.
+    """
+    async def _run():
+        pool = await create_pool(DATABASE_URL, min_size=1, max_size=2)
+        try:
+            await _cleanup(pool, "retr-test-procedge")
+            task_id = await _insert_task_node(
+                pool, "retr-test-procedge-task", embedding=[0.33] * 1024,
+            )
+            proc_row = await pool.fetchrow(
+                "INSERT INTO procedures (name, goal) VALUES ($1, $1) RETURNING id",
+                "retr-test-procedge-procedure",
+            )
+            await pool.execute(
+                "INSERT INTO edges (edge_type, custom_edge_type, source_id, source_table, "
+                "target_id, target_table) VALUES ('OWNS', 'DECOMPOSES_TO', $1, 'procedures', $2, 'task_nodes')",
+                proc_row["id"], task_id,
+            )
+
+            retriever = HybridRetriever(pool, embedder=FakeEmbedder([0.33] * 1024))
+            # Must not raise -- this is exactly the call that crashed before the fix.
+            result = await retriever.retrieve("retr-test-procedge-task", top_k=5)
+            names = [n.name for n in result.nodes]
+            assert "retr-test-procedge-task" in names
+        finally:
+            await pool.execute("DELETE FROM edges WHERE source_table = 'procedures' AND target_id = $1", task_id)
+            await pool.execute("DELETE FROM procedures WHERE id = $1", proc_row["id"])
+            await _cleanup(pool, "retr-test-procedge")
+            await pool.close()
+
+    asyncio.run(_run())

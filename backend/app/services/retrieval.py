@@ -356,7 +356,8 @@ class HybridRetriever:
                     # Same belief filter as direct search -- without it the
                     # SUPERSEDES/CONTRADICTS edge itself would walk expansion
                     # straight back to the OUT claim search just excluded.
-                    believed = "" if ntable == "task_nodes" else f"AND {NOT_TRUTH_STATE_OUT} "
+                    belief_frag = _belief_filter(ntable)
+                    believed = f"AND {belief_frag} " if belief_frag else ""
                     row = await self._pool.fetchrow(
                         f"SELECT id, name, "
                         f"{'description' if ntable == 'task_nodes' else 'NULL AS description'} "
