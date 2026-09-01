@@ -220,6 +220,36 @@ WHAT THIS DOES NOT DO, stated rather than implied:
     strategy ever populates it today, confirmed by reading both this
     session -- this module inherits that same honest gap, does not
     attempt to invent one).
+
+AUDIT PASS (this session): re-read against three specific asks and closed
+only the real gaps found. ALREADY CORRECT, unchanged: predicate
+intersection for stable preconditions, scope union for the soft-narrowing
+layer, slot-binder-agreement merging, and gate (d)'s contradiction
+handling (`_find_predicate_contradiction`) -- confirmed it REFUSES
+(returns `SynthesisResult(synthesized=False, ...)`) rather than silently
+picking one competing value or averaging; see CONTRADICTION HANDLING
+above, unchanged. Two genuine gaps closed:
+  - "Optional behavior": the merged step backbone previously kept every
+    step from the single richest episode unmarked, indistinguishable
+    from a step every contributing episode actually performed. Real data
+    already existed to tell the two apart (each episode's own
+    `derive_step_skeleton()` output, already computed for gate (c)) --
+    `_mark_optional_steps()` now sets `ProcedureStep.optional=True` on
+    any backbone step whose tool is absent from at least one
+    contributing episode's own skeleton (membership only, not
+    position -- this module still does no true multi-sequence
+    alignment).
+  - Generalization LEVEL: no such field existed anywhere in this package
+    or `__init__.py`'s single-episode path before this pass (grepped;
+    `capability.py`'s LEVEL_2_P_THRESHOLD is a different concept --
+    computed capability banding from execution outcomes, not extraction
+    generalization). `compute_generalization_level()` adds the honest
+    0/1/2 band described at GENERALIZATION_LEVEL_* above, derived from
+    real, already-computed inputs (episode count, a real non-'literal'
+    slot binder, and `_has_real_variation()`'s comparison of the actual
+    contributing skeletons/scopes) -- never from episode count alone, so
+    N compatible-but-identical episodes cannot be misreported as a
+    "genuinely multi-episode-generalized" level 2 result.
 """
 from __future__ import annotations
 
@@ -251,6 +281,39 @@ from app.services.procedure_extraction.validators import ValidationContext, vali
 from app.services.procedures import capture_procedure
 
 SYNTHESIS_TAG = "multi_episode_synthesis_v1@1"
+
+# GENERALIZATION LEVEL -- real gap this pass closes: nothing in this
+# package (or `__init__.py`'s single-episode path) previously exposed how
+# generalized a procedure actually is, as a stored/returned field. Three
+# honest bands, computed from real inputs only, never asserted:
+#
+#   0 LITERAL   -- a replay skeleton from exactly one episode, no real
+#                  slot generalization (DeterministicExtractor's own
+#                  output shape, or a single-episode synthesis input that
+#                  degrades to it).
+#   1 PARAMETERIZED -- built from one episode but genuinely slotted (a
+#                  real, non-'literal' SlotSpec binder -- derive_slots()
+#                  found a structural signal, not just a literal path
+#                  list), OR two-or-more compatible episodes whose
+#                  contributed evidence turned out NOT to differ in any
+#                  checkable way (see `_has_real_variation` below) -- in
+#                  that case claiming "genuinely multi-episode-
+#                  generalized" would be false precision, so this
+#                  deliberately does NOT reward episode COUNT on its own.
+#   2 MULTI_EPISODE -- two-or-more compatible episodes AND a real,
+#                  checked difference between them (their tool-call
+#                  skeletons are not byte-identical, or the scope
+#                  narrowing they contribute differs) -- i.e. synthesis
+#                  actually generalized over something, not just merged
+#                  N copies of the same trace.
+#
+# NEVER reachable from a single episode, no matter how it is phrased --
+# `compute_generalization_level` structurally cannot return 2 unless its
+# caller passes `n_episodes >= 2` AND `real_variation_found=True`, both
+# real, checked facts, not assumptions.
+GENERALIZATION_LEVEL_LITERAL = 0
+GENERALIZATION_LEVEL_PARAMETERIZED = 1
+GENERALIZATION_LEVEL_MULTI_EPISODE = 2
 
 # Conservative on purpose: two episodes whose tool-call PATTERN differs by
 # more than ~40% of its length are treated as different methods, not the
@@ -290,6 +353,10 @@ class SynthesisResult:
     contributing_episode_ids: list[str] = field(default_factory=list)
     refusal_reason: Optional[str] = None
     validation_failures: list[str] = field(default_factory=list)
+    # See GENERALIZATION_LEVEL_* above. None only on a refusal (no
+    # procedure was ever built, so there is nothing to grade) -- always
+    # set (0/1/2) alongside a real `extracted` result.
+    generalization_level: Optional[int] = None
 
 
 def _adapt_to_procedure_evidence(ev: EpisodeEvidence) -> ProcedureEvidence:
@@ -398,6 +465,89 @@ def _intersect_predicates(
         Predicate(subject=s, predicate=pred, object=obj)
         for s, pred, obj in sorted(common, key=lambda t: (t[0] or "", t[1], t[2] or ""))
     ]
+
+
+def _skeleton_signature(skeleton: list) -> tuple:
+    """Pure, comparable fingerprint of one episode's own step skeleton --
+    (tool_name, count) pairs in order. Two episodes with the identical
+    signature contributed no checkable structural difference to the
+    merge."""
+    return tuple((g.tool_name, g.count) for g in skeleton)
+
+
+def _has_real_variation(
+    skeletons_by_episode: dict[str, list],
+    scopes: list[dict],
+) -> bool:
+    """Whether the contributing episodes actually differed in some
+    checkable way, as opposed to being N copies of the same trace over
+    different literal data. Two real, cheap signals, either sufficient:
+    (1) the episodes' own tool-call skeletons are not all byte-identical
+    (see `_skeleton_signature`), or (2) the scope-narrowing signal they
+    each contributed (derive_scope's `language` list) is not identical
+    across all of them. Both are already-computed structures at the
+    synthesize_procedure() call site -- this adds no new derivation, only
+    a comparison. Deliberately does NOT count `len(episode_ids) >= 2` on
+    its own as variation: two compatible episodes over an identical
+    skeleton and identical scope contributed real EVIDENCE (more support
+    for the same method) but not a genuinely GENERALIZED method, so this
+    function correctly returns False for that case."""
+    sigs = {_skeleton_signature(skel) for skel in skeletons_by_episode.values()}
+    if len(sigs) > 1:
+        return True
+    scope_sigs = {tuple(sorted(s.get("language") or [])) for s in scopes}
+    return len(scope_sigs) > 1
+
+
+def compute_generalization_level(*, n_episodes: int, has_slots: bool, real_variation_found: bool) -> int:
+    """
+    See GENERALIZATION_LEVEL_* constants above for the three bands and
+    why each is honest. Pure, DB-free, callable in isolation (unit-
+    testable without building a single episode) -- exactly the seam
+    needed to prove "never level 2 from one episode" structurally rather
+    than by convention: with `n_episodes < 2`, the first branch below is
+    unreachable no matter what `real_variation_found` claims, because a
+    caller reporting real variation across fewer than two episodes would
+    itself be lying about its own inputs, not something this function
+    can be tricked into rewarding.
+    """
+    if n_episodes >= 2 and real_variation_found:
+        return GENERALIZATION_LEVEL_MULTI_EPISODE
+    if has_slots:
+        return GENERALIZATION_LEVEL_PARAMETERIZED
+    return GENERALIZATION_LEVEL_LITERAL
+
+
+def _mark_optional_steps(
+    steps: list,
+    backbone: list,
+    skeletons_by_episode: dict[str, list],
+) -> list:
+    """Real, observation-grounded "optional behavior" signal (a genuine
+    gap this pass closes -- previously, a step present in only SOME
+    contributing episodes was silently kept, unmarked, exactly as if
+    every episode had done it). For each step in the merged backbone,
+    counts how many contributing episodes' OWN skeleton contains a
+    StepGroup with the same tool name (membership only -- consistent
+    with this module's own stated limitation of no true multi-sequence
+    alignment; position/order is not compared). A step whose tool is
+    missing from at least one episode's skeleton is marked
+    `optional=True`; a step every episode's skeleton contains stays
+    `optional=False`. Returns a NEW list (ProcedureStep is immutable-by-
+    convention here; `.model_copy` is used rather than mutating the
+    caller's `steps` in place)."""
+    n_episodes = len(skeletons_by_episode)
+    marked = []
+    for step, group in zip(steps, backbone):
+        present_in = sum(
+            1 for skel in skeletons_by_episode.values()
+            if any(sg.tool_name == group.tool_name for sg in skel)
+        )
+        if present_in < n_episodes:
+            marked.append(step.model_copy(update={"optional": True}))
+        else:
+            marked.append(step)
+    return marked
 
 
 def _union_scope(scopes: list[dict]) -> dict:
@@ -610,12 +760,19 @@ async def synthesize_procedure(
             refusal_reason="no episode contributed a non-empty tool-call skeleton -- nothing to synthesize",
         )
     steps = literal_steps_from_skeleton(backbone)
+    steps = _mark_optional_steps(steps, backbone, skeletons)
 
     failure_conditions: list[str] = []
     for pe in proc_evidences.values():
         for fc in derive_failure_conditions(pe):
             if fc not in failure_conditions:
                 failure_conditions.append(fc)
+
+    generalization_level = compute_generalization_level(
+        n_episodes=len(episode_ids),
+        has_slots=any(s.binder != "literal" for s in merged_slots),
+        real_variation_found=_has_real_variation(skeletons, scopes),
+    )
 
     capability_statement = _build_capability_statement(
         [g.tool_name for g in backbone], n_episodes=len(episode_ids),
@@ -649,7 +806,10 @@ async def synthesize_procedure(
         )
 
     if dry_run:
-        return SynthesisResult(True, extracted=extracted, contributing_episode_ids=episode_ids)
+        return SynthesisResult(
+            True, extracted=extracted, contributing_episode_ids=episode_ids,
+            generalization_level=generalization_level,
+        )
 
     family_id = await _find_family_id(pool, episode_ids)
     evidence_refs = [
@@ -675,6 +835,12 @@ async def synthesize_procedure(
         parameter_schema={
             "slots": [s.model_dump() for s in extracted.slots],
             "extraction_method": SYNTHESIS_TAG,
+            # Stored via parameter_schema JSONB rather than a new
+            # `procedures` column -- same convention `extraction_method`
+            # above already uses (no migration 20+ column carries this
+            # today; adding one is real, separate future work this pass
+            # does not attempt).
+            "generalization_level": generalization_level,
         },
         preconditions=[p.model_dump() for p in extracted.preconditions],
         scope=extracted.scope,
@@ -701,4 +867,5 @@ async def synthesize_procedure(
     return SynthesisResult(
         True, procedure_id=result["procedure_id"], version_row_id=result["id"],
         extracted=extracted, contributing_episode_ids=episode_ids,
+        generalization_level=generalization_level,
     )

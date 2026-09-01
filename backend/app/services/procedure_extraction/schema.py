@@ -83,6 +83,18 @@ class ProcedureStep(BaseModel):
     failure_policy: Optional[dict] = None
     cost_budget: Optional[dict] = None
 
+    # Real signal, not a guess: set only by multi-episode synthesis
+    # (synthesis.py), which is the one producer that actually has
+    # per-episode step membership to check a step against. A step present
+    # in every contributing episode's own tool-call skeleton stays
+    # `optional=False` (the honest default -- every other producer here
+    # extracts from exactly one episode, where "optional" has no meaning
+    # and this field is correctly never touched); a step present in the
+    # merged backbone but ABSENT from at least one contributing episode's
+    # own skeleton is marked True rather than silently presented as
+    # something every contributing episode actually did.
+    optional: bool = False
+
     @field_validator("action")
     @classmethod
     def action_not_empty(cls, v: str) -> str:
