@@ -56,6 +56,36 @@ class SandboxExecutor(Protocol):
     ) -> ExecutionResult: ...
 
 
+class InputPathEscape(ValueError):
+    """An `input_files` key resolved outside the sandbox's own temp
+    directory. Raised instead of silently writing the file: `tmp_dir /
+    rel_path` in `pathlib` discards `tmp_dir` entirely when `rel_path` is
+    absolute (`Path("/tmp/x") / "/etc/passwd" == Path("/etc/passwd")`),
+    and `..` segments walk back out of it either way -- both let a caller-
+    supplied filename write anywhere the OS user running this process can,
+    with no sandboxing at all. `DeterministicProvider.execute()` passes
+    `context['input_files']` straight through, so this is reachable from
+    any caller of that provider."""
+
+
+def stage_input_files(tmp_dir: Path, input_files: dict[str, bytes]) -> None:
+    """Write every `(rel_path, content)` pair under `tmp_dir`, refusing
+    (via `InputPathEscape`) any key that would land outside it -- an
+    absolute path (POSIX or Windows-drive) or a `..`-carrying relative
+    path. Shared by both executors so the check can't drift between
+    them."""
+    tmp_dir = tmp_dir.resolve()
+    for rel_path, content in input_files.items():
+        candidate = (tmp_dir / rel_path).resolve()
+        if candidate != tmp_dir and tmp_dir not in candidate.parents:
+            raise InputPathEscape(
+                f"input_files key {rel_path!r} resolves to {candidate}, "
+                f"outside the sandbox directory {tmp_dir} -- refusing to write it"
+            )
+        candidate.parent.mkdir(parents=True, exist_ok=True)
+        candidate.write_bytes(content)
+
+
 class SubprocessSandboxExecutor:
     """
     The simple, experiment-scoped implementation. See module docstring
@@ -85,10 +115,12 @@ class SubprocessSandboxExecutor:
 
         tmp_dir = Path(tempfile.mkdtemp(prefix="sandbox_exec_"))
         try:
-            for rel_path, content in input_files.items():
-                dest = tmp_dir / rel_path
-                dest.parent.mkdir(parents=True, exist_ok=True)
-                dest.write_bytes(content)
+            try:
+                stage_input_files(tmp_dir, input_files)
+            except InputPathEscape as exc:
+                return ExecutionResult(
+                    exit_code=-1, stdout="", stderr=str(exc), wall_time_seconds=0.0,
+                )
 
             script_path = tmp_dir / "solution.py"
             script_path.write_text(code, encoding="utf-8")
@@ -284,10 +316,12 @@ class ContainerSandboxExecutor:
     ) -> ExecutionResult:
         tmp_dir = Path(tempfile.mkdtemp(prefix="container_sandbox_"))
         try:
-            for rel_path, content in input_files.items():
-                dest = tmp_dir / rel_path
-                dest.parent.mkdir(parents=True, exist_ok=True)
-                dest.write_bytes(content)
+            try:
+                stage_input_files(tmp_dir, input_files)
+            except InputPathEscape as exc:
+                return ExecutionResult(
+                    exit_code=-1, stdout="", stderr=str(exc), wall_time_seconds=0.0,
+                )
             (tmp_dir / "solution.py").write_text(code, encoding="utf-8")
 
             before = SubprocessSandboxExecutor._snapshot(tmp_dir)

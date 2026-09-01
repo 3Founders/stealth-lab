@@ -16,6 +16,7 @@ from pydantic import BaseModel, Field
 
 from app.api.deps import get_scope
 from app.debate.panel import default_judge, default_panel
+from app.services.authn import current_actor_id
 from app.services.access import AccessScope
 from app.services.agent_decision import AgentNotPendingApproval, decide_agent
 from app.services.agent_promotion import (
@@ -135,12 +136,20 @@ async def submit_agent(body: SubmitAgentRequest, pool=Depends(get_pool)) -> Subm
     human acknowledgment of the sandbox's real, stated limitations
     (app/services/sandbox.py), made at decision time, not submission
     time.
+
+    `created_by`: a validated OIDC actor (`current_actor_id()`), when one
+    exists, always overrides the request body's self-asserted
+    `submitted_by` -- the same rule `get_scope`/`authn.py` document and
+    `ingest.py` already follows. `submitted_by` survives only as the
+    fallback for the unauthenticated posture, where it grants nothing
+    that isn't already world-writable.
     """
     row = await pool.fetchrow(
         "INSERT INTO agents (name, description, source, execution_mode, "
         "skill_ref, source_detail, created_by) "
         "VALUES ($1, $2, $3, 'local_skill', 'pending_review', $4, $5) RETURNING id",
-        body.name, body.description, body.source, body.source_detail, body.submitted_by,
+        body.name, body.description, body.source, body.source_detail,
+        current_actor_id() or body.submitted_by,
     )
     agent_id = row["id"]
 
@@ -165,9 +174,12 @@ async def submit_agent(body: SubmitAgentRequest, pool=Depends(get_pool)) -> Subm
 
 @router.post("/promote", response_model=PromoteResponse)
 async def promote(body: PromoteRequest, pool=Depends(get_pool)) -> PromoteResponse:
+    # A validated OIDC actor always overrides the request body's
+    # self-asserted `actor` -- see submit_agent's docstring for the rule.
     try:
         outcome = await promote_decomposition(
-            pool, body.decomposition_id, default_judge(), actor=body.actor,
+            pool, body.decomposition_id, default_judge(),
+            actor=current_actor_id() or body.actor,
         )
     except DecompositionNotFound as exc:
         raise HTTPException(404, str(exc)) from exc
@@ -184,10 +196,12 @@ async def promote(body: PromoteRequest, pool=Depends(get_pool)) -> PromoteRespon
 
 @router.post("/{agent_id}/decide", response_model=DecideResponse)
 async def decide(agent_id: UUID, body: DecideRequest, pool=Depends(get_pool)) -> DecideResponse:
+    # A validated OIDC actor always overrides the request body's
+    # self-asserted `actor` -- see submit_agent's docstring for the rule.
     try:
         result = await decide_agent(
             pool, agent_id, body.decision, default_registry(),
-            actor=body.actor, reason=body.reason,
+            actor=current_actor_id() or body.actor, reason=body.reason,
             acknowledge_sandbox_limitations=body.acknowledge_sandbox_limitations,
         )
     except AgentNotPendingApproval as exc:

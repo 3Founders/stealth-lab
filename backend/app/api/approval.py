@@ -25,6 +25,7 @@ from app.debate.state_machine import DebateStateMachine, IllegalTransition, asse
 from app.export.markdown_diff import render_export
 from app.models.change import ChangeSet
 from app.models.debate import Layer1Result, Scorecard
+from app.services.authn import current_actor_id
 from app.services.human_participation import DebateNotPendingApproval, add_human_turn
 from app.services.knowledge_update import ChangeApplicationError, KnowledgeUpdater
 
@@ -102,6 +103,16 @@ async def decide(
     if body.decision not in ("approved", "rejected"):
         raise HTTPException(400, "decision must be 'approved' or 'rejected'")
 
+    # A validated OIDC actor always overrides the request body's
+    # self-asserted `approver_id` -- the same rule get_scope/authn.py
+    # document and app/api/agent_store.py follows for its own write
+    # paths. `approver_id` survives only as the fallback for the
+    # unauthenticated posture. This is THE named-human-approval gate
+    # (CLAUDE.md: "apply only after a named human approves"), so the
+    # attribution recorded here must be the real identity when one is
+    # available, not whatever the caller wrote in the request body.
+    resolved_approver_id = current_actor_id() or body.approver_id
+
     row = await pool.fetchrow(
         "SELECT s.id, s.debate_id, s.candidate_id, s.layer1_passed, s.blast_radius, "
         "s.reversible, s.recommendation, c.summary, c.change_set, c.supporters "
@@ -145,7 +156,7 @@ async def decide(
 
     if body.decision == "approved":
         try:
-            applied = await updater.apply(change_set, body.approver_id, at=now)
+            applied = await updater.apply(change_set, resolved_approver_id, at=now)
         except ChangeApplicationError as exc:
             # Leave the debate in PENDING_APPROVAL so it can be retried or
             # re-debated once the conflict is understood.
@@ -156,7 +167,7 @@ async def decide(
         "INSERT INTO approvals (scorecard_id, candidate_id, approver_id, approver_role, "
         "decision, note, decided_at, applied_at, applied_ops) "
         "VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING id",
-        scorecard_id, row["candidate_id"], body.approver_id, body.approver_role,
+        scorecard_id, row["candidate_id"], resolved_approver_id, body.approver_role,
         body.decision, body.note, now, now if applied else None, applied,
     )
 
@@ -164,8 +175,8 @@ async def decide(
         await machine.transition(
             row["debate_id"],
             "APPROVED" if body.decision == "approved" else "REJECTED",
-            reason=body.note or f"{body.decision} by {body.approver_id}",
-            actor=body.approver_id,
+            reason=body.note or f"{body.decision} by {resolved_approver_id}",
+            actor=resolved_approver_id,
         )
     except IllegalTransition as exc:
         raise HTTPException(409, str(exc)) from exc
@@ -183,7 +194,7 @@ async def decide(
             recommendation=row["recommendation"],
         )
         export_md = render_export(
-            scorecard, change_set, body.approver_id, now.isoformat()
+            scorecard, change_set, resolved_approver_id, now.isoformat()
         )
 
     return ApprovalResponse(

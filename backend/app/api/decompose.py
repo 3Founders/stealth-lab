@@ -19,6 +19,7 @@ from app.api.deps import enforce_limits, get_scope, make_cost_recorder
 from app.debate.panel import default_judge, default_panel
 from app.models.change import ChangeSet
 from app.services.access import AccessScope
+from app.services.authn import current_actor_id
 from app.services.decomposition import DecompositionService
 from app.services.knowledge_update import ChangeApplicationError, KnowledgeUpdater
 from app.services.retrieval import HybridRetriever
@@ -175,6 +176,12 @@ async def decide(
         # subgraph, since every apply inserts new nodes.
         raise HTTPException(409, f"already {row['status']}")
 
+    # A validated OIDC actor always overrides the request body's
+    # self-asserted `approver_id` -- same rule as approval.py::decide and
+    # app/api/agent_store.py; `approver_id` survives only as the fallback
+    # for the unauthenticated posture.
+    resolved_approver_id = current_actor_id() or body.approver_id
+
     created: list[dict] = []
     refs: dict[str, str] = {}
 
@@ -184,7 +191,7 @@ async def decide(
         change_set = ChangeSet(**(row["change_set"] or {"ops": []}))
         try:
             outcome = await KnowledgeUpdater(pool).apply_generated(
-                change_set, approver_id=body.approver_id
+                change_set, approver_id=resolved_approver_id
             )
         except ChangeApplicationError as exc:
             # Leave it 'proposed' so it can be re-examined rather than
@@ -196,7 +203,7 @@ async def decide(
     await pool.execute(
         "UPDATE decompositions SET status = $2, approver_id = $3, "
         "decided_at = now(), applied_refs = $4 WHERE id = $1",
-        decomposition_id, body.decision, body.approver_id, refs or None,
+        decomposition_id, body.decision, resolved_approver_id, refs or None,
     )
 
     return DecideResponse(
