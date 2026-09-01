@@ -47,6 +47,8 @@ pytestmark = pytest.mark.skipif(
 
 FAKE_AWS_KEY = "AKIAABCDEFGHIJKLMNOP"  # matches KNOWN_TOKEN_PATTERNS["aws_access_key"]
 FAKE_GITHUB_TOKEN = "ghp_" + "a" * 36  # matches KNOWN_TOKEN_PATTERNS["github_token"]
+FAKE_WINDOWS_PATH = r"C:\Users\chait\Prog\secret-repo\deploy.ps1"
+FAKE_POSIX_PATH = "/home/chait/secret-repo/deploy.sh"
 
 
 async def _cleanup(pool, name_prefix: str) -> None:
@@ -289,3 +291,68 @@ def test_verification_promotion_never_auto_publishes():
             f"{module.__name__} must never import/call publish_local_procedure "
             "itself -- publication is explicit-only, never automatic"
         )
+
+
+def test_publish_local_procedure_scrubs_absolute_paths_everywhere():
+    """Proves the GAP CLOSED THIS PASS fix for real: an absolute Windows
+    path AND an absolute POSIX path, planted in steps/preconditions/
+    scope/exclusions (not just name/goal/steps), must not survive
+    unchanged onto the published global row -- machine-specific
+    filesystem locations are exactly the kind of private, non-portable
+    detail publication must scrub."""
+    async def _run():
+        pool = await create_pool(DATABASE_URL, min_size=1, max_size=2)
+        name_prefix = "publish-test-paths"
+        try:
+            await _cleanup(pool, name_prefix)
+
+            with tempfile.TemporaryDirectory() as tmp_dir:
+                store = LocalProcedureStore(repo_root=tmp_dir)
+                local_result = store.capture_local_procedure(
+                    name=f"{name_prefix}-1",
+                    goal="run the deploy script",
+                    steps=[
+                        {"action": "run", "detail": f"execute {FAKE_WINDOWS_PATH}"},
+                        {"action": "run", "detail": f"then execute {FAKE_POSIX_PATH}"},
+                    ],
+                    preconditions=[{"check": "file_exists", "path": FAKE_WINDOWS_PATH}],
+                    scope={"repo_root": FAKE_POSIX_PATH},
+                    exclusions=[f"do not touch {FAKE_WINDOWS_PATH}"],
+                    provenance="system_pending_review",
+                    scope_type="user",
+                    scope_entity_id="local-workspace-1",
+                )
+                local_row_id = local_result["id"]
+
+                local_procedure = store.get_local_procedure(local_row_id)
+                assert FAKE_WINDOWS_PATH in local_procedure["steps"][0]["detail"], (
+                    "fixture sanity: raw local row must contain the unredacted "
+                    "absolute path before publish"
+                )
+
+                published = await publish_local_procedure(
+                    pool,
+                    local_store=store,
+                    local_row_id=local_row_id,
+                    published_by="tester@example.com",
+                    scope_type="global",
+                )
+
+            row = await get_procedure(pool, published["id"])
+            assert row is not None
+
+            payload = str(row["steps"]) + str(row["preconditions"]) + str(row["scope"]) + str(row["exclusions"])
+            assert FAKE_WINDOWS_PATH not in payload, "absolute Windows path leaked into published global row"
+            assert FAKE_POSIX_PATH not in payload, "absolute POSIX path leaked into published global row"
+            assert "[REDACTED:absolute_path]" in payload
+            # Steps/preconditions/scope/exclusions all actually got scrubbed,
+            # not just steps.
+            assert "[REDACTED:absolute_path]" in str(row["steps"])
+            assert "[REDACTED:absolute_path]" in str(row["preconditions"])
+            assert "[REDACTED:absolute_path]" in str(row["scope"])
+            assert "[REDACTED:absolute_path]" in str(row["exclusions"])
+        finally:
+            await _cleanup(pool, name_prefix)
+            await pool.close()
+
+    asyncio.run(_run())

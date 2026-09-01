@@ -18,9 +18,11 @@ SPEC REQUIREMENTS THIS MODULE SATISFIES (V1 spec, Phase 19):
     `domain_payload`, which IS preserved forever on the row.
   - author/owner preserved      -> `created_by=published_by`, never a
     generic/anonymous constant.
-  - private information scrubbed -> every free-text field
-    (name/goal/steps) is routed through trace_redaction's real
-    leaf-string scrubber before it ever reaches `capture_procedure`.
+  - private information scrubbed -> every free-text/JSONB field that can
+    carry author-written prose (name/goal/steps/preconditions/scope/
+    exclusions) is routed through trace_redaction's real leaf-string
+    scrubber PLUS this module's own absolute-path scrub (see
+    `_scrub_value` below) before it ever reaches `capture_procedure`.
   - candidate state explicit    -> `capture_procedure` is called with no
     verification_stats override; the row lands `candidate`/`fresh`/
     `active` like every other fresh capture. See VERIFICATION STATS
@@ -113,6 +115,7 @@ module's authority to alter.
 """
 from __future__ import annotations
 
+import re
 from datetime import datetime, timezone
 from typing import Any, Optional
 
@@ -124,26 +127,52 @@ from app.services.trace_redaction import redact_value
 
 PUBLISHED_PROVENANCE = "system_pending_review"
 
+# GAP CLOSED THIS PASS: trace_redaction's KNOWN_TOKEN_PATTERNS (via
+# redact_value, reused below) catches secret-shaped tokens but has no
+# generic absolute-path rule -- its own SENSITIVE_PATH_PATTERNS only
+# flags a short list of known-sensitive *filenames* (.env, .pem,
+# id_rsa, .ssh/, .aws/credentials), not "any absolute filesystem path",
+# and that check is wired only into redact_event (a tool-call-shaped
+# primitive publish.py deliberately does not use -- see module
+# docstring). A local procedure's steps/preconditions/scope/exclusions
+# can legitimately contain an author's own absolute path (e.g. a step
+# literally saying "cd C:\Users\chait\repo") which is machine-specific
+# and must not enter the shared global commons verbatim. Minimal,
+# narrowly-targeted regexes only -- not a generic PII framework.
+_WINDOWS_ABS_PATH = re.compile(r"[A-Za-z]:\\(?:[^\s\"'<>|*?]+)")
+_POSIX_ABS_PATH = re.compile(r"/(?:home|Users|root)/[^\s\"'<>|]+")
+PATH_REDACTION_PLACEHOLDER = "[REDACTED:absolute_path]"
+
+
+def _scrub_paths(value: str) -> str:
+    """Replace absolute filesystem paths (Windows and POSIX user/home/root
+    paths) with a placeholder. Leaf-string only, same shape as
+    trace_redaction's own leaf-string primitive."""
+    value = _WINDOWS_ABS_PATH.sub(PATH_REDACTION_PLACEHOLDER, value)
+    value = _POSIX_ABS_PATH.sub(PATH_REDACTION_PLACEHOLDER, value)
+    return value
+
+
+def _scrub_value(value: Any) -> Any:
+    """Recursively walks a parsed JSON value (dict/list/str/other),
+    applying BOTH scrubs to every string leaf: trace_redaction's shared
+    known-secret-token primitive (`redact_value`), then this module's
+    own absolute-path scrub. Used for every field of a local procedure
+    that is about to cross into the shared global commons."""
+    if isinstance(value, str):
+        matched: list[str] = []
+        return _scrub_paths(redact_value(value, matched))
+    if isinstance(value, dict):
+        return {k: _scrub_value(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_scrub_value(v) for v in value]
+    return value
+
 
 class AlreadyPublishedError(Exception):
     """Raised when `publish_local_procedure` is called against a local
     row that already has a durable publish link and the caller did not
     pass `force=True`. See module docstring's REPEATED-PUBLISH DECISION."""
-
-
-def _redact_text(value: str) -> str:
-    """Redact known-secret-shaped tokens out of one free-text string,
-    via trace_redaction's shared leaf-string primitive."""
-    matched: list[str] = []
-    return redact_value(value, matched)
-
-
-def _redact_json(value: Any) -> Any:
-    """Redact known-secret-shaped tokens out of an arbitrary parsed-JSON
-    value (steps is a JSON array of step objects) -- same primitive,
-    walked recursively by `redact_value` itself."""
-    matched: list[str] = []
-    return redact_value(value, matched)
 
 
 async def publish_local_procedure(
@@ -194,9 +223,12 @@ async def publish_local_procedure(
             "publish it again as a new, independent global candidate."
         )
 
-    redacted_name = _redact_text(local_procedure["name"])
-    redacted_goal = _redact_text(local_procedure["goal"])
-    redacted_steps = _redact_json(local_procedure.get("steps") or [])
+    redacted_name = _scrub_value(local_procedure["name"])
+    redacted_goal = _scrub_value(local_procedure["goal"])
+    redacted_steps = _scrub_value(local_procedure.get("steps") or [])
+    redacted_preconditions = _scrub_value(local_procedure.get("preconditions") or [])
+    redacted_scope = _scrub_value(local_procedure.get("scope") or {})
+    redacted_exclusions = _scrub_value(local_procedure.get("exclusions") or [])
 
     published_at = datetime.now(timezone.utc).isoformat()
     domain_payload = {
@@ -210,10 +242,10 @@ async def publish_local_procedure(
         name=redacted_name,
         goal=redacted_goal,
         steps=redacted_steps,
-        preconditions=local_procedure.get("preconditions") or [],
-        scope=local_procedure.get("scope") or {},
+        preconditions=redacted_preconditions,
+        scope=redacted_scope,
         invariants=local_procedure.get("invariants") or [],
-        exclusions=local_procedure.get("exclusions") or [],
+        exclusions=redacted_exclusions,
         evidence_refs=local_procedure.get("evidence_refs") or [],
         source_episode_ids=local_procedure.get("source_episode_ids") or [],
         provenance=PUBLISHED_PROVENANCE,
