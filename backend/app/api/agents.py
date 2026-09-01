@@ -37,7 +37,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
-from app.api.deps import enforce_limits, make_cost_recorder
+from app.api.deps import enforce_limits, get_scope, make_cost_recorder, scope_key_for
 from app.config import settings
 from app.debate.panel import default_chat_agent
 from app.services.execution import ExecutionHarness, SkillRegistry
@@ -223,12 +223,34 @@ async def run_medical_report_extraction(
 
 
 @router.get("/files/{file_id}")
-async def download_file(file_id: uuid.UUID, pool=Depends(get_pool)):
+async def download_file(
+    file_id: uuid.UUID,
+    request: Request,
+    pool=Depends(get_pool),
+    scope=Depends(get_scope),
+):
+    """
+    `generated_files.scope_key` is documented at the schema level
+    (db/06_generated_files.sql) as "who generated it, for cleanup/
+    ownership" -- this endpoint used to SELECT the row by id alone and
+    never actually checked it, so anyone who obtained a file's opaque id
+    (proxy/browser logs, a shared link, a screen-shared response body)
+    could download another caller's generated output, including the
+    extracted-medical-report Excel this router's own docstring names as
+    real PII. `scope_key_for` is the exact same identity key
+    `run_medical_report_extraction` stamped onto the row at INSERT time
+    (via `enforce_limits`'s `scope_key`), so this is a real ownership
+    check, not a new identity concept. A mismatch 404s -- same
+    anti-enumeration posture as every other scoped reader in this
+    codebase -- rather than a 403 that would confirm the id is real.
+    """
+    requester_key = scope_key_for(scope, request)
     row = await pool.fetchrow(
-        "SELECT disk_path, display_name, content_type FROM generated_files WHERE id = $1",
+        "SELECT disk_path, display_name, content_type, scope_key "
+        "FROM generated_files WHERE id = $1",
         file_id,
     )
-    if row is None:
+    if row is None or row["scope_key"] != requester_key:
         raise HTTPException(404, "file not found or already expired")
     if not os.path.exists(row["disk_path"]):
         # The DB row and the actual file can drift apart (disk cleanup,
