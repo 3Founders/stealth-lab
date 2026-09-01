@@ -866,4 +866,66 @@ def test_transfer_tier_reproduction_is_distinguishable_from_same_repo_reproducti
             shutil.rmtree(same_dir, ignore_errors=True)
             shutil.rmtree(transfer_dir, ignore_errors=True)
 
+
+def test_verification_stats_stays_in_lockstep_with_real_evidence_rows():
+    """core-a audit (verification/evidence authoritative source): proves
+    `procedures.verification_stats` never drifts from the real `evidence`
+    rows it is supposed to summarize. `record_execution_outcome` is the
+    ONLY writer of `procedures.verification_stats` in this codebase (grep
+    confirms it -- no second, independent counter-update path exists), and
+    it inserts the evidence row and updates the counters in the SAME
+    transaction (see that function's own docstring/WAVE-3 comment). This
+    test locks that invariant in with a real count, not a code-reading
+    argument: after a mixed sequence of successes/failures, `attempts`/
+    `successes` on the procedures row must equal the actual row counts in
+    `evidence` for that exact target_id/target_version -- queried
+    independently, not read back from the same counters."""
+    async def _run():
+        pool = await create_pool(DATABASE_URL, min_size=1, max_size=2)
+        try:
+            await _cleanup(pool, "proc-test-lockstep")
+            result = await capture_procedure(
+                pool, name="proc-test-lockstep-1", goal="g",
+                provenance="system_pending_review", scope_type="global",
+            )
+            row_id = result["id"]
+
+            outcomes = [True, True, False, True, False, True]
+            for i, success in enumerate(outcomes):
+                await record_execution_outcome(
+                    pool, procedure_row_id=row_id, success=success,
+                    context_key=f"ctx-{i % 3}",
+                )
+
+            row = await pool.fetchrow(
+                "SELECT verification_stats, version FROM procedures WHERE id = $1", row_id
+            )
+            stats = row["verification_stats"]
+
+            evidence_rows = await pool.fetch(
+                "SELECT outcome_status FROM evidence WHERE target_type = 'procedure' "
+                "AND target_id = $1 AND target_version = $2",
+                row_id, row["version"],
+            )
+            real_attempts = len(evidence_rows)
+            real_successes = sum(1 for r in evidence_rows if r["outcome_status"] == "success")
+
+            assert real_attempts == len(outcomes), (
+                "one evidence row must exist per record_execution_outcome call"
+            )
+            assert stats["attempts"] == real_attempts, (
+                f"cached attempts counter ({stats['attempts']}) drifted from real "
+                f"evidence row count ({real_attempts})"
+            )
+            assert stats["successes"] == real_successes, (
+                f"cached successes counter ({stats['successes']}) drifted from real "
+                f"evidence success-row count ({real_successes})"
+            )
+            assert real_successes == sum(outcomes)
+        finally:
+            await _cleanup(pool, "proc-test-lockstep")
+            await pool.close()
+
+    asyncio.run(_run())
+
     asyncio.run(_run())
