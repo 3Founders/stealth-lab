@@ -27,6 +27,7 @@ from pydantic import BaseModel
 from app.api.deps import enforce_limits, make_cost_recorder
 from app.debate.panel import default_judge, default_layer2_agent, default_panel
 from app.services.loop import LoopOrchestrator
+from app.services.procedure_extraction.failure_handlers import run_failure_handlers
 from app.services.triggers import ThresholdRule, TriggerDetector
 
 log = logging.getLogger(__name__)
@@ -129,3 +130,27 @@ async def run_scan(
         triggers_found=len(recorded), debates_run=len(outcomes),
         outcomes=outcomes, errors=errors,
     )
+
+
+class FailureRouteProcessResponse(BaseModel):
+    applied: dict[str, int]
+
+
+@router.post("/failure-routes/process", response_model=FailureRouteProcessResponse)
+async def process_failure_routes(pool=Depends(get_pool)) -> FailureRouteProcessResponse:
+    """
+    Manual loop trigger, same seam as /v1/admin/scan above: nothing in
+    the application ever called
+    app.services.procedure_extraction.failure_handlers.run_failure_handlers()
+    -- classify_and_route() (app/execution/failures.py, wired into
+    procedures.py::record_execution_outcome) appends every failed
+    outcome's route durably, but no production caller ever consumed
+    fetch_route_queue() to execute the mandated update. This endpoint is
+    that consumer: call it from a cron job, a dashboard button, or curl.
+    No LLM spend here (no enforce_limits) -- pure DB read/recompute/write.
+    Idempotent by construction (each handler's own change_sets ledger
+    check): calling this twice in a row performs the same updates only
+    once.
+    """
+    applied = await run_failure_handlers(pool)
+    return FailureRouteProcessResponse(applied=applied)
