@@ -304,16 +304,57 @@ def test_generator_failure_is_reported_not_crashed():
     assert "provider down" in result.reasoning
 
 
-def test_oversized_decomposition_is_rejected():
-    """A model emitting 50 steps is padding or malfunctioning."""
+def _linear_chain_ops(n: int) -> list[dict]:
+    """n task nodes, each producing into the next -- a valid, acyclic,
+    dangling-ref-free chain of exactly the requested size."""
     ops = [{"op_type": "create_task_node", "ref": f"t{i}", "name": f"Step {i}"}
+           for i in range(n)]
+    ops += [
+        {"op_type": "create_edge", "edge_type": "PRODUCES",
+         "source_ref": f"t{i}", "target_ref": f"t{i + 1}"}
+        for i in range(n - 1)
+    ]
+    return ops
+
+
+@pytest.mark.parametrize("n", [1, 3, 15, 30, 200])
+def test_decomposition_size_is_bounded_by_the_problem_not_a_constant(n):
+    """
+    CONSOLIDATED BACKEND directive §1-2/§62: there is no arbitrary
+    "at most N tasks" ceiling. A structurally valid decomposition
+    (acyclic, no dangling refs, no duplicate-node ops) must be accepted
+    regardless of its size -- 1 node and 200 nodes are both proposable
+    on their own structural merits. No number here is special; this is
+    parametrized precisely so no single size reads as "the new limit".
+    """
+    ops = _linear_chain_ops(n)
+    generator = ScriptedGenerator({"feasible": True, "reasoning": "sized to the problem", "ops": ops})
+    service = DecompositionService(generator=generator, critic=SilentCritic())
+    result = asyncio.run(service.decompose("a problem needing exactly this much work"))
+
+    assert result.safe_to_propose is True, result.structural_problems
+    assert result.node_count == n
+
+
+def test_decomposition_padding_is_still_caught_by_dedup_not_a_node_count():
+    """
+    The real protection against a malfunctioning/padding generator is
+    NOT a node-count ceiling -- it's the existing dedup pass
+    (dedupe_changeset_ops, app/services/dedup.py) collapsing literally
+    duplicated proposal-internal ops. A generator that emits the same
+    step 30 times must be caught by dedup, not by counting to a limit.
+    """
+    ops = [{"op_type": "create_task_node", "ref": f"t{i}", "name": "Do the same thing"}
            for i in range(30)]
-    huge = ScriptedGenerator({"feasible": True, "reasoning": "many", "ops": ops})
-    service = DecompositionService(generator=huge, critic=SilentCritic())
+    padded = ScriptedGenerator({"feasible": True, "reasoning": "padded", "ops": ops})
+    service = DecompositionService(generator=padded, critic=SilentCritic())
     result = asyncio.run(service.decompose("something"))
 
-    assert result.safe_to_propose is False
-    assert any("limit is" in p for p in result.structural_problems)
+    assert result.deduplicated, "dedup report must be non-empty -- duplicates were found and merged"
+    assert result.node_count < 30, (
+        "identical duplicate steps must be collapsed by dedup, independent "
+        "of any node-count check"
+    )
 
 
 def test_critique_objections_do_not_block_proposal():
