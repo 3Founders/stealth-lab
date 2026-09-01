@@ -40,26 +40,33 @@ both already establish for this exact seam):
   async pass that runs AFTER `compile_plan()` and BEFORE
   `persist_compiled_plan()`, composing the two primitives above over
   every node of an already-compiled (not yet persisted) `CompiledPlan`.
-  It is honest, standalone, real durable-id binding -- but it is NOT
-  wired into any of `server.py`'s four real compile+persist call sites in
-  this change. Why: every one of those call sites builds its `PlanNode`s
-  from `procedure_graph.py::expand_procedure_steps()`, and a stored
-  procedure step names a goal string, not a real `task_nodes.id` --
-  `PlanNode` itself has no first-class field for one (see
-  `resolve_implementation_for_node`'s own docstring). Wiring a real call
-  site would mean either (a) fabricating a task_node_id from a goal
-  string -- a guess this module's whole "never fabricate" posture
-  refuses, or (b) adding real step<->task_node linkage to the procedure/
-  step schema -- new schema-level work outside a "wire the binding stage"
-  change, and squarely a `schema.md`/spec-v4 concern (frozen) this lane
-  does not own. `bind_plan_implementations()` accepts an explicit
-  `task_node_ids` mapping (`{node.order: task_node_id}`) for exactly the
-  callers who DO already know the linkage (a future compile-time
-  integration once step<->task_node linkage is real, or a test
-  constructing one directly) -- with no mapping entry for a node, it
-  resolves nothing for that node, matching today's real behavior exactly
-  (see `execute_implementation`'s outcome 1: `implementation_id is None`
-  falls back to the frontier provider, unchanged).
+  It is honest, standalone, real durable-id binding, composed two ways:
+
+  (a) `PlanNode.task_node_id` -- a real, typed field (added alongside
+      `procedure_graph.py::_step_task_node_id()`): a stored procedure
+      step that names `{"task_node_id": "<uuid>"}` is threaded through
+      `steps_to_linear_nodes()` verbatim, never fabricated from `goal`/
+      `action` text. `bind_plan_implementations()` reads it directly off
+      each node -- no schema change was needed, since `task_graphs.nodes`
+      is already a JSONB column (`db/23_plan_persistence.sql`); adding a
+      Pydantic field there is purely additive, same precedent as
+      `implementation_hint` before it.
+  (b) An explicit `task_node_ids` mapping (`{node.order: task_node_id}`),
+      still accepted for callers who resolve a linkage OUTSIDE any single
+      step (e.g. `server.py::_bind_plan_to_registry`'s real, procedure-
+      level `procedures.migrated_from_task_node_id` link, applied
+      uniformly across every node of the compiled graph) -- (a) never
+      overrides an explicit mapping entry for the same node.
+
+  Neither path is wired into `server.py`'s four real compile+persist call
+  sites' STEP DATA today: most stored procedures still name only a goal
+  string per step, so `task_node_id` is `None` for the overwhelming
+  majority of real nodes -- matching today's real behavior exactly (see
+  `execute_implementation`'s outcome 1: `implementation_id is None` falls
+  back to the frontier provider, unchanged). The field exists so a step
+  that DOES carry real linkage (written by a future extraction/synthesis
+  pass, or a test constructing one directly) resolves automatically,
+  without any caller needing an out-of-band map.
 """
 from __future__ import annotations
 
@@ -90,11 +97,12 @@ async def resolve_implementation_for_node(
     preference the node didn't already carry.
 
     `task_node_id` is the real `task_nodes.id` this plan node is
-    satisfying, when known -- a plan node has no first-class field
-    naming one today (see module docstring: nothing wires this into
-    `compile_plan` yet), so callers that DO know it (e.g. a future
-    compile-time integration, or a test constructing one directly) pass
-    it explicitly. `None` means "no task node link is known for this
+    satisfying, when known -- the caller (`bind_plan_implementations`)
+    resolves it either from `node.task_node_id` (a real field the node
+    itself may carry, lifted from a stored step's own `task_node_id`) or
+    from an explicit out-of-band mapping for callers who know the linkage
+    some other way (e.g. a procedure-level link, or a test constructing
+    one directly). `None` means "no task node link is known for this
     node" -- honestly returns `None` rather than guessing one, since
     `implementation_registry.resolve()` requires a real task_node_id to
     query against.
@@ -212,7 +220,7 @@ async def bind_plan_implementations(
     bound_nodes: list[PlanNode] = []
     any_bound = False
     for node in compiled.graph.nodes:
-        task_node_id = task_node_ids.get(node.order)
+        task_node_id = task_node_ids.get(node.order) or node.task_node_id
         resolved = await resolve_implementation_for_node(pool, node, task_node_id, scope=scope)
         bound = bind_implementation(node, resolved)
         if bound.implementation_id is not None:

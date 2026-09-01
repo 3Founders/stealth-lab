@@ -37,7 +37,12 @@ unmodified today by mcp_server/server.py and local_agent/runner.py for
 non-composed procedures) and now also lifts `subprocedure_ref` into
 `PlanNode.step_ref` when present, so a caller who does NOT expand still
 gets an honest, typed signal that a step is a reference rather than real
-work.
+work. Same lossless-JSONB treatment applies to a step's own
+`task_node_id` (the real, durable `task_nodes.id` a step satisfies, when
+known) -- lifted verbatim into `PlanNode.task_node_id` by
+`_step_task_node_id()`, never guessed from `goal`/`action` text. See
+`app/execution/implementation_executor.py`'s module docstring for how
+that field feeds the resolve->bind stage.
 
 `expand_procedure_steps()` is the real compile-time expansion: given a
 root procedure's steps, it calls `steps_to_linear_nodes()` for the
@@ -134,12 +139,26 @@ def _step_implementation_hint(step: dict) -> Optional[tuple[str, ...]]:
     return validate_implementation_hint(step.get("implementation_hint"))
 
 
+def _step_task_node_id(step: dict) -> Optional[str]:
+    """Lift a step's `task_node_id` (if present) into `PlanNode.task_node_id`
+    -- the real, durable `task_nodes.id` this step satisfies, when the
+    step actually names one. Same discipline as `_step_ref`/
+    `_step_implementation_hint`: a real, stored fact is threaded through
+    verbatim (coerced to `str` since `PlanNode.task_node_id` is typed as
+    `str`, matching every other id field on this model); nothing here
+    ever GUESSES a task_node_id from `goal`/`action` text -- a step that
+    names none gets `None`, the same honest default
+    `implementation_executor.py`'s whole module refuses to paper over."""
+    raw = step.get("task_node_id")
+    return str(raw) if raw else None
+
+
 def steps_to_linear_nodes(steps: list[dict]) -> list[PlanNode]:
     """`steps`: a procedure's stored steps, each `{"order": int, "goal": str, ...}`
-    (extra keys ignored, except `subprocedure_ref` and `implementation_hint`
-    -- see module docstring). Returns PlanNodes in order, each depending
-    on the PREVIOUS element in sorted sequence -- a straight chain,
-    matching exactly what a linear procedure already is.
+    (extra keys ignored, except `subprocedure_ref`, `implementation_hint`,
+    and `task_node_id` -- see module docstring). Returns PlanNodes in
+    order, each depending on the PREVIOUS element in sorted sequence -- a
+    straight chain, matching exactly what a linear procedure already is.
 
     REAL BUG this fixed, found live against a real stored procedure:
     deriving deps as `order - 1` assumes `order` is contiguous, 0-indexed,
@@ -158,6 +177,7 @@ def steps_to_linear_nodes(steps: list[dict]) -> list[PlanNode]:
         PlanNode(
             order=s["order"], goal=_step_goal(s), step_ref=_step_ref(s),
             implementation_hint=_step_implementation_hint(s),
+            task_node_id=_step_task_node_id(s),
             deps=[ordered[i - 1]["order"]] if i > 0 else [],
         )
         for i, s in enumerate(ordered)

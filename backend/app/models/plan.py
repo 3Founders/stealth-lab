@@ -75,6 +75,17 @@ class PlanNode(BaseModel):
     parameters: dict[str, Any] = Field(default_factory=dict)
     node_class: NodeClass = "predictable"
     implementation_id: Optional[str] = None
+    # The real, durable `task_nodes.id` this node satisfies, when the
+    # source step names one (`{"task_node_id": "<uuid>"}` in the stored
+    # procedure's `steps` JSONB -- see procedure_graph.py::_step_task_node_id).
+    # None is the honest default: most steps today name only a goal
+    # string, and this field is never fabricated FROM that string (see
+    # implementation_executor.py's module docstring on exactly that
+    # refusal). Threading a real value through here is what lets
+    # `implementation_executor.resolve_implementation_for_node` look up
+    # `implementation_registry.resolve()` for THIS node automatically,
+    # without a caller having to pass an out-of-band task_node_ids map.
+    task_node_id: Optional[str] = None
     # Advisory sibling of `step_ref` (composition): which real
     # implementation kind(s) could satisfy this node's own work, once it
     # is an ordinary (non-composed) node. None means the step named no
