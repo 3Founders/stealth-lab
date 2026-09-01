@@ -663,6 +663,95 @@ async def handle_extract_procedure_from_episode(
         episode_id, result.procedure_id, result.extracted_by,
     )
 
+    await _maybe_auto_synthesize(
+        pool, episode_id=str(episode_id),
+        scope_type="project" if ep["project_id"] else "global",
+        scope_entity_id=ep["project_id"],
+    )
+
+
+# ---------------------------------------------------------------------
+# Multi-episode generalization (L2), auto-discovered -- closes the real
+# gap synthesis.py's own module docstring names and does not fill: that
+# module's `synthesize_procedure()` had ZERO production callers before
+# this pass (grepped this session), reachable only from tests supplying a
+# hand-picked episode_ids list. This is the ONE natural trigger point a
+# normal ingestion run already has after a real, successful single-
+# episode extraction: the episode this job just turned into a procedure
+# is exactly the "successful episode" synthesis.py's own docstring
+# describes as its input.
+#
+# RETRIEVAL, NOT A MANUAL ID LIST. synthesis.py's own "What this does NOT
+# do" section is explicit that candidate discovery is the CALLER's job --
+# this function is that caller. No embedding column is ever populated for
+# `procedures` today (grepped: extract_procedure()/capture_procedure()
+# never pass one), so a real vector search has nothing to query; the
+# honest substitute is a real SQL query over already-captured evidence:
+# other LIVE procedures that are themselves still single-episode
+# extractions (source_episode_ids length 1 -- i.e. not already folded
+# into a synthesis result) sharing this episode's own real project scope.
+# Coarse on purpose, per synthesis.py's own division of labor: its three
+# real compatibility gates (structural tool-sequence alignment, verification
+# agreement, predicate contradiction) are what actually decide merge-or-
+# refuse, not this query -- a related-but-incompatible candidate found
+# here is expected to come back refused, not silently merged.
+MAX_SYNTHESIS_CANDIDATES = 4  # + this episode = 5, inside synthesis.py's own
+# stated single-digit-N scale ("no support for more than a small number of
+# episodes in one call" -- its module docstring, "What this does NOT do").
+
+
+async def _discover_synthesis_candidates(
+    pool: asyncpg.Pool, *, episode_id: str, scope_type: str,
+    scope_entity_id: Optional[str], limit: int = MAX_SYNTHESIS_CANDIDATES,
+) -> list[str]:
+    rows = await pool.fetch(
+        "SELECT source_episode_ids[1] AS episode_id FROM procedures "
+        "WHERE t_invalid IS NULL AND array_length(source_episode_ids, 1) = 1 "
+        "AND source_episode_ids[1] != $1::uuid "
+        "AND scope_type = $2 AND scope_entity_id IS NOT DISTINCT FROM $3 "
+        "ORDER BY t_created DESC LIMIT $4",
+        episode_id, scope_type, scope_entity_id, limit,
+    )
+    return [str(r["episode_id"]) for r in rows]
+
+
+async def _maybe_auto_synthesize(
+    pool: asyncpg.Pool, *, episode_id: str, scope_type: str,
+    scope_entity_id: Optional[str],
+) -> None:
+    """Synchronous invocation at the natural trigger point -- no new
+    scheduler/queue, reuses `synthesize_procedure()` completely unchanged.
+    A refusal (structural mismatch, verification disagreement, or a
+    contradictory predicate) is the system working exactly as designed:
+    the candidate batch is logged and left as distinct, un-blended
+    single-episode procedures, never forced into one falsely-universal
+    result."""
+    from app.services.procedure_extraction.synthesis import (
+        MIN_CANDIDATE_EPISODES,
+        synthesize_procedure,
+    )
+
+    candidates = await _discover_synthesis_candidates(
+        pool, episode_id=episode_id, scope_type=scope_type,
+        scope_entity_id=scope_entity_id,
+    )
+    batch = [episode_id] + candidates
+    if len(batch) < MIN_CANDIDATE_EPISODES:
+        return
+
+    synth = await synthesize_procedure(pool, batch)
+    if synth.synthesized:
+        log.info(
+            "extract_procedure_from_episode: auto-discovered synthesis over %s -> "
+            "generalized procedure %s (level %s)",
+            synth.contributing_episode_ids, synth.procedure_id, synth.generalization_level,
+        )
+    else:
+        log.info(
+            "extract_procedure_from_episode: auto-discovered synthesis batch %s refused: %s",
+            batch, synth.refusal_reason,
+        )
+
 
 def _extraction_client():
     """The same OpenAI-compatible client mcp_server/server.py builds for
