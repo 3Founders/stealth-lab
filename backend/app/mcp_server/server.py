@@ -585,6 +585,62 @@ def _render_step(step) -> str:
     return f"{text}  [tool: {', '.join(tools)}]" if tools else text
 
 
+async def _bind_plan_to_registry(pool, compiled_plan, procedure_payload: dict):
+    """Directive Sec 20's "resolve -> bind" stage, run for real, over the
+    ONE real task_node link a stored procedure already carries:
+    `procedures.migrated_from_task_node_id` (`db/18_procedures.sql`) --
+    populated when a procedure was migrated from a task_node's own
+    htn_method_library entry, `NULL` for an ad-hoc/directly captured
+    procedure. This never fabricates a task_node_id from a goal string
+    (see `implementation_executor.py`'s own module docstring on exactly
+    that refusal) -- every real node of a plan compiled from this
+    procedure's steps is treated as satisfying that SAME task (a
+    procedure-level, not step-level, link, which is the only real one
+    that exists today), and a `None` link is a true no-op: the plan comes
+    back byte-identical, matching the registry's own "nothing resolved"
+    behavior everywhere else.
+
+    Run AFTER `compile_plan()` and BEFORE `persist_compiled_plan()` at
+    every real production call site, so a durable implementation bound
+    here is frozen into the persisted `task_graphs.nodes` row itself, not
+    merely resolved in memory and discarded.
+
+    PLAN-PINNING GUARD (directive Sec 31 -- "a newly registered
+    implementation must not silently replace an implementation already
+    frozen into a plan"): checks `find_plan_for_task` -- keyed on the
+    real, stable (`procedure_row_id`, `task_description`) pair, NOT
+    `content_hash` -- first. `bind_plan_implementations` deliberately
+    changes `content_hash` when it freezes an implementation (see its own
+    docstring), so a content_hash lookup on this fresh, not-yet-bound
+    compile could never find an already-bound stored plan; the
+    (procedure_row_id, task_description) pair is stable across binding
+    and is exactly "the same task, replayed." When a plan for that pair
+    is already persisted, its already-frozen nodes are returned
+    UNCHANGED -- never re-resolved -- so a newer implementation activated
+    after the original run cannot change which implementation a replay
+    of that exact plan binds to. Only a genuinely first-time compile (no
+    existing row for this pair) resolves and freezes a fresh binding.
+    """
+    task_node_id = procedure_payload.get("migrated_from_task_node_id")
+    if not task_node_id:
+        return compiled_plan
+    from app.execution.plan_persistence import find_plan_for_task
+
+    existing = await find_plan_for_task(
+        pool, procedure_row_id=compiled_plan.plan.procedure_row_id,
+        task_description=compiled_plan.plan.task_description,
+    )
+    if existing is not None:
+        return existing
+
+    from app.execution.implementation_executor import bind_plan_implementations
+
+    return await bind_plan_implementations(
+        pool, compiled_plan, scope=AccessScope.unrestricted(),
+        task_node_ids={n.order: str(task_node_id) for n in compiled_plan.graph.nodes},
+    )
+
+
 async def _respond_tier1_hit(pool, task_description: str, matched_procedure: dict) -> str:
     """Tier-1 lookup hit: REAL execution now, not just a returned text
     listing -- one real, cheap LLM call per real stored step, in real
@@ -643,6 +699,7 @@ async def _respond_tier1_hit(pool, task_description: str, matched_procedure: dic
         extractor_version="find_best_way_plan_compiler@1",
         created_by="find_best_way",
     )
+    compiled_plan = await _bind_plan_to_registry(pool, compiled_plan, matched_procedure)
     compiled_plan, _ = await persist_compiled_plan(pool, compiled_plan)
 
     client = OpenAI(
@@ -665,10 +722,13 @@ async def _respond_tier1_hit(pool, task_description: str, matched_procedure: dic
         return NodeResult(status="success" if text else "failure", notes=text)
 
     result = await execute_task_graph(compiled_plan.graph, run_node=run_node)
+    from app.execution.implementation_executor import plan_implementation_id
+
     await record_plan_execution(
         pool, compiled=compiled_plan,
         outcome=result.outcome,
         created_by=_resolve_caller_identity(fallback="find_best_way"),
+        implementation_id=plan_implementation_id(compiled_plan),
     )
 
     steps_text = "\n".join(
@@ -731,6 +791,7 @@ async def _respond_plan_only(pool, task_description: str, matched_procedure: dic
         extractor_version="find_best_way_plan_compiler@1",
         created_by="find_best_way",
     )
+    compiled_plan = await _bind_plan_to_registry(pool, compiled_plan, matched_procedure)
     compiled_plan, _ = await persist_compiled_plan(pool, compiled_plan)
 
     payload = {
@@ -1082,6 +1143,7 @@ async def find_best_way(task_description: str, ctx: Context,
         extractor_version="find_best_way_plan_compiler@1",
         created_by="find_best_way",
     )
+    compiled_plan = await _bind_plan_to_registry(pool, compiled_plan, procedure_payload)
     compiled_plan, _ = await persist_compiled_plan(pool, compiled_plan)
 
     # REAL PER-STEP EXECUTION, not one monolithic call over the whole
@@ -1144,10 +1206,13 @@ async def find_best_way(task_description: str, ctx: Context,
             steps_used=total_calls,
         )
 
+    from app.execution.implementation_executor import plan_implementation_id
+
     await record_plan_execution(
         pool, compiled=compiled_plan,
         outcome=graph_result.outcome,
         created_by=_resolve_caller_identity(fallback="find_best_way"),
+        implementation_id=plan_implementation_id(compiled_plan),
     )
 
     # Procedure extraction (memory-substrate blocker #1: extract_procedure()
@@ -1425,6 +1490,7 @@ async def reproduce_procedure(procedure_id: str, repo_path: str, ctx: Context,
             extractor_version="reproduce_procedure_plan_compiler@1",
             created_by=_resolve_caller_identity(fallback="reproduce_procedure"),
         )
+        compiled_plan = await _bind_plan_to_registry(pool, compiled_plan, procedure_payload)
         compiled_plan, _ = await persist_compiled_plan(pool, compiled_plan)
 
         node_runs: dict[int, "AgentRun"] = {}  # noqa: F821
@@ -1465,10 +1531,13 @@ async def reproduce_procedure(procedure_id: str, repo_path: str, ctx: Context,
             evidence_type="reproduction",
         )
 
+        from app.execution.implementation_executor import plan_implementation_id
+
         await record_plan_execution(
             pool, compiled=compiled_plan,
             outcome=graph_result.outcome,
             created_by=_resolve_caller_identity(fallback="reproduce_procedure"),
+            implementation_id=plan_implementation_id(compiled_plan),
         )
 
         return {

@@ -51,17 +51,7 @@ _EXECUTION_COLUMNS = (
 )
 
 
-async def _find_existing_plan(pool: asyncpg.Pool, content_hash: str) -> Optional[CompiledPlan]:
-    """Rebind support at the real storage layer: `find_rebindable_plan()`
-    (plans.py) is a pure comparison over caller-supplied rows -- this is
-    what fetches those rows for real, scoped to the one hash that matters
-    (content_hash is globally unique in intent: identical inputs, identical
-    hash), so this is a point lookup, not a scan."""
-    plan_row = await pool.fetchrow(
-        "SELECT * FROM execution_plans WHERE content_hash = $1", content_hash,
-    )
-    if plan_row is None:
-        return None
+async def _row_to_compiled_plan(pool: asyncpg.Pool, plan_row: asyncpg.Record) -> CompiledPlan:
     graph_row = await pool.fetchrow(
         "SELECT * FROM task_graphs WHERE execution_plan_id = $1", plan_row["id"],
     )
@@ -86,6 +76,62 @@ async def _find_existing_plan(pool: asyncpg.Pool, content_hash: str) -> Optional
     )
 
 
+async def find_existing_plan(pool: asyncpg.Pool, content_hash: str) -> Optional[CompiledPlan]:
+    """Rebind support at the real storage layer: `find_rebindable_plan()`
+    (plans.py) is a pure comparison over caller-supplied rows -- this is
+    what fetches those rows for real, scoped to the one hash that matters
+    (content_hash is globally unique in intent: identical inputs, identical
+    hash), so this is a point lookup, not a scan.
+
+    NOT the right lookup for the plan-pinning check ahead of
+    `implementation_executor.bind_plan_implementations` (directive Sec
+    31) -- binding deliberately changes `content_hash` (see that
+    module's own docstring: two compiles of the same procedure/task,
+    bound against a registry that has since changed, produce correctly
+    DIFFERENT plan content), so a freshly recompiled, not-yet-bound
+    plan's content_hash can never equal an already-bound stored plan's.
+    `find_plan_for_task`, below, is the stable-identity lookup that
+    exists for exactly that check.
+    """
+    plan_row = await pool.fetchrow(
+        "SELECT * FROM execution_plans WHERE content_hash = $1", content_hash,
+    )
+    if plan_row is None:
+        return None
+    return await _row_to_compiled_plan(pool, plan_row)
+
+
+async def find_plan_for_task(
+    pool: asyncpg.Pool, *, procedure_row_id: UUID, task_description: str,
+) -> Optional[CompiledPlan]:
+    """The plan-pinning lookup (directive Sec 31 -- "a newly registered
+    implementation must not silently replace an implementation already
+    frozen into a plan"): "has THIS exact (procedure_row_id,
+    task_description) pair already been compiled, bound, and persisted?",
+    keyed on two real, stable, stored columns that binding never touches
+    -- unlike `find_existing_plan`'s `content_hash`, which
+    `bind_plan_implementations` deliberately changes on every bind (see
+    its own docstring), making a content_hash lookup on a freshly
+    recompiled, not-yet-bound plan structurally unable to find an
+    already-bound one.
+
+    Returns the OLDEST matching plan (`ORDER BY created_at ASC`), so a
+    replay always finds the ORIGINAL run's plan, never a later one, even
+    if multiple runs somehow raced. `None` when this exact
+    (procedure_row_id, task_description) pair has never been compiled
+    before -- the real "first run" case, for which the caller resolves
+    and freezes a fresh binding instead of reusing one.
+    """
+    plan_row = await pool.fetchrow(
+        "SELECT * FROM execution_plans WHERE procedure_row_id = $1 AND task_description = $2 "
+        "ORDER BY created_at ASC LIMIT 1",
+        procedure_row_id, task_description,
+    )
+    if plan_row is None:
+        return None
+    return await _row_to_compiled_plan(pool, plan_row)
+
+
 async def persist_compiled_plan(
     pool: asyncpg.Pool, compiled: CompiledPlan,
 ) -> tuple[CompiledPlan, bool]:
@@ -100,10 +146,10 @@ async def persist_compiled_plan(
     Two INSERTs, not a transaction: both tables are append-only/frozen by
     trigger (migration 23), so a partial failure between them cannot be
     "corrected" by a rollback in any way that matters -- the defensive
-    check in `_find_existing_plan` is what catches that state if it ever
+    check in `find_existing_plan` is what catches that state if it ever
     occurs, rather than a transaction pretending to prevent it.
     """
-    existing = await _find_existing_plan(pool, compiled.plan.content_hash)
+    existing = await find_existing_plan(pool, compiled.plan.content_hash)
     if existing is not None:
         return existing, False
 
@@ -135,6 +181,7 @@ async def record_plan_execution(
     created_by: Optional[str] = None,
     scope_type: Optional[str] = None,
     scope_entity_id: Optional[str] = None,
+    implementation_id: Optional[str] = None,
 ) -> UUID:
     """Write the one `executions` row for a finished run.
 
@@ -142,6 +189,13 @@ async def record_plan_execution(
     AFTER the skill settles") -- `executions` rejects UPDATE by trigger, so
     there is no "insert running, update on completion" path here. Call this
     only once the outcome is already known.
+
+    `implementation_id`: the durable implementation identity that actually
+    ran, when the caller knows one (e.g.
+    `implementation_executor.plan_implementation_id(compiled)` over a plan
+    already bound by `bind_plan_implementations` before persist). Defaults
+    to `None`, the honest value for a run whose plan never resolved a
+    durable implementation -- never fabricated here.
     """
     validate_execution_binding(
         execution_plan_id=compiled.plan.id,
@@ -155,6 +209,7 @@ async def record_plan_execution(
         execution_plan_id=compiled.plan.id,
         task_graph_id=compiled.graph.id,
         procedure=compiled.plan.procedure,
+        implementation_id=implementation_id,  # type: ignore[arg-type]
         parameters=parameters or {},
         trace_id=trace_id,
         started_at=started_at or now,

@@ -245,6 +245,25 @@ async def bind_plan_implementations(
     return _dataclasses_replace(compiled, plan=new_plan, graph=new_graph)
 
 
+def plan_implementation_id(compiled: CompiledPlan) -> Optional[str]:
+    """The single durable implementation identity to record on this plan's
+    `Execution` row, if the whole graph agrees on one. `executions` carries
+    one `implementation_id` column per run (db/23_plan_persistence.sql),
+    not one per node -- honest for today's real graphs (tier-2/
+    reproduce_procedure compile overwhelmingly single-node, per
+    `graph_executor.py`'s own docstring). When every node's bound
+    `implementation_id` (already frozen by `bind_plan_implementations`, or
+    left `None` when nothing resolved) agrees, that shared value is
+    returned; a graph whose nodes disagree (some bound, some not, or bound
+    to different durable ids) returns `None` rather than picking one node's
+    identity arbitrarily -- an honest "no single identity fits this run"
+    over a fabricated pick."""
+    ids = {n.implementation_id for n in compiled.graph.nodes}
+    if len(ids) == 1:
+        return next(iter(ids))
+    return None
+
+
 async def execute_implementation(
     pool: asyncpg.Pool,
     node: PlanNode,
