@@ -30,6 +30,8 @@ Layers (spec §2): Events/Traces/Episodes → Observations → Claims/State/Grap
 
 Transport: stdio + Streamable HTTP (`mcp==2.0.0` `MCPServer`, hand-built SEP-2663 Tasks extension for long-running tools). Bearer token = authentication only; threat model documented; loopback-first posture.
 
+**Verified 2026-09-01 against `backend/app/mcp_server/server.py`'s live registry** (`packaging/tests/test_server_offline.py::test_all_registered_tools`): the table above is the original v0.1 slice and is no longer the full surface. 20 tools are registered today. Landed since, not reflected above: `check_applicability`, `decide_procedure`, `get_procedure`, `report_execution`, `reproduce_procedure`, `search_procedures`, `submit_procedure`, and a new **Implementation Registry** group (`get_implementation_capability`, `inspect_implementation`, `list_task_implementations`, `resolve_implementation` — durable implementation identity, migration 33). A companion read-only REST layer also now exists outside the MCP surface, wired in `backend/app/main.py`: `/v1/claims`, `/v1/procedures`, `/v1/solutions`, `/v1/repositories`, `/v1/projects`, `/v1/tasks`, `/v1/me`, `/v1/search`, `/v1/implementations`.
+
 ## 2 · Frameworks & standards
 
 - **Model Context Protocol**: spec 2026-06-28 era, Python SDK `mcp==2.0.0` (`MCPServer`, constructor-injected `on_list_tools`/`on_call_tool`; bundled FastMCP removed). Official registry + Smithery/Glama/PulseMCP directories for distribution. *Pins are informational; `backend/requirements.txt` is the source of truth — re-verify SDK/SEP pins at every release cut.*

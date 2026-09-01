@@ -22,11 +22,18 @@ statement of what ships and what proves it.
 
 ## What runs today
 
-A local-first MCP server exposing **9 tools** over a bi-temporal
+A local-first MCP server exposing **20 tools** (verified 2026-09-01 against
+`app/mcp_server/server.py`'s live tool registry — up from 9; the newer ones
+add procedure decisioning and the Implementation Registry surface,
+`check_applicability`/`decide_procedure`/`get_implementation_capability`/
+`get_procedure`/`inspect_implementation`/`list_task_implementations`/
+`report_execution`/`reproduce_procedure`/`resolve_implementation`/
+`search_procedures`/`submit_procedure` among them) over a bi-temporal
 knowledge/task graph: ingest execution traces, detect a bottleneck, run a
 multi-model debate to propose a fix, evaluate it statistically, and apply it
 only after a human approves — every state change auditable and reversible
-via the graph's supersede-not-delete history.
+via the graph's supersede-not-delete history. The table below covers the
+original debate/approval slice only; it predates the newer tools.
 
 | Tool | What it does |
 |---|---|
@@ -67,6 +74,13 @@ gotchas (stock `postgres:15` cannot run the migration chain; use
 mode (`--stdio` skips auth by protocol design), before `stealthlab-mcp-server`
 above will actually start; full variable list in `packaging/README.md`'s
 Configure section or `backend/README_MCP_SERVER.md`'s Setup section.
+
+The backend also exposes a read-oriented REST API alongside the MCP server
+(verified 2026-09-01, routers wired in `backend/app/main.py`): `/v1/claims`,
+`/v1/procedures`, `/v1/solutions`, `/v1/repositories`, `/v1/projects`,
+`/v1/tasks`, `/v1/me`, `/v1/search`, and `/v1/implementations` (the
+Implementation Registry). No client or quickstart doc for this layer exists
+yet outside the code itself.
 
 Tests: `cd backend && python -m pytest tests -q` — offline, no DB or API
 keys required for the bulk of the suite. Needs `backend/.env` to exist first
@@ -110,9 +124,17 @@ surface this is still expanding into (`explain_decision`,
 The engine behind that story is real and extensively tested — evidence
 tracking, capability scoring, precondition/applicability gating, failure
 classification and routing all exist and are proven offline and, where
-claimed, against a live model. What's still in progress is wiring that
-engine into the MCP tool surface a coding agent actually calls; `demo.md`
-tracks that gap in its ship checklist rather than hiding it.
+claimed, against a live model. Most of that engine is now wired into the MCP
+tool surface (verified 2026-09-01: `check_applicability`, `decide_procedure`,
+`get_procedure`, `report_execution`, `reproduce_procedure`,
+`search_procedures`, `submit_procedure`, plus a new Implementation Registry
+group — `get_implementation_capability`, `inspect_implementation`,
+`list_task_implementations`, `resolve_implementation` — are real, registered
+tools, not just engine code). What's still open is narrower than "tool
+wiring": `demo.md`'s ship checklist tracks one remaining gap, that a fresh
+install's own prior work doesn't yet surface via `retrieve_precedent` (the
+episode → claim pipeline breaks before procedures are produced from real
+agent sessions).
 
 ## Security & data
 
