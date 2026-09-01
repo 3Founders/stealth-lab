@@ -13,7 +13,7 @@ already have.
 """
 from __future__ import annotations
 
-from typing import Optional
+from typing import Any, Optional
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -21,12 +21,44 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from app.api.deps import get_scope
 from app.services.access import AccessScope
 from app.services.procedure_graph_api import get_solution_view
+from app.services.solution_search import search_solutions
 
 router = APIRouter(prefix="/v1/solutions", tags=["solutions"])
 
 
 async def get_pool(request: Request):
     return request.app.state.pool
+
+
+@router.get("/search")
+async def read_solutions_search(
+    q: str,
+    project_id: Optional[str] = Query(default=None),
+    repository_id: Optional[str] = Query(default=None),
+    limit: int = Query(default=20, ge=1, le=100),
+    pool=Depends(get_pool),
+    scope: AccessScope = Depends(get_scope),
+) -> dict[str, Any]:
+    """
+    Phase 7 "Google for how to do something" -- ONE blended, ranked list
+    of procedure + task hits. Thin wrapper over
+    `app.services.solution_search.search_solutions`; see that module's
+    docstring for the full interleaving design (round-robin by rank
+    position, never a fabricated cross-type score -- CLAUDE.md's RRF/
+    applicability separation rule). Registered BEFORE
+    `/{procedure_row_id}` in this file so the literal path segment
+    `search` is never mistaken for a UUID (FastAPI's uuid path convertor
+    already rejects a non-UUID segment and tries the next route either
+    way; declared first here for readability, not because it is load-
+    bearing).
+    """
+    return await search_solutions(
+        pool, q,
+        scope=scope,
+        project_id=project_id,
+        repository_id=repository_id,
+        limit=limit,
+    )
 
 
 @router.get("/{procedure_row_id}")

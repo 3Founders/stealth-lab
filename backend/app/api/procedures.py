@@ -9,6 +9,7 @@ anti-enumeration posture `graph.py` already documents).
 """
 from __future__ import annotations
 
+from typing import Any, Optional
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -16,6 +17,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from app.api.deps import get_scope
 from app.execution.procedure_graph import ProcedureCompositionError
 from app.services.access import AccessScope
+from app.services.domain_search import search_global
 from app.services.procedure_graph_api import (
     get_procedure_claims,
     get_procedure_detail,
@@ -29,6 +31,33 @@ router = APIRouter(prefix="/v1/procedures", tags=["procedures"])
 
 async def get_pool(request: Request):
     return request.app.state.pool
+
+
+@router.get("/search")
+async def search_procedures(
+    q: str,
+    repository_id: Optional[str] = Query(default=None),
+    project_id: Optional[str] = Query(default=None),
+    limit: int = Query(default=20, ge=1, le=100),
+    pool=Depends(get_pool),
+    scope: AccessScope = Depends(get_scope),
+) -> dict[str, Any]:
+    """
+    Directive Sec16 convenience endpoint -- a thin, procedure-only leg of
+    `domain_search.search_global` (`object_types=["procedure"]`), NOT a
+    second retrieval engine: same cascade+RRF ranking `/v1/search` itself
+    uses for its procedure bucket, reused verbatim. Registered before
+    `/{procedure_row_id}` for readability (the UUID path convertor on
+    that route already rejects the literal segment `search` on its own).
+    """
+    return await search_global(
+        pool, q,
+        object_types=["procedure"],
+        repository_id=repository_id,
+        project_id=project_id,
+        limit=limit,
+        scope=scope,
+    )
 
 
 @router.get("/{procedure_row_id}")
