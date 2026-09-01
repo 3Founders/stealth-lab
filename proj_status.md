@@ -1,8 +1,96 @@
 # PROJECT STATUS — Verified Procedural Experience System
 
-_Last updated: 2026-09-01 · doc-reconciliation pass (Claude Code), verified
+_Last updated: 2026-09-02 · doc-reconciliation pass (Claude Code), verified
 directly against source/tests, not inferred from commit messages · pull
 latest `main` before trusting this file._
+
+## 2026-09-02 doc-reconciliation update — what changed since the last entry
+
+Re-verified against the actual repo (not commit messages) on 2026-09-02.
+Six real fixes landed on `main` since the 2026-09-01 entry below (commits
+`e527250`..`9343b88`), each independently confirmed by reading the current
+source, not the commit messages alone:
+
+- **`fetch_route_queue()` has a real production consumer.** `POST
+  /v1/admin/failure-routes/process` (`backend/app/api/admin.py`) processes
+  the failure-routing queue for real; confirmed by reading the router.
+- **Unscoped IDOR fixed on `GET /v1/agent-store/{agent_id}`.** It was a raw
+  `SELECT * FROM agents WHERE id = $1` with no visibility check — any
+  caller who knew or guessed a UUID could read a private agent row. Now
+  threads `scope: AccessScope = Depends(get_scope)` through
+  `visibility_predicate()`, same anti-enumeration posture (404 for missing
+  or invisible alike) as the rest of Wave-1's single-row-by-id readers.
+- **Multi-episode generalization (`synthesize_procedure`) now has a real
+  production caller.** Before this, it was reachable only from tests
+  passing a hand-picked `episode_ids` list. `_maybe_auto_synthesize()`
+  (`backend/app/services/ingestion_jobs.py`) now runs after every
+  single-episode extraction, discovers up to 4 other still-single-episode
+  procedures in the same real scope via a plain SQL query (no embedding
+  column exists on `procedures` today — an honest substitute for vector
+  search, not vector search itself), and calls `synthesize_procedure()`
+  unchanged. A refusal from its own three compatibility gates (structural
+  alignment, verification agreement, predicate contradiction) leaves
+  procedures un-blended rather than forcing a false universal method. Live
+  E2E proof: `backend/tests/test_synthesis_auto_discovery_e2e.py` (real DB,
+  real entrypoint, episodes submitted one at a time — no batch ever passed
+  by the test) — 1 passed.
+- **Implementation Registry resolve→bind is now wired into the real
+  `find_best_way`/`reproduce_procedure` hot path**, not just standalone
+  read tools next to it. `_bind_plan_to_registry()`
+  (`backend/app/mcp_server/server.py`) is called after `compile_plan()`
+  and before `persist_compiled_plan()` at all four real production call
+  sites (tier-1 lookup, plan-only, tier-2, `reproduce_procedure`), via the
+  existing `procedures.migrated_from_task_node_id` link — no new column. A
+  plan-pinning guard checks `find_plan_for_task()` before any resolve, so a
+  replay reuses an already-bound plan rather than re-resolving to a newer
+  implementation registered since.
+- **Publish-time privacy scrub gap closed.** `publish_local_procedure`
+  previously routed only `name`/`goal`/`steps` through redaction;
+  `preconditions`/`scope`/`exclusions` crossed into the global commons
+  verbatim, and nothing caught generic absolute filesystem paths (only
+  known-sensitive filenames like `.env`/`.pem`/`id_rsa`). A new
+  `_scrub_value` in `backend/app/services/publish.py` composes the
+  existing secret redaction with a new absolute-path regex scrub and
+  applies it to all four fields before the `capture_procedure()` INSERT.
+  Live-DB test: `backend/tests/test_publish_e2e.py` — 6 passed.
+- **A single-command bootstrap orchestrator** (`backend/scripts/
+  bootstrap.py`) now exists over the existing import functions, printing
+  one consolidated, truthful summary (sources scanned/skipped, episodes
+  found, candidate procedures created, duplicates merged, rejections) —
+  every number a real return value, none hardcoded.
+
+**Suite counts, re-run this pass** (`cd backend && python -m pytest tests -q`,
+`DATABASE_URL` unset): **1982 passed / 261 skipped / 1 failed** — up from
+1981/252/0 in the 2026-09-01 entry (net +1 test from
+`test_synthesis_auto_discovery_e2e.py`, plus new skips/additions from
+`test_publish_e2e.py` and `test_bootstrap_live.py`). The 1 failure,
+`tests/test_band2_4_handlers.py::test_demotion_handler_performs_exactly_its_
+mandated_update`, is **pre-existing and unrelated to the six fixes above** —
+an evidence-query SQL shape assertion in a module this session's commits
+never touch; `git status` shows other concurrent sessions' in-progress,
+uncommitted edits to `app/services/applicability.py`,
+`app/services/task_api.py`, and `app/services/procedure_extraction/
+failure_handlers.py` (files this pass deliberately did not read-for-edit or
+stage), the likely cause. **Harness suite: 254 passed / 0 skipped.
+Packaging suite: 95 passed** — both unchanged from 2026-09-01, re-run and
+confirmed.
+
+**Migration count re-confirmed: 33 files** in `backend/db/`
+(`01_ontology.sql` … `33_implementation_registry.sql`) — same count as the
+2026-09-01 entry; still a file-count verification only, `scripts/
+migrate.py --status` was not re-run against a live DB this pass either (no
+Postgres instance available). `demo.md`'s C1 row previously said "30
+applied"; corrected to 33 with the same live-DB caveat.
+
+**Hygiene sweep of `backend/app`** (TODO/FIXME/"not implemented"/"not
+wired"/stub/placeholder/mock/fake/seeded/HTN/method_library, excluding
+`.venv`/egg-info): every hit found is either a legitimately-marked,
+self-documented future-work item (this codebase's own stated convention —
+"Several modules explicitly refuse to claim capability they don't have")
+or a real, correctly-used test fixture (e.g. `debate/panel.py`'s
+`MockAgent`, a scripted offline-test agent). No stale or misleading hit
+found in production code this pass; nothing required fixing or flagging as
+a new gap.
 
 ## 2026-09-01 doc-reconciliation update — what changed since the last entry
 

@@ -136,6 +136,25 @@ install's own prior work doesn't yet surface via `retrieve_precedent` (the
 episode → claim pipeline breaks before procedures are produced from real
 agent sessions).
 
+Landed since the 2026-09-01 pass above (verified against source/tests
+2026-09-02, not inferred from commit messages): the Implementation Registry
+is no longer just standalone read tools next to the hot path —
+`_bind_plan_to_registry()` in `app/mcp_server/server.py` now calls
+resolve→bind at all four real `find_best_way`/`reproduce_procedure`
+production call sites, pinning a durable implementation to a compiled plan
+before persistence (with a plan-pinning guard so a replay reuses an
+already-bound plan rather than re-resolving). Multi-episode generalization
+(`synthesize_procedure`) now has a real production caller too — ingestion
+auto-discovers up to 4 compatible same-scope single-episode procedures
+after each extraction and attempts synthesis itself, instead of requiring a
+caller to hand-pick `episode_ids`. The publish-time privacy scrub
+(`publish_local_procedure`) now redacts absolute filesystem paths and
+covers `preconditions`/`scope`/`exclusions`, not just `name`/`goal`/`steps`.
+A new admin endpoint, `POST /v1/admin/failure-routes/process`, gives
+`fetch_route_queue()` a real production consumer. And an unscoped IDOR on
+`GET /v1/agent-store/{agent_id}` (a raw `SELECT * FROM agents WHERE id = $1`
+with no visibility check) is fixed.
+
 ## Security & data
 
 [`SECURITY.md`](SECURITY.md) — threat model, stated plainly: a bearer token

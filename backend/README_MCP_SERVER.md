@@ -42,10 +42,23 @@ retrieval-grounded coding agent as 20 MCP tools.
 | `submit_procedure` | Submit a new candidate procedure | Yes -- lands as `system_pending_review` by default |
 | `decide_procedure` | The real human sign-off action for a candidate procedure: approve/reject | **Yes, gated** |
 | `reproduce_procedure` | Re-run an EXISTING procedure's own steps against a real repo (optionally a different, transfer-tier repo) to test whether it still reproduces its claimed result | Yes -- appends reproduction evidence |
-| `resolve_implementation` | Which concrete, durable implementation should satisfy this task node? | No -- read/resolve only |
+| `resolve_implementation` | Which concrete, durable implementation should satisfy this task node? | No -- read/resolve only (as a standalone tool call; see the wiring note below the table) |
 | `inspect_implementation` | Fetch one durable implementation row by id | No -- read-only |
 | `list_task_implementations` | Every implementation linked to a task_node | No -- read-only |
 | `get_implementation_capability` | Capability estimate for one durable implementation | No -- read-only |
+
+### Implementation Registry is now wired into the real hot path (2026-09-02)
+
+`resolve_implementation` used to be reachable only as its own standalone MCP
+call. As of this pass, `_bind_plan_to_registry()` in `server.py` calls
+resolve→bind internally at all four real production call sites that compile
+a plan -- `find_best_way`'s tier-1 lookup, plan-only mode, and tier-2, plus
+`reproduce_procedure` -- after `compile_plan()` and before
+`persist_compiled_plan()`, via the existing `procedures.migrated_from_task_
+node_id` link (no new column). A plan-pinning guard checks `find_plan_for_
+task(procedure_row_id, task_description)` before any resolve, so replaying
+an already-bound plan reuses it verbatim instead of re-resolving to a newer
+implementation registered since.
 
 ### Important: which gated tool goes with which proposal
 
@@ -265,9 +278,11 @@ engine-verified measurement).
   from task execution) isn't exposed as an MCP tool -- `detect_conflict_trigger`
   only wraps the knowledge-conflict half.
 - **Bulk/bootstrap ingestion isn't exposed.** `Onboarder.seed()` (hand-authored
-  workflow specs) and `POST /v1/traces` (OTel-shaped agentic workflow trace
-  ingestion -- a real, working endpoint, just not MCP-wrapped) both require
-  going around the MCP server directly.
+  workflow specs), `POST /v1/traces` (OTel-shaped agentic workflow trace
+  ingestion), and `POST /v1/admin/failure-routes/process` (real production
+  consumer for `fetch_route_queue()`, landed 2026-09-02) are all real,
+  working REST endpoints, just not MCP-wrapped -- going around the MCP
+  server directly is required to reach any of them.
 - **`find_best_way`'s Tasks-extension backing store is in-memory.** Task state
   doesn't survive a server restart and doesn't work across multiple server
   replicas. Fine for single-process use, not for production multi-replica.
