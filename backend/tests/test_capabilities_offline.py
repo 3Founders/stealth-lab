@@ -200,32 +200,30 @@ def test_get_implementation_capability_issues_the_exact_bounded_query():
 
 def test_get_implementation_capability_computes_real_p_estimate_from_recorded_outcomes():
     # Mirrors procedure_graph_api.py's own _capability_estimate exactly:
-    # only direction='supports' rows are outcome-bearing. A default-built
-    # success row carries direction='supports'; a default-built failure
-    # row carries direction='contradicts' (outcome_to_evidence's own
-    # honest default) and is therefore excluded from THIS estimate --
-    # the same real behavior the mirrored procedure-evidence function
-    # already has, not a new gap introduced here.
+    # a live outcome-bearing row with a terminal outcome_status is an
+    # attempt, in EITHER direction. A default-built failure row carries
+    # direction='contradicts' (outcome_to_evidence's honest default) and
+    # STILL counts -- it is exactly what lowers the Wilson lower bound.
     rows = [_evidence_row("success"), _evidence_row("success"), _evidence_row("failure")]
     pool = FakeReadPool(rows_by_id={IMPL_ID: rows})
 
     result = _run(get_implementation_capability(pool, IMPL_ID))
 
-    assert result["evidence_count"] == 2       # the two 'supports' success rows
+    assert result["evidence_count"] == 3       # 2 successes + 1 recorded failure
     assert result["success_count"] == 2
-    assert result["p_estimate"] > 0.0
+    assert result["p_estimate"] > 0.0          # 2/3, Wilson lower bound still positive
     assert result["level_gated"] is None
 
 
-def test_get_implementation_capability_only_counts_supports_direction_rows():
-    """An explicit-direction failure row (direction='supports', which is
-    not how record_implementation_outcome would build one by default, but
-    is real, storable evidence.direction data) DOES enter the estimate --
-    proving the filter is genuinely on `direction`, not silently on
-    `outcome_status`."""
+def test_get_implementation_capability_counts_default_direction_failures():
+    """A failure recorded the way record_implementation_outcome actually
+    builds one -- direction='contradicts' by outcome_to_evidence's own
+    default -- DOES enter the P estimate. The stream gate is
+    evidence_type + terminal outcome_status, never `direction` (that
+    filter used to silently drop every real failure)."""
     rows = [
-        _evidence_row("success", direction="supports"),
-        _evidence_row("failure", direction="supports"),
+        _evidence_row("success"),                 # default direction='supports'
+        _evidence_row("failure"),                 # default direction='contradicts'
     ]
     pool = FakeReadPool(rows_by_id={IMPL_ID: rows})
 

@@ -104,18 +104,41 @@ def _ddl() -> str:
 
 
 def _view_sql() -> str:
-    ddl = _ddl()
-    # PG has no CREATE VIEW IF NOT EXISTS -- idempotency comes from
-    # CREATE OR REPLACE (engine-verified fix, was a real chain-run failure).
-    start = ddl.index("CREATE OR REPLACE VIEW procedure_evidence_stats AS")
-    end = ddl.index(";", start)
-    return ddl[start:end]
+    # procedure_evidence_stats is defined in 24_evidence.sql and
+    # REDEFINED (CREATE OR REPLACE VIEW) in
+    # 34_evidence_stats_count_failures.sql -- read the latest definition
+    # that carries it, mirroring what the live DB actually has after the
+    # full migration chain runs.
+    db_dir = Path(__file__).resolve().parents[1] / "db"
+    marker = "CREATE OR REPLACE VIEW procedure_evidence_stats AS"
+    latest = None
+    for sql_file in sorted(db_dir.glob("*.sql")):
+        text = sql_file.read_text(encoding="utf-8")
+        if marker in text:
+            start = text.index(marker)
+            end = text.index(";", start)
+            latest = text[start:end]
+    assert latest is not None, "no migration defines procedure_evidence_stats"
+    return latest
 
 
 def test_ddl_view_counts_live_supporting_required_type_rows():
     sql = _view_sql()
     assert "e.t_invalid IS NULL" in sql, "retracted evidence must drop out of stats"
-    assert "e.direction = 'supports'" in sql, "contradicting rows are not verification"
+    # The view's tail predicate no longer filters `direction = 'supports'`
+    # (migration 34): a recorded failure is `direction='contradicts'` and
+    # must count as an attempt / a failure. The supports filter survives
+    # only INSIDE the independent_supporting_required FILTER, where the
+    # question really is "how much supporting evidence".
+    assert "WHERE e.t_invalid IS NULL\n  AND e.evidence_type IN" in sql, (
+        "tail predicate must gate on type + t_invalid only, not direction"
+    )
+    assert "independent_supporting_required" in sql
+    supporting_filter = sql[sql.index("independent_supporting_required") - 200:
+                            sql.index("independent_supporting_required")]
+    assert "e.direction = 'supports'" in supporting_filter, (
+        "the supporting-evidence count still requires direction='supports'"
+    )
     required_types_clause = re.search(
         r"evidence_type IN \(([^)]*)\)", sql
     ).group(1)

@@ -70,13 +70,16 @@ from app.services.procedure_extraction.capability import (
 )
 from app.services.procedures import get_procedure
 
-# Evidence rows this module treats as outcome-bearing for the P estimate --
-# the identical set `db/24_evidence.sql`'s own `procedure_evidence_stats`
-# view filters on (`direction = 'supports' AND evidence_type IN
-# ('execution_result', 'reproduction')`). Restated here (not queried from
-# the view) because the view aggregates per (procedure_id, version) and
-# this module needs the individual rows too (for independence_group
-# counting and the raw evidence listing endpoint).
+# Evidence rows this module treats as outcome-bearing for the P estimate.
+# `procedure_evidence_stats` (db/24_evidence.sql, as amended by
+# db/34_evidence_stats_count_failures.sql) counts an attempt for every
+# live row of these two types with a terminal `outcome_status`, in EITHER
+# direction -- a recorded failure (direction='contradicts' by
+# outcome_to_evidence's default) is an attempt that lowers P, not a row
+# that vanishes. Restated here (not queried from the view) because the
+# view aggregates per (procedure_id, version) and this module needs the
+# individual rows too (for independence_group counting and the raw
+# evidence listing endpoint).
 _OUTCOME_BEARING_EVIDENCE_TYPES = ("execution_result", "reproduction")
 
 
@@ -354,11 +357,25 @@ def _capability_estimate(evidence: list[dict]) -> dict:
     ungated -- `capability.py::band_for_p`), and `routing` (pure P
     threshold, `capability.py::route_for_p`) -- both reused verbatim, no
     reimplementation of the D1-ratified thresholds.
+
+    The stream is gated by `evidence_type` and `outcome_status` ONLY --
+    NOT by `direction`. `outcome_to_evidence()` defaults a failure's
+    `direction` to `'contradicts'`, so an `AND direction = 'supports'`
+    filter here silently dropped every real recorded failure from the P
+    estimate -- a procedure could accrue failures and its P would not
+    move. A terminal `outcome_status IN ('success', 'failure')` on an
+    outcome-bearing `evidence_type` already restricts to real recorded
+    outcomes regardless of the supports/contradicts arrow; the failure
+    count is exactly what pulls the Wilson lower bound down. (The
+    `direction = 'supports'` filter is still correct where the question
+    is "how much INDEPENDENT SUPPORTING evidence exists" -- see
+    `procedure_evidence_stats.independent_supporting_required`,
+    db/34_evidence_stats_count_failures.sql -- but that is a different
+    question from "what is P".)
     """
     outcome_bearing = [
         e for e in evidence
-        if e.get("direction") == "supports"
-        and e.get("evidence_type") in _OUTCOME_BEARING_EVIDENCE_TYPES
+        if e.get("evidence_type") in _OUTCOME_BEARING_EVIDENCE_TYPES
         and e.get("outcome_status") in ("success", "failure")
     ]
     total = len(outcome_bearing)

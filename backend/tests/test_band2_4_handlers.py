@@ -221,7 +221,13 @@ def test_demotion_handler_performs_exactly_its_mandated_update():
     sql, args = stream_reads[0]
     assert "target_type = $1" in sql and "$2::uuid" in sql
     assert "t_invalid IS NULL" in sql
-    assert "direction = 'supports'" in sql
+    # NO `direction = 'supports'` filter: outcome_to_evidence() defaults a
+    # failure's direction to 'contradicts', so that filter silently
+    # dropped every real failure -- including the very failure whose
+    # routing triggered this demotion. `outcome_status IN
+    # ('success','failure')` alone already restricts to real recorded
+    # outcomes (migration 34 makes procedure_evidence_stats agree).
+    assert "direction = 'supports'" not in sql
     for evidence_type in DEMOTION_EVIDENCE_TYPES:
         assert f"'{evidence_type}'" in sql
     assert "outcome_status IN ('success', 'failure')" in sql

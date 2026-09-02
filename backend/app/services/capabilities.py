@@ -65,10 +65,11 @@ from app.services.procedure_extraction.capability import (
 IMPLEMENTATION_EVIDENCE_WRITER_STAMP = "capabilities.record_implementation_outcome@v1"
 
 # Same outcome-bearing filter procedure_graph_api.py's own
-# _capability_estimate uses -- 'supports'/'contradicts' direction rows of
-# these two evidence_types are what a P-estimate is built from; witness
-# types (human_review, documents...) corroborate but never enter the
-# statistic.
+# _capability_estimate uses -- a live row of one of these two
+# evidence_types with a terminal outcome_status is an attempt, in either
+# direction: a 'supports' success and a 'contradicts' failure both enter
+# the P estimate (the failure is what lowers it). Witness types
+# (human_review, documents...) corroborate but never enter the statistic.
 _OUTCOME_BEARING_EVIDENCE_TYPES = ("execution_result", "reproduction")
 
 
@@ -213,20 +214,22 @@ def _capability_estimate_from_evidence(evidence: list[dict]) -> dict:
     this composition alone.
 
     Same filter as the mirrored function, restated honestly here too:
-    only rows with `direction == 'supports'` are outcome-bearing. Since
-    `outcome_to_evidence()`'s own honest default assigns
-    `direction='contradicts'` to a failure and `direction='supports'` to
-    a success, a failure recorded through `record_implementation_outcome`
-    with no explicit `direction` override is EXCLUDED from this
-    computation by default -- it does not lower `p_estimate`, it is
-    simply absent from the stream. This is the exact, real behavior the
-    mirrored `procedure_graph_api.py::_capability_estimate` already has
-    for procedure evidence; this module does not diverge from it or
-    quietly work around it."""
+    the stream is gated by `evidence_type` and a terminal
+    `outcome_status` ONLY, NOT by `direction`. `outcome_to_evidence()`
+    defaults a failure's `direction` to `'contradicts'`, so an
+    `AND direction == 'supports'` filter here silently excluded every
+    failure recorded through `record_implementation_outcome` -- P would
+    not move no matter how many times the implementation failed. A
+    recorded failure IS an outcome-bearing attempt and IS what lowers
+    `p_estimate`. This matches the mirrored
+    `procedure_graph_api.py::_capability_estimate` and
+    `procedure_evidence_stats` (db/24 as amended by db/34); "how much
+    independent SUPPORTING evidence exists" is still a
+    direction='supports' question, but it is a different question from
+    "what is P"."""
     outcome_bearing = [
         e for e in evidence
-        if e.get("direction") == "supports"
-        and e.get("evidence_type") in _OUTCOME_BEARING_EVIDENCE_TYPES
+        if e.get("evidence_type") in _OUTCOME_BEARING_EVIDENCE_TYPES
         and e.get("outcome_status") in ("success", "failure")
     ]
     total = len(outcome_bearing)

@@ -466,7 +466,11 @@ async def _capability_ranked_hits(
         procedure_evidence_stats (db/24) counts -- not a second
         capability computation living in two places.
       - the query shape (evidence_type IN DEMOTION_EVIDENCE_TYPES,
-        direction='supports', outcome_status IN ('success','failure'))
+        outcome_status IN ('success','failure'), no direction filter --
+        outcome_to_evidence() defaults a failure's direction to
+        'contradicts', so filtering on direction='supports' silently
+        drops every real failure from the stream; outcome_status alone
+        already restricts to real outcome-bearing rows)
         copied verbatim from check_procedure_reuse's own stream fetch a
         few hundred lines below, so the two call sites can never
         silently disagree about what counts as an attempt.
@@ -496,7 +500,6 @@ async def _capability_ranked_hits(
         WHERE target_type = 'procedure'
           AND target_id = ANY($1::uuid[])
           AND t_invalid IS NULL
-          AND direction = 'supports'
           AND evidence_type IN ({types_sql})
           AND outcome_status IN ('success', 'failure')
         ORDER BY t_created ASC, id ASC
@@ -1002,7 +1005,6 @@ async def check_procedure_reuse(
         WHERE target_type = 'procedure'
           AND target_id = $1::uuid AND target_version = $2
           AND t_invalid IS NULL
-          AND direction = 'supports'
           AND evidence_type IN ({types_sql})
           AND outcome_status IN ('success', 'failure')
         ORDER BY t_created ASC, id ASC

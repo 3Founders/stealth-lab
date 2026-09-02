@@ -44,23 +44,20 @@ HONEST SCOPE, confirmed by direct inspection before writing a line here:
     `DEMOTION_STREAM_LIMIT`). Nothing here reimplements Wilson intervals,
     banding, or routing.
 
-  - PRE-EXISTING QUIRK OBSERVED, NOT FIXED HERE (out of this task's
-    scope): both of that query's real call sites
-    (`applicability.py:1002`, `failure_handlers.py:219`) filter
-    `direction = 'supports'`, while `outcome_to_evidence()`
+  - PREVIOUSLY-OBSERVED QUIRK, NOW FIXED at its source
+    (`applicability.py`, `failure_handlers.py`, `capabilities.py`,
+    `procedure_graph_api.py`): those capability-stream queries used to
+    filter `direction = 'supports'`, while `outcome_to_evidence()`
     (`app/execution/evidence.py`) defaults a FAILURE outcome's direction
-    to `'contradicts'`. Reused verbatim here for consistency with the
-    established pattern; flagged in this module's own PR report rather
-    than silently changed.
+    to `'contradicts'` -- silently excluding every real failure from the
+    stream. The filter is gone; `outcome_status IN ('success','failure')`
+    alone already restricts to real outcome-bearing rows, regardless of
+    direction. This module's own query below never carried the filter to
+    begin with.
 
   - "Known failure modes" reads `evidence.failure_class` directly
     (a real, first-class column -- db/24_evidence.sql, spec v4 SS36's six
-    causes + `false_reuse`) WITHOUT the `direction='supports'` filter
-    above, because failure evidence is written with
-    `direction='contradicts'` (`outcome_to_evidence`'s own default) and a
-    `direction='supports'` filter would silently hide every real failure
-    mode that exists. This is a deliberately DIFFERENT, more honest query
-    than the capability-stream one, not an inconsistency.
+    causes + `false_reuse`) with no direction filter, same reasoning.
 """
 from __future__ import annotations
 
@@ -135,9 +132,7 @@ async def _dependent_procedures(
 
 async def _capability_for_procedure(pool: asyncpg.Pool, procedure: dict) -> dict:
     """Exact reuse of applicability.py/failure_handlers.py's own
-    evidence-stream shape and `capability_for_stream()` call -- see this
-    module's docstring for the direction='supports' quirk this
-    deliberately mirrors rather than silently changes."""
+    evidence-stream shape and `capability_for_stream()` call."""
     stream_rows = await pool.fetch(
         f"""
         SELECT outcome_status, context_key, independence_group
@@ -145,7 +140,6 @@ async def _capability_for_procedure(pool: asyncpg.Pool, procedure: dict) -> dict
         WHERE target_type = 'procedure'
           AND target_id = $1::uuid AND target_version = $2
           AND t_invalid IS NULL
-          AND direction = 'supports'
           AND evidence_type IN ({_DEMOTION_TYPES_SQL})
           AND outcome_status IN ('success', 'failure')
         ORDER BY t_created ASC, id ASC

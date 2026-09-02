@@ -219,7 +219,6 @@ async def handle_capability_demotion(
         WHERE target_type = $1
           AND target_id = $2::uuid
           AND t_invalid IS NULL
-          AND direction = 'supports'
           AND evidence_type IN ({types_sql})
           AND outcome_status IN ('success', 'failure')
         ORDER BY t_created ASC, id ASC
