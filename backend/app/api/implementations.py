@@ -64,6 +64,28 @@ async def get_implementation(
 
 
 # ---------------------------------------------------------------------------
+# GET /{implementation_id}/descriptor  -- the canonical execution ABI
+# ---------------------------------------------------------------------------
+@router.get("/{implementation_id}/descriptor")
+async def get_implementation_descriptor(
+    implementation_id: UUID,
+    pool=Depends(get_pool),
+    scope: AccessScope = Depends(get_scope),
+) -> dict:
+    """
+    The deterministic, secret-free execution descriptor for one visible
+    implementation (§1/§22/§27) -- the stable machine-readable shape a
+    harness/replay consumer binds against, identical to what the MCP
+    `inspect_implementation` / `resolve_implementation` tools emit. Same
+    404-for-missing-or-invisible posture as `get_implementation`.
+    """
+    d = await implementation_registry.get_descriptor(pool, str(implementation_id), scope=scope)
+    if d is None:
+        raise HTTPException(404, "implementation not found")
+    return d
+
+
+# ---------------------------------------------------------------------------
 # GET / (list)
 # ---------------------------------------------------------------------------
 

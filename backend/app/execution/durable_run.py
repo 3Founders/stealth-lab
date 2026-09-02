@@ -306,9 +306,16 @@ async def _finalize(pool: asyncpg.Pool, run_id: str, *, compiled=None) -> dict[s
     exec_id = None
     async with pool.acquire() as conn, conn.transaction():
         if compiled is not None:
+            impl_id = None
+            try:
+                from app.execution.implementation_executor import plan_implementation_id
+                impl_id = plan_implementation_id(compiled)
+            except Exception:  # noqa: BLE001 -- an unbound plan is fine, record None
+                impl_id = None
             exec_id = str(await record_plan_execution(
                 conn, compiled=compiled, outcome=outcome, created_by=run.get("created_by"),
                 scope_type=run.get("scope_type"), scope_entity_id=run.get("scope_entity_id"),
+                implementation_id=impl_id,
             ))
         await conn.execute(
             "UPDATE execution_runs SET status=$2, final_outcome=$3, final_execution_id=$4, "

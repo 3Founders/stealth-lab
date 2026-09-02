@@ -991,7 +991,8 @@ async def find_best_way(task_description: str, ctx: Context,
                          mode: str = "auto",
                          model: str = "gemma-4-31B-it", max_steps: int = 25,
                          session_id: Optional[str] = None,
-                         allow_unverified_procedures: bool = False) -> str:
+                         allow_unverified_procedures: bool = False,
+                         resume_run_id: Optional[str] = None) -> str:
     """
     Two-tier: find the best known way to do this, seamlessly callable at
     any point in a workflow -- not just as a heavyweight task entrypoint.
@@ -1339,7 +1340,25 @@ async def find_best_way(task_description: str, ctx: Context,
         node_notes.append(note)
         return NodeResult(status="success" if succeeded else "failure", notes=note)
 
-    graph_result = await execute_task_graph(compiled_plan.graph, run_node=run_node)
+    # DURABLE execution (final-V1 §3): this is THE production tier-2 path,
+    # so it runs on the durable substrate -- one execution_run per graph,
+    # per-node state persisted, resumable after a crash through this same
+    # tool (`resume_run_id`). durable_run appends the immutable
+    # `executions` row itself on terminal, so there is no separate
+    # record_plan_execution call below any more.
+    from app.execution.durable_graph import run_graph_durably
+
+    graph_result = await run_graph_durably(
+        pool, compiled_plan, run_node,
+        procedure_id=str(compiled_plan.plan.procedure.procedure_id),
+        procedure_version=int(compiled_plan.plan.procedure.version),
+        created_by=_resolve_caller_identity(fallback="find_best_way"),
+        scope_type=compiled_plan.plan.scope_type,
+        scope_entity_id=compiled_plan.plan.scope_entity_id,
+        side_effecting_orders=set(),  # V1: sandbox is rebuilt per invocation, so a step is replayable on resume (prior steps ride forward as context) -- not a park-on-crash side effect
+        resume_run_id=resume_run_id,
+    )
+    durable_run_id = graph_result.run_id
 
     # Aggregate across every real node that actually ran (skipped nodes
     # contribute nothing -- they never called the agent at all).
@@ -1363,14 +1382,9 @@ async def find_best_way(task_description: str, ctx: Context,
             steps_used=total_calls,
         )
 
-    from app.execution.implementation_executor import plan_implementation_id
-
-    await record_plan_execution(
-        pool, compiled=compiled_plan,
-        outcome=graph_result.outcome,
-        created_by=_resolve_caller_identity(fallback="find_best_way"),
-        implementation_id=plan_implementation_id(compiled_plan),
-    )
+    # NOTE: the immutable `executions` row is appended by durable_run's
+    # _finalize (implementation_id pinned via plan_implementation_id) --
+    # do NOT call record_plan_execution here or the run gets two.
 
     # Procedure extraction (memory-substrate blocker #1: extract_procedure()
     # otherwise has zero non-test callers, so nothing a developer does
@@ -1670,7 +1684,20 @@ async def reproduce_procedure(procedure_id: str, repo_path: str, ctx: Context,
             node_notes.append(note)
             return NodeResult(status="success" if succeeded else "failure", notes=note)
 
-        graph_result = await execute_task_graph(compiled_plan.graph, run_node=run_node)
+        # DURABLE execution (final-V1 §3): a stateful sandboxed agent
+        # replay -- same durable substrate as find_best_way tier-2.
+        # durable_run appends the immutable executions row.
+        from app.execution.durable_graph import run_graph_durably
+
+        graph_result = await run_graph_durably(
+            pool, compiled_plan, run_node,
+            procedure_id=str(compiled_plan.plan.procedure.procedure_id),
+            procedure_version=int(compiled_plan.plan.procedure.version),
+            created_by=_resolve_caller_identity(fallback="reproduce_procedure"),
+            scope_type=compiled_plan.plan.scope_type,
+            scope_entity_id=compiled_plan.plan.scope_entity_id,
+            side_effecting_orders=set(),  # V1: sandbox rebuilt per run -> step is replayable on resume
+        )
 
         all_files_edited = sorted({f for r in node_runs.values() for f in r.files_edited})
         combined_patch = "\n".join(r.patch for r in node_runs.values() if r.patch)
@@ -1686,15 +1713,6 @@ async def reproduce_procedure(procedure_id: str, repo_path: str, ctx: Context,
             context_key=context_key,
             steps_used=total_calls,
             evidence_type="reproduction",
-        )
-
-        from app.execution.implementation_executor import plan_implementation_id
-
-        await record_plan_execution(
-            pool, compiled=compiled_plan,
-            outcome=graph_result.outcome,
-            created_by=_resolve_caller_identity(fallback="reproduce_procedure"),
-            implementation_id=plan_implementation_id(compiled_plan),
         )
 
         return {
@@ -2569,11 +2587,7 @@ async def resolve_implementation(task_node_id: str, ctx: Context,
         if hint_kinds is None else "resolved via hint preference order"
     )
     return json.dumps({
-        "implementation_id": resolved["id"],
-        "provider": resolved["provider"],
-        "kind": resolved["kind"],
-        "requirements": resolved.get("requirements"),
-        "invocation": resolved.get("invocation"),
+        "descriptor": implementation_registry.descriptor(resolved),  # canonical execution ABI (§1/§27)
         "reason": reason,
     }, default=str)
 
@@ -2590,7 +2604,9 @@ async def inspect_implementation(implementation_id: str, ctx: Context) -> str:
     row = await implementation_registry.get(pool, implementation_id, scope=AccessScope.unrestricted())
     if row is None:
         return f"REFUSED: no implementation found for id {implementation_id!r}."
-    return json.dumps(row, default=str)
+    # Full row for humans + the canonical, deterministic, secret-free
+    # execution descriptor (§1/§22/§27) a harness consumer binds against.
+    return json.dumps({**row, "descriptor": implementation_registry.descriptor(row)}, default=str)
 
 
 @server.tool()

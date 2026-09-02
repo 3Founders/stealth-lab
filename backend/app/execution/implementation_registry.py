@@ -391,3 +391,115 @@ async def verify(pool: asyncpg.Pool, implementation_id: str) -> Optional[dict]:
         implementation_id,
     )
     return _row_to_dict(row) if row else None
+
+
+# ---------------------------------------------------------------------------
+# Execution descriptor -- the stable machine-readable ABI between Stealth
+# and any execution/replay/harness consumer (final-V1 §1, directive
+# §22/§27/§28). ONE canonical projection of a registry row; consumers use
+# THIS instead of each re-deriving the shape from raw columns.
+# ---------------------------------------------------------------------------
+DESCRIPTOR_VERSION = "impl-descriptor/1"
+
+# Ordered so serialization is deterministic regardless of dict insertion order.
+_DESCRIPTOR_FIELDS = (
+    "descriptor_version", "implementation_id", "kind", "provider", "version",
+    "status", "verification_status", "protocol", "locator", "invocation",
+    "input_schema", "output_schema", "requirements", "auth_requirements",
+    "resource_requirements",
+)
+
+# A value under auth_requirements is allowed ONLY if it is a reference, not a
+# secret. Keys whose value is an inline secret are dropped from the descriptor.
+_SECRETish_KEYS = ("token", "secret", "password", "passwd", "api_key", "apikey",
+                   "private_key", "client_secret", "access_key", "bearer")
+_REF_OK_KEYS = ("credential_ref", "ref", "secret_ref", "vault_path", "env",
+                "env_var", "provider", "scheme", "required", "scopes")
+
+
+def _protocol_for(row: dict[str, Any]) -> str:
+    """Derive the wire protocol. Prefer an explicit locator/invocation
+    field; otherwise map from kind. Never guesses a value the row can't
+    support."""
+    loc = row.get("locator") or {}
+    inv = row.get("invocation") or {}
+    for src in (loc, inv):
+        if isinstance(src, dict):
+            for k in ("protocol", "runtime", "scheme", "transport"):
+                v = src.get(k)
+                if isinstance(v, str) and v:
+                    return v.lower()
+    return {
+        "frontier": "model", "slm": "model",
+        "deterministic": "native", "human": "human",
+        "tool": "mcp", "api": "https", "wasm": "wasm", "computer_use": "computer_use",
+    }.get(row.get("kind", ""), "unknown")
+
+
+def _sanitize_auth(auth: Any) -> dict[str, Any]:
+    """Strip inline secret material -- the descriptor carries credential
+    REFERENCES only (§24). A dict value that itself contains a secret-ish
+    key with a non-empty string value is reduced to {'redacted': true}."""
+    if not isinstance(auth, dict):
+        return {}
+    out: dict[str, Any] = {}
+    for k, v in auth.items():
+        kl = str(k).lower()
+        if any(s in kl for s in _SECRETish_KEYS) and isinstance(v, str) and v and not kl.endswith("_ref"):
+            out[k] = {"redacted": True}
+            continue
+        if isinstance(v, dict):
+            inner = {ik: (iv if not (any(s in str(ik).lower() for s in _SECRETish_KEYS)
+                                     and isinstance(iv, str) and iv) else {"redacted": True})
+                     for ik, iv in v.items()}
+            out[k] = inner
+        else:
+            out[k] = v
+    return out
+
+
+def descriptor(row: dict[str, Any]) -> dict[str, Any]:
+    """
+    Deterministic, secret-free execution descriptor for one implementation
+    row (`_row_to_dict` / `get` / `resolve` shape). Pure function, no DB.
+
+    Guarantees:
+      - stable field set + order (`_DESCRIPTOR_FIELDS`), so two calls on
+        the same row byte-serialize identically;
+      - exact identity: `implementation_id` + `version` (a newer version
+        is a different row -> a different descriptor; an already-bound
+        descriptor never changes because the bound row never changes);
+      - no secret material -- `auth_requirements` is sanitized to
+        references only;
+      - optional fields absent on the row serialize as `{}` (JSONB) so a
+        consumer can rely on the key existing.
+    """
+    kind = row.get("kind")
+    if kind is not None and kind not in REGISTRABLE_KINDS:
+        raise ImplementationRegistryError(f"row has unknown kind {kind!r}")
+    d = {
+        "descriptor_version": DESCRIPTOR_VERSION,
+        "implementation_id": str(row["id"]) if row.get("id") is not None else None,
+        "kind": kind,
+        "provider": row.get("provider"),
+        "version": row.get("version"),
+        "status": row.get("status"),
+        "verification_status": row.get("verification_status"),
+        "protocol": _protocol_for(row),
+        "locator": row.get("locator") or {},
+        "invocation": row.get("invocation") or {},
+        "input_schema": row.get("input_schema") or {},
+        "output_schema": row.get("output_schema") or {},
+        "requirements": row.get("requirements") or {},
+        "auth_requirements": _sanitize_auth(row.get("auth_requirements")),
+        "resource_requirements": row.get("resource_requirements") or {},
+    }
+    return {k: d[k] for k in _DESCRIPTOR_FIELDS}
+
+
+async def get_descriptor(
+    pool: asyncpg.Pool, implementation_id: str, *, scope: AccessScope,
+) -> Optional[dict[str, Any]]:
+    """The descriptor for a scoped, visible implementation row, or None."""
+    row = await get(pool, implementation_id, scope=scope)
+    return descriptor(row) if row else None
