@@ -131,6 +131,39 @@ instance -- a cloud-hosted server could not reach it. More importantly,
 *anyone* holding a valid token. Treat this as a way to reach the server from
 another process/machine you already trust, not as a public deployment.
 
+### Identity: what gets attributed on `approved_by`/`created_by`/`author`
+
+**Default posture (no extra config): every caller looks the same.** The
+bearer token below gates *whether* a caller may reach the server at all; it
+does not by itself distinguish *which* caller is calling. Every write-path
+tool (`decide_procedure`, `submit_approval`, `apply_change_set`, etc.)
+attributes to a caller-supplied, self-asserted parameter (`approver_id` and
+similar) unless a real identity resolves -- fine for local/single-user use,
+but in a real shared deployment any caller holding the one shared token can
+claim to be anyone via that parameter.
+
+**Real per-caller identity, when you want it: configure OIDC.** Set
+`OIDC_ISSUER` + `OIDC_AUDIENCE` (and optionally `OIDC_JWKS_URL`) in
+`backend/.env` -- the exact same settings fields
+`app.services.authn.install_actor_middleware` already reads for the REST
+app (`app/main.py`, port 8000). This server's token verifier
+(`OidcAwareTokenVerifier`, `app/mcp_server/server.py`) then tries OIDC
+validation FIRST on every bearer it's handed: a caller presenting a real,
+signed token from that IdP gets attributed under that token's real `sub`
+claim, and a caller-supplied `approver_id`/`actor_id`-shaped parameter is
+ignored for trust purposes whenever a real identity resolved this way --
+proven against a real Postgres, with two distinct signed identities, by
+`test_mcp_server_identity_e2e.py::test_two_distinct_oidc_identities_
+attribute_to_distinct_rows_and_ignore_spoofed_approver_id`. A bearer that
+does not validate as an OIDC token for that issuer/audience still falls
+back to the shared `STEALTHLAB_MCP_TOKEN` check below, unchanged -- OIDC
+support is additive, never a replacement for the loopback gate.
+
+No second auth model was invented for this: it is the same OIDC
+validation code (`app.services.authn.validate_token_async`/`OidcConfig`/
+`FetchingJwks`) the REST app already uses, reused here rather than
+reimplemented.
+
 ### 1. Generate a token and set it
 
 ```bash

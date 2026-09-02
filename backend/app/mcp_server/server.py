@@ -62,7 +62,13 @@ from app.api.decompose import decompose, decide as decide_decomposition_fn, Deco
 from app.models.change import ChangeSet
 from app.services.access import AccessScope
 from app.services.applicability import verified_procedure_candidates
-from app.services.authn import current_actor_id
+from app.services.authn import (
+    FetchingJwks,
+    OidcConfig,
+    TokenRejected,
+    current_actor_id,
+    validate_token_async,
+)
 from app.services.decomposition import DecompositionService
 from app.services.embeddings import Embedder
 from app.services.knowledge_conflict import detect_and_create_conflict_trigger
@@ -142,32 +148,66 @@ async def lifespan(server: MCPServer) -> AsyncIterator[dict]:
         await pool.close()
 
 
-class StaticTokenVerifier(TokenVerifier):
-    """Minimal bearer-token check for a single-tenant, loopback-bound
-    deployment -- NOT a real OAuth flow. The SDK positions this server as
-    an OAuth 2.1 RESOURCE server (it validates tokens, it does not issue
-    them), and requires token_verifier+auth to be passed together; this is
-    the simplest thing that satisfies that contract.
+class OidcAwareTokenVerifier(TokenVerifier):
+    """Bearer-token check for this server's HTTP transport -- reuses the
+    EXACT same OIDC validation the real REST layer already uses
+    (app.services.authn.validate_token_async / OidcConfig / FetchingJwks,
+    wired onto app.main:app via install_actor_middleware), rather than
+    inventing a second auth model for this transport.
 
-    Constant-time comparison (secrets.compare_digest) because this is a
-    bearer secret compared against attacker-controlled input over the
-    network -- a naive `==` leaks timing information proportional to the
-    matching prefix length. `secrets` is already imported above (used for
-    instance_id generation); this is its second, more load-bearing use.
+    Tries OIDC first, when OIDC_ISSUER + OIDC_AUDIENCE are configured
+    (`app.config.settings`, same fields `authn.OidcConfig.from_settings`
+    already reads for the REST app): a bearer that validates as a real,
+    signed token belonging to that IdP gets AccessToken.subject set to the
+    token's real `sub` claim. This is what makes
+    `mcp.server.auth.middleware.auth_context.get_access_token().subject`
+    -- `_resolve_caller_identity`'s FIRST real identity source, below --
+    resolve a genuine, per-caller, spoof-proof identity over this
+    transport: two different OIDC-issued tokens now attribute writes to
+    two different real subjects, closing the gap
+    `_resolve_caller_identity`'s own docstring used to describe as always
+    empty in this process.
 
-    Deliberately NOT sufficient on its own: find_best_way's repo_path is
-    caller-controlled and apply_change_set is an ungated write (see
-    README_MCP_SERVER.md's "Known v1 limitations"). This gates WHO can
-    reach those tools, it does not make either tool safe against a caller
-    who does hold a valid token -- that is why hosting stays loopback-only
+    Falls back to the single shared STEALTHLAB_MCP_TOKEN (constant-time
+    compared via secrets.compare_digest, since this is a bearer secret
+    compared against attacker-controlled input over the network) when
+    OIDC is not configured, or when the presented token does not validate
+    as an OIDC JWT for the configured issuer/audience. That fallback
+    AccessToken carries no .subject, exactly as before OIDC support
+    existed -- this class only ADDS a real per-caller identity source when
+    an operator opts into OIDC; it never weakens or removes the existing
+    loopback-shared-secret gate, which stays the only mode in today's
+    actual default deployment (OIDC_ISSUER/OIDC_AUDIENCE unset).
+
+    Deliberately NOT sufficient on its own even with OIDC configured:
+    find_best_way's repo_path is caller-controlled and apply_change_set is
+    an ungated write (see README_MCP_SERVER.md's "Known v1 limitations").
+    This gates WHO can reach those tools (and, with OIDC, WHO they really
+    are), it does not make either tool safe against a caller who does hold
+    a valid token -- that is why hosting stays loopback-only by default
     (see the ASGI app / uvicorn invocation below), not exposed via tunnel.
     """
 
-    def __init__(self, token: str):
-        self._token = token
+    def __init__(self, shared_token: str, oidc_config: Optional[OidcConfig], jwks_provider):
+        self._shared_token = shared_token
+        self._oidc_config = oidc_config
+        self._jwks_provider = jwks_provider
 
     async def verify_token(self, token: str) -> AccessToken | None:
-        if not secrets.compare_digest(token, self._token):
+        if self._oidc_config is not None:
+            actor = None
+            try:
+                actor = await validate_token_async(
+                    token, config=self._oidc_config, jwks_provider=self._jwks_provider,
+                )
+            except TokenRejected:
+                pass  # not a valid OIDC token for this issuer/audience -- try the shared-secret fallback below
+            if actor is not None:
+                return AccessToken(
+                    token=token, client_id=actor.subject,
+                    scopes=["stealthlab:tools"], subject=actor.subject,
+                )
+        if not secrets.compare_digest(token, self._shared_token):
             return None
         return AccessToken(token=token, client_id="stealthlab-local", scopes=["stealthlab:tools"])
 
@@ -182,6 +222,18 @@ def _require_mcp_token() -> str:
             "`python -c \"import secrets; print(secrets.token_urlsafe(32))\"` "
             "and add it to backend/.env")
     return token
+
+
+def _build_token_verifier(shared_token: str) -> OidcAwareTokenVerifier:
+    """OIDC config comes from the exact same settings fields the REST
+    app's install_actor_middleware reads (app.services.authn.OidcConfig.
+    from_settings) -- None when OIDC_ISSUER/OIDC_AUDIENCE are unset, which
+    is today's actual default posture (see README_MCP_SERVER.md); the
+    verifier then runs shared-secret-only, unchanged from before this
+    function existed."""
+    oidc_config = OidcConfig.from_settings(settings)
+    jwks_provider = FetchingJwks(oidc_config.jwks_url) if oidc_config is not None else None
+    return OidcAwareTokenVerifier(shared_token, oidc_config, jwks_provider)
 
 
 _MCP_PORT = 8765  # not the SDK's default 8000, which app/main.py's FastAPI app already uses
@@ -203,7 +255,7 @@ server = MCPServer(
     # Authorization applies to HTTP transports only -- stdio (the `mcp dev`
     # Inspector quickstart in README_MCP_SERVER.md) bypasses it entirely,
     # by protocol design, not by an oversight here.
-    token_verifier=StaticTokenVerifier(_require_mcp_token()),
+    token_verifier=_build_token_verifier(_require_mcp_token()),
     auth=AuthSettings(
         issuer_url=AnyHttpUrl(f"http://127.0.0.1:{_MCP_PORT}"),
         resource_server_url=AnyHttpUrl(f"http://127.0.0.1:{_MCP_PORT}/mcp"),
@@ -248,22 +300,31 @@ def _resolve_caller_identity(fallback: str) -> str:
     1. mcp.server.auth.middleware.auth_context.get_access_token() -- the
        MCP SDK's own contextvar, auto-wired into this server's ASGI stack
        by AuthContextMiddleware because `server` above is constructed
-       with token_verifier=StaticTokenVerifier(...) (confirmed by reading
-       mcp/server/mcpserver/server.py: passing token_verifier makes
-       create_app() add BearerAuthBackend + AuthContextMiddleware to the
-       Starlette stack). Its AccessToken.subject (RFC 7662/9068 `sub`) is
-       real per-request identity, when the verifier sets one.
+       with token_verifier=_build_token_verifier(...) (confirmed by
+       reading mcp/server/mcpserver/server.py: passing token_verifier
+       makes create_app() add BearerAuthBackend + AuthContextMiddleware to
+       the Starlette stack). Its AccessToken.subject (RFC 7662/9068 `sub`)
+       is real per-request identity, when the verifier sets one.
 
-       HONEST GAP, not fixed here: StaticTokenVerifier (this file, above)
-       validates ONE shared STEALTHLAB_MCP_TOKEN for every caller and
-       never sets .subject -- every caller today gets the same
-       client_id="stealthlab-local" and no subject, so in the current
-       deployment this branch is always empty. That IS the single-
-       shared-identity gap; closing it for real needs per-caller tokens
-       or an OIDC-verifying TokenVerifier (a real identity provider),
-       explicitly out of scope for this change. What this function does
-       is make the seam real: the moment a verifier ever sets .subject,
-       every call site below picks it up with zero further change.
+       CLOSED FOR REAL (was the single-shared-identity gap): OidcAware
+       TokenVerifier (this file, above) now tries OIDC validation first --
+       reusing app.services.authn.validate_token_async, the SAME
+       validation the REST app's install_actor_middleware uses -- when
+       OIDC_ISSUER/OIDC_AUDIENCE are configured. A caller presenting a
+       real, signed OIDC token gets AccessToken.subject set to that
+       token's real `sub`, so two different OIDC identities now resolve
+       to two different values here, proven end-to-end (real signed
+       tokens, real persisted rows, two distinct identities) by
+       test_mcp_server_identity_e2e.py::test_two_distinct_oidc_identities_
+       attribute_to_distinct_rows_and_ignore_spoofed_approver_id.
+
+       HONEST REMAINING GAP: with OIDC_ISSUER/OIDC_AUDIENCE unset (today's
+       actual default posture -- see README_MCP_SERVER.md), the verifier
+       falls back to the single shared STEALTHLAB_MCP_TOKEN and never sets
+       .subject, so every caller still gets the same
+       client_id="stealthlab-local" and no subject in that mode -- this
+       branch is empty exactly as documented for the local/shared-secret
+       posture, honestly, not silently.
 
     2. app.services.authn.current_actor_id() -- the real OIDC actor
        contextvar authn.py's ASGI middleware populates on app.main:app

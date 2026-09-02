@@ -49,14 +49,18 @@ def test_all_registered_tools():
 
 
 def test_token_verifier_accepts_only_the_configured_token():
-    from app.mcp_server.server import StaticTokenVerifier
+    from app.mcp_server.server import OidcAwareTokenVerifier
 
-    verifier = StaticTokenVerifier("correct-horse")
+    # oidc_config=None matches today's actual default posture (OIDC_ISSUER/
+    # OIDC_AUDIENCE unset) -- shared-secret-only, same behaviour the old
+    # StaticTokenVerifier this class replaced always had.
+    verifier = OidcAwareTokenVerifier("correct-horse", oidc_config=None, jwks_provider=None)
     accepted = asyncio.run(verifier.verify_token("correct-horse"))
     rejected = asyncio.run(verifier.verify_token("wrong-battery"))
     assert accepted is not None
     assert accepted.scopes == ["stealthlab:tools"]
     assert accepted.client_id == "stealthlab-local"
+    assert accepted.subject is None
     assert rejected is None
 
 

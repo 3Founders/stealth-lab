@@ -125,6 +125,135 @@ def test_decide_procedure_resolved_identity_overrides_spoofed_approver_id():
     asyncio.run(_run())
 
 
+def test_two_distinct_oidc_identities_attribute_to_distinct_rows_and_ignore_spoofed_approver_id():
+    """Closes the gap `_resolve_caller_identity`'s own docstring used to
+    call a HONEST GAP: proves `OidcAwareTokenVerifier` (server.py) can
+    actually distinguish TWO different real callers over the MCP HTTP
+    transport, not just accept-or-reject one shared secret.
+
+    Real signed OIDC tokens (RS256, local RSA keypair + StaticJwks -- same
+    real jwt.decode()/JWKS-lookup code path test_authn_offline.py already
+    proves against a real IdP's token shape, no live network needed to
+    exercise it for real) with two DIFFERENT `sub` claims are each run
+    through `OidcAwareTokenVerifier.verify_token()` -- the exact function
+    the SDK's AuthContextMiddleware calls on every real HTTP request --
+    and the resulting AccessToken is published on the SDK's own
+    `auth_context_var`, exactly as that middleware would. `decide_procedure`
+    is then called once per identity, each time ALSO carrying a spoofed,
+    conflicting `approver_id`, and each persisted row is asserted to carry
+    the token's real subject, never the spoofed parameter, and the two
+    rows are asserted to differ from each other.
+    """
+    from datetime import datetime, timedelta, timezone
+
+    import jwt as pyjwt
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric import rsa
+    from mcp.server.auth.middleware.auth_context import auth_context_var
+    from mcp.server.auth.middleware.bearer_auth import AuthenticatedUser
+
+    import app.mcp_server.server as srv
+    from app.services.authn import OidcConfig, StaticJwks, jwk_from_public_numbers
+
+    ISSUER = "https://idp.example"
+    AUDIENCE = "stealthlab-api"
+    KID = "test-key-mcp-1"
+
+    rsa_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    pub = rsa_key.public_key().public_numbers()
+    size = (pub.n.bit_length() + 7) // 8
+    jwk = jwk_from_public_numbers(
+        n_bytes=pub.n.to_bytes(size, "big"),
+        e_bytes=pub.e.to_bytes((pub.e.bit_length() + 7) // 8, "big"),
+        kid=KID,
+    )
+    pem = rsa_key.private_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PrivateFormat.PKCS8,
+        encryption_algorithm=serialization.NoEncryption(),
+    )
+    jwks = StaticJwks({KID: jwk})
+    oidc_config = OidcConfig(issuer=ISSUER, audience=AUDIENCE, jwks_url="unused://")
+
+    def _mint(sub: str) -> str:
+        now = datetime.now(timezone.utc)
+        claims = {"iss": ISSUER, "aud": AUDIENCE, "sub": sub, "exp": now + timedelta(minutes=10)}
+        return pyjwt.encode(claims, pem, algorithm="RS256", headers={"kid": KID})
+
+    IDENTITY_A = "oidc-caller-alice"
+    IDENTITY_B = "oidc-caller-bob"
+    SPOOFED_APPROVER_ID = "attacker-claims-to-be-admin"
+    verifier = srv.OidcAwareTokenVerifier("unused-shared-secret", oidc_config, jwks)
+
+    async def _run():
+        pool = await create_pool(DATABASE_URL, min_size=1, max_size=2)
+        try:
+            await _cleanup(pool, "proc-test-two-identities")
+            proc_a = await capture_procedure(
+                pool, name="proc-test-two-identities-a", goal="g",
+                provenance="system_pending_review", scope_type="global",
+            )
+            proc_b = await capture_procedure(
+                pool, name="proc-test-two-identities-b", goal="g",
+                provenance="system_pending_review", scope_type="global",
+            )
+
+            for sub, proc in ((IDENTITY_A, proc_a), (IDENTITY_B, proc_b)):
+                token_str = _mint(sub)
+                access_token = await verifier.verify_token(token_str)
+                assert access_token is not None and access_token.subject == sub
+                cv_token = auth_context_var.set(AuthenticatedUser(access_token))
+                try:
+                    ctx = _FakeContext(pool)
+                    response = await srv.decide_procedure(
+                        procedure_id=proc["procedure_id"],
+                        approver_id=SPOOFED_APPROVER_ID, decision="approved", ctx=ctx,
+                    )
+                finally:
+                    auth_context_var.reset(cv_token)
+                assert "REFUSED" not in response
+
+            row_a = await pool.fetchrow("SELECT * FROM procedures WHERE id = $1", proc_a["id"])
+            row_b = await pool.fetchrow("SELECT * FROM procedures WHERE id = $1", proc_b["id"])
+            assert row_a["approved_by"] == IDENTITY_A
+            assert row_b["approved_by"] == IDENTITY_B
+            assert row_a["approved_by"] != row_b["approved_by"]
+            assert SPOOFED_APPROVER_ID not in (row_a["approved_by"], row_b["approved_by"])
+        finally:
+            await _cleanup(pool, "proc-test-two-identities")
+            await pool.close()
+
+    asyncio.run(_run())
+
+
+def test_oidc_verifier_falls_back_to_shared_secret_when_token_is_not_a_valid_oidc_token():
+    """When OIDC IS configured, a bearer that is NOT a valid token for
+    that issuer/audience must still be checked against the shared secret
+    -- OIDC support is additive, it must never make the existing
+    shared-secret mode reject a token it used to accept."""
+    from app.services.authn import OidcConfig
+
+    import app.mcp_server.server as srv
+
+    oidc_config = OidcConfig(issuer="https://idp.example", audience="stealthlab-api", jwks_url="unused://")
+
+    class _EmptyJwks:
+        def get_key(self, kid):
+            raise KeyError(kid)
+
+    verifier = srv.OidcAwareTokenVerifier("the-shared-secret", oidc_config, _EmptyJwks())
+
+    async def _run():
+        accepted = await verifier.verify_token("the-shared-secret")
+        rejected = await verifier.verify_token("not-a-jwt-and-not-the-secret")
+        return accepted, rejected
+
+    accepted, rejected = asyncio.run(_run())
+    assert accepted is not None
+    assert accepted.subject is None
+    assert rejected is None
+
+
 def test_decide_procedure_falls_back_to_self_asserted_approver_when_no_real_identity():
     """Honest counterpart to the spoofing-proof test above: with NO real
     identity resolvable (no SDK access token, no authn actor -- the
