@@ -56,6 +56,8 @@ from mcp.server.mcpserver import Context
 from pydantic import AnyHttpUrl
 
 from app.db.session import create_pool
+from app.execution import durable_resume as _dres
+from app.execution import durable_run as _dr
 from app.execution import implementation_registry
 from app.api.approval import decide, ApprovalRequest
 from app.api.decompose import decompose, decide as decide_decomposition_fn, DecomposeRequest, DecideRequest
@@ -109,7 +111,20 @@ from agent import Agent, RepoSandbox  # noqa: E402
 
 from openai import OpenAI
 
+from starlette.requests import Request
+from starlette.responses import HTMLResponse, JSONResponse, Response
+
 from app.mcp_server.tasks_extension import TasksExtension
+from app.mcp_server.claim_graph_page import CLAIM_GRAPH_HTML, FORCE_GRAPH_JS
+from app.services import claim_graph_api
+from app.services import product_model as _pm
+
+# Set once by `lifespan` (below) so the non-MCP custom HTTP routes
+# (/claim-graph, /claim-graph/data) can reach the same pool the MCP tools
+# get via ctx.request_context.lifespan_context -- a plain Starlette route
+# handler is not an MCP request and has no ctx. Single process
+# (--workers 1 is already load-bearing here), so a module global is safe.
+_LIFESPAN_STATE: dict = {}
 
 # LOGGED, DELIBERATE, LOCAL OVERRIDE -- not a change to the shared
 # PARTIAL_MATCH_THRESHOLD (0.70) used elsewhere in the platform.
@@ -143,9 +158,11 @@ async def lifespan(server: MCPServer) -> AsyncIterator[dict]:
     if not os.environ.get("DATABASE_URL"):
         raise RuntimeError("DATABASE_URL not set -- see backend/.env")
     pool = await create_pool(os.environ["DATABASE_URL"])
+    _LIFESPAN_STATE["pool"] = pool
     try:
         yield {"pool": pool}
     finally:
+        _LIFESPAN_STATE.pop("pool", None)
         await pool.close()
 
 
@@ -294,6 +311,72 @@ server = MCPServer(
 # leave all 9 MCP tools dark, which is the surface external agents
 # actually call. No-op without SENTRY_DSN.
 observability.init("mcp")
+
+
+# ---------------------------------------------------------------------------
+# Claim-graph viewer -- a read-only web page + JSON feed served by THIS MCP
+# server, so anyone running the StealthLab MCP setup can open
+# http://127.0.0.1:8765/claim-graph and see the live claim graph. The
+# graph renderer (force-graph, vendored under app/mcp_server/vendor/) is
+# served from /claim-graph/vendor/... -- no CDN, no build step, works
+# fully offline. `@server.custom_route` routes are deliberately
+# unauthenticated (the SDK reserves them for public health-check-style
+# endpoints); this fits the loopback-only default posture and the fact
+# that every handler here is strictly read-only. If the server is ever
+# exposed beyond loopback, front it with a reverse proxy / auth the same
+# way any other read endpoint would be.
+# ---------------------------------------------------------------------------
+
+def _graph_pool():
+    pool = _LIFESPAN_STATE.get("pool")
+    if pool is None:  # pragma: no cover - only before startup / after shutdown
+        raise RuntimeError("server not started -- DB pool unavailable")
+    return pool
+
+
+@server.custom_route("/claim-graph", methods=["GET"], include_in_schema=False)
+async def claim_graph_page(request: Request) -> HTMLResponse:  # noqa: ARG001
+    return HTMLResponse(CLAIM_GRAPH_HTML)
+
+
+@server.custom_route("/claim-graph/vendor/force-graph.js", methods=["GET"], include_in_schema=False)
+async def claim_graph_vendor_forcegraph(request: Request) -> Response:  # noqa: ARG001
+    return Response(FORCE_GRAPH_JS, media_type="application/javascript",
+                    headers={"cache-control": "public, max-age=86400"})
+
+
+@server.custom_route("/claim-graph/data", methods=["GET"], include_in_schema=False)
+async def claim_graph_data(request: Request) -> JSONResponse:
+    qp = request.query_params
+
+    def _int(name: str, default: int) -> int:
+        try:
+            return int(qp.get(name, default))
+        except (TypeError, ValueError):
+            return default
+
+    def _float(name: str, default: float) -> float:
+        try:
+            return float(qp.get(name, default))
+        except (TypeError, ValueError):
+            return default
+
+    def _bool(name: str) -> bool:
+        return str(qp.get(name, "")).lower() in ("1", "true", "yes", "on")
+
+    result = await claim_graph_api.get_claim_graph_overview(
+        _graph_pool(),
+        scope=AccessScope.unrestricted(),
+        limit=_int("limit", 200),
+        include_retired=_bool("include_retired"),
+        q=(qp.get("q") or None),
+        with_status=qp.get("with_status", "true").lower() != "false",
+        link_mode=(qp.get("link_mode") or "both"),
+        sim_k=_int("sim_k", 3),
+        sim_threshold=_float("sim_threshold", 0.55),
+    )
+    return JSONResponse(json.loads(json.dumps(result, default=str)))
+
 
 app = server.streamable_http_app()
 
@@ -910,7 +993,8 @@ async def find_best_way(task_description: str, ctx: Context,
                          mode: str = "auto",
                          model: str = "gemma-4-31B-it", max_steps: int = 25,
                          session_id: Optional[str] = None,
-                         allow_unverified_procedures: bool = False) -> str:
+                         allow_unverified_procedures: bool = False,
+                         resume_run_id: Optional[str] = None) -> str:
     """
     Two-tier: find the best known way to do this, seamlessly callable at
     any point in a workflow -- not just as a heavyweight task entrypoint.
@@ -1258,7 +1342,25 @@ async def find_best_way(task_description: str, ctx: Context,
         node_notes.append(note)
         return NodeResult(status="success" if succeeded else "failure", notes=note)
 
-    graph_result = await execute_task_graph(compiled_plan.graph, run_node=run_node)
+    # DURABLE execution (final-V1 §3): this is THE production tier-2 path,
+    # so it runs on the durable substrate -- one execution_run per graph,
+    # per-node state persisted, resumable after a crash through this same
+    # tool (`resume_run_id`). durable_run appends the immutable
+    # `executions` row itself on terminal, so there is no separate
+    # record_plan_execution call below any more.
+    from app.execution.durable_graph import run_graph_durably
+
+    graph_result = await run_graph_durably(
+        pool, compiled_plan, run_node,
+        procedure_id=str(compiled_plan.plan.procedure.procedure_id),
+        procedure_version=int(compiled_plan.plan.procedure.version),
+        created_by=_resolve_caller_identity(fallback="find_best_way"),
+        scope_type=compiled_plan.plan.scope_type,
+        scope_entity_id=compiled_plan.plan.scope_entity_id,
+        side_effecting_orders=set(),  # V1: sandbox is rebuilt per invocation, so a step is replayable on resume (prior steps ride forward as context) -- not a park-on-crash side effect
+        resume_run_id=resume_run_id,
+    )
+    durable_run_id = graph_result.run_id
 
     # Aggregate across every real node that actually ran (skipped nodes
     # contribute nothing -- they never called the agent at all).
@@ -1282,14 +1384,9 @@ async def find_best_way(task_description: str, ctx: Context,
             steps_used=total_calls,
         )
 
-    from app.execution.implementation_executor import plan_implementation_id
-
-    await record_plan_execution(
-        pool, compiled=compiled_plan,
-        outcome=graph_result.outcome,
-        created_by=_resolve_caller_identity(fallback="find_best_way"),
-        implementation_id=plan_implementation_id(compiled_plan),
-    )
+    # NOTE: the immutable `executions` row is appended by durable_run's
+    # _finalize (implementation_id pinned via plan_implementation_id) --
+    # do NOT call record_plan_execution here or the run gets two.
 
     # Procedure extraction (memory-substrate blocker #1: extract_procedure()
     # otherwise has zero non-test callers, so nothing a developer does
@@ -1589,7 +1686,20 @@ async def reproduce_procedure(procedure_id: str, repo_path: str, ctx: Context,
             node_notes.append(note)
             return NodeResult(status="success" if succeeded else "failure", notes=note)
 
-        graph_result = await execute_task_graph(compiled_plan.graph, run_node=run_node)
+        # DURABLE execution (final-V1 §3): a stateful sandboxed agent
+        # replay -- same durable substrate as find_best_way tier-2.
+        # durable_run appends the immutable executions row.
+        from app.execution.durable_graph import run_graph_durably
+
+        graph_result = await run_graph_durably(
+            pool, compiled_plan, run_node,
+            procedure_id=str(compiled_plan.plan.procedure.procedure_id),
+            procedure_version=int(compiled_plan.plan.procedure.version),
+            created_by=_resolve_caller_identity(fallback="reproduce_procedure"),
+            scope_type=compiled_plan.plan.scope_type,
+            scope_entity_id=compiled_plan.plan.scope_entity_id,
+            side_effecting_orders=set(),  # V1: sandbox rebuilt per run -> step is replayable on resume
+        )
 
         all_files_edited = sorted({f for r in node_runs.values() for f in r.files_edited})
         combined_patch = "\n".join(r.patch for r in node_runs.values() if r.patch)
@@ -1605,15 +1715,6 @@ async def reproduce_procedure(procedure_id: str, repo_path: str, ctx: Context,
             context_key=context_key,
             steps_used=total_calls,
             evidence_type="reproduction",
-        )
-
-        from app.execution.implementation_executor import plan_implementation_id
-
-        await record_plan_execution(
-            pool, compiled=compiled_plan,
-            outcome=graph_result.outcome,
-            created_by=_resolve_caller_identity(fallback="reproduce_procedure"),
-            implementation_id=plan_implementation_id(compiled_plan),
         )
 
         return {
@@ -1897,6 +1998,49 @@ async def search_procedures(task: str, ctx: Context, state: str = "{}", limit: i
         }
         for m in matches
     ])
+
+
+@server.tool()
+async def get_claim_graph(ctx: Context, limit: int = 200, include_retired: bool = False,
+                          q: str | None = None, with_status: bool = True,
+                          link_mode: str = "both", sim_k: int = 3,
+                          sim_threshold: float = 0.55) -> str:
+    """
+    The current claim graph as nodes + edges -- the same data the
+    /claim-graph web page in this server renders. Thin wrapper around
+    app.services.claim_graph_api.get_claim_graph_overview; read-only, no
+    new query logic here.
+
+    limit: max claim nodes (clamped 1..600). One extra row is checked
+    internally so `truncated` is honest, never a silent cap.
+    include_retired: default False -> only claims still believed
+    (truth_state='IN'). True also returns superseded/contradicted claims
+    (status 'retired'/'contradicted').
+    q: optional case-insensitive substring filter on the claim statement.
+    with_status: default True -> each node carries its real lifecycle
+    state (current/supported/stale/disputed/contradicted/retired), one
+    bounded read per node. False = faster raw dump, truth_state only.
+    link_mode: "both" (default) / "relations" / "similarity". Real
+    claim<->claim relation edges are usually sparse; "similarity" adds
+    undirected k-NN edges in claim-embedding space so related claims are
+    visibly connected.
+    sim_k: nearest neighbours per node for similarity edges (1..8).
+    sim_threshold: minimum cosine similarity for a similarity edge (>=0.3).
+
+    Returns JSON: {nodes:[{id, statement, truth_state, status, subject,
+    predicate, object, epistemic_status, scope_type, scope_entity_id,
+    created_by, t_valid, degree}], edges:[{id, source, target, kind
+    ('relation'|'similarity'), relation?, weight?}], counts:{claims_total,
+    claims_shown, edges, edges_by_kind, by_status}, truncated, link_mode,
+    generated_at}.
+    """
+    pool = ctx.request_context.lifespan_context["pool"]
+    result = await claim_graph_api.get_claim_graph_overview(
+        pool, scope=AccessScope.unrestricted(),
+        limit=limit, include_retired=include_retired, q=q, with_status=with_status,
+        link_mode=link_mode, sim_k=sim_k, sim_threshold=sim_threshold,
+    )
+    return json.dumps(result, default=str)
 
 
 @server.tool()
@@ -2445,11 +2589,7 @@ async def resolve_implementation(task_node_id: str, ctx: Context,
         if hint_kinds is None else "resolved via hint preference order"
     )
     return json.dumps({
-        "implementation_id": resolved["id"],
-        "provider": resolved["provider"],
-        "kind": resolved["kind"],
-        "requirements": resolved.get("requirements"),
-        "invocation": resolved.get("invocation"),
+        "descriptor": implementation_registry.descriptor(resolved),  # canonical execution ABI (§1/§27)
         "reason": reason,
     }, default=str)
 
@@ -2466,7 +2606,9 @@ async def inspect_implementation(implementation_id: str, ctx: Context) -> str:
     row = await implementation_registry.get(pool, implementation_id, scope=AccessScope.unrestricted())
     if row is None:
         return f"REFUSED: no implementation found for id {implementation_id!r}."
-    return json.dumps(row, default=str)
+    # Full row for humans + the canonical, deterministic, secret-free
+    # execution descriptor (§1/§22/§27) a harness consumer binds against.
+    return json.dumps({**row, "descriptor": implementation_registry.descriptor(row)}, default=str)
 
 
 @server.tool()
@@ -2560,6 +2702,201 @@ async def get_implementation_capability(implementation_id: str, ctx: Context) ->
     # altered here). We've already confirmed the parent row itself is
     # visible above.
     result = await _sibling_get_capability(pool, implementation_id)
+    return json.dumps(result, default=str)
+
+
+# ---------------------------------------------------------------------------
+# Product-model tools (directive §37) -- Problem / Benchmark / Solution /
+# Evaluation. Every one is a thin read wrapper over
+# app.services.product_model: REST and MCP converge on that one service,
+# no ranking or lineage logic here.
+# ---------------------------------------------------------------------------
+@server.tool()
+async def find_problem(query: str, ctx: Context, limit: int = 10) -> str:
+    """
+    Natural-language search for a Problem. Returns ranked matches
+    (title/description/objective), scoped to the caller. JSON:
+    {query, problems:[{id, title, status, objective, ...}]}.
+    """
+    pool = ctx.request_context.lifespan_context["pool"]
+    rows = await _pm.find_problem(pool, query, scope=AccessScope.unrestricted(), limit=limit)
+    return json.dumps({"query": query, "problems": rows}, default=str)
+
+
+@server.tool()
+async def inspect_problem(problem_id: str, ctx: Context) -> str:
+    """
+    One Problem with its benchmarks, solutions and the current
+    evidence-derived leaderboard (current best VERIFIED solution, or
+    []=none yet). JSON: {problem, benchmarks, solutions, leaderboard}.
+    """
+    pool = ctx.request_context.lifespan_context["pool"]
+    scope = AccessScope.unrestricted()
+    p = await _pm.get_problem(pool, problem_id, scope=scope)
+    if p is None:
+        return "REFUSED: problem not found or out of scope"
+    return json.dumps({
+        "problem": p,
+        "benchmarks": await _pm.list_problem_benchmarks(pool, problem_id),
+        "solutions": await _pm.list_problem_solutions(pool, problem_id, scope=scope),
+        "leaderboard": await _pm.problem_leaderboard(pool, problem_id, scope=scope),
+    }, default=str)
+
+
+@server.tool()
+async def list_problem_solutions(problem_id: str, ctx: Context) -> str:
+    """Every Solution associated with a Problem (association rows only, no
+    target objects copied). JSON: {solutions:[...]}."""
+    pool = ctx.request_context.lifespan_context["pool"]
+    rows = await _pm.list_problem_solutions(pool, problem_id, scope=AccessScope.unrestricted())
+    return json.dumps({"problem_id": problem_id, "solutions": rows}, default=str)
+
+
+@server.tool()
+async def compare_solutions(problem_id: str, solution_ids_json: str, ctx: Context) -> str:
+    """
+    Compare specific Solutions of one Problem on their COMPARABLE completed
+    evaluations only (§18/§52). solution_ids_json: a JSON list of solution
+    ids. JSON: {leaderboard:[only the requested, comparable ones],
+    current_best, conditional_leaders, excluded:[ids not comparable or
+    without evidence]}.
+    """
+    pool = ctx.request_context.lifespan_context["pool"]
+    try:
+        want = set(json.loads(solution_ids_json))
+    except (ValueError, TypeError):
+        return "REFUSED: solution_ids_json must be a JSON list of ids"
+    lb = await _pm.problem_leaderboard(pool, problem_id, scope=AccessScope.unrestricted())
+    kept = [e for e in lb["leaderboard"] if e["solution_id"] in want]
+    excluded = sorted(want - {e["solution_id"] for e in kept})
+    best = [s for s in lb["current_best"] if s in want]
+    return json.dumps({
+        "problem_id": problem_id, "benchmark_id": lb["benchmark_id"],
+        "leaderboard": kept, "current_best": best,
+        "current_best_is_tie": len(best) > 1,
+        "conditional_leaders": {k: v for k, v in lb["conditional_leaders"].items()
+                                if v in want},
+        "excluded": excluded,
+        "note": "only completed, mutually-comparable evaluations are ranked (§18).",
+    }, default=str)
+
+
+@server.tool()
+async def inspect_evaluation(evaluation_id: str, ctx: Context) -> str:
+    """
+    One Evaluation: its version-pinned procedure/implementation, recomputed
+    metrics, verification summary, status, and the linked execution ids
+    (the lineage a completed result must have). JSON: the evaluation row +
+    {executions:[...]}.
+    """
+    pool = ctx.request_context.lifespan_context["pool"]
+    e = await _pm.get_evaluation(pool, evaluation_id)
+    if e is None:
+        return "REFUSED: evaluation not found"
+    return json.dumps(e, default=str)
+
+
+@server.tool()
+async def find_best_solution(goal: str, ctx: Context) -> str:
+    """
+    Natural-language goal -> matched Problem -> that Problem's current best
+    VERIFIED solution, derived from completed-evaluation lineage
+    (§38/§51). Never picks a "best" from text similarity alone: the match
+    is a Problem, the answer is that Problem's evidence-derived
+    leaderboard. Returns {result: "verified" | "no verified solution yet"
+    | "no matching problem", matched_problem, current_best, leaderboard,
+    conditional_leaders}.
+
+    Distinct from `find_best_way`, which is the retrieval-grounded HTN
+    coding agent (precedent -> plan -> execute). This one answers "which
+    known solution is measurably best" and does not execute anything.
+    """
+    pool = ctx.request_context.lifespan_context["pool"]
+    return json.dumps(
+        await _pm.find_best_way(pool, goal, scope=AccessScope.unrestricted()),
+        default=str,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Durable execution-run retry / resume tools (final-V1 §2, §34) -- a thin
+# MCP surface over the PROVEN durable-run service (app/execution/durable_run.py,
+# migrations 36/37) via app.execution.durable_resume. NO retry/resume logic
+# lives here: every state transition, lease, terminal fence and attempt
+# bound is owned by durable_run. Reads are open; mutations are gated on the
+# resolved caller identity matching execution_runs.created_by.
+# ---------------------------------------------------------------------------
+@server.tool()
+async def inspect_run(run_id: str, ctx: Context) -> str:
+    """
+    Inspect a durable execution run: overall status, per-node status /
+    attempt_count / max_attempts / error_class, the pinned implementation
+    binding, worker/lease, first-pass vs final, and the full per-node
+    attempt history. Read-only. JSON: {status, nodes:[...], history:[...]}.
+    REFUSED if the run does not exist.
+    """
+    pool = ctx.request_context.lifespan_context["pool"]
+    status = await _dres.run_status_by_id(pool, run_id)
+    if status is None:
+        return f"REFUSED: execution run {run_id!r} not found"
+    history = await _dres.node_history_by_id(pool, run_id)
+    return json.dumps({"status": status, "history": history}, default=str)
+
+
+@server.tool()
+async def resume_execution_run(run_id: str, ctx: Context) -> str:
+    """
+    Resume an eligible durable run through the durable-run service. A
+    coding-agent / sandbox run (its plan compiled by
+    find_best_way_plan_compiler / reproduce_procedure_plan_compiler, or a
+    pending node with no real provider) is NOT faked -- it returns
+    {"status": "needs_product_context", ...} pointing at
+    find_best_way(resume_run_id=...) / reproduce_procedure. An
+    already-terminal run is an idempotent no-op. REFUSED if the run does
+    not exist or the resolved caller is not its creator.
+    """
+    pool = ctx.request_context.lifespan_context["pool"]
+    actor_id = _dres.resolved_caller_identity_or_none()
+    worker_id = f"mcp-{_resolve_caller_identity(fallback='resume_execution_run')}"
+    try:
+        result = await _dres.resume_run_by_id(
+            pool, run_id, worker_id=worker_id, actor_id=actor_id,
+        )
+    except _dres.NotYourRun as e:
+        return f"REFUSED: not your run -- {e}"
+    except _dr.ResumeInProgress as e:
+        return f"REFUSED: run is being resumed by another worker -- {e}"
+    except _dr.DurableRunError as e:
+        return f"REFUSED: {e}"
+    return json.dumps(result, default=str)
+
+
+@server.tool()
+async def retry_run_node(run_id: str, node_order: int, ctx: Context, force: bool = False) -> str:
+    """
+    Explicit bounded retry of ONE failed / resumable / blocked node of a
+    durable run, through the durable-run service. `force=True` bumps that
+    node's max_attempts by 1 (operator override for an exhausted node). A
+    succeeded node is never retried -- the service returns "already
+    succeeded -- terminal". Same needs_product_context refusal as
+    resume_execution_run for coding-agent / no-provider runs. REFUSED if
+    the run/node does not exist or the resolved caller is not the run's
+    creator.
+    """
+    pool = ctx.request_context.lifespan_context["pool"]
+    actor_id = _dres.resolved_caller_identity_or_none()
+    worker_id = f"mcp-{_resolve_caller_identity(fallback='retry_run_node')}"
+    try:
+        result = await _dres.retry_run_node_by_id(
+            pool, run_id, node_order,
+            worker_id=worker_id, actor_id=actor_id, force=force,
+        )
+    except _dres.NotYourRun as e:
+        return f"REFUSED: not your run -- {e}"
+    except _dr.ResumeInProgress as e:
+        return f"REFUSED: run is being resumed by another worker -- {e}"
+    except _dr.DurableRunError as e:
+        return f"REFUSED: {e}"
     return json.dumps(result, default=str)
 
 

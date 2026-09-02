@@ -67,14 +67,17 @@ validated, not rejected):
   strings, joined), and `message.create_time`. VERIFIED: this
   id/parent/children mapping-tree-of-nodes structure (built to support
   edited/regenerated branches) is the widely documented shape of
-  OpenAI's data export. ASSUMED: this module does NOT walk the
-  parent/children edit-branch graph to pick the single "live" branch --
-  it takes every node with a non-empty `message`, sorts by
-  `create_time`, and treats that as conversation order. For an export
-  with regenerated/edited branches this can include a stale branch
-  alongside the live one; documented here as a known, deliberate scope
-  limit (linear-conversation assumption) rather than silently claimed to
-  be exact. Tool-call structure in the ChatGPT export varies by client
+  OpenAI's data export. BRANCH RECONSTRUCTION (directive §28): this
+  module reconstructs the active root -> `current_node` branch from
+  `mapping` + `current_node` and reads ONLY the messages on that path, so
+  an abandoned edited/regenerated sibling (a fabricated tool call in a
+  regenerated-away answer, a hedged superseded reply) never contaminates
+  the extracted evidence. A linear conversation (no node with >1 child)
+  is unchanged -- every node, ordered by `create_time`. A branching
+  conversation with no resolvable `current_node` is CONSERVATIVE:
+  ancestry is ambiguous, so it yields zero messages / zero candidates
+  rather than a linearized, possibly-fabricated confirmation.
+  Tool-call structure in the ChatGPT export varies by client
   version and is not reliably present in the public shape, so
   `has_tool_use` is honestly always False for ChatGPT messages
   (`has_tool_result` is set only from `author.role == "tool"`, which IS
@@ -130,6 +133,77 @@ class NormalizedConversation:
     created_at: Optional[object]
     updated_at: Optional[object]
     messages: list[NormalizedMessage] = field(default_factory=list)
+
+
+# ---------------------------------------------------------------------------
+# ChatGPT export branch reconstruction (directive §28 -- evidence integrity)
+#
+# A ChatGPT `mapping` is a TREE: an edited/regenerated message forks
+# sibling branches under one parent and only the branch on `current_node`
+# was continued. Sorting every node by `create_time` splices abandoned
+# siblings into the transcript. `_chatgpt_active_node_ids` returns the
+# active root -> `current_node` path; a linear conversation returns
+# ``None`` (caller keeps the legacy timestamp order, behaviour unchanged);
+# a branching conversation with no resolvable `current_node` returns
+# ``[]`` (caller yields zero messages -> conservative discussion-only).
+# ---------------------------------------------------------------------------
+
+
+def _mapping_has_branching(mapping: dict) -> bool:
+    """True if any node has >1 child (directly, or by >1 node naming it as
+    `parent`) -- i.e. the conversation carries edited/regenerated siblings."""
+    child_counts: dict = {}
+    for node in mapping.values():
+        if not isinstance(node, dict):
+            continue
+        kids = node.get("children")
+        if isinstance(kids, list) and len(kids) > 1:
+            return True
+        parent = node.get("parent")
+        if isinstance(parent, str):
+            child_counts[parent] = child_counts.get(parent, 0) + 1
+    return any(c > 1 for c in child_counts.values())
+
+
+def _chatgpt_active_node_ids(mapping: object, current_node: object) -> Optional[list]:
+    """Node ids on the active root -> `current_node` branch, in order.
+    ``None`` -> conversation is linear (caller keeps legacy order);
+    ``[]`` -> branching but ambiguous ancestry (caller -> discussion-only);
+    non-empty list -> the active branch, root first."""
+    if not isinstance(mapping, dict) or not mapping:
+        return None
+    if not _mapping_has_branching(mapping):
+        return None
+    if not isinstance(current_node, str) or current_node not in mapping:
+        return []
+    if any(isinstance(n, dict) and n.get("parent") for n in mapping.values()):
+        path: list = []
+        seen: set = set()
+        nid: object = current_node
+        while isinstance(nid, str) and nid in mapping and nid not in seen:
+            seen.add(nid)
+            path.append(nid)
+            node = mapping[nid]
+            nid = node.get("parent") if isinstance(node, dict) else None
+        path.reverse()
+        return path
+    roots = [
+        nid for nid, n in mapping.items()
+        if isinstance(n, dict) and not n.get("parent")
+    ]
+    for root in roots:
+        stack: list = [(root, [root])]
+        while stack:
+            nid, acc = stack.pop()
+            if nid == current_node:
+                return acc
+            node = mapping.get(nid)
+            if not isinstance(node, dict):
+                continue
+            for kid in node.get("children") or []:
+                if isinstance(kid, str):
+                    stack.append((kid, acc + [kid]))
+    return []
 
 
 # ---------------------------------------------------------------------------
@@ -231,8 +305,28 @@ def parse_chatgpt_export(path: str) -> list[NormalizedConversation]:
         source_id = conv_obj.get("conversation_id") or conv_obj.get("id") or f"chatgpt_{conv_idx}"
         mapping = conv_obj.get("mapping") or {}
 
+        # Directive §28: reconstruct the active branch rather than
+        # linearizing every node. `None` -> linear conversation, keep
+        # legacy create_time order; `[]` -> branching + ambiguous
+        # ancestry, emit an empty conversation (conservative
+        # discussion-only); otherwise iterate the active path in order.
+        active_ids = _chatgpt_active_node_ids(mapping, conv_obj.get("current_node"))
+        if active_ids is not None and not active_ids:
+            conversations.append(NormalizedConversation(
+                source_type="chatgpt",
+                source_id=source_id,
+                created_at=conv_obj.get("create_time"),
+                updated_at=conv_obj.get("update_time"),
+                messages=[],
+            ))
+            continue
+        if active_ids is None:
+            node_iter = list(mapping.values())
+        else:
+            node_iter = [mapping[nid] for nid in active_ids if nid in mapping]
+
         ordered: list[tuple] = []
-        for node in mapping.values():
+        for node in node_iter:
             if not isinstance(node, dict):
                 continue
             msg = node.get("message")
@@ -250,10 +344,13 @@ def parse_chatgpt_export(path: str) -> list[NormalizedConversation]:
                 continue
             ordered.append((create_time, author_role, text))
 
-        # No parent/children branch-walk (documented scope limit above):
-        # sort by real create_time, treating None as earliest so a node
-        # missing a timestamp is never silently dropped.
-        ordered.sort(key=lambda t: (t[0] is None, t[0]))
+        if active_ids is None:
+            # Linear conversation (documented pre-§28 path): sort by real
+            # create_time, treating None as earliest so a node missing a
+            # timestamp is never silently dropped.
+            ordered.sort(key=lambda t: (t[0] is None, t[0]))
+        # Active-branch path: already in tree order (root -> current_node);
+        # regenerated-branch timestamps are not authoritative, so no sort.
 
         messages: list[NormalizedMessage] = []
         for i, (create_time, author_role, text) in enumerate(ordered):

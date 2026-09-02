@@ -3,6 +3,53 @@
 What each part is, why it is shaped that way, and where it is verified.
 Every claim marked **[T-n]** is checked by a test — see [TEST.md](TEST.md).
 
+> **Historical doc.** This describes the original SWE-bench-Pro
+> graph-memory / HTN measurement era. It is accurate as rationale for the
+> retrieval and execution-graph design, wrong as a description of the
+> current product. For what the shipped system is, read
+> [`docs/final-v1.md`](docs/final-v1.md), then `README.md`'s V1 section and
+> `proj_status.md`.
+
+---
+
+## Final-V1 update (2026-09-03)
+
+The parts of this document that this section overrides:
+
+- **Execution is no longer "always a single in-memory pass".** The
+  production tier-2 execution path (MCP `find_best_way` tier-2,
+  `reproduce_procedure`) runs on a **durable execution run** —
+  `execution_runs` + `execution_run_nodes` (migrations 36–37), driven by
+  `app/execution/durable_graph.run_graph_durably`. Per-node state
+  (`pending` / `running` / `succeeded` / `failed` / `blocked` /
+  `cancelled` / `resumable`), `attempt_count`, and the resolved
+  `implementation_id` are persisted. A crashed run **resumes**
+  (`find_best_way(resume_run_id=…)`): completed nodes are not re-run, a
+  `succeeded` node is fenced against stale-worker writes
+  (`trg_ern_terminal_fence`), a mid-node crash on a side-effecting node
+  parks rather than blind-retries, retry is bounded and explicit, and a
+  concurrent resume is refused (`ResumeInProgress`). Exactly one immutable
+  `executions` row is appended on terminal. The in-memory
+  `graph_executor.execute_task_graph` still backs offline tests and
+  non-stateful helpers.
+- **Evaluation is a first-class product concept**, not only a harness
+  measurement. `Problem` / `Benchmark` / `Solution` / `Evaluation`
+  (migration 35, `app/services/product_model.py`, `/v1` routes in
+  `app/api/problems.py`, six MCP tools) turn real Execution + Evidence
+  into comparable, version-pinned results. A Problem's **current-best**
+  Solution is derived on read from a **Wilson interval lower bound** of
+  verified success — never stored, `[]` when nothing is verified. The
+  McNemar / power machinery in §4 below is still how *sweeps* are judged;
+  it is not how a Problem leader is chosen.
+- **Execution descriptor** — the Implementation Registry now has one
+  deterministic, secret-free projection to the execution ABI
+  (`implementation_registry.descriptor()`;
+  `GET /v1/implementations/{id}/descriptor`; MCP
+  `inspect_implementation` / `resolve_implementation`). A plan binds an
+  implementation version once and never re-resolves it on resume.
+- **`Problem/Benchmark/Solution/Evaluation` are shipped, not "future
+  concepts"** — see `docs/final-v1.md` §1.
+
 ---
 
 ## The question

@@ -1,0 +1,279 @@
+{
+  "phase": 9,
+  "database": "supabase ap-south-1 (session pooler)",
+  "state": {
+    "procedures_prior_library": 28,
+    "procedure_version_rows_prior_library": 28,
+    "task_nodes_corpus_wave": 170,
+    "claims_corpus_wave": 15,
+    "claims_with_embedding": 15,
+    "episode_links_corpus_wave": 15,
+    "dup_procedure_names_remaining": 0,
+    "claim_graph_overview": {
+      "claims_total": 15,
+      "claims_shown": 15,
+      "edges": 30,
+      "edges_by_kind": {
+        "similarity": 30
+      },
+      "by_status": {
+        "current": 15
+      }
+    }
+  },
+  "procedures_ingested": [
+    {
+      "procedure_id": "00afa1e7-9c13-462b-8679-24fd160c39a9",
+      "name": "corpus-s38-represent-an-se-agent-trajectory-capture-full-ro",
+      "goal": "Define the record shape that makes an SE agent run both replayable and automatically gradable."
+    },
+    {
+      "procedure_id": "19711438-a56f-40a7-8663-0590d966d204",
+      "name": "corpus-s11-scaffold-an-autonomous-maintenance-loop-npx-cobu",
+      "goal": "Stand up a named maintenance loop in a repo that discovers work, hands it to an agent, verifies results, and persists state \u2014 starting report-only."
+    },
+    {
+      "procedure_id": "28decdd0-0d90-45e3-8187-1e7eafee3abc",
+      "name": "corpus-s31-eliminate-request-waterfalls-find-sequential-awa",
+      "goal": "Convert serial awaits of independent operations into parallel ones, on both client and server components."
+    },
+    {
+      "procedure_id": "2a5f8316-707f-4bf1-a98b-9c153ca40508",
+      "name": "corpus-s34-a-maintenance-automation-workflow-in-practice-sc",
+      "goal": "Keep issues labeled by type and component automatically, safely, with a bounded budget."
+    },
+    {
+      "procedure_id": "3103b71b-1af8-4b9a-bf63-41c69cc918a0",
+      "name": "corpus-s01-author-a-new-agent-skill-skill-md-frontmatter-ex",
+      "goal": "Produce a valid, loadable Agent Skill: a folder with a `SKILL.md` that a model can discover and follow."
+    },
+    {
+      "procedure_id": "32c834fa-ec8b-4290-b358-436c407fe59f",
+      "name": "corpus-s27-generate-a-shareable-single-file-html-deck-invok",
+      "goal": "Produce one self-contained HTML file (inline CSS/JS, zero dependencies) that renders a full deck and is shareable by URL or PDF."
+    },
+    {
+      "procedure_id": "3a3d1fb6-d95c-4dca-8eb1-a17d5bbab36a",
+      "name": "corpus-s09-red-green-refactor-tdd-loop-failing-test-watch-f",
+      "goal": "Implement each change through a strict RED-GREEN-REFACTOR cycle, retaining no code that predates its test."
+    },
+    {
+      "procedure_id": "3d66d551-1c93-4ff6-ad00-a0de78832ba9",
+      "name": "corpus-s33-client-side-form-validation-apply-html-constrain",
+      "goal": "Validate form input in the browser using HTML attributes + the Constraint Validation API, with visible feedback, before submission \u2014 and still validate server-side."
+    },
+    {
+      "procedure_id": "5acf0d36-e357-4863-b203-b6bc484a604f",
+      "name": "corpus-s32-accessibility-audit-slice-fetch-current-guidelin",
+      "goal": "Produce `file:line` findings for accessibility violations only, against the current Web Interface Guidelines."
+    },
+    {
+      "procedure_id": "5ca819d8-a43d-4ebd-931b-00fe5b95fa9f",
+      "name": "corpus-s41-query-works-programmatically-get-https-api-opena",
+      "goal": "Retrieve a filtered, complete list of works from OpenAlex, paged efficiently, as a good API citizen."
+    },
+    {
+      "procedure_id": "5f1263b5-1f9e-4b71-930b-63f1c28ef10d",
+      "name": "corpus-s05-apply-70-react-next-js-performance-rules-by-prio",
+      "goal": "Systematically apply the 70 rules (8 priority categories) to a codebase, highest-impact first, with a measured before/after."
+    },
+    {
+      "procedure_id": "651688c2-9f38-48e9-afea-065b1bafca82",
+      "name": "corpus-s23-install-the-mcp-server-call-smart-read-path-firs",
+      "goal": "Pay the full token cost of a file once; on later unchanged reads, pay only for the diff."
+    },
+    {
+      "procedure_id": "72f30232-0b43-4351-a666-6dd67ce2af5a",
+      "name": "corpus-s04-review-ui-code-against-the-web-interface-guideli",
+      "goal": "Produce a compliance review of specified UI code against the current Web Interface Guidelines, in a terse actionable format."
+    },
+    {
+      "procedure_id": "78431387-1ffb-459d-b94a-4b80bd873100",
+      "name": "corpus-s07-red-green-refactor-after-first-discovering-the-r",
+      "goal": "Implement a change test-first, using the repository's own framework, build system, and commands."
+    },
+    {
+      "procedure_id": "83d2e2f8-d79f-45c7-9ac8-9d9d63ea4542",
+      "name": "corpus-s36-construct-verify-a-task-instance-take-a-merged-p",
+      "goal": "Turn a real merged PR into a verifiable task instance, and define exactly when a candidate patch resolves it."
+    },
+    {
+      "procedure_id": "8927d8cd-79e4-4a90-8dbc-9f338fae2b34",
+      "name": "corpus-s02-eval-driven-skill-authoring-loop-intent-skill-md",
+      "goal": "Create a skill and prove, against a baseline, that it improves task outcomes \u2014 then iterate until feedback is empty."
+    },
+    {
+      "procedure_id": "8b574279-fd5b-4435-af80-47b84c85e291",
+      "name": "corpus-s47-debug-a-running-crashing-pod-kubectl-describe-po",
+      "goal": "Identify the cause of a running/crashing pod's problem using progressively more invasive tools, then clean up."
+    },
+    {
+      "procedure_id": "8cd6f567-c269-4b62-beae-b64fd9be66f6",
+      "name": "corpus-s03-deploy-a-project-to-vercel-as-a-claimable-deploy",
+      "goal": "Produce a live preview URL plus a claim URL that transfers the deployment to a Vercel account."
+    },
+    {
+      "procedure_id": "8e2ef4a2-2d06-486a-a19f-542a279f8bc9",
+      "name": "corpus-s43-verify-a-scientific-claim-against-evidence-retri",
+      "goal": "Produce a label (SUPPORT / CONTRADICT / NOINFO) for a claim plus the rationale sentences from the cited abstracts."
+    },
+    {
+      "procedure_id": "9795b49f-83a3-4ea1-8256-a9439c8a800c",
+      "name": "corpus-s19-reproduce-the-context-rot-benchmark-venv-deps-pr",
+      "goal": "Reproduce the measured degradation curves across the three tasks and compare to the published figures."
+    },
+    {
+      "procedure_id": "9cc278f0-a00b-4df4-bbbe-e13def67ccfa",
+      "name": "corpus-s42-retrieve-a-paper-its-citation-context-resolve-an",
+      "goal": "Fetch a paper + its citation/reference lists with only the fields you need, respecting rate limits."
+    },
+    {
+      "procedure_id": "a04f8261-a001-4304-b8b1-3206ba39044a",
+      "name": "corpus-s15-author-gh-aw-compile-lock-yml-push-review-via-sa",
+      "goal": "Turn a Markdown workflow definition into a sandboxed, compiled `.lock.yml` GitHub Actions workflow."
+    },
+    {
+      "procedure_id": "aba29676-3455-40d1-be97-6113f148b5f3",
+      "name": "corpus-s14-one-rule-set-across-all-ai-tools-ci-enforcement",
+      "goal": "Make every AI coding tool read a consistent rule set, and make commit/branch policy machine-enforced in CI."
+    },
+    {
+      "procedure_id": "adf6a524-fc58-4951-b734-3e694e6658e9",
+      "name": "corpus-s12-author-an-agents-md-dev-environment-tips-testing",
+      "goal": "Give agents one predictable file at the repo root carrying the context and instructions they need."
+    },
+    {
+      "procedure_id": "b1d824c0-1f91-4b77-b851-78d99f18dd46",
+      "name": "corpus-s46-harden-authentication-enforce-password-length-8",
+      "goal": "Bring a login system up to OWASP's baseline against brute-force, credential stuffing, and user enumeration."
+    },
+    {
+      "procedure_id": "c15c20fc-40d2-41e4-a04e-303fe64fbc1e",
+      "name": "corpus-s30-drive-a-browser-via-stable-refs-install-open-url",
+      "goal": "Navigate a page, enumerate interactive elements as stable refs, and interact with them reliably."
+    },
+    {
+      "procedure_id": "dc1ce2aa-26ad-46b3-ba6c-bc9d34d3446d",
+      "name": "corpus-s24-trim-mcp-tool-context-to-task-relevant-scan-conf",
+      "goal": "Produce a client-specific tool allowlist trimmed to a token budget for a named task, without losing the ability to complete that task."
+    },
+    {
+      "procedure_id": "fef6ceb9-a3c4-4f2c-bcc7-956f6a25d996",
+      "name": "corpus-s50-build-evaluate-a-tool-use-task-collect-real-rest",
+      "goal": "Construct a tool-use task with an annotated solution path, and evaluate a candidate's tool-use with reproducible metrics."
+    }
+  ],
+  "claims_ingested": [
+    {
+      "claim_id": "f38d9dec-8c98-4d4c-b26e-fa06be9c666d",
+      "source_id": "S20",
+      "epistemic_origin": "EXPERIMENTAL",
+      "epistemic_status": "observed",
+      "statement": "LLM accuracy degrades non-uniformly as input length grows"
+    },
+    {
+      "claim_id": "6f075acb-c56d-43ca-b449-0fc78f7bf8fb",
+      "source_id": "S20",
+      "epistemic_origin": "EXPERIMENTAL",
+      "epistemic_status": "observed",
+      "statement": "Degradation accelerates as needle-question semantic similarity decreases"
+    },
+    {
+      "claim_id": "020d8d90-a850-40d6-ad52-88e89e475895",
+      "source_id": "S20",
+      "epistemic_origin": "EXPERIMENTAL",
+      "epistemic_status": "observed",
+      "statement": "A single distractor lowers performance vs needle-only; four distractors compound it"
+    },
+    {
+      "claim_id": "7264f476-df45-4f2f-9a5c-5bde554757e5",
+      "source_id": "S20",
+      "epistemic_origin": "EXPERIMENTAL",
+      "epistemic_status": "observed",
+      "statement": "Models score higher on shuffled haystacks than logically-structured ones"
+    },
+    {
+      "claim_id": "5d9413d7-7d2e-4518-b9a6-9e425f94f2b4",
+      "source_id": "S20",
+      "epistemic_origin": "EXPERIMENTAL",
+      "epistemic_status": "observed",
+      "statement": "Focused (~300 tok) prompts beat full (~113k tok) prompts across all models on LongMemEval"
+    },
+    {
+      "claim_id": "acc130c7-6dd6-469e-a811-6d06dde2a8bd",
+      "source_id": "S02",
+      "epistemic_origin": "SOURCE_DERIVED",
+      "epistemic_status": "inferred",
+      "statement": "A skill should be admitted only when a benchmark shows it beats baseline and generalizes beyond its eval examples"
+    },
+    {
+      "claim_id": "daac9ccc-2e56-4b40-861a-6062aa09c07d",
+      "source_id": "S07",
+      "epistemic_origin": "SOURCE_DERIVED",
+      "epistemic_status": "inferred",
+      "statement": "Before writing tests, discover the repo's own framework/build/commands"
+    },
+    {
+      "claim_id": "3644a7b6-13a1-496b-8646-c828705e8656",
+      "source_id": "S09",
+      "epistemic_origin": "SOURCE_DERIVED",
+      "epistemic_status": "inferred",
+      "statement": "Code written before its corresponding test should be deleted"
+    },
+    {
+      "claim_id": "6f5e2eb3-54dd-4c6a-82f6-412ad7efcea1",
+      "source_id": "S11",
+      "epistemic_origin": "SOURCE_DERIVED",
+      "epistemic_status": "inferred",
+      "statement": "A maintenance loop should run report-only for its first week before being allowed to act"
+    },
+    {
+      "claim_id": "da8c9005-bbb0-44ca-8c5f-13a30883279c",
+      "source_id": "S15",
+      "epistemic_origin": "SOURCE_DERIVED",
+      "epistemic_status": "inferred",
+      "statement": "Agent jobs run read-only and sandboxed by default; writes go through scoped safe-outputs jobs"
+    },
+    {
+      "claim_id": "36c151f0-412b-429c-981b-cab6bc30e28f",
+      "source_id": "S24",
+      "epistemic_origin": "EXPERIMENTAL",
+      "epistemic_status": "observed",
+      "statement": "Trimming MCP tool context to task-relevant reduced context ~69% weighted-avg with 100% sufficiency on 5 eligible cases (author benchmark)"
+    },
+    {
+      "claim_id": "be5d06b5-da3f-4aae-85dd-978f51a5267f",
+      "source_id": "S36",
+      "epistemic_origin": "SOURCE_DERIVED",
+      "epistemic_status": "inferred",
+      "statement": "A code fix is verified iff it flips FAIL_TO_PASS while keeping PASS_TO_PASS green in a pinned environment"
+    },
+    {
+      "claim_id": "1d9ba437-5d05-4483-b27b-590002ad55c8",
+      "source_id": "S46",
+      "epistemic_origin": "SOURCE_DERIVED",
+      "epistemic_status": "inferred",
+      "statement": "OWASP treats passwords <15 chars as weak without MFA (<8 with MFA), and requires identical error text + constant time for bad-user vs bad-password"
+    },
+    {
+      "claim_id": "15303c27-8fa9-4901-a90d-418050a01e07",
+      "source_id": "S50",
+      "epistemic_origin": "EXPERIMENTAL",
+      "epistemic_status": "observed",
+      "statement": "DFSDT (a depth-first decision tree allowing backtracking) improves LLM planning on multi-tool tasks vs linear planning"
+    },
+    {
+      "claim_id": "660be625-c812-4cf4-bfbc-0233caaccf22",
+      "source_id": "S33",
+      "epistemic_origin": "SOURCE_DERIVED",
+      "epistemic_status": "inferred",
+      "statement": "Client-side constraint validation is a UX layer only; the same rules must be enforced server-side"
+    }
+  ],
+  "notes": [
+    "One 'document' episode anchors all 15 corpus_wave claims via episode_links.",
+    "Procedures carry provenance='prior_library' (vetted-external convention). verification_state=candidate -- 0 verified (no execution evidence yet, Phase 10).",
+    "License-blocked sources (S10 S18 S26 S29 S37 S49) NOT ingested; source rows in source_registry.jsonl only.",
+    "Claim-graph viewer at /claim-graph shows these 15 claims + embedding-similarity edges."
+  ]
+}

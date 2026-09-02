@@ -106,6 +106,53 @@ economy beyond "execution evidence is the reputation signal".
 
 ---
 
+## Final-V1 update (2026-09-03)
+
+The FINAL-V1 hardening wave landed since the frozen section above.
+[`docs/final-v1.md`](docs/final-v1.md) is the authoritative account; the
+short version of what changed:
+
+- **Problem / Benchmark / Solution / Evaluation is a shipped product
+  concept, not a future one.** Migration 35 adds the tables;
+  `app/services/product_model.py` is the one service; `app/api/problems.py`
+  exposes 17 `/v1` routes; six read-only MCP tools (`find_problem`,
+  `inspect_problem`, `list_problem_solutions`, `compare_solutions`,
+  `inspect_evaluation`, `find_best_solution`) share it. It is an
+  association + read-model layer over the existing substrate — no target
+  object is copied, no second execution engine. A completed **Evaluation**
+  aggregates real Executions + Evidence (the DB and the service both
+  reject a `completed` status with no execution lineage); a Problem's
+  **current-best** Solution is derived on read from a Wilson lower bound,
+  never stored, and is `[]` until something is verified.
+- **Evaluation is a first-class product concept now**, not just a testing
+  artifact — it is the unit that turns real execution evidence into a
+  comparable, version-pinned result and a leaderboard.
+- **Execution is durable on the production tier-2 path.** MCP
+  `find_best_way` tier-2 and `reproduce_procedure` run through
+  `app/execution/durable_graph.run_graph_durably` on the
+  `execution_runs` / `execution_run_nodes` substrate (migrations 36–37),
+  not the in-memory loop. **Retry / resume exists**: a crashed run resumes
+  through `find_best_way(resume_run_id=…)`, completed nodes are not re-run,
+  a terminal node is fenced against stale workers, and a concurrent resume
+  is refused. Exactly one immutable `executions` row is appended on
+  terminal, with `implementation_id` pinned.
+- **Execution descriptor** — one deterministic, secret-free projection of
+  an Implementation Registry row to the execution ABI
+  (`GET /v1/implementations/{id}/descriptor`; also on MCP
+  `inspect_implementation` / `resolve_implementation`).
+- **Ingestion security** — historical ChatGPT-export ingestion now
+  reconstructs the conversation branch tree and drops abandoned sibling
+  branches (§28); document / skill ingestion treats untrusted document
+  text as data behind a fence and cannot use it to escalate capability or
+  trust (§29).
+- **MCP surface is 28 registered tools** (was 21).
+- **The V1 product surface is `frontendv1/`** — a separate Next.js 16 app
+  (now tracked) with the benchmark-first pages and a 13-tool WebMCP
+  bridge, owned by the frontend session. The older `frontend/` (Next.js 15
+  debate/approval UI) is **not** the V1 surface.
+
+---
+
 ## What runs today
 
 A local-first MCP server exposing **20 tools** (verified 2026-09-01 against

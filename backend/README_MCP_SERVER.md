@@ -1,8 +1,33 @@
 # StealthLab MCP Server — v1
 
 Exposes StealthLab's bi-temporal knowledge/task graph, debate-based conflict
-resolution, procedure lifecycle, Implementation Registry, and a
-retrieval-grounded coding agent as 20 MCP tools.
+resolution, procedure lifecycle, Implementation Registry, the
+Problem/Benchmark/Solution/Evaluation product model, and a
+retrieval-grounded coding agent as **28 MCP tools**.
+
+> **Final-V1 update (2026-09-03).** Two changes to what is below:
+> 1. **Six product-model tools** were added — `find_problem`,
+>    `inspect_problem`, `list_problem_solutions`, `compare_solutions`,
+>    `inspect_evaluation`, `find_best_solution` — all read-only, all
+>    converging on `app/services/product_model.py` (the same service the
+>    `/v1/problems…` REST routes use). `find_best_solution` answers "which
+>    known Solution is measurably best for this goal" from completed-
+>    Evaluation lineage and a Wilson lower bound; it executes nothing and
+>    is distinct from `find_best_way`.
+> 2. **`find_best_way` tier-2 and `reproduce_procedure` now execute on the
+>    durable substrate** (`app/execution/durable_graph.run_graph_durably`
+>    over `execution_runs` / `execution_run_nodes`, migrations 36–37),
+>    not the in-memory `execute_task_graph`. `find_best_way` gained a
+>    `resume_run_id` parameter: pass the run id of an interrupted run and
+>    it resumes through the same tool — completed nodes are not re-run, a
+>    `succeeded` node is fenced against stale-worker writes, a concurrent
+>    resume is refused. `durable_run` appends the one immutable
+>    `executions` row itself on terminal (implementation_id pinned), so
+>    those two tools no longer call `record_plan_execution` separately.
+>    `inspect_implementation` / `resolve_implementation` now emit the
+>    canonical **execution descriptor** (also `GET
+>    /v1/implementations/{id}/descriptor`). Full account:
+>    `docs/final-v1.md`.
 
 ## Setup
 
@@ -22,7 +47,11 @@ retrieval-grounded coding agent as 20 MCP tools.
 3. `experiments/swebench_pro/` must exist as a real sibling directory of
    `backend/` -- `find_best_way` imports `Agent`/`RepoSandbox` from there.
 
-## The 20 tools
+## The tools
+
+_The table lists the 21-tool core surface; the six product-model tools and
+`get_claim_graph` from the Final-V1 update above bring the live registry to
+28. `docs/final-v1.md` §1 documents the product-model tools._
 
 | Tool | What it does | Writes to the graph? |
 |---|---|---|
@@ -46,6 +75,7 @@ retrieval-grounded coding agent as 20 MCP tools.
 | `inspect_implementation` | Fetch one durable implementation row by id | No -- read-only |
 | `list_task_implementations` | Every implementation linked to a task_node | No -- read-only |
 | `get_implementation_capability` | Capability estimate for one durable implementation | No -- read-only |
+| `get_claim_graph` | The current claim graph -- nodes (live claims + lifecycle state) and claim-to-claim relation edges -- the same feed the `/claim-graph` web page renders | No -- read-only |
 
 ### Implementation Registry is now wired into the real hot path (2026-09-02)
 
@@ -93,6 +123,37 @@ apply step -- do not cross them:
 `apply_change_set` itself is for change_sets that never went through
 either proposal flow -- e.g. a manually constructed change_set for
 testing.
+
+## Claim-graph viewer (`/claim-graph`)
+
+The HTTP transport also serves a plain, read-only web page for looking at
+the live claim graph -- no build step, no CDN, no extra install:
+
+```
+uvicorn app.mcp_server.server:app --host 127.0.0.1 --port 8765 --workers 1
+# then open http://127.0.0.1:8765/claim-graph
+```
+
+- `GET /claim-graph` -- a self-contained HTML page (inline canvas
+  force-directed graph). Nodes are live claims, coloured by real
+  lifecycle state (`current` / `supported` / `stale` / `disputed` /
+  `contradicted` / `retired`); dashed red edges are belief-revision
+  relations (`SUPERSEDES` / `CONTRADICTS`), grey edges are the general
+  epistemic/structural relations. Click a node for its full statement,
+  triple, scope, and relations. Controls: statement filter, node cap,
+  "show retired", refresh.
+- `GET /claim-graph/data?limit=&include_retired=&q=&with_status=` -- the
+  JSON feed (`{nodes, edges, counts, truncated, generated_at}`) the page
+  fetches. Same shape as the `get_claim_graph` MCP tool and the REST
+  endpoint `GET /v1/claims/graph`.
+
+Both routes are **unauthenticated** (the MCP SDK reserves
+`@server.custom_route` for public health-check-style endpoints) and
+strictly read-only. That fits the loopback-only default posture; if the
+server is ever exposed past `127.0.0.1`, put it behind a reverse
+proxy/auth the same as any other read endpoint. `include_retired=false`
+(the default) shows only claims still believed. `with_status=false` skips
+the per-node lifecycle read for a faster raw dump.
 
 ## Quickstart -- MCP Inspector
 

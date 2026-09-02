@@ -1,0 +1,43 @@
+
+> stealthlab-frontendv1@0.1.0 build
+> next build --turbopack
+
+▲ Next.js 16.3.4 (Turbopack)
+- Environments: .env.local
+✓ Running next.config.ts took 32ms
+
+  Creating an optimized production build ...
+✓ Compiled successfully in 867ms
+  Running TypeScript ...
+  Finished TypeScript in 2.5s ...
+  Collecting page data using 19 workers ...
+  Generating static pages using 19 workers (0/11) ...
+  Generating static pages using 19 workers (2/11) 
+  Generating static pages using 19 workers (5/11) 
+  Generating static pages using 19 workers (8/11) 
+✓ Generating static pages using 19 workers (11/11) in 985ms
+  Finalizing page optimization ...
+
+Route (app)
+┌ ○ /
+├ ○ /_not-found
+├ ○ /auth
+├ ƒ /claims/[id]
+├ ƒ /implementations/[id]
+├ ○ /me
+├ ○ /problems
+├ ○ /procedures
+├ ƒ /procedures/[id]
+├ ƒ /projects/[id]
+├ ƒ /repositories/[id]
+├ ○ /search
+├ ƒ /solutions/[id]
+├ ○ /submit
+├ ○ /tasks
+├ ƒ /tasks/[id]
+└ ○ /webmcp
+
+
+○  (Static)   prerendered as static content
+ƒ  (Dynamic)  server-rendered on demand
+

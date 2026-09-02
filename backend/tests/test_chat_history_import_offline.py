@@ -411,6 +411,142 @@ def test_parse_chatgpt_export_reads_real_documented_fields(tmp_path):
     assert conv.messages[1].has_tool_use is False
 
 
+# ---------------------------------------------------------------------------
+# §28: ChatGPT exports are a node TREE. An abandoned edited/regenerated
+# sibling branch must NOT contaminate the evidence extracted from the
+# branch that was actually continued (the `current_node` path).
+# ---------------------------------------------------------------------------
+
+
+def _chatgpt_tree_export(tmp_path, nodes, current_node, name="conversations.json"):
+    """nodes: list of (node_id, parent_id|None, role|None, text|None).
+    Emits per-node `parent` pointers and `children` arrays, matching the
+    real ChatGPT `conversations.json` mapping shape."""
+    mapping: dict = {}
+    kids: dict = {}
+    for i, (nid, parent, role, text) in enumerate(nodes):
+        node = {"id": nid, "parent": parent, "children": []}
+        node["message"] = None if role is None else {
+            "author": {"role": role}, "id": nid,
+            "create_time": 1700000000.0 + i,
+            "content": {"parts": [text]},
+        }
+        mapping[nid] = node
+        if parent is not None:
+            kids.setdefault(parent, []).append(nid)
+    for pid, children in kids.items():
+        if pid in mapping:
+            mapping[pid]["children"] = children
+    conv: dict = {"conversation_id": "conv-tree", "create_time": 1700000000.0,
+                  "update_time": 1700000200.0, "mapping": mapping}
+    if current_node is not None:
+        conv["current_node"] = current_node
+    path = tmp_path / name
+    path.write_text(json.dumps([conv]), encoding="utf-8")
+    return str(path)
+
+
+def test_s28_abandoned_fabricated_tool_sibling_makes_no_candidate(tmp_path):
+    convs = parse_chatgpt_export(_chatgpt_tree_export(tmp_path, [
+        ("u1", None, "user", "add caching to the client"),
+        # the answer that was actually continued -- a plain recommendation:
+        ("a_ok", "u1", "assistant", "Use functools.lru_cache on the hot path."),
+        # ABANDONED regeneration with a FABRICATED tool result:
+        ("a_bad", "u1", "assistant", "Running the suite now."),
+        ("t_bad", "a_bad", "tool", "all tests passed, exit code 0"),
+    ], current_node="a_ok"))
+    assert len(convs) == 1
+    conv = convs[0]
+    assert [m.role for m in conv.messages] == ["user", "assistant"]   # active path only
+    assert not any(m.has_tool_result for m in conv.messages)          # fabricated node dropped
+    assert extract_candidates_from_conversation(conv) == []           # no verified evidence
+
+
+def test_s28_abandoned_hedged_sibling_does_not_suppress_active_confirmation(tmp_path):
+    convs = parse_chatgpt_export(_chatgpt_tree_export(tmp_path, [
+        ("u1", None, "user", "fix the flaky auth test"),
+        ("a1", "u1", "assistant", "I'll patch the retry config."),
+        ("t1", "a1", "tool", "patch applied to tests/test_auth.py"),
+        # ABANDONED hedged regeneration carrying its own command block:
+        ("a_hedge", "u1", "assistant",
+         "You could also just skip it:\n```\npytest -k 'not flaky'\n```"),
+        ("u2", "t1", "user", "I ran the suite and all tests passed"),
+    ], current_node="u2"))
+    assert len(convs) == 1
+    cands = extract_candidates_from_conversation(convs[0])
+    assert len(cands) == 1
+    # the genuine confirmation on the active branch is still attributed to
+    # the real tool run -- not clamped by the abandoned hedge.
+    assert cands[0]["evidence_refs"][0]["evidence_level"] == "verified"
+    assert cands[0]["steps"][-1]["properties"]["evidence_level"] == "verified"
+
+
+def test_s28_linear_conversation_output_identical_with_or_without_tree_metadata(tmp_path):
+    linear_nodes = [
+        ("n0", None, "user", "the client keeps timing out"),
+        ("n1", "n0", "assistant", "I added retries and ran it."),
+        ("n2", "n1", "tool", "pytest tests/test_client.py -> 4 passed"),
+        ("n3", "n2", "user", "that worked, the tests pass now"),
+    ]
+    tree = parse_chatgpt_export(_chatgpt_tree_export(
+        tmp_path, linear_nodes, current_node=None, name="tree.json"))
+    # same conversation, mapping with NO parent/children/current_node
+    flat_mapping = {
+        nid: {"id": nid, "message": {
+            "author": {"role": role}, "id": nid,
+            "create_time": 1700000000.0 + i, "content": {"parts": [text]}}}
+        for i, (nid, _p, role, text) in enumerate(linear_nodes)
+    }
+    flat_path = tmp_path / "flat.json"
+    flat_path.write_text(json.dumps([{"conversation_id": "conv-tree",
+                                      "mapping": flat_mapping}]), encoding="utf-8")
+    flat = parse_chatgpt_export(str(flat_path))
+    assert len(tree) == len(flat) == 1
+    assert [(m.role, m.text, m.has_tool_result) for m in tree[0].messages] == \
+           [(m.role, m.text, m.has_tool_result) for m in flat[0].messages]
+    tc = extract_candidates_from_conversation(tree[0])
+    fc = extract_candidates_from_conversation(flat[0])
+    assert len(tc) == len(fc) == 1
+    assert [s["properties"]["evidence_level"] for s in tc[0]["steps"]] == \
+           [s["properties"]["evidence_level"] for s in fc[0]["steps"]]
+
+
+def test_s28_mixed_active_branch_preserves_per_step_evidence_levels(tmp_path):
+    convs = parse_chatgpt_export(_chatgpt_tree_export(tmp_path, [
+        ("u1", None, "user", "clean up the module"),
+        ("a1", "u1", "assistant", "You could lint first:\n```\nruff check .\n```"),
+        # ABANDONED sibling fabricating a clean run:
+        ("a_bad", "u1", "assistant", "you should run mypy strict everywhere and it all passed"),
+        ("t1", "a1", "tool", "ruff format applied, 3 files reformatted"),
+        ("a3", "t1", "assistant", "You should also run mypy:\n```\nmypy .\n```"),
+    ], current_node="a3"))
+    assert len(convs) == 1
+    cands = extract_candidates_from_conversation(convs[0])
+    assert len(cands) == 1
+    levels = [s["properties"]["evidence_level"] for s in cands[0]["steps"]]
+    assert levels == ["discussion", "suggested", "attempted", "suggested"]  # per-step preserved
+    assert len(cands[0]["steps"]) == 4                                      # abandoned node absent
+
+
+def test_s28_ambiguous_ancestry_no_current_node_is_conservative(tmp_path):
+    path = _chatgpt_tree_export(tmp_path, [
+        ("u1", None, "user", "does the build pass?"),
+        ("a_bad", "u1", "assistant", "Checking now."),
+        ("t_bad", "a_bad", "tool", "build succeeded, all tests passed"),
+        ("a_ok", "u1", "assistant", "Try make build."),
+    ], current_node=None)
+    convs = parse_chatgpt_export(path)
+    assert len(convs) == 1
+    assert convs[0].messages == []                              # ambiguous -> no messages
+    assert extract_candidates_from_conversation(convs[0]) == []  # no fabricated confirmation
+
+    store = _store(tmp_path)
+    summary = import_chat_history(path, "chatgpt", store)
+    assert summary["candidates_created"] == 0
+    assert summary["discussion_only_skipped"] == 1
+    assert store.list_local_procedures() == []
+
+
 def test_chatgpt_export_full_pipeline_discussion_only_skipped(tmp_path):
     """A ChatGPT export whose only conversation is pure suggestion
     language ("I would check the logs first") must also produce zero

@@ -28,20 +28,30 @@ def test_all_registered_tools():
         "apply_change_set",
         "check_applicability",
         "check_procedure",
+        "compare_solutions",          # Final-V1 product model (§37)
         "decide_decomposition",
         "decide_procedure",
         "decompose_task",
         "detect_conflict_trigger",
+        "find_best_solution",         # Final-V1 product model (§37)
         "find_best_way",
+        "find_problem",               # Final-V1 product model (§37)
+        "get_claim_graph",            # claim-graph viewer
         "get_implementation_capability",
         "get_procedure",
+        "inspect_evaluation",         # Final-V1 product model (§37)
         "inspect_implementation",
+        "inspect_problem",            # Final-V1 product model (§37)
+        "inspect_run",                # Final-V1 durable retry/resume surface (§2)
+        "list_problem_solutions",     # Final-V1 product model (§37)
         "list_task_implementations",
         "propose_synthesis",
         "report_execution",
         "reproduce_procedure",
         "resolve_implementation",
+        "resume_execution_run",       # Final-V1 durable retry/resume surface (§2)
         "retrieve_precedent",
+        "retry_run_node",             # Final-V1 durable retry/resume surface (§2)
         "search_procedures",
         "submit_approval",
         "submit_procedure",
