@@ -117,8 +117,11 @@ async def test_public_problem_lookup_by_natural_language_goal(pool):
     scope = AccessScope.unrestricted()
     found = await pm.find_problem(pool, f"deduplicate flaky retry storms {tag}", scope=scope)
     assert problem["id"] in {p["id"] for p in found}
-    # A query sharing no lexeme with the problem must not match it.
-    unrelated = await pm.find_problem(pool, f"unrelated-{tag}-xyzzy-quokka", scope=scope)
+    # A query sharing no lexeme with the problem must not match it. Deliberately
+    # NOT reusing `tag` here -- it appears in the problem's own title, so a query
+    # built from it would share a lexeme and this "unrelated" case would be
+    # testing nothing.
+    unrelated = await pm.find_problem(pool, f"unrelated-{_tag()}-xyzzy-quokka", scope=scope)
     assert problem["id"] not in {p["id"] for p in unrelated}
 
 
@@ -212,7 +215,7 @@ async def test_solution_supports_all_three_target_types_with_no_copied_payload(p
     tag = _tag()
     problem = await pm.create_problem(pool, title=f"[pm-gold {tag}] multi-type solutions", proposer="userA")
 
-    proc_id, _ = await _make_procedure(pool, f"pm-gold-{tag}-proc")
+    proc_id, proc_row_id = await _make_procedure(pool, f"pm-gold-{tag}-proc")
     sol_proc = await pm.associate_solution(
         pool, problem_id=problem["id"], solution_type="procedure", target_id=proc_id,
     )
@@ -227,10 +230,19 @@ async def test_solution_supports_all_three_target_types_with_no_copied_payload(p
     )
     assert sol_task["target_table"] == "task_nodes"
 
+    # A real execution_plans row (procedure_id/version/row_id + content hashes
+    # are NOT NULL, FK-tied to the procedure version above) -- same minimal
+    # fixture shape tests/test_product_model_e2e.py::_run_executions already
+    # uses for this table, not a fabricated standalone row.
+    proc_version = await pool.fetchval(
+        "SELECT version FROM procedures WHERE id=$1", proc_row_id,
+    )
     plan_id = await pool.fetchval(
-        "INSERT INTO execution_plans (id, task_description, content_hash, scope_type) "
-        "VALUES ($1,$2,$3,'global') RETURNING id",
-        str(uuid7()), f"pm-gold-{tag} plan", f"ch-{uuid.uuid4().hex[:12]}",
+        "INSERT INTO execution_plans (id, procedure_id, procedure_version, procedure_row_id, "
+        " task_description, procedure_content_hash, content_hash, scope_type) "
+        "VALUES ($1,$2,$3,$4,$5,$6,$7,'global') RETURNING id",
+        str(uuid7()), proc_id, proc_version, proc_row_id,
+        f"pm-gold-{tag} plan", f"pch-{uuid.uuid4().hex[:12]}", f"ch-{uuid.uuid4().hex[:12]}",
     )
     graph_id = await pool.fetchval(
         "INSERT INTO task_graphs (id, execution_plan_id, graph_hash, nodes) "
@@ -418,7 +430,12 @@ async def test_small_n_perfect_solution_never_reaches_best_verified_through_the_
 @with_pool
 async def test_find_best_way_no_matching_problem(pool):
     tag = _tag()
-    result = await pm.find_best_way(pool, f"utterly-unmatched-goal-{tag}-quokka-zzy", scope=AccessScope.unrestricted())
+    # find_problem OR's every lexeme in the query (see its own docstring: "an NL
+    # goal is not a boolean AND query"), so a real dictionary word here risks
+    # matching SOME accumulated row in this shared, never-cleaned-up dev DB --
+    # deliberately using only invented non-words (plus the random tag) so this
+    # negative case can't collide with any other test's real problem titles.
+    result = await pm.find_best_way(pool, f"zzqvix-{tag}-fjwortk-plexnar", scope=AccessScope.unrestricted())
     assert result["result"] == "no matching problem"
     assert result["current_best"] == []
     assert result["matched_problem"] is None
