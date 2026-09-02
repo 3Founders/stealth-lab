@@ -190,7 +190,7 @@ update above — real current counts are 1981/252/0 and 254/0.)
 | Doc accuracy (migration count, stale paths, stale product framing) | 🟡 this pass fixed the MCP tool-count and REST-layer gaps in `README.md`/`commLLM.md`; not a full re-sweep |
 | **`check_procedure` / `WOULD_REFUSE` reachable through the MCP server** | ✅ closed — real tool, tested against the actual server (now one of 20 registered tools, see update at top) |
 | `docker-compose.yml` boots clean | ✅ **reported** by the infra lane (zero fixes needed) — status not independently re-checked this pass |
-| Migration chain verified on a disposable DB | 🟡 33 migration files present and read (up from 30); **not** re-run against a live DB this pass (no Postgres instance available) — the prior "30/30 applied" report is not re-verified for 31–33 |
+| Migration chain verified on a disposable DB | ✅ 33 migration files, re-run against a genuinely fresh throwaway `pgvector/pgvector:pg15` container — 33/33 applied, 0 pending, 0 checksum mismatches, 0 errors (engine-verified 2026-09-02) |
 | `bootstrap_demo.py` scripted two-phase story | ✅ **closed** — see below; this row was wrong in the 2026-08-27 entry |
 
 ## The one real gap right now (superseded — see 2026-09-01 update at top)
