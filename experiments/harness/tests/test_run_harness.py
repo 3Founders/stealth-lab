@@ -1,6 +1,7 @@
 import json
 
 import run_harness
+import scripted_arms
 from conftest import FIXTURES
 
 
@@ -51,6 +52,30 @@ class TestSyntheticSweep:
         assert rows["db-mig-001"]["C"]["reused_procedure_ids"] == [
             "migrate-postgres-v4"]
         assert rows["db-mig-001"]["C"]["resolved"] is True
+
+    def test_episode_schema_covers_every_baseline_vs_stealth_field(self):
+        """Task spec §18: the comparison needs task success, first-pass
+        success, tokens, model calls, tool calls, latency, cost, retries,
+        verification result, and files touched on every episode record.
+        Structural check, not a live-run assertion -- every field just
+        needs to be PRESENT with an honest (possibly zero/None) value on
+        these scripted arms; a real frontier adapter fills them in for
+        real without needing another schema change."""
+        required = {
+            "resolved",              # task success
+            "first_pass_success",
+            "tokens_in", "tokens_out",
+            "model_calls",
+            "tool_calls",
+            "latency_seconds",
+            "cost_usd",
+            "retries",
+            "verification_result",
+            "files_touched",
+        }
+        ep = scripted_arms._base_episode({"task_id": "t", "unseen": False}, "A")
+        missing = required - set(ep)
+        assert not missing, f"episode schema is missing required §18 fields: {missing}"
 
     def test_poisoned_gate_produces_false_reuse_row(self, tmp_path):
         out = tmp_path / "out.jsonl"

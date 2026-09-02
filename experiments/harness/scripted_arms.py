@@ -25,6 +25,19 @@ Episode record schema (what scoring.py consumes):
   tokens_in, tokens_out     — cost inputs (§40 "tokens"/"cost")
   tool_calls, latency_seconds, human_interventions   — §40 telemetry
   unseen_task               — copied from the fixture for the unseen slice
+  model_calls, cost_usd, verification_result, first_pass_success
+                            — additive (evaluation-suite Phase 8b, task spec
+                              §18): the remaining fields the baseline-vs-
+                              Stealth comparison needs that the scripted
+                              arms don't model. Always 0/0.0/None/None here
+                              since these arms are canned scripts, not real
+                              LLM calls with real spend or a real
+                              verification step -- kept honestly at their
+                              zero value rather than fabricated, present so
+                              a real frontier-agent adapter (which DOES make
+                              real calls, spend real money, and run a real
+                              verification step) has somewhere real to put
+                              them without another schema change.
 """
 from __future__ import annotations
 
@@ -78,6 +91,14 @@ def _base_episode(task: dict, arm: str) -> dict:
         # them without a schema change.
         "retries": 0,
         "files_touched": [],
+        # Additive (evaluation-suite Phase 8b, task spec §18): the four
+        # remaining fields the baseline-vs-Stealth comparison's schema
+        # needs. Always at their honest zero/None value for these scripted
+        # arms -- see the module docstring's note on why.
+        "model_calls": 0,
+        "cost_usd": 0.0,
+        "verification_result": None,
+        "first_pass_success": None,
     }
 
 

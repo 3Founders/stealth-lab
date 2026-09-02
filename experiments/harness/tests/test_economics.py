@@ -1,6 +1,7 @@
 """Unit tests for economics.py's pure functions (spec section 26).
 Synthetic inputs only -- no live calls, no real spend."""
 import economics
+import pytest
 
 
 def test_spend_log_cost_sums_only_cost_usd_and_ignores_failed_rows_correctly():
@@ -25,6 +26,19 @@ def test_per_task_stealth_overhead_total_sums_every_category():
         retrieval=0.01, storage=0.02, revalidation=0.03, execution_overhead=0.04,
     )
     assert overhead.total == 0.10
+
+
+def test_per_task_stealth_overhead_includes_the_hardened_candidates_new_cost_surfaces():
+    """Task spec §20: durable retry/resume and the product-model layer's
+    extra reads are two real recurring cost surfaces the hardened
+    Final-V1 candidate introduced -- proving they're labeled categories
+    included in .total, not silently absorbed into execution_overhead or
+    dropped."""
+    overhead = economics.PerTaskStealthOverhead(
+        retrieval=0.01, storage=0.02, revalidation=0.03, execution_overhead=0.04,
+        durable_retry_overhead=0.05, product_model_read_overhead=0.06,
+    )
+    assert overhead.total == pytest.approx(0.21)
 
 
 def test_evaluate_workload_repetitive_shows_positive_roi_and_a_real_break_even_point():

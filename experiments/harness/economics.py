@@ -49,17 +49,31 @@ class PerTaskStealthOverhead:
     """Recurring, per-task cost Stealth adds on top of baseline execution
     cost -- add PerTaskStealthOverhead.total to a baseline per-task cost
     to get stealth_cost_per_task for evaluate_workload(), when a caller
-    wants the categories broken out rather than pre-summed."""
+    wants the categories broken out rather than pre-summed.
+
+    durable_retry_overhead and product_model_read_overhead are additive
+    (evaluation-suite Phase 8b, task spec §20): the hardened Final-V1
+    candidate's two new recurring cost surfaces this model didn't have a
+    labeled slot for -- durable per-node retry/resume bookkeeping
+    (app/execution/durable_run.py) and the extra Problem/Benchmark/
+    Solution/Evaluation reads find_best_way's product-model path now does
+    (app/services/product_model.py) beyond what execution_overhead already
+    named. Labeled input fields only, same as every other category here --
+    no calculation logic changes, no real number computed or claimed.
+    """
 
     retrieval: float = 0.0
     storage: float = 0.0
     revalidation: float = 0.0
     execution_overhead: float = 0.0
+    durable_retry_overhead: float = 0.0
+    product_model_read_overhead: float = 0.0
 
     @property
     def total(self) -> float:
         return (self.retrieval + self.storage + self.revalidation
-                + self.execution_overhead)
+                + self.execution_overhead + self.durable_retry_overhead
+                + self.product_model_read_overhead)
 
 
 def spend_log_cost(spend_rows: list[dict]) -> float:
