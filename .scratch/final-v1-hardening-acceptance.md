@@ -110,7 +110,7 @@ Postgres 17.6, migrations 01–37 applied.
 | Integration / E2E vs real Postgres (Supabase) | **CLOSED (this wave's additions)** | `test_claim_graph_overview_e2e` + `_mcp_e2e` (37), `test_product_model_e2e` (§57, 1), `test_product_model_mcp_e2e` (1), `test_durable_run_e2e` (§58, 3). Hardening-file run: **112 passed / 1 failed→fixed (isolation) → re-run 1 passed**. |
 | Migration — fresh DB + existing-DB upgrade, no checksum drift | **PARTIALLY CLOSED** | Migrations 01–37 applied clean to a fresh Supabase project (checksum ledger, `002e6da` + earlier). An explicit "apply against a populated V1 DB then diff" test is **not** written; the checksum-immutability discipline (a mismatch is a hard error in `migrate.py`) is the standing guard. |
 | Security regression | **CLOSED** | §28 (10) + §29 (4) named regression tests, above. |
-| Full offline regression gate (§63) | **PARTIALLY CLOSED** | Run started (`pytest tests -q`, DATABASE_URL unset, ~2378 tests). Result to be pasted here on completion. Targeted slices this wave: 96–112 passed per slice, 0 unexpected failures. The 2 carried pre-existing reds noted in the audit (`test_ingestion_admin_endpoint_e2e`; the earlier suite-ordering pair) are unchanged by this wave and out of its scope. |
+| Full offline regression gate (§63) | **CLOSED** | `cd backend && python -m pytest tests -q` (DATABASE_URL unset) → **2099 passed, 283 skipped, 0 failed, 14 warnings** in 4m48s, exit 0 (2026-09-03). The 283 skips are the `*_e2e.py` / `test_schema_drift.py` files self-skipping without a DB, as designed. The pre-existing `test_ingestion_admin_endpoint_e2e` red (audit-noted, trace→claim path, not the corpus/product path) only manifests with a live DB and is out of this wave's scope. |
 | Performance sanity | **OPEN** — not exercised this wave. |
 
 ## DOCUMENTATION
@@ -133,7 +133,7 @@ Postgres 17.6, migrations 01–37 applied.
 | API / MCP | 5 | 0 | 0 |
 | Frontend | 0 | 0 | 3 |
 | WebMCP | 0 | 0 | 1 |
-| Tests | 3 | 2 (migration-upgrade test; full offline gate paste) | 1 (perf sanity) |
+| Tests | 4 | 1 (migration-upgrade test) | 1 (perf sanity) |
 | Documentation | 0 | 0 | 1 |
 
 **Both release-critical defects (§28, §29) are CLOSED and proven. Every mandatory E2E
