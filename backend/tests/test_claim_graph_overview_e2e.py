@@ -93,8 +93,23 @@ def test_claim_graph_overview_against_real_postgres():
             assert node_a["truth_state"] == "IN"
             assert node_a["status"] == "supported", node_a
 
-            rels = {(e["source"], e["target"], e["relation"]) for e in g["edges"]}
+            # Two edge KINDS coexist (get_claim_graph_overview docstring): a
+            # 'relation' edge carries `relation` (the custom_edge_type); a
+            # 'similarity' edge is a computed embedding-proximity hint and
+            # deliberately has NO `relation` key, only `weight`. Select the
+            # relation edges before reading `relation`, and check the
+            # similarity edges are well formed rather than crashing on them.
+            rels = {
+                (e["source"], e["target"], e["relation"])
+                for e in g["edges"] if e["kind"] == "relation"
+            }
             assert (b, a, "SUPPORTS") in rels
+            for e in g["edges"]:
+                assert e["kind"] in ("relation", "similarity"), e
+                if e["kind"] == "similarity":
+                    assert "relation" not in e and isinstance(e["weight"], float), e
+                else:
+                    assert isinstance(e["relation"], str) and e["relation"], e
             assert not any(e["target"] == d for e in g["edges"]), (
                 "an edge is only included when BOTH endpoints are in the node set"
             )
@@ -111,7 +126,8 @@ def test_claim_graph_overview_against_real_postgres():
             assert node_d["truth_state"] == "OUT"
             assert node_d["status"] == "retired", node_d
             assert (c, d, "SUPERSEDES") in {
-                (e["source"], e["target"], e["relation"]) for e in g2["edges"]
+                (e["source"], e["target"], e["relation"])
+                for e in g2["edges"] if e["kind"] == "relation"
             }
 
             # ---- with_status=False is a raw, statusless dump ----
