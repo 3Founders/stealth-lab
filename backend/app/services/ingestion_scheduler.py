@@ -1,24 +1,31 @@
 """
-Automatic background driver for the ingestion pipeline (closes the gap
-`POST /v1/admin/ingestion/process` left open: that endpoint made the pipeline
-reachable without a hand-run CLI script, but something still had to remember
-to call it -- curl, a cron job, a dashboard button. Nothing in the running
-app itself ever called it. This module is that caller.
+Automatic background driver for the learning pipeline: a single
+`asyncio.create_task` loop, started in `main.py`'s lifespan and cancelled
+on shutdown. No new dependency -- a `while True: sleep; sweep` loop is the
+same weight class as the in-process worker `ingestion_jobs.py` already
+runs.
 
-Deliberately the smallest thing that works: a single `asyncio.create_task`
-loop, started in `main.py`'s lifespan and cancelled on shutdown. No new
-dependency (APScheduler, Celery, a separate worker process) -- this codebase
-already runs one in-process worker for ingestion_jobs (see
-ingestion_jobs.py's own SKIP LOCKED comment), and a `while True: sleep;
-process` loop is the same weight class as that existing design, not a step
-up from it.
+TWO MODES (settings.ingestion_auto_mode):
 
-REUSES, DOES NOT DUPLICATE: every iteration calls
-`app.api.admin.process_ingestion()` -- the exact function
-`POST /v1/admin/ingestion/process` calls -- with `pool=` passed directly,
-the same "call the endpoint function with pool=pool" pattern this suite's
-own e2e tests already use (test_ingestion_admin_endpoint_e2e.py). No
-ingestion logic lives in this file.
+  "local"  -- P0-1, the V1 DEFAULT. Each tick runs
+              `app.local_agent.local_learning_sweep.run_local_learning_sweep()`:
+              read the local trace collector output
+              (.claude/traces/<session>.jsonl) and write PRIVATE candidates
+              into the workspace `LocalProcedureStore`. DB-FREE. A raw
+              local trace is never uploaded to the global server just
+              because auto-learning is enabled -- crossing to the shared
+              corpus stays the explicit `publish.py` path.
+
+  "global" -- the shared-substrate path. Each tick calls
+              `app.api.admin.process_ingestion()` (the exact function
+              `POST /v1/admin/ingestion/process` calls), driving
+              trace_events -> observations -> claims -> shared procedures.
+              For a deliberate shared/company deployment only; needs a DB.
+
+REUSES, DOES NOT DUPLICATE: neither mode reimplements extraction. "local"
+calls the same trace reader + `LocalProcedureStore` writer the one-shot
+bootstrap uses; "global" calls the same admin function the REST endpoint
+does.
 
 COST CONTROL: unlike the manual endpoint's promote_limit=0/extract_limit=0
 safe-by-default, this loop's whole purpose is to actually do bounded work
@@ -41,6 +48,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 from datetime import datetime, timezone
 from typing import Any, Optional
 
@@ -63,16 +71,24 @@ class IngestionSchedulerState:
         self,
         *,
         enabled: bool,
+        mode: str,
         interval_seconds: int,
         promote_limit: int,
         extract_limit: int,
         job_limit: int,
+        workspace: Optional[str] = None,
+        trace_dir: Optional[str] = None,
+        max_sessions: int = 5,
     ) -> None:
         self.enabled = enabled
+        self.mode = mode
         self.interval_seconds = interval_seconds
         self.promote_limit = promote_limit
         self.extract_limit = extract_limit
         self.job_limit = job_limit
+        self.workspace = workspace
+        self.trace_dir = trace_dir
+        self.max_sessions = max_sessions
 
         self.run_count = 0
         self.last_run_started_at: Optional[str] = None
@@ -84,7 +100,11 @@ class IngestionSchedulerState:
     def as_dict(self) -> dict[str, Any]:
         return {
             "enabled": self.enabled,
+            "mode": self.mode,
             "interval_seconds": self.interval_seconds,
+            "workspace": self.workspace,
+            "trace_dir": self.trace_dir,
+            "max_sessions": self.max_sessions,
             "promote_limit": self.promote_limit,
             "extract_limit": self.extract_limit,
             "job_limit": self.job_limit,
@@ -97,15 +117,39 @@ class IngestionSchedulerState:
         }
 
 
-async def _loop(app: FastAPI, state: IngestionSchedulerState) -> None:
-    # Import here, not at module top: avoids a circular import
-    # (admin.py -> ... -> this module would be created if this file were
-    # ever imported from admin.py itself; it currently isn't, but importing
-    # at call time keeps that direction free either way) and matches
-    # process_ingestion's own habit of importing its heavy dependencies
-    # inside the function body.
+async def _run_local_tick(state: IngestionSchedulerState) -> dict:
+    """One local-mode sweep: local traces -> PRIVATE LocalProcedureStore
+    candidates. DB-free. Imported here, not at module top, so a bare
+    `import app.services.ingestion_scheduler` never pulls the local_agent
+    tree in."""
+    from app.local_agent.local_learning_sweep import run_local_learning_sweep
+    from app.local_agent.local_store import LocalProcedureStore
+
+    workspace = state.workspace or os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd()
+    trace_dir = state.trace_dir or os.path.join(workspace, ".claude", "traces")
+    store = LocalProcedureStore(workspace)
+    return run_local_learning_sweep(
+        store, trace_dir,
+        max_sessions=state.max_sessions,
+        workspace_entity_id=os.path.abspath(workspace),
+    )
+
+
+async def _run_global_tick(app: FastAPI, state: IngestionSchedulerState) -> dict:
+    """One global-mode tick: the exact function POST
+    /v1/admin/ingestion/process calls. Needs app.state.pool."""
     from app.api.admin import process_ingestion
 
+    result = await process_ingestion(
+        promote_limit=state.promote_limit,
+        extract_limit=state.extract_limit,
+        job_limit=state.job_limit,
+        pool=app.state.pool,
+    )
+    return result.model_dump()
+
+
+async def _loop(app: FastAPI, state: IngestionSchedulerState) -> None:
     while True:
         try:
             await asyncio.sleep(state.interval_seconds)
@@ -118,13 +162,10 @@ async def _loop(app: FastAPI, state: IngestionSchedulerState) -> None:
         state.run_count += 1
         state.last_run_started_at = _now_iso()
         try:
-            result = await process_ingestion(
-                promote_limit=state.promote_limit,
-                extract_limit=state.extract_limit,
-                job_limit=state.job_limit,
-                pool=app.state.pool,
-            )
-            state.last_result = result.model_dump()
+            if state.mode == "global":
+                state.last_result = await _run_global_tick(app, state)
+            else:
+                state.last_result = await _run_local_tick(state)
             state.last_error = None
         except asyncio.CancelledError:
             raise
@@ -152,23 +193,27 @@ def start(app: FastAPI) -> Optional["asyncio.Task[None]"]:
 
     state = IngestionSchedulerState(
         enabled=settings.ingestion_auto_enabled,
+        mode=settings.ingestion_auto_mode,
         interval_seconds=settings.ingestion_auto_interval_seconds,
         promote_limit=settings.ingestion_auto_promote_limit,
         extract_limit=settings.ingestion_auto_extract_limit,
         job_limit=settings.ingestion_auto_job_limit,
+        workspace=settings.ingestion_auto_workspace,
+        trace_dir=settings.ingestion_auto_trace_dir,
+        max_sessions=settings.ingestion_auto_max_sessions,
     )
     app.state.ingestion_scheduler = state
     app.state.ingestion_scheduler_task = None
 
     if not state.enabled:
-        log.info("automatic ingestion loop disabled (INGESTION_AUTO_ENABLED=false)")
+        log.info("automatic learning loop disabled (INGESTION_AUTO_ENABLED=false)")
         return None
 
     task = asyncio.create_task(_loop(app, state))
     app.state.ingestion_scheduler_task = task
     log.info(
-        "automatic ingestion loop started: interval=%ss promote_limit=%s extract_limit=%s",
-        state.interval_seconds, state.promote_limit, state.extract_limit,
+        "automatic learning loop started: mode=%s interval=%ss max_sessions=%s",
+        state.mode, state.interval_seconds, state.max_sessions,
     )
     return task
 

@@ -240,19 +240,32 @@ class Settings(BaseSettings):
     default_tenant_id: str = "00000000-0000-0000-0000-000000000001"
 
     # --- Automatic ingestion loop (app/services/ingestion_scheduler.py) ---
-    # POST /v1/admin/ingestion/process closed the "no real caller at all"
-    # gap but stayed a manual trigger -- something still had to remember to
-    # curl it. This loop is the in-process scheduler that calls it on a
-    # timer so normal agent work enters the learning pipeline without a
-    # human remembering anything. Defaults are deliberately small and
-    # positive (NOT the manual endpoint's promote_limit=0/extract_limit=0):
-    # this IS the automatic path meant to actually do bounded work, but
-    # "bounded" is the operative word -- each promotion is one real
-    # embedding call and each extraction one real LLM call, so a bare app
-    # start never spends unboundedly. INGESTION_AUTO_ENABLED=false is the
-    # opt-out for tests/dev that must not do any automatic work at all.
+    # The in-process scheduler that turns normal agent work into procedure
+    # candidates on a timer, so nothing has to remember to trigger it.
+    #
+    # ingestion_auto_mode (V1 default "local"): where automatic learning
+    #   lands.
+    #     "local"  -- P0-1: read the local trace collector output
+    #                 (.claude/traces/<session>.jsonl) and write PRIVATE
+    #                 candidates into the workspace LocalProcedureStore.
+    #                 DB-free. A raw local trace is NEVER uploaded to the
+    #                 global server just because auto-learning is on;
+    #                 crossing to global stays the explicit publish path.
+    #     "global" -- the shared substrate path (POST
+    #                 /v1/admin/ingestion/process: trace_events ->
+    #                 observations -> claims -> shared procedures). For a
+    #                 deliberate shared/company deployment only; needs a DB.
+    # Defaults are small and positive so the automatic path does bounded
+    # real work; INGESTION_AUTO_ENABLED=false disables it entirely (tests,
+    # dev that must do no automatic work).
     ingestion_auto_enabled: bool = True
+    ingestion_auto_mode: str = "local"
     ingestion_auto_interval_seconds: int = 60
+    # local mode:
+    ingestion_auto_workspace: Optional[str] = None      # default: CLAUDE_PROJECT_DIR or cwd
+    ingestion_auto_trace_dir: Optional[str] = None       # default: <workspace>/.claude/traces
+    ingestion_auto_max_sessions: int = 5
+    # global mode:
     ingestion_auto_promote_limit: int = 5
     ingestion_auto_extract_limit: int = 5
     ingestion_auto_job_limit: int = 500

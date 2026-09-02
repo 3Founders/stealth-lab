@@ -20,6 +20,92 @@ are not the same thing yet:
 If you only read one doc, read `demo.md` — it's the shorter, current
 statement of what ships and what proves it.
 
+---
+
+## StealthLab V1 — what ships (frozen)
+
+V1 is a **verified _personal_ procedural memory** for coding agents, with an
+explicit path to a shared commons. The lifecycle a user actually experiences:
+
+```
+your existing work ─┐
+your agent's new work ─┼─▶ PRIVATE personal library ─▶ (you publish) ─▶ GLOBAL commons ─▶ another user reuses
+                     ─┘        (candidates, local)         explicit          (candidates)      (independent evidence)
+```
+
+**What do I install?** `pip install -e packaging/` gives the MCP server, the
+trace hook, and the status page. A Postgres 15 + `pgvector` instance
+(`pgvector/pgvector:pg15`) is needed for the *global* commons and the MCP
+server; your *private* library is a local SQLite file and needs neither.
+
+**How do I connect an agent?** Point it at the MCP server (stdio, or HTTP
+with `STEALTHLAB_MCP_TOKEN`). Multi-user installs set `OIDC_ISSUER` +
+`OIDC_AUDIENCE` and `DEPLOYMENT_MODE=shared`; the server refuses to boot in
+`shared` mode without OIDC so per-caller identity is never silently lost.
+
+**How do I bring in my existing work?** One command:
+
+```bash
+cd backend
+python scripts/bootstrap.py --repo-root /path/to/repo \
+  --claude-export ~/claude/conversations.json \
+  --chatgpt-export ~/chatgpt/conversations.json \
+  --traces-dir ~/.claude/projects/<project>
+```
+
+`--repo-root` processes the repo's procedural docs **and its real git
+commit history** (conservative fix→test / migration→code→test patterns,
+never one candidate per bare commit). Claude/ChatGPT exports and Claude
+Code transcripts converge into the **same** private library, deduplicated,
+with every source's provenance preserved. Chat evidence stays honest: a
+recommendation ("you could run pytest") is never upgraded to *executed* by
+an unrelated later "tests passed" — status is attached to the material it
+describes, per step.
+
+**Where does my private memory live?** `<workspace>/.stealthlab/local_procedures.db`
+(SQLite). Nothing in the bootstrap or the automatic learning path sends it
+anywhere.
+
+**How does ongoing learning happen?** The app runs an in-process learning
+loop (`INGESTION_AUTO_MODE=local`, the default). On a timer it reads new
+local trace transcripts and writes **private candidates** into that same
+SQLite library — bounded (a few sessions per tick), idempotent, no LLM call
+per event, failures visible in `GET /v1/admin/ingestion/auto-status`. A raw
+local trace is **never** uploaded to the global server just because
+automatic learning is on. (`INGESTION_AUTO_MODE=global` is the opt-in
+shared-substrate path for a company deployment.)
+
+**How does a procedure mature?** Every procedure is born a `candidate`.
+Real reuse records real outcomes; a **failure lowers capability, it does
+not raise it**; retrying the same context is not independent evidence.
+`verified` is reached only on genuine independent supporting evidence
+(≥ successes across distinct contexts, invariant #3 gate). Multiple
+compatible successful episodes can synthesize a **generalized** procedure
+with provenance preserved. When a relevant precondition or environment fact
+changes, the procedure goes `stale` and retrieval/applicability stop
+selecting it — with a cited reason, not a shrug. `UNKNOWN` in a
+local-applicability check fails closed.
+
+**How does global publishing work?** You explicitly publish a trusted
+private procedure. It is scrubbed and enters the global commons as a
+**fresh `candidate`** — the local verification count is **not** copied.
+
+**How does another user reuse it?** User B's own retrieval surfaces the
+global candidate; User B's own local applicability check runs; User B
+executes it in their own environment; the outcome becomes **independent**
+global evidence. User B **cannot** see User A's private git-derived,
+repo-derived, chat-derived, trace-derived, or unpublished material —
+tenant scoping (`app.tenant_id`, `scope_predicates()`) plus a
+row-level-security backstop (migration 29).
+
+### Not in V1 (deliberately post-V1)
+
+Production SLM / WASM execution runtimes · internet-scale ingestion · a
+marketplace or monetization · massive distributed scaling · a reputation
+economy beyond "execution evidence is the reputation signal".
+
+---
+
 ## What runs today
 
 A local-first MCP server exposing **20 tools** (verified 2026-09-01 against
@@ -90,22 +176,19 @@ fail to even collect and the whole run aborts before anything executes.
 
 ### Ingesting collected traces
 
-`stealthlab-trace-hook` above only writes collector files
-(`.claude/traces/*.jsonl`) — something still has to load them into Postgres.
-That's `backend/scripts/run_ingestion.py`:
+> **V1 note:** for normal use you do **not** run an ingestion script. The
+> app's in-process learning loop (`INGESTION_AUTO_MODE=local`, the default —
+> see the V1 section above) turns local trace transcripts into private
+> candidates automatically. The scripts below are the *global*/company
+> substrate path and the one-shot historical bootstrap.
 
-```bash
-cd backend
-python scripts/run_ingestion.py --once            # single pass, then exit
-python scripts/run_ingestion.py --interval 30      # loop every 30s
-```
-
-It's free (no model calls) and gets each trace event as far as `trace_events`
-and `observations`. It does not go further yet — episode assembly is
-bypassed entirely and the break is at observation → claim, so a fresh
-install's own prior work won't show up via `retrieve_precedent` from this
-script alone (see `demo.md`'s C2 entry-point note and §3 reuse-demonstration
-checklist item for the engine-verified measurement).
+`stealthlab-trace-hook` writes collector files (`.claude/traces/*.jsonl`).
+For a shared/company deployment (`INGESTION_AUTO_MODE=global`), the loop
+calls the same path `backend/scripts/run_ingestion.py` drives — trace event
+→ `trace_events` → `observations` → `claims` → shared `procedures` — via the
+job queue in `app/services/ingestion_jobs.py` (`enqueue_pending_claim_promotions`
+/ `enqueue_pending_procedure_extractions` / `process_pending_jobs`). Model
+calls (embeddings, extraction) are bounded and opt-in per the loop's caps.
 
 ## What it's becoming
 

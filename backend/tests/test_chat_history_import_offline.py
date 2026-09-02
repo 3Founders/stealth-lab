@@ -34,6 +34,71 @@ def _store(tmp_path) -> LocalProcedureStore:
     return LocalProcedureStore(db_path=str(tmp_path / "local_procedures.db"))
 
 
+def _conv(*messages) -> NormalizedConversation:
+    return NormalizedConversation(
+        source_type="claude", source_id="c", created_at=None, updated_at=None,
+        messages=list(messages),
+    )
+
+
+# ---------------------------------------------------------------------------
+# P0-3: an outcome must be attributable to a real command; a later success
+# never reaches back past a recommendation, and an unrelated success makes
+# no candidate. Same four cases the directive names, on the shipped path.
+# ---------------------------------------------------------------------------
+
+
+def test_p0_3_case1_recommendation_plus_unrelated_success_makes_no_candidate(tmp_path):
+    conv = _conv(
+        _msg("user", "how do I check the code?", index=0),
+        _msg("assistant", "You could run the tests:\n```\npytest -q\n```", index=1),
+        _msg("user", "unrelated: our nightly deploy pipeline tests passed today", index=2),
+    )
+    assert extract_candidates_from_conversation(conv) == []
+
+
+def test_p0_3_case2_command_with_matching_outcome_yields_candidate(tmp_path):
+    conv = _conv(
+        _msg("user", "the client keeps timing out", index=0),
+        _msg("assistant", "I added retries and ran it:\n```\npytest tests/test_client.py\n```", index=1),
+        _msg("user", "that worked, the tests pass now", index=2),
+    )
+    cands = extract_candidates_from_conversation(conv)
+    assert len(cands) == 1
+    step_levels = [s["properties"]["evidence_level"] for s in cands[0]["steps"]]
+    # the human's own confirmation, attributed to the real command, is what
+    # grounds the candidate -- it is NOT clamped to "discussion".
+    assert _rank(step_levels[-1]) >= _rank("completed")
+    assert cands[0]["evidence_refs"][0]["evidence_level"] in ("attempted", "completed", "verified")
+
+
+def test_p0_3_case3_discussion_only_yields_no_candidate(tmp_path):
+    conv = _conv(
+        _msg("user", "queue or cron for this?", index=0),
+        _msg("assistant", "Depends on latency needs; both are fine.", index=1),
+    )
+    assert extract_candidates_from_conversation(conv) == []
+
+
+def test_p0_3_case4_mixed_conversation_keeps_each_step_status(tmp_path):
+    conv = _conv(
+        _msg("assistant", "You could lint first:\n```\nruff check .\n```", index=0),   # recommend
+        _msg("assistant", "I ran the formatter:\n```\nruff format .\n```", index=1),   # command, unhedged
+        _msg("user", "that worked", index=2),                                          # outcome for #1
+        _msg("assistant", "You should also run mypy:\n```\nmypy .\n```", index=3),     # recommend
+    )
+    cands = extract_candidates_from_conversation(conv)
+    assert len(cands) == 1
+    levels = [s["properties"]["evidence_level"] for s in cands[0]["steps"]]
+    assert levels[0] == "suggested"                       # recommendation A, not upgraded
+    assert _rank(levels[2]) >= _rank("completed")         # outcome attributed to the real run
+    assert levels[3] == "suggested"                       # recommendation C, not upgraded
+
+
+def _rank(level: str) -> int:
+    return EVIDENCE_LEVELS.index(level)
+
+
 def _msg(role: str, text: str, *, index: int, has_tool_use=False, has_tool_result=False) -> NormalizedMessage:
     return NormalizedMessage(
         role=role, text=text, timestamp=f"2026-01-01T00:00:{index:02d}Z",

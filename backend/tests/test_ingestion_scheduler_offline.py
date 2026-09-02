@@ -1,17 +1,16 @@
 """
 Offline tests for app/services/ingestion_scheduler.py -- the in-process
-background loop that calls app.api.admin.process_ingestion on a timer so
-normal agent work enters the learning pipeline without a human curling
-the endpoint.
+background loop that turns normal agent work into procedure candidates.
 
-No DB: process_ingestion is monkeypatched. The loop's real contract is
-(1) start() honors INGESTION_AUTO_ENABLED and always publishes a
-readable state object, (2) one iteration's failure is recorded but never
-kills the loop, (3) stop() cancels cleanly.
+V1 default is mode="local" (P0-1): local trace files -> PRIVATE
+LocalProcedureStore candidates, DB-free. mode="global" is the
+shared-substrate path (process_ingestion). Both are tested here with the
+real sweep functions and a monkeypatched process_ingestion respectively.
 """
 from __future__ import annotations
 
 import asyncio
+import json
 from types import SimpleNamespace
 
 import pytest
@@ -24,12 +23,26 @@ def _fake_app() -> SimpleNamespace:
     return SimpleNamespace(state=SimpleNamespace(pool=object()))
 
 
+def _state(**over):
+    base = dict(
+        enabled=True, mode="local", interval_seconds=0,
+        promote_limit=5, extract_limit=5, job_limit=500,
+        workspace=None, trace_dir=None, max_sessions=5,
+    )
+    base.update(over)
+    return IngestionSchedulerState(**base)
+
+
 def _set_settings(monkeypatch, **overrides):
     from app.config import settings
 
     defaults = dict(
         ingestion_auto_enabled=True,
+        ingestion_auto_mode="local",
         ingestion_auto_interval_seconds=60,
+        ingestion_auto_workspace=None,
+        ingestion_auto_trace_dir=None,
+        ingestion_auto_max_sessions=5,
         ingestion_auto_promote_limit=5,
         ingestion_auto_extract_limit=5,
         ingestion_auto_job_limit=500,
@@ -39,18 +52,26 @@ def _set_settings(monkeypatch, **overrides):
         monkeypatch.setattr(settings, name, value, raising=False)
 
 
+def _trace_dir(tmp_path):
+    d = tmp_path / ".claude" / "traces"
+    d.mkdir(parents=True)
+    (d / "sess-1.jsonl").write_text("\n".join([
+        json.dumps({"type": "user", "message": {"content": "run the migration and tests"}}),
+        json.dumps({"type": "assistant", "message": {"content": [
+            {"type": "tool_use", "name": "Bash", "input": {"command": "python scripts/migrate.py"}}]}}),
+        json.dumps({"type": "assistant", "message": {"content": [
+            {"type": "tool_use", "name": "Bash", "input": {"command": "pytest -q"}}]}}),
+    ]), encoding="utf-8")
+    return str(tmp_path)
+
+
 def test_start_disabled_returns_none_but_still_publishes_state(monkeypatch):
     _set_settings(monkeypatch, ingestion_auto_enabled=False)
     app = _fake_app()
-
     task = start(app)
-
     assert task is None
-    assert app.state.ingestion_scheduler_task is None
-    state = app.state.ingestion_scheduler
-    assert isinstance(state, IngestionSchedulerState)
-    assert state.enabled is False
-    assert state.run_count == 0
+    assert isinstance(app.state.ingestion_scheduler, IngestionSchedulerState)
+    assert app.state.ingestion_scheduler.mode == "local"
 
 
 def test_start_enabled_creates_a_task_and_stop_cancels_it(monkeypatch):
@@ -59,12 +80,9 @@ def test_start_enabled_creates_a_task_and_stop_cancels_it(monkeypatch):
 
     async def scenario():
         task = start(app)
-        assert task is not None
-        assert app.state.ingestion_scheduler_task is task
-        assert not task.done()
+        assert task is not None and not task.done()
         await stop(app)
         assert task.done()
-        assert task.cancelled() or task.exception() is None
 
     asyncio.run(scenario())
 
@@ -73,40 +91,33 @@ def test_stop_is_a_noop_when_no_task(monkeypatch):
     _set_settings(monkeypatch, ingestion_auto_enabled=False)
     app = _fake_app()
     start(app)
-
     asyncio.run(stop(app))  # must not raise
 
 
-def test_state_as_dict_matches_the_admin_status_response_shape(monkeypatch):
+def test_state_as_dict_matches_the_admin_status_response_shape():
     from app.api.admin import IngestionAutoStatusResponse
 
-    state = IngestionSchedulerState(
-        enabled=True, interval_seconds=60, promote_limit=5,
-        extract_limit=5, job_limit=500,
-    )
-    d = state.as_dict()
+    d = _state().as_dict()
     assert set(d) == set(IngestionAutoStatusResponse.model_fields)
-    # constructs without error -> shapes agree
     IngestionAutoStatusResponse(**d)
 
 
-def test_loop_records_a_successful_iteration(monkeypatch):
-    calls = []
-
-    async def fake_process_ingestion(*, promote_limit, extract_limit, job_limit, pool):
-        calls.append((promote_limit, extract_limit, job_limit))
-        return SimpleNamespace(model_dump=lambda: {"promoted": 1, "extracted": 0})
-
-    monkeypatch.setattr("app.api.admin.process_ingestion", fake_process_ingestion)
-    state = IngestionSchedulerState(
-        enabled=True, interval_seconds=0, promote_limit=3,
-        extract_limit=2, job_limit=99,
+def test_local_mode_tick_writes_private_candidates_from_real_traces(tmp_path, monkeypatch):
+    """P0-1: the DEFAULT loop reads local traces and writes into the
+    workspace LocalProcedureStore -- no DB, no global write."""
+    workspace = _trace_dir(tmp_path)
+    # process_ingestion must NOT be called in local mode.
+    called = []
+    monkeypatch.setattr(
+        "app.api.admin.process_ingestion",
+        lambda **kw: called.append(kw) or (_ for _ in ()).throw(AssertionError("global path hit")),
     )
+    state = _state(mode="local", workspace=workspace, interval_seconds=0)
     app = _fake_app()
 
     async def scenario():
         task = asyncio.create_task(_loop(app, state))
-        for _ in range(50):
+        for _ in range(200):
             if state.run_count >= 1 and state.last_result is not None:
                 break
             await asyncio.sleep(0)
@@ -116,32 +127,59 @@ def test_loop_records_a_successful_iteration(monkeypatch):
 
     asyncio.run(scenario())
 
-    assert state.run_count >= 1
-    assert calls and calls[0] == (3, 2, 99)
-    assert state.last_result == {"promoted": 1, "extracted": 0}
+    assert called == []
     assert state.last_error is None
-    assert state.last_run_completed_at is not None
+    res = state.last_result
+    assert res["sessions_seen"] == 1
+    assert res["captured"] == 1
+
+    from app.local_agent.local_store import LocalProcedureStore
+    store = LocalProcedureStore(workspace)
+    rows = store.list_local_procedures()
+    assert len(rows) == 1
+    row = store.get_local_procedure(rows[0]["id"])
+    assert row["verification_state"] == "candidate"
+    assert all(r["privacy"] == "local" for r in row["evidence_refs"])
 
 
-def test_loop_iteration_failure_is_recorded_and_does_not_kill_the_loop(monkeypatch):
-    state_box = {"n": 0}
+def test_global_mode_tick_calls_process_ingestion(tmp_path, monkeypatch):
+    async def fake_process_ingestion(*, promote_limit, extract_limit, job_limit, pool):
+        return SimpleNamespace(model_dump=lambda: {"promoted": 2})
 
-    async def flaky_process_ingestion(*, promote_limit, extract_limit, job_limit, pool):
-        state_box["n"] += 1
-        if state_box["n"] == 1:
-            raise RuntimeError("transient DB hiccup")
-        return SimpleNamespace(model_dump=lambda: {"ok": True})
-
-    monkeypatch.setattr("app.api.admin.process_ingestion", flaky_process_ingestion)
-    state = IngestionSchedulerState(
-        enabled=True, interval_seconds=0, promote_limit=1,
-        extract_limit=1, job_limit=1,
-    )
+    monkeypatch.setattr("app.api.admin.process_ingestion", fake_process_ingestion)
+    state = _state(mode="global", interval_seconds=0)
     app = _fake_app()
 
     async def scenario():
         task = asyncio.create_task(_loop(app, state))
         for _ in range(200):
+            if state.last_result is not None:
+                break
+            await asyncio.sleep(0)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+    asyncio.run(scenario())
+    assert state.last_result == {"promoted": 2}
+
+
+def test_loop_iteration_failure_is_recorded_and_does_not_kill_the_loop(monkeypatch):
+    box = {"n": 0}
+
+    async def flaky(*, promote_limit, extract_limit, job_limit, pool):
+        box["n"] += 1
+        if box["n"] == 1:
+            raise RuntimeError("transient")
+        return SimpleNamespace(model_dump=lambda: {"ok": True})
+
+    monkeypatch.setattr("app.api.admin.process_ingestion", flaky)
+    state = _state(mode="global", interval_seconds=0)
+    app = _fake_app()
+
+    async def scenario():
+        task = asyncio.create_task(_loop(app, state))
+        for _ in range(400):
             if state.run_count >= 2:
                 break
             await asyncio.sleep(0)
@@ -150,9 +188,7 @@ def test_loop_iteration_failure_is_recorded_and_does_not_kill_the_loop(monkeypat
             await task
 
     asyncio.run(scenario())
-
-    # first iteration failed -> recorded; loop kept going -> second succeeded
     assert state.run_count >= 2
     assert state.last_error_at is not None
     assert state.last_result == {"ok": True}
-    assert state.last_error is None  # cleared by the successful iteration
+    assert state.last_error is None

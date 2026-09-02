@@ -349,6 +349,49 @@ _SUGGESTION_PATTERNS = [
 ]
 
 
+_FENCED_BLOCK_RE = re.compile(r"```[a-zA-Z0-9_+-]*\n.*?```", re.DOTALL)
+
+
+def _has_command_signal(msg: NormalizedMessage) -> bool:
+    """This message shows a concrete command: a real tool call, a tool
+    result, or a fenced code block. Prose alone is never a command."""
+    return bool(
+        msg.has_tool_use or msg.has_tool_result
+        or _FENCED_BLOCK_RE.search(msg.text or "")
+    )
+
+
+def _attributed_levels(
+    conv: NormalizedConversation, levels: list[str]
+) -> list[str]:
+    """P0-3: an outcome ("attempted"/"completed"/"verified") only keeps
+    that level when it is attributable to a real command in the SAME
+    message, or in an earlier message that was NOT itself a hedge
+    ("suggested"). A bare "tests passed" sentence with no command it can
+    belong to -- or one that follows only "you could run ..." -- is about
+    something else and is clamped to "discussion".
+
+    A later success sentence therefore cannot reach back past a
+    recommendation to upgrade it, and an unrelated success elsewhere in
+    the conversation creates no candidate on its own.
+    """
+    out: list[str] = []
+    # None = no command seen yet; True = last command-bearing message was
+    # hedged; False = last command-bearing message was a real, unhedged use.
+    last_cmd_hedged: Optional[bool] = None
+    for msg, level in zip(conv.messages, levels):
+        has_cmd = _has_command_signal(msg)
+        hedged_here = any(p.search(msg.text or "") for p in _SUGGESTION_PATTERNS)
+        if _LEVEL_RANK[level] >= _LEVEL_RANK["attempted"]:
+            attributable = has_cmd or last_cmd_hedged is False
+            out.append(level if attributable else "discussion")
+        else:
+            out.append(level)
+        if has_cmd:
+            last_cmd_hedged = hedged_here
+    return out
+
+
 def classify_message_evidence(msg: NormalizedMessage) -> str:
     """Classify ONE message's own evidence strength, conservatively.
     Returns one of `EVIDENCE_LEVELS`. Defaults to "discussion" whenever
@@ -446,7 +489,12 @@ def extract_candidates_from_conversation(conv: NormalizedConversation) -> list[d
     if not conv.messages:
         return []
 
-    levels = [classify_message_evidence(m) for m in conv.messages]
+    raw_levels = [classify_message_evidence(m) for m in conv.messages]
+    # P0-3: clamp any outcome that no real command in this conversation
+    # can be attributed to -- an unrelated "tests passed" must not create
+    # a candidate, and a later success must not reach back past a
+    # recommendation.
+    levels = _attributed_levels(conv, raw_levels)
     max_level = max(levels, key=lambda level: _LEVEL_RANK[level])
     if _LEVEL_RANK[max_level] < _MIN_CANDIDATE_LEVEL:
         return []

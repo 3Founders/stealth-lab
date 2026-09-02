@@ -228,7 +228,11 @@ async def process_ingestion(
 
 class IngestionAutoStatusResponse(BaseModel):
     enabled: bool
+    mode: str
     interval_seconds: int
+    workspace: Optional[str] = None
+    trace_dir: Optional[str] = None
+    max_sessions: int
     promote_limit: int
     extract_limit: int
     job_limit: int

@@ -122,13 +122,24 @@ class HistoricalEpisode:
 
     def evidence_ref(self) -> dict:
         """The provenance record stored on the local row (§6: source type,
-        identifier, location, timestamp, privacy level all survive)."""
+        identifier, location, timestamp, privacy level all survive).
+
+        `step_statuses` carries the PER-STEP epistemic status (directive
+        P0-3 / spec §"mixed conversation"): a conversation with a
+        recommendation, an execution, and another recommendation persists
+        all three distinctly here -- the episode-level `evidence_status`
+        is only the strongest signal present, never a flattening of the
+        weaker ones."""
         return {
             "source_type": self.source_type,
             "source_id": self.source_id,
             "source_location": self.source_location,
             "timestamp": self.timestamp,
             "evidence_status": self.evidence_status,
+            "step_statuses": [
+                s.get("properties", {}).get("evidence_status", EVIDENCE_RECOMMENDED)
+                for s in self.steps
+            ],
             "privacy": "local",
         }
 
@@ -142,7 +153,8 @@ class HistoricalEpisode:
 def _classify_chat_text(text: str) -> tuple[str, list[str]]:
     """One chat message -> (its strongest evidence signal, concrete command
     blocks). Recommendation language never upgrades a block to executed;
-    outcome language only upgrades blocks that actually exist."""
+    outcome language only upgrades blocks that actually exist IN THE SAME
+    MESSAGE."""
     blocks = [b.strip() for b in _FENCED_BLOCK_RE.findall(text) if b.strip()]
     executed = bool(_EXECUTED_RE.search(text))
     recommended = bool(_RECOMMENDATION_RE.search(text))
@@ -153,6 +165,69 @@ def _classify_chat_text(text: str) -> tuple[str, list[str]]:
     else:
         status = EVIDENCE_DISCUSSION
     return status, blocks
+
+
+def _steps_from_message_texts(texts: list[str]) -> tuple[list[dict], str]:
+    """Shared conversation classifier for both chat exports (directive
+    P0-3 / spec "recommendation != execution").
+
+    An outcome marker upgrades a command block to `executed` ONLY when it
+    is:
+      - in the SAME message as the block (handled by _classify_chat_text), or
+      - in a message that is PURELY an outcome confirmation (an executed
+        marker, no new command block, no recommendation language) AND
+        directly follows the message that produced the block, AND that
+        block-producing message carried no recommendation language.
+
+    A later "it passed" therefore cannot reach back past a recommendation
+    ("you could run ...") to upgrade it, and an unrelated success sentence
+    elsewhere in the conversation upgrades nothing. The episode's own
+    `evidence_status` is then just the strongest per-step status present --
+    never a conversation-wide OR over every message.
+    """
+    steps: list[dict] = []
+    # indices into `steps` contributed by the most recent block-bearing
+    # message, and whether that message hedged with recommendation language.
+    pending_idx: list[int] = []
+    pending_had_reco = False
+    for i, text in enumerate(texts):
+        status, blocks = _classify_chat_text(text)
+        if blocks:
+            new_idx: list[int] = []
+            for j, block in enumerate(blocks):
+                command = block.splitlines()[0].strip()
+                steps.append({
+                    "order": len(steps),
+                    "goal": command,
+                    "properties": {
+                        "command": command,
+                        "evidence_status": status,
+                        "source_message_index": i,
+                        "source_block_index": j,
+                    },
+                })
+                new_idx.append(len(steps) - 1)
+            pending_idx = new_idx
+            pending_had_reco = bool(_RECOMMENDATION_RE.search(text))
+            continue
+        # No block. A pure outcome-confirmation message may upgrade the
+        # immediately preceding block-bearing message's steps -- once.
+        if (
+            pending_idx
+            and not pending_had_reco
+            and _EXECUTED_RE.search(text)
+            and not _RECOMMENDATION_RE.search(text)
+        ):
+            for k in pending_idx:
+                steps[k]["properties"]["evidence_status"] = EVIDENCE_EXECUTED
+            pending_idx = []
+
+    episode_status = (
+        EVIDENCE_EXECUTED
+        if any(s["properties"]["evidence_status"] == EVIDENCE_EXECUTED for s in steps)
+        else EVIDENCE_RECOMMENDED
+    )
+    return steps, episode_status
 
 
 def _goal_from(text: str, fallback: str, limit: int = 120) -> str:
@@ -174,9 +249,8 @@ def parse_claude_export(path: str) -> list[HistoricalEpisode]:
         conv_id = conv.get("uuid") or conv.get("id") or "unknown"
         title = conv.get("name") or conv.get("title") or "untitled conversation"
         messages = conv.get("chat_messages") or []
-        steps: list[dict] = []
-        any_executed_marker = False
-        for i, msg in enumerate(messages):
+        texts: list[str] = []
+        for msg in messages:
             text = msg.get("text") or ""
             if not text:
                 content = msg.get("content")
@@ -184,32 +258,10 @@ def parse_claude_export(path: str) -> list[HistoricalEpisode]:
                     text = "\n".join(
                         b.get("text", "") for b in content if isinstance(b, dict)
                     )
-            if _EXECUTED_RE.search(text):
-                any_executed_marker = True  # outcome language anywhere in the conversation
-            status, blocks = _classify_chat_text(text)
-            if status == EVIDENCE_DISCUSSION:
-                continue
-            for j, block in enumerate(blocks):
-                # Keep the FIRST line (the command itself); never fold the
-                # whole block of prose into the procedure step.
-                command = block.splitlines()[0].strip()
-                steps.append({
-                    "order": len(steps),
-                    "goal": command,
-                    "properties": {
-                        "command": command,
-                        "evidence_status": status,
-                        "source_message_index": i,
-                        "source_block_index": j,
-                    },
-                })
+            texts.append(text)
+        steps, evidence_status = _steps_from_message_texts(texts)
         if not steps:
             continue  # discussion-only conversation: skipped, not fabricated
-        # Conversation-level outcome language upgrades grounded steps to
-        # executed; recommendation language anywhere does NOT (the
-        # _classify_chat_text per-message rule already kept hypotheticals
-        # from becoming steps at all when they carry no concrete block).
-        evidence_status = EVIDENCE_EXECUTED if any_executed_marker else EVIDENCE_RECOMMENDED
         episodes.append(HistoricalEpisode(
             source_type="claude_chat",
             source_id=str(conv_id),
@@ -253,24 +305,9 @@ def parse_chatgpt_export(path: str) -> list[HistoricalEpisode]:
                     msg.get("create_time") or 0, msg.get("id") or "", text,
                 ))
         messages.sort(key=lambda m: m[0])
-        steps: list[dict] = []
-        any_executed_marker = any(_EXECUTED_RE.search(text) for _t, _m, text in messages)
-        for i, (_t, msg_id, text) in enumerate(messages):
-            status, blocks = _classify_chat_text(text)
-            if status == EVIDENCE_DISCUSSION:
-                continue
-            for j, block in enumerate(blocks):
-                command = block.splitlines()[0].strip()
-                steps.append({
-                    "order": len(steps),
-                    "goal": command,
-                    "properties": {
-                        "command": command,
-                        "evidence_status": status,
-                        "source_message_id": msg_id or i,
-                        "source_block_index": j,
-                    },
-                })
+        steps, evidence_status = _steps_from_message_texts(
+            [text for _t, _m, text in messages]
+        )
         if not steps:
             continue
         episodes.append(HistoricalEpisode(
@@ -279,7 +316,7 @@ def parse_chatgpt_export(path: str) -> list[HistoricalEpisode]:
             source_location=f"conversations.json#{conv_id}",
             goal=_goal_from(title, "chatgpt conversation"),
             steps=steps,
-            evidence_status=EVIDENCE_EXECUTED if any_executed_marker else EVIDENCE_RECOMMENDED,
+            evidence_status=evidence_status,
             timestamp=str(conv.get("create_time")) if conv.get("create_time") else None,
             session_id=str(conv_id),
         ))
@@ -399,73 +436,91 @@ def bootstrap_repository(repo_root: str) -> list[HistoricalEpisode]:
     return episodes
 
 
+def parse_claude_code_trace_file(fpath: str) -> Optional[HistoricalEpisode]:
+    """One Claude Code session transcript (`*.jsonl`) -> at most one
+    HistoricalEpisode. Steps are one per real tool invocation the user's
+    own runtime actually made -- OBSERVED commands, so evidence_status is
+    `executed` (the strongest historical source). Returns None for a
+    discussion-only session, an unreadable file, or one with no real
+    tool_use. Shared by the one-shot bootstrap and the ongoing
+    automatic-learning sweep so both read a trace identically."""
+    fname = os.path.basename(fpath)
+    steps: list[dict] = []
+    first_goal: Optional[str] = None
+    try:
+        with open(fpath, "r", encoding="utf-8") as f:
+            for line in f:
+                # The first real user turn is the session's goal -- checked
+                # BEFORE the tool_use filter, since the goal line itself
+                # carries no tool_use (this was previously dead code).
+                if first_goal is None and '"type": "user"' in line and '"content"' in line:
+                    try:
+                        rec = json.loads(line)
+                    except json.JSONDecodeError:
+                        rec = {}
+                    if rec.get("type") == "user":
+                        text = (rec.get("message") or {}).get("content")
+                        if isinstance(text, str) and text.strip():
+                            first_goal = _goal_from(text, "agent session")
+                if "tool_use" not in line:
+                    continue
+                try:
+                    record = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                message = record.get("message") or {}
+                content = message.get("content")
+                if not isinstance(content, list):
+                    continue
+                for block in content:
+                    if not isinstance(block, dict) or block.get("type") != "tool_use":
+                        continue
+                    tool_input = block.get("input") or {}
+                    command = next(
+                        (tool_input[k] for k in ("command", "cmd")
+                         if isinstance(tool_input.get(k), str)),
+                        None,
+                    )
+                    if not command:
+                        continue
+                    first_line = command.splitlines()[0].strip()
+                    steps.append({
+                        "order": len(steps),
+                        "goal": first_line,
+                        "properties": {
+                            "command": first_line,
+                            "tool": block.get("name"),
+                            "evidence_status": EVIDENCE_EXECUTED,
+                        },
+                    })
+    except OSError:
+        return None
+    if not steps:
+        return None
+    return HistoricalEpisode(
+        source_type="claude_code_trace",
+        source_id=fname,
+        source_location=f"{fname}#tool_use-steps",
+        goal=first_goal or f"agent session {fname}",
+        steps=steps,
+        evidence_status=EVIDENCE_EXECUTED,
+        session_id=fname[:-len(".jsonl")] if fname.endswith(".jsonl") else fname,
+    )
+
+
 def bootstrap_claude_code_traces(trace_dir: str) -> list[HistoricalEpisode]:
-    """Claude Code session transcripts (`~/.claude/projects/**.jsonl`):
-    one episode per session that contains real tool_use activity, steps
-    one per real tool invocation IN the user's own material -- these are
-    OBSERVED commands from a real agent runtime, so their evidence status
-    is `executed` (the strongest historical source). Discussion-only
-    sessions yield nothing."""
+    """Every Claude Code session transcript under `trace_dir`, via
+    parse_claude_code_trace_file(). Discussion-only sessions yield
+    nothing."""
     if not os.path.isdir(trace_dir):
         return []
     episodes: list[HistoricalEpisode] = []
     for fname in sorted(os.listdir(trace_dir)):
         if not fname.endswith(".jsonl"):
             continue
-        fpath = os.path.join(trace_dir, fname)
-        steps: list[dict] = []
-        first_goal: Optional[str] = None
-        try:
-            with open(fpath, "r", encoding="utf-8") as f:
-                for line in f:
-                    if "tool_use" not in line:
-                        continue
-                    try:
-                        record = json.loads(line)
-                    except json.JSONDecodeError:
-                        continue
-                    message = record.get("message") or {}
-                    if first_goal is None and record.get("type") == "user":
-                        text = message.get("content")
-                        if isinstance(text, str) and text.strip():
-                            first_goal = _goal_from(text, "agent session")
-                    content = message.get("content")
-                    if not isinstance(content, list):
-                        continue
-                    for block in content:
-                        if not isinstance(block, dict) or block.get("type") != "tool_use":
-                            continue
-                        tool_input = block.get("input") or {}
-                        command = next(
-                            (tool_input[k] for k in ("command", "cmd")
-                             if isinstance(tool_input.get(k), str)),
-                            None,
-                        )
-                        if not command:
-                            continue
-                        first_line = command.splitlines()[0].strip()
-                        steps.append({
-                            "order": len(steps),
-                            "goal": first_line,
-                            "properties": {
-                                "command": first_line,
-                                "tool": block.get("name"),
-                                "evidence_status": EVIDENCE_EXECUTED,
-                            },
-                        })
-        except OSError:
-            continue
-        if not steps:
-            continue
-        episodes.append(HistoricalEpisode(
-            source_type="claude_code_trace",
-            source_id=fname,
-            source_location=f"{fname}#tool_use-steps",
-            goal=first_goal or f"agent session {fname}",
-            steps=steps,
-            evidence_status=EVIDENCE_EXECUTED,
-            session_id=fname[:-len(".jsonl")],
-        ))
+        ep = parse_claude_code_trace_file(os.path.join(trace_dir, fname))
+        if ep is not None:
+            episodes.append(ep)
     return episodes
 
 
@@ -568,6 +623,27 @@ def run_bootstrap(
         episodes.extend(bootstrap_claude_code_traces(claude_traces_dir))
 
     summary = {"episodes": len(episodes), "captured": 0, "merged": 0, "skipped": 0, "ids": []}
+
+    # P0-2: --repo processes repo procedural docs (bootstrap_repository
+    # above) AND real git commit history, in this one call, converging
+    # into the SAME LocalProcedureStore. Git candidates are conservative
+    # cross-commit workflow patterns (never one-per-bare-commit),
+    # provenance 'git_history', evidence_status 'recommended' -- a commit
+    # proves a diff landed, never that a test passed. DB-free.
+    if repo_root:
+        from app.local_agent.git_history_bootstrap import bootstrap_git_history
+
+        # bootstrap_git_history takes the same optional async embed
+        # callable and manages its own event loop, exactly as this
+        # function does for HistoricalEpisode embeddings above.
+        git = bootstrap_git_history(
+            store, repo_root, embed=embed,
+            workspace_entity_id=workspace_entity_id,
+        )
+        summary["git"] = git
+        summary["captured"] += git.get("captured", 0)
+        summary["merged"] += git.get("merged", 0)
+        summary["ids"].extend(git.get("ids", []))
     loop: Optional[Any] = None
     for episode in episodes:
         embedding: Optional[list[float]] = None

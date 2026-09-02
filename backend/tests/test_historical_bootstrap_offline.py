@@ -20,6 +20,7 @@ from app.local_agent.historical_bootstrap import (
     EVIDENCE_RECOMMENDED,
     PROVENANCE,
     HistoricalEpisode,
+    _steps_from_message_texts,
     bootstrap_claude_code_traces,
     bootstrap_repository,
     converge_episode,
@@ -180,6 +181,112 @@ def test_trace_bootstrap_only_records_real_tool_invocations(tmp_path):
 
 
 # ---------------------------------------------------------------------------
+# P0-3: evidence status stays attached to the material it describes.
+# One late "it passed" must never upgrade an earlier recommendation.
+# Run every case through BOTH export formats.
+# ---------------------------------------------------------------------------
+
+
+def _claude_file(tmp_path, name, msgs):
+    """msgs: [(role, text), ...] -> a one-conversation Claude export file."""
+    path = tmp_path / f"{name}.json"
+    path.write_text(json.dumps([{
+        "uuid": name, "name": name,
+        "chat_messages": [{"sender": r, "text": t} for r, t in msgs],
+    }]), encoding="utf-8")
+    return str(path)
+
+
+def _chatgpt_file(tmp_path, name, msgs):
+    mapping, t = {}, 1754000000
+    for i, (role, text) in enumerate(msgs):
+        mapping[f"n{i}"] = {"message": {
+            "author": {"role": "user" if role == "human" else "assistant"},
+            "id": f"m{i}", "create_time": t + i, "content": {"parts": [text]},
+        }}
+    path = tmp_path / f"{name}.json"
+    path.write_text(json.dumps([{"uuid": name, "title": name, "mapping": mapping}]),
+                    encoding="utf-8")
+    return str(path)
+
+
+_PARSERS = [
+    pytest.param(parse_claude_export, _claude_file, id="claude"),
+    pytest.param(parse_chatgpt_export, _chatgpt_file, id="chatgpt"),
+]
+
+
+@pytest.mark.parametrize("parse, make", _PARSERS)
+def test_p0_3_case1_recommendation_plus_unrelated_later_success_is_not_upgraded(
+    tmp_path, parse, make
+):
+    eps = parse(make(tmp_path, "c1", [
+        ("assistant", "You could run the test suite:\n```\npytest -q\n```"),
+        ("human", "thanks"),
+        ("assistant", "By the way, the deploy pipeline ran successfully and its tests passed."),
+    ]))
+    assert len(eps) == 1
+    ep = eps[0]
+    assert ep.evidence_status == EVIDENCE_RECOMMENDED
+    assert [s["properties"]["evidence_status"] for s in ep.steps] == [EVIDENCE_RECOMMENDED]
+
+
+@pytest.mark.parametrize("parse, make", _PARSERS)
+def test_p0_3_case2_command_with_matching_outcome_is_executed(tmp_path, parse, make):
+    eps = parse(make(tmp_path, "c2", [
+        ("assistant", "I changed the retry config and ran it:\n```\npytest -q\n```\nand the tests passed."),
+    ]))
+    assert eps[0].evidence_status == EVIDENCE_EXECUTED
+    assert eps[0].steps[0]["properties"]["evidence_status"] == EVIDENCE_EXECUTED
+
+
+@pytest.mark.parametrize("parse, make", _PARSERS)
+def test_p0_3_case2b_outcome_in_next_message_upgrades_only_that_block(tmp_path, parse, make):
+    eps = parse(make(tmp_path, "c2b", [
+        ("assistant", "Let me run the suite.\n```\npytest tests/test_auth.py -q\n```"),
+        ("human", "it ran successfully and the tests passed after your fix"),
+    ]))
+    assert eps[0].evidence_status == EVIDENCE_EXECUTED
+    assert eps[0].steps[0]["properties"]["evidence_status"] == EVIDENCE_EXECUTED
+
+
+@pytest.mark.parametrize("parse, make", _PARSERS)
+def test_p0_3_case3_discussion_only_yields_no_candidate(tmp_path, parse, make):
+    eps = parse(make(tmp_path, "c3", [
+        ("human", "should we use a queue here?"),
+        ("assistant", "Depends on throughput. Redis or SQS both work; let's weigh it."),
+    ]))
+    assert eps == []
+
+
+@pytest.mark.parametrize("parse, make", _PARSERS)
+def test_p0_3_case4_mixed_conversation_keeps_each_step_status(tmp_path, parse, make):
+    eps = parse(make(tmp_path, "c4", [
+        ("assistant", "You could lint first:\n```\nruff check .\n```"),          # A: recommended
+        ("assistant", "I ran the formatter and it worked:\n```\nruff format .\n```"),  # B: executed
+        ("assistant", "If you want, you should also run mypy:\n```\nmypy .\n```"),  # C: recommended
+    ]))
+    ep = eps[0]
+    statuses = [s["properties"]["evidence_status"] for s in ep.steps]
+    assert statuses == [EVIDENCE_RECOMMENDED, EVIDENCE_EXECUTED, EVIDENCE_RECOMMENDED]
+    # episode-level status is the strongest present, never a flattening
+    assert ep.evidence_status == EVIDENCE_EXECUTED
+    # and the per-step distinction survives into the persisted evidence ref
+    assert ep.evidence_ref()["step_statuses"] == statuses
+
+
+def test_p0_3_late_outcome_cannot_reach_past_a_recommendation():
+    """The unit-level guard: a hedged block is never upgraded by a later
+    bare success line, even with nothing else between them."""
+    steps, status = _steps_from_message_texts([
+        "you could run `pytest` -- here:\n```\npytest -q\n```",
+        "pytest passed",
+    ])
+    assert status == EVIDENCE_RECOMMENDED
+    assert steps[0]["properties"]["evidence_status"] == EVIDENCE_RECOMMENDED
+
+
+# ---------------------------------------------------------------------------
 # Convergence + dedup
 # ---------------------------------------------------------------------------
 
@@ -258,6 +365,56 @@ def test_full_bootstrap_run_summary_is_honest(tmp_path, store):
         for r in store.list_local_procedures()
     )
     assert store.list_local_procedures()              # library now non-empty
+
+
+# ---------------------------------------------------------------------------
+# P0-2: git history is part of the ONE bootstrap flow, not a separate call.
+# ---------------------------------------------------------------------------
+
+
+def _git(repo, *args):
+    import subprocess
+    subprocess.run(["git", "-C", str(repo), *args], check=True,
+                   capture_output=True, text=True)
+
+
+def _make_git_repo_with_fix_then_test(tmp_path):
+    repo = tmp_path / "gitrepo"
+    (repo / "src").mkdir(parents=True)
+    _git(repo, "init", "-q")
+    _git(repo, "config", "user.email", "t@t.t")
+    _git(repo, "config", "user.name", "t")
+    (repo / "src" / "parser.py").write_text("def parse(x):\n    return x\n", encoding="utf-8")
+    _git(repo, "add", "-A"); _git(repo, "commit", "-q", "-m", "initial parser")
+    (repo / "src" / "parser.py").write_text("def parse(x):\n    return x.strip()\n", encoding="utf-8")
+    _git(repo, "add", "-A"); _git(repo, "commit", "-q", "-m", "fix: parser mishandles trailing whitespace")
+    # test co-located with the fixed file -> shared dir 'src', which the
+    # conservative fix_then_test pattern requires.
+    (repo / "src" / "test_parser.py").write_text(
+        "from parser import parse\n\ndef test_strip():\n    assert parse(' a ') == 'a'\n",
+        encoding="utf-8",
+    )
+    _git(repo, "add", "-A"); _git(repo, "commit", "-q", "-m", "add regression test for whitespace fix")
+    return str(repo)
+
+
+def test_p0_2_git_history_flows_through_the_single_run_bootstrap(tmp_path, store):
+    repo = _make_git_repo_with_fix_then_test(tmp_path)
+    summary = run_bootstrap(store, repo_root=repo, embed=None)
+
+    assert "git" in summary, "run_bootstrap must include git history when --repo is given"
+    assert summary["git"]["commits_scanned"] == 3
+    assert summary["git"]["candidates_formed"] >= 1
+
+    rows = store.list_local_procedures()
+    git_rows = [r for r in rows if (r.get("scope") or {}).get("git_history")]
+    assert git_rows, "a git_history candidate must land in the LocalProcedureStore"
+    row = store.get_local_procedure(git_rows[0]["id"])
+    assert row["verification_state"] == "candidate"          # commit history != verified
+    assert {ref["source_type"] for ref in row["evidence_refs"]} == {"git_history"}
+    assert all(ref["privacy"] == "local" for ref in row["evidence_refs"])
+    # retrievable without any new work
+    assert store.search_local_procedures("verify the parser whitespace fix")
 
 
 # ---------------------------------------------------------------------------

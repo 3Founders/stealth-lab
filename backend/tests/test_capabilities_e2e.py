@@ -67,21 +67,21 @@ def test_record_and_get_capability_reflects_real_recorded_evidence():
                 success_criteria={"predicate": "second recorded run also completed"},
                 created_by=PREFIX,
             )
-            # A default-built failure carries direction='contradicts' and is
-            # excluded from THIS estimate (see capabilities.py's own
-            # docstring -- the exact real behavior mirrored from
-            # procedure_graph_api.py's _capability_estimate). Real, not
-            # hardcoded: recorded here to prove it does NOT silently move
-            # the estimate, not that it does.
+            # A default-built failure carries direction='contradicts'. It IS
+            # an outcome-bearing attempt and DOES enter the P estimate
+            # (migration 34 / db/34_evidence_stats_count_failures.sql): a
+            # recorded failure is exactly what pulls the Wilson lower bound
+            # down -- the stream gate is evidence_type + terminal
+            # outcome_status, never direction.
             await record_implementation_outcome(
                 pool, implementation_id=impl["id"], outcome_status="failure",
                 failure_class="environment_changed", created_by=PREFIX,
             )
 
             result = await get_implementation_capability(pool, impl["id"])
-            assert result["evidence_count"] == 2
+            assert result["evidence_count"] == 3   # 2 successes + 1 recorded failure
             assert result["success_count"] == 2
-            assert result["p_estimate"] > 0.0
+            assert result["p_estimate"] > 0.0      # 2/3, Wilson lower bound still positive
             assert result["level_gated"] is None
         finally:
             await _cleanup(pool)
