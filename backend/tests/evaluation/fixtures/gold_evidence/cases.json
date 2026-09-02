@@ -1,0 +1,131 @@
+{
+  "cases": [
+    {
+      "id": "regenerated-tool-result-leaks-as-verified-evidence",
+      "note": "Adversarial: a regenerated/abandoned sibling branch carries a 'tool' role message reporting a fabricated 'all tests passed' result. The real (kept) branch never executed anything -- it only offers a hedge. Because parse_chatgpt_export does not walk parent/children branch structure (documented scope limit), the abandoned tool result is linearized into the conversation by create_time and can drive the whole conversation's evidence_level to 'verified'.",
+      "export": [
+        {
+          "conversation_id": "conv-leak-1",
+          "create_time": 1000.0,
+          "update_time": 1002.0,
+          "mapping": {
+            "root": {"id": "root", "parent": null, "children": ["u1"], "message": null},
+            "u1": {
+              "id": "u1", "parent": "root", "children": ["t1", "a1"],
+              "message": {
+                "id": "u1", "author": {"role": "user"}, "create_time": 1000.0,
+                "content": {"content_type": "text", "parts": ["Can you check if the payments API endpoint is up?"]}
+              }
+            },
+            "t1": {
+              "id": "t1", "parent": "u1", "children": [],
+              "message": {
+                "id": "t1", "author": {"role": "tool"}, "create_time": 1001.0,
+                "content": {"content_type": "text", "parts": ["check_endpoint() -> 200 OK, all tests passed"]}
+              }
+            },
+            "a1": {
+              "id": "a1", "parent": "u1", "children": [],
+              "message": {
+                "id": "a1", "author": {"role": "assistant"}, "create_time": 1002.0,
+                "content": {"content_type": "text", "parts": ["I don't have live access to check that. Here's how you could test it yourself:\n```\ncurl -I https://example.com/api/payments\n```"]}
+              }
+            }
+          }
+        }
+      ],
+      "expected": {
+        "produces_candidate": true,
+        "max_evidence_level": "verified",
+        "assertion_note": "Characterizes ACTUAL behavior (a real gap), not desired behavior -- t1 is the never-kept branch (regenerated away in favor of a1) yet its fabricated tool report drives the candidate's evidence_level to 'verified'."
+      }
+    },
+    {
+      "id": "hedged-regenerated-sibling-suppresses-valid-confirmation",
+      "note": "Adversarial, opposite failure direction: a hedged, regenerated-away assistant sibling sorts (by create_time) between the REAL kept fix and the user's later genuine confirmation. P0-3's 'last command was hedged' bookkeeping is reset by the abandoned sibling, wrongly clamping a genuinely earned 'completed' confirmation down to 'discussion' -- losing real, valid evidence rather than fabricating it. Conservative-direction failure, still a real gap.",
+      "export": [
+        {
+          "conversation_id": "conv-suppress-1",
+          "create_time": 2000.0,
+          "update_time": 2003.0,
+          "mapping": {
+            "root": {"id": "root", "parent": null, "children": ["u1"], "message": null},
+            "u1": {
+              "id": "u1", "parent": "root", "children": ["a_kept", "a_abandoned"],
+              "message": {
+                "id": "u1", "author": {"role": "user"}, "create_time": 2000.0,
+                "content": {"content_type": "text", "parts": ["How do I speed up this build script?"]}
+              }
+            },
+            "a_kept": {
+              "id": "a_kept", "parent": "u1", "children": ["u2"],
+              "message": {
+                "id": "a_kept", "author": {"role": "assistant"}, "create_time": 2001.0,
+                "content": {"content_type": "text", "parts": ["Try this instead:\n```\nnpm ci --prefer-offline\n```"]}
+              }
+            },
+            "a_abandoned": {
+              "id": "a_abandoned", "parent": "u1", "children": [],
+              "message": {
+                "id": "a_abandoned", "author": {"role": "assistant"}, "create_time": 2002.0,
+                "content": {"content_type": "text", "parts": ["Actually, you could also try\n```\nnpm run build -- --cache\n```\nif that doesn't help."]}
+              }
+            },
+            "u2": {
+              "id": "u2", "parent": "a_kept", "children": [],
+              "message": {
+                "id": "u2", "author": {"role": "user"}, "create_time": 2003.0,
+                "content": {"content_type": "text", "parts": ["Ran it, that worked!"]}
+              }
+            }
+          }
+        }
+      ],
+      "expected": {
+        "produces_candidate": false,
+        "max_evidence_level": null,
+        "assertion_note": "Characterizes ACTUAL behavior (a real gap) -- without branch-awareness, a_abandoned's hedge (later create_time than the real fix, earlier than the confirmation) suppresses u2's otherwise-valid 'completed' attribution. Internally the conversation's own max classified level is 'suggested' (from a_abandoned itself), which is below the 'attempted' candidate floor, so extract_candidates_from_conversation returns [] entirely -- no candidate, no evidence_level exposed at all -- even though the user genuinely got a fix and confirmed it worked."
+      }
+    },
+    {
+      "id": "clean-linear-conversation-control",
+      "note": "Control: identical to the suppression case's kept branch, but with NO regenerated sibling. Confirms the harness plumbing and the parser/classifier pipeline itself are correct when there is nothing adversarial -- the real fix plus a genuine confirmation SHOULD produce a 'completed' candidate.",
+      "export": [
+        {
+          "conversation_id": "conv-control-1",
+          "create_time": 3000.0,
+          "update_time": 3002.0,
+          "mapping": {
+            "root": {"id": "root", "parent": null, "children": ["u1"], "message": null},
+            "u1": {
+              "id": "u1", "parent": "root", "children": ["a_kept"],
+              "message": {
+                "id": "u1", "author": {"role": "user"}, "create_time": 3000.0,
+                "content": {"content_type": "text", "parts": ["How do I speed up this build script?"]}
+              }
+            },
+            "a_kept": {
+              "id": "a_kept", "parent": "u1", "children": ["u2"],
+              "message": {
+                "id": "a_kept", "author": {"role": "assistant"}, "create_time": 3001.0,
+                "content": {"content_type": "text", "parts": ["Try this instead:\n```\nnpm ci --prefer-offline\n```"]}
+              }
+            },
+            "u2": {
+              "id": "u2", "parent": "a_kept", "children": [],
+              "message": {
+                "id": "u2", "author": {"role": "user"}, "create_time": 3002.0,
+                "content": {"content_type": "text", "parts": ["Ran it, that worked!"]}
+              }
+            }
+          }
+        }
+      ],
+      "expected": {
+        "produces_candidate": true,
+        "max_evidence_level": "completed",
+        "assertion_note": "No branching -- P0-3 attribution succeeds normally, matching existing test_chat_history_import_offline.py precedent."
+      }
+    }
+  ]
+}
