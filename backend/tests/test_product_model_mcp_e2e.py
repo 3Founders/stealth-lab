@@ -71,7 +71,7 @@ async def test_product_model_tools_reachable_through_mcp():
         await pm.complete_evaluation(pool, eb["id"], execution_ids=exec_b)
 
         # --- find_problem ---
-        fp = json.loads(await srv.find_problem("flaky deterministic test suite", ctx))
+        fp = json.loads(await srv.find_problem(f"flaky deterministic test suite {tag}", ctx))
         assert any(p["id"] == problem["id"] for p in fp["problems"]), fp
 
         # --- inspect_problem ---
@@ -105,7 +105,7 @@ async def test_product_model_tools_reachable_through_mcp():
                 ).startswith("REFUSED")
 
         # --- find_best_solution ---
-        fbs = json.loads(await srv.find_best_solution("deterministic flaky test suite", ctx))
+        fbs = json.loads(await srv.find_best_solution(f"deterministic flaky test suite {tag}", ctx))
         assert fbs["result"] == "verified"
         assert fbs["current_best"] == [sa["id"]], fbs
     finally:
