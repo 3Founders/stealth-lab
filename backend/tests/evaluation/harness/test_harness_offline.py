@@ -62,6 +62,16 @@ def test_abstention_accuracy_credits_correct_unknowns_only():
     assert metrics.abstention_accuracy(predicted, gold, unknown_label="unknown") == 2 / 3
 
 
+def test_step_precision_recall_scores_correct_nothing_to_extract_as_perfect():
+    # Both empty ("nothing expected, nothing predicted") is a match, not a
+    # failure -- a gold case with zero expected steps/preconditions should
+    # never drag an aggregate down to 0.0 just for correctly extracting nothing.
+    assert metrics.step_precision_recall([], []) == (1.0, 1.0)
+    # One-sided-empty stays a real miss, not vacuously perfect.
+    assert metrics.step_precision_recall([], ["a"]) == (0.0, 0.0)
+    assert metrics.step_precision_recall(["a"], []) == (0.0, 0.0)
+
+
 def test_ordering_accuracy_is_1_when_relative_order_preserved():
     gold_steps = ["clone", "install", "migrate", "test"]
     predicted_same_order = ["install", "clone", "migrate", "test", "extra"]

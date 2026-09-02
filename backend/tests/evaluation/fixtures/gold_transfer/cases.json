@@ -1,0 +1,44 @@
+{
+  "cases": [
+    {
+      "id": "D1-cross-repo-same-real-facts-safe-transfer",
+      "case_type": "D",
+      "note": "different repositories entirely (different subjects), but the real package_version fact genuinely agrees -- a safe transfer. Subjects legitimately differ per-project so contradiction is never even checked on subject, only on predicate name + object value; same object value here means no contradiction.",
+      "episodes": {
+        "ep-d1": {"skeleton": [["Read", 1], ["Edit", 1], ["Bash", 1]], "preconditions": [["project:repoX", "package_version", "requests:2.31.0"]], "scope": {"language": ["python"]}, "slots": []},
+        "ep-d2": {"skeleton": [["Read", 1], ["Edit", 1], ["Bash", 1]], "preconditions": [["project:repoY", "package_version", "requests:2.31.0"]], "scope": {"language": ["python"]}, "slots": []}
+      },
+      "expected": {"should_transfer": true}
+    },
+    {
+      "id": "D2-different-package-version-unsafe-transfer",
+      "case_type": "D",
+      "note": "the spec's pandas<2.0-vs->=2.0 case, expressed via package_version: a real, potentially breaking environmental difference. Must NOT transfer.",
+      "episodes": {
+        "ep-d3": {"skeleton": [["Read", 1], ["Edit", 1], ["Bash", 1]], "preconditions": [["project:repoX", "package_version", "requests:2.31.0"]], "scope": {"language": ["python"]}, "slots": []},
+        "ep-d4": {"skeleton": [["Read", 1], ["Edit", 1], ["Bash", 1]], "preconditions": [["project:repoY", "package_version", "requests:1.9.0"]], "scope": {"language": ["python"]}, "slots": []}
+      },
+      "expected": {"should_transfer": false}
+    },
+    {
+      "id": "D3-different-implementation-same-method",
+      "case_type": "D",
+      "note": "same goal and same real preconditions, but a materially different concrete tool-call pattern (a different implementation style in a different repo) -- gold judgment call: this SHOULD transfer (it is genuinely the same method), testing whether structural alignment recognizes it.",
+      "episodes": {
+        "ep-d5": {"skeleton": [["Read", 1], ["Edit", 1], ["Bash", 1]], "preconditions": [["project:repoX", "has_test_runner", null]], "scope": {"language": ["python"]}, "slots": []},
+        "ep-d6": {"skeleton": [["Grep", 1], ["Write", 1], ["MultiEdit", 1], ["TodoWrite", 1], ["Bash", 1], ["Bash", 1]], "preconditions": [["project:repoY", "has_test_runner", null]], "scope": {"language": ["python"]}, "slots": []}
+      },
+      "expected": {"should_transfer": true}
+    },
+    {
+      "id": "D4-patch-level-version-difference-should-still-transfer",
+      "case_type": "D",
+      "note": "a patch-level python_version bump (3.11.2 -> 3.11.6) is not typically breaking -- gold judgment call: this SHOULD transfer, testing whether the exact-value contradiction check has any tolerance for compatible ranges.",
+      "episodes": {
+        "ep-d7": {"skeleton": [["Read", 1], ["Edit", 1]], "preconditions": [["project:repoX", "python_version", "3.11.2"]], "scope": {"language": ["python"]}, "slots": []},
+        "ep-d8": {"skeleton": [["Read", 1], ["Edit", 1]], "preconditions": [["project:repoY", "python_version", "3.11.6"]], "scope": {"language": ["python"]}, "slots": []}
+      },
+      "expected": {"should_transfer": true}
+    }
+  ]
+}

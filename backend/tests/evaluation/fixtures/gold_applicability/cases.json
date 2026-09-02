@@ -1,0 +1,236 @@
+{
+  "_comment": "Gold labels derived independently from applicability.py's own documented cascade order (module docstring + check_hard_constraints' inline comments), not from running the code and copying its output. 'expected' is one of: applicable, non_applicable, partial_match, unknown, stale, superseded, conflicting. Where the cascade's own boolean (applicable/not) is identical for two gold-distinct categories (e.g. unknown vs conflicting both reject under CWA fail-closed), the finer label comes from the case's own claims fixture, not from the code's return value -- see test_gold_applicability_offline.py's classify_outcome().",
+  "cases": [
+    {
+      "id": "applicable-baseline-no-preconditions",
+      "procedure": {},
+      "current_scope": {},
+      "expected": "applicable"
+    },
+    {
+      "id": "applicable-satisfied-precondition-no-claim-id",
+      "procedure": {
+        "preconditions": [{"subject": "project:p", "predicate": "has_test_runner", "object": "pytest"}]
+      },
+      "claims_by_subject": [
+        {"id": "c1", "properties": {"predicate": "has_test_runner", "object": "pytest"}, "t_valid": null, "t_invalid": null}
+      ],
+      "current_scope": {},
+      "expected": "applicable"
+    },
+    {
+      "id": "applicable-satisfied-precondition-with-claim-id",
+      "procedure": {
+        "preconditions": [{"subject": "project:p", "predicate": "has_test_runner", "object": "pytest", "claim_id": "00000000-0000-4000-8000-0000000000bb"}]
+      },
+      "claim_rows_by_id": {
+        "00000000-0000-4000-8000-0000000000bb": {"properties": {"predicate": "has_test_runner", "object": "pytest"}}
+      },
+      "current_scope": {},
+      "expected": "applicable"
+    },
+    {
+      "id": "applicable-unbound-numeric-invariant-does-not-disqualify",
+      "procedure": {"invariants": [{"kind": "numeric", "expr": "amount <= balance"}]},
+      "current_scope": {},
+      "invariant_bindings": {},
+      "expected": "applicable"
+    },
+    {
+      "id": "applicable-satisfied-numeric-invariant-package-version",
+      "procedure": {"invariants": [{"kind": "numeric", "expr": "pandas_version >= 2.0"}]},
+      "current_scope": {},
+      "invariant_bindings": {"pandas_version": 2.1},
+      "expected": "applicable"
+    },
+    {
+      "id": "applicable-matching-scope-single-key",
+      "procedure": {"scope": {"repo": ["backend"]}},
+      "current_scope": {"repo": ["backend"]},
+      "expected": "applicable"
+    },
+    {
+      "id": "stale-flagged-procedure-disqualified",
+      "procedure": {"staleness": "stale"},
+      "current_scope": {},
+      "expected": "stale"
+    },
+    {
+      "id": "stale-even-with-satisfied-preconditions",
+      "procedure": {
+        "staleness": "stale",
+        "preconditions": [{"subject": "project:p", "predicate": "has_test_runner", "object": "pytest"}]
+      },
+      "claims_by_subject": [
+        {"id": "c1", "properties": {"predicate": "has_test_runner", "object": "pytest"}, "t_valid": null, "t_invalid": null}
+      ],
+      "current_scope": {},
+      "expected": "stale"
+    },
+    {
+      "id": "superseded-temporal-validity-expired-yesterday",
+      "procedure": {"t_invalid_days_from_now": -1},
+      "current_scope": {},
+      "expected": "superseded"
+    },
+    {
+      "id": "superseded-temporal-validity-expired-long-ago",
+      "procedure": {"t_invalid_days_from_now": -365},
+      "current_scope": {},
+      "expected": "superseded"
+    },
+    {
+      "id": "non_applicable-quarantined-availability",
+      "procedure": {"availability": "quarantined"},
+      "current_scope": {},
+      "expected": "non_applicable"
+    },
+    {
+      "id": "non_applicable-retired-availability",
+      "procedure": {"availability": "retired"},
+      "current_scope": {},
+      "expected": "non_applicable"
+    },
+    {
+      "id": "non_applicable-not-yet-verified",
+      "procedure": {"verification_state": "proposed"},
+      "current_scope": {},
+      "expected": "non_applicable"
+    },
+    {
+      "id": "non_applicable-candidate-not-verified",
+      "procedure": {"verification_state": "candidate"},
+      "current_scope": {},
+      "expected": "non_applicable"
+    },
+    {
+      "id": "non_applicable-not-approved",
+      "procedure": {"approval_status": "proposed"},
+      "current_scope": {},
+      "expected": "non_applicable"
+    },
+    {
+      "id": "non_applicable-verified-but-unapproved",
+      "procedure": {"verification_state": "verified", "approval_status": "proposed"},
+      "current_scope": {},
+      "expected": "non_applicable"
+    },
+    {
+      "id": "non_applicable-scope-zero-overlap",
+      "procedure": {"scope": {"repo": ["backend"]}},
+      "current_scope": {"repo": ["frontend"]},
+      "expected": "non_applicable"
+    },
+    {
+      "id": "non_applicable-scope-key-not-supplied-by-caller",
+      "procedure": {"scope": {"repo": ["backend"]}},
+      "current_scope": {},
+      "expected": "non_applicable"
+    },
+    {
+      "id": "partial_match-scope-one-of-two-keys-satisfied",
+      "procedure": {"scope": {"repo": ["backend"], "env": ["staging"]}},
+      "current_scope": {"repo": ["backend"], "env": ["prod"]},
+      "expected": "partial_match"
+    },
+    {
+      "id": "partial_match-scope-second-key-missing-entirely",
+      "procedure": {"scope": {"repo": ["backend"], "env": ["staging"]}},
+      "current_scope": {"repo": ["backend"]},
+      "expected": "partial_match"
+    },
+    {
+      "id": "partial_match-scope-list-overlap-on-one-key-only",
+      "procedure": {"scope": {"repo": ["backend", "shared"], "tool": ["pytest"]}},
+      "current_scope": {"repo": ["shared"], "tool": ["jest"]},
+      "expected": "partial_match"
+    },
+    {
+      "id": "non_applicable-exclusion-matched",
+      "procedure": {"exclusions": [{"key": "file_pattern", "values": ["*.generated.py"]}]},
+      "current_scope": {"file_pattern": ["*.generated.py"]},
+      "expected": "non_applicable"
+    },
+    {
+      "id": "non_applicable-exclusion-matched-repo-characteristic",
+      "procedure": {"exclusions": [{"key": "repo_language", "values": ["cobol"]}]},
+      "current_scope": {"repo_language": ["cobol"]},
+      "expected": "non_applicable"
+    },
+    {
+      "id": "unknown-precondition-no-claim-exists-at-all",
+      "procedure": {
+        "preconditions": [{"subject": "project:p", "predicate": "has_test_runner", "object": "pytest"}]
+      },
+      "claims_by_subject": [],
+      "current_scope": {},
+      "expected": "unknown"
+    },
+    {
+      "id": "unknown-precondition-python-version-fact-never-recorded",
+      "procedure": {
+        "preconditions": [{"subject": "project:p", "predicate": "python_version", "object": "3.12"}]
+      },
+      "claims_by_subject": [],
+      "current_scope": {},
+      "expected": "unknown"
+    },
+    {
+      "id": "unknown-precondition-tool-availability-fact-never-recorded",
+      "procedure": {
+        "preconditions": [{"subject": "project:p", "predicate": "has_tool", "object": "docker"}]
+      },
+      "claims_by_subject": [],
+      "current_scope": {},
+      "expected": "unknown"
+    },
+    {
+      "id": "conflicting-precondition-claim-contradicts-expected-object",
+      "procedure": {
+        "preconditions": [{"subject": "project:p", "predicate": "has_test_runner", "object": "pytest"}]
+      },
+      "claims_by_subject": [
+        {"id": "c1", "properties": {"predicate": "has_test_runner", "object": "jest"}, "t_valid": null, "t_invalid": null}
+      ],
+      "current_scope": {},
+      "expected": "conflicting"
+    },
+    {
+      "id": "conflicting-precondition-python-version-mismatch",
+      "procedure": {
+        "preconditions": [{"subject": "project:p", "predicate": "python_version", "object": "3.12"}]
+      },
+      "claims_by_subject": [
+        {"id": "c1", "properties": {"predicate": "python_version", "object": "3.9"}, "t_valid": null, "t_invalid": null}
+      ],
+      "current_scope": {},
+      "expected": "conflicting"
+    },
+    {
+      "id": "conflicting-precondition-with-claim-id-narrows-past-a-matching-subject-claim",
+      "procedure": {
+        "preconditions": [{"subject": "project:p", "predicate": "has_test_runner", "object": "pytest", "claim_id": "00000000-0000-4000-8000-0000000000aa"}]
+      },
+      "claims_by_subject": [
+        {"id": "c1", "properties": {"predicate": "has_test_runner", "object": "pytest"}, "t_valid": null, "t_invalid": null}
+      ],
+      "claim_rows_by_id": {},
+      "current_scope": {},
+      "expected": "conflicting"
+    },
+    {
+      "id": "non_applicable-invariant-violated-package-version-too-old",
+      "procedure": {"invariants": [{"kind": "numeric", "expr": "pandas_version >= 2.0"}]},
+      "current_scope": {},
+      "invariant_bindings": {"pandas_version": 1.5},
+      "expected": "non_applicable"
+    },
+    {
+      "id": "non_applicable-invariant-violated-amount-exceeds-balance",
+      "procedure": {"invariants": [{"kind": "numeric", "expr": "amount <= balance"}]},
+      "current_scope": {},
+      "invariant_bindings": {"amount": 200, "balance": 100},
+      "expected": "non_applicable"
+    }
+  ]
+}

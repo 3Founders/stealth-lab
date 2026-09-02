@@ -1,0 +1,83 @@
+{
+  "_comment": "Gold cases for app.services.retrieval.fuse_rrf(), the pure RRF arithmetic extracted from HybridRetriever.retrieve(). This is the only offline-testable slice of real ranking logic in retrieval.py -- vector/lexical search themselves are raw SQL against a live Postgres and have no offline path (see test_gold_retrieval_offline.py's module docstring for why full paraphrase-quality Recall@k needs a DATABASE_URL-gated e2e companion instead). Each case supplies pre-computed semantic_hits/lexical_hits, exactly the shape _vector_search/_lexical_search return -- [id, table, rank] triples, rank is 0-based position within that one signal's own ranking.",
+  "cases": [
+    {
+      "id": "exact_match_both_signals_agree",
+      "category": "exact_match",
+      "semantic_hits": [["proc-migrate-db", "task_nodes", 0], ["proc-seed-demo", "task_nodes", 1]],
+      "lexical_hits": [["proc-migrate-db", "task_nodes", 0], ["proc-bootstrap-env", "task_nodes", 1]],
+      "relevant_ids": ["proc-migrate-db"],
+      "irrelevant_ids": ["proc-seed-demo", "proc-bootstrap-env"],
+      "k": 5,
+      "min_recall_at_k": 1.0,
+      "notes": "Both signals rank the same doc first -- RRF must not let a lower-ranked doc in either list overtake it."
+    },
+    {
+      "id": "paraphrase_semantic_only_recovers_it",
+      "category": "paraphrase",
+      "semantic_hits": [["proc-fix-flaky-auth-test", "task_nodes", 0], ["proc-unrelated-a", "task_nodes", 1]],
+      "lexical_hits": [["proc-unrelated-a", "task_nodes", 0], ["proc-unrelated-b", "task_nodes", 1]],
+      "relevant_ids": ["proc-fix-flaky-auth-test"],
+      "irrelevant_ids": ["proc-unrelated-a", "proc-unrelated-b"],
+      "k": 5,
+      "min_recall_at_k": 1.0,
+      "notes": "Represents a paraphrased query ('debug intermittent auth failures' for a procedure literally titled 'fix flaky authentication tests'): the lexical (keyword) signal finds nothing relevant because the wording doesn't overlap, but the semantic signal alone must still be enough for RRF to surface the right doc. This is a real production-code check of fuse_rrf's behavior under a semantic-only hit; it does NOT test whether the embedding model itself would actually produce that semantic_hits ranking for real paraphrased text -- that requires a live embedder + DB, tracked as a documented gap, not faked here."
+    },
+    {
+      "id": "short_query_sparse_signal",
+      "category": "short_query",
+      "semantic_hits": [["proc-restart-worker", "task_nodes", 0]],
+      "lexical_hits": [["proc-restart-worker", "task_nodes", 0]],
+      "relevant_ids": ["proc-restart-worker"],
+      "irrelevant_ids": [],
+      "k": 5,
+      "min_recall_at_k": 1.0,
+      "notes": "A very short query ('restart worker') typically returns few hits per signal -- RRF must still work correctly with single-element ranked lists, not just long ones."
+    },
+    {
+      "id": "long_query_many_candidates",
+      "category": "long_query",
+      "semantic_hits": [["proc-c", "task_nodes", 0], ["proc-a", "task_nodes", 1], ["proc-d", "task_nodes", 2], ["proc-e", "task_nodes", 3], ["proc-f", "task_nodes", 4]],
+      "lexical_hits": [["proc-a", "task_nodes", 0], ["proc-c", "task_nodes", 1], ["proc-g", "task_nodes", 2], ["proc-h", "task_nodes", 3]],
+      "relevant_ids": ["proc-a", "proc-c"],
+      "irrelevant_ids": ["proc-d", "proc-e", "proc-f", "proc-g", "proc-h"],
+      "k": 5,
+      "min_recall_at_k": 1.0,
+      "notes": "A long, detailed query surfaces many candidates per signal -- docs appearing in BOTH lists (proc-a, proc-c) must fuse to the top even if neither signal alone ranked them #1."
+    },
+    {
+      "id": "ambiguous_query_multiple_acceptable_answers",
+      "category": "ambiguous_query",
+      "semantic_hits": [["proc-clear-cache", "task_nodes", 0], ["proc-clear-cookies", "task_nodes", 1], ["proc-unrelated", "task_nodes", 2]],
+      "lexical_hits": [["proc-clear-cookies", "task_nodes", 0], ["proc-clear-cache", "task_nodes", 1], ["proc-unrelated", "task_nodes", 2]],
+      "relevant_ids": ["proc-clear-cache", "proc-clear-cookies"],
+      "irrelevant_ids": ["proc-unrelated"],
+      "k": 2,
+      "min_recall_at_k": 1.0,
+      "notes": "'Clear the browser state' is genuinely ambiguous between two acceptable procedures -- the gold set accepts either, unlike the single-answer cases above. Recall@2 must reach both."
+    },
+    {
+      "id": "unseen_terminology_semantic_only",
+      "category": "unseen_terminology",
+      "semantic_hits": [["proc-rotate-api-key", "task_nodes", 0]],
+      "lexical_hits": [],
+      "relevant_ids": ["proc-rotate-api-key"],
+      "irrelevant_ids": [],
+      "k": 5,
+      "min_recall_at_k": 1.0,
+      "notes": "A query using terminology never seen in any procedure's stored text (e.g. slang for 'rotate the API key') produces zero lexical hits at all -- fuse_rrf must handle an empty ranked list for one signal without erroring or zeroing out the other signal's contribution."
+    },
+    {
+      "id": "different_repository_false_positive_guard",
+      "category": "cross_repository",
+      "semantic_hits": [["proc-repo-a-deploy", "task_nodes", 0], ["proc-repo-b-deploy", "task_nodes", 1]],
+      "lexical_hits": [["proc-repo-b-deploy", "task_nodes", 0], ["proc-repo-a-deploy", "task_nodes", 1]],
+      "relevant_ids": ["proc-repo-a-deploy"],
+      "irrelevant_ids": ["proc-repo-b-deploy"],
+      "k": 1,
+      "min_recall_at_k": 1.0,
+      "max_false_positive_rate_at_k": 0.0,
+      "notes": "Two procedures with near-identical wording from different repositories both surface in both signals -- at k=1 the fused ranking must not let the wrong-repository one win a tie/near-tie by accident (deterministic tie-break is a separate concern from this gold set; here relevant strictly outranks irrelevant in both raw signals, so RRF has no excuse to invert that)."
+    }
+  ]
+}

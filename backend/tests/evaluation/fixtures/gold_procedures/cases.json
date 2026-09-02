@@ -1,0 +1,190 @@
+{
+  "_comment": "Gold set for backend/tests/evaluation/learning/test_gold_procedures_offline.py. Each case's `evidence` becomes a real ProcedureEvidence, `claim_rows` seed a FakePool standing in for project_state()'s DB round trip, and `expected` is compared against DeterministicExtractor().extract()'s real output -- the actual no-LLM production extraction path (app/services/procedure_extraction/strategies.py). GroundedHybridExtractor (the LLM-based abstraction path) is out of scope for this offline gold set -- see case incidental-read-literal-replay's note and evaluation/README.md's Known limitations.",
+  "cases": [
+    {
+      "id": "sequential-steps-with-precondition",
+      "evidence": {
+        "goal_text": "make the failing auth test pass",
+        "outcome": "success",
+        "tool_sequence": ["Read", "Read", "Edit", "Bash"],
+        "observations": [
+          {"observation_type": "test_run", "properties": {"passed": true, "command": "pytest -q"}}
+        ],
+        "project_id": "11111111-1111-1111-1111-111111111111"
+      },
+      "claim_rows": [
+        {"id": "c1", "predicate": "has_test_runner", "object": "pytest"},
+        {"id": "c2", "predicate": "has_dev_server", "object": "vite"}
+      ],
+      "expected": {
+        "goal": "make the failing auth test pass",
+        "steps": ["Call Read (2x)", "Call Edit", "Call Bash"],
+        "preconditions": [{"predicate": "has_test_runner", "object": "pytest", "claim_id": "c1"}],
+        "scope": {},
+        "failure_conditions": [],
+        "slots": []
+      },
+      "notes": "has_dev_server (c2) is a live claim but this episode never exercised it -- must be excluded, not just has_test_runner included."
+    },
+    {
+      "id": "multi-group-step-ordering",
+      "evidence": {
+        "goal_text": "refactor the three formatter modules",
+        "outcome": "success",
+        "tool_sequence": ["Read", "Read", "Read", "Edit", "Edit", "Bash", "Bash", "Bash"],
+        "observations": [],
+        "project_id": "11111111-1111-1111-1111-111111111111"
+      },
+      "claim_rows": [],
+      "expected": {
+        "goal": "refactor the three formatter modules",
+        "steps": ["Call Read (3x)", "Call Edit (2x)", "Call Bash (3x)"],
+        "preconditions": [],
+        "scope": {},
+        "failure_conditions": [],
+        "slots": []
+      },
+      "notes": "run-length encoding must produce exactly 3 groups in tool_sequence order, not 8 individual steps."
+    },
+    {
+      "id": "failure-condition-nonzero-exit",
+      "evidence": {
+        "goal_text": "run the release smoke check",
+        "outcome": "success",
+        "tool_sequence": ["Bash"],
+        "observations": [
+          {"observation_type": "command_executed", "properties": {"command": "pytest -q", "exit_code": 1}}
+        ],
+        "project_id": "11111111-1111-1111-1111-111111111111"
+      },
+      "claim_rows": [],
+      "expected": {
+        "goal": "run the release smoke check",
+        "steps": ["Call Bash"],
+        "preconditions": [],
+        "scope": {},
+        "failure_conditions": ["does not apply if `pytest -q` itself is expected to fail"],
+        "slots": []
+      },
+      "notes": "a command_executed observation with a real nonzero exit becomes a stated failure boundary, not a silently ignored one."
+    },
+    {
+      "id": "failure-condition-subordinate-test-not-passed",
+      "evidence": {
+        "goal_text": "stabilize the flaky retry test",
+        "outcome": "success",
+        "tool_sequence": ["Bash"],
+        "observations": [
+          {"observation_type": "test_run", "properties": {"passed": false}}
+        ],
+        "project_id": "11111111-1111-1111-1111-111111111111"
+      },
+      "claim_rows": [],
+      "expected": {
+        "goal": "stabilize the flaky retry test",
+        "steps": ["Call Bash"],
+        "preconditions": [],
+        "scope": {},
+        "failure_conditions": ["does not apply if the target test suite was already failing for an unrelated reason"],
+        "slots": []
+      },
+      "notes": "overall episode outcome is still success (a sub-step failed then the episode still succeeded) -- this is about one observation's own recorded failure, not the episode's outcome field."
+    },
+    {
+      "id": "precondition-ambiguous-omits-claim-id",
+      "evidence": {
+        "goal_text": "add a regression test for the parser bug",
+        "outcome": "success",
+        "tool_sequence": ["Bash"],
+        "observations": [
+          {"observation_type": "test_run", "properties": {"passed": true, "command": "pytest"}}
+        ],
+        "project_id": "11111111-1111-1111-1111-111111111111"
+      },
+      "claim_rows": [
+        {"id": "c1", "predicate": "has_test_runner", "object": "pytest"},
+        {"id": "c2", "predicate": "has_test_runner", "object": "pytest"}
+      ],
+      "expected": {
+        "goal": "add a regression test for the parser bug",
+        "steps": ["Call Bash"],
+        "preconditions": [{"predicate": "has_test_runner", "object": "pytest", "claim_id": null}],
+        "scope": {},
+        "failure_conditions": [],
+        "slots": []
+      },
+      "notes": "two independent live claims assert the exact same triple -- provenance must be honestly omitted (claim_id null), never guessed."
+    },
+    {
+      "id": "precondition-not-exercised-is-excluded",
+      "evidence": {
+        "goal_text": "fix the utils formatting helper",
+        "outcome": "success",
+        "tool_sequence": ["Edit"],
+        "observations": [
+          {"observation_type": "file_touched", "properties": {"file_path": "app/utils.js"}}
+        ],
+        "project_id": "11111111-1111-1111-1111-111111111111"
+      },
+      "claim_rows": [
+        {"id": "c1", "predicate": "has_dev_server", "object": "vite"}
+      ],
+      "expected": {
+        "goal": "fix the utils formatting helper",
+        "steps": ["Call Edit"],
+        "preconditions": [],
+        "scope": {},
+        "failure_conditions": [],
+        "slots": [{"name": "target_file_1", "binder": "literal", "description": "file: app/utils.js"}]
+      },
+      "notes": "has_dev_server is a live claim but this episode never started or served a dev server -- must not become a precondition. No repo_root/entry_seed_files supplied -> slot binds to 'literal', the honest degradation path."
+    },
+    {
+      "id": "scope-and-precondition-share-a-language-claim",
+      "evidence": {
+        "goal_text": "add type hints to the ingestion module",
+        "outcome": "success",
+        "tool_sequence": ["Edit"],
+        "observations": [
+          {"observation_type": "file_touched", "properties": {"file_path": "app/main.py"}}
+        ],
+        "project_id": "11111111-1111-1111-1111-111111111111"
+      },
+      "claim_rows": [
+        {"id": "c1", "predicate": "language", "object": "python"}
+      ],
+      "expected": {
+        "goal": "add type hints to the ingestion module",
+        "steps": ["Call Edit"],
+        "preconditions": [{"predicate": "language", "object": "python", "claim_id": "c1"}],
+        "scope": {"language": ["python"]},
+        "failure_conditions": [],
+        "slots": [{"name": "target_file_1", "binder": "literal", "description": "file: app/main.py"}]
+      },
+      "notes": "language is in PROBE_PREDICATE_VOCABULARY, so a load-bearing language claim legitimately becomes BOTH a precondition (derive_preconditions) and part of scope (derive_scope) -- these are two separate derivations over the same claim, not a bug."
+    },
+    {
+      "id": "incidental-read-literal-replay",
+      "evidence": {
+        "goal_text": "fix the off-by-one in the pagination helper",
+        "outcome": "success",
+        "tool_sequence": ["Read", "Edit", "Bash"],
+        "observations": [
+          {"observation_type": "file_touched", "properties": {"file_path": "README.md"}},
+          {"observation_type": "test_run", "properties": {"passed": true, "command": "pytest -q"}}
+        ],
+        "project_id": "11111111-1111-1111-1111-111111111111"
+      },
+      "claim_rows": [],
+      "expected": {
+        "goal": "fix the off-by-one in the pagination helper",
+        "steps": ["Call Read", "Call Edit", "Call Bash"],
+        "preconditions": [],
+        "scope": {},
+        "failure_conditions": [],
+        "slots": [{"name": "target_file_1", "binder": "literal", "description": "file: README.md"}]
+      },
+      "notes": "DOCUMENTED GAP, not a satisfied requirement: the initial Read here is an incidental orientation action (skimming README.md) that a generalized procedure should NOT promote to a reusable step per spec section 7. DeterministicExtractor is, by its own docstring, an honest literal replay of every tool call with no filtering -- it includes the incidental Read exactly as it includes the real Edit/Bash, and even derives a literal slot for the incidentally-touched README.md. True incidental-action filtering is GroundedHybridExtractor's job (the LLM abstraction path), which is out of scope for this offline-only pass -- see evaluation/README.md's Known limitations. This case pins DeterministicExtractor's real, current behavior (including the slot) so a future change to it is a visible diff, not a silent regression."
+    }
+  ]
+}

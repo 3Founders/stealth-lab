@@ -122,8 +122,16 @@ def confusion_counts(predicted: list[str], gold: list[str]) -> dict[str, int]:
 def step_precision_recall(predicted_steps: list[str], gold_steps: list[str]) -> tuple[float, float]:
     """Set-based precision/recall over step descriptions (order handled separately
     by ordering_accuracy — this only measures whether the right steps are present).
+
+    Both empty (correctly extracted nothing when nothing was expected) is a match,
+    not a failure -- scores (1.0, 1.0), not (0.0, 0.0). This matters for any caller
+    whose gold set legitimately has empty-vs-empty cases (e.g. a case with zero
+    expected preconditions): scoring that as 0.0 would silently drag down an
+    aggregate that should read as a perfect match.
     """
     pred_set, gold_set = set(predicted_steps), set(gold_steps)
+    if not pred_set and not gold_set:
+        return 1.0, 1.0
     tp = len(pred_set & gold_set)
     precision = tp / len(pred_set) if pred_set else 0.0
     recall = tp / len(gold_set) if gold_set else 0.0

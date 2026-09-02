@@ -1,0 +1,66 @@
+{
+  "cases": [
+    {
+      "id": "A1-identical-repeat-no-slots",
+      "case_type": "A",
+      "note": "three byte-identical episodes -- more evidence for the same procedure, not a generalized method. Must merge (nothing here contradicts or misaligns) but must NOT claim level 2.",
+      "episodes": {
+        "ep-a1": {"skeleton": [["Read", 2], ["Edit", 1], ["Bash", 1]], "preconditions": [["project:x", "language", "python"]], "scope": {"language": ["python"]}, "slots": []},
+        "ep-a2": {"skeleton": [["Read", 2], ["Edit", 1], ["Bash", 1]], "preconditions": [["project:y", "language", "python"]], "scope": {"language": ["python"]}, "slots": []},
+        "ep-a3": {"skeleton": [["Read", 2], ["Edit", 1], ["Bash", 1]], "preconditions": [["project:z", "language", "python"]], "scope": {"language": ["python"]}, "slots": []}
+      },
+      "expected": {"should_merge": true, "refusal_gate": null, "generalization_level": 0}
+    },
+    {
+      "id": "A2-identical-repeat-with-real-slots",
+      "case_type": "A",
+      "note": "two identical episodes with a real (non-literal) shared slot binder -- genuinely slotted, but from repetition alone, not real cross-episode variation. Level 1, never 2.",
+      "episodes": {
+        "ep-a4": {"skeleton": [["Read", 1], ["Edit", 1]], "preconditions": [["project:p", "has_test_runner", null]], "scope": {"language": ["python"]}, "slots": [{"name": "target_files", "binder": "grep_match", "description": "x"}]},
+        "ep-a5": {"skeleton": [["Read", 1], ["Edit", 1]], "preconditions": [["project:q", "has_test_runner", null]], "scope": {"language": ["python"]}, "slots": [{"name": "target_files", "binder": "grep_match", "description": "y"}]}
+      },
+      "expected": {"should_merge": true, "refusal_gate": null, "generalization_level": 1}
+    },
+    {
+      "id": "B1-compatible-variation-scope-language",
+      "case_type": "B",
+      "note": "same method, genuinely different projects (python and javascript) -- same underlying tool-call pattern, scope narrowing differs. Must merge and correctly claim level 2.",
+      "episodes": {
+        "ep-b1": {"skeleton": [["Read", 1], ["Edit", 1], ["Bash", 1]], "preconditions": [["project:a", "has_test_runner", null]], "scope": {"language": ["python"]}, "slots": []},
+        "ep-b2": {"skeleton": [["Read", 1], ["Edit", 1], ["Bash", 1]], "preconditions": [["project:b", "has_test_runner", null]], "scope": {"language": ["javascript"]}, "slots": []},
+        "ep-b3": {"skeleton": [["Read", 1], ["Edit", 1], ["Bash", 1]], "preconditions": [["project:c", "has_test_runner", null]], "scope": {"language": ["python"]}, "slots": []}
+      },
+      "expected": {"should_merge": true, "refusal_gate": null, "generalization_level": 2}
+    },
+    {
+      "id": "B2-compatible-variation-optional-step",
+      "case_type": "B",
+      "note": "one episode adds an extra lint pass the other skips -- structurally similar enough to align (similarity 0.75 >= 0.6 threshold), a real skeleton difference so level 2.",
+      "episodes": {
+        "ep-b4": {"skeleton": [["Read", 1], ["Edit", 1], ["Bash", 1], ["Bash", 1]], "preconditions": [["project:d", "language", "python"]], "scope": {"language": ["python"]}, "slots": []},
+        "ep-b5": {"skeleton": [["Read", 1], ["Edit", 1], ["Bash", 1]], "preconditions": [["project:e", "language", "python"]], "scope": {"language": ["python"]}, "slots": []}
+      },
+      "expected": {"should_merge": true, "refusal_gate": null, "generalization_level": 2}
+    },
+    {
+      "id": "C1-contradictory-package-manager",
+      "case_type": "C",
+      "note": "the spec's own pip-vs-poetry example -- a genuine environmental disagreement, must refuse rather than average or silently pick one.",
+      "episodes": {
+        "ep-c1": {"skeleton": [["Read", 1], ["Edit", 1]], "preconditions": [["project:f", "package_manager", "pip"]], "scope": {}, "slots": []},
+        "ep-c2": {"skeleton": [["Read", 1], ["Edit", 1]], "preconditions": [["project:g", "package_manager", "poetry"]], "scope": {}, "slots": []}
+      },
+      "expected": {"should_merge": false, "refusal_gate": "predicate_contradiction", "generalization_level": null}
+    },
+    {
+      "id": "C2-contradictory-structural-pattern",
+      "case_type": "C",
+      "note": "same nominal goal, materially different tool-call pattern (Read/Edit/Bash vs an almost entirely Bash-driven workflow) -- structural similarity well below threshold, must refuse as a different method, not merge into one falsely-universal procedure.",
+      "episodes": {
+        "ep-c3": {"skeleton": [["Read", 1], ["Edit", 1], ["Bash", 1]], "preconditions": [["project:h", "language", "python"]], "scope": {"language": ["python"]}, "slots": []},
+        "ep-c4": {"skeleton": [["Grep", 1], ["Write", 1], ["MultiEdit", 1], ["TodoWrite", 1], ["Bash", 1], ["Bash", 1]], "preconditions": [["project:i", "language", "python"]], "scope": {"language": ["python"]}, "slots": []}
+      },
+      "expected": {"should_merge": false, "refusal_gate": "tool_sequence_alignment", "generalization_level": null}
+    }
+  ]
+}
