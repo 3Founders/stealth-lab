@@ -31,6 +31,7 @@ import json
 import os
 import uuid
 
+import asyncpg
 import pytest
 
 pytestmark = pytest.mark.skipif(
@@ -363,6 +364,46 @@ async def test_concurrent_resume_is_refused_not_duplicated():
             return {"order": order}
         done = await execute_run(pool, run_id, deps=DEPS, run_node=ok_node, worker_id="workerC")
         assert done["status"] == "succeeded"
+    finally:
+        await pool.close()
+
+
+# ---------------------------------------------------------------------------
+# Stale-worker terminal-mutation rejection: once a node has reached a
+# terminal state, no write -- not even a direct SQL UPDATE bypassing the
+# service layer entirely -- can mutate it. This is an engine-level fence
+# (trg_ern_terminal_fence), not application-level discipline that a worker
+# could route around.
+# ---------------------------------------------------------------------------
+@pytest.mark.asyncio
+async def test_stale_worker_cannot_mutate_a_terminal_node_even_via_direct_sql():
+    pool = await create_pool(statement_cache_size=0)
+    tag = _tag()
+    try:
+        run_id, proc_id, pv, plan_id, graph_id = await _plan_chain(pool, tag)
+
+        async def ok_node(order, attempt):
+            return {"order": order}
+
+        res = await execute_run(pool, run_id, deps=DEPS, run_node=ok_node, worker_id="workerA")
+        assert res["status"] == "succeeded"
+        by = {n["node_order"]: n for n in res["nodes"]}
+        assert by[0]["status"] == "succeeded"
+
+        # A worker that thinks node 0 is still its to run (stale view) tries to
+        # reset it directly -- bypassing execute_run/resume_run/retry_node
+        # entirely -- and the DB trigger, not application code, refuses it.
+        async with pool.acquire() as c:
+            with pytest.raises(asyncpg.exceptions.RaiseError):
+                await c.execute(
+                    "UPDATE execution_run_nodes SET status='pending', attempt_count=0 "
+                    "WHERE execution_run_id=$1 AND node_order=0", run_id,
+                )
+
+        # The fence's refusal didn't corrupt the row -- it is exactly as it
+        # was before the rejected write.
+        st = await run_status(pool, run_id)
+        assert {n["node_order"]: n for n in st["nodes"]}[0]["status"] == "succeeded"
     finally:
         await pool.close()
 
