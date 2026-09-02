@@ -78,12 +78,34 @@ def build_manifest(
     repo_root: Path,
     corpus_state: str,
     config: dict[str, Any],
+    system_under_test_commit: str | None = None,
+    evaluation_harness_commit: str | None = None,
+    historical_baseline_commit: str | None = None,
+    branch: str | None = None,
+    final_v1_tag: str | None = None,
     extra: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Manifest recorded alongside every evaluation-results run (spec §33)."""
+    """Manifest recorded alongside every evaluation-results run (spec §33).
+
+    Deliberately three separate commit fields, not one ambiguous `commit` --
+    the product under test and the evaluation harness testing it are
+    different commits on different branches once the harness merges the
+    product branch in to gain test access to it (see
+    evaluation-results/final-v1-candidate/manifest.json for the current
+    values). `evaluation_harness_commit` defaults to HEAD (this repo's own
+    tip, which is where the harness's test/fixture code lives even though a
+    merge means the working tree also contains the product code);
+    `system_under_test_commit` must be passed explicitly by the caller since
+    it can't be inferred from HEAD alone. `final_v1_tag` stays null until
+    the product's immutable Final-V1 tag exists (spec §25).
+    """
     manifest = {
         "generated_at": datetime.now(timezone.utc).isoformat(),
-        "commit": _git_commit(repo_root),
+        "system_under_test_commit": system_under_test_commit,
+        "evaluation_harness_commit": evaluation_harness_commit or _git_commit(repo_root),
+        "historical_baseline_commit": historical_baseline_commit,
+        "branch": branch,
+        "final_v1_tag": final_v1_tag,
         "python_version": sys.version.split()[0],
         "platform": platform.platform(),
         "corpus_state": corpus_state,

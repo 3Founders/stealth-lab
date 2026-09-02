@@ -81,7 +81,7 @@ a parallel scheme:
 When Chaitanya's external-corpus admission work approves a canonical procedure `P`, the bridge
 into this suite is: add one gold case per relevant `gold_<area>/` set (a `gold_retrieval` query
 whose relevant procedure is `P`, a `gold_applicability` case using `P`'s real preconditions, an
-execution case if `P` is meant to run, and a `backend/tests/evaluation/regression/` case if
+execution case if `P` is meant to run, and a pinned case in that area's own gold set if
 admitting `P` surfaces a new failure mode). No discovery/fetch/extraction machinery is
 duplicated here — this suite only ever asks "given knowledge already in Stealth, does the
 system use it correctly," never "should this external technique enter Stealth."

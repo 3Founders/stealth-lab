@@ -36,7 +36,7 @@ that. What it adds:
 4. **Concurrency/chaos at small scale** (`backend/tests/evaluation/concurrency/`): simultaneous
    publishers, duplicate job processing, claim-update-during-retrieval, resumed-execution-twice,
    DB/LLM/embedding timeout injection.
-5. **Economics/ROI machinery** (`backend/tests/evaluation/economics/`): a cost model and
+5. **Economics/ROI machinery** (`experiments/harness/economics.py`): a cost model and
    ROI/break-even calculator. Built as extension points; not executed against live spend this
    pass (see Known limitations below).
 6. A **v1 baseline run + final scorecard** (`evaluation-results/`) so results are
@@ -107,9 +107,10 @@ data and code are.
 2. Add a case object to that gold set's JSON file, following the existing cases' shape (each
    case needs a unique `id` and whatever fields that area's `run_case` function expects — see
    the matching `test_gold_<area>_offline.py`).
-3. If it's a regression for a bug found during evaluation, add it to
-   `backend/tests/evaluation/regression/` instead, following the `TEST.md`-style convention:
-   name the failure the case prevents, not just the behavior it checks.
+3. If it's a regression for a bug found during evaluation, pin it as a case in that area's own
+   gold set (e.g. `gold_evidence/cases.json`, `gold_transfer/cases.json`) rather than a separate
+   `regression/` directory — name the failure the case prevents, not just the behavior it checks,
+   the way the existing ChatGPT-branch and transfer-conservatism cases already do.
 4. When Chaitanya's external-corpus work admits a canonical procedure, register it the same
    way — see `ARCHITECTURE.md`'s "Chaitanya convergence point" section. This is the only
    required bridge between the two projects; this suite does not depend on or duplicate his

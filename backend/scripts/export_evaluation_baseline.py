@@ -254,6 +254,16 @@ def main() -> int:
     manifest = build_manifest(
         repo_root=REPO_ROOT,
         corpus_state="v1-baseline-2026-09-02",
+        # This script is frozen to the HISTORICAL pre-hardening baseline (spec state A) --
+        # every module it exercises (extraction/applicability/retrieval-fusion/ingestion/
+        # security/concurrency) is unchanged by the core-a/ingestion-testing merge (verified
+        # zero file overlap before merging), so re-running this against the current tree still
+        # reproduces the same historical numbers. It intentionally does NOT cover the hardened
+        # candidate's new surfaces (product model, durable execution, implementation
+        # descriptor) -- see scripts/export_final_v1_candidate_baseline.py for that (state B).
+        system_under_test_commit="a5dace6ccbe52c7669e13fa0efe8eb17448d05a8",
+        historical_baseline_commit="a5dace6ccbe52c7669e13fa0efe8eb17448d05a8",
+        branch="evaluation-suite",
         config={
             "model": "n/a -- no live LLM calls in this export (offline/gold-set + live-DB areas only)",
             "embedding_model": "n/a -- gold-set areas use FakeEmbedder stand-ins, no real embedding calls",
