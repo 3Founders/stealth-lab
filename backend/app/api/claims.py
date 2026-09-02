@@ -106,6 +106,45 @@ class ClaimVersionOut(BaseModel):
     properties: dict[str, Any] = {}
 
 
+class GraphNodeOut(BaseModel):
+    id: str
+    statement: str
+    truth_state: str
+    status: Optional[str] = None
+    subject: Optional[str] = None
+    predicate: Optional[str] = None
+    object: Optional[str] = None  # noqa: A003 -- matches the claim triple field name
+    claim_type: Optional[str] = None
+    epistemic_status: Optional[str] = None
+    scope_type: Optional[str] = None
+    scope_entity_id: Optional[str] = None
+    created_by: Optional[str] = None
+    t_valid: Optional[datetime] = None
+    degree: int = 0
+
+
+class GraphEdgeOut(BaseModel):
+    id: str
+    source: str
+    target: str
+    kind: str
+    relation: Optional[str] = None
+    weight: Optional[float] = None
+    created_by: Optional[str] = None
+    t_valid: Optional[datetime] = None
+
+
+class ClaimGraphOut(BaseModel):
+    nodes: list[GraphNodeOut]
+    edges: list[GraphEdgeOut]
+    counts: dict[str, Any]
+    truncated: bool
+    include_retired: bool
+    link_mode: str
+    query: Optional[str] = None
+    generated_at: str
+
+
 # ---------------------------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------------------------
@@ -116,6 +155,44 @@ async def _require_visible_claim(pool, claim_id: UUID, *, scope: AccessScope) ->
     if claim is None:
         raise HTTPException(404, "claim not found")
     return claim
+
+
+@router.get("/graph", response_model=ClaimGraphOut)
+async def get_claim_graph(
+    limit: int = Query(default=200, ge=1, le=600),
+    include_retired: bool = Query(
+        default=False,
+        description="Also include claims no longer believed (truth_state='OUT') as nodes.",
+    ),
+    q: Optional[str] = Query(
+        default=None, description="Case-insensitive substring filter on the claim statement.",
+    ),
+    with_status: bool = Query(
+        default=True,
+        description="Compute each node's real lifecycle state "
+        "(current/supported/stale/disputed/contradicted/retired). Set false for a faster raw dump.",
+    ),
+    link_mode: str = Query(
+        default="both", pattern="^(both|relations|similarity)$",
+        description="Which edges to include: real claim relations, embedding-similarity edges, or both.",
+    ),
+    sim_k: int = Query(default=3, ge=1, le=8, description="Nearest neighbours per node for similarity edges."),
+    sim_threshold: float = Query(
+        default=0.55, ge=0.3, le=0.999, description="Minimum cosine similarity for a similarity edge.",
+    ),
+    pool=Depends(get_pool),
+    scope: AccessScope = Depends(get_scope),
+) -> ClaimGraphOut:
+    """The current claim graph as nodes + edges (real claim relations and
+    embedding-similarity links), for a visualizer. Registered before
+    `/{claim_id}` so the literal path `graph` is never parsed as a claim
+    UUID. Read-only; scope-filtered the same way every other claim read is."""
+    result = await claim_graph_api.get_claim_graph_overview(
+        pool, scope=scope, limit=limit, include_retired=include_retired,
+        q=q, with_status=with_status, link_mode=link_mode,
+        sim_k=sim_k, sim_threshold=sim_threshold,
+    )
+    return ClaimGraphOut(**result)
 
 
 @router.get("/{claim_id}", response_model=ClaimOut)

@@ -109,7 +109,19 @@ from agent import Agent, RepoSandbox  # noqa: E402
 
 from openai import OpenAI
 
+from starlette.requests import Request
+from starlette.responses import HTMLResponse, JSONResponse, Response
+
 from app.mcp_server.tasks_extension import TasksExtension
+from app.mcp_server.claim_graph_page import CLAIM_GRAPH_HTML, FORCE_GRAPH_JS
+from app.services import claim_graph_api
+
+# Set once by `lifespan` (below) so the non-MCP custom HTTP routes
+# (/claim-graph, /claim-graph/data) can reach the same pool the MCP tools
+# get via ctx.request_context.lifespan_context -- a plain Starlette route
+# handler is not an MCP request and has no ctx. Single process
+# (--workers 1 is already load-bearing here), so a module global is safe.
+_LIFESPAN_STATE: dict = {}
 
 # LOGGED, DELIBERATE, LOCAL OVERRIDE -- not a change to the shared
 # PARTIAL_MATCH_THRESHOLD (0.70) used elsewhere in the platform.
@@ -143,9 +155,11 @@ async def lifespan(server: MCPServer) -> AsyncIterator[dict]:
     if not os.environ.get("DATABASE_URL"):
         raise RuntimeError("DATABASE_URL not set -- see backend/.env")
     pool = await create_pool(os.environ["DATABASE_URL"])
+    _LIFESPAN_STATE["pool"] = pool
     try:
         yield {"pool": pool}
     finally:
+        _LIFESPAN_STATE.pop("pool", None)
         await pool.close()
 
 
@@ -294,6 +308,72 @@ server = MCPServer(
 # leave all 9 MCP tools dark, which is the surface external agents
 # actually call. No-op without SENTRY_DSN.
 observability.init("mcp")
+
+
+# ---------------------------------------------------------------------------
+# Claim-graph viewer -- a read-only web page + JSON feed served by THIS MCP
+# server, so anyone running the StealthLab MCP setup can open
+# http://127.0.0.1:8765/claim-graph and see the live claim graph. The
+# graph renderer (force-graph, vendored under app/mcp_server/vendor/) is
+# served from /claim-graph/vendor/... -- no CDN, no build step, works
+# fully offline. `@server.custom_route` routes are deliberately
+# unauthenticated (the SDK reserves them for public health-check-style
+# endpoints); this fits the loopback-only default posture and the fact
+# that every handler here is strictly read-only. If the server is ever
+# exposed beyond loopback, front it with a reverse proxy / auth the same
+# way any other read endpoint would be.
+# ---------------------------------------------------------------------------
+
+def _graph_pool():
+    pool = _LIFESPAN_STATE.get("pool")
+    if pool is None:  # pragma: no cover - only before startup / after shutdown
+        raise RuntimeError("server not started -- DB pool unavailable")
+    return pool
+
+
+@server.custom_route("/claim-graph", methods=["GET"], include_in_schema=False)
+async def claim_graph_page(request: Request) -> HTMLResponse:  # noqa: ARG001
+    return HTMLResponse(CLAIM_GRAPH_HTML)
+
+
+@server.custom_route("/claim-graph/vendor/force-graph.js", methods=["GET"], include_in_schema=False)
+async def claim_graph_vendor_forcegraph(request: Request) -> Response:  # noqa: ARG001
+    return Response(FORCE_GRAPH_JS, media_type="application/javascript",
+                    headers={"cache-control": "public, max-age=86400"})
+
+
+@server.custom_route("/claim-graph/data", methods=["GET"], include_in_schema=False)
+async def claim_graph_data(request: Request) -> JSONResponse:
+    qp = request.query_params
+
+    def _int(name: str, default: int) -> int:
+        try:
+            return int(qp.get(name, default))
+        except (TypeError, ValueError):
+            return default
+
+    def _float(name: str, default: float) -> float:
+        try:
+            return float(qp.get(name, default))
+        except (TypeError, ValueError):
+            return default
+
+    def _bool(name: str) -> bool:
+        return str(qp.get(name, "")).lower() in ("1", "true", "yes", "on")
+
+    result = await claim_graph_api.get_claim_graph_overview(
+        _graph_pool(),
+        scope=AccessScope.unrestricted(),
+        limit=_int("limit", 200),
+        include_retired=_bool("include_retired"),
+        q=(qp.get("q") or None),
+        with_status=qp.get("with_status", "true").lower() != "false",
+        link_mode=(qp.get("link_mode") or "both"),
+        sim_k=_int("sim_k", 3),
+        sim_threshold=_float("sim_threshold", 0.55),
+    )
+    return JSONResponse(json.loads(json.dumps(result, default=str)))
+
 
 app = server.streamable_http_app()
 
@@ -1897,6 +1977,49 @@ async def search_procedures(task: str, ctx: Context, state: str = "{}", limit: i
         }
         for m in matches
     ])
+
+
+@server.tool()
+async def get_claim_graph(ctx: Context, limit: int = 200, include_retired: bool = False,
+                          q: str | None = None, with_status: bool = True,
+                          link_mode: str = "both", sim_k: int = 3,
+                          sim_threshold: float = 0.55) -> str:
+    """
+    The current claim graph as nodes + edges -- the same data the
+    /claim-graph web page in this server renders. Thin wrapper around
+    app.services.claim_graph_api.get_claim_graph_overview; read-only, no
+    new query logic here.
+
+    limit: max claim nodes (clamped 1..600). One extra row is checked
+    internally so `truncated` is honest, never a silent cap.
+    include_retired: default False -> only claims still believed
+    (truth_state='IN'). True also returns superseded/contradicted claims
+    (status 'retired'/'contradicted').
+    q: optional case-insensitive substring filter on the claim statement.
+    with_status: default True -> each node carries its real lifecycle
+    state (current/supported/stale/disputed/contradicted/retired), one
+    bounded read per node. False = faster raw dump, truth_state only.
+    link_mode: "both" (default) / "relations" / "similarity". Real
+    claim<->claim relation edges are usually sparse; "similarity" adds
+    undirected k-NN edges in claim-embedding space so related claims are
+    visibly connected.
+    sim_k: nearest neighbours per node for similarity edges (1..8).
+    sim_threshold: minimum cosine similarity for a similarity edge (>=0.3).
+
+    Returns JSON: {nodes:[{id, statement, truth_state, status, subject,
+    predicate, object, epistemic_status, scope_type, scope_entity_id,
+    created_by, t_valid, degree}], edges:[{id, source, target, kind
+    ('relation'|'similarity'), relation?, weight?}], counts:{claims_total,
+    claims_shown, edges, edges_by_kind, by_status}, truncated, link_mode,
+    generated_at}.
+    """
+    pool = ctx.request_context.lifespan_context["pool"]
+    result = await claim_graph_api.get_claim_graph_overview(
+        pool, scope=AccessScope.unrestricted(),
+        limit=limit, include_retired=include_retired, q=q, with_status=with_status,
+        link_mode=link_mode, sim_k=sim_k, sim_threshold=sim_threshold,
+    )
+    return json.dumps(result, default=str)
 
 
 @server.tool()

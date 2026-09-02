@@ -99,6 +99,19 @@ class FakePool:
             return row.get("visibility") == "public"
         return True  # TRUE -- unrestricted
 
+    def _claim_rows_visible(self, norm: str, params: tuple):
+        return [c for c in self.claims.values() if self._row_visible(norm, params, c)]
+
+    async def fetchval(self, sql, *params):
+        norm = _norm(sql)
+        self.fetch_calls.append((norm, params))
+        if norm.startswith("SELECT count(*) FROM knowledge_nodes WHERE node_type = 'claim'"):
+            rows = self._claim_rows_visible(norm, params)
+            if "truth_state" in norm and "= 'IN'" in norm:
+                rows = [c for c in rows if c["properties"].get("truth_state", "IN") == "IN"]
+            return len(rows)
+        raise AssertionError(f"unexpected fetchval: {norm}")
+
     async def fetchrow(self, sql, *params):
         norm = _norm(sql)
         self.fetchrow_calls.append((norm, params))
@@ -118,6 +131,43 @@ class FakePool:
     async def fetch(self, sql, *params):
         norm = _norm(sql)
         self.fetch_calls.append((norm, params))
+
+        if norm.startswith(
+            "SELECT id, name, properties, t_valid, created_by, scope_type, scope_entity_id "
+            "FROM knowledge_nodes WHERE node_type = 'claim'"
+        ):
+            limit = params[0]
+            rows = self._claim_rows_visible(norm, params)
+            if "truth_state" in norm and "= 'IN'" in norm:
+                rows = [c for c in rows if c["properties"].get("truth_state", "IN") == "IN"]
+            if "name ILIKE $" in norm:
+                needle = str(params[-1]).strip("%").lower()
+                rows = [c for c in rows if needle in (c["name"] or "").lower()]
+            rows = sorted(rows, key=lambda c: c["t_valid"], reverse=True)[:limit]
+            return [
+                {
+                    "id": c["id"], "name": c["name"], "properties": dict(c["properties"]),
+                    "t_valid": c["t_valid"], "created_by": c["created_by"],
+                    "scope_type": c["scope_type"], "scope_entity_id": c["scope_entity_id"],
+                }
+                for c in rows
+            ]
+
+        if norm.startswith(
+            "SELECT id, source_id, target_id, custom_edge_type AS relation, created_by, t_valid "
+            "FROM edges WHERE source_table = 'knowledge_nodes'"
+        ):
+            wanted, ids = set(params[0]), set(params[1])
+            return [
+                {
+                    "id": e["id"], "source_id": e["source_id"], "target_id": e["target_id"],
+                    "relation": e["relation"], "created_by": e["created_by"],
+                    "t_valid": e["t_valid"],
+                }
+                for e in self.edges
+                if e["relation"] in wanted
+                and e["source_id"] in ids and e["target_id"] in ids
+            ]
 
         if "FROM edges e WHERE" in norm:
             claim_id, wanted = params[0], set(params[1])
@@ -177,6 +227,13 @@ class FakePool:
                 {"id": c["id"]} for c in self.claims.values()
                 if c["id"] in ids and self._row_visible(norm, params, c)
             ]
+
+        if "CROSS JOIN LATERAL" in norm and "a.embedding <=> b.embedding" in norm:
+            # embedding-similarity k-NN edge query -- offline fixtures carry no
+            # real pgvector embeddings, so it honestly returns nothing. The
+            # link_mode='relations' tests exercise the relation-edge path; the
+            # similarity path is covered live in test_claim_graph_overview_e2e.
+            return []
 
         raise AssertionError(f"unexpected fetch: {norm}")
 
@@ -371,6 +428,114 @@ def test_get_claim_history_empty_for_invisible_claim():
     pool = _base_pool()
     result = _run(claim_graph_api.get_claim_history(pool, C_PRIVATE, scope=ANON))
     assert result == []
+
+
+# ---------------------------------------------------------------------------
+# get_claim_graph_overview
+# ---------------------------------------------------------------------------
+
+C_OUT = "00000000-0000-4000-8000-0000000000b0"
+E_SUP = "00000000-0000-4000-8000-0000000000e9"
+E_NONREL = "00000000-0000-4000-8000-0000000000ea"
+UNRESTRICTED = AccessScope.unrestricted()
+
+
+def _overview_pool() -> FakePool:
+    def row(cid, stmt, days_old, *, visibility="public", owner_id=None, props_extra=None):
+        r = _claim_row(cid, visibility=visibility, owner_id=owner_id,
+                       properties={"statement": stmt, **(props_extra or {})})
+        r["name"] = stmt
+        r["t_valid"] = NOW - timedelta(days=days_old)
+        return r
+
+    claims = [
+        row(C1, "alpha cache invariant", 1),
+        row(C2, "alpha supporting note", 2),
+        row(C3, "alpha newer rule", 3),
+        row(C_OUT, "alpha older rule", 4, props_extra={"truth_state": "OUT"}),
+        row(C_PRIVATE, "alpha private thing", 1, visibility="private", owner_id="someone-else"),
+    ]
+    edges = [
+        _edge(E1, C2, C1, "SUPPORTS"),          # both shown
+        _edge(E3, C1, C_PRIVATE, "CONTRADICTS"),  # endpoint not in the (anon) node set
+        _edge(E_SUP, C3, C_OUT, "SUPERSEDES"),   # only in the node set when include_retired
+        _edge(E_NONREL, C1, C2, "PRODUCES"),     # not a claim relation -> never an edge here
+    ]
+    return FakePool(claims=claims, edges=edges)
+
+
+def test_overview_believed_only_by_default_and_scope_filtered():
+    pool = _overview_pool()
+    g = _run(claim_graph_api.get_claim_graph_overview(pool, scope=ANON, with_status=False))
+    ids = {n["id"] for n in g["nodes"]}
+    assert ids == {C1, C2, C3}                 # OUT excluded, private excluded (anon)
+    assert g["counts"]["claims_total"] == 3
+    assert g["counts"]["claims_shown"] == 3
+    assert all(n["status"] is None for n in g["nodes"])   # with_status=False
+    assert [n["id"] for n in g["nodes"]] == [C1, C2, C3]   # newest t_valid first
+
+
+def test_overview_unrestricted_scope_sees_private_claim():
+    pool = _overview_pool()
+    g = _run(claim_graph_api.get_claim_graph_overview(pool, scope=UNRESTRICTED, with_status=False))
+    assert C_PRIVATE in {n["id"] for n in g["nodes"]}
+
+
+def test_overview_include_retired_adds_out_claims():
+    pool = _overview_pool()
+    g = _run(claim_graph_api.get_claim_graph_overview(
+        pool, scope=ANON, include_retired=True, with_status=False,
+    ))
+    ids = {n["id"] for n in g["nodes"]}
+    assert C_OUT in ids
+    node_out = next(n for n in g["nodes"] if n["id"] == C_OUT)
+    assert node_out["truth_state"] == "OUT"
+    assert g["include_retired"] is True
+
+
+def test_overview_edges_only_among_shown_nodes_and_only_claim_relations():
+    pool = _overview_pool()
+    g = _run(claim_graph_api.get_claim_graph_overview(pool, scope=ANON, with_status=False))
+    rels = {(e["source"], e["target"], e["relation"]) for e in g["edges"]}
+    assert rels == {(C2, C1, "SUPPORTS")}     # E3 endpoint invisible, E_SUP node OUT, E_NONREL not a relation
+
+    g2 = _run(claim_graph_api.get_claim_graph_overview(
+        pool, scope=ANON, include_retired=True, with_status=False,
+    ))
+    rels2 = {(e["source"], e["target"], e["relation"]) for e in g2["edges"]}
+    assert (C3, C_OUT, "SUPERSEDES") in rels2   # now both endpoints are in the node set
+
+
+def test_overview_q_filters_on_statement():
+    pool = _overview_pool()
+    g = _run(claim_graph_api.get_claim_graph_overview(
+        pool, scope=ANON, q="supporting", with_status=False,
+    ))
+    assert {n["id"] for n in g["nodes"]} == {C2}
+    assert g["query"] == "supporting"
+
+
+def test_overview_truncation_is_honest():
+    pool = _overview_pool()
+    g = _run(claim_graph_api.get_claim_graph_overview(
+        pool, scope=ANON, limit=2, with_status=False,
+    ))
+    assert len(g["nodes"]) == 2
+    assert g["truncated"] is True
+    # limit is clamped, never trusted raw
+    g2 = _run(claim_graph_api.get_claim_graph_overview(
+        pool, scope=ANON, limit=99999, with_status=False,
+    ))
+    assert g2["truncated"] is False
+
+
+def test_overview_router_graph_route_is_registered_before_claim_id():
+    client = _client(_overview_pool())
+    resp = client.get("/v1/claims/graph", params={"with_status": "false"})
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert {n["id"] for n in body["nodes"]} == {C1, C2, C3}
+    assert body["counts"]["edges"] == 1
 
 
 # ---------------------------------------------------------------------------

@@ -2,7 +2,7 @@
 
 Exposes StealthLab's bi-temporal knowledge/task graph, debate-based conflict
 resolution, procedure lifecycle, Implementation Registry, and a
-retrieval-grounded coding agent as 20 MCP tools.
+retrieval-grounded coding agent as 21 MCP tools.
 
 ## Setup
 
@@ -22,7 +22,7 @@ retrieval-grounded coding agent as 20 MCP tools.
 3. `experiments/swebench_pro/` must exist as a real sibling directory of
    `backend/` -- `find_best_way` imports `Agent`/`RepoSandbox` from there.
 
-## The 20 tools
+## The 21 tools
 
 | Tool | What it does | Writes to the graph? |
 |---|---|---|
@@ -46,6 +46,7 @@ retrieval-grounded coding agent as 20 MCP tools.
 | `inspect_implementation` | Fetch one durable implementation row by id | No -- read-only |
 | `list_task_implementations` | Every implementation linked to a task_node | No -- read-only |
 | `get_implementation_capability` | Capability estimate for one durable implementation | No -- read-only |
+| `get_claim_graph` | The current claim graph -- nodes (live claims + lifecycle state) and claim-to-claim relation edges -- the same feed the `/claim-graph` web page renders | No -- read-only |
 
 ### Implementation Registry is now wired into the real hot path (2026-09-02)
 
@@ -93,6 +94,37 @@ apply step -- do not cross them:
 `apply_change_set` itself is for change_sets that never went through
 either proposal flow -- e.g. a manually constructed change_set for
 testing.
+
+## Claim-graph viewer (`/claim-graph`)
+
+The HTTP transport also serves a plain, read-only web page for looking at
+the live claim graph -- no build step, no CDN, no extra install:
+
+```
+uvicorn app.mcp_server.server:app --host 127.0.0.1 --port 8765 --workers 1
+# then open http://127.0.0.1:8765/claim-graph
+```
+
+- `GET /claim-graph` -- a self-contained HTML page (inline canvas
+  force-directed graph). Nodes are live claims, coloured by real
+  lifecycle state (`current` / `supported` / `stale` / `disputed` /
+  `contradicted` / `retired`); dashed red edges are belief-revision
+  relations (`SUPERSEDES` / `CONTRADICTS`), grey edges are the general
+  epistemic/structural relations. Click a node for its full statement,
+  triple, scope, and relations. Controls: statement filter, node cap,
+  "show retired", refresh.
+- `GET /claim-graph/data?limit=&include_retired=&q=&with_status=` -- the
+  JSON feed (`{nodes, edges, counts, truncated, generated_at}`) the page
+  fetches. Same shape as the `get_claim_graph` MCP tool and the REST
+  endpoint `GET /v1/claims/graph`.
+
+Both routes are **unauthenticated** (the MCP SDK reserves
+`@server.custom_route` for public health-check-style endpoints) and
+strictly read-only. That fits the loopback-only default posture; if the
+server is ever exposed past `127.0.0.1`, put it behind a reverse
+proxy/auth the same as any other read endpoint. `include_retired=false`
+(the default) shows only claims still believed. `with_status=false` skips
+the per-node lifecycle read for a faster raw dump.
 
 ## Quickstart -- MCP Inspector
 
