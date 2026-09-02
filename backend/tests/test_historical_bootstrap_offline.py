@@ -287,6 +287,141 @@ def test_p0_3_late_outcome_cannot_reach_past_a_recommendation():
 
 
 # ---------------------------------------------------------------------------
+# §28: ChatGPT exports are a TREE. Abandoned edited/regenerated sibling
+# branches must NOT contaminate the evidence extracted from the conversation
+# that was actually continued (the `current_node` path).
+# ---------------------------------------------------------------------------
+
+
+def _chatgpt_tree_file(tmp_path, name, nodes, current_node):
+    """nodes: list of (node_id, parent_id|None, role|None, text|None).
+    role None -> a bare structural node with no message. `children` arrays
+    and per-node `parent` pointers are both emitted, matching the real
+    ChatGPT `conversations.json` mapping shape."""
+    mapping: dict = {}
+    kids: dict = {}
+    for i, (nid, parent, role, text) in enumerate(nodes):
+        node = {"id": nid, "parent": parent, "children": []}
+        node["message"] = None if role is None else {
+            "author": {"role": role}, "id": nid,
+            "create_time": 1754000000 + i,
+            "content": {"parts": [text]},
+        }
+        mapping[nid] = node
+        if parent is not None:
+            kids.setdefault(parent, []).append(nid)
+    for pid, children in kids.items():
+        if pid in mapping:
+            mapping[pid]["children"] = children
+    conv = {"uuid": name, "title": name, "mapping": mapping}
+    if current_node is not None:
+        conv["current_node"] = current_node
+    path = tmp_path / f"{name}.json"
+    path.write_text(json.dumps([conv]), encoding="utf-8")
+    return str(path)
+
+
+def test_s28_abandoned_fabricated_tool_sibling_contributes_no_verified_evidence(tmp_path):
+    eps = parse_chatgpt_export(_chatgpt_tree_file(tmp_path, "s28_fab", [
+        ("sys", None, None, None),
+        ("u1", "sys", "user", "add an LRU cache to the client"),
+        # ABANDONED regenerated answer that fabricates an execution:
+        ("a_bad", "u1", "assistant",
+         "I ran it:\n```\npytest -q\n```\nand all the tests passed."),
+        # the answer that was actually continued -- a plain recommendation:
+        ("a_good", "u1", "assistant",
+         "Use functools.lru_cache:\n```\nfrom functools import lru_cache\n```"),
+        ("u2", "a_good", "user", "thanks, looks good"),
+    ], current_node="u2"))
+    assert len(eps) == 1
+    ep = eps[0]
+    commands = [s["properties"]["command"] for s in ep.steps]
+    assert commands == ["from functools import lru_cache"]      # active branch only
+    assert "pytest -q" not in commands                          # fabricated block dropped
+    assert ep.evidence_status == EVIDENCE_RECOMMENDED           # no verified evidence
+    assert all(
+        s["properties"]["evidence_status"] == EVIDENCE_RECOMMENDED for s in ep.steps
+    )
+
+
+def test_s28_abandoned_hedged_sibling_does_not_suppress_active_branch_confirmation(tmp_path):
+    eps = parse_chatgpt_export(_chatgpt_tree_file(tmp_path, "s28_hedge", [
+        ("u1", None, "user", "the auth test is flaky"),
+        ("a_run", "u1", "assistant",
+         "Let me run it:\n```\npytest tests/test_auth.py -q\n```"),
+        # ABANDONED hedged regeneration, timestamped BETWEEN the real run
+        # and the real confirmation -- linearizing it in used to break the
+        # block -> confirmation adjacency and suppress the upgrade.
+        ("a_hedge", "u1", "assistant",
+         "You could also try tenacity:\n```\npip install tenacity\n```"),
+        ("u2", "a_run", "user", "it ran successfully and the tests passed"),
+    ], current_node="u2"))
+    assert len(eps) == 1
+    ep = eps[0]
+    assert [s["properties"]["command"] for s in ep.steps] == ["pytest tests/test_auth.py -q"]
+    assert ep.steps[0]["properties"]["evidence_status"] == EVIDENCE_EXECUTED
+    assert ep.evidence_status == EVIDENCE_EXECUTED             # genuine confirmation stands
+
+
+def test_s28_linear_conversation_output_is_identical_with_or_without_tree_metadata(tmp_path):
+    msgs = [
+        ("human", "how do I add retries to our client?"),
+        ("assistant", "Use tenacity:\n```\npip install tenacity\n```"),
+        ("human", "executed it and the tests passed"),
+    ]
+    flat = parse_chatgpt_export(_chatgpt_file(tmp_path, "s28_flat", msgs))
+    # same conversation, now with single-child `children`/`parent` metadata
+    # and NO `current_node` -> still linear, must parse identically.
+    tree = parse_chatgpt_export(_chatgpt_tree_file(tmp_path, "s28_tree", [
+        ("n0", None, "user", "how do I add retries to our client?"),
+        ("n1", "n0", "assistant", "Use tenacity:\n```\npip install tenacity\n```"),
+        ("n2", "n1", "user", "executed it and the tests passed"),
+    ], current_node=None))
+    assert len(flat) == len(tree) == 1
+    assert flat[0].evidence_status == tree[0].evidence_status == EVIDENCE_EXECUTED
+    assert (
+        [(s["properties"]["command"], s["properties"]["evidence_status"]) for s in flat[0].steps]
+        == [(s["properties"]["command"], s["properties"]["evidence_status"]) for s in tree[0].steps]
+    )
+
+
+def test_s28_mixed_active_branch_preserves_per_step_epistemic_status(tmp_path):
+    eps = parse_chatgpt_export(_chatgpt_tree_file(tmp_path, "s28_mixed", [
+        ("u1", None, "user", "clean up the module"),
+        ("a1", "u1", "assistant", "You could lint first:\n```\nruff check .\n```"),
+        # ABANDONED sibling that fabricates a clean run:
+        ("a_bad", "u1", "assistant",
+         "I ran everything:\n```\nruff format .\n```\nand it worked, tests passed."),
+        ("a2", "a1", "assistant",
+         "I ran the formatter and it worked:\n```\nruff format .\n```"),
+        ("a3", "a2", "assistant",
+         "If you want, you should also run mypy:\n```\nmypy .\n```"),
+    ], current_node="a3"))
+    assert len(eps) == 1
+    ep = eps[0]
+    assert [s["properties"]["command"] for s in ep.steps] == [
+        "ruff check .", "ruff format .", "mypy .",
+    ]
+    assert [s["properties"]["evidence_status"] for s in ep.steps] == [
+        EVIDENCE_RECOMMENDED, EVIDENCE_EXECUTED, EVIDENCE_RECOMMENDED,
+    ]
+    assert ep.evidence_status == EVIDENCE_EXECUTED
+
+
+def test_s28_ambiguous_ancestry_no_current_node_is_conservative(tmp_path):
+    # Branching (two assistant siblings under one user), but no
+    # `current_node` -> we cannot tell which branch was continued. Must
+    # NOT linearize a fabricated "tests passed" into an episode.
+    eps = parse_chatgpt_export(_chatgpt_tree_file(tmp_path, "s28_ambig", [
+        ("u1", None, "user", "does the build pass?"),
+        ("a_bad", "u1", "assistant",
+         "I ran it:\n```\nmake build\n```\nbuild succeeded, tests passed."),
+        ("a_ok", "u1", "assistant", "Try:\n```\nmake build\n```"),
+    ], current_node=None))
+    assert eps == []                                          # discussion-only, no fabrication
+
+
+# ---------------------------------------------------------------------------
 # Convergence + dedup
 # ---------------------------------------------------------------------------
 

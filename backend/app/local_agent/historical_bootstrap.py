@@ -235,6 +235,126 @@ def _goal_from(text: str, fallback: str, limit: int = 120) -> str:
     return (text[:limit] or fallback).strip()
 
 
+# ---------------------------------------------------------------------------
+# ChatGPT export branch reconstruction (directive §28 -- evidence-integrity).
+#
+# A ChatGPT `conversations.json` `mapping` is a TREE, not a list: editing or
+# regenerating a message forks sibling branches under one parent, and only
+# the branch on the conversation's `current_node` path was actually
+# continued. Linearizing every node by `create_time` (the old behaviour)
+# splices ABANDONED siblings -- a fabricated tool call in a regenerated-away
+# answer, a hedged superseded reply -- into the real transcript, where they
+# contaminate the extracted evidence. We instead reconstruct the active
+# root -> `current_node` path and read steps/evidence ONLY from it.
+#
+#   - linear conversation (no node has >1 child)  -> UNCHANGED: every
+#     message, ordered by `create_time` (the exact pre-§28 path).
+#   - branching + usable `current_node`           -> active path only, in
+#     tree order (regenerated-branch timestamps are not authoritative).
+#   - branching + missing/unresolvable `current_node` -> CONSERVATIVE:
+#     ancestry is genuinely ambiguous, so the conversation is treated as
+#     discussion-only (no episode). Uncertainty is never upgraded into a
+#     fabricated confirmation.
+# ---------------------------------------------------------------------------
+
+
+def _mapping_has_branching(mapping: dict) -> bool:
+    """True if any node has >1 child (directly, or by >1 node naming it as
+    `parent`) -- i.e. the conversation carries edited/regenerated siblings."""
+    child_counts: dict[str, int] = {}
+    for node in mapping.values():
+        if not isinstance(node, dict):
+            continue
+        kids = node.get("children")
+        if isinstance(kids, list) and len(kids) > 1:
+            return True
+        parent = node.get("parent")
+        if isinstance(parent, str):
+            child_counts[parent] = child_counts.get(parent, 0) + 1
+    return any(c > 1 for c in child_counts.values())
+
+
+def _chatgpt_active_node_ids(mapping: Any, current_node: Any) -> Optional[list[str]]:
+    """Node ids on the active root -> `current_node` branch, in order.
+
+    Returns:
+      - ``None``  -> the conversation is linear; the caller keeps the
+        legacy "every node, sorted by create_time" path (behaviour
+        UNCHANGED for non-branching exports).
+      - ``[]``    -> branching but ambiguous ancestry (no / unresolvable
+        `current_node`); the caller treats the conversation as
+        discussion-only.
+      - non-empty list -> the active branch, root first.
+    """
+    if not isinstance(mapping, dict) or not mapping:
+        return None
+    if not _mapping_has_branching(mapping):
+        return None
+    if not isinstance(current_node, str) or current_node not in mapping:
+        return []
+    # Real ChatGPT exports put a `parent` pointer on every node: walk up.
+    if any(isinstance(n, dict) and n.get("parent") for n in mapping.values()):
+        path: list[str] = []
+        seen: set[str] = set()
+        nid: Any = current_node
+        while isinstance(nid, str) and nid in mapping and nid not in seen:
+            seen.add(nid)
+            path.append(nid)
+            node = mapping[nid]
+            nid = node.get("parent") if isinstance(node, dict) else None
+        path.reverse()
+        return path
+    # No parent pointers -- descend from each root via `children`, keeping
+    # the branch that reaches `current_node`.
+    roots = [
+        nid for nid, n in mapping.items()
+        if isinstance(n, dict) and not n.get("parent")
+    ]
+    for root in roots:
+        stack: list[tuple[str, list[str]]] = [(root, [root])]
+        while stack:
+            nid, acc = stack.pop()
+            if nid == current_node:
+                return acc
+            node = mapping.get(nid)
+            if not isinstance(node, dict):
+                continue
+            for kid in node.get("children") or []:
+                if isinstance(kid, str):
+                    stack.append((kid, acc + [kid]))
+    return []
+
+
+def _claude_active_messages(conv: dict, messages: list) -> list:
+    """Claude's `conversations.json` export is a FLAT `chat_messages` list
+    with no node tree, so the §28 branch-contamination defect does not
+    arise. IF a future export carries branch structure
+    (`current_leaf_message_uuid` on the conversation + `parent_message_uuid`
+    on messages), reconstruct the active leaf -> root chain the same way;
+    otherwise return the messages untouched (behaviour UNCHANGED)."""
+    leaf = conv.get("current_leaf_message_uuid") or conv.get("current_leaf")
+    if not leaf:
+        return messages
+    by_uuid = {
+        m.get("uuid"): m
+        for m in messages
+        if isinstance(m, dict) and m.get("uuid")
+    }
+    if leaf not in by_uuid or not any(
+        isinstance(m, dict) and m.get("parent_message_uuid") for m in messages
+    ):
+        return messages
+    chain: list = []
+    seen: set = set()
+    cur: Any = leaf
+    while cur in by_uuid and cur not in seen:
+        seen.add(cur)
+        chain.append(by_uuid[cur])
+        cur = by_uuid[cur].get("parent_message_uuid")
+    chain.reverse()
+    return chain
+
+
 def parse_claude_export(path: str) -> list[HistoricalEpisode]:
     """Claude's own `conversations.json` export: a list of conversations
     with `chat_messages` carrying `sender` ("human"/"assistant") and
@@ -248,7 +368,7 @@ def parse_claude_export(path: str) -> list[HistoricalEpisode]:
     for conv in conversations:
         conv_id = conv.get("uuid") or conv.get("id") or "unknown"
         title = conv.get("name") or conv.get("title") or "untitled conversation"
-        messages = conv.get("chat_messages") or []
+        messages = _claude_active_messages(conv, conv.get("chat_messages") or [])
         texts: list[str] = []
         for msg in messages:
             text = msg.get("text") or ""
@@ -277,10 +397,14 @@ def parse_claude_export(path: str) -> list[HistoricalEpisode]:
 
 def parse_chatgpt_export(path: str) -> list[HistoricalEpisode]:
     """ChatGPT's `conversations.json` export: a list of conversations whose
-    `mapping` is a node tree of `{message: {author: {role}, content:
-    {parts: [...]}, create_time}}`. Same conservatism as the Claude
-    parser -- one shared classification function, zero source-specific
-    leniency."""
+    `mapping` is a node TREE of `{id, message, parent, children[]}`. The
+    active branch is reconstructed from `mapping` + `current_node`
+    (`_chatgpt_active_node_ids`) -- steps/evidence come ONLY from messages
+    on that path, so an abandoned edited/regenerated sibling never
+    contaminates the transcript (directive §28). Linear conversations are
+    unchanged; branching with no resolvable `current_node` is treated as
+    discussion-only. Same conservatism as the Claude parser -- one shared
+    classification function, zero source-specific leniency."""
     with open(path, "r", encoding="utf-8") as f:
         conversations = json.load(f)
     if isinstance(conversations, dict):
@@ -290,8 +414,16 @@ def parse_chatgpt_export(path: str) -> list[HistoricalEpisode]:
         conv_id = conv.get("uuid") or conv.get("conversation_id") or "unknown"
         title = conv.get("title") or "untitled conversation"
         mapping = conv.get("mapping") or {}
+        active_ids = _chatgpt_active_node_ids(mapping, conv.get("current_node"))
+        if active_ids is not None and not active_ids:
+            # Branching + ambiguous ancestry: conservative, no episode.
+            continue
+        if active_ids is None:
+            node_iter = list(mapping.values())
+        else:
+            node_iter = [mapping[nid] for nid in active_ids if nid in mapping]
         messages = []
-        for node in mapping.values():
+        for node in node_iter:
             msg = node.get("message") if isinstance(node, dict) else None
             if not msg:
                 continue
@@ -304,7 +436,10 @@ def parse_chatgpt_export(path: str) -> list[HistoricalEpisode]:
                 messages.append((
                     msg.get("create_time") or 0, msg.get("id") or "", text,
                 ))
-        messages.sort(key=lambda m: m[0])
+        if active_ids is None:
+            # Linear conversation: unchanged ordering by create_time.
+            messages.sort(key=lambda m: m[0])
+        # Active-branch path: keep tree order (root -> current_node).
         steps, evidence_status = _steps_from_message_texts(
             [text for _t, _m, text in messages]
         )
