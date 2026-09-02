@@ -11,7 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app import observability
 from app.api import admin, agent_store, agents, approval, chat, decompose, graph, ingest
 from app.api import claims, implementations, me, procedures, projects, repositories, search, solutions, tasks
-from app.api import problems
+from app.api import problems, runs
 from app.api.deps import require_trustworthy_identity
 from app.config import settings
 from app.db.session import close_pool, create_pool
@@ -106,6 +106,11 @@ app.include_router(implementations.router)
 # Evaluation + evidence-derived leaderboard. All routes delegate to
 # app.services.product_model -- REST and MCP share that one service.
 app.include_router(problems.router)
+
+# Final-V1 §2: retry/resume REST surface over the durable-run service
+# (app/execution/durable_run.py, migrations 36/37). Thin -- delegates to
+# app.execution.durable_resume; no retry logic in the router.
+app.include_router(runs.router)
 
 
 @app.get("/health")

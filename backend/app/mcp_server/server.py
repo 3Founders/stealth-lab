@@ -56,6 +56,8 @@ from mcp.server.mcpserver import Context
 from pydantic import AnyHttpUrl
 
 from app.db.session import create_pool
+from app.execution import durable_resume as _dres
+from app.execution import durable_run as _dr
 from app.execution import implementation_registry
 from app.api.approval import decide, ApprovalRequest
 from app.api.decompose import decompose, decide as decide_decomposition_fn, DecomposeRequest, DecideRequest
@@ -2814,6 +2816,88 @@ async def find_best_solution(goal: str, ctx: Context) -> str:
         await _pm.find_best_way(pool, goal, scope=AccessScope.unrestricted()),
         default=str,
     )
+
+
+# ---------------------------------------------------------------------------
+# Durable execution-run retry / resume tools (final-V1 §2, §34) -- a thin
+# MCP surface over the PROVEN durable-run service (app/execution/durable_run.py,
+# migrations 36/37) via app.execution.durable_resume. NO retry/resume logic
+# lives here: every state transition, lease, terminal fence and attempt
+# bound is owned by durable_run. Reads are open; mutations are gated on the
+# resolved caller identity matching execution_runs.created_by.
+# ---------------------------------------------------------------------------
+@server.tool()
+async def inspect_run(run_id: str, ctx: Context) -> str:
+    """
+    Inspect a durable execution run: overall status, per-node status /
+    attempt_count / max_attempts / error_class, the pinned implementation
+    binding, worker/lease, first-pass vs final, and the full per-node
+    attempt history. Read-only. JSON: {status, nodes:[...], history:[...]}.
+    REFUSED if the run does not exist.
+    """
+    pool = ctx.request_context.lifespan_context["pool"]
+    status = await _dres.run_status_by_id(pool, run_id)
+    if status is None:
+        return f"REFUSED: execution run {run_id!r} not found"
+    history = await _dres.node_history_by_id(pool, run_id)
+    return json.dumps({"status": status, "history": history}, default=str)
+
+
+@server.tool()
+async def resume_execution_run(run_id: str, ctx: Context) -> str:
+    """
+    Resume an eligible durable run through the durable-run service. A
+    coding-agent / sandbox run (its plan compiled by
+    find_best_way_plan_compiler / reproduce_procedure_plan_compiler, or a
+    pending node with no real provider) is NOT faked -- it returns
+    {"status": "needs_product_context", ...} pointing at
+    find_best_way(resume_run_id=...) / reproduce_procedure. An
+    already-terminal run is an idempotent no-op. REFUSED if the run does
+    not exist or the resolved caller is not its creator.
+    """
+    pool = ctx.request_context.lifespan_context["pool"]
+    actor_id = _dres.resolved_caller_identity_or_none()
+    worker_id = f"mcp-{_resolve_caller_identity(fallback='resume_execution_run')}"
+    try:
+        result = await _dres.resume_run_by_id(
+            pool, run_id, worker_id=worker_id, actor_id=actor_id,
+        )
+    except _dres.NotYourRun as e:
+        return f"REFUSED: not your run -- {e}"
+    except _dr.ResumeInProgress as e:
+        return f"REFUSED: run is being resumed by another worker -- {e}"
+    except _dr.DurableRunError as e:
+        return f"REFUSED: {e}"
+    return json.dumps(result, default=str)
+
+
+@server.tool()
+async def retry_run_node(run_id: str, node_order: int, ctx: Context, force: bool = False) -> str:
+    """
+    Explicit bounded retry of ONE failed / resumable / blocked node of a
+    durable run, through the durable-run service. `force=True` bumps that
+    node's max_attempts by 1 (operator override for an exhausted node). A
+    succeeded node is never retried -- the service returns "already
+    succeeded -- terminal". Same needs_product_context refusal as
+    resume_execution_run for coding-agent / no-provider runs. REFUSED if
+    the run/node does not exist or the resolved caller is not the run's
+    creator.
+    """
+    pool = ctx.request_context.lifespan_context["pool"]
+    actor_id = _dres.resolved_caller_identity_or_none()
+    worker_id = f"mcp-{_resolve_caller_identity(fallback='retry_run_node')}"
+    try:
+        result = await _dres.retry_run_node_by_id(
+            pool, run_id, node_order,
+            worker_id=worker_id, actor_id=actor_id, force=force,
+        )
+    except _dres.NotYourRun as e:
+        return f"REFUSED: not your run -- {e}"
+    except _dr.ResumeInProgress as e:
+        return f"REFUSED: run is being resumed by another worker -- {e}"
+    except _dr.DurableRunError as e:
+        return f"REFUSED: {e}"
+    return json.dumps(result, default=str)
 
 
 if __name__ == "__main__":
