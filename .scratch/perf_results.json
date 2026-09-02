@@ -1,0 +1,167 @@
+{
+  "product_model.get_problem": {
+    "samples": 20,
+    "p50_ms": 40.45,
+    "p95_ms": 254.52,
+    "mean_ms": 49.8,
+    "min_ms": 24.58,
+    "max_ms": 254.52,
+    "query_count": 2,
+    "failures": []
+  },
+  "product_model.list_problem_solutions": {
+    "samples": 20,
+    "p50_ms": 78.12,
+    "p95_ms": 304.26,
+    "mean_ms": 117.28,
+    "min_ms": 44.0,
+    "max_ms": 304.26,
+    "query_count": 4,
+    "failures": []
+  },
+  "product_model.get_benchmark": {
+    "samples": 20,
+    "p50_ms": 37.54,
+    "p95_ms": 254.57,
+    "mean_ms": 47.47,
+    "min_ms": 26.74,
+    "max_ms": 254.57,
+    "query_count": 2,
+    "failures": []
+  },
+  "product_model.problem_leaderboard": {
+    "samples": 20,
+    "p50_ms": 150.37,
+    "p95_ms": 374.18,
+    "mean_ms": 157.38,
+    "min_ms": 72.9,
+    "max_ms": 374.18,
+    "query_count": 8,
+    "failures": []
+  },
+  "product_model.get_evaluation": {
+    "samples": 20,
+    "p50_ms": 58.17,
+    "p95_ms": 84.17,
+    "mean_ms": 61.06,
+    "min_ms": 36.67,
+    "max_ms": 84.17,
+    "query_count": 4,
+    "failures": []
+  },
+  "product_model.complete_evaluation_6exec": {
+    "samples": 20,
+    "p50_ms": 283.54,
+    "p95_ms": 440.77,
+    "mean_ms": 282.53,
+    "min_ms": 175.52,
+    "max_ms": 440.77,
+    "query_count": 13,
+    "failures": []
+  },
+  "durable_run.start_run_3node": {
+    "samples": 20,
+    "p50_ms": 132.82,
+    "p95_ms": 360.58,
+    "mean_ms": 148.79,
+    "min_ms": 91.0,
+    "max_ms": 360.58,
+    "query_count": 7,
+    "failures": []
+  },
+  "durable_run.execute_run_3node_full": {
+    "samples": 20,
+    "p50_ms": 1080.69,
+    "p95_ms": 1788.39,
+    "mean_ms": 1149.51,
+    "min_ms": 675.75,
+    "max_ms": 1788.39,
+    "query_count": 47,
+    "failures": []
+  },
+  "durable_run.resume_run_after_worker_loss": {
+    "samples": 20,
+    "p50_ms": 1179.54,
+    "p95_ms": 2043.05,
+    "mean_ms": 1242.67,
+    "min_ms": 709.2,
+    "max_ms": 2043.05,
+    "query_count": 70,
+    "failures": []
+  },
+  "mcp.find_problem": {
+    "samples": 20,
+    "p50_ms": 27.29,
+    "p95_ms": 237.94,
+    "mean_ms": 47.98,
+    "min_ms": 17.3,
+    "max_ms": 237.94,
+    "query_count": 2,
+    "failures": []
+  },
+  "mcp.inspect_problem": {
+    "samples": 20,
+    "p50_ms": 283.05,
+    "p95_ms": 744.33,
+    "mean_ms": 332.38,
+    "min_ms": 140.64,
+    "max_ms": 744.33,
+    "query_count": 16,
+    "failures": []
+  },
+  "mcp.find_best_solution": {
+    "samples": 20,
+    "p50_ms": 171.75,
+    "p95_ms": 213.08,
+    "mean_ms": 159.58,
+    "min_ms": 101.92,
+    "max_ms": 213.08,
+    "query_count": 10,
+    "failures": []
+  },
+  "claim_graph_api.get_claim_graph_overview_both": {
+    "samples": 20,
+    "p50_ms": 394.46,
+    "p95_ms": 952.48,
+    "mean_ms": 429.7,
+    "min_ms": 180.2,
+    "max_ms": 952.48,
+    "query_count": 98,
+    "failures": []
+  },
+  "claim_graph_api.get_claim_graph_overview_both_no_status": {
+    "samples": 20,
+    "p50_ms": 159.74,
+    "p95_ms": 827.28,
+    "mean_ms": 205.53,
+    "min_ms": 107.4,
+    "max_ms": 827.28,
+    "query_count": 8,
+    "failures": []
+  },
+  "embeddings.embed_one_distinct": {
+    "samples": 6,
+    "p50_ms": 3430.62,
+    "p95_ms": 5599.16,
+    "mean_ms": 3815.26,
+    "min_ms": 3367.98,
+    "max_ms": 5599.16,
+    "query_count": null,
+    "note": "external provider API (Voyage/Gemini chain); not a DB path",
+    "failures": []
+  },
+  "embeddings.embed_one_cached_repeat": {
+    "samples": 5,
+    "p50_ms": 0.02,
+    "mean_ms": 690.52,
+    "min_ms": 0.01,
+    "max_ms": 3452.5,
+    "note": "same text 5x -- calls 2..5 served from in-process _EMBED_CACHE",
+    "failures": []
+  },
+  "find_best_way_tier2": {
+    "samples": 0,
+    "note": "not measured, requires sandbox (real repo + model)",
+    "failures": []
+  }
+}
