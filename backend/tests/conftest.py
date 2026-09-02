@@ -35,6 +35,15 @@ import os
 
 import dotenv
 
+# Captured once, at conftest import -- before pytest_configure, before any
+# test module is collected, and before the wrapper below can run. True iff
+# DATABASE_URL was ALREADY in the environment when this process started
+# (an explicit `DATABASE_URL=... pytest` for the live-DB tests), as opposed
+# to arriving later via a .env load. test_env_guard_offline.py uses this to
+# distinguish "someone exported one by hand" (nothing for the guard to
+# prove -- skip) from a real .env-leak regression (assert).
+DATABASE_URL_WAS_AMBIENT_AT_STARTUP = "DATABASE_URL" in os.environ
+
 _real_load_dotenv = dotenv.load_dotenv
 
 

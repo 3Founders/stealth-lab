@@ -454,7 +454,20 @@ def test_no_embedding_returns_unranked_survivors_not_an_error():
             await _cleanup(pool, "app-test-noembed")
             await _make_verified_procedure(pool, "app-test-noembed-1")
 
-            results = await find_applicable_procedures(pool, current_scope={}, goal_embedding=None)
+            # Real-corpus live DB: with no goal_embedding the candidate pool
+            # is the N fewest-precondition procedures (applicability.py's
+            # documented cost-only pre-filter -- there is no relevance signal
+            # to fuse with). This database carries hundreds of 0-precondition
+            # verified procedures from other e2e tests, so the pool/limit are
+            # widened here to prove RETRIEVABILITY (the seeded row is a real
+            # survivor of the no-embedding path, not an error / not dropped)
+            # rather than incidental placement inside a small default window
+            # -- the same idiom test_canonical_personal_memory_e2e.py already
+            # documents and uses for this exact reason.
+            results = await find_applicable_procedures(
+                pool, current_scope={}, goal_embedding=None,
+                limit=5000, candidate_pool_size=20000,
+            )
             assert any(r["name"] == "app-test-noembed-1" for r in results)
         finally:
             await _cleanup(pool, "app-test-noembed")

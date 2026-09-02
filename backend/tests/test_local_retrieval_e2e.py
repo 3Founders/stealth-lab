@@ -389,10 +389,19 @@ def test_call_graph_ranked_names_boosts_semantic_tier_ranking(tmp_path):
                 "'no call graph relation', 's2')"
             )
 
+            # Real-corpus live DB: the two seeded task_nodes carry no
+            # embedding, so they enter only via the semantic tier's lexical
+            # leg. This shared DB's knowledge graph is large, so the default
+            # retrieval window (top_k=6, max_context_nodes=25) can truncate
+            # them out entirely before the rank-order under test is even
+            # observable. The window is widened here so BOTH seeded nodes are
+            # retained; the assertion itself -- the call-graph-boosted node
+            # ranks at or above the plain one -- is unchanged.
             result = await retrieve_local_first(
                 pool, "local-retr-test-cgboost shared query words",
                 embedder=FakeEmbedder(),
                 structural=StructuralContext(call_graph_ranked_names=ranked_files),
+                top_k=50, max_context_nodes=500, token_budget=200_000,
             )
             names_in_order = [n for n in result.text.split("\n")]
             boosted_idx = next(i for i, l in enumerate(names_in_order) if "boosted" in l)

@@ -119,9 +119,17 @@ def test_search_solutions_blends_a_real_procedure_and_a_real_task():
                 "release checklist": task_vec,
             })
 
+            # Real-corpus live DB: `limit` is the size of the final blended
+            # list. This shared DB carries hundreds of other procedures/tasks;
+            # a small `limit` can push the two rows THIS test seeded (each an
+            # exact-vector similarity match via the FakeEmbedder) off the end
+            # of the blended list, which would surface as a `next(...)` /
+            # set-equality failure that has nothing to do with the blend
+            # logic under test. Widened so both seeded rows survive into the
+            # list; every assertion below is unchanged.
             result = await search_solutions(
                 pool, f"{prefix} roll out the release checklist",
-                scope=AccessScope.unrestricted(), embedder=embedder, limit=10,
+                scope=AccessScope.unrestricted(), embedder=embedder, limit=500,
             )
 
             types_present = {hit["type"] for hit in result["results"]}
@@ -206,8 +214,12 @@ def test_rest_solutions_search_route_end_to_end_against_real_db(monkeypatch):
 
             transport = httpx.ASGITransport(app=app)
             async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                # limit=100 (the route's max): real-corpus live DB, keep the
+                # seeded exact-match procedure inside the returned blended
+                # list rather than risk it falling off a small default page.
                 resp = await client.get("/v1/solutions/search", params={
                     "q": f"{prefix} drain the queue",
+                    "limit": 100,
                 })
                 assert resp.status_code == 200
                 body = resp.json()

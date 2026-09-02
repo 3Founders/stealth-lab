@@ -150,9 +150,17 @@ def test_second_user_finds_and_independently_reuses_a_published_procedure():
 
                 # Before independent verification, User B's real automatic
                 # search must NOT surface it (require_verified gate, ticket 13).
+                # Pool/limit widened for the same reason the positive check
+                # below is: this shared live DB carries hundreds of
+                # 0-precondition procedures, and applicability.py's
+                # no-embedding candidate pre-filter is a bounded
+                # `candidate_pool_size`. A default window would let this
+                # negative assertion pass for the wrong reason (row simply
+                # outside the window); the wide pool makes it prove the
+                # verification gate specifically.
                 pre_verify_hits = await find_applicable_procedures(
                     pool, access_scope=AccessScope.for_user(USER_B),
-                    require_verified=True, limit=50,
+                    require_verified=True, limit=5000, candidate_pool_size=20000,
                 )
                 assert global_row_id not in {str(h["id"]) for h in pre_verify_hits}, (
                     "an unverified candidate must not be automatically "
@@ -185,9 +193,18 @@ def test_second_user_finds_and_independently_reuses_a_published_procedure():
                 # ---- STEP 4: User B (distinct AccessScope), a real
                 # automatic search, finds the now-verified+approved
                 # procedure. ----
+                # Real-corpus live DB: the published procedure carries no
+                # goal embedding, so applicability.py places it via the
+                # cost-only pre-filter (fewest-precondition procedures, bounded
+                # by candidate_pool_size). Hundreds of other 0-precondition
+                # procedures live in this shared DB, so the pool/limit are
+                # widened to prove RETRIEVABILITY (User B can find the
+                # independently-verified procedure at all) rather than its
+                # incidental rank inside a small default window -- same idiom
+                # test_canonical_personal_memory_e2e.py documents.
                 hits = await find_applicable_procedures(
                     pool, access_scope=AccessScope.for_user(USER_B),
-                    require_verified=True, limit=50,
+                    require_verified=True, limit=5000, candidate_pool_size=20000,
                 )
                 hit_ids = {str(h["id"]) for h in hits}
                 assert global_row_id in hit_ids, (

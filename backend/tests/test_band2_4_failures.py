@@ -237,6 +237,16 @@ e2e = pytest.mark.skipif(
     not DATABASE_URL, reason="requires a real DATABASE_URL -- live-database integration test"
 )
 
+# fetch_route_queue / fetch_unrouted_failures are oldest-first, bounded by
+# a `limit` kwarg (default 500 -- a reasonable production page size). This
+# test's freshly-seeded rows are the NEWEST in the shared live DB, which
+# already carries >500 live `requires_review` routes accumulated by other
+# tests and prior runs. Reading with a very large limit here makes every
+# membership assertion below check the WHOLE live queue (its real intent:
+# "the routed row is in the queue"), not just the oldest page -- the queue
+# read, the routing, and the assertions are otherwise unchanged.
+_WHOLE_QUEUE = 10_000_000
+
 
 async def _schema_ready(pool) -> bool:
     return await pool.fetchval(
@@ -362,12 +372,12 @@ def test_failures_classify_route_and_land_in_queryable_queues():
             assert count == 1
 
             # --- queues are readable; sweep finds only the stray ------
-            dep_queue = await fetch_route_queue(pool, "dependency_queue")
+            dep_queue = await fetch_route_queue(pool, "dependency_queue", limit=_WHOLE_QUEUE)
             assert any(str(r["evidence_id"]) == str(classified_id) for r in dep_queue)
-            review_queue = await fetch_route_queue(pool, "requires_review")
+            review_queue = await fetch_route_queue(pool, "requires_review", limit=_WHOLE_QUEUE)
             assert any(str(r["evidence_id"]) == str(unclassified_id) for r in review_queue)
             unrouted = {
-                str(r["id"]) for r in await fetch_unrouted_failures(pool)
+                str(r["id"]) for r in await fetch_unrouted_failures(pool, limit=_WHOLE_QUEUE)
             }
             assert str(stray_failure_id) in unrouted
             assert str(classified_id) not in unrouted
@@ -393,7 +403,7 @@ def test_failures_classify_route_and_land_in_queryable_queues():
             )
             assert all(
                 str(r["evidence_id"]) != str(classified_id)
-                for r in await fetch_route_queue(pool, "dependency_queue")
+                for r in await fetch_route_queue(pool, "dependency_queue", limit=_WHOLE_QUEUE)
             ), "retracted decisions leave the live queue"
         finally:
             await _retract_all(pool)
