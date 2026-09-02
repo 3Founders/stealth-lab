@@ -96,7 +96,17 @@ system use it correctly," never "should this external technique enter Stealth."
   estimated ingestion/embedding/extraction/generalization/storage/execution-overhead cost, and
   an ROI/break-even calculator taking a workload shape as input. Pure functions over recorded
   cost data — computing ROI from a spend log doesn't require spending anything itself.
-- Ablation arm configs D (retrieval+applicability+reuse), E (+decomposition), F
-  (+implementation selection), G (full stack) defined alongside existing A/B/C in
-  `scripted_arms.py`'s config, per spec §25's "smallest sensible matrix" — config only, no
-  live runs this pass.
+- `ablation_config.py` (new, separate file rather than folded into `scripted_arms.py` — it's
+  pure declarative config, not agent code): a smallest-sensible-matrix ladder per spec §25.
+  Actual letters used: **A, C, E, F, G** — not A-G. This harness's existing arm C already *is*
+  "retrieval + applicability + procedure reuse" as one gate-enforced unit (every reuse it
+  credits already passes a real `check_applicability` call first — see `RealProcedureAgent`/
+  `VerifiedProcedureAgent`), which collapses spec §25's B/C/D into a single existing arm rather
+  than three new ones. Splitting "procedure reuse without the applicability gate" out as its
+  own arm would mean building and running a deliberately-unsafe agent just to ablate it — a
+  different kind of cost from the other steps, so it's documented as a deliberate omission
+  rather than silently dropped. E adds decomposition, F adds implementation selection (binding
+  reuse to a specific registered implementation via `implementation_registry.py`), G is both
+  together. Each entry names the real machinery that does not exist yet and would be needed
+  before that arm could actually run (`new_machinery_required`) — config only, no live runs
+  this pass.

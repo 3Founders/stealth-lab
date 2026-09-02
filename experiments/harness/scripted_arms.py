@@ -67,6 +67,17 @@ def _base_episode(task: dict, arm: str) -> dict:
         "latency_seconds": 0.0,
         "human_interventions": 0,
         "unseen_task": bool(task.get("unseen")),
+        # Additive (evaluation-suite Phase 7): retries this episode needed
+        # (LLM-call retries/repair round-trips for real arms; always 0 for
+        # the scripted arms, which never retry) and files this episode
+        # touched -- empty for every current arm/fixture pack, since this
+        # harness scores an abstract resolved/refused decision, not a real
+        # diff (no arm here produces file edits) -- kept honestly empty
+        # rather than populated with a fabricated value, present so a
+        # future adapter that DOES touch files has somewhere real to put
+        # them without a schema change.
+        "retries": 0,
+        "files_touched": [],
     }
 
 

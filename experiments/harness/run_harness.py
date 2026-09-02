@@ -23,6 +23,7 @@ import json
 import sys
 import time
 import traceback
+import uuid
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -55,7 +56,14 @@ def load_done(path: Path) -> set[str]:
 
 
 def run_task(task: dict, agents: dict) -> dict:
-    rec: dict = {"task_id": task["task_id"]}
+    # Additive (evaluation-suite Phase 7): run_id distinguishes THIS
+    # execution of task_id from a later resumed/re-run one -- task_id
+    # alone is stable across resumes (that's the point of load_done()'s
+    # skip logic); run_id is not, and is what a caller correlating rows
+    # across a resumed multi-day sweep actually needs. Scoreboard/
+    # mcnemar_power read rows by task_id/arm/valid/resolved/etc, never by
+    # the full key set, so this is safe to add without touching either.
+    rec: dict = {"task_id": task["task_id"], "run_id": uuid.uuid4().hex[:12]}
     for arm in scripted_arms.ARMS:
         ep = agents[arm].run(task)
         ep.setdefault("arm", arm)
