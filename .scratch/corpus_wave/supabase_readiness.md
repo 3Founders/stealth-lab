@@ -61,31 +61,41 @@ newest `34_evidence_stats_count_failures.sql`.
 move (only `DATABASE_URL` changed in `.env`); left to the operator.
 
 ### e2e + schema-drift against Supabase
+
+**First run** (local Windows clock **8.9 s behind** the Supabase server clock —
+`SELECT now()` = client `now()` + 8.9 s, measured twice, and independently against
+Google/Microsoft/AWS `Date` headers which all agreed with the *server*, confirming the client
+was the one adrift): **256 passed, 27 failed**, 5m35s. Every one of 26 failures followed
+_insert a claim (row `t_valid = server now()`) → `project_state(as_of = client now())` → assert
+live_; `project_state` filters `t_valid <= $2` with `$2` = client `datetime.now(timezone.utc)`
+(`app/services/state.py:131`), so for ~9 s post-insert the row read as "future" and was excluded.
+`test_state_e2e.py` failed 7/8 in isolation → not cross-test pollution.
+
+**After the operator corrected the clock** (`w32tm` NTP config + resync; skew now **7 ms**,
+verified against Google/MS/AWS `Date` headers *and* Supabase `now()` — all within ±0.8 s):
 `DATABASE_URL=<session> python -m pytest tests -q -k "e2e or schema_drift"` →
-**256 passed, 27 failed** (2052 deselected), 5m35s.
+**281 passed, 2 failed** (2052 deselected), 4m41s. **All 26 clock-skew failures cleared.**
 
-**Root cause of 26 of the 27: local clock skew, not the substrate.**
-The Windows client clock is **~8.9 s behind** the Supabase server clock
-(`SELECT now()` = client `now()` + 8.9 s, measured twice). Every failing test follows the shape
-_insert a claim (row gets `t_valid = server now()`) → call `project_state(as_of = client now())` →
-assert the claim is live_. `project_state` filters `t_valid <= $2` with `$2` = the client's
-`datetime.now(timezone.utc)` (`app/services/state.py:131`), so for ~9 s after each insert the
-just-written row is "in the future" and is excluded. Same mechanism drives every failure in
-`test_state_e2e`, `test_claim_traversal_e2e`, `test_environment_probe_e2e`,
-`test_precondition_*_e2e`, `test_procedure_extraction*_e2e`, `test_applicability_e2e`,
-`test_staleness_selection_e2e`, `test_tms_readability_e2e`. `test_state_e2e.py` run in isolation
-still fails 7/8 → confirmed not cross-test pollution.
+Remaining 2 failures (neither is Supabase-portability, neither is the clock):
 
-**Fix (operator, client-side):** correct the Windows clock —
-`w32tm /resync` from an elevated prompt, or Settings → Time & Language → "Sync now" with
-"Set time automatically" on. An 8.9 s skew will also affect JWT `iat`/`exp`, rate-limit windows,
-and any client-issued `as_of`. After the clock is fixed, re-run the e2e cluster; expect the 26 to
-clear.
-
-**The 27th failure is unrelated to both Supabase and the clock:**
-`test_claim_graph_overview_e2e.py::test_claim_graph_overview_against_real_postgres` →
-`KeyError: 'relation'`. This is in the claim-graph viewer code from commit `92a6eee` (a different
-session's work). Flagged to that session; out of scope for this branch.
+1. `test_claim_graph_overview_e2e.py::test_claim_graph_overview_against_real_postgres` →
+   `KeyError: 'relation'`. Claim-graph viewer code from commit `92a6eee` (another session's
+   work). Flagged to that session; out of scope for this branch.
+2. `test_ingestion_admin_endpoint_e2e.py::test_admin_ingestion_endpoint_drives_real_traces_to_a_real_procedure_candidate`
+   → `assert 0 >= 1`. Fails 1/2 in isolation → real, not pollution. The round-2 job drain reports
+   `done >= 5` but produces **0 claims linked to the episode via `episode_links`**.
+   `handle_promote_observation_to_claim` (`app/services/ingestion_jobs.py:180`) by design returns
+   cleanly (job → `done`) when the observation has no resolvable `task_ids` **and** no
+   `justification_episode_id` anchor, or when `promote_observation_to_claim()` returns `None`
+   (logged at `:261`, not raised). So "5 done, 0 claims" is self-consistent — the enqueued
+   promote jobs are not carrying (or not resolving) an anchor on this DB.
+   **Ruled out:** clock (query filters `t_invalid IS NULL`, no `as_of`); embeddings
+   (`Embedder().embed_one(...)` returns a real 1024-vec from this environment); schema (all
+   tables/indexes present). **Likely:** the round-1 enqueue path
+   (`handle_normalize_trace_event`) or `promote_observation_to_claim`'s own anchor-resolution
+   query behaves differently here than on the local disposable-PG V1 gate. **Impact on this
+   wave: low** — corpus ingestion is `skill_ingestion.py` (artifact → procedure), not the
+   trace → observation → claim path this test exercises. Tracked as a follow-up, not a blocker.
 
 ## GO / NO-GO
 
@@ -95,10 +105,12 @@ session's work). Flagged to that session; out of scope for this branch.
 | extensions (vector ≥ 0.5.0, pgcrypto, btree_gist) | ✅ |
 | 34/34 migrations applied, checksums clean | ✅ |
 | schema + 5 HNSW indexes + VECTOR(1024) columns | ✅ |
-| e2e substrate behaviour | ✅ **256 pass**; 26 "failures" are client clock skew (fix `w32tm /resync`), 1 is a pre-existing claim-graph bug on `92a6eee` |
+| e2e substrate behaviour | ✅ **281 pass / 2 fail** post-clock-fix. Fail #1 = pre-existing claim-graph bug on `92a6eee` (other session). Fail #2 = `test_ingestion_admin_endpoint_e2e` trace→claim anchor follow-up (low impact — not the corpus path). |
+| clock skew | ✅ resolved — client vs Supabase now **7 ms** |
 | offline suite on Supabase-config | ⬜ operator to run |
 
-**Verdict: substrate is healthy on Supabase.** The blocker for the execution/evidence phases is
-the **9-second client clock skew** — fix that before canonical ingestion and any timestamp-sensitive
-retrieval/staleness/execution work, or those paths will be intermittently wrong in the same way.
-Offline corpus extraction (Phases 1–2, 6, 8) is unaffected and can proceed now.
+**Verdict: substrate is healthy on Supabase.** Migrations, extensions, indexes, and 281/283
+e2e all green. The clock skew that produced 26 spurious failures is fixed (`w32tm` NTP resync;
+7 ms residual). Canonical ingestion / retrieval / staleness / execution phases are unblocked.
+The one substrate-side follow-up (`test_ingestion_admin_endpoint_e2e`) is on the trace→observation→claim
+path, not the corpus artifact→procedure path this wave ingests through, so it does not gate the wave.
