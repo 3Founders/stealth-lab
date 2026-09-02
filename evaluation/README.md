@@ -124,6 +124,14 @@ data and code are.
 - Load/capacity testing (spec §30) covers correctness at small/modest scale (100s–1000s of
   records), not capacity-at-scale (1k→1M procedures).
 - Execution-graph retry/resume (spec §16) was found genuinely absent in
-  `backend/app/execution/graph_executor.py` at the code level, not just untested. Per "no new
-  V1 features," this is documented as a discovered production gap, not implemented here — see
-  `evaluation-results/final-scorecard.md`.
+  `backend/app/execution/graph_executor.py` at the code level, not just untested, **as of the
+  historical `v1-baseline-2026-09-02` baseline this document describes**. The hardened Final-V1
+  candidate (`core-a/ingestion-testing`) adds durable retry/resume alongside the in-memory
+  executor — see `backend/tests/evaluation/durable/` and `evaluation-results/final-scorecard.md`'s
+  Bug #6 for the resolution, and `evaluation-results/final-v1-candidate/` for that candidate's own
+  baseline once produced.
+- Two release-critical bugs this document originally reported CONFIRMED (ChatGPT branch evidence
+  leak; ingestion prompt-injection surface) are now RESOLVED on the hardened Final-V1 candidate —
+  see `evaluation-results/final-scorecard.md`'s Bugs #1 and #2 for the fix commits and the gold
+  cases updated to prove the fixed behavior. The historical baseline numbers themselves are
+  unchanged; only the candidate they were run against has moved on.

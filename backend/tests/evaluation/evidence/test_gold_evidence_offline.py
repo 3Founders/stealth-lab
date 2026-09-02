@@ -62,6 +62,9 @@ def run_case(case: dict) -> dict:
     candidates = extract_candidates_from_conversation(conv)
     produced = bool(candidates)
     max_level = candidates[0]["evidence_refs"][0]["evidence_level"] if candidates else None
+    step_levels = (
+        [s["properties"]["evidence_level"] for s in candidates[0]["steps"]] if candidates else []
+    )
 
     mismatches = []
     if produced != expected["produces_candidate"]:
@@ -71,6 +74,14 @@ def run_case(case: dict) -> dict:
     if max_level != expected["max_evidence_level"]:
         mismatches.append(
             f"max_evidence_level: {max_level!r} != {expected['max_evidence_level']!r}"
+        )
+    # Optional: a case may pin the full per-step epistemic sequence, not just
+    # the aggregate max -- required for the "mixed conversation preserves
+    # per-step state" case, where collapsing to one level would hide the
+    # very thing being proven.
+    if "step_evidence_levels" in expected and step_levels != expected["step_evidence_levels"]:
+        mismatches.append(
+            f"step_evidence_levels: {step_levels!r} != {expected['step_evidence_levels']!r}"
         )
 
     return {
@@ -84,15 +95,16 @@ def run_case(case: dict) -> dict:
     }
 
 
-def test_gold_evidence_chatgpt_branch_cases_match_documented_real_behavior():
-    """This test PASSING means the gold labels correctly characterize what
-    the real code does today -- including the two documented gaps (leaked
-    verified-evidence from an abandoned tool branch; suppressed valid
-    confirmation from a hedged abandoned branch). It is a regression pin,
-    not a claim that this behavior is safe or desired -- see
-    evaluation-results/final-scorecard.md and evaluation/README.md's Known
-    limitations for the reportable finding this test exists to catch drift
-    on."""
+def test_gold_evidence_chatgpt_branch_cases_match_fixed_behavior():
+    """FIXED (task spec §9, product commit 209564a): this test PASSING now
+    means the gold labels correctly characterize the FIXED code's real
+    active-branch-aware behavior -- an abandoned sibling (fabricated tool
+    result, or a hedge) is excluded via current_node/parent/children
+    resolution instead of leaking into or suppressing the real branch's
+    evidence. Previously (pre-hardening) this same test pinned two real,
+    confirmed bugs in the opposite direction; see git history on this file
+    and evaluation-results/final-scorecard.md's Bug #1 for the
+    CONFIRMED -> RESOLVED record of what changed and why."""
     cases = load_gold_set(GOLD_PATH)
     results = run_gold_set("gold_evidence", cases, run_case)
 
@@ -101,20 +113,72 @@ def test_gold_evidence_chatgpt_branch_cases_match_documented_real_behavior():
     assert success_rate(results) == 1.0
 
 
-def test_leaked_tool_result_case_is_the_reportable_false_positive():
-    """Isolates the sharper of the two findings with its own explicit
-    assertion (not just gold-set equality) so its significance can't get
-    lost in an aggregate pass/fail: an abandoned branch alone can drive a
-    real candidate to evidence_level 'verified'."""
+def test_regenerated_tool_result_no_longer_leaks_as_verified_evidence():
+    """FIXED: isolates the sharper of the two §28 findings with its own
+    explicit assertion (not just gold-set equality) so the fix's
+    significance can't get lost in an aggregate pass/fail. Previously an
+    abandoned branch alone could drive a real candidate to evidence_level
+    'verified'; now the fabricated tool result is excluded from the active
+    branch (current_node=a1) and produces no candidate at all."""
     cases = {c["id"]: c for c in load_gold_set(GOLD_PATH)}
-    case = cases["regenerated-tool-result-leaks-as-verified-evidence"]
+    case = cases["regenerated-tool-result-no-longer-leaks-as-verified-evidence"]
     conv = _parse_export(case["export"])[0]
     candidates = extract_candidates_from_conversation(conv)
-    assert len(candidates) == 1
-    assert candidates[0]["evidence_refs"][0]["evidence_level"] == "verified", (
-        "if this changes, the regenerated-branch leak has been fixed -- update this pin "
-        "AND evaluation/README.md's Known limitations, don't just relax the assertion"
+    assert candidates == [], (
+        "if this changes, the fix has regressed -- the fabricated tool result (t1) is not "
+        "an ancestor of current_node=a1 and must never produce a 'verified' candidate"
     )
+
+
+def test_linear_conversation_output_identical_with_or_without_tree_metadata():
+    """Required case (task spec §9 #3): an ordinary linear conversation's
+    output must be unchanged by the active-branch-resolution fix -- proven
+    here by comparing a tree-annotated export (parent/children/current_node,
+    no branching) against the same conversation flattened to a plain
+    mapping with none of that metadata, matching
+    tests/test_chat_history_import_offline.py::test_s28_linear_conversation_
+    output_identical_with_or_without_tree_metadata's proof of the same
+    property in this suite's own gold-evidence layer."""
+    tree_nodes = [
+        ("n0", None, "user", "the client keeps timing out"),
+        ("n1", "n0", "assistant", "I added retries and ran it."),
+        ("n2", "n1", "tool", "pytest tests/test_client.py -> 4 passed"),
+        ("n3", "n2", "user", "that worked, the tests pass now"),
+    ]
+    mapping = {}
+    kids: dict = {}
+    for i, (nid, parent, role, text) in enumerate(tree_nodes):
+        mapping[nid] = {
+            "id": nid, "parent": parent, "children": [],
+            "message": {"id": nid, "author": {"role": role}, "create_time": 7000.0 + i,
+                        "content": {"content_type": "text", "parts": [text]}},
+        }
+        if parent is not None:
+            kids.setdefault(parent, []).append(nid)
+    for pid, children in kids.items():
+        mapping[pid]["children"] = children
+    tree_export = [{
+        "conversation_id": "conv-linear-tree", "create_time": 7000.0, "update_time": 7003.0,
+        "current_node": "n3", "mapping": mapping,
+    }]
+
+    flat_mapping = {
+        nid: {"id": nid, "message": {"id": nid, "author": {"role": role}, "create_time": 7000.0 + i,
+                                      "content": {"content_type": "text", "parts": [text]}}}
+        for i, (nid, _p, role, text) in enumerate(tree_nodes)
+    }
+    flat_export = [{"conversation_id": "conv-linear-tree", "mapping": flat_mapping}]
+
+    tree_conv = _parse_export(tree_export)[0]
+    flat_conv = _parse_export(flat_export)[0]
+    assert [(m.role, m.text, m.has_tool_result) for m in tree_conv.messages] == \
+           [(m.role, m.text, m.has_tool_result) for m in flat_conv.messages]
+
+    tree_cands = extract_candidates_from_conversation(tree_conv)
+    flat_cands = extract_candidates_from_conversation(flat_conv)
+    assert len(tree_cands) == len(flat_cands) == 1
+    assert [s["properties"]["evidence_level"] for s in tree_cands[0]["steps"]] == \
+           [s["properties"]["evidence_level"] for s in flat_cands[0]["steps"]]
 
 
 def test_gold_set_has_no_duplicate_or_empty_case_ids():

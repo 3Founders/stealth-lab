@@ -136,6 +136,20 @@ wrongly suppress a genuine confirmed fix — a false negative alongside the fals
 **Not fixed** — per "no new V1 features / no silent baseline changes" — recorded here and pinned
 as a regression case for whoever picks up branch-aware parsing.
 
+> **RESOLVED on the hardened Final-V1 candidate** (`core-a/ingestion-testing` @ `4208b87`, commit
+> `209564a`, task spec §28/§9). `parse_chatgpt_export` now walks the real `current_node`/
+> `parent`/`children` tree: an explicit `current_node` resolves the active branch and excludes
+> abandoned siblings entirely (both the fabricated-tool-result leak and the hedge-suppression
+> case are fixed by this), and ambiguous ancestry (no `current_node`, real branching) is handled
+> conservatively — zero messages, zero candidates, never a guessed "safe" branch. This scorecard
+> describes the **historical, frozen `v1-baseline-2026-09-02`** run and its numbers are
+> unchanged — the fix does not retroactively alter what that baseline measured. The gold cases
+> that pinned this bug (`backend/tests/evaluation/fixtures/gold_evidence/cases.json`) have been
+> updated in place to prove the fixed behavior against the now-merged hardened code, plus the two
+> remaining required regression cases (mixed conversation, ambiguous ancestry) — see
+> `evaluation-results/final-v1-candidate/final-scorecard.md` for the hardened candidate's own
+> measurement once produced.
+
 ### 2. `skill_ingestion._abstract_capability` prompt-injection surface (CONFIRMED, moderate severity, bounded impact)
 
 **Root cause:** `app/services/skill_ingestion.py`'s `_abstract_capability` concatenates untrusted
@@ -154,6 +168,19 @@ test_manipulated_response_without_source_token_echo_is_accepted_as_capability` p
 manipulated response with no literal source-text echo passes through completely uncaught.
 
 **Not fixed** — recorded and pinned.
+
+> **RESOLVED on the hardened Final-V1 candidate** (`core-a/ingestion-testing` @ `4208b87`, commit
+> `47f4ffd`, task spec §29/§10). Untrusted document content is now wrapped in an explicit
+> `<untrusted_source>...</untrusted_source>` fence (defense in depth, not the primary fix), and
+> `_validate_capability_statement` adds real semantic checks independent of the original
+> echo-only defense: reject on a trust/verification/execution-authority assertion, reject on a
+> meta-directive aimed at the ingestion system, and reject a candidate not grounded in the parsed
+> document's own content (fewer than 2 shared content stems). This last check is what catches the
+> exact manipulated payload this bug was reported against — verified directly (zero stem overlap
+> between the fabricated capability text and the real skill's content). This scorecard describes
+> the **historical, frozen `v1-baseline-2026-09-02`** run and its numbers are unchanged.
+> `backend/tests/evaluation/security/test_injection_adversarial_offline.py` has been updated in
+> place to prove the fixed behavior against the now-merged hardened code.
 
 ### 3 & 4. `synthesis.py` boundary-variation (transfer) gaps (CONFIRMED, low severity — both conservative failures)
 
@@ -182,6 +209,17 @@ one **was** fixed, since it's this pass's own evaluation code, not V1 production
 `backend/app/execution/graph_executor.py` has no retry or resume semantics at the code level, not
 just untested — confirmed by the pre-work audit. Per "no new V1 features," not implemented this
 pass. This is a real capability gap for whoever scopes V1.1, not a regression.
+
+> **RESOLVED on the hardened Final-V1 candidate** (`core-a/ingestion-testing` @ `4208b87`, task
+> spec §6/§7). Durable per-node execution state (`execution_run_nodes`/`execution_runs`,
+> migration 36) now sits beside the existing in-memory `graph_executor.py` — wired into MCP
+> `find_best_way` tier-2 and `reproduce_procedure` via `app/execution/durable_graph.py::
+> run_graph_durably`. Retry/resume is a full house of proven invariants (completed nodes never
+> re-run, bounded retries with an explicit policy, crash-mid-node survives and resumes,
+> implementation binding pinned across resume, a stale worker cannot mutate a terminal node,
+> concurrent resume is refused not duplicated) — see this suite's own
+> `backend/tests/evaluation/durable/` (added this pass) plus the product's own
+> `backend/tests/test_durable_run_e2e.py` / `test_durable_graph_e2e.py` / `test_durable_resume_e2e.py`.
 
 ---
 
