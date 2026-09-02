@@ -11,6 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app import observability
 from app.api import admin, agent_store, agents, approval, chat, decompose, graph, ingest
 from app.api import claims, implementations, me, procedures, projects, repositories, search, solutions, tasks
+from app.api import problems
 from app.api.deps import require_trustworthy_identity
 from app.config import settings
 from app.db.session import close_pool, create_pool
@@ -100,6 +101,11 @@ app.include_router(search.router)
 # identity + REST surface, migration 33. See
 # .scratch/implementation_registry_architecture.md.
 app.include_router(implementations.router)
+
+# Final-V1 product layer (migration 35): Problem / Benchmark / Solution /
+# Evaluation + evidence-derived leaderboard. All routes delegate to
+# app.services.product_model -- REST and MCP share that one service.
+app.include_router(problems.router)
 
 
 @app.get("/health")
