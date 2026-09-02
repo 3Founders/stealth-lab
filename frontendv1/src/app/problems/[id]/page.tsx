@@ -164,7 +164,10 @@ export default function ProblemPage() {
 
       {/* Benchmark hero */}
       {bestEntries.length > 0 ? (
-        <section className="mt-8 rounded-lg border border-neutral-200 p-6">
+        <section
+          className="mt-8 rounded-lg border border-neutral-200 p-6"
+          data-testid="current-best-hero"
+        >
           <p className="text-xs uppercase tracking-widest text-neutral-400">
             {bestEntries.length > 1 ? "Current best verified (tie)" : "Current best verified"}
           </p>
