@@ -29,12 +29,25 @@ that chat-export candidates use, never the shared Postgres `procedures`
 table -- a personal repo's commit history is exactly the kind of private,
 one-workspace material `local_store.py`'s module docstring describes.
 
+Repo procedural docs (SKILL.md/AGENTS.md/CLAUDE.md/CI workflows/runbooks)
+default to that SAME private path now, via
+`app/local_agent/repo_docs_bootstrap.py`: real adapters + the existing
+pure `parse_skill_md()` parser, written into the local `LocalProcedureStore`
+under `--workspace`, DB-free -- a personal repo's own docs are exactly the
+private, one-workspace material `local_store.py`'s module docstring
+describes, not something that should default to the shared Postgres
+`procedures` table. Pass `--global-repo-docs` to opt back into the old
+global path (run_skill_ingestion() into shared Postgres, needs
+DATABASE_URL) for a deliberate shared/company-wide ingestion.
+
 Sources orchestrated (each optional; at least one input is required):
   --repo-root DIR        SKILL.md, AGENTS.md/CLAUDE.md, CI workflow jobs,
-                          runbook-shaped docs, AND real git commit history
-                          under DIR (repo skills/instructions/workflows via
-                          run_skill_ingestion() into the shared `procedures`
-                          table, needs DATABASE_URL; git history via
+                          runbook-shaped docs (private by default, via
+                          bootstrap_repo_docs() into the local
+                          LocalProcedureStore under --workspace, DB-free;
+                          --global-repo-docs opts into the shared Postgres
+                          `procedures` table instead, needs DATABASE_URL),
+                          AND real git commit history under DIR (via
                           bootstrap_git_history() into the local
                           LocalProcedureStore under --workspace, DB-free).
   --claude-export FILE   A real claude.ai "conversations.json" export.
@@ -135,6 +148,17 @@ def run_git_history(local_store, repo_root: Path) -> dict:
     return bootstrap_git_history(local_store, str(repo_root))
 
 
+def run_repo_docs_private(local_store, repo_root: Path) -> dict:
+    """Repo skills/instructions/workflows (SKILL.md, AGENTS.md/CLAUDE.md,
+    CI workflow jobs, runbook-shaped docs) -> the same local
+    LocalProcedureStore git-history/chat-export candidates use. DB-free,
+    private by default -- drives the real bootstrap_repo_docs(), no
+    reimplementation of discovery/parsing here."""
+    from app.local_agent.repo_docs_bootstrap import bootstrap_repo_docs
+
+    return bootstrap_repo_docs(local_store, str(repo_root))
+
+
 def run_chat_export(local_store, path: Path, source_type: str) -> dict:
     """Claude or ChatGPT chat history export -> local procedure
     candidates, via the real import_chat_history() -- no reimplementation
@@ -205,6 +229,20 @@ def _print_summary(sources_run: dict, sources_skipped: list[dict]) -> dict:
         non_procedural_rejected += r["non_procedural_skipped"]
         insufficient_evidence_rejected += r["totals"]["rejected"]
 
+    repo_docs_summary = "not run -- --repo-root not given"
+    if "repo_docs" in sources_run:
+        d = sources_run["repo_docs"]
+        procedural_items_found += d["candidates_formed"]
+        candidate_procedures_created += d["captured"]
+        duplicates_merged += d["merged"]
+        insufficient_evidence_rejected += d["skipped_unparseable"]
+        repo_docs_summary = (
+            f"artifacts_seen={d['artifacts_seen']} "
+            f"candidates_formed={d['candidates_formed']} "
+            f"captured={d['captured']} merged={d['merged']} "
+            f"skipped_unparseable={d['skipped_unparseable']}"
+        )
+
     for key in ("claude_history", "chatgpt_history"):
         if key in sources_run:
             c = sources_run[key]
@@ -245,6 +283,7 @@ def _print_summary(sources_run: dict, sources_skipped: list[dict]) -> dict:
         "non_procedural_rejected": non_procedural_rejected,
         "insufficient_evidence_rejected": insufficient_evidence_rejected,
         "git_history": git_history_summary,
+        "repo_docs": repo_docs_summary,
         "detail": sources_run,
     }
 
@@ -259,6 +298,7 @@ def _print_summary(sources_run: dict, sources_skipped: list[dict]) -> dict:
     print(f"non-procedural material rejected:      {non_procedural_rejected}")
     print(f"insufficient-evidence material rejected: {insufficient_evidence_rejected}")
     print(f"git history: {summary['git_history']}")
+    print(f"repo docs (private): {summary['repo_docs']}")
     return summary
 
 
@@ -267,12 +307,16 @@ async def main_async(args: argparse.Namespace) -> dict:
     sources_skipped: list[dict] = []
     database_url = os.environ.get("DATABASE_URL")
 
-    needs_db = bool(args.repo_root or args.traces_dir)
+    # Repo procedural docs (SKILL.md/AGENTS.md/CLAUDE.md/CI workflows/
+    # runbooks) are private-by-default (LocalProcedureStore, DB-free) --
+    # they only need DATABASE_URL when --global-repo-docs opts into the
+    # old shared-Postgres path.
+    needs_db = bool((args.repo_root and args.global_repo_docs) or args.traces_dir)
     pool = None
     embedder = None
     if needs_db:
         if not database_url:
-            if args.repo_root:
+            if args.repo_root and args.global_repo_docs:
                 sources_skipped.append({"name": "repo_procedural", "reason": "DATABASE_URL not set"})
             if args.traces_dir:
                 sources_skipped.append({"name": "agent_traces", "reason": "DATABASE_URL not set"})
@@ -283,12 +327,12 @@ async def main_async(args: argparse.Namespace) -> dict:
             embedder = Embedder()
 
     try:
-        if args.repo_root:
+        if args.repo_root and args.global_repo_docs:
             if pool is not None:
                 sources_run["repo_procedural"] = await run_repo_procedural(
                     pool, embedder, args.repo_root, created_by="bootstrap",
                 )
-        else:
+        elif args.global_repo_docs:
             sources_skipped.append({"name": "repo_procedural", "reason": "--repo-root not given"})
 
         if args.claude_export or args.chatgpt_export or args.repo_root:
@@ -306,6 +350,7 @@ async def main_async(args: argparse.Namespace) -> dict:
                 sources_skipped.append({"name": "chatgpt_history", "reason": "--chatgpt-export not given"})
             if args.repo_root:
                 sources_run["git_history"] = run_git_history(local_store, args.repo_root)
+                sources_run["repo_docs"] = run_repo_docs_private(local_store, args.repo_root)
         else:
             sources_skipped.append({"name": "claude_history", "reason": "--claude-export not given"})
             sources_skipped.append({"name": "chatgpt_history", "reason": "--chatgpt-export not given"})
@@ -333,6 +378,10 @@ def main() -> int:
     ap.add_argument("--repo-root", type=Path, default=None,
                      help="repo directory to scan for SKILL.md / AGENTS.md / CLAUDE.md / "
                           "CI workflows / runbooks")
+    ap.add_argument("--global-repo-docs", action="store_true", default=False,
+                     help="opt IN to the old shared-Postgres repo-docs path "
+                          "(run_skill_ingestion(), needs DATABASE_URL) instead of the "
+                          "default private LocalProcedureStore path")
     ap.add_argument("--claude-export", type=Path, default=None,
                      help="path to a real claude.ai conversations.json export")
     ap.add_argument("--chatgpt-export", type=Path, default=None,
