@@ -161,18 +161,17 @@ def test_task_detail_and_personal_contributions_against_real_postgres():
             assert len(detail["capability_statistics"]) == 1
             cap = detail["capability_statistics"][0]
             assert cap["procedure_row_id"] == procedure_row_id
-            # PRE-EXISTING QUIRK (documented in task_api.py's own
-            # docstring, not fixed by this change): the capability query
-            # filters direction='supports', and a failure outcome's
-            # evidence row defaults to direction='contradicts'
-            # (outcome_to_evidence's own default) -- so only the two real
-            # successes are visible to capability_for_stream here, even
-            # though a real failure was also recorded.
-            assert cap["evidence_count"] == 2
+            # A recorded failure (direction='contradicts' by
+            # outcome_to_evidence's default) IS an outcome-bearing attempt
+            # and counts here: the capability stream gates on
+            # evidence_type + terminal outcome_status, not direction
+            # (db/34_evidence_stats_count_failures.sql). 2 successes + 1
+            # failure = 3.
+            assert cap["evidence_count"] == 3
             assert cap["success_count"] == 2
 
-            # known_failure_modes reads failure_class directly, WITHOUT
-            # that direction filter -- so the real failure IS visible here.
+            # known_failure_modes reads failure_class directly -- the real
+            # failure is visible here too.
             assert detail["known_failure_modes"] == ["environment_changed"]
 
             # ================= get_personal_contributions =================
