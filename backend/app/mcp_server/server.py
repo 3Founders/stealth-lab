@@ -1,7 +1,15 @@
 """
-StealthLab MCP server. Four tools:
-  - retrieve_precedent, apply_change_set: thin wrappers, zero new business
-    logic, wrap already-tested read/write functions.
+StealthLab MCP server. Representative tools:
+  - retrieve_precedent: thin read wrapper, zero new business logic, wraps
+    an already-tested retrieval function.
+  - submit_approval / decide_decomposition: the ONLY paths that mutate the
+    knowledge graph. Each loads a persisted proposal (a debate scorecard
+    row / a decompositions row), enforces its gate (PENDING_APPROVAL /
+    status='proposed'), applies THAT row's stored change_set -- never a
+    caller-supplied one -- and writes an audit row. The former ungated
+    `apply_change_set` tool, which applied an arbitrary caller-supplied
+    change_set with no gate or audit row, was removed in the post-freeze
+    security hardening (v1-final-2026-09-03.1).
   - propose_synthesis: thin wrapper around LoopOrchestrator.run(), the real
     debate orchestration used throughout this project.
   - find_best_way (renamed from solve_task): NOT a pure wrapper -- see its
@@ -61,7 +69,6 @@ from app.execution import durable_run as _dr
 from app.execution import implementation_registry
 from app.api.approval import decide, ApprovalRequest
 from app.api.decompose import decompose, decide as decide_decomposition_fn, DecomposeRequest, DecideRequest
-from app.models.change import ChangeSet
 from app.services.access import AccessScope
 from app.services.applicability import verified_procedure_candidates
 from app.services.authn import (
@@ -75,7 +82,6 @@ from app.services.authn import (
 from app.services.decomposition import DecompositionService
 from app.services.embeddings import Embedder
 from app.services.knowledge_conflict import detect_and_create_conflict_trigger
-from app.services.knowledge_update import ChangeApplicationError, KnowledgeUpdater
 from app.services.local_retrieval import assemble_structural_context, retrieve_local_first
 from app.services.procedure_extraction import extract_procedure
 from app.services.procedure_extraction.evidence import AgentRunEvidenceSource
@@ -84,12 +90,6 @@ from app.services.reuse_detection import ReusableNode, _vector_candidates
 from app import observability
 from app.config import settings
 from fastapi import HTTPException
-
-# apply_debate_result.py lives in scripts/synthetic_tasks/, not app/ --
-# same real, working sys.path pattern debate_curation.py (experiments/
-# swebench_pro/) already uses to reach it, not a new approach.
-sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts" / "synthetic_tasks"))
-from apply_debate_result import auto_preserve_missing_keys, preflight_validate
 
 # Real, existing debate orchestration -- LoopOrchestrator.run(trigger_id) is
 # the actual, already-tested entrypoint used by app/api/admin.py,
@@ -198,12 +198,15 @@ class OidcAwareTokenVerifier(TokenVerifier):
     actual default deployment (OIDC_ISSUER/OIDC_AUDIENCE unset).
 
     Deliberately NOT sufficient on its own even with OIDC configured:
-    find_best_way's repo_path is caller-controlled and apply_change_set is
-    an ungated write (see README_MCP_SERVER.md's "Known v1 limitations").
-    This gates WHO can reach those tools (and, with OIDC, WHO they really
-    are), it does not make either tool safe against a caller who does hold
-    a valid token -- that is why hosting stays loopback-only by default
-    (see the ASGI app / uvicorn invocation below), not exposed via tunnel.
+    find_best_way's repo_path is caller-controlled (see
+    README_MCP_SERVER.md's "Known v1 limitations"). This gates WHO can
+    reach that tool (and, with OIDC, WHO they really are), it does not
+    make it safe against a caller who does hold a valid token -- that is
+    why hosting stays loopback-only by default (see the ASGI app /
+    uvicorn invocation below), not exposed via tunnel. (The former
+    ungated `apply_change_set` write tool was removed in the post-freeze
+    security hardening; graph mutation is now gated behind
+    submit_approval / decide_decomposition.)
     """
 
     def __init__(self, shared_token: str, oidc_config: Optional[OidcConfig], jwks_provider):
@@ -464,16 +467,12 @@ def _resolve_caller_identity(fallback: str) -> str:
         approved_by -- fallback=approver_id (the caller-supplied,
         self-asserted parameter), so a resolved real identity OVERRIDES
         it rather than being overridden by it.
-      - apply_change_set: KnowledgeUpdater.apply's approver_id --
-        previously a bare hardcoded string with no resolution attempt at
-        all (the same "no resolution attempt" bug this invariant guards
-        against); now wired the same as every other site.
       - decide_decomposition: DecideRequest's approver_id (the real
         decompositions.approver_id audit column) -- fallback=approver_id.
         A real audit gap this same identity-hardening pass missed the
         first time: found and closed during a later hardening audit
-        (this pass), same "no resolution attempt" bug as apply_change_set
-        above, at a different call site.
+        (this pass), same "no resolution attempt" bug, at a different
+        call site.
       - submit_approval: ApprovalRequest's approver_id (the real
         approvals.approver_id audit column) -- fallback=approver_id.
         Same gap, same fix, found in the same pass as decide_decomposition
@@ -552,75 +551,16 @@ async def retrieve_precedent(query: str, ctx: Context) -> str:
     return "\n".join(lines)
 
 
-@server.tool()
-async def apply_change_set(change_set_json: str, ctx: Context) -> str:
-    """
-    Validate and apply a change_set directly to the real graph, WITHOUT
-    any approval gate.
-
-    USE submit_approval INSTEAD if this change_set came from
-    propose_synthesis. This tool does not check debate state, does not
-    require APPROVED, and does not write an approvals audit row -- using
-    it on a debate scorecard's change_set bypasses human approval entirely,
-    a real gap this project's own MCP testing found and submit_approval
-    exists specifically to close. Use apply_change_set for change_sets
-    that never had a debate to begin with -- decompose_task's output is
-    the real, intended case (decomposition proposals aren't debated,
-    they're reviewed directly by whoever calls apply_change_set).
-
-    Thin wrapper around the exact real, already-validated pipeline this
-    project proved works end-to-end on a real case (the synthetic Task
-    A/B merge): auto_preserve_missing_keys (deterministic bookkeeping
-    carry-forward, not left to LLM judgment) -> preflight_validate (an
-    INDEPENDENT safety check against the real current DB state,
-    regardless of what the proposal itself claims) -> KnowledgeUpdater's
-    real, transactional apply. This tool adds no new validation logic
-    of its own -- every real safety check already exists and is already
-    tested elsewhere.
-
-    change_set_json: a JSON string matching the real ChangeSet schema
-    (a dict with an "ops" list) -- typically decompose_task's output, or
-    a manually constructed proposal for testing.
-
-    Will genuinely REFUSE, not silently do something wrong, if: the
-    JSON is malformed, pre-flight validation finds a real problem (e.g.
-    a proposal that would silently delete real existing data), or
-    KnowledgeUpdater itself rejects the change set. Every refusal
-    returns the real, specific reason -- never fails silently.
-    """
-    pool = ctx.request_context.lifespan_context["pool"]
-
-    try:
-        change_set_dict = json.loads(change_set_json)
-    except json.JSONDecodeError as exc:
-        return f"REFUSED: change_set_json is not valid JSON -- {exc}"
-
-    change_set_dict = await auto_preserve_missing_keys(pool, change_set_dict)
-    problems = await preflight_validate(pool, change_set_dict)
-    if problems:
-        lines = ["REFUSED -- pre-flight validation found real problem(s), independent of "
-                 "what the proposal itself claims:"]
-        lines.extend(f"  - {p}" for p in problems)
-        return "\n".join(lines)
-
-    try:
-        change_set = ChangeSet.model_validate(change_set_dict)
-    except Exception as exc:  # noqa: BLE001 -- real pydantic ValidationError, report it plainly
-        return f"REFUSED: change_set does not match the real ChangeSet schema -- {exc}"
-
-    updater = KnowledgeUpdater(pool)
-    try:
-        applied = await updater.apply(
-            change_set,
-            approver_id=_resolve_caller_identity(fallback="mcp_apply_change_set"),
-        )
-    except ChangeApplicationError as exc:
-        return f"REFUSED by KnowledgeUpdater itself -- {exc}"
-
-    lines = ["Applied successfully -- this was a real write to the graph, not a proposal:"]
-    for a in applied:
-        lines.append(f"  {a}")
-    return "\n".join(lines)
+# The ungated `apply_change_set` tool was removed here in the post-freeze
+# security hardening (v1-final-2026-09-03.1). It accepted an arbitrary
+# caller-supplied change_set JSON and applied it to the real graph with no
+# approval gate, no persisted decision, and no audit row -- the only
+# ungated public write to the knowledge graph. Graph mutation now goes
+# ONLY through submit_approval (a PENDING_APPROVAL debate scorecard's
+# STORED change_set + an `approvals` audit row) and decide_decomposition
+# (a status='proposed' decompositions row's STORED change_set + a status/
+# approver/decided_at update). Both apply the persisted proposal's own
+# change_set, never one supplied by the caller of the decision.
 
 
 @server.tool()

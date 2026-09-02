@@ -89,8 +89,8 @@ INVALID_PARAMS = -32602
 """Real, spec-mandated code for an invalid/nonexistent taskId (SEP-2663 'Protocol Errors')."""
 
 # Tools this extension is allowed to task-ify. Deliberately NOT every tool --
-# retrieve_precedent and apply_change_set are fast enough to stay synchronous;
-# task-ifying them would only add polling overhead for no real benefit.
+# retrieve_precedent is fast enough to stay synchronous; task-ifying it
+# would only add polling overhead for no real benefit.
 #
 # find_best_way (renamed from solve_task) is task-augmented as a whole
 # because its tier-2 execution path is still a genuinely long-running

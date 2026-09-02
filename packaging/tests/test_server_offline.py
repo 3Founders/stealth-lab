@@ -25,7 +25,6 @@ def test_all_registered_tools():
     module = slc.load_mcp_server_module()
     names = sorted(tool.name for tool in module.server._tool_manager.list_tools())
     assert names == [
-        "apply_change_set",
         "check_applicability",
         "check_procedure",
         "compare_solutions",          # Final-V1 product model (§37)

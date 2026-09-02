@@ -254,9 +254,9 @@ class ContainerSandboxExecutor:
 
     DO NOT "FIX" THIS BY MOUNTING /var/run/docker.sock INTO THE BACKEND.
     Socket access is effectively root on the host, and that same container
-    serves apply_change_set (an ungated raw write) and find_best_way (whose
-    repo_path is caller-controlled). Granting those a Docker socket turns a
-    contained bad outcome into host compromise -- arguably a worse posture
+    serves find_best_way (whose repo_path is caller-controlled). Granting
+    that a Docker socket turns a contained bad outcome into host
+    compromise -- arguably a worse posture
     than the unisolated executor this class replaces. If it ever goes that
     way it needs a founder ruling, the same class of decision as the
     licence question, not a lane's call.
