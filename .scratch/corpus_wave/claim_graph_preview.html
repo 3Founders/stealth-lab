@@ -1,0 +1,572 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Corpus Wave — Claim Graph Preview</title>
+<style>
+  :root { color-scheme: light dark; }
+  body { margin:0; font:14px/1.5 system-ui,-apple-system,Segoe UI,Roboto,sans-serif; background:#0e1116; color:#e6edf3; }
+  header { padding:10px 14px; border-bottom:1px solid #30363d; display:flex; gap:16px; align-items:baseline; flex-wrap:wrap; }
+  header h1 { font-size:15px; margin:0; font-weight:600; }
+  header .meta { color:#8b949e; font-size:12px; }
+  #wrap { display:flex; height:calc(100vh - 46px); }
+  #graph { flex:1; min-width:0; }
+  aside { width:340px; border-left:1px solid #30363d; padding:12px 14px; overflow:auto; font-size:12.5px; }
+  aside h2 { font-size:12px; text-transform:uppercase; letter-spacing:.06em; color:#8b949e; margin:14px 0 6px; }
+  aside dl { margin:0 0 8px; } aside dt { color:#8b949e; } aside dd { margin:0 0 6px; }
+  .legend span { display:inline-flex; align-items:center; gap:5px; margin-right:12px; }
+  .dot { width:10px; height:10px; border-radius:50%; display:inline-block; }
+  .swatch { width:18px; height:3px; display:inline-block; border-radius:2px; }
+  code { background:#161b22; padding:1px 4px; border-radius:4px; }
+  .empty { color:#8b949e; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Corpus Wave — Claim Graph Preview</h1>
+  <span class="meta" id="counts"></span>
+  <span class="legend">
+    <span><i class="dot" style="background:#d29922"></i>EXPERIMENTAL claim</span>
+    <span><i class="dot" style="background:#8957e5"></i>USER_REPORTED claim</span>
+    <span><i class="dot" style="background:#2f81f7"></i>SOURCE_DERIVED claim</span>
+    <span><i class="dot" style="background:#3fb950"></i>procedure</span>
+  </span>
+  <span class="legend">
+    <span><i class="swatch" style="background:#3fb950"></i>SUPPORTS</span>
+    <span><i class="swatch" style="background:#f85149"></i>CONTRADICTS</span>
+    <span><i class="swatch" style="background:#d29922"></i>CONSTRAINS</span>
+    <span><i class="swatch" style="background:#58a6ff"></i>VALIDATED_BY</span>
+    <span><i class="swatch" style="background:#8b949e"></i>SIBLING_OF</span>
+  </span>
+</header>
+<div id="wrap">
+  <div id="graph"></div>
+  <aside>
+    <div id="detail"><p class="empty">Click a node.</p></div>
+    <h2>What this is</h2>
+    <p>The claim &rarr; procedure graph extracted so far by the corpus wave (candidates S01&ndash;S20). Static preview: node ids are slugs, not the uuid7s the Phase&nbsp;9 canonical ingest will issue. Nothing here is <em>verified</em> &mdash; every node is a <code>candidate</code> pending execution evidence (Phase&nbsp;10).</p>
+    <h2>Edge meanings</h2>
+    <dl>
+      <dt>SUPPORTS</dt><dd>claim raises confidence in the procedure</dd>
+      <dt>CONSTRAINS</dt><dd>claim bounds when the procedure applies</dd>
+      <dt>VALIDATED_BY</dt><dd>the source's own method produces this evidence (not a StealthLab verification)</dd>
+      <dt>SIBLING_OF</dt><dd>two procedures for the same goal</dd>
+    </dl>
+  </aside>
+</div>
+<script src="./force-graph.min.js"></script>
+<script id="data" type="application/json">
+{
+  "_comment": "Corpus-wave claim graph, built from candidates S01-S20 (Phase 7 so far). Shape matches app/services/claim_graph_api.py::get_claim_graph_overview -> {nodes, edges, counts}. node.id values are stable slugs here (not uuid7) so this file is diffable; the Phase 9 canonical ingest will re-issue real uuid7 ids. edge.relation uses the repo's custom_edge_type vocabulary (SUPPORTS / CONTRADICTS / CONSTRAINS / VALIDATED_BY / SIBLING_OF).",
+  "nodes": [
+    {
+      "id": "c.s20.degrades_with_length",
+      "statement": "LLM accuracy degrades non-uniformly as input length grows",
+      "truth_state": "IN",
+      "status": "candidate",
+      "claim_type": "empirical",
+      "epistemic_status": "EXPERIMENTAL",
+      "subject": "long-context-llm",
+      "predicate": "accuracy_vs_length",
+      "object": "monotonic-decline",
+      "scope_type": "global",
+      "created_by": "corpus_wave:S20",
+      "source_id": "S20"
+    },
+    {
+      "id": "c.s20.similarity_sensitivity",
+      "statement": "Degradation accelerates as needle-question semantic similarity decreases",
+      "truth_state": "IN",
+      "status": "candidate",
+      "claim_type": "empirical",
+      "epistemic_status": "EXPERIMENTAL",
+      "subject": "niah-extension",
+      "predicate": "slope_vs_similarity",
+      "object": "steeper-at-low-similarity",
+      "scope_type": "global",
+      "created_by": "corpus_wave:S20",
+      "source_id": "S20"
+    },
+    {
+      "id": "c.s20.distractor_impact",
+      "statement": "A single distractor lowers performance vs needle-only; four compound it",
+      "truth_state": "IN",
+      "status": "candidate",
+      "claim_type": "empirical",
+      "epistemic_status": "EXPERIMENTAL",
+      "subject": "niah-extension",
+      "predicate": "effect_of_distractors",
+      "object": "non-uniform-compounding",
+      "scope_type": "global",
+      "created_by": "corpus_wave:S20",
+      "source_id": "S20"
+    },
+    {
+      "id": "c.s20.haystack_structure",
+      "statement": "Models score higher on shuffled haystacks than logically-structured ones",
+      "truth_state": "IN",
+      "status": "candidate",
+      "claim_type": "empirical",
+      "epistemic_status": "EXPERIMENTAL",
+      "subject": "niah-extension",
+      "predicate": "effect_of_coherence",
+      "object": "shuffled-outperforms-structured",
+      "scope_type": "global",
+      "created_by": "corpus_wave:S20",
+      "source_id": "S20"
+    },
+    {
+      "id": "c.s20.focused_beats_full",
+      "statement": "Focused (~300 tok) prompts beat full (~113k tok) prompts across all models on LongMemEval",
+      "truth_state": "IN",
+      "status": "candidate",
+      "claim_type": "empirical",
+      "epistemic_status": "EXPERIMENTAL",
+      "subject": "longmemeval",
+      "predicate": "focused_vs_full",
+      "object": "focused-wins",
+      "scope_type": "global",
+      "created_by": "corpus_wave:S20",
+      "source_id": "S20"
+    },
+    {
+      "id": "c.s10.ralph_cost",
+      "statement": "Huntley reports a $50k-scope MVP delivered, tested + reviewed, for $297",
+      "truth_state": "IN",
+      "status": "candidate",
+      "claim_type": "anecdote",
+      "epistemic_status": "USER_REPORTED",
+      "subject": "ralph-loop",
+      "predicate": "reported_cost",
+      "object": "297usd-for-50k-scope",
+      "scope_type": "global",
+      "created_by": "corpus_wave:S10",
+      "source_id": "S10"
+    },
+    {
+      "id": "c.s10.ralph_novel_lang",
+      "statement": "Huntley reports Ralph built and programmed in a language absent from the LLM training set",
+      "truth_state": "IN",
+      "status": "candidate",
+      "claim_type": "anecdote",
+      "epistemic_status": "USER_REPORTED",
+      "subject": "ralph-loop",
+      "predicate": "capability",
+      "object": "novel-language-programming",
+      "scope_type": "global",
+      "created_by": "corpus_wave:S10",
+      "source_id": "S10"
+    },
+    {
+      "id": "c.s02.eval_gate",
+      "statement": "A skill should be accepted only when a benchmark shows it beats baseline and generalizes beyond its eval examples",
+      "truth_state": "IN",
+      "status": "candidate",
+      "claim_type": "methodological",
+      "epistemic_status": "SOURCE_DERIVED",
+      "subject": "skill-authoring",
+      "predicate": "admission_rule",
+      "object": "benchmark-vs-baseline",
+      "scope_type": "global",
+      "created_by": "corpus_wave:S02",
+      "source_id": "S02"
+    },
+    {
+      "id": "c.s11.report_only_first",
+      "statement": "A maintenance loop should run report-only for its first week before being allowed to act",
+      "truth_state": "IN",
+      "status": "candidate",
+      "claim_type": "methodological",
+      "epistemic_status": "SOURCE_DERIVED",
+      "subject": "autonomous-loop",
+      "predicate": "rollout_rule",
+      "object": "report-only-then-act",
+      "scope_type": "global",
+      "created_by": "corpus_wave:S11",
+      "source_id": "S11"
+    },
+    {
+      "id": "c.s15.read_only_default",
+      "statement": "Agent jobs run read-only and sandboxed by default; writes go through scoped safe-outputs jobs",
+      "truth_state": "IN",
+      "status": "candidate",
+      "claim_type": "design",
+      "epistemic_status": "SOURCE_DERIVED",
+      "subject": "gh-aw",
+      "predicate": "safety_posture",
+      "object": "read-only-plus-safe-outputs",
+      "scope_type": "global",
+      "created_by": "corpus_wave:S15",
+      "source_id": "S15"
+    },
+    {
+      "id": "c.s07.discover_stack_first",
+      "statement": "Before writing tests, discover the repo's own framework/build/commands",
+      "truth_state": "IN",
+      "status": "candidate",
+      "claim_type": "methodological",
+      "epistemic_status": "SOURCE_DERIVED",
+      "subject": "tdd-in-existing-repo",
+      "predicate": "precondition",
+      "object": "discover-stack-first",
+      "scope_type": "global",
+      "created_by": "corpus_wave:S07",
+      "source_id": "S07"
+    },
+    {
+      "id": "p.s10.fresh_context_loop",
+      "statement": "PROCEDURE: run a coding agent in a fresh-context loop (reload spec+fix_plan each iteration, one task, tests as backpressure, commit+tag)",
+      "truth_state": "IN",
+      "status": "candidate",
+      "claim_type": "procedure_ref",
+      "epistemic_status": "SOURCE_DERIVED",
+      "subject": "long-running-agent",
+      "scope_type": "global",
+      "created_by": "corpus_wave:S10",
+      "source_id": "S10"
+    },
+    {
+      "id": "p.s21.bootstrap_relevant_context",
+      "statement": "PROCEDURE: bootstrap only task-relevant context from GitHub Issues at session start",
+      "truth_state": "IN",
+      "status": "candidate",
+      "claim_type": "procedure_ref",
+      "epistemic_status": "SOURCE_DERIVED",
+      "subject": "context-engineering",
+      "scope_type": "global",
+      "created_by": "corpus_wave:S21",
+      "source_id": "S21"
+    },
+    {
+      "id": "p.s23.smart_read_diff",
+      "statement": "PROCEDURE: cache a file on first read; return only a diff on subsequent unchanged re-reads (smart_read)",
+      "truth_state": "IN",
+      "status": "candidate",
+      "claim_type": "procedure_ref",
+      "epistemic_status": "SOURCE_DERIVED",
+      "subject": "token-optimization",
+      "scope_type": "global",
+      "created_by": "corpus_wave:S23",
+      "source_id": "S23"
+    },
+    {
+      "id": "p.s24.trim_tool_context",
+      "statement": "PROCEDURE: trim MCP tool context to task-relevant tools/instructions under a token budget, then confirm sufficiency retained",
+      "truth_state": "IN",
+      "status": "candidate",
+      "claim_type": "procedure_ref",
+      "epistemic_status": "SOURCE_DERIVED",
+      "subject": "token-optimization",
+      "scope_type": "global",
+      "created_by": "corpus_wave:S24",
+      "source_id": "S24"
+    },
+    {
+      "id": "p.s26.open_only_needed_pages",
+      "statement": "PROCEDURE: navigate an OKF wiki by reading the index and opening only the pages a question needs; never load the whole folder",
+      "truth_state": "IN",
+      "status": "candidate",
+      "claim_type": "procedure_ref",
+      "epistemic_status": "SOURCE_DERIVED",
+      "subject": "knowledge-base-nav",
+      "scope_type": "global",
+      "created_by": "corpus_wave:S26",
+      "source_id": "S26"
+    },
+    {
+      "id": "p.s19.reproduce_context_rot",
+      "statement": "PROCEDURE: reproduce the Context Rot benchmark (venv -> deps -> keys -> datasets -> run experiment -> compare to published figures)",
+      "truth_state": "IN",
+      "status": "candidate",
+      "claim_type": "procedure_ref",
+      "epistemic_status": "SOURCE_DERIVED",
+      "subject": "benchmark-repro",
+      "scope_type": "global",
+      "created_by": "corpus_wave:S19",
+      "source_id": "S19"
+    },
+    {
+      "id": "p.s01.author_skill",
+      "statement": "PROCEDURE: author a new Agent Skill (folder + SKILL.md + frontmatter + Examples/Guidelines)",
+      "truth_state": "IN",
+      "status": "candidate",
+      "claim_type": "procedure_ref",
+      "epistemic_status": "SOURCE_DERIVED",
+      "subject": "skill-authoring",
+      "scope_type": "global",
+      "created_by": "corpus_wave:S01",
+      "source_id": "S01"
+    },
+    {
+      "id": "p.s09.tdd_loop",
+      "statement": "PROCEDURE: RED-GREEN-REFACTOR TDD loop; delete any code written before its test",
+      "truth_state": "IN",
+      "status": "candidate",
+      "claim_type": "procedure_ref",
+      "epistemic_status": "SOURCE_DERIVED",
+      "subject": "tdd",
+      "scope_type": "global",
+      "created_by": "corpus_wave:S09",
+      "source_id": "S09"
+    },
+    {
+      "id": "p.s07.tdd_discover_first",
+      "statement": "PROCEDURE: TDD after first discovering the repo's own test framework and commands",
+      "truth_state": "IN",
+      "status": "candidate",
+      "claim_type": "procedure_ref",
+      "epistemic_status": "SOURCE_DERIVED",
+      "subject": "tdd",
+      "scope_type": "global",
+      "created_by": "corpus_wave:S07",
+      "source_id": "S07"
+    }
+  ],
+  "edges": [
+    {
+      "id": "e1",
+      "kind": "relation",
+      "relation": "SUPPORTS",
+      "source_id": "c.s20.focused_beats_full",
+      "target_id": "p.s21.bootstrap_relevant_context",
+      "created_by": "corpus_wave"
+    },
+    {
+      "id": "e2",
+      "kind": "relation",
+      "relation": "SUPPORTS",
+      "source_id": "c.s20.focused_beats_full",
+      "target_id": "p.s24.trim_tool_context",
+      "created_by": "corpus_wave"
+    },
+    {
+      "id": "e3",
+      "kind": "relation",
+      "relation": "SUPPORTS",
+      "source_id": "c.s20.focused_beats_full",
+      "target_id": "p.s26.open_only_needed_pages",
+      "created_by": "corpus_wave"
+    },
+    {
+      "id": "e4",
+      "kind": "relation",
+      "relation": "SUPPORTS",
+      "source_id": "c.s20.degrades_with_length",
+      "target_id": "p.s10.fresh_context_loop",
+      "created_by": "corpus_wave"
+    },
+    {
+      "id": "e5",
+      "kind": "relation",
+      "relation": "SUPPORTS",
+      "source_id": "c.s20.degrades_with_length",
+      "target_id": "p.s23.smart_read_diff",
+      "created_by": "corpus_wave"
+    },
+    {
+      "id": "e6",
+      "kind": "relation",
+      "relation": "SUPPORTS",
+      "source_id": "c.s20.distractor_impact",
+      "target_id": "p.s24.trim_tool_context",
+      "created_by": "corpus_wave"
+    },
+    {
+      "id": "e7",
+      "kind": "relation",
+      "relation": "CONSTRAINS",
+      "source_id": "c.s20.haystack_structure",
+      "target_id": "p.s26.open_only_needed_pages",
+      "created_by": "corpus_wave"
+    },
+    {
+      "id": "e8",
+      "kind": "relation",
+      "relation": "VALIDATED_BY",
+      "source_id": "c.s20.degrades_with_length",
+      "target_id": "p.s19.reproduce_context_rot",
+      "created_by": "corpus_wave"
+    },
+    {
+      "id": "e9",
+      "kind": "relation",
+      "relation": "VALIDATED_BY",
+      "source_id": "c.s20.similarity_sensitivity",
+      "target_id": "p.s19.reproduce_context_rot",
+      "created_by": "corpus_wave"
+    },
+    {
+      "id": "e10",
+      "kind": "relation",
+      "relation": "VALIDATED_BY",
+      "source_id": "c.s20.distractor_impact",
+      "target_id": "p.s19.reproduce_context_rot",
+      "created_by": "corpus_wave"
+    },
+    {
+      "id": "e11",
+      "kind": "relation",
+      "relation": "VALIDATED_BY",
+      "source_id": "c.s20.haystack_structure",
+      "target_id": "p.s19.reproduce_context_rot",
+      "created_by": "corpus_wave"
+    },
+    {
+      "id": "e12",
+      "kind": "relation",
+      "relation": "VALIDATED_BY",
+      "source_id": "c.s20.focused_beats_full",
+      "target_id": "p.s19.reproduce_context_rot",
+      "created_by": "corpus_wave"
+    },
+    {
+      "id": "e13",
+      "kind": "relation",
+      "relation": "CONSTRAINS",
+      "source_id": "c.s02.eval_gate",
+      "target_id": "p.s01.author_skill",
+      "created_by": "corpus_wave"
+    },
+    {
+      "id": "e14",
+      "kind": "relation",
+      "relation": "CONSTRAINS",
+      "source_id": "c.s07.discover_stack_first",
+      "target_id": "p.s09.tdd_loop",
+      "created_by": "corpus_wave"
+    },
+    {
+      "id": "e15",
+      "kind": "relation",
+      "relation": "SUPPORTS",
+      "source_id": "c.s07.discover_stack_first",
+      "target_id": "p.s07.tdd_discover_first",
+      "created_by": "corpus_wave"
+    },
+    {
+      "id": "e16",
+      "kind": "relation",
+      "relation": "SIBLING_OF",
+      "source_id": "p.s07.tdd_discover_first",
+      "target_id": "p.s09.tdd_loop",
+      "created_by": "corpus_wave"
+    },
+    {
+      "id": "e17",
+      "kind": "relation",
+      "relation": "SUPPORTS",
+      "source_id": "c.s10.ralph_cost",
+      "target_id": "p.s10.fresh_context_loop",
+      "created_by": "corpus_wave"
+    },
+    {
+      "id": "e18",
+      "kind": "relation",
+      "relation": "SUPPORTS",
+      "source_id": "c.s10.ralph_novel_lang",
+      "target_id": "p.s10.fresh_context_loop",
+      "created_by": "corpus_wave"
+    },
+    {
+      "id": "e19",
+      "kind": "relation",
+      "relation": "SUPPORTS",
+      "source_id": "c.s11.report_only_first",
+      "target_id": "p.s10.fresh_context_loop",
+      "created_by": "corpus_wave"
+    },
+    {
+      "id": "e20",
+      "kind": "relation",
+      "relation": "SUPPORTS",
+      "source_id": "c.s15.read_only_default",
+      "target_id": "p.s10.fresh_context_loop",
+      "created_by": "corpus_wave"
+    }
+  ],
+  "counts": {
+    "nodes": 20,
+    "edges": 20,
+    "claims_total": 11,
+    "procedure_refs": 9,
+    "by_epistemic_status": {
+      "EXPERIMENTAL": 5,
+      "USER_REPORTED": 2,
+      "SOURCE_DERIVED": 13
+    },
+    "by_relation": {
+      "SUPPORTS": 11,
+      "CONSTRAINS": 3,
+      "VALIDATED_BY": 5,
+      "SIBLING_OF": 1
+    },
+    "by_status": {
+      "candidate": 20,
+      "verified": 0
+    }
+  },
+  "link_mode": "relations",
+  "notes": [
+    "Every node is candidate / candidate-not-verified: nothing here has independent supporting execution evidence yet (Phase 10).",
+    "USER_REPORTED claims (c.s10.*) are attribution of Huntley's blog, NOT restated as established fact.",
+    "EXPERIMENTAL claims (c.s20.*) carry measured conditions in candidates/S20.md; the executable form is p.s19.reproduce_context_rot.",
+    "VALIDATED_BY here means 'the report's own method produces this evidence', not 'StealthLab verified it'."
+  ]
+}
+</script>
+<script>
+(function () {
+  var raw = JSON.parse(document.getElementById('data').textContent);
+  var REL_COLOR = { SUPPORTS:'#3fb950', CONTRADICTS:'#f85149', CONSTRAINS:'#d29922', VALIDATED_BY:'#58a6ff', SIBLING_OF:'#8b949e' };
+  function nodeColor(n){
+    if (n.claim_type === 'procedure_ref') return '#3fb950';
+    if (n.epistemic_status === 'EXPERIMENTAL') return '#d29922';
+    if (n.epistemic_status === 'USER_REPORTED') return '#8957e5';
+    return '#2f81f7';
+  }
+  var nodes = raw.nodes.map(function(n){ return Object.assign({}, n); });
+  var links = raw.edges.map(function(e){ return { source:e.source_id, target:e.target_id, relation:e.relation, id:e.id }; });
+  document.getElementById('counts').textContent =
+    raw.counts.nodes + ' nodes · ' + raw.counts.edges + ' edges · ' +
+    raw.counts.claims_total + ' claims / ' + raw.counts.procedure_refs + ' procedures · 0 verified';
+
+  var el = document.getElementById('graph');
+  var G = ForceGraph()(el)
+    .graphData({ nodes: nodes, links: links })
+    .backgroundColor('#0e1116')
+    .nodeRelSize(5)
+    .nodeVal(function(n){ return n.claim_type === 'procedure_ref' ? 6 : 3; })
+    .nodeColor(nodeColor)
+    .nodeLabel(function(n){ return '<div style="max-width:320px;font:12px system-ui;color:#111;background:#fff;padding:6px 8px;border-radius:6px">'
+        + '<b>' + n.id + '</b><br>' + (n.statement||'') + '</div>'; })
+    .linkColor(function(l){ return REL_COLOR[l.relation] || '#6e7681'; })
+    .linkWidth(1.4)
+    .linkDirectionalArrowLength(4)
+    .linkDirectionalArrowRelPos(1)
+    .linkDirectionalParticles(function(l){ return l.relation === 'SUPPORTS' ? 2 : 0; })
+    .linkDirectionalParticleSpeed(0.006)
+    .onNodeClick(function(n){
+      var d = document.getElementById('detail');
+      d.innerHTML = '<h2>' + n.id + '</h2>'
+        + '<p>' + (n.statement||'') + '</p><dl>'
+        + row('kind', n.claim_type === 'procedure_ref' ? 'procedure' : (n.claim_type||'claim'))
+        + row('epistemic_status', n.epistemic_status)
+        + row('truth_state', n.truth_state)
+        + row('status', n.status)
+        + row('subject', n.subject)
+        + row('predicate', n.predicate)
+        + row('object', n.object)
+        + row('source', n.source_id)
+        + row('created_by', n.created_by)
+        + '</dl>';
+      G.centerAt(n.x, n.y, 500); G.zoom(2.4, 500);
+    });
+  function row(k,v){ return v ? ('<dt>'+k+'</dt><dd>'+v+'</dd>') : ''; }
+  window.addEventListener('resize', function(){ G.width(el.clientWidth).height(el.clientHeight); });
+  G.width(el.clientWidth).height(el.clientHeight);
+  G.d3Force('charge').strength(-140);
+})();
+</script>
+</body>
+</html>
