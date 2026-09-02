@@ -437,6 +437,51 @@ class LocalProcedureStore:
         return _row_to_dict(updated)
 
     # -----------------------------------------------------------------
+    # Bootstrap merge -- directive §11's convergence primitive. An
+    # already-existing row RECEIVES a new historical source's evidence
+    # instead of a duplicate row being born. Provenance is never
+    # destroyed: each source's ref is appended, never overwritten, and
+    # duplicate refs (same source_id) are idempotently ignored.
+    # -----------------------------------------------------------------
+    def merge_bootstrap_evidence(
+        self,
+        row_id: str,
+        *,
+        evidence_ref: dict,
+        source_episode_id: str,
+    ) -> dict:
+        conn = self._connect()
+        try:
+            row = conn.execute(
+                "SELECT * FROM local_procedures WHERE id = ?", (row_id,),
+            ).fetchone()
+            if row is None:
+                raise LocalProcedureNotFound(row_id)
+            existing = _row_to_dict(row)
+            refs = list(existing.get("evidence_refs") or [])
+            if not any(
+                r.get("source_id") == evidence_ref.get("source_id")
+                and r.get("source_type") == evidence_ref.get("source_type")
+                for r in refs if isinstance(r, dict)
+            ):
+                refs.append(evidence_ref)
+            episode_ids = list(existing.get("source_episode_ids") or [])
+            if source_episode_id not in episode_ids:
+                episode_ids.append(source_episode_id)
+            conn.execute(
+                "UPDATE local_procedures SET evidence_refs = ?, source_episode_ids = ?, "
+                "updated_at = ? WHERE id = ?",
+                (json.dumps(refs), json.dumps(episode_ids), _now_iso(), row_id),
+            )
+            conn.commit()
+            updated = conn.execute(
+                "SELECT * FROM local_procedures WHERE id = ?", (row_id,),
+            ).fetchone()
+        finally:
+            conn.close()
+        return _row_to_dict(updated)
+
+    # -----------------------------------------------------------------
     # Publish linkage -- durable local-side record of whether/where this
     # row was published to the global `procedures` table. Written by
     # `app/services/publish.py::publish_local_procedure` AFTER a
