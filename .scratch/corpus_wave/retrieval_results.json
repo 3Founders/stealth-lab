@@ -1,0 +1,2338 @@
+{
+  "_generated_by": ".scratch/corpus_wave/retrieval_eval.py",
+  "callable": "app.services.domain_search.search_global(object_types=['procedure'], filters={'require_verified': False})",
+  "underlying": "app.services.applicability.find_applicable_procedures -- hard-constraint cascade + similarity/capability RRF",
+  "scope": "AccessScope.unrestricted()",
+  "top_k": 10,
+  "corpus": "28 prior_library procedures ingested Phase 9 (verification_state=candidate)",
+  "summary": {
+    "n_primary_queries": 28,
+    "n_paraphrase_queries": 28,
+    "procedure_recall_at_5": 1.0,
+    "procedure_recall_at_10": 1.0,
+    "mean_reciprocal_rank": 0.7565,
+    "paraphrase_recall_at_5": 0.9286,
+    "paraphrase_recall_at_10": 1.0,
+    "paraphrase_mrr": 0.7411,
+    "paraphrase_stability_both_top5": 0.9286,
+    "paraphrase_stability_both_top10": 1.0,
+    "paraphrase_mean_abs_rank_delta": 0.4643,
+    "paraphrase_median_abs_rank_delta": 0.0
+  },
+  "primary_results": [
+    {
+      "query": "turn a merged pull request that fixes a bug into a pass/fail task with FAIL_TO_PASS and PASS_TO_PASS tests",
+      "target_procedure_id": "83d2e2f8-d79f-45c7-9ac8-9d9d63ea4542",
+      "hit": true,
+      "rank": 1,
+      "returned": 10,
+      "top_5": [
+        {
+          "id": "83d2e2f8-d79f-45c7-9ac8-9d9d63ea4542",
+          "name": "corpus-s36-construct-verify-a-task-instance-take-a-merged-p",
+          "score": 0.7583775342570444
+        },
+        {
+          "id": "a0b3a611-49ba-4639-a7f1-66105c9408bb",
+          "name": "proc-test-planonly-root-05bbcb48",
+          "score": 0.6153438735956219
+        },
+        {
+          "id": "35be8cae-3b09-481c-b2c7-b8efddde929b",
+          "name": "proc-test-planonly-root-821c6ddd",
+          "score": 0.6252096238010743
+        },
+        {
+          "id": "3a3d1fb6-d95c-4dca-8eb1-a17d5bbab36a",
+          "name": "corpus-s09-red-green-refactor-tdd-loop-failing-test-watch-f",
+          "score": 0.6287406075152123
+        },
+        {
+          "id": "19711438-a56f-40a7-8663-0590d966d204",
+          "name": "corpus-s11-scaffold-an-autonomous-maintenance-loop-npx-cobu",
+          "score": 0.6425230123839674
+        }
+      ],
+      "source_id": "S36",
+      "kind": "primary"
+    },
+    {
+      "query": "eval-driven loop for authoring an agent skill and proving it beats a baseline before shipping",
+      "target_procedure_id": "8927d8cd-79e4-4a90-8dbc-9f338fae2b34",
+      "hit": true,
+      "rank": 1,
+      "returned": 10,
+      "top_5": [
+        {
+          "id": "8927d8cd-79e4-4a90-8dbc-9f338fae2b34",
+          "name": "corpus-s02-eval-driven-skill-authoring-loop-intent-skill-md",
+          "score": 0.7844964789750697
+        },
+        {
+          "id": "3103b71b-1af8-4b9a-bf63-41c69cc918a0",
+          "name": "corpus-s01-author-a-new-agent-skill-skill-md-frontmatter-ex",
+          "score": 0.7148446905191402
+        },
+        {
+          "id": "83d2e2f8-d79f-45c7-9ac8-9d9d63ea4542",
+          "name": "corpus-s36-construct-verify-a-task-instance-take-a-merged-p",
+          "score": 0.6505420866195328
+        },
+        {
+          "id": "3a3d1fb6-d95c-4dca-8eb1-a17d5bbab36a",
+          "name": "corpus-s09-red-green-refactor-tdd-loop-failing-test-watch-f",
+          "score": 0.6428565693141759
+        },
+        {
+          "id": "00afa1e7-9c13-462b-8679-24fd160c39a9",
+          "name": "corpus-s38-represent-an-se-agent-trajectory-capture-full-ro",
+          "score": 0.6865919274358914
+        }
+      ],
+      "source_id": "S02",
+      "kind": "primary"
+    },
+    {
+      "query": "reproduce the Context Rot benchmark end to end with a venv, provider API keys and downloaded datasets",
+      "target_procedure_id": "9795b49f-83a3-4ea1-8256-a9439c8a800c",
+      "hit": true,
+      "rank": 1,
+      "returned": 10,
+      "top_5": [
+        {
+          "id": "9795b49f-83a3-4ea1-8256-a9439c8a800c",
+          "name": "corpus-s19-reproduce-the-context-rot-benchmark-venv-deps-pr",
+          "score": 0.6977466274348342
+        },
+        {
+          "id": "8e2ef4a2-2d06-486a-a19f-542a279f8bc9",
+          "name": "corpus-s43-verify-a-scientific-claim-against-evidence-retri",
+          "score": 0.6604134745224729
+        },
+        {
+          "id": "35be8cae-3b09-481c-b2c7-b8efddde929b",
+          "name": "proc-test-planonly-root-821c6ddd",
+          "score": 0.6127215706704356
+        },
+        {
+          "id": "dc1ce2aa-26ad-46b3-ba6c-bc9d34d3446d",
+          "name": "corpus-s24-trim-mcp-tool-context-to-task-relevant-scan-conf",
+          "score": 0.63163940073583
+        },
+        {
+          "id": "adf6a524-fc58-4951-b734-3e694e6658e9",
+          "name": "corpus-s12-author-an-agents-md-dev-environment-tips-testing",
+          "score": 0.6215475790968227
+        }
+      ],
+      "source_id": "S19",
+      "kind": "primary"
+    },
+    {
+      "query": "harden a login system to the OWASP baseline: password length rules, breached-password blocking, account lockout, constant-time generic errors",
+      "target_procedure_id": "b1d824c0-1f91-4b77-b851-78d99f18dd46",
+      "hit": true,
+      "rank": 1,
+      "returned": 10,
+      "top_5": [
+        {
+          "id": "b1d824c0-1f91-4b77-b851-78d99f18dd46",
+          "name": "corpus-s46-harden-authentication-enforce-password-length-8",
+          "score": 0.7668268919106449
+        },
+        {
+          "id": "a0b3a611-49ba-4639-a7f1-66105c9408bb",
+          "name": "proc-test-planonly-root-05bbcb48",
+          "score": 0.573172288579018
+        },
+        {
+          "id": "3a3d1fb6-d95c-4dca-8eb1-a17d5bbab36a",
+          "name": "corpus-s09-red-green-refactor-tdd-loop-failing-test-watch-f",
+          "score": 0.5853297703613638
+        },
+        {
+          "id": "3d66d551-1c93-4ff6-ad00-a0de78832ba9",
+          "name": "corpus-s33-client-side-form-validation-apply-html-constrain",
+          "score": 0.6202109355140594
+        },
+        {
+          "id": "9795b49f-83a3-4ea1-8256-a9439c8a800c",
+          "name": "corpus-s19-reproduce-the-context-rot-benchmark-venv-deps-pr",
+          "score": 0.5845001141160002
+        }
+      ],
+      "source_id": "S46",
+      "kind": "primary"
+    },
+    {
+      "query": "trim MCP tool context to only what a task needs, staying under a token budget while keeping the task completable",
+      "target_procedure_id": "dc1ce2aa-26ad-46b3-ba6c-bc9d34d3446d",
+      "hit": true,
+      "rank": 1,
+      "returned": 10,
+      "top_5": [
+        {
+          "id": "dc1ce2aa-26ad-46b3-ba6c-bc9d34d3446d",
+          "name": "corpus-s24-trim-mcp-tool-context-to-task-relevant-scan-conf",
+          "score": 0.8079296594991949
+        },
+        {
+          "id": "651688c2-9f38-48e9-afea-065b1bafca82",
+          "name": "corpus-s23-install-the-mcp-server-call-smart-read-path-firs",
+          "score": 0.657763221660505
+        },
+        {
+          "id": "adf6a524-fc58-4951-b734-3e694e6658e9",
+          "name": "corpus-s12-author-an-agents-md-dev-environment-tips-testing",
+          "score": 0.6622592718328226
+        },
+        {
+          "id": "fef6ceb9-a3c4-4f2c-bcc7-956f6a25d996",
+          "name": "corpus-s50-build-evaluate-a-tool-use-task-collect-real-rest",
+          "score": 0.6884551879951779
+        },
+        {
+          "id": "83d2e2f8-d79f-45c7-9ac8-9d9d63ea4542",
+          "name": "corpus-s36-construct-verify-a-task-instance-take-a-merged-p",
+          "score": 0.6466469836190403
+        }
+      ],
+      "source_id": "S24",
+      "kind": "primary"
+    },
+    {
+      "query": "verify a scientific claim against cited abstracts and label it SUPPORT, CONTRADICT or NOINFO with rationale sentences",
+      "target_procedure_id": "8e2ef4a2-2d06-486a-a19f-542a279f8bc9",
+      "hit": true,
+      "rank": 1,
+      "returned": 10,
+      "top_5": [
+        {
+          "id": "8e2ef4a2-2d06-486a-a19f-542a279f8bc9",
+          "name": "corpus-s43-verify-a-scientific-claim-against-evidence-retri",
+          "score": 0.860964356560331
+        },
+        {
+          "id": "9cc278f0-a00b-4df4-bbbe-e13def67ccfa",
+          "name": "corpus-s42-retrieve-a-paper-its-citation-context-resolve-an",
+          "score": 0.6583833536824627
+        },
+        {
+          "id": "9795b49f-83a3-4ea1-8256-a9439c8a800c",
+          "name": "corpus-s19-reproduce-the-context-rot-benchmark-venv-deps-pr",
+          "score": 0.6518372807049438
+        },
+        {
+          "id": "83d2e2f8-d79f-45c7-9ac8-9d9d63ea4542",
+          "name": "corpus-s36-construct-verify-a-task-instance-take-a-merged-p",
+          "score": 0.625827054157781
+        },
+        {
+          "id": "35be8cae-3b09-481c-b2c7-b8efddde929b",
+          "name": "proc-test-planonly-root-821c6ddd",
+          "score": 0.5889179297844536
+        }
+      ],
+      "source_id": "S43",
+      "kind": "primary"
+    },
+    {
+      "query": "compile a Markdown agent workflow definition into a sandboxed lock.yml GitHub Actions workflow",
+      "target_procedure_id": "a04f8261-a001-4304-b8b1-3206ba39044a",
+      "hit": true,
+      "rank": 1,
+      "returned": 10,
+      "top_5": [
+        {
+          "id": "a04f8261-a001-4304-b8b1-3206ba39044a",
+          "name": "corpus-s15-author-gh-aw-compile-lock-yml-push-review-via-sa",
+          "score": 0.8537490363765504
+        },
+        {
+          "id": "adf6a524-fc58-4951-b734-3e694e6658e9",
+          "name": "corpus-s12-author-an-agents-md-dev-environment-tips-testing",
+          "score": 0.7035800359477652
+        },
+        {
+          "id": "35be8cae-3b09-481c-b2c7-b8efddde929b",
+          "name": "proc-test-planonly-root-821c6ddd",
+          "score": 0.6136582961749975
+        },
+        {
+          "id": "dc1ce2aa-26ad-46b3-ba6c-bc9d34d3446d",
+          "name": "corpus-s24-trim-mcp-tool-context-to-task-relevant-scan-conf",
+          "score": 0.6632331682618097
+        },
+        {
+          "id": "3103b71b-1af8-4b9a-bf63-41c69cc918a0",
+          "name": "corpus-s01-author-a-new-agent-skill-skill-md-frontmatter-ex",
+          "score": 0.6941212898773792
+        }
+      ],
+      "source_id": "S15",
+      "kind": "primary"
+    },
+    {
+      "query": "author an AGENTS.md file at the repo root with dev environment tips, testing instructions and PR instructions",
+      "target_procedure_id": "adf6a524-fc58-4951-b734-3e694e6658e9",
+      "hit": true,
+      "rank": 1,
+      "returned": 10,
+      "top_5": [
+        {
+          "id": "adf6a524-fc58-4951-b734-3e694e6658e9",
+          "name": "corpus-s12-author-an-agents-md-dev-environment-tips-testing",
+          "score": 0.7706876069423426
+        },
+        {
+          "id": "3103b71b-1af8-4b9a-bf63-41c69cc918a0",
+          "name": "corpus-s01-author-a-new-agent-skill-skill-md-frontmatter-ex",
+          "score": 0.7114863729166807
+        },
+        {
+          "id": "19711438-a56f-40a7-8663-0590d966d204",
+          "name": "corpus-s11-scaffold-an-autonomous-maintenance-loop-npx-cobu",
+          "score": 0.6587402921341239
+        },
+        {
+          "id": "3a3d1fb6-d95c-4dca-8eb1-a17d5bbab36a",
+          "name": "corpus-s09-red-green-refactor-tdd-loop-failing-test-watch-f",
+          "score": 0.636402296618504
+        },
+        {
+          "id": "83d2e2f8-d79f-45c7-9ac8-9d9d63ea4542",
+          "name": "corpus-s36-construct-verify-a-task-instance-take-a-merged-p",
+          "score": 0.6272022226102565
+        }
+      ],
+      "source_id": "S12",
+      "kind": "primary"
+    },
+    {
+      "query": "drive a browser via stable element refs: open a url, snapshot to get @e1 @e2, click and fill refs, snapshot again",
+      "target_procedure_id": "c15c20fc-40d2-41e4-a04e-303fe64fbc1e",
+      "hit": true,
+      "rank": 1,
+      "returned": 10,
+      "top_5": [
+        {
+          "id": "c15c20fc-40d2-41e4-a04e-303fe64fbc1e",
+          "name": "corpus-s30-drive-a-browser-via-stable-refs-install-open-url",
+          "score": 0.800332809091084
+        },
+        {
+          "id": "35be8cae-3b09-481c-b2c7-b8efddde929b",
+          "name": "proc-test-planonly-root-821c6ddd",
+          "score": 0.616550154295488
+        },
+        {
+          "id": "83d2e2f8-d79f-45c7-9ac8-9d9d63ea4542",
+          "name": "corpus-s36-construct-verify-a-task-instance-take-a-merged-p",
+          "score": 0.627736363180464
+        },
+        {
+          "id": "a0b3a611-49ba-4639-a7f1-66105c9408bb",
+          "name": "proc-test-planonly-root-05bbcb48",
+          "score": 0.6089246744572162
+        },
+        {
+          "id": "3a3d1fb6-d95c-4dca-8eb1-a17d5bbab36a",
+          "name": "corpus-s09-red-green-refactor-tdd-loop-failing-test-watch-f",
+          "score": 0.6165592427265972
+        }
+      ],
+      "source_id": "S30",
+      "kind": "primary"
+    },
+    {
+      "query": "strict red-green-refactor TDD loop, deleting any code that was written before its test",
+      "target_procedure_id": "3a3d1fb6-d95c-4dca-8eb1-a17d5bbab36a",
+      "hit": true,
+      "rank": 2,
+      "returned": 10,
+      "top_5": [
+        {
+          "id": "a0b3a611-49ba-4639-a7f1-66105c9408bb",
+          "name": "proc-test-planonly-root-05bbcb48",
+          "score": 0.6235055370620453
+        },
+        {
+          "id": "3a3d1fb6-d95c-4dca-8eb1-a17d5bbab36a",
+          "name": "corpus-s09-red-green-refactor-tdd-loop-failing-test-watch-f",
+          "score": 0.8067281231320588
+        },
+        {
+          "id": "35be8cae-3b09-481c-b2c7-b8efddde929b",
+          "name": "proc-test-planonly-root-821c6ddd",
+          "score": 0.6210249415566059
+        },
+        {
+          "id": "78431387-1ffb-459d-b94a-4b80bd873100",
+          "name": "corpus-s07-red-green-refactor-after-first-discovering-the-r",
+          "score": 0.6824923030900198
+        },
+        {
+          "id": "83d2e2f8-d79f-45c7-9ac8-9d9d63ea4542",
+          "name": "corpus-s36-construct-verify-a-task-instance-take-a-merged-p",
+          "score": 0.5929652366792231
+        }
+      ],
+      "source_id": "S09",
+      "kind": "primary"
+    },
+    {
+      "query": "generate a single self-contained HTML slide deck with inline CSS and JS and zero dependencies, shareable by URL",
+      "target_procedure_id": "32c834fa-ec8b-4290-b358-436c407fe59f",
+      "hit": true,
+      "rank": 1,
+      "returned": 10,
+      "top_5": [
+        {
+          "id": "32c834fa-ec8b-4290-b358-436c407fe59f",
+          "name": "corpus-s27-generate-a-shareable-single-file-html-deck-invok",
+          "score": 0.8355153494753099
+        },
+        {
+          "id": "a04f8261-a001-4304-b8b1-3206ba39044a",
+          "name": "corpus-s15-author-gh-aw-compile-lock-yml-push-review-via-sa",
+          "score": 0.6332052952104525
+        },
+        {
+          "id": "adf6a524-fc58-4951-b734-3e694e6658e9",
+          "name": "corpus-s12-author-an-agents-md-dev-environment-tips-testing",
+          "score": 0.6153521447158949
+        },
+        {
+          "id": "c15c20fc-40d2-41e4-a04e-303fe64fbc1e",
+          "name": "corpus-s30-drive-a-browser-via-stable-refs-install-open-url",
+          "score": 0.6030501649811576
+        },
+        {
+          "id": "3103b71b-1af8-4b9a-bf63-41c69cc918a0",
+          "name": "corpus-s01-author-a-new-agent-skill-skill-md-frontmatter-ex",
+          "score": 0.6151466264697305
+        }
+      ],
+      "source_id": "S27",
+      "kind": "primary"
+    },
+    {
+      "query": "client-side form validation with HTML constraint attributes and the Constraint Validation API, with visible feedback",
+      "target_procedure_id": "3d66d551-1c93-4ff6-ad00-a0de78832ba9",
+      "hit": true,
+      "rank": 1,
+      "returned": 10,
+      "top_5": [
+        {
+          "id": "3d66d551-1c93-4ff6-ad00-a0de78832ba9",
+          "name": "corpus-s33-client-side-form-validation-apply-html-constrain",
+          "score": 0.7877631703850384
+        },
+        {
+          "id": "c15c20fc-40d2-41e4-a04e-303fe64fbc1e",
+          "name": "corpus-s30-drive-a-browser-via-stable-refs-install-open-url",
+          "score": 0.6080177544771596
+        },
+        {
+          "id": "72f30232-0b43-4351-a666-6dd67ce2af5a",
+          "name": "corpus-s04-review-ui-code-against-the-web-interface-guideli",
+          "score": 0.6092631533362689
+        },
+        {
+          "id": "b1d824c0-1f91-4b77-b851-78d99f18dd46",
+          "name": "corpus-s46-harden-authentication-enforce-password-length-8",
+          "score": 0.5773557822345268
+        },
+        {
+          "id": "3a3d1fb6-d95c-4dca-8eb1-a17d5bbab36a",
+          "name": "corpus-s09-red-green-refactor-tdd-loop-failing-test-watch-f",
+          "score": 0.5675213754241347
+        }
+      ],
+      "source_id": "S33",
+      "kind": "primary"
+    },
+    {
+      "query": "scaffold an autonomous repo maintenance loop that runs report-only for its first week before it is allowed to act",
+      "target_procedure_id": "19711438-a56f-40a7-8663-0590d966d204",
+      "hit": true,
+      "rank": 1,
+      "returned": 10,
+      "top_5": [
+        {
+          "id": "19711438-a56f-40a7-8663-0590d966d204",
+          "name": "corpus-s11-scaffold-an-autonomous-maintenance-loop-npx-cobu",
+          "score": 0.8166000430277273
+        },
+        {
+          "id": "83d2e2f8-d79f-45c7-9ac8-9d9d63ea4542",
+          "name": "corpus-s36-construct-verify-a-task-instance-take-a-merged-p",
+          "score": 0.6733314315049641
+        },
+        {
+          "id": "3a3d1fb6-d95c-4dca-8eb1-a17d5bbab36a",
+          "name": "corpus-s09-red-green-refactor-tdd-loop-failing-test-watch-f",
+          "score": 0.6702970177569033
+        },
+        {
+          "id": "adf6a524-fc58-4951-b734-3e694e6658e9",
+          "name": "corpus-s12-author-an-agents-md-dev-environment-tips-testing",
+          "score": 0.6680208942231326
+        },
+        {
+          "id": "8b574279-fd5b-4435-af80-47b84c85e291",
+          "name": "corpus-s47-debug-a-running-crashing-pod-kubectl-describe-po",
+          "score": 0.6659561498861775
+        }
+      ],
+      "source_id": "S11",
+      "kind": "primary"
+    },
+    {
+      "query": "query the OpenAlex works API with cursor pagination and a mailto polite-pool parameter until next_cursor is null",
+      "target_procedure_id": "5ca819d8-a43d-4ebd-931b-00fe5b95fa9f",
+      "hit": true,
+      "rank": 1,
+      "returned": 10,
+      "top_5": [
+        {
+          "id": "5ca819d8-a43d-4ebd-931b-00fe5b95fa9f",
+          "name": "corpus-s41-query-works-programmatically-get-https-api-opena",
+          "score": 0.7905889060217459
+        },
+        {
+          "id": "dc1ce2aa-26ad-46b3-ba6c-bc9d34d3446d",
+          "name": "corpus-s24-trim-mcp-tool-context-to-task-relevant-scan-conf",
+          "score": 0.6174913247584062
+        },
+        {
+          "id": "c15c20fc-40d2-41e4-a04e-303fe64fbc1e",
+          "name": "corpus-s30-drive-a-browser-via-stable-refs-install-open-url",
+          "score": 0.5963701116837757
+        },
+        {
+          "id": "9cc278f0-a00b-4df4-bbbe-e13def67ccfa",
+          "name": "corpus-s42-retrieve-a-paper-its-citation-context-resolve-an",
+          "score": 0.690329832913721
+        },
+        {
+          "id": "19711438-a56f-40a7-8663-0590d966d204",
+          "name": "corpus-s11-scaffold-an-autonomous-maintenance-loop-npx-cobu",
+          "score": 0.5972433579122077
+        }
+      ],
+      "source_id": "S41",
+      "kind": "primary"
+    },
+    {
+      "query": "retrieve a paper plus its citations and references from the Semantic Scholar Graph API with field selection and batch",
+      "target_procedure_id": "9cc278f0-a00b-4df4-bbbe-e13def67ccfa",
+      "hit": true,
+      "rank": 1,
+      "returned": 10,
+      "top_5": [
+        {
+          "id": "9cc278f0-a00b-4df4-bbbe-e13def67ccfa",
+          "name": "corpus-s42-retrieve-a-paper-its-citation-context-resolve-an",
+          "score": 0.8104956683336492
+        },
+        {
+          "id": "8e2ef4a2-2d06-486a-a19f-542a279f8bc9",
+          "name": "corpus-s43-verify-a-scientific-claim-against-evidence-retri",
+          "score": 0.6436826389021606
+        },
+        {
+          "id": "9795b49f-83a3-4ea1-8256-a9439c8a800c",
+          "name": "corpus-s19-reproduce-the-context-rot-benchmark-venv-deps-pr",
+          "score": 0.5927871136406274
+        },
+        {
+          "id": "c15c20fc-40d2-41e4-a04e-303fe64fbc1e",
+          "name": "corpus-s30-drive-a-browser-via-stable-refs-install-open-url",
+          "score": 0.5882219327423055
+        },
+        {
+          "id": "5ca819d8-a43d-4ebd-931b-00fe5b95fa9f",
+          "name": "corpus-s41-query-works-programmatically-get-https-api-opena",
+          "score": 0.6936319508024813
+        }
+      ],
+      "source_id": "S42",
+      "kind": "primary"
+    },
+    {
+      "query": "author a new Agent Skill: a folder with a SKILL.md, frontmatter, and Examples and Guidelines sections",
+      "target_procedure_id": "3103b71b-1af8-4b9a-bf63-41c69cc918a0",
+      "hit": true,
+      "rank": 3,
+      "returned": 10,
+      "top_5": [
+        {
+          "id": "adf6a524-fc58-4951-b734-3e694e6658e9",
+          "name": "corpus-s12-author-an-agents-md-dev-environment-tips-testing",
+          "score": 0.6731316518372272
+        },
+        {
+          "id": "8927d8cd-79e4-4a90-8dbc-9f338fae2b34",
+          "name": "corpus-s02-eval-driven-skill-authoring-loop-intent-skill-md",
+          "score": 0.6659863311312373
+        },
+        {
+          "id": "3103b71b-1af8-4b9a-bf63-41c69cc918a0",
+          "name": "corpus-s01-author-a-new-agent-skill-skill-md-frontmatter-ex",
+          "score": 0.8116867283444812
+        },
+        {
+          "id": "35be8cae-3b09-481c-b2c7-b8efddde929b",
+          "name": "proc-test-planonly-root-821c6ddd",
+          "score": 0.6030111403856806
+        },
+        {
+          "id": "dc1ce2aa-26ad-46b3-ba6c-bc9d34d3446d",
+          "name": "corpus-s24-trim-mcp-tool-context-to-task-relevant-scan-conf",
+          "score": 0.6110633654656498
+        }
+      ],
+      "source_id": "S01",
+      "kind": "primary"
+    },
+    {
+      "query": "review UI code against the Web Interface Guidelines and emit file:line findings",
+      "target_procedure_id": "72f30232-0b43-4351-a666-6dd67ce2af5a",
+      "hit": true,
+      "rank": 1,
+      "returned": 10,
+      "top_5": [
+        {
+          "id": "72f30232-0b43-4351-a666-6dd67ce2af5a",
+          "name": "corpus-s04-review-ui-code-against-the-web-interface-guideli",
+          "score": 0.8389855384633487
+        },
+        {
+          "id": "5acf0d36-e357-4863-b203-b6bc484a604f",
+          "name": "corpus-s32-accessibility-audit-slice-fetch-current-guidelin",
+          "score": 0.7906389275929087
+        },
+        {
+          "id": "c15c20fc-40d2-41e4-a04e-303fe64fbc1e",
+          "name": "corpus-s30-drive-a-browser-via-stable-refs-install-open-url",
+          "score": 0.6364604300048748
+        },
+        {
+          "id": "3a3d1fb6-d95c-4dca-8eb1-a17d5bbab36a",
+          "name": "corpus-s09-red-green-refactor-tdd-loop-failing-test-watch-f",
+          "score": 0.6308673062154805
+        },
+        {
+          "id": "5f1263b5-1f9e-4b71-930b-63f1c28ef10d",
+          "name": "corpus-s05-apply-70-react-next-js-performance-rules-by-prio",
+          "score": 0.6715493207420863
+        }
+      ],
+      "source_id": "S04",
+      "kind": "primary"
+    },
+    {
+      "query": "eliminate request waterfalls by hoisting sequential awaits of independent operations into Promise.all",
+      "target_procedure_id": "28decdd0-0d90-45e3-8187-1e7eafee3abc",
+      "hit": true,
+      "rank": 1,
+      "returned": 10,
+      "top_5": [
+        {
+          "id": "28decdd0-0d90-45e3-8187-1e7eafee3abc",
+          "name": "corpus-s31-eliminate-request-waterfalls-find-sequential-awa",
+          "score": 0.7667891188643344
+        },
+        {
+          "id": "c15c20fc-40d2-41e4-a04e-303fe64fbc1e",
+          "name": "corpus-s30-drive-a-browser-via-stable-refs-install-open-url",
+          "score": 0.6067617885852181
+        },
+        {
+          "id": "5ca819d8-a43d-4ebd-931b-00fe5b95fa9f",
+          "name": "corpus-s41-query-works-programmatically-get-https-api-opena",
+          "score": 0.6350338113062718
+        },
+        {
+          "id": "5f1263b5-1f9e-4b71-930b-63f1c28ef10d",
+          "name": "corpus-s05-apply-70-react-next-js-performance-rules-by-prio",
+          "score": 0.6386934562494164
+        },
+        {
+          "id": "dc1ce2aa-26ad-46b3-ba6c-bc9d34d3446d",
+          "name": "corpus-s24-trim-mcp-tool-context-to-task-relevant-scan-conf",
+          "score": 0.606750109803598
+        }
+      ],
+      "source_id": "S31",
+      "kind": "primary"
+    },
+    {
+      "query": "accessibility audit slice: check semantics, focus order, contrast, labels and keyboard, emit file:line a11y findings",
+      "target_procedure_id": "5acf0d36-e357-4863-b203-b6bc484a604f",
+      "hit": true,
+      "rank": 1,
+      "returned": 10,
+      "top_5": [
+        {
+          "id": "5acf0d36-e357-4863-b203-b6bc484a604f",
+          "name": "corpus-s32-accessibility-audit-slice-fetch-current-guidelin",
+          "score": 0.775187908463904
+        },
+        {
+          "id": "c15c20fc-40d2-41e4-a04e-303fe64fbc1e",
+          "name": "corpus-s30-drive-a-browser-via-stable-refs-install-open-url",
+          "score": 0.669350056635296
+        },
+        {
+          "id": "72f30232-0b43-4351-a666-6dd67ce2af5a",
+          "name": "corpus-s04-review-ui-code-against-the-web-interface-guideli",
+          "score": 0.7197553527372468
+        },
+        {
+          "id": "3a3d1fb6-d95c-4dca-8eb1-a17d5bbab36a",
+          "name": "corpus-s09-red-green-refactor-tdd-loop-failing-test-watch-f",
+          "score": 0.6107293613623843
+        },
+        {
+          "id": "5f1263b5-1f9e-4b71-930b-63f1c28ef10d",
+          "name": "corpus-s05-apply-70-react-next-js-performance-rules-by-prio",
+          "score": 0.6431450112043611
+        }
+      ],
+      "source_id": "S32",
+      "kind": "primary"
+    },
+    {
+      "query": "a compiled GitHub issue auto-triage workflow: cron plus issues trigger, read-only agent proposes labels, safe-outputs add-labels with a bounded budget and one audit discussion",
+      "target_procedure_id": "2a5f8316-707f-4bf1-a98b-9c153ca40508",
+      "hit": true,
+      "rank": 3,
+      "returned": 10,
+      "top_5": [
+        {
+          "id": "a04f8261-a001-4304-b8b1-3206ba39044a",
+          "name": "corpus-s15-author-gh-aw-compile-lock-yml-push-review-via-sa",
+          "score": 0.672258492780862
+        },
+        {
+          "id": "83d2e2f8-d79f-45c7-9ac8-9d9d63ea4542",
+          "name": "corpus-s36-construct-verify-a-task-instance-take-a-merged-p",
+          "score": 0.6463478214476244
+        },
+        {
+          "id": "2a5f8316-707f-4bf1-a98b-9c153ca40508",
+          "name": "corpus-s34-a-maintenance-automation-workflow-in-practice-sc",
+          "score": 0.7361674560306928
+        },
+        {
+          "id": "19711438-a56f-40a7-8663-0590d966d204",
+          "name": "corpus-s11-scaffold-an-autonomous-maintenance-loop-npx-cobu",
+          "score": 0.6662279871818544
+        },
+        {
+          "id": "dc1ce2aa-26ad-46b3-ba6c-bc9d34d3446d",
+          "name": "corpus-s24-trim-mcp-tool-context-to-task-relevant-scan-conf",
+          "score": 0.6582134161766657
+        }
+      ],
+      "source_id": "S34",
+      "kind": "primary"
+    },
+    {
+      "query": "debug a running or crashing Kubernetes pod with kubectl describe, kubectl logs, kubectl exec and ephemeral debug containers, then clean up",
+      "target_procedure_id": "8b574279-fd5b-4435-af80-47b84c85e291",
+      "hit": true,
+      "rank": 5,
+      "returned": 10,
+      "top_5": [
+        {
+          "id": "35be8cae-3b09-481c-b2c7-b8efddde929b",
+          "name": "proc-test-planonly-root-821c6ddd",
+          "score": 0.5633281532551622
+        },
+        {
+          "id": "19711438-a56f-40a7-8663-0590d966d204",
+          "name": "corpus-s11-scaffold-an-autonomous-maintenance-loop-npx-cobu",
+          "score": 0.5960206749760179
+        },
+        {
+          "id": "9795b49f-83a3-4ea1-8256-a9439c8a800c",
+          "name": "corpus-s19-reproduce-the-context-rot-benchmark-venv-deps-pr",
+          "score": 0.5725707511121694
+        },
+        {
+          "id": "3a3d1fb6-d95c-4dca-8eb1-a17d5bbab36a",
+          "name": "corpus-s09-red-green-refactor-tdd-loop-failing-test-watch-f",
+          "score": 0.5592567332178087
+        },
+        {
+          "id": "8b574279-fd5b-4435-af80-47b84c85e291",
+          "name": "corpus-s47-debug-a-running-crashing-pod-kubectl-describe-po",
+          "score": 0.7760678500403232
+        }
+      ],
+      "source_id": "S47",
+      "kind": "primary"
+    },
+    {
+      "query": "one rule set across all AI coding tools with commitlint and GitHub Actions CI enforcement referencing STANDARDS.md",
+      "target_procedure_id": "aba29676-3455-40d1-be97-6113f148b5f3",
+      "hit": true,
+      "rank": 3,
+      "returned": 10,
+      "top_5": [
+        {
+          "id": "adf6a524-fc58-4951-b734-3e694e6658e9",
+          "name": "corpus-s12-author-an-agents-md-dev-environment-tips-testing",
+          "score": 0.6567018116112475
+        },
+        {
+          "id": "a04f8261-a001-4304-b8b1-3206ba39044a",
+          "name": "corpus-s15-author-gh-aw-compile-lock-yml-push-review-via-sa",
+          "score": 0.6566115800946374
+        },
+        {
+          "id": "aba29676-3455-40d1-be97-6113f148b5f3",
+          "name": "corpus-s14-one-rule-set-across-all-ai-tools-ci-enforcement",
+          "score": 0.8006111431412587
+        },
+        {
+          "id": "35be8cae-3b09-481c-b2c7-b8efddde929b",
+          "name": "proc-test-planonly-root-821c6ddd",
+          "score": 0.6172278652348601
+        },
+        {
+          "id": "72f30232-0b43-4351-a666-6dd67ce2af5a",
+          "name": "corpus-s04-review-ui-code-against-the-web-interface-guideli",
+          "score": 0.6461850023269319
+        }
+      ],
+      "source_id": "S14",
+      "kind": "primary"
+    },
+    {
+      "query": "an MCP smart_read tool that caches a file on first read and returns only a diff on later reads of an unchanged file",
+      "target_procedure_id": "651688c2-9f38-48e9-afea-065b1bafca82",
+      "hit": true,
+      "rank": 1,
+      "returned": 10,
+      "top_5": [
+        {
+          "id": "651688c2-9f38-48e9-afea-065b1bafca82",
+          "name": "corpus-s23-install-the-mcp-server-call-smart-read-path-firs",
+          "score": 0.730104002648448
+        },
+        {
+          "id": "35be8cae-3b09-481c-b2c7-b8efddde929b",
+          "name": "proc-test-planonly-root-821c6ddd",
+          "score": 0.5965800446020855
+        },
+        {
+          "id": "adf6a524-fc58-4951-b734-3e694e6658e9",
+          "name": "corpus-s12-author-an-agents-md-dev-environment-tips-testing",
+          "score": 0.6207943092254166
+        },
+        {
+          "id": "19711438-a56f-40a7-8663-0590d966d204",
+          "name": "corpus-s11-scaffold-an-autonomous-maintenance-loop-npx-cobu",
+          "score": 0.6082456293554505
+        },
+        {
+          "id": "dc1ce2aa-26ad-46b3-ba6c-bc9d34d3446d",
+          "name": "corpus-s24-trim-mcp-tool-context-to-task-relevant-scan-conf",
+          "score": 0.6020244125534979
+        }
+      ],
+      "source_id": "S23",
+      "kind": "primary"
+    },
+    {
+      "query": "build and evaluate a tool-use task with a DFSDT annotated solution path and ToolEval pass rate and win rate",
+      "target_procedure_id": "fef6ceb9-a3c4-4f2c-bcc7-956f6a25d996",
+      "hit": true,
+      "rank": 3,
+      "returned": 10,
+      "top_5": [
+        {
+          "id": "8927d8cd-79e4-4a90-8dbc-9f338fae2b34",
+          "name": "corpus-s02-eval-driven-skill-authoring-loop-intent-skill-md",
+          "score": 0.672290718914828
+        },
+        {
+          "id": "9795b49f-83a3-4ea1-8256-a9439c8a800c",
+          "name": "corpus-s19-reproduce-the-context-rot-benchmark-venv-deps-pr",
+          "score": 0.670308196293508
+        },
+        {
+          "id": "fef6ceb9-a3c4-4f2c-bcc7-956f6a25d996",
+          "name": "corpus-s50-build-evaluate-a-tool-use-task-collect-real-rest",
+          "score": 0.7930998873706326
+        },
+        {
+          "id": "dc1ce2aa-26ad-46b3-ba6c-bc9d34d3446d",
+          "name": "corpus-s24-trim-mcp-tool-context-to-task-relevant-scan-conf",
+          "score": 0.6695085928675697
+        },
+        {
+          "id": "00afa1e7-9c13-462b-8679-24fd160c39a9",
+          "name": "corpus-s38-represent-an-se-agent-trajectory-capture-full-ro",
+          "score": 0.6707479617627977
+        }
+      ],
+      "source_id": "S50",
+      "kind": "primary"
+    },
+    {
+      "query": "apply React and Next.js performance rules by priority: waterfalls, bundle size, server cache, memoization, JS patterns",
+      "target_procedure_id": "5f1263b5-1f9e-4b71-930b-63f1c28ef10d",
+      "hit": true,
+      "rank": 2,
+      "returned": 10,
+      "top_5": [
+        {
+          "id": "3a3d1fb6-d95c-4dca-8eb1-a17d5bbab36a",
+          "name": "corpus-s09-red-green-refactor-tdd-loop-failing-test-watch-f",
+          "score": 0.6185536333558819
+        },
+        {
+          "id": "5f1263b5-1f9e-4b71-930b-63f1c28ef10d",
+          "name": "corpus-s05-apply-70-react-next-js-performance-rules-by-prio",
+          "score": 0.6920640436882466
+        },
+        {
+          "id": "28decdd0-0d90-45e3-8187-1e7eafee3abc",
+          "name": "corpus-s31-eliminate-request-waterfalls-find-sequential-awa",
+          "score": 0.645131649613661
+        },
+        {
+          "id": "651688c2-9f38-48e9-afea-065b1bafca82",
+          "name": "corpus-s23-install-the-mcp-server-call-smart-read-path-firs",
+          "score": 0.6020067958787587
+        },
+        {
+          "id": "c15c20fc-40d2-41e4-a04e-303fe64fbc1e",
+          "name": "corpus-s30-drive-a-browser-via-stable-refs-install-open-url",
+          "score": 0.6006269793192474
+        }
+      ],
+      "source_id": "S05",
+      "kind": "primary"
+    },
+    {
+      "query": "represent a software-engineering agent trajectory: role-tagged conversation, final unified-diff patch, exit status, resolved flag, generated-test signals",
+      "target_procedure_id": "00afa1e7-9c13-462b-8679-24fd160c39a9",
+      "hit": true,
+      "rank": 4,
+      "returned": 10,
+      "top_5": [
+        {
+          "id": "83d2e2f8-d79f-45c7-9ac8-9d9d63ea4542",
+          "name": "corpus-s36-construct-verify-a-task-instance-take-a-merged-p",
+          "score": 0.6952581613812796
+        },
+        {
+          "id": "35be8cae-3b09-481c-b2c7-b8efddde929b",
+          "name": "proc-test-planonly-root-821c6ddd",
+          "score": 0.6371367564406741
+        },
+        {
+          "id": "adf6a524-fc58-4951-b734-3e694e6658e9",
+          "name": "corpus-s12-author-an-agents-md-dev-environment-tips-testing",
+          "score": 0.7008873156532365
+        },
+        {
+          "id": "00afa1e7-9c13-462b-8679-24fd160c39a9",
+          "name": "corpus-s38-represent-an-se-agent-trajectory-capture-full-ro",
+          "score": 0.7593949879321015
+        },
+        {
+          "id": "3103b71b-1af8-4b9a-bf63-41c69cc918a0",
+          "name": "corpus-s01-author-a-new-agent-skill-skill-md-frontmatter-ex",
+          "score": 0.6747169040662868
+        }
+      ],
+      "source_id": "S38",
+      "kind": "primary"
+    },
+    {
+      "query": "TDD that first discovers the repository's own test framework, build system and commands before writing any test",
+      "target_procedure_id": "78431387-1ffb-459d-b94a-4b80bd873100",
+      "hit": true,
+      "rank": 5,
+      "returned": 10,
+      "top_5": [
+        {
+          "id": "35be8cae-3b09-481c-b2c7-b8efddde929b",
+          "name": "proc-test-planonly-root-821c6ddd",
+          "score": 0.6601904877820403
+        },
+        {
+          "id": "3a3d1fb6-d95c-4dca-8eb1-a17d5bbab36a",
+          "name": "corpus-s09-red-green-refactor-tdd-loop-failing-test-watch-f",
+          "score": 0.6904075635288212
+        },
+        {
+          "id": "a0b3a611-49ba-4639-a7f1-66105c9408bb",
+          "name": "proc-test-planonly-root-05bbcb48",
+          "score": 0.64299411909412
+        },
+        {
+          "id": "adf6a524-fc58-4951-b734-3e694e6658e9",
+          "name": "corpus-s12-author-an-agents-md-dev-environment-tips-testing",
+          "score": 0.6664943481333864
+        },
+        {
+          "id": "78431387-1ffb-459d-b94a-4b80bd873100",
+          "name": "corpus-s07-red-green-refactor-after-first-discovering-the-r",
+          "score": 0.7607197403150038
+        }
+      ],
+      "source_id": "S07",
+      "kind": "primary"
+    },
+    {
+      "query": "deploy a project to Vercel as a claimable deployment: tarball, framework detect, upload, preview URL plus claim URL",
+      "target_procedure_id": "8cd6f567-c269-4b62-beae-b64fd9be66f6",
+      "hit": true,
+      "rank": 5,
+      "returned": 10,
+      "top_5": [
+        {
+          "id": "83d2e2f8-d79f-45c7-9ac8-9d9d63ea4542",
+          "name": "corpus-s36-construct-verify-a-task-instance-take-a-merged-p",
+          "score": 0.6212960243938493
+        },
+        {
+          "id": "19711438-a56f-40a7-8663-0590d966d204",
+          "name": "corpus-s11-scaffold-an-autonomous-maintenance-loop-npx-cobu",
+          "score": 0.6353716392321742
+        },
+        {
+          "id": "adf6a524-fc58-4951-b734-3e694e6658e9",
+          "name": "corpus-s12-author-an-agents-md-dev-environment-tips-testing",
+          "score": 0.6238731276554849
+        },
+        {
+          "id": "35be8cae-3b09-481c-b2c7-b8efddde929b",
+          "name": "proc-test-planonly-root-821c6ddd",
+          "score": 0.5935773896670972
+        },
+        {
+          "id": "8cd6f567-c269-4b62-beae-b64fd9be66f6",
+          "name": "corpus-s03-deploy-a-project-to-vercel-as-a-claimable-deploy",
+          "score": 0.79108065129338
+        }
+      ],
+      "source_id": "S03",
+      "kind": "primary"
+    }
+  ],
+  "paraphrase_results": [
+    {
+      "query": "how do I build a verifiable SWE-bench style task instance from a real merged PR and its test patch",
+      "target_procedure_id": "83d2e2f8-d79f-45c7-9ac8-9d9d63ea4542",
+      "hit": true,
+      "rank": 1,
+      "returned": 10,
+      "top_5": [
+        {
+          "id": "83d2e2f8-d79f-45c7-9ac8-9d9d63ea4542",
+          "name": "corpus-s36-construct-verify-a-task-instance-take-a-merged-p",
+          "score": 0.8022221213842768
+        },
+        {
+          "id": "35be8cae-3b09-481c-b2c7-b8efddde929b",
+          "name": "proc-test-planonly-root-821c6ddd",
+          "score": 0.6392261384014336
+        },
+        {
+          "id": "9795b49f-83a3-4ea1-8256-a9439c8a800c",
+          "name": "corpus-s19-reproduce-the-context-rot-benchmark-venv-deps-pr",
+          "score": 0.6578767934542634
+        },
+        {
+          "id": "fef6ceb9-a3c4-4f2c-bcc7-956f6a25d996",
+          "name": "corpus-s50-build-evaluate-a-tool-use-task-collect-real-rest",
+          "score": 0.6741235892801859
+        },
+        {
+          "id": "adf6a524-fc58-4951-b734-3e694e6658e9",
+          "name": "corpus-s12-author-an-agents-md-dev-environment-tips-testing",
+          "score": 0.6481550059047535
+        }
+      ],
+      "source_id": "S36",
+      "kind": "paraphrase"
+    },
+    {
+      "query": "create a skill, write evals, run with-skill and baseline, grade, and iterate until feedback is empty",
+      "target_procedure_id": "8927d8cd-79e4-4a90-8dbc-9f338fae2b34",
+      "hit": true,
+      "rank": 1,
+      "returned": 10,
+      "top_5": [
+        {
+          "id": "8927d8cd-79e4-4a90-8dbc-9f338fae2b34",
+          "name": "corpus-s02-eval-driven-skill-authoring-loop-intent-skill-md",
+          "score": 0.7690058970084426
+        },
+        {
+          "id": "3103b71b-1af8-4b9a-bf63-41c69cc918a0",
+          "name": "corpus-s01-author-a-new-agent-skill-skill-md-frontmatter-ex",
+          "score": 0.6992002663115593
+        },
+        {
+          "id": "35be8cae-3b09-481c-b2c7-b8efddde929b",
+          "name": "proc-test-planonly-root-821c6ddd",
+          "score": 0.6211836922350973
+        },
+        {
+          "id": "9795b49f-83a3-4ea1-8256-a9439c8a800c",
+          "name": "corpus-s19-reproduce-the-context-rot-benchmark-venv-deps-pr",
+          "score": 0.6469094974634193
+        },
+        {
+          "id": "8e2ef4a2-2d06-486a-a19f-542a279f8bc9",
+          "name": "corpus-s43-verify-a-scientific-claim-against-evidence-retri",
+          "score": 0.6423055170615015
+        }
+      ],
+      "source_id": "S02",
+      "kind": "paraphrase"
+    },
+    {
+      "query": "run the Chroma context-rot experiments and compare the degradation curves to the published figures",
+      "target_procedure_id": "9795b49f-83a3-4ea1-8256-a9439c8a800c",
+      "hit": true,
+      "rank": 1,
+      "returned": 10,
+      "top_5": [
+        {
+          "id": "9795b49f-83a3-4ea1-8256-a9439c8a800c",
+          "name": "corpus-s19-reproduce-the-context-rot-benchmark-venv-deps-pr",
+          "score": 0.7927982766384218
+        },
+        {
+          "id": "35be8cae-3b09-481c-b2c7-b8efddde929b",
+          "name": "proc-test-planonly-root-821c6ddd",
+          "score": 0.6061053573998723
+        },
+        {
+          "id": "8e2ef4a2-2d06-486a-a19f-542a279f8bc9",
+          "name": "corpus-s43-verify-a-scientific-claim-against-evidence-retri",
+          "score": 0.6219531889057441
+        },
+        {
+          "id": "3a3d1fb6-d95c-4dca-8eb1-a17d5bbab36a",
+          "name": "corpus-s09-red-green-refactor-tdd-loop-failing-test-watch-f",
+          "score": 0.6035138504809415
+        },
+        {
+          "id": "00afa1e7-9c13-462b-8679-24fd160c39a9",
+          "name": "corpus-s38-represent-an-se-agent-trajectory-capture-full-ro",
+          "score": 0.618111241393441
+        }
+      ],
+      "source_id": "S19",
+      "kind": "paraphrase"
+    },
+    {
+      "query": "authentication hardening: enforce minimum password length, check Pwned Passwords, add failed-login lockout, identical error text for bad user vs bad password",
+      "target_procedure_id": "b1d824c0-1f91-4b77-b851-78d99f18dd46",
+      "hit": true,
+      "rank": 3,
+      "returned": 10,
+      "top_5": [
+        {
+          "id": "a0b3a611-49ba-4639-a7f1-66105c9408bb",
+          "name": "proc-test-planonly-root-05bbcb48",
+          "score": 0.5991028515659075
+        },
+        {
+          "id": "35be8cae-3b09-481c-b2c7-b8efddde929b",
+          "name": "proc-test-planonly-root-821c6ddd",
+          "score": 0.591074010622878
+        },
+        {
+          "id": "b1d824c0-1f91-4b77-b851-78d99f18dd46",
+          "name": "corpus-s46-harden-authentication-enforce-password-length-8",
+          "score": 0.708338035220346
+        },
+        {
+          "id": "3d66d551-1c93-4ff6-ad00-a0de78832ba9",
+          "name": "corpus-s33-client-side-form-validation-apply-html-constrain",
+          "score": 0.5914175596108138
+        },
+        {
+          "id": "3a3d1fb6-d95c-4dca-8eb1-a17d5bbab36a",
+          "name": "corpus-s09-red-green-refactor-tdd-loop-failing-test-watch-f",
+          "score": 0.5669306049896935
+        }
+      ],
+      "source_id": "S46",
+      "kind": "paraphrase"
+    },
+    {
+      "query": "produce a client-specific tool allowlist compressed to a budget and confirm sufficiency is retained",
+      "target_procedure_id": "dc1ce2aa-26ad-46b3-ba6c-bc9d34d3446d",
+      "hit": true,
+      "rank": 1,
+      "returned": 10,
+      "top_5": [
+        {
+          "id": "dc1ce2aa-26ad-46b3-ba6c-bc9d34d3446d",
+          "name": "corpus-s24-trim-mcp-tool-context-to-task-relevant-scan-conf",
+          "score": 0.8698202584828552
+        },
+        {
+          "id": "fef6ceb9-a3c4-4f2c-bcc7-956f6a25d996",
+          "name": "corpus-s50-build-evaluate-a-tool-use-task-collect-real-rest",
+          "score": 0.6951421297364265
+        },
+        {
+          "id": "5f1263b5-1f9e-4b71-930b-63f1c28ef10d",
+          "name": "corpus-s05-apply-70-react-next-js-performance-rules-by-prio",
+          "score": 0.6666497183721277
+        },
+        {
+          "id": "8e2ef4a2-2d06-486a-a19f-542a279f8bc9",
+          "name": "corpus-s43-verify-a-scientific-claim-against-evidence-retri",
+          "score": 0.6542685948232801
+        },
+        {
+          "id": "83d2e2f8-d79f-45c7-9ac8-9d9d63ea4542",
+          "name": "corpus-s36-construct-verify-a-task-instance-take-a-merged-p",
+          "score": 0.6531248150834424
+        }
+      ],
+      "source_id": "S24",
+      "kind": "paraphrase"
+    },
+    {
+      "query": "scientific fact-checking protocol: retrieve abstracts, select rationale sentences, predict a label, evaluate on the dev set",
+      "target_procedure_id": "8e2ef4a2-2d06-486a-a19f-542a279f8bc9",
+      "hit": true,
+      "rank": 1,
+      "returned": 10,
+      "top_5": [
+        {
+          "id": "8e2ef4a2-2d06-486a-a19f-542a279f8bc9",
+          "name": "corpus-s43-verify-a-scientific-claim-against-evidence-retri",
+          "score": 0.8033777228405824
+        },
+        {
+          "id": "9795b49f-83a3-4ea1-8256-a9439c8a800c",
+          "name": "corpus-s19-reproduce-the-context-rot-benchmark-venv-deps-pr",
+          "score": 0.6512933383699637
+        },
+        {
+          "id": "dc1ce2aa-26ad-46b3-ba6c-bc9d34d3446d",
+          "name": "corpus-s24-trim-mcp-tool-context-to-task-relevant-scan-conf",
+          "score": 0.616756610745218
+        },
+        {
+          "id": "8927d8cd-79e4-4a90-8dbc-9f338fae2b34",
+          "name": "corpus-s02-eval-driven-skill-authoring-loop-intent-skill-md",
+          "score": 0.6144353334438604
+        },
+        {
+          "id": "fef6ceb9-a3c4-4f2c-bcc7-956f6a25d996",
+          "name": "corpus-s50-build-evaluate-a-tool-use-task-collect-real-rest",
+          "score": 0.6318986802039135
+        }
+      ],
+      "source_id": "S43",
+      "kind": "paraphrase"
+    },
+    {
+      "query": "author a natural-language workflow, run gh aw compile, and review the generated executable .lock.yml via safe-outputs",
+      "target_procedure_id": "a04f8261-a001-4304-b8b1-3206ba39044a",
+      "hit": true,
+      "rank": 1,
+      "returned": 10,
+      "top_5": [
+        {
+          "id": "a04f8261-a001-4304-b8b1-3206ba39044a",
+          "name": "corpus-s15-author-gh-aw-compile-lock-yml-push-review-via-sa",
+          "score": 0.7948840447950527
+        },
+        {
+          "id": "a0b3a611-49ba-4639-a7f1-66105c9408bb",
+          "name": "proc-test-planonly-root-05bbcb48",
+          "score": 0.6471801093826413
+        },
+        {
+          "id": "35be8cae-3b09-481c-b2c7-b8efddde929b",
+          "name": "proc-test-planonly-root-821c6ddd",
+          "score": 0.6558976644272297
+        },
+        {
+          "id": "19711438-a56f-40a7-8663-0590d966d204",
+          "name": "corpus-s11-scaffold-an-autonomous-maintenance-loop-npx-cobu",
+          "score": 0.6824631955159124
+        },
+        {
+          "id": "dc1ce2aa-26ad-46b3-ba6c-bc9d34d3446d",
+          "name": "corpus-s24-trim-mcp-tool-context-to-task-relevant-scan-conf",
+          "score": 0.6607103239090947
+        }
+      ],
+      "source_id": "S15",
+      "kind": "paraphrase"
+    },
+    {
+      "query": "give coding agents one predictable instructions file at the repository root; nearest file wins for nested packages",
+      "target_procedure_id": "adf6a524-fc58-4951-b734-3e694e6658e9",
+      "hit": true,
+      "rank": 1,
+      "returned": 10,
+      "top_5": [
+        {
+          "id": "adf6a524-fc58-4951-b734-3e694e6658e9",
+          "name": "corpus-s12-author-an-agents-md-dev-environment-tips-testing",
+          "score": 0.8376803749546603
+        },
+        {
+          "id": "aba29676-3455-40d1-be97-6113f148b5f3",
+          "name": "corpus-s14-one-rule-set-across-all-ai-tools-ci-enforcement",
+          "score": 0.7034586557177537
+        },
+        {
+          "id": "3103b71b-1af8-4b9a-bf63-41c69cc918a0",
+          "name": "corpus-s01-author-a-new-agent-skill-skill-md-frontmatter-ex",
+          "score": 0.6963234568799338
+        },
+        {
+          "id": "651688c2-9f38-48e9-afea-065b1bafca82",
+          "name": "corpus-s23-install-the-mcp-server-call-smart-read-path-firs",
+          "score": 0.6444904638470804
+        },
+        {
+          "id": "00afa1e7-9c13-462b-8679-24fd160c39a9",
+          "name": "corpus-s38-represent-an-se-agent-trajectory-capture-full-ro",
+          "score": 0.6703723328346096
+        }
+      ],
+      "source_id": "S12",
+      "kind": "paraphrase"
+    },
+    {
+      "query": "navigate a web page and interact with its elements using stable references, confirming each command with --json",
+      "target_procedure_id": "c15c20fc-40d2-41e4-a04e-303fe64fbc1e",
+      "hit": true,
+      "rank": 1,
+      "returned": 10,
+      "top_5": [
+        {
+          "id": "c15c20fc-40d2-41e4-a04e-303fe64fbc1e",
+          "name": "corpus-s30-drive-a-browser-via-stable-refs-install-open-url",
+          "score": 0.803791783653537
+        },
+        {
+          "id": "a0b3a611-49ba-4639-a7f1-66105c9408bb",
+          "name": "proc-test-planonly-root-05bbcb48",
+          "score": 0.6204683208244817
+        },
+        {
+          "id": "35be8cae-3b09-481c-b2c7-b8efddde929b",
+          "name": "proc-test-planonly-root-821c6ddd",
+          "score": 0.6395488735495446
+        },
+        {
+          "id": "72f30232-0b43-4351-a666-6dd67ce2af5a",
+          "name": "corpus-s04-review-ui-code-against-the-web-interface-guideli",
+          "score": 0.6452528961455244
+        },
+        {
+          "id": "5acf0d36-e357-4863-b203-b6bc484a604f",
+          "name": "corpus-s32-accessibility-audit-slice-fetch-current-guidelin",
+          "score": 0.6447161660556765
+        }
+      ],
+      "source_id": "S30",
+      "kind": "paraphrase"
+    },
+    {
+      "query": "test-first development cycle: write a failing test, watch it fail, minimal code to pass, refactor, commit",
+      "target_procedure_id": "3a3d1fb6-d95c-4dca-8eb1-a17d5bbab36a",
+      "hit": true,
+      "rank": 2,
+      "returned": 10,
+      "top_5": [
+        {
+          "id": "35be8cae-3b09-481c-b2c7-b8efddde929b",
+          "name": "proc-test-planonly-root-821c6ddd",
+          "score": 0.6434993791205709
+        },
+        {
+          "id": "3a3d1fb6-d95c-4dca-8eb1-a17d5bbab36a",
+          "name": "corpus-s09-red-green-refactor-tdd-loop-failing-test-watch-f",
+          "score": 0.7760339681397742
+        },
+        {
+          "id": "a0b3a611-49ba-4639-a7f1-66105c9408bb",
+          "name": "proc-test-planonly-root-05bbcb48",
+          "score": 0.6353352567214595
+        },
+        {
+          "id": "83d2e2f8-d79f-45c7-9ac8-9d9d63ea4542",
+          "name": "corpus-s36-construct-verify-a-task-instance-take-a-merged-p",
+          "score": 0.621383811360936
+        },
+        {
+          "id": "78431387-1ffb-459d-b94a-4b80bd873100",
+          "name": "corpus-s07-red-green-refactor-after-first-discovering-the-r",
+          "score": 0.737578100572788
+        }
+      ],
+      "source_id": "S09",
+      "kind": "paraphrase"
+    },
+    {
+      "query": "produce a shareable HTML presentation from content or a pptx, pick a style preview, render the full deck",
+      "target_procedure_id": "32c834fa-ec8b-4290-b358-436c407fe59f",
+      "hit": true,
+      "rank": 1,
+      "returned": 10,
+      "top_5": [
+        {
+          "id": "32c834fa-ec8b-4290-b358-436c407fe59f",
+          "name": "corpus-s27-generate-a-shareable-single-file-html-deck-invok",
+          "score": 0.7789977887076587
+        },
+        {
+          "id": "a04f8261-a001-4304-b8b1-3206ba39044a",
+          "name": "corpus-s15-author-gh-aw-compile-lock-yml-push-review-via-sa",
+          "score": 0.60663812643214
+        },
+        {
+          "id": "c15c20fc-40d2-41e4-a04e-303fe64fbc1e",
+          "name": "corpus-s30-drive-a-browser-via-stable-refs-install-open-url",
+          "score": 0.5897541301718364
+        },
+        {
+          "id": "3103b71b-1af8-4b9a-bf63-41c69cc918a0",
+          "name": "corpus-s01-author-a-new-agent-skill-skill-md-frontmatter-ex",
+          "score": 0.602575437922933
+        },
+        {
+          "id": "8cd6f567-c269-4b62-beae-b64fd9be66f6",
+          "name": "corpus-s03-deploy-a-project-to-vercel-as-a-claimable-deploy",
+          "score": 0.636723416860829
+        }
+      ],
+      "source_id": "S27",
+      "kind": "paraphrase"
+    },
+    {
+      "query": "validate form input in the browser using required/pattern/min/max, setCustomValidity, checkValidity and reportValidity, then also validate server-side",
+      "target_procedure_id": "3d66d551-1c93-4ff6-ad00-a0de78832ba9",
+      "hit": true,
+      "rank": 2,
+      "returned": 10,
+      "top_5": [
+        {
+          "id": "c15c20fc-40d2-41e4-a04e-303fe64fbc1e",
+          "name": "corpus-s30-drive-a-browser-via-stable-refs-install-open-url",
+          "score": 0.5821929706373379
+        },
+        {
+          "id": "3d66d551-1c93-4ff6-ad00-a0de78832ba9",
+          "name": "corpus-s33-client-side-form-validation-apply-html-constrain",
+          "score": 0.7723180790248206
+        },
+        {
+          "id": "b1d824c0-1f91-4b77-b851-78d99f18dd46",
+          "name": "corpus-s46-harden-authentication-enforce-password-length-8",
+          "score": 0.6106003538354992
+        },
+        {
+          "id": "3a3d1fb6-d95c-4dca-8eb1-a17d5bbab36a",
+          "name": "corpus-s09-red-green-refactor-tdd-loop-failing-test-watch-f",
+          "score": 0.5559890527399324
+        },
+        {
+          "id": "72f30232-0b43-4351-a666-6dd67ce2af5a",
+          "name": "corpus-s04-review-ui-code-against-the-web-interface-guideli",
+          "score": 0.5741237568605366
+        }
+      ],
+      "source_id": "S33",
+      "kind": "paraphrase"
+    },
+    {
+      "query": "stand up a daily-triage automation loop with a dry-run period, then promote it to act",
+      "target_procedure_id": "19711438-a56f-40a7-8663-0590d966d204",
+      "hit": true,
+      "rank": 1,
+      "returned": 10,
+      "top_5": [
+        {
+          "id": "19711438-a56f-40a7-8663-0590d966d204",
+          "name": "corpus-s11-scaffold-an-autonomous-maintenance-loop-npx-cobu",
+          "score": 0.7245118367926596
+        },
+        {
+          "id": "83d2e2f8-d79f-45c7-9ac8-9d9d63ea4542",
+          "name": "corpus-s36-construct-verify-a-task-instance-take-a-merged-p",
+          "score": 0.663020270551743
+        },
+        {
+          "id": "3a3d1fb6-d95c-4dca-8eb1-a17d5bbab36a",
+          "name": "corpus-s09-red-green-refactor-tdd-loop-failing-test-watch-f",
+          "score": 0.6480973820686873
+        },
+        {
+          "id": "a0b3a611-49ba-4639-a7f1-66105c9408bb",
+          "name": "proc-test-planonly-root-05bbcb48",
+          "score": 0.6199255547010472
+        },
+        {
+          "id": "35be8cae-3b09-481c-b2c7-b8efddde929b",
+          "name": "proc-test-planonly-root-821c6ddd",
+          "score": 0.6203297325873578
+        }
+      ],
+      "source_id": "S11",
+      "kind": "paraphrase"
+    },
+    {
+      "query": "programmatically page through every work from OpenAlex filtered by a field, as a good API citizen",
+      "target_procedure_id": "5ca819d8-a43d-4ebd-931b-00fe5b95fa9f",
+      "hit": true,
+      "rank": 1,
+      "returned": 10,
+      "top_5": [
+        {
+          "id": "5ca819d8-a43d-4ebd-931b-00fe5b95fa9f",
+          "name": "corpus-s41-query-works-programmatically-get-https-api-opena",
+          "score": 0.8593397220057482
+        },
+        {
+          "id": "c15c20fc-40d2-41e4-a04e-303fe64fbc1e",
+          "name": "corpus-s30-drive-a-browser-via-stable-refs-install-open-url",
+          "score": 0.6127382806697111
+        },
+        {
+          "id": "dc1ce2aa-26ad-46b3-ba6c-bc9d34d3446d",
+          "name": "corpus-s24-trim-mcp-tool-context-to-task-relevant-scan-conf",
+          "score": 0.6257248923531741
+        },
+        {
+          "id": "9cc278f0-a00b-4df4-bbbe-e13def67ccfa",
+          "name": "corpus-s42-retrieve-a-paper-its-citation-context-resolve-an",
+          "score": 0.7080351120097074
+        },
+        {
+          "id": "651688c2-9f38-48e9-afea-065b1bafca82",
+          "name": "corpus-s23-install-the-mcp-server-call-smart-read-path-firs",
+          "score": 0.5938245780464014
+        }
+      ],
+      "source_id": "S41",
+      "kind": "paraphrase"
+    },
+    {
+      "query": "fetch a paper's citation context via the S2 graph API, paging citations and references and respecting rate-limit headers",
+      "target_procedure_id": "9cc278f0-a00b-4df4-bbbe-e13def67ccfa",
+      "hit": true,
+      "rank": 1,
+      "returned": 10,
+      "top_5": [
+        {
+          "id": "9cc278f0-a00b-4df4-bbbe-e13def67ccfa",
+          "name": "corpus-s42-retrieve-a-paper-its-citation-context-resolve-an",
+          "score": 0.7975662622223377
+        },
+        {
+          "id": "c15c20fc-40d2-41e4-a04e-303fe64fbc1e",
+          "name": "corpus-s30-drive-a-browser-via-stable-refs-install-open-url",
+          "score": 0.6276090205920533
+        },
+        {
+          "id": "8e2ef4a2-2d06-486a-a19f-542a279f8bc9",
+          "name": "corpus-s43-verify-a-scientific-claim-against-evidence-retri",
+          "score": 0.6529347922994144
+        },
+        {
+          "id": "5ca819d8-a43d-4ebd-931b-00fe5b95fa9f",
+          "name": "corpus-s41-query-works-programmatically-get-https-api-opena",
+          "score": 0.7190223079598163
+        },
+        {
+          "id": "651688c2-9f38-48e9-afea-065b1bafca82",
+          "name": "corpus-s23-install-the-mcp-server-call-smart-read-path-firs",
+          "score": 0.6035911797255765
+        }
+      ],
+      "source_id": "S42",
+      "kind": "paraphrase"
+    },
+    {
+      "query": "create a valid loadable agent skill that a model can discover and follow",
+      "target_procedure_id": "3103b71b-1af8-4b9a-bf63-41c69cc918a0",
+      "hit": true,
+      "rank": 1,
+      "returned": 10,
+      "top_5": [
+        {
+          "id": "3103b71b-1af8-4b9a-bf63-41c69cc918a0",
+          "name": "corpus-s01-author-a-new-agent-skill-skill-md-frontmatter-ex",
+          "score": 0.8243194610202678
+        },
+        {
+          "id": "8927d8cd-79e4-4a90-8dbc-9f338fae2b34",
+          "name": "corpus-s02-eval-driven-skill-authoring-loop-intent-skill-md",
+          "score": 0.6927356899055931
+        },
+        {
+          "id": "35be8cae-3b09-481c-b2c7-b8efddde929b",
+          "name": "proc-test-planonly-root-821c6ddd",
+          "score": 0.5996283594027835
+        },
+        {
+          "id": "adf6a524-fc58-4951-b734-3e694e6658e9",
+          "name": "corpus-s12-author-an-agents-md-dev-environment-tips-testing",
+          "score": 0.6549848662447324
+        },
+        {
+          "id": "19711438-a56f-40a7-8663-0590d966d204",
+          "name": "corpus-s11-scaffold-an-autonomous-maintenance-loop-npx-cobu",
+          "score": 0.6345371817555713
+        }
+      ],
+      "source_id": "S01",
+      "kind": "paraphrase"
+    },
+    {
+      "query": "audit a frontend implementation for compliance with the current web interface guidelines, terse and actionable",
+      "target_procedure_id": "72f30232-0b43-4351-a666-6dd67ce2af5a",
+      "hit": true,
+      "rank": 1,
+      "returned": 10,
+      "top_5": [
+        {
+          "id": "72f30232-0b43-4351-a666-6dd67ce2af5a",
+          "name": "corpus-s04-review-ui-code-against-the-web-interface-guideli",
+          "score": 0.8032986688410274
+        },
+        {
+          "id": "3a3d1fb6-d95c-4dca-8eb1-a17d5bbab36a",
+          "name": "corpus-s09-red-green-refactor-tdd-loop-failing-test-watch-f",
+          "score": 0.6490890029571371
+        },
+        {
+          "id": "5acf0d36-e357-4863-b203-b6bc484a604f",
+          "name": "corpus-s32-accessibility-audit-slice-fetch-current-guidelin",
+          "score": 0.7381737651176721
+        },
+        {
+          "id": "c15c20fc-40d2-41e4-a04e-303fe64fbc1e",
+          "name": "corpus-s30-drive-a-browser-via-stable-refs-install-open-url",
+          "score": 0.6478823230445901
+        },
+        {
+          "id": "5f1263b5-1f9e-4b71-930b-63f1c28ef10d",
+          "name": "corpus-s05-apply-70-react-next-js-performance-rules-by-prio",
+          "score": 0.6840448545503728
+        }
+      ],
+      "source_id": "S04",
+      "kind": "paraphrase"
+    },
+    {
+      "query": "convert serial awaits of independent fetches into parallel ones on both client and server components",
+      "target_procedure_id": "28decdd0-0d90-45e3-8187-1e7eafee3abc",
+      "hit": true,
+      "rank": 2,
+      "returned": 10,
+      "top_5": [
+        {
+          "id": "c15c20fc-40d2-41e4-a04e-303fe64fbc1e",
+          "name": "corpus-s30-drive-a-browser-via-stable-refs-install-open-url",
+          "score": 0.5943370957292891
+        },
+        {
+          "id": "28decdd0-0d90-45e3-8187-1e7eafee3abc",
+          "name": "corpus-s31-eliminate-request-waterfalls-find-sequential-awa",
+          "score": 0.8639041202871334
+        },
+        {
+          "id": "9cc278f0-a00b-4df4-bbbe-e13def67ccfa",
+          "name": "corpus-s42-retrieve-a-paper-its-citation-context-resolve-an",
+          "score": 0.6490764475399926
+        },
+        {
+          "id": "5ca819d8-a43d-4ebd-931b-00fe5b95fa9f",
+          "name": "corpus-s41-query-works-programmatically-get-https-api-opena",
+          "score": 0.6404584574781276
+        },
+        {
+          "id": "3a3d1fb6-d95c-4dca-8eb1-a17d5bbab36a",
+          "name": "corpus-s09-red-green-refactor-tdd-loop-failing-test-watch-f",
+          "score": 0.5780096678503733
+        }
+      ],
+      "source_id": "S31",
+      "kind": "paraphrase"
+    },
+    {
+      "query": "run an accessibility-only review of UI code against the web interface guidelines",
+      "target_procedure_id": "5acf0d36-e357-4863-b203-b6bc484a604f",
+      "hit": true,
+      "rank": 1,
+      "returned": 10,
+      "top_5": [
+        {
+          "id": "5acf0d36-e357-4863-b203-b6bc484a604f",
+          "name": "corpus-s32-accessibility-audit-slice-fetch-current-guidelin",
+          "score": 0.8177817856793359
+        },
+        {
+          "id": "72f30232-0b43-4351-a666-6dd67ce2af5a",
+          "name": "corpus-s04-review-ui-code-against-the-web-interface-guideli",
+          "score": 0.8131652834765247
+        },
+        {
+          "id": "c15c20fc-40d2-41e4-a04e-303fe64fbc1e",
+          "name": "corpus-s30-drive-a-browser-via-stable-refs-install-open-url",
+          "score": 0.6469845216500524
+        },
+        {
+          "id": "5f1263b5-1f9e-4b71-930b-63f1c28ef10d",
+          "name": "corpus-s05-apply-70-react-next-js-performance-rules-by-prio",
+          "score": 0.6760025185928419
+        },
+        {
+          "id": "3a3d1fb6-d95c-4dca-8eb1-a17d5bbab36a",
+          "name": "corpus-s09-red-green-refactor-tdd-loop-failing-test-watch-f",
+          "score": 0.6428417410702562
+        }
+      ],
+      "source_id": "S32",
+      "kind": "paraphrase"
+    },
+    {
+      "query": "automatically keep issues labeled by type and component, safely, with a capped budget and a noop when nothing to do",
+      "target_procedure_id": "2a5f8316-707f-4bf1-a98b-9c153ca40508",
+      "hit": true,
+      "rank": 3,
+      "returned": 10,
+      "top_5": [
+        {
+          "id": "dc1ce2aa-26ad-46b3-ba6c-bc9d34d3446d",
+          "name": "corpus-s24-trim-mcp-tool-context-to-task-relevant-scan-conf",
+          "score": 0.6598694961938072
+        },
+        {
+          "id": "83d2e2f8-d79f-45c7-9ac8-9d9d63ea4542",
+          "name": "corpus-s36-construct-verify-a-task-instance-take-a-merged-p",
+          "score": 0.6390165657782413
+        },
+        {
+          "id": "2a5f8316-707f-4bf1-a98b-9c153ca40508",
+          "name": "corpus-s34-a-maintenance-automation-workflow-in-practice-sc",
+          "score": 0.8455881544965518
+        },
+        {
+          "id": "3a3d1fb6-d95c-4dca-8eb1-a17d5bbab36a",
+          "name": "corpus-s09-red-green-refactor-tdd-loop-failing-test-watch-f",
+          "score": 0.632912535594016
+        },
+        {
+          "id": "19711438-a56f-40a7-8663-0590d966d204",
+          "name": "corpus-s11-scaffold-an-autonomous-maintenance-loop-npx-cobu",
+          "score": 0.6579029151228866
+        }
+      ],
+      "source_id": "S34",
+      "kind": "paraphrase"
+    },
+    {
+      "query": "troubleshoot a crashlooping pod using progressively more invasive kubectl tools including kubectl debug node and copy-to",
+      "target_procedure_id": "8b574279-fd5b-4435-af80-47b84c85e291",
+      "hit": true,
+      "rank": 6,
+      "returned": 10,
+      "top_5": [
+        {
+          "id": "9795b49f-83a3-4ea1-8256-a9439c8a800c",
+          "name": "corpus-s19-reproduce-the-context-rot-benchmark-venv-deps-pr",
+          "score": 0.5755559270650271
+        },
+        {
+          "id": "a0b3a611-49ba-4639-a7f1-66105c9408bb",
+          "name": "proc-test-planonly-root-05bbcb48",
+          "score": 0.5305361292438461
+        },
+        {
+          "id": "19711438-a56f-40a7-8663-0590d966d204",
+          "name": "corpus-s11-scaffold-an-autonomous-maintenance-loop-npx-cobu",
+          "score": 0.5759753966953267
+        },
+        {
+          "id": "dc1ce2aa-26ad-46b3-ba6c-bc9d34d3446d",
+          "name": "corpus-s24-trim-mcp-tool-context-to-task-relevant-scan-conf",
+          "score": 0.5510846441643256
+        },
+        {
+          "id": "35be8cae-3b09-481c-b2c7-b8efddde929b",
+          "name": "proc-test-planonly-root-821c6ddd",
+          "score": 0.5281887540106184
+        }
+      ],
+      "source_id": "S47",
+      "kind": "paraphrase"
+    },
+    {
+      "query": "share a single standards file across every AI coding assistant and make commit and branch policy machine-enforced in CI",
+      "target_procedure_id": "aba29676-3455-40d1-be97-6113f148b5f3",
+      "hit": true,
+      "rank": 2,
+      "returned": 10,
+      "top_5": [
+        {
+          "id": "adf6a524-fc58-4951-b734-3e694e6658e9",
+          "name": "corpus-s12-author-an-agents-md-dev-environment-tips-testing",
+          "score": 0.6824780507201942
+        },
+        {
+          "id": "aba29676-3455-40d1-be97-6113f148b5f3",
+          "name": "corpus-s14-one-rule-set-across-all-ai-tools-ci-enforcement",
+          "score": 0.8573641912455339
+        },
+        {
+          "id": "83d2e2f8-d79f-45c7-9ac8-9d9d63ea4542",
+          "name": "corpus-s36-construct-verify-a-task-instance-take-a-merged-p",
+          "score": 0.6312897815384603
+        },
+        {
+          "id": "5f1263b5-1f9e-4b71-930b-63f1c28ef10d",
+          "name": "corpus-s05-apply-70-react-next-js-performance-rules-by-prio",
+          "score": 0.667702106200471
+        },
+        {
+          "id": "72f30232-0b43-4351-a666-6dd67ce2af5a",
+          "name": "corpus-s04-review-ui-code-against-the-web-interface-guideli",
+          "score": 0.6512117110273061
+        }
+      ],
+      "source_id": "S14",
+      "kind": "paraphrase"
+    },
+    {
+      "query": "pay the full token cost of reading a file once, then pay only for the diff on subsequent unchanged reads",
+      "target_procedure_id": "651688c2-9f38-48e9-afea-065b1bafca82",
+      "hit": true,
+      "rank": 1,
+      "returned": 10,
+      "top_5": [
+        {
+          "id": "651688c2-9f38-48e9-afea-065b1bafca82",
+          "name": "corpus-s23-install-the-mcp-server-call-smart-read-path-firs",
+          "score": 0.9050312028228734
+        },
+        {
+          "id": "35be8cae-3b09-481c-b2c7-b8efddde929b",
+          "name": "proc-test-planonly-root-821c6ddd",
+          "score": 0.6034947991795475
+        },
+        {
+          "id": "dc1ce2aa-26ad-46b3-ba6c-bc9d34d3446d",
+          "name": "corpus-s24-trim-mcp-tool-context-to-task-relevant-scan-conf",
+          "score": 0.6650747046474844
+        },
+        {
+          "id": "adf6a524-fc58-4951-b734-3e694e6658e9",
+          "name": "corpus-s12-author-an-agents-md-dev-environment-tips-testing",
+          "score": 0.6452894094957164
+        },
+        {
+          "id": "a0b3a611-49ba-4639-a7f1-66105c9408bb",
+          "name": "proc-test-planonly-root-05bbcb48",
+          "score": 0.5944121541437971
+        }
+      ],
+      "source_id": "S23",
+      "kind": "paraphrase"
+    },
+    {
+      "query": "construct a multi-tool instruction with an annotated depth-first solution tree and score an agent with pass rate and pairwise preference",
+      "target_procedure_id": "fef6ceb9-a3c4-4f2c-bcc7-956f6a25d996",
+      "hit": true,
+      "rank": 2,
+      "returned": 10,
+      "top_5": [
+        {
+          "id": "dc1ce2aa-26ad-46b3-ba6c-bc9d34d3446d",
+          "name": "corpus-s24-trim-mcp-tool-context-to-task-relevant-scan-conf",
+          "score": 0.6613493807006086
+        },
+        {
+          "id": "fef6ceb9-a3c4-4f2c-bcc7-956f6a25d996",
+          "name": "corpus-s50-build-evaluate-a-tool-use-task-collect-real-rest",
+          "score": 0.7463387119446846
+        },
+        {
+          "id": "8927d8cd-79e4-4a90-8dbc-9f338fae2b34",
+          "name": "corpus-s02-eval-driven-skill-authoring-loop-intent-skill-md",
+          "score": 0.6574201335223375
+        },
+        {
+          "id": "3103b71b-1af8-4b9a-bf63-41c69cc918a0",
+          "name": "corpus-s01-author-a-new-agent-skill-skill-md-frontmatter-ex",
+          "score": 0.6608704541930612
+        },
+        {
+          "id": "9795b49f-83a3-4ea1-8256-a9439c8a800c",
+          "name": "corpus-s19-reproduce-the-context-rot-benchmark-venv-deps-pr",
+          "score": 0.6479463532953733
+        }
+      ],
+      "source_id": "S50",
+      "kind": "paraphrase"
+    },
+    {
+      "query": "systematically optimize a Next.js codebase with the 70 performance rules, highest impact first, with a measured before and after",
+      "target_procedure_id": "5f1263b5-1f9e-4b71-930b-63f1c28ef10d",
+      "hit": true,
+      "rank": 2,
+      "returned": 10,
+      "top_5": [
+        {
+          "id": "3a3d1fb6-d95c-4dca-8eb1-a17d5bbab36a",
+          "name": "corpus-s09-red-green-refactor-tdd-loop-failing-test-watch-f",
+          "score": 0.6217326444577929
+        },
+        {
+          "id": "5f1263b5-1f9e-4b71-930b-63f1c28ef10d",
+          "name": "corpus-s05-apply-70-react-next-js-performance-rules-by-prio",
+          "score": 0.7678572435788935
+        },
+        {
+          "id": "28decdd0-0d90-45e3-8187-1e7eafee3abc",
+          "name": "corpus-s31-eliminate-request-waterfalls-find-sequential-awa",
+          "score": 0.6319680583363458
+        },
+        {
+          "id": "9795b49f-83a3-4ea1-8256-a9439c8a800c",
+          "name": "corpus-s19-reproduce-the-context-rot-benchmark-venv-deps-pr",
+          "score": 0.5969451094300082
+        },
+        {
+          "id": "dc1ce2aa-26ad-46b3-ba6c-bc9d34d3446d",
+          "name": "corpus-s24-trim-mcp-tool-context-to-task-relevant-scan-conf",
+          "score": 0.5936711435210965
+        }
+      ],
+      "source_id": "S05",
+      "kind": "paraphrase"
+    },
+    {
+      "query": "define a record shape that makes an SE agent run both replayable and automatically gradable",
+      "target_procedure_id": "00afa1e7-9c13-462b-8679-24fd160c39a9",
+      "hit": true,
+      "rank": 2,
+      "returned": 10,
+      "top_5": [
+        {
+          "id": "adf6a524-fc58-4951-b734-3e694e6658e9",
+          "name": "corpus-s12-author-an-agents-md-dev-environment-tips-testing",
+          "score": 0.6685014506226377
+        },
+        {
+          "id": "00afa1e7-9c13-462b-8679-24fd160c39a9",
+          "name": "corpus-s38-represent-an-se-agent-trajectory-capture-full-ro",
+          "score": 0.9425795567664607
+        },
+        {
+          "id": "83d2e2f8-d79f-45c7-9ac8-9d9d63ea4542",
+          "name": "corpus-s36-construct-verify-a-task-instance-take-a-merged-p",
+          "score": 0.6406439274057113
+        },
+        {
+          "id": "c15c20fc-40d2-41e4-a04e-303fe64fbc1e",
+          "name": "corpus-s30-drive-a-browser-via-stable-refs-install-open-url",
+          "score": 0.6328394153939266
+        },
+        {
+          "id": "9795b49f-83a3-4ea1-8256-a9439c8a800c",
+          "name": "corpus-s19-reproduce-the-context-rot-benchmark-venv-deps-pr",
+          "score": 0.6438506008499185
+        }
+      ],
+      "source_id": "S38",
+      "kind": "paraphrase"
+    },
+    {
+      "query": "test-first workflow using the repo's existing tooling; a bug fix carries a reproduction test that failed before the fix",
+      "target_procedure_id": "78431387-1ffb-459d-b94a-4b80bd873100",
+      "hit": true,
+      "rank": 6,
+      "returned": 10,
+      "top_5": [
+        {
+          "id": "a0b3a611-49ba-4639-a7f1-66105c9408bb",
+          "name": "proc-test-planonly-root-05bbcb48",
+          "score": 0.6634615295171019
+        },
+        {
+          "id": "3a3d1fb6-d95c-4dca-8eb1-a17d5bbab36a",
+          "name": "corpus-s09-red-green-refactor-tdd-loop-failing-test-watch-f",
+          "score": 0.7246670954658699
+        },
+        {
+          "id": "35be8cae-3b09-481c-b2c7-b8efddde929b",
+          "name": "proc-test-planonly-root-821c6ddd",
+          "score": 0.6541606113778206
+        },
+        {
+          "id": "83d2e2f8-d79f-45c7-9ac8-9d9d63ea4542",
+          "name": "corpus-s36-construct-verify-a-task-instance-take-a-merged-p",
+          "score": 0.7171624748940436
+        },
+        {
+          "id": "19711438-a56f-40a7-8663-0590d966d204",
+          "name": "corpus-s11-scaffold-an-autonomous-maintenance-loop-npx-cobu",
+          "score": 0.6664881049819276
+        }
+      ],
+      "source_id": "S07",
+      "kind": "paraphrase"
+    },
+    {
+      "query": "produce a live Vercel preview URL and a claim URL that transfers the deployment to an account",
+      "target_procedure_id": "8cd6f567-c269-4b62-beae-b64fd9be66f6",
+      "hit": true,
+      "rank": 4,
+      "returned": 10,
+      "top_5": [
+        {
+          "id": "83d2e2f8-d79f-45c7-9ac8-9d9d63ea4542",
+          "name": "corpus-s36-construct-verify-a-task-instance-take-a-merged-p",
+          "score": 0.6127526686481256
+        },
+        {
+          "id": "c15c20fc-40d2-41e4-a04e-303fe64fbc1e",
+          "name": "corpus-s30-drive-a-browser-via-stable-refs-install-open-url",
+          "score": 0.6025995295748263
+        },
+        {
+          "id": "19711438-a56f-40a7-8663-0590d966d204",
+          "name": "corpus-s11-scaffold-an-autonomous-maintenance-loop-npx-cobu",
+          "score": 0.6107067601360405
+        },
+        {
+          "id": "8cd6f567-c269-4b62-beae-b64fd9be66f6",
+          "name": "corpus-s03-deploy-a-project-to-vercel-as-a-claimable-deploy",
+          "score": 0.8979618251688039
+        },
+        {
+          "id": "adf6a524-fc58-4951-b734-3e694e6658e9",
+          "name": "corpus-s12-author-an-agents-md-dev-environment-tips-testing",
+          "score": 0.6007150011940167
+        }
+      ],
+      "source_id": "S03",
+      "kind": "paraphrase"
+    }
+  ],
+  "paraphrase_stability": [
+    {
+      "source_id": "S36",
+      "target_procedure_id": "83d2e2f8-d79f-45c7-9ac8-9d9d63ea4542",
+      "primary_rank": 1,
+      "paraphrase_rank": 1,
+      "both_hit_top_10": true,
+      "both_hit_top_5": true,
+      "rank_delta": 0,
+      "highlighted": false
+    },
+    {
+      "source_id": "S02",
+      "target_procedure_id": "8927d8cd-79e4-4a90-8dbc-9f338fae2b34",
+      "primary_rank": 1,
+      "paraphrase_rank": 1,
+      "both_hit_top_10": true,
+      "both_hit_top_5": true,
+      "rank_delta": 0,
+      "highlighted": false
+    },
+    {
+      "source_id": "S19",
+      "target_procedure_id": "9795b49f-83a3-4ea1-8256-a9439c8a800c",
+      "primary_rank": 1,
+      "paraphrase_rank": 1,
+      "both_hit_top_10": true,
+      "both_hit_top_5": true,
+      "rank_delta": 0,
+      "highlighted": false
+    },
+    {
+      "source_id": "S46",
+      "target_procedure_id": "b1d824c0-1f91-4b77-b851-78d99f18dd46",
+      "primary_rank": 1,
+      "paraphrase_rank": 3,
+      "both_hit_top_10": true,
+      "both_hit_top_5": true,
+      "rank_delta": 2,
+      "highlighted": true
+    },
+    {
+      "source_id": "S24",
+      "target_procedure_id": "dc1ce2aa-26ad-46b3-ba6c-bc9d34d3446d",
+      "primary_rank": 1,
+      "paraphrase_rank": 1,
+      "both_hit_top_10": true,
+      "both_hit_top_5": true,
+      "rank_delta": 0,
+      "highlighted": false
+    },
+    {
+      "source_id": "S43",
+      "target_procedure_id": "8e2ef4a2-2d06-486a-a19f-542a279f8bc9",
+      "primary_rank": 1,
+      "paraphrase_rank": 1,
+      "both_hit_top_10": true,
+      "both_hit_top_5": true,
+      "rank_delta": 0,
+      "highlighted": false
+    },
+    {
+      "source_id": "S15",
+      "target_procedure_id": "a04f8261-a001-4304-b8b1-3206ba39044a",
+      "primary_rank": 1,
+      "paraphrase_rank": 1,
+      "both_hit_top_10": true,
+      "both_hit_top_5": true,
+      "rank_delta": 0,
+      "highlighted": false
+    },
+    {
+      "source_id": "S12",
+      "target_procedure_id": "adf6a524-fc58-4951-b734-3e694e6658e9",
+      "primary_rank": 1,
+      "paraphrase_rank": 1,
+      "both_hit_top_10": true,
+      "both_hit_top_5": true,
+      "rank_delta": 0,
+      "highlighted": false
+    },
+    {
+      "source_id": "S30",
+      "target_procedure_id": "c15c20fc-40d2-41e4-a04e-303fe64fbc1e",
+      "primary_rank": 1,
+      "paraphrase_rank": 1,
+      "both_hit_top_10": true,
+      "both_hit_top_5": true,
+      "rank_delta": 0,
+      "highlighted": false
+    },
+    {
+      "source_id": "S09",
+      "target_procedure_id": "3a3d1fb6-d95c-4dca-8eb1-a17d5bbab36a",
+      "primary_rank": 2,
+      "paraphrase_rank": 2,
+      "both_hit_top_10": true,
+      "both_hit_top_5": true,
+      "rank_delta": 0,
+      "highlighted": false
+    },
+    {
+      "source_id": "S27",
+      "target_procedure_id": "32c834fa-ec8b-4290-b358-436c407fe59f",
+      "primary_rank": 1,
+      "paraphrase_rank": 1,
+      "both_hit_top_10": true,
+      "both_hit_top_5": true,
+      "rank_delta": 0,
+      "highlighted": false
+    },
+    {
+      "source_id": "S33",
+      "target_procedure_id": "3d66d551-1c93-4ff6-ad00-a0de78832ba9",
+      "primary_rank": 1,
+      "paraphrase_rank": 2,
+      "both_hit_top_10": true,
+      "both_hit_top_5": true,
+      "rank_delta": 1,
+      "highlighted": false
+    },
+    {
+      "source_id": "S11",
+      "target_procedure_id": "19711438-a56f-40a7-8663-0590d966d204",
+      "primary_rank": 1,
+      "paraphrase_rank": 1,
+      "both_hit_top_10": true,
+      "both_hit_top_5": true,
+      "rank_delta": 0,
+      "highlighted": false
+    },
+    {
+      "source_id": "S41",
+      "target_procedure_id": "5ca819d8-a43d-4ebd-931b-00fe5b95fa9f",
+      "primary_rank": 1,
+      "paraphrase_rank": 1,
+      "both_hit_top_10": true,
+      "both_hit_top_5": true,
+      "rank_delta": 0,
+      "highlighted": false
+    },
+    {
+      "source_id": "S42",
+      "target_procedure_id": "9cc278f0-a00b-4df4-bbbe-e13def67ccfa",
+      "primary_rank": 1,
+      "paraphrase_rank": 1,
+      "both_hit_top_10": true,
+      "both_hit_top_5": true,
+      "rank_delta": 0,
+      "highlighted": false
+    },
+    {
+      "source_id": "S01",
+      "target_procedure_id": "3103b71b-1af8-4b9a-bf63-41c69cc918a0",
+      "primary_rank": 3,
+      "paraphrase_rank": 1,
+      "both_hit_top_10": true,
+      "both_hit_top_5": true,
+      "rank_delta": 2,
+      "highlighted": false
+    },
+    {
+      "source_id": "S04",
+      "target_procedure_id": "72f30232-0b43-4351-a666-6dd67ce2af5a",
+      "primary_rank": 1,
+      "paraphrase_rank": 1,
+      "both_hit_top_10": true,
+      "both_hit_top_5": true,
+      "rank_delta": 0,
+      "highlighted": false
+    },
+    {
+      "source_id": "S31",
+      "target_procedure_id": "28decdd0-0d90-45e3-8187-1e7eafee3abc",
+      "primary_rank": 1,
+      "paraphrase_rank": 2,
+      "both_hit_top_10": true,
+      "both_hit_top_5": true,
+      "rank_delta": 1,
+      "highlighted": true
+    },
+    {
+      "source_id": "S32",
+      "target_procedure_id": "5acf0d36-e357-4863-b203-b6bc484a604f",
+      "primary_rank": 1,
+      "paraphrase_rank": 1,
+      "both_hit_top_10": true,
+      "both_hit_top_5": true,
+      "rank_delta": 0,
+      "highlighted": false
+    },
+    {
+      "source_id": "S34",
+      "target_procedure_id": "2a5f8316-707f-4bf1-a98b-9c153ca40508",
+      "primary_rank": 3,
+      "paraphrase_rank": 3,
+      "both_hit_top_10": true,
+      "both_hit_top_5": true,
+      "rank_delta": 0,
+      "highlighted": false
+    },
+    {
+      "source_id": "S47",
+      "target_procedure_id": "8b574279-fd5b-4435-af80-47b84c85e291",
+      "primary_rank": 5,
+      "paraphrase_rank": 6,
+      "both_hit_top_10": true,
+      "both_hit_top_5": false,
+      "rank_delta": 1,
+      "highlighted": false
+    },
+    {
+      "source_id": "S14",
+      "target_procedure_id": "aba29676-3455-40d1-be97-6113f148b5f3",
+      "primary_rank": 3,
+      "paraphrase_rank": 2,
+      "both_hit_top_10": true,
+      "both_hit_top_5": true,
+      "rank_delta": 1,
+      "highlighted": false
+    },
+    {
+      "source_id": "S23",
+      "target_procedure_id": "651688c2-9f38-48e9-afea-065b1bafca82",
+      "primary_rank": 1,
+      "paraphrase_rank": 1,
+      "both_hit_top_10": true,
+      "both_hit_top_5": true,
+      "rank_delta": 0,
+      "highlighted": false
+    },
+    {
+      "source_id": "S50",
+      "target_procedure_id": "fef6ceb9-a3c4-4f2c-bcc7-956f6a25d996",
+      "primary_rank": 3,
+      "paraphrase_rank": 2,
+      "both_hit_top_10": true,
+      "both_hit_top_5": true,
+      "rank_delta": 1,
+      "highlighted": false
+    },
+    {
+      "source_id": "S05",
+      "target_procedure_id": "5f1263b5-1f9e-4b71-930b-63f1c28ef10d",
+      "primary_rank": 2,
+      "paraphrase_rank": 2,
+      "both_hit_top_10": true,
+      "both_hit_top_5": true,
+      "rank_delta": 0,
+      "highlighted": false
+    },
+    {
+      "source_id": "S38",
+      "target_procedure_id": "00afa1e7-9c13-462b-8679-24fd160c39a9",
+      "primary_rank": 4,
+      "paraphrase_rank": 2,
+      "both_hit_top_10": true,
+      "both_hit_top_5": true,
+      "rank_delta": 2,
+      "highlighted": true
+    },
+    {
+      "source_id": "S07",
+      "target_procedure_id": "78431387-1ffb-459d-b94a-4b80bd873100",
+      "primary_rank": 5,
+      "paraphrase_rank": 6,
+      "both_hit_top_10": true,
+      "both_hit_top_5": false,
+      "rank_delta": 1,
+      "highlighted": false
+    },
+    {
+      "source_id": "S03",
+      "target_procedure_id": "8cd6f567-c269-4b62-beae-b64fd9be66f6",
+      "primary_rank": 5,
+      "paraphrase_rank": 4,
+      "both_hit_top_10": true,
+      "both_hit_top_5": true,
+      "rank_delta": 1,
+      "highlighted": false
+    }
+  ],
+  "cross_type_probe": {
+    "query": "represent a software-engineering agent trajectory so a run is replayable and gradable",
+    "result_keys": [
+      "procedure",
+      "task"
+    ],
+    "grouped_by_object_type": true,
+    "counts": {
+      "procedure": 5,
+      "task": 5
+    },
+    "cross_type_single_list": false,
+    "note": "search_global returns a dict of per-object-type buckets, each ordered by that type's own ranking mechanism. There is no combined ranked list in which a task could 'outrank' a procedure -- cross-type ordering is not exercisable on this search path by design."
+  }
+}

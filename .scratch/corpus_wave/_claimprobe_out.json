@@ -1,0 +1,463 @@
+{
+  "overview": {
+    "node_count": 15,
+    "edge_count": 30,
+    "edges_by_kind": {
+      "similarity": 30
+    },
+    "link_mode": "both",
+    "by_status": {
+      "current": 15
+    },
+    "counts_block": {
+      "claims_total": 15,
+      "claims_shown": 15,
+      "edges": 30,
+      "edges_by_kind": {
+        "similarity": 30
+      },
+      "by_status": {
+        "current": 15
+      }
+    },
+    "node_ids": [
+      "660be625-c812-4cf4-bfbc-0233caaccf22",
+      "15303c27-8fa9-4901-a90d-418050a01e07",
+      "1d9ba437-5d05-4483-b27b-590002ad55c8",
+      "be5d06b5-da3f-4aae-85dd-978f51a5267f",
+      "36c151f0-412b-429c-981b-cab6bc30e28f",
+      "da8c9005-bbb0-44ca-8c5f-13a30883279c",
+      "6f5e2eb3-54dd-4c6a-82f6-412ad7efcea1",
+      "3644a7b6-13a1-496b-8646-c828705e8656",
+      "daac9ccc-2e56-4b40-861a-6062aa09c07d",
+      "acc130c7-6dd6-469e-a811-6d06dde2a8bd",
+      "5d9413d7-7d2e-4518-b9a6-9e425f94f2b4",
+      "7264f476-df45-4f2f-9a5c-5bde554757e5",
+      "020d8d90-a850-40d6-ad52-88e89e475895",
+      "6f075acb-c56d-43ca-b449-0fc78f7bf8fb",
+      "f38d9dec-8c98-4d4c-b26e-fa06be9c666d"
+    ]
+  },
+  "s20_cluster": {
+    "claim_ids": [
+      "f38d9dec-8c98-4d4c-b26e-fa06be9c666d",
+      "6f075acb-c56d-43ca-b449-0fc78f7bf8fb",
+      "020d8d90-a850-40d6-ad52-88e89e475895",
+      "7264f476-df45-4f2f-9a5c-5bde554757e5",
+      "5d9413d7-7d2e-4518-b9a6-9e425f94f2b4"
+    ],
+    "internal_similarity_edges": [
+      [
+        "5d9413d7-7d2e-4518-b9a6-9e425f94f2b4",
+        "f38d9dec-8c98-4d4c-b26e-fa06be9c666d",
+        0.8767
+      ],
+      [
+        "6f075acb-c56d-43ca-b449-0fc78f7bf8fb",
+        "f38d9dec-8c98-4d4c-b26e-fa06be9c666d",
+        0.8089
+      ],
+      [
+        "7264f476-df45-4f2f-9a5c-5bde554757e5",
+        "f38d9dec-8c98-4d4c-b26e-fa06be9c666d",
+        0.8071
+      ],
+      [
+        "020d8d90-a850-40d6-ad52-88e89e475895",
+        "6f075acb-c56d-43ca-b449-0fc78f7bf8fb",
+        0.8298
+      ],
+      [
+        "6f075acb-c56d-43ca-b449-0fc78f7bf8fb",
+        "7264f476-df45-4f2f-9a5c-5bde554757e5",
+        0.7869
+      ],
+      [
+        "020d8d90-a850-40d6-ad52-88e89e475895",
+        "7264f476-df45-4f2f-9a5c-5bde554757e5",
+        0.7873
+      ],
+      [
+        "5d9413d7-7d2e-4518-b9a6-9e425f94f2b4",
+        "7264f476-df45-4f2f-9a5c-5bde554757e5",
+        0.7986
+      ]
+    ],
+    "edges_from_s20_to_outside": [
+      [
+        "020d8d90-a850-40d6-ad52-88e89e475895",
+        "36c151f0-412b-429c-981b-cab6bc30e28f",
+        0.759
+      ],
+      [
+        "15303c27-8fa9-4901-a90d-418050a01e07",
+        "5d9413d7-7d2e-4518-b9a6-9e425f94f2b4",
+        0.8098
+      ],
+      [
+        "36c151f0-412b-429c-981b-cab6bc30e28f",
+        "5d9413d7-7d2e-4518-b9a6-9e425f94f2b4",
+        0.8026
+      ],
+      [
+        "5d9413d7-7d2e-4518-b9a6-9e425f94f2b4",
+        "acc130c7-6dd6-469e-a811-6d06dde2a8bd",
+        0.7923
+      ],
+      [
+        "acc130c7-6dd6-469e-a811-6d06dde2a8bd",
+        "f38d9dec-8c98-4d4c-b26e-fa06be9c666d",
+        0.785
+      ],
+      [
+        "7264f476-df45-4f2f-9a5c-5bde554757e5",
+        "acc130c7-6dd6-469e-a811-6d06dde2a8bd",
+        0.7733
+      ],
+      [
+        "36c151f0-412b-429c-981b-cab6bc30e28f",
+        "f38d9dec-8c98-4d4c-b26e-fa06be9c666d",
+        0.7734
+      ],
+      [
+        "1d9ba437-5d05-4483-b27b-590002ad55c8",
+        "f38d9dec-8c98-4d4c-b26e-fa06be9c666d",
+        0.7315
+      ],
+      [
+        "1d9ba437-5d05-4483-b27b-590002ad55c8",
+        "5d9413d7-7d2e-4518-b9a6-9e425f94f2b4",
+        0.7059
+      ],
+      [
+        "15303c27-8fa9-4901-a90d-418050a01e07",
+        "f38d9dec-8c98-4d4c-b26e-fa06be9c666d",
+        0.8064
+      ],
+      [
+        "660be625-c812-4cf4-bfbc-0233caaccf22",
+        "f38d9dec-8c98-4d4c-b26e-fa06be9c666d",
+        0.725
+      ]
+    ],
+    "connected": true,
+    "reachable_count": 5
+  },
+  "probes": {
+    "f38d9dec-8c98-4d4c-b26e-fa06be9c666d": {
+      "relation_neighbors": 0,
+      "traverse_supporting": 0,
+      "traverse_contradicting": 0,
+      "traverse_other": 0
+    },
+    "36c151f0-412b-429c-981b-cab6bc30e28f": {
+      "relation_neighbors": 0,
+      "traverse_supporting": 0,
+      "traverse_contradicting": 0,
+      "traverse_other": 0
+    },
+    "be5d06b5-da3f-4aae-85dd-978f51a5267f": {
+      "relation_neighbors": 0,
+      "traverse_supporting": 0,
+      "traverse_contradicting": 0,
+      "traverse_other": 0
+    }
+  },
+  "worked_example": {
+    "query": "does a shorter focused prompt beat a long one full of context",
+    "seed_claim": {
+      "id": "5d9413d7-7d2e-4518-b9a6-9e425f94f2b4",
+      "name": "Focused (~300 tok) prompts beat full (~113k tok) prompts across all models on LongMemEval",
+      "score": 0.03278688524590164
+    },
+    "similarity_neighbours": [
+      {
+        "id": "f38d9dec-8c98-4d4c-b26e-fa06be9c666d",
+        "name": "LLM accuracy degrades non-uniformly as input length grows",
+        "weight": 0.8767
+      },
+      {
+        "id": "7264f476-df45-4f2f-9a5c-5bde554757e5",
+        "name": "Models score higher on shuffled haystacks than logically-structured ones",
+        "weight": 0.7986
+      },
+      {
+        "id": "15303c27-8fa9-4901-a90d-418050a01e07",
+        "name": "DFSDT (a depth-first decision tree allowing backtracking) improves LLM planning on multi-tool tasks vs linear planning",
+        "weight": 0.8098
+      },
+      {
+        "id": "36c151f0-412b-429c-981b-cab6bc30e28f",
+        "name": "Trimming MCP tool context to task-relevant reduced context ~69% weighted-avg with 100% sufficiency on 5 eligible cases (author benchmark)",
+        "weight": 0.8026
+      },
+      {
+        "id": "acc130c7-6dd6-469e-a811-6d06dde2a8bd",
+        "name": "A skill should be admitted only when a benchmark shows it beats baseline and generalizes beyond its eval examples",
+        "weight": 0.7923
+      },
+      {
+        "id": "1d9ba437-5d05-4483-b27b-590002ad55c8",
+        "name": "OWASP treats passwords <15 chars as weak without MFA (<8 with MFA), and requires identical error text + constant time for bad-user vs bad-password",
+        "weight": 0.7059
+      }
+    ]
+  },
+  "claim_source_map": [
+    {
+      "id": "f38d9dec-8c98-4d4c-b26e-fa06be9c666d",
+      "name": "LLM accuracy degrades non-uniformly as input length grows",
+      "properties_keys": [
+        "claim_type",
+        "epistemic_origin",
+        "epistemic_status",
+        "object",
+        "predicate",
+        "source_id",
+        "statement",
+        "subject",
+        "truth_state",
+        "wave"
+      ],
+      "source_hint": "S20"
+    },
+    {
+      "id": "6f075acb-c56d-43ca-b449-0fc78f7bf8fb",
+      "name": "Degradation accelerates as needle-question semantic similarity decreases",
+      "properties_keys": [
+        "claim_type",
+        "epistemic_origin",
+        "epistemic_status",
+        "object",
+        "predicate",
+        "source_id",
+        "statement",
+        "subject",
+        "truth_state",
+        "wave"
+      ],
+      "source_hint": "S20"
+    },
+    {
+      "id": "020d8d90-a850-40d6-ad52-88e89e475895",
+      "name": "A single distractor lowers performance vs needle-only; four distractors compound it",
+      "properties_keys": [
+        "claim_type",
+        "epistemic_origin",
+        "epistemic_status",
+        "object",
+        "predicate",
+        "source_id",
+        "statement",
+        "subject",
+        "truth_state",
+        "wave"
+      ],
+      "source_hint": "S20"
+    },
+    {
+      "id": "7264f476-df45-4f2f-9a5c-5bde554757e5",
+      "name": "Models score higher on shuffled haystacks than logically-structured ones",
+      "properties_keys": [
+        "claim_type",
+        "epistemic_origin",
+        "epistemic_status",
+        "object",
+        "predicate",
+        "source_id",
+        "statement",
+        "subject",
+        "truth_state",
+        "wave"
+      ],
+      "source_hint": "S20"
+    },
+    {
+      "id": "5d9413d7-7d2e-4518-b9a6-9e425f94f2b4",
+      "name": "Focused (~300 tok) prompts beat full (~113k tok) prompts across all models on LongMemEval",
+      "properties_keys": [
+        "claim_type",
+        "epistemic_origin",
+        "epistemic_status",
+        "object",
+        "predicate",
+        "source_id",
+        "statement",
+        "subject",
+        "truth_state",
+        "wave"
+      ],
+      "source_hint": "S20"
+    },
+    {
+      "id": "acc130c7-6dd6-469e-a811-6d06dde2a8bd",
+      "name": "A skill should be admitted only when a benchmark shows it beats baseline and generalizes beyond its eval examples",
+      "properties_keys": [
+        "claim_type",
+        "epistemic_origin",
+        "epistemic_status",
+        "object",
+        "predicate",
+        "source_id",
+        "statement",
+        "subject",
+        "truth_state",
+        "wave"
+      ],
+      "source_hint": "S02"
+    },
+    {
+      "id": "daac9ccc-2e56-4b40-861a-6062aa09c07d",
+      "name": "Before writing tests, discover the repo's own framework/build/commands",
+      "properties_keys": [
+        "claim_type",
+        "epistemic_origin",
+        "epistemic_status",
+        "object",
+        "predicate",
+        "source_id",
+        "statement",
+        "subject",
+        "truth_state",
+        "wave"
+      ],
+      "source_hint": "S07"
+    },
+    {
+      "id": "3644a7b6-13a1-496b-8646-c828705e8656",
+      "name": "Code written before its corresponding test should be deleted",
+      "properties_keys": [
+        "claim_type",
+        "epistemic_origin",
+        "epistemic_status",
+        "object",
+        "predicate",
+        "source_id",
+        "statement",
+        "subject",
+        "truth_state",
+        "wave"
+      ],
+      "source_hint": "S09"
+    },
+    {
+      "id": "6f5e2eb3-54dd-4c6a-82f6-412ad7efcea1",
+      "name": "A maintenance loop should run report-only for its first week before being allowed to act",
+      "properties_keys": [
+        "claim_type",
+        "epistemic_origin",
+        "epistemic_status",
+        "object",
+        "predicate",
+        "source_id",
+        "statement",
+        "subject",
+        "truth_state",
+        "wave"
+      ],
+      "source_hint": "S11"
+    },
+    {
+      "id": "da8c9005-bbb0-44ca-8c5f-13a30883279c",
+      "name": "Agent jobs run read-only and sandboxed by default; writes go through scoped safe-outputs jobs",
+      "properties_keys": [
+        "claim_type",
+        "epistemic_origin",
+        "epistemic_status",
+        "object",
+        "predicate",
+        "source_id",
+        "statement",
+        "subject",
+        "truth_state",
+        "wave"
+      ],
+      "source_hint": "S15"
+    },
+    {
+      "id": "36c151f0-412b-429c-981b-cab6bc30e28f",
+      "name": "Trimming MCP tool context to task-relevant reduced context ~69% weighted-avg with 100% sufficiency on 5 eligible cases (author benchmark)",
+      "properties_keys": [
+        "claim_type",
+        "epistemic_origin",
+        "epistemic_status",
+        "object",
+        "predicate",
+        "source_id",
+        "statement",
+        "subject",
+        "truth_state",
+        "wave"
+      ],
+      "source_hint": "S24"
+    },
+    {
+      "id": "be5d06b5-da3f-4aae-85dd-978f51a5267f",
+      "name": "A code fix is verified iff it flips FAIL_TO_PASS while keeping PASS_TO_PASS green in a pinned environment",
+      "properties_keys": [
+        "claim_type",
+        "epistemic_origin",
+        "epistemic_status",
+        "object",
+        "predicate",
+        "source_id",
+        "statement",
+        "subject",
+        "truth_state",
+        "wave"
+      ],
+      "source_hint": "S36"
+    },
+    {
+      "id": "1d9ba437-5d05-4483-b27b-590002ad55c8",
+      "name": "OWASP treats passwords <15 chars as weak without MFA (<8 with MFA), and requires identical error text + constant time for bad-user vs bad-password",
+      "properties_keys": [
+        "claim_type",
+        "epistemic_origin",
+        "epistemic_status",
+        "object",
+        "predicate",
+        "source_id",
+        "statement",
+        "subject",
+        "truth_state",
+        "wave"
+      ],
+      "source_hint": "S46"
+    },
+    {
+      "id": "15303c27-8fa9-4901-a90d-418050a01e07",
+      "name": "DFSDT (a depth-first decision tree allowing backtracking) improves LLM planning on multi-tool tasks vs linear planning",
+      "properties_keys": [
+        "claim_type",
+        "epistemic_origin",
+        "epistemic_status",
+        "object",
+        "predicate",
+        "source_id",
+        "statement",
+        "subject",
+        "truth_state",
+        "wave"
+      ],
+      "source_hint": "S50"
+    },
+    {
+      "id": "660be625-c812-4cf4-bfbc-0233caaccf22",
+      "name": "Client-side constraint validation is a UX layer only; the same rules must be enforced server-side",
+      "properties_keys": [
+        "claim_type",
+        "epistemic_origin",
+        "epistemic_status",
+        "object",
+        "predicate",
+        "source_id",
+        "statement",
+        "subject",
+        "truth_state",
+        "wave"
+      ],
+      "source_hint": "S33"
+    }
+  ]
+}
