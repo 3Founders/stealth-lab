@@ -145,7 +145,7 @@ short version of what changed:
   branches (§28); document / skill ingestion treats untrusted document
   text as data behind a fence and cannot use it to escalate capability or
   trust (§29).
-- **MCP surface is 28 registered tools** (was 21).
+- **MCP surface is 30 registered tools** (was 21).
 - **The V1 product surface is `frontendv1/`** — a separate Next.js 16 app
   (now tracked) with the benchmark-first pages and a 13-tool WebMCP
   bridge, owned by the frontend session. The older `frontend/` (Next.js 15

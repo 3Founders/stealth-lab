@@ -1280,8 +1280,8 @@ async def find_best_way(task_description: str, ctx: Context,
     # history worth keeping, not just successes. See
     # app/execution/plan_persistence.py for why this is two/three plain
     # INSERTs and not a transaction.
-    from app.execution.graph_executor import NodeResult, execute_task_graph
-    from app.execution.plan_persistence import persist_compiled_plan, record_plan_execution
+    from app.execution.graph_executor import NodeResult
+    from app.execution.plan_persistence import persist_compiled_plan
     from app.execution.plans import compile_plan
     from app.execution.procedure_graph import expand_procedure_steps
 
@@ -1627,8 +1627,8 @@ async def reproduce_procedure(procedure_id: str, repo_path: str, ctx: Context,
         # attempted, transfer included.
         return same_repo_stale
 
-    from app.execution.graph_executor import NodeResult, execute_task_graph
-    from app.execution.plan_persistence import persist_compiled_plan, record_plan_execution
+    from app.execution.graph_executor import NodeResult
+    from app.execution.plan_persistence import persist_compiled_plan
     from app.execution.plans import compile_plan
     from app.execution.procedure_graph import expand_procedure_steps
 

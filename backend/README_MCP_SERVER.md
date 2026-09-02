@@ -3,7 +3,7 @@
 Exposes StealthLab's bi-temporal knowledge/task graph, debate-based conflict
 resolution, procedure lifecycle, Implementation Registry, the
 Problem/Benchmark/Solution/Evaluation product model, and a
-retrieval-grounded coding agent as **28 MCP tools**.
+retrieval-grounded coding agent as **30 MCP tools**.
 
 > **Final-V1 update (2026-09-03).** Two changes to what is below:
 > 1. **Six product-model tools** were added — `find_problem`,
