@@ -85,6 +85,44 @@ specification.
 | ROI | net_savings / stealth_cost |
 | break_even_reuses | number of times a procedure must be reused before net_savings crosses zero |
 
+## Performance sanity (measured, not re-run here)
+
+Task spec §21. The hardened Final-V1 candidate (`core-a/ingestion-testing`) already carries a
+real performance **sanity** probe — not a capacity/scale benchmark — covering: `product_model`
+reads (`get_problem`, `list_problem_solutions`, `get_benchmark`, `problem_leaderboard`,
+`get_evaluation`, `complete_evaluation`), durable execution (`start_run`, `execute_run`,
+`resume_run`), MCP (`find_problem`, `inspect_problem`, `find_best_solution`), and the claim-graph
+overview. Raw data: `.scratch/final-v1-perf-sanity.md` + `.scratch/perf_results.json` on that
+branch (`git show origin/core-a/ingestion-testing:.scratch/final-v1-perf-sanity.md`); this section
+summarizes it, it does not re-measure it — this evaluation suite has not re-run that probe.
+
+**Verdict from that document: GO.** Every DB path measured has a bounded, data-size-independent
+(or explicitly `LIMIT`-capped) query count: `problem_leaderboard` is a fixed 4 reads with no N+1;
+durable execution has bounded retries (`max_attempts`, `RETRYABLE_ERROR_CLASSES`) and a
+non-spinning drive loop; embeddings cache repeated identical text. The one O(N) fan-out found
+(`claim_graph_api.get_claim_graph_overview(with_status=True)`, ~4.5 queries/node) is bounded
+(≤600 nodes), concurrency-limited, documented in its own docstring, and has a flat
+`with_status=False` fast path — recorded there as a follow-up watch-point, not a blocker.
+
+**Explicit limitations preserved, not paraphrased away:**
+- N=20 timed calls per path (embedding: 6 distinct + 5 repeat) — a **sanity** check on real code
+  paths for small representative workloads, not production-scale capacity evidence (task spec
+  §21's own instruction: "Do not present a 20-run sanity probe as production-scale capacity
+  evidence").
+- Measured against a **remote Supabase session pooler reached over the public internet** from a
+  Windows dev box — every absolute latency number includes real network round-trips (~25-40ms
+  each) and is therefore a **ceiling, not a floor**; a co-located app+DB would be far lower. What
+  the probe's numbers are evidence for is **shape** (query count, and whether it grows with data
+  size), not absolute production latency.
+- `find_best_way` tier-2 (the durable-execution-backed HTN coding-agent path) was **not
+  measured** — it requires a live sandboxed repo + model, out of scope for a sanity probe.
+- `query_count` slightly over-counts (it includes `tenant_transaction` BEGIN/`SET LOCAL`/COMMIT
+  and asyncpg's per-acquire connection-reset statement) — a real but small, documented
+  measurement artifact, not a correction to any of the numbers above.
+
+Reproduce: `DATABASE_URL=... python .scratch/perf_probe.py` on `core-a/ingestion-testing` (not
+this branch — the probe script lives on the product branch, alongside the code it measures).
+
 ## Result schema (reconciled superset)
 
 `backend/tests/evaluation/harness/results.py`'s `EvalResult` and `experiments/harness/`'s
