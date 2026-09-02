@@ -21,17 +21,22 @@ function; nothing is estimated or hardcoded. A source with no input path
 given is reported as SKIPPED with a reason, never silently treated as
 zero.
 
-Git history is NOT included: this repo has no dedicated git-log/commit
-history procedural-source adapter (grepped, confirmed absent) -- adding
-one would be new business logic, out of scope for a thin orchestrator.
-This is reported honestly in the printed summary, not glossed over.
+Git history: `--repo-root` also drives `app/local_agent/git_history_bootstrap.py`
+(real `git log` via subprocess, conservative fix+test / migration+code+test
+pattern formation -- never one candidate per bare commit). It is DB-free:
+candidates land in the same local `LocalProcedureStore` under `--workspace`
+that chat-export candidates use, never the shared Postgres `procedures`
+table -- a personal repo's commit history is exactly the kind of private,
+one-workspace material `local_store.py`'s module docstring describes.
 
 Sources orchestrated (each optional; at least one input is required):
   --repo-root DIR        SKILL.md, AGENTS.md/CLAUDE.md, CI workflow jobs,
-                          and runbook-shaped docs under DIR (repo skills/
-                          instructions/workflows). Needs DATABASE_URL --
-                          candidates are written to the shared `procedures`
-                          table via run_skill_ingestion().
+                          runbook-shaped docs, AND real git commit history
+                          under DIR (repo skills/instructions/workflows via
+                          run_skill_ingestion() into the shared `procedures`
+                          table, needs DATABASE_URL; git history via
+                          bootstrap_git_history() into the local
+                          LocalProcedureStore under --workspace, DB-free).
   --claude-export FILE   A real claude.ai "conversations.json" export.
                           DB-free -- candidates land in the local
                           LocalProcedureStore under --workspace.
@@ -120,6 +125,16 @@ async def run_repo_procedural(pool, embedder, root: Path, *, created_by: str) ->
     }
 
 
+def run_git_history(local_store, repo_root: Path) -> dict:
+    """Real git commit history under `repo_root` -> conservative
+    fix+test / migration+code+test candidates -> the same local
+    LocalProcedureStore chat-export candidates use. DB-free, drives the
+    real bootstrap_git_history() -- no reimplementation here."""
+    from app.local_agent.git_history_bootstrap import bootstrap_git_history
+
+    return bootstrap_git_history(local_store, str(repo_root))
+
+
 def run_chat_export(local_store, path: Path, source_type: str) -> dict:
     """Claude or ChatGPT chat history export -> local procedure
     candidates, via the real import_chat_history() -- no reimplementation
@@ -203,6 +218,23 @@ def _print_summary(sources_run: dict, sources_skipped: list[dict]) -> dict:
         if t["queued_extractions"]:
             procedural_items_found += t["queued_extractions"]["enqueued"]
 
+    git_history_summary = "not run -- --repo-root not given"
+    if "git_history" in sources_run:
+        g = sources_run["git_history"]
+        procedural_items_found += g["candidates_formed"]
+        candidate_procedures_created += g["captured"]
+        duplicates_merged += g["merged"]
+        # bare commits with no cross-commit test/migration evidence are
+        # the git-history analogue of "insufficient evidence" -- counted
+        # honestly, never silently dropped.
+        insufficient_evidence_rejected += g["skipped_bare_commits"]
+        git_history_summary = (
+            f"commits_scanned={g['commits_scanned']} "
+            f"candidates_formed={g['candidates_formed']} "
+            f"captured={g['captured']} merged={g['merged']} "
+            f"skipped_bare_commits={g['skipped_bare_commits']}"
+        )
+
     summary = {
         "sources_scanned": sorted(sources_run.keys()),
         "sources_skipped": sources_skipped,
@@ -212,9 +244,7 @@ def _print_summary(sources_run: dict, sources_skipped: list[dict]) -> dict:
         "duplicates_merged": duplicates_merged,
         "non_procedural_rejected": non_procedural_rejected,
         "insufficient_evidence_rejected": insufficient_evidence_rejected,
-        "git_history": "not available -- no git-log/commit-history procedural "
-                        "source adapter exists in this codebase (confirmed by "
-                        "grep); not orchestrated, not fabricated",
+        "git_history": git_history_summary,
         "detail": sources_run,
     }
 
@@ -261,7 +291,7 @@ async def main_async(args: argparse.Namespace) -> dict:
         else:
             sources_skipped.append({"name": "repo_procedural", "reason": "--repo-root not given"})
 
-        if args.claude_export or args.chatgpt_export:
+        if args.claude_export or args.chatgpt_export or args.repo_root:
             from app.local_agent.local_store import LocalProcedureStore
             local_store = LocalProcedureStore(str(args.workspace))
             if args.claude_export:
@@ -274,9 +304,12 @@ async def main_async(args: argparse.Namespace) -> dict:
                     local_store, args.chatgpt_export, "chatgpt")
             else:
                 sources_skipped.append({"name": "chatgpt_history", "reason": "--chatgpt-export not given"})
+            if args.repo_root:
+                sources_run["git_history"] = run_git_history(local_store, args.repo_root)
         else:
             sources_skipped.append({"name": "claude_history", "reason": "--claude-export not given"})
             sources_skipped.append({"name": "chatgpt_history", "reason": "--chatgpt-export not given"})
+            sources_skipped.append({"name": "git_history", "reason": "--repo-root not given"})
 
         if args.traces_dir:
             if pool is not None:
