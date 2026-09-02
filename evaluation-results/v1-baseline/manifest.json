@@ -1,0 +1,92 @@
+{
+  "areas": [
+    {
+      "area": "gold_retrieval",
+      "failed": 0,
+      "passed": 8,
+      "skipped": 0,
+      "total": 8
+    },
+    {
+      "area": "gold_applicability",
+      "failed": 0,
+      "passed": 31,
+      "skipped": 0,
+      "total": 31
+    },
+    {
+      "area": "gold_procedures",
+      "failed": 0,
+      "passed": 9,
+      "skipped": 0,
+      "total": 9
+    },
+    {
+      "area": "gold_generalization",
+      "failed": 0,
+      "passed": 6,
+      "skipped": 0,
+      "total": 6
+    },
+    {
+      "area": "gold_transfer",
+      "failed": 2,
+      "passed": 2,
+      "skipped": 0,
+      "total": 4
+    },
+    {
+      "area": "gold_evidence",
+      "failed": 0,
+      "passed": 3,
+      "skipped": 0,
+      "total": 3
+    },
+    {
+      "area": "ingestion",
+      "failed": 0,
+      "passed": 9,
+      "skipped": 0,
+      "total": 9
+    },
+    {
+      "area": "security_offline",
+      "failed": 0,
+      "passed": 4,
+      "skipped": 0,
+      "total": 4
+    },
+    {
+      "area": "security_e2e",
+      "failed": 0,
+      "passed": 1,
+      "skipped": 0,
+      "total": 1
+    },
+    {
+      "area": "provenance",
+      "failed": 0,
+      "passed": 1,
+      "skipped": 0,
+      "total": 1
+    },
+    {
+      "area": "concurrency",
+      "failed": 0,
+      "passed": 5,
+      "skipped": 0,
+      "total": 5
+    }
+  ],
+  "commit": "10380b288b455ca1f8f7a2e6afe0269918daf761",
+  "config": {
+    "database_url_present": true,
+    "embedding_model": "n/a -- gold-set areas use FakeEmbedder stand-ins, no real embedding calls",
+    "model": "n/a -- no live LLM calls in this export (offline/gold-set + live-DB areas only)"
+  },
+  "corpus_state": "v1-baseline-2026-09-02",
+  "generated_at": "2026-09-02T15:03:04.187819+00:00",
+  "platform": "Windows-10-10.0.19045-SP0",
+  "python_version": "3.14.6",
+  "run_id": "758d7339eec9"
+}
