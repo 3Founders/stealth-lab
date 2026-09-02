@@ -1,8 +1,33 @@
 # StealthLab MCP Server — v1
 
 Exposes StealthLab's bi-temporal knowledge/task graph, debate-based conflict
-resolution, procedure lifecycle, Implementation Registry, and a
-retrieval-grounded coding agent as 21 MCP tools.
+resolution, procedure lifecycle, Implementation Registry, the
+Problem/Benchmark/Solution/Evaluation product model, and a
+retrieval-grounded coding agent as **28 MCP tools**.
+
+> **Final-V1 update (2026-09-03).** Two changes to what is below:
+> 1. **Six product-model tools** were added — `find_problem`,
+>    `inspect_problem`, `list_problem_solutions`, `compare_solutions`,
+>    `inspect_evaluation`, `find_best_solution` — all read-only, all
+>    converging on `app/services/product_model.py` (the same service the
+>    `/v1/problems…` REST routes use). `find_best_solution` answers "which
+>    known Solution is measurably best for this goal" from completed-
+>    Evaluation lineage and a Wilson lower bound; it executes nothing and
+>    is distinct from `find_best_way`.
+> 2. **`find_best_way` tier-2 and `reproduce_procedure` now execute on the
+>    durable substrate** (`app/execution/durable_graph.run_graph_durably`
+>    over `execution_runs` / `execution_run_nodes`, migrations 36–37),
+>    not the in-memory `execute_task_graph`. `find_best_way` gained a
+>    `resume_run_id` parameter: pass the run id of an interrupted run and
+>    it resumes through the same tool — completed nodes are not re-run, a
+>    `succeeded` node is fenced against stale-worker writes, a concurrent
+>    resume is refused. `durable_run` appends the one immutable
+>    `executions` row itself on terminal (implementation_id pinned), so
+>    those two tools no longer call `record_plan_execution` separately.
+>    `inspect_implementation` / `resolve_implementation` now emit the
+>    canonical **execution descriptor** (also `GET
+>    /v1/implementations/{id}/descriptor`). Full account:
+>    `docs/final-v1.md`.
 
 ## Setup
 
@@ -22,7 +47,11 @@ retrieval-grounded coding agent as 21 MCP tools.
 3. `experiments/swebench_pro/` must exist as a real sibling directory of
    `backend/` -- `find_best_way` imports `Agent`/`RepoSandbox` from there.
 
-## The 21 tools
+## The tools
+
+_The table lists the 21-tool core surface; the six product-model tools and
+`get_claim_graph` from the Final-V1 update above bring the live registry to
+28. `docs/final-v1.md` §1 documents the product-model tools._
 
 | Tool | What it does | Writes to the graph? |
 |---|---|---|
