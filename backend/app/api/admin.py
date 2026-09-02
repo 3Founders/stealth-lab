@@ -132,6 +132,100 @@ async def run_scan(
     )
 
 
+class IngestionProcessResponse(BaseModel):
+    trace_dir: str
+    files_processed: int
+    collector: dict
+    jobs: dict
+    requeued_promotions: Optional[dict] = None
+    queued_extractions: Optional[dict] = None
+
+
+@router.post("/ingestion/process", response_model=IngestionProcessResponse)
+async def process_ingestion(
+    promote_limit: int = 0,
+    extract_limit: int = 0,
+    job_limit: int = 500,
+    pool=Depends(get_pool),
+) -> IngestionProcessResponse:
+    """
+    Manual loop trigger, same seam as /v1/admin/scan and
+    /v1/admin/failure-routes/process above: before this endpoint, the ONLY
+    real caller of process_collector_file() / process_pending_jobs() /
+    enqueue_pending_claim_promotions() / enqueue_pending_procedure_
+    extractions() was scripts/run_ingestion.py -- a hand-run CLI a developer
+    had to invoke with tuning flags after every session. Nothing turned
+    "user does normal agent work" into "a procedure candidate exists in
+    storage" without that manual step. This endpoint is
+    scripts/run_ingestion.py's own `_run_once()` body, reachable over HTTP
+    instead of a terminal: call it from a cron job, a dashboard button, or
+    curl -- whatever calls this on a timer is the seam, exactly as this
+    file's own module docstring already states for /scan.
+
+    Drains real collector .jsonl files (STEALTHLAB_TRACE_DIR, else
+    <CLAUDE_PROJECT_DIR or cwd>/.claude/traces) into trace_events, then
+    drains ingestion_jobs: normalize_trace_event -> observations ->
+    promote_observation_to_claim -> claims -> (gated)
+    extract_procedure_from_episode -> procedure candidates. Every function
+    called is imported unchanged from ingestion_jobs.py / trace_worker.py --
+    this endpoint reimplements none of their logic, same discipline
+    scripts/bootstrap.py's own docstring states for its sources.
+
+    promote_limit/extract_limit default to 0 (disabled), matching
+    run_ingestion.py's own --promote-limit/--extract-limit defaults: each
+    promotion re-enqueue costs one real embedding call and each extraction
+    costs one real grounded_hybrid_v1 LLM call, so spend stays opt-in and
+    caller-bounded, never automatic on a bare sweep. No enforce_limits here
+    for the same reason /failure-routes/process has none at its default
+    (promote_limit=extract_limit=0): a bare call is pure DB read/recompute/
+    write. Passing a positive extract_limit does spend real money -- the
+    caller-supplied limit IS the cost control, identical to the CLI flag it
+    replaces.
+    """
+    import os
+    from pathlib import Path
+
+    from app.services.ingestion_jobs import (
+        enqueue_pending_claim_promotions,
+        enqueue_pending_procedure_extractions,
+        process_pending_jobs,
+    )
+    from app.services.trace_worker import process_collector_file
+
+    # Same resolution order as hook_wrapper.py's / run_ingestion.py's own
+    # _default_trace_dir() -- duplicated rather than imported, matching
+    # run_ingestion.py's own stated reason: these are standalone entry
+    # points that should not couple to each other's module.
+    env_dir = os.environ.get("STEALTHLAB_TRACE_DIR")
+    trace_dir = (
+        Path(env_dir) if env_dir
+        else Path(os.environ.get("CLAUDE_PROJECT_DIR", Path.cwd())) / ".claude" / "traces"
+    )
+
+    collector_totals = {"records_seen": 0, "inserted": 0, "skipped_duplicate": 0, "quarantined": 0}
+    files = sorted(trace_dir.glob("*.jsonl")) if trace_dir.is_dir() else []
+    for f in files:
+        result = await process_collector_file(pool, f)
+        for k in collector_totals:
+            collector_totals[k] += result.get(k, 0)
+
+    requeued = None
+    if promote_limit > 0:
+        requeued = await enqueue_pending_claim_promotions(pool, limit=promote_limit)
+
+    extracted = None
+    if extract_limit > 0:
+        extracted = await enqueue_pending_procedure_extractions(pool, limit=extract_limit)
+
+    job_totals = await process_pending_jobs(pool, limit=job_limit)
+
+    return IngestionProcessResponse(
+        trace_dir=str(trace_dir), files_processed=len(files),
+        collector=collector_totals, jobs=job_totals,
+        requeued_promotions=requeued, queued_extractions=extracted,
+    )
+
+
 class FailureRouteProcessResponse(BaseModel):
     applied: dict[str, int]
 
