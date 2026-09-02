@@ -12,6 +12,8 @@ from app.services.environment_probe import (
     EnvironmentFact,
     invariant_bindings_from_facts,
     probe_environment,
+    probe_installed_package_versions,
+    probe_python_version,
 )
 
 
@@ -175,6 +177,35 @@ def test_invariant_bindings_from_multiple_packages():
         EnvironmentFact("package_version", "numpy:1.26.0"),
     ]
     assert invariant_bindings_from_facts(facts) == {"pandas_version": 2.1, "numpy_version": 1.26}
+
+
+def test_probe_installed_package_versions_real_pandas():
+    """Real importlib.metadata lookup against this test environment's
+    actual installed pandas -- no mocking."""
+    import importlib.metadata
+    real_version = importlib.metadata.version("pandas")
+
+    facts = probe_installed_package_versions(["pandas"])
+    assert facts == [EnvironmentFact("package_version", f"pandas:{real_version}")]
+
+
+def test_probe_installed_package_versions_unresolvable_name_is_omitted():
+    facts = probe_installed_package_versions(["definitely-not-a-real-package-xyz"])
+    assert facts == []
+
+
+def test_probe_installed_package_versions_empty_input():
+    assert probe_installed_package_versions([]) == []
+
+
+def test_probe_python_version_matches_real_interpreter():
+    import platform
+    fact = probe_python_version()
+    assert fact == EnvironmentFact("python_version", platform.python_version())
+
+
+def test_python_version_predicate_is_in_the_vocabulary():
+    assert "python_version" in PROBE_PREDICATE_VOCABULARY
 
 
 def test_against_this_repos_own_frontend():

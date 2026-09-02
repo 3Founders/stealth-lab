@@ -36,6 +36,8 @@ from app.services.environment_facts import (
     EnvironmentFact,
     invariant_bindings_from_facts,
     probe_environment,
+    probe_installed_package_versions,
+    probe_python_version,
 )
 from app.services.state import project_state
 
@@ -47,6 +49,8 @@ __all__ = [
     "EnvironmentFact",
     "invariant_bindings_from_facts",
     "probe_environment",
+    "probe_installed_package_versions",
+    "probe_python_version",
     "assert_environment_claims",
     "CREATED_BY",
 ]

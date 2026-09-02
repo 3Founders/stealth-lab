@@ -25,8 +25,10 @@ keeps working without a code change.
 """
 from __future__ import annotations
 
+import importlib.metadata
 import json
 import os
+import platform
 import re
 from dataclasses import dataclass
 from typing import Optional
@@ -43,6 +45,7 @@ PROBE_PREDICATE_VOCABULARY: tuple[str, ...] = (
     "package_manager",
     "language",
     "package_version",
+    "python_version",
 )
 
 
@@ -268,6 +271,55 @@ def invariant_bindings_from_facts(facts: list[EnvironmentFact]) -> dict[str, flo
             continue
         bindings[f"{name}_version"] = float(f"{match.group(1)}.{match.group(2)}")
     return bindings
+
+
+def probe_installed_package_versions(package_names: list[str]) -> list[EnvironmentFact]:
+    """
+    Real INSTALLED package versions for a caller-given set of names, via
+    `importlib.metadata` -- the ground truth for "what version of X is
+    actually importable in THIS process", distinct from
+    `_requirements_pinned_versions`' "what version does requirements.txt
+    DECLARE". A repo can pin one version and have a different one
+    actually installed (or installed as an unpinned/ranged dependency,
+    or with no requirements.txt at all) -- this is the only one of the
+    two that answers "would a precondition/invariant naming this package
+    actually hold right now".
+
+    Takes an explicit `package_names` list rather than enumerating every
+    installed distribution: a caller only ever wants the versions its
+    own procedure's preconditions/invariants actually name (see
+    `local_applicability.check_local_hard_constraints`), and dumping the
+    whole environment would be unbounded work and a mostly-irrelevant
+    fact set. A name with nothing installed under it is silently
+    omitted -- same honest-skip discipline `_requirements_pinned_versions`
+    already uses for a range spec it cannot express as one version --
+    never fabricated as "not installed" = "version 0" or similar.
+
+    Same predicate/shape as `_requirements_pinned_versions`
+    ("package_version", "{name}:{version}"), so downstream consumers
+    (`invariant_bindings_from_facts`, precondition equality-matching)
+    need no special-casing for where a package_version fact came from.
+    """
+    facts: list[EnvironmentFact] = []
+    for name in package_names:
+        if not name:
+            continue
+        try:
+            version = importlib.metadata.version(name)
+        except importlib.metadata.PackageNotFoundError:
+            continue
+        facts.append(EnvironmentFact("package_version", f"{name.lower()}:{version}"))
+    return facts
+
+
+def probe_python_version() -> EnvironmentFact:
+    """Real interpreter version of THIS process (`platform.python_version()`)
+    -- deterministic, no subprocess, no filesystem read. Full
+    major.minor.patch (unlike `invariant_bindings_from_facts`' own
+    major.minor-only numeric binding), since equality-matched
+    preconditions can legitimately want to distinguish '3.11.4' from
+    '3.11.9'."""
+    return EnvironmentFact("python_version", platform.python_version())
 
 
 def probe_environment(repo_root: str) -> list[EnvironmentFact]:

@@ -65,7 +65,11 @@ from app.local_agent.local_store import LocalProcedureStore
 from app.local_agent.unified_retrieval import orchestrate_unified_search
 from app.models.plan import TaskGraph
 from app.services.embeddings import Embedder
-from app.services.environment_facts import invariant_bindings_from_facts, probe_environment
+from app.services.environment_facts import (
+    invariant_bindings_from_facts,
+    probe_environment,
+    probe_python_version,
+)
 
 
 @dataclass
@@ -301,6 +305,17 @@ class LocalAgentRunner:
             # applied here because THIS is the process with a real repo
             # to probe. Pure, synchronous, off the event loop.
             local_facts = await asyncio.to_thread(probe_environment, repo_path)
+            # V1: local hard-constraint preconditions (checked below via
+            # check_local_hard_constraints, reached through
+            # orchestrate_unified_search) resolve against these SAME
+            # probed facts -- UNKNOWN != TRUE, so a precondition this
+            # process cannot resolve locally rejects automatic selection
+            # rather than passing silently. python_version is included
+            # even though probe_environment() itself is manifest-derived
+            # only, because "which interpreter is actually running this
+            # process" is real, always-available local evidence a
+            # precondition can legitimately name.
+            local_facts = local_facts + [probe_python_version()]
             invariant_bindings = invariant_bindings_from_facts(local_facts)
 
             # Phase 1+2 (memory-substrate map): check the workspace's own
@@ -332,6 +347,7 @@ class LocalAgentRunner:
                     session, store,
                     task_description=task_description,
                     invariant_bindings=invariant_bindings,
+                    environment_facts=local_facts,
                     require_verified=not allow_unverified,
                     limit=3,
                     query_embedding=query_embedding,

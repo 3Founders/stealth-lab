@@ -228,20 +228,12 @@ def test_local_applicability_numeric_invariant():
     assert undecided.applicable is True
 
 
-def test_local_applicability_unknown_precondition_is_neither_pass_nor_fail():
-    """Product spec's own explicit rule: 'Unknown must not silently become
-    true.' local_applicability.py's own module docstring already states it
-    does NOT evaluate `preconditions` at all (no claims graph locally to
-    project state from) -- a precondition-bearing local procedure is
-    neither disqualified NOR passed on that basis, it is simply not
-    checked. This test proves that honest scope limit holds in both
-    directions: a procedure with real preconditions that a global,
-    DB-backed cascade WOULD need to check must still pass this local
-    cascade when every OTHER real gate is satisfied (preconditions never
-    silently disqualify it), and must NOT be treated as satisfying those
-    preconditions either -- `failed_constraints` never mentions
-    'precondition' in either case, proving it was genuinely skipped, not
-    silently resolved true or false."""
+def test_local_applicability_unresolvable_precondition_rejects_as_unknown():
+    """V1 rule (UNKNOWN != TRUE): a precondition naming something the
+    local probe's closed vocabulary cannot even express (here,
+    'has_test_suite' is not in PROBE_PREDICATE_VOCABULARY) must reject
+    automatic selection, never silently pass -- the prior behavior
+    (unconditional skip -> always applicable) is gone."""
     row_with_preconditions = {
         "id": "row-precond", "t_invalid": None, "staleness": "fresh",
         "availability": "active", "verification_state": "verified",
@@ -251,24 +243,144 @@ def test_local_applicability_unknown_precondition_is_neither_pass_nor_fail():
         ],
     }
     result = check_local_hard_constraints(row_with_preconditions, current_scope={})
-    assert result.applicable is True, (
-        "a real precondition this local cascade cannot evaluate must not "
-        "disqualify an otherwise-applicable procedure"
+    assert result.applicable is False, (
+        "an unresolvable precondition must reject automatic selection, "
+        "never silently pass"
     )
-    assert not any("precondition" in c for c in result.failed_constraints), (
-        "preconditions must be genuinely SKIPPED (never checked), not "
-        "silently resolved to a pass -- this assertion would also catch "
-        "a future accidental precondition check being added without the "
-        "real claims-graph machinery to back it"
-    )
+    assert result.failed_constraints[0].startswith("precondition:unknown:")
 
-    # Same row, but staleness genuinely does disqualify it -- proves the
-    # precondition-skip isn't masking a broken cascade; other real gates
-    # still fire correctly on the SAME row shape.
+    # Same row, but staleness genuinely does disqualify it FIRST -- proves
+    # the precondition stage is reached only after the earlier gates, same
+    # short-circuit discipline as every other stage.
     stale_row = dict(row_with_preconditions, staleness="stale")
     stale_result = check_local_hard_constraints(stale_row, current_scope={})
     assert stale_result.applicable is False
     assert stale_result.failed_constraints == ["staleness"]
+
+
+def test_local_applicability_precondition_in_vocabulary_but_never_probed_is_unknown():
+    """A precondition naming a REAL probe predicate (in
+    PROBE_PREDICATE_VOCABULARY) still rejects as unknown when the caller
+    supplied no environment_facts at all -- absence of local evidence is
+    not evidence the precondition holds."""
+    row = {
+        "id": "row-precond2", "t_invalid": None, "staleness": "fresh",
+        "availability": "active", "verification_state": "verified",
+        "scope": {}, "exclusions": [], "invariants": [],
+        "preconditions": [
+            {"subject": "repo", "predicate": "has_framework", "object": "next"},
+        ],
+    }
+    result = check_local_hard_constraints(row, current_scope={})
+    assert result.applicable is False
+    assert result.failed_constraints[0].startswith("precondition:unknown:")
+
+
+def test_local_applicability_precondition_satisfied_by_real_probed_fact():
+    from app.services.environment_facts import EnvironmentFact
+
+    row = {
+        "id": "row-precond3", "t_invalid": None, "staleness": "fresh",
+        "availability": "active", "verification_state": "verified",
+        "scope": {}, "exclusions": [], "invariants": [],
+        "preconditions": [
+            {"subject": "repo", "predicate": "has_framework", "object": "next"},
+        ],
+    }
+    facts = [EnvironmentFact("has_framework", "next")]
+    result = check_local_hard_constraints(row, current_scope={}, environment_facts=facts)
+    assert result.applicable is True
+    assert result.failed_constraints == []
+
+
+def test_local_applicability_precondition_violated_by_real_probed_fact():
+    from app.services.environment_facts import EnvironmentFact
+
+    row = {
+        "id": "row-precond4", "t_invalid": None, "staleness": "fresh",
+        "availability": "active", "verification_state": "verified",
+        "scope": {}, "exclusions": [], "invariants": [],
+        "preconditions": [
+            {"subject": "repo", "predicate": "has_framework", "object": "next"},
+        ],
+    }
+    facts = [EnvironmentFact("has_framework", "vue")]
+    result = check_local_hard_constraints(row, current_scope={}, environment_facts=facts)
+    assert result.applicable is False
+    assert result.failed_constraints[0].startswith("precondition:violated:")
+
+
+def test_local_applicability_pandas_ge_2_0_invariant_against_real_installed_pandas():
+    """PROOF: a procedure requiring 'pandas >= 2.0' -- expressed as this
+    substrate's own numeric-invariant shape, since preconditions are
+    equality-only (see applicability.py's _claim_matches_precondition) --
+    evaluated against the REAL package installed in this interpreter via
+    app.services.environment_facts.probe_installed_package_versions
+    (importlib.metadata, no mocking, no seeded final state). This
+    process's real pandas is >= 2.0 (see requirements), so it applies;
+    a genuinely older pinned version does not."""
+    z3 = pytest.importorskip("z3")
+    import importlib.metadata
+
+    installed = importlib.metadata.version("pandas")
+    major, minor = (int(x) for x in installed.split(".")[:2])
+    assert (major, minor) >= (2, 0), (
+        "this proving test requires a real pandas>=2.0 installed in the "
+        "test environment -- see backend/requirements*.txt"
+    )
+
+    from app.services.environment_facts import probe_installed_package_versions
+
+    real_facts = probe_installed_package_versions(["pandas"])
+    assert real_facts and real_facts[0].predicate == "package_version"
+    assert real_facts[0].object.startswith("pandas:")
+
+    row = {
+        "id": "row-pandas", "t_invalid": None, "staleness": "fresh",
+        "availability": "active", "verification_state": "verified",
+        "scope": {}, "exclusions": [], "preconditions": [],
+        "invariants": [{"kind": "numeric", "expr": "pandas_version >= 2.0"}],
+    }
+    # No invariant_bindings passed explicitly -- derived from the REAL
+    # probed environment_facts, exercising the actual production wiring
+    # (check_local_hard_constraints -> invariant_bindings_from_facts).
+    result = check_local_hard_constraints(row, environment_facts=real_facts)
+    assert result.applicable is True, result.failed_constraints
+
+    # A genuinely older pinned version is a real rejection, not the real
+    # installed one -- proves the < 2.0 side of the rule via a real,
+    # differently-shaped fact rather than editing site-packages.
+    from app.services.environment_facts import EnvironmentFact
+
+    old_facts = [EnvironmentFact("package_version", "pandas:1.5.3")]
+    old_result = check_local_hard_constraints(row, environment_facts=old_facts)
+    assert old_result.applicable is False
+    assert old_result.failed_constraints[0].startswith("invariant:")
+
+
+def test_local_applicability_unresolvable_package_precondition_rejects_as_unknown():
+    """A precondition naming a package the local probe genuinely cannot
+    resolve (nothing installed under that name, nothing in
+    environment_facts) rejects as UNKNOWN, with the reason inspectable --
+    never silently passes."""
+    from app.services.environment_facts import probe_installed_package_versions
+
+    facts = probe_installed_package_versions(["definitely-not-a-real-package-xyz"])
+    assert facts == []  # honest: nothing installed under that name
+
+    row = {
+        "id": "row-unresolvable", "t_invalid": None, "staleness": "fresh",
+        "availability": "active", "verification_state": "verified",
+        "scope": {}, "exclusions": [], "invariants": [],
+        "preconditions": [
+            {"subject": "repo", "predicate": "package_version",
+             "object": "definitely-not-a-real-package-xyz:9.9.9"},
+        ],
+    }
+    result = check_local_hard_constraints(row, environment_facts=facts)
+    assert result.applicable is False
+    assert result.failed_constraints[0].startswith("precondition:unknown:")
+    assert "package_version" in result.failed_constraints[0]
 
 
 # ---------------------------------------------------------------------------

@@ -59,6 +59,7 @@ from typing import Any, Optional, Protocol
 
 from app.local_agent.local_applicability import check_local_hard_constraints
 from app.local_agent.local_store import LocalProcedureStore
+from app.services.environment_facts import EnvironmentFact
 from app.services.v0_gate import SCOPE_TYPES
 
 CAPABILITY_TIE_BUCKET = 0.05
@@ -104,6 +105,7 @@ def rank_unified_candidates(
     *,
     current_scope: Optional[dict] = None,
     invariant_bindings: Optional[dict[str, float]] = None,
+    environment_facts: Optional[list[EnvironmentFact]] = None,
     require_verified: bool = True,
     limit: int = 10,
 ) -> list[RankedCandidate]:
@@ -111,13 +113,21 @@ def rank_unified_candidates(
     Pure ranking policy over already-fetched candidate lists -- no
     network, no DB, easily unit-tested with fakes on both sides. See
     module docstring for the real policy.
+
+    `environment_facts`: real, already-probed local facts (see
+    app.local_agent.local_applicability's own docstring) threaded
+    through to each local candidate's hard-gate check so a declared
+    precondition is resolved against the real local environment rather
+    than silently skipped. Global candidates are unaffected -- they are
+    trusted as already applicability-filtered server-side (see module
+    docstring).
     """
     survivors: list[RankedCandidate] = []
 
     for proc in local_candidates:
         result = check_local_hard_constraints(
             proc, current_scope=current_scope, require_verified=require_verified,
-            invariant_bindings=invariant_bindings,
+            invariant_bindings=invariant_bindings, environment_facts=environment_facts,
         )
         if not result.applicable:
             continue
@@ -143,6 +153,7 @@ async def orchestrate_unified_search(
     task_description: str,
     current_scope: Optional[dict] = None,
     invariant_bindings: Optional[dict[str, float]] = None,
+    environment_facts: Optional[list[EnvironmentFact]] = None,
     require_verified: bool = True,
     limit: int = 10,
     query_embedding: Optional[list[float]] = None,
@@ -157,7 +168,9 @@ async def orchestrate_unified_search(
     LocalAgentRunner._open_client_session constructs, or a fake in tests.
     The remote call's payload is EXACTLY {"task", "require_verified",
     "limit", "invariant_bindings"} -- no local store content, ever (see
-    module docstring's structural privacy guarantee).
+    module docstring's structural privacy guarantee). `environment_facts`
+    is likewise never sent remotely -- it stays purely local input to
+    `rank_unified_candidates`'s local-side hard gate.
     """
     import json
 
@@ -179,5 +192,6 @@ async def orchestrate_unified_search(
     return rank_unified_candidates(
         local_hits, global_hits,
         current_scope=current_scope, invariant_bindings=invariant_bindings,
+        environment_facts=environment_facts,
         require_verified=require_verified, limit=limit,
     )
