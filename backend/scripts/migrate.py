@@ -59,7 +59,12 @@ CREATE TABLE IF NOT EXISTS schema_migrations (
 
 
 def _checksum(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
+    # Hash the migration's *text*, not its byte-level line endings. A
+    # migration's meaning is unchanged by CRLF vs LF; a Windows checkout
+    # with core.autocrlf=true must not read as an edited migration. CRLF
+    # and a lone trailing CR are both normalised to LF before hashing.
+    raw = path.read_bytes().replace(b"\r\n", b"\n").replace(b"\r", b"\n")
+    return hashlib.sha256(raw).hexdigest()
 
 
 def _real_files(directory: Path) -> list[Path]:

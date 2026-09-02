@@ -1,0 +1,9 @@
+# SQL migrations are checksum-verified byte-for-byte by
+# backend/scripts/migrate.py. Pin them to LF on every platform so a
+# Windows checkout with core.autocrlf=true cannot produce a spurious
+# "MISMATCH" against a ledger that was populated from an LF checkout.
+*.sql text eol=lf
+
+# Same reasoning for the migrate script and the test fakes that re-hash
+# migration text.
+backend/scripts/migrate.py text eol=lf
