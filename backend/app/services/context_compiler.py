@@ -28,6 +28,14 @@ TOKEN ESTIMATE IS APPROXIMATE. `_estimate_tokens` uses `len(text) // 4`,
 a rough characters-per-token heuristic, not a real tokenizer. Good enough
 to keep a prompt roughly bounded; do not treat `total_tokens_estimate` as
 an exact count.
+
+NOT WIRED INTO THE V1 PRODUCTION PLAN/EXECUTION PATH. No caller in
+`app/mcp_server/server.py`'s `find_best_way`/`reproduce_procedure` flow (or
+anywhere else in `app/`) imports or calls `compile_context()` today -- only
+`backend/tests/test_context_compiler_offline.py` exercises it. This is a
+deliberate V1 scope decision, not a bug: the module is ready for the
+future caller described above, but wiring it into the hot path is
+unstarted work, tracked separately.
 """
 
 from __future__ import annotations
