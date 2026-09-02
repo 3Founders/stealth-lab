@@ -1,18 +1,23 @@
 # Final Integration + V1 Hardening — Acceptance Matrix (§61)
 
 Branch `core-a/ingestion-testing`. Baseline `a5dace6` (`v1-baseline-2026-09-02`).
-Hardening head `dfb793e` (+ the §13/§14 doc commit). Every row is
-**CLOSED / PARTIALLY CLOSED / OPEN** — no "mostly", no "probably". Evidence =
-a commit SHA + a test that runs.
+Hardening head `a404593`. Every row is **CLOSED / PARTIALLY CLOSED / OPEN** —
+no "mostly", no "probably". Evidence = a commit SHA + a test that runs.
 
-**Rewritten 2026-09-03** after the production-readiness pass closed the last
-non-frontend PARTIAL/OPEN items (`b966cd7` descriptor + tier-2 wiring,
-`a8bd940` retry/resume surface, `885d83a` migration upgrade, `dfb793e` perf,
-`44c942c` docs) and the frontend lane landed `39e2892`.
+**Rewritten 2026-09-03 (freeze pass)** — the last PARTIALLY CLOSED row, the
+frontend scripted browser E2E (§56), is now CLOSED via `2fae92c`
+(`frontendv1/e2e/v1-flow.spec.ts`, 7 Playwright tests against the real
+backend + real Supabase). **Every Final-V1 acceptance row is now CLOSED.**
+`a404593` is freeze-prep hygiene only (dead imports, doc tool-count,
+untrack build logs — no behaviour change).
+
+Prior pass closed the non-frontend PARTIAL/OPEN items: `b966cd7` descriptor
++ tier-2 wiring, `a8bd940` retry/resume surface, `885d83a` migration
+upgrade, `dfb793e` perf, `44c942c` docs; frontend lane landed `39e2892`.
 
 Commits this wave: `bbf6ff0` `53c93f9` `209564a` `47f4ffd` `8aecc04` `ed958b2`
 `3229641` `9040dfa` `002e6da` `0f17055` `320918a` `892f60c` `b966cd7` `39e2892`
-`44c942c` `a8bd940` `885d83a` `dfb793e`.
+`44c942c` `a8bd940` `885d83a` `dfb793e` `4208b87` `2fae92c` `a404593`.
 
 DB target for all E2E: Supabase `wckeklqxmiglivfolujn` (ap-south-1 session pooler),
 Postgres 17.6, migrations 01–37 applied.
@@ -104,14 +109,14 @@ Postgres 17.6, migrations 01–37 applied.
 |---|---|---|
 | Home / Search / Problem (benchmark+leaderboard) / Solution / Procedure / Task / Implementation / Claim / Evaluation / Repository / Project / Personal / Auth pages | **CLOSED** | `39e2892` (frontend lane). `frontendv1/` — Next 16 + React 19, 52 tracked files, `src/app/**/page.tsx`, single typed client `src/lib/api/{client,types}.ts`, OIDC + dev-viewer auth. |
 | Problem benchmark hero — current-best / tie / open, backend-ranked leaderboard | **CLOSED** | `frontendv1/src/components/leaderboard.tsx`, `src/app/problems/[id]/page.tsx` — consumes `problem_leaderboard`; no client-side ranking. |
-| Frontend critical E2E (§56) | **PARTIALLY CLOSED** | Pages built + typed against the live API contract; a scripted browser E2E run was not part of the frontend lane's landed commit. Frontend lane owns closure. |
+| Frontend critical E2E (§56) | **CLOSED** | `2fae92c` — `frontendv1/e2e/v1-flow.spec.ts` (Playwright, **7 passed**) drives the real Next frontend against the real FastAPI backend + real Supabase (no mock server). Asserts: app loads + `/health`; viewer identity (`X-Viewer-Id`) on `/v1` requests; Problems list from `GET /v1/problems`; Problem detail renders the benchmark name, "2 candidate solutions", the leaderboard `<table>` + backend Wilson-LB copy, and the backend-derived "Current best verified" hero (93.3% / n=30); Evaluation detail shows backend-recomputed n=30 + verified 93.3%; full home→problems→problem→evaluation click-path; every `/v1` request stays on the configured backend origin and matches no `mock\|fixture\|stub\|fake`. Seed: `frontendv1/e2e/seed_v1_flow.py` (real `product_model` write paths → `current_best == [Solution A]`). The stale Problems list-page stub was wired to `GET /v1/problems` in the same commit. |
 | Performance architecture (small bundle, lazy graph, cached reads, debounced search) | **CLOSED** | `frontendv1/src/components/search-box.tsx` (debounced), skeleton loaders, per-route code splitting (Next app router). |
 
 ## WEBMCP
 
 | Requirement | State | Evidence |
 |---|---|---|
-| `document.modelContext.registerTool` wrapper + feature-detect; semantic tools over the domain API; schema validation | **CLOSED** | `39e2892` — `frontendv1/src/webmcp/{registry,schemas,tools,validate}.ts` + `src/components/webmcp-provider.tsx`, `src/app/webmcp/page.tsx`. Feature-detects `document.modelContext`; tools call the same typed API client. Live-browser test owned by the frontend lane. |
+| `document.modelContext.registerTool` wrapper + feature-detect; semantic tools over the domain API; schema validation | **CLOSED** | `39e2892` — `frontendv1/src/webmcp/{registry,schemas,tools,validate}.ts` + `src/components/webmcp-provider.tsx`, `src/app/webmcp/page.tsx` (13 semantic tools). Feature-detects `document.modelContext`; tools call the same typed API client. Browser proof: `2fae92c` `v1-flow.spec.ts` asserts `/webmcp` feature-detects and renders all 13 expected tools. |
 
 ## TESTS
 
@@ -121,7 +126,7 @@ Postgres 17.6, migrations 01–37 applied.
 | Integration / E2E vs real Postgres (Supabase) | **CLOSED** | `test_claim_graph_overview_e2e` + `_mcp_e2e`, `test_product_model_e2e` (§57), `test_product_model_mcp_e2e`, `test_durable_run_e2e` (§58, 3), `test_durable_graph_e2e` (§3, 1), `test_durable_resume_e2e` (3), `test_migration_upgrade_e2e` (1). Live run: see §11 in `final-v1-production-readiness.md`. |
 | Migration — fresh DB + existing-DB upgrade, no checksum drift | **CLOSED** | `885d83a`. `test_migration_upgrade_e2e.py` — throwaway PG17 cluster: apply 01..34, write a pre-hardening dataset via the real write paths, apply 35/36/37 via the real `migrate.py`, assert no checksum drift + every pre-existing row byte-for-byte unchanged + scope still enforced + new product-model & durable-run tables work against the pre-existing rows + no destructive DDL. 1 passed. |
 | Security regression | **CLOSED** | §28 (10) + §29 (4) + descriptor secret redaction (in the 7) + cross-user run auth (offline + e2e) named tests. |
-| Full offline regression gate (§63) | **CLOSED** | see §11 in `final-v1-production-readiness.md` — `cd backend && python -m pytest tests -q` (DATABASE_URL unset). |
+| Full offline regression gate (§63) | **CLOSED** | 2026-09-03 freeze run, exit 0: backend offline **2118 passed / 287 skipped / 0 failed**; live E2E vs Supabase **12 passed**; harness **254**; packaging **95**; frontend `tsc` clean; browser E2E **7 passed**. Total **2486 passed / 0 failed / 287 skipped**. Detail: `.scratch/final-v1-regression-results.md`. |
 | Performance sanity | **CLOSED** | `dfb793e`. `.scratch/final-v1-perf-sanity.md` — probe vs live Supabase, N=20/path, 0 failures, **GO**; leaderboard N+1 check = none (8 fixed queries); no unbounded retry / repeated embed. `.scratch/perf_probe.py` + `perf_results.json`. |
 
 ## DOCUMENTATION
@@ -142,14 +147,20 @@ Postgres 17.6, migrations 01–37 applied.
 | Implementation registry | 5 | 0 | 0 |
 | Execution retry/resume | 9 | 0 | 0 |
 | API / MCP | 6 | 0 | 0 |
-| Frontend | 3 | 1 (scripted browser E2E — frontend lane owns) | 0 |
+| Frontend | 4 | 0 | 0 |
 | WebMCP | 1 | 0 | 0 |
 | Tests | 6 | 0 | 0 |
 | Documentation | 1 | 0 | 0 |
 
-**Every backend / product-path acceptance item is CLOSED.** The one remaining
-PARTIALLY CLOSED row is a scripted browser E2E for the frontend, owned by the
-frontend lane — not a backend or product-substrate blocker. Both release-critical
-defects (§28, §29) are CLOSED and proven. Every mandatory E2E — §3 durable
-tier-2, §57 product lineage, §58 retry/resume, §59 claim-graph, migration
-upgrade — is CLOSED against Supabase.
+**Every Final-V1 acceptance item is CLOSED — no PARTIALLY CLOSED, no OPEN.**
+Both release-critical defects (§28, §29) are CLOSED and proven. Every
+mandatory E2E — §3 durable tier-2, §56 frontend browser flow, §57 product
+lineage, §58 retry/resume, §59 claim-graph, migration upgrade — is CLOSED
+against real Postgres / Supabase.
+
+Carried (unchanged from the frozen baseline, not introduced or regressed
+this wave; recorded for founder review, not a Final-V1 blocker):
+`apply_change_set` is an ungated raw write primitive that is present in the
+public MCP registry — CLAUDE.md's "opt-in flag, not public" posture is not
+enforced by a flag today. Approval + audit still come from
+`submit_approval` / `decide_decomposition`, never from `apply_change_set`.

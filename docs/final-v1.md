@@ -1,8 +1,9 @@
 # Final V1 — what shipped
 
-_Authoritative as of branch `core-a/ingestion-testing` head `39e2892`
-(baseline `a5dace6` = tag `v1-baseline-2026-09-02`). Written 2026-09-03 for
-FINAL-V1 §6._
+_Authoritative as of branch `core-a/ingestion-testing` head `a404593`
+(baseline `a5dace6` = tag `v1-baseline-2026-09-02`; final freeze tag
+`v1-final-2026-09-03`). Written 2026-09-03 for FINAL-V1 §6, extended for
+the freeze pass (§8/§10)._
 
 This is the single place a reader learns what changed in the Final-V1
 hardening wave. It does not restate the whole system — `README.md` (V1
@@ -14,7 +15,7 @@ explicitly *not* in this wave.
 The interim record this supersedes: `.scratch/current-state-audit.md`
 (§0 audit) and `.scratch/final-v1-hardening-acceptance.md` (§61 acceptance
 matrix). Every closed unit's design rationale is in its commit message
-(`git log a5dace6..39e2892`).
+(`git log a5dace6..a404593`).
 
 Terminology used throughout (one set, no synonyms):
 
@@ -403,10 +404,10 @@ Accepted, not blockers. Real, not invented.
    caller. There is no "resume run X with no other input" path for a
    coding-agent run, by design.
 
-3. **Migration upgrade test is discipline, not a test.** Migrations
-   01–37 apply clean to a fresh Supabase project and checksums are
-   immutable-on-mismatch (`migrate.py` hard-errors), but there is no
-   explicit "apply against a populated V1 DB, then diff" test.
+3. **Execution-run reads are unauthenticated.** `GET /v1/runs/{id}` and
+   `/nodes` return `created_by` / `scope_type` / `scope_entity_id` with no
+   identity check — consistent with every other V1 read surface. Mutations
+   (resume / retry) *are* creator-gated. Tighten if private Problems ship.
 
 4. **`test_ingestion_admin_endpoint_e2e`** (trace → observation → claim
    drain) is a pre-existing red on a live DB — a narrow bug where
@@ -455,3 +456,103 @@ Explicitly **not** part of this wave. Listed so the boundary is clear.
   claim-graph proof and `final_report.md` for the 29 admitted sources;
   admitting an internet-scale corpus is post-V1 and gated on public-launch
   signals.
+
+---
+
+## FREEZE PASS (2026-09-03) — LIMITATIONS REGISTER
+
+Added for FINAL-V1 §10. The full detail is in the sections above; this is
+the four-bucket index the freeze gate requires.
+
+### A · CLOSED BY FINAL V1
+
+Everything under **SHIPPED IN FINAL V1** (§1–§7 above), plus, closed in the
+freeze pass:
+
+- **Frontend scripted browser E2E (§56)** — `2fae92c`,
+  `frontendv1/e2e/v1-flow.spec.ts` (Playwright, 7 tests) against the real
+  Next frontend + real FastAPI backend + real Supabase, no mock server.
+  Seed via `frontendv1/e2e/seed_v1_flow.py` (real `product_model` write
+  paths). The stale Problems list-page stub was wired to `GET /v1/problems`
+  in the same commit.
+- **Migration populated-upgrade test** — `885d83a`,
+  `test_migration_upgrade_e2e.py`: throwaway PG17 cluster, apply 01–34,
+  write a pre-hardening dataset through the real write paths, apply
+  35/36/37 via the real `migrate.py`, assert every pre-existing row
+  byte-for-byte unchanged + scope still enforced + the new product-model
+  and durable-run tables work against the pre-existing rows + no
+  destructive DDL. (This retires the old KNOWN-limitation "#3: migration
+  upgrade is discipline, not a test".)
+- **Full regression** — 2026-09-03: **2486 passed / 0 failed / 287
+  skipped** across backend offline (2118), live E2E vs Supabase (12),
+  harness (254), packaging (95), browser E2E (7); frontend `tsc` clean.
+  `.scratch/final-v1-regression-results.md`.
+
+### B · KNOWN / ACCEPTED V1 QUALITY LIMITATIONS
+
+The six items under **KNOWN V1 QUALITY LIMITATIONS** above, i.e.:
+
+1. `find_best_way` tier-2 resume rebuilds the sandbox per invocation
+   (durable at the graph layer; a resumed run's earlier file edits ride
+   forward as agent *context*, not mechanically re-applied).
+2. A coding-agent run does not resume headless — the durable-run tools
+   return `needs_product_context`; resume via
+   `find_best_way(resume_run_id=…)`.
+3. Execution-run **reads** are unauthenticated (mutations are
+   creator-gated; consistent with every other V1 read surface).
+4. `test_ingestion_admin_endpoint_e2e` pre-existing red — trace →
+   observation → claim drain, not the corpus/product path.
+5. `apply_change_set` is an ungated raw write primitive **present in the
+   public MCP registry** — CLAUDE.md's "opt-in flag, not public" posture
+   is not enforced by a flag. Unchanged from the frozen baseline `a5dace6`
+   (not introduced or regressed this wave). Approval + audit come from
+   `submit_approval` / `decide_decomposition`. Flagged for a founder
+   decision; not a Final-V1 blocker.
+6. MCP Tasks-extension backing store is in-memory (`--workers 1`
+   load-bearing) — the durable execution *run* is Postgres-durable, the
+   MCP Tasks *envelope* around it is not.
+7. `get_claim_graph_overview(with_status=True)` issues ~4.5 queries/node,
+   bounded by `limit ≤ 600` + a semaphore of 8; a flat fast-path
+   (`with_status=False`) exists.
+8. `frontendv1` `npm run lint` (bare `eslint`) crashes inside ESLint 9 /
+   `@eslint/eslintrc` on the flat-config + legacy `extends` mix —
+   pre-existing tooling defect. `npx tsc --noEmit` (the real type gate) is
+   clean.
+
+### C · UNMEASURED POST-FREEZE EVALUATION QUESTIONS
+
+Not answerable from the code; require running the frozen product against
+workloads. (Was mixed into "POST-V1 EXPERIMENT / MEASUREMENT" above.)
+
+- Real **baseline-vs-Stealth** live results — do a Problem's
+  evidence-derived `current_best` actually route an agent to a better
+  Solution (three-arm: solo / ordinary memory / verified substrate)?
+- Real **ROI / break-even** — token + wall-clock cost of the
+  verified-substrate arm vs the win rate it buys.
+- **Full embedding-level retrieval quality** — `problems` / `procedures`
+  have no vector column today (`find_problem` is lexical `ts_rank`);
+  measure what an index buys for Problem match + precedent retrieval.
+- **Large-scale capacity** — p95 tool-call latency, leaderboard
+  compute-on-read cost at 10²–10³ Evaluations, durable-run throughput.
+- **Live LLM extraction quality** — procedure / claim / capability
+  extraction accuracy on a held-out corpus.
+- **Ablations** — comparability gate on/off, Wilson lower bound vs raw
+  rate, `MIN_RUNS_FOR_RANKING` sensitivity, durable-resume vs
+  restart-from-scratch cost.
+
+### D · POST-V1 FEATURES
+
+Deliberately not built; safe to add later.
+
+- Richer generalization / transfer semantics where provably safe.
+- Execution capabilities beyond what Final V1 requires (more providers,
+  headless coding-agent resume, a persistent MCP Tasks store).
+- Owner column + authenticated reads on `execution_runs` if private
+  Problems ship.
+- Full convergence of `find_best_way` (HTN coding agent) and
+  `find_best_solution` (evidence leaderboard) into one entry point.
+- Set-based claim-lifecycle query for large graphs.
+- `schema.md` refresh to list the migration 35/36 tables (frozen — needs a
+  formal unfreeze decision; today recorded as a board note).
+- Internet-scale external-corpus admission (gated on public-launch
+  signals).
