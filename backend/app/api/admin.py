@@ -226,6 +226,36 @@ async def process_ingestion(
     )
 
 
+class IngestionAutoStatusResponse(BaseModel):
+    enabled: bool
+    interval_seconds: int
+    promote_limit: int
+    extract_limit: int
+    job_limit: int
+    run_count: int
+    last_run_started_at: Optional[str] = None
+    last_run_completed_at: Optional[str] = None
+    last_result: Optional[dict] = None
+    last_error: Optional[str] = None
+    last_error_at: Optional[str] = None
+
+
+@router.get("/ingestion/auto-status", response_model=IngestionAutoStatusResponse)
+async def ingestion_auto_status(request: Request) -> IngestionAutoStatusResponse:
+    """
+    Read-only diagnostics for app/services/ingestion_scheduler.py's
+    background loop -- lets an operator (or a test) see the loop is alive
+    and what its most recent sweep did without reading logs. Populated at
+    app startup (main.py's lifespan) regardless of whether the loop is
+    enabled, so this endpoint always has something real to report, even
+    with INGESTION_AUTO_ENABLED=false.
+    """
+    state = getattr(request.app.state, "ingestion_scheduler", None)
+    if state is None:
+        raise HTTPException(500, "ingestion scheduler state not initialized (app not started via lifespan)")
+    return IngestionAutoStatusResponse(**state.as_dict())
+
+
 class FailureRouteProcessResponse(BaseModel):
     applied: dict[str, int]
 

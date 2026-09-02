@@ -14,6 +14,7 @@ from app.api import claims, implementations, me, procedures, projects, repositor
 from app.api.deps import require_trustworthy_identity
 from app.config import settings
 from app.db.session import close_pool, create_pool
+from app.services import ingestion_scheduler
 from app.services.authn import assert_boot_posture, install_actor_middleware
 
 logging.basicConfig(
@@ -38,9 +39,17 @@ async def lifespan(app: FastAPI):
         multi_user_exposure_enabled=settings.multi_user_exposure_enabled,
     )
     app.state.pool = await create_pool()
+    # The seam this directive closes: without this, "user does normal
+    # agent work" never becomes "a procedure candidate exists in storage"
+    # unless a human remembers to curl /v1/admin/ingestion/process on a
+    # timer. INGESTION_AUTO_ENABLED=false (tests, some dev setups) skips
+    # starting the task but still sets app.state.ingestion_scheduler so
+    # the status endpoint always has something to report.
+    ingestion_scheduler.start(app)
     try:
         yield
     finally:
+        await ingestion_scheduler.stop(app)
         await close_pool()
 
 

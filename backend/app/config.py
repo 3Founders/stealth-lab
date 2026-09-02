@@ -210,6 +210,24 @@ class Settings(BaseSettings):
     oidc_jwks_url: Optional[str] = None
     multi_user_exposure_enabled: bool = False
 
+    # --- MCP server deployment-mode guard (backend/app/mcp_server/server.py) ---
+    # OidcAwareTokenVerifier's shared-STEALTHLAB_MCP_TOKEN fallback (no
+    # per-caller .subject) is fine for local/single-user dev -- it is
+    # exactly what runs when OIDC_ISSUER/OIDC_AUDIENCE are unset. Nothing
+    # about that fallback stops a real hosted/multi-user deployment from
+    # running on it by accident, silently losing per-user attribution.
+    # "single_user" (default, unchanged behavior) leaves the shared-token
+    # fallback allowed regardless of OIDC config. "shared" is the explicit
+    # hosted/multi-user opt-in: assert_deployment_mode_posture (app/
+    # services/authn.py, called at MCP server import time) refuses to boot
+    # in this mode unless BOTH OIDC_ISSUER and OIDC_AUDIENCE are set --
+    # same "refuse to boot on a bad combination" discipline as
+    # assert_boot_posture (REST app, Band 2.9) and
+    # tasks_extension.assert_single_worker. Default "single_user" keeps
+    # every existing dev setup working unchanged -- this flag must be set
+    # explicitly to change behavior, never inferred.
+    deployment_mode: str = "single_user"
+
     # --- V2 governance ---
     # On by default: an unprotected public endpoint that spends money per
     # call is the kind of thing that should require deliberate opt-out,
@@ -220,6 +238,24 @@ class Settings(BaseSettings):
 
     # Single-tenant placeholder (Section 12 auth seam).
     default_tenant_id: str = "00000000-0000-0000-0000-000000000001"
+
+    # --- Automatic ingestion loop (app/services/ingestion_scheduler.py) ---
+    # POST /v1/admin/ingestion/process closed the "no real caller at all"
+    # gap but stayed a manual trigger -- something still had to remember to
+    # curl it. This loop is the in-process scheduler that calls it on a
+    # timer so normal agent work enters the learning pipeline without a
+    # human remembering anything. Defaults are deliberately small and
+    # positive (NOT the manual endpoint's promote_limit=0/extract_limit=0):
+    # this IS the automatic path meant to actually do bounded work, but
+    # "bounded" is the operative word -- each promotion is one real
+    # embedding call and each extraction one real LLM call, so a bare app
+    # start never spends unboundedly. INGESTION_AUTO_ENABLED=false is the
+    # opt-out for tests/dev that must not do any automatic work at all.
+    ingestion_auto_enabled: bool = True
+    ingestion_auto_interval_seconds: int = 60
+    ingestion_auto_promote_limit: int = 5
+    ingestion_auto_extract_limit: int = 5
+    ingestion_auto_job_limit: int = 500
 
     # --- MCP task-state single-worker guard (Phase 34 / MCP TASK STATE) ---
     # TasksExtension's task store is in-memory and single-process (see

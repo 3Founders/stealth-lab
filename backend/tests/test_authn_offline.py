@@ -30,6 +30,7 @@ from app.services.authn import (
     StaticJwks,
     TokenRejected,
     assert_boot_posture,
+    assert_deployment_mode_posture,
     current_actor,
     current_actor_id,
     extract_bearer,
@@ -156,6 +157,46 @@ def test_fully_configured_oidc_allows_everything():
         real_auth_enabled=True,
         oidc_configured_=True,
         multi_user_exposure_enabled=True,
+    )
+
+
+# --- assert_deployment_mode_posture (MCP server boot guard) ------------------
+
+def test_deployment_mode_single_user_never_raises_regardless_of_oidc():
+    # The default. Additive guard -- existing dev setups are untouched.
+    assert_deployment_mode_posture(
+        deployment_mode="single_user", oidc_issuer=None, oidc_audience=None,
+    )
+    assert_deployment_mode_posture(
+        deployment_mode="single_user",
+        oidc_issuer="https://idp.example", oidc_audience="stealthlab",
+    )
+
+
+def test_deployment_mode_shared_without_oidc_refuses_to_boot():
+    with pytest.raises(RuntimeError, match="OIDC_ISSUER and OIDC_AUDIENCE"):
+        assert_deployment_mode_posture(
+            deployment_mode="shared", oidc_issuer=None, oidc_audience=None,
+        )
+
+
+def test_deployment_mode_shared_names_the_single_missing_var():
+    with pytest.raises(RuntimeError, match="OIDC_AUDIENCE"):
+        assert_deployment_mode_posture(
+            deployment_mode="shared",
+            oidc_issuer="https://idp.example", oidc_audience=None,
+        )
+    with pytest.raises(RuntimeError, match="OIDC_ISSUER"):
+        assert_deployment_mode_posture(
+            deployment_mode="shared",
+            oidc_issuer=None, oidc_audience="stealthlab",
+        )
+
+
+def test_deployment_mode_shared_with_full_oidc_boots():
+    assert_deployment_mode_posture(
+        deployment_mode="shared",
+        oidc_issuer="https://idp.example", oidc_audience="stealthlab",
     )
 
 

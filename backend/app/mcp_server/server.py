@@ -66,6 +66,7 @@ from app.services.authn import (
     FetchingJwks,
     OidcConfig,
     TokenRejected,
+    assert_deployment_mode_posture,
     current_actor_id,
     validate_token_async,
 )
@@ -230,7 +231,21 @@ def _build_token_verifier(shared_token: str) -> OidcAwareTokenVerifier:
     from_settings) -- None when OIDC_ISSUER/OIDC_AUDIENCE are unset, which
     is today's actual default posture (see README_MCP_SERVER.md); the
     verifier then runs shared-secret-only, unchanged from before this
-    function existed."""
+    function existed.
+
+    Boot guard (same "refuse to boot on a bad combination" shape as
+    authn.assert_boot_posture for the REST app and
+    tasks_extension.assert_single_worker): when DEPLOYMENT_MODE=shared is
+    set explicitly, a shared-secret-only verifier means every caller is
+    attributed as one identity -- wrong for a real multi-user
+    deployment -- so require OIDC_ISSUER + OIDC_AUDIENCE. The default
+    DEPLOYMENT_MODE=single_user never raises here (existing dev setups
+    unaffected)."""
+    assert_deployment_mode_posture(
+        deployment_mode=settings.deployment_mode,
+        oidc_issuer=settings.oidc_issuer,
+        oidc_audience=settings.oidc_audience,
+    )
     oidc_config = OidcConfig.from_settings(settings)
     jwks_provider = FetchingJwks(oidc_config.jwks_url) if oidc_config is not None else None
     return OidcAwareTokenVerifier(shared_token, oidc_config, jwks_provider)

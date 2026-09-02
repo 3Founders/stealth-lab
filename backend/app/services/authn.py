@@ -162,6 +162,50 @@ def assert_boot_posture(
         )
 
 
+def assert_deployment_mode_posture(
+    *,
+    deployment_mode: str,
+    oidc_issuer: Optional[str],
+    oidc_audience: Optional[str],
+) -> None:
+    """MCP server boot-time guard (app/mcp_server/server.py), same "refuse
+    to boot on a bad combination" shape as assert_boot_posture above and
+    tasks_extension.assert_single_worker -- an explicit settings check, not
+    runtime introspection.
+
+    The gap this closes: OidcAwareTokenVerifier's shared-STEALTHLAB_MCP_TOKEN
+    fallback (no per-caller .subject) is fine for local/single-user dev, but
+    nothing stopped a real hosted/multi-user deployment from running on it
+    by accident, silently losing per-user write attribution -- no error, no
+    log, just every caller attributed as the same identity forever.
+
+    deployment_mode="single_user" (the default, unchanged pre-existing
+    behavior) never raises here, regardless of OIDC config -- this guard is
+    additive, not a new requirement for existing dev setups.
+    deployment_mode="shared" is the explicit hosted/multi-user opt-in: it
+    requires BOTH oidc_issuer and oidc_audience, naming exactly which is
+    missing (either can be absent independently), and pointing at the two
+    real fixes -- configure OIDC, or admit this is genuinely single-user and
+    set DEPLOYMENT_MODE=single_user instead.
+    """
+    if deployment_mode != "shared":
+        return
+    missing = [
+        name for name, value in (("OIDC_ISSUER", oidc_issuer), ("OIDC_AUDIENCE", oidc_audience))
+        if not value
+    ]
+    if missing:
+        raise RuntimeError(
+            f"deployment_mode='shared' requires {' and '.join(missing)} to be set "
+            f"({'it is' if len(missing) == 1 else 'they are'} currently missing), so "
+            "this MCP server would run on the shared-token fallback with no "
+            "per-caller identity in a real multi-user deployment. Fix: set "
+            f"{' and '.join(missing)} in backend/.env (see README_MCP_SERVER.md's "
+            "OIDC section), or, if this deployment is genuinely single-user, set "
+            "DEPLOYMENT_MODE=single_user explicitly instead of leaving it unset."
+        )
+
+
 # ---------------------------------------------------------------------------
 # Token validation.
 # ---------------------------------------------------------------------------
