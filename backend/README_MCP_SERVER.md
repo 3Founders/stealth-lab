@@ -3,7 +3,18 @@
 Exposes StealthLab's bi-temporal knowledge/task graph, debate-based conflict
 resolution, procedure lifecycle, Implementation Registry, the
 Problem/Benchmark/Solution/Evaluation product model, and a
-retrieval-grounded coding agent as **30 MCP tools**.
+retrieval-grounded coding agent as **29 MCP tools**.
+
+> **Post-freeze security hardening (`v1-final-2026-09-03.1`).**
+> `apply_change_set` was **removed as a public MCP tool** (30 → 29 tools;
+> `tools/list` no longer exposes it). It was an ungated arbitrary
+> knowledge-graph write with no persisted approval and no audit row.
+> Graph mutation from MCP now goes **only** through the gated
+> `submit_approval` (debate scorecards) and `decide_decomposition`
+> (decomposition proposals) paths; the internal `KnowledgeUpdater` is
+> reachable from those two services alone. See
+> `docs/final-v1.md` § "POST-FREEZE SECURITY HARDENING" and
+> `.scratch/final-v1-postfreeze-hardening.md`.
 
 > **Final-V1 update (2026-09-03).** Two changes to what is below:
 > 1. **Six product-model tools** were added — `find_problem`,
@@ -49,9 +60,10 @@ retrieval-grounded coding agent as **30 MCP tools**.
 
 ## The tools
 
-_The table lists the 21-tool core surface; the six product-model tools and
-`get_claim_graph` from the Final-V1 update above bring the live registry to
-28. `docs/final-v1.md` §1 documents the product-model tools._
+_The table lists the 20-tool core surface (was 21; `apply_change_set` was
+removed post-freeze — see the hardening note above); the six product-model
+tools and `get_claim_graph` from the Final-V1 update above bring the live
+registry to 27. `docs/final-v1.md` §1 documents the product-model tools._
 
 | Tool | What it does | Writes to the graph? |
 |---|---|---|
@@ -59,7 +71,6 @@ _The table lists the 21-tool core surface; the six product-model tools and
 | `check_procedure` | Audit-mode ALLOW/WOULD_REFUSE verdict on reusing a named procedure right now, with evidence | No -- read-only, informs the caller, never blocks |
 | `decompose_task` | Turn an unstructured problem into a structured proposal (new nodes/edges), persisted but not yet applied | No -- returns a proposal only |
 | `decide_decomposition` | Approve/reject a `decompose_task` proposal: re-runs the capability-boundary check at apply time | **Yes, gated** -- the correct path for `decompose_task`'s output |
-| `apply_change_set` | Apply a change_set directly, no approval gate | **Yes, ungated** |
 | `detect_conflict_trigger` | Find a real conflict between knowledge_nodes, open a debate trigger | Yes -- creates a proxy task node + trigger, doesn't touch existing content |
 | `propose_synthesis` | Run a real multi-round debate on a trigger, produce scorecards | No -- drives debate state to `PENDING_APPROVAL`, doesn't write graph content |
 | `submit_approval` | Approve/reject a scorecard: applies + audits + finalizes debate state | **Yes, gated** -- the correct path for debate-originated changes |
@@ -93,36 +104,34 @@ implementation registered since.
 ### Important: which gated tool goes with which proposal
 
 Two different tools produce proposals, and each has its own required
-apply step -- do not cross them:
+apply step -- do not cross them. Since the post-freeze hardening these are
+the **only** two ways to mutate the knowledge graph from MCP; the raw
+`apply_change_set` primitive is no longer exposed as a public tool.
 
-- **`decompose_task` output → `decide_decomposition`, never `apply_change_set`.**
-  `apply_change_set` uses `KnowledgeUpdater.apply()`, which never calls
-  `validate_generative()` -- the capability-boundary check that is this
-  project's stated only real guarantee against a prompt-injected/hijacked
-  model (generated content may only *create* new nodes and connect them
-  to each other, never modify or invalidate anything that already
-  exists). `decide_decomposition` calls the real `app.api.decompose.decide()`,
-  which re-runs `validate_generative()` at apply time, so a proposal
-  tampered with in storage between propose and decide still can't
-  escalate. This was a real bug in an earlier version of this server
-  (`decompose_task` used to tell callers to apply via `apply_change_set`)
-  -- fixed, but `apply_change_set`'s own docstring in `server.py` still
-  describes decomposition proposals as its "intended case" and has not
-  been updated to match; flagged here rather than silently rewritten
-  in-code.
-- **`propose_synthesis` output → `submit_approval`, never `apply_change_set`.**
-  `apply_change_set` is a raw write primitive with **no approval gate** --
-  it doesn't check debate state, doesn't require `APPROVED`, doesn't write
-  an audit row. `submit_approval` is the real, gated path: it applies the
-  change_set, writes a row to the `approvals` table, and transitions the
-  debate to `APPROVED`/`REJECTED` -- all atomically, so there's never a
-  false audit trail (an approval recorded against a change that didn't
-  actually apply). Skipping this and calling `apply_change_set` directly on
-  a debate scorecard's change_set bypasses human approval entirely.
+- **`decompose_task` output → `decide_decomposition`.**
+  `decide_decomposition` calls the real `app.api.decompose.decide()`,
+  which re-runs `validate_generative()` at apply time -- the
+  capability-boundary check that is this project's stated only real
+  guarantee against a prompt-injected/hijacked model (generated content
+  may only *create* new nodes and connect them to each other, never
+  modify or invalidate anything that already exists). The proposal is a
+  persisted `decompositions` row behind a `status='proposed'` gate, so a
+  proposal tampered with in storage between propose and decide still
+  can't escalate. The change_set applied is the **stored** one, never
+  caller-supplied.
+- **`propose_synthesis` output → `submit_approval`.**
+  `submit_approval` is the real, gated path: it re-loads the persisted
+  `scorecards` row, applies its change_set, writes a row to the
+  `approvals` table, and transitions the debate to `APPROVED`/`REJECTED`
+  -- all atomically, so there's never a false audit trail (an approval
+  recorded against a change that didn't actually apply).
 
-`apply_change_set` itself is for change_sets that never went through
-either proposal flow -- e.g. a manually constructed change_set for
-testing.
+Both paths run through the internal `KnowledgeUpdater`, which is now
+reachable only from `app/api/approval.py::decide` and
+`app/api/decompose.py::decide` -- each requiring a persisted proposal, a
+state gate, actor resolution, and an audit write. There is no public MCP
+entry point for a hand-constructed change_set; a manually built change_set
+for testing goes through the service layer directly, not the MCP surface.
 
 ## Claim-graph viewer (`/claim-graph`)
 
@@ -166,8 +175,8 @@ just raise the timeout in the Inspector's own Configuration panel after
 it opens -- the Inspector's default is a real 10s/60s, far too short for
 a genuine multi-round debate.)
 
-Test order, cheapest/safest first: `retrieve_precedent` → `apply_change_set`
-with deliberately malformed input → `detect_conflict_trigger` → only then
+Test order, cheapest/safest first: `retrieve_precedent` →
+`detect_conflict_trigger` → only then
 `propose_synthesis`/`submit_approval`/`decompose_task`/`find_best_way`, since
 those cost real API spend.
 
@@ -186,10 +195,10 @@ against 1.29.0, not assumed from changelogs.
 
 **Why this stays loopback-only.** `DATABASE_URL` is a local Postgres
 instance -- a cloud-hosted server could not reach it. More importantly,
-`find_best_way`'s `repo_path` is caller-controlled and `apply_change_set` is an
-**ungated write** (see "Known v1 limitations" below); a bearer token gates
-*who* can call these tools, it does not make either tool safe against
-*anyone* holding a valid token. Treat this as a way to reach the server from
+`find_best_way`'s `repo_path` is caller-controlled (see "Known v1
+limitations" below); a bearer token gates *who* can call these tools, it
+does not make every tool safe against *anyone* holding a valid token.
+Treat this as a way to reach the server from
 another process/machine you already trust, not as a public deployment.
 
 ### Identity: what gets attributed on `approved_by`/`created_by`/`author`
@@ -197,7 +206,7 @@ another process/machine you already trust, not as a public deployment.
 **Default posture (no extra config): every caller looks the same.** The
 bearer token below gates *whether* a caller may reach the server at all; it
 does not by itself distinguish *which* caller is calling. Every write-path
-tool (`decide_procedure`, `submit_approval`, `apply_change_set`, etc.)
+tool (`decide_procedure`, `submit_approval`, `decide_decomposition`, etc.)
 attributes to a caller-supplied, self-asserted parameter (`approver_id` and
 similar) unless a real identity resolves -- fine for local/single-user use,
 but in a real shared deployment any caller holding the one shared token can
@@ -388,6 +397,11 @@ engine-verified measurement).
 - **Rule extraction / SHADOW→ENFORCE lifecycle status is unconfirmed** --
   no code for this was found in this session's review. Worth checking
   whether it exists at all before treating it as an "MCP gap" specifically.
+- **Closed post-freeze (`v1-final-2026-09-03.1`):** the raw ungated
+  `apply_change_set` write primitive was **removed from the public MCP
+  surface**. It is no longer in `tools/list` and is not callable by any
+  token holder. Graph mutation from MCP is gated through `submit_approval`
+  / `decide_decomposition` only.
 
 ## Test scripts included
 
@@ -396,7 +410,8 @@ honestly stubbed around real network walls this dev sandbox couldn't
 reach -- Supabase, Voyage, and your LLM panel providers -- re-run them on
 real infra to close that gap):
 
-- `test_apply_change_set_live.py`
+- `test_apply_change_set_live.py` (probe for the now-removed public tool;
+  retained only as a historical KnowledgeUpdater exercise)
 - `test_tasks_extension_live.py`
 - `test_propose_synthesis_live.py`
 - `test_find_best_way_live.py`

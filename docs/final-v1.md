@@ -1,9 +1,20 @@
 # Final V1 — what shipped
 
-_Authoritative as of branch `core-a/ingestion-testing` head `a404593`
-(baseline `a5dace6` = tag `v1-baseline-2026-09-02`; final freeze tag
-`v1-final-2026-09-03`). Written 2026-09-03 for FINAL-V1 §6, extended for
-the freeze pass (§8/§10)._
+_Version lineage — three points, all explicit:_
+
+| Point | Commit | Tag |
+|---|---|---|
+| Historical baseline | `a5dace6` | `v1-baseline-2026-09-02` |
+| Historical frozen Final V1 | `d0b173c` | `v1-final-2026-09-03` |
+| Post-freeze security hardening (current launch candidate) | the commit tagged `v1-final-2026-09-03.1` | `v1-final-2026-09-03.1` |
+
+`v1-final-2026-09-03` (`d0b173c`) is the **historical frozen Final V1**, not
+the current launch commit. The **launch candidate** is the `.1` patch tag
+(`v1-final-2026-09-03.1` → the commit tagged `v1-final-2026-09-03.1`), which removes the public
+`apply_change_set` MCP tool (see § "POST-FREEZE SECURITY HARDENING" below).
+
+_Written 2026-09-03 for FINAL-V1 §6, extended for the freeze pass (§8/§10)
+and the post-freeze security hardening._
 
 This is the single place a reader learns what changed in the Final-V1
 hardening wave. It does not restate the whole system — `README.md` (V1
@@ -15,7 +26,7 @@ explicitly *not* in this wave.
 The interim record this supersedes: `.scratch/current-state-audit.md`
 (§0 audit) and `.scratch/final-v1-hardening-acceptance.md` (§61 acceptance
 matrix). Every closed unit's design rationale is in its commit message
-(`git log a5dace6..a404593`).
+(`git log a5dace6..v1-final-2026-09-03.1`).
 
 Terminology used throughout (one set, no synonyms):
 
@@ -416,11 +427,12 @@ Accepted, not blockers. Real, not invented.
    the trace-ingestion path, **not** the corpus→procedure or product-model
    path, and is out of this wave's scope.
 
-5. **`apply_change_set` remains an ungated raw write primitive** — behind
-   an opt-in flag, does not ship public (`commLLM.md`). Approval + audit
-   come from `submit_approval` / `decide_decomposition`, not from
-   `apply_change_set`. Unchanged this wave; restated so it is not
-   mistaken for a regression.
+5. **`apply_change_set` — CLOSED post-freeze.** Was an ungated raw write
+   primitive present in the public MCP registry; **removed as a public
+   tool** in `v1-final-2026-09-03.1` (see § "POST-FREEZE SECURITY
+   HARDENING"). Graph mutation from MCP is now gated via `submit_approval`
+   / `decide_decomposition` only. Kept in this list as a pointer; the live
+   entry is under FREEZE PASS · A · CLOSED.
 
 6. **`find_best_way`'s Tasks-extension backing store is in-memory** —
    `--workers 1` is load-bearing; task state does not survive a server
@@ -487,6 +499,15 @@ freeze pass:
   skipped** across backend offline (2118), live E2E vs Supabase (12),
   harness (254), packaging (95), browser E2E (7); frontend `tsc` clean.
   `.scratch/final-v1-regression-results.md`.
+- **Public ungated `apply_change_set` MCP exposure** — removed as a public
+  tool (`v1-final-2026-09-03.1`, post-freeze security hardening); graph
+  mutation is gated via `submit_approval` / `decide_decomposition` only.
+  The internal `KnowledgeUpdater` is reachable from
+  `app/api/approval.py::decide` and `app/api/decompose.py::decide` alone,
+  each requiring a persisted proposal, a state gate, actor resolution, and
+  an audit write. Public MCP tool count 30 → 29. Detail in
+  § "POST-FREEZE SECURITY HARDENING" below and
+  `.scratch/final-v1-postfreeze-hardening.md`.
 
 ### B · KNOWN / ACCEPTED V1 QUALITY LIMITATIONS
 
@@ -502,12 +523,10 @@ The six items under **KNOWN V1 QUALITY LIMITATIONS** above, i.e.:
    creator-gated; consistent with every other V1 read surface).
 4. `test_ingestion_admin_endpoint_e2e` pre-existing red — trace →
    observation → claim drain, not the corpus/product path.
-5. `apply_change_set` is an ungated raw write primitive **present in the
-   public MCP registry** — CLAUDE.md's "opt-in flag, not public" posture
-   is not enforced by a flag. Unchanged from the frozen baseline `a5dace6`
-   (not introduced or regressed this wave). Approval + audit come from
-   `submit_approval` / `decide_decomposition`. Flagged for a founder
-   decision; not a Final-V1 blocker.
+5. ~~`apply_change_set` ungated + present in the public MCP registry.~~
+   **MOVED to A · CLOSED** — removed as a public MCP tool in the
+   post-freeze security hardening (`v1-final-2026-09-03.1`). No longer a
+   known/accepted limitation.
 6. MCP Tasks-extension backing store is in-memory (`--workers 1`
    load-bearing) — the durable execution *run* is Postgres-durable, the
    MCP Tasks *envelope* around it is not.
@@ -556,3 +575,66 @@ Deliberately not built; safe to add later.
   formal unfreeze decision; today recorded as a board note).
 - Internet-scale external-corpus admission (gated on public-launch
   signals).
+
+---
+
+## POST-FREEZE SECURITY HARDENING (v1-final-2026-09-03.1)
+
+Landed **after** the `d0b173c` / `v1-final-2026-09-03` freeze. It changes
+the public MCP surface, so it is a patch tag (`v1-final-2026-09-03.1` →
+the commit tagged `v1-final-2026-09-03.1`) on top of the frozen Final V1, not a rewrite of it.
+Full draft account: `.scratch/final-v1-postfreeze-hardening.md`.
+
+**Issue.** The public MCP tool `apply_change_set` was an ungated,
+arbitrary knowledge-graph write: any caller holding a valid token could
+apply a hand-constructed `change_set` directly, with **no persisted
+approval and no audit row**.
+
+**Root cause.** It shipped as a bare `@server.tool()` alongside the gated
+`submit_approval` / `decide_decomposition`. `CLAUDE.md`'s "behind an
+opt-in flag, does not ship public" posture was never enforced by an
+actual flag, so the tool was live in `tools/list` on every deployment.
+
+**Fix.** Removed the public tool and its now-dead imports from
+`app/mcp_server/server.py`. The internal mutation implementation
+(`KnowledgeUpdater`) stays, now reachable **only** from
+`app/api/approval.py::decide` (debate scorecards → persisted `scorecards`
+row + `approvals` audit row) and `app/api/decompose.py::decide`
+(decomposition proposals → persisted `decompositions` row, `status =
+'proposed'` gate). Both require a persisted proposal, a state gate, actor
+resolution, and an audit write, and the change_set applied is the
+**stored** one — never caller-supplied.
+
+**Approval model.** Unchanged. Same `approvals` table, same scorecard
+state machine, same `decompositions.status` gate. No new approval system
+was introduced.
+
+**Public MCP change.** 30 → 29 tools. `tools/list` no longer exposes
+`apply_change_set`.
+
+**Tests.** `backend/tests/test_apply_change_set_removed_security.py` (21
+offline) + `backend/tests/test_apply_change_set_removed_e2e.py` (2 vs
+Supabase). Prove: `apply_change_set` absent from the registry and from
+`tools/list` (total 29); no module-level `server.apply_change_set`; an
+AST scan asserts `KnowledgeUpdater` is imported by **exactly**
+`{app/api/approval.py, app/api/decompose.py}` and `server.py` imports
+neither it nor `apply_debate_result` (guards against a re-added hidden
+route); `approval.decide` on a missing / non-`PENDING_APPROVAL` scorecard
+mutates nothing (404 / 409); `decompose.decide` on `status != 'proposed'`
+is 409 and applies nothing, and `DecideRequest` / `ApprovalRequest` carry
+no `ops` / `change_set` field so a caller cannot smuggle ops; both gated
+paths apply the **stored** `row["change_set"]` verbatim; a resolved OIDC
+actor overrides a spoofed `approver_id` in both paths; a failed apply
+surfaces a plain 409 that leaks no `token` / `password` / `api_key` / DSN
+material; re-deciding a decided proposal is 409, not a double-apply. The
+two e2e cases drive a real `PENDING_APPROVAL` scorecard through
+`submit_approval` and a real `status='proposed'` decomposition through
+`decide_decomposition`, and confirm the write still lands **with** its
+audit row (`approvals` / `decompositions.status`+`approver_id`+`decided_at`).
+Full offline backend suite after the change: **2139 passed, 289 skipped,
+0 failed**; packaging **95 passed**; `test_live_scripts_not_collected`
+still green.
+
+**Lineage.** Old tag `v1-final-2026-09-03` (`d0b173c`) unchanged and still
+the historical frozen Final V1. New patch tag `v1-final-2026-09-03.1` →
+the commit tagged `v1-final-2026-09-03.1` is the current launch candidate.

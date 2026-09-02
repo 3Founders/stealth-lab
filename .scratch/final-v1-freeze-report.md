@@ -301,3 +301,23 @@ cd frontendv1 && NEXT_PUBLIC_API_URL=http://127.0.0.1:8000 npx playwright test
 - `git log --merges a5dace6..HEAD` empty — `main` is `a5dace6` plus a
   linear fast-forward. No force-push. No history rewrite. No squash of
   the hardening history.
+
+---
+
+## POST-FREEZE ADDENDUM (v1-final-2026-09-03.1)
+
+This report is a point-in-time record of the `d0b173c` /
+`v1-final-2026-09-03` freeze and is **not** rewritten. One item has moved
+since:
+
+- **§5 "Carried, unchanged from baseline: `apply_change_set` ungated in
+  the public MCP registry" is now CLOSED.** The post-freeze security
+  hardening removed `apply_change_set` as a public MCP tool (public tool
+  count 30 → 29); graph mutation from MCP is gated via `submit_approval` /
+  `decide_decomposition` only. Full account:
+  `.scratch/final-v1-postfreeze-hardening.md` and `docs/final-v1.md`
+  § "POST-FREEZE SECURITY HARDENING".
+- **Lineage:** `v1-final-2026-09-03` (`d0b173c`) is unchanged and remains
+  the historical frozen Final V1. The current launch candidate is the
+  patch tag `v1-final-2026-09-03.1` → the commit tagged `v1-final-2026-09-03.1` (lead fills the
+  SHA).

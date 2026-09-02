@@ -1,8 +1,14 @@
 # FINAL V1 — Production Readiness Report
 
-**Branch:** `core-a/ingestion-testing`
+**Branch:** `core-a/ingestion-testing` (since integrated — **`main` is now
+the authoritative branch**; this report is a point-in-time record of the
+hardening pass and is not rewritten)
 **Baseline SHA:** `a5dace6ccbe52c7669e13fa0efe8eb17448d05a8` (tag `v1-baseline-2026-09-02`)
-**Final candidate SHA:** `dfb793e` (updated by §16 commit)
+**Final candidate SHA:** `dfb793e` (updated by §16 commit) — folded into the
+frozen Final V1 `d0b173c` / `v1-final-2026-09-03`. **Post-freeze:** a
+security hardening removed the public `apply_change_set` MCP tool; current
+launch candidate is `v1-final-2026-09-03.1` → the commit tagged `v1-final-2026-09-03.1`. See
+`.scratch/final-v1-postfreeze-hardening.md`.
 **DB target for all E2E:** Supabase `wckeklqxmiglivfolujn` (ap-south-1 session pooler), Postgres 17.6, migrations 01–37.
 **Date:** 2026-09-03
 
@@ -136,7 +142,7 @@ lane and are recorded here for completeness; this lane did not author them.
 | Descriptor secret leakage | `_sanitize_auth` unit-tested for inline `token` / `client_secret` / nested `oauth` → `{"redacted": true}`; `test_implementation_descriptor_offline.py` asserts no drift. | **PASS** |
 | Evaluation lifecycle forgery | DB trigger + service both block `status='completed'` without execution lineage; caller success numbers ignored. | **PASS** |
 | Ingestion capability escalation | Fail-closed; capability statement never becomes trust/execution authority (grep-verified). | **PASS** |
-| MCP `apply_change_set` | Unchanged — stays behind the opt-in flag, does not ship public. | **PASS** |
+| MCP `apply_change_set` | **CLOSED post-freeze (`v1-final-2026-09-03.1`): removed as a public MCP tool** (public tool count 30 → 29). Graph mutation from MCP is gated via `submit_approval` / `decide_decomposition` only; `KnowledgeUpdater` reachable from `app/api/approval.py::decide` / `app/api/decompose.py::decide` alone. | **PASS** |
 | Credentials in Postgres | No new secret-storing column this wave; `auth_requirements` holds `credential_ref` only. | **PASS** |
 
 No secret, `.env`, or service-role key is committed. `frontendv1/.env.local.example`

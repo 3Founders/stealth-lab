@@ -49,6 +49,12 @@ The parts of this document that this section overrides:
   implementation version once and never re-resolves it on resume.
 - **`Problem/Benchmark/Solution/Evaluation` are shipped, not "future
   concepts"** — see `docs/final-v1.md` §1.
+- **Post-freeze (`v1-final-2026-09-03.1`): the public `apply_change_set`
+  MCP tool was removed** (public MCP tool count 30 → 29). Graph mutation
+  from MCP is gated through `submit_approval` / `decide_decomposition`
+  only; the internal `KnowledgeUpdater` is reachable from
+  `app/api/approval.py::decide` / `app/api/decompose.py::decide` alone.
+  See `docs/final-v1.md` § "POST-FREEZE SECURITY HARDENING".
 
 ---
 

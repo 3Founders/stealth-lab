@@ -92,8 +92,11 @@ instructions, in `docker-compose.yml`'s header comment, now always say
    not authorization — documented in SECURITY.md threat model.
 2. **Redaction default-on**: `trace_redaction.py` is the single choke point;
    no raw-prompt persistence flag exists in v0.1.
-3. **Raw write primitive stays gated**: `apply_change_set` requires explicit
-   opt-in env flag; never advertised in tool listings by default.
+3. **No raw graph-write primitive on the public MCP surface**: the
+   `apply_change_set` tool was removed post-freeze (`v1-final-2026-09-03.1`).
+   Graph mutation from MCP is gated through `submit_approval` /
+   `decide_decomposition` only; the internal `KnowledgeUpdater` is
+   reachable from those two services alone.
 4. **Fresh-start honesty**: no backfills, no legacy shims — a fresh install sees
    exactly what the schema births (verified by the engine run above).
 5. **Apache-2.0** + plain-language data statement (local-first, opt-in telemetry

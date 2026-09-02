@@ -145,7 +145,11 @@ short version of what changed:
   branches (§28); document / skill ingestion treats untrusted document
   text as data behind a fence and cannot use it to escalate capability or
   trust (§29).
-- **MCP surface is 30 registered tools** (was 21).
+- **MCP surface is 29 registered tools** (was 21). The post-freeze
+  security hardening (`v1-final-2026-09-03.1`) removed the public
+  `apply_change_set` MCP tool (30 → 29): graph mutation from MCP now flows
+  only through the gated `submit_approval` / `decide_decomposition` paths.
+  See `docs/final-v1.md` § "POST-FREEZE SECURITY HARDENING".
 - **The V1 product surface is `frontendv1/`** — a separate Next.js 16 app
   (now tracked) with the benchmark-first pages and a 13-tool WebMCP
   bridge, owned by the frontend session. The older `frontend/` (Next.js 15
@@ -180,9 +184,13 @@ original debate/approval slice only; it predates the newer tools.
 | `find_best_way` | Retrieval-grounded coding agent against a real repo on disk |
 | `check_procedure` | Applicability check → `ALLOW` or structured `WOULD_REFUSE` with a cited reason (audit mode only) |
 
+> **Post-freeze (`v1-final-2026-09-03.1`):** `apply_change_set` was removed
+> as a public MCP tool. The row above is retained only as a record of the
+> historical debate/approval slice. Graph mutation from MCP is now gated
+> through `submit_approval` / `decide_decomposition` exclusively.
+
 Full setup, the stdio vs. hosted-HTTP split, and the known v1 limitations
-(no job queue, `apply_change_set` is an ungated write, `repo_path` is
-caller-controlled) are documented in
+(no job queue, `repo_path` is caller-controlled) are documented in
 [`backend/README_MCP_SERVER.md`](backend/README_MCP_SERVER.md) — that's the
 accurate, current setup doc; if anything below disagrees with it, trust it
 instead.

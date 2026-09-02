@@ -1,5 +1,12 @@
 # StealthLab v0.1 — End-to-End Testing Guide
 
+> **Historical (v0.1).** Tool counts and suite numbers below predate Final
+> V1. The current MCP surface is **29 tools** (`apply_change_set` was
+> removed as a public tool post-freeze, `v1-final-2026-09-03.1`); see
+> `docs/final-v1.md` and `backend/README_MCP_SERVER.md` for the current
+> surface. The module structure and per-module "what a pass means" notes
+> below still apply.
+
 Companion to `PRODUCTION_READINESS.md` (status snapshot) and `.scratch/build-board.md`
 (lane history). This doc is the runbook: how to actually verify every real component
 of v0.1, module by module, so anyone (a lane, a fresh contributor, a future Claude
@@ -118,10 +125,12 @@ python -m app.mcp_server.server   # Streamable HTTP on loopback
 ```
 
 Then, from a client (or `claude mcp list` if using Claude Code as the caller):
-confirm all 9 tools resolve — `retrieve_precedent`, `apply_change_set`,
-`propose_synthesis`, `find_best_way`, `detect_conflict_trigger`, `check_procedure`,
+confirm the tools resolve — `retrieve_precedent`, `propose_synthesis`,
+`find_best_way`, `detect_conflict_trigger`, `check_procedure`,
 `decompose_task`, `decide_decomposition`, `submit_approval`. An unauthenticated
-`POST /mcp` should return 401.
+`POST /mcp` should return 401. (`apply_change_set` was in this list at v0.1;
+it was removed as a public tool post-freeze — `v1-final-2026-09-03.1`.
+The live registry is now 29 tools, not 9 — grep `@server.tool()`.)
 
 **Pass:** 9 tools, not 7 or 8 — this exact drift has happened three separate times
 in the docs this session (root README, `README_MCP_SERVER.md`, `packaging/README.md`,

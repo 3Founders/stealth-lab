@@ -10,7 +10,7 @@ Two surfaces:
 
 | Command | What it launches |
 |---|---|
-| `stealthlab-mcp-server` | The StealthLab MCP server (9 tools over the bi-temporal knowledge/task graph) — Streamable HTTP on loopback by default, or `--stdio` |
+| `stealthlab-mcp-server` | The StealthLab MCP server (29 tools over the bi-temporal knowledge/task graph) — Streamable HTTP on loopback by default, or `--stdio` |
 | `stealthlab-trace-hook` | Claude Code hook command: reads one hook JSON payload on stdin, redacts it (`trace_redaction`), appends it to the local collector file (`trace_collector.append_event`) |
 | `stealthlab-status-page` | The minimal status surface: one read-only page listing episodes -> claims -> procedures with capability scores and evidence trails (board item P2) |
 | `stealthlab-public-board` | The public scoreboard generator: static markdown + HTML page from a real-arms sweep's results + spend JSONL, power-analysis footer with discordant pairs beside every p-value (board item P5) |
@@ -156,9 +156,9 @@ claude mcp add --transport http stealthlab http://127.0.0.1:8765/mcp \
 claude mcp list        # expect: stealthlab ✔ Connected
 ```
 
-Cheapest-first tool order: `retrieve_precedent` → `apply_change_set` with
-malformed input (expect a REFUSED message) → everything else costs real API
-spend. `propose_synthesis` / `find_best_way` are long-running; raise client
+Cheapest-first tool order: `retrieve_precedent` → `get_procedure` /
+`check_applicability` (fast reads) → everything else costs real API spend.
+`propose_synthesis` / `find_best_way` are long-running; raise client
 timeouts (see `backend/README_MCP_SERVER.md`).
 
 ## Smoke test B — MCP server over stdio (no token)
@@ -249,9 +249,12 @@ touching `app.*`.
 
 ## Honest scope, inherited limitations stated plainly
 
-- **Loopback-only deployment posture.** The token gates who can call;
-  `apply_change_set` remains an ungated write and `find_best_way`'s `repo_path`
-  is caller-controlled — same accepted-for-now posture as
+- **Loopback-only deployment posture.** The token gates who can call.
+  Knowledge-graph mutation is gated (only `submit_approval` /
+  `decide_decomposition`, each requiring a persisted proposal + audit row;
+  the ungated `apply_change_set` tool was removed post-freeze,
+  `v1-final-2026-09-03.1`). `find_best_way`'s `repo_path` is still
+  caller-controlled — same accepted-for-now posture as
   `backend/README_MCP_SERVER.md`.
 - **Single process only.** Tasks-extension state is in-memory; run exactly one
   server process (uvicorn default here).

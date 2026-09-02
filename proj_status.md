@@ -105,7 +105,10 @@ Re-verified against the actual repo (not commit messages) on 2026-09-01:
 - **Harness suite: 254 passed / 0 skipped** (`experiments/harness`, was
   reported as 241/241). **Packaging suite: 95 passed** (not previously
   recorded here).
-- **MCP tool surface: 20 registered tools**, not 9 — verified by running
+- **MCP tool surface: 29 registered tools** (was 20 mid-2026; the Final-V1
+  additions brought product-model + durable-run tools, and the post-freeze
+  hardening `v1-final-2026-09-03.1` removed the ungated `apply_change_set`) —
+  verified by running
   `packaging/tests/test_server_offline.py::test_all_registered_tools`
   (passes) and independently by listing `server._tool_manager.list_tools()`
   after import. New since the last count: `check_applicability`,
@@ -188,7 +191,7 @@ update above — real current counts are 1981/252/0 and 254/0.)
 | `SECURITY.md` + `DATA_STATEMENT.md` published | ✅ |
 | README quickstart works from a clean clone | ✅ |
 | Doc accuracy (migration count, stale paths, stale product framing) | 🟡 this pass fixed the MCP tool-count and REST-layer gaps in `README.md`/`commLLM.md`; not a full re-sweep |
-| **`check_procedure` / `WOULD_REFUSE` reachable through the MCP server** | ✅ closed — real tool, tested against the actual server (now one of 20 registered tools, see update at top) |
+| **`check_procedure` / `WOULD_REFUSE` reachable through the MCP server** | ✅ closed — real tool, tested against the actual server (now one of 29 registered tools, see update at top) |
 | `docker-compose.yml` boots clean | ✅ **reported** by the infra lane (zero fixes needed) — status not independently re-checked this pass |
 | Migration chain verified on a disposable DB | ✅ 33 migration files, re-run against a genuinely fresh throwaway `pgvector/pgvector:pg15` container — 33/33 applied, 0 pending, 0 checksum mismatches, 0 errors (engine-verified 2026-09-02) |
 | `bootstrap_demo.py` scripted two-phase story | ✅ **closed** — see below; this row was wrong in the 2026-08-27 entry |

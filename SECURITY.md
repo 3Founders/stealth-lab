@@ -39,10 +39,13 @@ threat model.
    to.** It does not mean the caller is limited in what they can then do —
    there is no per-tool, per-scope, or per-user permission model in v0.1.
    Concretely:
-   - `apply_change_set` is a **raw, ungated write primitive**. Anyone
-     holding a valid token can call it directly, bypassing human review of
-     anything that would normally flow through `propose_synthesis`'s
-     approval path.
+   - `apply_change_set` was a raw, ungated write primitive; it was
+     **removed from the public MCP surface** in the post-freeze security
+     hardening (`v1-final-2026-09-03.1`). Graph mutation from MCP now
+     flows only through the gated `submit_approval` /
+     `decide_decomposition` paths (persisted proposal + state gate +
+     audit row); the internal `KnowledgeUpdater` is reachable from those
+     two services alone.
    - `find_best_way`'s `repo_path` argument is **caller-controlled**. The
      sandbox stops edits from escaping the given path; nothing stops a
      caller from pointing it at a sensitive real directory in the first
@@ -92,7 +95,8 @@ your machine.
 These are accepted-for-now tradeoffs for a single-user local tool, not bugs
 to be quietly patched:
 
-- `apply_change_set` is an ungated write primitive (above).
+- `apply_change_set` was an ungated write primitive; **removed from the
+  public MCP surface** post-freeze (`v1-final-2026-09-03.1`) — see above.
 - `find_best_way`'s `repo_path` is caller-controlled (above).
 - No per-user, per-scope, or per-tool authorization model exists in v0.1 —
   a valid token grants everything a token can grant.

@@ -158,9 +158,12 @@ mandatory E2E — §3 durable tier-2, §56 frontend browser flow, §57 product
 lineage, §58 retry/resume, §59 claim-graph, migration upgrade — is CLOSED
 against real Postgres / Supabase.
 
-Carried (unchanged from the frozen baseline, not introduced or regressed
-this wave; recorded for founder review, not a Final-V1 blocker):
-`apply_change_set` is an ungated raw write primitive that is present in the
-public MCP registry — CLAUDE.md's "opt-in flag, not public" posture is not
-enforced by a flag today. Approval + audit still come from
-`submit_approval` / `decide_decomposition`, never from `apply_change_set`.
+Carried item — **CLOSED (post-freeze, `v1-final-2026-09-03.1`): removed as
+a public MCP tool.** `apply_change_set` was an ungated raw write primitive
+present in the public MCP registry (unchanged from the frozen baseline, not
+introduced or regressed by the hardening wave). The post-freeze security
+hardening removed it as a public tool (public tool count 30 → 29); graph
+mutation from MCP is gated via `submit_approval` / `decide_decomposition`
+only, and the internal `KnowledgeUpdater` is reachable from
+`app/api/approval.py::decide` / `app/api/decompose.py::decide` alone. See
+`.scratch/final-v1-postfreeze-hardening.md`.
