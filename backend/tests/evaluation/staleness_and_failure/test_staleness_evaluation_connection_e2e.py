@@ -1,22 +1,27 @@
 """
 Task spec §14 -- connecting the existing, already-proven claim->staleness->
 selection chain (tests/test_staleness_selection_e2e.py) to the
-Problem/Benchmark/Solution/Evaluation product-model layer that didn't exist
-when that chain was written.
+Problem/Benchmark/Solution/Evaluation product-model layer.
 
-Real finding, verified directly against the code before writing this test
-(not a guess): `app/services/product_model.py` has ZERO references to
-`staleness` anywhere -- `grep -in stale app/services/product_model.py`
-returns nothing, and the only place it touches the `procedures` table is a
-target-existence check for Solution association (`_SOLUTION_TABLE`), never
-a join on `procedures.staleness`. `problem_leaderboard`/`complete_evaluation`/
-`current_best` compute purely from `evaluations`/`evaluation_executions`
-rows. This is a real, current product gap, not invented staleness semantics
-beyond what the product supports -- the task spec explicitly asks to test
-the EXISTING actual policy, and the existing actual policy is "no
-connection at all" between claim staleness and Evaluation/leaderboard
-status. This test proves that gap concretely rather than asserting it from
-static analysis alone.
+HISTORICAL CONTEXT (Bug #7, Final-V1 evaluation): this test used to be named
+test_stale_underlying_procedure_does_not_change_evaluation_or_leaderboard_status
+and proved a real, confirmed gap -- `app/services/product_model.py` had ZERO
+references to `staleness` anywhere, so `problem_leaderboard`/
+`complete_evaluation`/`current_best` computed purely from
+`evaluations`/`evaluation_executions` rows and never noticed when a
+Solution's only underlying Procedure went stale.
+
+FIXED on main: `product_model.py` now recomputes each Solution's
+eligibility from `procedures.staleness` on every `problem_leaderboard`
+read -- a stale-backed Solution is marked `state="STALE"`, `eligible=False`,
+dropped from `current_best`/`conditional_leaders`, kept (with its historical
+numbers intact) in `leaderboard`, and surfaced in the new
+`ineligible_solutions` list. The underlying historical `evaluations` row
+itself is never rewritten or invalidated. This test is rewritten to prove
+that FIXED behavior, still driving staleness through the exact real
+production entry point (`relate_claims(..., relation="SUPERSEDES")` ->
+`propagate_claim_change()` -> `mark_procedure_stale()`), never a low-level
+helper called directly.
 
 Skips itself when DATABASE_URL is unset, matching every other _e2e.py file.
 """
@@ -52,7 +57,7 @@ def _tag() -> str:
 
 
 @pytest.mark.asyncio
-async def test_stale_underlying_procedure_does_not_change_evaluation_or_leaderboard_status():
+async def test_stale_underlying_procedure_removes_solution_from_current_best_but_preserves_history():
     # No cleanup of procedures/executions/execution_plans: those tables are
     # frozen/append-only by trigger (migration 23) and FK-locked to each
     # other once a real execution exists, matching
@@ -140,29 +145,42 @@ async def test_stale_underlying_procedure_does_not_change_evaluation_or_leaderbo
         )
         assert after_staleness == "stale", "the underlying procedure really did go stale"
 
-        # --- THE GAP: the product-model layer never looks at staleness at
-        # all. The Evaluation and leaderboard report EXACTLY the same
-        # BEST_VERIFIED / current_best status as before, even though the
-        # Solution's only underlying procedure is now stale. ---
-        ev_reloaded = await pm.get_evaluation(pool, ev["id"])
+        # --- FIXED: the leaderboard recomputes eligibility from staleness on
+        # every read. The Solution drops out of current_best, is marked
+        # STALE/ineligible with a reason, but is neither deleted from the
+        # board nor stripped of its historical numbers. ---
+        board_after = await pm.problem_leaderboard(pool, problem["id"], scope=AccessScope.unrestricted())
+        assert sol["id"] not in board_after["current_best"], (
+            "fixed: a Solution whose only underlying procedure is now stale must not "
+            "remain current_best"
+        )
+        entry_after = next(r for r in board_after["leaderboard"] if r["solution_id"] == sol["id"])
+        assert entry_after["state"] == "STALE"
+        assert entry_after["eligible"] is False
+        assert "stale" in entry_after["ineligibility_reason"].lower()
+        # still visible on the board, with its historical numbers intact --
+        # demoted, not erased.
+        assert entry_after["run_count"] == n
+        assert entry_after["verified_successes"] == successes
+        assert {"solution_id": sol["id"], "reason": entry_after["ineligibility_reason"]} \
+            in board_after["ineligible_solutions"]
+        # no verified solution remains for this problem, so there is honestly
+        # no current-best winner (spec: "no verified solution yet"), not a
+        # fabricated one.
+        assert board_after["current_best"] == []
+
+        # --- HISTORICAL EVALUATION IS PRESERVED, not rewritten or
+        # invalidated, and no fake replacement Evaluation is fabricated. ---
+        ev_reloaded = await pm.get_evaluation(pool, ev["id"], scope=AccessScope.unrestricted())
         assert ev_reloaded["status"] == "completed"
         assert ev_reloaded["run_count"] == n
         assert set(ev_reloaded["executions"]) == set(exec_ids), (
-            "get_evaluation does not re-derive anything from procedure staleness -- "
-            "it reports exactly the same executions/run_count as before the claim change"
+            "get_evaluation still reports exactly the same executions/run_count as "
+            "before the claim change -- staleness demotes eligibility, it does not "
+            "rewrite completed history"
         )
-
-        board_after = await pm.problem_leaderboard(pool, problem["id"], scope=AccessScope.unrestricted())
-        assert sol["id"] in board_after["current_best"], (
-            "CONFIRMED GAP: the solution is still current_best even though its only "
-            "underlying procedure is now stale -- problem_leaderboard has no staleness input"
-        )
-        state_after = next(r["state"] for r in board_after["leaderboard"] if r["solution_id"] == sol["id"])
-        assert state_after == "BEST_VERIFIED", (
-            "CONFIRMED GAP: still BEST_VERIFIED -- an Evaluation based on a since-invalidated "
-            "Solution is not silently demoted or flagged by anything in product_model.py. "
-            "Not fixed here (house rules against touching product code this pass) -- this is "
-            "the honest current policy, not a bug this test papers over."
-        )
+        all_evals = await pm.list_problem_evaluations(pool, problem["id"], scope=AccessScope.unrestricted())
+        assert len(all_evals) == 1, "staleness must not fabricate a new Evaluation"
+        assert all_evals[0]["id"] == ev["id"]
     finally:
         await pool.close()

@@ -169,7 +169,7 @@ async def test_benchmark_version_bump_is_a_distinct_evaluation_context(pool):
         evaluation_protocol={"verification": "deterministic"},
     )
     assert v1["id"] != v2["id"]
-    benches = await pm.list_problem_benchmarks(pool, problem["id"])
+    benches = await pm.list_problem_benchmarks(pool, problem["id"], scope=AccessScope.unrestricted())
     assert {b["id"] for b in benches} == {v1["id"], v2["id"]}
 
     # An evaluation against v1 and one against v2 are NOT comparable, even
@@ -393,7 +393,8 @@ async def test_ties_conditional_leaders_and_no_stored_winner_field(pool):
 
     # No stored winner anywhere in the row-level data this all comes from.
     for row in (await pm.get_problem(pool, problem["id"], scope=AccessScope.unrestricted()),
-                await pm.get_evaluation(pool, ev_a["id"]), await pm.get_evaluation(pool, ev_b["id"])):
+                await pm.get_evaluation(pool, ev_a["id"], scope=AccessScope.unrestricted()),
+                await pm.get_evaluation(pool, ev_b["id"], scope=AccessScope.unrestricted())):
         assert "winner" not in row and "best_solution_id" not in row
 
 

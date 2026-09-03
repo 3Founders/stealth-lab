@@ -74,42 +74,32 @@ async def _rest_client(pool):
 
 
 # ---------------------------------------------------------------------------
-# CONFIRMED GAP (not fixed here -- house rules against touching product
-# code): a private Problem's Benchmarks and Evaluations are NOT actually
-# scope-checked, at either the service layer or the REST surface, unlike
-# its Solutions (list_problem_solutions correctly gates on get_problem's
-# visibility first -- product_model.py:278). Verified directly against the
-# real code before writing this test:
+# HISTORICAL CONTEXT (Bug #8, Final-V1 evaluation): this test used to be
+# named test_private_benchmark_and_evaluation_are_not_scope_checked_confirmed_gap
+# and proved a real, confirmed gap -- product_model.get_benchmark /
+# list_problem_benchmarks / get_evaluation / list_problem_evaluations ran
+# raw, unscoped queries, so a private Problem's Benchmark/Evaluation content
+# was fully readable (and, via the list endpoints, discoverable without even
+# knowing the UUID) by any other identity or anonymously.
 #
-#   product_model.get_benchmark(pool, benchmark_id)            -- no `scope` param at all
-#   product_model.list_problem_benchmarks(pool, problem_id)    -- no `scope` param at all
-#   product_model.get_evaluation(pool, evaluation_id)          -- no `scope` param at all
-#   product_model.list_problem_evaluations(pool, problem_id)   -- no `scope` param at all
-#
-# and at the REST layer (app/api/problems.py):
-#   GET /v1/problems/{id}/benchmarks   -> pm.list_problem_benchmarks(pool, problem_id)   [no scope threaded]
-#   GET /v1/problems/{id}/evaluations  -> pm.list_problem_evaluations(pool, problem_id)  [no scope threaded]
-#   GET /v1/benchmarks/{id}            -> pm.get_benchmark(pool, benchmark_id)           [no scope threaded]
-#   GET /v1/evaluations/{id}           -> pm.get_evaluation(pool, evaluation_id)         [no scope threaded]
-#
-# every one of those four routes DOES accept `scope: AccessScope = Depends(get_scope)`
-# as a parameter (so a caller-supplied X-Viewer-Id IS resolved) -- it is simply
-# never passed into the service call, unlike the sibling
-# `GET /v1/problems/{id}/solutions` route on the same file, which does thread
-# scope through. This is an inconsistency with no documented rationale
-# (contrast app/api/runs.py's module docstring, which explicitly states
-# "reads are open" as a deliberate policy for that feature -- no such
-# statement exists here for benchmarks/evaluations). This is a real,
-# reportable privacy gap: a private Problem's benchmark/evaluation content
-# is fully readable by any other resolved identity (or anonymously) if the
-# UUID is known, and DISCOVERABLE without even knowing the UUID via the
-# list endpoints, which take no problem-visibility gate at all.
+# FIXED on main: all four accessors now take a required `scope: AccessScope`
+# keyword-only parameter and inherit the owning Problem's visibility -- the
+# exact rule `list_problem_solutions` already applied
+# (product_model.py:278) -- and the REST routes in app/api/problems.py now
+# thread the resolved `scope` into every one of those service calls instead
+# of dropping it. This test is rewritten to prove the FIXED behavior: owner
+# access, cross-user denial, anonymous denial, no id/name leak in either
+# direction, and that public Problems remain unaffected.
 # ---------------------------------------------------------------------------
 @with_pool
-async def test_private_benchmark_and_evaluation_are_not_scope_checked_confirmed_gap(pool):
+async def test_private_benchmark_and_evaluation_are_scope_checked(pool):
     tag = _tag()
+    owner_scope = AccessScope.for_user("userA")
+    other_scope = AccessScope.for_user("userB")
+    anon_scope = AccessScope.anonymous()
+
     problem = await pm.create_problem(
-        pool, title=f"[privacy-gold {tag}] private benchmark/evaluation leak probe",
+        pool, title=f"[privacy-gold {tag}] private benchmark/evaluation scope probe",
         proposer="userA", owner_id="userA", visibility="private",
     )
     bench = await pm.create_benchmark(pool, problem_id=problem["id"], name="secret-bench", version=1)
@@ -124,70 +114,95 @@ async def test_private_benchmark_and_evaluation_are_not_scope_checked_confirmed_
     )
     await pm.complete_evaluation(pool, ev["id"], execution_ids=exec_ids)
 
-    other_scope = AccessScope.for_user("userB")
-
-    # Sanity: the parent Problem itself IS correctly private (Phase 2's
-    # proof, re-confirmed here as the premise this gap contradicts).
+    # Sanity: the parent Problem itself is private, as it always was.
+    assert await pm.get_problem(pool, problem["id"], scope=owner_scope) is not None
     assert await pm.get_problem(pool, problem["id"], scope=other_scope) is None
+    assert await pm.get_problem(pool, problem["id"], scope=anon_scope) is None
 
-    # The gap: Benchmark and Evaluation reads take no scope at all, so they
-    # succeed for "userB" regardless of the parent Problem's privacy.
-    leaked_bench = await pm.get_benchmark(pool, bench["id"])
-    assert leaked_bench is not None and leaked_bench["id"] == bench["id"], (
-        "confirmed gap: get_benchmark() has no scope parameter to enforce "
-        "the parent Problem's privacy with"
-    )
-    leaked_benches_list = await pm.list_problem_benchmarks(pool, problem["id"])
-    assert bench["id"] in {b["id"] for b in leaked_benches_list}, (
-        "confirmed gap: list_problem_benchmarks() never gates on Problem "
-        "visibility at all, unlike list_problem_solutions()"
-    )
-    leaked_eval = await pm.get_evaluation(pool, ev["id"])
-    assert leaked_eval is not None and leaked_eval["id"] == ev["id"], (
-        "confirmed gap: get_evaluation() has no scope parameter"
-    )
-    leaked_evals_list = await pm.list_problem_evaluations(pool, problem["id"])
-    assert ev["id"] in {e["id"] for e in leaked_evals_list}, (
-        "confirmed gap: list_problem_evaluations() never gates on Problem visibility"
-    )
+    # --- owner ("userA") can read the private Benchmark/Evaluation. ---
+    owner_bench = await pm.get_benchmark(pool, bench["id"], scope=owner_scope)
+    assert owner_bench is not None and owner_bench["id"] == bench["id"]
+    assert bench["id"] in {b["id"] for b in await pm.list_problem_benchmarks(pool, problem["id"], scope=owner_scope)}
+    owner_eval = await pm.get_evaluation(pool, ev["id"], scope=owner_scope)
+    assert owner_eval is not None and owner_eval["id"] == ev["id"]
+    assert ev["id"] in {e["id"] for e in await pm.list_problem_evaluations(pool, problem["id"], scope=owner_scope)}
 
-    # Same gap reachable over the real REST surface, not just the service
-    # layer -- as "userB" via the same X-Viewer-Id header the product's own
-    # get_scope() dependency trusts.
+    # --- another authenticated user AND anonymous can read NEITHER, and the
+    # list endpoints come back empty rather than 403/erroring (matching the
+    # already-established list_problem_solutions convention). ---
+    for denied_scope in (other_scope, anon_scope):
+        assert await pm.get_benchmark(pool, bench["id"], scope=denied_scope) is None
+        assert await pm.list_problem_benchmarks(pool, problem["id"], scope=denied_scope) == []
+        assert await pm.get_evaluation(pool, ev["id"], scope=denied_scope) is None
+        assert await pm.list_problem_evaluations(pool, problem["id"], scope=denied_scope) == []
+
+    # --- same proof over the real REST surface, not just the service layer. ---
     client = await _rest_client(pool)
     async with client:
+        # owner: everything allowed
+        r_problem_owner = await client.get(f"/v1/problems/{problem['id']}", headers={"X-Viewer-Id": "userA"})
+        assert r_problem_owner.status_code == 200
+        r_bench_owner = await client.get(f"/v1/benchmarks/{bench['id']}", headers={"X-Viewer-Id": "userA"})
+        assert r_bench_owner.status_code == 200 and r_bench_owner.json()["id"] == bench["id"]
+        r_eval_owner = await client.get(f"/v1/evaluations/{ev['id']}", headers={"X-Viewer-Id": "userA"})
+        assert r_eval_owner.status_code == 200 and r_eval_owner.json()["id"] == ev["id"]
+
+        # another user: the Problem itself is 404 (unchanged), and now so are
+        # its Benchmark/Evaluation -- direct reads 404, list reads empty.
         r_problem = await client.get(f"/v1/problems/{problem['id']}", headers={"X-Viewer-Id": "userB"})
         assert r_problem.status_code == 404, "the Problem itself is correctly gated over REST"
+
+        r_bench_direct = await client.get(f"/v1/benchmarks/{bench['id']}", headers={"X-Viewer-Id": "userB"})
+        assert r_bench_direct.status_code == 404, "fixed: GET /v1/benchmarks/{id} now checks the parent Problem's visibility"
+
+        r_eval_direct = await client.get(f"/v1/evaluations/{ev['id']}", headers={"X-Viewer-Id": "userB"})
+        assert r_eval_direct.status_code == 404, "fixed: GET /v1/evaluations/{id} now checks the parent Problem's visibility"
 
         r_bench_list = await client.get(
             f"/v1/problems/{problem['id']}/benchmarks", headers={"X-Viewer-Id": "userB"},
         )
-        assert r_bench_list.status_code == 200
-        assert bench["id"] in {b["id"] for b in r_bench_list.json()["benchmarks"]}, (
-            "confirmed gap over REST: GET /v1/problems/{id}/benchmarks leaks a private "
-            "problem's benchmarks to another viewer"
-        )
+        assert r_bench_list.status_code == 200 and r_bench_list.json()["benchmarks"] == []
+        # no id/name leak in the (empty) list response body either
+        assert bench["id"] not in r_bench_list.text and bench["name"] not in r_bench_list.text
 
         r_eval_list = await client.get(
             f"/v1/problems/{problem['id']}/evaluations", headers={"X-Viewer-Id": "userB"},
         )
-        assert r_eval_list.status_code == 200
-        assert ev["id"] in {e["id"] for e in r_eval_list.json()["evaluations"]}, (
-            "confirmed gap over REST: GET /v1/problems/{id}/evaluations leaks a private "
-            "problem's evaluations to another viewer"
-        )
+        assert r_eval_list.status_code == 200 and r_eval_list.json()["evaluations"] == []
+        assert ev["id"] not in r_eval_list.text
 
-        r_bench_direct = await client.get(f"/v1/benchmarks/{bench['id']}", headers={"X-Viewer-Id": "userB"})
-        assert r_bench_direct.status_code == 200 and r_bench_direct.json()["id"] == bench["id"], (
-            "confirmed gap over REST: GET /v1/benchmarks/{id} does not check the "
-            "parent Problem's visibility"
-        )
+        # anonymous (no X-Viewer-Id header at all): identical denial.
+        r_bench_anon = await client.get(f"/v1/benchmarks/{bench['id']}")
+        assert r_bench_anon.status_code == 404
+        r_eval_anon = await client.get(f"/v1/evaluations/{ev['id']}")
+        assert r_eval_anon.status_code == 404
+        r_bench_list_anon = await client.get(f"/v1/problems/{problem['id']}/benchmarks")
+        assert r_bench_list_anon.status_code == 200 and r_bench_list_anon.json()["benchmarks"] == []
 
-        r_eval_direct = await client.get(f"/v1/evaluations/{ev['id']}", headers={"X-Viewer-Id": "userB"})
-        assert r_eval_direct.status_code == 200 and r_eval_direct.json()["id"] == ev["id"], (
-            "confirmed gap over REST: GET /v1/evaluations/{id} does not check the "
-            "parent Problem's visibility"
-        )
+    # --- public behavior is unchanged: a PUBLIC problem's downstream graph
+    # stays readable by anyone, proving the fix gates on visibility rather
+    # than blanket-denying non-owners. ---
+    pub_problem = await pm.create_problem(
+        pool, title=f"[privacy-gold {tag}] public benchmark/evaluation scope probe",
+        proposer="userA", owner_id="userA", visibility="public",
+    )
+    pub_bench = await pm.create_benchmark(pool, problem_id=pub_problem["id"], name="open-bench", version=1)
+    pub_proc_id, pub_proc_row = await _make_procedure(pool, f"privacy-gold-{tag}-pub-proc")
+    pub_sol = await pm.associate_solution(
+        pool, problem_id=pub_problem["id"], solution_type="procedure", target_id=pub_proc_id,
+        owner_id="userA",
+    )
+    pub_exec_ids = await _run_executions(pool, pub_proc_id, pub_proc_row, n=5, successes=5)
+    pub_ev = await pm.request_evaluation(
+        pool, problem_id=pub_problem["id"], benchmark_id=pub_bench["id"], solution_id=pub_sol["id"],
+    )
+    await pm.complete_evaluation(pool, pub_ev["id"], execution_ids=pub_exec_ids)
+    for who_scope in (other_scope, anon_scope):
+        assert await pm.get_benchmark(pool, pub_bench["id"], scope=who_scope) is not None
+        assert pub_bench["id"] in {
+            b["id"] for b in await pm.list_problem_benchmarks(pool, pub_problem["id"], scope=who_scope)
+        }
+        assert await pm.get_evaluation(pool, pub_ev["id"], scope=who_scope) is not None
 
 
 # ---------------------------------------------------------------------------
@@ -246,8 +261,8 @@ async def test_published_solution_discoverable_by_b_and_bs_execution_is_independ
     # (complete_evaluation()'s own return is the bare `evaluations` row;
     # get_evaluation() is what joins in the linked execution ids.)
     assert b_eval["id"] != a_eval["id"]
-    a_reloaded = await pm.get_evaluation(pool, a_eval["id"])
-    b_reloaded = await pm.get_evaluation(pool, b_eval["id"])
+    a_reloaded = await pm.get_evaluation(pool, a_eval["id"], scope=AccessScope.for_user("userA"))
+    b_reloaded = await pm.get_evaluation(pool, b_eval["id"], scope=b_scope)
     assert set(a_reloaded["executions"]) == set(a_exec_ids), (
         "A's evaluation must still be linked to exactly A's own executions -- "
         "B's independent run must never be folded into it"
