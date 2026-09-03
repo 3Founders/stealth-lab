@@ -502,10 +502,11 @@ async def _snapshot(pool, rec: dict) -> dict:
 # THE TEST
 # ---------------------------------------------------------------------------
 def test_migration_upgrade_path_populated_v1_to_hardening():
-    # Grep proof (mirrors the acceptance note): 35/36/37 carry no destructive DDL.
+    # Grep proof (mirrors the acceptance note): the hardening migrations
+    # (35..38) carry no destructive DDL.
     g = subprocess.run(
         ["git", "grep", "-nE", "DROP TABLE|DROP COLUMN|TRUNCATE",
-         "--", "db/35_*", "db/36_*", "db/37_*"],
+         "--", "db/35_*", "db/36_*", "db/37_*", "db/38_*"],
         capture_output=True, text=True, cwd=str(_BACKEND_ROOT),
     )
     assert g.returncode == 1 and g.stdout.strip() == "", (
@@ -519,6 +520,7 @@ def test_migration_upgrade_path_populated_v1_to_hardening():
         "35_product_model.sql",
         "36_durable_execution_runs.sql",
         "37_execution_runs_terminal_chk_fix.sql",
+        "38_candidates_no_action_justified.sql",
     }, [p.name for p in hardening_files]
 
     with _disposable_postgres() as dsn:
@@ -545,7 +547,8 @@ def test_migration_upgrade_path_populated_v1_to_hardening():
         up = _run_real_migrate(dsn)
         assert up.returncode == 0, f"migrate.py upgrade run failed:\n{up.stdout}\n{up.stderr}"
         for name in ("35_product_model.sql", "36_durable_execution_runs.sql",
-                     "37_execution_runs_terminal_chk_fix.sql"):
+                     "37_execution_runs_terminal_chk_fix.sql",
+                     "38_candidates_no_action_justified.sql"):
             assert f"applied   {name}" in up.stdout, up.stdout
 
         # --- phase 4: assertions on the upgraded DB ---
