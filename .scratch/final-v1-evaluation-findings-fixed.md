@@ -262,19 +262,21 @@ Three reviewable commits (spec §17), not squashed. Tests ship with the fix
 they prove rather than in a separate lump — the cleaner grouping §17
 permits:
 
-1. `14aed83` — `core-a: Final-V1 eval Bug #7 -- staleness-aware
-   current-best / leaderboard` (`product_model.py` +
-   `test_product_model_staleness_leaderboard_e2e.py`).
-2. `ca87178` — `core-a: Final-V1 eval Bug #8 -- Benchmark/Evaluation
-   inherit Problem scope` (`product_model.py` + `api/problems.py` +
-   `mcp_server/server.py` + `test_product_model_privacy_e2e.py`).
-3. `core-a: Final-V1 eval findings -- docs + closure record` (`docs/final-v1.md`
-   + this file). ← `v1-final-2026-09-03.2` points here; run
-   `git show v1-final-2026-09-03.2` for its SHA.
+1. `core-a: Final-V1 eval Bug #7 -- staleness-aware current-best /
+   leaderboard` — `product_model.py` +
+   `test_product_model_staleness_leaderboard_e2e.py`.
+2. `core-a: Final-V1 eval Bug #8 -- Benchmark/Evaluation inherit Problem
+   scope` — `product_model.py` + `api/problems.py` + `mcp_server/server.py`
+   + `test_product_model_privacy_e2e.py`.
+3. `core-a: Final-V1 eval findings -- docs + closure record` —
+   `docs/final-v1.md` + this file. `v1-final-2026-09-03.2` points at this
+   commit.
 
-(SHAs are post-rebase onto `origin/main` `ce8700c`, a frontend-only CSS
-commit with no overlap; the pre-rebase equivalents were `15ffeb3` /
-`8d7190b` / `7ce3b21`.)
+SHAs are not pinned here because the branch was rebased twice onto a
+moving `origin/main` (both intervening commits were frontend-only, no
+overlap with this patch). Authoritative:
+`git log --oneline v1-final-2026-09-03.1..v1-final-2026-09-03.2` and
+`git show v1-final-2026-09-03.2`.
 
 ## K. Remaining accepted V1 limitations (after `.2`)
 
