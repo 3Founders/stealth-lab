@@ -476,6 +476,83 @@ def _band(wilson_lower: float, run_count: int, verified: int) -> str:
     return "PROMISING"
 
 
+# A Solution's completed Evaluations are HISTORICAL evidence; whether that
+# Solution is still an eligible *current* leader is a separate question that
+# depends on whether the thing it points at is valid RIGHT NOW. Final-V1
+# eval Bug #7: a Solution whose underlying Procedure had gone stale kept its
+# BEST_VERIFIED band and stayed in current_best. Eligibility is derived here
+# from the SAME truth find_applicable_procedures() uses -- the live
+# procedures row's `staleness` (== 'stale' disqualifies, matching
+# applicability._CANDIDATE_BASE_WHERE / check_hard_constraints) -- never a
+# second flag, never a timestamp heuristic.
+_STALE_PROCEDURE_REASON = "underlying procedure is stale (procedures.staleness = 'stale')"
+_NO_LIVE_PROCEDURE_REASON = "underlying procedure has no live version (fully tombstoned)"
+_NO_LIVE_TASK_REASON = "underlying task is no longer live (task_nodes.t_invalid set)"
+
+
+async def _ineligible_solution_reasons(
+    pool: asyncpg.Pool, solutions: list[dict[str, Any]],
+) -> dict[str, str]:
+    """`solution_id -> reason` for Solutions that must NOT rank as a current
+    leader. Absent from the map == eligible.
+
+    - ``procedure`` Solutions: the target_id IS the stable
+      ``procedures.procedure_id`` (see ``_SOLUTION_TARGET_COL``). Ineligible
+      iff the live row (``t_invalid IS NULL``) is ``staleness = 'stale'`` or
+      there is no live row at all -- exactly the disqualifiers
+      ``check_hard_constraints`` and ``_CANDIDATE_BASE_WHERE`` apply. This is
+      the existing staleness truth; nothing new is computed.
+    - ``task`` Solutions: ``task_nodes`` carries no staleness axis, only
+      bi-temporal validity, so the only "no longer valid" signal is
+      ``t_invalid`` being set. Weaker guarantee than a Procedure, applied
+      as-is.
+    - ``task_graph`` Solutions: ``task_graphs`` has neither a staleness axis
+      nor ``t_invalid`` (``backend/db/23_*.sql`` -- deliberately no
+      bi-temporal quartet). There is therefore NO current-validity signal
+      for a task_graph-backed Solution; it is never marked ineligible here.
+      Documented gap, not a silent assumption of a stronger guarantee.
+    """
+    by_type: dict[str, dict[str, list[str]]] = {}
+    for s in solutions:
+        by_type.setdefault(s["solution_type"], {}) \
+               .setdefault(str(s["target_id"]), []).append(s["id"])
+
+    out: dict[str, str] = {}
+
+    proc_targets = by_type.get("procedure", {})
+    if proc_targets:
+        rows = await pool.fetch(
+            "SELECT procedure_id::text AS pid, staleness::text AS st FROM procedures "
+            "WHERE procedure_id = ANY($1::uuid[]) AND t_invalid IS NULL",
+            list(proc_targets),
+        )
+        live = {r["pid"]: r["st"] for r in rows}
+        for tid, sids in proc_targets.items():
+            reason = None
+            if tid not in live:
+                reason = _NO_LIVE_PROCEDURE_REASON
+            elif live[tid] == "stale":
+                reason = _STALE_PROCEDURE_REASON
+            if reason:
+                for sid in sids:
+                    out[sid] = reason
+
+    task_targets = by_type.get("task", {})
+    if task_targets:
+        rows = await pool.fetch(
+            "SELECT id::text AS tid FROM task_nodes "
+            "WHERE id = ANY($1::uuid[]) AND t_invalid IS NULL",
+            list(task_targets),
+        )
+        live_ids = {r["tid"] for r in rows}
+        for tid, sids in task_targets.items():
+            if tid not in live_ids:
+                for sid in sids:
+                    out[sid] = _NO_LIVE_TASK_REASON
+
+    return out
+
+
 async def problem_leaderboard(
     pool: asyncpg.Pool, problem_id: str, *, scope: AccessScope,
     benchmark_id: Optional[str] = None, tenant_scope: Optional[TenantScope] = None,
@@ -495,13 +572,22 @@ async def problem_leaderboard(
     completed = [e for e in all_evals if e["status"] == "completed"
                  and (benchmark_id is None or e["benchmark_id"] == benchmark_id)]
 
+    # Bug #7: a completed Evaluation is historical evidence; current-best
+    # eligibility is recomputed here from the target's validity RIGHT NOW.
+    ineligible = await _ineligible_solution_reasons(pool, sols)
+
     entries: list[dict[str, Any]] = []
     for s in sols:
+        elig = s["id"] not in ineligible
         se = [e for e in completed if e["solution_id"] == s["id"]]
         if not se:
-            entries.append({"solution_id": s["id"], "solution_type": s["solution_type"],
-                            "target_id": s["target_id"], "run_count": 0,
-                            "state": "INSUFFICIENT_EVIDENCE", "evaluations": 0})
+            entry = {"solution_id": s["id"], "solution_type": s["solution_type"],
+                     "target_id": s["target_id"], "run_count": 0,
+                     "state": "STALE" if not elig else "INSUFFICIENT_EVIDENCE",
+                     "eligible": elig, "evaluations": 0}
+            if not elig:
+                entry["ineligibility_reason"] = ineligible[s["id"]]
+            entries.append(entry)
             continue
         # comparability: keep only evals mutually comparable with the first.
         pivot = se[0]
@@ -517,7 +603,7 @@ async def problem_leaderboard(
             vals = [float(e["metrics"][key]) for e in comparable
                     if isinstance(e.get("metrics"), dict) and e["metrics"].get(key) is not None]
             return round(sum(vals) / len(vals), 4) if vals else None
-        entries.append({
+        entry = {
             "solution_id": s["id"], "solution_type": s["solution_type"],
             "target_id": s["target_id"],
             "run_count": run_count, "successes": successes, "verified_successes": verified,
@@ -530,9 +616,24 @@ async def problem_leaderboard(
             "evaluations": len(comparable),
             "incomparable_evaluations": len(incomparable),
             "state": _band(w_lo, run_count, verified),
-        })
+            "eligible": elig,
+        }
+        if not elig:
+            # Historical numbers stay visible on the row; the Solution is
+            # simply no longer a current leader (Bug #7). It is never
+            # rewritten or deleted.
+            entry["state"] = "STALE"
+            entry["ineligibility_reason"] = ineligible[s["id"]]
+        entries.append(entry)
 
-    ranked = sorted(entries, key=lambda e: (-e["verified_success_wilson_lower"], -e["run_count"]))
+    # Ineligible entries always sort last, so they can never *outrank* a
+    # currently valid Solution; `.get` on the wilson key keeps a Solution
+    # with zero completed evaluations from raising here.
+    ranked = sorted(entries, key=lambda e: (
+        0 if e.get("eligible", True) else 1,
+        -e.get("verified_success_wilson_lower", -1.0),
+        -e.get("run_count", 0),
+    ))
     # current best: the highest Wilson-lower entry that is BEST_VERIFIED,
     # plus any tied within TIE_EPSILON. None if nobody clears the bar.
     best: list[str] = []
@@ -544,7 +645,8 @@ async def problem_leaderboard(
 
     def _leader(key: str, *, minimize: bool) -> Optional[str]:
         cand = [e for e in entries if e.get(key) is not None
-                and e["state"] != "INSUFFICIENT_EVIDENCE"]
+                and e["state"] not in ("INSUFFICIENT_EVIDENCE", "STALE")
+                and e.get("eligible", True)]
         if not cand:
             return None
         pick = (min if minimize else max)(cand, key=lambda e: e[key])
@@ -562,7 +664,14 @@ async def problem_leaderboard(
             "best_latency": _leader("p95_latency_s", minimize=True),
             "best_first_pass": _leader("first_pass_success_rate", minimize=False),
         },
-        "note": "computed on read from completed-evaluation lineage; no winner is stored.",
+        "ineligible_solutions": [
+            {"solution_id": sid, "reason": r} for sid, r in sorted(ineligible.items())
+        ],
+        "note": "computed on read from completed-evaluation lineage; no winner is stored. "
+                "A Solution whose underlying target is no longer valid (e.g. its "
+                "procedure went stale) stays visible in `leaderboard` with its historical "
+                "numbers but is state=STALE, excluded from current_best and conditional "
+                "leaders (Bug #7).",
     }
 
 
