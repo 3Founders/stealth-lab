@@ -116,7 +116,9 @@ from starlette.responses import HTMLResponse, JSONResponse, Response
 
 from app.mcp_server.tasks_extension import TasksExtension
 from app.mcp_server.claim_graph_page import CLAIM_GRAPH_HTML, FORCE_GRAPH_JS
+from app.mcp_server.procedure_graph_page import PROCEDURE_GRAPH_HTML
 from app.services import claim_graph_api
+from app.services import procedure_task_graph_api
 from app.services import product_model as _pm
 
 # Set once by `lifespan` (below) so the non-MCP custom HTTP routes
@@ -377,6 +379,55 @@ async def claim_graph_data(request: Request) -> JSONResponse:
         link_mode=(qp.get("link_mode") or "both"),
         sim_k=_int("sim_k", 3),
         sim_threshold=_float("sim_threshold", 0.55),
+    )
+    return JSONResponse(json.loads(json.dumps(result, default=str)))
+
+
+# ---------------------------------------------------------------------------
+# Procedure & task-node viewer -- the procedure-side counterpart of
+# /claim-graph. Same posture: read-only, unauthenticated custom routes,
+# force-graph served from the shared /claim-graph/vendor/ path (no second
+# copy of the lib). Whole-corpus overview of live procedures + task nodes
+# and how they connect (version chains, decomposition, hierarchy,
+# subprocedure composition).
+# ---------------------------------------------------------------------------
+@server.custom_route("/procedure-graph", methods=["GET"], include_in_schema=False)
+async def procedure_graph_page(request: Request) -> HTMLResponse:  # noqa: ARG001
+    return HTMLResponse(PROCEDURE_GRAPH_HTML)
+
+
+@server.custom_route("/procedure-graph/data", methods=["GET"], include_in_schema=False)
+async def procedure_graph_data(request: Request) -> JSONResponse:
+    qp = request.query_params
+
+    def _int(name: str, default: int) -> int:
+        try:
+            return int(qp.get(name, default))
+        except (TypeError, ValueError):
+            return default
+
+    def _bool(name: str, default: bool = False) -> bool:
+        raw = qp.get(name)
+        if raw is None:
+            return default
+        return str(raw).lower() in ("1", "true", "yes", "on")
+
+    # the page sends `kinds=procedure` | `procedure,task`; also accept a
+    # plain `include_tasks` bool.
+    kinds_raw = qp.get("kinds")
+    if kinds_raw is not None:
+        include_tasks = "task" in {k.strip() for k in kinds_raw.split(",")}
+    else:
+        include_tasks = _bool("include_tasks", True)
+
+    result = await procedure_task_graph_api.get_procedure_task_overview(
+        _graph_pool(),
+        scope=AccessScope.unrestricted(),
+        limit=_int("limit", 150),
+        q=(qp.get("q") or None),
+        include_stale=_bool("include_stale", False),
+        include_tasks=include_tasks,
+        link_mode=(qp.get("link_mode") or "all"),
     )
     return JSONResponse(json.loads(json.dumps(result, default=str)))
 
