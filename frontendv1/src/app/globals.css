@@ -1,11 +1,11 @@
 @import "tailwindcss";
 
 :root {
-  --background: #fafafa;
-  --foreground: #171717;
+  --background: #faf6ea; /* light golden */
+  --foreground: #1c1a15; /* warm near-black */
   --accent: #047857;
-  --muted: #737373;
-  --border: #e5e5e5;
+  --muted: #6b6455;
+  --border: #ece3ce;
 }
 
 @theme inline {
@@ -22,5 +22,5 @@ body {
 }
 
 ::selection {
-  background: #d1fae5;
+  background: #f0e4bf;
 }

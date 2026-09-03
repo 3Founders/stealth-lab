@@ -30,7 +30,7 @@ export default function RootLayout({
   return (
     <html lang="en" className={inter.variable}>
       <body className="min-h-screen font-sans">
-        <header className="border-b border-neutral-200 bg-white">
+        <header className="sticky top-0 z-50 border-b border-black/5 bg-[--background]/75 backdrop-blur-md">
           <div className="mx-auto flex h-14 max-w-5xl items-center justify-between px-6">
             <Link href="/" className="text-sm font-semibold tracking-tight">
               Stealth Lab
