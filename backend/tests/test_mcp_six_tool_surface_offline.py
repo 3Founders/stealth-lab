@@ -205,11 +205,16 @@ async def test_report_execution_refuses_unknown_id():
 
 
 @pytest.mark.asyncio
-async def test_report_execution_refuses_bad_success_criteria_json():
+async def test_report_execution_refuses_non_dict_success_criteria():
+    """success_criteria is a structured object (dict), not a JSON-encoded
+    string. A real MCP client is stopped earlier, at the schema layer
+    (see test_report_execution_schema_rejects_string_success_criteria
+    below); this covers a direct/offline caller that skips that layer
+    the same way this test file's other direct calls do."""
     ctx = FakeContext(FakePool(procedure_row=PROCEDURE_ROW))
     result = await srv.report_execution(
         procedure_id=PROC_ID, success=True, context_key="ctx-a", ctx=ctx,
-        success_criteria="not json",
+        success_criteria="not json",  # type: ignore[arg-type]
     )
     assert result.startswith("REFUSED:")
 
@@ -237,6 +242,7 @@ async def test_report_execution_returns_the_updated_state(monkeypatch):
                            success_criteria, failure_class):
         assert procedure_row_id == ROW_ID
         assert success is True
+        assert success_criteria == {"predicate": "real check"}
         return {
             "verification_state": "verified", "availability": "active",
             "verification_stats": {"successes": 10, "distinct_contexts": 3},
@@ -247,10 +253,134 @@ async def test_report_execution_returns_the_updated_state(monkeypatch):
 
     result = json.loads(await srv.report_execution(
         procedure_id=PROC_ID, success=True, context_key="ctx-a", ctx=ctx,
-        success_criteria=json.dumps({"predicate": "real check"}),
+        success_criteria={"predicate": "real check"},
     ))
     assert result["verification_state"] == "verified"
     assert result["verification_stats"]["successes"] == 10
+
+
+@pytest.mark.asyncio
+async def test_report_execution_passes_structured_dict_straight_through(monkeypatch):
+    """The MCP boundary must not stringify/reparse the caller's object --
+    whatever dict a (real or offline) caller sends is exactly what
+    record_execution_outcome() receives, unchanged."""
+    captured = {}
+
+    async def fake_record(pool, *, procedure_row_id, success, context_key, steps_used,
+                           success_criteria, failure_class):
+        captured["success_criteria"] = success_criteria
+        return {
+            "verification_state": "candidate", "availability": "active",
+            "verification_stats": {"successes": 1, "distinct_contexts": 1},
+        }
+
+    monkeypatch.setattr("app.services.procedures.record_execution_outcome", fake_record)
+    ctx = FakeContext(FakePool(procedure_row=PROCEDURE_ROW))
+
+    metrics_and_predicate = {
+        "predicate": "tests pass",
+        "metrics": {"tests_passed": 42, "tests_failed": 0},
+    }
+    await srv.report_execution(
+        procedure_id=PROC_ID, success=True, context_key="ctx-a", ctx=ctx,
+        success_criteria=metrics_and_predicate,
+    )
+    assert captured["success_criteria"] == metrics_and_predicate
+
+
+@pytest.mark.asyncio
+async def test_report_execution_omits_success_criteria_cleanly(monkeypatch):
+    """success=false, success_criteria omitted must still reach
+    record_execution_outcome() as None -- no forced empty dict, no
+    forced parse attempt (spec case G)."""
+    captured = {}
+
+    async def fake_record(pool, *, procedure_row_id, success, context_key, steps_used,
+                           success_criteria, failure_class):
+        captured["success_criteria"] = success_criteria
+        return {
+            "verification_state": "candidate", "availability": "active",
+            "verification_stats": {"successes": 0, "distinct_contexts": 1},
+        }
+
+    monkeypatch.setattr("app.services.procedures.record_execution_outcome", fake_record)
+    ctx = FakeContext(FakePool(procedure_row=PROCEDURE_ROW))
+
+    await srv.report_execution(
+        procedure_id=PROC_ID, success=False, context_key="ctx-a", ctx=ctx,
+    )
+    assert captured["success_criteria"] is None
+
+
+# ------------------------------------------ report_execution: MCP schema/contract
+
+
+def test_report_execution_schema_advertises_success_criteria_as_object():
+    """Regression guard for the exact bug this fix closes: the public MCP
+    tool schema must declare success_criteria as a structured object
+    (or null), never a string. If someone later reverts the annotation
+    to `str`, this test catches it -- the docstring alone can't."""
+    tool = srv.server._tool_manager.get_tool("report_execution")
+    assert tool is not None
+    schema = tool.parameters["properties"]["success_criteria"]
+
+    branches = schema.get("anyOf", [schema])
+    types = {branch.get("type") for branch in branches}
+    assert "object" in types, f"success_criteria schema does not advertise object: {schema}"
+    assert "string" not in types, f"success_criteria schema still advertises string: {schema}"
+
+
+@pytest.mark.asyncio
+async def test_report_execution_schema_rejects_string_success_criteria():
+    """Real MCP surface, not a direct Python call: dispatch through the
+    same ToolManager.call_tool() a live JSON-RPC request goes through,
+    with a raw string for success_criteria (what a caller following the
+    OLD str-typed contract, or a confused client, would send). Pydantic
+    argument validation must refuse it before report_execution's body
+    ever runs -- proving the schema, not just the function body, is
+    fixed."""
+    from mcp.server.mcpserver.exceptions import ToolError
+
+    ctx = FakeContext(FakePool(procedure_row=PROCEDURE_ROW))
+    with pytest.raises(ToolError):
+        await srv.server._tool_manager.call_tool(
+            "report_execution",
+            {
+                "procedure_id": PROC_ID, "success": True, "context_key": "ctx-a",
+                "success_criteria": "not-json",
+            },
+            context=ctx,
+        )
+
+
+@pytest.mark.asyncio
+async def test_report_execution_schema_accepts_structured_object(monkeypatch):
+    """The positive counterpart: a real structured-object call, dispatched
+    through the same real ToolManager.call_tool() path, must clear
+    argument validation and reach record_execution_outcome() as a dict."""
+    captured = {}
+
+    async def fake_record(pool, *, procedure_row_id, success, context_key, steps_used,
+                           success_criteria, failure_class):
+        captured["success_criteria"] = success_criteria
+        return {
+            "verification_state": "verified", "availability": "active",
+            "verification_stats": {"successes": 10, "distinct_contexts": 3},
+        }
+
+    monkeypatch.setattr("app.services.procedures.record_execution_outcome", fake_record)
+    ctx = FakeContext(FakePool(procedure_row=PROCEDURE_ROW))
+
+    result = await srv.server._tool_manager.call_tool(
+        "report_execution",
+        {
+            "procedure_id": PROC_ID, "success": True, "context_key": "ctx-a",
+            "success_criteria": {"predicate": "tests pass"},
+        },
+        context=ctx,
+    )
+    assert captured["success_criteria"] == {"predicate": "tests pass"}
+    assert json.loads(result)["verification_state"] == "verified"
 
 
 # --------------------------------------------------------------- submit_procedure

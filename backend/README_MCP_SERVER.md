@@ -88,6 +88,41 @@ registry to 27. `docs/final-v1.md` §1 documents the product-model tools._
 | `get_implementation_capability` | Capability estimate for one durable implementation | No -- read-only |
 | `get_claim_graph` | The current claim graph -- nodes (live claims + lifecycle state) and claim-to-claim relation edges -- the same feed the `/claim-graph` web page renders | No -- read-only |
 
+### `report_execution`'s `success_criteria` is a structured object, not a JSON string
+
+`success_criteria` is a real JSON object argument -- `{"predicate": "...",
+"metrics": {...}}` -- sent by the client exactly as any other structured MCP
+argument, never JSON-encoded into a string first. The public schema
+advertises it as `object | null`.
+
+```json
+{
+  "procedure_id": "…",
+  "success": true,
+  "context_key": "repo:my-repo",
+  "success_criteria": {
+    "predicate": "tests pass",
+    "metrics": {"tests_passed": 42, "tests_failed": 0}
+  }
+}
+```
+
+- At least one of `predicate` (non-empty string) or `metrics` (non-empty
+  object) is required whenever the field IS supplied -- `{}` or
+  `{"predicate": ""}` is REFUSED (invariant #13:
+  `app/execution/evidence.py::_check_success_criteria`, backed by the
+  DB-level `evidence_success_criteria_chk`).
+- Omitting the field entirely on a real success is different from sending
+  an empty object: omission lets `record_execution_outcome()` synthesize
+  criteria from what the call itself measured (`steps_used`/`match_cost`/
+  `realised_savings`); a caller-supplied empty/blank object is refused
+  outright. Either way, a success is never recorded on a bare, unexplained
+  "it worked" -- the synthesized criteria is a real recorded measurement,
+  not a rubber stamp, and an explicitly empty criteria object is rejected
+  rather than silently accepted.
+- `success=false` reports never carry `success_criteria` -- omit it; the
+  service classifies failures via `failure_class` instead (§36).
+
 ### Implementation Registry is now wired into the real hot path (2026-09-02)
 
 `resolve_implementation` used to be reachable only as its own standalone MCP

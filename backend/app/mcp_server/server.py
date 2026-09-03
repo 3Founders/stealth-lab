@@ -48,7 +48,7 @@ import subprocess
 import sys
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import AsyncIterator, Optional
+from typing import Any, AsyncIterator, Optional
 from uuid import UUID
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
@@ -2173,7 +2173,7 @@ async def check_applicability(procedure_id: str, ctx: Context, state: str = "{}"
 @server.tool()
 async def report_execution(procedure_id: str, success: bool, context_key: str, ctx: Context,
                             steps_used: int | None = None,
-                            success_criteria: str | None = None,
+                            success_criteria: dict[str, Any] | None = None,
                             failure_class: str | None = None) -> str:
     """
     Report a real execution outcome for a NAMED procedure. Thin wrapper
@@ -2188,10 +2188,19 @@ async def report_execution(procedure_id: str, success: bool, context_key: str, c
     needs >=3 DISTINCT keys across >=10 successes with 0 failures -- a
     caller that always passes the same string can never reach verified
     regardless of how many times it reports success.
-    success_criteria: JSON object with a non-empty 'predicate' string
-    and/or a non-empty 'metrics' object -- REQUIRED shape whenever
-    success=true (invariant #13); omit to let
-    record_execution_outcome() synthesize one from steps_used alone.
+    success_criteria: a structured object, NOT a JSON-encoded string --
+    {"predicate": "non-empty string"} and/or {"metrics": {non-empty
+    object}}. Only meaningful when success=true. A malformed shape
+    (blank predicate, empty/absent metrics, both absent while the field
+    IS provided) is REFUSED by record_execution_outcome()'s own
+    evidence-layer check (invariant #13, app/execution/evidence.py's
+    _check_success_criteria). Omitting the field entirely on a real
+    success is different from providing an empty one: omission lets
+    record_execution_outcome() synthesize criteria from what the call
+    itself measured (steps_used/match_cost/realised_savings) -- that
+    synthesis, not this parameter, is what keeps bare model-asserted
+    success out of the evidence table. Passing explicit criteria only
+    lets the caller say something more specific than "the run completed".
     failure_class: one of evidence.py's real failure_class values, when
     success=false and the caller knows the cause. Omitted is honest
     (lands in the requires_review queue) rather than guessed.
@@ -2209,16 +2218,24 @@ async def report_execution(procedure_id: str, success: bool, context_key: str, c
     except ProcedureNotFound as exc:
         return f"REFUSED: {exc}"
 
-    try:
-        criteria = json.loads(success_criteria) if success_criteria else None
-    except json.JSONDecodeError as exc:
-        return f"REFUSED: success_criteria must be a JSON object ({exc})"
+    # Real MCP clients validate this against the tool's advertised
+    # object schema before the call ever reaches here; this guard is
+    # for direct/offline callers (tests, local_agent) that skip that
+    # layer -- either way, a non-object value is refused outright,
+    # never string-parsed (that was the whole bug: a JSON-encoded
+    # string could never be both valid str AND a real MCP client's
+    # natural structured-object call).
+    if success_criteria is not None and not isinstance(success_criteria, dict):
+        return (
+            "REFUSED: success_criteria must be a JSON object, e.g. "
+            '{"predicate": "..."} -- not a JSON-encoded string or other type'
+        )
 
     try:
         updated = await record_execution_outcome(
             pool, procedure_row_id=str(procedure["id"]), success=success,
             context_key=context_key, steps_used=steps_used,
-            success_criteria=criteria, failure_class=failure_class,
+            success_criteria=success_criteria, failure_class=failure_class,
         )
     except Exception as exc:  # noqa: BLE001 -- a producer-side contract
         # violation (e.g. invariant #13's bare-success refusal, or an
