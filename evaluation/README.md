@@ -85,6 +85,71 @@ evaluation together — spec section 32 requires that a plain `pytest` invocatio
 frontier-model calls. Expensive evaluation (baseline-vs-Stealth, ablation, economics execution,
 capacity-at-scale) is deliberately a separate, explicit, user-triggered step.
 
+## Test tiers (spec §26)
+
+Named tiers, each mapped to a real command against this suite's actual directory layout —
+none of these are invented paths. `FAST`/`FULL`/`SECURITY`/`E2E`/`DURABLE`/`LOAD` never make a
+network or LLM call beyond the target Postgres connection; `RETRIEVAL` makes real embedding-
+provider calls (small, bounded); `EXPERIMENT` and `ECONOMICS` are never automatic and are never
+invoked as part of any other tier.
+
+```bash
+# cd backend first, same convention as above.
+
+# FAST — deterministic offline suite, no DB, no network, no LLM:
+python -m pytest tests/ -q
+python -m pytest tests/evaluation/ -q
+
+# FULL — every product regression test, including this suite's e2e areas,
+# against a real (disposable) Postgres:
+DATABASE_URL=postgresql://... python -m pytest tests/ -q
+
+# SECURITY — adversarial security suite (injection, redaction, admission
+# boundary) only:
+python -m pytest tests/evaluation/security/ -q
+DATABASE_URL=postgresql://... python -m pytest tests/evaluation/security/ -q  # + the one live-DB case
+
+# E2E — complete product-model lifecycle (Problem→Benchmark→Solution→
+# Evaluation→leaderboard), against a real Postgres:
+DATABASE_URL=postgresql://... python -m pytest tests/evaluation/product_model/ -q
+
+# DURABLE — retry/resume, including the REST+MCP surface, against a real
+# Postgres:
+DATABASE_URL=postgresql://... python -m pytest tests/evaluation/durable/ -q
+DATABASE_URL=postgresql://... python -m pytest tests/evaluation/concurrency/test_durable_concurrency_chaos_e2e.py -q
+
+# RETRIEVAL — live embedding benchmark (real Voyage calls, small and
+# bounded — see the file's own docstring for the exact rate-limit
+# discipline used):
+DATABASE_URL=postgresql://... python -m pytest tests/evaluation/retrieval/test_live_retrieval_e2e.py -q -s
+
+# LOAD — concurrency/chaos at modest scale, against a real Postgres:
+DATABASE_URL=postgresql://... python -m pytest tests/evaluation/concurrency/ -q
+
+# Regenerate the machine-readable baseline export for the hardened
+# Final-V1 candidate (spec state B — see manifest.json's
+# system_under_test_commit/evaluation_harness_commit/historical_baseline_commit):
+DATABASE_URL=postgresql://... python scripts/export_final_v1_candidate_baseline.py
+
+# Regenerate the FROZEN HISTORICAL v1-baseline export (spec state A —
+# do not point this at anything but the historical baseline commit):
+python scripts/export_evaluation_baseline.py
+```
+
+```powershell
+# EXPERIMENT — live baseline-vs-Stealth three-arm comparison. Explicit
+# invocation ONLY, never part of any tier above, costs real model spend:
+backend\.venv\Scripts\python.exe experiments\harness\run_harness.py
+# (experiments/harness/ is its own venv/invocation — see experiments/harness/README.md)
+
+# ECONOMICS — real-workload ROI. There is no CLI: experiments/harness/economics.py
+# is a pure calculator (evaluate_workload()/cumulative_curve()) that takes real
+# cost inputs as explicit arguments once a live workload actually exists to
+# measure — it computes nothing and invents no number on its own. See that
+# module's own docstring for exactly which cost categories it still has no
+# real tracked source for.
+```
+
 ## How metrics are calculated
 
 See `METRICS.md` for exact definitions. Every metric is implemented once, in
