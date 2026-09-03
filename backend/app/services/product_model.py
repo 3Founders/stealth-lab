@@ -213,12 +213,31 @@ async def freeze_benchmark(
     return _row(r)
 
 
-async def get_benchmark(pool: asyncpg.Pool, benchmark_id: str) -> Optional[dict[str, Any]]:
+async def get_benchmark(
+    pool: asyncpg.Pool, benchmark_id: str, *, scope: AccessScope,
+    tenant_scope: Optional[TenantScope] = None,
+) -> Optional[dict[str, Any]]:
+    """A Benchmark has no independent visibility -- it inherits the owning
+    Problem's (same rule as ``list_problem_solutions``). Resolve the row,
+    then gate on the Problem being visible to ``scope``; otherwise it is
+    indistinguishable from "not found" (Bug #8)."""
     r = await pool.fetchrow("SELECT * FROM benchmarks WHERE id=$1", benchmark_id)
+    if r is None:
+        return None
+    if await get_problem(pool, str(r["problem_id"]), scope=scope,
+                         tenant_scope=tenant_scope) is None:
+        return None
     return _row(r)
 
 
-async def list_problem_benchmarks(pool: asyncpg.Pool, problem_id: str) -> list[dict[str, Any]]:
+async def list_problem_benchmarks(
+    pool: asyncpg.Pool, problem_id: str, *, scope: AccessScope,
+    tenant_scope: Optional[TenantScope] = None,
+) -> list[dict[str, Any]]:
+    """Benchmarks inherit the Problem's visibility -- gate on the Problem
+    first, then return all of its benchmarks (Bug #8)."""
+    if await get_problem(pool, problem_id, scope=scope, tenant_scope=tenant_scope) is None:
+        return []
     rows = await pool.fetch(
         "SELECT * FROM benchmarks WHERE problem_id=$1 ORDER BY version DESC, created_at DESC",
         problem_id,
@@ -413,8 +432,19 @@ async def invalidate_evaluation(
     return _row(r)
 
 
-async def get_evaluation(pool: asyncpg.Pool, evaluation_id: str) -> Optional[dict[str, Any]]:
+async def get_evaluation(
+    pool: asyncpg.Pool, evaluation_id: str, *, scope: AccessScope,
+    tenant_scope: Optional[TenantScope] = None,
+) -> Optional[dict[str, Any]]:
+    """An Evaluation inherits the owning Problem's visibility. Resolve the
+    row, gate on the Problem being visible to ``scope``, then hydrate the
+    linked execution ids (Bug #8)."""
     r = await pool.fetchrow("SELECT * FROM evaluations WHERE id=$1", evaluation_id)
+    if r is None:
+        return None
+    if await get_problem(pool, str(r["problem_id"]), scope=scope,
+                         tenant_scope=tenant_scope) is None:
+        return None
     d = _row(r)
     if d:
         d["executions"] = [
@@ -426,7 +456,14 @@ async def get_evaluation(pool: asyncpg.Pool, evaluation_id: str) -> Optional[dic
     return d
 
 
-async def list_problem_evaluations(pool: asyncpg.Pool, problem_id: str) -> list[dict[str, Any]]:
+async def list_problem_evaluations(
+    pool: asyncpg.Pool, problem_id: str, *, scope: AccessScope,
+    tenant_scope: Optional[TenantScope] = None,
+) -> list[dict[str, Any]]:
+    """Evaluations inherit the Problem's visibility -- gate on the Problem
+    first, then return all of its evaluations (Bug #8)."""
+    if await get_problem(pool, problem_id, scope=scope, tenant_scope=tenant_scope) is None:
+        return []
     rows = await pool.fetch(
         "SELECT * FROM evaluations WHERE problem_id=$1 ORDER BY created_at DESC", problem_id,
     )
@@ -564,11 +601,25 @@ async def problem_leaderboard(
     derived states + conditional leaders + ties. Never mutates a stored
     'winner'.
     """
+    # Gate the whole read on the Problem being visible to `scope` -- so a
+    # private Problem's leaderboard can't even leak its benchmark_id to a
+    # stranger (Bug #8). The sub-calls below are each independently gated
+    # too; this keeps the empty shape clean and mirrors the REST route.
+    if await get_problem(pool, problem_id, scope=scope, tenant_scope=tenant_scope) is None:
+        return {
+            "problem_id": problem_id, "benchmark_id": None, "leaderboard": [],
+            "current_best": [], "current_best_is_tie": False,
+            "conditional_leaders": {"best_reliability": None, "best_cost": None,
+                                    "best_latency": None, "best_first_pass": None},
+            "ineligible_solutions": [],
+            "note": "problem not found or out of scope",
+        }
     sols = await list_problem_solutions(pool, problem_id, scope=scope, tenant_scope=tenant_scope)
-    benches = await list_problem_benchmarks(pool, problem_id)
+    benches = await list_problem_benchmarks(pool, problem_id, scope=scope, tenant_scope=tenant_scope)
     if benchmark_id is None and benches:
         benchmark_id = benches[0]["id"]
-    all_evals = await list_problem_evaluations(pool, problem_id)
+    all_evals = await list_problem_evaluations(pool, problem_id, scope=scope,
+                                               tenant_scope=tenant_scope)
     completed = [e for e in all_evals if e["status"] == "completed"
                  and (benchmark_id is None or e["benchmark_id"] == benchmark_id)]
 

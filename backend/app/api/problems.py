@@ -128,13 +128,13 @@ async def problem_solutions(problem_id: str, pool=Depends(get_pool),
 @router.get("/problems/{problem_id}/benchmarks")
 async def problem_benchmarks(problem_id: str, pool=Depends(get_pool),
                              scope: AccessScope = Depends(get_scope)) -> dict[str, Any]:
-    return {"benchmarks": await pm.list_problem_benchmarks(pool, problem_id)}
+    return {"benchmarks": await pm.list_problem_benchmarks(pool, problem_id, scope=scope)}
 
 
 @router.get("/problems/{problem_id}/evaluations")
 async def problem_evaluations(problem_id: str, pool=Depends(get_pool),
                               scope: AccessScope = Depends(get_scope)) -> dict[str, Any]:
-    return {"evaluations": await pm.list_problem_evaluations(pool, problem_id)}
+    return {"evaluations": await pm.list_problem_evaluations(pool, problem_id, scope=scope)}
 
 
 @router.get("/problems/{problem_id}/leaderboard")
@@ -168,7 +168,7 @@ async def freeze_benchmark(benchmark_id: str, pool=Depends(get_pool),
 @router.get("/benchmarks/{benchmark_id}")
 async def get_benchmark(benchmark_id: str, pool=Depends(get_pool),
                         scope: AccessScope = Depends(get_scope)) -> dict[str, Any]:
-    b = await pm.get_benchmark(pool, benchmark_id)
+    b = await pm.get_benchmark(pool, benchmark_id, scope=scope)
     if b is None:
         raise HTTPException(status_code=404, detail="benchmark not found")
     return b
@@ -220,7 +220,7 @@ async def invalidate_evaluation(evaluation_id: str, reason: str = Query(...),
 @router.get("/evaluations/{evaluation_id}")
 async def get_evaluation(evaluation_id: str, pool=Depends(get_pool),
                          scope: AccessScope = Depends(get_scope)) -> dict[str, Any]:
-    e = await pm.get_evaluation(pool, evaluation_id)
+    e = await pm.get_evaluation(pool, evaluation_id, scope=scope)
     if e is None:
         raise HTTPException(status_code=404, detail="evaluation not found")
     return e

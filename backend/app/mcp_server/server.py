@@ -487,6 +487,33 @@ def _resolve_caller_identity(fallback: str) -> str:
     return fallback
 
 
+def _caller_access_scope() -> AccessScope:
+    """Read-path visibility scope for the product-model tools -- the MCP
+    analogue of the REST ``get_scope`` dependency (``app/api/deps.py``).
+
+    A real resolved OIDC identity (the same two contextvar sources
+    ``_resolve_caller_identity`` checks) -> that user's scope
+    (``AccessScope.for_user``). Nothing resolvable -- the default
+    shared-token / loopback posture -> ``AccessScope.anonymous()``: the
+    SAME public-only denial semantics an unauthenticated REST caller gets.
+
+    Never ``AccessScope.unrestricted()`` from a tool call -- that bypasses
+    visibility entirely and is exactly what let a private Problem's
+    Benchmark / Evaluation leak through ``inspect_problem`` /
+    ``inspect_evaluation`` / ``compare_solutions`` / ``find_best_solution``
+    (final-V1 eval Bug #8). This is not a second authorization system: the
+    guard itself lives in ``product_model`` (inherit the owning Problem's
+    scope); this only supplies the caller identity REST already supplies.
+    """
+    token = get_access_token()
+    if token is not None and token.subject:
+        return AccessScope.for_user(token.subject)
+    actor_id = current_actor_id()
+    if actor_id:
+        return AccessScope.for_user(actor_id)
+    return AccessScope.anonymous()
+
+
 @server.tool()
 async def retrieve_precedent(query: str, ctx: Context) -> str:
     """
@@ -2659,7 +2686,7 @@ async def find_problem(query: str, ctx: Context, limit: int = 10) -> str:
     {query, problems:[{id, title, status, objective, ...}]}.
     """
     pool = ctx.request_context.lifespan_context["pool"]
-    rows = await _pm.find_problem(pool, query, scope=AccessScope.unrestricted(), limit=limit)
+    rows = await _pm.find_problem(pool, query, scope=_caller_access_scope(), limit=limit)
     return json.dumps({"query": query, "problems": rows}, default=str)
 
 
@@ -2671,13 +2698,13 @@ async def inspect_problem(problem_id: str, ctx: Context) -> str:
     []=none yet). JSON: {problem, benchmarks, solutions, leaderboard}.
     """
     pool = ctx.request_context.lifespan_context["pool"]
-    scope = AccessScope.unrestricted()
+    scope = _caller_access_scope()
     p = await _pm.get_problem(pool, problem_id, scope=scope)
     if p is None:
         return "REFUSED: problem not found or out of scope"
     return json.dumps({
         "problem": p,
-        "benchmarks": await _pm.list_problem_benchmarks(pool, problem_id),
+        "benchmarks": await _pm.list_problem_benchmarks(pool, problem_id, scope=scope),
         "solutions": await _pm.list_problem_solutions(pool, problem_id, scope=scope),
         "leaderboard": await _pm.problem_leaderboard(pool, problem_id, scope=scope),
     }, default=str)
@@ -2688,7 +2715,7 @@ async def list_problem_solutions(problem_id: str, ctx: Context) -> str:
     """Every Solution associated with a Problem (association rows only, no
     target objects copied). JSON: {solutions:[...]}."""
     pool = ctx.request_context.lifespan_context["pool"]
-    rows = await _pm.list_problem_solutions(pool, problem_id, scope=AccessScope.unrestricted())
+    rows = await _pm.list_problem_solutions(pool, problem_id, scope=_caller_access_scope())
     return json.dumps({"problem_id": problem_id, "solutions": rows}, default=str)
 
 
@@ -2706,7 +2733,7 @@ async def compare_solutions(problem_id: str, solution_ids_json: str, ctx: Contex
         want = set(json.loads(solution_ids_json))
     except (ValueError, TypeError):
         return "REFUSED: solution_ids_json must be a JSON list of ids"
-    lb = await _pm.problem_leaderboard(pool, problem_id, scope=AccessScope.unrestricted())
+    lb = await _pm.problem_leaderboard(pool, problem_id, scope=_caller_access_scope())
     kept = [e for e in lb["leaderboard"] if e["solution_id"] in want]
     excluded = sorted(want - {e["solution_id"] for e in kept})
     best = [s for s in lb["current_best"] if s in want]
@@ -2730,7 +2757,7 @@ async def inspect_evaluation(evaluation_id: str, ctx: Context) -> str:
     {executions:[...]}.
     """
     pool = ctx.request_context.lifespan_context["pool"]
-    e = await _pm.get_evaluation(pool, evaluation_id)
+    e = await _pm.get_evaluation(pool, evaluation_id, scope=_caller_access_scope())
     if e is None:
         return "REFUSED: evaluation not found"
     return json.dumps(e, default=str)
@@ -2753,7 +2780,7 @@ async def find_best_solution(goal: str, ctx: Context) -> str:
     """
     pool = ctx.request_context.lifespan_context["pool"]
     return json.dumps(
-        await _pm.find_best_way(pool, goal, scope=AccessScope.unrestricted()),
+        await _pm.find_best_way(pool, goal, scope=_caller_access_scope()),
         default=str,
     )
 
