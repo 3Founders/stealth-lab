@@ -6,12 +6,19 @@ _Version lineage — three points, all explicit:_
 |---|---|---|
 | Historical baseline | `a5dace6` | `v1-baseline-2026-09-02` |
 | Historical frozen Final V1 | `d0b173c` | `v1-final-2026-09-03` |
-| Post-freeze security hardening (current launch candidate) | the commit tagged `v1-final-2026-09-03.1` | `v1-final-2026-09-03.1` |
+| Post-freeze security hardening | the commit tagged `v1-final-2026-09-03.1` | `v1-final-2026-09-03.1` |
+| Evaluation-suite findings closed (current launch candidate) | the commit tagged `v1-final-2026-09-03.2` | `v1-final-2026-09-03.2` |
 
 `v1-final-2026-09-03` (`d0b173c`) is the **historical frozen Final V1**, not
-the current launch commit. The **launch candidate** is the `.1` patch tag
-(`v1-final-2026-09-03.1` → the commit tagged `v1-final-2026-09-03.1`), which removes the public
-`apply_change_set` MCP tool (see § "POST-FREEZE SECURITY HARDENING" below).
+the current launch commit. The **launch candidate** is the `.2` patch tag
+(`v1-final-2026-09-03.2`), which closes the two product defects the
+independent Final-V1 evaluation suite discovered against the hardened
+product — staleness not propagating into the leaderboard (Bug #7) and
+Benchmark/Evaluation reads not inheriting the owning Problem's scope
+(Bug #8). See § "POST-FREEZE EVALUATION FINDINGS" at the end. The `.1` tag
+removed the public `apply_change_set` MCP tool (see § "POST-FREEZE SECURITY
+HARDENING" below); it stays immutable, as does `.1`'s and `.2`'s
+predecessors.
 
 _Written 2026-09-03 for FINAL-V1 §6, extended for the freeze pass (§8/§10)
 and the post-freeze security hardening._
@@ -62,10 +69,10 @@ object is ever copied, there is no second execution engine.
 | Object | Rule |
 |---|---|
 | **Problem** | Durable. `status` ∈ `open` / `active` / `solved` / `archived`. Standard scope pair (`owner_id` / `visibility` / `scope_type`); private Problems stay private through `scope_predicates()`. |
-| **Benchmark** | Versioned. Once a benchmark has been used for a published (completed) result it is **immutable** — `trg_benchmark_frozen_immutable` (BEFORE UPDATE) rejects any change to its measured meaning (protocol / criteria / environment / comparison policy / version / name). New meaning = a new version row. `freeze_benchmark()` in the service. |
+| **Benchmark** | Versioned. Once a benchmark has been used for a published (completed) result it is **immutable** — `trg_benchmark_frozen_immutable` (BEFORE UPDATE) rejects any change to its measured meaning (protocol / criteria / environment / comparison policy / version / name). New meaning = a new version row. `freeze_benchmark()` in the service. No independent visibility: a Benchmark **inherits the owning Problem's scope** — `get_benchmark` / `list_problem_benchmarks` gate on `get_problem(scope)` before returning anything (as of `.2`; see § "POST-FREEZE EVALUATION FINDINGS", Bug #8). |
 | **Benchmark case** | The smallest existing executable unit: a case **is** a `task_nodes` row + `expected_outcome` + `verification_criteria` overlay (`benchmark_cases`, FK to `task_nodes`). Not a new executable abstraction. |
 | **Solution** | Association only: `(problem_id, solution_type, target_id, target_table, version, status, proposer, provenance)`. `solution_type` ∈ `procedure` / `task_graph` / `task`, with a type↔table CHECK. `associate_solution` validates the target row exists via the right id column (`procedures.procedure_id` for a procedure, `.id` for task / task_graph). Nothing is copied. Solutions **inherit their Problem's visibility** (`list_problem_solutions` gates on `get_problem(scope)` — same precedent as task_graphs inheriting plan scope). |
-| **Evaluation** | Aggregates over **real** executions + evidence. Version-pins `procedure_id`+`procedure_version` and `implementation_id`+`implementation_version` (UUIDs, no FK, so a tombstoned version stays interpretable). `evaluation_executions` is the only Evaluation↔Execution link; no raw payload is duplicated. |
+| **Evaluation** | Aggregates over **real** executions + evidence. Version-pins `procedure_id`+`procedure_version` and `implementation_id`+`implementation_version` (UUIDs, no FK, so a tombstoned version stays interpretable). `evaluation_executions` is the only Evaluation↔Execution link; no raw payload is duplicated. No independent visibility: an Evaluation **inherits the owning Problem's scope** — `get_evaluation` / `list_problem_evaluations` gate on `get_problem(scope)` (as of `.2`; Bug #8). A completed Evaluation is **historical evidence** and is never rewritten or deleted; whether its Solution is still a *current* leader is recomputed on read from the target's present validity (Bug #7). |
 
 **Evaluation lifecycle — anti-fabrication.** An untrusted caller cannot
 fabricate a `completed` Evaluation or a `verified_success_rate`:
@@ -99,7 +106,22 @@ incomplete Evaluation is never comparable.
   reaches `BEST_VERIFIED` (its Wilson lower bound is below the floor →
   `INSUFFICIENT_EVIDENCE`);
 - derived states: `BEST_VERIFIED` / `HIGH_PERFORMING` / `PROMISING` /
-  `INSUFFICIENT_EVIDENCE`;
+  `INSUFFICIENT_EVIDENCE`, plus `STALE` for a Solution whose underlying
+  target is no longer valid;
+- **current-validity gate (as of `.2`, Bug #7):** a Solution is only an
+  *eligible* leader if the thing it points at is valid **right now**.
+  `_ineligible_solution_reasons` reuses the existing staleness truth — a
+  `procedure` Solution is ineligible iff its live `procedures` row is
+  `staleness = 'stale'` (or has no live version), the same disqualifier
+  `find_applicable_procedures` applies; a `task` Solution is ineligible iff
+  its `task_nodes` row is tombstoned. An ineligible Solution stays in
+  `leaderboard` with its historical numbers but is `state = STALE`,
+  `eligible = false`, dropped from `current_best` and every
+  `conditional_leaders` slot, and always sorted last (it can never
+  *outrank* a valid Solution). `task_graph` Solutions carry no
+  validity/staleness signal today — a documented gap, not a stronger
+  guarantee than exists. New `ineligible_solutions: [{solution_id,
+  reason}]` on the response;
 - `TIE_EPSILON` → `current_best` is a **list**;
 - `conditional_leaders` for reliability / cost / latency / first-pass;
 - **`current_best` is derived, never stored.** It is `[]` when nothing is
@@ -132,7 +154,11 @@ POST /v1/evaluations/{id}/complete      POST /v1/evaluations/{id}/invalidate
 `compare_solutions` (comparable completed evals only, plus an `excluded`
 list), `inspect_evaluation` (version-pinned eval + linked execution ids),
 `find_best_solution` (NL goal → matched Problem → current best VERIFIED
-solution).
+solution). As of `.2` these derive the caller's `AccessScope` the same way
+the REST layer does — a real resolved OIDC subject → that user's scope,
+nothing resolvable → `AccessScope.anonymous()` (public only) — via
+`server._caller_access_scope()`, instead of the former hardcoded
+`AccessScope.unrestricted()` that bypassed visibility entirely (Bug #8).
 
 **Proof:** `backend/tests/test_product_model_offline.py` (12 — comparability
 matrix, derived-state bands, small-n),
@@ -417,8 +443,12 @@ Accepted, not blockers. Real, not invented.
 
 3. **Execution-run reads are unauthenticated.** `GET /v1/runs/{id}` and
    `/nodes` return `created_by` / `scope_type` / `scope_entity_id` with no
-   identity check — consistent with every other V1 read surface. Mutations
-   (resume / retry) *are* creator-gated. Tighten if private Problems ship.
+   identity check. Mutations (resume / retry) *are* creator-gated. Tighten
+   if private Problems ship. Scope: this item is now specifically about
+   `execution_runs` — the product-model **downstream reads**
+   (Benchmark / Evaluation / leaderboard) *are* scope-gated as of `.2`
+   (Bug #8); `execution_runs` was left unchanged as out of this wave's
+   surgical scope.
 
 4. **`test_ingestion_admin_endpoint_e2e`** (trace → observation → claim
    drain) is a pre-existing red on a live DB — a narrow bug where
@@ -636,5 +666,127 @@ Full offline backend suite after the change: **2139 passed, 289 skipped,
 still green.
 
 **Lineage.** Old tag `v1-final-2026-09-03` (`d0b173c`) unchanged and still
-the historical frozen Final V1. New patch tag `v1-final-2026-09-03.1` →
-the commit tagged `v1-final-2026-09-03.1` is the current launch candidate.
+the historical frozen Final V1. Patch tag `v1-final-2026-09-03.1` was the
+launch candidate until `v1-final-2026-09-03.2` superseded it (see
+§ "POST-FREEZE EVALUATION FINDINGS"); all three tags stay immutable.
+
+---
+
+## POST-FREEZE EVALUATION FINDINGS (v1-final-2026-09-03.2)
+
+Landed **after** `v1-final-2026-09-03.1`. The independent Final-V1
+evaluation suite, re-run against the hardened product, found two real,
+previously undocumented product defects. Both are closed here; the
+evaluation suite stays the independent proving layer and no evaluation
+code was imported into production. This is a **surgical** closure — the
+product model, staleness, and authorization designs are unchanged; there
+is no second ranking system and no second authorization system. No schema
+migration (see below). Full account:
+`.scratch/final-v1-evaluation-findings-fixed.md`. Discovery history is
+preserved: these bugs existed in `.1` and earlier and were found by the
+evaluation suite, not the test suite.
+
+### Bug #7 — CLOSED — staleness must affect current-best / leaderboard
+
+**Root cause.** The lower staleness chain already worked (claim change →
+`propagate_claim_change` → `mark_procedure_stale` → `procedures.staleness =
+'stale'` → `find_applicable_procedures` stops selecting it). But
+`product_model.problem_leaderboard` never consulted that truth: it banded
+each Solution purely on the Wilson lower bound of its **completed**
+Evaluations, which are historical. A Solution backed by a now-stale
+Procedure kept its `BEST_VERIFIED` band and stayed in `current_best`,
+outranking currently valid Solutions.
+
+**Fix.** `backend/app/services/product_model.py`. New
+`_ineligible_solution_reasons(pool, solutions)` reuses the **existing**
+disqualifier — a `procedure` Solution (whose `target_id` is the stable
+`procedures.procedure_id`) is ineligible iff its live row is `staleness =
+'stale'` or has no live version; a `task` Solution is ineligible iff its
+`task_nodes` row is tombstoned; `task_graph` Solutions carry no such
+signal and are documented as a gap, not given a stronger guarantee.
+`problem_leaderboard` now marks an ineligible Solution `state = "STALE"`,
+`eligible = false`, keeps it in `leaderboard` **with its historical
+numbers**, drops it from `current_best` and every `conditional_leaders`
+slot, sorts it last (it can never outrank a valid Solution), and returns a
+new `ineligible_solutions: [{solution_id, reason}]`. If the only
+`BEST_VERIFIED` Solution becomes stale, `current_best` becomes `[]` ("no
+verified solution yet"). No stored winner; still computed on read.
+
+**Regression.** `backend/tests/test_product_model_staleness_leaderboard_e2e.py`
+— full lineage → confirm `current_best`; force staleness through the real
+`relate_claims(SUPERSEDES)` production path; confirm `procedures.staleness`
+really flips; re-read the leaderboard through the real service; confirm the
+stale Solution leaves `current_best`, a fresh verified Solution is promoted,
+the stale one is still listed, and **the historical Evaluation row is
+unchanged** (`status='completed'`, lineage still pinned, no new Evaluation
+fabricated). Second test: stale-only Solution → `current_best == []`.
+
+**Historical Evaluation records are preserved; current-best eligibility is
+derived from current validity.**
+
+### Bug #8 — CLOSED — private Benchmark / Evaluation scope-gating
+
+**Root cause.** Problem visibility was enforced (`scope_predicates()`), and
+`list_problem_solutions` already inherited it. But `get_benchmark`,
+`list_problem_benchmarks`, `get_evaluation`, and `list_problem_evaluations`
+in `product_model.py` ran raw unscoped `SELECT`s, their REST routes never
+threaded the viewer scope, and the six product-model MCP tools hardcoded
+`AccessScope.unrestricted()` (which bypasses visibility entirely). Another
+user — or an anonymous caller — could read or list a private Problem's
+Benchmark/Evaluation data directly, or infer it from the leaderboard's
+`benchmark_id`.
+
+**Fix.** One shared guard, reused everywhere; no per-router auth logic.
+- `backend/app/services/product_model.py`: the four accessors take a
+  keyword-only `scope: AccessScope` (+ optional `tenant_scope`) and gate on
+  `get_problem(pool, <problem_id>, scope=...)` being visible before
+  returning anything — the exact idiom `list_problem_solutions` already
+  uses. `problem_leaderboard` gained a top-level `get_problem` gate so a
+  private board can't even leak its `benchmark_id`.
+- `backend/app/api/problems.py`: the benchmark/evaluation routes pass
+  `scope=scope` (already resolved by the `get_scope` dependency).
+- `backend/app/mcp_server/server.py`: new `_caller_access_scope()` — the
+  MCP analogue of REST `get_scope`: a real resolved OIDC subject →
+  `AccessScope.for_user`, nothing resolvable → `AccessScope.anonymous()`
+  (public only, matching an unauthenticated REST caller). The six
+  product-model tools use it instead of `AccessScope.unrestricted()`.
+
+**Regression.** `backend/tests/test_product_model_privacy_e2e.py` — proves
+denial at three layers (service with `AccessScope.for_user`/`anonymous`,
+REST with real `X-Viewer-Id` identity, MCP with the real caller-identity
+contextvar), that a public Problem's downstream graph is still readable by
+anyone, and the negative inference-leak checks (no benchmark id/name, no
+`current_best`, no eval count in a stranger's leaderboard / `compare_solutions`
+/ `find_best_solution` responses or bodies).
+
+**Benchmark/Evaluation visibility inherits the owning Problem's scope.**
+
+### Migration
+
+**None.** `procedures.staleness` already carries the Bug #7 truth;
+`benchmarks` and `evaluations` have no scope columns by design (they were
+always meant to inherit the Problem's), so Bug #8 is a service-layer gate,
+not a schema change. Fresh-DB and populated-upgrade migration tests are
+unaffected and were re-run.
+
+### Accepted limitations after `.2`
+
+- `task_graph`-backed Solutions have no staleness or bi-temporal validity
+  signal (`task_graphs` has neither axis by design), so a `task_graph`
+  Solution is never marked `STALE`. Documented gap, surfaced honestly, not
+  a silent assumption of a stronger guarantee.
+- Product-model MCP reads are **public-only unless OIDC is configured**
+  (`_caller_access_scope()` → `anonymous()` in the shared-token / loopback
+  posture) — the same denial semantics an unauthenticated REST caller
+  gets. A deployment that needs per-caller MCP visibility configures
+  `OIDC_ISSUER` / `OIDC_AUDIENCE`, exactly as the write-path attribution
+  already does.
+- `execution_runs` reads remain unauthenticated (known limitation #3,
+  above) — deliberately out of this wave's surgical scope.
+
+### No ingestion
+
+No external-corpus ingestion or admission was performed in this fix wave.
+The next phase (evaluation-suite re-run pinned to `v1-final-2026-09-03.2`,
+clean baseline, then admission and the A/B/C + ablation + ROI experiments)
+begins only after this patch lands.
