@@ -1911,7 +1911,17 @@ async def check_procedure(procedure_id: str, query: str, ctx: Context) -> str:
             pool, procedure_id=procedure_id, access_scope=AccessScope.unrestricted(),
         )
     except ProcedureNotFound as exc:
-        return f"REFUSED: {exc}"
+        # finding C: the caller may have passed the procedures.id row key
+        # instead of the stable handle -- resolve it and retry once.
+        canonical = await _canonical_procedure_id(pool, procedure_id)
+        if canonical is None or canonical == procedure_id:
+            return f"REFUSED: {exc}"
+        try:
+            result = await check_procedure_reuse(
+                pool, procedure_id=canonical, access_scope=AccessScope.unrestricted(),
+            )
+        except ProcedureNotFound as exc2:
+            return f"REFUSED: {exc2}"
 
     return json.dumps({
         "verdict": result.verdict,
@@ -1934,20 +1944,48 @@ async def check_procedure(procedure_id: str, query: str, ctx: Context) -> str:
 # ---------------------------------------------------------------------------
 
 
+async def _canonical_procedure_id(pool, given: str) -> "str | None":
+    """Accept EITHER the stable ``procedures.procedure_id`` family handle OR
+    a per-version ``procedures.id`` row key, and return the stable handle
+    for the live version. Final-V1 eval finding C: the MCP procedure tools
+    take the family handle, but the row key is what a caller sees in the
+    DB / the /procedure-graph viewer / another tool's output, and passing
+    it was bounced with an unhelpful "no live procedure". Returns None when
+    neither resolves to a live row (``t_invalid IS NULL``)."""
+    try:
+        u = UUID(str(given))
+    except (ValueError, AttributeError, TypeError):
+        return None
+    row = await pool.fetchrow(
+        "SELECT procedure_id::text AS pid FROM procedures "
+        "WHERE (procedure_id = $1::uuid OR id = $1::uuid) AND t_invalid IS NULL "
+        "ORDER BY (procedure_id = $1::uuid) DESC LIMIT 1",
+        u,
+    )
+    return row["pid"] if row else None
+
+
 async def _resolve_live_procedure(pool, procedure_id: str) -> dict:
-    """Shared resolver: a stable procedure_id -> its current live version
-    row. The exact query applicability.py::check_procedure_reuse() already
-    uses -- reused here, not duplicated, so both paths agree by
-    construction on what "the current live version" means."""
+    """Shared resolver: a procedure handle -> its current live version row.
+    Accepts the stable ``procedure_id`` OR the ``procedures.id`` row key
+    (finding C) via ``_canonical_procedure_id``; the row read itself is the
+    exact query applicability.py::check_procedure_reuse() uses, so both
+    paths agree by construction on "the current live version"."""
     from app.services.applicability import ProcedureNotFound
 
     try:
-        proc_uuid = UUID(str(procedure_id))
+        UUID(str(procedure_id))
     except (ValueError, AttributeError, TypeError) as exc:
         raise ProcedureNotFound(f"{procedure_id!r} is not a valid procedure id (UUID)") from exc
+    canonical = await _canonical_procedure_id(pool, procedure_id)
+    if canonical is None:
+        raise ProcedureNotFound(
+            f"no live procedure for {procedure_id} -- tried it as both the "
+            "procedure_id family handle and the procedures.id row key"
+        )
     row = await pool.fetchrow(
         "SELECT * FROM procedures WHERE procedure_id = $1::uuid AND t_invalid IS NULL",
-        proc_uuid,
+        UUID(canonical),
     )
     if row is None:
         raise ProcedureNotFound(f"no live procedure for procedure_id={procedure_id}")

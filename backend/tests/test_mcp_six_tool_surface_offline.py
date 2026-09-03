@@ -36,13 +36,19 @@ class FakeContext:
 
 
 class FakePool:
-    """Answers the one query _resolve_live_procedure issues."""
+    """Answers the two queries _resolve_live_procedure issues:
+    _canonical_procedure_id's handle-or-row-key resolve, then the full row."""
 
     def __init__(self, procedure_row=None):
         self._row = procedure_row
 
     async def fetchrow(self, sql, *params):
-        if "FROM procedures WHERE procedure_id" in sql:
+        n = " ".join(sql.split())
+        if self._row is None:
+            return None
+        if "OR id = $1::uuid" in n:  # _canonical_procedure_id (finding C)
+            return {"pid": self._row["procedure_id"]}
+        if "FROM procedures WHERE procedure_id" in n:
             return self._row
         return None
 
