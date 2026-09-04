@@ -55,6 +55,42 @@ def verify_T1(wt_path: Path) -> dict:
     }
 
 
+def verify_T1_v2(wt_path: Path) -> dict:
+    """T1-v2 (final pre-score remediation, bounded T1/T3 pass): resolver
+    identification is the real, required, hypothesis-relevant test;
+    exact-name enumeration is now an informational tolerance check, not a
+    gating requirement -- see repair_reason in tasks.jsonl for why."""
+    gt = t1_ground_truth(wt_path)
+    answer = _read_answer(wt_path)
+    if answer is None:
+        return {"task_success": False, "deterministic_correctness": 0.0,
+                "verification_quality": {"answer_file_found": False},
+                "details": {"reason": "no answer.md/answer.txt found in worktree"}}
+
+    resolver_named = gt["shared_resolver"].lower() in answer.lower()
+
+    # Informational only: does the answer's reported/implied tool count fall
+    # within a generous +/-30% band of the true count? Never gates success.
+    true_count = gt["tool_function_count"]
+    numbers_in_answer = [int(n) for n in re.findall(r"\b(\d{1,3})\b", answer)]
+    count_within_tolerance = any(
+        abs(n - true_count) <= max(1, round(true_count * 0.30)) for n in numbers_in_answer
+    ) if numbers_in_answer else False
+
+    success = resolver_named  # the ONLY gating requirement
+    return {
+        "task_success": success,
+        "deterministic_correctness": 1.0 if resolver_named else 0.0,
+        "verification_quality": {
+            "answer_file_found": True,
+            "resolver_correctly_named": resolver_named,
+            "true_tool_count": true_count,
+            "count_within_tolerance_informational_only": count_within_tolerance,
+        },
+        "details": {"ground_truth": gt},
+    }
+
+
 def verify_T3(wt_path: Path) -> dict:
     candidates = t3_candidate_functions(wt_path)
     answer_text = ""
@@ -175,4 +211,14 @@ def verify_T7(wt_path: Path) -> dict:
     }
 
 
-VERIFIERS = {"T1": verify_T1, "T3": verify_T3, "T7": verify_T7}
+VERIFIERS = {
+    "T1": verify_T1, "T3": verify_T3, "T7": verify_T7,
+    # T7-v2 uses a separate, dedicated verifier (ground_truth_t7v2_largest_function.py),
+    # wired in by the previous pass's own run_pilot.py / calibration scripts.
+    "T1-v2": verify_T1_v2,
+    # T3-v2 intentionally reuses verify_T3 unchanged -- the defect and its fix
+    # live entirely in ground_truth.py's call-site scanner (t3_candidate_functions/
+    # t3_ground_truth_for now route through the AST-aware _find_real_call_sites),
+    # not in the verifier's own detection logic, so no new function is needed.
+    "T3-v2": verify_T3,
+}

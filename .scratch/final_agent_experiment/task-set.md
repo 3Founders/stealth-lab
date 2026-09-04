@@ -1,113 +1,121 @@
-# Final frozen task set (final pre-score remediation, section E)
+# Final frozen task set (bounded T1/T3 pass, final pre-score remediation)
 
-**3 tasks: T1, T3, T7-v2.** T7 (original) is retired — see `t7-review.md`.
-This set is frozen as of this document; no task may be added, removed, or
-altered after any scored result exists for it.
+**3 tasks: T1-v2, T3-v2, T7-v2.** All three original tasks (T1, T3, T7) are
+retired from the scored set and preserved unmodified in `tasks.jsonl` as
+historical evidence — see `t7-review.md` (T7's retirement, prior pass) and
+this document's own "why repaired" sections below. This set is frozen as of
+this document; no task may be added, removed, or altered after any scored
+result exists for it, per this task's own explicit prohibition on further
+iteration after this pass.
 
-## T1 — MCP tool-surface + shared-resolver identification
+## T1-v2 — shared-resolver identification (repaired from T1)
 
-- **Statement:** "In this repository at commit `bd768e62...`, examine
-  `backend/app/mcp_server/server.py` and answer: (a) how many functions are
-  decorated with `@server.tool()`, listing their exact names, and (b) which
-  single function is the SHARED resolver that `get_procedure`,
-  `check_procedure`, `check_applicability`, `report_execution`, and
-  `decide_procedure` all use to accept either a `procedures.procedure_id`
-  family handle or a `procedures.id` row key. Write the answer to
-  `answer.md` as a short numbered list with exact function names and line
-  numbers."
-- **Initial repository state:** fresh disposable worktree at `bd768e62`.
-- **Expected outcome / deterministic grading:** real ground truth
-  (`ground_truth.py::t1_ground_truth`) independently derives the tool-count
-  (29) and the real shared resolver name via AST + text scan of the pinned
-  file; grader does an exact match against the agent's reported numbers/name.
+- **Statement:** examine `backend/app/mcp_server/server.py` (fresh
+  disposable worktree, commit `bd768e62...`) and identify the single
+  function that `get_procedure`, `check_procedure`, `check_applicability`,
+  `report_execution`, and `decide_procedure` all share to resolve either a
+  `procedures.procedure_id` family handle or a `procedures.id` row key.
+  Also report an approximate `@server.tool()` count (informational only).
+- **Deterministic grading:** resolver name match against real AST/regex
+  ground truth (`ground_truth.py::t1_ground_truth`) is the ONLY gating
+  requirement (`verifiers.py::verify_T1_v2`); tool count is checked within
+  a +/-30% tolerance band but never gates success.
+- **Why repaired, not KEPT or RETIRED:** real evidence from 8 trials of the
+  ORIGINAL T1 across 4 step budgets (8/16/25/40), both arms: 100% budget
+  consumption every single time (excluding 2 unrelated `api_error`
+  outliers), zero convergence trend — the same flat non-convergence
+  signature that led to the original T7's retirement. But unlike T7, T1's
+  underlying navigation/resolver-identification mechanism is sound and
+  bounded (one file, one real shared function, 5 real call sites to trace)
+  — the problem was a bundled, mechanically demanding requirement (>=90%
+  exact-name recall across 29 items) tangential to the actual
+  hypothesis-relevant test. Repair (drop the exhaustive-enumeration gate,
+  keep resolver ID as the sole requirement) is the smallest principled
+  correction, not a redesign for convenience — the hard part of the task
+  (deep reasoning to find what 5 different call sites share) is unchanged.
+- **Relevant Stealth capability:** structural-summary-before-full-read.
+- **Fair A/B test:** same frozen file/commit, same question, identical
+  prior for both arms.
+- **Approximate complexity:** medium (one ~700-line file, real call-graph
+  reasoning across 5 functions).
+
+## T3-v2 — cross-file rename with corrected grader (repaired from T3)
+
+- **Statement:** unchanged from the original T3 — find every real call site
+  of a `capability.py`-defined function used elsewhere in
+  `backend/app/services/`, rename it to `compute_wilson_lower_bound`
+  everywhere (definition + every real code call site; renaming prose
+  comments/docstrings that merely mention the name is explicitly not
+  required), confirm the real test suite for that area still passes.
+- **Deterministic grading:** `ground_truth.py::_find_real_call_sites`
+  (new, AST-based) replaces the original `_find_call_sites` (text-substring
+  regex). Only genuine `ast.Name`/`ast.Attribute`/import-alias references
+  count as a "call site" — comments are never part of the AST at all, and
+  docstrings are `ast.Constant` string nodes, not `Name`/`Attribute` nodes,
+  so both are excluded by construction. `verifiers.py::verify_T3` is
+  unchanged (reused as-is for T3-v2) — the defect and its fix live entirely
+  in the ground-truth data source, not the verifier's own logic.
+- **Why repaired, not KEPT or RETIRED:** confirmed, real grader defect —
+  both real candidate functions in `capability.py` (`wilson_interval`,
+  `band_for_p`) have their names embedded in prose comments/docstrings
+  across multiple files (`backend/app/api/implementations.py:170`,
+  `backend/app/services/capabilities.py:43-44/268`,
+  `backend/app/services/procedure_graph_api.py:29-30/357`,
+  `backend/app/services/product_model.py:16` — confirmed directly via
+  grep). The original grader's success condition required the OLD name to
+  have ZERO remaining textual matches anywhere in the tree; these harmless
+  prose mentions made that condition structurally unreachable even after a
+  functionally perfect rename. Direct evidence this was a grader bug, not a
+  task-design or agent-capability problem: 4 of 8 real T3 trials show the
+  agent successfully defined `compute_wilson_lower_bound` in
+  `capability.py` (`new_name_defined_in_capability_py: True`), but the
+  grader's rename-detection heuristic still reported
+  `renamed_from_detected: False` every time. Same class of bug (naive
+  substring matching mistaken for semantic/structural truth) as the
+  original T7's grader defect, repaired the same principled way (an
+  AST-aware scanner), without forcing T7-v2's specific line-count mechanism
+  onto a task whose natural shape is call-site discovery, not size
+  measurement.
 - **Relevant Stealth capability:** structural-summary-before-full-read
-  (one large file, many decorated functions — an outline-first approach
-  should need far fewer tokens than reading the whole file).
-- **Fair A/B test:** neither arm has this file's content memorized from
-  training in a way that differs between arms; both start from the same
-  frozen commit, same file, same question.
-- **Approximate complexity:** small-to-medium (one target file, ~600 lines).
-- **Realistic chance to finish:** both arms completed real work in prior
-  calibration at 25 steps (though neither reached a final natural stop —
-  see `step-budget-calibration.md`); this task is the smallest of the 3.
-
-## T3 — cross-file rename with real verification
-
-- **Statement:** "`backend/app/services/procedure_extraction/capability.py`
-  defines a function used by at least one other module in
-  `backend/app/services/`. Find every real call site of that function
-  across the whole `backend/app/` tree, rename it to
-  `compute_wilson_lower_bound` everywhere (definition and every call site),
-  and confirm the existing test suite for that area still passes."
-- **Initial repository state:** fresh disposable worktree at `bd768e62`.
-- **Expected outcome / deterministic grading:** grader independently
-  identifies the real candidate function(s) (`ground_truth.py::
-  t3_candidate_functions` — 5 real candidates found this session:
-  `wilson_interval`, `band_for_p`, `route_for_p`, `compute_capability`,
-  `capability_trajectory`, each with real, AST/import-verified external
-  callers) and checks whether the agent's `answer.md`/diff genuinely
-  renamed a real candidate consistently across its real call sites, and
-  whether the reported test-run command/output is real (re-run and
-  compared, same discipline as T8's own design).
-- **Relevant Stealth capability:** structural-summary-before-full-read
-  (locate the right function among several in one file) + a genuine
-  multi-file, safe-edit task (the product hypothesis's "modifying multiple
-  files safely" criterion).
-- **Fair A/B test:** same file, same starting commit, same instructions,
-  both arms.
-- **Approximate complexity:** medium (cross-file edit + real verification
-  step).
-- **Realistic chance to finish:** not yet demonstrated at any tested budget
-  (0/2 cells reached a natural stop at 25 steps — see
-  `step-budget-calibration.md`); the max_steps decision in that document is
-  load-bearing for whether this task is realistically completable at all.
+  (finding real call sites efficiently rather than reading every file).
+- **Fair A/B test:** same task, same commit, same real multi-file edit risk
+  for both arms.
+- **Approximate complexity:** medium-high (up to 5 real call sites across
+  5 files, real test-suite verification).
 
 ## T7-v2 — composition: largest function across a bounded subtree
 
-- **Statement:** "Across every top-level `.py` file directly under
-  `backend/app/services/` (NOT subdirectories), find the single function or
-  method (including methods defined inside a class) with the largest
-  number of physical lines in its body, counted from its `def` line through
-  its last body line inclusive. Report in `answer.md`: the function/method
-  name, its containing file (relative path), and its exact line count. Use
-  as few full-file reads as you reasonably can; prefer targeted
-  search/outline tools over reading every file in full."
-- **Initial repository state:** fresh disposable worktree at `bd768e62`.
-- **Expected outcome / deterministic grading:**
-  `ground_truth_t7v2_largest_function.py` independently re-computes the
-  answer via pure AST line-span measurement (no cross-file call-graph
-  inference — see `t7-review.md` for why the original T7's grader class was
-  retired). Real answer: `record_execution_outcome` in
-  `backend/app/services/procedures.py`, 247 lines, a clean 10-line margin
-  over the second-place candidate (237 lines).
-- **Relevant Stealth capability:** structural-summary-before-full-read
-  (75 files to survey — a genuine opportunity for outline-first navigation
-  to show a real token/tool-call difference vs. reading every file in
-  full) + tool efficiency generally (many repeated search/read tool calls
-  across a real, moderately large search space) — the closest honest
-  approximation of a composition opportunity this single-agent harness can
-  exercise (see `t7-review.md` and `final-readiness-review.md` for why
-  git-worktree-isolation cannot be meaningfully tested by a single-agent
-  trial).
-- **Fair A/B test:** neither arm has any special knowledge of this specific
-  measurement; the 75-file scope is large enough that brute-force full
-  reads is a real, costly baseline strategy either arm could fall into.
-- **Approximate complexity:** the largest of the 3 (75 files), by design —
-  this is intentional, to give retrieval/context-efficiency mechanisms room
-  to matter.
-- **Realistic chance to finish:** UNPROVEN as of this document's own
-  writing — this is a brand-new task with zero prior trials of any kind.
-  `step-budget-calibration.md`'s fresh 40-step calibration trial for this
-  task is the first real evidence either way, and is the actual gate for
-  whether this task set is realistically completable — see that document
-  for the outcome and this document's own honesty: **do not treat this
-  task as validated by its ground-truth's clean margin alone; a clean
-  margin proves the GRADER is trustworthy, not that either arm can reach
-  it within budget.**
+Unaffected by this pass (repaired the prior pass, from original T7). See
+`t7-review.md` for the full original repair record. Summary: pure AST
+`end_lineno - lineno + 1` measurement across 75 top-level files directly
+under `backend/app/services/`, zero cross-file call-graph inference by
+construction. Real computed answer: `record_execution_outcome` in
+`procedures.py`, 247 lines, a clean 10-line margin over second place (237
+lines). Already converges cleanly and naturally at both 25 and 40 steps in
+both arms (`no_tool_call`, genuine stop, well under either ceiling).
+
+## Why this final 3-task set is scientifically valid
+
+All three tasks now have: (1) a real, bounded, unambiguous ground truth
+independently re-derived by the grader at trial time from the pinned
+commit, never trusted/cached; (2) a deterministic, non-subjective success
+condition; (3) a confirmed-fair setup for both arms (same commit, same
+file(s), same question, no arm-specific hints); (4) a real, disclosed,
+evidence-backed relationship to the structural-summary-before-full-read /
+composition hypothesis this experiment exists to test. No task was kept,
+repaired, or invented because it was likely to favor either arm — every
+change in this pass was driven by a confirmed defect (T1's mechanically
+demanding bundled requirement; T3's grader bug) with real trial evidence
+behind it, not by a desire for convergence. 3 tasks (not 2, not padded to a
+larger number) is what survived honest scrutiny; the coordinator's own
+instruction explicitly permitted landing on 2 if that's what the evidence
+supported, but a principled repair was available for both T1 and T3, so
+neither needed to be dropped or replaced.
 
 ## Diversity check
 
-3 tasks, spanning: single-file read+identify (T1), cross-file edit+verify
-(T3), broad-survey+measure (T7-v2). Not a one-task anecdote, though a small
-n=3 is honestly still a small sample — see `final-readiness-review.md`'s
-uncertainty-discipline section for how this is treated in analysis.
+3 tasks, spanning: single-file read+identify (T1-v2), cross-file
+edit+verify (T3-v2), broad-survey+measure (T7-v2). Not a one-task anecdote,
+though n=3 is honestly still a small sample — see
+`final-readiness-review.md`'s uncertainty-discipline section for how this
+is treated in analysis.

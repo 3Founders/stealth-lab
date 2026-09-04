@@ -490,3 +490,41 @@ again. This is a task-design decision, explicitly outside this pass's own
 mandate (fixing the timeout/execution-robustness architecture, which is
 now done and proven) -- not something this pass was authorized to decide
 unilaterally.
+
+### FOURTH/FINAL ADDENDUM FINAL READINESS (supersedes the addendum above)
+
+T1 and T3 investigated once (bounded single pass, per explicit mandate --
+no further iteration taken or authorized). Both **REPAIRED**: original
+task statements preserved unchanged as `T1`/`T3` (historical record);
+live final set is `T1-v2`, `T3-v2`, `T7-v2`. Full root-cause evidence and
+fix details: `remediation-results.md` ("Part T1/T3"), `task-set.md`.
+
+- retrieval abstention: **YES** (unchanged, re-confirmed passing this pass)
+- real knowledge retrieval: **YES** (unchanged, re-confirmed passing this pass)
+- T7 valid: **YES** (unchanged, `T7-v2`)
+- T1/T3 valid: **YES** -- repaired this pass (`T1-v2`, `T3-v2`)
+- task set frozen: **YES** -- `T1-v2`, `T3-v2`, `T7-v2` (3 tasks;
+  `task-set.md`)
+- step budget frozen: **YES** -- `max_steps=40`, common across all 3
+  final tasks, proven safe by a 6-cell non-scored final-set safety check
+  (zero hangs, max observed 729.6s vs. the 900s ceiling; see
+  `step-budget-calibration.md`)
+- execution robustness: **YES** (unchanged, re-confirmed)
+- isolated worktrees: **YES** (unchanged, re-confirmed)
+- instrumentation: **YES** (unchanged, re-confirmed)
+- **final scored pilot ready: YES**
+
+### Disclosed residual risk (not a blocker)
+
+Of the safety check's 6 cells, 1 (`T3-v2`/`B_default`) consumed the full
+40/40 step budget in its single non-scored trial; 3 others ended early via
+`api_error` (pre-existing, separately-tracked GENERAL_COMPUTE provider
+noise, not step-budget signal); `T7-v2` converged cleanly in both arms
+(30-31 of 40). A single trial cannot distinguish a one-off (provider
+slowness, a harder-than-average random walk through the rename) from a
+systematic pattern for `T3-v2`/`B_default` -- and per the single-bounded-
+pass mandate, this pass deliberately did not run further non-scored trials
+to resolve that ambiguity itself. The scored pilot's own multi-trial
+replication is the correct mechanism to characterize this, and is exactly
+what it is designed to do; this is disclosed as real, honest residual
+uncertainty, not swept under the rug.

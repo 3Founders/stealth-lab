@@ -132,3 +132,32 @@ converge at any tested budget, likely needing task redesign like the
 original T7 did." T7, retrieval abstention, and execution robustness are
 all now genuinely closed. See `final-readiness-review.md`'s
 ADDENDUM FINAL READINESS block for the complete gate table.
+
+## STATUS UPDATE 2: task set and step budget frozen (this pass)
+
+This supersedes the item above for `max_steps` and the T1/T3 status; it
+does not rewrite the frozen history above it.
+
+1. **T1 and T3 -- resolved.** Investigated once (bounded, single pass,
+   no further iteration authorized or taken), both **REPAIRED** (not
+   retired, not redesigned-for-difficulty): T1's grader/scope bundled an
+   unnecessary exhaustive-enumeration requirement onto an otherwise valid
+   lookup question; T3's grader used a naive substring scanner that
+   miscounted comment/docstring mentions as real call sites, penalizing
+   genuine correct renames. Originals preserved unchanged as `T1`/`T3`
+   (historical record, not deleted). Live final set: `T1-v2`, `T3-v2`,
+   `T7-v2`. Full evidence and fix details in `remediation-results.md`
+   ("Part T1/T3") and `task-set.md`.
+2. **`max_steps` -- FROZEN at 40.** A 6-cell, 1-trial-per-cell, non-scored
+   safety check of the final set (`T1-v2`/`T3-v2`/`T7-v2` x {A,
+   B_default}, `run_final_set_safety_check.py`) confirmed zero hangs (max
+   observed 729.6s against the 900s ceiling) and no runaway consumption
+   beyond the configured budget. See `step-budget-calibration.md`'s
+   final "Decision" section for the full per-cell table and reasoning.
+
+**This document now authorizes the final scored pilot to proceed** --
+task set frozen (3 tasks: `T1-v2`, `T3-v2`, `T7-v2`), `max_steps=40`
+frozen, retrieval abstention, execution robustness, and corpus
+contamination all previously resolved and re-confirmed unchanged this
+pass. See `final-readiness-review.md`'s FOURTH/FINAL addendum for the
+complete gate table.

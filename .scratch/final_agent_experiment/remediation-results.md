@@ -399,6 +399,54 @@ for the full result: T7-v2 passes both budgets cleanly; T1 and T3 fail
 both at exactly 100% budget consumption with no convergence trend --
 reclassified below as a task-design problem, not an infrastructure one.
 
+## Part T1/T3: REPAIR investigation and resolution
+
+Bounded, single pass (per explicit coordinator mandate: investigate once,
+decide, freeze, stop -- no further iteration). For each of T1 and T3:
+inspected the original task statement, grader, and real 25/40-step trial
+traces; determined whether the task is scientifically valid and whether
+the grader measures the intended outcome; determined the root cause of
+100% budget consumption. Outcome for both: **REPAIR** (valid underlying
+task, defective scope or grader, smallest principled fix, original
+preserved unchanged as historical evidence).
+
+**T1 root cause:** scope, not grader. The original statement bundled an
+exhaustive, exact enumeration requirement (count every `@server.tool()`-
+decorated function in the file) onto an otherwise well-posed single-answer
+lookup question (identify the shared resolver function). Real trace
+evidence: 8 trials across 2 budgets, 0 answer files ever produced, 100%
+budget consumption in every trial -- the agent never converged on
+"finished," consistent with chasing exhaustive completeness rather than
+task difficulty. **Fix (`T1-v2`):** keeps the resolver-identification
+question exactly as-is (the actually load-bearing part), and downgrades
+the enumeration requirement to an approximate, non-gating count. Grader
+(`verify_T1_v2`): resolver-name match is the sole gating check; the count
+is reported but never fails the trial.
+
+**T3 root cause:** grader, not scope or agent capability. The original
+ground-truth scanner (`_find_call_sites`, text-substring based) counted
+any occurrence of the target function name anywhere in a file, including
+prose comments and docstrings that merely mention it -- not just real code
+call sites. Direct grep confirmed both candidate functions are mentioned
+in comments/docstrings in files beyond their real call sites. Real trace
+evidence: at least one trial reached `new_name_defined_in_capability_py:
+True` (the agent genuinely performed the rename) while the grader still
+scored it a failure (`renamed_from_detected: False`), because a stale
+comment mentioning the old name elsewhere kept tripping the substring
+scanner. This is a confirmed grader defect, not a task-design or agent-
+capability problem. **Fix (`T3-v2`):** new `_find_real_call_sites`
+(AST-based: parses each file, walks `ast.Name`/`ast.Attribute`/
+`ast.ImportFrom` nodes, only counts genuine references, structurally
+excluding comments and docstrings). Task statement unchanged in substance
+(same rename, same scope); `verify_T3` reused unchanged since the fix
+lives entirely in `ground_truth.py`.
+
+Neither repair loosens or tunes the task to make it easier, and neither
+was chosen because it favors an experiment arm -- both fixes narrow or
+correct the *measurement*, leaving the underlying work the agent must do
+essentially the same size. See `task-set.md` for the full final-set
+writeup and diversity check.
+
 ## Classification table (all issues this pass touched)
 
 | issue | category |
@@ -406,7 +454,7 @@ reclassified below as a task-design problem, not an infrastructure one.
 | Retrieval abstention gap | experiment design problem (the retrieval code had no bug per se for its ORIGINAL intended use; the gap was an unstated design requirement -- "abstain when nothing is truly relevant" -- never implemented) -- though the FIX itself is a real, permanent `backend/app/` change, not merely a test/harness change |
 | T7 (original) | experiment design problem (grader) + experiment design problem (scope) -- see `t7-review.md` |
 | Step-budget-too-small (T7-v2) | RESOLVED -- passes cleanly at 25 (and 40), not a real issue for this task |
-| Step-budget non-convergence (T1/T3, this pass, both 25 and 40) | experiment design problem, now well-evidenced (100% budget consumption at two tested points, zero convergence trend) -- the same category T7 itself was in before being retired, not a product defect and not an infrastructure defect |
+| Step-budget non-convergence (T1/T3, this pass, both 25 and 40) | experiment design problem, RESOLVED this pass via REPAIR -- see "Part T1/T3: REPAIR investigation and resolution" below. Originals preserved as `T1`/`T3` for historical record; live final set uses `T1-v2`/`T3-v2` |
 | Calibration-hang (orchestrator could hang indefinitely on a non-responding provider call) | experiment infrastructure problem -- **RESOLVED this pass**, see "Hard-timeout / hang-safety fix" above |
 | T1/A `api_error` at 25 steps (prior pass, re-audited this pass) | environment/product-boundary -- a real provider-reliability question flagged, not fully resolved this pass; NOT reproduced at 40 steps in this pass's own fresh run (T1/B_default hit `api_error` at 25 instead, `step_budget` at 40 -- consistent with genuine intermittent provider variance, not a fixed pattern) |
 | Corpus contamination (prior pass) | corpus/test-data problem (already fixed, re-confirmed unchanged this pass) |

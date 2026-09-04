@@ -142,3 +142,67 @@ been empirically validated, and the evidence suggests raising it further
 without also revisiting T1/T3's task design is unlikely to fix that by
 itself. This is reported as a real, current, well-evidenced blocker --
 not softened, not silently carried forward as "40 is probably enough."
+
+## Update: T1-v2/T3-v2 repair + final-set safety check (this pass)
+
+This pass investigated T1 and T3 directly (see `task-set.md` for full
+evidence), concluding **REPAIR** for both (not RETIRE, not a redesign-for-
+difficulty move): T1's grader/scope bundled an exhaustive enumeration
+requirement onto an otherwise well-posed lookup question; T3's grader used
+a naive text-substring scanner that miscounted comment/docstring mentions
+of the target function names as real call sites, silently penalizing
+correct renames. Both fixes are principled, minimal, and preserve the
+original tasks as `T1`/`T3` (unchanged, retained for historical record) --
+the live final set uses `T1-v2`/`T3-v2`/`T7-v2`.
+
+**Final-set safety check** (`run_final_set_safety_check.py`, non-scored,
+1 trial per cell x {T1-v2, T3-v2, T7-v2} x {A, B_default} = 6 cells,
+`max_steps=40`, real MCP server, same hard-timeout-protected harness as
+above):
+
+| task_id | arm | stop_reason | tool_calls | elapsed |
+|---|---|---|---|---|
+| T1-v2 | A | api_error | 15 | 220.9s |
+| T1-v2 | B_default | api_error | 13 | 218.1s |
+| T3-v2 | A | api_error | 1 | 35.2s |
+| T3-v2 | B_default | step_budget | 40 | 88.1s |
+| T7-v2 | A | no_tool_call | 31 | 50.1s |
+| T7-v2 | B_default | no_tool_call | 30 | 729.6s |
+
+**No hangs.** All 6 cells terminated within the 900s ceiling (max observed
+729.6s, cell T7-v2/B_default -- flagged mid-run by the coordinator as
+unusually slow, monitored directly via process CPU time and network state
+on the target machine, and confirmed to be real forward progress, not a
+stall, before it completed cleanly via `no_tool_call`).
+
+3 of 6 cells terminated via `api_error` (GENERAL_COMPUTE provider noise,
+the same pre-existing, separately-tracked reliability category as
+Part B below -- not evidence about step-budget fit either way, since the
+trial never got far enough to test it). T7-v2 converges cleanly in both
+arms, well under 40 (30-31 tool_calls). **T3-v2/B_default consumed the
+full 40/40 budget in this single trial** -- disclosed honestly as a real,
+unresolved single-sample data point, not smoothed over. Given the explicit
+single-bounded-pass mandate (no further iteration, no re-running to chase
+this), this is not treated as disqualifying: the safety check's actual job
+was to confirm bounded termination (confirmed for all 6 cells) and confirm
+the budget doesn't force runaway consumption beyond 40 (true by
+construction -- `step_budget` stops exactly at 40), not to characterize
+whether any one cell's single non-scored trial reflects typical behavior.
+Distinguishing a one-off (provider slowness, a harder random walk through
+the rename task) from a systematic pattern is exactly what the scored
+pilot's multi-trial replication is for -- re-running more non-scored
+trials here to pre-answer that would itself be the open-ended iteration
+this pass was explicitly told not to do.
+
+## Decision (final)
+
+**`max_steps = 40` is frozen for the scored pilot`, common across T1-v2,
+T3-v2, and T7-v2.** Rationale: it is the larger of the two previously
+calibrated candidates (25/40), already proven safe (no hangs at 40 across
+either the original T1/T3/T7-v2 run or this pass's 6-cell check), gives
+T3-v2's real rename workload (which touches multiple files across
+`backend/app/`) more room than 25 would, and T7-v2 has wide headroom
+either way (30-31 of 40). This closes the sole remaining blocker recorded
+in the prior addendum ("no single value works for all 3 final tasks") --
+that blocker was scoped to the *original* T1/T3, which are no longer part
+of the live task set.

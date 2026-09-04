@@ -32,7 +32,7 @@ with open(Path(__file__).resolve().parent / "tasks.jsonl", encoding="utf-8") as 
         row = json.loads(line)
         TASKS[row["task_id"]] = row
 
-CAL_TASK_IDS = ["T1", "T3", "T7"]
+CAL_TASK_IDS = ["T1-v2", "T3-v2", "T7-v2"]
 MAX_STEPS_CANDIDATE = int(sys.argv[1]) if len(sys.argv) > 1 else 16
 TIME_BUDGET_S = max(600, MAX_STEPS_CANDIDATE * 60)  # scale outer ceiling with step count
 
