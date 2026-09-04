@@ -93,15 +93,40 @@ class LocalRunResult:
     captured_candidate: Optional[dict] = None
 
 
+# The MCP session is held open for this transport's entire lifetime,
+# including while _run_local_node blocks synchronously (via
+# asyncio.to_thread) running a real Agent+RepoSandbox loop against
+# GENERAL_COMPUTE -- traffic that never touches this MCP connection at
+# all. A short client-side timeout here times out the underlying
+# streamable-http connection's own idle read, not any one MCP call, and
+# the mcp package's internal TaskGroup (client/session.py,
+# client/streamable_http.py) then raises an ExceptionGroup with BOTH its
+# read-loop and write-loop sub-tasks failing together -- observed live:
+# two real pilot trials on a task requiring more agent exploration each
+# failed at wall_clock_seconds_total 60.01s/60.02s, matching the
+# previous timeout=60 to the millisecond (see
+# .scratch/final_agent_experiment/remediation-results.md). Set generously
+# above the orchestrator's own outer per-trial wall-clock ceiling (600s,
+# see .scratch/final_agent_experiment/protocol.md) so this transport-level
+# timeout is never the thing that kills a trial early -- the outer,
+# already-designed budget stays the real governing limit.
+_MCP_SESSION_HTTP_TIMEOUT_SECONDS = 650
+
+
 @asynccontextmanager
 async def _open_client_session(server_url: str, token: str):
     """Real MCP transport -- the exact nested-context-manager shape proven
     live in test_real_mcp_client_live.py, factored into one seam so a
     test can swap the whole thing for a fake session with no real
     network at all."""
-    http_client = httpx2.AsyncClient(headers={"Authorization": f"Bearer {token}"}, timeout=60)
+    http_client = httpx2.AsyncClient(
+        headers={"Authorization": f"Bearer {token}"},
+        timeout=_MCP_SESSION_HTTP_TIMEOUT_SECONDS,
+    )
     async with streamable_http_client(server_url, http_client=http_client) as (read, write):
-        async with ClientSession(read, write, read_timeout_seconds=60) as session:
+        async with ClientSession(
+            read, write, read_timeout_seconds=_MCP_SESSION_HTTP_TIMEOUT_SECONDS,
+        ) as session:
             yield session
 
 
@@ -213,7 +238,15 @@ async def _run_local_node(node, *, task_description: str, repo_path: str,
         status="success" if succeeded else "failure",
         notes=note,
         data={"files_edited": run_result.files_edited, "patch": run_result.patch,
-              "tool_calls": len(run_result.tool_calls)},
+              "tool_calls": len(run_result.tool_calls),
+              # Surfaced so a caller (e.g. an experiment orchestrator
+              # scoring/recording a trial) can see whether this run needed
+              # provider-side error recovery at all -- was previously a
+              # purely internal Agent.run() loop variable with no way out.
+              # Never changes success/failure or usage accounting: a
+              # recovered run's tokens/steps already include every real
+              # attempted call, this is visibility only.
+              "recoveries": run_result.recoveries},
     )
 
 

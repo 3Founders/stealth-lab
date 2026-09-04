@@ -186,6 +186,12 @@ async def run_trial_arm_A(*, task_description: str, repo_path: str, model: str,
         "graph_status": result.status,
         "files_touched": result.data.get("files_edited", []) if result.data else [],
         "tool_calls": result.data.get("tool_calls", 0) if result.data else 0,
+        # Real, not-yet-absorbed retry accounting (Part B, provider-
+        # robustness remediation): how many times Agent.run() recovered
+        # from a transient provider error by dropping its last exchange.
+        # Never affects usage/tokens/success -- those already count every
+        # real attempted call, recovered or not; this is visibility only.
+        "recoveries": result.data.get("recoveries", 0) if result.data else 0,
         "wall_clock_seconds": wall,
         "notes": result.notes,
         "stealth_retrieval_decision": None,

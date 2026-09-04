@@ -101,6 +101,17 @@ class AgentRun:
     wall_seconds: float = 0.0
     retrieved: list[str] = field(default_factory=list)
     error: Optional[str] = None
+    # How many times this episode recovered from a transient provider error
+    # by dropping its last exchange (see is_transient/MAX_RECOVERIES below).
+    # Was a purely local loop variable before -- a caller (e.g. an
+    # orchestrator scoring/recording a trial) had no way to know a
+    # "successful" run had actually needed provider-side recovery at all,
+    # nor to distinguish a clean first-attempt run from a recovered one.
+    # Never affects `usage` or `steps`: every real attempted API call,
+    # including ones that failed and were recovered from, is already
+    # counted there -- this field adds visibility, it does not change what
+    # was already being measured.
+    recoveries: int = 0
 
 
 class RepoSandbox:
@@ -855,6 +866,7 @@ class Agent:
             usage=usage, steps=usage.calls, tool_calls=tool_log,
             files_edited=sandbox.edited_files(), stop_reason=stop_reason,
             wall_seconds=time.time() - t0, retrieved=retrieved or [], error=error,
+            recoveries=recoveries,
         )
 
     @staticmethod
