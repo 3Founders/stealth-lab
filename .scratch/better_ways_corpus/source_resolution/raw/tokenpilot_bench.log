@@ -1,0 +1,18 @@
+# TokenPilot bench-hook.mjs -- own latency benchmark, n=30
+# Before ast-index install:
+bench-hook  n=30  cold=1404.1ms  warm p50=1086.9ms  p95=1137.8ms  p99=1166.9ms
+thresholds  warm p50<30  warm p95<100  cold p99<250
+BREACH: warm p50 1086.9 >= 30 | warm p95 1137.8 >= 100 | cold 1404.1 >= 250
+
+# After `npm install -g @ast-index/cli` (tool's own documented fallback):
+bench-hook  n=30  cold=958.2ms  warm p50=1035.5ms  p95=1452.8ms  p99=1494.5ms
+thresholds  warm p50<30  warm p95<100  cold p99<250
+BREACH: warm p50 1035.5 >= 30 | warm p95 1452.8 >= 100 | cold 958.2 >= 250
+# Root cause: per-call Node process spawn overhead (architectural), not the missing binary.
+
+# Token-reduction test: hook-read against real src/index.ts (2033 lines, this repo's own file)
+# a1df2519b034d6f79fac9e22191ab28cb9311960 (commit SHA at clone time)
+raw file src/index.ts: 17988 tokens (tiktoken cl100k_base, independently measured)
+hook-read structural summary: 1289 tokens (tiktoken cl100k_base)
+reduction: 92.8%
+tool's own self-reported estimate in the deny message: "~17123 tokens" (close to independent count, corroborates)

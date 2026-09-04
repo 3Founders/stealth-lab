@@ -1,0 +1,62 @@
+{
+  "methodology": "Ranked by (1) strength/decisiveness of the measured result, (2) reproducibility (own official benchmark/test suite reproduced > custom-but-real experiment > partial), (3) evidence quality (independently re-measured with tiktoken/real subprocess exit codes, not trusting a vendor's self-reported number). Mixed-result candidates (a real win alongside a real failure) are ranked on their strongest genuinely-measured claim but flagged, not hidden.",
+  "ranking": [
+    {
+      "rank": 1,
+      "candidate_id": "C04",
+      "artifact": "Git worktree isolation",
+      "score": "strongest",
+      "rationale": "Most decisive, cleanest result of the entire pass: 1/8 -> 8/8 real concurrent-git success rate, at trivial overhead. Fully reproducible with nothing but git itself -- zero external dependency, zero license question, zero blocked toolchain."
+    },
+    {
+      "rank": 2,
+      "candidate_id": "C05",
+      "artifact": "StealthLab's own deferred-tool loading",
+      "score": "very strong",
+      "rationale": "67.5x (conservative lower bound) token reduction, measured against this session's own real, current tool definitions -- as close to zero-inference-distance evidence as this pass produced. Already deployed in StealthLab, so this is confirmation of existing value, not a new-adoption bet."
+    },
+    {
+      "rank": 3,
+      "candidate_id": "C02",
+      "artifact": "octocode view",
+      "score": "strong",
+      "rationale": "77.0% real token reduction on StealthLab's own code, independently tiktoken-measured, deterministic (no embeddings/API needed for this command), Apache-2.0, prebuilt binary reproducible by anyone in minutes."
+    },
+    {
+      "rank": 4,
+      "candidate_id": "C06",
+      "artifact": "hermes-agent tail-protection",
+      "score": "strong",
+      "rationale": "9/9 of the project's own real unit tests pass at the pinned commit -- the strongest reproducibility signal available (the artifact's own test suite, not a test I invented), MIT-licensed, mechanism located precisely in source."
+    },
+    {
+      "rank": 5,
+      "candidate_id": "C07",
+      "artifact": "hermes-agent tool-result pruning",
+      "score": "strong",
+      "rationale": "Same evidence quality as C06 (shared test run, same commit, same license); ranked just below it only because it is the less load-bearing of the two techniques for StealthLab's own architecture."
+    },
+    {
+      "rank": 6,
+      "candidate_id": "C03",
+      "artifact": "code-graph-rag indexing",
+      "score": "moderate-strong, partial",
+      "rationale": "Real, reproduced against StealthLab's own 176-file backend/app using the project's own official no-DB benchmark. Ranked below the top 5 only because the benchmark deliberately excludes the query layer (needs Memgraph, not tested) -- the number proven is 'parsing+graph-construction is fast and works,' not the full retrieval value proposition."
+    },
+    {
+      "rank": 7,
+      "candidate_id": "C01",
+      "artifact": "TokenPilot",
+      "score": "moderate, mixed",
+      "rationale": "Ranked last among survivors specifically because it is the one candidate with a real, measured, negative finding alongside its real positive one: 92.8% token reduction is genuine and strong, but the tool's own hook-latency benchmark shows it breaching its own documented SLA by ~35x in this real environment, unfixed by installing the accelerator. Selected because the core token-value claim independently holds, not because the latency problem is dismissed."
+    }
+  ],
+  "not_ranked_rejected": [
+    "R01 RouteLLM -- blocked (needs live API or GPU)",
+    "R02 gortex -- blocked (needs a C toolchain this sandbox lacks)",
+    "R03 InfiAgent -- insufficient evidence (source-verified only, not executed; heavy dependency footprint)",
+    "R04 AST-KG paper -- no located companion artifact",
+    "R05 GrepRAG paper -- no located companion artifact",
+    "R06 cAST/chunking paper -- no located companion artifact"
+  ]
+}

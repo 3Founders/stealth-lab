@@ -1,0 +1,164 @@
+SIGNATURES (1 files)
+
+FILE: app/services/product_model.py
+Language: python
+24: import json
+
+25: from typing import Any, Optional
+
+27: import asyncpg
+
+29: from app.services.access import (
+30:     AccessScope,
+// ... 2 more lines
+33:     tenant_transaction,
+34: )
+
+35: from app.services.procedure_extraction.capability import wilson_interval
+
+36: from app.utils.ids import uuid7
+
+57: def _commons() -> TenantScope:
+58:     return TenantScope.commons()
+
+61: def _row(r: asyncpg.Record | None) -> Optional[dict[str, Any]]:
+62:     if r is None:
+// ... 16 more lines
+79:             d[k] = str(v)
+80:     return d
+
+// # --------------------------------------------------------------------------- # Problem # ---------------------------------------------------------------------------
+86: async def create_problem(
+87:     pool: asyncpg.Pool, *, title: str, description: Optional[str] = None,
+// ... 18 more lines
+106:         )
+107:     return _row(r)
+
+110: async def get_problem(
+111:     pool: asyncpg.Pool, problem_id: str, *, scope: AccessScope,
+// ... 6 more lines
+118:     )
+119:     return _row(r)
+
+122: async def list_problems(
+123:     pool: asyncpg.Pool, *, scope: AccessScope, status: Optional[str] = None,
+// ... 17 more lines
+141:     )
+142:     return [_row(r) for r in rows]
+
+145: async def find_problem(
+146:     pool: asyncpg.Pool, query: str, *, scope: AccessScope, limit: int = 10,
+// ... 23 more lines
+170:     )
+171:     return [_row(r) for r in rows]
+
+156: import re as _re
+
+// # --------------------------------------------------------------------------- # Benchmark # ---------------------------------------------------------------------------
+177: async def create_benchmark(
+178:     pool: asyncpg.Pool, *, problem_id: str, name: str, description: Optional[str] = None,
+// ... 18 more lines
+197:         )
+198:     return _row(r)
+
+201: async def freeze_benchmark(
+202:     pool: asyncpg.Pool, benchmark_id: str, *, tenant_scope: Optional[TenantScope] = None,
+// ... 8 more lines
+211:         raise ValueError(f"benchmark {benchmark_id} not found")
+212:     return _row(r)
+
+215: async def get_benchmark(pool: asyncpg.Pool, benchmark_id: str) -> Optional[dict[str, Any]]:
+216:     r = await pool.fetchrow("SELECT * FROM benchmarks WHERE id=$1", benchmark_id)
+217:     return _row(r)
+
+220: async def list_problem_benchmarks(pool: asyncpg.Pool, problem_id: str) -> list[dict[str, Any]]:
+221:     rows = await pool.fetch(
+// ... 2 more lines
+224:     )
+225:     return [_row(r) for r in rows]
+
+// # --------------------------------------------------------------------------- # Solution (association only -- no target copied) # ---------------------------------------------------------------------------
+231: async def associate_solution(
+232:     pool: asyncpg.Pool, *, problem_id: str, solution_type: str, target_id: str,
+// ... 29 more lines
+262:         )
+263:     return _row(r)
+
+266: async def list_problem_solutions(
+267:     pool: asyncpg.Pool, problem_id: str, *, scope: AccessScope,
+// ... 14 more lines
+282:     )
+283:     return [_row(r) for r in rows]
+
+// # --------------------------------------------------------------------------- # Evaluation # ---------------------------------------------------------------------------
+289: async def request_evaluation(
+290:     pool: asyncpg.Pool, *, problem_id: str, benchmark_id: str, solution_id: str,
+// ... 15 more lines
+306:         )
+307:     return _row(r)
+
+310: async def complete_evaluation(
+311:     pool: asyncpg.Pool, evaluation_id: str, *, execution_ids: list[str],
+// ... 84 more lines
+396:         raise ValueError(f"evaluation {evaluation_id} not found")
+397:     return _row(r)
+
+400: async def invalidate_evaluation(
+401:     pool: asyncpg.Pool, evaluation_id: str, *, reason: str,
+// ... 9 more lines
+411:         raise ValueError(f"evaluation {evaluation_id} not found")
+412:     return _row(r)
+
+415: async def get_evaluation(pool: asyncpg.Pool, evaluation_id: str) -> Optional[dict[str, Any]]:
+416:     r = await pool.fetchrow("SELECT * FROM evaluations WHERE id=$1", evaluation_id)
+// ... 7 more lines
+424:         ]
+425:     return d
+
+428: async def list_problem_evaluations(pool: asyncpg.Pool, problem_id: str) -> list[dict[str, Any]]:
+429:     rows = await pool.fetch(
+430:         "SELECT * FROM evaluations WHERE problem_id=$1 ORDER BY created_at DESC", problem_id,
+431:     )
+432:     return [_row(r) for r in rows]
+
+441: def _material_env(env: dict | None) -> dict:
+442:     return {k: v for k, v in (env or {}).items() if k not in _NON_MATERIAL_ENV_KEYS}
+
+445: def evaluations_comparable(a: dict[str, Any], b: dict[str, Any]) -> tuple[bool, Optional[str]]:
+446:     """
+// ... 14 more lines
+461:         return False, "both evaluations must be completed to be comparable"
+462:     return True, None
+
+// # --------------------------------------------------------------------------- # Leaderboard / current best (§19) -- computed per request, never stored # ---------------------------------------------------------------------------
+468: def _band(wilson_lower: float, run_count: int, verified: int) -> str:
+469:     if run_count < MIN_RUNS_FOR_RANKING or verified == 0:
+// ... 4 more lines
+474:         return "HIGH_PERFORMING"
+475:     return "PROMISING"
+
+478: async def problem_leaderboard(
+479:     pool: asyncpg.Pool, problem_id: str, *, scope: AccessScope,
+// ... 84 more lines
+564:         "note": "computed on read from completed-evaluation lineage; no winner is stored.",
+565:     }
+
+515: def _mean(key: str) -> Optional[float]:
+516:             vals = [float(e["metrics"][key]) for e in comparable
+517:                     if isinstance(e.get("metrics"), dict) and e["metrics"].get(key) is not None]
+518:             return round(sum(vals) / len(vals), 4) if vals else None
+
+544: def _leader(key: str, *, minimize: bool) -> Optional[str]:
+545:         cand = [e for e in entries if e.get(key) is not None
+// ... 3 more lines
+549:         pick = (min if minimize else max)(cand, key=lambda e: e[key])
+550:         return pick["solution_id"]
+
+568: async def find_best_way(
+569:     pool: asyncpg.Pool, goal: str, *, scope: AccessScope, limit: int = 5,
+// ... 22 more lines
+592:             "conditional_leaders": lb["conditional_leaders"],
+593:             "other_matched_problems": [m["id"] for m in matches[1:]]}
+
+
+

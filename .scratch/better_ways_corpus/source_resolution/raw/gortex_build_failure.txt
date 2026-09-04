@@ -1,0 +1,6 @@
+gortex @ commit 5b299072c44457751cd339c00aabb0e5d2356ad3, Apache-2.0 (LICENSE.md, verified)
+Portable Go 1.23.4 toolchain downloaded (no system install), go.mod declares go 1.27.0 -- GOTOOLCHAIN=auto attempted auto-upgrade.
+`go build ./cmd/gortex` FAILED: multiple tree-sitter language bindings (dart, dockerfile, markdown, orgmode, protobuf, sql)
+"build constraints exclude all Go files" -- these are CGO-based bindings requiring a real C compiler toolchain
+(gcc/clang/MinGW), which this Windows sandbox does not have installed. Installing a full C toolchain was judged
+out of scope for "quick and safe" per the task's own install guidance. BLOCKED, not tested.

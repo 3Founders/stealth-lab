@@ -1,0 +1,41 @@
+{
+  "rejected": [
+    {
+      "candidate_id": "R01",
+      "artifact": "RouteLLM",
+      "reason_code": "BLOCKED_NO_AUTHORIZED_PATH",
+      "reason": "All 3 router implementations require either a live OpenAI embeddings API call (not authorized -- no live LLM/API spend this pass) or a CUDA GPU (not available in this sandbox). Source and license were verified directly; the mechanism itself was not exercised."
+    },
+    {
+      "candidate_id": "R02",
+      "artifact": "gortex",
+      "reason_code": "BLOCKED_MISSING_TOOLCHAIN",
+      "reason": "Build fails: multiple tree-sitter language bindings require a real C compiler (CGO), which this Windows sandbox does not have and which was judged too heavy an install for this pass's scope. The vendor's own published GCX1 benchmark numbers (-27.4% median tokens) were NOT independently reproduced -- not reported as this pass's own result."
+    },
+    {
+      "candidate_id": "R03",
+      "artifact": "InfiAgent",
+      "reason_code": "INSUFFICIENT_EVIDENCE_NOT_EXECUTED",
+      "reason": "Real repo, real GPL-3.0 license, real mechanism located in source and a real dedicated test file confirmed to exist -- but not run, due to a heavy transitive dependency footprint (~52 packages including Playwright-installing crawl4ai) disproportionate to one experiment in the remaining time budget. Explicitly not converted from 'source is real' into 'verified procedure' per the task's own rule."
+    },
+    {
+      "candidate_id": "R04",
+      "artifact": "arXiv:2601.08773 (AST-Derived Graphs vs LLM-Extracted KGs)",
+      "reason_code": "NO_COMPANION_ARTIFACT",
+      "reason": "No GitHub/code link found on the paper's abstract page. Reimplementing the described method from scratch to test it was judged out of scope for a single-pass local experiment. The underlying idea (deterministic AST/tree-sitter graphs) is independently covered by C02/C03, which were tested instead."
+    },
+    {
+      "candidate_id": "R05",
+      "artifact": "arXiv:2601.23254 (Better Call Grep / GrepRAG)",
+      "reason_code": "NO_COMPANION_ARTIFACT",
+      "reason": "No GitHub/code link found on the paper's abstract page."
+    },
+    {
+      "candidate_id": "R06",
+      "artifact": "arXiv:2605.04763 (chunking study / cAST)",
+      "reason_code": "NO_COMPANION_ARTIFACT",
+      "reason": "No GitHub/code link found on the paper's abstract page."
+    }
+  ],
+  "attempted_but_not_completed_note": "Beyond the 13 rows in candidates.jsonl (7 selected + 6 rejected), no other RESOLVED_VERIFIED/RESOLVED_UNVERIFIED seed was fetched or run this pass -- see final_report.md 'Not attempted this pass' section for the honest list of what was in-scope-by-family but never started (model routing beyond RouteLLM was not applicable since RouteLLM was the family's one named executable framework; deterministic-execution and verification/reliability families had no locatable runnable artifact beyond what's already listed as rejected; failure-recovery family's only source is the same Bustamante blog text already covered qualitatively by the long-running family, and StealthLab's own native RETRYABLE_ERROR_CLASSES was judged out of scope to 'test' here since that would be evaluating StealthLab itself, not the external source)."
+}
