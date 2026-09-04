@@ -99,3 +99,59 @@ should be explicitly amended to read `max_steps=25` (currently states 8,
 the value calibrated as insufficient here), with a dated note pointing back
 to this document -- not done as part of this remediation pass, since no
 new scored run is being authorized here.
+
+---
+
+## ADDENDUM (final-readiness-gate pass): `max_steps=25` independently
+## tested and found INSUFFICIENT -- superseding the recommendation above
+
+The prior section's own final paragraph explicitly named the exact test
+this pass performed: "The first real trials run at `max_steps=25`... should
+be watched closely: if T1/T3/T7 STILL uniformly hit the ceiling at 25, that
+would be strong evidence the problem is not (or not only) budget size."
+That test was run. **The result is exactly the warned-about outcome.**
+
+Ran 6 fresh, non-scored calibration trials, one per (task, arm) cell, at
+`max_steps=25` for real (`calibration/raw/` files with a later timestamp
+group than the 16-step ones above; `calibration_25_run.log`):
+
+| task/arm | tool_calls used | model_calls | outcome |
+|---|---|---|---|
+| T1/A | 19 | 14 | `stop_reason=api_error` -- a real, unrecovered provider error interrupted a genuine trajectory; did NOT reach a natural `finished` stop either |
+| T1/B_default | 25 | 21 | `stop_reason=step_budget` -- hit the ceiling |
+| T3/A | 25 | 25 | `stop_reason=step_budget` -- hit the ceiling. Real partial progress (`verification_quality.new_name_defined_in_capability_py: true` -- the rename WAS applied in the defining file), but the task's own "confirm the test suite still passes" requirement was never reached |
+| T3/B_default | 25 | 24 | `stop_reason=step_budget` -- hit the ceiling |
+| T7/A | 25 | 23 | `stop_reason=step_budget` -- hit the ceiling. **0 of 11** ground-truth private-helper targets found (`verification_quality.matched_count: 0`) -- identical to the 16-step result; recall did not move off 0.0 despite a 56% larger budget |
+
+**5 of 6 cells hit the step ceiling; the 6th terminated via a real
+unrecovered API error, not a clean stop. Zero of six reached
+`stop_reason=finished`.** This is unambiguous: **`max_steps=25` is NOT
+validated as sufficient**, and per the coordinator's own explicit
+instruction ("If a task still routinely cannot complete within 25, stop
+and recalibrate BEFORE any scored run"), this pass does **not** freeze 25
+(or any other untested number) into `experiment-protocol.md`.
+
+**Real evidence now separates T1/T3 from T7, which the 16-step round alone
+could not do:**
+- **T1 and T3** show genuine, if incomplete, progress with more budget
+  (T3/A actually completed the code change, just not the verification
+  step; T1/A's trajectory was cut short by an external error, not
+  exhaustion) -- plausibly solvable with a further-increased, but still not
+  yet determined, budget. A third calibration round at a higher value
+  (not guessed here, to avoid repeating the same mistake of freezing an
+  unverified number) is the honest next step for these two.
+- **T7 shows a task-design problem, not a budget problem.** Recall stayed
+  at exactly 0.0 across BOTH the 8->16 AND 16->25 budget increases (a
+  ~3x total increase in real exploration budget with zero improvement in
+  ground-truth recall). This is strong evidence T7, as currently worded
+  (an unscoped enumeration of all private-helper/cross-file-caller pairs
+  across the entire `backend/app/services/` tree), is not "impossible
+  within the frozen protocol" purely for lack of a bigger number -- see
+  `final-readiness-review.md` section 8 for the resulting task-quality
+  recommendation.
+
+**Conclusion for the readiness gate: `max_steps` remains UNFROZEN.** This
+addendum does not propose a replacement number -- doing so without
+evidence would repeat exactly the mistake this addendum documents. See
+`final-readiness-review.md` for how this affects the overall YES/NO gate
+block.

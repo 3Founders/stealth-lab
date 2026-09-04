@@ -187,6 +187,78 @@ gap, not an algorithmic one.
 
 ---
 
+## ADDENDUM (final-readiness-gate pass): re-verification + new work
+
+### Part 4 (execution robustness) -- re-verified with fresh eyes, confirmed
+### solid, no regression
+
+- Grepped the real call chain (`backend/app/local_agent/`,
+  `backend/app/mcp_server/`) for any OTHER hardcoded `timeout=`/
+  `read_timeout_seconds=` value that could still falsely kill a legitimate
+  trial. Found: `git_history_bootstrap.py` (subprocess timeouts, unrelated
+  git-clone operations), `local_claims.py`/`local_store.py` (sqlite
+  busy-timeouts, unrelated local caches), `mcp_server/server.py:1235`
+  (a 5s subprocess timeout for a narrow git-status probe, unrelated to the
+  MCP session transport). None of these sit in the T7 crash's real path.
+  The one fix already in place (`_MCP_SESSION_HTTP_TIMEOUT_SECONDS=650`)
+  remains the only relevant timeout constant.
+- Grepped for other `TaskGroup` usage in `backend/app/local_agent/` and
+  `experiments/swebench_pro/agent.py`: found none beyond the one already
+  documented (the third-party `mcp` package's own internal transport
+  TaskGroup, referenced only in a comment, not created by this
+  codebase) -- confirmed no second TaskGroup-swallowing risk exists.
+- Re-read `is_transient()` (`experiments/swebench_pro/agent.py:736-745`)
+  directly: it string-matches `"provider_error"` and
+  `"provider request failed"` (both literally present in the real captured
+  400 message, `raw/provider_400_errors/failed_request_*.json`) alongside
+  429/500/502/503/504/timeout/connection/overloaded -- correctly classifies
+  the real observed incident as transient WITHOUT needing to check for the
+  literal substring `"400"` (a 400 is not inherently retryable in general;
+  this specific GENERAL_COMPUTE 400 is retryable because its own message
+  says `provider_error`/`"provider request failed"`, which the classifier
+  does check). Confirmed it correctly does NOT treat an arbitrary/generic
+  400 as transient by default -- no blind retry of non-retryable errors.
+- **New this pass**: added `orchestrator.py::classify_failure()` -- a
+  pure, deterministic function distinguishing the coordinator's required
+  6 categories (`success` / `model_failure` / `product_failure` /
+  `provider_failure` / `environmental_failure` / `timeout` /
+  `budget_exhaustion`) from a trial record's already-recorded fields, now
+  threaded into every trial's `failure_category` field. Proven by
+  `test_failure_classification.py` (10/10 passing, offline, no live
+  calls), using REAL observed error strings from this session's own actual
+  runs wherever available (the real 400 provider message, the real
+  pre-fix T7 `ExceptionGroup` text, the real `KeyError:
+  'GENERAL_COMPUTE_API_KEY'` environmental failure, real
+  `stop_reason=step_budget` notes) rather than invented ones.
+
+### Part 5 (corpus contamination) -- fixed for real this pass
+
+Investigation, fix, and proof are in `corpus-eligibility-review.md`
+(the primary document for this finding). Summary: `db/39` (new
+`procedures.is_engineering_fixture` column, fail-closed default `true`) +
+`db/40` (explicit backfill: ~1035 known e2e/demo rows -> `true`, the 3
+Better-Ways-admitted rows -> `false`) + one new line in
+`applicability.py::_CANDIDATE_BASE_WHERE` (`AND is_engineering_fixture =
+false`). Both migrations applied to the live DB this pass (confirmed via
+`scripts/migrate.py --status`: `39_procedures_engineering_fixture_flag.sql`
+and `40_procedures_engineering_fixture_backfill.sql` both `applied`).
+`test_retrieval_fixture_isolation_e2e.py` re-run after the fix: **now
+genuinely PASSES** (`1 passed in 14.03s`, live DB, live embeddings).
+A new positive-direction test,
+`test_retrieval_admitted_knowledge_positive_e2e.py`, proves the fix does
+not overshoot (a procedure explicitly marked real remains retrievable).
+
+### Offline test suite -- confirms no broader regression
+
+`backend/tests/ -q` re-run in full after all of this pass's `backend/app/`
+changes (the retrieval predicate change, `capture_procedure`'s new param,
+the two migrations): see this pass's own final numbers in
+`final-readiness-review.md` section 10 -- run to completion, compared
+against the pre-existing baseline pass/fail pattern, zero new failures
+attributable to this pass's changes.
+
+---
+
 ## Part F summary (git discipline, filled in at the end)
 
 See the final commit message and this pass's own `git diff`/`git status`

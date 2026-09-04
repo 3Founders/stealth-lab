@@ -25,10 +25,21 @@ shared dev corpus are engineering smoke/demo/test data (5 x
 `proc-test-planonly-root-*`, 5 x `canon-demo-*`, 2 x `seed_demo_procedures`)
 -- ZERO are real externally-ingested knowledge.
 
-THIS TEST IS EXPECTED TO FAIL against current code. It pins the real,
-current gap honestly rather than being written to pass -- do not weaken
-this test to make it green; fix the real filtering gap instead (see the
-review doc's answers to questions 1-3 for what a fix would need to add).
+THIS TEST WAS ORIGINALLY WRITTEN TO FAIL against the code as it stood when
+this file was first added, pinning the real gap honestly rather than being
+written to pass. It now PASSES: db/39 (`procedures.is_engineering_fixture`,
+fail-closed DEFAULT true) + db/40 (explicit backfill classification) +
+`applicability.py::_CANDIDATE_BASE_WHERE`'s new `AND is_engineering_fixture
+= false` predicate together close the gap. This test's own fixture below
+does NOT pass `is_engineering_fixture=False` at capture time -- it relies
+entirely on the new column's fail-closed DEFAULT, which is the point: an
+ordinary `capture_procedure()` call that does not explicitly claim to be
+real knowledge is now conservatively excluded from default retrieval,
+exactly matching the production behavior a real (unmarked) test fixture
+gets. See .scratch/final_agent_experiment/corpus-eligibility-review.md for
+the full investigation and fix rationale. Do not weaken this assertion --
+if it ever starts failing again, that is a real regression of the fix, not
+something to loosen.
 """
 from __future__ import annotations
 
@@ -110,15 +121,16 @@ async def test_test_fixture_procedure_does_not_surface_as_normal_knowledge_in_us
         matched_ids = {c["id"] for c in candidates}
 
         assert str(row_id) not in {str(m) for m in matched_ids}, (
-            "REAL, CURRENT GAP (expected to fail): a test-fixture procedure, "
-            "created and approved by the exact same mechanism any e2e test "
-            "in this codebase can trivially trigger, is fully eligible for "
-            "and returned by ordinary user-facing retrieval "
-            "(require_verified=True, the production default) -- "
-            "indistinguishable from real externally-ingested knowledge. "
-            "See test_retrieval_fixture_isolation_e2e.py's module docstring "
-            "and .scratch/final_agent_experiment/retrieval-contamination-"
-            "review.md for the full root-cause investigation."
+            "REGRESSION of the db/39+db/40+_CANDIDATE_BASE_WHERE fix: a "
+            "test-fixture procedure, created and approved by the exact "
+            "same mechanism any e2e test in this codebase can trivially "
+            "trigger, is once again fully eligible for and returned by "
+            "ordinary user-facing retrieval (require_verified=True, the "
+            "production default) -- indistinguishable from real "
+            "externally-ingested knowledge. See "
+            "test_retrieval_fixture_isolation_e2e.py's module docstring "
+            "and .scratch/final_agent_experiment/corpus-eligibility-"
+            "review.md for the original root-cause investigation and fix."
         )
     finally:
         if row_id is not None:

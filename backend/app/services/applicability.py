@@ -389,7 +389,16 @@ async def check_hard_constraints(
 
 
 _CANDIDATE_BASE_WHERE = (
-    "t_invalid IS NULL AND staleness != 'stale' AND availability = 'active'"
+    "t_invalid IS NULL AND staleness != 'stale' AND availability = 'active' "
+    # db/39: ordinary user-facing retrieval never offers engineering/test/
+    # demo-created procedures as candidates -- fail-closed (new rows are
+    # excluded by default unless a real capture path explicitly marks
+    # itself real, db/40 backfills the known-real exceptions). Direct SQL
+    # (tests, admin tooling) is unaffected -- only this cascade's own
+    # candidate pool is filtered. See
+    # backend/tests/test_retrieval_fixture_isolation_e2e.py and
+    # .scratch/final_agent_experiment/corpus-eligibility-review.md.
+    "AND is_engineering_fixture = false"
 )
 
 

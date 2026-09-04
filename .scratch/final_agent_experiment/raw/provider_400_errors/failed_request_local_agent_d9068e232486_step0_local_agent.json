@@ -1,0 +1,400 @@
+{
+  "instance_id": "local_agent_d9068e232486_step0",
+  "arm": "local_agent",
+  "step": 18,
+  "error": "BadRequestError: Error code: 400 - {'error': {'message': 'Provider request failed with status 400', 'type': 'provider_error', 'code': 'provider_error', 'param': None}}",
+  "n_messages": 38,
+  "approx_chars": 27397,
+  "roles": [
+    "system",
+    "user",
+    "assistant",
+    "tool",
+    "assistant",
+    "tool",
+    "assistant",
+    "tool",
+    "assistant",
+    "tool",
+    "assistant",
+    "tool",
+    "assistant",
+    "tool",
+    "assistant",
+    "tool",
+    "assistant",
+    "tool",
+    "assistant",
+    "tool",
+    "assistant",
+    "tool",
+    "assistant",
+    "tool",
+    "assistant",
+    "tool",
+    "assistant",
+    "tool",
+    "assistant",
+    "tool",
+    "assistant",
+    "tool",
+    "assistant",
+    "tool",
+    "assistant",
+    "tool",
+    "assistant",
+    "tool"
+  ],
+  "messages": [
+    {
+      "role": "system",
+      "content": "You are fixing a real bug in the trial-f5c31dceb6 repository, checked out at the commit where the issue was reported.\n\nWork by locating the relevant source, reading enough of it to understand the current behaviour, then making the change that fixes the issue. Hidden tests will be run against your change: they were written from the issue description, so implement what the issue actually asks for, not a narrower special case.\n\nRules:\n- If the issue calls for a module, hook, helper or config file that does not exist yet, CREATE it with create_file. Roughly a third of issues like this are fixed by adding a file, not by editing one -- if you cannot find the thing the issue describes, consider that it may need to be written rather than found.\n- Edit source files only. Do not edit anything under test/ -- test changes are discarded before grading and waste your budget.\n- PREFER list_symbols + read_symbol OVER read_file for any Python, Go, JS or TS file over ~100 lines. read_symbol returns one function's exact source for a fraction of the tokens read_file would spend on the surrounding file. Use read_file only for config/data files or when you need to see a file's overall shape rather than one named symbol.\n- You have at most 25 tool calls. Spend them on locating the right code, not on reading whole directories.\n- Call finish when done.\n"
+    },
+    {
+      "role": "user",
+      "content": "Issue to fix:\n\nbackend/app/services/procedure_extraction/capability.py defines a function used by at least one other module in backend/app/services/. Find every real call site of that function across the whole backend/app/ tree, rename it to compute_wilson_lower_bound everywhere (definition and every call site), and confirm the existing test suite for that area still passes.\n\nCurrent step: backend/app/services/procedure_extraction/capability.py defines a function used by at least one other module in backend/app/services/. Find every real call site of that function across the whole backend/app/ tree, rename it to compute_wilson_lower_bound everywhere (definition and every call site), and confirm the existing test suite for that area still passes.\n\nBegin."
+    },
+    {
+      "role": "assistant",
+      "content": "",
+      "tool_calls": [
+        {
+          "id": "call_f4bb56e7d5234d1a8c",
+          "type": "function",
+          "function": {
+            "name": "search",
+            "arguments": "{\"path\": \"backend/app\", \"pattern\": \"def .*wilson\"}"
+          }
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "tool_call_id": "call_f4bb56e7d5234d1a8c",
+      "content": "backend/app/services/product_model.py:506: def _band(wilson_lower: float, run_count: int, verified: int) -> str:\nbackend/app/services/procedure_extraction/capability.py:150: def wilson_interval("
+    },
+    {
+      "role": "assistant",
+      "content": "",
+      "tool_calls": [
+        {
+          "id": "call_7ba4d65218294cf980",
+          "type": "function",
+          "function": {
+            "name": "list_symbols",
+            "arguments": "{\"path\": \"backend/app/services/procedure_extraction/capability.py\"}"
+          }
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "tool_call_id": "call_7ba4d65218294cf980",
+      "content": "class      OutcomeRecord                            lines 90-116\nclass      CapabilityScope                          lines 119-141\ndef        CapabilityScope._reject_blank            lines 138-141\nclass      RoutingDecision                          lines 144-147\ndef        wilson_interval                          lines 150-168\ndef        band_for_p                               lines 171-186\ndef        route_for_p                              lines 189-199\nclass      CapabilityRecord                         lines 202-219\ndef        compute_capability                       lines 222-296\ndef        capability_trajectory                    lines 299-321"
+    },
+    {
+      "role": "assistant",
+      "content": "",
+      "tool_calls": [
+        {
+          "id": "call_e759a33572d847a6bf",
+          "type": "function",
+          "function": {
+            "name": "search",
+            "arguments": "{\"path\": \"backend/app\", \"pattern\": \"wilson_interval\"}"
+          }
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "tool_call_id": "call_e759a33572d847a6bf",
+      "content": "backend/app/api/implementations.py:170:     math directly (`wilson_interval`, `band_for_p`, `route_for_p`) --\nbackend/app/api/implementations.py:182:         wilson_interval,\nbackend/app/api/implementations.py:194:     p_lower, p_upper = wilson_interval(successes, total)\nbackend/app/mcp_server/server.py:2736:             band_for_p, route_for_p, wilson_interval,\nbackend/app/mcp_server/server.py:2759:         p_lower, p_upper = wilson_interval(successes, total)\nbackend/app/services/capabilities.py:43:     directly from real evidence rows using ONLY `wilson_interval`,\nbackend/app/services/capabilities.py:61:     wilson_interval,\nbackend/app/services/capabilities.py:238:     p_lower, p_upper = wilson_interval(successes, total)\nbackend/app/services/capabilities.py:268:     `compute_capability`/`wilson_interval` math\nbackend/app/services/procedure_graph_api.py:29:   - `app.services.procedure_extraction.capability.wilson_interval` /\nbackend/app/services/procedure_graph_api.py:69:     wilson_interval,\nbackend/app/services/procedure_graph_api.py:384:     p_lower, p_upper = wilson_interval(successes, total)\nbackend/app/services/product_model.py:16:     (procedure_extraction.capability.wilson_interval) -- capabilities.py's\nbackend/app/services/product_model.py:36: from app.services.procedure_extraction.capability import wilson_interval\nbackend/app/services/product_model.py:384:         p_lo, p_hi = wilson_interval(int(verified), run_count)\nbackend/app/services/product_model.py:652:         w_lo, w_hi = wilson_interval(verified, run_count)\nbackend/app/services/procedure_extraction/capability.py:150: def wilson_interval(\nbackend/app/services/procedure_extraction/capability.py:256:     p_lower, p_upper = wilson_interval(successes, total)\nbackend/app/services/procedure_extraction/capability.py:258:     # evidence, wilson_interval returns (0, 1) -> estimate 0.0 -> level 0."
+    },
+    {
+      "role": "assistant",
+      "content": "",
+      "tool_calls": [
+        {
+          "id": "call_0e37120fb2b54c95b7",
+          "type": "function",
+          "function": {
+            "name": "read_symbol",
+            "arguments": "{\"path\": \"backend/app/services/procedure_extraction/capability.py\", \"name\": \"wilson_interval\"}"
+          }
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "tool_call_id": "call_0e37120fb2b54c95b7",
+      "content": "backend/app/services/procedure_extraction/capability.py:150-168  def wilson_interval\ndef wilson_interval(\r\n    successes: int, total: int, z: float = WILSON_Z_95,\r\n) -> tuple[float, float]:\r\n    \"\"\"\r\n    Wilson score interval for a binomial proportion. total == 0 returns\r\n    the maximum-ignorance interval (0, 1): no evidence supports no claim\r\n    in either direction. Lower bound is clamped to [0, 1] only via the\r\n    formula's natural range; no smoothing, no priors.\r\n    \"\"\"\r\n    if total <= 0:\r\n        return (0.0, 1.0)\r\n    p_hat = successes / total\r\n    z_sq = z * z\r\n    denom = 1.0 + z_sq / total\r\n    center = (p_hat + z_sq / (2 * total)) / denom\r\n    half = (z * math.sqrt(p_hat * (1 - p_hat) / total + z_sq / (4 * total * total))) / denom\r\n    lower = max(0.0, center - half)\r\n    upper = min(1.0, center + half)\r\n    return (lower, upper)"
+    },
+    {
+      "role": "assistant",
+      "content": "",
+      "tool_calls": [
+        {
+          "id": "call_4241e6d77a8e4c9c88",
+          "type": "function",
+          "function": {
+            "name": "search",
+            "arguments": "{\"path\": \"backend/app\", \"pattern\": \"wilson_interval\"}"
+          }
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "tool_call_id": "call_4241e6d77a8e4c9c88",
+      "content": "backend/app/api/implementations.py:170:     math directly (`wilson_interval`, `band_for_p`, `route_for_p`) --\nbackend/app/api/implementations.py:182:         wilson_interval,\nbackend/app/api/implementations.py:194:     p_lower, p_upper = wilson_interval(successes, total)\nbackend/app/mcp_server/server.py:2736:             band_for_p, route_for_p, wilson_interval,\nbackend/app/mcp_server/server.py:2759:         p_lower, p_upper = wilson_interval(successes, total)\nbackend/app/services/capabilities.py:43:     directly from real evidence rows using ONLY `wilson_interval`,\nbackend/app/services/capabilities.py:61:     wilson_interval,\nbackend/app/services/capabilities.py:238:     p_lower, p_upper = wilson_interval(successes, total)\nbackend/app/services/capabilities.py:268:     `compute_capability`/`wilson_interval` math\nbackend/app/services/procedure_graph_api.py:29:   - `app.services.procedure_extraction.capability.wilson_interval` /\nbackend/app/services/procedure_graph_api.py:69:     wilson_interval,\nbackend/app/services/procedure_graph_api.py:384:     p_lower, p_upper = wilson_interval(successes, total)\nbackend/app/services/product_model.py:16:     (procedure_extraction.capability.wilson_interval) -- capabilities.py's\nbackend/app/services/product_model.py:36: from app.services.procedure_extraction.capability import wilson_interval\nbackend/app/services/product_model.py:384:         p_lo, p_hi = wilson_interval(int(verified), run_count)\nbackend/app/services/product_model.py:652:         w_lo, w_hi = wilson_interval(verified, run_count)\nbackend/app/services/procedure_extraction/capability.py:150: def wilson_interval(\nbackend/app/services/procedure_extraction/capability.py:256:     p_lower, p_upper = wilson_interval(successes, total)\nbackend/app/services/procedure_extraction/capability.py:258:     # evidence, wilson_interval returns (0, 1) -> estimate 0.0 -> level 0."
+    },
+    {
+      "role": "assistant",
+      "content": "",
+      "tool_calls": [
+        {
+          "id": "call_13e1bc00eb78448297",
+          "type": "function",
+          "function": {
+            "name": "search",
+            "arguments": "{\"path\": \"backend/app\", \"pattern\": \"import .*wilson_interval\"}"
+          }
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "tool_call_id": "call_13e1bc00eb78448297",
+      "content": "backend/app/services/product_model.py:36: from app.services.procedure_extraction.capability import wilson_interval"
+    },
+    {
+      "role": "assistant",
+      "content": "",
+      "tool_calls": [
+        {
+          "id": "call_ca809f2aa5cf4fa2b3",
+          "type": "function",
+          "function": {
+            "name": "search",
+            "arguments": "{\"path\": \"backend/app\", \"pattern\": \"wilson_interval\"}"
+          }
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "tool_call_id": "call_ca809f2aa5cf4fa2b3",
+      "content": "backend/app/api/implementations.py:170:     math directly (`wilson_interval`, `band_for_p`, `route_for_p`) --\nbackend/app/api/implementations.py:182:         wilson_interval,\nbackend/app/api/implementations.py:194:     p_lower, p_upper = wilson_interval(successes, total)\nbackend/app/mcp_server/server.py:2736:             band_for_p, route_for_p, wilson_interval,\nbackend/app/mcp_server/server.py:2759:         p_lower, p_upper = wilson_interval(successes, total)\nbackend/app/services/capabilities.py:43:     directly from real evidence rows using ONLY `wilson_interval`,\nbackend/app/services/capabilities.py:61:     wilson_interval,\nbackend/app/services/capabilities.py:238:     p_lower, p_upper = wilson_interval(successes, total)\nbackend/app/services/capabilities.py:268:     `compute_capability`/`wilson_interval` math\nbackend/app/services/procedure_graph_api.py:29:   - `app.services.procedure_extraction.capability.wilson_interval` /\nbackend/app/services/procedure_graph_api.py:69:     wilson_interval,\nbackend/app/services/procedure_graph_api.py:384:     p_lower, p_upper = wilson_interval(successes, total)\nbackend/app/services/product_model.py:16:     (procedure_extraction.capability.wilson_interval) -- capabilities.py's\nbackend/app/services/product_model.py:36: from app.services.procedure_extraction.capability import wilson_interval\nbackend/app/services/product_model.py:384:         p_lo, p_hi = wilson_interval(int(verified), run_count)\nbackend/app/services/product_model.py:652:         w_lo, w_hi = wilson_interval(verified, run_count)\nbackend/app/services/procedure_extraction/capability.py:150: def wilson_interval(\nbackend/app/services/procedure_extraction/capability.py:256:     p_lower, p_upper = wilson_interval(successes, total)\nbackend/app/services/procedure_extraction/capability.py:258:     # evidence, wilson_interval returns (0, 1) -> estimate 0.0 -> level 0."
+    },
+    {
+      "role": "assistant",
+      "content": "",
+      "tool_calls": [
+        {
+          "id": "call_61bbe9cfa22a40a68d",
+          "type": "function",
+          "function": {
+            "name": "read_symbol",
+            "arguments": "{\"path\": \"backend/app/services/procedure_extraction/capability.py\", \"name\": \"band_for_p\"}"
+          }
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "tool_call_id": "call_61bbe9cfa22a40a68d",
+      "content": "backend/app/services/procedure_extraction/capability.py:171-186  def band_for_p\ndef band_for_p(p: float) -> int:\r\n    \"\"\"\r\n    The D1 band boundaries applied to a P value ALONE -- pure ladder, no\r\n    gates (gates cap the level in compute_capability). Level 1 is any\r\n    positive P with evidence; callers handle the no-evidence case before\r\n    banding (it is level 0 regardless of any interval endpoint).\r\n    \"\"\"\r\n    if p >= LEVEL_5_P_THRESHOLD:\r\n        return 5\r\n    if p >= LEVEL_4_P_THRESHOLD:\r\n        return 4\r\n    if p >= LEVEL_3_P_THRESHOLD:\r\n        return 3\r\n    if p >= LEVEL_2_P_THRESHOLD:\r\n        return 2\r\n    return 1"
+    },
+    {
+      "role": "assistant",
+      "content": "",
+      "tool_calls": [
+        {
+          "id": "call_07558da0c576438ea3",
+          "type": "function",
+          "function": {
+            "name": "read_file",
+            "arguments": "{\"path\": \"backend/app/api/implementations.py\", \"line_start\": 150, \"line_end\": 210}"
+          }
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "tool_call_id": "call_07558da0c576438ea3",
+      "content": "     1| \"\"\"\n     2| Read-only REST surface over the durable Implementation Registry\n     3| (directive Sec 43-54, `app/execution/implementation_registry.py`,\n     4| backed by `db/33_implementation_registry.sql`).\n     5| \n     6| Mirrors `app/api/graph.py`'s/`app/api/claims.py`'s exact structure:\n     7| `pool` via `request.app.state.pool`, `scope: AccessScope =\n     8| Depends(get_scope)`, anti-enumeration posture (a row the caller's scope\n     9| cannot see 404s the same as a row that doesn't exist -- the real gate is\n    10| `visibility_predicate()` filtering inside `implementation_registry.py`\n    11| itself, this router adds no additional filtering logic of its own).\n    12| \n    13| No business logic lives here beyond thin param passthrough and the one\n    14| inline capability fallback (see `_capability_endpoint` below, and its own\n    15| docstring for why it is inline rather than imported).\n    16| \"\"\"\n    17| from __future__ import annotations\n    18| \n    19| from typing import Any, Optional\n    20| from uuid import UUID\n    21| \n    22| from fastapi import APIRouter, Depends, HTTPException, Query, Request\n    23| \n    24| from app.api.deps import get_scope\n    25| from app.execution import implementation_registry\n    26| from app.services.access import AccessScope\n    27| \n    28| router = APIRouter(prefix=\"/v1/implementations\", tags=[\"implementations\"])\n    29| \n    30| \n    31| async def get_pool(request: Request):\n    32|     return request.app.state.pool\n    33| \n    34| \n    35| # ---------------------------------------------------------------------------\n    36| # GET /{implementation_id}\n    37| # ---------------------------------------------------------------------------\n    38| \n    39| \n    40| @router.get(\"/{implementation_id}\")\n    41| async def get_implementation(\n    42|     implementation_id: UUID,\n    43|     pool=Depends(get_pool),\n    44|     scope: AccessScope = Depends(get_scope),\n    45| ) -> dict:\n    46|     \"\"\"\n    47|     One implementation row by id, visibility-filtered by\n    48|     `implementation_registry.get()` itself. 404 for missing OR invisible\n    49|     alike -- same anti-enumeration posture every other Wave-1 reader in\n    50|     this codebase uses (`claim_graph_api.get_claim`, `graph.py::\n    51|     get_subgraph`).\n    52| \n    53|     Sanity note (not new logic): `auth_requirements` only ever stores a\n    54|     `credential_ref` SHAPE per `implementation_registry.py`'s own\n    55|     docstring -- no secret value is ever written to this column by any\n    56|     real writer, so echoing the row verbatim here leaks nothing a\n    57|     `visibility='private'` row's real gate (the query predicate itself)\n    58|     doesn't already withhold from an unauthorized caller.\n    59|     \"\"\"\n    60|     r"
+    },
+    {
+      "role": "assistant",
+      "content": "",
+      "tool_calls": [
+        {
+          "id": "call_91a20838d772459bac",
+          "type": "function",
+          "function": {
+            "name": "search",
+            "arguments": "{\"path\": \"backend/app\", \"pattern\": \"import .*wilson_interval\"}"
+          }
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "tool_call_id": "call_91a20838d772459bac",
+      "content": "backend/app/services/product_model.py:36: from app.services.procedure_extraction.capability import wilson_interval"
+    },
+    {
+      "role": "assistant",
+      "content": "",
+      "tool_calls": [
+        {
+          "id": "call_6361c9a1038642ce83",
+          "type": "function",
+          "function": {
+            "name": "search",
+            "arguments": "{\"path\": \"backend/app\", \"pattern\": \"wilson_interval\"}"
+          }
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "tool_call_id": "call_6361c9a1038642ce83",
+      "content": "backend/app/api/implementations.py:170:     math directly (`wilson_interval`, `band_for_p`, `route_for_p`) --\nbackend/app/api/implementations.py:182:         wilson_interval,\nbackend/app/api/implementations.py:194:     p_lower, p_upper = wilson_interval(successes, total)\nbackend/app/mcp_server/server.py:2736:             band_for_p, route_for_p, wilson_interval,\nbackend/app/mcp_server/server.py:2759:         p_lower, p_upper = wilson_interval(successes, total)\nbackend/app/services/capabilities.py:43:     directly from real evidence rows using ONLY `wilson_interval`,\nbackend/app/services/capabilities.py:61:     wilson_interval,\nbackend/app/services/capabilities.py:238:     p_lower, p_upper = wilson_interval(successes, total)\nbackend/app/services/capabilities.py:268:     `compute_capability`/`wilson_interval` math\nbackend/app/services/procedure_graph_api.py:29:   - `app.services.procedure_extraction.capability.wilson_interval` /\nbackend/app/services/procedure_graph_api.py:69:     wilson_interval,\nbackend/app/services/procedure_graph_api.py:384:     p_lower, p_upper = wilson_interval(successes, total)\nbackend/app/services/product_model.py:16:     (procedure_extraction.capability.wilson_interval) -- capabilities.py's\nbackend/app/services/product_model.py:36: from app.services.procedure_extraction.capability import wilson_interval\nbackend/app/services/product_model.py:384:         p_lo, p_hi = wilson_interval(int(verified), run_count)\nbackend/app/services/product_model.py:652:         w_lo, w_hi = wilson_interval(verified, run_count)\nbackend/app/services/procedure_extraction/capability.py:150: def wilson_interval(\nbackend/app/services/procedure_extraction/capability.py:256:     p_lower, p_upper = wilson_interval(successes, total)\nbackend/app/services/procedure_extraction/capability.py:258:     # evidence, wilson_interval returns (0, 1) -> estimate 0.0 -> level 0."
+    },
+    {
+      "role": "assistant",
+      "content": "",
+      "tool_calls": [
+        {
+          "id": "call_63a2f8d7cd6942669c",
+          "type": "function",
+          "function": {
+            "name": "search",
+            "arguments": "{\"path\": \"backend/app\", \"pattern\": \"from .*capability import wilson_interval\"}"
+          }
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "tool_call_id": "call_63a2f8d7cd6942669c",
+      "content": "backend/app/services/product_model.py:36: from app.services.procedure_extraction.capability import wilson_interval"
+    },
+    {
+      "role": "assistant",
+      "content": "",
+      "tool_calls": [
+        {
+          "id": "call_276f856080874a308c",
+          "type": "function",
+          "function": {
+            "name": "edit_file",
+            "arguments": "{\"path\": \"backend/app/services/procedure_extraction/capability.py\", \"old_str\": \"def wilson_interval(\", \"new_str\": \"def compute_wilson_lower_bound(\"}"
+          }
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "tool_call_id": "call_276f856080874a308c",
+      "content": "edited backend/app/services/procedure_extraction/capability.py"
+    },
+    {
+      "role": "assistant",
+      "content": "",
+      "tool_calls": [
+        {
+          "id": "call_09b6ce838be647399e",
+          "type": "function",
+          "function": {
+            "name": "edit_file",
+            "arguments": "{\"path\": \"backend/app/services/procedure_extraction/capability.py\", \"old_str\": \"wilson_interval(\", \"new_str\": \"compute_wilson_lower_bound(\"}"
+          }
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "tool_call_id": "call_09b6ce838be647399e",
+      "content": "edited backend/app/services/procedure_extraction/capability.py"
+    },
+    {
+      "role": "assistant",
+      "content": "",
+      "tool_calls": [
+        {
+          "id": "call_af7aa68c916c4d7f96",
+          "type": "function",
+          "function": {
+            "name": "edit_file",
+            "arguments": "{\"path\": \"backend/app/services/procedure_extraction/capability.py\", \"old_str\": \"wilson_interval(\", \"new_str\": \"compute_wilson_lower_bound(\"}"
+          }
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "tool_call_id": "call_af7aa68c916c4d7f96",
+      "content": "old_str not found. Whitespace is ignored when matching, so the difference is in the code itself -- read the region again and copy it exactly."
+    },
+    {
+      "role": "assistant",
+      "content": "",
+      "tool_calls": [
+        {
+          "id": "call_9be15ab0d7e748689b",
+          "type": "function",
+          "function": {
+            "name": "read_file",
+            "arguments": "{\"path\": \"backend/app/services/procedure_extraction/capability.py\", \"line_start\": 140, \"line_end\": 170}"
+          }
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "tool_call_id": "call_9be15ab0d7e748689b",
+      "content": "     1| \"\"\"\n     2| Capability computation v1 (Band 1.9b / ROADMAP Band-2 item 3): levels as\n     3| a banding over P, per spec v4 \u00a716 as amended by the RATIFIED D1 ruling\n     4| (BAND0_DECISIONS.md, founder quiz 2026-08-25).\n     5| \n     6| Spec \u00a716's single canonical representation:\n     7| \n     8|     Capability = P(required outcome | state, procedure, implementation)\n     9| \n    10| The ordinal ladder (0 unknown \u2192 1 observed \u2192 2 reproduced \u2192 3 validated\n    11| \u2192 4 generalized \u2192 5 trusted) is NOT a separate representation -- it is a\n    12| banding over P. All routing thresholds apply to **P itself**; the level\n    13| label is presentation, never a routing input (\u00a716, verbatim). The two\n    14| named routing tiers are D1-ratified product behavior and live here ONLY\n    15| as named config constants -- never as inline literals at a call site.\n    16| \n    17| WHY THIS MODULE LIVES IN procedure_extraction/: this lane's ownership is\n    18| `procedure_extraction/**` plus four named sibling files; a new top-level\n    19| services/capability.py would fall outside every owned path, and file\n    20| ownership is absolute (board rule). This package is where procedures are\n    21| born, so rating their reliability from outcome streams is its natural\n    22| downstream concern; relocation to services/capability.py is a one-line\n    23| import change for callers whenever ownership is redrawn (logged on the\n    24| board as a numbered question rather than decided unilaterally).\n    25| \n    26| HONEST SCOPE:\n    27| - PURE computation over a caller-supplied outcome stream. No DB reads,\n    28|   no persistence: the [D] companion storage for computed capability is\n    29|   CORE-A's territory (1.9a evidence table / schema needs route through\n    30|   that lane; board rule: no new migrations from this lane).\n    31| - P is estimated as the LOWER bound of the Wilson score interval at the\n    32|   named z. Spec \u00a716 says level bands correspond to \"P intervals whose\n    33|   bounds tighten as evidence volume grows (sequential-testing\n    34|   semantics)\" -- an interval estimate is exactly that. Banding and\n    35|   routing consume the LOWER bound deliberately: the optimistic upper\n    36|   bound would let three lucky successes auto-route (UB=1.0) while real\n    37|   uncertainty is huge, which inverts the system's fail-closed posture.\n    38|   A sequential test (SPRT) refinement is deferred; ticket 13's SPRT\n    39|   promotion logic in procedures.py stays untouched and authoritative\n    40|   for lifecycle transitions -- this module computes the ROUTING input,\n    41|   it does not own lifecycle.\n    42| - Not yet wired into retrieval/routing call sites. \"Replaces raw\n    43|   counters as the routing input\" is a caller-side migration (procedures\n    "
+    },
+    {
+      "role": "assistant",
+      "content": "",
+      "tool_calls": [
+        {
+          "id": "call_fdb7eee39c9446a9bf",
+          "type": "function",
+          "function": {
+            "name": "edit_file",
+            "arguments": "{\"path\": \"backend/app/services/procedure_extraction/capability.py\", \"old_str\": \"wilson_interval(successes, total)\", \"new_str\": \"compute_wilson_lower_bound(successes, total)\"}"
+          }
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "tool_call_id": "call_fdb7eee39c9446a9bf",
+      "content": "old_str not found. Whitespace is ignored when matching, so the difference is in the code itself -- read the region again and copy it exactly.\n\n[8 tool calls remaining]"
+    },
+    {
+      "role": "assistant",
+      "content": "",
+      "tool_calls": [
+        {
+          "id": "call_9440fd2963814eb19c",
+          "type": "function",
+          "function": {
+            "name": "read_file",
+            "arguments": "{\"path\": \"backend/app/services/procedure_extraction/capability.py\", \"line_start\": 240, \"line_end\": 280}"
+          }
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "tool_call_id": "call_9440fd2963814eb19c",
+      "content": "     1| \"\"\"\n     2| Capability computation v1 (Band 1.9b / ROADMAP Band-2 item 3): levels as\n     3| a banding over P, per spec v4 \u00a716 as amended by the RATIFIED D1 ruling\n     4| (BAND0_DECISIONS.md, founder quiz 2026-08-25).\n     5| \n     6| Spec \u00a716's single canonical representation:\n     7| \n     8|     Capability = P(required outcome | state, procedure, implementation)\n     9| \n    10| The ordinal ladder (0 unknown \u2192 1 observed \u2192 2 reproduced \u2192 3 validated\n    11| \u2192 4 generalized \u2192 5 trusted) is NOT a separate representation -- it is a\n    12| banding over P. All routing thresholds apply to **P itself**; the level\n    13| label is presentation, never a routing input (\u00a716, verbatim). The two\n    14| named routing tiers are D1-ratified product behavior and live here ONLY\n    15| as named config constants -- never as inline literals at a call site.\n    16| \n    17| WHY THIS MODULE LIVES IN procedure_extraction/: this lane's ownership is\n    18| `procedure_extraction/**` plus four named sibling files; a new top-level\n    19| services/capability.py would fall outside every owned path, and file\n    20| ownership is absolute (board rule). This package is where procedures are\n    21| born, so rating their reliability from outcome streams is its natural\n    22| downstream concern; relocation to services/capability.py is a one-line\n    23| import change for callers whenever ownership is redrawn (logged on the\n    24| board as a numbered question rather than decided unilaterally).\n    25| \n    26| HONEST SCOPE:\n    27| - PURE computation over a caller-supplied outcome stream. No DB reads,\n    28|   no persistence: the [D] companion storage for computed capability is\n    29|   CORE-A's territory (1.9a evidence table / schema needs route through\n    30|   that lane; board rule: no new migrations from this lane).\n    31| - P is estimated as the LOWER bound of the Wilson score interval at the\n    32|   named z. Spec \u00a716 says level bands correspond to \"P intervals whose\n    33|   bounds tighten as evidence volume grows (sequential-testing\n    34|   semantics)\" -- an interval estimate is exactly that. Banding and\n    35|   routing consume the LOWER bound deliberately: the optimistic upper\n    36|   bound would let three lucky successes auto-route (UB=1.0) while real\n    37|   uncertainty is huge, which inverts the system's fail-closed posture.\n    38|   A sequential test (SPRT) refinement is deferred; ticket 13's SPRT\n    39|   promotion logic in procedures.py stays untouched and authoritative\n    40|   for lifecycle transitions -- this module computes the ROUTING input,\n    41|   it does not own lifecycle.\n    42| - Not yet wired into retrieval/routing call sites. \"Replaces raw\n    43|   counters as the routing input\" is a caller-side migration (procedures\n    \n\n[7 tool calls remaining]"
+    }
+  ]
+}

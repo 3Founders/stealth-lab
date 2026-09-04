@@ -226,6 +226,94 @@ async def run_trial_arm_B(*, task_description: str, repo_path: str, model: str,
     }
 
 
+def classify_failure(record: dict) -> str:
+    """
+    One deterministic classifier, six distinct outcomes -- the coordinator's
+    explicit requirement that the experiment distinguish "model failure /
+    product failure / provider failure / environmental failure / timeout /
+    task-budget exhaustion" rather than lumping everything into one generic
+    error bucket. Pure function of the already-recorded fields (error
+    string, budget_exceeded, task_success, node_notes/notes) -- no new
+    exception handling added elsewhere, this only labels what already
+    happened.
+
+    Precedence matters: check the more specific/diagnostic signals before
+    the generic ones, so e.g. a step-budget note inside an otherwise
+    successful-looking record is still correctly called budget_exhaustion,
+    not silently folded into "success".
+    """
+    if record.get("task_success") is True:
+        return "success"
+
+    err = (record.get("error") or "")
+    notes = record.get("notes") or ""
+    node_notes = " ".join(record.get("node_notes") or [])
+    combined_notes = f"{notes} {node_notes}"
+
+    # 1. Task-budget exhaustion: the real per-step ceiling (max_steps) was
+    #    hit -- a real, informative stop, not an error. Checked first: a
+    #    trial that hit the step ceiling AND also has budget_exceeded=True
+    #    (the OUTER wall-clock ceiling) should still read as step-budget
+    #    exhaustion, the more specific/actionable fact.
+    if "stop_reason=step_budget" in combined_notes:
+        return "budget_exhaustion"
+
+    # 2. Timeout: the OUTER per-trial wall-clock ceiling (time_budget_s,
+    #    asyncio.wait_for) fired with no other error -- distinct from a
+    #    step-budget stop, which is an intentional, in-band signal from the
+    #    agent loop itself; this is the orchestrator's own external cutoff.
+    if record.get("budget_exceeded") and not err:
+        return "timeout"
+
+    # 3. Environmental failure: this sandbox/process's own setup is
+    #    missing/misconfigured -- not a defect in Stealth, the model, or
+    #    the provider. Real observed instances this session: a missing
+    #    STEALTHLAB_MCP_TOKEN/GENERAL_COMPUTE_API_KEY env var, a DB/MCP
+    #    connection that could never be established at all (ConnectError
+    #    before any real request went out).
+    _env_markers = ("KeyError", "GENERAL_COMPUTE_API_KEY", "STEALTHLAB_MCP_TOKEN",
+                     "ConnectError", "connection refused", "No such file or directory")
+    if any(m in err for m in _env_markers):
+        return "environmental_failure"
+
+    # 4. Provider failure: a real upstream GENERAL_COMPUTE error that
+    #    is_transient() (experiments/swebench_pro/agent.py) would classify
+    #    as transient (429/500/502/503/504/provider_error/"provider request
+    #    failed"/timed out/overloaded), surfaced here because recovery was
+    #    exhausted (MAX_RECOVERIES) or the error reached this layer
+    #    unrecovered -- an upstream fact, not a bug in this codebase.
+    _provider_markers = ("429", "rate limit", "500", "502", "503", "504",
+                          "overloaded", "provider_error", "provider request failed")
+    if any(m in err.lower() for m in _provider_markers):
+        return "provider_failure"
+
+    # 5. Timeout (transport-level): the exact class of failure db/39's
+    #    sibling fix (runner.py's _MCP_SESSION_HTTP_TIMEOUT_SECONDS)
+    #    addressed -- an MCP transport ExceptionGroup/ReadTimeout, distinct
+    #    from a provider-side error. Should be rare/absent post-fix; kept
+    #    as its own category rather than folded into "product_failure" so
+    #    a regression of that specific fix is immediately visible in the
+    #    aggregate failure-category counts, not hidden inside a generic
+    #    bucket.
+    _timeout_markers = ("ExceptionGroup", "ReadTimeout", "timed out")
+    if any(m in err for m in _timeout_markers):
+        return "timeout"
+
+    # 6. Product failure: an unrecovered exception genuinely raised from
+    #    this codebase's own logic (not the provider, not the mcp
+    #    transport, not an environment-setup problem) -- a real defect to
+    #    investigate, not a model-quality question.
+    if err:
+        return "product_failure"
+
+    # 7. Everything else with no error at all -- the agent ran, stayed
+    # within every real budget, and simply did not produce a correct
+    # answer. This is the model's own task performance, not a failure of
+    # any StealthLab mechanism -- the honest default, never silently
+    # merged into a vaguer bucket.
+    return "model_failure"
+
+
 async def run_one_trial(*, task_id: str, task_description: str, arm: str,
                          frozen_commit: str, repo_root: Path, tmp_root: Path,
                          model: str, max_steps: int, time_budget_s: int,
@@ -291,6 +379,7 @@ async def run_one_trial(*, task_id: str, task_description: str, arm: str,
         "wall_clock_seconds_total": wall, **{k: v for k, v in arm_result.items() if k != "arm"},
         **verification,
     }
+    record["failure_category"] = classify_failure(record)
     (raw_dir / f"{trial_id}.json").write_text(
         json.dumps(_redact(record), indent=2, default=str), encoding="utf-8",
     )

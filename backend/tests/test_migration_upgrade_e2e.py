@@ -503,10 +503,14 @@ async def _snapshot(pool, rec: dict) -> dict:
 # ---------------------------------------------------------------------------
 def test_migration_upgrade_path_populated_v1_to_hardening():
     # Grep proof (mirrors the acceptance note): the hardening migrations
-    # (35..38) carry no destructive DDL.
+    # (35..40) carry no destructive DDL. 39/40 (final-agent-experiment
+    # readiness gate: procedures.is_engineering_fixture, fail-closed
+    # column + explicit backfill) added the same pass this comment/range
+    # was extended -- both are ADD COLUMN IF NOT EXISTS / UPDATE only, no
+    # DROP/TRUNCATE, confirmed by this same grep.
     g = subprocess.run(
         ["git", "grep", "-nE", "DROP TABLE|DROP COLUMN|TRUNCATE",
-         "--", "db/35_*", "db/36_*", "db/37_*", "db/38_*"],
+         "--", "db/35_*", "db/36_*", "db/37_*", "db/38_*", "db/39_*", "db/40_*"],
         capture_output=True, text=True, cwd=str(_BACKEND_ROOT),
     )
     assert g.returncode == 1 and g.stdout.strip() == "", (
@@ -521,6 +525,8 @@ def test_migration_upgrade_path_populated_v1_to_hardening():
         "36_durable_execution_runs.sql",
         "37_execution_runs_terminal_chk_fix.sql",
         "38_candidates_no_action_justified.sql",
+        "39_procedures_engineering_fixture_flag.sql",
+        "40_procedures_engineering_fixture_backfill.sql",
     }, [p.name for p in hardening_files]
 
     with _disposable_postgres() as dsn:
@@ -539,16 +545,47 @@ def test_migration_upgrade_path_populated_v1_to_hardening():
 
         assert asyncio.run(_count(dsn)) == len(baseline_files)
 
+        # --- phase 1.5: db/39 must precede seeding, real code<->schema
+        # coupling, not a test artifact. capture_procedure()'s own INSERT
+        # unconditionally names is_engineering_fixture (db/39) -- exactly
+        # the same class of real drift db/38's own commit message
+        # documented for candidates.no_action_justified: the column must
+        # exist before ANY real capture_procedure() call, not merely
+        # before "hardening" is nominally applied. db/40 (the backfill
+        # UPDATE) has no such requirement -- it touches existing rows by
+        # created_by pattern, never blocks a fresh INSERT -- so it stays
+        # in phase 3 below, applied in its normal migration order.
+        async def _apply_one(dsn_: str, filename: str) -> None:
+            import asyncpg
+            path = next(p for p in _migration_files() if p.name == filename)
+            conn = await asyncpg.connect(dsn_)
+            try:
+                checksum = _MIG._checksum(path)
+                async with conn.transaction():
+                    await conn.execute(path.read_text())
+                    await conn.execute(
+                        "INSERT INTO schema_migrations (filename, checksum, kind) "
+                        "VALUES ($1, $2, 'schema')", path.name, checksum,
+                    )
+            finally:
+                await conn.close()
+
+        asyncio.run(_apply_one(dsn, "39_procedures_engineering_fixture_flag.sql"))
+
         # --- phase 2: populate the pre-hardening dataset ---
         os.environ.pop("DATABASE_URL", None)  # force explicit-dsn everywhere
         rec = asyncio.run(_seed_pre_hardening(dsn))
 
-        # --- phase 3: apply 35/36/37 via the REAL runner ---
+        # --- phase 3: apply the rest of the hardening set via the REAL runner
+        # (db/39 already applied above; migrate.py's own idempotent ledger
+        # check skips it cleanly, proven by phase 4's status assertions
+        # below still showing it "applied" exactly once) ---
         up = _run_real_migrate(dsn)
         assert up.returncode == 0, f"migrate.py upgrade run failed:\n{up.stdout}\n{up.stderr}"
         for name in ("35_product_model.sql", "36_durable_execution_runs.sql",
                      "37_execution_runs_terminal_chk_fix.sql",
-                     "38_candidates_no_action_justified.sql"):
+                     "38_candidates_no_action_justified.sql",
+                     "40_procedures_engineering_fixture_backfill.sql"):
             assert f"applied   {name}" in up.stdout, up.stdout
 
         # --- phase 4: assertions on the upgraded DB ---

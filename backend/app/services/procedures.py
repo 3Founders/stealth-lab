@@ -119,6 +119,7 @@ async def capture_procedure(
     embedding: Optional[list[float]] = None,
     scope_type: Optional[str] = None,
     scope_entity_id: Optional[str] = None,
+    is_engineering_fixture: bool = True,
 ) -> dict:
     """
     Inserts a new procedure, always starting `candidate` / `fresh` /
@@ -126,6 +127,14 @@ async def capture_procedure(
     {"id": ..., "procedure_id": ...}: `id` is this specific version row;
     `procedure_id` is the stable handle a caller uses across the version
     chain (see supersede_procedure() for how a new version is created).
+
+    `is_engineering_fixture` (db/39): fail-closed, defaults True. Ordinary
+    user-facing retrieval (applicability.py::_CANDIDATE_BASE_WHERE) excludes
+    rows where this is true. A caller capturing genuine, source-derived,
+    externally-admitted knowledge must explicitly pass
+    `is_engineering_fixture=False` -- forgetting to do so is a safe failure
+    (the procedure exists, just isn't ordinarily retrievable yet), not a
+    contamination risk the way the previous unmarked-by-default state was.
 
     Band 1.2/1.3: provenance and scope are V0-gated at this boundary --
     a procedure without explicit provenance or without a derivable scope
@@ -160,14 +169,16 @@ async def capture_procedure(
             scope, exclusions, family_id, evidence_refs, source_episode_ids,
             provenance, domain, domain_payload, migrated_from_task_node_id,
             created_by, owner_id, visibility, embedding,
-            scope_type, scope_entity_id, embedding_model_id, embedding_dim
+            scope_type, scope_entity_id, embedding_model_id, embedding_dim,
+            is_engineering_fixture
         ) VALUES (
             $24::uuid, $1, $2, $3::jsonb, $4::jsonb, $5::jsonb, $6::jsonb,
             $7::jsonb, $8::jsonb, $9::jsonb, $10::jsonb,
             $11::jsonb, $12::jsonb, $13, $14::jsonb, $15,
             $16, $17, $18::jsonb, $19,
             $20, $21, $22::visibility_level, $23::vector,
-            $25, $26, $27, $28
+            $25, $26, $27, $28,
+            $29
         )
         RETURNING id, procedure_id
         """,
@@ -199,6 +210,7 @@ async def capture_procedure(
         # vector, at what dimension. Null iff embedding is null.
         (settings.embedding_model if embedding is not None else None),
         (settings.embedding_dimension if embedding is not None else None),
+        is_engineering_fixture,
     )
     return {"id": str(row["id"]), "procedure_id": str(row["procedure_id"])}
 
