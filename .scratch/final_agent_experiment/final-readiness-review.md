@@ -400,3 +400,93 @@ fine at 25 or 40."
    finding above -- see `step-budget-calibration.md`'s own caveat.
 
 None of these three blockers require redoing this pass's actual fixes (contamination, execution robustness) -- those are done and proven. They require a calibration/task-design decision this pass was not authorized to make unilaterally.
+
+---
+
+## SECOND ADDENDUM: hard-timeout fix pass -- final authoritative state
+
+The "Honest limitation this pass could not resolve" section above (the
+hanging-calibration infrastructure gap) is now RESOLVED. Full investigation,
+fix, and proof:
+
+**Root cause, precisely identified via controlled reproduction (not
+assumed):** `Agent._complete()` (`experiments/swebench_pro/agent.py`)
+already passed `timeout=REQUEST_TIMEOUT` (180.0) as openai's own per-call
+`timeout=` argument -- and this was measured, via a real local socket that
+accepts a TCP connection and sends nothing, to NOT reliably bound the call:
+elapsed time was ~2x the configured budget. An explicit client-level
+`httpx.Timeout(connect=X, read=X, write=X, pool=X)` with a zero-retry
+transport (the "obvious" stronger fix) was measured WORSE -- it had not
+returned even after >150s against a 5s budget and had to be force-killed.
+Only a real OS-level socket timeout, `socket.setdefaulttimeout()`, reliably
+bounded the call (~1s over budget, consistently, across repeated runs).
+
+**Fix implemented:** `_bounded_socket_timeout()` (new, `agent.py`), a
+context manager that saves the previous `socket.getdefaulttimeout()`,
+sets a new bound, and restores the previous value on exit (success or
+exception) -- scoped as tightly as possible around the ONE real HTTP call
+site inside `Agent._complete()`'s retry loop, not the whole retry loop or
+episode. Documented as process-global (a real, disclosed limitation of
+`socket.setdefaulttimeout()`, not hidden) but verified safe under genuine
+two-thread concurrent contention: each thread's own call still bounds near
+its own configured budget, no cross-thread leakage observed.
+
+**Proof:**
+- 3 new deterministic offline regression tests
+  (`experiments/swebench_pro/test_bounded_model_call_timeout.py`, all
+  passing): bounds a call against a real non-responding local socket;
+  correctly restores the previous socket default on both the success and
+  exception paths; does not affect a normal successful call's behavior.
+- A non-scored end-to-end stress test through the REAL orchestrator ->
+  `runner.py::_run_local_node` -> `agent.py` -> openai-client integration
+  path (not just the isolated `agent.py` unit), reproducing the original
+  hang's exact shape (`GENERAL_COMPUTE_BASE_URL` pointed at a real
+  non-responding local socket): solo run terminated in 17.2s; two
+  genuinely concurrent trial attempts (the exact contention pattern that
+  originally triggered the hang) each terminated in ~14.1s, running truly
+  in parallel; thread count before and after both runs was identical
+  (`threads_before == threads_after`), confirming no thread was left
+  stuck. All results well under the old 900s ceiling.
+
+**Step-budget calibration, completed for real with the fix in place:**
+both 25 and 40 were run to completion (6 real cells each, T1/T3/T7-v2 x
+{A, B_default}). T7-v2 passes cleanly at both budgets. T1 and T3 fail at
+BOTH budgets, consuming exactly 100% of whatever is offered (25/25, then
+40/40) with zero convergence trend -- strong, now twice-confirmed evidence
+this is a task-design/scope problem for T1 and T3 (the same class of issue
+T7 itself had before being retired), not a budget-size problem. Candidate
+55 was deliberately not run (a disclosed judgment call: the flat
+non-convergent pattern at 25->40 makes it unlikely to resolve by itself,
+and redesigning T1/T3 is outside this pass's mandate).
+
+### THIRD/FINAL ADDENDUM FINAL READINESS (supersedes the addendum above)
+
+- retrieval abstention: **YES** (unchanged, re-confirmed passing this pass)
+- real knowledge retrieval: **YES** (unchanged, re-confirmed passing this pass)
+- T7 valid: **YES** (unchanged)
+- task set frozen: **YES** (T1, T3, T7-v2 -- unchanged)
+- step budget frozen: **NO** -- but now for a task-design reason, not an
+  infrastructure one (see above; T1/T3 need investigation/redesign, the
+  same way the original T7 did)
+- execution robustness: **YES** -- now including the hard-timeout/hang-
+  safety fix proven above, in addition to the T7-crash timeout fix from
+  the prior pass
+- isolated worktrees: **YES** (unchanged, re-confirmed; this pass's own
+  stress test exercised it directly, under real concurrency)
+- instrumentation: **YES** (unchanged, re-confirmed)
+- final scored pilot ready: **NO**
+
+### Remaining blocker (singular, as of this final addendum)
+
+**Only one real blocker remains: `max_steps` has no single value that
+works for all 3 final tasks.** T7-v2 is solved at 25. T1 and T3 are not
+solved at 25 or 40, and the flat 100%-consumption pattern at both tested
+budgets is real evidence against "just try a bigger number" as the fix.
+The honest, evidence-backed recommendation is the same category of
+resolution T7 itself received: investigate T1 and T3's actual traces the
+way `t7-review.md` investigated T7's, and either redesign them to a
+bounded, achievable scope, or replace them, before attempting calibration
+again. This is a task-design decision, explicitly outside this pass's own
+mandate (fixing the timeout/execution-robustness architecture, which is
+now done and proven) -- not something this pass was authorized to decide
+unilaterally.

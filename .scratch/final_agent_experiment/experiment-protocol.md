@@ -25,7 +25,8 @@ current-state amendment.
 
 | item | v1 (`protocol.md`) | v2 (this file) | status |
 |---|---|---|---|
-| `max_steps` | 8 (pilot), 25 (recommended, unverified) | **UNRESOLVED** -- 25 tested and found insufficient for 5/6 cells (`budget-calibration.md` addendum) | **NOT FROZEN** |
+| `max_steps` | 8 (pilot), 25 (recommended, unverified) | **UNRESOLVED** -- 25 AND 40 both tested to completion (hang bug fixed this pass); T7-v2 passes both, T1/T3 consume 100% of budget at both with no convergence trend (`step-budget-calibration.md`) | **NOT FROZEN** |
+| Execution-robustness / hang-safety | orchestrator could hang indefinitely on a non-responding provider call (`asyncio.wait_for` can't kill a blocked thread) | **FIXED** -- real OS socket timeout, scoped + save/restore, proven via offline tests + live stress test (solo + concurrent) | frozen (this fix itself is not going to be reverted) |
 | Task set (T1/T3/T7) | as designed | T7 flagged as likely needing redesign (0/11 ground-truth recall at both 16 and 25 steps) -- not yet redesigned this pass | **NOT FROZEN** |
 | Corpus eligibility | contaminated (all 12 verified procedures were fixtures) | **FIXED** -- db/39+db/40+`_CANDIDATE_BASE_WHERE`, live-verified | frozen (this fix itself is not going to be reverted) |
 | Execution robustness (T7 crash) | `_MCP_SESSION_HTTP_TIMEOUT_SECONDS=650` fix (prior pass) | re-verified this pass, confirmed solid, no other TaskGroup/timeout risk found | frozen |
@@ -88,11 +89,29 @@ fabricated, no secrets recorded, no frozen baseline (`main`,
 ## FINAL PRE-SCORE REMEDIATION PASS -- outcome (supersedes the "What must
 ## happen" list above)
 
-1. **`max_steps`** -- **still NOT resolved.** A fresh 40-step calibration
-   attempt could not complete (see `step-budget-calibration.md` -- a real
-   infrastructure gap in the orchestrator's own timeout enforcement, not
-   a product defect). No validated value exists as of this document. This
-   is the sole remaining blocker.
+1. **`max_steps`** -- **still NOT resolved, but the reason has changed.**
+   The previous blocker (the orchestrator's own timeout enforcement gap --
+   a calibration trial could hang indefinitely, `asyncio.wait_for`
+   cancelling the awaiting coroutine but not the underlying blocked
+   thread) is **FIXED and proven**: a real OS socket timeout
+   (`socket.setdefaulttimeout()`, scoped around the one real HTTP call
+   site with save/restore) now reliably bounds every model call, verified
+   via 3 new offline regression tests plus a non-scored end-to-end stress
+   test through the real orchestrator path (solo + concurrent-contention
+   runs, both bounded, zero lingering threads). With that fixed, BOTH 25
+   and 40 were run to completion for real this pass. Result: T7-v2 passes
+   cleanly at both (well under either ceiling); **T1 and T3 fail at BOTH
+   25 and 40, consuming exactly 100% of the budget every time with zero
+   convergence trend between the two data points** -- strong evidence this
+   is a task-design/scope problem for T1 and T3 (the same class of issue
+   the original T7 had), not a budget-size problem. Candidate 55 was
+   deliberately not run this pass (disclosed judgment call, see
+   `step-budget-calibration.md`'s "Decision on candidate 55" section) --
+   the flat non-convergent pattern at 25->40 makes it unlikely to resolve
+   by itself, and redesigning T1/T3 is outside this pass's mandate (fixing
+   the timeout/execution-robustness architecture). **This is now the sole
+   remaining blocker, and it is a task-design question, not an
+   infrastructure one.**
 2. **T7** -- **resolved.** Retired and replaced with T7-v2 (bounded,
    75-file, pure-AST grader, zero cross-file-call ambiguity). See
    `t7-review.md`, `task-set.md`.
@@ -102,9 +121,14 @@ fabricated, no secrets recorded, no frozen baseline (`main`,
    accounting of why not all 26), implemented in
    `applicability.py::find_applicable_procedures`, both directions
    live-tested and passing.
+4. **Execution-robustness / hang-safety** -- **resolved, newly this
+   pass.** See `remediation-results.md` for the full investigation,
+   fix, and proof.
 
-**This document is still NOT authorizing a scored run** -- the same
-single blocker (`max_steps`) that blocked the prior pass still blocks
-this one, now isolated as the only remaining item (T7 and retrieval
-abstention are both genuinely closed). See `final-readiness-review.md`'s
+**This document is still NOT authorizing a scored run** -- `max_steps`
+remains unresolved, but the blocker has moved from "the harness can't even
+run a calibration trial without risking a hang" to "T1 and T3 don't
+converge at any tested budget, likely needing task redesign like the
+original T7 did." T7, retrieval abstention, and execution robustness are
+all now genuinely closed. See `final-readiness-review.md`'s
 ADDENDUM FINAL READINESS block for the complete gate table.

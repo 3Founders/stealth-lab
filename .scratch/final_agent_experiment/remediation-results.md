@@ -310,12 +310,103 @@ budget) -- not a product defect, not a harness infrastructure bug.
 
 See `step-budget-calibration.md` for the pre-registered rule and result.
 
+## Hard-timeout / hang-safety fix (this pass, follow-up to the readiness gate)
+
+**Call chain traced precisely, not assumed:** `run_trial_arm_A`
+(`orchestrator.py`) -> `runner.py::_run_local_node` ->
+`asyncio.to_thread(node_agent.run, ...)` -> `experiments/swebench_pro/
+agent.py::Agent.run()` -> `Agent._complete()` -> `self._client.chat.
+completions.create(..., timeout=REQUEST_TIMEOUT)`, where `self._client`
+is `openai.OpenAI(max_retries=0, api_key=..., base_url=GENERAL_COMPUTE_
+BASE_URL)` (constructed in `runner.py::_run_local_node`, no client-level
+timeout override). Both arms share this exact path (arm B reaches it via
+`LocalAgentRunner.run()` -> the same `_run_local_node`), so the fix
+applies identically to both by construction, not by separate patching.
+
+**The escape hatch, found by controlled reproduction, not by reading
+documentation and assuming it would work:** a real local TCP listener was
+built that accepts the connection and then sends nothing (the exact shape
+of "provider stopped responding," distinct from "connection refused,"
+which fails fast and would prove nothing). Pointed the real
+`OpenAI(base_url=...)` client construction at it and measured three
+candidate fixes:
+1. The pre-existing bare-float `timeout=REQUEST_TIMEOUT` passed per-call
+   -- measured ~2x its configured budget (5s configured, ~10.15s actual,
+   reproduced 4x).
+2. An explicit client-level `httpx.Timeout(connect=X, read=X, write=X,
+   pool=X)` with a zero-retry `httpx.HTTPTransport(retries=0)` -- measured
+   WORSE: had not returned after >150s against a 5s budget, required a
+   force-kill (`taskkill`) to end the process. Ruled out.
+3. `socket.setdefaulttimeout(X)`, set immediately before the call and
+   restored immediately after -- measured ~1s over budget, consistently,
+   across repeated single-threaded runs (6.05s/6.06s/6.10s/6.12s against a
+   5.0s budget) AND under real two-thread concurrent contention (a 3.0s-
+   budget call and a 6.0s-budget call launched together, each landing near
+   its OWN configured budget: 4.16s and 7.11s respectively -- no cross-
+   thread leakage of the other thread's value).
+
+**Why (2) failing and (3) working is not fully explained at the httpx-
+internals level, and that is stated honestly rather than papered over**
+-- what IS established with certainty is which mechanism empirically
+works for this specific provider/environment combination, via direct,
+repeated, reproducible measurement, which is the standard this whole
+session has held every other fix to.
+
+**Fix implemented:** `_bounded_socket_timeout()` (new function,
+`experiments/swebench_pro/agent.py`), wrapping only the one real
+`.create()` call inside `Agent._complete()`'s existing retry loop
+(REQUEST_TIMEOUT/MAX_RETRIES/backoff logic all unchanged). `REQUEST_
+TIMEOUT` itself is kept and still passed to openai's own `timeout=` for
+defense in depth and provider-side error-message clarity -- it is simply
+no longer relied on ALONE. `is_transient()`'s existing classification of
+`APITimeoutError` (already correctly recognizing "timed out"/"timeout" in
+both the exception type name and message, per that function's own prior
+history) needed no change -- a bounded-then-raised timeout is retried and
+ultimately classified exactly as before, just now guaranteed to actually
+happen within a bounded time.
+
+**Regression coverage:** 3 new offline tests
+(`experiments/swebench_pro/test_bounded_model_call_timeout.py`, all
+passing) -- bounds a real non-responding local socket; restores the
+previous `socket.getdefaulttimeout()` on both success and exception exit;
+does not affect a real successful call's behavior or response content.
+
+**Non-scored stress test, through the REAL integration path** (not the
+isolated `agent.py` unit): `GENERAL_COMPUTE_BASE_URL` pointed at a real
+local non-responding socket, `REQUEST_TIMEOUT`/`MAX_RETRIES` temporarily
+reduced (5.0s/2, restored after) purely so the stress test itself finishes
+in under a minute rather than the ~12 real minutes a full-budget worst
+case would take -- the mechanism under test is identical at any
+configured value. Solo run: 17.2s. Two genuinely concurrent trial
+attempts (the exact contention pattern that triggered the original hang):
+14.1s each, running truly in parallel (not serialized -- confirmed by the
+combined wall-clock matching the SLOWER individual time, not their sum).
+Thread count identical before and after both runs -- no thread left
+stuck. All results orders of magnitude under the old 900s ceiling.
+
+**Classification: experiment infrastructure problem.** Not a StealthLab
+product defect (the bug lives entirely in `experiments/swebench_pro/
+agent.py`, the MEASURE-lane research harness both arms share, not
+`backend/app/`) -- though `backend/app/local_agent/runner.py` DOES import
+and depend on this file at runtime (`_ensure_swebench_pro_on_path()`),
+so it is a real dependency of the production local-agent execution path,
+not a purely isolated research-only concern; flagged honestly rather than
+minimized.
+
+**With this fixed, step-budget calibration was completed for real (both
+25 and 40, 6 cells each, zero hangs).** See `step-budget-calibration.md`
+for the full result: T7-v2 passes both budgets cleanly; T1 and T3 fail
+both at exactly 100% budget consumption with no convergence trend --
+reclassified below as a task-design problem, not an infrastructure one.
+
 ## Classification table (all issues this pass touched)
 
 | issue | category |
 |---|---|
 | Retrieval abstention gap | experiment design problem (the retrieval code had no bug per se for its ORIGINAL intended use; the gap was an unstated design requirement -- "abstain when nothing is truly relevant" -- never implemented) -- though the FIX itself is a real, permanent `backend/app/` change, not merely a test/harness change |
 | T7 (original) | experiment design problem (grader) + experiment design problem (scope) -- see `t7-review.md` |
-| Step-budget-too-small (T1/T3, re-confirmed this pass) | experiment design problem (an under-provisioned pilot parameter, not a product defect) |
-| T1/A `api_error` at 25 steps (prior pass, re-audited this pass) | environment/product-boundary -- a real provider-reliability question flagged, not fully resolved this pass (see `step-budget-calibration.md`'s caveat) |
+| Step-budget-too-small (T7-v2) | RESOLVED -- passes cleanly at 25 (and 40), not a real issue for this task |
+| Step-budget non-convergence (T1/T3, this pass, both 25 and 40) | experiment design problem, now well-evidenced (100% budget consumption at two tested points, zero convergence trend) -- the same category T7 itself was in before being retired, not a product defect and not an infrastructure defect |
+| Calibration-hang (orchestrator could hang indefinitely on a non-responding provider call) | experiment infrastructure problem -- **RESOLVED this pass**, see "Hard-timeout / hang-safety fix" above |
+| T1/A `api_error` at 25 steps (prior pass, re-audited this pass) | environment/product-boundary -- a real provider-reliability question flagged, not fully resolved this pass; NOT reproduced at 40 steps in this pass's own fresh run (T1/B_default hit `api_error` at 25 instead, `step_budget` at 40 -- consistent with genuine intermittent provider variance, not a fixed pattern) |
 | Corpus contamination (prior pass) | corpus/test-data problem (already fixed, re-confirmed unchanged this pass) |

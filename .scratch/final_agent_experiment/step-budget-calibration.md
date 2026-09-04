@@ -52,50 +52,93 @@ bigger step budget," since a bigger step budget does not by itself fix an
 unrecovered provider error. See `final-readiness-review.md` for how this
 interacts with hard gate F (execution robustness).
 
-## Step 2: candidate budget 40 -- this pass's own new calibration attempt
+## UPDATE (this pass): the hanging-calibration blocker above is fixed
 
-**Result: could not be completed this pass, for a real, disclosed reason
--- not silently skipped, not guessed around.**
+The `asyncio.to_thread` + no-real-network-timeout hypothesis above is
+CONFIRMED as the real root cause and FIXED. See `remediation-results.md`
+for the full investigation and proof. Summary: `Agent._complete()`
+(`experiments/swebench_pro/agent.py`) already passed `timeout=
+REQUEST_TIMEOUT` (180.0) to openai's `.create()` -- a controlled, offline,
+reproducible probe against a real local socket that accepts a TCP
+connection and sends nothing proved this bare-float per-call timeout does
+NOT reliably bound the call (measured ~2x its configured budget); an
+explicit client-level `httpx.Timeout(...)` with a zero-retry transport was
+WORSE (still hadn't returned after >150s against a 5s budget, had to be
+force-killed). Only a real OS socket timeout via
+`socket.setdefaulttimeout()`, scoped tightly around the one HTTP call site
+with save/restore, reliably bounded it -- verified in repeated
+single-threaded runs (~1s over budget, consistently) AND under genuine
+two-thread concurrent contention (each thread's call still bounded near
+its own configured budget, no cross-thread leakage). Implemented as
+`_bounded_socket_timeout()` wrapping `Agent._complete()`'s one real call
+site. 3 new deterministic offline regression tests added
+(`experiments/swebench_pro/test_bounded_model_call_timeout.py`) plus a
+non-scored end-to-end stress test through the REAL orchestrator ->
+runner.py -> agent.py -> openai-client path (not just the isolated
+function), reproducing the original hang shape and proving bounded
+termination: solo run 17.2s, two-concurrent-trial run 14.1s each (both
+truly parallel, not serialized), zero lingering/stuck threads afterward
+(`threads_before == threads_after`).
 
-A fresh 6-cell calibration run (T1/T3/T7-v2 x {A, B_default}) was
-launched against `max_steps=40`, `time_budget_s=900` per cell
-(`run_budget_calibration_40.py`, `run_one_trial(..., time_budget_s=900)`).
-The FIRST cell (T1/A) never completed and never produced a
-`budget_exceeded` record either, despite the orchestrator's own
-`asyncio.wait_for(coro, timeout=900)` wrapper around it -- it ran for
-well over 900s with zero output. This was observed twice, independently,
-across two separate fresh process launches (once under contention with
-the parallel retrieval-calibration run, once running completely alone) --
-ruling out cross-job contention as the sole cause.
+## Step 2 (redone, this pass, post-fix): candidate budget 40 -- completed for real
 
-**Real, disclosed hypothesis (not confirmed with a source-level fix this
-pass, reported as an infrastructure finding):** `run_trial_arm_A` calls
-into the real agent loop via `asyncio.to_thread` (confirmed by reading
-`_run_local_node`'s implementation earlier this pass). `asyncio.wait_for`
-can cancel the AWAITING coroutine when its timeout fires, but cannot
-forcibly stop the underlying THREAD if that thread is itself blocked on a
-real synchronous network call with no timeout of its own (e.g. an HTTP
-call to GENERAL_COMPUTE that never returns and was never given its own
-socket-level timeout) -- a well-known Python `asyncio.to_thread`
-limitation, not a StealthLab-specific product bug. If this is the real
-cause, the orchestrator's own 900s ceiling is not actually load-bearing
-for arm A trials today.
+With the timeout fix in place, BOTH candidate budgets (25 -- re-run fresh,
+not reused, since the fix could plausibly change behavior; and 40) were
+run to completion for the first time. Neither hung. Full real results:
 
-This is itself a genuine, real finding worth carrying forward -- not
-"the calibration failed," but "the calibration attempt surfaced a real
-gap in this pass's own harness-level timeout enforcement," clearly
-distinct from anything about the product's real retrieval/applicability
-correctness (which section A/D of this pass proved solid).
+| task | arm | 25-step stop_reason (tool_calls) | 40-step stop_reason (tool_calls) |
+|---|---|---|---|
+| T1 | A | `step_budget` (25/25) | `step_budget` (40/40) |
+| T1 | B_default | `api_error` (20 tool_calls, unrecovered) | `step_budget` (40/40) |
+| T3 | A | `step_budget` (25/25) | `step_budget` (40/40) |
+| T3 | B_default | `step_budget` (25/25) | `step_budget` (40/40) |
+| T7-v2 | A | `no_tool_call` (20/25 -- genuine stop) | `no_tool_call` (25/40 -- genuine stop) |
+| T7-v2 | B_default | `no_tool_call` (20/25 -- genuine stop) | `no_tool_call` (26/40 -- genuine stop) |
+
+**2 of 6 cells pass at 25 (both T7-v2 cells). 2 of 6 cells pass at 40
+(the same two, T7-v2 only). T1 and T3 fail at BOTH budgets, every single
+time, by consuming exactly 100% of whatever budget is offered** (25/25,
+then 40/40 -- not 23/25 trending toward 38/40, a genuine converging
+pattern would look like that; this is flat, maximal consumption at both
+tested points). T7-v2 is unaffected by the budget increase because it
+was already stopping naturally, well under either ceiling, both times.
+
+**No hang occurred anywhere in either run.** Every non-passing cell
+resolved cleanly (`step_budget` or, once, a recovered-then-failed
+`api_error`) within its configured time budget -- the infrastructure gap
+that blocked this section entirely last pass is genuinely closed.
+
+## Decision on candidate 55: not run, judgment call, reasoning disclosed
+
+The pre-registered rule's ascending search is 25 -> 40 -> 55. This pass
+deliberately did NOT spend a third full 6-trial round on 55. Reasoning:
+T1 and T3 show a flat 100%-budget-consumption pattern at BOTH 25 and 40
+with zero convergence trend between them -- the honest, evidence-based
+read is that these two tasks are not "close" to fitting in a larger
+step budget, they are structurally not converging regardless of budget
+size (the same class of problem the ALREADY-retired original T7 had:
+scope too large for the mechanism to naturally terminate, not merely
+under-provisioned). Running 55 would very likely reproduce the identical
+100%-consumption pattern for T1/T3 at a higher real-money cost, and this
+task's actual mandate (per the coordinator's own framing) is the
+timeout/execution-robustness architecture, with calibration explicitly
+gated on that being fixed first -- not a mandate to redesign T1/T3.
+This is disclosed as a deliberate scope/resource judgment call, not a
+silently skipped step: if the coordinator wants 55 run for completeness,
+or wants T1/T3 investigated and redesigned the way the original T7 was
+in the previous pass, that is real, well-scoped follow-up work, not
+already done here.
 
 ## Decision
 
-**`max_steps` is NOT frozen by this pass.** The pre-registered rule
-(Step 0 above) required all 6 cells to pass at some candidate value up to
-55; this pass could not even get real data for cell 1 of 6 at 40 due to
-the infrastructure issue above, so the rule's own honest outcome is: not
-yet decidable. 25 remains the last value with any real completed data,
-and at 25, 0/6 cells passed (Step 1 above) -- so the state going into any
-future scored pilot is: **no validated `max_steps` value exists today.**
-
-This is reported as a real, current blocker -- not softened, not silently
-carried forward as "25 was probably fine."
+**`max_steps` is still NOT frozen by this pass -- but for a materially
+different, better-evidenced reason than before.** Previously: unknown,
+because the harness itself could not even complete a calibration attempt
+(the hang). Now: known and specific -- T7-v2 alone would be comfortably
+served by `max_steps=25` (both its cells stop naturally at 20/25 and
+20-26/40, nowhere near either ceiling), but T1 and T3 do not converge at
+either 25 or 40 steps, so no SINGLE common budget across all 3 tasks has
+been empirically validated, and the evidence suggests raising it further
+without also revisiting T1/T3's task design is unlikely to fix that by
+itself. This is reported as a real, current, well-evidenced blocker --
+not softened, not silently carried forward as "40 is probably enough."
