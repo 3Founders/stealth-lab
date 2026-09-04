@@ -528,3 +528,48 @@ to resolve that ambiguity itself. The scored pilot's own multi-trial
 replication is the correct mechanism to characterize this, and is exactly
 what it is designed to do; this is disclosed as real, honest residual
 uncertainty, not swept under the rug.
+
+---
+
+## FINAL QUICK CONFIRMATION addendum (coordinator-directed, this pass only)
+
+Purpose: resolve whether the 3 cells that never reached completion in the
+prior 6-cell safety check (`T1-v2`/A, `T1-v2`/`B_default`, `T3-v2`/A --
+`T3-v2`/`B_default` already verified, not rerun) can execute cleanly enough
+to justify the scored pilot. At most 2 attempts per cell; stop on 2
+consecutive provider errors; no task/grader/protocol/budget changes.
+
+| cell | attempts | outcome | provider error? | reached natural stop? | grader exercised? |
+|---|---|---|---|---|---|
+| `T1-v2`/A | 2/2 | `api_error` both times (197.8s, 201.7s) | YES, both attempts | No | No -- no answer file either time |
+| `T1-v2`/`B_default` | 1/1 (no provider error, no retry needed) | `step_budget` (40/40 tool_calls), 178.2s | No | No | No -- ran out of budget before writing an answer |
+| `T3-v2`/A | 1/1 (no provider error, no retry needed) | `step_budget` (40/40 tool_calls), 75.1s | No | No | **Yes** -- 3 real files genuinely edited (`capabilities.py`, `capability.py`, `product_model.py`); the AST-based grader ran real logic against them (`new_name_defined_in_capability_py: true`, `renamed_from_detected: false`) -- confirms the repaired T3-v2 pipeline works end-to-end, task just wasn't finished within 40 steps this run |
+
+Timeout protection held in every attempt -- no hang, all well under the
+900s ceiling (max observed 201.7s).
+
+**Per the coordinator's own stated bar ("at least one clean, naturally
+terminating, gradeable execution"): none of the 3 target cells achieved a
+natural (`no_tool_call`) stop in this check.** `T1-v2`/A was blocked by
+repeated provider noise (2 consecutive `api_error`s, the documented
+stopping condition -- not evidence of a task/grader defect, since neither
+attempt got far enough to exercise the grader at all). `T1-v2`/`B_default`
+and `T3-v2`/A both ran without any provider error and hit the step budget
+instead -- a real, non-noise data point suggesting 40 steps may not be
+enough for these two cells via the Stealth-enhanced path specifically,
+distinct from `T1-v2`/A's pure provider-reliability blockage. `T3-v2`/A's
+grader result is a genuine positive signal for pipeline correctness (real
+files changed, real structured grading output) even though the task itself
+didn't finish in budget.
+
+**FINAL SCORED PILOT READY: NO.** This is not a task/grader defect (both
+graders are independently confirmed correct in the prior pass and, for
+T3-v2, reconfirmed functional here against a real completed partial
+change) and not an infrastructure defect (timeout protection held in every
+attempt). It is an open, honest, unresolved question about whether
+`max_steps=40` gives the Stealth arm enough room on `T1-v2` and `T3-v2`
+specifically, combined with `T1-v2`'s apparent higher susceptibility to
+provider noise in this small sample (2/2 attempts, vs. 0/2 for the other
+two cells). No further action was taken this pass per the coordinator's
+explicit "no further remediation loop" instruction -- this is reported as
+the blocker, not routed around.

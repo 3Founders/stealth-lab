@@ -1,0 +1,715 @@
+{
+  "instance_id": "local_agent_a40ed1b0fd03_step0",
+  "arm": "local_agent",
+  "step": 33,
+  "error": "BadRequestError: Error code: 400 - {'error': {'message': 'Provider request failed with status 400', 'type': 'provider_error', 'code': 'provider_error', 'param': None}}",
+  "n_messages": 68,
+  "approx_chars": 39563,
+  "roles": [
+    "system",
+    "user",
+    "assistant",
+    "tool",
+    "assistant",
+    "tool",
+    "assistant",
+    "tool",
+    "assistant",
+    "tool",
+    "assistant",
+    "tool",
+    "assistant",
+    "tool",
+    "assistant",
+    "tool",
+    "assistant",
+    "tool",
+    "assistant",
+    "tool",
+    "assistant",
+    "tool",
+    "assistant",
+    "tool",
+    "assistant",
+    "tool",
+    "assistant",
+    "tool",
+    "assistant",
+    "tool",
+    "assistant",
+    "tool",
+    "assistant",
+    "tool",
+    "assistant",
+    "tool",
+    "assistant",
+    "tool",
+    "assistant",
+    "tool",
+    "assistant",
+    "tool",
+    "assistant",
+    "tool",
+    "assistant",
+    "tool",
+    "assistant",
+    "tool",
+    "assistant",
+    "tool",
+    "assistant",
+    "tool",
+    "assistant",
+    "tool",
+    "assistant",
+    "tool",
+    "assistant",
+    "tool",
+    "assistant",
+    "tool",
+    "assistant",
+    "tool",
+    "assistant",
+    "tool",
+    "assistant",
+    "tool",
+    "assistant",
+    "tool"
+  ],
+  "messages": [
+    {
+      "role": "system",
+      "content": "You are fixing a real bug in the trial-7049b0901b repository, checked out at the commit where the issue was reported.\n\nWork by locating the relevant source, reading enough of it to understand the current behaviour, then making the change that fixes the issue. Hidden tests will be run against your change: they were written from the issue description, so implement what the issue actually asks for, not a narrower special case.\n\nRules:\n- If the issue calls for a module, hook, helper or config file that does not exist yet, CREATE it with create_file. Roughly a third of issues like this are fixed by adding a file, not by editing one -- if you cannot find the thing the issue describes, consider that it may need to be written rather than found.\n- Edit source files only. Do not edit anything under test/ -- test changes are discarded before grading and waste your budget.\n- PREFER list_symbols + read_symbol OVER read_file for any Python, Go, JS or TS file over ~100 lines. read_symbol returns one function's exact source for a fraction of the tokens read_file would spend on the surrounding file. Use read_file only for config/data files or when you need to see a file's overall shape rather than one named symbol.\n- You have at most 40 tool calls. Spend them on locating the right code, not on reading whole directories.\n- Call finish when done.\n"
+    },
+    {
+      "role": "user",
+      "content": "Issue to fix:\n\nbackend/app/services/procedure_extraction/capability.py defines a function used by at least one other module in backend/app/services/. Find every real call site of that function across the whole backend/app/ tree, rename it to compute_wilson_lower_bound everywhere (definition and every real code call site -- import statements and invocations; renaming prose comments/docstrings that merely mention the name is not required), and confirm the existing test suite for that area still passes.\n\nCurrent step: backend/app/services/procedure_extraction/capability.py defines a function used by at least one other module in backend/app/services/. Find every real call site of that function across the whole backend/app/ tree, rename it to compute_wilson_lower_bound everywhere (definition and every real code call site -- import statements and invocations; renaming prose comments/docstrings that merely mention the name is not required), and confirm the existing test suite for that area still passes.\n\nBegin."
+    },
+    {
+      "role": "assistant",
+      "content": "",
+      "tool_calls": [
+        {
+          "id": "call_46a1436f26dd4c53a5",
+          "type": "function",
+          "function": {
+            "name": "list_dir",
+            "arguments": "{\"path\": \"backend/app/services\"}"
+          }
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "tool_call_id": "call_46a1436f26dd4c53a5",
+      "content": "file __init__.py\nfile access.py\nfile agent_decision.py\nfile agent_promotion.py\nfile agent_review_orchestrator.py\nfile agent_review_state_machine.py\nfile agent_search.py\nfile applicability.py\nfile authn.py\nfile call_graph.py\nfile capabilities.py\nfile changeset_record.py\nfile chat.py\nfile claim_evidence.py\nfile claim_family.py\nfile claim_graph_api.py\nfile claim_impact.py\nfile claim_temporal.py\nfile claim_traversal.py\nfile claims.py\nfile code_index.py\nfile code_review.py\nfile content_diff.py\nfile context_compiler.py\nfile decomposition.py\nfile dedup.py\nfile domain_search.py\nfile embed_cache.py\nfile embeddings.py\nfile environment_facts.py\nfile environment_probe.py\nfile execution.py\nfile failure_capture.py\nfile governance.py\nfile hierarchy.py\nfile human_participation.py\nfile import_deps.py\nfile ingestion_jobs.py\nfile ingestion_scheduler.py\ndir  ingestion_sources\nfile invariants.py\nfile knowledge_conflict.py\nfile knowledge_update.py\nfile local_retrieval.py\nfile loop.py\nfile method_library.py\nfile observations.py\nfile patch_format.py\nfile personal_contributions.py\nfile precondition_gate.py\ndir  procedure_extraction\nfile procedure_graph_api.py\nfile procedure_task_graph_api.py\nfile procedures.py\nfile product_model.py\nfile publish.py\nfile related_tests.py\nfile repository_knowledge.py\nfile retrieval.py\nfile reuse_detection.py\n... 17 more"
+    },
+    {
+      "role": "assistant",
+      "content": "",
+      "tool_calls": [
+        {
+          "id": "call_9272adc8174645b18f",
+          "type": "function",
+          "function": {
+            "name": "list_dir",
+            "arguments": "{\"path\": \"backend/app/services/procedure_extraction\"}"
+          }
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "tool_call_id": "call_9272adc8174645b18f",
+      "content": "file __init__.py\nfile capability.py\nfile derive.py\nfile episode_evidence.py\nfile evidence.py\nfile failure_handlers.py\nfile registry.py\nfile schema.py\nfile strategies.py\nfile synthesis.py\nfile validators.py"
+    },
+    {
+      "role": "assistant",
+      "content": "",
+      "tool_calls": [
+        {
+          "id": "call_e717df548c2c402999",
+          "type": "function",
+          "function": {
+            "name": "read_symbol",
+            "arguments": "{\"path\": \"backend/app/services/procedure_extraction/capability.py\", \"name\": \"\"}"
+          }
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "tool_call_id": "call_e717df548c2c402999",
+      "content": "no symbol named '' in backend/app/services/procedure_extraction/capability.py. Use list_symbols to see what is actually there."
+    },
+    {
+      "role": "assistant",
+      "content": "",
+      "tool_calls": [
+        {
+          "id": "call_c3a39b44ace24b6187",
+          "type": "function",
+          "function": {
+            "name": "list_symbols",
+            "arguments": "{\"path\": \"backend/app/services/procedure_extraction/capability.py\"}"
+          }
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "tool_call_id": "call_c3a39b44ace24b6187",
+      "content": "class      OutcomeRecord                            lines 90-116\nclass      CapabilityScope                          lines 119-141\ndef        CapabilityScope._reject_blank            lines 138-141\nclass      RoutingDecision                          lines 144-147\ndef        wilson_interval                          lines 150-168\ndef        band_for_p                               lines 171-186\ndef        route_for_p                              lines 189-199\nclass      CapabilityRecord                         lines 202-219\ndef        compute_capability                       lines 222-296\ndef        capability_trajectory                    lines 299-321"
+    },
+    {
+      "role": "assistant",
+      "content": "",
+      "tool_calls": [
+        {
+          "id": "call_f6a60ba834b64ee7a8",
+          "type": "function",
+          "function": {
+            "name": "search",
+            "arguments": "{\"path\": \"backend/app/services\", \"pattern\": \"wilson_interval\"}"
+          }
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "tool_call_id": "call_f6a60ba834b64ee7a8",
+      "content": "backend/app/services/capabilities.py:43:     directly from real evidence rows using ONLY `wilson_interval`,\nbackend/app/services/capabilities.py:61:     wilson_interval,\nbackend/app/services/capabilities.py:238:     p_lower, p_upper = wilson_interval(successes, total)\nbackend/app/services/capabilities.py:268:     `compute_capability`/`wilson_interval` math\nbackend/app/services/procedure_graph_api.py:29:   - `app.services.procedure_extraction.capability.wilson_interval` /\nbackend/app/services/procedure_graph_api.py:69:     wilson_interval,\nbackend/app/services/procedure_graph_api.py:384:     p_lower, p_upper = wilson_interval(successes, total)\nbackend/app/services/product_model.py:16:     (procedure_extraction.capability.wilson_interval) -- capabilities.py's\nbackend/app/services/product_model.py:36: from app.services.procedure_extraction.capability import wilson_interval\nbackend/app/services/product_model.py:384:         p_lo, p_hi = wilson_interval(int(verified), run_count)\nbackend/app/services/product_model.py:652:         w_lo, w_hi = wilson_interval(verified, run_count)\nbackend/app/services/procedure_extraction/capability.py:150: def wilson_interval(\nbackend/app/services/procedure_extraction/capability.py:256:     p_lower, p_upper = wilson_interval(successes, total)\nbackend/app/services/procedure_extraction/capability.py:258:     # evidence, wilson_interval returns (0, 1) -> estimate 0.0 -> level 0."
+    },
+    {
+      "role": "assistant",
+      "content": "",
+      "tool_calls": [
+        {
+          "id": "call_947b5a2c5c204e04ac",
+          "type": "function",
+          "function": {
+            "name": "search",
+            "arguments": "{\"path\": \"backend/app/services\", \"pattern\": \"wilson_interval\"}"
+          }
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "tool_call_id": "call_947b5a2c5c204e04ac",
+      "content": "backend/app/services/capabilities.py:43:     directly from real evidence rows using ONLY `wilson_interval`,\nbackend/app/services/capabilities.py:61:     wilson_interval,\nbackend/app/services/capabilities.py:238:     p_lower, p_upper = wilson_interval(successes, total)\nbackend/app/services/capabilities.py:268:     `compute_capability`/`wilson_interval` math\nbackend/app/services/procedure_graph_api.py:29:   - `app.services.procedure_extraction.capability.wilson_interval` /\nbackend/app/services/procedure_graph_api.py:69:     wilson_interval,\nbackend/app/services/procedure_graph_api.py:384:     p_lower, p_upper = wilson_interval(successes, total)\nbackend/app/services/product_model.py:16:     (procedure_extraction.capability.wilson_interval) -- capabilities.py's\nbackend/app/services/product_model.py:36: from app.services.procedure_extraction.capability import wilson_interval\nbackend/app/services/product_model.py:384:         p_lo, p_hi = wilson_interval(int(verified), run_count)\nbackend/app/services/product_model.py:652:         w_lo, w_hi = wilson_interval(verified, run_count)\nbackend/app/services/procedure_extraction/capability.py:150: def wilson_interval(\nbackend/app/services/procedure_extraction/capability.py:256:     p_lower, p_upper = wilson_interval(successes, total)\nbackend/app/services/procedure_extraction/capability.py:258:     # evidence, wilson_interval returns (0, 1) -> estimate 0.0 -> level 0."
+    },
+    {
+      "role": "assistant",
+      "content": "",
+      "tool_calls": [
+        {
+          "id": "call_09d6c2efc83f4dfc94",
+          "type": "function",
+          "function": {
+            "name": "search",
+            "arguments": "{\"path\": \"backend/app/services\", \"pattern\": \"import .*wilson_interval\"}"
+          }
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "tool_call_id": "call_09d6c2efc83f4dfc94",
+      "content": "backend/app/services/product_model.py:36: from app.services.procedure_extraction.capability import wilson_interval"
+    },
+    {
+      "role": "assistant",
+      "content": "",
+      "tool_calls": [
+        {
+          "id": "call_4dad2b1606b64457a6",
+          "type": "function",
+          "function": {
+            "name": "search",
+            "arguments": "{\"path\": \"\", \"pattern\": \"wilson_interval(\"}"
+          }
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "tool_call_id": "call_4dad2b1606b64457a6",
+      "content": "bad regex: missing ), unterminated subpattern at position 15"
+    },
+    {
+      "role": "assistant",
+      "content": "",
+      "tool_calls": [
+        {
+          "id": "call_87cd2065641c4f5197",
+          "type": "function",
+          "function": {
+            "name": "read_symbol",
+            "arguments": "{\"path\": \"backend/app/services/procedure_extraction/capability.py\", \"name\": \"wilson_interval\"}"
+          }
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "tool_call_id": "call_87cd2065641c4f5197",
+      "content": "backend/app/services/procedure_extraction/capability.py:150-168  def wilson_interval\ndef wilson_interval(\r\n    successes: int, total: int, z: float = WILSON_Z_95,\r\n) -> tuple[float, float]:\r\n    \"\"\"\r\n    Wilson score interval for a binomial proportion. total == 0 returns\r\n    the maximum-ignorance interval (0, 1): no evidence supports no claim\r\n    in either direction. Lower bound is clamped to [0, 1] only via the\r\n    formula's natural range; no smoothing, no priors.\r\n    \"\"\"\r\n    if total <= 0:\r\n        return (0.0, 1.0)\r\n    p_hat = successes / total\r\n    z_sq = z * z\r\n    denom = 1.0 + z_sq / total\r\n    center = (p_hat + z_sq / (2 * total)) / denom\r\n    half = (z * math.sqrt(p_hat * (1 - p_hat) / total + z_sq / (4 * total * total))) / denom\r\n    lower = max(0.0, center - half)\r\n    upper = min(1.0, center + half)\r\n    return (lower, upper)"
+    },
+    {
+      "role": "assistant",
+      "content": "",
+      "tool_calls": [
+        {
+          "id": "call_6643435086a54278b3",
+          "type": "function",
+          "function": {
+            "name": "read_file",
+            "arguments": "{\"path\": \"backend/app/services/capabilities.py\", \"start_line\": 1, \"num_lines\": 300}"
+          }
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "tool_call_id": "call_6643435086a54278b3",
+      "content": "     1| \"\"\"\n     2| Capability estimation for `target_type='implementation'` evidence rows.\n     3| \n     4| Directive Sec 35-37: REUSE the existing empirical Wilson-interval\n     5| machinery (`app.services.procedure_extraction.capability`), do not build a\n     6| second one. This module is a thin extension over that machinery for a\n     7| target type (`'implementation'`) `evidence_target_type_chk` (migration 24)\n     8| already permits at the schema level -- zero schema change needed, exactly\n     9| as `.scratch/implementation_registry_audit.md` and this module's own\n    10| callers confirm.\n    11| \n    12| HOME: kept in `app/services/` (a new file), not inside\n    13| `procedure_extraction/capability.py` itself (that file is explicitly\n    14| out-of-bounds for this task -- \"import and call only\") and not inside\n    15| `procedure_extraction/` at all -- that package's own docstring names its\n    16| home as an accident of lane ownership at the time it was written\n    17| (\"a new top-level services/capability.py would fall outside every owned\n    18| path, and file ownership is absolute (board rule)\"), not a statement that\n    19| every capability concern must live there. Implementations are a distinct\n    20| target type with their own writer module\n    21| (`app.execution.implementation_registry`) already living under\n    22| `app/execution/` and `app/services/` respectively -- `app/services/\n    23| capabilities.py` sits next to `app/services/claim_evidence.py`, the\n    24| module this file's write-path most directly mirrors (see below), which is\n    25| precedent for \"a new target-type-specific evidence module lives in\n    26| services/, named after the target type it covers.\"\n    27| \n    28| TWO REAL SOURCES OF WILSON-INTERVAL MATH ALREADY EXIST IN THIS CODEBASE,\n    29| AND WHY THIS MODULE USES THE LOWER-LEVEL ONE:\n    30| \n    31|   - `procedure_extraction.capability.compute_capability()` requires a\n    32|     non-blank `environment` per `OutcomeRecord` and produces the fully\n    33|     gated L0-5 ladder (independent-groups / environments-held /\n    34|     verification-plan / completed-review gates). Nothing in the\n    35|     `evidence` table records which environment an outcome ran in\n    36|     (confirmed by reading `db/24_evidence.sql` in full -- same finding\n    37|     `procedure_graph_api.py::_capability_estimate`'s own docstring\n    38|     already made for procedure evidence). Inventing an environment value\n    39|     to satisfy `OutcomeRecord` would be exactly the fabrication CLAUDE.md\n    40|     forbids.\n    41|   - `procedure_graph_api.py::_capability_estimate()` already solved this\n    42|     identical problem for procedure evidence: compute P/Wilson/routing\n    43|     directly from real evidence rows using ONLY `wil"
+    },
+    {
+      "role": "assistant",
+      "content": "",
+      "tool_calls": [
+        {
+          "id": "call_798f87c8710b4f4abb",
+          "type": "function",
+          "function": {
+            "name": "search",
+            "arguments": "{\"path\": \"backend/app/services\", \"pattern\": \"wilson_interval\\\\(\"}"
+          }
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "tool_call_id": "call_798f87c8710b4f4abb",
+      "content": "backend/app/services/capabilities.py:238:     p_lower, p_upper = wilson_interval(successes, total)\nbackend/app/services/procedure_graph_api.py:384:     p_lower, p_upper = wilson_interval(successes, total)\nbackend/app/services/product_model.py:384:         p_lo, p_hi = wilson_interval(int(verified), run_count)\nbackend/app/services/product_model.py:652:         w_lo, w_hi = wilson_interval(verified, run_count)\nbackend/app/services/procedure_extraction/capability.py:150: def wilson_interval(\nbackend/app/services/procedure_extraction/capability.py:256:     p_lower, p_upper = wilson_interval(successes, total)"
+    },
+    {
+      "role": "assistant",
+      "content": "",
+      "tool_calls": [
+        {
+          "id": "call_16e290949d9c4dc498",
+          "type": "function",
+          "function": {
+            "name": "search",
+            "arguments": "{\"path\": \"backend/app/services\", \"pattern\": \"import .*wilson_interval\"}"
+          }
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "tool_call_id": "call_16e290949d9c4dc498",
+      "content": "backend/app/services/product_model.py:36: from app.services.procedure_extraction.capability import wilson_interval"
+    },
+    {
+      "role": "assistant",
+      "content": "",
+      "tool_calls": [
+        {
+          "id": "call_3f4ac8c2af094143b1",
+          "type": "function",
+          "function": {
+            "name": "edit_file",
+            "arguments": "{\"path\": \"backend/app/services/procedure_extraction/capability.py\", \"old_str\": \"def wilson_interval(\", \"new_str\": \"def compute_wilson_lower_bound(\"}"
+          }
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "tool_call_id": "call_3f4ac8c2af094143b1",
+      "content": "edited backend/app/services/procedure_extraction/capability.py"
+    },
+    {
+      "role": "assistant",
+      "content": "",
+      "tool_calls": [
+        {
+          "id": "call_047c0682edc147bebe",
+          "type": "function",
+          "function": {
+            "name": "search",
+            "arguments": "{\"path\": \"backend/app/services\", \"pattern\": \"wilson_interval\"}"
+          }
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "tool_call_id": "call_047c0682edc147bebe",
+      "content": "backend/app/services/capabilities.py:43:     directly from real evidence rows using ONLY `wilson_interval`,\nbackend/app/services/capabilities.py:61:     wilson_interval,\nbackend/app/services/capabilities.py:238:     p_lower, p_upper = wilson_interval(successes, total)\nbackend/app/services/capabilities.py:268:     `compute_capability`/`wilson_interval` math\nbackend/app/services/procedure_graph_api.py:29:   - `app.services.procedure_extraction.capability.wilson_interval` /\nbackend/app/services/procedure_graph_api.py:69:     wilson_interval,\nbackend/app/services/procedure_graph_api.py:384:     p_lower, p_upper = wilson_interval(successes, total)\nbackend/app/services/product_model.py:16:     (procedure_extraction.capability.wilson_interval) -- capabilities.py's\nbackend/app/services/product_model.py:36: from app.services.procedure_extraction.capability import wilson_interval\nbackend/app/services/product_model.py:384:         p_lo, p_hi = wilson_interval(int(verified), run_count)\nbackend/app/services/product_model.py:652:         w_lo, w_hi = wilson_interval(verified, run_count)\nbackend/app/services/procedure_extraction/capability.py:256:     p_lower, p_upper = wilson_interval(successes, total)\nbackend/app/services/procedure_extraction/capability.py:258:     # evidence, wilson_interval returns (0, 1) -> estimate 0.0 -> level 0."
+    },
+    {
+      "role": "assistant",
+      "content": "",
+      "tool_calls": [
+        {
+          "id": "call_a4da192b4f8244c897",
+          "type": "function",
+          "function": {
+            "name": "search",
+            "arguments": "{\"path\": \"backend/app/services\", \"pattern\": \"import wilson_interval\"}"
+          }
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "tool_call_id": "call_a4da192b4f8244c897",
+      "content": "backend/app/services/product_model.py:36: from app.services.procedure_extraction.capability import wilson_interval"
+    },
+    {
+      "role": "assistant",
+      "content": "",
+      "tool_calls": [
+        {
+          "id": "call_7d0c8d5a6d9b489bb8",
+          "type": "function",
+          "function": {
+            "name": "edit_file",
+            "arguments": "{\"path\": \"backend/app/services/procedure_extraction/capability.py\", \"old_str\": \"wilson_interval(successes, total)\", \"new_str\": \"compute_wilson_lower_bound(successes, total)\"}"
+          }
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "tool_call_id": "call_7d0c8d5a6d9b489bb8",
+      "content": "edited backend/app/services/procedure_extraction/capability.py"
+    },
+    {
+      "role": "assistant",
+      "content": "",
+      "tool_calls": [
+        {
+          "id": "call_a1f5ba1233b842bba2",
+          "type": "function",
+          "function": {
+            "name": "search",
+            "arguments": "{\"path\": \"backend/app/services\", \"pattern\": \"wilson_interval\"}"
+          }
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "tool_call_id": "call_a1f5ba1233b842bba2",
+      "content": "backend/app/services/capabilities.py:43:     directly from real evidence rows using ONLY `wilson_interval`,\nbackend/app/services/capabilities.py:61:     wilson_interval,\nbackend/app/services/capabilities.py:238:     p_lower, p_upper = wilson_interval(successes, total)\nbackend/app/services/capabilities.py:268:     `compute_capability`/`wilson_interval` math\nbackend/app/services/procedure_graph_api.py:29:   - `app.services.procedure_extraction.capability.wilson_interval` /\nbackend/app/services/procedure_graph_api.py:69:     wilson_interval,\nbackend/app/services/procedure_graph_api.py:384:     p_lower, p_upper = wilson_interval(successes, total)\nbackend/app/services/product_model.py:16:     (procedure_extraction.capability.wilson_interval) -- capabilities.py's\nbackend/app/services/product_model.py:36: from app.services.procedure_extraction.capability import wilson_interval\nbackend/app/services/product_model.py:384:         p_lo, p_hi = wilson_interval(int(verified), run_count)\nbackend/app/services/product_model.py:652:         w_lo, w_hi = wilson_interval(verified, run_count)\nbackend/app/services/procedure_extraction/capability.py:258:     # evidence, wilson_interval returns (0, 1) -> estimate 0.0 -> level 0."
+    },
+    {
+      "role": "assistant",
+      "content": "",
+      "tool_calls": [
+        {
+          "id": "call_beeae79e93ec44f58d",
+          "type": "function",
+          "function": {
+            "name": "read_file",
+            "arguments": "{\"path\": \"backend/app/services/capabilities.py\", \"start_line\": 1, \"num_lines\": 300}"
+          }
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "tool_call_id": "call_beeae79e93ec44f58d",
+      "content": "     1| \"\"\"\n     2| Capability estimation for `target_type='implementation'` evidence rows.\n     3| \n     4| Directive Sec 35-37: REUSE the existing empirical Wilson-interval\n     5| machinery (`app.services.procedure_extraction.capability`), do not build a\n     6| second one. This module is a thin extension over that machinery for a\n     7| target type (`'implementation'`) `evidence_target_type_chk` (migration 24)\n     8| already permits at the schema level -- zero schema change needed, exactly\n     9| as `.scratch/implementation_registry_audit.md` and this module's own\n    10| callers confirm.\n    11| \n    12| HOME: kept in `app/services/` (a new file), not inside\n    13| `procedure_extraction/capability.py` itself (that file is explicitly\n    14| out-of-bounds for this task -- \"import and call only\") and not inside\n    15| `procedure_extraction/` at all -- that package's own docstring names its\n    16| home as an accident of lane ownership at the time it was written\n    17| (\"a new top-level services/capability.py would fall outside every owned\n    18| path, and file ownership is absolute (board rule)\"), not a statement that\n    19| every capability concern must live there. Implementations are a distinct\n    20| target type with their own writer module\n    21| (`app.execution.implementation_registry`) already living under\n    22| `app/execution/` and `app/services/` respectively -- `app/services/\n    23| capabilities.py` sits next to `app/services/claim_evidence.py`, the\n    24| module this file's write-path most directly mirrors (see below), which is\n    25| precedent for \"a new target-type-specific evidence module lives in\n    26| services/, named after the target type it covers.\"\n    27| \n    28| TWO REAL SOURCES OF WILSON-INTERVAL MATH ALREADY EXIST IN THIS CODEBASE,\n    29| AND WHY THIS MODULE USES THE LOWER-LEVEL ONE:\n    30| \n    31|   - `procedure_extraction.capability.compute_capability()` requires a\n    32|     non-blank `environment` per `OutcomeRecord` and produces the fully\n    33|     gated L0-5 ladder (independent-groups / environments-held /\n    34|     verification-plan / completed-review gates). Nothing in the\n    35|     `evidence` table records which environment an outcome ran in\n    36|     (confirmed by reading `db/24_evidence.sql` in full -- same finding\n    37|     `procedure_graph_api.py::_capability_estimate`'s own docstring\n    38|     already made for procedure evidence). Inventing an environment value\n    39|     to satisfy `OutcomeRecord` would be exactly the fabrication CLAUDE.md\n    40|     forbids.\n    41|   - `procedure_graph_api.py::_capability_estimate()` already solved this\n    42|     identical problem for procedure evidence: compute P/Wilson/routing\n    43|     directly from real evidence rows using ONLY `wil"
+    },
+    {
+      "role": "assistant",
+      "content": "",
+      "tool_calls": [
+        {
+          "id": "call_bc79175e88b94cd68d",
+          "type": "function",
+          "function": {
+            "name": "search",
+            "arguments": "{\"path\": \"backend/app/services/capabilities.py\", \"pattern\": \"import\"}"
+          }
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "tool_call_id": "call_bc79175e88b94cd68d",
+      "content": "no matches"
+    },
+    {
+      "role": "assistant",
+      "content": "",
+      "tool_calls": [
+        {
+          "id": "call_3921e6d106ec45ac9b",
+          "type": "function",
+          "function": {
+            "name": "search",
+            "arguments": "{\"path\": \"\", \"pattern\": \"procedure_extraction.capability import wilson_interval\"}"
+          }
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "tool_call_id": "call_3921e6d106ec45ac9b",
+      "content": "backend/app/services/product_model.py:36: from app.services.procedure_extraction.capability import wilson_interval\nbackend/tests/test_product_model_offline.py:84:     from app.services.procedure_extraction.capability import wilson_interval"
+    },
+    {
+      "role": "assistant",
+      "content": "",
+      "tool_calls": [
+        {
+          "id": "call_e5214f6a6c174a76b1",
+          "type": "function",
+          "function": {
+            "name": "edit_file",
+            "arguments": "{\"path\": \"backend/app/services/product_model.py\", \"old_str\": \"from app.services.procedure_extraction.capability import wilson_interval\", \"new_str\": \"from app.services.procedure_extraction.capability import compute_wilson_lower_bound\"}"
+          }
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "tool_call_id": "call_e5214f6a6c174a76b1",
+      "content": "edited backend/app/services/product_model.py"
+    },
+    {
+      "role": "assistant",
+      "content": "",
+      "tool_calls": [
+        {
+          "id": "call_a4d1afc00e00421fbb",
+          "type": "function",
+          "function": {
+            "name": "search",
+            "arguments": "{\"path\": \"backend/app/services\", \"pattern\": \"wilson_interval(\"}"
+          }
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "tool_call_id": "call_a4d1afc00e00421fbb",
+      "content": "bad regex: missing ), unterminated subpattern at position 15"
+    },
+    {
+      "role": "assistant",
+      "content": "",
+      "tool_calls": [
+        {
+          "id": "call_7665e623f3df43498b",
+          "type": "function",
+          "function": {
+            "name": "search",
+            "arguments": "{\"path\": \"backend/app/services\", \"pattern\": \"wilson_interval\"}"
+          }
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "tool_call_id": "call_7665e623f3df43498b",
+      "content": "backend/app/services/capabilities.py:43:     directly from real evidence rows using ONLY `wilson_interval`,\nbackend/app/services/capabilities.py:61:     wilson_interval,\nbackend/app/services/capabilities.py:238:     p_lower, p_upper = wilson_interval(successes, total)\nbackend/app/services/capabilities.py:268:     `compute_capability`/`wilson_interval` math\nbackend/app/services/procedure_graph_api.py:29:   - `app.services.procedure_extraction.capability.wilson_interval` /\nbackend/app/services/procedure_graph_api.py:69:     wilson_interval,\nbackend/app/services/procedure_graph_api.py:384:     p_lower, p_upper = wilson_interval(successes, total)\nbackend/app/services/product_model.py:16:     (procedure_extraction.capability.wilson_interval) -- capabilities.py's\nbackend/app/services/product_model.py:384:         p_lo, p_hi = wilson_interval(int(verified), run_count)\nbackend/app/services/product_model.py:652:         w_lo, w_hi = wilson_interval(verified, run_count)\nbackend/app/services/procedure_extraction/capability.py:258:     # evidence, wilson_interval returns (0, 1) -> estimate 0.0 -> level 0."
+    },
+    {
+      "role": "assistant",
+      "content": "",
+      "tool_calls": [
+        {
+          "id": "call_4d5c5740b53d4db4b5",
+          "type": "function",
+          "function": {
+            "name": "search",
+            "arguments": "{\"path\": \"backend/app/services\", \"pattern\": \"capability import\"}"
+          }
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "tool_call_id": "call_4d5c5740b53d4db4b5",
+      "content": "backend/app/services/capabilities.py:58: from app.services.procedure_extraction.capability import (\nbackend/app/services/procedure_graph_api.py:66: from app.services.procedure_extraction.capability import (\nbackend/app/services/product_model.py:36: from app.services.procedure_extraction.capability import compute_wilson_lower_bound\nbackend/app/services/procedure_extraction/failure_handlers.py:82: from app.services.procedure_extraction.capability import ("
+    },
+    {
+      "role": "assistant",
+      "content": "",
+      "tool_calls": [
+        {
+          "id": "call_a6b3e4d8150845c890",
+          "type": "function",
+          "function": {
+            "name": "search",
+            "arguments": "{\"path\": \"backend/app/services\", \"pattern\": \"wilson_interval\"}"
+          }
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "tool_call_id": "call_a6b3e4d8150845c890",
+      "content": "backend/app/services/capabilities.py:43:     directly from real evidence rows using ONLY `wilson_interval`,\nbackend/app/services/capabilities.py:61:     wilson_interval,\nbackend/app/services/capabilities.py:238:     p_lower, p_upper = wilson_interval(successes, total)\nbackend/app/services/capabilities.py:268:     `compute_capability`/`wilson_interval` math\nbackend/app/services/procedure_graph_api.py:29:   - `app.services.procedure_extraction.capability.wilson_interval` /\nbackend/app/services/procedure_graph_api.py:69:     wilson_interval,\nbackend/app/services/procedure_graph_api.py:384:     p_lower, p_upper = wilson_interval(successes, total)\nbackend/app/services/product_model.py:16:     (procedure_extraction.capability.wilson_interval) -- capabilities.py's\nbackend/app/services/product_model.py:384:         p_lo, p_hi = wilson_interval(int(verified), run_count)\nbackend/app/services/product_model.py:652:         w_lo, w_hi = wilson_interval(verified, run_count)\nbackend/app/services/procedure_extraction/capability.py:258:     # evidence, wilson_interval returns (0, 1) -> estimate 0.0 -> level 0."
+    },
+    {
+      "role": "assistant",
+      "content": "",
+      "tool_calls": [
+        {
+          "id": "call_f887ddddf03046d89e",
+          "type": "function",
+          "function": {
+            "name": "search",
+            "arguments": "{\"path\": \"backend/app/services\", \"pattern\": \"wilson_interval\"}"
+          }
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "tool_call_id": "call_f887ddddf03046d89e",
+      "content": "backend/app/services/capabilities.py:43:     directly from real evidence rows using ONLY `wilson_interval`,\nbackend/app/services/capabilities.py:61:     wilson_interval,\nbackend/app/services/capabilities.py:238:     p_lower, p_upper = wilson_interval(successes, total)\nbackend/app/services/capabilities.py:268:     `compute_capability`/`wilson_interval` math\nbackend/app/services/procedure_graph_api.py:29:   - `app.services.procedure_extraction.capability.wilson_interval` /\nbackend/app/services/procedure_graph_api.py:69:     wilson_interval,\nbackend/app/services/procedure_graph_api.py:384:     p_lower, p_upper = wilson_interval(successes, total)\nbackend/app/services/product_model.py:16:     (procedure_extraction.capability.wilson_interval) -- capabilities.py's\nbackend/app/services/product_model.py:384:         p_lo, p_hi = wilson_interval(int(verified), run_count)\nbackend/app/services/product_model.py:652:         w_lo, w_hi = wilson_interval(verified, run_count)\nbackend/app/services/procedure_extraction/capability.py:258:     # evidence, wilson_interval returns (0, 1) -> estimate 0.0 -> level 0."
+    },
+    {
+      "role": "assistant",
+      "content": "",
+      "tool_calls": [
+        {
+          "id": "call_6d575f7dc9814e1089",
+          "type": "function",
+          "function": {
+            "name": "read_file",
+            "arguments": "{\"path\": \"backend/app/services/capabilities.py\", \"start_line\": 50, \"num_lines\": 30}"
+          }
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "tool_call_id": "call_6d575f7dc9814e1089",
+      "content": "    50| from __future__ import annotations\n    51| \n    52| from typing import Any, Optional\n    53| \n    54| import asyncpg\n    55| \n    56| from app.execution.evidence import outcome_to_evidence\n    57| from app.services.access import TenantScope, tenant_transaction\n    58| from app.services.procedure_extraction.capability import (\n    59|     band_for_p,\n    60|     route_for_p,\n    61|     wilson_interval,\n    62| )\n    63| \n    64| # Same provenance stamp idiom as claim_evidence.py's CLAIM_EVIDENCE_WRITER_STAMP.\n    65| IMPLEMENTATION_EVIDENCE_WRITER_STAMP = \"capabilities.record_implementation_outcome@v1\"\n    66| \n    67| # Same outcome-bearing filter procedure_graph_api.py's own\n    68| # _capability_estimate uses -- a live row of one of these two\n    69| # evidence_types with a terminal outcome_status is an attempt, in either\n    70| # direction: a 'supports' success and a 'contradicts' failure both enter\n    71| # the P estimate (the failure is what lowers it). Witness types\n    72| # (human_review, documents...) corroborate but never enter the statistic.\n    73| _OUTCOME_BEARING_EVIDENCE_TYPES = (\"execution_result\", \"reproduction\")\n    74| \n    75| \n    76| async def record_implementation_outcome(\n    77|     pool: asyncpg.Pool,\n    78|     *,\n    79|     implementation_id: str,\n\n... file continues to line 314\n\n[13 tool calls remaining]"
+    },
+    {
+      "role": "assistant",
+      "content": "",
+      "tool_calls": [
+        {
+          "id": "call_bc1433d74d544d15af",
+          "type": "function",
+          "function": {
+            "name": "search",
+            "arguments": "{\"path\": \"backend/app/services\", \"pattern\": \"wilson_interval\"}"
+          }
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "tool_call_id": "call_bc1433d74d544d15af",
+      "content": "backend/app/services/capabilities.py:43:     directly from real evidence rows using ONLY `wilson_interval`,\nbackend/app/services/capabilities.py:61:     wilson_interval,\nbackend/app/services/capabilities.py:238:     p_lower, p_upper = wilson_interval(successes, total)\nbackend/app/services/capabilities.py:268:     `compute_capability`/`wilson_interval` math\nbackend/app/services/procedure_graph_api.py:29:   - `app.services.procedure_extraction.capability.wilson_interval` /\nbackend/app/services/procedure_graph_api.py:69:     wilson_interval,\nbackend/app/services/procedure_graph_api.py:384:     p_lower, p_upper = wilson_interval(successes, total)\nbackend/app/services/product_model.py:16:     (procedure_extraction.capability.wilson_interval) -- capabilities.py's\nbackend/app/services/product_model.py:384:         p_lo, p_hi = wilson_interval(int(verified), run_count)\nbackend/app/services/product_model.py:652:         w_lo, w_hi = wilson_interval(verified, run_count)\nbackend/app/services/procedure_extraction/capability.py:258:     # evidence, wilson_interval returns (0, 1) -> estimate 0.0 -> level 0.\n\n[12 tool calls remaining]"
+    },
+    {
+      "role": "assistant",
+      "content": "",
+      "tool_calls": [
+        {
+          "id": "call_dfa35141a3ec40bd8e",
+          "type": "function",
+          "function": {
+            "name": "read_file",
+            "arguments": "{\"path\": \"backend/app/services/capabilities.py\", \"start_line\": 55, \"num_lines\": 20}"
+          }
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "tool_call_id": "call_dfa35141a3ec40bd8e",
+      "content": "    55| \n    56| from app.execution.evidence import outcome_to_evidence\n    57| from app.services.access import TenantScope, tenant_transaction\n    58| from app.services.procedure_extraction.capability import (\n    59|     band_for_p,\n    60|     route_for_p,\n    61|     wilson_interval,\n    62| )\n    63| \n    64| # Same provenance stamp idiom as claim_evidence.py's CLAIM_EVIDENCE_WRITER_STAMP.\n    65| IMPLEMENTATION_EVIDENCE_WRITER_STAMP = \"capabilities.record_implementation_outcome@v1\"\n    66| \n    67| # Same outcome-bearing filter procedure_graph_api.py's own\n    68| # _capability_estimate uses -- a live row of one of these two\n    69| # evidence_types with a terminal outcome_status is an attempt, in either\n    70| # direction: a 'supports' success and a 'contradicts' failure both enter\n    71| # the P estimate (the failure is what lowers it). Witness types\n    72| # (human_review, documents...) corroborate but never enter the statistic.\n    73| _OUTCOME_BEARING_EVIDENCE_TYPES = (\"execution_result\", \"reproduction\")\n    74| \n\n... file continues to line 314\n\n[11 tool calls remaining]"
+    },
+    {
+      "role": "assistant",
+      "content": "",
+      "tool_calls": [
+        {
+          "id": "call_cc5ebed404634b0380",
+          "type": "function",
+          "function": {
+            "name": "search",
+            "arguments": "{\"path\": \"backend/app/services\", \"pattern\": \"wilson_interval\"}"
+          }
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "tool_call_id": "call_cc5ebed404634b0380",
+      "content": "backend/app/services/capabilities.py:43:     directly from real evidence rows using ONLY `wilson_interval`,\nbackend/app/services/capabilities.py:61:     wilson_interval,\nbackend/app/services/capabilities.py:238:     p_lower, p_upper = wilson_interval(successes, total)\nbackend/app/services/capabilities.py:268:     `compute_capability`/`wilson_interval` math\nbackend/app/services/procedure_graph_api.py:29:   - `app.services.procedure_extraction.capability.wilson_interval` /\nbackend/app/services/procedure_graph_api.py:69:     wilson_interval,\nbackend/app/services/procedure_graph_api.py:384:     p_lower, p_upper = wilson_interval(successes, total)\nbackend/app/services/product_model.py:16:     (procedure_extraction.capability.wilson_interval) -- capabilities.py's\nbackend/app/services/product_model.py:384:         p_lo, p_hi = wilson_interval(int(verified), run_count)\nbackend/app/services/product_model.py:652:         w_lo, w_hi = wilson_interval(verified, run_count)\nbackend/app/services/procedure_extraction/capability.py:258:     # evidence, wilson_interval returns (0, 1) -> estimate 0.0 -> level 0.\n\n[10 tool calls remaining]"
+    },
+    {
+      "role": "assistant",
+      "content": "",
+      "tool_calls": [
+        {
+          "id": "call_cc2ed5f6883949e0a7",
+          "type": "function",
+          "function": {
+            "name": "edit_file",
+            "arguments": "{\"path\": \"backend/app/services/capabilities.py\", \"old_str\": \"wilson_interval,\", \"new_str\": \"compute_wilson_lower_bound,\"}"
+          }
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "tool_call_id": "call_cc2ed5f6883949e0a7",
+      "content": "edited backend/app/services/capabilities.py\n\n[9 tool calls remaining]"
+    },
+    {
+      "role": "assistant",
+      "content": "",
+      "tool_calls": [
+        {
+          "id": "call_23f82d0a166342cfa6",
+          "type": "function",
+          "function": {
+            "name": "search",
+            "arguments": "{\"path\": \"backend/app/services\", \"pattern\": \"wilson_interval\"}"
+          }
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "tool_call_id": "call_23f82d0a166342cfa6",
+      "content": "backend/app/services/capabilities.py:43:     directly from real evidence rows using ONLY `wilson_interval`,\nbackend/app/services/capabilities.py:238:     p_lower, p_upper = wilson_interval(successes, total)\nbackend/app/services/capabilities.py:268:     `compute_capability`/`wilson_interval` math\nbackend/app/services/procedure_graph_api.py:29:   - `app.services.procedure_extraction.capability.wilson_interval` /\nbackend/app/services/procedure_graph_api.py:69:     wilson_interval,\nbackend/app/services/procedure_graph_api.py:384:     p_lower, p_upper = wilson_interval(successes, total)\nbackend/app/services/product_model.py:16:     (procedure_extraction.capability.wilson_interval) -- capabilities.py's\nbackend/app/services/product_model.py:384:         p_lo, p_hi = wilson_interval(int(verified), run_count)\nbackend/app/services/product_model.py:652:         w_lo, w_hi = wilson_interval(verified, run_count)\nbackend/app/services/procedure_extraction/capability.py:258:     # evidence, wilson_interval returns (0, 1) -> estimate 0.0 -> level 0.\n\n[8 tool calls remaining]"
+    },
+    {
+      "role": "assistant",
+      "content": "",
+      "tool_calls": [
+        {
+          "id": "call_877bb54db760421591",
+          "type": "function",
+          "function": {
+            "name": "search",
+            "arguments": "{\"path\": \"backend/app/services\", \"pattern\": \"wilson_interval\"}"
+          }
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "tool_call_id": "call_877bb54db760421591",
+      "content": "backend/app/services/capabilities.py:43:     directly from real evidence rows using ONLY `wilson_interval`,\nbackend/app/services/capabilities.py:238:     p_lower, p_upper = wilson_interval(successes, total)\nbackend/app/services/capabilities.py:268:     `compute_capability`/`wilson_interval` math\nbackend/app/services/procedure_graph_api.py:29:   - `app.services.procedure_extraction.capability.wilson_interval` /\nbackend/app/services/procedure_graph_api.py:69:     wilson_interval,\nbackend/app/services/procedure_graph_api.py:384:     p_lower, p_upper = wilson_interval(successes, total)\nbackend/app/services/product_model.py:16:     (procedure_extraction.capability.wilson_interval) -- capabilities.py's\nbackend/app/services/product_model.py:384:         p_lo, p_hi = wilson_interval(int(verified), run_count)\nbackend/app/services/product_model.py:652:         w_lo, w_hi = wilson_interval(verified, run_count)\nbackend/app/services/procedure_extraction/capability.py:258:     # evidence, wilson_interval returns (0, 1) -> estimate 0.0 -> level 0.\n\n[7 tool calls remaining]"
+    }
+  ]
+}
