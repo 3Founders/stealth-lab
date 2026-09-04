@@ -221,4 +221,11 @@ VERIFIERS = {
     # t3_ground_truth_for now route through the AST-aware _find_real_call_sites),
     # not in the verifier's own detection logic, so no new function is needed.
     "T3-v2": verify_T3,
+    # T1-v3 / T3-v3 (final task-set decision pass): the revision in both cases
+    # is a task-STATEMENT change only (drop the non-gating tool-count ask for
+    # T1; add an explicit stopping-condition sentence for T3) -- the grading
+    # logic that already correctly implements what each task checks is
+    # unchanged, so both reuse their v2 verifier directly, not a new function.
+    "T1-v3": verify_T1_v2,
+    "T3-v3": verify_T3,
 }

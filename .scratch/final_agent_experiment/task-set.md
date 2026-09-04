@@ -119,3 +119,90 @@ edit+verify (T3-v2), broad-survey+measure (T7-v2). Not a one-task anecdote,
 though n=3 is honestly still a small sample — see
 `final-readiness-review.md`'s uncertainty-discipline section for how this
 is treated in analysis.
+
+## FINAL TASK-SET DECISION (one-pass revision-or-retirement, this document supersedes the "3-task set" conclusion above)
+
+Per the coordinator's explicit instruction to stop calibrating step budgets
+and instead decide, for each of T1-v2/T3-v2, exactly one REPAIR or RETIRE
+(no further iteration), real trajectory evidence was read for both tasks'
+non-converging trials. Both showed the same root cause: the agent found the
+answer-relevant fact early, then burned its remaining budget in a
+repeated, non-converging re-search loop rather than stopping -- not a
+scope problem, not a grader defect (both graders were already correct from
+the prior pass).
+
+**T1-v3 (repair of T1-v2): KEPT.** Fix: task statement now asks for
+exactly the one question the grader checks (dropped the non-gating
+"also report approximately how many tools" ask that was inviting the
+unproductive search loop). Real verification result (non-scored, one
+attempt per arm, `bd768e62a887b13a94fdd118693a5c671df1cf95`, max_steps=40):
+
+- Arm A: naturally completed in 14 tool calls / 86.2s (`stop_reason=no_tool_call`),
+  wrote `answer.md`. Resolver named incorrectly.
+- Arm B_default: naturally completed in 12 tool calls / 59.5s
+  (`stop_reason=no_tool_call`), wrote `answer.md`. Resolver named incorrectly.
+
+Both arms now naturally complete, well under budget -- a large improvement
+over T1-v2 (which never wrote an answer file and consumed its full budget
+in the traced example). The repair fixed the structural non-completion
+defect it targeted. Both arms answering incorrectly is a separate,
+correctness-axis outcome (this identification question is genuinely hard:
+29 candidate `@server.tool()` functions, only one of which is the true
+shared resolver) -- not evidence the task fails to complete, and not
+grounds for retirement under the coordinator's literal completion rule.
+This is disclosed plainly, not smoothed over: a task where both arms
+answer wrong in a single non-scored trial does not by itself prove the
+task can't discriminate arms across the real scored pilot's multiple
+trials: single-trial correctness is not the question this pass was
+chartered to answer.
+
+**T3-v3 (repair of T3-v2): RETIRED.** Fix: added one explicit
+stopping-condition sentence ("There are only a small, bounded number of
+real call sites... proceed directly to making the edits... a single
+search before your edits and one test run at the end is sufficient").
+Real verification result (non-scored, `bd768e62a887b13a94fdd118693a5c671df1cf95`,
+max_steps=40):
+
+- Arm A: 2 consecutive genuine provider `api_error`s (202.3s, then 208.8s)
+  -- stopped per this session's established retry discipline (at most one
+  environmental retry). No real completion data obtained for this arm;
+  this is provider noise, not attributed to the task.
+- Arm B_default: ran the full 40/40 steps (`stop_reason=step_budget`,
+  `failure_category=budget_exhaustion`), did not complete the rename.
+
+Neither arm demonstrated natural completion in this pass: arm A's true
+behavior is unknown (provider-blocked, not task-refuted), and arm B
+positively failed to converge even after the stopping-condition repair --
+the same non-convergence pattern the repair specifically targeted. Per
+the coordinator's own rule ("if a surviving task still cannot naturally
+complete in both arms after this single verification attempt plus at most
+one environmental retry, retire it") and the standing instruction not to
+treat a bigger budget as the default fix, T3 is retired after this, its
+one permitted revision. T3/T3-v2/T3-v3 are preserved unmodified in
+`tasks.jsonl` as historical record; none are in the final scored set.
+
+## FINAL scored task set (supersedes the 3-task set above): T1-v3, T7-v2
+
+Two tasks, not three. Per the coordinator's explicit standing guidance,
+two strong, real, naturally-completing tasks are preferable to a third
+that has now twice failed the same non-convergence pattern. T7-v2 was not
+re-run in this pass (out of this pass's required scope, which was
+T1/T3 only); it is carried forward on the strength of its two prior,
+independent clean convergences (`t7-review.md`, `remediation-results.md`)
+and is not itself a fresh claim made in this document.
+
+- **T1-v3** -- single-file structural identification (`server.py`,
+  29-candidate resolver question). Naturally completes both arms, real
+  multi-call-site reasoning requirement, deterministic exact-match grader.
+- **T7-v2** -- broad-survey composition (largest function across 75
+  top-level files under `services/`). Naturally completes both arms in
+  prior passes, pure AST line-count grader (no fuzzy call-graph
+  inference), genuinely exercises structural-summary-before-full-read at
+  a different task shape than T1-v3 (breadth-survey vs. targeted-lookup).
+
+max_steps stays **40** -- unchanged, no new calibration search run this
+pass. All 4 real cells run this pass (T1-v3 x2 arms, T3-v3 x2 arms, minus
+the 2 T3-v3-A attempts consumed by provider noise) finished in 59-209
+wall-clock seconds; T7-v2's own historical convergence is 20-26 tool
+calls. 40 remains a generous, evidence-grounded ceiling for both surviving
+tasks with real margin, not a value chosen to force convergence.
