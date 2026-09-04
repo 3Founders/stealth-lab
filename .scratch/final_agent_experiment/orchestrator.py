@@ -74,6 +74,93 @@ def _redact(obj):
     return obj
 
 
+class _UsageCapture:
+    """Monkeypatches experiments/swebench_pro/agent.py's real Agent.run
+    (NOT a file on disk -- a runtime patch applied from this orchestrator
+    process only) to record the REAL AgentRun.usage (Usage.prompt_tokens/
+    completion_tokens/calls, populated in agent.py's own run() from the
+    real OpenAI-compatible response's resp.usage on every call -- see
+    agent.py lines ~813-814) that backend/app/local_agent/runner.py's
+    _run_local_node currently reads AgentRun.stop_reason/tool_calls/
+    files_edited/patch from but never AgentRun.usage, discarding it.
+
+    Zero bytes written to backend/app/** or experiments/swebench_pro/**;
+    this class exists only in this scratch orchestrator and restores the
+    original method on exit, so a caller reusing this process for
+    something else is never left with a dangling patch.
+    """
+
+    def __init__(self):
+        self.calls: list[dict] = []
+        self._agent_module = None
+        self._original_run = None
+
+    def __enter__(self) -> "_UsageCapture":
+        from app.local_agent import runner as runner_mod
+
+        runner_mod._ensure_swebench_pro_on_path()
+        import agent as swebench_agent_module  # experiments/swebench_pro/agent.py
+
+        self._agent_module = swebench_agent_module
+        self._original_run = swebench_agent_module.Agent.run
+        capture = self
+
+        def _patched_run(self_agent, *args, **kwargs):
+            result = capture._original_run(self_agent, *args, **kwargs)
+            u = result.usage
+            capture.calls.append({
+                "instance_id": result.instance_id,
+                "prompt_tokens": u.prompt_tokens,
+                "completion_tokens": u.completion_tokens,
+                "total_tokens": u.total,
+                "api_calls": u.calls,
+            })
+            return result
+
+        swebench_agent_module.Agent.run = _patched_run
+        return self
+
+    def __exit__(self, *exc_info) -> None:
+        if self._agent_module is not None and self._original_run is not None:
+            self._agent_module.Agent.run = self._original_run
+
+    def summary(self) -> dict:
+        """Real aggregated usage across every Agent.run() call captured
+        this trial (a multi-node task graph makes more than one such
+        call; a single-step task like the smoke test makes exactly one).
+        cost_usd is deliberately always null -- no versioned
+        GENERAL_COMPUTE/gpt-oss-120b pricing config exists anywhere in
+        this repo (experiments/harness/openrouter_arms.py's
+        PRICE_PER_MTOK has exactly one entry, "default": {input 2.50,
+        output 10.00}/Mtok, which is an OpenRouter fallback price for a
+        DIFFERENT provider -- borrowing it here would misattribute a
+        real-looking but fabricated cost to GENERAL_COMPUTE usage,
+        exactly what this instrumentation pass was told not to do)."""
+        if not self.calls:
+            return {
+                "input_tokens": None, "output_tokens": None, "total_tokens": None,
+                "model_calls": 0, "cost_usd": None,
+                "cost_unavailable_reason": "no Agent.run() call captured this trial",
+                "usage_raw": [],
+            }
+        input_tokens = sum(c["prompt_tokens"] for c in self.calls)
+        output_tokens = sum(c["completion_tokens"] for c in self.calls)
+        return {
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens,
+            "total_tokens": input_tokens + output_tokens,
+            "model_calls": sum(c["api_calls"] for c in self.calls),
+            "cost_usd": None,
+            "cost_unavailable_reason": (
+                "no versioned GENERAL_COMPUTE/gpt-oss-120b pricing config exists in "
+                "this repo (economics.py and openrouter_arms.py price OpenRouter only; "
+                "PRICE_PER_MTOK's sole 'default' entry is an OpenRouter fallback for a "
+                "different provider, not an authoritative GENERAL_COMPUTE price)"
+            ),
+            "usage_raw": self.calls,
+        }
+
+
 async def run_trial_arm_A(*, task_description: str, repo_path: str, model: str,
                            max_steps: int) -> dict:
     """Direct Agent+RepoSandbox call, NO MCP/Stealth layer -- mirrors
@@ -87,10 +174,11 @@ async def run_trial_arm_A(*, task_description: str, repo_path: str, model: str,
         goal = task_description
 
     t0 = time.monotonic()
-    result = await runner_mod._run_local_node(
-        _Node(), task_description=task_description, repo_path=repo_path,
-        model=model, max_steps=max_steps, node_notes=node_notes,
-    )
+    with _UsageCapture() as usage:
+        result = await runner_mod._run_local_node(
+            _Node(), task_description=task_description, repo_path=repo_path,
+            model=model, max_steps=max_steps, node_notes=node_notes,
+        )
     wall = time.monotonic() - t0
     return {
         "arm": "A",
@@ -98,10 +186,10 @@ async def run_trial_arm_A(*, task_description: str, repo_path: str, model: str,
         "graph_status": result.status,
         "files_touched": result.data.get("files_edited", []) if result.data else [],
         "tool_calls": result.data.get("tool_calls", 0) if result.data else 0,
-        "model_calls": 1,  # one Agent.run() call this arm
         "wall_clock_seconds": wall,
         "notes": result.notes,
         "stealth_retrieval_decision": None,
+        **usage.summary(),
     }
 
 
@@ -112,14 +200,14 @@ async def run_trial_arm_B(*, task_description: str, repo_path: str, model: str,
 
     runner = LocalAgentRunner(server_url, token, model=model, max_steps=max_steps)
     t0 = time.monotonic()
-    result = await runner.run(task_description, repo_path, allow_unverified=allow_unverified)
+    with _UsageCapture() as usage:
+        result = await runner.run(task_description, repo_path, allow_unverified=allow_unverified)
     wall = time.monotonic() - t0
     return {
         "arm": "B_unverified" if allow_unverified else "B_default",
         "task_success": None,
         "graph_outcome": result.graph_outcome,
         "files_touched": result.files_edited,
-        "model_calls": 1,
         "wall_clock_seconds": wall,
         "stealth_retrieval_decision": {
             "matched": result.matched_procedure is not None,
@@ -128,6 +216,7 @@ async def run_trial_arm_B(*, task_description: str, repo_path: str, model: str,
                 if result.matched_procedure else None,
         },
         "node_notes": result.node_notes,
+        **usage.summary(),
     }
 
 
