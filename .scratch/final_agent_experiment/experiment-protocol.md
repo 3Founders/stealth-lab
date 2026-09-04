@@ -1,12 +1,19 @@
 # Final Baseline vs Stealth Agent Experiment -- FROZEN PROTOCOL (v2)
 
-**STATUS: NOT frozen for execution. This document records the current
-best-understood configuration after the final-readiness-gate pass, but
-section 3's `max_steps` is explicitly UNRESOLVED (see
-`budget-calibration.md`'s addendum) -- do not treat this file as
-authorizing a scored run. It will be re-issued as genuinely frozen once
-`max_steps` is validated and any task-quality changes to T7 are made and
-also frozen, per this same process.**
+**STATUS UPDATE (final pre-score remediation pass, this document's
+governing pass): T7 has been retired and replaced with T7-v2 (see
+`t7-review.md`, `task-set.md`) -- the original T7's 0/11-recall problem is
+now understood to be a real grader/ground-truth defect (confirmed false
+positive: `_now_iso`) plus a separate scale problem, not primarily a
+step-budget question. The retrieval negative-control gap (an irrelevant
+query still returning all 3 admitted procedures at low similarity) has
+been investigated and addressed with a calibrated similarity floor -- see
+`retrieval-calibration.md` for the calibration set, measured score
+distribution, and the frozen decision rule. `max_steps` status: see
+`step-budget-calibration.md` for this pass's own fresh 40-step calibration
+against the FINAL task set (T1/T3/T7-v2) -- this status line is updated
+below once that data is in. Do not treat this file as authorizing a scored
+run until `final-readiness-review.md`'s own hard-gate table says READY.**
 
 This document supersedes `protocol.md` for the items it updates; it does
 NOT retroactively alter `protocol.md`'s own text (per the coordinator's
@@ -75,3 +82,29 @@ working end to end, cost correctly reported unavailable rather than
 fabricated, no secrets recorded, no frozen baseline (`main`,
 `evaluation-suite`, `better-ways-candidate-results`,
 `better-ways-admission`) modified.
+
+---
+
+## FINAL PRE-SCORE REMEDIATION PASS -- outcome (supersedes the "What must
+## happen" list above)
+
+1. **`max_steps`** -- **still NOT resolved.** A fresh 40-step calibration
+   attempt could not complete (see `step-budget-calibration.md` -- a real
+   infrastructure gap in the orchestrator's own timeout enforcement, not
+   a product defect). No validated value exists as of this document. This
+   is the sole remaining blocker.
+2. **T7** -- **resolved.** Retired and replaced with T7-v2 (bounded,
+   75-file, pure-AST grader, zero cross-file-call ambiguity). See
+   `t7-review.md`, `task-set.md`.
+3. **Retrieval negative-control abstention** -- **resolved.**
+   `_MIN_RELEVANCE_SIMILARITY=0.45`, calibrated from real data (16 of a
+   planned 26 queries -- see `retrieval-calibration.md` for the honest
+   accounting of why not all 26), implemented in
+   `applicability.py::find_applicable_procedures`, both directions
+   live-tested and passing.
+
+**This document is still NOT authorizing a scored run** -- the same
+single blocker (`max_steps`) that blocked the prior pass still blocks
+this one, now isolated as the only remaining item (T7 and retrieval
+abstention are both genuinely closed). See `final-readiness-review.md`'s
+ADDENDUM FINAL READINESS block for the complete gate table.

@@ -264,3 +264,58 @@ attributable to this pass's changes.
 See the final commit message and this pass's own `git diff`/`git status`
 output, reported by the coordinator's directive verbatim in the fork's
 final report.
+
+---
+
+# ADDENDUM — Final Pre-Score Remediation Pass
+
+## Retrieval abstention fix (section A)
+
+`backend/app/services/applicability.py::find_applicable_procedures` — one
+new module constant, `_MIN_RELEVANCE_SIMILARITY = 0.45`, applied at the
+final result-list construction stage (a candidate with a real measured
+embedding `similarity` below this value is excluded from the returned
+results; it still legitimately participates in the RRF ranking math
+itself -- this is a result-surfacing floor, not a re-filter of the
+ranking). Calibrated from a real 16-query measured set (12 relevant, 4
+irrelevant -- see `retrieval-calibration.md` for the full evidence,
+including an honest disclosure of a real connection-stability
+infrastructure issue that limited the originally-planned 26-query set).
+Candidates with no stored embedding at all (the pre-existing
+capability-only ranking path) are untouched by this floor.
+
+Two new/re-confirmed regression tests, all 3 run together and
+independently re-verified passing (one initial run hit the known
+pre-existing Voyage-billing rate limit under parallel background load;
+re-run in isolation, genuinely passes):
+- `backend/tests/test_retrieval_negative_control_e2e.py` (new): a
+  genuinely unrelated query returns `[]` under both `require_verified=True`
+  and `require_verified=False`.
+- `backend/tests/test_retrieval_admitted_knowledge_positive_e2e.py`
+  (prior pass, re-confirmed): a real relevant query for each admitted
+  procedure still retrieves it -- the floor did not overshoot.
+- `backend/tests/test_retrieval_fixture_isolation_e2e.py` (prior pass,
+  re-confirmed): unrelated to this floor's own predicate but re-run to
+  confirm zero interaction/regression between the two independent fixes
+  (`is_engineering_fixture` exclusion vs. the new similarity floor).
+
+## T7 retirement (section B)
+
+See `t7-review.md` for the full investigation. Classified: **experiment
+design problem** (the task's own ground-truth-derivation approach was
+unreliable, and separately, its scope was too large for any tested
+budget) -- not a product defect, not a harness infrastructure bug.
+
+## Step-budget calibration (section C)
+
+See `step-budget-calibration.md` for the pre-registered rule and result.
+
+## Classification table (all issues this pass touched)
+
+| issue | category |
+|---|---|
+| Retrieval abstention gap | experiment design problem (the retrieval code had no bug per se for its ORIGINAL intended use; the gap was an unstated design requirement -- "abstain when nothing is truly relevant" -- never implemented) -- though the FIX itself is a real, permanent `backend/app/` change, not merely a test/harness change |
+| T7 (original) | experiment design problem (grader) + experiment design problem (scope) -- see `t7-review.md` |
+| Step-budget-too-small (T1/T3, re-confirmed this pass) | experiment design problem (an under-provisioned pilot parameter, not a product defect) |
+| T1/A `api_error` at 25 steps (prior pass, re-audited this pass) | environment/product-boundary -- a real provider-reliability question flagged, not fully resolved this pass (see `step-budget-calibration.md`'s caveat) |
+| Corpus contamination (prior pass) | corpus/test-data problem (already fixed, re-confirmed unchanged this pass) |

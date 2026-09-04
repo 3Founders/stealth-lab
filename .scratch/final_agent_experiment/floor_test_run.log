@@ -1,0 +1,100 @@
+============================= test session starts =============================
+platform win32 -- Python 3.14.6, pytest-9.1.1, pluggy-1.6.0 -- C:\Users\user\sl-core-b\backend\.venv\Scripts\python.exe
+cachedir: .pytest_cache
+rootdir: C:\Users\user\sl-final-remediation\backend
+configfile: pyproject.toml
+plugins: anyio-4.14.2, langsmith-0.11.1, asyncio-1.4.0
+asyncio: mode=Mode.STRICT, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collecting ... collected 3 items
+
+tests/test_retrieval_negative_control_e2e.py::test_genuinely_unrelated_query_abstains_rather_than_returning_the_least_bad_option PASSED [ 33%]
+tests/test_retrieval_admitted_knowledge_positive_e2e.py::test_explicitly_real_procedure_remains_retrievable_after_the_fixture_isolation_fix PASSED [ 66%]
+tests/test_retrieval_fixture_isolation_e2e.py::test_test_fixture_procedure_does_not_surface_as_normal_knowledge_in_user_facing_retrieval FAILED [100%]
+
+================================== FAILURES ===================================
+_ test_test_fixture_procedure_does_not_surface_as_normal_knowledge_in_user_facing_retrieval _
+
+    @pytest.mark.asyncio
+    async def test_test_fixture_procedure_does_not_surface_as_normal_knowledge_in_user_facing_retrieval():
+        pool = await create_pool(DATABASE_URL, min_size=1, max_size=2)
+        row_id = None
+        try:
+            run_id = uuid.uuid4().hex[:8]
+            embedder = Embedder()
+    
+            # Deliberately mirror test_find_best_way_plan_only_e2e.py's real
+            # fixture-creation pattern exactly -- same name prefix convention
+            # this test's own module docstring documents as the actual, real
+            # contamination source; same provenance/scope_type any e2e test in
+            # this codebase already uses; same mechanical bar
+            # (MIN_SUCCESSES_FOR_VERIFIED successes across
+            # MIN_DISTINCT_CONTEXTS_FOR_VERIFIED distinct contexts, then
+            # approve_procedure) that legitimately earns verification_state=
+            # 'verified'/approval_status='approved' today.
+            goal_text = (
+                f"regression-test-fixture-isolation unique marker phrase ({run_id}) "
+                "-- run the shared lint pass and verify the change"
+            )
+>           goal_vec = await embedder.embed_one(goal_text, input_type="document")
+                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests\test_retrieval_fixture_isolation_e2e.py:90: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+app\services\embeddings.py:359: in embed_one
+    vectors = await self.embed([text], input_type=input_type)
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+app\services\embeddings.py:192: in embed
+    vectors = await self._embed_via_chain(missing_texts, input_type)
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = <app.services.embeddings.Embedder object at 0x000001FEE7280A50>
+texts = ['regression-test-fixture-isolation unique marker phrase (d795c962) -- run the shared lint pass and verify the change']
+input_type = 'document'
+
+    async def _embed_via_chain(
+        self, texts: Sequence[str], input_type: InputType
+    ) -> list[list[float]]:
+        # Provider chain, first success wins. A provider that errors
+        # (missing key, rate limit, outage) falls through to the next;
+        # only when EVERY provider fails does this raise. Failover is
+        # logged loudly rather than silently absorbed -- a silent swap
+        # would change the vector space under callers' feet without
+        # anyone knowing (the migration-11 drift lesson, at runtime).
+        chain = [p.strip() for p in settings.embedding_provider_chain.split(",") if p.strip()]
+        failures: list[str] = []
+        for provider in chain:
+            try:
+                if provider == "gemini":
+                    vectors = await self._embed_gemini(texts, input_type)
+                elif provider == "voyage":
+                    vectors = await self._embed_voyage(texts, input_type)
+                else:
+                    log.warning("unknown embedding provider %r in chain -- skipped", provider)
+                    continue
+            except EmbeddingError as exc:
+                failures.append(f"{provider}: {exc}")
+                log.warning("embedding provider %s failed (%s) -- falling through",
+                            provider, str(exc)[:200])
+                continue
+            self._check_dimension(vectors, f"{provider}:{self.model}")
+            return vectors
+    
+>       raise EmbeddingError(
+            "all embedding providers failed -- " + " | ".join(failures)
+        )
+E       app.services.embeddings.EmbeddingError: all embedding providers failed -- gemini: no Gemini API key configured | voyage: Voyage embedding failed: You have not yet added your payment method in the billing page and will have reduced rate limits of 3 RPM and 10K TPM. To unlock our standard rate limits, please add a payment method in the billing page for the appropriate organization in the user dashboard (https://dashboard.voyageai.com/). Even with payment methods entered, the free tokens (200M tokens for Voyage series 3) will still apply. After adding a payment method, you should see your rate limits increase after several minutes. See our pricing docs (https://docs.voyageai.com/docs/pricing) for the free tokens for your model.
+
+app\services\embeddings.py:233: EmbeddingError
+------------------------------ Captured log call ------------------------------
+WARNING  app.services.embeddings:embeddings.py:227 embedding provider gemini failed (no Gemini API key configured) -- falling through
+WARNING  app.services.embeddings:embeddings.py:227 embedding provider voyage failed (Voyage embedding failed: You have not yet added your payment method in the billing page and will have reduced rate limits of 3 RPM and 10K TPM. To unlock our standard rate limits, please add a payment) -- falling through
+============================== warnings summary ===============================
+tests/test_retrieval_negative_control_e2e.py::test_genuinely_unrelated_query_abstains_rather_than_returning_the_least_bad_option
+  C:\Users\user\sl-core-b\backend\.venv\Lib\site-packages\google\genai\types.py:42: DeprecationWarning: '_UnionGenericAlias' is deprecated and slated for removal in Python 3.17
+    VersionedUnionType = Union[builtin_types.UnionType, _UnionGenericAlias]
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ===========================
+FAILED tests/test_retrieval_fixture_isolation_e2e.py::test_test_fixture_procedure_does_not_surface_as_normal_knowledge_in_user_facing_retrieval
+=================== 1 failed, 2 passed, 1 warning in 22.84s ===================
