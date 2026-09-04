@@ -1,0 +1,16 @@
+{
+  "trial_id": "T3-A-c72e9f33",
+  "task_id": "T3",
+  "arm": "A",
+  "frozen_commit": "bd768e62a887b13a94fdd118693a5c671df1cf95",
+  "scored": true,
+  "budget_exceeded": false,
+  "error": "KeyError: 'GENERAL_COMPUTE_API_KEY'",
+  "wall_clock_seconds_total": 0.000990999978967011,
+  "task_success": false,
+  "deterministic_correctness": 0.0,
+  "verification_quality": {
+    "reason": "budget_exceeded or error, not evaluated"
+  },
+  "verification_details": null
+}

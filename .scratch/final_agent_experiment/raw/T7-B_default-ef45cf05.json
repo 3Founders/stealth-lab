@@ -1,0 +1,16 @@
+{
+  "trial_id": "T7-B_default-ef45cf05",
+  "task_id": "T7",
+  "arm": "B_default",
+  "frozen_commit": "bd768e62a887b13a94fdd118693a5c671df1cf95",
+  "scored": true,
+  "budget_exceeded": false,
+  "error": "ExceptionGroup: unhandled errors in a TaskGroup (2 sub-exceptions)",
+  "wall_clock_seconds_total": 60.01712109998334,
+  "task_success": false,
+  "deterministic_correctness": 0.0,
+  "verification_quality": {
+    "reason": "budget_exceeded or error, not evaluated"
+  },
+  "verification_details": null
+}

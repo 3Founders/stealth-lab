@@ -224,7 +224,7 @@ async def run_one_trial(*, task_id: str, task_description: str, arm: str,
                          frozen_commit: str, repo_root: Path, tmp_root: Path,
                          model: str, max_steps: int, time_budget_s: int,
                          server_url: str | None, token: str | None,
-                         out_dir: Path, scored: bool) -> dict:
+                         out_dir: Path, scored: bool, verify_fn=None) -> dict:
     out_dir.mkdir(parents=True, exist_ok=True)
     raw_dir = out_dir / "raw"
     raw_dir.mkdir(parents=True, exist_ok=True)
@@ -255,11 +255,35 @@ async def run_one_trial(*, task_id: str, task_description: str, arm: str,
         error = f"{type(exc).__name__}: {exc}"
 
     wall = time.monotonic() - t0
+
+    verification = {"task_success": None, "deterministic_correctness": None,
+                     "verification_quality": None, "verification_details": None}
+    if verify_fn is not None and not budget_exceeded and error is None:
+        try:
+            v = verify_fn(wt_path)
+            verification = {
+                "task_success": v.get("task_success"),
+                "deterministic_correctness": v.get("deterministic_correctness"),
+                "verification_quality": v.get("verification_quality"),
+                "verification_details": v.get("details"),
+            }
+        except Exception as vexc:  # noqa: BLE001 -- a verifier crash is a real fact, not silence
+            verification = {"task_success": False, "deterministic_correctness": 0.0,
+                             "verification_quality": {"verifier_crashed": True},
+                             "verification_details": {"error": f"{type(vexc).__name__}: {vexc}"}}
+    elif budget_exceeded or error is not None:
+        # a trial that never finished cannot be scored success -- explicit
+        # false, not null, so it counts correctly in the success-rate table
+        verification = {"task_success": False, "deterministic_correctness": 0.0,
+                         "verification_quality": {"reason": "budget_exceeded or error, not evaluated"},
+                         "verification_details": None}
+
     record = {
         "trial_id": trial_id, "task_id": task_id, "arm": arm,
         "frozen_commit": frozen_commit, "scored": scored,
         "budget_exceeded": budget_exceeded, "error": error,
         "wall_clock_seconds_total": wall, **{k: v for k, v in arm_result.items() if k != "arm"},
+        **verification,
     }
     (raw_dir / f"{trial_id}.json").write_text(
         json.dumps(_redact(record), indent=2, default=str), encoding="utf-8",
