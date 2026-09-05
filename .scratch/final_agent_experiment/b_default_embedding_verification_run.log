@@ -1,0 +1,32 @@
+=== [1/2] RELEVANT control (allow_unverified=True) ===
+embedding provider gemini failed (no Gemini API key configured) -- falling through
+{
+  "label": "relevant_control",
+  "elapsed_s": 12.42,
+  "error": null,
+  "matched": true,
+  "ranked": [
+    {
+      "source": "global",
+      "name": "Parallel-agent git-worktree isolation",
+      "rank_key": [
+        1,
+        0,
+        1,
+        0
+      ]
+    }
+  ]
+}
+=== waiting 25s (real, unpaced 3-RPM Voyage throttle) ===
+=== [2/2] NEGATIVE control (allow_unverified=True) ===
+embedding provider gemini failed (no Gemini API key configured) -- falling through
+{
+  "label": "negative_control",
+  "elapsed_s": 333.93,
+  "error": "MCPError: SSE stream ended without a response",
+  "matched": false,
+  "ranked": []
+}
+
+[exited with code 0]
