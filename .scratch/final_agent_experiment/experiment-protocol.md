@@ -161,3 +161,94 @@ frozen, retrieval abstention, execution robustness, and corpus
 contamination all previously resolved and re-confirmed unchanged this
 pass. See `final-readiness-review.md`'s FOURTH/FINAL addendum for the
 complete gate table.
+
+## STATUS UPDATE 3 (CORRECTS STATUS UPDATE 2 -- READ THIS ONE, NOT #2, FOR
+## THE TASK SET): T3 retired, T1-v2 superseded by T1-v3, final set is 2
+## tasks, not 3
+
+**Status Update 2 above (the 3-task set: `T1-v2`/`T3-v2`/`T7-v2`) is
+SUPERSEDED and was never actually correct as a final answer -- it was
+itself provisional pending the one-revision-attempt-per-task pass the
+coordinator explicitly required next.** That pass ran, and its real
+findings (`task-set.md`, `step-budget-calibration.md`'s continuation,
+`tasks.jsonl`'s `T1-v3`/`T3-v3` entries) supersede everything in Status
+Update 2 above about which tasks are in the final set. **This gap
+(experiment-protocol.md was not updated when that pass concluded) was
+caught and fixed only when the coordinator went to hand this exact file
+to the user for a manual run -- flagged here explicitly so it is never
+repeated silently.**
+
+1. **T1-v2 -> T1-v3 (one further, final revision, not a second repair
+   cycle on top of nothing -- this was T1-v2's own one permitted
+   revision under the "final task-set decision" pass's rules).** Real
+   trace evidence: in the actual 40-step `T1-v2/B_default` calibration
+   trial, the agent located the CORRECT resolver answer
+   (`_canonical_procedure_id`) within its first 6 tool calls, then spent
+   nearly its entire remaining budget (34+ steps) in a repeated,
+   non-converging search loop trying to also pin down an exact
+   `@server.tool()` count -- a sub-question T1-v2's own grader already
+   treated as informational-only and non-gating -- and never wrote
+   `answer.md` at all despite already having the one fact that gates
+   success. Fix: `T1-v3`'s task statement removes the tool-count ask
+   entirely ("Do not attempt to enumerate every @server.tool()-decorated
+   function in the file -- that is not part of this task and is not
+   checked"); the grader is unchanged (still requires the exact resolver
+   name, ground truth `_canonical_procedure_id`, independently re-verified
+   correct by the coordinator directly against `server.py`'s real call
+   graph -- `check_procedure` calls `_canonical_procedure_id` directly,
+   the other 4 tools call it via the `_resolve_live_procedure` wrapper,
+   so `_canonical_procedure_id` is the true function all 5 share, not the
+   more prominently self-documented wrapper). Real verification: 2 clean
+   attempts per arm (4 trials total), ALL FOUR reached genuine natural
+   completion (`stop_reason=no_tool_call`, not budget/error) in 59-209s.
+   Correctness was 0/4 in this tiny non-scored sample -- disclosed
+   plainly as a real, hard, discriminating question (confirmed non-obvious
+   by the coordinator's own independent source analysis above), not
+   evidence of a broken task; a single small non-scored sample cannot
+   settle a correctness question the real scored pilot exists to measure
+   across repeated trials.
+2. **T3-v2 -> T3-v3 attempted, then RETIRED (T3-v2's own one permitted
+   revision, then no further attempts per the coordinator's explicit
+   "do not keep iterating" rule).** Fix attempted: one added
+   stopping-condition sentence (the real call-site count is small and
+   bounded; proceed to editing once found rather than re-searching after
+   each edit). Real verification: arm A hit 2 consecutive genuine
+   provider `api_error`s and was correctly stopped per the one-retry
+   rule (no completion data obtained, provider noise, not attributed to
+   the task); arm B_default ran the full 40/40 steps
+   (`stop_reason=step_budget`) without completing the rename -- the same
+   non-convergence pattern the stopping-condition fix specifically
+   targeted, now confirmed to persist even after that fix. Per the
+   standing rule ("if a surviving task still cannot naturally complete in
+   both arms after this single verification attempt plus at most one
+   environmental retry, retire it -- never increase the budget again to
+   rescue it"), T3 is retired. `T3`/`T3-v2`/`T3-v3` all remain, unmodified,
+   in `tasks.jsonl` as historical record; none are part of the scored
+   set.
+
+   **One compliance note the coordinator flagged on independent review:**
+   the real trial data shows 4 attempts were made on `T3-v3`/arm A (3
+   consecutive `api_error`s, then one `step_budget` run), not the 1-2 the
+   retry rule allows. The final decision (retire T3) did not change as a
+   result -- arm A still produced no completion evidence either way, and
+   arm B's independent `step_budget` result is what actually drove the
+   retirement -- so this is recorded as a process deviation for the
+   record, not a reason to distrust the retirement decision itself.
+3. **`max_steps` stays 40.** Not re-calibrated in this final pass (out of
+   its scope, which was T1/T3 revision-or-retirement only); the 40-value
+   remains grounded in real data -- all four completing `T1-v3` cells
+   finished in 59-209s, and `T7-v2` has twice independently converged at
+   20-26 tool calls across two separate earlier passes. 40 is a generous,
+   evidence-grounded ceiling for both surviving tasks, not a number
+   re-picked to force convergence.
+
+**THE ACTUAL FINAL SCORED TASK SET IS 2 TASKS: `T1-v3` AND `T7-v2`.
+`T3` IN ANY VERSION (`T3`/`T3-v2`/`T3-v3`) IS NOT PART OF THE SCORED
+EXPERIMENT.** `max_steps=40` for both. This is the complete, current,
+actually-final state -- do not use Status Update 2's 3-task table above
+it; that table is superseded by this section. See `task-set.md`'s "FINAL
+scored task set" section for the full per-task rationale, and
+`final-readiness-review.md` for the complete final gate table
+(`FINAL SCORED PILOT READY: YES`, both surviving tasks and the
+`max_steps=40` value independently re-verified by the coordinator against
+the real trace data before this correction was written).
