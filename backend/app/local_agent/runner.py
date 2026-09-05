@@ -47,6 +47,7 @@ import asyncio
 import hashlib
 import json
 import os
+import re
 import secrets
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
@@ -57,6 +58,7 @@ import httpx2
 from mcp import ClientSession
 from mcp.client.streamable_http import streamable_http_client
 
+from app.execution.artifact_validation import gate_execution_success
 from app.execution.graph_executor import NodeResult, execute_task_graph
 from app.execution.implementations import resolve_implementation
 from app.execution.procedure_graph import steps_to_linear_nodes
@@ -130,6 +132,109 @@ async def _open_client_session(server_url: str, token: str):
             yield session
 
 
+def _resolve_git_head_sha(git_dir: str) -> Optional[str]:
+    """Real HEAD commit SHA, read directly from `.git`'s own on-disk
+    layout -- no `git` subprocess, matching this codebase's existing
+    pure-filesystem-read discipline (app.services.environment_facts).
+    Stable across an arbitrary number of clones/re-clones of the SAME
+    commit, regardless of what any of them happen to be named on disk."""
+    head_path = os.path.join(git_dir, "HEAD")
+    if not os.path.isfile(head_path):
+        return None
+    try:
+        content = open(head_path, encoding="utf-8").read().strip()
+    except OSError:
+        return None
+
+    if not content.startswith("ref:"):
+        # Detached HEAD: the file itself already names a real commit SHA.
+        return content or None
+
+    ref = content[len("ref:"):].strip()
+    ref_path = os.path.join(git_dir, ref)
+    if os.path.isfile(ref_path):
+        try:
+            sha = open(ref_path, encoding="utf-8").read().strip()
+        except OSError:
+            return None
+        return sha or None
+
+    # Loose ref file doesn't exist -- the branch may have been packed
+    # (common right after a fresh clone). Fall back to packed-refs.
+    packed_path = os.path.join(git_dir, "packed-refs")
+    if not os.path.isfile(packed_path):
+        return None
+    try:
+        with open(packed_path, encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith("#") or line.startswith("^"):
+                    continue
+                sha, _, ref_name = line.partition(" ")
+                if ref_name == ref:
+                    return sha
+    except OSError:
+        return None
+    return None
+
+
+_GIT_REMOTE_ORIGIN_URL_RE = re.compile(
+    r'\[remote\s+"origin"\][^\[]*?\burl\s*=\s*(\S+)', re.DOTALL,
+)
+
+
+def _read_git_remote_url(git_dir: str) -> Optional[str]:
+    """Real configured `origin` remote URL, read straight from `.git/config`
+    text -- a stable identity signal for "which real repository" that,
+    unlike a HEAD SHA, survives even across genuinely different commits of
+    the SAME repository. Purely advisory alongside the SHA below: absence
+    (a local-only repo with no remote configured) is honest and handled,
+    never fabricated."""
+    config_path = os.path.join(git_dir, "config")
+    if not os.path.isfile(config_path):
+        return None
+    try:
+        content = open(config_path, encoding="utf-8").read()
+    except OSError:
+        return None
+    match = _GIT_REMOTE_ORIGIN_URL_RE.search(content)
+    return match.group(1) if match else None
+
+
+def _git_repo_identity(repo_path: str) -> Optional[str]:
+    """Real repository identity derived from git's own on-disk metadata,
+    independent of the disposable filesystem path this checkout happens
+    to live at -- `origin` remote URL (when configured) plus the real HEAD
+    commit SHA. Returns None (never a fabricated identity) when
+    `repo_path` carries no discoverable `.git` metadata at all -- the
+    caller then honestly falls back to the folder name, the only signal
+    left.
+
+    THE REAL DEFECT THIS CLOSES: the prior context_key derived repo
+    identity from `os.path.basename(repo_path)` alone -- a bare folder
+    name under the CALLER's control, not the repository's own identity.
+    Two disposable clones of the exact same repo+commit, checked out under
+    two differently-named folders (or renamed between runs), previously
+    produced two DIFFERENT context_keys despite being genuinely the same
+    context -- letting a verification campaign manufacture fake
+    ">=3 distinct contexts" by nothing more than renaming/re-cloning the
+    same checkout. Conversely, two ACTUALLY different repositories that
+    happened to be checked out under the same conventional folder name
+    (e.g. both named "repo") previously collapsed into the same
+    context_key. A commit SHA is real, content-derived, and cannot be
+    gamed by renaming a directory; combined with the remote URL it also
+    distinguishes two repos at a coincidentally-identical commit (a
+    shared empty-init history, say)."""
+    git_dir = os.path.join(os.path.abspath(repo_path), ".git")
+    if not os.path.isdir(git_dir):
+        return None
+    head_sha = _resolve_git_head_sha(git_dir)
+    if head_sha is None:
+        return None
+    remote_url = _read_git_remote_url(git_dir)
+    return f"{remote_url or 'no-remote'}@{head_sha}"
+
+
 def _local_context_key(repo_path: str, facts: list) -> str:
     """Meaningful context identity (product spec P0: 'Fix context
     identity'). A bare repo folder name collapses every run against the
@@ -139,20 +244,24 @@ def _local_context_key(repo_path: str, facts: list) -> str:
     counted as ten repeats of the SAME context, undermining ticket 13's
     real ">=3 DISTINCT contexts" requirement.
 
-    Real and deterministic, never randomized: repo folder name + a stable
-    hash of every real fact `probe_environment` actually returned
-    (language, package versions -- exactly what feeds invariant_bindings
-    already) -- so the SAME repo checked out with the SAME dependency
-    state always reduces to the SAME context_key (no artificial
-    diversity), while a genuinely different environment (a branch with a
-    different pandas pin, say) produces a genuinely different one. Facts
-    are sorted before hashing so key order never affects the result."""
-    repo_name = os.path.basename(os.path.abspath(repo_path))
+    Real and deterministic, never randomized: real repository identity
+    (see `_git_repo_identity` -- git remote+HEAD SHA when this is a real
+    git checkout, honestly falling back to the folder name only when it
+    is not) + a stable hash of every real fact `probe_environment`
+    actually returned (language, package versions -- exactly what feeds
+    invariant_bindings already) -- so the SAME repo checked out with the
+    SAME dependency state always reduces to the SAME context_key (no
+    artificial diversity, and no gaming it by renaming/re-cloning the same
+    checkout), while a genuinely different environment (a branch with a
+    different pandas pin, say) or a genuinely different repository
+    produces a genuinely different one. Facts are sorted before hashing so
+    key order never affects the result."""
+    repo_identity = _git_repo_identity(repo_path) or os.path.basename(os.path.abspath(repo_path))
     fact_parts = sorted(f"{fact.predicate}={fact.object}" for fact in facts)
     if not fact_parts:
-        return f"{repo_name}:no-probed-facts"
+        return f"{repo_identity}:no-probed-facts"
     fact_hash = hashlib.sha256("|".join(fact_parts).encode("utf-8")).hexdigest()[:12]
-    return f"{repo_name}:{fact_hash}"
+    return f"{repo_identity}:{fact_hash}"
 
 
 def _ensure_swebench_pro_on_path() -> None:
@@ -428,6 +537,22 @@ class LocalAgentRunner:
                     r.data["patch"] for r in node_results.values() if r.data.get("patch")
                 )
                 run_succeeded = graph_result.outcome == "success" and bool(combined_patch)
+                # REAL GAP CLOSED (verification success criterion): a
+                # declared success from the raw agent mechanism alone (a
+                # "finished" stop_reason plus a non-empty patch) is not
+                # evidence the produced artifact actually works -- see
+                # app.execution.artifact_validation's module docstring for
+                # the real D1 incident (an unimportable module accepted as
+                # success) this closes. Never overturns a declared failure;
+                # only tightens a declared success against the strongest
+                # deterministic check this process actually has for each
+                # edited file's real artifact type.
+                run_succeeded, validation_failure_reason = gate_execution_success(
+                    repo_root=repo_path, declared_success=run_succeeded,
+                    files_edited=all_files_edited,
+                )
+                if validation_failure_reason is not None:
+                    node_notes.append(f"ARTIFACT VALIDATION FAILED: {validation_failure_reason}")
                 # REAL GAP CLOSED: an ad-hoc-captured candidate previously
                 # got no embedding at all (local_learning.py never computed
                 # or accepted one), so it was only ever findable by lexical
@@ -498,6 +623,18 @@ class LocalAgentRunner:
             )
             total_tool_calls = sum(r.data.get("tool_calls", 0) for r in node_results.values())
             run_succeeded = graph_result.outcome == "success" and bool(combined_patch)
+            # REAL GAP CLOSED (verification success criterion): see the
+            # matching comment in the ad-hoc branch above and
+            # app.execution.artifact_validation's module docstring -- a
+            # declared success is never itself evidence the produced
+            # artifact actually works, only the strongest deterministic
+            # check available for its real artifact type is.
+            run_succeeded, validation_failure_reason = gate_execution_success(
+                repo_root=repo_path, declared_success=run_succeeded,
+                files_edited=all_files_edited,
+            )
+            if validation_failure_reason is not None:
+                node_notes.append(f"ARTIFACT VALIDATION FAILED: {validation_failure_reason}")
             # REAL GAP CLOSED: a bare repo folder name collapses every run
             # against the same checkout into ONE context regardless of
             # which branch/dependency set was actually active -- see

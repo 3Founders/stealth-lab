@@ -170,6 +170,13 @@ async def test_runner_prefers_and_stays_local_when_only_a_local_procedure_matche
         "search_procedures": json.dumps([]),  # nothing matches remotely
     })
 
+    # A real, importable file -- the artifact-validation gate (see
+    # test_artifact_validation_offline.py) now actually inspects whatever
+    # `files_edited` names, so a fake claiming to have touched "calc.py"
+    # must leave a real, valid file there, exactly as the real
+    # _run_local_node/RepoSandbox always does.
+    (tmp_path / "calc.py").write_text("import os\n")
+
     async def fake_run_node(node, **kwargs):
         return NodeResult(status="success", notes=f"ran {node.goal}",
                            data={"files_edited": ["calc.py"], "patch": "diff --git ..."})
@@ -209,6 +216,11 @@ async def test_runner_captures_a_local_candidate_from_a_successful_adhoc_run(mon
     from app.local_agent.local_store import LocalProcedureStore
 
     fake_session = FakeClientSession({"search_procedures": json.dumps([])})
+
+    # See the matching comment in
+    # test_runner_prefers_and_stays_local_when_only_a_local_procedure_matches:
+    # the artifact-validation gate now really inspects `files_edited`.
+    (tmp_path / "new_thing.py").write_text("import os\n")
 
     async def fake_run_node(node, **kwargs):
         return NodeResult(status="success", notes=f"ran {node.goal}",
@@ -479,3 +491,241 @@ def test_mcp_session_http_timeout_is_not_shorter_than_a_real_agent_run_can_take(
     # The original incident-triggering value, pinned explicitly so nobody
     # re-introduces exactly this number by copy-paste.
     assert timeout != 60, "this is the exact value that caused the T7 crash"
+
+
+# ---------------------------------------------------------------------------
+# PART 1 regression: verification success criterion must gate on real
+# artifact validation, not just a "finished" stop_reason + non-empty patch.
+# See app/execution/artifact_validation.py's module docstring for the real
+# D1 incident (an unimportable module accepted as success) this closes.
+# Unit coverage of the validator itself lives in
+# test_artifact_validation_offline.py -- these tests prove it is actually
+# WIRED IN to the real runner's success/evidence-recording path.
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_runner_never_records_local_success_for_an_unimportable_artifact(monkeypatch, tmp_path):
+    """OLD UNSAFE BEHAVIOR (the confirmed D1 defect): stop_reason=='finished'
+    plus a non-empty patch was accepted as success with zero inspection of
+    the artifact itself. Proven closed: a matched local procedure whose
+    agent run 'finishes' but leaves a syntactically-valid, unimportable
+    Python file behind must be recorded as a FAILURE in the local store,
+    never a success -- even though the raw graph mechanics still say
+    'success' (that's the agent's own honest self-report, left unchanged;
+    only the RECORDED evidence outcome is gated)."""
+    import json
+
+    from app.local_agent.local_store import LocalProcedureStore
+
+    store = LocalProcedureStore(str(tmp_path))
+    captured = store.capture_local_procedure(
+        name="fix-calc-bug-local", goal="fix the calc bug",
+        steps=[{"order": 0, "goal": "fix the bug in calc.py"}],
+        provenance="system_pending_review", scope_type="repository",
+        scope_entity_id=str(tmp_path),
+    )
+
+    # Syntactically valid, semantically broken -- the exact D1 shape:
+    # references a real module's attribute that does not exist.
+    (tmp_path / "calc.py").write_text("from os import DefinitelyNotARealAttribute\n")
+
+    fake_session = FakeClientSession({"search_procedures": json.dumps([])})
+
+    async def fake_run_node(node, **kwargs):
+        return NodeResult(status="success", notes=f"ran {node.goal}",
+                           data={"files_edited": ["calc.py"], "patch": "diff --git ..."})
+
+    monkeypatch.setattr(runner_module, "_open_client_session", lambda url, token: fake_session)
+    monkeypatch.setattr(runner_module, "_run_local_node", fake_run_node)
+
+    result = await runner_module.LocalAgentRunner(
+        server_url="http://fake/mcp", token="fake-token",
+    ).run(task_description="fix the calc bug", repo_path=str(tmp_path), allow_unverified=True)
+
+    # The agent's own raw self-report is left honest/unchanged...
+    assert result.graph_outcome == "success"
+    assert any("ARTIFACT VALIDATION FAILED" in note for note in result.node_notes)
+
+    # ...but the RECORDED evidence outcome must be a failure, never a
+    # success -- this is the real, single source of truth ticket 13's
+    # promotion math reads from.
+    updated = store.get_local_procedure(captured["id"])
+    assert updated["verification_stats"]["attempts"] == 1
+    assert updated["verification_stats"]["successes"] == 0
+
+
+@pytest.mark.asyncio
+async def test_runner_does_not_capture_an_unimportable_adhoc_artifact_as_a_candidate(monkeypatch, tmp_path):
+    """Same defect, ad-hoc/no-match path (Phase 12 capture): an unimportable
+    artifact must never become a new local candidate procedure at all --
+    laundering a broken result into a stored 'this worked, try it again'
+    candidate would be the same class of defect, one step earlier."""
+    import json
+
+    (tmp_path / "new_thing.py").write_text("from os import DefinitelyNotARealAttribute\n")
+
+    fake_session = FakeClientSession({"search_procedures": json.dumps([])})
+
+    async def fake_run_node(node, **kwargs):
+        return NodeResult(status="success", notes=f"ran {node.goal}",
+                           data={"files_edited": ["new_thing.py"], "patch": "diff --git ..."})
+
+    monkeypatch.setattr(runner_module, "_open_client_session", lambda url, token: fake_session)
+    monkeypatch.setattr(runner_module, "_run_local_node", fake_run_node)
+
+    result = await runner_module.LocalAgentRunner(
+        server_url="http://fake/mcp", token="fake-token",
+    ).run(task_description="add a new utility function", repo_path=str(tmp_path))
+
+    assert result.graph_outcome == "success"
+    assert any("ARTIFACT VALIDATION FAILED" in note for note in result.node_notes)
+    assert result.captured_candidate is None, (
+        "an unimportable ad-hoc artifact must never be captured as a new "
+        "local candidate procedure"
+    )
+    assert result.source is None
+
+
+@pytest.mark.asyncio
+async def test_runner_still_records_success_for_a_genuinely_working_artifact(monkeypatch, tmp_path):
+    """Proves the fix does not weaken anything: a matched local procedure
+    whose run leaves a real, importable file behind must still be recorded
+    as a success exactly as before."""
+    import json
+
+    from app.local_agent.local_store import LocalProcedureStore
+
+    store = LocalProcedureStore(str(tmp_path))
+    captured = store.capture_local_procedure(
+        name="fix-calc-bug-local", goal="fix the calc bug",
+        steps=[{"order": 0, "goal": "fix the bug in calc.py"}],
+        provenance="system_pending_review", scope_type="repository",
+        scope_entity_id=str(tmp_path),
+    )
+    (tmp_path / "calc.py").write_text("import os\n\nVALUE = 1\n")
+
+    fake_session = FakeClientSession({"search_procedures": json.dumps([])})
+
+    async def fake_run_node(node, **kwargs):
+        return NodeResult(status="success", notes=f"ran {node.goal}",
+                           data={"files_edited": ["calc.py"], "patch": "diff --git ..."})
+
+    monkeypatch.setattr(runner_module, "_open_client_session", lambda url, token: fake_session)
+    monkeypatch.setattr(runner_module, "_run_local_node", fake_run_node)
+
+    result = await runner_module.LocalAgentRunner(
+        server_url="http://fake/mcp", token="fake-token",
+    ).run(task_description="fix the calc bug", repo_path=str(tmp_path), allow_unverified=True)
+
+    assert result.graph_outcome == "success"
+    assert not any("ARTIFACT VALIDATION FAILED" in note for note in result.node_notes)
+
+    updated = store.get_local_procedure(captured["id"])
+    assert updated["verification_stats"]["successes"] == 1
+
+
+# ---------------------------------------------------------------------------
+# PART 2 regression: context identity must derive from the real repository
+# (git remote + HEAD SHA), not the disposable folder name the checkout
+# happens to live at -- otherwise a verification campaign can manufacture
+# fake ">=3 distinct contexts" just by renaming/re-cloning the same
+# checkout, and two genuinely different repos sharing a conventional folder
+# name (e.g. both named "repo") could falsely collapse into one context.
+# ---------------------------------------------------------------------------
+
+def _init_fake_git_repo(root, *, sha: str, remote_url: str | None = None) -> None:
+    """Minimal, real `.git` on-disk layout -- no `git` binary invocation,
+    matching this module's own pure-filesystem-read discipline. Enough for
+    `_git_repo_identity` to resolve a real HEAD SHA (detached-HEAD shape:
+    `.git/HEAD` names the SHA directly, the simplest real case)."""
+    git_dir = root / ".git"
+    git_dir.mkdir()
+    (git_dir / "HEAD").write_text(sha + "\n")
+    if remote_url is not None:
+        (git_dir / "config").write_text(
+            f'[remote "origin"]\n\turl = {remote_url}\n\tfetch = +refs/heads/*:refs/remotes/origin/*\n'
+        )
+
+
+def test_context_key_is_the_same_for_two_differently_named_clones_of_the_same_commit(tmp_path):
+    """THE CONFIRMED DEFECT: two disposable clones of the exact same
+    repository at the exact same commit, checked out under two
+    DIFFERENT folder names, must produce the SAME context_key -- the old
+    folder-basename-only identity would have produced two different keys
+    here, letting a verification campaign manufacture fake diversity by
+    nothing more than renaming/re-cloning the same checkout."""
+    from app.services.environment_facts import EnvironmentFact
+
+    clone_a = tmp_path / "disposable-clone-run-1"
+    clone_b = tmp_path / "disposable-clone-run-2-totally-different-name"
+    clone_a.mkdir()
+    clone_b.mkdir()
+    sha = "a" * 40
+    _init_fake_git_repo(clone_a, sha=sha, remote_url="git@example.com:acme/widgets.git")
+    _init_fake_git_repo(clone_b, sha=sha, remote_url="git@example.com:acme/widgets.git")
+
+    facts = [EnvironmentFact(predicate="language", object="python")]
+    key_a = runner_module._local_context_key(str(clone_a), facts)
+    key_b = runner_module._local_context_key(str(clone_b), facts)
+
+    assert key_a == key_b, (
+        "renaming/re-cloning the SAME commit of the SAME repo must not "
+        "manufacture a new context -- this is exactly how a verification "
+        "campaign could game the distinct-contexts counter"
+    )
+
+
+def test_context_key_differs_for_the_same_folder_name_holding_different_repos(tmp_path):
+    """The other direction of the same defect: two ACTUALLY different
+    repositories that happen to be checked out under the same
+    conventional folder name (e.g. both literally named "repo") must
+    produce DIFFERENT context_keys -- the old folder-basename-only
+    identity would have falsely collapsed these into one context."""
+    from app.services.environment_facts import EnvironmentFact
+
+    root_a = tmp_path / "workspace_one"
+    root_b = tmp_path / "workspace_two"
+    root_a.mkdir()
+    root_b.mkdir()
+    repo_a = root_a / "repo"
+    repo_b = root_b / "repo"
+    repo_a.mkdir()
+    repo_b.mkdir()
+    _init_fake_git_repo(repo_a, sha="a" * 40, remote_url="git@example.com:acme/widgets.git")
+    _init_fake_git_repo(repo_b, sha="b" * 40, remote_url="git@example.com:acme/other-project.git")
+
+    facts = [EnvironmentFact(predicate="language", object="python")]
+    key_a = runner_module._local_context_key(str(repo_a), facts)
+    key_b = runner_module._local_context_key(str(repo_b), facts)
+
+    assert key_a != key_b, (
+        "two genuinely different repositories sharing a folder name must "
+        "not collapse into the same context"
+    )
+
+
+def test_context_key_falls_back_to_folder_name_when_there_is_no_git_metadata_at_all():
+    """A repo_path with no discoverable .git metadata (offline tests, a
+    bare non-git workspace) must fall back to the prior folder-name
+    behavior honestly, never crash and never fabricate a git identity."""
+    from app.services.environment_facts import EnvironmentFact
+
+    facts = [EnvironmentFact(predicate="language", object="python")]
+    key = runner_module._local_context_key("/fake/nonexistent/repo", facts)
+    assert key.startswith("repo:")
+
+
+def test_git_repo_identity_is_none_without_git_metadata(tmp_path):
+    assert runner_module._git_repo_identity(str(tmp_path)) is None
+
+
+def test_git_repo_identity_uses_head_sha_and_remote_url(tmp_path):
+    _init_fake_git_repo(tmp_path, sha="c" * 40, remote_url="git@example.com:acme/widgets.git")
+    identity = runner_module._git_repo_identity(str(tmp_path))
+    assert identity == "git@example.com:acme/widgets.git@" + "c" * 40
+
+
+def test_git_repo_identity_handles_a_missing_remote_honestly(tmp_path):
+    _init_fake_git_repo(tmp_path, sha="d" * 40, remote_url=None)
+    identity = runner_module._git_repo_identity(str(tmp_path))
+    assert identity == "no-remote@" + "d" * 40
