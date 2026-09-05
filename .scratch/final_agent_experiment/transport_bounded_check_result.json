@@ -1,0 +1,33 @@
+{
+  "call_timeout_s": 90.0,
+  "no_attempt_exceeded_the_bound": true,
+  "results": [
+    {
+      "label": "relevant_control",
+      "elapsed_s": 15.08,
+      "error": null,
+      "matched": true,
+      "ranked": [
+        {
+          "source": "global",
+          "name": "Parallel-agent git-worktree isolation",
+          "rank_key": [
+            1,
+            0,
+            1,
+            0
+          ]
+        }
+      ],
+      "bounded_timeout_fired": false
+    },
+    {
+      "label": "negative_control",
+      "elapsed_s": 90.01,
+      "error": "BOUNDED_TIMEOUT after 90s (script-level, same mechanism orchestrator.run_one_trial uses)",
+      "matched": false,
+      "ranked": [],
+      "bounded_timeout_fired": true
+    }
+  ]
+}

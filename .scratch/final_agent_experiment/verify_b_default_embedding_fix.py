@@ -53,7 +53,7 @@ sys.path.insert(0, str(REPO_ROOT / "backend"))
 from orchestrator import _start_mcp_server  # noqa: E402
 
 FROZEN_COMMIT = "bd768e62a887b13a94fdd118693a5c671df1cf95"
-PORT = 8850
+PORT = 8875
 TMP_ROOT = Path(os.environ.get("TEMP", "/tmp")) / "b-default-embedding-verify"
 
 
@@ -135,7 +135,7 @@ async def main() -> int:
     wt_path = _make_worktree()
     results = []
     try:
-        await asyncio.sleep(15.0)
+        await asyncio.sleep(30.0)
         if proc.poll() is not None:
             out = proc.stdout.read() if proc.stdout else ""
             print("ABORT: MCP server exited early:\n" + out[-3000:])
