@@ -12,6 +12,7 @@ import subprocess
 from pathlib import Path
 
 from ground_truth import t1_ground_truth, t3_candidate_functions, t3_ground_truth_for, t7_ground_truth
+from ground_truth_t7v2_largest_function import t7v2_largest_function
 
 
 def _read_answer(wt_path: Path, name: str = "answer.md") -> str | None:
@@ -211,10 +212,82 @@ def verify_T7(wt_path: Path) -> dict:
     }
 
 
+def verify_T7_v2(wt_path: Path) -> dict:
+    """T7-v2 (largest-function-by-line-count). Implements EXACTLY the
+    grader tasks.jsonl already declares for this task -- "grader
+    independently re-runs ground_truth_t7v2_largest_function.py against
+    the pinned commit and does an exact match on function name + file +
+    line count against the agent's answer.md".
+
+    That grader was described in the task definition but never existed as
+    code: VERIFIERS had no "T7-v2" key, so every scripted caller
+    (VERIFIERS[task_id]) raised KeyError and the orchestrator CLI path
+    (which takes no verify_fn at all) silently recorded task_success=None
+    -- an UNGRADED trial, not a failed one. This function closes that gap
+    and changes nothing about what T7-v2 asks for.
+
+    Deliberately NOT weakened: answer.md (or answer.txt, the same
+    filename tolerance every other verifier here already allows) remains
+    the ONLY input. A model that reports the right answer in its final
+    chat message but never writes the file still fails, because "Report
+    in answer.md" is part of the task. All three components -- name, file
+    relative path, exact line count -- must match; two out of three is a
+    partial deterministic_correctness score, never a success.
+    """
+    gt = t7v2_largest_function(wt_path)["answer"]
+    answer = _read_answer(wt_path)
+    if answer is None:
+        return {"task_success": False, "deterministic_correctness": 0.0,
+                "verification_quality": {"answer_file_found": False},
+                "details": {"reason": "no answer.md/answer.txt found in worktree",
+                            "ground_truth": gt}}
+    if gt is None:
+        return {"task_success": False, "deterministic_correctness": 0.0,
+                "verification_quality": {"answer_file_found": True,
+                                          "ground_truth_computable": False},
+                "details": {"reason": "ground truth produced no answer for this worktree"}}
+
+    lowered = answer.lower()
+    # Path separators are normalized both sides: the ground truth is built
+    # with pathlib (backslashes on Windows), an answer could reasonably use
+    # either. That is a representation detail of the SAME path, not a
+    # loosening of what must match.
+    normalized = lowered.replace("\\", "/")
+    true_file = gt["file"].replace("\\", "/").lower()
+
+    name_ok = re.search(r"\b" + re.escape(gt["function_name"].lower()) + r"\b", lowered) is not None
+    file_ok = true_file in normalized
+    count_ok = re.search(r"\b" + re.escape(str(gt["line_count"])) + r"\b", answer) is not None
+
+    components = [name_ok, file_ok, count_ok]
+    success = all(components)
+    return {
+        "task_success": success,
+        "deterministic_correctness": round(sum(components) / 3.0, 4),
+        "verification_quality": {
+            "answer_file_found": True,
+            "function_name_correct": name_ok,
+            "file_path_correct": file_ok,
+            "line_count_correct": count_ok,
+            # informational only, never gates: did the answer name the right
+            # file by basename while getting the relative path wrong?
+            "basename_only_match_informational_only": (
+                (not file_ok) and true_file.rsplit("/", 1)[-1] in normalized
+            ),
+        },
+        "details": {"ground_truth": gt},
+    }
+
+
 VERIFIERS = {
     "T1": verify_T1, "T3": verify_T3, "T7": verify_T7,
-    # T7-v2 uses a separate, dedicated verifier (ground_truth_t7v2_largest_function.py),
-    # wired in by the previous pass's own run_pilot.py / calibration scripts.
+    # T7-v2: dedicated verifier over ground_truth_t7v2_largest_function.py.
+    # This key previously did NOT exist -- the comment here claimed the
+    # wiring lived in run_pilot.py / the calibration scripts, but every one
+    # of those does VERIFIERS[task_id], so T7-v2 could only ever KeyError
+    # or (via the orchestrator CLI, which passes no verify_fn) go silently
+    # ungraded. Registered for real now.
+    "T7-v2": verify_T7_v2,
     "T1-v2": verify_T1_v2,
     # T3-v2 intentionally reuses verify_T3 unchanged -- the defect and its fix
     # live entirely in ground_truth.py's call-site scanner (t3_candidate_functions/

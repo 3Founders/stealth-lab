@@ -192,6 +192,13 @@ async def run_trial_arm_A(*, task_description: str, repo_path: str, model: str,
         # Never affects usage/tokens/success -- those already count every
         # real attempted call, recovered or not; this is visibility only.
         "recoveries": result.data.get("recoveries", 0) if result.data else 0,
+        # Diagnostic only -- neither field is an input to any verifier.
+        # answer.md in the worktree remains the sole grading input; these
+        # exist so an ungraded/failed trial can be told apart (model never
+        # tried to write the file / wrote it and it did not persist /
+        # answered in prose instead) without re-running it.
+        "tool_names": result.data.get("tool_names", []) if result.data else [],
+        "final_message": result.data.get("final_message", "") if result.data else "",
         "wall_clock_seconds": wall,
         "notes": result.notes,
         "stealth_retrieval_decision": None,
@@ -306,7 +313,17 @@ def classify_failure(record: dict) -> str:
     if err:
         return "product_failure"
 
-    # 7. Everything else with no error at all -- the agent ran, stayed
+    # 7. NOT GRADED: the trial ran cleanly inside every budget but no
+    # verifier ever looked at its worktree, so task_success is None rather
+    # than True/False. Calling that "model_failure" asserts a conclusion
+    # about model quality from a trial that nothing checked -- exactly what
+    # happened to T7-v2-A-d51a7347, whose task_id had no VERIFIERS entry.
+    # An ungraded trial is a HARNESS fact and must never be counted as
+    # either a success or a model-quality failure.
+    if record.get("task_success") is None:
+        return "not_graded"
+
+    # 8. Everything else with no error at all -- the agent ran, stayed
     # within every real budget, and simply did not produce a correct
     # answer. This is the model's own task performance, not a failure of
     # any StealthLab mechanism -- the honest default, never silently
@@ -371,6 +388,15 @@ async def run_one_trial(*, task_id: str, task_description: str, arm: str,
         verification = {"task_success": False, "deterministic_correctness": 0.0,
                          "verification_quality": {"reason": "budget_exceeded or error, not evaluated"},
                          "verification_details": None}
+    else:
+        # verify_fn is None: the trial completed but NOTHING graded it.
+        # Left implicit before, which is how a scored, ungraded T7-v2 trial
+        # (task_success=None) still got written to scored_final/raw and was
+        # then labelled model_failure. task_success stays None -- an
+        # ungraded trial must never be coerced to True or False -- but the
+        # record now says WHY it is None, and classify_failure calls the
+        # trial "not_graded".
+        verification["verification_quality"] = {"reason": "no verifier wired for this task_id"}
 
     record = {
         "trial_id": trial_id, "task_id": task_id, "arm": arm,
@@ -414,7 +440,16 @@ def main() -> int:
     p.add_argument("--scored", action="store_true", help="omit for smoke-test runs")
     args = p.parse_args()
 
+    # The CLI path previously passed no verify_fn at all, so every trial it
+    # ran came back task_success=None regardless of whether a verifier for
+    # that task existed -- the path that produced scored_final/raw. Wire the
+    # real table here; .get (not [task_id]) so an unknown/smoke task_id
+    # still runs and is honestly recorded as not_graded rather than
+    # crashing with KeyError.
+    from verifiers import VERIFIERS  # local import: only the CLI path needs it
+
     record = asyncio.run(run_one_trial(
+        verify_fn=VERIFIERS.get(args.task_id),
         task_id=args.task_id, task_description=args.task_description, arm=args.arm,
         frozen_commit=args.frozen_commit, repo_root=Path(args.repo_root),
         tmp_root=Path(args.tmp_root), model=args.model, max_steps=args.max_steps,

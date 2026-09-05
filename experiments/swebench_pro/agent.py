@@ -160,6 +160,16 @@ class AgentRun:
     # counted there -- this field adds visibility, it does not change what
     # was already being measured.
     recoveries: int = 0
+    # The text of the LAST assistant turn, if that turn produced one.
+    # Purely diagnostic. Before this field existed, a run that ended with
+    # stop_reason="no_tool_call" -- the model stopping to write prose
+    # instead of calling a tool -- discarded that prose entirely, so an
+    # ungradeable episode could not be told apart afterwards: did the model
+    # never work out the answer, or did it work it out and report it in
+    # chat instead of writing the file the task asked for? Recorded, never
+    # graded: every verifier still reads the sandbox, and this text has no
+    # path into task_success.
+    final_message: str = ""
 
 
 class RepoSandbox:
@@ -832,6 +842,7 @@ class Agent:
         error = None
 
         recoveries = 0
+        final_message = ""
         for step in range(self._max_steps):
             try:
                 resp = self._complete(messages)
@@ -873,6 +884,7 @@ class Agent:
                 usage.add(resp.usage)
             msg = resp.choices[0].message
             calls = msg.tool_calls or []
+            final_message = msg.content or final_message
 
             messages.append({
                 "role": "assistant",
@@ -914,7 +926,7 @@ class Agent:
             usage=usage, steps=usage.calls, tool_calls=tool_log,
             files_edited=sandbox.edited_files(), stop_reason=stop_reason,
             wall_seconds=time.time() - t0, retrieved=retrieved or [], error=error,
-            recoveries=recoveries,
+            recoveries=recoveries, final_message=final_message,
         )
 
     @staticmethod

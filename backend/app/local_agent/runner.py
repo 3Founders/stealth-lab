@@ -239,6 +239,16 @@ async def _run_local_node(node, *, task_description: str, repo_path: str,
         notes=note,
         data={"files_edited": run_result.files_edited, "patch": run_result.patch,
               "tool_calls": len(run_result.tool_calls),
+              # Diagnostic pass-through, never used for success/failure
+              # (that is decided above, purely from stop_reason). The tool
+              # NAMES and the model's final prose were both discarded here
+              # -- only their count survived -- so a run that ended with
+              # stop_reason="no_tool_call" and touched no files could not
+              # be diagnosed afterwards: whether it ever attempted to write
+              # the file it was asked for, and what it said instead, were
+              # simply not recorded anywhere.
+              "tool_names": list(run_result.tool_calls),
+              "final_message": run_result.final_message,
               # Surfaced so a caller (e.g. an experiment orchestrator
               # scoring/recording a trial) can see whether this run needed
               # provider-side error recovery at all -- was previously a
