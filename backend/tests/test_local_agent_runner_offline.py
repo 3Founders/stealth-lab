@@ -17,6 +17,7 @@ import pytest
 
 import app.local_agent.runner as runner_module
 from app.execution.graph_executor import NodeResult
+from tests.fake_embeddings import install_fake_embedder
 
 RUNNER_SOURCE_PATH = Path(inspect.getfile(runner_module))
 
@@ -39,6 +40,81 @@ def test_runner_module_never_imports_the_database():
     assert "asyncpg" not in sys.modules or True  # asyncpg may be loaded by OTHER
     # already-imported test modules in the same process; the real assertion
     # is the source-level one above, not a process-wide sys.modules check.
+
+
+@pytest.mark.asyncio
+async def test_offline_embedder_seam_never_reaches_a_real_provider(monkeypatch):
+    """Gate 2A regression: the offline fake (tests/fake_embeddings.py)
+    patches `Embedder._embed_via_chain` -- the one method that actually
+    dispatches to a network provider. Pin that the patched seam is really
+    intercepting there, not merely happening to avoid the network by luck
+    (e.g. because every offline test's exact text was already cache-warm):
+    stub every real provider method to blow up, then prove `embed_one`
+    still returns a normal vector with none of them called. A future
+    refactor that moves the provider dispatch to a new method (bypassing
+    this patch point) would make this test fail loudly instead of quietly
+    reintroducing a live network call in the "offline" suite."""
+    from app.services.embeddings import Embedder
+
+    install_fake_embedder(monkeypatch)
+
+    async def _real_provider_call_attempted(self, *args, **kwargs):
+        raise AssertionError(
+            "a real embedding provider method was reached from an offline test"
+        )
+
+    monkeypatch.setattr(Embedder, "_embed_gemini", _real_provider_call_attempted)
+    monkeypatch.setattr(Embedder, "_embed_voyage", _real_provider_call_attempted)
+    monkeypatch.setattr(Embedder, "_embed_local", _real_provider_call_attempted)
+
+    embedder = Embedder()
+    vector = await embedder.embed_one("anything at all", input_type="query")
+
+    assert isinstance(vector, list)
+    assert len(vector) == embedder.dimension
+    assert all(isinstance(v, float) for v in vector)
+
+
+@pytest.mark.asyncio
+async def test_offline_runner_flow_never_reaches_a_real_provider(monkeypatch, tmp_path):
+    """Same guarantee, exercised through the real runner path that used to
+    make the live calls (query embedding on every search, capture embedding
+    on ad-hoc candidate capture) -- proves the fake is actually wired into
+    the runner's real usage, not just into a standalone Embedder call."""
+    import json
+
+    from app.services.embeddings import Embedder
+
+    install_fake_embedder(monkeypatch)
+
+    async def _real_provider_call_attempted(self, *args, **kwargs):
+        raise AssertionError(
+            "a real embedding provider method was reached from an offline runner test"
+        )
+
+    monkeypatch.setattr(Embedder, "_embed_gemini", _real_provider_call_attempted)
+    monkeypatch.setattr(Embedder, "_embed_voyage", _real_provider_call_attempted)
+    monkeypatch.setattr(Embedder, "_embed_local", _real_provider_call_attempted)
+
+    (tmp_path / "new_thing.py").write_text("import os\n")
+    fake_session = FakeClientSession({"search_procedures": json.dumps([])})
+
+    async def fake_run_node(node, **kwargs):
+        return NodeResult(status="success", notes=f"ran {node.goal}",
+                           data={"files_edited": ["new_thing.py"], "patch": "diff --git ..."})
+
+    monkeypatch.setattr(runner_module, "_open_client_session", lambda url, token: fake_session)
+    monkeypatch.setattr(runner_module, "_run_local_node", fake_run_node)
+
+    result = await runner_module.LocalAgentRunner(
+        server_url="http://fake/mcp", token="fake-token",
+    ).run(task_description="add a new utility function", repo_path=str(tmp_path))
+
+    # This flow calls Embedder twice for real (query embedding, then
+    # capture embedding on the ad-hoc candidate) -- reaching this
+    # assertion at all, with the provider stubs above never firing, is
+    # the proof.
+    assert result.captured_candidate is not None
 
 
 class FakeContent:
@@ -125,6 +201,7 @@ async def test_runner_probes_its_own_repo_and_sends_invariant_bindings(monkeypat
     search call's bindings, not execution."""
     import json as json_mod
 
+    install_fake_embedder(monkeypatch)
     (tmp_path / "requirements.txt").write_text("pandas==2.1.0\n")
 
     fake_session = FakeClientSession({
@@ -158,6 +235,7 @@ async def test_runner_prefers_and_stays_local_when_only_a_local_procedure_matche
 
     from app.local_agent.local_store import LocalProcedureStore
 
+    install_fake_embedder(monkeypatch)
     store = LocalProcedureStore(str(tmp_path))
     captured = store.capture_local_procedure(
         name="fix-calc-bug-local", goal="fix the calc bug",
@@ -215,6 +293,7 @@ async def test_runner_captures_a_local_candidate_from_a_successful_adhoc_run(mon
 
     from app.local_agent.local_store import LocalProcedureStore
 
+    install_fake_embedder(monkeypatch)
     fake_session = FakeClientSession({"search_procedures": json.dumps([])})
 
     # See the matching comment in
@@ -287,15 +366,19 @@ def test_local_context_key_reflects_real_environment_not_just_repo_name():
 async def test_runner_finds_a_local_procedure_via_semantic_similarity_not_lexical_overlap(monkeypatch, tmp_path):
     """P0 fix: local search must actually use the store's real cosine-
     similarity ranking, not silently fall back to lexical-only matching
-    because no query embedding was ever supplied. Real embedding calls
-    (this repo's existing Embedder, no mock) prove genuine semantic
-    retrieval: the query shares NO words with the stored procedure's
-    name/goal, so a lexical-only search would find nothing."""
+    because no query embedding was ever supplied. Deterministic fake
+    embeddings (tests/fake_embeddings.py -- concept-synonym vectors, no
+    network) prove genuine semantic retrieval: the query shares NO words
+    with the stored procedure's name/goal, so a lexical-only search would
+    find nothing, yet the two texts share recognized concepts (auth,
+    negative_outcome, ...) so their fake vectors are genuinely close in
+    cosine space, exercising the real similarity-ranking code path."""
     import json
 
     from app.local_agent.local_store import LocalProcedureStore
     from app.services.embeddings import Embedder
 
+    install_fake_embedder(monkeypatch)
     embedder = Embedder()
     goal = "resolve a failing login attempt caused by an expired session token"
     goal_vec = await embedder.embed_one(goal, input_type="document")
@@ -342,6 +425,7 @@ async def test_runner_finds_a_local_procedure_via_semantic_similarity_not_lexica
 async def test_runner_does_not_capture_a_candidate_from_a_failed_adhoc_run(monkeypatch, tmp_path):
     import json
 
+    install_fake_embedder(monkeypatch)
     fake_session = FakeClientSession({"search_procedures": json.dumps([])})
 
     async def fake_run_node(node, **kwargs):
@@ -371,6 +455,7 @@ async def test_runner_refuses_a_node_naming_only_an_unimplemented_kind(monkeypat
 
     from app.local_agent.local_store import LocalProcedureStore
 
+    install_fake_embedder(monkeypatch)
     store = LocalProcedureStore(str(tmp_path))
     store.capture_local_procedure(
         name="fix-calc-bug-local", goal="fix the calc bug",
@@ -412,6 +497,7 @@ async def test_runner_still_runs_a_hintless_node_through_the_real_mechanism(monk
 
     from app.local_agent.local_store import LocalProcedureStore
 
+    install_fake_embedder(monkeypatch)
     store = LocalProcedureStore(str(tmp_path))
     store.capture_local_procedure(
         name="fix-calc-bug-local-2", goal="fix the calc bug",
@@ -517,6 +603,7 @@ async def test_runner_never_records_local_success_for_an_unimportable_artifact(m
 
     from app.local_agent.local_store import LocalProcedureStore
 
+    install_fake_embedder(monkeypatch)
     store = LocalProcedureStore(str(tmp_path))
     captured = store.capture_local_procedure(
         name="fix-calc-bug-local", goal="fix the calc bug",
@@ -562,6 +649,7 @@ async def test_runner_does_not_capture_an_unimportable_adhoc_artifact_as_a_candi
     candidate would be the same class of defect, one step earlier."""
     import json
 
+    install_fake_embedder(monkeypatch)
     (tmp_path / "new_thing.py").write_text("from os import DefinitelyNotARealAttribute\n")
 
     fake_session = FakeClientSession({"search_procedures": json.dumps([])})
@@ -595,6 +683,7 @@ async def test_runner_still_records_success_for_a_genuinely_working_artifact(mon
 
     from app.local_agent.local_store import LocalProcedureStore
 
+    install_fake_embedder(monkeypatch)
     store = LocalProcedureStore(str(tmp_path))
     captured = store.capture_local_procedure(
         name="fix-calc-bug-local", goal="fix the calc bug",
