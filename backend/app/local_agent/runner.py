@@ -59,6 +59,10 @@ from mcp import ClientSession
 from mcp.client.streamable_http import streamable_http_client
 
 from app.execution.artifact_validation import gate_execution_success
+from app.execution.behavioral_validation import (
+    extract_behavioral_contract,
+    gate_execution_success_with_behavior,
+)
 from app.execution.graph_executor import NodeResult, execute_task_graph
 from app.execution.implementations import resolve_implementation
 from app.execution.procedure_graph import steps_to_linear_nodes
@@ -586,12 +590,22 @@ class LocalAgentRunner:
             # declared success is never itself evidence the produced
             # artifact actually works, only the strongest deterministic
             # check available for its real artifact type is.
-            run_succeeded, validation_failure_reason = gate_execution_success(
+            #
+            # Gate 2B: when the matched procedure DECLARES a behavioral
+            # contract (domain_payload.behavioral_contract), artifact
+            # validation alone is still not enough -- the composed gate
+            # (app.execution.behavioral_validation) additionally runs the
+            # deterministic verifier registered for the contract's
+            # capability kind. Procedures without a contract keep the
+            # exact previous artifact-only behavior.
+            run_succeeded, validation_failure_reason = gate_execution_success_with_behavior(
                 repo_root=repo_path, declared_success=run_succeeded,
                 files_edited=all_files_edited,
+                behavioral_contract=extract_behavioral_contract(procedure),
             )
             if validation_failure_reason is not None:
-                node_notes.append(f"ARTIFACT VALIDATION FAILED: {validation_failure_reason}")
+                node_notes.append(
+                    f"POST-EXECUTION VALIDATION FAILED: {validation_failure_reason}")
             # REAL GAP CLOSED: a bare repo folder name collapses every run
             # against the same checkout into ONE context regardless of
             # which branch/dependency set was actually active -- see

@@ -19,6 +19,12 @@ dependencies = [
     "pydantic",
     "pydantic-settings",
     "pytest",
+    # Real test-infrastructure gap: every async test in backend/tests/
+    # (e.g. test_local_agent_runner_offline.py) uses @pytest.mark.asyncio,
+    # but this plugin was never declared -- the async tests silently fail
+    # as "async def functions are not natively supported" in any
+    # freshly-synced environment (confirmed live on a clean `uv sync`).
+    "pytest-asyncio",
     "python-dotenv",
     "PyYAML",
     "reportlab",
