@@ -74,11 +74,14 @@ async def test_search_procedures_refuses_bad_state_json():
 
 @pytest.mark.asyncio
 async def test_search_procedures_returns_real_matches(monkeypatch):
+    captured = {}
+
     async def fake_embed_one(self, text, input_type="query"):
         return [0.1] * 1024
 
     async def fake_find(pool, *, goal_embedding, current_scope, require_verified, limit,
                          invariant_bindings=None):
+        captured["require_verified"] = require_verified
         return [dict(PROCEDURE_ROW, _similarity_score=0.9)]
 
     import app.services.embeddings as emb_mod
@@ -92,6 +95,7 @@ async def test_search_procedures_returns_real_matches(monkeypatch):
         "name": "pandas-append-fix", "goal": "fix removed DataFrame.append",
         "verification_state": "candidate", "similarity": 0.9,
     }]
+    assert captured["require_verified"] is False
 
 
 @pytest.mark.asyncio

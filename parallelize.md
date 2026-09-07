@@ -179,3 +179,41 @@ Update `.scratch/skill_ingestion_wave1_report.md` with actual counts from the sh
 9. Preserve raw artifacts through the artifact substrate and keep secrets/caches out of Git.
 
 Completion means reproducible versioned sources, candidate procedures with provenance, preserved implementations/dependencies, normal retrieval success, and an auditable queue/report. It does not mean that every imported procedure is verified.
+
+## Current execution tree and gate status
+
+```text
+WAVE 1
+│
+├─ 1. Stabilize ingestion + retrieval
+│  ├─ search_procedures browse default includes candidates       DONE (code fix)
+│  ├─ automatic selection still requires verified procedures    DONE (preserved)
+│  ├─ ingest 5–10 excellent canary procedures                   DONE (5 Addy canaries)
+│  ├─ offline exact-title/paraphrase retrieval                   DONE (15/15 QA queries)
+│  └─ live MCP exact-title/paraphrase retrieval                  PENDING (run after worker/runtime starts)
+│
+├─ 2. Run Wave 1 ingestion in parallel
+│  ├─ Addy agent-skills                                        DONE
+│  ├─ Anthropic OSS skills                                     NOT IN MANIFEST / NOT DONE
+│  ├─ Superpowers                                              DONE
+│  ├─ OpenAI Agents repo-local skills                          DONE
+│  ├─ Microsoft skills                                         QUEUED / DRAIN PENDING
+│  ├─ awesome-copilot                                          QUEUED / DRAIN PENDING
+│  └─ SceneAI/Jiro/design-prompt corpora                       SEPARATE FAMILY / NOT DONE
+│
+└─ 3. Deploy worker fabric
+   ├─ Oracle E2.1.Micro #1, worker-limit=1                    NOT DONE (SSH blocked)
+   ├─ Oracle E2.1.Micro #2, worker-limit=1                    NOT DONE
+   ├─ collaborator laptop CPU worker                          NOT DONE
+   ├─ GitHub Actions burst workers                             NOT DONE
+   └─ Cloud Run Jobs burst workers                              NOT DONE
+```
+
+### Gate decision
+
+Everything before worker setup is **not yet complete**. The ingestion architecture, manifest, parser, candidate staging, provenance, implementation/dependency preservation, five-skill canary, and offline retrieval QA are complete. The remaining pre-worker gates are:
+
+1. Start a runnable backend environment and prove live MCP exact-title and paraphrase retrieval with `require_verified=false`; imported rows must remain candidate/unverified.
+2. Drain and QA the already queued Microsoft, awesome-copilot, and OpenAI Plugins jobs.
+3. Decide whether to add Anthropic OSS and design/prompt corpora as new manifest families; they are not part of the committed seven-source wave.
+4. Only then provision the worker fabric across Oracle, laptop, GitHub Actions, and Cloud Run Jobs.

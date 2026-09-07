@@ -1994,7 +1994,7 @@ async def _resolve_live_procedure(pool, procedure_id: str) -> dict:
 
 @server.tool()
 async def search_procedures(task: str, ctx: Context, state: str = "{}", limit: int = 5,
-                             require_verified: bool = True,
+                             require_verified: bool = False,
                              invariant_bindings: str = "{}") -> str:
     """
     Find procedures applicable to a task/state -- lookup only, nothing
@@ -2007,9 +2007,10 @@ async def search_procedures(task: str, ctx: Context, state: str = "{}", limit: i
     state: JSON object of current-scope predicates (e.g.
     '{"language": ["python"]}') -- structured, not free text. "{}" (the
     default) means no scope narrowing.
-    require_verified: real ticket-13 gate, default True unchanged from
-    every other caller in this codebase -- pass False to also see
-    candidates that haven't earned verification evidence yet.
+    require_verified: whether to restrict the browse to verified and
+    approved procedures. This lookup defaults to False so candidate
+    procedures can be inspected and retrieved during corpus cold start;
+    automatic selection callers continue to pass True explicitly.
     invariant_bindings: JSON object of real numeric quantities the CALLER
     already knows (e.g. '{"pandas_version": 2.1}') -- fed straight into
     check_hard_constraints' numeric-invariant stage (invariants.py). This
