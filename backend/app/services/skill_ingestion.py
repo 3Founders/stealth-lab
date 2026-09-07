@@ -27,11 +27,13 @@ predicate" discipline the banking precondition work established.
 from __future__ import annotations
 
 import re
+import posixpath
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Optional
 
 import asyncpg
+import yaml
 
 from app.services.applicability import find_applicable_procedures
 from app.services.embeddings import Embedder
@@ -59,12 +61,39 @@ class ParsedSkill:
     steps: list[str]
     applies_when: Optional[str] = None
     frontmatter: dict[str, Any] = field(default_factory=dict)
+    instructions: str = ""
+    license: Optional[str] = None
+    compatibility: Optional[str] = None
+    allowed_tools: list[str] = field(default_factory=list)
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class SkillDependency:
+    """A source-authored local relationship, retained until resolution."""
+
+    reference: str
+    resolution: str = "unresolved"
+    target_skill_path: Optional[str] = None
+
+
+@dataclass(frozen=True)
+class NormalizedSkillPackage:
+    """Document-shaped ingestion IR; deliberately not a runtime Skill type."""
+
+    source: dict[str, Any]
+    skill_path: str
+    metadata: dict[str, Any]
+    instructions: str
+    resources: tuple[Any, ...]
+    dependencies: tuple[SkillDependency, ...]
+    tool_requirements: tuple[str, ...]
 
 
 _FRONTMATTER_RE = re.compile(r"^---\s*\n(.*?)\n---\s*\n(.*)$", re.DOTALL)
-_FRONTMATTER_FIELD_RE = re.compile(r"^([A-Za-z_][A-Za-z0-9_-]*):\s*(.*)$")
 _NUMBERED_STEP_RE = re.compile(r"^\s*\d+[.)]\s+(.+)$")
 _BULLET_STEP_RE = re.compile(r"^\s*[-*]\s+(.+)$")
+_STEP_HEADING_RE = re.compile(r"^\s*#{2,4}\s+Step\s+\d+\s*[:.)-]\s*(.+)$", re.IGNORECASE)
 _APPLIES_WHEN_RE = re.compile(
     r"^\s*(?:applies when|use when|when to use)\s*:?\s*(.+)$", re.IGNORECASE,
 )
@@ -85,20 +114,46 @@ def parse_skill_md(content: str, *, fallback_name: str = "unnamed-skill") -> Par
     ExtractedProcedure.steps_not_empty already enforces for trace-derived
     procedures.
     """
-    frontmatter: dict[str, str] = {}
+    frontmatter: dict[str, Any] = {}
     body = content
     m = _FRONTMATTER_RE.match(content)
     if m:
         raw_frontmatter, body = m.group(1), m.group(2)
-        for line in raw_frontmatter.splitlines():
-            fm = _FRONTMATTER_FIELD_RE.match(line)
-            if fm:
-                frontmatter[fm.group(1).strip().lower()] = fm.group(2).strip().strip('"\'')
+        try:
+            loaded = yaml.safe_load(raw_frontmatter)
+        except yaml.YAMLError as exc:
+            raise SkillMdParseError(f"invalid YAML frontmatter: {exc}") from exc
+        if loaded is not None and not isinstance(loaded, dict):
+            raise SkillMdParseError("SKILL.md frontmatter must be a mapping")
+        frontmatter = dict(loaded or {})
 
-    name = frontmatter.get("name") or fallback_name
-    description = frontmatter.get("description") or ""
+    name = str(frontmatter.get("name") or fallback_name)
+    description = str(frontmatter.get("description") or "")
+    raw_tools = frontmatter.get("allowed-tools", frontmatter.get("allowed_tools", []))
+    if isinstance(raw_tools, str):
+        allowed_tools = [part for part in re.split(r"[\s,]+", raw_tools.strip()) if part]
+    elif isinstance(raw_tools, list):
+        allowed_tools = [str(tool).strip() for tool in raw_tools if str(tool).strip()]
+    else:
+        allowed_tools = []
+    raw_metadata = frontmatter.get("metadata")
+    metadata = dict(raw_metadata) if isinstance(raw_metadata, dict) else {}
 
-    steps: list[str] = []
+    heading_steps = [
+        match.group(1).strip()
+        for line in body.splitlines()
+        if (match := _STEP_HEADING_RE.match(line))
+    ]
+    numbered_steps = [
+        match.group(1).strip()
+        for line in body.splitlines()
+        if (match := _NUMBERED_STEP_RE.match(line))
+    ]
+    # Workflow-labelled headings are the strongest structure. Numbered
+    # lists come next. Bullets are a last resort because real SKILL.md
+    # documents use them heavily for examples, red flags, and checklists.
+    has_structured_steps = bool(heading_steps or numbered_steps)
+    steps: list[str] = list(heading_steps or numbered_steps)
     applies_when: Optional[str] = None
     description_lines: list[str] = []
     for line in body.splitlines():
@@ -109,9 +164,7 @@ def parse_skill_md(content: str, *, fallback_name: str = "unnamed-skill") -> Par
         if aw:
             applies_when = aw.group(1).strip()
             continue
-        num = _NUMBERED_STEP_RE.match(line)
-        if num:
-            steps.append(num.group(1).strip())
+        if has_structured_steps:
             continue
         bullet = _BULLET_STEP_RE.match(line)
         if bullet:
@@ -141,6 +194,68 @@ def parse_skill_md(content: str, *, fallback_name: str = "unnamed-skill") -> Par
     return ParsedSkill(
         name=name, description=description or steps[0], steps=steps,
         applies_when=applies_when, frontmatter=frontmatter,
+        instructions=body.strip(),
+        license=str(frontmatter["license"]) if frontmatter.get("license") is not None else None,
+        compatibility=(str(frontmatter["compatibility"])
+                       if frontmatter.get("compatibility") is not None else None),
+        allowed_tools=allowed_tools, metadata=metadata,
+    )
+
+
+_LOCAL_REFERENCE_RE = re.compile(
+    r"(?:\]\(([^)#]+)(?:#[^)]+)?\)|`((?:\.\.?/)?[^`\s]+\.(?:md|py|sh|bash|json|ya?ml|toml|ini|cfg))`)",
+    re.IGNORECASE,
+)
+_SKILL_DEPENDENCY_RE = re.compile(
+    r"(?:required\s+sub[- ]skill|superpowers:|skill\s*:)\s*([a-z0-9][a-z0-9-]+)",
+    re.IGNORECASE,
+)
+
+
+def normalize_skill_package(artifact: Any) -> NormalizedSkillPackage:
+    """Normalize a fetched package without promoting it into ontology state."""
+    parsed = parse_skill_md(
+        artifact.content, fallback_name=_artifact_fallback_name(artifact),
+    )
+    dependencies_list: list[SkillDependency] = []
+    skill_dir = posixpath.dirname(artifact.path or "")
+    for target in getattr(artifact, "related_skill_paths", ()):
+        dependencies_list.append(SkillDependency(
+            reference=posixpath.relpath(target, skill_dir or "."),
+            resolution="resolved",
+            target_skill_path=target,
+        ))
+    declared = parsed.frontmatter.get("dependencies")
+    if isinstance(declared, str):
+        declared_refs = [declared]
+    elif isinstance(declared, list):
+        declared_refs = [str(item) for item in declared]
+    else:
+        declared_refs = []
+    declared_refs.extend(
+        f"skill:{match.group(1)}"
+        for match in _SKILL_DEPENDENCY_RE.finditer(parsed.instructions)
+    )
+    known = {dependency.reference for dependency in dependencies_list}
+    dependencies_list.extend(
+        SkillDependency(reference=reference)
+        for reference in declared_refs if reference and reference not in known
+    )
+    dependencies = tuple(dependencies_list)
+    source = _source_provenance(artifact)
+    source.update({
+        "source_id": getattr(artifact, "source_id", None),
+        "bundle_hash": getattr(artifact, "bundle_hash", None),
+        "license_metadata": getattr(artifact, "license_metadata", {}),
+    })
+    return NormalizedSkillPackage(
+        source=source,
+        skill_path=artifact.path or "SKILL.md",
+        metadata=dict(parsed.frontmatter),
+        instructions=parsed.instructions,
+        resources=tuple(getattr(artifact, "resources", ())),
+        dependencies=dependencies,
+        tool_requirements=tuple(parsed.allowed_tools),
     )
 
 
@@ -279,8 +394,8 @@ async def ingest_skill_md(
 # provenance/telemetry side tables only (migration 32).
 # ---------------------------------------------------------------------------
 
-EXTRACTOR_VERSION_DETERMINISTIC = "skill_md_v1"
-EXTRACTOR_VERSION_GROUNDED = "skill_md_grounded_v1"
+EXTRACTOR_VERSION_DETERMINISTIC = "skill_md_v5"
+EXTRACTOR_VERSION_GROUNDED = "skill_md_grounded_v5"
 
 _SKILL_ABSTRACTION_SYSTEM_PROMPT = """You restate a software skill's capability as ONE abstract, \
 reusable sentence.
@@ -344,6 +459,8 @@ class IngestOutcome:
     # provenance='system_pending_review' and with NO capability statement,
     # and the model was never run on the document.
     injection_screened: bool = False
+    implementation_ids: list[str] = field(default_factory=list)
+    dependency_count: int = 0
 
 
 def _slugify(text: str, *, maxlen: int = 80) -> str:
@@ -611,15 +728,27 @@ def _source_provenance(artifact: Any) -> dict:
         "path": artifact.path,
         "commit": artifact.commit,
         "content_hash": artifact.content_hash,
+        "bundle_hash": getattr(artifact, "bundle_hash", None),
+        "source_id": getattr(artifact, "source_id", None),
+        "license": getattr(artifact, "license_metadata", {}),
         "ingested_at": datetime.now(timezone.utc).isoformat(),
     }
 
 
 def _domain_payload(artifact: Any, parsed: ParsedSkill) -> dict:
+    package = normalize_skill_package(artifact)
     return {
         "source": _source_provenance(artifact),
         "applies_when": parsed.applies_when,  # PROSE, never a fabricated Predicate
         "frontmatter": parsed.frontmatter,
+        "compatibility": parsed.compatibility,
+        "tool_requirements": list(package.tool_requirements),
+        "resource_manifest": [
+            {"path": resource.path, "kind": resource.kind,
+             "sha256": resource.sha256, "size": resource.size}
+            for resource in package.resources
+        ],
+        "dependencies": [dependency.__dict__ for dependency in package.dependencies],
     }
 
 
@@ -671,6 +800,27 @@ async def _write_artifact_row(
     procedure_row_id: Optional[str], extractor_version: str,
     owner_id: Optional[str] = None,
 ) -> str:
+    if getattr(artifact, "source_type", None) == "skill_package":
+        package = normalize_skill_package(artifact)
+        row = await pool.fetchrow(
+            "INSERT INTO ingested_artifacts (id, source_type, uri, repository, path, "
+            "\"commit\", content_hash, extractor_version, procedure_id, procedure_row_id, "
+            "run_id, first_seen, last_seen, owner_id, source_id, retrieved_at, "
+            "license_metadata, bundle_hash, resource_manifest, parsed_metadata, "
+            "dependencies, requirements) VALUES (gen_random_uuid(), $1, $2, $3, $4, "
+            "$5, $6, $7, $8::uuid, $9::uuid, $10::uuid, now(), now(), $11, $12, $13, "
+            "$14::jsonb, $15, $16::jsonb, $17::jsonb, $18::jsonb, $19::jsonb) RETURNING id",
+            artifact.source_type, artifact.uri, artifact.repository, artifact.path,
+            artifact.commit, artifact.bundle_hash or artifact.content_hash, extractor_version,
+            procedure_id, procedure_row_id, run_id, owner_id, artifact.source_id,
+            artifact.discovered_at, artifact.license_metadata, artifact.bundle_hash,
+            [{"path": r.path, "kind": r.kind, "sha256": r.sha256, "size": r.size}
+             for r in artifact.resources],
+            package.metadata,
+            [d.__dict__ for d in package.dependencies],
+            {"tools": list(package.tool_requirements), "compatibility": parse_skill_md(artifact.content).compatibility},
+        )
+        return str(row["id"])
     row = await pool.fetchrow(
         "INSERT INTO ingested_artifacts (id, source_type, uri, repository, path, "
         "\"commit\", content_hash, extractor_version, procedure_id, procedure_row_id, "
@@ -682,6 +832,92 @@ async def _write_artifact_row(
         procedure_id, procedure_row_id, run_id, owner_id,
     )
     return str(row["id"])
+
+
+async def _persist_package_relations(
+    pool: asyncpg.Pool, artifact: Any, parsed: ParsedSkill, *,
+    procedure_id: str, created_by: str,
+) -> tuple[list[str], int]:
+    """Persist package implementations and explicit references idempotently."""
+    if getattr(artifact, "source_type", None) != "skill_package":
+        return [], 0
+    package = normalize_skill_package(artifact)
+    implementation_ids: list[str] = []
+    for resource in package.resources:
+        if resource.kind != "script":
+            continue
+        name = f"{artifact.source_id}:{resource.path}"
+        raw_url = (
+            f"https://raw.githubusercontent.com/{artifact.repository}/"
+            f"{artifact.commit}/{resource.path}"
+        )
+        row = await pool.fetchrow(
+            "INSERT INTO implementations (id, name, description, kind, provider, version, "
+            "locator, invocation, requirements, source_ref, author, license, content_hash, "
+            "created_by, visibility, scope_type) VALUES (gen_random_uuid(), $1, $2, "
+            "'deterministic', 'skill-package', 1, $3::jsonb, $4::jsonb, $5::jsonb, "
+            "$6, $7, $8, $9, $10, 'public', 'global') "
+            "ON CONFLICT (name, provider, version) DO NOTHING RETURNING id",
+            name, f"Bundled executable resource for {parsed.name}",
+            {"type": "immutable_github_raw", "url": raw_url,
+             "commit": artifact.commit, "path": resource.path},
+            {"entrypoint": resource.path, "executable": False},
+            {"tools": list(package.tool_requirements)}, artifact.uri,
+            (artifact.repository or "").split("/", 1)[0] or None,
+            parsed.license or artifact.license_metadata.get("spdx_id"),
+            resource.sha256, created_by,
+        )
+        if row is None:
+            row = await pool.fetchrow(
+                "SELECT id FROM implementations WHERE name=$1 AND provider='skill-package' "
+                "AND version=1", name,
+            )
+        implementation_id = str(row["id"])
+        implementation_ids.append(implementation_id)
+        await pool.execute(
+            "INSERT INTO procedure_implementations (id, procedure_id, implementation_id, "
+            "resource_path, created_by) VALUES (gen_random_uuid(), $1::uuid, $2::uuid, $3, $4) "
+            "ON CONFLICT (procedure_id, implementation_id) DO NOTHING",
+            procedure_id, implementation_id, resource.path, created_by,
+        )
+    for dependency in package.dependencies:
+        dependency_ref = dependency.target_skill_path or dependency.reference
+        target_procedure_id = None
+        resolution_status = "unresolved"
+        if dependency.target_skill_path:
+            target = await pool.fetchrow(
+                "SELECT procedure_id FROM ingested_artifacts WHERE repository=$1 "
+                "AND \"commit\"=$2 AND path=$3 AND procedure_id IS NOT NULL "
+                "AND t_invalid IS NULL ORDER BY first_seen DESC LIMIT 1",
+                artifact.repository, artifact.commit, dependency.target_skill_path,
+            )
+            if target is not None:
+                target_procedure_id = str(target["procedure_id"])
+                resolution_status = "resolved"
+        await pool.execute(
+            "INSERT INTO procedure_dependencies (id, procedure_id, dependency_ref, "
+            "target_procedure_id, resolution_status, source_path, created_by) VALUES "
+            "(gen_random_uuid(), $1::uuid, $2, $3::uuid, $4, $5, $6) "
+            "ON CONFLICT (procedure_id, dependency_ref) DO NOTHING",
+            procedure_id, dependency_ref, target_procedure_id, resolution_status,
+            artifact.path, created_by,
+        )
+    return implementation_ids, len(package.dependencies)
+
+
+async def resolve_procedure_dependencies(pool: asyncpg.Pool) -> int:
+    """Resolve repository-local dependency paths after independently ordered jobs."""
+    result = await pool.execute(
+        "UPDATE procedure_dependencies pd SET target_procedure_id=target.procedure_id, "
+        "resolution_status='resolved' FROM ingested_artifacts source, "
+        "ingested_artifacts target WHERE pd.resolution_status='unresolved' "
+        "AND source.procedure_id=pd.procedure_id AND target.repository=source.repository "
+        "AND target.\"commit\"=source.\"commit\" AND target.path=pd.dependency_ref "
+        "AND target.procedure_id IS NOT NULL AND source.t_invalid IS NULL "
+        "AND target.t_invalid IS NULL"
+    )
+    tail = result.rsplit(" ", 1)[-1]
+    return int(tail) if tail.isdigit() else 0
 
 
 async def compile_skill_artifact(
@@ -728,13 +964,16 @@ async def compile_skill_artifact(
         EXTRACTOR_VERSION_GROUNDED if capability_statement is not None
         else EXTRACTOR_VERSION_DETERMINISTIC
     )
+    artifact_fingerprint = (
+        getattr(artifact, "bundle_hash", None) or artifact.content_hash
+    )
 
     # --- staleness / version detection against the provenance table ---
     exact = await pool.fetchrow(
         "SELECT id, procedure_id FROM ingested_artifacts "
         "WHERE source_type = $1 AND uri = $2 AND content_hash = $3 "
-        "AND t_invalid IS NULL ORDER BY first_seen DESC LIMIT 1",
-        artifact.source_type, artifact.uri, artifact.content_hash,
+        "AND extractor_version = $4 AND t_invalid IS NULL ORDER BY first_seen DESC LIMIT 1",
+        artifact.source_type, artifact.uri, artifact_fingerprint, extractor_version,
     )
     if exact is not None:
         await pool.execute(
@@ -757,6 +996,12 @@ async def compile_skill_artifact(
     )
 
     steps_json = [{"order": i, "goal": s} for i, s in enumerate(parsed.steps)]
+    embedding_text = " ".join([
+        capability_statement or parsed.description,
+        "Workflow:",
+        *parsed.steps,
+    ])
+    goal_vec = await embedder.embed_one(embedding_text, input_type="document")
 
     if prior_art is not None:
         changed_fields: dict[str, Any] = {
@@ -773,6 +1018,7 @@ async def compile_skill_artifact(
             # flagged stale below -- supersede_procedure carries `staleness`
             # forward otherwise.
             "staleness": "fresh",
+            "embedding": goal_vec,
         }
         if capability_statement is not None:
             changed_fields["capability_statement"] = capability_statement
@@ -803,10 +1049,16 @@ async def compile_skill_artifact(
                 )
                 marked_stale = True
 
-            task_node_ids = await _write_task_nodes(
-                pool, procedure_row_id=superseded["id"],
-                steps=parsed.steps, created_by=created_by,
-                scope_type="entity" if domain else "global", scope_entity_id=domain,
+            task_node_ids = []
+            if artifact.source_type != "skill_package":
+                task_node_ids = await _write_task_nodes(
+                    pool, procedure_row_id=superseded["id"],
+                    steps=parsed.steps, created_by=created_by,
+                    scope_type="entity" if domain else "global", scope_entity_id=domain,
+                )
+            implementation_ids, dependency_count = await _persist_package_relations(
+                pool, artifact, parsed, procedure_id=str(superseded["procedure_id"]),
+                created_by=created_by,
             )
             artifact_id = await _write_artifact_row(
                 pool, artifact, run_id=run_id,
@@ -824,6 +1076,8 @@ async def compile_skill_artifact(
                 marked_stale=marked_stale,
                 injection_screened=bool(injection_signals),
                 reason=screen_reason,
+                implementation_ids=implementation_ids,
+                dependency_count=dependency_count,
             )
         # prior row already gone (concurrent merge/supersede) -- fall
         # through and treat this as a fresh capture.
@@ -846,6 +1100,10 @@ async def compile_skill_artifact(
             procedure_row_id=None,
             extractor_version=extractor_version, owner_id=owner_id,
         )
+        implementation_ids, dependency_count = await _persist_package_relations(
+            pool, artifact, parsed, procedure_id=str(existing["procedure_id"]),
+            created_by=created_by,
+        )
         return IngestOutcome(
             status="duplicate",
             procedure_id=str(existing["procedure_id"]),
@@ -853,12 +1111,11 @@ async def compile_skill_artifact(
             capability_abstained=capability_abstained,
             reason=screen_reason or f"similarity {existing.get('_similarity_score')}",
             injection_screened=bool(injection_signals),
+            implementation_ids=implementation_ids,
+            dependency_count=dependency_count,
         )
 
     # --- fresh capture ---
-    goal_vec = await embedder.embed_one(
-        capability_statement or parsed.description, input_type="document",
-    )
     result = await capture_procedure(
         pool, name=parsed.name, goal=parsed.description, steps=steps_json,
         provenance=provenance, domain=domain,
@@ -875,9 +1132,15 @@ async def compile_skill_artifact(
             "UPDATE procedures SET capability_statement = $2 WHERE id = $1::uuid",
             result["id"], capability_statement,
         )
-    task_node_ids = await _write_task_nodes(
-        pool, procedure_row_id=result["id"], steps=parsed.steps, created_by=created_by,
-        scope_type="entity" if domain else "global", scope_entity_id=domain,
+    task_node_ids = []
+    if artifact.source_type != "skill_package":
+        task_node_ids = await _write_task_nodes(
+            pool, procedure_row_id=result["id"], steps=parsed.steps, created_by=created_by,
+            scope_type="entity" if domain else "global", scope_entity_id=domain,
+        )
+    implementation_ids, dependency_count = await _persist_package_relations(
+        pool, artifact, parsed, procedure_id=str(result["procedure_id"]),
+        created_by=created_by,
     )
     artifact_id = await _write_artifact_row(
         pool, artifact, run_id=run_id,
@@ -893,6 +1156,8 @@ async def compile_skill_artifact(
         capability_abstained=capability_abstained,
         injection_screened=bool(injection_signals),
         reason=screen_reason,
+        implementation_ids=implementation_ids,
+        dependency_count=dependency_count,
     )
 
 
@@ -909,6 +1174,7 @@ async def run_skill_ingestion(
     created_by: str = "skill_md_ingestion",
     invariants: Optional[list[dict]] = None,
     owner_id: Optional[str] = None,
+    limit: Optional[int] = None,
 ) -> dict:
     """Drive one source adapter end to end and record a manifest.
 
@@ -945,10 +1211,14 @@ async def run_skill_ingestion(
         # with no capability statement. Orthogonal to accepted/duplicate/
         # etc. (a screened doc is normally also `accepted`).
         "screened": 0,
+        "implementation_candidates": 0,
+        "procedure_dependencies": 0,
     }
     outcomes: list[IngestOutcome] = []
 
     for ref in adapter.discover():
+        if limit is not None and metrics["artifacts_seen"] >= limit:
+            break
         metrics["artifacts_seen"] += 1
         try:
             artifact = adapter.fetch(ref)
@@ -964,6 +1234,8 @@ async def run_skill_ingestion(
             continue
 
         outcomes.append(outcome)
+        metrics["implementation_candidates"] += len(outcome.implementation_ids)
+        metrics["procedure_dependencies"] += outcome.dependency_count
         # `candidates` counts every artifact that reached the compiler,
         # rejected ones included (brief section 14: candidates == accepted +
         # duplicates + rejected + ...); only a fetch/compile exception is
@@ -984,8 +1256,26 @@ async def run_skill_ingestion(
         if outcome.injection_screened:
             metrics["screened"] += 1
 
+    await resolve_procedure_dependencies(pool)
+
     await pool.execute(
         "UPDATE ingestion_runs SET finished_at = now(), metrics = $2::jsonb WHERE run_id = $1::uuid",
         run_id, metrics,
     )
     return {"run_id": run_id, "metrics": metrics, "outcomes": outcomes}
+
+
+async def persist_source_snapshot(pool: asyncpg.Pool, adapter: Any) -> dict:
+    """Persist the immutable repo revision once, including zero-skill sources."""
+    snapshot = adapter.snapshot_metadata()
+    row = await pool.fetchrow(
+        "INSERT INTO ingestion_source_snapshots (id, source_id, repo_url, resolved_commit, "
+        "retrieved_at, license_metadata, source_path, content_hash, expected_format) "
+        "VALUES (gen_random_uuid(), $1, $2, $3, now(), $4::jsonb, $5, $6, $7) "
+        "ON CONFLICT (source_id, resolved_commit, (COALESCE(source_path, ''))) DO UPDATE "
+        "SET retrieved_at=EXCLUDED.retrieved_at RETURNING *",
+        snapshot["source_id"], snapshot["repo_url"], snapshot["resolved_commit"],
+        snapshot["license_metadata"], snapshot["source_path"],
+        snapshot["content_hash"], snapshot["expected_format"],
+    )
+    return dict(row)

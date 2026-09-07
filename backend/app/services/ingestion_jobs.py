@@ -37,6 +37,34 @@ from app.services.observations import (
     promote_observation_to_claim,
 )
 
+
+async def handle_ingest_skill_package(pool: asyncpg.Pool, payload: dict) -> None:
+    """Ingest exactly one immutable skill package, retryably and idempotently."""
+    from app.services.embeddings import Embedder
+    from app.services.ingestion_sources import GitHubSkillCorpusSource
+    from app.services.ingestion_sources.base import SourceRef
+    from app.services.ingestion_sources.manifest import CorpusSourceSpec
+    from app.services.skill_ingestion import compile_skill_artifact
+
+    spec = CorpusSourceSpec(
+        id=str(payload["source_id"]), priority=int(payload.get("priority", 1)),
+        type=payload.get("source_type", "github"), repo=str(payload["repo"]),
+        path=payload.get("subtree"), expected_format=payload.get("expected_format", "skill_repository"),
+        ref=str(payload.get("ref", "HEAD")),
+    )
+    adapter = GitHubSkillCorpusSource(spec)
+    commit = str(payload["commit"])
+    path = str(payload["path"])
+    uri = str(payload.get("uri") or f"https://github.com/{adapter.slug}/blob/{commit}/{path}")
+    artifact = adapter.fetch(SourceRef(
+        uri=uri, repository=adapter.slug, path=path, commit=commit,
+        source_id=spec.id,
+    ))
+    await compile_skill_artifact(
+        pool, artifact, embedder=Embedder(),
+        created_by="structured_skill_ingestion_worker",
+    )
+
 log = logging.getLogger(__name__)
 
 # job_type registry -- deliberately a plain dict, not a class hierarchy;
@@ -268,11 +296,44 @@ async def handle_promote_observation_to_claim(pool: asyncpg.Pool, payload: dict)
 JOB_HANDLERS: dict[str, JobHandler] = {
     "normalize_trace_event": handle_normalize_trace_event,
     "promote_observation_to_claim": handle_promote_observation_to_claim,
+    "ingest_skill_package": handle_ingest_skill_package,
     # 'extract_procedure_from_episode' is registered further down, right
     # after its handler is defined -- that handler sits below the sweep it
     # belongs with, and a forward reference here would be a NameError at
     # import time. Registration is asserted by a test either way.
 }
+
+
+async def enqueue_skill_package_jobs(
+    pool: asyncpg.Pool, *, source_spec: dict, refs: list[dict],
+) -> int:
+    """Queue one deduplicated job per package for distributed workers."""
+    queued = 0
+    for ref in refs:
+        payload = {**source_spec, **ref}
+        exists = await pool.fetchval(
+            "SELECT 1 FROM ingestion_jobs WHERE job_type='ingest_skill_package' "
+            "AND payload->>'source_id'=$1 AND payload->>'commit'=$2 "
+            "AND payload->>'path'=$3 AND status IN ('pending','processing','done') LIMIT 1",
+            str(payload["source_id"]), str(payload["commit"]), str(payload["path"]),
+        )
+        if exists:
+            continue
+        await pool.execute(
+            "INSERT INTO ingestion_jobs (job_type, payload) VALUES ($1, $2::jsonb)",
+            "ingest_skill_package", json.dumps(payload),
+        )
+        queued += 1
+    return queued
+
+
+async def resume_failed_skill_jobs(pool: asyncpg.Pool) -> int:
+    result = await pool.execute(
+        "UPDATE ingestion_jobs SET status='pending', claimed_at=NULL, completed_at=NULL "
+        "WHERE job_type='ingest_skill_package' AND status='failed'"
+    )
+    tail = result.rsplit(" ", 1)[-1]
+    return int(tail) if tail.isdigit() else 0
 
 
 # The episode-arrived-late recovery path. Ordering matters here and there

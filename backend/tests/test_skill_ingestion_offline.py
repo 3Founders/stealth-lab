@@ -375,7 +375,7 @@ async def test_compile_carries_full_source_provenance(no_dup):
         "skill_md", art.uri, art.repository, art.path, "abc123",
     )
     assert content_hash == art.content_hash
-    assert extractor_version == "skill_md_v1"          # deterministic: no client
+    assert extractor_version == "skill_md_v5"          # deterministic: no client
     assert procedure_id is not None
     assert procedure_row_id is not None
     assert run_id is None and owner_id is None         # standalone compile, no run
@@ -411,7 +411,7 @@ async def test_compile_with_client_sets_capability_and_grounded_extractor(no_dup
     cap_updates = [p for kind, p in pool.captured["updates"] if kind == "procedures.capability_statement"]
     assert len(cap_updates) == 1
     assert "Migrate a data-manipulation library call" in cap_updates[0][1]
-    assert pool.captured["ingested_artifacts"][0][6] == "skill_md_grounded_v1"
+    assert pool.captured["ingested_artifacts"][0][6] == "skill_md_grounded_v5"
 
 
 @pytest.mark.asyncio
@@ -704,7 +704,7 @@ async def test_injection_document_downgrades_to_pending_review_and_drops_capabil
         k == "procedures.capability_statement" for k, _ in pool.captured["updates"]
     )
     # deterministic extractor version, not the grounded one
-    assert pool.captured["ingested_artifacts"][0][6] == "skill_md_v1"
+    assert pool.captured["ingested_artifacts"][0][6] == "skill_md_v5"
 
 
 @pytest.mark.asyncio

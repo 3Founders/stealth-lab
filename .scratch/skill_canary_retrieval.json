@@ -1,0 +1,1023 @@
+{
+  "results": [
+    {
+      "query": "implement this feature using tests first",
+      "expected_procedure_family": "test-driven-development",
+      "top_5": [
+        {
+          "procedure_id": "4d0fa246-b377-41f0-9902-b6ce6a39bdef",
+          "name": "test-driven-development",
+          "source": {
+            "uri": "https://github.com/addyosmani/agent-skills/blob/48cb1168aeaaa70dfc2bbf709eddfa2a8ed8129a/skills/test-driven-development/SKILL.md",
+            "path": "skills/test-driven-development/SKILL.md",
+            "commit": "48cb1168aeaaa70dfc2bbf709eddfa2a8ed8129a",
+            "license": {
+              "url": null,
+              "name": null,
+              "path": "LICENSE",
+              "spdx_id": null
+            },
+            "source_id": "addy-agent-skills",
+            "repository": "addyosmani/agent-skills",
+            "bundle_hash": "10b52cb94b4a19063c028986850cdac3cf8aa437476153cfbcf1e4e3ebbfe28a",
+            "ingested_at": "2026-09-07T16:27:00.218076+00:00",
+            "source_type": "skill_package",
+            "content_hash": "440fb3c9b76f4f1b0b564dfbaec19d370beab0167a3e2ab048ce59c5a865ecef"
+          },
+          "similarity": 0.7361878163443537
+        },
+        {
+          "procedure_id": "05ad763c-6257-43dc-bef8-952be9f6d071",
+          "name": "code-review-and-quality",
+          "source": {
+            "uri": "https://github.com/addyosmani/agent-skills/blob/48cb1168aeaaa70dfc2bbf709eddfa2a8ed8129a/skills/code-review-and-quality/SKILL.md",
+            "path": "skills/code-review-and-quality/SKILL.md",
+            "commit": "48cb1168aeaaa70dfc2bbf709eddfa2a8ed8129a",
+            "license": {
+              "url": null,
+              "name": null,
+              "path": "LICENSE",
+              "spdx_id": null
+            },
+            "source_id": "addy-agent-skills",
+            "repository": "addyosmani/agent-skills",
+            "bundle_hash": "8f6fc5da3fdd7f59c5bbe7d0736ac77b90c8401a3773e83e5df5a7af35c0d4b1",
+            "ingested_at": "2026-09-07T16:26:53.634277+00:00",
+            "source_type": "skill_package",
+            "content_hash": "8f3cabca581bbf7cb5f0add3f7454e7a4523f9d4353a6a4a217e6fa515309612"
+          },
+          "similarity": 0.6527476643411775
+        },
+        {
+          "procedure_id": "3a3d1fb6-d95c-4dca-8eb1-a17d5bbab36a",
+          "name": "corpus-s09-red-green-refactor-tdd-loop-failing-test-watch-f",
+          "source": "skill_md",
+          "similarity": 0.7506376800015686
+        },
+        {
+          "procedure_id": "78431387-1ffb-459d-b94a-4b80bd873100",
+          "name": "corpus-s07-red-green-refactor-after-first-discovering-the-r",
+          "source": "skill_md",
+          "similarity": 0.7563274265102872
+        },
+        {
+          "procedure_id": "83d2e2f8-d79f-45c7-9ac8-9d9d63ea4542",
+          "name": "corpus-s36-construct-verify-a-task-instance-take-a-merged-p",
+          "source": "skill_md",
+          "similarity": 0.6610954881903365
+        }
+      ],
+      "rank": 1
+    },
+    {
+      "query": "write a failing regression test before fixing this bug",
+      "expected_procedure_family": "test-driven-development",
+      "top_5": [
+        {
+          "procedure_id": "4d0fa246-b377-41f0-9902-b6ce6a39bdef",
+          "name": "test-driven-development",
+          "source": {
+            "uri": "https://github.com/addyosmani/agent-skills/blob/48cb1168aeaaa70dfc2bbf709eddfa2a8ed8129a/skills/test-driven-development/SKILL.md",
+            "path": "skills/test-driven-development/SKILL.md",
+            "commit": "48cb1168aeaaa70dfc2bbf709eddfa2a8ed8129a",
+            "license": {
+              "url": null,
+              "name": null,
+              "path": "LICENSE",
+              "spdx_id": null
+            },
+            "source_id": "addy-agent-skills",
+            "repository": "addyosmani/agent-skills",
+            "bundle_hash": "10b52cb94b4a19063c028986850cdac3cf8aa437476153cfbcf1e4e3ebbfe28a",
+            "ingested_at": "2026-09-07T16:27:00.218076+00:00",
+            "source_type": "skill_package",
+            "content_hash": "440fb3c9b76f4f1b0b564dfbaec19d370beab0167a3e2ab048ce59c5a865ecef"
+          },
+          "similarity": 0.6894314963316155
+        },
+        {
+          "procedure_id": "63d84fe9-4e8c-499c-9b74-26cfd8a56cce",
+          "name": "debugging-and-error-recovery",
+          "source": {
+            "uri": "https://github.com/addyosmani/agent-skills/blob/48cb1168aeaaa70dfc2bbf709eddfa2a8ed8129a/skills/debugging-and-error-recovery/SKILL.md",
+            "path": "skills/debugging-and-error-recovery/SKILL.md",
+            "commit": "48cb1168aeaaa70dfc2bbf709eddfa2a8ed8129a",
+            "license": {
+              "url": null,
+              "name": null,
+              "path": "LICENSE",
+              "spdx_id": null
+            },
+            "source_id": "addy-agent-skills",
+            "repository": "addyosmani/agent-skills",
+            "bundle_hash": "ae951ccbaadeff964bf20735a471855c32cf1f473ce97291300272ff3b723a11",
+            "ingested_at": "2026-09-07T16:26:57.016964+00:00",
+            "source_type": "skill_package",
+            "content_hash": "67ce2c9442da0c5a6e3515617fc9c4003cfe232ef7c7210da342f40f508f9958"
+          },
+          "similarity": 0.628742100825545
+        },
+        {
+          "procedure_id": "3a3d1fb6-d95c-4dca-8eb1-a17d5bbab36a",
+          "name": "corpus-s09-red-green-refactor-tdd-loop-failing-test-watch-f",
+          "source": "skill_md",
+          "similarity": 0.6842973137751238
+        },
+        {
+          "procedure_id": "78431387-1ffb-459d-b94a-4b80bd873100",
+          "name": "corpus-s07-red-green-refactor-after-first-discovering-the-r",
+          "source": "skill_md",
+          "similarity": 0.68442733111692
+        },
+        {
+          "procedure_id": "83d2e2f8-d79f-45c7-9ac8-9d9d63ea4542",
+          "name": "corpus-s36-construct-verify-a-task-instance-take-a-merged-p",
+          "source": "skill_md",
+          "similarity": 0.6716352689308058
+        }
+      ],
+      "rank": 1
+    },
+    {
+      "query": "prove the behavior change with a red green refactor loop",
+      "expected_procedure_family": "test-driven-development",
+      "top_5": [
+        {
+          "procedure_id": "4d0fa246-b377-41f0-9902-b6ce6a39bdef",
+          "name": "test-driven-development",
+          "source": {
+            "uri": "https://github.com/addyosmani/agent-skills/blob/48cb1168aeaaa70dfc2bbf709eddfa2a8ed8129a/skills/test-driven-development/SKILL.md",
+            "path": "skills/test-driven-development/SKILL.md",
+            "commit": "48cb1168aeaaa70dfc2bbf709eddfa2a8ed8129a",
+            "license": {
+              "url": null,
+              "name": null,
+              "path": "LICENSE",
+              "spdx_id": null
+            },
+            "source_id": "addy-agent-skills",
+            "repository": "addyosmani/agent-skills",
+            "bundle_hash": "10b52cb94b4a19063c028986850cdac3cf8aa437476153cfbcf1e4e3ebbfe28a",
+            "ingested_at": "2026-09-07T16:27:00.218076+00:00",
+            "source_type": "skill_package",
+            "content_hash": "440fb3c9b76f4f1b0b564dfbaec19d370beab0167a3e2ab048ce59c5a865ecef"
+          },
+          "similarity": 0.7759681932615862
+        },
+        {
+          "procedure_id": "5d817824-a98c-4a47-b3e9-c9efc39c3cbe",
+          "name": "code-simplification",
+          "source": {
+            "uri": "https://github.com/addyosmani/agent-skills/blob/48cb1168aeaaa70dfc2bbf709eddfa2a8ed8129a/skills/code-simplification/SKILL.md",
+            "path": "skills/code-simplification/SKILL.md",
+            "commit": "48cb1168aeaaa70dfc2bbf709eddfa2a8ed8129a",
+            "license": {
+              "url": null,
+              "name": null,
+              "path": "LICENSE",
+              "spdx_id": null
+            },
+            "source_id": "addy-agent-skills",
+            "repository": "addyosmani/agent-skills",
+            "bundle_hash": "5ed5cf0cf04b4160ec943e0b931ed7b87b66b583394951b054548268cd4649e4",
+            "ingested_at": "2026-09-07T16:26:55.396329+00:00",
+            "source_type": "skill_package",
+            "content_hash": "f0c5ed754057eb0c1e027e2587f59de816651feb5e837242296c43ea21cf621d"
+          },
+          "similarity": 0.6814462203562871
+        },
+        {
+          "procedure_id": "3a3d1fb6-d95c-4dca-8eb1-a17d5bbab36a",
+          "name": "corpus-s09-red-green-refactor-tdd-loop-failing-test-watch-f",
+          "source": "skill_md",
+          "similarity": 0.7851227644484707
+        },
+        {
+          "procedure_id": "78431387-1ffb-459d-b94a-4b80bd873100",
+          "name": "corpus-s07-red-green-refactor-after-first-discovering-the-r",
+          "source": "skill_md",
+          "similarity": 0.7138564915482508
+        },
+        {
+          "procedure_id": "83d2e2f8-d79f-45c7-9ac8-9d9d63ea4542",
+          "name": "corpus-s36-construct-verify-a-task-instance-take-a-merged-p",
+          "source": "skill_md",
+          "similarity": 0.6575211064892621
+        }
+      ],
+      "rank": 1
+    },
+    {
+      "query": "how should I debug a failing test without randomly editing files?",
+      "expected_procedure_family": "debugging-and-error-recovery",
+      "top_5": [
+        {
+          "procedure_id": "4d0fa246-b377-41f0-9902-b6ce6a39bdef",
+          "name": "test-driven-development",
+          "source": {
+            "uri": "https://github.com/addyosmani/agent-skills/blob/48cb1168aeaaa70dfc2bbf709eddfa2a8ed8129a/skills/test-driven-development/SKILL.md",
+            "path": "skills/test-driven-development/SKILL.md",
+            "commit": "48cb1168aeaaa70dfc2bbf709eddfa2a8ed8129a",
+            "license": {
+              "url": null,
+              "name": null,
+              "path": "LICENSE",
+              "spdx_id": null
+            },
+            "source_id": "addy-agent-skills",
+            "repository": "addyosmani/agent-skills",
+            "bundle_hash": "10b52cb94b4a19063c028986850cdac3cf8aa437476153cfbcf1e4e3ebbfe28a",
+            "ingested_at": "2026-09-07T16:27:00.218076+00:00",
+            "source_type": "skill_package",
+            "content_hash": "440fb3c9b76f4f1b0b564dfbaec19d370beab0167a3e2ab048ce59c5a865ecef"
+          },
+          "similarity": 0.6707317142796132
+        },
+        {
+          "procedure_id": "63d84fe9-4e8c-499c-9b74-26cfd8a56cce",
+          "name": "debugging-and-error-recovery",
+          "source": {
+            "uri": "https://github.com/addyosmani/agent-skills/blob/48cb1168aeaaa70dfc2bbf709eddfa2a8ed8129a/skills/debugging-and-error-recovery/SKILL.md",
+            "path": "skills/debugging-and-error-recovery/SKILL.md",
+            "commit": "48cb1168aeaaa70dfc2bbf709eddfa2a8ed8129a",
+            "license": {
+              "url": null,
+              "name": null,
+              "path": "LICENSE",
+              "spdx_id": null
+            },
+            "source_id": "addy-agent-skills",
+            "repository": "addyosmani/agent-skills",
+            "bundle_hash": "ae951ccbaadeff964bf20735a471855c32cf1f473ce97291300272ff3b723a11",
+            "ingested_at": "2026-09-07T16:26:57.016964+00:00",
+            "source_type": "skill_package",
+            "content_hash": "67ce2c9442da0c5a6e3515617fc9c4003cfe232ef7c7210da342f40f508f9958"
+          },
+          "similarity": 0.6580058931347951
+        },
+        {
+          "procedure_id": "8b574279-fd5b-4435-af80-47b84c85e291",
+          "name": "corpus-s47-debug-a-running-crashing-pod-kubectl-describe-po",
+          "source": "skill_md",
+          "similarity": 0.662216595497629
+        },
+        {
+          "procedure_id": "3a3d1fb6-d95c-4dca-8eb1-a17d5bbab36a",
+          "name": "corpus-s09-red-green-refactor-tdd-loop-failing-test-watch-f",
+          "source": "skill_md",
+          "similarity": 0.6462184932438642
+        },
+        {
+          "procedure_id": "78431387-1ffb-459d-b94a-4b80bd873100",
+          "name": "corpus-s07-red-green-refactor-after-first-discovering-the-r",
+          "source": "skill_md",
+          "similarity": 0.6469471164255887
+        }
+      ],
+      "rank": 2
+    },
+    {
+      "query": "systematically isolate the root cause of this unexpected error",
+      "expected_procedure_family": "debugging-and-error-recovery",
+      "top_5": [
+        {
+          "procedure_id": "63d84fe9-4e8c-499c-9b74-26cfd8a56cce",
+          "name": "debugging-and-error-recovery",
+          "source": {
+            "uri": "https://github.com/addyosmani/agent-skills/blob/48cb1168aeaaa70dfc2bbf709eddfa2a8ed8129a/skills/debugging-and-error-recovery/SKILL.md",
+            "path": "skills/debugging-and-error-recovery/SKILL.md",
+            "commit": "48cb1168aeaaa70dfc2bbf709eddfa2a8ed8129a",
+            "license": {
+              "url": null,
+              "name": null,
+              "path": "LICENSE",
+              "spdx_id": null
+            },
+            "source_id": "addy-agent-skills",
+            "repository": "addyosmani/agent-skills",
+            "bundle_hash": "ae951ccbaadeff964bf20735a471855c32cf1f473ce97291300272ff3b723a11",
+            "ingested_at": "2026-09-07T16:26:57.016964+00:00",
+            "source_type": "skill_package",
+            "content_hash": "67ce2c9442da0c5a6e3515617fc9c4003cfe232ef7c7210da342f40f508f9958"
+          },
+          "similarity": 0.7205681735313251
+        },
+        {
+          "procedure_id": "05ad763c-6257-43dc-bef8-952be9f6d071",
+          "name": "code-review-and-quality",
+          "source": {
+            "uri": "https://github.com/addyosmani/agent-skills/blob/48cb1168aeaaa70dfc2bbf709eddfa2a8ed8129a/skills/code-review-and-quality/SKILL.md",
+            "path": "skills/code-review-and-quality/SKILL.md",
+            "commit": "48cb1168aeaaa70dfc2bbf709eddfa2a8ed8129a",
+            "license": {
+              "url": null,
+              "name": null,
+              "path": "LICENSE",
+              "spdx_id": null
+            },
+            "source_id": "addy-agent-skills",
+            "repository": "addyosmani/agent-skills",
+            "bundle_hash": "8f6fc5da3fdd7f59c5bbe7d0736ac77b90c8401a3773e83e5df5a7af35c0d4b1",
+            "ingested_at": "2026-09-07T16:26:53.634277+00:00",
+            "source_type": "skill_package",
+            "content_hash": "8f3cabca581bbf7cb5f0add3f7454e7a4523f9d4353a6a4a217e6fa515309612"
+          },
+          "similarity": 0.6296082203749378
+        },
+        {
+          "procedure_id": "9795b49f-83a3-4ea1-8256-a9439c8a800c",
+          "name": "corpus-s19-reproduce-the-context-rot-benchmark-venv-deps-pr",
+          "source": "skill_md",
+          "similarity": 0.6446224503036132
+        },
+        {
+          "procedure_id": "8b574279-fd5b-4435-af80-47b84c85e291",
+          "name": "corpus-s47-debug-a-running-crashing-pod-kubectl-describe-po",
+          "source": "skill_md",
+          "similarity": 0.6935077081405132
+        },
+        {
+          "procedure_id": "5f1263b5-1f9e-4b71-930b-63f1c28ef10d",
+          "name": "corpus-s05-apply-70-react-next-js-performance-rules-by-prio",
+          "source": "skill_md",
+          "similarity": 0.6273227024769146
+        }
+      ],
+      "rank": 1
+    },
+    {
+      "query": "the build broke and I need to reproduce localize and verify the fix",
+      "expected_procedure_family": "debugging-and-error-recovery",
+      "top_5": [
+        {
+          "procedure_id": "63d84fe9-4e8c-499c-9b74-26cfd8a56cce",
+          "name": "debugging-and-error-recovery",
+          "source": {
+            "uri": "https://github.com/addyosmani/agent-skills/blob/48cb1168aeaaa70dfc2bbf709eddfa2a8ed8129a/skills/debugging-and-error-recovery/SKILL.md",
+            "path": "skills/debugging-and-error-recovery/SKILL.md",
+            "commit": "48cb1168aeaaa70dfc2bbf709eddfa2a8ed8129a",
+            "license": {
+              "url": null,
+              "name": null,
+              "path": "LICENSE",
+              "spdx_id": null
+            },
+            "source_id": "addy-agent-skills",
+            "repository": "addyosmani/agent-skills",
+            "bundle_hash": "ae951ccbaadeff964bf20735a471855c32cf1f473ce97291300272ff3b723a11",
+            "ingested_at": "2026-09-07T16:26:57.016964+00:00",
+            "source_type": "skill_package",
+            "content_hash": "67ce2c9442da0c5a6e3515617fc9c4003cfe232ef7c7210da342f40f508f9958"
+          },
+          "similarity": 0.6831575105899014
+        },
+        {
+          "procedure_id": "83d2e2f8-d79f-45c7-9ac8-9d9d63ea4542",
+          "name": "corpus-s36-construct-verify-a-task-instance-take-a-merged-p",
+          "source": "skill_md",
+          "similarity": 0.6688654333282764
+        },
+        {
+          "procedure_id": "78431387-1ffb-459d-b94a-4b80bd873100",
+          "name": "corpus-s07-red-green-refactor-after-first-discovering-the-r",
+          "source": "skill_md",
+          "similarity": 0.6544292021919721
+        },
+        {
+          "procedure_id": "19711438-a56f-40a7-8663-0590d966d204",
+          "name": "corpus-s11-scaffold-an-autonomous-maintenance-loop-npx-cobu",
+          "source": "skill_md",
+          "similarity": 0.6457674028839648
+        },
+        {
+          "procedure_id": "8b574279-fd5b-4435-af80-47b84c85e291",
+          "name": "corpus-s47-debug-a-running-crashing-pod-kubectl-describe-po",
+          "source": "skill_md",
+          "similarity": 0.6537939079720557
+        }
+      ],
+      "rank": 1
+    },
+    {
+      "query": "break this large implementation request into safe steps",
+      "expected_procedure_family": "planning-and-task-breakdown",
+      "top_5": [
+        {
+          "procedure_id": "b9796ba8-40c9-4549-aa77-4fe1b1a65372",
+          "name": "planning-and-task-breakdown",
+          "source": {
+            "uri": "https://github.com/addyosmani/agent-skills/blob/48cb1168aeaaa70dfc2bbf709eddfa2a8ed8129a/skills/planning-and-task-breakdown/SKILL.md",
+            "path": "skills/planning-and-task-breakdown/SKILL.md",
+            "commit": "48cb1168aeaaa70dfc2bbf709eddfa2a8ed8129a",
+            "license": {
+              "url": null,
+              "name": null,
+              "path": "LICENSE",
+              "spdx_id": null
+            },
+            "source_id": "addy-agent-skills",
+            "repository": "addyosmani/agent-skills",
+            "bundle_hash": "a5eaf082ce27cd77eb23717ed98596f3be48427da92c5f8ddf25e9c1788c2a2b",
+            "ingested_at": "2026-09-07T16:26:58.613118+00:00",
+            "source_type": "skill_package",
+            "content_hash": "ed0f90cc5951ddd4bcab7f871f64efec93a49af9279ef93bc470da77ad8da3f7"
+          },
+          "similarity": 0.6861580626331132
+        },
+        {
+          "procedure_id": "dc1ce2aa-26ad-46b3-ba6c-bc9d34d3446d",
+          "name": "corpus-s24-trim-mcp-tool-context-to-task-relevant-scan-conf",
+          "source": "skill_md",
+          "similarity": 0.6647606856683889
+        },
+        {
+          "procedure_id": "3a3d1fb6-d95c-4dca-8eb1-a17d5bbab36a",
+          "name": "corpus-s09-red-green-refactor-tdd-loop-failing-test-watch-f",
+          "source": "skill_md",
+          "similarity": 0.6851467900564201
+        },
+        {
+          "procedure_id": "5f1263b5-1f9e-4b71-930b-63f1c28ef10d",
+          "name": "corpus-s05-apply-70-react-next-js-performance-rules-by-prio",
+          "source": "skill_md",
+          "similarity": 0.684952337258302
+        },
+        {
+          "procedure_id": "78431387-1ffb-459d-b94a-4b80bd873100",
+          "name": "corpus-s07-red-green-refactor-after-first-discovering-the-r",
+          "source": "skill_md",
+          "similarity": 0.6636636188244758
+        }
+      ],
+      "rank": 1
+    },
+    {
+      "query": "turn this specification into ordered tasks with checkpoints",
+      "expected_procedure_family": "planning-and-task-breakdown",
+      "top_5": [
+        {
+          "procedure_id": "b9796ba8-40c9-4549-aa77-4fe1b1a65372",
+          "name": "planning-and-task-breakdown",
+          "source": {
+            "uri": "https://github.com/addyosmani/agent-skills/blob/48cb1168aeaaa70dfc2bbf709eddfa2a8ed8129a/skills/planning-and-task-breakdown/SKILL.md",
+            "path": "skills/planning-and-task-breakdown/SKILL.md",
+            "commit": "48cb1168aeaaa70dfc2bbf709eddfa2a8ed8129a",
+            "license": {
+              "url": null,
+              "name": null,
+              "path": "LICENSE",
+              "spdx_id": null
+            },
+            "source_id": "addy-agent-skills",
+            "repository": "addyosmani/agent-skills",
+            "bundle_hash": "a5eaf082ce27cd77eb23717ed98596f3be48427da92c5f8ddf25e9c1788c2a2b",
+            "ingested_at": "2026-09-07T16:26:58.613118+00:00",
+            "source_type": "skill_package",
+            "content_hash": "ed0f90cc5951ddd4bcab7f871f64efec93a49af9279ef93bc470da77ad8da3f7"
+          },
+          "similarity": 0.74311569723147
+        },
+        {
+          "procedure_id": "dc1ce2aa-26ad-46b3-ba6c-bc9d34d3446d",
+          "name": "corpus-s24-trim-mcp-tool-context-to-task-relevant-scan-conf",
+          "source": "skill_md",
+          "similarity": 0.6543469899526914
+        },
+        {
+          "procedure_id": "83d2e2f8-d79f-45c7-9ac8-9d9d63ea4542",
+          "name": "corpus-s36-construct-verify-a-task-instance-take-a-merged-p",
+          "source": "skill_md",
+          "similarity": 0.6844478107536326
+        },
+        {
+          "procedure_id": "3103b71b-1af8-4b9a-bf63-41c69cc918a0",
+          "name": "corpus-s01-author-a-new-agent-skill-skill-md-frontmatter-ex",
+          "source": "skill_md",
+          "similarity": 0.6536649487378038
+        },
+        {
+          "procedure_id": "fef6ceb9-a3c4-4f2c-bcc7-956f6a25d996",
+          "name": "corpus-s50-build-evaluate-a-tool-use-task-collect-real-rest",
+          "source": "skill_md",
+          "similarity": 0.6499869394958679
+        }
+      ],
+      "rank": 1
+    },
+    {
+      "query": "identify dependencies and parallel work before implementation",
+      "expected_procedure_family": "planning-and-task-breakdown",
+      "top_5": [
+        {
+          "procedure_id": "b9796ba8-40c9-4549-aa77-4fe1b1a65372",
+          "name": "planning-and-task-breakdown",
+          "source": {
+            "uri": "https://github.com/addyosmani/agent-skills/blob/48cb1168aeaaa70dfc2bbf709eddfa2a8ed8129a/skills/planning-and-task-breakdown/SKILL.md",
+            "path": "skills/planning-and-task-breakdown/SKILL.md",
+            "commit": "48cb1168aeaaa70dfc2bbf709eddfa2a8ed8129a",
+            "license": {
+              "url": null,
+              "name": null,
+              "path": "LICENSE",
+              "spdx_id": null
+            },
+            "source_id": "addy-agent-skills",
+            "repository": "addyosmani/agent-skills",
+            "bundle_hash": "a5eaf082ce27cd77eb23717ed98596f3be48427da92c5f8ddf25e9c1788c2a2b",
+            "ingested_at": "2026-09-07T16:26:58.613118+00:00",
+            "source_type": "skill_package",
+            "content_hash": "ed0f90cc5951ddd4bcab7f871f64efec93a49af9279ef93bc470da77ad8da3f7"
+          },
+          "similarity": 0.709561322159874
+        },
+        {
+          "procedure_id": "05ad763c-6257-43dc-bef8-952be9f6d071",
+          "name": "code-review-and-quality",
+          "source": {
+            "uri": "https://github.com/addyosmani/agent-skills/blob/48cb1168aeaaa70dfc2bbf709eddfa2a8ed8129a/skills/code-review-and-quality/SKILL.md",
+            "path": "skills/code-review-and-quality/SKILL.md",
+            "commit": "48cb1168aeaaa70dfc2bbf709eddfa2a8ed8129a",
+            "license": {
+              "url": null,
+              "name": null,
+              "path": "LICENSE",
+              "spdx_id": null
+            },
+            "source_id": "addy-agent-skills",
+            "repository": "addyosmani/agent-skills",
+            "bundle_hash": "8f6fc5da3fdd7f59c5bbe7d0736ac77b90c8401a3773e83e5df5a7af35c0d4b1",
+            "ingested_at": "2026-09-07T16:26:53.634277+00:00",
+            "source_type": "skill_package",
+            "content_hash": "8f3cabca581bbf7cb5f0add3f7454e7a4523f9d4353a6a4a217e6fa515309612"
+          },
+          "similarity": 0.6430548165290803
+        },
+        {
+          "procedure_id": "28decdd0-0d90-45e3-8187-1e7eafee3abc",
+          "name": "corpus-s31-eliminate-request-waterfalls-find-sequential-awa",
+          "source": "skill_md",
+          "similarity": 0.6774240635229808
+        },
+        {
+          "procedure_id": "3a3d1fb6-d95c-4dca-8eb1-a17d5bbab36a",
+          "name": "corpus-s09-red-green-refactor-tdd-loop-failing-test-watch-f",
+          "source": "skill_md",
+          "similarity": 0.6585976713622607
+        },
+        {
+          "procedure_id": "5f1263b5-1f9e-4b71-930b-63f1c28ef10d",
+          "name": "corpus-s05-apply-70-react-next-js-performance-rules-by-prio",
+          "source": "skill_md",
+          "similarity": 0.6484720865325333
+        }
+      ],
+      "rank": 1
+    },
+    {
+      "query": "review this change for bugs and regressions",
+      "expected_procedure_family": "code-review-and-quality",
+      "top_5": [
+        {
+          "procedure_id": "05ad763c-6257-43dc-bef8-952be9f6d071",
+          "name": "code-review-and-quality",
+          "source": {
+            "uri": "https://github.com/addyosmani/agent-skills/blob/48cb1168aeaaa70dfc2bbf709eddfa2a8ed8129a/skills/code-review-and-quality/SKILL.md",
+            "path": "skills/code-review-and-quality/SKILL.md",
+            "commit": "48cb1168aeaaa70dfc2bbf709eddfa2a8ed8129a",
+            "license": {
+              "url": null,
+              "name": null,
+              "path": "LICENSE",
+              "spdx_id": null
+            },
+            "source_id": "addy-agent-skills",
+            "repository": "addyosmani/agent-skills",
+            "bundle_hash": "8f6fc5da3fdd7f59c5bbe7d0736ac77b90c8401a3773e83e5df5a7af35c0d4b1",
+            "ingested_at": "2026-09-07T16:26:53.634277+00:00",
+            "source_type": "skill_package",
+            "content_hash": "8f3cabca581bbf7cb5f0add3f7454e7a4523f9d4353a6a4a217e6fa515309612"
+          },
+          "similarity": 0.7066132352129447
+        },
+        {
+          "procedure_id": "5d817824-a98c-4a47-b3e9-c9efc39c3cbe",
+          "name": "code-simplification",
+          "source": {
+            "uri": "https://github.com/addyosmani/agent-skills/blob/48cb1168aeaaa70dfc2bbf709eddfa2a8ed8129a/skills/code-simplification/SKILL.md",
+            "path": "skills/code-simplification/SKILL.md",
+            "commit": "48cb1168aeaaa70dfc2bbf709eddfa2a8ed8129a",
+            "license": {
+              "url": null,
+              "name": null,
+              "path": "LICENSE",
+              "spdx_id": null
+            },
+            "source_id": "addy-agent-skills",
+            "repository": "addyosmani/agent-skills",
+            "bundle_hash": "5ed5cf0cf04b4160ec943e0b931ed7b87b66b583394951b054548268cd4649e4",
+            "ingested_at": "2026-09-07T16:26:55.396329+00:00",
+            "source_type": "skill_package",
+            "content_hash": "f0c5ed754057eb0c1e027e2587f59de816651feb5e837242296c43ea21cf621d"
+          },
+          "similarity": 0.6599217415405756
+        },
+        {
+          "procedure_id": "83d2e2f8-d79f-45c7-9ac8-9d9d63ea4542",
+          "name": "corpus-s36-construct-verify-a-task-instance-take-a-merged-p",
+          "source": "skill_md",
+          "similarity": 0.6760534965429361
+        },
+        {
+          "procedure_id": "78431387-1ffb-459d-b94a-4b80bd873100",
+          "name": "corpus-s07-red-green-refactor-after-first-discovering-the-r",
+          "source": "skill_md",
+          "similarity": 0.6640980000290354
+        },
+        {
+          "procedure_id": "3a3d1fb6-d95c-4dca-8eb1-a17d5bbab36a",
+          "name": "corpus-s09-red-green-refactor-tdd-loop-failing-test-watch-f",
+          "source": "skill_md",
+          "similarity": 0.661475745333326
+        }
+      ],
+      "rank": 1
+    },
+    {
+      "query": "assess a pull request for correctness security and performance",
+      "expected_procedure_family": "code-review-and-quality",
+      "top_5": [
+        {
+          "procedure_id": "05ad763c-6257-43dc-bef8-952be9f6d071",
+          "name": "code-review-and-quality",
+          "source": {
+            "uri": "https://github.com/addyosmani/agent-skills/blob/48cb1168aeaaa70dfc2bbf709eddfa2a8ed8129a/skills/code-review-and-quality/SKILL.md",
+            "path": "skills/code-review-and-quality/SKILL.md",
+            "commit": "48cb1168aeaaa70dfc2bbf709eddfa2a8ed8129a",
+            "license": {
+              "url": null,
+              "name": null,
+              "path": "LICENSE",
+              "spdx_id": null
+            },
+            "source_id": "addy-agent-skills",
+            "repository": "addyosmani/agent-skills",
+            "bundle_hash": "8f6fc5da3fdd7f59c5bbe7d0736ac77b90c8401a3773e83e5df5a7af35c0d4b1",
+            "ingested_at": "2026-09-07T16:26:53.634277+00:00",
+            "source_type": "skill_package",
+            "content_hash": "8f3cabca581bbf7cb5f0add3f7454e7a4523f9d4353a6a4a217e6fa515309612"
+          },
+          "similarity": 0.7185220573521974
+        },
+        {
+          "procedure_id": "5d817824-a98c-4a47-b3e9-c9efc39c3cbe",
+          "name": "code-simplification",
+          "source": {
+            "uri": "https://github.com/addyosmani/agent-skills/blob/48cb1168aeaaa70dfc2bbf709eddfa2a8ed8129a/skills/code-simplification/SKILL.md",
+            "path": "skills/code-simplification/SKILL.md",
+            "commit": "48cb1168aeaaa70dfc2bbf709eddfa2a8ed8129a",
+            "license": {
+              "url": null,
+              "name": null,
+              "path": "LICENSE",
+              "spdx_id": null
+            },
+            "source_id": "addy-agent-skills",
+            "repository": "addyosmani/agent-skills",
+            "bundle_hash": "5ed5cf0cf04b4160ec943e0b931ed7b87b66b583394951b054548268cd4649e4",
+            "ingested_at": "2026-09-07T16:26:55.396329+00:00",
+            "source_type": "skill_package",
+            "content_hash": "f0c5ed754057eb0c1e027e2587f59de816651feb5e837242296c43ea21cf621d"
+          },
+          "similarity": 0.6492082920415017
+        },
+        {
+          "procedure_id": "83d2e2f8-d79f-45c7-9ac8-9d9d63ea4542",
+          "name": "corpus-s36-construct-verify-a-task-instance-take-a-merged-p",
+          "source": "skill_md",
+          "similarity": 0.6863847870461364
+        },
+        {
+          "procedure_id": "5f1263b5-1f9e-4b71-930b-63f1c28ef10d",
+          "name": "corpus-s05-apply-70-react-next-js-performance-rules-by-prio",
+          "source": "skill_md",
+          "similarity": 0.6813908085607886
+        },
+        {
+          "procedure_id": "72f30232-0b43-4351-a666-6dd67ce2af5a",
+          "name": "corpus-s04-review-ui-code-against-the-web-interface-guideli",
+          "source": "skill_md",
+          "similarity": 0.6535248670392443
+        }
+      ],
+      "rank": 1
+    },
+    {
+      "query": "inspect tests and implementation before approving a merge",
+      "expected_procedure_family": "code-review-and-quality",
+      "top_5": [
+        {
+          "procedure_id": "05ad763c-6257-43dc-bef8-952be9f6d071",
+          "name": "code-review-and-quality",
+          "source": {
+            "uri": "https://github.com/addyosmani/agent-skills/blob/48cb1168aeaaa70dfc2bbf709eddfa2a8ed8129a/skills/code-review-and-quality/SKILL.md",
+            "path": "skills/code-review-and-quality/SKILL.md",
+            "commit": "48cb1168aeaaa70dfc2bbf709eddfa2a8ed8129a",
+            "license": {
+              "url": null,
+              "name": null,
+              "path": "LICENSE",
+              "spdx_id": null
+            },
+            "source_id": "addy-agent-skills",
+            "repository": "addyosmani/agent-skills",
+            "bundle_hash": "8f6fc5da3fdd7f59c5bbe7d0736ac77b90c8401a3773e83e5df5a7af35c0d4b1",
+            "ingested_at": "2026-09-07T16:26:53.634277+00:00",
+            "source_type": "skill_package",
+            "content_hash": "8f3cabca581bbf7cb5f0add3f7454e7a4523f9d4353a6a4a217e6fa515309612"
+          },
+          "similarity": 0.7416169205195885
+        },
+        {
+          "procedure_id": "4d0fa246-b377-41f0-9902-b6ce6a39bdef",
+          "name": "test-driven-development",
+          "source": {
+            "uri": "https://github.com/addyosmani/agent-skills/blob/48cb1168aeaaa70dfc2bbf709eddfa2a8ed8129a/skills/test-driven-development/SKILL.md",
+            "path": "skills/test-driven-development/SKILL.md",
+            "commit": "48cb1168aeaaa70dfc2bbf709eddfa2a8ed8129a",
+            "license": {
+              "url": null,
+              "name": null,
+              "path": "LICENSE",
+              "spdx_id": null
+            },
+            "source_id": "addy-agent-skills",
+            "repository": "addyosmani/agent-skills",
+            "bundle_hash": "10b52cb94b4a19063c028986850cdac3cf8aa437476153cfbcf1e4e3ebbfe28a",
+            "ingested_at": "2026-09-07T16:27:00.218076+00:00",
+            "source_type": "skill_package",
+            "content_hash": "440fb3c9b76f4f1b0b564dfbaec19d370beab0167a3e2ab048ce59c5a865ecef"
+          },
+          "similarity": 0.6535435506827142
+        },
+        {
+          "procedure_id": "83d2e2f8-d79f-45c7-9ac8-9d9d63ea4542",
+          "name": "corpus-s36-construct-verify-a-task-instance-take-a-merged-p",
+          "source": "skill_md",
+          "similarity": 0.6931350992055181
+        },
+        {
+          "procedure_id": "3a3d1fb6-d95c-4dca-8eb1-a17d5bbab36a",
+          "name": "corpus-s09-red-green-refactor-tdd-loop-failing-test-watch-f",
+          "source": "skill_md",
+          "similarity": 0.6907478921830896
+        },
+        {
+          "procedure_id": "78431387-1ffb-459d-b94a-4b80bd873100",
+          "name": "corpus-s07-red-green-refactor-after-first-discovering-the-r",
+          "source": "skill_md",
+          "similarity": 0.68632002752299
+        }
+      ],
+      "rank": 1
+    },
+    {
+      "query": "simplify this complicated implementation without changing behavior",
+      "expected_procedure_family": "code-simplification",
+      "top_5": [
+        {
+          "procedure_id": "5d817824-a98c-4a47-b3e9-c9efc39c3cbe",
+          "name": "code-simplification",
+          "source": {
+            "uri": "https://github.com/addyosmani/agent-skills/blob/48cb1168aeaaa70dfc2bbf709eddfa2a8ed8129a/skills/code-simplification/SKILL.md",
+            "path": "skills/code-simplification/SKILL.md",
+            "commit": "48cb1168aeaaa70dfc2bbf709eddfa2a8ed8129a",
+            "license": {
+              "url": null,
+              "name": null,
+              "path": "LICENSE",
+              "spdx_id": null
+            },
+            "source_id": "addy-agent-skills",
+            "repository": "addyosmani/agent-skills",
+            "bundle_hash": "5ed5cf0cf04b4160ec943e0b931ed7b87b66b583394951b054548268cd4649e4",
+            "ingested_at": "2026-09-07T16:26:55.396329+00:00",
+            "source_type": "skill_package",
+            "content_hash": "f0c5ed754057eb0c1e027e2587f59de816651feb5e837242296c43ea21cf621d"
+          },
+          "similarity": 0.7131329415702429
+        },
+        {
+          "procedure_id": "05ad763c-6257-43dc-bef8-952be9f6d071",
+          "name": "code-review-and-quality",
+          "source": {
+            "uri": "https://github.com/addyosmani/agent-skills/blob/48cb1168aeaaa70dfc2bbf709eddfa2a8ed8129a/skills/code-review-and-quality/SKILL.md",
+            "path": "skills/code-review-and-quality/SKILL.md",
+            "commit": "48cb1168aeaaa70dfc2bbf709eddfa2a8ed8129a",
+            "license": {
+              "url": null,
+              "name": null,
+              "path": "LICENSE",
+              "spdx_id": null
+            },
+            "source_id": "addy-agent-skills",
+            "repository": "addyosmani/agent-skills",
+            "bundle_hash": "8f6fc5da3fdd7f59c5bbe7d0736ac77b90c8401a3773e83e5df5a7af35c0d4b1",
+            "ingested_at": "2026-09-07T16:26:53.634277+00:00",
+            "source_type": "skill_package",
+            "content_hash": "8f3cabca581bbf7cb5f0add3f7454e7a4523f9d4353a6a4a217e6fa515309612"
+          },
+          "similarity": 0.6501483629283318
+        },
+        {
+          "procedure_id": "4d0fa246-b377-41f0-9902-b6ce6a39bdef",
+          "name": "test-driven-development",
+          "source": {
+            "uri": "https://github.com/addyosmani/agent-skills/blob/48cb1168aeaaa70dfc2bbf709eddfa2a8ed8129a/skills/test-driven-development/SKILL.md",
+            "path": "skills/test-driven-development/SKILL.md",
+            "commit": "48cb1168aeaaa70dfc2bbf709eddfa2a8ed8129a",
+            "license": {
+              "url": null,
+              "name": null,
+              "path": "LICENSE",
+              "spdx_id": null
+            },
+            "source_id": "addy-agent-skills",
+            "repository": "addyosmani/agent-skills",
+            "bundle_hash": "10b52cb94b4a19063c028986850cdac3cf8aa437476153cfbcf1e4e3ebbfe28a",
+            "ingested_at": "2026-09-07T16:27:00.218076+00:00",
+            "source_type": "skill_package",
+            "content_hash": "440fb3c9b76f4f1b0b564dfbaec19d370beab0167a3e2ab048ce59c5a865ecef"
+          },
+          "similarity": 0.642683643503632
+        },
+        {
+          "procedure_id": "3a3d1fb6-d95c-4dca-8eb1-a17d5bbab36a",
+          "name": "corpus-s09-red-green-refactor-tdd-loop-failing-test-watch-f",
+          "source": "skill_md",
+          "similarity": 0.6757691656706202
+        },
+        {
+          "procedure_id": "5f1263b5-1f9e-4b71-930b-63f1c28ef10d",
+          "name": "corpus-s05-apply-70-react-next-js-performance-rules-by-prio",
+          "source": "skill_md",
+          "similarity": 0.6577288039694679
+        }
+      ],
+      "rank": 1
+    },
+    {
+      "query": "remove unnecessary complexity while preserving exact behavior",
+      "expected_procedure_family": "code-simplification",
+      "top_5": [
+        {
+          "procedure_id": "5d817824-a98c-4a47-b3e9-c9efc39c3cbe",
+          "name": "code-simplification",
+          "source": {
+            "uri": "https://github.com/addyosmani/agent-skills/blob/48cb1168aeaaa70dfc2bbf709eddfa2a8ed8129a/skills/code-simplification/SKILL.md",
+            "path": "skills/code-simplification/SKILL.md",
+            "commit": "48cb1168aeaaa70dfc2bbf709eddfa2a8ed8129a",
+            "license": {
+              "url": null,
+              "name": null,
+              "path": "LICENSE",
+              "spdx_id": null
+            },
+            "source_id": "addy-agent-skills",
+            "repository": "addyosmani/agent-skills",
+            "bundle_hash": "5ed5cf0cf04b4160ec943e0b931ed7b87b66b583394951b054548268cd4649e4",
+            "ingested_at": "2026-09-07T16:26:55.396329+00:00",
+            "source_type": "skill_package",
+            "content_hash": "f0c5ed754057eb0c1e027e2587f59de816651feb5e837242296c43ea21cf621d"
+          },
+          "similarity": 0.7416924327630078
+        },
+        {
+          "procedure_id": "4d0fa246-b377-41f0-9902-b6ce6a39bdef",
+          "name": "test-driven-development",
+          "source": {
+            "uri": "https://github.com/addyosmani/agent-skills/blob/48cb1168aeaaa70dfc2bbf709eddfa2a8ed8129a/skills/test-driven-development/SKILL.md",
+            "path": "skills/test-driven-development/SKILL.md",
+            "commit": "48cb1168aeaaa70dfc2bbf709eddfa2a8ed8129a",
+            "license": {
+              "url": null,
+              "name": null,
+              "path": "LICENSE",
+              "spdx_id": null
+            },
+            "source_id": "addy-agent-skills",
+            "repository": "addyosmani/agent-skills",
+            "bundle_hash": "10b52cb94b4a19063c028986850cdac3cf8aa437476153cfbcf1e4e3ebbfe28a",
+            "ingested_at": "2026-09-07T16:27:00.218076+00:00",
+            "source_type": "skill_package",
+            "content_hash": "440fb3c9b76f4f1b0b564dfbaec19d370beab0167a3e2ab048ce59c5a865ecef"
+          },
+          "similarity": 0.6586729077825642
+        },
+        {
+          "procedure_id": "05ad763c-6257-43dc-bef8-952be9f6d071",
+          "name": "code-review-and-quality",
+          "source": {
+            "uri": "https://github.com/addyosmani/agent-skills/blob/48cb1168aeaaa70dfc2bbf709eddfa2a8ed8129a/skills/code-review-and-quality/SKILL.md",
+            "path": "skills/code-review-and-quality/SKILL.md",
+            "commit": "48cb1168aeaaa70dfc2bbf709eddfa2a8ed8129a",
+            "license": {
+              "url": null,
+              "name": null,
+              "path": "LICENSE",
+              "spdx_id": null
+            },
+            "source_id": "addy-agent-skills",
+            "repository": "addyosmani/agent-skills",
+            "bundle_hash": "8f6fc5da3fdd7f59c5bbe7d0736ac77b90c8401a3773e83e5df5a7af35c0d4b1",
+            "ingested_at": "2026-09-07T16:26:53.634277+00:00",
+            "source_type": "skill_package",
+            "content_hash": "8f3cabca581bbf7cb5f0add3f7454e7a4523f9d4353a6a4a217e6fa515309612"
+          },
+          "similarity": 0.6476063409710161
+        },
+        {
+          "procedure_id": "3a3d1fb6-d95c-4dca-8eb1-a17d5bbab36a",
+          "name": "corpus-s09-red-green-refactor-tdd-loop-failing-test-watch-f",
+          "source": "skill_md",
+          "similarity": 0.700703593543835
+        },
+        {
+          "procedure_id": "5f1263b5-1f9e-4b71-930b-63f1c28ef10d",
+          "name": "corpus-s05-apply-70-react-next-js-performance-rules-by-prio",
+          "source": "skill_md",
+          "similarity": 0.6639924225524472
+        }
+      ],
+      "rank": 1
+    },
+    {
+      "query": "refactor working code incrementally and verify it still behaves the same",
+      "expected_procedure_family": "code-simplification",
+      "top_5": [
+        {
+          "procedure_id": "5d817824-a98c-4a47-b3e9-c9efc39c3cbe",
+          "name": "code-simplification",
+          "source": {
+            "uri": "https://github.com/addyosmani/agent-skills/blob/48cb1168aeaaa70dfc2bbf709eddfa2a8ed8129a/skills/code-simplification/SKILL.md",
+            "path": "skills/code-simplification/SKILL.md",
+            "commit": "48cb1168aeaaa70dfc2bbf709eddfa2a8ed8129a",
+            "license": {
+              "url": null,
+              "name": null,
+              "path": "LICENSE",
+              "spdx_id": null
+            },
+            "source_id": "addy-agent-skills",
+            "repository": "addyosmani/agent-skills",
+            "bundle_hash": "5ed5cf0cf04b4160ec943e0b931ed7b87b66b583394951b054548268cd4649e4",
+            "ingested_at": "2026-09-07T16:26:55.396329+00:00",
+            "source_type": "skill_package",
+            "content_hash": "f0c5ed754057eb0c1e027e2587f59de816651feb5e837242296c43ea21cf621d"
+          },
+          "similarity": 0.7153011225722814
+        },
+        {
+          "procedure_id": "4d0fa246-b377-41f0-9902-b6ce6a39bdef",
+          "name": "test-driven-development",
+          "source": {
+            "uri": "https://github.com/addyosmani/agent-skills/blob/48cb1168aeaaa70dfc2bbf709eddfa2a8ed8129a/skills/test-driven-development/SKILL.md",
+            "path": "skills/test-driven-development/SKILL.md",
+            "commit": "48cb1168aeaaa70dfc2bbf709eddfa2a8ed8129a",
+            "license": {
+              "url": null,
+              "name": null,
+              "path": "LICENSE",
+              "spdx_id": null
+            },
+            "source_id": "addy-agent-skills",
+            "repository": "addyosmani/agent-skills",
+            "bundle_hash": "10b52cb94b4a19063c028986850cdac3cf8aa437476153cfbcf1e4e3ebbfe28a",
+            "ingested_at": "2026-09-07T16:27:00.218076+00:00",
+            "source_type": "skill_package",
+            "content_hash": "440fb3c9b76f4f1b0b564dfbaec19d370beab0167a3e2ab048ce59c5a865ecef"
+          },
+          "similarity": 0.7355402139157129
+        },
+        {
+          "procedure_id": "3a3d1fb6-d95c-4dca-8eb1-a17d5bbab36a",
+          "name": "corpus-s09-red-green-refactor-tdd-loop-failing-test-watch-f",
+          "source": "skill_md",
+          "similarity": 0.7598529553485942
+        },
+        {
+          "procedure_id": "78431387-1ffb-459d-b94a-4b80bd873100",
+          "name": "corpus-s07-red-green-refactor-after-first-discovering-the-r",
+          "source": "skill_md",
+          "similarity": 0.7149055560038919
+        },
+        {
+          "procedure_id": "5f1263b5-1f9e-4b71-930b-63f1c28ef10d",
+          "name": "corpus-s05-apply-70-react-next-js-performance-rules-by-prio",
+          "source": "skill_md",
+          "similarity": 0.681133938772473
+        }
+      ],
+      "rank": 1
+    }
+  ]
+}
