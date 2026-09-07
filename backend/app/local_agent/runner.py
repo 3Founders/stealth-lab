@@ -49,6 +49,7 @@ import json
 import os
 import re
 import secrets
+import time
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from typing import Any, Optional
@@ -97,6 +98,78 @@ class LocalRunResult:
     # None on every other path (a match was used, or the ad-hoc run
     # didn't clear the real success bar).
     captured_candidate: Optional[dict] = None
+    # Gate 3 (experiment instrumentation, trailing fields with defaults so
+    # every pre-existing caller sees unchanged behavior):
+    # retrieval_log -- the FULL ranked retrieval evidence (rank, name, ids,
+    #   verification_state, source/scope) the retrieval layer actually
+    #   produced, for experiment reporting. Ranking here is the
+    #   deterministic policy key (verification/capability/freshness/
+    #   specificity -- unified_retrieval.py); that layer exposes NO cosine
+    #   similarity for its global ranking, so none is recorded here. Empty
+    #   when retrieval was bypassed or never attempted.
+    # metrics -- run-level wall-clock/metrics dict (timestamps, latency,
+    #   steps, llm_calls, tokens, stop reason, failure info). Real values
+    #   or None/"not_available" -- never invented.
+    retrieval_log: list[dict] = field(default_factory=list)
+    metrics: dict = field(default_factory=dict)
+
+
+def _retrieval_entry(procedure: Any, source: Optional[str], rank: int) -> dict:
+    """One ranked retrieval result, exactly as the retrieval layer produced
+    it -- only real fields the candidate/procedure dict actually carries,
+    never fabricated ones."""
+    if not isinstance(procedure, dict):
+        return {"rank": rank, "source": source}
+    return {
+        "rank": rank,
+        "name": procedure.get("name"),
+        "id": procedure.get("id"),
+        "procedure_id": procedure.get("procedure_id"),
+        "version": procedure.get("version"),
+        "verification_state": procedure.get("verification_state"),
+        "source": source or procedure.get("source"),
+    }
+
+
+def _run_metrics(started: float, node_results: dict, node_notes: list,
+                 extra: Optional[dict] = None) -> dict:
+    """Aggregate real run-level metrics from node results + notes. Any
+    metric this process genuinely lacks is None, never an estimate.
+    stop_reason is parsed from the per-node note format _run_local_node
+    emits (stop_reason=...) -- the real final agent stop reason."""
+    prompt_tokens = sum(r.data.get("prompt_tokens") or 0 for r in node_results.values())
+    completion_tokens = sum(r.data.get("completion_tokens") or 0 for r in node_results.values())
+    llm_calls = sum(r.data.get("llm_calls") or 0 for r in node_results.values())
+    tool_calls = sum(r.data.get("tool_calls") or 0 for r in node_results.values())
+    stop_reason = None
+    for note in reversed(node_notes):
+        m = re.search(r"stop_reason=([^,]+)", note)
+        if m:
+            stop_reason = m.group(1)
+            break
+    failure_info = next(
+        (n for n in node_notes if "VALIDATION FAILED" in n or n.startswith("REFUSED:")),
+        None)
+    metrics = {
+        "started_at_unix": round(started, 3),
+        "ended_at_unix": round(time.time(), 3),
+        "latency_s": round(time.time() - started, 3),
+        "steps": len(node_results),
+        "llm_calls": llm_calls,
+        "prompt_tokens": prompt_tokens if prompt_tokens else None,
+        "completion_tokens": completion_tokens if completion_tokens else None,
+        "total_tokens": (prompt_tokens + completion_tokens) if (prompt_tokens or completion_tokens) else None,
+        "tool_calls": tool_calls,
+        # The provider/model name is the caller's configured model string;
+        # per-token cost information is NOT available from this stack, so
+        # cost is explicitly "not_available" rather than estimated.
+        "cost": "not_available",
+        "stop_reason": stop_reason,
+        "failure_info": failure_info,
+    }
+    if extra:
+        metrics.update(extra)
+    return metrics
 
 
 @asynccontextmanager
@@ -322,11 +395,18 @@ async def _run_local_node(node, *, task_description: str, repo_path: str,
     note = f"step {node.order} ({node.goal}): stop_reason={run_result.stop_reason}, tool_calls={len(run_result.tool_calls)}"
     node_notes.append(note)
     succeeded = run_result.stop_reason == "finished"
+    # Gate 3 (experiment instrumentation): surface the Agent's real token
+    # accounting (experiments/swebench_pro/agent.py Usage) alongside the
+    # existing tool-call count. Real numbers from the real provider usage
+    # object, or 0 when the provider did not report them -- never estimates.
     return NodeResult(
         status="success" if succeeded else "failure",
         notes=note,
         data={"files_edited": run_result.files_edited, "patch": run_result.patch,
-              "tool_calls": len(run_result.tool_calls)},
+              "tool_calls": len(run_result.tool_calls),
+              "prompt_tokens": run_result.usage.prompt_tokens,
+              "completion_tokens": run_result.usage.completion_tokens,
+              "llm_calls": run_result.usage.calls},
     )
 
 
@@ -396,7 +476,8 @@ class LocalAgentRunner:
         return node_notes, node_results, graph_result
 
     async def run(self, task_description: str, repo_path: str, *,
-                   allow_unverified: bool = False) -> LocalRunResult:
+                   allow_unverified: bool = False,
+                   experimental_no_retrieval: bool = False) -> LocalRunResult:
         """allow_unverified: default False -- production default is
         verified + approved procedures only (require_verified=True on the
         remote search_procedures call), matching find_best_way's own
@@ -405,7 +486,21 @@ class LocalAgentRunner:
         explicit development/experimentation use, never as a silent
         default -- a `candidate` (unverified/unapproved) procedure must
         never be selected for real execution unless the caller opted in
-        by name."""
+        by name.
+
+        experimental_no_retrieval: EXPERIMENTAL-ONLY (Gate 3 A/B arm A),
+        default False. When True, StealthLab procedure retrieval is
+        bypassed ENTIRELY -- no local search, no remote search_procedures
+        call, no match -- and the task routes straight into the EXISTING
+        ad-hoc execution machinery below (the same single-step path a
+        genuine no-match takes; nothing is duplicated, and no retrieval
+        result is fabricated: matched_procedure is None and
+        retrieval_log is empty). This must never be enabled by a
+        production caller; it exists solely so an A/B experiment's
+        no-retrieval arm is a deliberate, explicit bypass rather than
+        depending on "no procedure happened to match". With the default
+        False, behavior is byte-for-byte the pre-Gate-3 path."""
+        run_started = time.time()
         async with _open_client_session(self.server_url, self.token) as session:
             await session.initialize()
 
@@ -441,7 +536,25 @@ class LocalAgentRunner:
             # behavior verbatim, rather than trying to create a store file
             # under a path that was never a real workspace.
             store = LocalProcedureStore(repo_path) if os.path.isdir(repo_path) else None
-            if store is not None:
+            # Gate 3: full ranked retrieval evidence, surfaced verbatim from
+            # whatever the retrieval layer below actually produced (rank,
+            # name, ids, verification_state, source). Empty when retrieval
+            # is bypassed. No similarity numbers -- this layer's global
+            # ranking is the deterministic policy key, not a float score.
+            retrieval_log: list[dict] = []
+            matched, source = None, None
+            no_retrieval_note: str | None = None
+            if experimental_no_retrieval:
+                # EXPERIMENTAL arm-A bypass (see docstring): skip retrieval
+                # entirely; matched stays None so control falls into the
+                # EXISTING ad-hoc machinery below -- no duplicated logic,
+                # nothing fabricated. (node_notes does not exist yet at this
+                # point -- it is created by _execute_steps below -- so the
+                # marker is appended there.)
+                no_retrieval_note = (
+                    "EXPERIMENTAL NO-RETRIEVAL ARM: StealthLab procedure "
+                    "retrieval bypassed by explicit caller request.")
+            elif store is not None:
                 # REAL GAP CLOSED: orchestrate_unified_search's
                 # query_embedding param has existed since Phase 1+2, and
                 # LocalProcedureStore.search_local_procedures() only ranks
@@ -466,6 +579,10 @@ class LocalAgentRunner:
                     query_embedding=query_embedding,
                 )
                 matched, source = (ranked[0].procedure, ranked[0].source) if ranked else (None, None)
+                retrieval_log = [
+                    _retrieval_entry(r.procedure, r.source, i)
+                    for i, r in enumerate(ranked)
+                ]
             else:
                 search_result = await session.call_tool(
                     "search_procedures",
@@ -476,6 +593,9 @@ class LocalAgentRunner:
                 )
                 matches = json.loads(search_result.content[0].text)
                 matched, source = (matches[0], "global") if matches else (None, None)
+                retrieval_log = [
+                    _retrieval_entry(m, "global", i) for i, m in enumerate(matches)
+                ]
 
             # Phase 12 (personal learning loop): nothing matched, local or
             # global -- rather than giving up (the prior behavior), run
@@ -486,11 +606,20 @@ class LocalAgentRunner:
             # something to match against.
             if matched is None:
                 if store is None:
-                    return LocalRunResult(matched_procedure=None, graph_outcome="no_match")
+                    return LocalRunResult(
+                        matched_procedure=None, graph_outcome="no_match",
+                        retrieval_log=retrieval_log,
+                        metrics=_run_metrics(
+                            run_started, {}, [],
+                            extra={"retrieval_attempted": not experimental_no_retrieval},
+                        ),
+                    )
                 steps = [{"order": 0, "goal": task_description}]
                 node_notes, node_results, graph_result = await self._execute_steps(
                     steps, task_description=task_description, repo_path=repo_path,
                 )
+                if no_retrieval_note is not None:
+                    node_notes.insert(0, no_retrieval_note)
                 all_files_edited = sorted({
                     f for r in node_results.values() for f in r.data.get("files_edited", [])
                 })
@@ -558,6 +687,11 @@ class LocalAgentRunner:
                     node_notes=node_notes,
                     source="local_adhoc" if captured else None,
                     captured_candidate=captured,
+                    retrieval_log=retrieval_log,
+                    metrics=_run_metrics(
+                        run_started, node_results, node_notes,
+                        extra={"retrieval_attempted": not experimental_no_retrieval},
+                    ),
                 )
 
             if source == "local":
@@ -636,4 +770,9 @@ class LocalAgentRunner:
                 combined_patch=combined_patch,
                 node_notes=node_notes,
                 source=source,
+                retrieval_log=retrieval_log,
+                metrics=_run_metrics(
+                    run_started, node_results, node_notes,
+                    extra={"retrieval_attempted": True},
+                ),
             )
