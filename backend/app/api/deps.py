@@ -109,7 +109,11 @@ class AuthenticatedPrincipal:
     email: Optional[str] = None
     name: Optional[str] = None
     org_ids: tuple[str, ...] = ()
+    roles: tuple[str, ...] = ()          # role names across the caller's active memberships
     claims: Mapping[str, Any] = field(default_factory=dict)
+
+    def has_role(self, *names: str) -> bool:
+        return any(r in self.roles for r in names)
 
     def access_scope(self) -> AccessScope:
         """The read/write scope for this principal: public rows, own rows,
@@ -160,6 +164,7 @@ async def require_authenticated_user(request: Request) -> AuthenticatedPrincipal
         ) from exc
 
     org_ids = tuple(sorted({m.organization_id for m in memberships}))
+    roles = tuple(sorted({m.role_name for m in memberships}))
     return AuthenticatedPrincipal(
         user_id=user_id,
         subject=actor.subject,
@@ -167,6 +172,7 @@ async def require_authenticated_user(request: Request) -> AuthenticatedPrincipal
         email=actor.email,
         name=actor.name,
         org_ids=org_ids,
+        roles=roles,
         claims=dict(actor.claims),
     )
 

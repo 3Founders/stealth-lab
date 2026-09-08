@@ -151,6 +151,11 @@ async def delete_user_data(
     # row simply stops appearing.
     for pid in plan["private_procedures_physical_delete"]:
         await pool.execute("DELETE FROM procedures WHERE id = $1::uuid", pid)
+        await record_audit_event(
+            pool, actor_subject=subject, action="private_object_deleted",
+            object_type="procedure", object_id=pid, actor_user_id=actor_user_id,
+            details={"mode": "physical", "request_id": req_id},
+        )
 
     # Tombstone: a published source stays as immutable history but stops
     # being retrievable and its vector is cleared.

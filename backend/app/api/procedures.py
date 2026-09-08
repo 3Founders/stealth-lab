@@ -130,6 +130,28 @@ def _created_response(result: dict, principal: AuthenticatedPrincipal) -> dict:
     }
 
 
+async def _audit_private_created(pool, principal: AuthenticatedPrincipal, result: dict, via: str) -> None:
+    """Phase 7 (LC-011): a private object entering storage is an
+    attributable transition. Best-effort — a failed audit write must not
+    fail the contribution the user is waiting on."""
+    try:
+        from app.services.audit import record_audit_event
+
+        await record_audit_event(
+            pool,
+            actor_subject=principal.subject,
+            action="private_object_created",
+            object_type="procedure",
+            object_id=str(result["id"]),
+            actor_user_id=principal.user_id,
+            details={"via": via, "visibility": "private", "verification": "candidate"},
+        )
+    except Exception:  # noqa: BLE001
+        import logging
+
+        logging.getLogger(__name__).warning("audit write failed for private_object_created")
+
+
 @router.post("", status_code=201)
 async def create_procedure(
     body: ProcedureCreateBody,
@@ -220,6 +242,7 @@ async def create_procedure(
         )
     except ValueError as exc:
         raise HTTPException(422, str(exc)) from exc
+    await _audit_private_created(pool, principal, result, via="structured")
     resp = _created_response(result, principal) | {"embedded": embedded}
     if embed_note:
         resp["indexing"] = embed_note
@@ -265,6 +288,7 @@ async def create_procedure_from_text(
                 "similarity": result.get("similarity"),
             },
         )
+    await _audit_private_created(pool, principal, result, via="from_text")
     return _created_response(result, principal) | {
         "embedded": result.get("embedded", False),
     }

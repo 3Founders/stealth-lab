@@ -12,7 +12,7 @@ from app import observability
 from app.api import admin, agent_store, agents, approval, chat, decompose, graph, ingest
 from app.api import claims, implementations, me, procedures, projects, repositories, search, solutions, tasks
 from app.api import problems, runs
-from app.api import publications
+from app.api import publications, workspaces
 from app.api.deps import require_trustworthy_identity
 from app.config import settings
 from app.db.session import close_pool, create_pool
@@ -119,6 +119,7 @@ app.include_router(problems.router)
 # app.execution.durable_resume; no retry logic in the router.
 app.include_router(runs.router)
 app.include_router(publications.router)
+app.include_router(workspaces.router)
 
 
 @app.get("/health")

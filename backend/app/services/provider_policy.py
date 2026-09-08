@@ -53,7 +53,7 @@ _POLICY_SELECT = """
        AND (model = $2 OR model = '*')
        AND effective_from <= now()
        AND (effective_until IS NULL OR effective_until > now())
-       AND (tenant_id IS NULL OR tenant_id = $3::uuid)
+       AND (tenant_id IS NULL OR $3::uuid = tenant_id)
      ORDER BY (tenant_id IS NOT NULL) DESC,
               (model <> '*') DESC,
               effective_from DESC

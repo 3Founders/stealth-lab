@@ -25,11 +25,88 @@ from typing import Any, Optional
 
 
 class WorkspaceNotAuthorized(PermissionError):
-    """The caller may not execute against the named workspace."""
+    """The caller may not execute against (or register) the named workspace."""
 
 
 class WorkspaceNotFound(LookupError):
     """No active workspace with that id (or it belongs to another tenant)."""
+
+
+# Roles allowed to register a workspace root for a tenant. Registration
+# binds a SERVER-SIDE filesystem path, so it is an operator/admin action,
+# never something a plain member can do.
+_REGISTRAR_ROLES = frozenset({"owner", "admin"})
+
+# A registered root must live under one of these prefixes -- a hard
+# backstop so an authorized-but-mistaken admin cannot bind '/etc' or a
+# home directory as a workspace. Override via settings.workspace_root_allowlist.
+_DEFAULT_ROOT_ALLOWLIST = ("/srv/workspaces", "/workspaces", "/data/workspaces")
+
+
+class WorkspacePathRejected(ValueError):
+    """The proposed storage_path is not an acceptable server-side root."""
+
+
+def _canonical_root(path: str, allowlist: tuple[str, ...]) -> str:
+    """Resolve to an absolute, symlink-free, traversal-free path and
+    confirm it sits under an allowed prefix."""
+    real = os.path.realpath(os.path.abspath(path))
+    norm = os.path.normpath(real)
+    if ".." in norm.split(os.sep):
+        raise WorkspacePathRejected(f"path traversal in {path!r}")
+    allowed = tuple(os.path.normpath(p) for p in allowlist)
+    if not any(norm == a or norm.startswith(a + os.sep) for a in allowed):
+        raise WorkspacePathRejected(
+            f"{norm!r} is not under an allowed workspace root ({', '.join(allowed)})"
+        )
+    return norm
+
+
+_WS_INSERT = """
+    INSERT INTO registered_workspaces (tenant_id, name, storage_path, default_branch, created_by)
+    VALUES ($1::uuid, $2, $3, $4, $5)
+    RETURNING id::text, tenant_id::text, name, storage_path, default_branch
+"""
+
+
+async def register_workspace(
+    pool: Any,
+    *,
+    actor_subject: str,
+    actor_user_id: Optional[str],
+    tenant_id: str,
+    actor_role: str,
+    name: str,
+    storage_path: str,
+    default_branch: str = "main",
+    root_allowlist: Optional[tuple[str, ...]] = None,
+) -> "RegisteredWorkspace":
+    """Register a hosted workspace root for a tenant. Requires an
+    owner/admin role in that tenant; canonicalizes + allowlists the path;
+    emits a `workspace_registered` audit event."""
+    if actor_role not in _REGISTRAR_ROLES:
+        raise WorkspaceNotAuthorized(
+            f"role {actor_role!r} may not register a workspace (need owner/admin)"
+        )
+    root = _canonical_root(storage_path, root_allowlist or _DEFAULT_ROOT_ALLOWLIST)
+    row = await pool.fetchrow(_WS_INSERT, tenant_id, name, root, default_branch, actor_subject)
+
+    try:
+        from app.services.audit import record_audit_event
+
+        await record_audit_event(
+            pool, actor_subject=actor_subject, action="workspace_registered",
+            object_type="registered_workspace", object_id=row["id"],
+            actor_user_id=actor_user_id, tenant_id=tenant_id,
+            details={"name": name, "storage_path": root, "default_branch": default_branch},
+        )
+    except Exception:  # noqa: BLE001 - audit best-effort; the row is already durable
+        pass
+
+    return RegisteredWorkspace(
+        id=row["id"], tenant_id=row["tenant_id"], name=row["name"],
+        storage_path=row["storage_path"], default_branch=row["default_branch"],
+    )
 
 
 @dataclass(frozen=True)

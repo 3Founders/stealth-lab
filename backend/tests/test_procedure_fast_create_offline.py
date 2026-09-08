@@ -28,6 +28,8 @@ class _FakePool:
         self.insert_args = None
 
     async def fetchrow(self, sql, *args):
+        if "INSERT INTO audit_events" in " ".join(sql.split()):
+            return {"id": 1}          # Phase 7 private_object_created audit
         self.insert_sql = sql
         self.insert_args = args
         return {"id": uuid4(), "procedure_id": uuid4()}
