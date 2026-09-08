@@ -22,6 +22,8 @@ Database and tests:
 
 - `backend/db/39_structured_skill_ingestion.sql`
 - `backend/db/40_ingested_artifact_extractor_identity.sql`
+- `backend/db/42_worker_ingestion_integrity.sql`
+- `backend/db/43_skill_job_payload_object.sql`
 - the changed skill-ingestion/migration tests under `backend/tests/`
 - `backend/tests/fixtures/skill_retrieval_queries.json`
 
@@ -65,7 +67,7 @@ All workers must use the same Postgres/Supabase database. Do not give each machi
 
 1. Clone the checkout at the exact source-code commit.
 2. Install the repository's normal backend environment and dependencies.
-3. Put the required environment variables in the worker's local environment (or `backend/.env` as supported by the backend): database URL, embedding/API key, and optionally a GitHub token for higher API limits. Copy variable names, never secrets, into messages or Git.
+3. Put the required environment variables in the worker's local environment (or `backend/.env` as supported by the backend): database URL, embedding/API key, and optionally a GitHub token for higher API limits. Copy variable names, never secrets, into messages or Git. Set **one** embedding provider/model for every worker (for example `EMBEDDING_PROVIDER_CHAIN=gemini`); do not configure Gemini-to-Voyage fallback, because their vectors are different semantic spaces.
 4. Run migrations once from a host with a direct database connection:
 
    ```powershell
@@ -76,6 +78,17 @@ All workers must use the same Postgres/Supabase database. Do not give each machi
    Use the direct Postgres URL for migrations. Workers may use the configured pooled URL if that is the repository convention; if the driver reports prepared-statement errors through a transaction pooler, use the repository's pooler-compatible setting (usually statement cache disabled).
 
 The migrations are idempotent. Do not delete production data or mark imported procedures verified.
+
+If the corpus was produced before migrations 42/43, repair vectors only after
+the selected provider has usable quota. This preserves each procedure's
+candidate/unverified state while rebuilding the single recorded vector space:
+
+```powershell
+python scripts/backfill_procedure_embeddings.py --replace-existing --source-id addy-agent-skills --limit 10
+```
+
+Repeat bounded batches for each source, then run retrieval QA. Do not mix a
+second provider into the same corpus as a rate-limit fallback.
 
 ## 3. Queue work by source
 
@@ -98,19 +111,19 @@ Start one bounded worker process per laptop/Oracle instance, all using the same 
 
 ```powershell
 cd backend
-python scripts/ingest_skills.py ingest --process-jobs --worker-limit 10
+python scripts/ingest_skills.py worker --max-jobs 10 --worker-id cpu-laptop-1
 ```
 
-For a CPU laptop use roughly 5–10 concurrent jobs. For an Oracle instance start at 10–25, then lower the value if GitHub or embedding API rate limits appear. One process per host is enough; multiple hosts coordinate through row locking (`SKIP LOCKED`). A crashed worker leaves retryable jobs for another worker.
+`worker` drains already-queued jobs only; it never rediscovers or enqueues a source, so it is safe for CI/serverless bursts. `--max-jobs` is a bounded sequential batch, not a concurrency setting. Start with 1–10 per invocation and one worker process per CPU-limited host. Multiple hosts coordinate through row locking (`SKIP LOCKED`). A crashed worker leaves retryable jobs for another worker.
 
 To requeue failed jobs and then drain them:
 
 ```powershell
 python scripts/ingest_skills.py ingest --resume
-python scripts/ingest_skills.py ingest --process-jobs --worker-limit 10
+python scripts/ingest_skills.py worker --max-jobs 10 --worker-id cpu-laptop-1
 ```
 
-Do not run deduplication with `--apply` while workers are writing. Keep imported procedures in candidate/unverified state.
+`--resume` deliberately does not retry embedding-provider failures. Restore quota or explicitly choose a provider first; only then use `--include-embedding-failures`. Do not run deduplication with `--apply` while workers are writing. Keep imported procedures in candidate/unverified state.
 
 ## 5. Monitor the queue
 
@@ -134,7 +147,7 @@ WHERE job_type = 'ingest_skill_package'
 ORDER BY id;
 ```
 
-The queue's persisted states are the states implemented by the current schema (`pending`, `processing`, `done`, and `failed`). Treat `processing` jobs left by a dead process according to the existing retry/claim logic; do not invent a second job table.
+The queue's persisted states are `pending`, `processing`, `done`, `failed`, and `cancelled`. `cancelled` retains duplicate scheduling attempts for audit and must not be resumed. Treat `processing` jobs left by a dead process according to the existing retry/claim logic; do not invent a second job table.
 
 The queue is drained when there are no `pending` or `processing` skill-package jobs. Retry failures only after reading their individual error messages. A partial source failure must remain visible in the final report.
 
@@ -171,7 +184,7 @@ Update `.scratch/skill_ingestion_wave1_report.md` with actual counts from the sh
 1. Send/commit the listed source, migration, test, and manifest files.
 2. Configure each worker with the same database and API credentials locally.
 3. Apply migrations once using a direct database connection.
-4. Check existing job counts; queue only missing or failed sources.
+4. Check existing job counts; queue only missing sources. Do not use source discovery/enqueue as the worker command.
 5. Start bounded workers on the CPU laptop and Oracle instances.
 6. Monitor until `pending = 0` and `processing = 0`; inspect and retry failures.
 7. Run retrieval QA, focused tests, and the dry-run dedup sweep.
