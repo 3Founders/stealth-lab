@@ -506,7 +506,7 @@ def test_migration_upgrade_path_populated_v1_to_hardening():
     # (35..38) carry no destructive DDL.
     g = subprocess.run(
         ["git", "grep", "-nE", "DROP TABLE|DROP COLUMN|TRUNCATE",
-         "--", "db/35_*", "db/36_*", "db/37_*", "db/38_*", "db/39_*", "db/40_*", "db/42_*"],
+         "--", "db/35_*", "db/36_*", "db/37_*", "db/38_*", "db/39_*", "db/40_*", "db/42_*", "db/43_*"],
         capture_output=True, text=True, cwd=str(_BACKEND_ROOT),
     )
     assert g.returncode == 1 and g.stdout.strip() == "", (
@@ -524,6 +524,7 @@ def test_migration_upgrade_path_populated_v1_to_hardening():
         "39_structured_skill_ingestion.sql",
         "40_ingested_artifact_extractor_identity.sql",
         "42_worker_ingestion_integrity.sql",
+        "43_skill_job_payload_object.sql",
     }
     assert required_hardening <= {p.name for p in hardening_files}, [p.name for p in hardening_files]
 
@@ -555,7 +556,8 @@ def test_migration_upgrade_path_populated_v1_to_hardening():
                      "38_candidates_no_action_justified.sql",
                      "39_structured_skill_ingestion.sql",
                      "40_ingested_artifact_extractor_identity.sql",
-                     "42_worker_ingestion_integrity.sql"):
+                     "42_worker_ingestion_integrity.sql",
+                     "43_skill_job_payload_object.sql"):
             assert f"applied   {name}" in up.stdout, up.stdout
 
         # --- phase 4: assertions on the upgraded DB ---
