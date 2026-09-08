@@ -38,8 +38,20 @@ module CHANGELOG below. Re-running the harness after a corpus or
 representation change is how this number is revised -- never by taste.
 
 CHANGELOG
-  relgate_v1 (2026-09-08): cutoff and bands set from
-    retrieval_eval_v1.report.json -- see that file for the sweep.
+  relgate_v1 (2026-09-08): cutoff 0.6839, strong band 0.7317, set from
+    retrieval_eval_v1.report.json. Corpus: 2478 procedures embedded with
+    local:mxbai-embed-large @ retrieval-document procdoc_v1 (paid
+    Gemini/Voyage quotas exhausted; the repo's built-in local-model path
+    was used so query and corpus share one space). Eval set: 57 queries /
+    855 labelled candidates across 8 buckets. Selection rule: max F1 s.t.
+    the no-match bucket returns zero results in >= 90% of its queries
+    (it does so at 100% for every cutoff >= 0.55 -- the fixture-junk
+    similarity floor tops out at 0.53). At 0.6839: precision 0.695,
+    recall 0.525, F1 0.598, P@3 0.766, nDCG@10 0.579. Recall is bounded
+    by mxbai-embed-large's weaker vocabulary-shift handling and will rise
+    if the corpus is re-embedded with a stronger model -- re-run
+    scripts/eval_retrieval_quality.py --measure and update these two
+    numbers from the new report, never by taste.
 """
 from __future__ import annotations
 
@@ -52,12 +64,11 @@ RELEVANCE_GATE_VERSION = "relgate_v1"
 # Operates on cosine similarity in [0, 1] == 1 - (embedding <=> query),
 # which find_applicable_procedures already attaches as `_similarity_score`.
 #
-# PLACEHOLDER until the harness runs against the fully re-embedded corpus.
-# The harness writes the real values into retrieval_eval_v1.report.json and
-# this module is updated from it in the same change. A None cutoff means
-# "not yet measured -- do not gate" (fail open, never silently guess).
-RELEVANCE_GATE_MIN_SIMILARITY: Optional[float] = None
-RELEVANCE_LABEL_STRONG_SIMILARITY: Optional[float] = None
+# Measured 2026-09-08 -- see retrieval_eval_v1.report.json and the module
+# CHANGELOG. Set None only to deliberately disable the gate (it then fails
+# open, inert); never set a hand-picked number here.
+RELEVANCE_GATE_MIN_SIMILARITY: Optional[float] = 0.6839
+RELEVANCE_LABEL_STRONG_SIMILARITY: Optional[float] = 0.7317
 
 
 _WORD_RE = re.compile(r"[a-z0-9]+")

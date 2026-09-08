@@ -391,6 +391,12 @@ async def check_hard_constraints(
 _CANDIDATE_BASE_WHERE = (
     "t_invalid IS NULL AND staleness != 'stale' AND availability = 'active'"
 )
+# NOTE: excluding `is_engineering_fixture` rows was evaluated as a
+# precision lever and REJECTED -- on this corpus the flag marks 2475 of
+# 2478 live procedures (the entire bulk-ingested skill set, not just test
+# junk), so filtering on it empties product search. The relevance gate
+# (services/relevance_gate.py) is the real defence against irrelevant
+# hits; migration 45 only guarantees the column exists.
 
 
 # Lexical candidate leg (plan Part 5). Matches the GIN index built in
