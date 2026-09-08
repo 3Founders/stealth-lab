@@ -35,59 +35,62 @@ ranking** (ranker quality, threshold-independent). `optimal F1` /
 `no-match FP rate` / `zero-result rate` are at each model's **own optimal
 threshold**.
 
-## Results
+## Results  (complete — bounded 448-procedure eval index)
 
 | metric | **local** mxbai-embed-large | **gemini** gemini-embedding-001 | **voyage** voyage-3-large |
 |---|---|---|---|
-| per-model optimal threshold | 0.6906 | 0.6829 | _measurement running (bcmpyqvc0)_ |
-| precision @ threshold | 0.762 | 0.621 | _pending_ |
-| recall @ threshold | 0.481 | 0.643 | _pending_ |
-| **F1 @ threshold** | 0.589 | **0.632** | _pending_ |
-| no-match false-positive rate | 0.00 | 0.00 | _pending_ |
-| zero-result rate | (7/7 no-match → 0 results) | (7/7) | _pending_ |
-| Recall@1 | 0.277 | 0.290 | _pending_ |
-| Recall@3 | 0.475 | 0.493 | _pending_ |
-| Recall@5 | 0.546 | 0.565 | _pending_ |
-| Recall@10 | 0.722 | **0.734** | _pending_ |
-| Precision@1 | 0.579 | 0.597 | _pending_ |
-| Precision@3 | 0.404 | 0.421 | _pending_ |
-| Precision@5 | 0.326 | 0.330 | _pending_ |
-| Precision@10 | 0.242 | 0.233 | _pending_ |
-| MRR | 0.623 | **0.634** | _pending_ |
-| nDCG@10 | 0.726 | **0.741** | _pending_ |
-| embedding failures | 0 | 0 | _pending_ |
-| embedding latency (448 docs + 57 q) | ~0 s (reads live column) | ~510 s, constant free-tier 429-rotation | _pending — 3 RPM pacing_ |
-| operational cost for a 2478-doc migration | run/scale an Ollama host (cold call ~16 s) | free tier: ~35 min of 429-churn; **needs paid tier** | free tier: ~1 h at 3 RPM; **needs a payment method** |
+| **per-model optimal threshold** | 0.6906 | 0.6829 | **0.5396** |
+| precision @ threshold | **0.762** | 0.621 | 0.598 |
+| recall @ threshold | 0.481 | **0.643** | 0.631 |
+| **F1 @ threshold** | 0.589 | **0.632** | 0.614 |
+| no-match false-positive rate | 0.00 | 0.00 | 0.00 |
+| zero-result rate on no-match | 7/7 → 0 | 7/7 → 0 | 7/7 → 0 |
+| Recall@1 | 0.277 | 0.290 | **0.299** |
+| Recall@3 | 0.475 | **0.493** | 0.470 |
+| Recall@5 | 0.546 | **0.565** | 0.536 |
+| Recall@10 | 0.722 | **0.734** | 0.696 |
+| Precision@1 | 0.579 | **0.597** | 0.579 |
+| Precision@3 | 0.404 | **0.421** | 0.404 |
+| Precision@5 | 0.326 | **0.330** | 0.316 |
+| Precision@10 | 0.242 | 0.233 | 0.226 |
+| **MRR** | 0.623 | **0.634** | 0.616 |
+| **nDCG@10** | 0.726 | **0.741** | 0.727 |
+| embedding failures | 0 | 0 | **16 / 574** (free-tier 3 RPM / 10 K TPM cap) |
+| embedding latency (448–574 docs + 57 q) | ~0 s (reads the live column) | ~510 s, constant free-tier 429-rotation | ~1090 s, 3 RPM pacing |
+| operational cost for a 2478-doc migration | run/scale an Ollama host (cold call ~16 s) | free tier: ~35 min of 429-churn; **needs paid tier** | free tier: > 1 h at 3 RPM, will drop batches; **needs a payment method** |
 | provider data-use policy | data never leaves your infra (strongest) | Google AI API terms — verify per account tier | Voyage SaaS terms — verify |
 
-## Selection
+Note the **per-model optimal thresholds differ sharply** — 0.691 / 0.683
+/ 0.540 — exactly why a single raw similarity cutoff must never be shared
+across models (voyage-3-large's cosine distribution sits materially
+lower).
 
-**Ranking quality:** `gemini` > `local` on every K (MRR 0.634 vs 0.623,
-nDCG@10 0.741 vs 0.726, Recall@10 0.734 vs 0.722). `gemini` also wins F1
-at its own threshold (0.632 vs 0.589) by trading precision (0.62 vs 0.76)
-for recall (0.64 vs 0.48). Both abstain perfectly on the no-match bucket.
-The gap between `local` and `gemini` is **real but modest** on this
-bounded index (≈ 1–2 points on the ranking metrics).
+## Selection: **`gemini:gemini-embedding-001`**
 
-**`voyage` measurement is still running** and is the tie-breaker: Voyage-3
-is generally the strongest of the three for retrieval, but its free tier
-is operationally unusable at scale without a payment method.
+`gemini` leads on **MRR (0.634)**, **nDCG@10 (0.741)**, Recall@3/5/10,
+Precision@1/3/5, and **F1 at its own threshold (0.632)**. All three
+abstain perfectly on the no-match bucket.
 
-**Decision (interim, pending the voyage row):**
+- `local` has the best precision-at-threshold (0.76) but **by far the
+  worst recall (0.48)** — it is the most conservative and misses the
+  most.
+- `voyage` is roughly tied with `local` on ranking (MRR 0.616, nDCG@10
+  0.727) and behind `gemini`; it also produced **16 embedding failures**
+  on the free tier — the strongest general-purpose model of the three,
+  but not on this eval and not operationally, without paid Voyage access.
 
-- If `voyage` measurably beats `gemini` on MRR/nDCG/Recall@K AND
-  Chaitanya adds a Voyage payment method (§2a of `CHITANYA-SETUP.md`) →
-  **migrate to `voyage:voyage-3-large`**.
-- Else, if Chaitanya enables billing on the Gemini project → **migrate to
-  `gemini:gemini-embedding-001`** (measured better than the current local
-  model, an API provider is operationally simpler than self-hosting
-  Ollama at production scale).
-- If neither paid option is provisioned → **keep `local:mxbai-embed-large`**.
-  It is not the best of the three but it is fully functional, free,
-  private, has zero embedding failures, and the retrieval quality
-  difference vs the alternatives is modest on this eval. This is an
-  operational decision for Chaitanya, not a quality-only one.
+The differences are **real but modest** (≈ 1–2 points on the ranking
+metrics between `gemini` and the others). `gemini` is the measured choice.
 
-The production model is **not finalised** until the voyage row lands and
-Chaitanya makes the billing decision. The corpus re-embed (section 6) and
-the threshold re-derivation (section 7) then run against that final model.
+### Blocker on acting on the selection
+
+`gemini-embedding-001` needs a **paid Google tier** — the free tier is
+`RESOURCE_EXHAUSTED` across all three configured keys (`CHITANYA-SETUP.md`
+§2b). Until that is provisioned, **keep `local:mxbai-embed-large`**: it is
+functional, free, private, had zero embedding failures, and the retrieval
+gap is modest. This is an operational decision for Chaitanya.
+
+The production model is **not finalised** until Chaitanya makes the
+billing decision. The corpus re-embed (section 6) and threshold
+re-derivation (section 7) then run against the selected space
+(`gemini` if billing is enabled, else `local`).

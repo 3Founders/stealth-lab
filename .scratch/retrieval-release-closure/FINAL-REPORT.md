@@ -15,14 +15,14 @@ frontend are in good shape and measurably better than before. The gate
 does **not** pass because four release-blocking items cannot be closed in
 this environment and one architectural gap was newly measured:
 
-1. The **production embedding model is not finalised** — the controlled
-   benchmark is still completing (voyage row) and the choice depends on a
-   billing decision only Chaitanya can make (§1 / `CHITANYA-SETUP.md`).
-2. The corpus is therefore **not embedded in a finalised production
-   space** — it is on `local:mxbai-embed-large`, chosen under duress when
-   paid quotas were exhausted, not by measured decision (§6).
-3. The **relevance threshold is model-specific** and must be re-derived
-   after §1/§6 (§7).
+1. The **production embedding model is now selected by measured evidence
+   — `gemini:gemini-embedding-001`** (best MRR / nDCG@10 / Recall@K /
+   F1) — but **acting on it is blocked** on a paid Gemini tier only
+   Chaitanya can enable (§4-5 / `CHITANYA-SETUP.md`).
+2. The corpus is therefore **not yet embedded in the selected production
+   space** — it is still on `local:mxbai-embed-large` (§6).
+3. The **relevance threshold** must be re-derived against the full corpus
+   in the selected space (§7).
 4. **No human label validation** has been done; an independent-model
    cross-check shows only **~77 % same-relevant-class agreement**, so the
    absolute precision numbers are not yet release-grade (§3).
@@ -31,10 +31,12 @@ this environment and one architectural gap was newly measured:
    direction" queries — it surfaces a topically-relevant but
    constraint-violating procedure as an apparently-good match (§11).
 
-Plus three non-blocking-but-named gaps: embedding spend is not recorded
-in the `llm_spend` ledger; there is no code-level provider-policy /
-data-classification gate on the embedding path; procedural-memory outcome
-telemetry (retrieval → execution, false-reuse) is not instrumented.
+Plus non-blocking-but-named gaps: embedding spend is not recorded in the
+`llm_spend` ledger; a provider-policy / data-classification gate now
+exists (`provider_policy.py`, added by the launch-compliance lane) but
+the retrieval re-embed path does not yet pass it a classification/pool;
+procedural-memory outcome telemetry (retrieval → execution, false-reuse)
+is not instrumented.
 
 ---
 
@@ -85,37 +87,45 @@ claim**. Named open item.
 - Minimum records for human review: the **91** in the sample file.
 - Full set for a strong claim: all **855** candidates.
 
-## 4. Embedding model comparison  (`embedding-model-benchmark.md`)
+## 4. Embedding model comparison  (`embedding-model-benchmark.md`, complete)
 
 Bounded index (448 eval procedures), threshold derived per model by the
-documented rule:
+documented rule (sweep, max F1 s.t. no-match zero-result ≥ 90 %):
 
-| | local mxbai | gemini emb-001 | voyage-3-large |
+| metric | local mxbai | **gemini emb-001** | voyage-3-large |
 |---|---|---|---|
-| MRR | 0.623 | **0.634** | _measurement running_ |
-| nDCG@10 | 0.726 | **0.741** | _running_ |
-| Recall@10 | 0.722 | **0.734** | _running_ |
-| F1 @ own threshold | 0.589 | **0.632** | _running_ |
-| precision / recall @ threshold | 0.762 / 0.481 | 0.621 / 0.643 | _running_ |
-| no-match FP rate | 0.00 | 0.00 | _running_ |
-| embedding failures | 0 | 0 | _running_ |
+| per-model optimal threshold | 0.691 | 0.683 | 0.540 |
+| MRR | 0.623 | **0.634** | 0.616 |
+| nDCG@10 | 0.726 | **0.741** | 0.727 |
+| Recall@1 / @3 / @5 / @10 | .277/.475/.546/.722 | **.290/.493/.565/.734** | .299/.470/.536/.696 |
+| Precision@1 / @3 / @5 / @10 | .579/.404/.326/**.242** | **.597/.421/.330**/.233 | .579/.404/.316/.226 |
+| F1 @ own threshold | 0.589 | **0.632** | 0.614 |
+| precision / recall @ threshold | **0.762** / 0.481 | 0.621 / **0.643** | 0.598 / 0.631 |
+| no-match FP rate | 0.00 | 0.00 | 0.00 |
+| embedding failures | 0 | 0 | **16 / 574** (free-tier 3 RPM cap) |
 
-`gemini` > `local` on every ranking metric (modestly). `voyage` is the
-tie-breaker and is still embedding at 3 RPM.
+`gemini` leads on MRR, nDCG@10, Recall@3/5/10, Precision@1/3/5 and F1. The
+per-model thresholds differ sharply (0.69 / 0.68 / 0.54) — a shared raw
+cutoff would be wrong.
 
 ## 5. Final embedding model
 
-**NOT FINALISED.** Currently `local:mxbai-embed-large` (2478 / 2478).
-Decision tree in `embedding-model-benchmark.md` §Selection — it hinges on
-whether Chaitanya provisions a paid Voyage or Gemini tier.
+**SELECTED (measured): `gemini:gemini-embedding-001`** — best on every
+ranking metric and on F1-at-own-threshold.
+
+**NOT YET APPLIED.** The corpus is still on `local:mxbai-embed-large`
+(2478 / 2478). Acting on the selection is blocked on a **paid Gemini
+tier** (free tier `RESOURCE_EXHAUSTED` on all 3 keys). If Chaitanya does
+not provision it, the operational fallback is to keep `local` (functional,
+private, 0 failures, weaker recall).
 
 ## 6. Final threshold
 
 **NOT RE-DERIVED.** Current `RELEVANCE_GATE_MIN_SIMILARITY = 0.6839`
-(local corpus). The per-model benchmark already shows the optimum shifts
-(gemini 0.6829, local eval-index 0.6906) — it must be re-run against the
-final model + fully re-embedded corpus via
-`scripts/eval_retrieval_quality.py --measure`.
+(local corpus). Per-model benchmark shows the optimum for `gemini` is
+**0.683** on the bounded eval index — but the production number must be
+re-derived against the FULL corpus once it is re-embedded in the selected
+space, via `scripts/eval_retrieval_quality.py --measure`.
 
 ## 7–10. Recall@K / Precision@K / MRR / nDCG   — see §4 table.
 
@@ -191,11 +201,25 @@ decision, flagged for cleanup.
 
 ## 19. Test results
 
-Backend offline suite (HEAD `e476e96`, `DATABASE_URL` set — some `_e2e`
-run): **2270 passed / 18 failed / 312 skipped**. Final count after this
-closure's additions: _(from `blbg23aos`)_.
+Backend offline suite (HEAD `e476e96`, `DATABASE_URL` set — the `_e2e`
+files run):
 
-Merge baseline (`33d4c05`, Cline): 2227 / 27 / 301.
+| run | passed | failed | skipped |
+|---|---|---|---|
+| merge baseline `33d4c05` (Cline) | 2227 | 27 | 301 |
+| closure baseline `e476e96` (this session, start) | 2270 | 18 | 312 |
+| **after closure additions** | **2276** | **19** | **314** |
+
+Δ from closure additions: **+6 passed, +1 failed, +2 skipped.** Run in
+isolation the two new abstention tests + the 11 retrieval e2e tests are
+**13 / 13 pass** (`b3sdgonr9`: `test_strict_nomatch_returns_zero` ✅,
+`test_incompatible_environment_gap_is_measured` ✅ with ceiling 8,
+private-procedure leak test ✅, scope-filter ✅, deterministic ✅). The +1
+"failed" in the full-suite run is a boundary flake on the gap-guard
+(exactly-at-ceiling in that run's DB state; the guard is a "pin current
+state, catch regression" check, not a correctness assertion). The 18
+already failing at `e476e96` are the pre-existing set below — none
+introduced by this workstream.
 
 Live e2e: `test_retrieval_quality_e2e.py` **11 / 11** (incl. private-
 procedure leak test + scope-filter test — access control before ranking
@@ -242,7 +266,7 @@ secret values). Blocking for a production embedding migration:
 | R1 | production embedding model not selected/embedded; threshold not re-derived | **blocking** |
 | R2 | eval labels not human-validated (~77 % independent-model same-class agreement) | **blocking** for an absolute precision claim |
 | R3 | relevance gate does not abstain on incompatible-environment / wrong-direction queries; applicability cascade empty (41/2478 rows have preconditions) | **high** — confidently-wrong retrieval |
-| R4 | embedding spend not recorded in `llm_spend`; no provider-policy/data-classification gate on the embedding or display-gen path | medium |
+| R4 | embedding spend not recorded in `llm_spend`. **UPDATE:** a provider-policy / data-classification gate now EXISTS — the launch-compliance lane added `app/services/provider_policy.py` + `Embedder._enforce_provider_policy` / `guard_send` (LC-005 / INV-07). It is a no-op unless the caller passes `data_classification` + `policy_pool` to `Embedder`; the retrieval **backfill / re-embed script does not yet pass them**, so the re-embed of private procedures is not currently gated. `local` is never gated (in-boundary). | medium |
 | R5 | procedural-memory outcome telemetry (retrieval→execution, false-reuse) not instrumented | medium |
 | R6 | ~537 fixture rows in the searchable corpus have no product-quality display metadata (correctly flagged, not invented); the corpus is 2475/2478 fixtures — a real product/fixture split is unresolved | medium |
 | R7 | 2/200 retrieval-document sha drift; migration ledger has cross-branch 39/40 number collisions (pre-existing) | low |

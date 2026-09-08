@@ -1,0 +1,393 @@
+{
+  "held_constant": [
+    "corpus",
+    "procdoc_v1 representation",
+    "_PROC_LEXICAL_SQL lexical leg",
+    "fuse_rrf",
+    "_CANDIDATE_BASE_WHERE browse filter",
+    "access=unrestricted",
+    "ranking",
+    "57 queries",
+    "855 labels",
+    "scoring"
+  ],
+  "varied": "embedding model only",
+  "threshold_rule": "max F1 s.t. no-match bucket zero-result rate >= 0.9; tie -> higher cutoff; swept per model",
+  "topn": 50,
+  "results": {
+    "local": {
+      "model_id": "local:mxbai-embed-large",
+      "embedding_failures": 0,
+      "embedding_latency_s_total": 0.0,
+      "optimal_threshold": 0.6906,
+      "at_optimal_threshold": {
+        "precision": 0.7615,
+        "recall": 0.4806,
+        "f1": 0.5893,
+        "no_match_zero_result_rate": 1.0,
+        "no_match_false_positive_rate": 0.0
+      },
+      "raw_ranking": {
+        "recall@1": 0.2767,
+        "recall@3": 0.4745,
+        "recall@5": 0.546,
+        "recall@10": 0.722,
+        "precision@1": 0.5789,
+        "precision@3": 0.4035,
+        "precision@5": 0.3263,
+        "precision@10": 0.2421,
+        "mrr": 0.6229,
+        "ndcg@10": 0.7263
+      },
+      "note": "salvaged from first benchmark run (crash before JSON write); index=eval, same harness"
+    },
+    "gemini": {
+      "model_id": "gemini:gemini-embedding-001",
+      "embedding_failures": 0,
+      "embedding_latency_s_total": 510.0,
+      "optimal_threshold": 0.6829,
+      "at_optimal_threshold": {
+        "precision": 0.6207,
+        "recall": 0.6429,
+        "f1": 0.6316,
+        "no_match_zero_result_rate": 1.0,
+        "no_match_false_positive_rate": 0.0
+      },
+      "raw_ranking": {
+        "recall@1": 0.2895,
+        "recall@3": 0.4925,
+        "recall@5": 0.5648,
+        "recall@10": 0.7335,
+        "precision@1": 0.5965,
+        "precision@3": 0.4211,
+        "precision@5": 0.3298,
+        "precision@10": 0.2333,
+        "mrr": 0.6338,
+        "ndcg@10": 0.7407
+      },
+      "note": "salvaged from first benchmark run; index=eval, same harness. Second run's gemini phase failed (all 3 free-tier keys RESOURCE_EXHAUSTED)."
+    },
+    "voyage": {
+      "model_id": "voyage:voyage-3-large",
+      "embedding_failures": 16,
+      "embedding_latency_s_total": 1089.8,
+      "docs_embedded": 558,
+      "optimal_threshold": 0.5396,
+      "at_optimal_threshold": {
+        "precision": 0.5981,
+        "recall": 0.6313,
+        "f1": 0.6143,
+        "no_match_zero_result_rate": 1.0,
+        "no_match_false_positive_rate": 0.0
+      },
+      "raw_ranking": {
+        "recall@1": 0.2992,
+        "recall@3": 0.47,
+        "recall@5": 0.5363,
+        "recall@10": 0.6955,
+        "precision@1": 0.5789,
+        "precision@3": 0.4035,
+        "precision@5": 0.3158,
+        "precision@10": 0.2263,
+        "mrr": 0.6156,
+        "ndcg@10": 0.7273
+      },
+      "zero_result_rate_at_threshold": 0.3333,
+      "curve": [
+        {
+          "cutoff": 0.0,
+          "precision": 0.0695,
+          "recall": 1.0,
+          "f1": 0.1299,
+          "no_match_zero_rate": 0.0
+        },
+        {
+          "cutoff": 0.0193,
+          "precision": 0.1094,
+          "recall": 0.9747,
+          "f1": 0.1967,
+          "no_match_zero_rate": 0.0
+        },
+        {
+          "cutoff": 0.0385,
+          "precision": 0.1094,
+          "recall": 0.9747,
+          "f1": 0.1967,
+          "no_match_zero_rate": 0.0
+        },
+        {
+          "cutoff": 0.0578,
+          "precision": 0.1094,
+          "recall": 0.9747,
+          "f1": 0.1967,
+          "no_match_zero_rate": 0.0
+        },
+        {
+          "cutoff": 0.0771,
+          "precision": 0.1094,
+          "recall": 0.9747,
+          "f1": 0.1967,
+          "no_match_zero_rate": 0.0
+        },
+        {
+          "cutoff": 0.0964,
+          "precision": 0.1094,
+          "recall": 0.9747,
+          "f1": 0.1967,
+          "no_match_zero_rate": 0.0
+        },
+        {
+          "cutoff": 0.1156,
+          "precision": 0.1094,
+          "recall": 0.9747,
+          "f1": 0.1967,
+          "no_match_zero_rate": 0.0
+        },
+        {
+          "cutoff": 0.1349,
+          "precision": 0.1094,
+          "recall": 0.9747,
+          "f1": 0.1967,
+          "no_match_zero_rate": 0.0
+        },
+        {
+          "cutoff": 0.1542,
+          "precision": 0.1094,
+          "recall": 0.9747,
+          "f1": 0.1967,
+          "no_match_zero_rate": 0.0
+        },
+        {
+          "cutoff": 0.1734,
+          "precision": 0.1094,
+          "recall": 0.9747,
+          "f1": 0.1967,
+          "no_match_zero_rate": 0.0
+        },
+        {
+          "cutoff": 0.1927,
+          "precision": 0.1094,
+          "recall": 0.9747,
+          "f1": 0.1967,
+          "no_match_zero_rate": 0.0
+        },
+        {
+          "cutoff": 0.212,
+          "precision": 0.1094,
+          "recall": 0.9747,
+          "f1": 0.1967,
+          "no_match_zero_rate": 0.0
+        },
+        {
+          "cutoff": 0.2313,
+          "precision": 0.1094,
+          "recall": 0.9747,
+          "f1": 0.1967,
+          "no_match_zero_rate": 0.0
+        },
+        {
+          "cutoff": 0.2505,
+          "precision": 0.1094,
+          "recall": 0.9747,
+          "f1": 0.1967,
+          "no_match_zero_rate": 0.0
+        },
+        {
+          "cutoff": 0.2698,
+          "precision": 0.1094,
+          "recall": 0.9747,
+          "f1": 0.1967,
+          "no_match_zero_rate": 0.0
+        },
+        {
+          "cutoff": 0.2891,
+          "precision": 0.1116,
+          "recall": 0.9747,
+          "f1": 0.2002,
+          "no_match_zero_rate": 0.0
+        },
+        {
+          "cutoff": 0.3083,
+          "precision": 0.1127,
+          "recall": 0.9747,
+          "f1": 0.202,
+          "no_match_zero_rate": 0.0
+        },
+        {
+          "cutoff": 0.3276,
+          "precision": 0.1161,
+          "recall": 0.9747,
+          "f1": 0.2074,
+          "no_match_zero_rate": 0.1429
+        },
+        {
+          "cutoff": 0.3469,
+          "precision": 0.1217,
+          "recall": 0.9747,
+          "f1": 0.2164,
+          "no_match_zero_rate": 0.4286
+        },
+        {
+          "cutoff": 0.3662,
+          "precision": 0.1306,
+          "recall": 0.9747,
+          "f1": 0.2303,
+          "no_match_zero_rate": 0.5714
+        },
+        {
+          "cutoff": 0.3854,
+          "precision": 0.1415,
+          "recall": 0.9747,
+          "f1": 0.2471,
+          "no_match_zero_rate": 0.7143
+        },
+        {
+          "cutoff": 0.4047,
+          "precision": 0.1548,
+          "recall": 0.9646,
+          "f1": 0.2668,
+          "no_match_zero_rate": 0.7143
+        },
+        {
+          "cutoff": 0.424,
+          "precision": 0.179,
+          "recall": 0.9394,
+          "f1": 0.3007,
+          "no_match_zero_rate": 0.8571
+        },
+        {
+          "cutoff": 0.4432,
+          "precision": 0.2127,
+          "recall": 0.9293,
+          "f1": 0.3462,
+          "no_match_zero_rate": 0.8571
+        },
+        {
+          "cutoff": 0.4625,
+          "precision": 0.2507,
+          "recall": 0.9192,
+          "f1": 0.3939,
+          "no_match_zero_rate": 1.0
+        },
+        {
+          "cutoff": 0.4818,
+          "precision": 0.3007,
+          "recall": 0.8838,
+          "f1": 0.4487,
+          "no_match_zero_rate": 1.0
+        },
+        {
+          "cutoff": 0.5011,
+          "precision": 0.3762,
+          "recall": 0.798,
+          "f1": 0.5113,
+          "no_match_zero_rate": 1.0
+        },
+        {
+          "cutoff": 0.5203,
+          "precision": 0.4757,
+          "recall": 0.6919,
+          "f1": 0.5638,
+          "no_match_zero_rate": 1.0
+        },
+        {
+          "cutoff": 0.5396,
+          "precision": 0.5981,
+          "recall": 0.6313,
+          "f1": 0.6143,
+          "no_match_zero_rate": 1.0
+        },
+        {
+          "cutoff": 0.5589,
+          "precision": 0.7172,
+          "recall": 0.5253,
+          "f1": 0.6064,
+          "no_match_zero_rate": 1.0
+        },
+        {
+          "cutoff": 0.5781,
+          "precision": 0.7456,
+          "recall": 0.4293,
+          "f1": 0.5449,
+          "no_match_zero_rate": 1.0
+        },
+        {
+          "cutoff": 0.5974,
+          "precision": 0.7558,
+          "recall": 0.3283,
+          "f1": 0.4577,
+          "no_match_zero_rate": 1.0
+        },
+        {
+          "cutoff": 0.6167,
+          "precision": 0.8219,
+          "recall": 0.303,
+          "f1": 0.4428,
+          "no_match_zero_rate": 1.0
+        },
+        {
+          "cutoff": 0.636,
+          "precision": 0.86,
+          "recall": 0.2172,
+          "f1": 0.3468,
+          "no_match_zero_rate": 1.0
+        },
+        {
+          "cutoff": 0.6552,
+          "precision": 0.9655,
+          "recall": 0.1414,
+          "f1": 0.2467,
+          "no_match_zero_rate": 1.0
+        },
+        {
+          "cutoff": 0.6745,
+          "precision": 1.0,
+          "recall": 0.1061,
+          "f1": 0.1918,
+          "no_match_zero_rate": 1.0
+        },
+        {
+          "cutoff": 0.6938,
+          "precision": 1.0,
+          "recall": 0.0859,
+          "f1": 0.1581,
+          "no_match_zero_rate": 1.0
+        },
+        {
+          "cutoff": 0.7131,
+          "precision": 1.0,
+          "recall": 0.0657,
+          "f1": 0.1232,
+          "no_match_zero_rate": 1.0
+        },
+        {
+          "cutoff": 0.7323,
+          "precision": 1.0,
+          "recall": 0.0354,
+          "f1": 0.0683,
+          "no_match_zero_rate": 1.0
+        },
+        {
+          "cutoff": 0.7516,
+          "precision": 1.0,
+          "recall": 0.0152,
+          "f1": 0.0299,
+          "no_match_zero_rate": 1.0
+        },
+        {
+          "cutoff": 0.7709,
+          "precision": 1.0,
+          "recall": 0.0101,
+          "f1": 0.02,
+          "no_match_zero_rate": 1.0
+        }
+      ]
+    }
+  },
+  "selection": {
+    "winner": "gemini:gemini-embedding-001",
+    "rationale": "Leads on MRR (0.634 vs local 0.623, voyage 0.616), nDCG@10 (0.741 vs 0.726/0.727), Recall@3/5/10, Precision@1, and F1 at its own threshold (0.632 vs 0.589/0.614). All three abstain perfectly on no-match. Local has the best precision-at-threshold but by far the worst recall (0.48). Voyage is ~tied with local on ranking and had 16/574 embedding failures on the free tier.",
+    "blocker": "requires a paid Gemini tier (free tier RESOURCE_EXHAUSTED). If no paid tier is provisioned, keep local:mxbai-embed-large (functional, private, 0 failures, weaker recall).",
+    "threshold_note": "per-model optimal cutoffs differ sharply -- local 0.691, gemini 0.683, voyage 0.540 -- confirming the rule that a single raw threshold must not be shared across models. The production threshold is re-derived after the full re-embed in the selected space."
+  }
+}
