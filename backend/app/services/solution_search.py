@@ -167,12 +167,21 @@ def _base_result(object_type: str, item: dict, native_rank: int) -> dict[str, An
         return {
             "type": "procedure",
             "id": item.get("id"),
-            "title": item.get("name"),
-            "goal": item.get("goal"),
+            # Human-facing first (plan Part 12/13): the display name/
+            # description, not the machine slug. `name` is carried as the
+            # secondary technical label.
+            "title": item.get("display_name") or item.get("name"),
+            "name": item.get("name"),
+            "goal": item.get("display_description") or item.get("goal"),
+            "applicability_summary": item.get("applicability_summary"),
+            "relevance_label": item.get("relevance_label"),
+            "relevance_reason": item.get("relevance_reason"),
+            "evidence_summary": item.get("evidence_summary"),
+            "failure_modes": item.get("failure_modes") or [],
             # A procedure hit here only exists because it survived
-            # find_applicable_procedures' hard-constraint cascade
-            # (domain_search._search_procedures reuses that verbatim) --
-            # so `applicable` is honestly True for every procedure result,
+            # find_applicable_procedures' hard-constraint cascade AND the
+            # relevance gate (domain_search._search_procedures) -- so
+            # `applicable` is honestly True for every procedure result,
             # not a fabricated pass/fail this module re-derives.
             "applicable": True,
             "verification": {
@@ -182,13 +191,14 @@ def _base_result(object_type: str, item: dict, native_rank: int) -> dict[str, An
                 "approval_status": item.get("approval_status"),
             },
             "capability": None,  # filled in by _hydrate_procedure for the top-N cap
-            "provenance": None,  # filled in by _hydrate_procedure for the top-N cap
+            "provenance": item.get("provenance"),  # enriched by _hydrate_procedure
             "claims": [],  # filled in by _hydrate_procedure for the top-N cap
+            "scope": item.get("scope") or {},
             "scope_type": item.get("scope_type"),
             "scope_entity_id": item.get("scope_entity_id"),
             "version": item.get("version"),
             # NOT cross-comparable to a task's native_score -- see module
-            # docstring. Carried through for transparency/debugging only.
+            # docstring. Debug-only; never the user-facing meaning of match.
             "native_score": item.get("similarity_score"),
             "native_rank": native_rank,
         }

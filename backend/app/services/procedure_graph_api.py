@@ -69,6 +69,10 @@ from app.services.procedure_extraction.capability import (
     wilson_interval,
 )
 from app.services.procedures import get_procedure
+from app.services.retrieval_document import (
+    build_applicability_summary,
+    build_failure_modes,
+)
 
 # Evidence rows this module treats as outcome-bearing for the P estimate.
 # `procedure_evidence_stats` (db/24_evidence.sql, as amended by
@@ -286,6 +290,12 @@ async def get_procedure_detail(
         "family_id": str(procedure["family_id"]) if procedure.get("family_id") else None,
         "name": procedure["name"],
         "goal": procedure["goal"],
+        # Human-facing (plan Part 14): the detail page leads with these,
+        # `name` stays the technical secondary label.
+        "display_name": procedure.get("display_name") or procedure["name"],
+        "display_description": procedure.get("display_description") or procedure["goal"],
+        "applicability_summary": build_applicability_summary(dict(procedure)),
+        "failure_modes": build_failure_modes(dict(procedure)),
         "steps": procedure.get("steps") or [],
         "preconditions": procedure.get("preconditions") or [],
         "invariants": procedure.get("invariants") or [],
@@ -512,6 +522,12 @@ async def get_solution_view(
         "version": procedure["version"],
         "name": procedure["name"],
         "goal": procedure["goal"],
+        # Human-facing fields (plan Part 15) -- the machine slug stays as
+        # `name`; the UI leads with these.
+        "display_name": procedure.get("display_name") or procedure["name"],
+        "display_description": procedure.get("display_description") or procedure["goal"],
+        "applicability_summary": build_applicability_summary(dict(procedure)),
+        "failure_modes": build_failure_modes(dict(procedure)),
         "implementation_id": implementation_id,
         "implementations": implementation_resolutions,
         "runtime_execution": runtime_execution,

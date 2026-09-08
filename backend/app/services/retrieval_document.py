@@ -359,3 +359,25 @@ def build_procedure_retrieval_document(
 
 def retrieval_document_sha256(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+# --------------------------------------------------------------------------
+# Presentation helpers (plan Part 7 / Part 13 / Part 14). Deterministic,
+# built only from the procedure's own recorded structure -- never an
+# invented claim, never a query-time model call.
+# --------------------------------------------------------------------------
+
+
+def build_applicability_summary(proc: Mapping[str, Any]) -> Optional[str]:
+    """One "when to use" line for the search card / detail page: the
+    procedure's own ``applies_when`` prose plus any trigger-shaped goal
+    text plus its rendered preconditions. ``None`` when the procedure
+    records nothing about when it applies."""
+    purpose = _norm(proc.get("capability_statement") or proc.get("goal") or "")
+    text = _when_to_use(proc, purpose)
+    return text or None
+
+
+def build_failure_modes(proc: Mapping[str, Any]) -> list[str]:
+    """Known failure conditions as short human-readable lines, or []."""
+    return _render_failure_conditions(proc)

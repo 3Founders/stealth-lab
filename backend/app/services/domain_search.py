@@ -109,7 +109,16 @@ from app.services.applicability import (
     find_applicable_procedures,
 )
 from app.services.embeddings import Embedder
+from app.services.relevance_gate import (
+    passes_relevance_gate,
+    relevance_label,
+    relevance_reason,
+)
 from app.services.retrieval import NOT_TRUTH_STATE_OUT, HybridRetriever, fuse_rrf
+from app.services.retrieval_document import (
+    build_applicability_summary,
+    build_failure_modes,
+)
 
 VALID_OBJECT_TYPES: tuple[str, ...] = ("procedure", "task", "claim")
 
@@ -260,18 +269,43 @@ async def _search_procedures(
             scope_type=scope_type, repository_id=repository_id, project_id=project_id,
         ):
             continue
+        similarity = proc.get("_similarity_score")
+        # RELEVANCE GATE (plan Part 6): drop a survivor whose best relevance
+        # signal is below the MEASURED cutoff. Runs AFTER the applicability
+        # cascade, BEFORE presentation. Never re-ranks; returning fewer --
+        # or zero -- results is correct, not a failure to pad.
+        if not passes_relevance_gate(similarity):
+            continue
+        stats = proc.get("verification_stats") or {}
         out.append({
             "id": str(proc["id"]),
             "procedure_id": str(proc["procedure_id"]),
             "name": proc["name"],
             "goal": proc["goal"],
+            # --- human-facing (plan Part 7) ---
+            "display_name": proc.get("display_name") or proc["name"],
+            "display_description": proc.get("display_description") or proc["goal"],
+            "applicability_summary": build_applicability_summary(proc),
+            "relevance_label": relevance_label(similarity),
+            "relevance_reason": (
+                relevance_reason(query_text, proc) if query_text else None
+            ),
             "verification_state": proc["verification_state"],
+            "evidence_summary": {
+                "successes": stats.get("successes", 0),
+                "attempts": stats.get("attempts", 0),
+                "distinct_contexts": stats.get("distinct_contexts", 0),
+            },
+            "failure_modes": build_failure_modes(proc),
+            "provenance": proc.get("provenance"),
+            "scope": proc.get("scope") or {},
+            # --- internal / debug ---
             "staleness": proc["staleness"],
             "availability": proc["availability"],
             "approval_status": proc.get("approval_status"),
             "scope_type": proc.get("scope_type"),
             "scope_entity_id": proc.get("scope_entity_id"),
-            "similarity_score": proc.get("_similarity_score"),
+            "similarity_score": similarity,
             "version": proc.get("version"),
         })
         if len(out) >= limit:
