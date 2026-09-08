@@ -1,0 +1,180 @@
+name: Stealth Wave 1 Ingestion
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  PYTHONUNBUFFERED: "1"
+  DATABASE_URL: ${{ secrets.DATABASE_URL }}
+  GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+  GEMINI_API_KEYS: ${{ secrets.GEMINI_API_KEYS }}
+  VOYAGE_API_KEY: ${{ secrets.VOYAGE_API_KEY }}
+
+jobs:
+  enqueue:
+    name: Discover and enqueue Wave 1
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout exact ingestion commit
+        uses: actions/checkout@v4
+        with:
+          ref: a4504a0
+
+      - name: Verify commit
+        run: |
+          git rev-parse HEAD
+          test "$(git rev-parse --short=7 HEAD)" = "a4504a0"
+
+      - name: Verify Wave 1 manifest
+        run: |
+          test -f config/skill_sources.yaml
+          echo "Found config/skill_sources.yaml"
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install dependencies
+        working-directory: backend
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Discover and enqueue packages
+        working-directory: backend
+        run: |
+          python scripts/ingest_skills.py ingest --queue-only
+
+  workers:
+    name: Worker ${{ matrix.worker }}
+    needs: enqueue
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    strategy:
+      fail-fast: false
+      matrix:
+        worker: [1, 2, 3, 4]
+
+    env:
+      CALLER_TAG: gha-wave1-${{ github.run_id }}-${{ matrix.worker }}
+
+    steps:
+      - name: Checkout exact ingestion commit
+        uses: actions/checkout@v4
+        with:
+          ref: a4504a0
+
+      - name: Verify commit
+        run: |
+          git rev-parse HEAD
+          test "$(git rev-parse --short=7 HEAD)" = "a4504a0"
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install dependencies
+        working-directory: backend
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Consume queued jobs until queue is empty
+        working-directory: backend
+        shell: bash
+        run: |
+          python - <<'PY'
+          import asyncio
+          import json
+          import os
+
+          from app.db.session import create_pool
+          from app.services.ingestion_jobs import process_pending_jobs
+
+          async def main():
+              pool = await create_pool(os.environ["DATABASE_URL"])
+              totals = {"claimed": 0, "done": 0, "failed": 0, "unknown_type": 0}
+              try:
+                  while True:
+                      result = await process_pending_jobs(pool, limit=1)
+                      for key in totals:
+                          totals[key] += int(result.get(key, 0))
+                      print(json.dumps({"iteration": result, "totals": totals}), flush=True)
+                      if int(result.get("claimed", 0)) == 0:
+                          break
+              finally:
+                  await pool.close()
+
+              print("WORKER COMPLETE")
+              print(json.dumps(totals, indent=2))
+              if totals["failed"] or totals["unknown_type"]:
+                  raise SystemExit(1)
+
+          asyncio.run(main())
+          PY
+
+  summary:
+    name: Wave 1 summary
+    needs: workers
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout exact ingestion commit
+        uses: actions/checkout@v4
+        with:
+          ref: a4504a0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        working-directory: backend
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Print ingestion job status
+        working-directory: backend
+        shell: bash
+        run: |
+          python - <<'PY'
+          import asyncio
+          import os
+          from app.db.session import create_pool
+
+          async def main():
+              pool = await create_pool(os.environ["DATABASE_URL"])
+              try:
+                  rows = await pool.fetch(
+                      """
+                      SELECT status, COUNT(*) AS count
+                      FROM ingestion_jobs
+                      WHERE job_type = 'ingest_skill_package'
+                      GROUP BY status
+                      ORDER BY status
+                      """
+                  )
+                  print("Wave 1 skill-ingestion jobs:")
+                  for row in rows:
+                      print(f"{row['status']}: {row['count']}")
+              finally:
+                  await pool.close()
+
+          asyncio.run(main())
+          PY
