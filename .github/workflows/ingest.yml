@@ -10,24 +10,19 @@ env:
   PYTHONUNBUFFERED: "1"
 
   DATABASE_URL: ${{ secrets.DATABASE_URL }}
-
   GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
   GEMINI_API_KEYS: ${{ secrets.GEMINI_API_KEYS }}
   VOYAGE_API_KEY: ${{ secrets.VOYAGE_API_KEY }}
 
-  # Built-in GitHub Actions token.
-  # The ingestion adapters use GITHUB_TOKEN when available.
+  # Built-in GitHub token for authenticated GitHub API access
   GITHUB_TOKEN: ${{ github.token }}
 
 jobs:
 
-  # ============================================================
-  # 1. DISCOVER ALL WAVE-1 SKILL PACKAGES AND ENQUEUE THEM
-  # ============================================================
-
   enqueue:
     name: Discover and enqueue Wave 1
     runs-on: ubuntu-latest
+    environment: Production
     timeout-minutes: 20
 
     steps:
@@ -36,18 +31,20 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Pin exact ingestion commit
+      - name: Pin exact final commit
         shell: bash
         run: |
           set -euo pipefail
 
+          EXPECTED_SHA="bb3dbb1e14a326a70d8b3a98b1f0fa6347599ec8"
+
           git fetch --all --tags
-          git checkout a4504a0
+          git checkout "$EXPECTED_SHA"
 
           echo "Checked out:"
           git rev-parse HEAD
 
-          test "$(git rev-parse --short=7 HEAD)" = "a4504a0"
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
 
       - name: Verify Wave 1 manifest
         shell: bash
@@ -55,8 +52,7 @@ jobs:
           set -euo pipefail
 
           test -f config/skill_sources.yaml
-
-          echo "Found Wave 1 manifest:"
+          echo "Found config/skill_sources.yaml"
           ls -lh config/skill_sources.yaml
 
       - name: Set up Python
@@ -88,12 +84,12 @@ jobs:
 
           echo "DATABASE_URL is present"
 
-          if [ -n "${GITHUB_TOKEN:-}" ]; then
-            echo "GITHUB_TOKEN is present"
-          else
+          if [ -z "${GITHUB_TOKEN:-}" ]; then
             echo "ERROR: GITHUB_TOKEN is missing"
             exit 1
           fi
+
+          echo "GITHUB_TOKEN is present"
 
       - name: Discover and enqueue packages
         working-directory: backend
@@ -105,25 +101,11 @@ jobs:
             --queue-only
 
 
-  # ============================================================
-  # 2. FOUR PARALLEL INGESTION WORKERS
-  #
-  # Each GitHub Actions job = one real worker/consumer.
-  #
-  # Each worker:
-  #   claim 1
-  #   process 1
-  #   claim next
-  #   ...
-  #   exit when no pending job remains
-  # ============================================================
-
   workers:
     name: Worker ${{ matrix.worker }}
-
     needs: enqueue
-
     runs-on: ubuntu-latest
+    environment: Production
     timeout-minutes: 60
 
     strategy:
@@ -140,18 +122,20 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Pin exact ingestion commit
+      - name: Pin exact final commit
         shell: bash
         run: |
           set -euo pipefail
 
+          EXPECTED_SHA="bb3dbb1e14a326a70d8b3a98b1f0fa6347599ec8"
+
           git fetch --all --tags
-          git checkout a4504a0
+          git checkout "$EXPECTED_SHA"
 
           echo "Worker ${{ matrix.worker }} checked out:"
           git rev-parse HEAD
 
-          test "$(git rev-parse --short=7 HEAD)" = "a4504a0"
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
 
       - name: Set up Python
         uses: actions/setup-python@v6
@@ -237,8 +221,6 @@ jobs:
                           flush=True,
                       )
 
-                      # No pending job was claimable.
-                      # This worker has finished its current queue.
                       if int(result.get("claimed", 0)) == 0:
                           break
 
@@ -256,20 +238,15 @@ jobs:
           PY
 
 
-  # ============================================================
-  # 3. FINAL DATABASE SUMMARY
-  # ============================================================
-
   summary:
     name: Wave 1 summary
-
     needs:
       - enqueue
       - workers
-
     if: always()
 
     runs-on: ubuntu-latest
+    environment: Production
     timeout-minutes: 10
 
     steps:
@@ -278,17 +255,19 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Pin exact ingestion commit
+      - name: Pin exact final commit
         shell: bash
         run: |
           set -euo pipefail
 
+          EXPECTED_SHA="bb3dbb1e14a326a70d8b3a98b1f0fa6347599ec8"
+
           git fetch --all --tags
-          git checkout a4504a0
+          git checkout "$EXPECTED_SHA"
 
           git rev-parse HEAD
 
-          test "$(git rev-parse --short=7 HEAD)" = "a4504a0"
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
 
       - name: Set up Python
         uses: actions/setup-python@v6
