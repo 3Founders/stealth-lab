@@ -20,9 +20,9 @@ from git + tests without chat history.
 | Env (no secrets) | `backend/.env`: `SUPABASE_PROJECT_URL`, `SUPABASE_JWT_AUDIENCE=authenticated`. `frontendv1/.env.local`: `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY` (`sb_publishable_…`, gitignored). No `service_role`/`sb_secret_` in the frontend. |
 | Frontend deps | `@supabase/supabase-js@2.116.0`. `next@16.3.4`. `tsc --noEmit` clean. |
 | Frontend `/auth` | renders the email/password + Google branch; `/auth/callback` 200; dev server boots clean on `.env.local`. |
-| Migrations applied | 01–45 **and 41** (`audit_events`, `registered_workspaces`, `'org'` enum — applied by the operator). |
-| Migrations PENDING | **46** (`model_provider_policies` + `publication_records` + `data_requests` + seeds) and **47** (`procedures.tenant_id`). Both fully additive/idempotent — `CREATE TABLE IF NOT EXISTS`, `ADD COLUMN IF NOT EXISTS`, seed `INSERT … ON CONFLICT DO NOTHING`. **No irreversible operation.** Apply with `cd backend && python scripts/migrate.py`. |
-| DB state | `procedures` 2537 (2536 public / 1 private); `visibility_level` = `{public, private, org}`; `users` 0; `organizations` 1 (commons). `procedures.tenant_id` **not yet added** (mig 47). |
+| Migrations applied | 01–48 — incl. **41** (`audit_events`, `registered_workspaces`, `'org'` enum), **46** (`model_provider_policies` + 8 seed rows, `publication_records`, `data_requests`), **47** (`procedures.tenant_id`), **48** (`contributor_profiles` — the peer session's people layer). All applied by the operator 2026-09-08. |
+| Migrations PENDING | none for launch compliance. |
+| DB state | `procedures.tenant_id` present; `model_provider_policies` 8 rows (external → PUBLIC_* only; `local` → private classes); `publication_records` / `data_requests` 0 rows (nothing published/requested yet). `visibility_level` = `{public, private, org}`. `users` 0. |
 | Offline test baseline | see the "Regression" section below. |
 
 ---
@@ -86,7 +86,14 @@ proof; DB e2e skipped); same-org → allow / other-org → deny ✅ **at the
 predicate level** (needs mig 47 + org rows for a live proof); anon → public ✅;
 anon → private ✅; IDOR via body/query/path ✅ structural.
 
-### Phase 3 — Hosted repository / execution security (PARTIAL)
+### Phase 3 — Hosted repository / execution security (PARTIAL — OUT OF LAUNCH SCOPE)
+
+**Launch decision (2026-09-08): this launch does not host user repositories.**
+`HOSTED_EXECUTION_ENABLED=false`. `repo_path` stays local/loopback passthrough,
+the workspace registry is dormant, and the open items below gate only a future
+hosted-repo SaaS feature — they are NON-BLOCKING for this launch. Operational
+guardrail: keep the MCP server local/trusted (its documented posture).
+
 
 Done:
 - `workspace_registry.resolve_workspace_for_actor` (tenant-ownership; foreign
@@ -378,15 +385,40 @@ Nothing was wiped, reset, truncated, or hand-mutated.
 
 ## RELEASE GATES
 
-**AUTH/POLICY RELEASE GATE: NOT PASS**
+**AUTH/POLICY RELEASE GATE: PASS** (for a launch that does not host user repositories)
 
-Phases 1, 2 (personal/global), 4, 5, 6, 7 are implemented and offline-proven.
-But: migrations 46/47 are unapplied (B1), so publication / provider-policy /
-export / deletion cannot run against the live DB and org reads would 500;
-Phase 3 hosted-execution hardening is incomplete (B2, B3); and the DB-backed
-adversarial e2e matrix was not run (B5). The gate can move to PASS once B1 and
-B5 are done and B2/B3 are either closed or explicitly out of launch scope
-(`HOSTED_EXECUTION_ENABLED=false`).
+Update 2026-09-08 (final):
+
+- **B1 closed** — migrations 46/47/48 applied and verified live (8 provider-policy
+  rows, `procedures.tenant_id`, `publication_records`/`data_requests`/`contributor_profiles`).
+- **Phase 3 formally OUT OF LAUNCH SCOPE** — this launch does not host user
+  repositories. `HOSTED_EXECUTION_ENABLED=false` (the default): `repo_path` is
+  local/loopback passthrough, the workspace registry sits dormant, and the
+  subprocess-sandbox network-isolation gap (B3) and the un-guarded REST execution
+  paths (B2) apply only to a future hosted-repo product. The one operational
+  guardrail: keep the MCP server (`find_best_way` / `reproduce_procedure`)
+  local/trusted, per its own documented posture.
+- **B5 closed** — the DB-backed adversarial e2e suites were run against a
+  **disposable local Postgres 17 + pgvector 0.8.0** (port 55432, migrations
+  01→48 applied fresh, torn down after). **Result: 75 passed / 0 failed** across
+  `test_cross_user_isolation_e2e`, `test_product_model_privacy_e2e`,
+  `test_agent_store_idor_e2e`, `test_agents_file_download_isolation_e2e`,
+  `test_publish_e2e`, `test_local_claims_publish_e2e`,
+  `test_second_user_global_reuse_e2e`, `test_hardening_h1_identity_tenancy`,
+  `test_hardening_h2_rls_backstop`. Plus `test_schema_drift` +
+  `test_wave3_tenancy_adoption` (24 passed) and a live smoke of the new gates
+  against the real schema: provider policy denies `USER_PRIVATE → gemini` /
+  allows `PUBLIC_DERIVED → gemini`; `publish_procedure` produces a GLOBAL
+  CANDIDATE + `publication_records` row + 3 audit events; a non-owner publish is
+  denied. The only e2e failure was `test_migration_upgrade_e2e`
+  (`embedding_provider` column) — the pre-existing ingestion-lane migration-order
+  bug (baseline), not a security regression.
+
+Nothing security-relevant is outstanding for a non-hosted launch. Remaining
+non-blocking items: legal documents (B10, counsel), incident-response subsystem
+(B9, needed before *broad* public launch — P1), `frontendv1` deployment (B7),
+Google OAuth config or disable (B6), and per-call-site LLM policy wiring in
+`panel.py` (B4 — embeddings + private paths are already gated).
 
 **RETRIEVAL/PROCEDURAL-MEMORY RELEASE GATE: NOT PASS**
 
@@ -398,15 +430,15 @@ that lane is red.
 
 **INGESTION RESUME: NOT ALLOWED**
 
-Prerequisites not proven: (1) the ingestion/embedding lane has 18 failing tests
-including `test_migration_upgrade_e2e` (`embedding_provider` column);
-(2) migrations 46/47 unapplied — provider policy would fail-closed on every
-external embedding, and ingestion-sourced global candidates have no
-`publication_records`/audit attribution path until 46 is applied;
-(3) no DB-backed proof that ingested private material stays out of global
-retrieval under the new org/classification model. Resume only after the lane is
-green, 46/47 applied, and one e2e proof of ingestion → classification →
-retrieval isolation.
+Migrations 46/47/48 are now applied (was blocker 2). Remaining prerequisites not
+proven: (1) the ingestion/embedding lane still has ~18 failing offline tests
+including `test_migration_upgrade_e2e` (`embedding_provider` column) — a
+migration-ordering bug in that lane's own migrations, confirmed still failing on
+a fresh DB; (2) no DB-backed proof that ingested private material stays out of
+global retrieval under the new org/classification model (the isolation e2e run
+above covered user/procedure isolation, not an ingestion→classification→retrieval
+path). Resume only after that lane is green and one e2e proof of
+ingestion → classification → retrieval isolation exists.
 
 ---
 
