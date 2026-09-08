@@ -20,10 +20,17 @@ jobs:
     timeout-minutes: 20
 
     steps:
-      - name: Checkout exact ingestion commit
-        uses: actions/checkout@v4
+      
+      - name: Checkout repo
+        uses: actions/checkout@v6
         with:
-          ref: a4504a0
+          fetch-depth: 0
+
+      - name: Pin exact commit
+        run: |
+          git fetch --all --tags
+          git checkout a4504a0
+          test "$(git rev-parse --short HEAD)" = "a4504a0"
 
       - name: Verify commit
         run: |
