@@ -27,9 +27,10 @@ jobs:
 
   enqueue:
     name: Discover and enqueue Wave 1
+    if: ${{ inputs.enqueue }}
     runs-on: ubuntu-latest
     environment: Production
-    timeout-minutes: 20
+    timeout-minutes: 60
 
     steps:
       - name: Checkout repository
@@ -110,6 +111,7 @@ jobs:
   workers:
     name: Worker ${{ matrix.worker }}
     needs: enqueue
+    if: ${{ always() && (needs.enqueue.result == 'success' || needs.enqueue.result == 'skipped') }}
     runs-on: ubuntu-latest
     environment: Production
     timeout-minutes: 60
