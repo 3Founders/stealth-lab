@@ -16,7 +16,7 @@ from app.api.deps import require_trustworthy_identity
 from app.config import settings
 from app.db.session import close_pool, create_pool
 from app.services import ingestion_scheduler
-from app.services.authn import assert_boot_posture, install_actor_middleware
+from app.services.authn import assert_boot_posture, install_actor_middleware, oidc_configured
 
 logging.basicConfig(
     level=logging.INFO,
@@ -33,11 +33,17 @@ async def lifespan(app: FastAPI):
     # Band 2.9 frozen posture: multi-user exposure / real_auth_enabled
     # without OIDC configured refuses to boot -- the identity gate cannot
     # silently slip to a later band.
+    # oidc_configured() accounts for BOTH the generic OIDC_ISSUER/OIDC_AUDIENCE
+    # path and the Supabase Auth preset (SUPABASE_PROJECT_URL +
+    # SUPABASE_JWT_AUDIENCE) — a Supabase-only deployment must count as
+    # "identity configured", and a half-configured preset raises here so the
+    # bad posture fails at boot rather than silently degrading to anonymous.
     assert_boot_posture(
         private_visibility_enabled=settings.private_visibility_enabled,
         real_auth_enabled=settings.real_auth_enabled,
-        oidc_configured_=settings.oidc_issuer is not None and settings.oidc_audience is not None,
+        oidc_configured_=oidc_configured(settings),
         multi_user_exposure_enabled=settings.multi_user_exposure_enabled,
+        hosted_execution_enabled=settings.hosted_execution_enabled,
     )
     app.state.pool = await create_pool()
     # The seam this directive closes: without this, "user does normal

@@ -48,6 +48,7 @@ from app.services.procedures import (
     supersede_procedure,
 )
 from app.services.retrieval_document import (
+    RETRIEVAL_DOCUMENT_IMPORT_VERSION,
     RETRIEVAL_DOCUMENT_VERSION,
     build_procedure_retrieval_document,
     retrieval_document_sha256,
@@ -391,6 +392,11 @@ async def ingest_skill_md(
     created_by: str = "skill_md_ingestion",
     embedder: Optional[Embedder] = None,
     invariants: Optional[list[dict]] = None,
+    owner_id: Optional[str] = None,
+    visibility: str = "public",
+    scope_type: Optional[str] = None,
+    scope_entity_id: Optional[str] = None,
+    embed: bool = True,
 ) -> dict:
     """
     Parse + dedup-check + write, end to end. Returns
@@ -426,56 +432,88 @@ async def ingest_skill_md(
     # 'system_pending_review'. See _screen_untrusted_document.
     injection_signals = _screen_untrusted_document(parsed)
     provenance = "system_pending_review" if injection_signals else "prior_library"
+    # An end-user submission (owner_id set) is unreviewed user-entered
+    # content by definition: it is never 'prior_library' vetted material,
+    # regardless of injection screening. Private-by-default (INV-01).
+    if owner_id is not None:
+        provenance = "system_pending_review"
 
-    existing = await check_novelty(pool, embedder, parsed.description)
-    if existing is not None:
-        return {
-            "status": "duplicate",
-            "existing_procedure_id": existing["procedure_id"],
-            "similarity": existing.get("_similarity_score"),
-        }
+    if embed:
+        existing = await check_novelty(pool, embedder, parsed.description)
+        if existing is not None:
+            return {
+                "status": "duplicate",
+                "existing_procedure_id": existing["procedure_id"],
+                "similarity": existing.get("_similarity_score"),
+            }
 
     # REAL BUG this session's own production test found and fixed
     # elsewhere (submit_procedure, backfill_procedure_embeddings.py):
     # a procedure captured with no embedding can be completely starved
     # out of search once the corpus has any real size. Computed here,
     # same input_type="document" convention, BEFORE the write, not after.
+    #
+    # embed=False is the fast escape hatch (bulk import / a submission
+    # path that wants a sub-100ms write): the row is captured WITHOUT a
+    # vector and WITHOUT the dedup check, and its retrieval_document is
+    # stamped the import sentinel so the --representation embedding
+    # backfill re-embeds it. It is retrievable by owner/scope listing
+    # immediately, and by semantic search only after that backfill runs.
     retrieval_doc = build_skill_retrieval_document(parsed, domain=domain)
-    goal_vec, embedding_metadata = await embedder.embed_one_with_metadata(
-        retrieval_doc, input_type="document",
-    )
     disp_name, disp_desc, disp_version = build_skill_display_metadata(parsed)
-
     steps = [{"order": i, "goal": s} for i, s in enumerate(parsed.steps)]
-    result = await capture_procedure(
-        pool, name=parsed.name, goal=parsed.description, steps=steps,
+
+    resolved_scope_type = scope_type or ("entity" if domain else "global")
+    domain_payload: dict = {
+        "source": "skill_md",
+        "applies_when": parsed.applies_when,  # kept as PROSE, never a fabricated Predicate
+        "frontmatter": parsed.frontmatter,
+    }
+
+    capture_kwargs: dict = dict(
         provenance=provenance, domain=domain,
-        domain_payload={
-            "source": "skill_md",
-            "applies_when": parsed.applies_when,  # kept as PROSE, never a fabricated Predicate
-            "frontmatter": parsed.frontmatter,
-            "embedding": embedding_metadata.__dict__,
-        },
-        scope_type="entity" if domain else "global",
+        scope_type=resolved_scope_type, scope_entity_id=scope_entity_id,
         created_by=created_by,
-        embedding=goal_vec,
-        embedding_model_id=embedding_metadata.model_id,
-        embedding_provider=embedding_metadata.provider,
-        embedding_input_type=embedding_metadata.input_type,
-        embedding_text_hash=embedding_metadata.text_sha256,
+        owner_id=owner_id, visibility=visibility,
         retrieval_document=retrieval_doc,
-        retrieval_document_version=RETRIEVAL_DOCUMENT_VERSION,
         retrieval_document_sha256=retrieval_document_sha256(retrieval_doc),
+        # embed=False path: stamp the import sentinel so the
+        # --representation embedding backfill knows this row still owes a
+        # vector built from the canonical document (embed=True overrides
+        # this with RETRIEVAL_DOCUMENT_VERSION below).
+        retrieval_document_version=RETRIEVAL_DOCUMENT_IMPORT_VERSION,
         display_name=disp_name,
         display_description=disp_desc,
         display_metadata_version=disp_version,
         invariants=invariants,
+    )
+
+    if embed:
+        goal_vec, embedding_metadata = await embedder.embed_one_with_metadata(
+            retrieval_doc, input_type="document",
+        )
+        domain_payload["embedding"] = embedding_metadata.__dict__
+        capture_kwargs.update(
+            embedding=goal_vec,
+            embedding_model_id=embedding_metadata.model_id,
+            embedding_provider=embedding_metadata.provider,
+            embedding_input_type=embedding_metadata.input_type,
+            embedding_text_hash=embedding_metadata.text_sha256,
+            retrieval_document_version=RETRIEVAL_DOCUMENT_VERSION,
+        )
+
+    result = await capture_procedure(
+        pool, name=parsed.name, goal=parsed.description, steps=steps,
+        domain_payload=domain_payload,
+        **capture_kwargs,
     )
     return {
         "status": "captured",
         "id": result["id"],
         "procedure_id": result["procedure_id"],
         "provenance": provenance,
+        "visibility": visibility,
+        "embedded": bool(embed),
         "injection_screened": bool(injection_signals),
     }
 

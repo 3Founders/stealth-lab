@@ -170,6 +170,32 @@ stepping on each other or repeating work.
     (no migration applied, no Phase 2+ work, per founder instruction).
   - Files I will still touch: only the ones listed above + `thingstodo.md`.
 
+- **security-hardening resume / Claude Sonnet 5 — started 2026-09-08, branch `gate-2b`.**
+  Completing "Supabase Auth + Launch Security" (STEALTHLAB-LAUNCH-COMPLIANCE-SPEC-V1).
+  Phase 0 reconstruction audit is done and written to
+  `docs/launch_compliance_implementation_ledger.md` — read that for the full
+  phase 0–8 state. Now doing **Phase 1 (authentication)** only, then stopping to
+  notify the founder.
+  Files I will touch for Phase 1:
+  - BACKEND: `backend/app/api/deps.py` (add ONE central `require_authenticated_user`
+    dependency + wire org-membership resolution into `get_scope`),
+    `backend/app/main.py` (boot-posture: account for the Supabase preset +
+    `hosted_execution_enabled`), `backend/app/services/authn.py` (surface a typed
+    request principal; no rewrite of the validator), new
+    `backend/tests/test_supabase_auth_*` , apply migration
+    `backend/db/41_phase1_security_boundaries.sql` (already committed, additive,
+    idempotent — never applied).
+  - FRONTEND (`frontendv1/`): `src/lib/auth.ts`, `src/app/auth/page.tsx`, new
+    `src/lib/supabase/*`, `package.json` (+`@supabase/supabase-js`,
+    `@supabase/ssr`), `.env.local.example`; a 1-line merge into
+    `src/lib/api/client.ts` (auth-header source).
+  COORDINATION: `frontend integration stealth-lab` is listed as "auth only"
+  owner — could not reach them via agent messaging; if that agent is active on
+  frontend auth, this line yields the frontend half to them and I take backend
+  only. `retrieval representation frontend` (core-b) owns
+  `frontendv1/src/lib/api/{client,types}.ts` — my touch there is additive
+  (header source), will rebase around their changes.
+
 ---
 
 ## PAUSED / HANDOFF (started, not finished — read before picking up)

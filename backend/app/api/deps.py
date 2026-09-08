@@ -15,7 +15,8 @@ content to anyone who sets a header.
 """
 from __future__ import annotations
 
-from typing import Optional
+from dataclasses import dataclass, field
+from typing import Any, Mapping, Optional
 
 from fastapi import Depends, Header, HTTPException, Request
 
@@ -66,6 +67,117 @@ def require_trustworthy_identity() -> None:
             "header, so anyone could read any private content by setting it. "
             "Build real authentication before enabling private visibility."
         )
+
+
+# ---------------------------------------------------------------------------
+# Phase 1 (launch compliance): the ONE authentication dependency.
+#
+# A route that declares `Depends(require_authenticated_user)` requires a
+# VALIDATED bearer token — a Supabase Auth access token, or a generic OIDC
+# token, verified by the ASGI middleware in services/authn.py (signature
+# against the issuer JWKS, iss/aud/exp/nbf, required sub, asymmetric algs
+# only). Identity is the verified token subject and the users row it
+# provisions — NEVER a request body, query, or path field. There is no
+# X-Viewer-Id fallback here on purpose: that header is unverified and is
+# only ever honoured in the fully-public posture by get_scope(); an
+# authenticated endpoint that accepted it would be exactly the "fake
+# authorization that could be mistaken for production authorization" the
+# launch spec forbids.
+#
+# Consequence: these endpoints return 401 for every caller until Supabase
+# Auth (or generic OIDC) is configured — SUPABASE_PROJECT_URL +
+# SUPABASE_JWT_AUDIENCE, or OIDC_ISSUER + OIDC_AUDIENCE. That is the
+# intended frozen-posture behaviour, not a gap.
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class AuthenticatedPrincipal:
+    """A request-scoped, server-derived identity. `user_id` is the
+    canonical StealthLab `users.id` (provisioned on first login from the
+    verified token); `subject` is the raw verified token subject (the
+    Supabase `auth.users` uid). `org_ids` are the caller's active
+    organization memberships — the ORG_PRIVATE visibility boundary."""
+
+    user_id: str
+    subject: str
+    issuer: Optional[str] = None
+    email: Optional[str] = None
+    name: Optional[str] = None
+    org_ids: tuple[str, ...] = ()
+    claims: Mapping[str, Any] = field(default_factory=dict)
+
+    def access_scope(self) -> AccessScope:
+        """The read/write scope for this principal: public rows, own rows,
+        and — when the caller holds memberships — their organizations'
+        'org'-visibility rows. Access is resolved from this, BEFORE any
+        relevance ranking (data-flow spec INV-02)."""
+        if self.org_ids:
+            return AccessScope.for_org_member(self.subject, list(self.org_ids))
+        return AccessScope.for_user(self.subject)
+
+
+async def require_authenticated_user(request: Request) -> AuthenticatedPrincipal:
+    """FastAPI dependency: require a validated end-user identity.
+
+    Raises 401 when no credentials are presented (a present-but-invalid
+    token is already rejected with 401 by the ASGI middleware before this
+    runs). Raises 403 when the token is valid but the account is
+    deactivated. Never consults request-body identity fields.
+    """
+    from app.services.authn import (
+        AmbiguousTenant,
+        IdentityInactive,
+        current_actor,
+        ensure_user,
+        resolve_memberships,
+    )
+
+    actor = current_actor()
+    if actor is None:
+        raise HTTPException(
+            status_code=401,
+            detail="authentication required",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    pool = request.app.state.pool
+    try:
+        user_id = await ensure_user(pool, actor)
+        memberships = await resolve_memberships(pool, user_id)
+    except IdentityInactive as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except AmbiguousTenant as exc:
+        # Multiple active org memberships with no per-request org selector
+        # yet: fail loud rather than silently pick one (H1 discipline).
+        raise HTTPException(
+            status_code=409,
+            detail=f"ambiguous organization membership: {exc}",
+        ) from exc
+
+    org_ids = tuple(sorted({m.organization_id for m in memberships}))
+    return AuthenticatedPrincipal(
+        user_id=user_id,
+        subject=actor.subject,
+        issuer=actor.issuer,
+        email=actor.email,
+        name=actor.name,
+        org_ids=org_ids,
+        claims=dict(actor.claims),
+    )
+
+
+async def optional_authenticated_user(
+    request: Request,
+) -> Optional[AuthenticatedPrincipal]:
+    """Like `require_authenticated_user` but returns None instead of 401
+    when unauthenticated — for endpoints that are public but richer when
+    signed in."""
+    from app.services.authn import current_actor
+
+    if current_actor() is None:
+        return None
+    return await require_authenticated_user(request)
 
 
 def scope_key_for(scope: AccessScope, request: Request) -> str:

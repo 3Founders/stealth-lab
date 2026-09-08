@@ -13,8 +13,9 @@ from typing import Any, Optional
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from pydantic import BaseModel, Field
 
-from app.api.deps import get_scope
+from app.api.deps import AuthenticatedPrincipal, get_scope, require_authenticated_user
 from app.execution.procedure_graph import ProcedureCompositionError
 from app.services.access import AccessScope
 from app.services.domain_search import search_global
@@ -58,6 +59,190 @@ async def search_procedures(
         limit=limit,
         scope=scope,
     )
+
+
+# ---------------------------------------------------------------------------
+# Fast contribution path (launch: "a signed-in user adds a procedure as
+# fast as possible"). Two write endpoints, both authenticated, both
+# private-by-default and 'candidate' — nothing a user contributes is born
+# global or verified (data-flow spec INV-01/INV-03). They compose the
+# existing capture path (services/procedures.capture_procedure,
+# services/skill_ingestion.ingest_skill_md); NOT a second procedure store.
+# ---------------------------------------------------------------------------
+
+
+class ProcedureCreateBody(BaseModel):
+    """The minimum a procedure needs to be useful: a name, a goal, and the
+    ordered steps. Everything else is optional and derived deterministically
+    (display text, retrieval document) when omitted."""
+
+    name: str = Field(min_length=1, max_length=200)
+    goal: str = Field(min_length=1, max_length=4000)
+    steps: list[str] = Field(default_factory=list, max_length=200)
+    applicability: list[str] = Field(
+        default_factory=list, max_length=50,
+        description="Plain-language preconditions — when this procedure applies.",
+    )
+    tools: list[str] = Field(default_factory=list, max_length=50)
+    failure_conditions: list[str] = Field(default_factory=list, max_length=50)
+    domain: Optional[str] = Field(default=None, max_length=120)
+    embed: bool = Field(
+        default=True,
+        description="Embed inline for immediate semantic search (one provider "
+        "call). Set false for a faster write; the row is indexed later by the "
+        "embedding backfill.",
+    )
+
+
+class ProcedureFromTextBody(BaseModel):
+    """Paste a whole SKILL.md-style document (frontmatter + prose + a
+    'Steps'/'Workflow' list). Parsed deterministically — no model call."""
+
+    text: str = Field(min_length=1, max_length=100_000)
+    name: Optional[str] = Field(default=None, max_length=200)
+    domain: Optional[str] = Field(default=None, max_length=120)
+    embed: bool = Field(
+        default=True,
+        description="Embed inline for immediate semantic search (one provider "
+        "call). Set false for a sub-100ms write; the row is indexed later by "
+        "the embedding backfill.",
+    )
+
+
+def _created_response(result: dict, principal: AuthenticatedPrincipal) -> dict:
+    return {
+        "procedure_id": result["procedure_id"],
+        "id": result["id"],
+        "scope": "PRIVATE",
+        "verification": "candidate",
+        "owner_id": principal.user_id,
+        "next": f"/v1/procedures/{result['id']}",
+    }
+
+
+@router.post("", status_code=201)
+async def create_procedure(
+    body: ProcedureCreateBody,
+    pool=Depends(get_pool),
+    principal: AuthenticatedPrincipal = Depends(require_authenticated_user),
+) -> dict:
+    """Create a private procedure owned by the authenticated caller.
+
+    Identity is the verified token subject — the request body carries no
+    owner/user field and could not set one. Starts `candidate` / `private`;
+    promotion to verified needs execution evidence, publication to global
+    is a separate explicit action.
+    """
+    from app.services.procedures import capture_procedure
+    from app.services.retrieval_document import (
+        RETRIEVAL_DOCUMENT_IMPORT_VERSION,
+        RETRIEVAL_DOCUMENT_VERSION,
+        build_procedure_retrieval_document,
+        retrieval_document_sha256,
+    )
+
+    preconditions = [p for p in body.applicability if p.strip()]
+    failure_conditions = [f for f in body.failure_conditions if f.strip()]
+    steps = [{"order": i, "goal": s} for i, s in enumerate(body.steps) if s.strip()]
+
+    # Deterministic retrieval document, built here so the row is never
+    # stored embedded-but-unrepresented and the embedding backfill has a
+    # canonical text to work from.
+    retrieval_doc = build_procedure_retrieval_document(
+        {
+            "name": body.name, "goal": body.goal, "steps": steps,
+            "preconditions": preconditions, "invariants": [],
+            "postconditions": [], "failure_conditions": failure_conditions,
+            "domain": body.domain, "domain_payload": {"tools": body.tools},
+        }
+    )
+    capture_kwargs: dict = dict(
+        preconditions=preconditions,
+        failure_conditions=failure_conditions,
+        domain=body.domain,
+        domain_payload={"tools": [t for t in body.tools if t.strip()]},
+        provenance="system_pending_review",
+        scope_type="user",
+        scope_entity_id=principal.user_id,
+        owner_id=principal.user_id,
+        visibility="private",
+        created_by="user_submission",
+        retrieval_document=retrieval_doc,
+        retrieval_document_sha256=retrieval_document_sha256(retrieval_doc),
+        retrieval_document_version=RETRIEVAL_DOCUMENT_IMPORT_VERSION,
+    )
+
+    embedded = False
+    if body.embed:
+        try:
+            from app.services.embeddings import Embedder
+
+            vec, meta = await Embedder().embed_one_with_metadata(
+                retrieval_doc, input_type="document"
+            )
+            capture_kwargs.update(
+                embedding=vec,
+                embedding_model_id=meta.model_id,
+                embedding_provider=meta.provider,
+                embedding_input_type=meta.input_type,
+                embedding_text_hash=meta.text_sha256,
+                retrieval_document_version=RETRIEVAL_DOCUMENT_VERSION,
+            )
+            embedded = True
+        except Exception:  # noqa: BLE001 — indexing is best-effort; the backfill covers a miss
+            embedded = False
+
+    try:
+        result = await capture_procedure(
+            pool, name=body.name, goal=body.goal, steps=steps, **capture_kwargs
+        )
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    return _created_response(result, principal) | {"embedded": embedded}
+
+
+@router.post("/from_text", status_code=201)
+async def create_procedure_from_text(
+    body: ProcedureFromTextBody,
+    pool=Depends(get_pool),
+    principal: AuthenticatedPrincipal = Depends(require_authenticated_user),
+) -> dict:
+    """Create a private procedure from a pasted SKILL.md-style document.
+
+    The document is untrusted user input: parsed deterministically, screened
+    for prompt-injection, and always recorded as unreviewed
+    (`system_pending_review`) private content owned by the caller.
+    """
+    from app.services.skill_ingestion import ingest_skill_md
+
+    try:
+        result = await ingest_skill_md(
+            pool,
+            body.text,
+            fallback_name=body.name or "untitled-procedure",
+            domain=body.domain,
+            created_by="user_submission",
+            owner_id=principal.user_id,
+            visibility="private",
+            scope_type="user",
+            scope_entity_id=principal.user_id,
+            embed=body.embed,
+        )
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+    if result.get("status") == "duplicate":
+        raise HTTPException(
+            409,
+            {
+                "detail": "a very similar procedure already exists",
+                "existing_procedure_id": result["existing_procedure_id"],
+                "similarity": result.get("similarity"),
+            },
+        )
+    return _created_response(result, principal) | {
+        "embedded": result.get("embedded", False),
+    }
 
 
 @router.get("/{procedure_row_id}")
