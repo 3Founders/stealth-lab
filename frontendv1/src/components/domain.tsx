@@ -76,6 +76,93 @@ export function ErrorState({
   );
 }
 
+/**
+ * Meaningful match strength — ONLY rendered when the backend's measured
+ * relevance gate produced a label. Never invents confidence language and
+ * never shows a raw similarity percentage.
+ */
+export function RelevanceBadge({ label }: { label: "strong" | "relevant" | null | undefined }) {
+  if (!label) return null;
+  return (
+    <Badge variant={label === "strong" ? "accent" : "secondary"}>
+      {label === "strong" ? "Strong match" : "Relevant"}
+    </Badge>
+  );
+}
+
+/**
+ * Trust label derived from real system state. "Verified" only when the
+ * backend says so; otherwise the honest weaker word.
+ */
+export function VerificationLabel({
+  state,
+  provenance,
+}: {
+  state?: string | null;
+  provenance?: string | null;
+}) {
+  if (state === "verified") return <Badge variant="accent">Verified</Badge>;
+  if (provenance === "prior_library" || provenance === "company_ingested")
+    return <Badge variant="outline">Community reported</Badge>;
+  return <Badge variant="secondary">Experimental</Badge>;
+}
+
+/** Evidence, stated as a count of real recorded executions — not a probability. */
+export function EvidenceLine({
+  evidence,
+}: {
+  evidence: { successes: number; attempts: number; distinct_contexts: number } | null | undefined;
+}) {
+  if (!evidence || evidence.attempts === 0) {
+    return <span className="text-xs text-neutral-400">No executions recorded yet</span>;
+  }
+  const { successes, attempts, distinct_contexts } = evidence;
+  return (
+    <span className="text-xs text-neutral-600">
+      <span className="font-medium text-neutral-800">{successes}</span> successful
+      {" "}of {attempts} recorded execution{attempts === 1 ? "" : "s"}
+      {distinct_contexts > 1 ? ` across ${distinct_contexts} contexts` : ""}
+    </span>
+  );
+}
+
+/** "Why this matched" — deterministic backend explanation, shown verbatim or hidden. */
+export function WhyMatched({ reason }: { reason?: string | null }) {
+  if (!reason) return null;
+  return (
+    <p className="mt-2 text-sm text-neutral-600">
+      <span className="font-medium text-neutral-700">Why this matched: </span>
+      {reason}
+    </p>
+  );
+}
+
+/** "Good for" — the procedure's own applicability summary. */
+export function GoodFor({ summary }: { summary?: string | null }) {
+  if (!summary) return null;
+  return (
+    <p className="mt-2 text-sm text-neutral-600">
+      <span className="font-medium text-neutral-700">Good for: </span>
+      {summary}
+    </p>
+  );
+}
+
+/** Known failure modes, from the procedure's own recorded failure conditions. */
+export function FailureModes({ modes }: { modes?: string[] | null }) {
+  if (!modes || modes.length === 0) return null;
+  return (
+    <section>
+      <SectionHeading>Known failure modes</SectionHeading>
+      <ul className="mt-3 list-disc space-y-1.5 pl-5 text-sm text-neutral-800">
+        {modes.map((m, i) => (
+          <li key={i}>{m}</li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
 export function SectionHeading({ children }: { children: ReactNode }) {
   return (
     <h2 className="text-lg font-semibold tracking-tight text-neutral-900">
@@ -87,9 +174,20 @@ export function SectionHeading({ children }: { children: ReactNode }) {
 export function ProvenanceBlock({
   provenance,
 }: {
-  provenance: Record<string, unknown> | null;
+  provenance: Record<string, unknown> | string | null;
 }) {
-  if (!provenance || Object.keys(provenance).length === 0) return null;
+  if (!provenance) return null;
+  if (typeof provenance === "string") {
+    return (
+      <section>
+        <SectionHeading>Source</SectionHeading>
+        <p className="mt-3 text-sm capitalize text-neutral-800">
+          {provenance.replace(/_/g, " ")}
+        </p>
+      </section>
+    );
+  }
+  if (Object.keys(provenance).length === 0) return null;
   return (
     <section>
       <SectionHeading>Provenance</SectionHeading>

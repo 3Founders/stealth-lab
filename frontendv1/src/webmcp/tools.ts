@@ -73,7 +73,10 @@ function searchHit(hit: SolutionSearchHit) {
     id: hit.id,
     title: hit.title,
     goal: hit.goal ?? undefined,
-    verified: isProcedure ? hit.verification === "verified" : null,
+    verified: isProcedure
+      ? hit.verification?.verification_state === "verified"
+      : null,
+    relevance: hit.relevance_label ?? undefined,
     verification: capabilitySummary(hit.capability),
     url: url(isProcedure ? `/solutions/${hit.id}` : `/tasks/${hit.id}`),
   };

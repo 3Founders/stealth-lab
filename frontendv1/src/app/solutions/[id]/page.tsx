@@ -7,10 +7,12 @@ import { useEffect, useState } from "react";
 import {
   EmptyState,
   ErrorState,
+  EvidenceLine,
+  FailureModes,
   Metric,
   ProvenanceBlock,
   SectionHeading,
-  StatusBadge,
+  VerificationLabel,
 } from "@/components/domain";
 import { Skeleton } from "@/components/ui/skeleton";
 import { getSolution } from "@/lib/api/client";
@@ -52,34 +54,47 @@ export default function SolutionPage() {
   }
 
   const cap = sol.capability;
+  const evidence = cap
+    ? {
+        successes: cap.success_count ?? 0,
+        attempts: cap.evidence_count ?? 0,
+        distinct_contexts: cap.independent_groups ?? 0,
+      }
+    : null;
 
   return (
     <article className="pt-16">
       <header>
+        {/* primary identity is the display name, not the machine slug */}
         <h1 className="text-3xl font-semibold tracking-tight text-neutral-900">
-          {sol.name}
+          {sol.display_name || sol.name}
         </h1>
-        {sol.goal ? (
-          <p className="mt-3 max-w-2xl text-base text-neutral-500">{sol.goal}</p>
+        {sol.display_description ? (
+          <p className="mt-3 max-w-2xl text-base text-neutral-600">
+            {sol.display_description}
+          </p>
         ) : null}
-        <div className="mt-5 flex items-center gap-4">
-          <StatusBadge verificationState={sol.verification_state} />
-          {cap ? (
-            <>
-              <Metric
-                label="verified success"
-                value={
-                  cap.p_estimate !== null
-                    ? `${Math.round(cap.p_estimate * 1000) / 10}%`
-                    : null
-                }
-              />
-              <Metric label="executions" value={cap.evidence_count} />
-            </>
-          ) : null}
+        <div className="mt-5 flex flex-wrap items-center gap-3">
+          <VerificationLabel
+            state={sol.verification_state}
+            provenance={typeof sol.provenance === "string" ? sol.provenance : null}
+          />
+          <EvidenceLine evidence={evidence} />
           <Metric label="version" value={sol.version} />
+          <code className="rounded bg-neutral-100 px-1.5 py-0.5 font-mono text-[11px] text-neutral-500">
+            {sol.name}
+          </code>
         </div>
       </header>
+
+      {sol.applicability_summary ? (
+        <section className="mt-14">
+          <SectionHeading>When to use</SectionHeading>
+          <p className="mt-3 max-w-2xl text-sm leading-relaxed text-neutral-800">
+            {sol.applicability_summary}
+          </p>
+        </section>
+      ) : null}
 
       <section className="mt-14">
         <SectionHeading>How it works</SectionHeading>
@@ -106,9 +121,12 @@ export default function SolutionPage() {
         )}
       </section>
 
+      {/* Claims are the rationale for WHY this works -- kept distinct from
+          recorded execution evidence, which is the EvidenceLine in the
+          header. */}
       {sol.claims.length > 0 ? (
         <section className="mt-14">
-          <SectionHeading>Evidence</SectionHeading>
+          <SectionHeading>Why this works</SectionHeading>
           <ul className="mt-4 max-w-2xl space-y-5">
             {sol.claims.map((claim, i) => (
               <li key={claim.id ?? i} className="text-sm text-neutral-800">
@@ -118,6 +136,10 @@ export default function SolutionPage() {
           </ul>
         </section>
       ) : null}
+
+      <div className="mt-14">
+        <FailureModes modes={sol.failure_modes} />
+      </div>
 
       <div className="mt-14">
         <ProvenanceBlock provenance={sol.provenance} />

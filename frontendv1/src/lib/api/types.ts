@@ -15,17 +15,43 @@ export type EpistemicStatus =
 
 // ---------- Search ----------
 
+/** Shared evidence rollup surfaced on search cards and detail pages. */
+export interface EvidenceSummary {
+  successes: number;
+  attempts: number;
+  distinct_contexts: number;
+}
+
+/**
+ * Meaningful match strength, backed by the measured relevance gate.
+ * `null` when the gate cutoff has not been measured yet (fail-open) or
+ * the hit was capability-ranked with no vector to score.
+ */
+export type RelevanceLabel = "strong" | "relevant" | null;
+
 export interface ProcedureSearchHit {
   id: string;
   procedure_id: string;
+  /** Machine identity / lookup handle. Not a UI title. */
   name: string;
   goal: string | null;
+  /** Human-facing title + capability sentence (plan Part 9/10). */
+  display_name: string;
+  display_description: string;
+  applicability_summary: string | null;
+  relevance_label: RelevanceLabel;
+  relevance_reason: string | null;
+  evidence_summary: EvidenceSummary | null;
+  failure_modes: string[];
+  provenance: string | null;
+  scope: Record<string, unknown>;
   verification_state: string;
   staleness: string | null;
   availability: string | null;
   approval_status: string | null;
   scope_type: ScopeType | null;
   scope_entity_id: string | null;
+  /** Debug/advanced only — never the user-facing meaning of relevance. */
   similarity_score: number | null;
   version: number | string | null;
 }
@@ -92,16 +118,27 @@ export interface ClaimSummary {
 export interface SolutionSearchHit {
   type: "procedure" | "task";
   id: string;
+  /** Human-facing title (display_name for a procedure). Lead with this. */
   title: string;
+  /** Machine slug — secondary technical label, procedures only. */
+  name?: string | null;
+  /** Human-facing capability sentence (display_description for a procedure). */
   goal: string | null;
+  applicability_summary?: string | null;
+  relevance_label?: RelevanceLabel;
+  relevance_reason?: string | null;
+  evidence_summary?: EvidenceSummary | null;
+  failure_modes?: string[];
   applicable: boolean | null;
-  verification: unknown | null;
+  verification: { verification_state?: string | null } | null;
   capability: Capability | null;
-  provenance: Provenance | null;
+  provenance: Provenance | string | null;
   claims: ClaimSummary[];
+  scope?: Record<string, unknown>;
   scope_type: ScopeType | null;
   scope_entity_id: string | null;
   version: number | string | null;
+  /** Debug/advanced only — not the user-facing meaning of relevance. */
   native_score: number | null;
   native_rank: number | null;
   matched_by?: string | null;
@@ -127,8 +164,14 @@ export interface SolutionDetail {
   procedure_row_id: string;
   procedure_id: string;
   version: number | string | null;
+  /** Machine slug. Secondary label only. */
   name: string;
   goal: string | null;
+  /** Human-facing (plan Part 15). */
+  display_name: string;
+  display_description: string;
+  applicability_summary: string | null;
+  failure_modes: string[];
   implementation_id: string | null;
   implementations: Record<string, SolutionKindImplementation>;
   runtime_execution: unknown | null;
@@ -167,8 +210,14 @@ export interface ProcedureDetail {
   procedure_id: string;
   version: number | string | null;
   family_id: string | null;
+  /** Machine slug. Shown as a small secondary label, never the title. */
   name: string;
   goal: string | null;
+  /** Human-facing (plan Part 14). */
+  display_name: string;
+  display_description: string;
+  applicability_summary: string | null;
+  failure_modes: string[];
   steps: { [key: string]: unknown }[];
   preconditions: unknown[];
   invariants: unknown[];
@@ -415,6 +464,11 @@ export interface RecommendResponse {
   recommendation: {
     id: string;
     name: string;
+    display_name: string;
+    display_description: string | null;
+    applicability_summary: string | null;
+    relevance_label: RelevanceLabel;
+    relevance_reason: string | null;
     goal: string | null;
     verification_state: string;
     similarity_score: number | null;

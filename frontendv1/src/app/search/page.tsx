@@ -5,7 +5,16 @@ import { useSearchParams } from "next/navigation";
 import { Suspense, useCallback, useEffect, useState } from "react";
 
 import { SearchBox } from "@/components/search-box";
-import { EmptyState, ErrorState, Metric, StatusBadge, TypeBadge } from "@/components/domain";
+import {
+  EmptyState,
+  ErrorState,
+  EvidenceLine,
+  GoodFor,
+  RelevanceBadge,
+  TypeBadge,
+  VerificationLabel,
+  WhyMatched,
+} from "@/components/domain";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   findBestWay,
@@ -25,22 +34,6 @@ const FILTERS: { key: Filter; label: string }[] = [
   { key: "task", label: "Tasks" },
 ];
 
-function evidence(hit: SolutionSearchHit): { label: string; value: string | number }[] {
-  const out: { label: string; value: string | number }[] = [];
-  if (hit.capability) {
-    if (hit.capability.p_estimate !== null) {
-      out.push({
-        label: "verified success",
-        value: `${Math.round((hit.capability.p_estimate ?? 0) * 1000) / 10}%`,
-      });
-    }
-    if (hit.capability.evidence_count !== null) {
-      out.push({ label: "executions", value: hit.capability.evidence_count });
-    }
-  }
-  return out;
-}
-
 function ResultRow({
   hit,
   selected,
@@ -52,6 +45,7 @@ function ResultRow({
 }) {
   const href =
     hit.type === "procedure" ? `/solutions/${hit.id}` : `/tasks/${hit.id}`;
+  const isProcedure = hit.type === "procedure";
   return (
     <li>
       <Link
@@ -63,21 +57,33 @@ function ResultRow({
           selected && "rounded-lg bg-neutral-50"
         )}
       >
-        <div className="flex items-center gap-3">
+        {/* 1. what it does */}
+        <div className="flex flex-wrap items-center gap-2">
           <TypeBadge type={hit.type} />
           <span className="text-base text-neutral-900">{hit.title}</span>
+          {/* 2. why it is relevant */}
+          {isProcedure ? <RelevanceBadge label={hit.relevance_label} /> : null}
+          {/* 3. whether it is verified */}
+          {isProcedure ? (
+            <VerificationLabel
+              state={hit.verification?.verification_state}
+              provenance={typeof hit.provenance === "string" ? hit.provenance : null}
+            />
+          ) : null}
         </div>
         {hit.goal ? (
-          <p className="mt-1 text-sm text-neutral-500">{hit.goal}</p>
+          <p className="mt-1 text-sm text-neutral-600">{hit.goal}</p>
         ) : null}
-        <div className="mt-2 flex items-center gap-4">
-          {hit.type === "procedure" && hit.verification !== null ? (
-            <StatusBadge verificationState={String(hit.verification)} />
-          ) : null}
-          {evidence(hit).map((e) => (
-            <Metric key={e.label} label={e.label} value={e.value} />
-          ))}
-        </div>
+        {/* 4. evidence / capability */}
+        {isProcedure ? (
+          <div className="mt-2">
+            <EvidenceLine evidence={hit.evidence_summary} />
+          </div>
+        ) : null}
+        {/* 5. applicability */}
+        <GoodFor summary={hit.applicability_summary} />
+        {/* why this matched */}
+        <WhyMatched reason={hit.relevance_reason} />
       </Link>
     </li>
   );
@@ -117,28 +123,24 @@ function BestWayCard({ rec }: { rec: NonNullable<RecommendResponse["recommendati
       aria-label="Best way"
       className="mt-6 rounded-lg border border-neutral-200 bg-neutral-50/50 p-5"
     >
-      <div className="flex items-center gap-2 text-xs font-medium uppercase tracking-wide text-neutral-500">
+      <div className="flex flex-wrap items-center gap-2 text-xs font-medium uppercase tracking-wide text-neutral-500">
         Best way
-        {rec.verification_state === "verified" ? (
-          <StatusBadge verificationState="verified" />
-        ) : null}
+        <RelevanceBadge label={rec.relevance_label} />
+        <VerificationLabel state={rec.verification_state} />
       </div>
       <Link
         href={`/solutions/${rec.id}`}
         className="mt-2 block text-lg text-neutral-900 hover:underline"
       >
-        {rec.name}
+        {rec.display_name || rec.name}
       </Link>
-      {rec.reason ? (
-        <p className="mt-1 text-sm text-neutral-500">{rec.reason}</p>
+      {rec.display_description ? (
+        <p className="mt-1 text-sm text-neutral-600">{rec.display_description}</p>
       ) : null}
+      <GoodFor summary={rec.applicability_summary} />
+      <WhyMatched reason={rec.relevance_reason} />
       {rec.capability_note ? (
-        <p className="mt-1 text-sm text-neutral-500">{rec.capability_note}</p>
-      ) : null}
-      {rec.similarity_score !== null ? (
-        <p className="mt-2 text-xs text-neutral-400">
-          Match {Math.round(rec.similarity_score * 100)}%
-        </p>
+        <p className="mt-2 text-xs text-neutral-500">{rec.capability_note}</p>
       ) : null}
     </section>
   );

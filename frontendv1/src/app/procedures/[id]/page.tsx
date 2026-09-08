@@ -7,10 +7,12 @@ import { useEffect, useState } from "react";
 import {
   EmptyState,
   ErrorState,
+  EvidenceLine,
+  FailureModes,
   Metric,
   ProvenanceBlock,
   SectionHeading,
-  StatusBadge,
+  VerificationLabel,
 } from "@/components/domain";
 import { Skeleton } from "@/components/ui/skeleton";
 import { getProcedure } from "@/lib/api/client";
@@ -64,31 +66,66 @@ export default function ProcedurePage() {
   }
 
   const es = proc.evidence_summary;
+  const evidence = es
+    ? {
+        successes: es.success_count ?? 0,
+        attempts: es.total ?? es.evidence_count ?? 0,
+        distinct_contexts: es.independent_groups ?? 0,
+      }
+    : null;
 
   return (
     <article className="pt-16">
       <header>
+        {/* human-readable title */}
         <h1 className="text-3xl font-semibold tracking-tight text-neutral-900">
-          {proc.name}
+          {proc.display_name || proc.name}
         </h1>
-        {proc.goal ? (
-          <p className="mt-3 max-w-2xl text-base text-neutral-500">{proc.goal}</p>
+        {/* concise capability description */}
+        {proc.display_description ? (
+          <p className="mt-3 max-w-2xl text-base text-neutral-600">
+            {proc.display_description}
+          </p>
         ) : null}
-        <div className="mt-5 flex items-center gap-4">
-          <StatusBadge verificationState={proc.verification_state} />
-          {es ? (
-            <>
-              <Metric label="verified success" value={es.p_estimate !== null && es.p_estimate !== undefined ? `${Math.round(es.p_estimate * 1000) / 10}%` : null} />
-              <Metric label="executions" value={es.evidence_count ?? es.total ?? null} />
-            </>
-          ) : null}
+        <div className="mt-5 flex flex-wrap items-center gap-3">
+          <VerificationLabel
+            state={proc.verification_state}
+            provenance={typeof proc.provenance === "string" ? proc.provenance : null}
+          />
+          <EvidenceLine evidence={evidence} />
           <Metric label="version" value={proc.version ?? null} />
+          {/* internal ontology stays available, secondary */}
+          <code className="rounded bg-neutral-100 px-1.5 py-0.5 font-mono text-[11px] text-neutral-500">
+            {proc.name}
+          </code>
         </div>
       </header>
 
+      {proc.applicability_summary ? (
+        <section className="mt-14">
+          <SectionHeading>When to use</SectionHeading>
+          <p className="mt-3 max-w-2xl text-sm leading-relaxed text-neutral-800">
+            {proc.applicability_summary}
+          </p>
+        </section>
+      ) : null}
+
+      {proc.preconditions.length > 0 ? (
+        <section className="mt-14">
+          <SectionHeading>Prerequisites</SectionHeading>
+          <ul className="mt-4 max-w-2xl list-disc space-y-1.5 pl-5 text-sm text-neutral-800">
+            {proc.preconditions.map((pc, i) => (
+              <li key={i}>
+                {typeof pc === "string" ? pc : JSON.stringify(pc)}
+              </li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
+
       {proc.steps.length > 0 ? (
         <section className="mt-14">
-          <SectionHeading>Procedure</SectionHeading>
+          <SectionHeading>How it works</SectionHeading>
           <ol className="mt-4 max-w-2xl space-y-3">
             {proc.steps.map((step, i) => (
               <li key={i} className="text-sm leading-relaxed text-neutral-800">
@@ -100,6 +137,10 @@ export default function ProcedurePage() {
       ) : (
         <EmptyState title="No steps recorded for this procedure yet." />
       )}
+
+      <div className="mt-14">
+        <FailureModes modes={proc.failure_modes} />
+      </div>
 
       {proc.claims.length > 0 ? (
         <section className="mt-14">
