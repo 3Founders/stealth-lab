@@ -22,6 +22,7 @@ function NavLink({ href, label }: { href: string; label: string }) {
   );
 }
 
+import { AuthNav } from "@/components/auth-nav";
 import { WebMcpProvider } from "@/components/webmcp-provider";
 
 export default function RootLayout({
@@ -38,12 +39,7 @@ export default function RootLayout({
             <nav aria-label="Main" className="flex items-center gap-6">
               <NavLink href="/search" label="Search" />
               <NavLink href="/problems" label="Problems" />
-              <Link
-                href="/auth"
-                className="rounded-md border border-neutral-200 px-3 py-1.5 text-sm text-neutral-700 transition-colors hover:bg-neutral-50"
-              >
-                Sign in
-              </Link>
+              <AuthNav />
             </nav>
           </div>
         </header>
