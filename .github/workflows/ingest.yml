@@ -36,7 +36,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          EXPECTED_SHA="bb3dbb1e14a326a70d8b3a98b1f0fa6347599ec8"
+          EXPECTED_SHA="fb568c8bbab65913d7842161d96c62ce7e2e92b0"
 
           git fetch --all --tags
           git checkout "$EXPECTED_SHA"
