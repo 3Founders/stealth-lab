@@ -27,15 +27,32 @@ import logging
 import os
 import threading
 import time
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Literal, Optional, Sequence
+from typing import Any, Literal, Optional, Sequence
 
 from app.config import settings
 
 log = logging.getLogger(__name__)
 
 InputType = Literal["document", "query"]
+
+
+@dataclass(frozen=True)
+class EmbeddingMetadata:
+    """Identity of the vector space used for one persisted embedding.
+
+    Similarity only has meaning inside one provider/model space.  This is
+    returned with the vector so persistence callers never have to infer the
+    provider from configuration after a fallback or deployment change.
+    """
+
+    provider: str
+    model_id: str
+    dimension: int
+    input_type: InputType
+    text_sha256: str
 
 # ---------------------------------------------------------------------------
 # Usage telemetry + cross-process TPM budget (see docs/usageapi.md).
@@ -159,9 +176,60 @@ class EmbeddingError(Exception):
 class Embedder:
     """Thin wrapper over Voyage. Batches, because per-node calls are wasteful."""
 
-    def __init__(self, model: Optional[str] = None, dimension: Optional[int] = None):
+    def __init__(
+        self,
+        model: Optional[str] = None,
+        dimension: Optional[int] = None,
+        *,
+        rate_limit_pool: Any = None,
+    ):
         self.model = model or settings.embedding_model
         self.dimension = dimension or settings.embedding_dimension
+        # Ingestion workers pass their shared Postgres pool here. Ordinary
+        # interactive retrieval keeps the lightweight local limiter.
+        self._rate_limit_pool = rate_limit_pool
+
+    def _configured_provider(self) -> str:
+        if settings.use_local_models:
+            return "local"
+        providers = [
+            provider.strip()
+            for provider in settings.embedding_provider_chain.split(",")
+            if provider.strip()
+        ]
+        if not providers:
+            raise EmbeddingError("embedding_provider_chain is empty")
+        # A fallback provider produces a different vector space. Choosing
+        # one explicit provider is safer than silently mixing vectors that
+        # pgvector can compare numerically but cannot compare semantically.
+        return providers[0]
+
+    def embedding_model_id(self) -> str:
+        provider = self._configured_provider()
+        if provider == "gemini":
+            return f"gemini:{settings.gemini_embedding_model}"
+        if provider == "voyage":
+            return f"voyage:{self.model}"
+        if provider == "local":
+            return f"local:{settings.local_embedding_model}"
+        raise EmbeddingError(f"unknown embedding provider {provider!r}")
+
+    @staticmethod
+    def _text_sha256(text: str) -> str:
+        return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+    async def embed_one_with_metadata(
+        self, text: str, input_type: InputType = "document",
+    ) -> tuple[list[float], EmbeddingMetadata]:
+        vector = await self.embed_one(text, input_type=input_type)
+        provider = self._configured_provider()
+        return vector, EmbeddingMetadata(
+            provider=provider,
+            model_id=self.embedding_model_id(),
+            dimension=self.dimension,
+            input_type=input_type,
+            text_sha256=self._text_sha256(text),
+        )
 
     async def embed(
         self, texts: Sequence[str], input_type: InputType = "document"
@@ -169,7 +237,10 @@ class Embedder:
         if not texts:
             return []
 
-        if settings.use_local_models:
+        provider = self._configured_provider()
+        model_id = self.embedding_model_id()
+
+        if provider == "local":
             return await self._embed_local(texts)
 
         # Cache pass: serve whatever we already have, send only the misses
@@ -179,7 +250,7 @@ class Embedder:
         missing_idx: list[int] = []
         missing_texts: list[str] = []
         for i, text in enumerate(texts):
-            key = _cache_key(settings.gemini_embedding_model, self.dimension, task_type, text)
+            key = _cache_key(model_id, self.dimension, task_type, text)
             with _EMBED_CACHE_LOCK:
                 cached = _EMBED_CACHE.get(key)
             if cached is not None:
@@ -189,11 +260,11 @@ class Embedder:
                 missing_texts.append(text)
 
         if missing_texts:
-            vectors = await self._embed_via_chain(missing_texts, input_type)
+            vectors = await self._embed_configured_provider(missing_texts, input_type)
             for i, text, vec in zip(missing_idx, missing_texts, vectors):
                 results[i] = vec
                 _cache_put(
-                    _cache_key(settings.gemini_embedding_model, self.dimension, task_type, text),
+                    _cache_key(model_id, self.dimension, task_type, text),
                     vec,
                 )
             if len(missing_texts) < len(texts):
@@ -202,37 +273,23 @@ class Embedder:
 
         return [results[i] for i in range(len(texts))]
 
-    async def _embed_via_chain(
+    async def _embed_configured_provider(
         self, texts: Sequence[str], input_type: InputType
     ) -> list[list[float]]:
-        # Provider chain, first success wins. A provider that errors
-        # (missing key, rate limit, outage) falls through to the next;
-        # only when EVERY provider fails does this raise. Failover is
-        # logged loudly rather than silently absorbed -- a silent swap
-        # would change the vector space under callers' feet without
-        # anyone knowing (the migration-11 drift lesson, at runtime).
-        chain = [p.strip() for p in settings.embedding_provider_chain.split(",") if p.strip()]
-        failures: list[str] = []
-        for provider in chain:
-            try:
-                if provider == "gemini":
-                    vectors = await self._embed_gemini(texts, input_type)
-                elif provider == "voyage":
-                    vectors = await self._embed_voyage(texts, input_type)
-                else:
-                    log.warning("unknown embedding provider %r in chain -- skipped", provider)
-                    continue
-            except EmbeddingError as exc:
-                failures.append(f"{provider}: {exc}")
-                log.warning("embedding provider %s failed (%s) -- falling through",
-                            provider, str(exc)[:200])
-                continue
-            self._check_dimension(vectors, f"{provider}:{self.model}")
-            return vectors
-
-        raise EmbeddingError(
-            "all embedding providers failed -- " + " | ".join(failures)
-        )
+        provider = self._configured_provider()
+        try:
+            if provider == "gemini":
+                vectors = await self._embed_gemini(texts, input_type)
+            elif provider == "voyage":
+                vectors = await self._embed_voyage(texts, input_type)
+            else:
+                raise EmbeddingError(f"unknown embedding provider {provider!r}")
+        except EmbeddingError:
+            # Do not fall through to a provider with another embedding
+            # space. The caller records a retryable job failure instead.
+            raise
+        self._check_dimension(vectors, self.embedding_model_id())
+        return vectors
 
     async def _embed_gemini(
         self, texts: Sequence[str], input_type: InputType
@@ -262,7 +319,7 @@ class Embedder:
 
         task_type = "RETRIEVAL_QUERY" if input_type == "query" else "RETRIEVAL_DOCUMENT"
         est_tokens = max(1, sum(len(t) // 4 for t in texts) + 8)
-        await _bucket_acquire(est_tokens)
+        await self._acquire_gemini_budget(est_tokens)
 
         failures: list[str] = []
         for i, key in enumerate(keys):
@@ -302,6 +359,62 @@ class Embedder:
         raise EmbeddingError(
             f"Gemini embedding failed across {len(keys)} key(s): " + " | ".join(failures)
         )
+
+    async def _acquire_gemini_budget(self, est_tokens: int) -> None:
+        """Acquire a rolling-minute Gemini budget across distributed workers.
+
+        The former file bucket works only for processes sharing one disk.
+        When an ingestion worker supplies its Postgres pool, this uses a
+        short row-locked transaction so every provider sees one aggregate
+        budget. The lock is released before any model HTTP request.
+        """
+        if self._rate_limit_pool is None:
+            await _bucket_acquire(est_tokens)
+            return
+
+        budget = settings.embed_tpm_budget
+        if budget <= 0 or est_tokens <= 0:
+            return
+
+        import asyncio
+
+        scope = self.embedding_model_id()
+        while True:
+            wait_seconds = 0.0
+            async with self._rate_limit_pool.acquire() as conn:
+                async with conn.transaction():
+                    await conn.execute(
+                        "INSERT INTO embedding_rate_windows "
+                        "(scope, window_started_at, tokens_used) "
+                        "VALUES ($1, now(), 0) ON CONFLICT (scope) DO NOTHING",
+                        scope,
+                    )
+                    row = await conn.fetchrow(
+                        "SELECT window_started_at, tokens_used FROM embedding_rate_windows "
+                        "WHERE scope=$1 FOR UPDATE",
+                        scope,
+                    )
+                    elapsed = await conn.fetchval(
+                        "SELECT EXTRACT(EPOCH FROM now() - $1::timestamptz)",
+                        row["window_started_at"],
+                    )
+                    if elapsed >= 60:
+                        await conn.execute(
+                            "UPDATE embedding_rate_windows "
+                            "SET window_started_at=now(), tokens_used=$2, updated_at=now() "
+                            "WHERE scope=$1",
+                            scope, est_tokens,
+                        )
+                        return
+                    if int(row["tokens_used"]) + est_tokens <= budget:
+                        await conn.execute(
+                            "UPDATE embedding_rate_windows "
+                            "SET tokens_used=tokens_used+$2, updated_at=now() WHERE scope=$1",
+                            scope, est_tokens,
+                        )
+                        return
+                    wait_seconds = max(0.5, min(60.0 - float(elapsed), 10.0))
+            await asyncio.sleep(wait_seconds)
 
     async def _embed_local(self, texts: Sequence[str]) -> list[list[float]]:
         """

@@ -1,0 +1,27 @@
+{
+  "trial_id": "task1_lazy_multi_tool_A_0_20260907_192937",
+  "arm": "A",
+  "task_id": "task1_lazy_multi_tool",
+  "task_text": "The developer dashboard keeps timing out while loading our internal tool server. In tool_server.py, the default listing payload returned by list_tools() currently embeds every tool's full JSON input schema, which has become far too large for clients that are only doing discovery. Refactor the server so that:\n1. list_tools() returns only each tool's name and description (no input schema data of any kind in the listing payload), and\n2. a new function get_tool_schema(name) returns the full, exact JSON input schema for the single tool being asked about.\nDo not change what any existing tool does when invoked, and do not change call_tool(name, args)'s interface or behavior.",
+  "repo_path": "C:\\Users\\chait\\AppData\\Local\\Temp\\gate3_task1_lazy_multi_tool_A_knrq4vfk",
+  "node_notes": [
+    "EXPERIMENTAL NO-RETRIEVAL ARM: StealthLab procedure retrieval bypassed by explicit caller request.",
+    "step 0 (The developer dashboard keeps timing out while loading our internal tool server. In tool_server.py, the default listing payload returned by list_tools() currently embeds every tool's full JSON input schema, which has become far too large for clients that are only doing discovery. Refactor the server so that:\n1. list_tools() returns only each tool's name and description (no input schema data of any kind in the listing payload), and\n2. a new function get_tool_schema(name) returns the full, exact JSON input schema for the single tool being asked about.\nDo not change what any existing tool does when invoked, and do not change call_tool(name, args)'s interface or behavior.): stop_reason=finished, tool_calls=5"
+  ],
+  "files_edited": [
+    "tool_server.py"
+  ],
+  "combined_patch_chars": 754,
+  "captured_candidate_id": "01a07c2b-24e4-7ce6-a09d-d355f5ff73af",
+  "grader": {
+    "grader_success": true,
+    "checks": {
+      "import_ok": true,
+      "listing_lightweight": true,
+      "targeted_schema_exact": true,
+      "unknown_tool_safe": true,
+      "call_tool_regression": true
+    },
+    "error": null
+  }
+}

@@ -17,7 +17,7 @@ from __future__ import annotations
 import hashlib
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Iterator, Protocol, runtime_checkable
+from typing import Any, Iterator, Protocol, runtime_checkable
 
 
 def _utcnow() -> datetime:
@@ -42,6 +42,18 @@ class SourceRef:
     repository: str | None = None
     path: str | None = None
     commit: str | None = None
+    source_id: str | None = None
+
+
+@dataclass(frozen=True)
+class SourceResource:
+    """One bounded file bundled with a document-shaped source artifact."""
+
+    path: str
+    kind: str
+    sha256: str
+    size: int
+    content: bytes = field(repr=False, default=b"")
 
 
 @dataclass(frozen=True)
@@ -58,6 +70,11 @@ class SourceArtifact:
     path: str | None = None
     commit: str | None = None
     discovered_at: datetime = field(default_factory=_utcnow)
+    source_id: str | None = None
+    license_metadata: dict[str, Any] = field(default_factory=dict)
+    resources: tuple[SourceResource, ...] = ()
+    bundle_hash: str | None = None
+    related_skill_paths: tuple[str, ...] = ()
 
 
 @runtime_checkable

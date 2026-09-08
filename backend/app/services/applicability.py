@@ -395,6 +395,7 @@ _CANDIDATE_BASE_WHERE = (
 
 async def _fetch_candidate_pool(
     pool: asyncpg.Pool, goal_embedding: Optional[list[float]], candidate_pool_size: int,
+    embedding_model_id: Optional[str] = None,
 ) -> list[asyncpg.Record]:
     """The pre-filter feeding find_applicable_procedures' cascade -- see
     that function's own docstring for why this fuses cost and relevance
@@ -418,12 +419,23 @@ async def _fetch_candidate_pool(
         "ORDER BY jsonb_array_length(preconditions) ASC LIMIT $1",
         candidate_pool_size,
     )
-    similarity_rows = await pool.fetch(
-        f"SELECT id FROM procedures WHERE {_CANDIDATE_BASE_WHERE} "
-        "AND embedding IS NOT NULL "
-        "ORDER BY embedding <=> $1::vector ASC LIMIT $2",
-        to_pgvector(goal_embedding), candidate_pool_size,
-    )
+    if embedding_model_id is None:
+        similarity_rows = await pool.fetch(
+            f"SELECT id FROM procedures WHERE {_CANDIDATE_BASE_WHERE} "
+            "AND embedding IS NOT NULL "
+            "ORDER BY embedding <=> $1::vector ASC LIMIT $2",
+            to_pgvector(goal_embedding), candidate_pool_size,
+        )
+    else:
+        # pgvector has no awareness of model provenance: vectors from two
+        # embedding models may have the same dimension but no shared
+        # semantic geometry. Only compare vectors from the query's space.
+        similarity_rows = await pool.fetch(
+            f"SELECT id FROM procedures WHERE {_CANDIDATE_BASE_WHERE} "
+            "AND embedding IS NOT NULL AND embedding_model_id = $2 "
+            "ORDER BY embedding <=> $1::vector ASC LIMIT $3",
+            to_pgvector(goal_embedding), embedding_model_id, candidate_pool_size,
+        )
     cost_hits = [(r["id"], "procedures", i) for i, r in enumerate(cost_rows)]
     similarity_hits = [(r["id"], "procedures", i) for i, r in enumerate(similarity_rows)]
     scores, _ = fuse_rrf([(cost_hits, "cost"), (similarity_hits, "relevance")])
@@ -539,6 +551,7 @@ async def find_applicable_procedures(
     limit: int = 10,
     candidate_pool_size: int = 200,
     invariant_bindings: Optional[dict[str, float]] = None,
+    embedding_model_id: Optional[str] = None,
 ) -> list[dict]:
     """
     Real ticket-12 pipeline, end to end: cold-start gate, then the
@@ -600,7 +613,9 @@ async def find_applicable_procedures(
     if require_verified and await should_disable_procedure_retrieval(pool, access_scope):
         return []
 
-    rows = await _fetch_candidate_pool(pool, goal_embedding, candidate_pool_size)
+    rows = await _fetch_candidate_pool(
+        pool, goal_embedding, candidate_pool_size, embedding_model_id,
+    )
 
     # ONE memo table + ONE pinned timestamp for the whole cascade: same
     # pool, same as_of, same access scope throughout -- exactly the
@@ -636,13 +651,23 @@ async def find_applicable_procedures(
         return survivors[:limit]
 
     survivor_ids = [s["id"] for s in survivors]
-    ranked = await pool.fetch(
-        "SELECT id, 1 - (embedding <=> $1::vector) AS similarity FROM procedures "
-        "WHERE id = ANY($2::uuid[]) AND embedding IS NOT NULL "
-        "ORDER BY embedding <=> $1::vector ASC "
-        "LIMIT $3",
-        to_pgvector(goal_embedding), survivor_ids, limit,
-    )
+    if embedding_model_id is None:
+        ranked = await pool.fetch(
+            "SELECT id, 1 - (embedding <=> $1::vector) AS similarity FROM procedures "
+            "WHERE id = ANY($2::uuid[]) AND embedding IS NOT NULL "
+            "ORDER BY embedding <=> $1::vector ASC "
+            "LIMIT $3",
+            to_pgvector(goal_embedding), survivor_ids, limit,
+        )
+    else:
+        ranked = await pool.fetch(
+            "SELECT id, 1 - (embedding <=> $1::vector) AS similarity FROM procedures "
+            "WHERE id = ANY($2::uuid[]) AND embedding IS NOT NULL "
+            "AND embedding_model_id = $3 "
+            "ORDER BY embedding <=> $1::vector ASC "
+            "LIMIT $4",
+            to_pgvector(goal_embedding), survivor_ids, embedding_model_id, limit,
+        )
     ranked_ids = {str(r["id"]): r["similarity"] for r in ranked}
 
     # Phase 3 -- fuse similarity with the real capability signal via the

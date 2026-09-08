@@ -67,6 +67,27 @@ stepping on each other or repeating work.
 
 ## IN PROGRESS (someone is working on this right now)
 
+- [ ] **Retrieval representation + relevance gate + human-facing display metadata + frontendv1 search UX**
+  — _core-b / Claude Sonnet 5 — started 2026-09-08, branch `gate-2b`._
+  Building one canonical deterministic procedure retrieval document (name +
+  goal + applicability + steps + tools + deps + domain + constraints +
+  failure conditions), versioning it and the embedding, re-embedding the
+  ~2400 live procedures from it, adding a measured (not guessed) relevance
+  gate from a labelled eval set, and adding `display_name` /
+  `display_description` with a backfill. Frontend: search card, procedure
+  and solution detail pages stop showing raw "Match 82%" and lead with
+  capability / applicability / verification / evidence.
+  Files: `backend/app/services/{retrieval_document,embeddings,skill_ingestion,
+  procedures,applicability,domain_search,solution_search,retrieval}.py`,
+  new `backend/db/44_*.sql`, new backfill under `backend/scripts/`, new eval
+  suite under `backend/tests/`, `frontendv1/src/app/search/page.tsx`,
+  `frontendv1/src/app/procedures/[id]/page.tsx`,
+  `frontendv1/src/app/solutions/[id]/page.tsx`,
+  `frontendv1/src/lib/api/{types,client}.ts`,
+  `backend/app/api/{search,solutions,procedures}.py`.
+  Coordinated with "frontend integration stealth-lab" (owns auth only) and
+  "evidence-tracking-temporal-reasoning" (no overlap; migration 44 is mine).
+
 - [ ] **MCP evaluation harness** — _core-a / Claude Sonnet 5 — started 2026-09-08._
   Building the end-to-end test that goes through the real MCP interface:
   search a procedure → retrieve it → inspect it → plan → execute → check the
@@ -101,6 +122,57 @@ stepping on each other or repeating work.
 
 ---
 
+## IN PROGRESS
+
+- **Cline (Phase 1 security boundaries), 2026-09-08.** Implementing Phase 1 of the
+  launch-compliance work (Supabase Auth + hosted repo authorization + audit_events).
+  Full detail of what I am doing:
+  - **Task:** Phase 1 of STEALTHLAB-LAUNCH-COMPLIANCE-SPEC-V1. Phase 0 audit was
+    approved; decisions 1–7 from the founder are implemented.
+  - **What exists so far (all uncommitted, verified intact in the working tree):**
+    - `backend/app/services/audit.py` (NEW) — one centralized audit event writer,
+      to be reused by publication/withdrawal/export/authz transitions. No ad-hoc
+      audit systems.
+    - `backend/app/services/workspace_registry.py` (NEW) — hosted repository
+      authorization boundary: caller-supplied `repo_path` is no longer the
+      authorization mechanism in hosted mode; workspace identity resolves
+      server-side against `registered_workspaces`; local/loopback mode keeps
+      `repo_path` (documented, unchanged behavior).
+    - `backend/db/41_phase1_security_boundaries.sql` (NEW) — creates
+      `audit_events` + `registered_workspaces`, adds `org` to the
+      `visibility_level` enum. NOT yet applied to any database.
+    - `backend/app/config.py` (MOD) — Supabase Auth config (issuer
+      `{url}/auth/v1`, JWKS derivation, ES256/RS256 only, never HS256),
+      hosted-mode flags, boot-posture guards for half-configured Supabase.
+    - `backend/app/services/authn.py` (MOD) — Supabase preset in
+      `OidcConfig.from_settings`; user_id derived from verified tokens, never
+      client-supplied fields.
+    - `backend/app/services/access.py` (MOD) — `org` visibility in the ONE
+      centralized predicate builder (existing public/commons rows untouched;
+      new USER_PRIVATE/ORG_PRIVATE enforce real ownership/membership).
+    - `backend/app/mcp_server/server.py` (MOD) — hosted-mode guard wired into the
+      two repo-executing MCP tools (`find_best_way`, `reproduce_procedure`).
+    - `backend/tests/test_phase1_security_boundaries_offline.py` (NEW) —
+      impersonation, tenant isolation, workspace authz, Supabase verifier,
+      migration assertions. All 56 pass.
+  - **Test status:** my new suite is green (56/56). Full offline suite:
+    2208 passed / 27 failed / 301 skipped. **Triage result: all 27 failures are
+    NOT from my work.** They trace to (a) `Embedder._embed_via_chain` /
+    `embedding_model_id` / `embedding_provider` changes and (b) migrations
+    39/40/42/43 — both belong to the parallel ingestion work-stream (commits
+    284c9ef, bc2d4c9, c624f8f). I did not touch `embeddings.py`, `procedures.py`,
+    or those migrations.
+  - **Heads-up for other agents:** mid-session the branch switched from `main`
+    to `gate-2b` (both at c624f8f now) — someone is moving branches while I
+    work. My changes are in the working tree on `gate-2b`. A safety stash
+    `stash@{0} (On main: phase1-verify)` holds a copy of my edits; do not drop it.
+  - **Next steps:** commit Phase 1 with test counts in the message, then STOP
+    (no migration applied, no Phase 2+ work, per founder instruction).
+  - Files I will still touch: only the ones listed above + `thingstodo.md`.
+
+---
+
+## PAUSED / HANDOFF (started, not finished — read before picking up)
 ## PAUSED / HANDOFF (started, not finished — read before picking up)
 
 _(nothing here yet)_

@@ -117,6 +117,10 @@ async def capture_procedure(
     owner_id: Optional[str] = None,
     visibility: str = "public",
     embedding: Optional[list[float]] = None,
+    embedding_model_id: Optional[str] = None,
+    embedding_provider: Optional[str] = None,
+    embedding_input_type: Optional[str] = None,
+    embedding_text_hash: Optional[str] = None,
     scope_type: Optional[str] = None,
     scope_entity_id: Optional[str] = None,
 ) -> dict:
@@ -160,14 +164,15 @@ async def capture_procedure(
             scope, exclusions, family_id, evidence_refs, source_episode_ids,
             provenance, domain, domain_payload, migrated_from_task_node_id,
             created_by, owner_id, visibility, embedding,
-            scope_type, scope_entity_id, embedding_model_id, embedding_dim
+            scope_type, scope_entity_id, embedding_model_id, embedding_dim,
+            embedding_provider, embedding_input_type, embedding_text_hash
         ) VALUES (
             $24::uuid, $1, $2, $3::jsonb, $4::jsonb, $5::jsonb, $6::jsonb,
             $7::jsonb, $8::jsonb, $9::jsonb, $10::jsonb,
             $11::jsonb, $12::jsonb, $13, $14::jsonb, $15,
             $16, $17, $18::jsonb, $19,
             $20, $21, $22::visibility_level, $23::vector,
-            $25, $26, $27, $28
+            $25, $26, $27, $28, $29, $30, $31
         )
         RETURNING id, procedure_id
         """,
@@ -197,8 +202,11 @@ async def capture_procedure(
         procedure_scope_entity_id,
         # Band 1.6: embedding provenance stamps — which model produced this
         # vector, at what dimension. Null iff embedding is null.
-        (settings.embedding_model if embedding is not None else None),
+        ((embedding_model_id or settings.embedding_model) if embedding is not None else None),
         (settings.embedding_dimension if embedding is not None else None),
+        (embedding_provider if embedding is not None else None),
+        (embedding_input_type if embedding is not None else None),
+        (embedding_text_hash if embedding is not None else None),
     )
     return {"id": str(row["id"]), "procedure_id": str(row["procedure_id"])}
 
@@ -225,6 +233,7 @@ _SUPERSEDE_CARRY_COLUMNS: tuple[str, ...] = (
     "evidence_refs", "source_episode_ids", "migrated_from_task_node_id",
     "provenance", "domain", "domain_payload", "created_by", "visibility",
     "owner_id", "embedding", "embedding_model_id", "embedding_dim",
+    "embedding_provider", "embedding_input_type", "embedding_text_hash",
     "scope_type", "scope_entity_id", "approval_status", "approved_by",
     "approved_at", "capability_statement", "extracted_by",
 )

@@ -25,7 +25,9 @@ import argparse
 import asyncio
 import json
 import os
+import socket
 import sys
+from pathlib import Path
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
@@ -35,7 +37,11 @@ load_dotenv()
 from app.db.session import create_pool
 from app.services.embeddings import Embedder
 from app.services.ingestion_sources.skill_md import GitHubSkillSource, LocalDirSkillSource
-from app.services.skill_ingestion import run_skill_ingestion
+from app.services.ingestion_sources import GitHubSkillCorpusSource, load_source_manifest
+from app.services.skill_ingestion import persist_source_snapshot, run_skill_ingestion
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+DEFAULT_MANIFEST = REPO_ROOT / "config" / "skill_sources.yaml"
 
 
 async def _cmd_skill_dir(args: argparse.Namespace) -> None:
@@ -91,6 +97,155 @@ async def _cmd_search(args: argparse.Namespace) -> None:
         await pool.close()
 
 
+def _selected_specs(args: argparse.Namespace):
+    manifest = load_source_manifest(args.manifest)
+    if getattr(args, "source", None):
+        return [manifest.by_id(args.source)]
+    return [spec for spec in manifest.sources if spec.enabled]
+
+
+async def _cmd_discover(args: argparse.Namespace) -> None:
+    reports = []
+    for spec in _selected_specs(args):
+        adapter = GitHubSkillCorpusSource(spec)
+        refs = list(adapter.discover())
+        reports.append({
+            **adapter.snapshot_metadata(),
+            "skills_discovered": len(refs),
+            "skill_paths": [ref.path for ref in refs],
+        })
+    print(json.dumps({"sources": reports}, indent=2, default=str))
+
+
+async def _cmd_ingest_manifest(args: argparse.Namespace) -> None:
+    from app.services.ingestion_jobs import (
+        enqueue_skill_package_jobs, process_pending_jobs, resume_failed_skill_jobs,
+    )
+    pool = await create_pool(os.environ["DATABASE_URL"])
+    results = []
+    try:
+        if args.resume:
+            print(json.dumps({"resumed": await resume_failed_skill_jobs(
+                pool, include_embedding_failures=args.include_embedding_failures,
+            )}))
+        if args.queue_only or args.process_jobs:
+            for spec in _selected_specs(args):
+                adapter = GitHubSkillCorpusSource(spec)
+                await persist_source_snapshot(pool, adapter)
+                refs = list(adapter.discover())
+                queued = await enqueue_skill_package_jobs(
+                    pool,
+                    source_spec={
+                        "source_id": spec.id, "priority": spec.priority,
+                        "source_type": spec.type, "repo": spec.repo,
+                        "subtree": spec.path, "expected_format": spec.expected_format,
+                        "ref": spec.ref,
+                    },
+                    refs=[{
+                        "uri": ref.uri, "path": ref.path, "commit": ref.commit,
+                    } for ref in refs if not args.skill_path or ref.path in args.skill_path],
+                )
+                results.append({"source": spec.id, "queued": queued,
+                                "discovered": len(refs)})
+            if args.process_jobs:
+                results.append({"worker": await process_pending_jobs(
+                    pool, limit=args.worker_limit,
+                )})
+            print(json.dumps({"results": results}, indent=2, default=str))
+            return
+        for spec in _selected_specs(args):
+            adapter = GitHubSkillCorpusSource(
+                spec, include_paths=set(args.skill_path or []),
+            )
+            snapshot = await persist_source_snapshot(pool, adapter)
+            result = await run_skill_ingestion(
+                pool, adapter, embedder=Embedder(),
+                domain=(spec.repo if spec.type == "github_subtree" else None),
+                created_by="structured_skill_ingestion_wave1", limit=args.limit,
+            )
+            results.append({
+                "source": spec.id,
+                "resolved_commit": str(snapshot["resolved_commit"]),
+                "run_id": result["run_id"],
+                "metrics": result["metrics"],
+                "errors": [
+                    {"status": outcome.status, "reason": outcome.reason}
+                    for outcome in result["outcomes"] if outcome.status == "error"
+                ],
+            })
+    finally:
+        await pool.close()
+    print(json.dumps({"results": results}, indent=2, default=str))
+
+
+async def _cmd_retrieval_qa(args: argparse.Namespace) -> None:
+    from app.services.applicability import find_applicable_procedures
+
+    suite = json.loads(Path(args.suite).read_text(encoding="utf-8"))
+    pool = await create_pool(os.environ["DATABASE_URL"])
+    results = []
+    try:
+        embedder = Embedder()
+        for case in suite:
+            query_vec = await embedder.embed_one(case["query"], input_type="query")
+            matches = await find_applicable_procedures(
+                pool, goal_embedding=query_vec, require_verified=False, limit=5,
+                embedding_model_id=embedder.embedding_model_id(),
+            )
+            top = [{
+                "procedure_id": str(m.get("procedure_id")), "name": m.get("name"),
+                "source": (m.get("domain_payload") or {}).get("source"),
+                "similarity": m.get("_similarity_score") or m.get("similarity"),
+            } for m in matches]
+            expected = case["expected_procedure_family"].lower()
+            rank = next((i + 1 for i, m in enumerate(top)
+                         if expected in (m.get("name") or "").lower()), None)
+            results.append({**case, "top_5": top, "rank": rank})
+    finally:
+        await pool.close()
+    payload = {"results": results}
+    rendered = json.dumps(payload, indent=2, default=str)
+    if args.output:
+        Path(args.output).write_text(rendered + "\n", encoding="utf-8")
+    if args.summary:
+        print(json.dumps({
+            "queries": len(results),
+            "found_top_5": sum(result["rank"] is not None for result in results),
+            "ranks": [{"query": result["query"], "rank": result["rank"]}
+                      for result in results],
+        }, indent=2))
+    else:
+        print(rendered)
+
+
+async def _cmd_worker(args: argparse.Namespace) -> None:
+    """Drain a bounded batch of already-queued skill packages.
+
+    This intentionally does not load the manifest, discover repositories,
+    or enqueue work. It is therefore safe to run many times from a CI or
+    serverless provider against the same authoritative queue.
+    """
+    from app.services.ingestion_jobs import process_pending_jobs, requeue_stuck_jobs
+
+    pool = await create_pool(os.environ["DATABASE_URL"])
+    worker_id = args.worker_id or os.environ.get("STEALTHLAB_WORKER_ID") or socket.gethostname()
+    try:
+        requeued = 0
+        if args.requeue_stuck_minutes is not None:
+            requeued = await requeue_stuck_jobs(
+                pool, older_than_minutes=args.requeue_stuck_minutes,
+            )
+        result = await process_pending_jobs(
+            pool,
+            limit=args.max_jobs,
+            job_types=["ingest_skill_package"],
+            worker_id=worker_id,
+        )
+        print(json.dumps({"requeued_stuck": requeued, **result}, indent=2, default=str))
+    finally:
+        await pool.close()
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
@@ -112,8 +267,52 @@ def main() -> None:
     p_search.add_argument("--k", type=int, default=5)
     p_search.set_defaults(func=_cmd_search)
 
+    p_discover = sub.add_parser("discover", help="Inspect manifest sources without canonical writes.")
+    p_discover.add_argument("--manifest", default=str(DEFAULT_MANIFEST))
+    p_discover.add_argument("--source")
+    p_discover.set_defaults(func=_cmd_discover, needs_db=False)
+
+    p_ingest = sub.add_parser("ingest", help="Ingest manifest sources into candidate staging.")
+    p_ingest.add_argument("--manifest", default=str(DEFAULT_MANIFEST))
+    p_ingest.add_argument("--source")
+    p_ingest.add_argument("--limit", type=int)
+    p_ingest.add_argument("--skill-path", action="append", help="Exact repo-local SKILL.md path; repeatable.")
+    p_ingest.add_argument("--resume", action="store_true")
+    p_ingest.add_argument(
+        "--include-embedding-failures", action="store_true",
+        help="With --resume, also requeue failures caused by embedding-provider exhaustion.",
+    )
+    p_ingest.add_argument("--queue-only", action="store_true",
+                          help="Queue one retryable job per package; do not ingest inline.")
+    p_ingest.add_argument("--process-jobs", action="store_true",
+                          help="Queue packages and process a bounded worker batch inline.")
+    p_ingest.add_argument("--worker-limit", type=int, default=100)
+    p_ingest.set_defaults(func=_cmd_ingest_manifest, needs_db=True)
+
+    p_qa = sub.add_parser("retrieval-qa", help="Run the structured-skill retrieval suite.")
+    p_qa.add_argument("--suite", required=True)
+    p_qa.add_argument("--output")
+    p_qa.add_argument("--summary", action="store_true")
+    p_qa.set_defaults(func=_cmd_retrieval_qa, needs_db=True)
+
+    p_worker = sub.add_parser(
+        "worker", help="Process already-queued skill packages without discovery or enqueueing.",
+    )
+    p_worker.add_argument(
+        "--max-jobs", type=int, default=1,
+        help="Maximum skill-package jobs to claim in this bounded invocation.",
+    )
+    p_worker.add_argument(
+        "--worker-id", help="Observable worker identity; defaults to STEALTHLAB_WORKER_ID or hostname.",
+    )
+    p_worker.add_argument(
+        "--requeue-stuck-minutes", type=int,
+        help="Explicitly recover processing jobs older than this threshold before claiming.",
+    )
+    p_worker.set_defaults(func=_cmd_worker, needs_db=True)
+
     args = parser.parse_args()
-    if "DATABASE_URL" not in os.environ:
+    if getattr(args, "needs_db", True) and "DATABASE_URL" not in os.environ:
         print("REFUSED: DATABASE_URL is not set.", file=sys.stderr)
         sys.exit(1)
     asyncio.run(args.func(args))

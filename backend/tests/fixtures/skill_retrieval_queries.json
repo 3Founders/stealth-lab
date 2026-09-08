@@ -1,0 +1,17 @@
+[
+  {"query": "implement this feature using tests first", "expected_procedure_family": "test-driven-development"},
+  {"query": "write a failing regression test before fixing this bug", "expected_procedure_family": "test-driven-development"},
+  {"query": "prove the behavior change with a red green refactor loop", "expected_procedure_family": "test-driven-development"},
+  {"query": "how should I debug a failing test without randomly editing files?", "expected_procedure_family": "debugging-and-error-recovery"},
+  {"query": "systematically isolate the root cause of this unexpected error", "expected_procedure_family": "debugging-and-error-recovery"},
+  {"query": "the build broke and I need to reproduce localize and verify the fix", "expected_procedure_family": "debugging-and-error-recovery"},
+  {"query": "break this large implementation request into safe steps", "expected_procedure_family": "planning-and-task-breakdown"},
+  {"query": "turn this specification into ordered tasks with checkpoints", "expected_procedure_family": "planning-and-task-breakdown"},
+  {"query": "identify dependencies and parallel work before implementation", "expected_procedure_family": "planning-and-task-breakdown"},
+  {"query": "review this change for bugs and regressions", "expected_procedure_family": "code-review-and-quality"},
+  {"query": "assess a pull request for correctness security and performance", "expected_procedure_family": "code-review-and-quality"},
+  {"query": "inspect tests and implementation before approving a merge", "expected_procedure_family": "code-review-and-quality"},
+  {"query": "simplify this complicated implementation without changing behavior", "expected_procedure_family": "code-simplification"},
+  {"query": "remove unnecessary complexity while preserving exact behavior", "expected_procedure_family": "code-simplification"},
+  {"query": "refactor working code incrementally and verify it still behaves the same", "expected_procedure_family": "code-simplification"}
+]

@@ -191,6 +191,30 @@ class Settings(BaseSettings):
     # Layer 1 eval gate (Section 8.1).
     groundedness_threshold: float = 0.5
 
+    # Phase 1 P0: hosted execution mode. Default False preserves the
+    # local/loopback posture exactly: repo_path stays caller-provided and
+    # everything behaves as before. When True, repo-executing entry points
+    # refuse any repo_path that is not a registered workspace's
+    # server-side storage_path (services/workspace_registry.py) — the
+    # caller-controlled filesystem path stops being the authorization
+    # mechanism. Refuses to boot in hosted mode without OIDC identity
+    # (assert_boot_posture), because hosted mode with anonymous callers
+    # would be an authorization boundary with no one to authorize.
+    hosted_execution_enabled: bool = False
+
+    # --- Phase 1: Supabase Auth (canonical identity provider) ---
+    # Supabase Auth is OIDC-shaped: issuer is {project_url}/auth/v1 and
+    # the JWKS lives at {issuer}/.well-known/jwks.json. Setting
+    # supabase_project_url (with supabase_jwt_audience) is the
+    # zero-issuer-spelling preset: OidcConfig.from_settings derives the
+    # rest. Signing keys on Supabase are asymmetric (ES256/RS256) — the
+    # preset NEVER allows HS256, because HS256 verification against a
+    # leaked anon key would be signature-validation theater. The legacy
+    # shared-secret JWT mode is intentionally unsupported by this
+    # preset; projects still on it must rotate to asymmetric keys first.
+    supabase_project_url: Optional[str] = None
+    supabase_jwt_audience: Optional[str] = None
+
     # --- V2 access control ---
     # Private visibility is off until real authentication exists. These
     # two flags are checked together at startup (app/api/deps.py):

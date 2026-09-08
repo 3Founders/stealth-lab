@@ -24,7 +24,14 @@ from app.services.ingestion_sources.base import (
     SourceAdapter,
     SourceArtifact,
     SourceRef,
+    SourceResource,
     compute_content_hash,
+)
+from app.services.ingestion_sources.github_corpus import GitHubSkillCorpusSource
+from app.services.ingestion_sources.manifest import (
+    CorpusSourceSpec,
+    SkillSourceManifest,
+    load_source_manifest,
 )
 from app.services.ingestion_sources.skill_md import (
     SOURCE_ADAPTERS,
@@ -36,7 +43,12 @@ __all__ = [
     "SourceAdapter",
     "SourceArtifact",
     "SourceRef",
+    "SourceResource",
     "compute_content_hash",
+    "GitHubSkillCorpusSource",
+    "CorpusSourceSpec",
+    "SkillSourceManifest",
+    "load_source_manifest",
     "SOURCE_ADAPTERS",
     "GitHubSkillSource",
     "LocalDirSkillSource",

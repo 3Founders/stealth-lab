@@ -34,10 +34,18 @@ class AccessScope:
 
     `viewer_id` is None for anonymous public traffic — the default on a
     public commons, not an error condition.
+
+    `org_ids` carries the organizations the viewer is a member of (the
+    Phase 1 ORG_PRIVATE boundary, migration 41's 'org' visibility value).
+    A member sees: public rows, their own rows, and their organizations'
+    'org'-visibility rows. A non-member and anonymous viewers never see
+    'org' rows. Empty by default — the shared-commons posture is exactly
+    "no memberships", so existing callers behave identically.
     """
 
     viewer_id: Optional[str] = None
     include_private: bool = True
+    org_ids: tuple[str, ...] = ()
 
     @classmethod
     def anonymous(cls) -> "AccessScope":
@@ -46,6 +54,10 @@ class AccessScope:
     @classmethod
     def for_user(cls, viewer_id: str) -> "AccessScope":
         return cls(viewer_id=viewer_id)
+
+    @classmethod
+    def for_org_member(cls, viewer_id: str, org_ids: list[str]) -> "AccessScope":
+        return cls(viewer_id=viewer_id, org_ids=tuple(str(o) for o in org_ids))
 
     @classmethod
     def unrestricted(cls) -> "AccessScope":
@@ -91,11 +103,27 @@ def visibility_predicate(
     if not scope.include_private:
         return f"{prefix}visibility = 'public'", []
 
-    # Signed in: public content, plus anything they own.
-    return (
-        f"({prefix}visibility = 'public' OR {prefix}owner_id = ${param_index})",
-        [scope.viewer_id],
-    )
+    # Signed in: public content, plus anything they own, plus their
+    # organizations' 'org'-visibility rows (Phase 1 ORG_PRIVATE — migration
+    # 41 added the 'org' enum value; org rows carry their org's tenant_id).
+    # Anonymous and unrestricted scopes never see 'org' rows: the branches
+    # above return before reaching here.
+    clauses = [
+        f"{prefix}visibility = 'public'",
+        f"{prefix}owner_id = ${param_index}",
+    ]
+    params: list = [scope.viewer_id]
+    next_index = param_index + 1
+    if scope.org_ids:
+        placeholders = ", ".join(
+            f"${next_index + i}::uuid" for i in range(len(scope.org_ids))
+        )
+        clauses.append(
+            f"({prefix}visibility = 'org' AND {prefix}tenant_id IN ({placeholders}))"
+        )
+        params.extend(scope.org_ids)
+        next_index += len(scope.org_ids)
+    return "(" + " OR ".join(clauses) + ")", params
 
 
 def next_param_index(scope: AccessScope, current: int) -> int:

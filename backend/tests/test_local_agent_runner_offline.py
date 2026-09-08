@@ -596,7 +596,13 @@ async def test_runner_never_records_local_success_for_an_unimportable_artifact(m
 
     # The agent's own raw self-report is left honest/unchanged...
     assert result.graph_outcome == "success"
-    assert any("ARTIFACT VALIDATION FAILED" in note for note in result.node_notes)
+    # (Gate 2B: the note was renamed from ARTIFACT VALIDATION FAILED to
+    # POST-EXECUTION VALIDATION FAILED because the composed gate can now
+    # fail from artifact validation OR behavioral validation.)
+    assert any("POST-EXECUTION VALIDATION FAILED" in note for note in result.node_notes)
+    assert any("import" in note.lower() for note in result.node_notes), (
+        "this unimportable-artifact failure must specifically come from the "
+        "artifact gate (import check), not the behavioral gate")
 
     # ...but the RECORDED evidence outcome must be a failure, never a
     # success -- this is the real, single source of truth ticket 13's
@@ -672,7 +678,8 @@ async def test_runner_still_records_success_for_a_genuinely_working_artifact(mon
     ).run(task_description="fix the calc bug", repo_path=str(tmp_path), allow_unverified=True)
 
     assert result.graph_outcome == "success"
-    assert not any("ARTIFACT VALIDATION FAILED" in note for note in result.node_notes)
+    assert not any("POST-EXECUTION VALIDATION FAILED" in note
+                   for note in result.node_notes)
 
     updated = store.get_local_procedure(captured["id"])
     assert updated["verification_stats"]["successes"] == 1

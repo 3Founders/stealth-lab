@@ -1,0 +1,43 @@
+sources:
+  - id: addy-agent-skills
+    priority: 1
+    type: github
+    repo: https://github.com/addyosmani/agent-skills
+    expected_format: skill_repository
+
+  - id: obra-superpowers
+    priority: 2
+    type: github
+    repo: https://github.com/obra/superpowers
+    expected_format: skill_repository
+
+  - id: github-awesome-copilot
+    priority: 3
+    type: github
+    repo: https://github.com/github/awesome-copilot
+    expected_format: skill_repository
+
+  - id: microsoft-skills
+    priority: 4
+    type: github
+    repo: https://github.com/microsoft/skills
+    expected_format: skill_repository
+
+  - id: openai-plugins
+    priority: 5
+    type: github
+    repo: https://github.com/openai/plugins
+    expected_format: repository
+
+  - id: openai-agents-python-skills
+    priority: 6
+    type: github_subtree
+    repo: https://github.com/openai/openai-agents-python
+    path: .agents/skills
+    expected_format: skill_repository
+
+  - id: agent-skills-spec
+    priority: 7
+    type: github
+    repo: https://github.com/agentskills/agentskills
+    expected_format: specification_and_examples
