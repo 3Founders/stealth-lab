@@ -1,107 +1,571 @@
-# Test map — what is verified, and what each test defends against
+You are working on the StealthLab repository:
 
-Every entry names the **failure it prevents**, not just the behaviour it
-checks. Architecture context: [ARCHITECTURE.md](ARCHITECTURE.md).
+`https://github.com/3Founders/stealth-lab`
 
-```bash
-cd backend && python -m pytest -q          # 345 passing
+Goal: add **production-ready Supabase authentication** to the existing project without disturbing the ingestion, MCP, retrieval, or procedural-memory architecture.
+
+StealthLab already uses Supabase/Postgres for backend data. Authentication should be added on top of the existing system, not by creating a parallel user/database architecture.
+
+## Product goal
+
+We need users to be able to:
+
+```text
+sign up / sign in
+→ receive a Supabase-authenticated session
+→ use the StealthLab UI
+→ call authenticated backend/API/MCP-adjacent endpoints where appropriate
+→ have server-side code know the authenticated user identity
+→ enforce ownership/privacy for user-scoped data
 ```
 
-A test here exists because something silently produced a plausible wrong
-answer. Where a bug was found in production, the measurement is quoted.
+For V1, support:
+
+```text
+Email + password
+Google OAuth
+```
+
+If the repo already has another auth mechanism or Supabase auth scaffolding, extend/reuse it rather than duplicating it.
 
 ---
 
-## T-1 · Harness and grading — `tests/test_pro_harness.py`
+# FIRST: inspect the repo
 
-| id | test | defends against |
-|---|---|---|
-| **T-11** | gold resolves, empty patch does not | a harness that cannot recognise a known-correct answer makes every number meaningless. Pilot: 10/11 repos pass; NodeBB's gold breaks 6 unrelated tests |
-| **T-12** | a test absent from output counts as **failure** | treating absence as a pass is the one bug that manufactures successes |
-| T-13 | `pass_to_pass` breakage ⇒ not resolved | a patch that fixes the target and breaks the suite is not a fix |
-| T-14 | failed apply distinguishable from wrong fix | `patch_failed` and `f2p_failed` need opposite responses |
-| T-15 | dataset lists are Python reprs, not JSON | parsing as JSON yields an empty expectation set, and empty `f2p` grades as trivially resolved |
-| T-16 | `PYTEST_ADDOPTS` with spaces stays quoted | unquoted, the shell exports one word and the test flags vanish |
+Before changing code, inspect:
 
-## T-2 · Graph and retrieval — verified live against 731 nodes
+```text
+frontend structure/framework
+backend framework
+existing Supabase clients
+environment-variable handling
+API request helpers
+middleware
+current user/account models
+database schema
+RLS policies
+MCP/API authentication behavior
+deployment configuration
+tests
+```
 
-| id | check | defends against |
-|---|---|---|
-| **T-21** | 731/731/731, zero orphans, dupes or NULL embeddings | a partially-embedded graph degrades silently to lexical-only |
-| **T-22** | knowledge nodes reached by expansion (40/40 queries, 126/156 via traversal) | if they are never reached, the task/knowledge split is decorative |
-| **T-23** | holdout hides at **raw node level** under both columns; restores to 731 | an instance retrieving itself turns the experiment into a lookup of the answer |
-| **T-24** | `embedding_joint` is really searched (SQL captured; orderings differ) | a column flag that silently does nothing would show as "no effect" |
-| T-25 | invalid column name rejected | the name is interpolated into SQL |
-| T-26 | hierarchy `Group:` nodes excluded from entrypoints **and expansion** | 29% of returned nodes were aggregators, rendering `"Group: Group: …"` into prompts |
-| T-27 | `PARENT_OF` edges not traversed during expansion | `expand_depth=1` reached 2 hops; 193/324 expanded nodes had no direct edge to any entrypoint and 12 came from foreign repos |
-| T-28 | hierarchy build is deterministic | `_fetch_roots` had no `ORDER BY`; the same corpus built 113 vs 54 roots across runs, so no hierarchical number was reproducible |
+Search specifically for:
 
-## T-3 · HTN agent — `tests/test_htn_agent.py` (18 tests)
+```text
+supabase
+auth
+user_id
+owner_id
+created_by
+scope
+visibility
+service_role
+anon key
+JWT
+Authorization
+Bearer
+```
 
-| id | test | defends against |
-|---|---|---|
-| **T-31** | returns the same shape as the flat agent | if the harness can tell them apart, flat-vs-HTN is not controlled |
-| **T-32** | failed node replans **alone**; completed nodes keep edits, `attempts == 1` | re-running valid work is the whole thing localized backtracking exists to avoid |
-| **T-33** | each node opens a **fresh** message list; `max(len) ≤ 2 + 2·steps_per_subgoal`; no earlier node's tool output present | this is the bound on context growth. Without it HTN is just the flat agent with extra prompts — the flat agent hit a 53K-token context and 1.07M tokens on teleport |
-| **T-34** | plan parsing: JSON, fenced JSON, prose-prefixed, bullets, numbered | losing a plan to a code fence silently degrades every run |
-| T-34b | a **single line of prose is rejected** as a plan | *"I'm not sure how to break this down"* would otherwise become a subgoal and look like a deliberate one-step plan instead of a planner failure |
-| T-34c | self-loops and dangling deps dropped; cycles broken | either leaves a node permanently unready and hangs the scheduler |
-| **T-35** | a failed node blocks only **transitive dependents**; independent branches still run | a linear plan propagates one failure to work that never depended on it |
-| T-36 | blocked nodes consume **zero** budget | running a node whose prerequisite never landed edits against a state that does not exist |
-| T-37 | execution follows topological order | a dependent running first builds on nothing |
-| T-38 | replan attempts bounded | an unbounded retry on an impossible node eats the whole budget |
-| T-39 | unusable plan degrades to one subgoal, flagged `decompose_failed` | a zero-subgoal run would "complete" having changed nothing |
+Then briefly report:
 
-## T-4 · Agent capability — `tests/test_agent_sandbox.py` (27 tests)
+1. existing auth-related substrate
+2. frontend framework
+3. backend authentication seams
+4. tables already carrying user ownership/scope
+5. files you intend to modify
 
-| id | test | defends against |
-|---|---|---|
-| **T-41** | `create_file` makes nested dirs; emits `new file mode` + `--- /dev/null`; `delete_file` emits `deleted file mode` | **243 of 731 instances (33.2%)** add a file. Without this they were impossible, not hard — and a malformed header makes `git apply` fail, which grades identically to a wrong answer |
-| **T-42** | whitespace-tolerant match: spaces↔tabs, **nested depth preserved**, ambiguity refused, content differences still rejected | 16 edit attempts across three episodes, all rejected, in the rhythm `edit → read → edit → read`. Go is 38% of the corpus and tab-indented. The first fix for this **flattened nested blocks** → `IndentationError`, 0 tests parsed, while reporting "edited" |
-| **T-43** | `\ No newline at end of file` emitted; lines not fused | difflib pieces without a trailing newline fused into `-two+TWO`; git rejected the whole patch. **127 of 4853 ansible files (2.6%)** lack a trailing newline, including the changelog fragments its gold patches always touch. Deleting one failed every time |
-| T-44 | `search` sees `.go`, `.ts`, `.tsx`, `.js`, extensionless | the old allowlist was blind to **69% of gold-patch files**; in 356/731 instances not one target file was searchable. It survived because the only measured run was 9/9 ansible |
-| **T-45** | every tool in `TOOLS` is dispatched, and vice versa | a tool declared but not dispatched is a capability that exists and is never used |
-| T-46 | path traversal refused on read, create and delete | |
-
-## T-5 · Scoring and statistics — verified against scipy
-
-| id | check | defends against |
-|---|---|---|
-| **T-51** | McNemar matches `scipy.binomtest` across **255 combinations**; `(0,0)` returns "no test possible", not p=1.0 | reporting p=1.0 on zero discordant pairs implies evidence of no difference where there is no evidence at all |
-| **T-52** | resume skips completed and gold-excluded rows but **retries** harness errors | keying on `instance_id` alone baked transient failures in permanently — an earlier file has frozen `api_error` rows |
-| **T-53** | copyability 1.0 when a precedent contains the whole gold patch, 0.0 when unrelated; `+++` headers ignored | without it a memory-arm win cannot be separated from near-duplicate lookup |
-| **T-54** | retrieval scoring: same-dir-different-file ⇒ `file_recall 0.0, dir_recall 1.0` | exact match alone cannot distinguish "wrong subsystem" from "neighbouring file", which need opposite responses |
-| T-55 | invalid/excluded rows kept out of rates and token totals | a provider-killed episode counted as a task failure is the bug that invalidated Experiment 1 Hyp B |
-| T-56 | selection: 20 instances, 10 repos, 2 each, all gold files hand-editable | protobuf/lockfile regeneration is a `make generate` task an agent fails regardless of retrieval |
-
-## T-6 · Extraction — `tests/test_graph_ingest.py` (26 tests)
-
-| id | test | defends against |
-|---|---|---|
-| T-61 | literal `\n` unescaped | **391 of 731** problem statements carry backslash-n; anything splitting on newlines saw one 3000-char line |
-| T-62 | `title_of` never returns a bare label | produced **116 degenerate titles, 52 of them literally `"Title"`** — 52 nodes colliding under one name in both the lexical index and the vector space |
-| T-63 | `patch_facts` extracts files and hunk symbols across Go and TS | the localization signal; empty ⇒ the knowledge node points at nothing |
-| T-64 | search/replace conversion: no `@@` survives, SEARCH is byte-identical to the original | `@@ -42,7` refers to the *precedent's* file, not the one being edited |
+Do not redesign unrelated parts of the system.
 
 ---
 
-## Verified outside the suite
+# Architecture requirements
 
-Some properties cannot be unit-tested and were checked against reality:
+Use **Supabase Auth as the canonical identity provider**.
 
-- **`git apply` acceptance** — create + tolerant-edit + delete in one patch,
-  applied to a real git repo, `rc=0`, all three landing correctly
-- **Real container round-trip** — a `RepoSandbox` diff fed through
-  `evaluate()` returns `apply_status: applied`
-- **Live graph** — 731 nodes, holdout, restore, joint-column ordering
-- **Provider health** — 2.3–4.8s per call at probe time
+Desired architecture:
 
-## Known limits, stated rather than hidden
+```text
+Browser
+   ↓
+Supabase Auth
+   ↓
+access token / session
+   ↓
+Stealth frontend
+   ↓ Authorization: Bearer <JWT>
+Stealth backend
+   ↓
+verify Supabase JWT
+   ↓
+authenticated user ID
+   ↓
+existing services/database
+```
 
-- **n=20 cannot detect a doubling of the resolution rate** (power 0.041). See
-  the table in [ARCHITECTURE.md](ARCHITECTURE.md#power--read-this-before-reading-any-p-value)
-- Two instances (flipt, vuls) have `n_tests_parsed = 1` — one flaky test flips
-  the verdict
-- The flat agent's token cost is quadratic by construction; both arms bear it
-  equally, so comparisons hold but absolute costs are inflated
-- Copyability is indentation-insensitive and dedupes repeated lines
+Important distinction:
+
+```text
+PUBLIC CLIENT
+→ Supabase URL
+→ anon/publishable key
+
+BACKEND / trusted workers only
+→ service-role key
+```
+
+Never expose the service-role key to browser/client code.
+
+Do not put service-role credentials into:
+
+```text
+NEXT_PUBLIC_*
+VITE_*
+browser bundles
+frontend source
+logs
+error responses
+```
+
+---
+
+# Frontend requirements
+
+Adapt these to the actual frontend framework.
+
+Add a centralized Supabase browser client.
+
+Support:
+
+```text
+sign up
+sign in
+sign out
+Google OAuth
+session restoration
+current-user retrieval
+auth-state changes
+```
+
+Create a minimal auth experience consistent with the existing UI:
+
+```text
+/sign-in
+/sign-up
+```
+
+or use the repo's existing routing convention.
+
+The authenticated UI should show at minimum:
+
+```text
+user email/avatar where available
+sign-out control
+```
+
+Protect authenticated product pages appropriately.
+
+Do not create a huge account-management product.
+
+---
+
+# Session behavior
+
+Authentication must survive page refreshes.
+
+Handle:
+
+```text
+loading session
+authenticated session
+unauthenticated state
+expired token
+sign-out
+OAuth callback
+```
+
+Avoid UI flashes where protected pages briefly render before auth has resolved.
+
+If using Next.js or another SSR-capable framework, use the framework-appropriate Supabase SSR/session pattern rather than relying solely on localStorage.
+
+---
+
+# Backend requirements
+
+Add a single reusable authentication dependency/helper.
+
+Conceptually:
+
+```python
+user = require_authenticated_user(request)
+```
+
+It should:
+
+1. read:
+
+```text
+Authorization: Bearer <access_token>
+```
+
+2. validate the Supabase token using the appropriate supported mechanism
+
+3. return a typed authenticated-user object containing at minimum:
+
+```text
+user_id
+email if available
+claims/session metadata where useful
+```
+
+4. reject invalid/expired/missing authentication with appropriate HTTP status
+
+Do not duplicate JWT validation logic across endpoints.
+
+---
+
+# Frontend → backend calls
+
+Update the existing frontend API helper/client so authenticated requests automatically include:
+
+```http
+Authorization: Bearer <Supabase access token>
+```
+
+Do this centrally.
+
+Do not manually add auth headers in dozens of components.
+
+Desired flow:
+
+```text
+get session
+→ obtain access token
+→ API client attaches token
+→ backend resolves user
+```
+
+---
+
+# Public vs protected endpoints
+
+Do NOT blindly put authentication on every endpoint.
+
+Classify existing endpoints into:
+
+### Public
+
+Examples may include:
+
+```text
+health
+landing/product metadata
+explicitly public Procedure discovery
+public MCP discovery if currently intended
+```
+
+### Authenticated
+
+Examples may include:
+
+```text
+personal/repository/project data
+private Problems
+user-owned executions
+private procedures
+account-specific activity
+writes that should have an owner
+```
+
+### Internal/service
+
+Examples:
+
+```text
+ingestion workers
+background jobs
+service-role operations
+administrative processes
+```
+
+These should NOT pretend to be end-user Supabase sessions.
+
+Preserve the existing worker/service authentication model.
+
+---
+
+# Critical StealthLab privacy semantics
+
+The existing system has concepts such as:
+
+```text
+GLOBAL
+PROJECT
+REPOSITORY
+PERSONAL
+```
+
+Authentication should make those scopes enforceable.
+
+The intended direction is:
+
+```text
+GLOBAL
+→ accessible according to public/global policy
+
+PERSONAL
+→ authenticated owner only
+
+PROJECT / REPOSITORY
+→ only authorized members/users once membership exists
+```
+
+For this task, do not invent a giant organization/RBAC system unless the repo already has one.
+
+But ensure that obvious owner-scoped reads/writes cannot simply trust a client-supplied `user_id`.
+
+Bad:
+
+```json
+{
+  "user_id": "someone-else"
+}
+```
+
+Good:
+
+```text
+user_id comes from authenticated Supabase JWT
+```
+
+The backend should derive identity from the session.
+
+---
+
+# Database/RLS
+
+Inspect whether Supabase Row Level Security is already used.
+
+If appropriate and compatible with the current backend architecture, add or improve RLS for clearly user-owned tables.
+
+However:
+
+**do not break trusted backend/service-role operations.**
+
+Remember:
+
+```text
+service role
+→ trusted server/worker context
+
+authenticated user
+→ user-scoped permissions
+```
+
+Do not run destructive migrations.
+
+Any schema/RLS migration must:
+
+```text
+be checked into the repo
+be reversible/conservative
+preserve existing data
+not change global procedural knowledge ownership accidentally
+```
+
+Do not suddenly assign existing global Procedures to the first authenticated user.
+
+---
+
+# MCP considerations
+
+StealthLab currently exposes MCP functionality.
+
+Do not casually make the entire MCP server inaccessible during this change.
+
+Separate:
+
+```text
+public/global procedural lookup
+```
+
+from:
+
+```text
+private/personal/repository-scoped knowledge
+```
+
+If MCP authentication is not already cleanly supported by the current host/client setup, do the minimum necessary for the web/API auth layer and clearly document MCP auth as a follow-up rather than inventing an unsafe token scheme.
+
+But ensure private data cannot leak through MCP merely because the normal HTTP UI is authenticated.
+
+Inspect this carefully.
+
+---
+
+# Environment variables
+
+Use the repo's existing naming convention if equivalent variables already exist.
+
+Likely frontend/public variables:
+
+```text
+SUPABASE_URL
+SUPABASE_ANON_KEY
+```
+
+or framework-prefixed equivalents.
+
+Backend trusted variables may include:
+
+```text
+SUPABASE_URL
+SUPABASE_SERVICE_ROLE_KEY
+```
+
+Do not rename working existing variables unnecessarily.
+
+Update:
+
+```text
+.env.example
+deployment docs
+GitHub/hosting secret documentation
+```
+
+without committing real secrets.
+
+---
+
+# Google OAuth
+
+Configure application code for Supabase Google OAuth.
+
+Expected user flow:
+
+```text
+Sign in with Google
+→ Supabase OAuth
+→ callback
+→ session established
+→ redirect to app
+```
+
+Add any required callback route.
+
+Document the exact redirect URLs we need to configure in the Supabase dashboard for:
+
+```text
+localhost development
+production domain
+```
+
+Do not hardcode one deployment URL throughout the application.
+
+---
+
+# Error handling
+
+Users should get sensible states for:
+
+```text
+invalid credentials
+account already exists
+OAuth failure
+expired session
+network error
+backend 401
+backend 403
+```
+
+Do not expose raw Supabase/backend internals unnecessarily.
+
+---
+
+# Tests
+
+Add targeted tests for the important boundaries.
+
+At minimum verify:
+
+```text
+unauthenticated request to protected endpoint → rejected
+valid authenticated user → accepted
+malformed token → rejected
+expired/invalid token → rejected
+client-supplied fake user_id cannot impersonate another user
+public endpoint remains public
+service/worker path is not broken
+```
+
+Frontend tests should cover auth-state routing if the project already has frontend test infrastructure.
+
+Do not build an enormous testing framework if none exists.
+
+---
+
+# Important non-goals
+
+Do NOT:
+
+```text
+rewrite the ingestion system
+rewrite Procedure retrieval
+change find_best_way semantics
+change the TaskGraph executor
+replace Supabase/Postgres
+create another User database unless genuinely required
+introduce a second auth provider
+build billing
+build teams/orgs from scratch
+build elaborate RBAC
+make all Procedures private
+make ingestion workers authenticate as end users
+expose service-role credentials
+```
+
+---
+
+# Acceptance criteria
+
+The change is complete when:
+
+```text
+1. New user can sign up.
+2. Existing user can sign in.
+3. Google OAuth works structurally and required dashboard config is documented.
+4. Refresh preserves the authenticated session.
+5. Sign out clears the session.
+6. Protected frontend routes reject/redirect unauthenticated users.
+7. Frontend API calls automatically attach the Supabase access token.
+8. Backend validates that token centrally.
+9. Backend derives user identity from authentication, not request payload.
+10. Public endpoints remain usable.
+11. Existing ingestion workers still work.
+12. Existing MCP/retrieval behavior is not accidentally broken.
+13. No service-role secret enters frontend/browser code.
+14. Tests pass.
+```
+
+---
+
+# At the end report
+
+Return:
+
+```text
+A. architecture found before changes
+B. auth architecture implemented
+C. files changed
+D. migrations/RLS policies added
+E. frontend routes/components added
+F. backend endpoints now protected
+G. endpoints intentionally left public
+H. environment variables required
+I. exact Supabase dashboard settings I must configure manually
+J. local run/test instructions
+K. production deployment checklist
+L. tests and results
+M. known follow-ups, especially MCP private-scope authentication
+```
+
+Favor the smallest production-quality change that cleanly integrates Supabase Auth into the existing StealthLab architecture.
