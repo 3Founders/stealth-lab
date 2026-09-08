@@ -42,18 +42,16 @@ test.describe("Final-V1 product path", () => {
       if (u.includes("/v1/")) apiCalls.push(u);
     });
     // dev-fallback viewer identity, exactly as the /auth page would set it
+    // (signInAsViewer stores the raw id under "stealth.viewer")
     await context.addInitScript(
       ([key, id]) => {
         try {
-          sessionStorage.setItem(
-            key,
-            JSON.stringify({ mode: "viewer", token: id }),
-          );
+          sessionStorage.setItem(key, id);
         } catch {
           /* private mode */
         }
       },
-      ["stealth.auth", seed.viewer_id],
+      ["stealth.viewer", seed.viewer_id],
     );
   });
 

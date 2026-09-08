@@ -1,196 +1,186 @@
 /**
- * Frontend identity. The backend validates RS256 OIDC bearer tokens against
- * its configured issuer's JWKS (app/services/authn.py) and, in the public
- * posture only, accepts an X-Viewer-Id header. There is no backend login
- * endpoint by design, so the browser performs Authorization Code + PKCE
- * directly against the OIDC provider; the dev fallback sends X-Viewer-Id.
+ * Frontend identity, backed by Supabase Auth (launch compliance Phase 1).
  *
- * Tokens live in sessionStorage: short-lived, per-tab, nothing sensitive
- * persisted long-term. The backend is the only token validator.
+ * Supabase issues the session; the StealthLab backend is the only token
+ * validator — it verifies "Authorization: Bearer <access_token>" against the
+ * project's JWKS (app/services/authn.py, ES256/RS256). The access token is
+ * kept in a module variable, refreshed transparently by supabase-js and
+ * mirrored here via onAuthStateChange, so `authHeaders()` stays synchronous
+ * for the API client and a reload restores the signed-in state.
+ *
+ * Dev fallback: when Supabase is not configured (local public posture),
+ * `signInAsViewer` sends an unverified X-Viewer-Id — accepted by the backend
+ * only while nothing is private.
  */
+import type { Session } from "@supabase/supabase-js";
 
-const AUTH_KEY = "stealth.auth";
+import { getSupabase, isSupabaseConfigured } from "@/lib/supabase/client";
+
+export { isSupabaseConfigured };
+
+const VIEWER_KEY = "stealth.viewer";
 
 export interface AuthState {
-  mode: "oidc" | "viewer";
-  /** OIDC access token (mode=oidc) or viewer id (mode=viewer). */
+  mode: "supabase" | "viewer";
+  /** OIDC access token (mode=supabase) or viewer id (mode=viewer). */
   token: string;
-  /** Unix ms expiry for OIDC tokens; undefined for viewer mode. */
   expiresAt?: number;
   email?: string;
   name?: string;
 }
 
-export function getAuth(): AuthState | null {
+// --- live session mirror -------------------------------------------------
+
+let _session: Session | null = null;
+let _ready = false;
+const _listeners = new Set<() => void>();
+
+function _emit() {
+  for (const l of _listeners) l();
+}
+
+/** Subscribe to auth-state changes (sign in / out / token refresh). */
+export function onAuthChange(cb: () => void): () => void {
+  _listeners.add(cb);
+  return () => _listeners.delete(cb);
+}
+
+/** Resolves once the initial session has been read from storage. */
+export function authReady(): Promise<void> {
+  if (_ready || typeof window === "undefined") return Promise.resolve();
+  return new Promise((resolve) => {
+    const off = onAuthChange(() => {
+      if (_ready) {
+        off();
+        resolve();
+      }
+    });
+  });
+}
+
+if (typeof window !== "undefined") {
+  const supabase = getSupabase();
+  if (supabase) {
+    supabase.auth.getSession().then(({ data }) => {
+      _session = data.session;
+      _ready = true;
+      _emit();
+    });
+    supabase.auth.onAuthStateChange((_event, session) => {
+      _session = session;
+      _ready = true;
+      _emit();
+    });
+  } else {
+    _ready = true;
+  }
+}
+
+// --- viewer fallback ---------------------------------------------------
+
+function _viewerId(): string | null {
   if (typeof window === "undefined") return null;
   try {
-    const raw = sessionStorage.getItem(AUTH_KEY);
-    if (!raw) return null;
-    const auth = JSON.parse(raw) as AuthState;
-    if (auth.mode === "oidc" && auth.expiresAt && auth.expiresAt < Date.now()) {
-      signOut();
-      return null;
-    }
-    return auth;
+    return sessionStorage.getItem(VIEWER_KEY) || null;
   } catch {
     return null;
   }
 }
 
-export function setAuth(auth: AuthState): void {
-  sessionStorage.setItem(AUTH_KEY, JSON.stringify(auth));
-}
+// --- public API ------------------------------------------------------
 
-export function signOut(): void {
-  sessionStorage.removeItem(AUTH_KEY);
-}
-
-/** Headers the API client should attach for identity. */
-export function authHeaders(): Record<string, string> {
-  const auth = getAuth();
-  if (!auth) return {};
-  return auth.mode === "oidc"
-    ? { Authorization: `Bearer ${auth.token}` }
-    : { "X-Viewer-Id": auth.token };
-}
-
-// ---------------------------------------------------------------------------
-// OIDC config (build-time via NEXT_PUBLIC_* env).
-// ---------------------------------------------------------------------------
-
-export const OIDC_AUTHORITY = process.env.NEXT_PUBLIC_OIDC_AUTHORITY ?? "";
-export const OIDC_CLIENT_ID = process.env.NEXT_PUBLIC_OIDC_CLIENT_ID ?? "";
-
-export function isOidcConfigured(): boolean {
-  return Boolean(OIDC_AUTHORITY && OIDC_CLIENT_ID);
-}
-
-// ---------------------------------------------------------------------------
-// PKCE (RFC 7636) — Authorization Code flow with S256, all client-side.
-// Provider-agnostic via /.well-known/openid-configuration discovery
-// (Google, Auth0, Keycloak, WorkOS, ...).
-// ---------------------------------------------------------------------------
-
-function base64url(bytes: Uint8Array): string {
-  return btoa(String.fromCharCode(...bytes))
-    .replace(/\+/g, "-")
-    .replace(/\//g, "_")
-    .replace(/=+$/, "");
-}
-
-async function sha256(input: string): Promise<Uint8Array> {
-  const digest = await crypto.subtle.digest(
-    "SHA-256",
-    new TextEncoder().encode(input)
-  );
-  return new Uint8Array(digest);
-}
-
-interface PendingFlow {
-  verifier: string;
-  state: string;
-  createdAt: number;
-}
-
-const PENDING_KEY = "stealth.oidc.pending";
-
-export async function beginOidcSignIn(): Promise<void> {
-  if (!isOidcConfigured()) throw new Error("OIDC is not configured");
-  const verifier = base64url(crypto.getRandomValues(new Uint8Array(32)));
-  const challenge = base64url(await sha256(verifier));
-  const state = base64url(crypto.getRandomValues(new Uint8Array(16)));
-  sessionStorage.setItem(
-    PENDING_KEY,
-    JSON.stringify({ verifier, state, createdAt: Date.now() } satisfies PendingFlow)
-  );
-
-  const discovery = await fetch(
-    `${OIDC_AUTHORITY}/.well-known/openid-configuration`
-  );
-  if (!discovery.ok) throw new Error("OIDC discovery failed");
-  const doc = (await discovery.json()) as { authorization_endpoint: string };
-
-  const url = new URL(doc.authorization_endpoint);
-  url.searchParams.set("response_type", "code");
-  url.searchParams.set("client_id", OIDC_CLIENT_ID);
-  url.searchParams.set("redirect_uri", `${window.location.origin}/auth`);
-  url.searchParams.set("scope", "openid profile email");
-  url.searchParams.set("state", state);
-  url.searchParams.set("code_challenge", challenge);
-  url.searchParams.set("code_challenge_method", "S256");
-  window.location.assign(url.toString());
-}
-
-/**
- * Handle the redirect back to /auth?code=...&state=...
- * Exchanges the code at the provider's token endpoint (public client, PKCE,
- * no client secret — the backend never sees the provider, only the token).
- */
-export async function completeOidcSignInIfPending(): Promise<AuthState | null> {
-  if (typeof window === "undefined") return null;
-  const url = new URL(window.location.href);
-  const code = url.searchParams.get("code");
-  const state = url.searchParams.get("state");
-  if (!code || !state) return null;
-
-  const raw = sessionStorage.getItem(PENDING_KEY);
-  window.history.replaceState(null, "", "/auth");
-  if (!raw) throw new Error("No sign-in flow in progress");
-  sessionStorage.removeItem(PENDING_KEY);
-  const pending = JSON.parse(raw) as PendingFlow;
-  if (pending.state !== state) throw new Error("State mismatch");
-  if (Date.now() - pending.createdAt > 10 * 60_000)
-    throw new Error("Sign-in flow expired; try again");
-
-  const discovery = await fetch(
-    `${OIDC_AUTHORITY}/.well-known/openid-configuration`
-  );
-  const doc = (await discovery.json()) as { token_endpoint: string };
-
-  const res = await fetch(doc.token_endpoint, {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: new URLSearchParams({
-      grant_type: "authorization_code",
-      code,
-      redirect_uri: `${window.location.origin}/auth`,
-      client_id: OIDC_CLIENT_ID,
-      code_verifier: pending.verifier,
-    }),
-  });
-  if (!res.ok) throw new Error("Token exchange failed");
-  const tokens = (await res.json()) as {
-    access_token: string;
-    expires_in: number;
-    id_token?: string;
-  };
-
-  const auth: AuthState = {
-    mode: "oidc",
-    token: tokens.access_token,
-    expiresAt: Date.now() + tokens.expires_in * 1000,
-  };
-  // Best-effort display profile from the id_token payload.
-  if (tokens.id_token) {
-    try {
-      const payload = JSON.parse(
-        atob(tokens.id_token.split(".")[1].replace(/-/g, "+").replace(/_/g, "/"))
-      ) as { email?: string; name?: string };
-      auth.email = payload.email;
-      auth.name = payload.name;
-    } catch {
-      // display-only; ignore malformed id_token
-    }
+/** Synchronous snapshot for rendering. */
+export function getAuth(): AuthState | null {
+  if (_session?.access_token) {
+    return {
+      mode: "supabase",
+      token: _session.access_token,
+      expiresAt: _session.expires_at ? _session.expires_at * 1000 : undefined,
+      email: _session.user?.email ?? undefined,
+      name:
+        (_session.user?.user_metadata?.full_name as string | undefined) ??
+        (_session.user?.user_metadata?.name as string | undefined),
+    };
   }
-  setAuth(auth);
-  return auth;
+  const viewer = _viewerId();
+  if (viewer) return { mode: "viewer", token: viewer };
+  return null;
+}
+
+/** Headers the API client attaches for identity (synchronous). */
+export function authHeaders(): Record<string, string> {
+  if (_session?.access_token) {
+    return { Authorization: `Bearer ${_session.access_token}` };
+  }
+  const viewer = _viewerId();
+  return viewer ? { "X-Viewer-Id": viewer } : {};
+}
+
+export async function signUpWithPassword(
+  email: string,
+  password: string
+): Promise<{ needsConfirmation: boolean }> {
+  const supabase = _require();
+  const { data, error } = await supabase.auth.signUp({
+    email,
+    password,
+    options: { emailRedirectTo: `${window.location.origin}/auth/callback` },
+  });
+  if (error) throw error;
+  // No session back => the project requires email confirmation first.
+  return { needsConfirmation: !data.session };
+}
+
+export async function signInWithPassword(
+  email: string,
+  password: string
+): Promise<void> {
+  const supabase = _require();
+  const { error } = await supabase.auth.signInWithPassword({ email, password });
+  if (error) throw error;
+}
+
+export async function signInWithGoogle(): Promise<void> {
+  const supabase = _require();
+  const { error } = await supabase.auth.signInWithOAuth({
+    provider: "google",
+    options: { redirectTo: `${window.location.origin}/auth/callback` },
+  });
+  if (error) throw error;
+  // supabase redirects the browser to Google; nothing after this runs.
+}
+
+export async function signOut(): Promise<void> {
+  try {
+    sessionStorage.removeItem(VIEWER_KEY);
+  } catch {
+    /* ignore */
+  }
+  const supabase = getSupabase();
+  if (supabase) await supabase.auth.signOut();
+  _session = null;
+  _emit();
 }
 
 /** Dev fallback: unverified viewer identity, valid only in the public posture. */
 export function signInAsViewer(id: string): AuthState {
   const trimmed = id.trim().slice(0, 100);
   if (!trimmed) throw new Error("Viewer id required");
-  const auth: AuthState = { mode: "viewer", token: trimmed };
-  setAuth(auth);
-  return auth;
+  try {
+    sessionStorage.setItem(VIEWER_KEY, trimmed);
+  } catch {
+    /* private mode — the id still rides the in-memory emit for this tab */
+  }
+  _emit();
+  return { mode: "viewer", token: trimmed };
+}
+
+function _require() {
+  const supabase = getSupabase();
+  if (!supabase) {
+    throw new Error(
+      "Supabase Auth is not configured (set NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY)."
+    );
+  }
+  return supabase;
 }
