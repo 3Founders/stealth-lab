@@ -327,7 +327,17 @@ class FetchingJwks:
         def _fetch() -> dict[str, dict[str, Any]]:
             with urllib.request.urlopen(self.url, timeout=10) as resp:  # noqa: S310 - configured URL
                 doc = json.loads(resp.read().decode("utf-8"))
-            return {k["kid"]: k for k in doc.get("keys", []) if k.get("kty") == "RSA"}
+            # Keep every asymmetric signing key. RSA (RS256) AND EC (ES256) --
+            # Supabase Auth's modern signing keys are EC/P-256, so filtering
+            # to kty=="RSA" here silently dropped the only key and every
+            # authenticated request 500'd with KeyError(kid). PyJWT's
+            # PyJWK.from_dict handles both families; validate_token's alg
+            # whitelist is the real gate.
+            return {
+                k["kid"]: k
+                for k in doc.get("keys", [])
+                if k.get("kid") and k.get("kty") in ("RSA", "EC")
+            }
 
         self._keys = await asyncio.to_thread(_fetch)
         self._fetched_at = time.monotonic()
