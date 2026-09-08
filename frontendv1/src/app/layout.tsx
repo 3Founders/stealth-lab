@@ -39,6 +39,8 @@ export default function RootLayout({
             <nav aria-label="Main" className="flex items-center gap-6">
               <NavLink href="/search" label="Search" />
               <NavLink href="/problems" label="Problems" />
+              <NavLink href="/leaderboard" label="Leaderboard" />
+              <NavLink href="/people" label="People" />
               <AuthNav />
             </nav>
           </div>

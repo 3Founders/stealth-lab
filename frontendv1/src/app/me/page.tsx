@@ -6,17 +6,22 @@ import { useEffect, useState } from "react";
 import { EmptyState, ErrorState, SectionHeading } from "@/components/domain";
 import { Skeleton } from "@/components/ui/skeleton";
 import { getMe } from "@/lib/api/client";
+import { getMyProfile } from "@/lib/api/people";
 import type { MeResponse } from "@/lib/api/types";
 
 export default function MePage() {
   const [me, setMe] = useState<MeResponse | null>(null);
   const [status, setStatus] = useState<number | null>(null);
+  const [disclosureNeeded, setDisclosureNeeded] = useState(false);
 
   useEffect(() => {
     let alive = true;
     getMe()
       .then((m) => alive && setMe(m))
       .catch((err) => alive && setStatus(err?.status ?? 0));
+    getMyProfile()
+      .then((p) => alive && setDisclosureNeeded(p.disclosure_required))
+      .catch(() => {});
     return () => {
       alive = false;
     };
@@ -59,6 +64,21 @@ export default function MePage() {
           What you have added to the global capability layer.
         </p>
       </header>
+
+      {disclosureNeeded ? (
+        <div className="mt-6 max-w-2xl rounded-xl border border-black/[0.08] bg-black/[0.02] p-4 text-sm">
+          <p className="font-medium text-neutral-900">Your profile is private</p>
+          <p className="mt-1 text-neutral-600">
+            Your name and contribution counts are not shown to anyone. You can
+            opt into a public profile — visible in people search and on the
+            contributor leaderboard — from{" "}
+            <Link href="/me/privacy" className="underline">
+              Privacy &amp; Data
+            </Link>
+            .
+          </p>
+        </div>
+      ) : null}
 
       <section className="mt-12">
         <SectionHeading>Your procedures</SectionHeading>

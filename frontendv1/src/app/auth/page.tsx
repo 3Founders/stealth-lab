@@ -203,7 +203,12 @@ export default function AuthPage() {
         </p>
       ) : null}
 
-      <Link href="/" className="mt-8 text-xs text-neutral-500 underline">
+      <p className="mt-8 max-w-xs text-center text-xs text-neutral-400">
+        Your profile is private by default. Contribution counts and your name
+        become public only if you turn on a public profile in Privacy &amp; Data.
+      </p>
+
+      <Link href="/" className="mt-4 text-xs text-neutral-500 underline">
         Back to search
       </Link>
     </div>

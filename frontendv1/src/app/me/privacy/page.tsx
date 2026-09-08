@@ -9,7 +9,113 @@ import {
   previewMyDeletion,
   type DeletionPlan,
 } from "@/lib/api/privacy";
+import {
+  getMyProfile,
+  setMyProfile,
+  type MyProfileResponse,
+} from "@/lib/api/people";
 import { getAuth, onAuthChange } from "@/lib/auth";
+
+function PublicProfileSection() {
+  const [me, setMe] = useState<MyProfileResponse | null>(null);
+  const [tagline, setTagline] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  useEffect(() => {
+    getMyProfile()
+      .then((r) => {
+        setMe(r);
+        setTagline(r.profile?.tagline ?? "");
+      })
+      .catch((e) => setErr(e instanceof Error ? e.message : "Couldn’t load your profile."));
+  }, []);
+
+  async function save(visibility: "private" | "public") {
+    setBusy(true);
+    setErr(null);
+    try {
+      const r = await setMyProfile(visibility, tagline);
+      setMe((prev) => (prev ? { ...prev, profile: r.profile, disclosure_required: false } : prev));
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "Save failed.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const isPublic = me?.profile?.visibility === "public";
+
+  return (
+    <section className="mt-8">
+      <h2 className="text-sm font-medium text-neutral-900">Public profile</h2>
+      <p className="mt-1 text-sm text-neutral-500">
+        Off by default. If you turn it on, your name
+        {me?.display_name ? ` (${me.display_name})` : ""} and your aggregate
+        contribution counts — procedures authored, verified procedures, claims,
+        Commons publications — become publicly visible on a profile page, in
+        people search, and on the contributor leaderboard. No private procedures,
+        traces, or execution detail are ever shown. You can switch it back to
+        private at any time.
+      </p>
+
+      {me ? (
+        <>
+          <label className="mt-3 block text-xs text-neutral-500" htmlFor="tagline">
+            Tagline (optional, shown only when public)
+          </label>
+          <input
+            id="tagline"
+            value={tagline}
+            maxLength={280}
+            onChange={(e) => setTagline(e.target.value)}
+            placeholder="e.g. Postgres migrations, CI reliability"
+            className="mt-1 h-9 w-full max-w-md rounded-lg border border-neutral-200 px-3 text-sm outline-none focus:border-neutral-300 focus:ring-[3px] focus:ring-neutral-950/5"
+          />
+          <div className="mt-3 flex items-center gap-2">
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => void save(isPublic ? "private" : "public")}
+              className={
+                "rounded-lg px-4 py-2 text-sm font-medium disabled:opacity-50 " +
+                (isPublic
+                  ? "border border-neutral-200 text-neutral-700 hover:bg-neutral-50"
+                  : "bg-neutral-900 text-neutral-50 hover:bg-neutral-800")
+              }
+            >
+              {busy
+                ? "Saving…"
+                : isPublic
+                  ? "Make my profile private"
+                  : "Make my profile public"}
+            </button>
+            {isPublic ? (
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => void save("public")}
+                className="rounded-lg border border-neutral-200 px-4 py-2 text-sm text-neutral-700 hover:bg-neutral-50 disabled:opacity-50"
+              >
+                Save tagline
+              </button>
+            ) : null}
+            <span className="text-xs text-neutral-400">
+              {isPublic ? "Currently public" : "Currently private"}
+            </span>
+          </div>
+        </>
+      ) : err ? null : (
+        <p className="mt-3 text-sm text-neutral-400">Loading…</p>
+      )}
+      {err ? (
+        <p className="mt-3 rounded-lg border border-red-200 bg-red-50 px-4 py-2 text-sm text-red-800">
+          {err}
+        </p>
+      ) : null}
+    </section>
+  );
+}
 
 export default function PrivacyPage() {
   const [signedIn, setSignedIn] = useState(false);
@@ -99,6 +205,8 @@ export default function PrivacyPage() {
           <li>Executions and evidence you can see.</li>
         </ul>
       </section>
+
+      <PublicProfileSection />
 
       <section className="mt-8">
         <h2 className="text-sm font-medium text-neutral-900">Export my data</h2>
