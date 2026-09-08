@@ -4713,3 +4713,17 @@ Grounded findings from  3_access.sql/ 4_governance.sql/deps.py review. Sequence:
   something this wave's 20 new provenance="system_pending_review" call
   sites caused). Two commits pushed straight to main per house rules:
   Part A (mechanical), then Part B (judgment).
+
+### Lane INTEGRATOR — structured-skill ingestion wave 1 (2026-09-07)
+
+- `[~]` Founder-directed implementation on branch `gate-2b`: extend the existing
+  `ingestion_sources` / `skill_ingestion` module for the seven-source, immutable-SHA
+  corpus; preserve bundled resources, implementations, dependencies, candidate state,
+  and runtime TaskGraph instantiation. Phase 0 audit:
+  `.scratch/skill_ingestion_wave1_audit.md`.
+- Granted paths for this wave: `config/skill_sources.yaml`,
+  `backend/app/services/ingestion_sources/**`, `backend/app/services/skill_ingestion.py`,
+  `backend/app/services/ingestion_jobs.py`, `backend/app/execution/implementation_registry.py`,
+  `backend/scripts/ingest_skills.py`, new additive `backend/db/38_*`, focused tests and
+  fixtures, and `.scratch/skill_*_report.md`. Existing dirty Gate 3/local-runner files are
+  explicitly excluded and remain user-owned.
