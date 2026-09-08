@@ -60,3 +60,7 @@ CLAUDE.md
 # core-b retrieval backfill / eval runtime state (not code)
 backend/scripts/.backfill_state/
 backend/logs/
+
+# retrieval-release-closure embedding vector caches (large, regenerable)
+.scratch/retrieval-release-closure/vectors/
+backend/.scratch/

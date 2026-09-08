@@ -1,0 +1,28 @@
+{"query": "what year did the Roman Empire fall", "category": "completely_unrelated", "note": "general knowledge, nothing in a coding-procedure corpus"}
+{"query": "recommend a 30 minute upper body dumbbell workout", "category": "completely_unrelated", "note": "fitness, no procedure"}
+{"query": "translate 'good morning, how are you' into Japanese", "category": "completely_unrelated", "note": "translation task"}
+{"query": "what is the boiling point of water at 2000m altitude", "category": "completely_unrelated", "note": "physics trivia"}
+{"query": "draft a wedding toast for my brother", "category": "completely_unrelated", "note": "creative writing"}
+{"query": "file my quarterly VAT return with HMRC", "category": "wrong_domain", "note": "accounting/tax, not software engineering"}
+{"query": "diagnose why my dishwasher leaves spots on glasses", "category": "wrong_domain", "note": "appliance repair"}
+{"query": "plan a 7 day itinerary for northern Portugal", "category": "wrong_domain", "note": "travel planning"}
+{"query": "what mortgage rate can I get with a 720 credit score", "category": "wrong_domain", "note": "personal finance"}
+{"query": "review the tenant lease agreement for unfavorable clauses", "category": "wrong_domain", "note": "'review' overlaps code-review skills but domain is legal"}
+{"query": "load balance incoming traffic across three web servers", "category": "superficial_wording_diff_intent", "note": "'load' collides with lazy tool-schema LOADING; infra task with no procedure"}
+{"query": "isolate the noisy neighbor VM that is starving the host", "category": "superficial_wording_diff_intent", "note": "'isolate' collides with worktree ISOLATION; unrelated ops task"}
+{"query": "read the room before pitching the new roadmap to leadership", "category": "superficial_wording_diff_intent", "note": "'read ... before' collides with structural-summary-before-full-READ"}
+{"query": "generate leads for the outbound sales campaign this quarter", "category": "superficial_wording_diff_intent", "note": "'generate' collides with generate-image; sales, not code"}
+{"query": "defer the tax payment to next fiscal year", "category": "superficial_wording_diff_intent", "note": "'defer' collides with 'Defer tool-schema loading'"}
+{"query": "permanently delete every Twilio recording and close the account", "category": "same_tool_diff_objective", "note": "corpus has twilio-call-recordings (how to MAKE recordings); this is data destruction / offboarding"}
+{"query": "downgrade React 18 back to React 17 in a legacy service", "category": "same_tool_diff_objective", "note": "corpus has react18-* MIGRATION guides; reverse direction, no procedure"}
+{"query": "revoke a compromised CodeQL result and notify the security team", "category": "same_tool_diff_objective", "note": "corpus has codeql SETUP; this is incident response"}
+{"query": "cancel the running Temporal workflow and purge its history", "category": "same_tool_diff_objective", "note": "corpus has temporal-developer (build/debug); this is teardown"}
+{"query": "set up go-to-definition for a proprietary in-house DSL with no language server", "category": "same_objective_incompatible_env", "note": "corpus lsp-setup assumes an existing LSP server; incompatible precondition"}
+{"query": "run the webapp Playwright test suite against a native iOS app", "category": "same_objective_incompatible_env", "note": "corpus webapp-testing is browser-only; wrong runtime"}
+{"query": "migrate javax to jakarta in a Kotlin-only codebase with no Java sources", "category": "same_objective_incompatible_env", "note": "corpus javax-to-jakarta-migration operates on Java source"}
+{"query": "embed a Zoom meeting in a Qt desktop app using C++ only", "category": "same_objective_incompatible_env", "note": "corpus zoom SDK skills are iOS / React Native / Web; no Qt/C++ path"}
+{"query": "apply the Oracle-to-Postgres migration plan to a MySQL source database", "category": "same_objective_incompatible_env", "note": "corpus plan is Oracle-specific; MySQL is a different source engine"}
+{"query": "isolate parallel coding agents using Docker containers instead of git worktrees", "category": "family_cousin_do_not_reuse", "note": "corpus 'Parallel-agent git-worktree isolation' is worktree-specific; container isolation is a different mechanism and reusing the worktree steps would be wrong"}
+{"query": "reduce agent context by summarizing conversation history, not by lazy tool loading", "category": "family_cousin_do_not_reuse", "note": "adjacent to 'Defer tool-schema loading' but a different technique; the tool-schema steps do not apply"}
+{"query": "review a Rust crate's unsafe blocks specifically for memory safety", "category": "family_cousin_do_not_reuse", "note": "corpus has react-best-practices / code-review-and-quality; neither covers Rust unsafe auditing"}
+{"query": "get a structural outline of a 40-page PDF contract before reading it", "category": "family_cousin_do_not_reuse", "note": "corpus 'Structural-summary-before-full-read' is for CODE files via AST; a PDF contract is a different artifact and the steps do not transfer"}
