@@ -37,10 +37,20 @@ import yaml
 
 from app.services.applicability import find_applicable_procedures
 from app.services.embeddings import Embedder
+from app.services.procedure_display import (
+    DISPLAY_METADATA_FALLBACK_VERSION,
+    DISPLAY_METADATA_VERSION,
+    build_display_metadata,
+)
 from app.services.procedures import (
     capture_procedure,
     mark_procedure_stale,
     supersede_procedure,
+)
+from app.services.retrieval_document import (
+    RETRIEVAL_DOCUMENT_VERSION,
+    build_procedure_retrieval_document,
+    retrieval_document_sha256,
 )
 
 NOVELTY_THRESHOLD = 0.90
@@ -259,6 +269,90 @@ def normalize_skill_package(artifact: Any) -> NormalizedSkillPackage:
     )
 
 
+# ---------------------------------------------------------------------------
+# Canonical retrieval representation + display metadata for an ingested
+# skill. Before this, three call sites built the embedding text three
+# different (all impoverished) ways; now every path embeds exactly
+# build_procedure_retrieval_document() over the same structured shape, and
+# the row records which recipe produced its vector.
+# ---------------------------------------------------------------------------
+
+
+def _parsed_skill_procedure_shape(
+    parsed: ParsedSkill,
+    *,
+    capability_statement: Optional[str] = None,
+    domain: Optional[str] = None,
+    artifact: Any = None,
+) -> dict:
+    """A ``procedures``-column-shaped dict for a parsed skill, so
+    build_procedure_retrieval_document / build_display_metadata can run on
+    it before the row exists."""
+    payload: dict[str, Any] = {
+        "applies_when": parsed.applies_when,
+        "tool_requirements": list(parsed.allowed_tools),
+        "compatibility": parsed.compatibility,
+    }
+    if artifact is not None:
+        try:
+            package = normalize_skill_package(artifact)
+            payload["tool_requirements"] = list(package.tool_requirements)
+            payload["dependencies"] = [dep.__dict__ for dep in package.dependencies]
+        except Exception:  # noqa: BLE001 -- a malformed package must not block ingestion here
+            pass
+    return {
+        "name": parsed.name,
+        "goal": parsed.description,
+        "capability_statement": capability_statement,
+        "steps": [{"order": i, "goal": s} for i, s in enumerate(parsed.steps)],
+        "domain": domain,
+        "domain_payload": payload,
+        "preconditions": [],
+        "invariants": [],
+        "postconditions": [],
+        "failure_conditions": [],
+    }
+
+
+def build_skill_retrieval_document(
+    parsed: ParsedSkill,
+    *,
+    capability_statement: Optional[str] = None,
+    domain: Optional[str] = None,
+    artifact: Any = None,
+) -> str:
+    return build_procedure_retrieval_document(
+        _parsed_skill_procedure_shape(
+            parsed, capability_statement=capability_statement,
+            domain=domain, artifact=artifact,
+        )
+    )
+
+
+def build_skill_display_metadata(
+    parsed: ParsedSkill, *, capability_statement: Optional[str] = None,
+) -> tuple[str, str, str]:
+    """(display_name, display_description, display_metadata_version).
+
+    Deterministic (de-slug + capability-first sentence from
+    capability_statement/goal). When capability_statement is present -- it
+    is the SAME model output compile_skill_artifact already produced for
+    the capability column, not a new call -- the description is materially
+    better. A row the deterministic path still cannot describe usefully is
+    stamped DISPLAY_METADATA_FALLBACK_VERSION so data-quality reporting can
+    find it; it is never left NULL and never shown as a raw slug.
+    """
+    name, description, quality = build_display_metadata(
+        {"name": parsed.name, "goal": parsed.description,
+         "capability_statement": capability_statement}
+    )
+    version = (
+        DISPLAY_METADATA_VERSION if quality is None
+        else DISPLAY_METADATA_FALLBACK_VERSION
+    )
+    return name, description, version
+
+
 async def check_novelty(
     pool: asyncpg.Pool, embedder: Embedder, goal_text: str,
 ) -> Optional[dict]:
@@ -346,9 +440,11 @@ async def ingest_skill_md(
     # a procedure captured with no embedding can be completely starved
     # out of search once the corpus has any real size. Computed here,
     # same input_type="document" convention, BEFORE the write, not after.
+    retrieval_doc = build_skill_retrieval_document(parsed, domain=domain)
     goal_vec, embedding_metadata = await embedder.embed_one_with_metadata(
-        parsed.description, input_type="document",
+        retrieval_doc, input_type="document",
     )
+    disp_name, disp_desc, disp_version = build_skill_display_metadata(parsed)
 
     steps = [{"order": i, "goal": s} for i, s in enumerate(parsed.steps)]
     result = await capture_procedure(
@@ -367,6 +463,12 @@ async def ingest_skill_md(
         embedding_provider=embedding_metadata.provider,
         embedding_input_type=embedding_metadata.input_type,
         embedding_text_hash=embedding_metadata.text_sha256,
+        retrieval_document=retrieval_doc,
+        retrieval_document_version=RETRIEVAL_DOCUMENT_VERSION,
+        retrieval_document_sha256=retrieval_document_sha256(retrieval_doc),
+        display_name=disp_name,
+        display_description=disp_desc,
+        display_metadata_version=disp_version,
         invariants=invariants,
     )
     return {
@@ -1008,13 +1110,18 @@ async def compile_skill_artifact(
     )
 
     steps_json = [{"order": i, "goal": s} for i, s in enumerate(parsed.steps)]
-    embedding_text = " ".join([
-        capability_statement or parsed.description,
-        "Workflow:",
-        *parsed.steps,
-    ])
+    # ONE canonical retrieval representation (plan Part 2), replacing the
+    # old ad-hoc "capability/description + 'Workflow:' + raw steps" string.
+    retrieval_doc = build_skill_retrieval_document(
+        parsed, capability_statement=capability_statement,
+        domain=domain, artifact=artifact,
+    )
     goal_vec, embedding_metadata = await embedder.embed_one_with_metadata(
-        embedding_text, input_type="document",
+        retrieval_doc, input_type="document",
+    )
+    retrieval_doc_sha = retrieval_document_sha256(retrieval_doc)
+    disp_name, disp_desc, disp_version = build_skill_display_metadata(
+        parsed, capability_statement=capability_statement,
     )
 
     if prior_art is not None:
@@ -1039,6 +1146,12 @@ async def compile_skill_artifact(
             "embedding_provider": embedding_metadata.provider,
             "embedding_input_type": embedding_metadata.input_type,
             "embedding_text_hash": embedding_metadata.text_sha256,
+            "retrieval_document": retrieval_doc,
+            "retrieval_document_version": RETRIEVAL_DOCUMENT_VERSION,
+            "retrieval_document_sha256": retrieval_doc_sha,
+            "display_name": disp_name,
+            "display_description": disp_desc,
+            "display_metadata_version": disp_version,
         }
         if capability_statement is not None:
             changed_fields["capability_statement"] = capability_statement
@@ -1150,6 +1263,12 @@ async def compile_skill_artifact(
         embedding_provider=embedding_metadata.provider,
         embedding_input_type=embedding_metadata.input_type,
         embedding_text_hash=embedding_metadata.text_sha256,
+        retrieval_document=retrieval_doc,
+        retrieval_document_version=RETRIEVAL_DOCUMENT_VERSION,
+        retrieval_document_sha256=retrieval_doc_sha,
+        display_name=disp_name,
+        display_description=disp_desc,
+        display_metadata_version=disp_version,
         invariants=invariants,
         owner_id=owner_id,
     )

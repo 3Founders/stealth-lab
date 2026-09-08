@@ -78,6 +78,12 @@ def _prior_row(**over):
         "approved_at": None,
         "capability_statement": "Migrate a removed DataFrame API to its supported replacement",
         "extracted_by": None,
+        "retrieval_document": "Name: fix pandas append removal\nPurpose: ...",
+        "retrieval_document_version": "procdoc_v1",
+        "retrieval_document_sha256": "b" * 64,
+        "display_name": "Fix Pandas Append Removal",
+        "display_description": "Migrate a removed DataFrame API to its supported replacement.",
+        "display_metadata_version": "disp_v1",
     }
     row.update(over)
     return row

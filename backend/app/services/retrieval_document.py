@@ -59,6 +59,13 @@ from typing import Any, Iterable, Mapping, Optional, Sequence
 # every live procedure whose stored retrieval_document_version differs.
 RETRIEVAL_DOCUMENT_VERSION = "procdoc_v1"
 
+# Stamped on a row whose embedding was produced OUTSIDE this recipe (a
+# local-procedure publish, a one-off seed that pre-computed a vector). The
+# canonical document is still built and stored for inspection, but the
+# --representation backfill treats anything other than
+# RETRIEVAL_DOCUMENT_VERSION as owing a re-embed.
+RETRIEVAL_DOCUMENT_IMPORT_VERSION = "import_pending_reembed"
+
 # Per-section budgets. Chosen so a pathological row (a 69-step onboarding
 # tutorial, a 4 KB compatibility paragraph) cannot dominate the vector --
 # not because the exact numbers are meaningful. Applied after

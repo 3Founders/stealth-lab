@@ -123,6 +123,12 @@ async def capture_procedure(
     embedding_text_hash: Optional[str] = None,
     scope_type: Optional[str] = None,
     scope_entity_id: Optional[str] = None,
+    retrieval_document: Optional[str] = None,
+    retrieval_document_version: Optional[str] = None,
+    retrieval_document_sha256: Optional[str] = None,
+    display_name: Optional[str] = None,
+    display_description: Optional[str] = None,
+    display_metadata_version: Optional[str] = None,
 ) -> dict:
     """
     Inserts a new procedure, always starting `candidate` / `fresh` /
@@ -156,6 +162,58 @@ async def capture_procedure(
         allow_global_entity_id=bool(scope_type == "global" and scope_entity_id),
     )
 
+    # --- retrieval-representation contract (plan Part 18) -------------------
+    # A stored vector only means something relative to the text it was
+    # built from, so every row is stamped with WHICH retrieval-document
+    # recipe its state corresponds to:
+    #
+    #   * ingestion passes retrieval_document + retrieval_document_version
+    #     (RETRIEVAL_DOCUMENT_VERSION) because it embedded exactly that
+    #     text -- trusted as-is.
+    #   * a caller that supplies an embedding built elsewhere (publish of a
+    #     local procedure, a one-off seed) gets a freshly-built document
+    #     for inspection but the version RETRIEVAL_DOCUMENT_IMPORT_VERSION,
+    #     which the --representation backfill treats as "not yet canonical"
+    #     and re-embeds. The row is never left with an embedding and NO
+    #     recorded representation.
+    #   * a caller with no embedding at all (procedure_extraction) is
+    #     unchanged: document/version stay NULL until the embedding
+    #     backfill runs.
+    from app.services.procedure_display import (
+        DISPLAY_METADATA_VERSION,
+        build_display_metadata,
+    )
+    from app.services.retrieval_document import (
+        RETRIEVAL_DOCUMENT_IMPORT_VERSION,
+        build_procedure_retrieval_document,
+        retrieval_document_sha256 as _retdoc_sha,
+    )
+
+    if embedding is not None and not retrieval_document_version:
+        retrieval_document = retrieval_document or build_procedure_retrieval_document(
+            {
+                "name": name, "goal": goal, "steps": steps or [],
+                "preconditions": preconditions or [], "invariants": invariants or [],
+                "postconditions": postconditions or [],
+                "failure_conditions": failure_conditions or [],
+                "domain": domain, "domain_payload": domain_payload or {},
+            }
+        )
+        retrieval_document_version = RETRIEVAL_DOCUMENT_IMPORT_VERSION
+    if retrieval_document is not None and retrieval_document_sha256 is None:
+        retrieval_document_sha256 = _retdoc_sha(retrieval_document)
+
+    # display metadata is never NULL for a stored procedure: derive it
+    # deterministically from name/goal when the caller did not supply it,
+    # so the UI never has to fall back to the raw machine slug.
+    if not display_name or not display_description:
+        d_name, d_desc, _quality = build_display_metadata(
+            {"name": name, "goal": goal}
+        )
+        display_name = display_name or d_name
+        display_description = display_description or d_desc
+        display_metadata_version = display_metadata_version or DISPLAY_METADATA_VERSION
+
     row = await pool.fetchrow(
         """
         INSERT INTO procedures (
@@ -165,14 +223,17 @@ async def capture_procedure(
             provenance, domain, domain_payload, migrated_from_task_node_id,
             created_by, owner_id, visibility, embedding,
             scope_type, scope_entity_id, embedding_model_id, embedding_dim,
-            embedding_provider, embedding_input_type, embedding_text_hash
+            embedding_provider, embedding_input_type, embedding_text_hash,
+            retrieval_document, retrieval_document_version, retrieval_document_sha256,
+            display_name, display_description, display_metadata_version
         ) VALUES (
             $24::uuid, $1, $2, $3::jsonb, $4::jsonb, $5::jsonb, $6::jsonb,
             $7::jsonb, $8::jsonb, $9::jsonb, $10::jsonb,
             $11::jsonb, $12::jsonb, $13, $14::jsonb, $15,
             $16, $17, $18::jsonb, $19,
             $20, $21, $22::visibility_level, $23::vector,
-            $25, $26, $27, $28, $29, $30, $31
+            $25, $26, $27, $28, $29, $30, $31,
+            $32, $33, $34, $35, $36, $37
         )
         RETURNING id, procedure_id
         """,
@@ -207,6 +268,15 @@ async def capture_procedure(
         (embedding_provider if embedding is not None else None),
         (embedding_input_type if embedding is not None else None),
         (embedding_text_hash if embedding is not None else None),
+        # Retrieval representation + human-facing display metadata. The
+        # document/version/sha are NULL only for a row captured without an
+        # embedding (nothing to interpret yet); display_* is always set.
+        retrieval_document,
+        retrieval_document_version,
+        retrieval_document_sha256,
+        display_name,
+        display_description,
+        display_metadata_version,
     )
     return {"id": str(row["id"]), "procedure_id": str(row["procedure_id"])}
 
@@ -236,6 +306,12 @@ _SUPERSEDE_CARRY_COLUMNS: tuple[str, ...] = (
     "embedding_provider", "embedding_input_type", "embedding_text_hash",
     "scope_type", "scope_entity_id", "approval_status", "approved_by",
     "approved_at", "capability_statement", "extracted_by",
+    # Retrieval representation + display metadata (migration 44). Carried
+    # forward like every other content column so a supersede that only
+    # touches `steps` keeps the prior version's document/display text
+    # unless the caller explicitly rebuilds and overrides them.
+    "retrieval_document", "retrieval_document_version", "retrieval_document_sha256",
+    "display_name", "display_description", "display_metadata_version",
 )
 
 # Per-column SQL cast for the carry-forward INSERT. asyncpg infers scalar
