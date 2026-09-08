@@ -56,3 +56,7 @@ FUNDRAISE_*.md
 # and manually cleaned out. Adding both conventions defensively.)
 AGENTS.md
 CLAUDE.md
+
+# core-b retrieval backfill / eval runtime state (not code)
+backend/scripts/.backfill_state/
+backend/logs/
