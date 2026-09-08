@@ -109,3 +109,58 @@ def test_write_endpoints_take_only_body_pool_and_the_auth_dependency():
     for fn in (proc_api.create_procedure, proc_api.create_procedure_from_text):
         params = list(inspect.signature(fn).parameters)
         assert params == ["body", "pool", "principal"]
+
+
+# ---------------------------------------------------- organization isolation
+
+
+class _OrgPool:
+    def __init__(self, org_ids):
+        self.org_ids = list(org_ids)
+
+    async def fetchrow(self, sql, *a):
+        if " ".join(sql.split()).startswith("SELECT id, is_active"):
+            return {"id": "u-1", "is_active": True, "t_expired": None}
+        raise AssertionError(sql[:50])
+
+    async def fetch(self, sql, *a):
+        return [
+            {"organization_id": o, "organization_name": o, "organization_slug": o,
+             "role_name": "member"}
+            for o in self.org_ids
+        ]
+
+
+def test_get_scope_resolves_org_membership_for_a_validated_actor():
+    from types import SimpleNamespace
+
+    req = SimpleNamespace(
+        app=SimpleNamespace(state=SimpleNamespace(pool=_OrgPool(["org-A"])))
+    )
+    with _actor(Actor(subject="alice")):
+        scope = asyncio.run(get_scope(req, x_viewer_id=None))
+    assert scope.org_ids == ("org-A",)
+    sql, params = visibility_predicate(scope, param_index=1)
+    assert "visibility = 'org'" in sql and "org-A" in params
+
+
+def test_org_a_member_predicate_cannot_match_org_b_rows():
+    a = AccessScope.for_org_member("alice", ["org-A"])
+    sql, params = visibility_predicate(a, param_index=1)
+    # only org-A is a bound parameter; an 'org' row with tenant_id=org-B
+    # can never satisfy `tenant_id IN ($2)` where $2 = 'org-A'
+    assert params == ["alice", "org-A"]
+    assert "org-B" not in sql
+
+
+def test_membership_resolution_failure_degrades_to_owner_scope():
+    from types import SimpleNamespace
+
+    class _Boom:
+        async def fetchrow(self, *a):
+            raise RuntimeError("db down")
+
+    req = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(pool=_Boom())))
+    with _actor(Actor(subject="alice")):
+        scope = asyncio.run(get_scope(req, x_viewer_id=None))
+    assert scope == AccessScope.for_user("alice")

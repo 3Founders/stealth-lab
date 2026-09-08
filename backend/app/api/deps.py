@@ -45,12 +45,35 @@ async def get_scope(request: Request, x_viewer_id: Optional[str] = Header(defaul
     anonymous — a plain header can no longer name a user, so a private row
     written by an authenticated user cannot be read by anyone spoofing
     `X-Viewer-Id: <their subject>`.
+
+    Phase 2 completion: a validated actor's scope resolves their active
+    organization memberships, so `visibility='org'` rows of THEIR orgs are
+    visible and other orgs' are not. Resolution failure degrades to the
+    owner-only scope rather than 500 — a transient DB hiccup must not lock
+    a user out of their own private content.
     """
-    from app.services.authn import current_actor, oidc_configured
+    from app.services.authn import (
+        current_actor,
+        ensure_user,
+        oidc_configured,
+        resolve_memberships,
+    )
 
     actor = current_actor()
     if actor is not None:
-        return AccessScope.for_user(actor.subject)
+        try:
+            pool = request.app.state.pool
+            uid = await ensure_user(pool, actor)
+            org_ids = sorted(
+                {m.organization_id for m in await resolve_memberships(pool, uid)}
+            )
+            return (
+                AccessScope.for_org_member(actor.subject, org_ids)
+                if org_ids
+                else AccessScope.for_user(actor.subject)
+            )
+        except Exception:  # noqa: BLE001 — never fail a request on membership resolution
+            return AccessScope.for_user(actor.subject)
     if x_viewer_id and not oidc_configured(settings):
         return AccessScope.for_user(x_viewer_id)
     return AccessScope.anonymous()

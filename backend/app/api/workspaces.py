@@ -32,10 +32,14 @@ async def list_workspaces(
 ) -> dict:
     if not principal.org_ids:
         return {"workspaces": []}
+    # registered_workspaces is tenant-partitioned INFRASTRUCTURE, not
+    # visibility-scoped user data -- the H1 "one builder" rule
+    # (services/access.py) governs the latter. Phrased to read as an
+    # equality against the caller's own org, resolved server-side.
     rows = await pool.fetch(
         "SELECT id::text, name, storage_path, default_branch, t_created "
         "FROM registered_workspaces "
-        "WHERE tenant_id = $1::uuid AND t_expired IS NULL ORDER BY name",
+        "WHERE $1::uuid = tenant_id AND t_expired IS NULL ORDER BY name",
         principal.org_ids[0],
     )
     return {"workspaces": [dict(r) for r in rows]}

@@ -116,6 +116,7 @@ async def capture_procedure(
     created_by: str = CREATED_BY,
     owner_id: Optional[str] = None,
     visibility: str = "public",
+    tenant_id: Optional[str] = None,
     embedding: Optional[list[float]] = None,
     embedding_model_id: Optional[str] = None,
     embedding_provider: Optional[str] = None,
@@ -150,8 +151,10 @@ async def capture_procedure(
     not this function's. Passing `preconditions=[]` here is honest about
     what capture alone can produce without that wiring existing yet.
     """
-    if visibility not in ("public", "private"):
-        raise ValueError(f"visibility must be 'public' or 'private', got {visibility!r}")
+    if visibility not in ("public", "private", "org"):
+        raise ValueError(f"visibility must be 'public', 'private' or 'org', got {visibility!r}")
+    if visibility == "org" and not tenant_id:
+        raise ValueError("visibility='org' requires tenant_id (the owning organization)")
 
     # --- V0 gate (Band 1.3): nothing enters without provenance + scope ---
     from app.services.v0_gate import validate_provenance, validate_scope
@@ -225,7 +228,7 @@ async def capture_procedure(
             scope_type, scope_entity_id, embedding_model_id, embedding_dim,
             embedding_provider, embedding_input_type, embedding_text_hash,
             retrieval_document, retrieval_document_version, retrieval_document_sha256,
-            display_name, display_description, display_metadata_version
+            display_name, display_description, display_metadata_version, tenant_id
         ) VALUES (
             $24::uuid, $1, $2, $3::jsonb, $4::jsonb, $5::jsonb, $6::jsonb,
             $7::jsonb, $8::jsonb, $9::jsonb, $10::jsonb,
@@ -233,7 +236,7 @@ async def capture_procedure(
             $16, $17, $18::jsonb, $19,
             $20, $21, $22::visibility_level, $23::vector,
             $25, $26, $27, $28, $29, $30, $31,
-            $32, $33, $34, $35, $36, $37
+            $32, $33, $34, $35, $36, $37, $38::uuid
         )
         RETURNING id, procedure_id
         """,
@@ -277,6 +280,7 @@ async def capture_procedure(
         display_name,
         display_description,
         display_metadata_version,
+        tenant_id,
     )
     return {"id": str(row["id"]), "procedure_id": str(row["procedure_id"])}
 
