@@ -2,6 +2,12 @@ name: Stealth Wave 1 Ingestion
 
 on:
   workflow_dispatch:
+    inputs:
+      enqueue:
+        description: "Run Wave 1 discovery/enqueue first?"
+        required: true
+        default: false
+        type: boolean
 
 permissions:
   contents: read
