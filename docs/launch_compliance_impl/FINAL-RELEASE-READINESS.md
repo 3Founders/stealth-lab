@@ -277,15 +277,14 @@ See "Acceptance matrix" and "Regression" below.
 
 ## Regression
 
-Full offline suite (`DATABASE_URL` unset), on `b2265e9`:
+Full offline suite (`DATABASE_URL` unset), on `b2265e9` (349s):
 
-**RESULT: _pending final run_ — the run before the conftest fix was
-2317 passed / 19 failed / 314 skipped; the 19th failure
-(`test_claim_graph_api_offline::…owner_viewing_their_own_private_claim`) was a
-Phase-2 env-leak regression, fixed in `b2265e9` (conftest now isolates
-SUPABASE_*/OIDC_* for offline). Expected post-fix: ~2317 passed / 18 failed.**
+**RESULT: 2318 passed / 18 failed / 314 skipped.**
 
-The 18 persistent failures are the pre-existing ingestion/embedding lane
+The Phase-2 env-leak regression
+(`test_claim_graph_api_offline::…owner_viewing_their_own_private_claim`, one run
+showed 19 failed) is fixed in `b2265e9`. The 18 remaining failures are the
+pre-existing ingestion/embedding lane
 (`Embedder` missing `embedding_model_id`/`embedding_provider`;
 `fake_find()` kwarg; `test_migration_upgrade_e2e` `embedding_provider` column) —
 `test_local_agent_runner_offline` ×12, `test_behavioral_validation_offline` ×2,
