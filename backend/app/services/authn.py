@@ -115,6 +115,38 @@ class OidcConfig:
 
     @classmethod
     def from_settings(cls, settings: Any) -> Optional["OidcConfig"]:
+        # --- Supabase Auth preset (Phase 1 P0) -----------------------------
+        # Supabase Auth is canonical identity per the launch decision. It is
+        # OIDC-shaped: issuer is {project_url}/auth/v1 and the JWKS lives at
+        # {issuer}/.well-known/jwks.json. Two settings name it
+        # (supabase_project_url + supabase_jwt_audience); setting EXACTLY
+        # ONE of them is a half-configured posture, and a half-configured
+        # identity preset must fail LOUD here rather than silently vanish
+        # into "OIDC not configured" — the same refuse-to-boot discipline
+        # assert_boot_posture enforces for the generic path.
+        supabase_url = getattr(settings, "supabase_project_url", None)
+        supabase_aud = getattr(settings, "supabase_jwt_audience", None)
+        if (supabase_url is None) != (supabase_aud is None):
+            raise RuntimeError(
+                "supabase_project_url and supabase_jwt_audience must be set "
+                "TOGETHER (Supabase Auth preset). Half-configured identity "
+                "is worse than none: set both, or neither."
+            )
+        if supabase_url and supabase_aud:
+            issuer = supabase_url.rstrip("/") + "/auth/v1"
+            # Supabase signing keys are asymmetric (ES256 modern default,
+            # RS256 legacy). HS256 is NEVER allowed: verifying an HS256
+            # token against the leaked anon key would be signature-
+            # validation theater. The legacy shared-secret JWT mode is
+            # intentionally unsupported by this preset.
+            return cls(
+                issuer=issuer,
+                audience=supabase_aud,
+                jwks_url=issuer + "/.well-known/jwks.json",
+                allowed_algs=("ES256", "RS256"),
+            )
+
+        # --- Generic OIDC path (unchanged) ---------------------------------
         issuer = getattr(settings, "oidc_issuer", None)
         audience = getattr(settings, "oidc_audience", None)
         if not issuer or not audience:
@@ -133,6 +165,7 @@ def assert_boot_posture(
     real_auth_enabled: bool,
     oidc_configured_: bool,
     multi_user_exposure_enabled: bool,
+    hosted_execution_enabled: bool = False,
 ) -> None:
     """Refuse to boot on every half-enabled identity posture.
 
@@ -159,6 +192,15 @@ def assert_boot_posture(
             "(set OIDC_ISSUER + OIDC_AUDIENCE). Half-enabled identity is "
             "worse than none: it claims trust the request path cannot "
             "verify."
+        )
+    if hosted_execution_enabled and not oidc_configured_:
+        raise RuntimeError(
+            "hosted_execution_enabled is on, but OIDC is not configured "
+            "(set OIDC_ISSUER + OIDC_AUDIENCE, or the Supabase Auth preset "
+            "SUPABASE_PROJECT_URL + SUPABASE_JWT_AUDIENCE). Hosted mode is "
+            "an authorization boundary over multi-tenant workspaces; with "
+            "anonymous callers there is no one to authorize and the "
+            "boundary would be decorative."
         )
 
 

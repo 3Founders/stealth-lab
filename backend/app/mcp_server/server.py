@@ -565,6 +565,67 @@ def _caller_access_scope() -> AccessScope:
     return AccessScope.anonymous()
 
 
+class _RepoExecutionRefused(Exception):
+    """Hosted-mode repo authorization refused the call (tool returns REFUSED)."""
+
+
+async def _authorize_repo_execution(
+    ctx: Context, repo_path: Optional[str], workspace_id: Optional[str]
+) -> str:
+    """Phase 1 P0 hosted-repository authorization boundary.
+
+    Local/loopback mode (hosted_execution_enabled=False, the default):
+    repo_path passes through unchanged -- the documented local dev posture.
+
+    Hosted mode: repo_path is NOT the authorization mechanism. The caller
+    names a registered workspace id; the server resolves the filesystem
+    path from registered_workspaces (db/41) after confirming the caller's
+    tenant owns it. A caller-supplied repo_path, if any, must match the
+    registered root exactly. Caller-controlled paths never select what is
+    mounted; RepoSandbox's traversal guard stays as defense in depth.
+    """
+    from app.config import settings
+    from app.services import workspace_registry as wr
+
+    if not getattr(settings, "hosted_execution_enabled", False):
+        if repo_path is None:
+            raise _RepoExecutionRefused("repo_path is required.")
+        return repo_path
+
+    subject = None
+    token = get_access_token()
+    if token is not None and token.subject:
+        subject = token.subject
+    else:
+        subject = current_actor_id()
+    if not subject:
+        raise _RepoExecutionRefused(
+            "hosted execution requires an authenticated identity."
+        )
+    if workspace_id is None:
+        raise _RepoExecutionRefused(
+            "hosted execution requires workspace_id (a registered workspace); "
+            "caller-supplied filesystem paths are not an authorization mechanism."
+        )
+    from app.services.authn import Actor, tenant_scope_for_actor
+
+    _, tenant_scope = await tenant_scope_for_actor(pool=ctx.request_context.lifespan_context["pool"], actor=Actor(subject=subject))
+    try:
+        workspace = await wr.resolve_workspace_for_actor(
+            ctx.request_context.lifespan_context["pool"],
+            workspace_id=workspace_id,
+            actor_tenant_id=tenant_scope.tenant_id,
+        )
+        return wr.enforce_hosted_repo_path(
+            settings=settings, repo_path=repo_path, workspace=workspace
+        )
+    except wr.WorkspaceNotFound as exc:
+        raise _RepoExecutionRefused(f"REFUSED: {exc}") from exc
+    except wr.WorkspaceNotAuthorized as exc:
+        raise _RepoExecutionRefused(f"REFUSED: {exc}") from exc
+
+
+
 @server.tool()
 async def retrieve_precedent(query: str, ctx: Context) -> str:
     """
@@ -1012,7 +1073,8 @@ async def find_best_way(task_description: str, ctx: Context,
                          model: str = "gemma-4-31B-it", max_steps: int = 25,
                          session_id: Optional[str] = None,
                          allow_unverified_procedures: bool = False,
-                         resume_run_id: Optional[str] = None) -> str:
+                         resume_run_id: Optional[str] = None,
+                         workspace_id: Optional[str] = None) -> str:
     """
     Two-tier: find the best known way to do this, seamlessly callable at
     any point in a workflow -- not just as a heavyweight task entrypoint.
@@ -1150,6 +1212,14 @@ async def find_best_way(task_description: str, ctx: Context,
         return f"REFUSED: repo_path {repo_path!r} is not a directory on this server."
     if mode == "full_run" and repo_path is None:
         return "REFUSED: mode='full_run' requires repo_path."
+
+    # Phase 1 P0: hosted-mode repo authorization. Local mode: passthrough.
+    try:
+        repo_path = await _authorize_repo_execution(ctx, repo_path, workspace_id)
+    except _RepoExecutionRefused as exc:
+        return f"REFUSED: {exc}"
+    if repo_path is not None and not os.path.isdir(repo_path):
+        return f"REFUSED: repo_path {repo_path!r} is not a directory on this server."
 
     from app.services.applicability import find_applicable_procedures
     from app.services.environment_probe import invariant_bindings_from_facts, probe_environment
@@ -1462,7 +1532,9 @@ async def find_best_way(task_description: str, ctx: Context,
 @server.tool()
 async def reproduce_procedure(procedure_id: str, repo_path: str, ctx: Context,
                                model: str = "gemma-4-31B-it", max_steps: int = 25,
-                               transfer_repo_path: Optional[str] = None) -> str:
+                               transfer_repo_path: Optional[str] = None,
+                               workspace_id: Optional[str] = None,
+                               transfer_workspace_id: Optional[str] = None) -> str:
     """
     Deliberately re-run an EXISTING procedure's own steps against a real
     repo to test whether it still reproduces its claimed result, and
@@ -1566,6 +1638,17 @@ async def reproduce_procedure(procedure_id: str, repo_path: str, ctx: Context,
     """
     pool = ctx.request_context.lifespan_context["pool"]
 
+    # Phase 1 P0: hosted-mode repo authorization for BOTH tiers. Local
+    # mode: unchanged passthrough. The transfer tier gets its own
+    # workspace authorization when a transfer target is named.
+    try:
+        repo_path = await _authorize_repo_execution(ctx, repo_path, workspace_id)
+        if transfer_repo_path is not None or transfer_workspace_id is not None:
+            transfer_repo_path = await _authorize_repo_execution(
+                ctx, transfer_repo_path, transfer_workspace_id
+            )
+    except _RepoExecutionRefused as exc:
+        return f"REFUSED: {exc}"
     if not os.path.isdir(repo_path):
         return f"REFUSED: repo_path {repo_path!r} is not a directory on this server."
     if transfer_repo_path is not None and not os.path.isdir(transfer_repo_path):
