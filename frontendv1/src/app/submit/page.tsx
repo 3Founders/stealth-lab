@@ -11,6 +11,7 @@ import {
   type CreatedProcedure,
 } from "@/lib/api/contribute";
 import { getAuth, onAuthChange } from "@/lib/auth";
+import { ScopeBadge } from "@/components/scope-badge";
 import type { DecomposeResponse } from "@/lib/api/types";
 
 type Tab = "quick" | "propose";
@@ -80,9 +81,7 @@ function QuickAdd({ initial }: { initial: string }) {
           Saved to your private library.
         </p>
         <p className="text-emerald-700">
-          <span className="rounded bg-white px-1.5 py-0.5 text-xs font-medium ring-1 ring-emerald-200">
-            PRIVATE
-          </span>{" "}
+          <ScopeBadge visibility="private" verification_state="candidate" />{" "}
           <span className="ml-1 text-xs">candidate · not verified · not public</span>
         </p>
         <div className="flex gap-3 pt-1">
@@ -240,6 +239,26 @@ function ProposeToCommons({ initial }: { initial: string }) {
         proposal that stays quarantined until a human approves it — it never
         enters the shared commons automatically.
       </p>
+
+      <div className="mt-4 rounded-lg border border-neutral-200 bg-neutral-50 p-4 text-xs text-neutral-600">
+        <p className="font-medium text-neutral-800">
+          What proposing to the commons does
+        </p>
+        <ul className="mt-2 space-y-1">
+          <li>
+            • Visibility changes:{" "}
+            <ScopeBadge visibility="private" verification_state="candidate" /> →{" "}
+            <ScopeBadge visibility="public" verification_state="candidate" />.
+          </li>
+          <li>• It runs the publication gate: provenance, license, and privacy/secret checks.</li>
+          <li>
+            • Your <span className="font-medium">private execution history and
+            evidence stay private</span> — a Global Candidate starts with zero
+            independent verification and earns it from other people&apos;s runs.
+          </li>
+          <li>• Nothing is published automatically; a human approves each proposal.</li>
+        </ul>
+      </div>
       <form onSubmit={onSubmit} className="mt-6 space-y-3">
         <textarea
           value={problem}

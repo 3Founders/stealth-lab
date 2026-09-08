@@ -14,6 +14,7 @@ import {
   SectionHeading,
   VerificationLabel,
 } from "@/components/domain";
+import { ScopeBadge } from "@/components/scope-badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { getProcedure } from "@/lib/api/client";
 import type { ProcedureDetail } from "@/lib/api/types";
@@ -88,6 +89,11 @@ export default function ProcedurePage() {
           </p>
         ) : null}
         <div className="mt-5 flex flex-wrap items-center gap-3">
+          <ScopeBadge
+            visibility={proc.visibility}
+            verification_state={proc.verification_state}
+            withHint
+          />
           <VerificationLabel
             state={proc.verification_state}
             provenance={typeof proc.provenance === "string" ? proc.provenance : null}
