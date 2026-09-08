@@ -168,8 +168,14 @@ stepping on each other or repeating work.
   - Files I will still touch: only the ones listed above + `thingstodo.md`.
 
 - **security-hardening resume / Claude Sonnet 5 — 2026-09-08, branch `gate-2b`.**
-  **Phase 1 (authentication) CODE COMPLETE — commits `3e47906` (backend) +
-  `e63ba85` (frontend), not pushed.** Phase 0 audit + full ledger in
+  **Phase 1 auth DONE + config LIVE. Phase 2 partial, Phase 7 frontend done.**
+  Commits `3e47906` `e63ba85` `382d53b` `33463dc` `120a506` `7f2fbb8` `593046b`
+  (not pushed). Authority: `docs/launch_compliance_impl/FINAL-RELEASE-READINESS.md`
+  (phases 0-8 + 3 release gates: AUTH/POLICY NOT PASS, RETRIEVAL NOT PASS,
+  INGESTION RESUME NOT ALLOWED). Supabase auth verified working (P-256/ES256
+  JWKS live, backend boots, `/auth` renders email form). Migration 41 still
+  UNAPPLIED (irreversible `ALTER TYPE`; agent classifier-blocked — needs
+  `cd backend && python scripts/migrate.py`). Phase 0 audit + ledger in
   `docs/launch_compliance_implementation_ledger.md`.
   Backend: `require_authenticated_user` dependency, boot-posture fix,
   `POST /v1/procedures` + `/from_text` fast contribution (private+candidate).
