@@ -422,6 +422,7 @@ _PROC_LEXICAL_SQL = (
 async def _fetch_candidate_pool(
     pool: asyncpg.Pool, goal_embedding: Optional[list[float]], candidate_pool_size: int,
     embedding_model_id: Optional[str] = None, goal_text: Optional[str] = None,
+    access_scope: Optional[AccessScope] = None,
 ) -> list[asyncpg.Record]:
     """The pre-filter feeding find_applicable_procedures' cascade -- see
     that function's own docstring for why this fuses cost and relevance
@@ -485,9 +486,19 @@ async def _fetch_candidate_pool(
 
     if not ids:
         return []
+    # ACCESS FILTERING BEFORE RANKING (plan Part 20 / ticket 09): the
+    # id-gathering legs above are unranked noise, but this is where a
+    # candidate id becomes a full row that can be returned, ranked, and
+    # fed to relevance_reason(). A row the viewer cannot see is dropped
+    # here -- a private procedure never reaches presentation or any
+    # explanation field.
+    vis_sql, vis_params = visibility_predicate(
+        access_scope or AccessScope.unrestricted(), param_index=2
+    )
     rows = await pool.fetch(
-        f"SELECT * FROM procedures WHERE id = ANY($1::uuid[]) AND {_CANDIDATE_BASE_WHERE}",
-        ids,
+        f"SELECT * FROM procedures WHERE id = ANY($1::uuid[]) "
+        f"AND {_CANDIDATE_BASE_WHERE} AND {vis_sql}",
+        ids, *vis_params,
     )
     by_id = {row["id"]: row for row in rows}
     # Preserve fused order -- a row can be legitimately absent here if it
@@ -657,7 +668,7 @@ async def find_applicable_procedures(
 
     rows = await _fetch_candidate_pool(
         pool, goal_embedding, candidate_pool_size, embedding_model_id,
-        goal_text=goal_text,
+        goal_text=goal_text, access_scope=access_scope,
     )
 
     # ONE memo table + ONE pinned timestamp for the whole cascade: same

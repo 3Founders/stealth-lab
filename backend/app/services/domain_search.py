@@ -97,6 +97,8 @@ real, existing ranking mechanism:
 """
 from __future__ import annotations
 
+import hashlib
+import logging
 from typing import Any, Optional
 from uuid import UUID
 
@@ -110,6 +112,8 @@ from app.services.applicability import (
 )
 from app.services.embeddings import Embedder
 from app.services.relevance_gate import (
+    RELEVANCE_GATE_MIN_SIMILARITY,
+    RELEVANCE_GATE_VERSION,
     passes_relevance_gate,
     relevance_label,
     relevance_reason,
@@ -119,6 +123,15 @@ from app.services.retrieval_document import (
     build_applicability_summary,
     build_failure_modes,
 )
+
+log = logging.getLogger("stealthlab.retrieval")
+
+
+def _q_tag(query: str) -> str:
+    """A stable, non-reversible query tag for logs -- length + 10 hex of
+    sha256. Never logs the query text itself or any procedure content."""
+    return f"len={len(query)} h={hashlib.sha256(query.encode('utf-8')).hexdigest()[:10]}"
+
 
 VALID_OBJECT_TYPES: tuple[str, ...] = ("procedure", "task", "claim")
 
@@ -263,6 +276,7 @@ async def _search_procedures(
     survivors = await find_applicable_procedures(pool, **kwargs)
 
     out: list[dict] = []
+    dropped_by_gate = 0
     for proc in survivors:
         if not _scope_filter_matches(
             proc.get("scope_type"), proc.get("scope_entity_id"),
@@ -275,6 +289,7 @@ async def _search_procedures(
         # cascade, BEFORE presentation. Never re-ranks; returning fewer --
         # or zero -- results is correct, not a failure to pad.
         if not passes_relevance_gate(similarity):
+            dropped_by_gate += 1
             continue
         stats = proc.get("verification_stats") or {}
         out.append({
@@ -310,6 +325,17 @@ async def _search_procedures(
         })
         if len(out) >= limit:
             break
+
+    # Observability (plan Part 19): representation/gate version, how many
+    # applicable survivors the relevance gate removed, and whether this was
+    # a zero-result search. Query text and procedure content are never
+    # logged -- only a non-reversible tag and counts.
+    log.info(
+        "procedure_search %s cascade_survivors=%d dropped_by_relevance_gate=%d "
+        "returned=%d zero_result=%s gate=%s cutoff=%s",
+        _q_tag(query_text or ""), len(survivors), dropped_by_gate, len(out),
+        len(out) == 0, RELEVANCE_GATE_VERSION, RELEVANCE_GATE_MIN_SIMILARITY,
+    )
     return out
 
 

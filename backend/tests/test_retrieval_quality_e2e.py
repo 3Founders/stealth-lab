@@ -214,6 +214,68 @@ async def test_scope_filter_unchanged():
 
 
 @pytest.mark.asyncio
+async def test_private_procedure_never_leaks_to_another_viewer():
+    """A private procedure owned by viewer A must not appear in viewer B's
+    results NOR in any relevance_reason / applicability_summary shown to B
+    -- access filtering happens before ranking and before explanation
+    (plan Part 20)."""
+    from app.services.procedures import capture_procedure
+    from app.services.retrieval_document import (
+        RETRIEVAL_DOCUMENT_VERSION,
+        build_procedure_retrieval_document,
+        retrieval_document_sha256,
+    )
+
+    pool = await _get_pool()
+    embedder = Embedder()
+    secret_goal = "zzz private ritual for provisioning the acme widget cluster xyzzy"
+    proc_shape = {"name": "priv-e2e-secret-ritual", "goal": secret_goal,
+                  "steps": [{"goal": "do the secret thing"}]}
+    doc = build_procedure_retrieval_document(proc_shape)
+    vec, meta = await embedder.embed_one_with_metadata(doc, input_type="document")
+    created = await capture_procedure(
+        pool, name="priv-e2e-secret-ritual", goal=secret_goal,
+        steps=[{"order": 0, "goal": "do the secret thing"}],
+        provenance="system_pending_review", scope_type="global",
+        visibility="private", owner_id="e2e-owner-A",
+        embedding=vec, embedding_model_id=meta.model_id,
+        embedding_provider=meta.provider, embedding_input_type=meta.input_type,
+        embedding_text_hash=meta.text_sha256,
+        retrieval_document=doc, retrieval_document_version=RETRIEVAL_DOCUMENT_VERSION,
+        retrieval_document_sha256=retrieval_document_sha256(doc),
+    )
+    try:
+        res = await search_global(
+            pool, secret_goal, object_types=["procedure"],
+            scope=AccessScope.for_user("e2e-viewer-B"), limit=15,
+        )
+        hits = res["results"]["procedure"]
+        assert all(h["name"] != "priv-e2e-secret-ritual" for h in hits), (
+            "private procedure leaked into another viewer's results"
+        )
+        # and no explanation field for B mentions the private slug/goal token
+        blob = " ".join(
+            f"{h.get('relevance_reason') or ''} {h.get('applicability_summary') or ''} "
+            f"{h.get('display_name') or ''} {h.get('name') or ''}"
+            for h in hits
+        )
+        assert "xyzzy" not in blob and "priv-e2e-secret-ritual" not in blob
+
+        # sanity: the owner CAN see it (proves the row is real + retrievable)
+        res_a = await search_global(
+            pool, secret_goal, object_types=["procedure"],
+            scope=AccessScope.for_user("e2e-owner-A"), limit=15,
+        )
+        assert any(h["name"] == "priv-e2e-secret-ritual"
+                   for h in res_a["results"]["procedure"])
+    finally:
+        await pool.execute(
+            "UPDATE procedures SET t_invalid = now() WHERE id = $1::uuid",
+            created["id"],
+        )
+
+
+@pytest.mark.asyncio
 async def test_lexical_leg_contributes():
     """A query whose wording lexically matches a procedure's canonical
     document still retrieves it (semantic + lexical RRF, not pure
