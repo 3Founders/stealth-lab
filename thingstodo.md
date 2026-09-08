@@ -25,6 +25,24 @@ stepping on each other or repeating work.
 
 ## DONE (already finished this session)
 
+- [x] **Retrieval representation + measured relevance gate + human-facing display + frontend UX**
+  — _core-b / Claude Sonnet 5 — branch `gate-2b`, commits `9223b54`..`b50b094`._
+  One canonical deterministic procedure retrieval document (`procdoc_v1`:
+  name/purpose/when-to-use/steps/tools/deps/domain/constraints/failure-conditions),
+  versioned per row alongside the embedding; migrations 44 + 45; all 2478 live
+  procedures re-embedded from it (local `mxbai-embed-large` — paid Gemini + Voyage
+  quotas both ran dry; one coherent space, 0 failures) with `display_name` /
+  `display_description` on every row. A **measured** relevance gate: 57-query /
+  855-candidate labelled eval set, cutoff swept and selected by rule
+  (`RELEVANCE_GATE_MIN_SIMILARITY = 0.6839`, not guessed). Old vs new representation,
+  same model: precision **0.47 → 0.65** at the optimal gate; no-match queries return
+  zero. Procedure lexical retrieval leg added over the canonical document. Frontend:
+  search card + procedure/solution detail pages lead with what/why/verified/evidence;
+  raw "Match 82%" removed. Private-procedure access filter closed a pre-existing gap in
+  `_fetch_candidate_pool`. Backend offline suite 2270 pass / 18 fail (merge baseline
+  2227 / 27 — +43 passing, −9 failing, zero new); frontend `tsc` + `next build` green.
+  Full evidence: `.scratch/retrieval-representation-FINAL-REPORT.md`.
+
 - [x] **Fixed the leaderboard "stale solution" bug (Bug #7).** The product
   leaderboard used to rank fixes that were built on out-of-date knowledge. Now it
   hides those, marks them `STALE`, and keeps their old numbers only for history.
@@ -66,27 +84,6 @@ stepping on each other or repeating work.
 ---
 
 ## IN PROGRESS (someone is working on this right now)
-
-- [ ] **Retrieval representation + relevance gate + human-facing display metadata + frontendv1 search UX**
-  — _core-b / Claude Sonnet 5 — started 2026-09-08, branch `gate-2b`._
-  Building one canonical deterministic procedure retrieval document (name +
-  goal + applicability + steps + tools + deps + domain + constraints +
-  failure conditions), versioning it and the embedding, re-embedding the
-  ~2400 live procedures from it, adding a measured (not guessed) relevance
-  gate from a labelled eval set, and adding `display_name` /
-  `display_description` with a backfill. Frontend: search card, procedure
-  and solution detail pages stop showing raw "Match 82%" and lead with
-  capability / applicability / verification / evidence.
-  Files: `backend/app/services/{retrieval_document,embeddings,skill_ingestion,
-  procedures,applicability,domain_search,solution_search,retrieval}.py`,
-  new `backend/db/44_*.sql`, new backfill under `backend/scripts/`, new eval
-  suite under `backend/tests/`, `frontendv1/src/app/search/page.tsx`,
-  `frontendv1/src/app/procedures/[id]/page.tsx`,
-  `frontendv1/src/app/solutions/[id]/page.tsx`,
-  `frontendv1/src/lib/api/{types,client}.ts`,
-  `backend/app/api/{search,solutions,procedures}.py`.
-  Coordinated with "frontend integration stealth-lab" (owns auth only) and
-  "evidence-tracking-temporal-reasoning" (no overlap; migration 44 is mine).
 
 - [ ] **MCP evaluation harness** — _core-a / Claude Sonnet 5 — started 2026-09-08._
   Building the end-to-end test that goes through the real MCP interface:
