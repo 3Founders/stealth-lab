@@ -270,6 +270,39 @@ async def create_procedure_from_text(
     }
 
 
+@router.post("/{procedure_row_id}/publish", status_code=201)
+async def publish_procedure_to_commons(
+    procedure_row_id: UUID,
+    pool=Depends(get_pool),
+    principal: AuthenticatedPrincipal = Depends(require_authenticated_user),
+) -> dict:
+    """The one canonical private/org -> Global Commons publication (LC-002).
+
+    Runs the publication gate: ownership, scope, classification, dependency
+    traversal, provenance/license, sanitization. On success creates a fresh
+    GLOBAL CANDIDATE (no private evidence or verification counts carried)
+    and a durable `publication_records` row, and emits audit events.
+    """
+    from app.services.publication import (
+        PublicationDenied,
+        SourceProcedureNotFound,
+        publish_procedure,
+    )
+
+    try:
+        return await publish_procedure(
+            pool,
+            source_row_id=str(procedure_row_id),
+            actor_subject=principal.subject,
+            actor_user_id=principal.user_id,
+            organization_id=(principal.org_ids[0] if principal.org_ids else None),
+        )
+    except SourceProcedureNotFound:
+        raise HTTPException(404, "procedure not found")
+    except PublicationDenied as exc:
+        raise HTTPException(422, {"detail": "publication gate refused", "reasons": exc.reasons})
+
+
 @router.get("/{procedure_row_id}")
 async def read_procedure(
     procedure_row_id: UUID,
