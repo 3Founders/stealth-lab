@@ -64,14 +64,14 @@ def test_structured_create_is_private_candidate_owned_by_principal():
 
     assert out["scope"] == "PRIVATE"
     assert out["verification"] == "candidate"
-    assert out["owner_id"] == "user-uuid-1"
+    assert out["owner_id"] == "supabase-uid-1"  # token subject, not users.id
     assert out["embedded"] is False
 
-    assert _col_value(pool, "owner_id") == "user-uuid-1"
+    assert _col_value(pool, "owner_id") == "supabase-uid-1"
     assert _col_value(pool, "visibility") == "private"
     assert _col_value(pool, "provenance") == "system_pending_review"
     assert _col_value(pool, "scope_type") == "user"
-    assert _col_value(pool, "scope_entity_id") == "user-uuid-1"
+    assert _col_value(pool, "scope_entity_id") == "supabase-uid-1"
     assert _col_value(pool, "created_by") == "user_submission"
     # a canonical retrieval document is stored even without an inline embed
     assert _col_value(pool, "retrieval_document")
@@ -93,8 +93,8 @@ def test_from_text_parses_a_pasted_doc_into_a_private_candidate():
         proc_api.create_procedure_from_text(body, pool=pool, principal=PRINCIPAL)
     )
     assert out["scope"] == "PRIVATE"
-    assert out["owner_id"] == "user-uuid-1"
-    assert _col_value(pool, "owner_id") == "user-uuid-1"
+    assert out["owner_id"] == "supabase-uid-1"  # token subject, not users.id
+    assert _col_value(pool, "owner_id") == "supabase-uid-1"
     assert _col_value(pool, "visibility") == "private"
     assert _col_value(pool, "provenance") == "system_pending_review"
     assert _col_value(pool, "scope_type") == "user"

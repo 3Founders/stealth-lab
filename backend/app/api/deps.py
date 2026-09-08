@@ -35,19 +35,23 @@ async def get_scope(request: Request, x_viewer_id: Optional[str] = Header(defaul
     The scope for this request. Anonymous by default — the normal case on
     a public commons, not a failure.
 
-    Band 2.9: a VALIDATED OIDC actor (published by authn's middleware on
-    the contextvar) always wins — its subject is real identity. The
-    X-Viewer-Id header is trusted only when no validated actor exists,
-    which is exactly the public posture where it grants nothing that
-    wasn't already world-readable; the boot guard refuses to run private
-    visibility in that posture.
+    Band 2.9: a VALIDATED OIDC/Supabase actor (published by authn's
+    middleware on the contextvar) always wins — its subject is real
+    identity.
+
+    Phase 2 hardening: the X-Viewer-Id header is a dev convenience for the
+    FULLY-PUBLIC posture only. The moment real identity is configured
+    (Supabase Auth preset or generic OIDC), an unauthenticated request is
+    anonymous — a plain header can no longer name a user, so a private row
+    written by an authenticated user cannot be read by anyone spoofing
+    `X-Viewer-Id: <their subject>`.
     """
-    from app.services.authn import current_actor
+    from app.services.authn import current_actor, oidc_configured
 
     actor = current_actor()
     if actor is not None:
         return AccessScope.for_user(actor.subject)
-    if x_viewer_id:
+    if x_viewer_id and not oidc_configured(settings):
         return AccessScope.for_user(x_viewer_id)
     return AccessScope.anonymous()
 

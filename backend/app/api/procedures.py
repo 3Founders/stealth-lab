@@ -109,13 +109,23 @@ class ProcedureFromTextBody(BaseModel):
     )
 
 
+# The row's owner_id must equal what visibility_predicate() filters an
+# owner read by. That is the AccessScope.viewer_id, which get_scope()
+# derives from the *token subject* (app/api/deps.py::get_scope) — NOT the
+# provisioned users.id. Writing users.id here would hide the row from its
+# own creator. principal.user_id stays the key for org-membership lookups
+# only.
+def _owner_key(principal: AuthenticatedPrincipal) -> str:
+    return principal.subject
+
+
 def _created_response(result: dict, principal: AuthenticatedPrincipal) -> dict:
     return {
         "procedure_id": result["procedure_id"],
         "id": result["id"],
         "scope": "PRIVATE",
         "verification": "candidate",
-        "owner_id": principal.user_id,
+        "owner_id": _owner_key(principal),
         "next": f"/v1/procedures/{result['id']}",
     }
 
@@ -163,8 +173,8 @@ async def create_procedure(
         domain_payload={"tools": [t for t in body.tools if t.strip()]},
         provenance="system_pending_review",
         scope_type="user",
-        scope_entity_id=principal.user_id,
-        owner_id=principal.user_id,
+        scope_entity_id=_owner_key(principal),
+        owner_id=_owner_key(principal),
         visibility="private",
         created_by="user_submission",
         retrieval_document=retrieval_doc,
@@ -222,10 +232,10 @@ async def create_procedure_from_text(
             fallback_name=body.name or "untitled-procedure",
             domain=body.domain,
             created_by="user_submission",
-            owner_id=principal.user_id,
+            owner_id=_owner_key(principal),
             visibility="private",
             scope_type="user",
-            scope_entity_id=principal.user_id,
+            scope_entity_id=_owner_key(principal),
             embed=body.embed,
         )
     except ValueError as exc:
