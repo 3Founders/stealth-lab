@@ -40,6 +40,8 @@ class FakePool:
         if "INSERT INTO audit_events" in f:
             self.audits.append((a[2], a[4]))
             return {"id": len(self.audits)}
+        if "FROM contributor_profiles" in f:
+            return getattr(self, "contributor_profile", None)
         raise AssertionError(f[:60])
 
     async def fetch(self, sql, *a):

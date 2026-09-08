@@ -67,11 +67,20 @@ async def export_user_data(
     user = await pool.fetchrow(_USER_ROW, subject)
     procs = await pool.fetch(_PRIV_PROCS, subject)
     pubs = await pool.fetch(_PUBLICATIONS, subject)
+    contributor_profile = None
+    if user is not None:
+        prow = await pool.fetchrow(
+            "SELECT visibility, disclosed_at, tagline, t_created, t_updated "
+            "FROM contributor_profiles WHERE user_id = $1::uuid",
+            user["id"],
+        )
+        contributor_profile = dict(prow) if prow else None
 
     bundle = {
         "format": "stealthlab.export/v1",
         "subject": subject,
         "account": dict(user) if user else None,
+        "contributor_profile": contributor_profile,       # opt-in public listing + disclosure state
         "private_procedures": [dict(r) for r in procs],
         "publication_actions": [dict(r) for r in pubs],   # references, not the published objects
         "preferences": {},                                # none stored yet
@@ -166,11 +175,21 @@ async def delete_user_data(
             pid,
         )
 
+    # Retract the opt-in public listing (name + counts). The identity row and
+    # publication records are handled by their own rules above; this just
+    # removes the person from people-search and the contributor leaderboard.
+    profile_removed = await pool.execute(
+        "DELETE FROM contributor_profiles WHERE user_id = "
+        "(SELECT id FROM users WHERE external_subject = $1)",
+        subject,
+    )
+
     summary = {
         "physically_deleted": len(plan["private_procedures_physical_delete"]),
         "tombstoned": len(plan["private_procedures_tombstone"]),
         "global_objects_preserved": len(plan["global_objects_preserved"]),
         "publication_records_retained": len(plan["publication_records_retained"]),
+        "contributor_profile_removed": bool(profile_removed and profile_removed != "DELETE 0"),
     }
     await pool.execute(_REQ_COMPLETE, req_id, "completed", _json(summary))
     await record_audit_event(

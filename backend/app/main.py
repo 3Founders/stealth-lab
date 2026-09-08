@@ -13,6 +13,8 @@ from app.api import admin, agent_store, agents, approval, chat, decompose, graph
 from app.api import claims, implementations, me, procedures, projects, repositories, search, solutions, tasks
 from app.api import problems, runs
 from app.api import publications, workspaces
+from app.api import contributors as contributors_api
+from app.api import profile as profile_api
 from app.api.deps import require_trustworthy_identity
 from app.config import settings
 from app.db.session import close_pool, create_pool
@@ -120,6 +122,8 @@ app.include_router(problems.router)
 app.include_router(runs.router)
 app.include_router(publications.router)
 app.include_router(workspaces.router)
+app.include_router(contributors_api.router)
+app.include_router(profile_api.router)
 
 
 @app.get("/health")
