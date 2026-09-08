@@ -182,14 +182,21 @@ class Embedder:
         dimension: Optional[int] = None,
         *,
         rate_limit_pool: Any = None,
+        provider: Optional[str] = None,
     ):
         self.model = model or settings.embedding_model
         self.dimension = dimension or settings.embedding_dimension
         # Ingestion workers pass their shared Postgres pool here. Ordinary
         # interactive retrieval keeps the lightweight local limiter.
         self._rate_limit_pool = rate_limit_pool
+        # Explicit one-off override of the configured provider chain, for a
+        # bulk job that must pin a specific space (e.g. the canonical
+        # re-embed backfill). Never a fallback -- exactly one provider.
+        self._provider_override = provider.strip() if provider else None
 
     def _configured_provider(self) -> str:
+        if self._provider_override:
+            return self._provider_override
         if settings.use_local_models:
             return "local"
         providers = [

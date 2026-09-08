@@ -108,7 +108,7 @@ async def _dependency_refs_by_procedure(pool, procedure_ids: list) -> dict[str, 
 # --------------------------------------------------------------------------
 async def backfill_representation(
     *, dry_run: bool = False, limit: int | None = None, force: bool = False,
-    pool=None, embedder=None,
+    pool=None, embedder=None, provider: str | None = None,
 ) -> dict:
     """Re-embed every live procedure off the current canonical retrieval
     document. Resumable: selects only rows not already on
@@ -138,7 +138,7 @@ async def backfill_representation(
         deps = await _dependency_refs_by_procedure(
             pool, [r["procedure_id"] for r in rows]
         )
-        embedder = embedder or Embedder(rate_limit_pool=pool)
+        embedder = embedder or Embedder(rate_limit_pool=pool, provider=provider)
 
         # Build every doc first, split into the no-op fast path (canonical
         # text unchanged -> just stamp the version) and the real re-embed
@@ -371,6 +371,8 @@ def main() -> int:
     p.add_argument("--limit", type=int, help="bound this invocation (worker-safe chunks)")
     p.add_argument("--force", action="store_true",
                    help="reprocess every live row even if already on the current version")
+    p.add_argument("--provider", choices=("voyage", "gemini", "local"),
+                   help="pin the embedding provider for this run (default: configured chain)")
     args = p.parse_args()
 
     if not os.environ.get("DATABASE_URL"):
@@ -386,7 +388,8 @@ def main() -> int:
         return 0
     # default
     result = asyncio.run(backfill_representation(
-        dry_run=args.dry_run, limit=args.limit, force=args.force))
+        dry_run=args.dry_run, limit=args.limit, force=args.force,
+        provider=args.provider))
     return 1 if result["failed"] else 0
 
 
