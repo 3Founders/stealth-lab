@@ -201,7 +201,8 @@ Frontend `tsc --noEmit` clean (repo eslint is pre-broken, unrelated).
 
 STILL REQUIRED to make sign-in live (config only — no more code):
 1. Supabase dashboard (project `wckeklqxmiglivfolujn`):
-   - Project Settings → JWT Keys → migrate to **asymmetric (ES256)** keys.
+   - Project Settings → JWT Keys → set a **P-256 (ECC)** key as the current
+     signing key (it issues `alg: ES256` JWTs; the backend rejects HS256).
    - Authentication → Providers → enable **Google** (client id/secret).
    - Authentication → URL Configuration → add `<origin>/auth/callback`
      redirect URLs (localhost + deployed).
