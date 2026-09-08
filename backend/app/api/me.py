@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 
-from app.api.deps import get_scope
+from app.api.deps import AuthenticatedPrincipal, get_scope, require_authenticated_user
 from app.services.access import AccessScope
 from app.services.personal_contributions import get_personal_contributions
 
@@ -39,3 +39,51 @@ async def get_me(
             "personal contribution history",
         )
     return await get_personal_contributions(pool, scope.viewer_id, scope=scope)
+
+
+# --- Phase 6: data rights (LC-006 / LC-007) --------------------------------
+
+
+@router.get("/export")
+async def export_my_data(
+    pool=Depends(get_pool),
+    principal: AuthenticatedPrincipal = Depends(require_authenticated_user),
+) -> dict:
+    """Machine-readable export of the caller's own data. Global Commons
+    knowledge appears only as publication-action references."""
+    from app.services.data_rights import export_user_data
+
+    return await export_user_data(
+        pool, subject=principal.subject, actor_user_id=principal.user_id
+    )
+
+
+@router.get("/deletion")
+async def preview_my_deletion(
+    pool=Depends(get_pool),
+    principal: AuthenticatedPrincipal = Depends(require_authenticated_user),
+) -> dict:
+    """What a 'delete my data' request would do -- no mutation."""
+    from app.services.data_rights import delete_user_data
+
+    return await delete_user_data(pool, subject=principal.subject, dry_run=True)
+
+
+@router.post("/deletion")
+async def request_my_deletion(
+    pool=Depends(get_pool),
+    principal: AuthenticatedPrincipal = Depends(require_authenticated_user),
+) -> dict:
+    """Execute deletion: physical-delete private rows with no downstream
+    publication, tombstone published sources (history kept, vector cleared),
+    retain publication records and independently-sourced global objects.
+    Refused if the subject is under legal hold."""
+    from app.services.data_rights import delete_user_data
+
+    try:
+        return await delete_user_data(
+            pool, subject=principal.subject, actor_user_id=principal.user_id,
+            dry_run=False,
+        )
+    except PermissionError as exc:
+        raise HTTPException(409, str(exc))
