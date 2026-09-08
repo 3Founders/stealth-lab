@@ -46,15 +46,24 @@ async def handle_ingest_skill_package(pool: asyncpg.Pool, payload: dict) -> None
     from app.services.ingestion_sources.manifest import CorpusSourceSpec
     from app.services.skill_ingestion import compile_skill_artifact
 
-    spec = CorpusSourceSpec(
-        id=str(payload["source_id"]), priority=int(payload.get("priority", 1)),
-        type=payload.get("source_type", "github"), repo=str(payload["repo"]),
-        path=payload.get("subtree"), expected_format=payload.get("expected_format", "skill_repository"),
-        ref=str(payload.get("ref", "HEAD")),
-    )
-    adapter = GitHubSkillCorpusSource(spec)
     commit = str(payload["commit"])
     path = str(payload["path"])
+
+    spec = CorpusSourceSpec(
+        id=str(payload["source_id"]),
+        priority=int(payload.get("priority", 1)),
+        type=payload.get("source_type", "github"),
+        repo=str(payload["repo"]),
+        path=payload.get("subtree"),
+        expected_format=payload.get("expected_format", "skill_repository"),
+
+        # IMPORTANT:
+        # Reconstruct the worker adapter from the immutable commit
+        # discovered and stored in the queued job, not from HEAD/main.
+        ref=commit,
+    )
+
+    adapter = GitHubSkillCorpusSource(spec)
     uri = str(payload.get("uri") or f"https://github.com/{adapter.slug}/blob/{commit}/{path}")
     artifact = adapter.fetch(SourceRef(
         uri=uri, repository=adapter.slug, path=path, commit=commit,
