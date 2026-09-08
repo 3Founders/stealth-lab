@@ -406,6 +406,29 @@ _CANDIDATE_BASE_WHERE = (
 # which almost never matches a natural-language query against one document;
 # rewrite ' & ' -> ' | ' so a shared MEANINGFUL word is enough, exactly the
 # fix retrieval.py::_lexical_search already applies for the node legs.
+# EGRESS: never `SELECT *` a candidate row over the wire. `embedding` is a
+# 1024-dim VECTOR that asyncpg ships as ~15 KB of text PER ROW, and
+# `retrieval_document` is up to ~5 KB -- neither is read anywhere in the
+# cascade or the result shaping (the `<=>` distance runs server-side and
+# returns a float, not the vector). Pulling `SELECT *` for
+# candidate_pool_size (=200) rows on EVERY search was ~3 MB of pure waste
+# per query. This list is every `procedures` column EXCEPT the three heavy
+# ones; keep it in sync if a migration adds a column the cascade needs.
+PROCEDURE_COLS_NO_HEAVY = (
+    "id, procedure_id, family_id, name, goal, steps, parameter_schema, "
+    "preconditions, required_state, expected_effects, postconditions, invariants, "
+    "failure_conditions, scope, exclusions, verification_state, staleness, "
+    "availability, verification_stats, evidence_refs, source_episode_ids, "
+    "migrated_from_task_node_id, provenance, domain, domain_payload, version, "
+    "t_valid, t_invalid, t_created, t_expired, created_by, created_at, updated_at, "
+    "visibility, owner_id, approval_status, approved_by, approved_at, "
+    "capability_statement, extracted_by, scope_type, scope_entity_id, "
+    "embedding_model_id, embedding_dim, is_engineering_fixture, embedding_provider, "
+    "embedding_input_type, embedding_text_hash, retrieval_document_version, "
+    "display_name, display_description, display_metadata_version, tenant_id"
+)
+
+
 _PROC_LEXICAL_SQL = (
     f"SELECT id FROM procedures WHERE {_CANDIDATE_BASE_WHERE} "
     "AND to_tsvector('english', coalesce(retrieval_document, '')) "
@@ -442,7 +465,7 @@ async def _fetch_candidate_pool(
     offered to the hard-constraint cascade, never what passes it."""
     if goal_embedding is None:
         return await pool.fetch(
-            f"SELECT * FROM procedures WHERE {_CANDIDATE_BASE_WHERE} "
+            f"SELECT {PROCEDURE_COLS_NO_HEAVY} FROM procedures WHERE {_CANDIDATE_BASE_WHERE} "
             "ORDER BY jsonb_array_length(preconditions) ASC LIMIT $1",
             candidate_pool_size,
         )
@@ -496,7 +519,7 @@ async def _fetch_candidate_pool(
         access_scope or AccessScope.unrestricted(), param_index=2
     )
     rows = await pool.fetch(
-        f"SELECT * FROM procedures WHERE id = ANY($1::uuid[]) "
+        f"SELECT {PROCEDURE_COLS_NO_HEAVY} FROM procedures WHERE id = ANY($1::uuid[]) "
         f"AND {_CANDIDATE_BASE_WHERE} AND {vis_sql}",
         ids, *vis_params,
     )
@@ -1060,7 +1083,8 @@ async def check_procedure_reuse(
         raise ProcedureNotFound(f"{procedure_id!r} is not a valid procedure id (UUID)") from exc
 
     row = await pool.fetchrow(
-        "SELECT * FROM procedures WHERE procedure_id = $1::uuid AND t_invalid IS NULL",
+        f"SELECT {PROCEDURE_COLS_NO_HEAVY} FROM procedures "
+        "WHERE procedure_id = $1::uuid AND t_invalid IS NULL",
         proc_uuid,
     )
     if row is None:

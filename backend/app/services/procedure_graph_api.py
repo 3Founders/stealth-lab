@@ -63,6 +63,7 @@ from app.execution.procedure_graph import (
     expand_procedure_steps,
 )
 from app.services.access import AccessScope, TenantScope, scope_predicates, visibility_predicate
+from app.services.applicability import PROCEDURE_COLS_NO_HEAVY
 from app.services.procedure_extraction.capability import (
     band_for_p,
     route_for_p,
@@ -97,8 +98,12 @@ async def _fetch_visible_procedure(
     pool: asyncpg.Pool, procedure_row_id: str, *, scope: AccessScope,
 ) -> Optional[dict]:
     vis_sql, vis_params = visibility_predicate(scope, param_index=2)
+    # Explicit projection, not SELECT * -- the ~15 KB/row `embedding` vector
+    # and multi-KB `retrieval_document` are never read on any detail path and
+    # were the bulk of this endpoint's network egress.
     row = await pool.fetchrow(
-        f"SELECT * FROM procedures WHERE id = $1::uuid AND {vis_sql}",
+        f"SELECT {PROCEDURE_COLS_NO_HEAVY} FROM procedures "
+        f"WHERE id = $1::uuid AND {vis_sql}",
         procedure_row_id, *vis_params,
     )
     return dict(row) if row else None
@@ -213,7 +218,7 @@ async def get_procedure_versions(
     vis_sql, vis_params = visibility_predicate(scope, param_index=2)
     rows = await pool.fetch(
         f"""
-        SELECT * FROM procedures
+        SELECT {PROCEDURE_COLS_NO_HEAVY} FROM procedures
         WHERE procedure_id = $1::uuid AND {vis_sql}
         ORDER BY version ASC
         """,
