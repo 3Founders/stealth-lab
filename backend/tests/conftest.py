@@ -44,16 +44,58 @@ import dotenv
 # prove -- skip) from a real .env-leak regression (assert).
 DATABASE_URL_WAS_AMBIENT_AT_STARTUP = "DATABASE_URL" in os.environ
 
+# Same rationale, extended: an identity-provider config carried in
+# backend/.env (SUPABASE_PROJECT_URL / OIDC_ISSUER / ...) must not silently
+# change offline-test behaviour. app/api/deps.py::get_scope now branches on
+# `oidc_configured(settings)` -- with a leaked SUPABASE_PROJECT_URL it would
+# start REJECTING the X-Viewer-Id header that the header-driven offline
+# router tests rely on. Strip these for a plain offline run; an explicitly
+# exported value (a developer exercising the real auth path) is left alone.
+_AUTH_ENV_KEYS = (
+    "SUPABASE_PROJECT_URL", "SUPABASE_JWT_AUDIENCE",
+    "OIDC_ISSUER", "OIDC_AUDIENCE", "OIDC_JWKS_URL",
+)
+_AUTH_ENV_AMBIENT_AT_STARTUP = {k for k in _AUTH_ENV_KEYS if k in os.environ}
+
 _real_load_dotenv = dotenv.load_dotenv
 
 
 def _load_dotenv_without_leaking_database_url(*args, **kwargs):
     had_database_url = "DATABASE_URL" in os.environ
+    had_auth = {k for k in _AUTH_ENV_KEYS if k in os.environ}
     result = _real_load_dotenv(*args, **kwargs)
     if not had_database_url:
         os.environ.pop("DATABASE_URL", None)
+    for k in _AUTH_ENV_KEYS:
+        if k not in had_auth and k not in _AUTH_ENV_AMBIENT_AT_STARTUP:
+            os.environ.pop(k, None)
     return result
 
 
 def pytest_configure(config):
     dotenv.load_dotenv = _load_dotenv_without_leaking_database_url
+
+    # pydantic-settings reads backend/.env DIRECTLY (env_file=), bypassing
+    # dotenv.load_dotenv, so the wrapper above cannot stop SUPABASE_* /
+    # OIDC_* from reaching `app.config.settings`. Null them on the singleton
+    # for a plain offline run -- unless a developer exported one explicitly
+    # to exercise the real auth path. get_scope()/authn read the singleton,
+    # so this restores the pre-Supabase offline posture (X-Viewer-Id honoured)
+    # without weakening any production check.
+    try:
+        from app import config as _cfg
+
+        for _k, _attr in (
+            ("SUPABASE_PROJECT_URL", "supabase_project_url"),
+            ("SUPABASE_JWT_AUDIENCE", "supabase_jwt_audience"),
+            ("OIDC_ISSUER", "oidc_issuer"),
+            ("OIDC_AUDIENCE", "oidc_audience"),
+            ("OIDC_JWKS_URL", "oidc_jwks_url"),
+        ):
+            if _k not in _AUTH_ENV_AMBIENT_AT_STARTUP and hasattr(_cfg.settings, _attr):
+                try:
+                    setattr(_cfg.settings, _attr, None)
+                except Exception:  # noqa: BLE001 - frozen model: leave it
+                    pass
+    except Exception:  # noqa: BLE001 - config import failure surfaces elsewhere
+        pass
