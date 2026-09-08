@@ -70,7 +70,7 @@ async def handle_ingest_skill_package(pool: asyncpg.Pool, payload: dict) -> None
         source_id=spec.id,
     ))
     await compile_skill_artifact(
-        pool, artifact, embedder=Embedder(),
+        pool, artifact, embedder=Embedder(rate_limit_pool=pool),
         created_by="structured_skill_ingestion_worker",
     )
 
@@ -320,26 +320,48 @@ async def enqueue_skill_package_jobs(
     queued = 0
     for ref in refs:
         payload = {**source_spec, **ref}
+        # Older workers wrote json.dumps(payload) through asyncpg's JSONB
+        # codec, producing a JSON *string* rather than an object. Decode
+        # that legacy shape while checking idempotency, then write the new
+        # object shape below. Without this compatibility expression every
+        # rerun misses the existing job and floods the shared queue.
         exists = await pool.fetchval(
             "SELECT 1 FROM ingestion_jobs WHERE job_type='ingest_skill_package' "
-            "AND payload->>'source_id'=$1 AND payload->>'commit'=$2 "
-            "AND payload->>'path'=$3 AND status IN ('pending','processing','done') LIMIT 1",
+            "AND (CASE WHEN jsonb_typeof(payload)='string' "
+            "THEN (payload #>> '{}')::jsonb ELSE payload END)->>'source_id'=$1 "
+            "AND (CASE WHEN jsonb_typeof(payload)='string' "
+            "THEN (payload #>> '{}')::jsonb ELSE payload END)->>'commit'=$2 "
+            "AND (CASE WHEN jsonb_typeof(payload)='string' "
+            "THEN (payload #>> '{}')::jsonb ELSE payload END)->>'path'=$3 "
+            "AND status IN ('pending','processing','done') LIMIT 1",
             str(payload["source_id"]), str(payload["commit"]), str(payload["path"]),
         )
         if exists:
             continue
         await pool.execute(
             "INSERT INTO ingestion_jobs (job_type, payload) VALUES ($1, $2::jsonb)",
-            "ingest_skill_package", json.dumps(payload),
+            # create_pool() registers a JSONB encoder, so pass the object
+            # itself. json.dumps(payload) would be encoded a second time.
+            "ingest_skill_package", payload,
         )
         queued += 1
     return queued
 
 
-async def resume_failed_skill_jobs(pool: asyncpg.Pool) -> int:
+async def resume_failed_skill_jobs(
+    pool: asyncpg.Pool, *, include_embedding_failures: bool = False,
+) -> int:
+    """Requeue fixable skill failures without creating an API-quota storm.
+
+    Provider-exhaustion rows stay failed by default until an operator has
+    restored quota or deliberately selected a provider. Source/fetch/parser
+    failures can be retried through the normal --resume path.
+    """
     result = await pool.execute(
         "UPDATE ingestion_jobs SET status='pending', claimed_at=NULL, completed_at=NULL "
-        "WHERE job_type='ingest_skill_package' AND status='failed'"
+        "WHERE job_type='ingest_skill_package' AND status='failed' "
+        "AND ($1 OR last_error IS NULL OR last_error NOT LIKE 'EmbeddingError(%')",
+        include_embedding_failures,
     )
     tail = result.rsplit(" ", 1)[-1]
     return int(tail) if tail.isdigit() else 0
@@ -852,7 +874,10 @@ def _extraction_client():
 JOB_HANDLERS["extract_procedure_from_episode"] = handle_extract_procedure_from_episode
 
 
-async def claim_jobs(pool: asyncpg.Pool, *, limit: int) -> list[dict]:
+async def claim_jobs(
+    pool: asyncpg.Pool, *, limit: int, job_types: Optional[list[str]] = None,
+    worker_id: Optional[str] = None,
+) -> list[dict]:
     """
     Real SKIP LOCKED claim: marks up to `limit` pending jobs 'processing'
     and returns them, atomically, safe under concurrent workers even
@@ -864,23 +889,27 @@ async def claim_jobs(pool: asyncpg.Pool, *, limit: int) -> list[dict]:
             rows = await conn.fetch(
                 "SELECT id, job_type, payload, attempts FROM ingestion_jobs "
                 "WHERE status = 'pending' "
+                "AND ($1::text[] IS NULL OR job_type = ANY($1::text[])) "
                 "ORDER BY id "
-                "LIMIT $1 "
+                "LIMIT $2 "
                 "FOR UPDATE SKIP LOCKED",
-                limit,
+                job_types, limit,
             )
             if not rows:
                 return []
             ids = [r["id"] for r in rows]
             await conn.execute(
-                "UPDATE ingestion_jobs SET status = 'processing', claimed_at = now() "
-                "WHERE id = ANY($1::bigint[])",
-                ids,
+                "UPDATE ingestion_jobs SET status = 'processing', claimed_at = now(), "
+                "claimed_by = $2 WHERE id = ANY($1::bigint[])",
+                ids, worker_id,
             )
     return [dict(r) for r in rows]
 
 
-async def process_pending_jobs(pool: asyncpg.Pool, *, limit: int = 500) -> dict:
+async def process_pending_jobs(
+    pool: asyncpg.Pool, *, limit: int = 500, job_types: Optional[list[str]] = None,
+    worker_id: Optional[str] = None,
+) -> dict:
     """
     Real entry point: claim up to `limit` pending jobs, run each through
     its registered handler, mark done/failed individually. One job's
@@ -891,7 +920,7 @@ async def process_pending_jobs(pool: asyncpg.Pool, *, limit: int = 500) -> dict:
     Returns real counts, not estimates, same discipline as
     process_collector_file()'s own return value.
     """
-    jobs = await claim_jobs(pool, limit=limit)
+    jobs = await claim_jobs(pool, limit=limit, job_types=job_types, worker_id=worker_id)
     done = 0
     failed = 0
     unknown_type = 0
@@ -941,6 +970,7 @@ async def process_pending_jobs(pool: asyncpg.Pool, *, limit: int = 500) -> dict:
         "done": done,
         "failed": failed,
         "unknown_type": unknown_type,
+        "worker_id": worker_id,
     }
 
 

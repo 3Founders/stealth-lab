@@ -1192,6 +1192,7 @@ async def find_best_way(task_description: str, ctx: Context,
         pool, goal_embedding=query_vec, current_scope=procedure_scope, limit=1,
         require_verified=not allow_unverified_procedures,
         invariant_bindings=invariant_bindings,
+        embedding_model_id=embedder.embedding_model_id(),
     )
     matched_procedure = matched_procedures[0] if matched_procedures else None
 
@@ -2045,6 +2046,7 @@ async def search_procedures(task: str, ctx: Context, state: str = "{}", limit: i
         pool, goal_embedding=goal_vec, current_scope=current_scope,
         require_verified=require_verified, limit=limit,
         invariant_bindings=bindings,
+        embedding_model_id=embedder.embedding_model_id(),
     )
     return json.dumps([
         {

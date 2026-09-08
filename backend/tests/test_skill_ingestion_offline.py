@@ -18,6 +18,7 @@ from app.services.skill_ingestion import (
     ingest_skill_md,
     parse_skill_md,
 )
+from app.services.embeddings import EmbeddingMetadata
 
 PANDAS_APPEND_SKILL_MD = """---
 name: fix-pandas-append-removal
@@ -94,6 +95,15 @@ def test_empty_document_refuses_rather_than_fabricating():
 class FakeEmbedder:
     async def embed_one(self, text, input_type="query"):
         return [0.1] * 1024
+
+    async def embed_one_with_metadata(self, text, input_type="document"):
+        return [0.1] * 1024, EmbeddingMetadata(
+            provider="test",
+            model_id="test:embedding-1024",
+            dimension=1024,
+            input_type=input_type,
+            text_sha256="a" * 64,
+        )
 
 
 class FakePool:

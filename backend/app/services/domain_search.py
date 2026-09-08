@@ -207,6 +207,7 @@ async def _search_procedures(
     pool: asyncpg.Pool,
     query_vec: Optional[list[float]],
     *,
+    embedding_model_id: Optional[str],
     scope: AccessScope,
     current_scope: Optional[dict],
     require_verified: bool,
@@ -245,6 +246,7 @@ async def _search_procedures(
         access_scope=scope,
         require_verified=require_verified,
         invariant_bindings=invariant_bindings,
+        embedding_model_id=embedding_model_id,
         limit=limit * 4 if has_scope_filter else limit,
     )
     survivors = await find_applicable_procedures(pool, **kwargs)
@@ -505,6 +507,7 @@ async def search_global(
     if "procedure" in resolved_types:
         results["procedure"] = await _search_procedures(
             pool, query_vec,
+            embedding_model_id=embedder.embedding_model_id() if query_vec is not None else None,
             scope=scope,
             current_scope=filters.get("current_scope"),
             require_verified=bool(filters.get("require_verified", False)),
@@ -620,6 +623,7 @@ async def find_best_way(
         access_scope=scope,
         require_verified=not allow_unverified,
         invariant_bindings=constraints.get("invariant_bindings"),
+        embedding_model_id=embedder.embedding_model_id() if goal_vec is not None else None,
         limit=max(alt_limit + 1, 1),
     )
 

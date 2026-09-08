@@ -346,7 +346,9 @@ async def ingest_skill_md(
     # a procedure captured with no embedding can be completely starved
     # out of search once the corpus has any real size. Computed here,
     # same input_type="document" convention, BEFORE the write, not after.
-    goal_vec = await embedder.embed_one(parsed.description, input_type="document")
+    goal_vec, embedding_metadata = await embedder.embed_one_with_metadata(
+        parsed.description, input_type="document",
+    )
 
     steps = [{"order": i, "goal": s} for i, s in enumerate(parsed.steps)]
     result = await capture_procedure(
@@ -356,10 +358,15 @@ async def ingest_skill_md(
             "source": "skill_md",
             "applies_when": parsed.applies_when,  # kept as PROSE, never a fabricated Predicate
             "frontmatter": parsed.frontmatter,
+            "embedding": embedding_metadata.__dict__,
         },
         scope_type="entity" if domain else "global",
         created_by=created_by,
         embedding=goal_vec,
+        embedding_model_id=embedding_metadata.model_id,
+        embedding_provider=embedding_metadata.provider,
+        embedding_input_type=embedding_metadata.input_type,
+        embedding_text_hash=embedding_metadata.text_sha256,
         invariants=invariants,
     )
     return {
@@ -735,9 +742,11 @@ def _source_provenance(artifact: Any) -> dict:
     }
 
 
-def _domain_payload(artifact: Any, parsed: ParsedSkill) -> dict:
+def _domain_payload(
+    artifact: Any, parsed: ParsedSkill, *, embedding: Optional[dict] = None,
+) -> dict:
     package = normalize_skill_package(artifact)
-    return {
+    payload = {
         "source": _source_provenance(artifact),
         "applies_when": parsed.applies_when,  # PROSE, never a fabricated Predicate
         "frontmatter": parsed.frontmatter,
@@ -750,6 +759,9 @@ def _domain_payload(artifact: Any, parsed: ParsedSkill) -> dict:
         ],
         "dependencies": [dependency.__dict__ for dependency in package.dependencies],
     }
+    if embedding is not None:
+        payload["embedding"] = embedding
+    return payload
 
 
 async def _write_task_nodes(
@@ -1001,7 +1013,9 @@ async def compile_skill_artifact(
         "Workflow:",
         *parsed.steps,
     ])
-    goal_vec = await embedder.embed_one(embedding_text, input_type="document")
+    goal_vec, embedding_metadata = await embedder.embed_one_with_metadata(
+        embedding_text, input_type="document",
+    )
 
     if prior_art is not None:
         changed_fields: dict[str, Any] = {
@@ -1009,7 +1023,9 @@ async def compile_skill_artifact(
             "goal": parsed.description,
             "steps": steps_json,
             "parameter_schema": {"source": "skill_md"},
-            "domain_payload": _domain_payload(artifact, parsed),
+            "domain_payload": _domain_payload(
+                artifact, parsed, embedding=embedding_metadata.__dict__,
+            ),
             # §29: a screened source revision cannot upgrade an existing
             # procedure's provenance -- the new version lands as
             # 'system_pending_review', never 'prior_library'.
@@ -1019,6 +1035,10 @@ async def compile_skill_artifact(
             # forward otherwise.
             "staleness": "fresh",
             "embedding": goal_vec,
+            "embedding_model_id": embedding_metadata.model_id,
+            "embedding_provider": embedding_metadata.provider,
+            "embedding_input_type": embedding_metadata.input_type,
+            "embedding_text_hash": embedding_metadata.text_sha256,
         }
         if capability_statement is not None:
             changed_fields["capability_statement"] = capability_statement
@@ -1119,11 +1139,17 @@ async def compile_skill_artifact(
     result = await capture_procedure(
         pool, name=parsed.name, goal=parsed.description, steps=steps_json,
         provenance=provenance, domain=domain,
-        domain_payload=_domain_payload(artifact, parsed),
+        domain_payload=_domain_payload(
+            artifact, parsed, embedding=embedding_metadata.__dict__,
+        ),
         scope_type="entity" if domain else "global",
         scope_entity_id=domain,
         created_by=created_by,
         embedding=goal_vec,
+        embedding_model_id=embedding_metadata.model_id,
+        embedding_provider=embedding_metadata.provider,
+        embedding_input_type=embedding_metadata.input_type,
+        embedding_text_hash=embedding_metadata.text_sha256,
         invariants=invariants,
         owner_id=owner_id,
     )

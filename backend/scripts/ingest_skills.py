@@ -25,6 +25,7 @@ import argparse
 import asyncio
 import json
 import os
+import socket
 import sys
 from pathlib import Path
 
@@ -124,7 +125,9 @@ async def _cmd_ingest_manifest(args: argparse.Namespace) -> None:
     results = []
     try:
         if args.resume:
-            print(json.dumps({"resumed": await resume_failed_skill_jobs(pool)}))
+            print(json.dumps({"resumed": await resume_failed_skill_jobs(
+                pool, include_embedding_failures=args.include_embedding_failures,
+            )}))
         if args.queue_only or args.process_jobs:
             for spec in _selected_specs(args):
                 adapter = GitHubSkillCorpusSource(spec)
@@ -187,6 +190,7 @@ async def _cmd_retrieval_qa(args: argparse.Namespace) -> None:
             query_vec = await embedder.embed_one(case["query"], input_type="query")
             matches = await find_applicable_procedures(
                 pool, goal_embedding=query_vec, require_verified=False, limit=5,
+                embedding_model_id=embedder.embedding_model_id(),
             )
             top = [{
                 "procedure_id": str(m.get("procedure_id")), "name": m.get("name"),
@@ -212,6 +216,34 @@ async def _cmd_retrieval_qa(args: argparse.Namespace) -> None:
         }, indent=2))
     else:
         print(rendered)
+
+
+async def _cmd_worker(args: argparse.Namespace) -> None:
+    """Drain a bounded batch of already-queued skill packages.
+
+    This intentionally does not load the manifest, discover repositories,
+    or enqueue work. It is therefore safe to run many times from a CI or
+    serverless provider against the same authoritative queue.
+    """
+    from app.services.ingestion_jobs import process_pending_jobs, requeue_stuck_jobs
+
+    pool = await create_pool(os.environ["DATABASE_URL"])
+    worker_id = args.worker_id or os.environ.get("STEALTHLAB_WORKER_ID") or socket.gethostname()
+    try:
+        requeued = 0
+        if args.requeue_stuck_minutes is not None:
+            requeued = await requeue_stuck_jobs(
+                pool, older_than_minutes=args.requeue_stuck_minutes,
+            )
+        result = await process_pending_jobs(
+            pool,
+            limit=args.max_jobs,
+            job_types=["ingest_skill_package"],
+            worker_id=worker_id,
+        )
+        print(json.dumps({"requeued_stuck": requeued, **result}, indent=2, default=str))
+    finally:
+        await pool.close()
 
 
 def main() -> None:
@@ -246,6 +278,10 @@ def main() -> None:
     p_ingest.add_argument("--limit", type=int)
     p_ingest.add_argument("--skill-path", action="append", help="Exact repo-local SKILL.md path; repeatable.")
     p_ingest.add_argument("--resume", action="store_true")
+    p_ingest.add_argument(
+        "--include-embedding-failures", action="store_true",
+        help="With --resume, also requeue failures caused by embedding-provider exhaustion.",
+    )
     p_ingest.add_argument("--queue-only", action="store_true",
                           help="Queue one retryable job per package; do not ingest inline.")
     p_ingest.add_argument("--process-jobs", action="store_true",
@@ -258,6 +294,22 @@ def main() -> None:
     p_qa.add_argument("--output")
     p_qa.add_argument("--summary", action="store_true")
     p_qa.set_defaults(func=_cmd_retrieval_qa, needs_db=True)
+
+    p_worker = sub.add_parser(
+        "worker", help="Process already-queued skill packages without discovery or enqueueing.",
+    )
+    p_worker.add_argument(
+        "--max-jobs", type=int, default=1,
+        help="Maximum skill-package jobs to claim in this bounded invocation.",
+    )
+    p_worker.add_argument(
+        "--worker-id", help="Observable worker identity; defaults to STEALTHLAB_WORKER_ID or hostname.",
+    )
+    p_worker.add_argument(
+        "--requeue-stuck-minutes", type=int,
+        help="Explicitly recover processing jobs older than this threshold before claiming.",
+    )
+    p_worker.set_defaults(func=_cmd_worker, needs_db=True)
 
     args = parser.parse_args()
     if getattr(args, "needs_db", True) and "DATABASE_URL" not in os.environ:

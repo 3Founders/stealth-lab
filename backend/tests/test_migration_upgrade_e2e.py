@@ -506,7 +506,7 @@ def test_migration_upgrade_path_populated_v1_to_hardening():
     # (35..38) carry no destructive DDL.
     g = subprocess.run(
         ["git", "grep", "-nE", "DROP TABLE|DROP COLUMN|TRUNCATE",
-         "--", "db/35_*", "db/36_*", "db/37_*", "db/38_*", "db/39_*", "db/40_*"],
+         "--", "db/35_*", "db/36_*", "db/37_*", "db/38_*", "db/39_*", "db/40_*", "db/42_*"],
         capture_output=True, text=True, cwd=str(_BACKEND_ROOT),
     )
     assert g.returncode == 1 and g.stdout.strip() == "", (
@@ -516,14 +516,16 @@ def test_migration_upgrade_path_populated_v1_to_hardening():
     all_files = _migration_files()
     baseline_files = [p for p in all_files if _prefix_num(p) <= _BASELINE_MAX]
     hardening_files = [p for p in all_files if _prefix_num(p) > _BASELINE_MAX]
-    assert {p.name for p in hardening_files} == {
+    required_hardening = {
         "35_product_model.sql",
         "36_durable_execution_runs.sql",
         "37_execution_runs_terminal_chk_fix.sql",
         "38_candidates_no_action_justified.sql",
         "39_structured_skill_ingestion.sql",
         "40_ingested_artifact_extractor_identity.sql",
-    }, [p.name for p in hardening_files]
+        "42_worker_ingestion_integrity.sql",
+    }
+    assert required_hardening <= {p.name for p in hardening_files}, [p.name for p in hardening_files]
 
     with _disposable_postgres() as dsn:
         # --- phase 1: baseline 01..34 only ---
@@ -552,7 +554,8 @@ def test_migration_upgrade_path_populated_v1_to_hardening():
                      "37_execution_runs_terminal_chk_fix.sql",
                      "38_candidates_no_action_justified.sql",
                      "39_structured_skill_ingestion.sql",
-                     "40_ingested_artifact_extractor_identity.sql"):
+                     "40_ingested_artifact_extractor_identity.sql",
+                     "42_worker_ingestion_integrity.sql"):
             assert f"applied   {name}" in up.stdout, up.stdout
 
         # --- phase 4: assertions on the upgraded DB ---
