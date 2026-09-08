@@ -393,9 +393,29 @@ _CANDIDATE_BASE_WHERE = (
 )
 
 
+# Lexical candidate leg (plan Part 5). Matches the GIN index built in
+# migration 44 -- to_tsvector('english', coalesce(retrieval_document,'')) --
+# so it searches the full canonical procedural text (name/goal/steps/tools/
+# domain/constraints), not the short goal. plainto_tsquery ANDs every word,
+# which almost never matches a natural-language query against one document;
+# rewrite ' & ' -> ' | ' so a shared MEANINGFUL word is enough, exactly the
+# fix retrieval.py::_lexical_search already applies for the node legs.
+_PROC_LEXICAL_SQL = (
+    f"SELECT id FROM procedures WHERE {_CANDIDATE_BASE_WHERE} "
+    "AND to_tsvector('english', coalesce(retrieval_document, '')) "
+    "    @@ to_tsquery('english', regexp_replace("
+    "        plainto_tsquery('english', $1)::text, ' & ', ' | ', 'g')) "
+    "ORDER BY ts_rank("
+    "    to_tsvector('english', coalesce(retrieval_document, '')), "
+    "    to_tsquery('english', regexp_replace("
+    "        plainto_tsquery('english', $1)::text, ' & ', ' | ', 'g'))) DESC "
+    "LIMIT $2"
+)
+
+
 async def _fetch_candidate_pool(
     pool: asyncpg.Pool, goal_embedding: Optional[list[float]], candidate_pool_size: int,
-    embedding_model_id: Optional[str] = None,
+    embedding_model_id: Optional[str] = None, goal_text: Optional[str] = None,
 ) -> list[asyncpg.Record]:
     """The pre-filter feeding find_applicable_procedures' cascade -- see
     that function's own docstring for why this fuses cost and relevance
@@ -406,7 +426,13 @@ async def _fetch_candidate_pool(
     byte -- a caller that never had an embedding sees no change at all,
     not even an extra round trip (proven by
     test_full_cascade_shares_one_cache_and_scopes_its_gate, which pins
-    the exact fetch-call count)."""
+    the exact fetch-call count).
+
+    With BOTH a goal_embedding and a goal_text, a third candidate leg --
+    lexical full-text over the canonical retrieval_document -- is
+    RRF-fused alongside cost and vector similarity (plan Part 5). Same
+    fuse_rrf primitive, no new scoring formula; this only widens WHAT gets
+    offered to the hard-constraint cascade, never what passes it."""
     if goal_embedding is None:
         return await pool.fetch(
             f"SELECT * FROM procedures WHERE {_CANDIDATE_BASE_WHERE} "
@@ -436,9 +462,18 @@ async def _fetch_candidate_pool(
             "ORDER BY embedding <=> $1::vector ASC LIMIT $3",
             to_pgvector(goal_embedding), embedding_model_id, candidate_pool_size,
         )
-    cost_hits = [(r["id"], "procedures", i) for i, r in enumerate(cost_rows)]
-    similarity_hits = [(r["id"], "procedures", i) for i, r in enumerate(similarity_rows)]
-    scores, _ = fuse_rrf([(cost_hits, "cost"), (similarity_hits, "relevance")])
+    ranked_lists = [
+        ([(r["id"], "procedures", i) for i, r in enumerate(cost_rows)], "cost"),
+        ([(r["id"], "procedures", i) for i, r in enumerate(similarity_rows)], "relevance"),
+    ]
+    if goal_text and goal_text.strip():
+        lexical_rows = await pool.fetch(
+            _PROC_LEXICAL_SQL, goal_text, candidate_pool_size,
+        )
+        ranked_lists.append(
+            ([(r["id"], "procedures", i) for i, r in enumerate(lexical_rows)], "lexical")
+        )
+    scores, _ = fuse_rrf(ranked_lists)
     ranked = sorted(scores.items(), key=lambda kv: kv[1], reverse=True)
     ids = [key[0] for key, _ in ranked[:candidate_pool_size]]
 
@@ -552,6 +587,7 @@ async def find_applicable_procedures(
     candidate_pool_size: int = 200,
     invariant_bindings: Optional[dict[str, float]] = None,
     embedding_model_id: Optional[str] = None,
+    goal_text: Optional[str] = None,
 ) -> list[dict]:
     """
     Real ticket-12 pipeline, end to end: cold-start gate, then the
@@ -615,6 +651,7 @@ async def find_applicable_procedures(
 
     rows = await _fetch_candidate_pool(
         pool, goal_embedding, candidate_pool_size, embedding_model_id,
+        goal_text=goal_text,
     )
 
     # ONE memo table + ONE pinned timestamp for the whole cascade: same

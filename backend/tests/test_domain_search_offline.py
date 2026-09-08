@@ -38,6 +38,12 @@ class FakeEmbedder:
     async def embed_one(self, text, input_type="document"):
         return [0.1] * 8
 
+    def embedding_model_id(self):
+        return "fake:test-embed"
+
+    def _configured_provider(self):
+        return "fake"
+
 
 def _procedure_row(pid="00000000-0000-4000-8000-000000000001", **overrides):
     row = {

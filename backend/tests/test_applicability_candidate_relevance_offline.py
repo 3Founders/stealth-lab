@@ -112,3 +112,80 @@ async def test_no_embedding_path_is_untouched_single_query():
         "no-embedding path must stay a single query -- got "
         f"{len(pool.fetch_calls)}: {pool.fetch_calls}"
     )
+
+
+@pytest.mark.asyncio
+async def test_no_embedding_path_ignores_goal_text_no_extra_roundtrip():
+    """goal_text alone (no embedding) must NOT add a lexical query -- the
+    pinned no-embedding single-query contract is unchanged."""
+    pool = OrderAwareFakePool(ALL_PROCEDURES)
+    await _fetch_candidate_pool(
+        pool, goal_embedding=None, candidate_pool_size=2,
+        goal_text="rotate the deployment credentials",
+    )
+    assert len(pool.fetch_calls) == 1
+
+
+# --- S5: lexical candidate leg over the canonical retrieval_document -----
+
+class LexAwareFakePool(OrderAwareFakePool):
+    """Adds a handler for the Part-5 lexical leg: rows whose 'text' field
+    shares a word with the query rank first, in configured order."""
+
+    def __init__(self, procedures, lexical_hits):
+        super().__init__(procedures)
+        self._lexical_hits = lexical_hits  # ordered list of ids
+
+    async def fetch(self, sql, *params):
+        normalized = " ".join(sql.split())
+        if "to_tsvector('english', coalesce(retrieval_document" in normalized:
+            self.fetch_calls.append("LEXICAL")
+            limit = params[-1]
+            return [{"id": i} for i in self._lexical_hits[:limit]]
+        return await super().fetch(sql, *params)
+
+
+# A vocab-mismatch procedure: the vector puts it just inside the pool
+# (similarity_rank 3) and it is NOT among the cheapest, so cost+similarity
+# alone leave it on the bubble; the lexical leg is what secures it.
+LEX_RELEVANT = _procedure("lex-relevant", n_preconditions=4, similarity_rank=3)
+LEX_POOL = [LEX_RELEVANT] + CHEAP_BUT_IRRELEVANT
+
+
+@pytest.mark.asyncio
+async def test_lexical_leg_fires_only_with_embedding_and_goal_text():
+    pool = LexAwareFakePool(LEX_POOL, lexical_hits=["lex-relevant"])
+    await _fetch_candidate_pool(
+        pool, goal_embedding=[0.1] * 1024, candidate_pool_size=4,
+        goal_text="isolate parallel agents with git worktrees",
+    )
+    assert "LEXICAL" in pool.fetch_calls, "lexical leg must run when both signals are present"
+
+    pool2 = LexAwareFakePool(LEX_POOL, lexical_hits=["lex-relevant"])
+    await _fetch_candidate_pool(
+        pool2, goal_embedding=[0.1] * 1024, candidate_pool_size=4, goal_text=None,
+    )
+    assert "LEXICAL" not in pool2.fetch_calls, "no goal_text -> no lexical leg"
+
+
+@pytest.mark.asyncio
+async def test_lexical_hit_lifts_a_bubble_vocab_match_over_a_weaker_row():
+    """RRF over cost + similarity + lexical (no new formula). A procedure
+    on the candidate-pool bubble that is ALSO the clear lexical match must
+    rank above one that only barely made a single list."""
+    with_lex = LexAwareFakePool(LEX_POOL, lexical_hits=["lex-relevant"])
+    ranked_with = await _fetch_candidate_pool(
+        with_lex, goal_embedding=[0.1] * 1024, candidate_pool_size=4,
+        goal_text="isolate parallel agents with git worktrees",
+    )
+    without_lex = LexAwareFakePool(LEX_POOL, lexical_hits=[])
+    ranked_without = await _fetch_candidate_pool(
+        without_lex, goal_embedding=[0.1] * 1024, candidate_pool_size=4,
+        goal_text="isolate parallel agents with git worktrees",
+    )
+    pos_with = [r["id"] for r in ranked_with].index("lex-relevant")
+    pos_without = [r["id"] for r in ranked_without].index("lex-relevant")
+    assert pos_with < pos_without, (
+        "the lexical leg must improve the vocab-match procedure's rank, "
+        f"got {pos_with} with vs {pos_without} without"
+    )
