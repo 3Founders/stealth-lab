@@ -183,22 +183,34 @@ async def create_procedure(
     )
 
     embedded = False
+    embed_note: Optional[str] = None
     if body.embed:
         try:
+            from app.services.classification import DataClass
             from app.services.embeddings import Embedder
+            from app.services.provider_policy import ProviderPolicyDenied
 
-            vec, meta = await Embedder().embed_one_with_metadata(
-                retrieval_doc, input_type="document"
-            )
-            capture_kwargs.update(
-                embedding=vec,
-                embedding_model_id=meta.model_id,
-                embedding_provider=meta.provider,
-                embedding_input_type=meta.input_type,
-                embedding_text_hash=meta.text_sha256,
-                retrieval_document_version=RETRIEVAL_DOCUMENT_VERSION,
-            )
-            embedded = True
+            # USER_PRIVATE text. The Embedder gates the external provider
+            # call on ProviderPolicyService — a private embedding never
+            # reaches a provider whose policy does not permit that class
+            # (INV-07 / INV-17). With only external providers configured
+            # this is expected to deny; the row is still captured, just
+            # without a vector, and stays owner-listable.
+            try:
+                vec, meta = await Embedder(
+                    data_classification=DataClass.USER_PRIVATE, policy_pool=pool
+                ).embed_one_with_metadata(retrieval_doc, input_type="document")
+                capture_kwargs.update(
+                    embedding=vec,
+                    embedding_model_id=meta.model_id,
+                    embedding_provider=meta.provider,
+                    embedding_input_type=meta.input_type,
+                    embedding_text_hash=meta.text_sha256,
+                    retrieval_document_version=RETRIEVAL_DOCUMENT_VERSION,
+                )
+                embedded = True
+            except ProviderPolicyDenied as exc:
+                embed_note = f"not indexed: {exc.decision.reason}"
         except Exception:  # noqa: BLE001 — indexing is best-effort; the backfill covers a miss
             embedded = False
 
@@ -208,7 +220,10 @@ async def create_procedure(
         )
     except ValueError as exc:
         raise HTTPException(422, str(exc)) from exc
-    return _created_response(result, principal) | {"embedded": embedded}
+    resp = _created_response(result, principal) | {"embedded": embedded}
+    if embed_note:
+        resp["indexing"] = embed_note
+    return resp
 
 
 @router.post("/from_text", status_code=201)

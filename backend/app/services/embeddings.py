@@ -183,12 +183,21 @@ class Embedder:
         *,
         rate_limit_pool: Any = None,
         provider: Optional[str] = None,
+        data_classification: Any = None,
+        policy_pool: Any = None,
     ):
         self.model = model or settings.embedding_model
         self.dimension = dimension or settings.embedding_dimension
         # Ingestion workers pass their shared Postgres pool here. Ordinary
         # interactive retrieval keeps the lightweight local limiter.
         self._rate_limit_pool = rate_limit_pool
+        # Phase 5 (LC-005 / INV-07): when the caller knows the
+        # classification of what is being embedded and supplies a pool,
+        # every EXTERNAL provider call is gated by ProviderPolicyService.
+        # A private embedding never reaches a provider whose policy row
+        # does not list its class. `local` (in-boundary) is never gated.
+        self._data_classification = data_classification
+        self._policy_pool = policy_pool or rate_limit_pool
         # Explicit one-off override of the configured provider chain, for a
         # bulk job that must pin a specific space (e.g. the canonical
         # re-embed backfill). Never a fallback -- exactly one provider.
@@ -280,10 +289,26 @@ class Embedder:
 
         return [results[i] for i in range(len(texts))]
 
+    async def _enforce_provider_policy(self, provider: str) -> None:
+        """LC-005: gate an external embedding call on ProviderPolicyService.
+        No-op when the caller supplied no classification/pool, or for the
+        in-boundary `local` provider. Raises ProviderPolicyDenied otherwise."""
+        if provider == "local" or self._data_classification is None or self._policy_pool is None:
+            return
+        from app.services.provider_policy import guard_send
+
+        await guard_send(
+            self._policy_pool,
+            data_classification=self._data_classification,
+            provider=provider,
+            model=self.embedding_model_id(),
+        )
+
     async def _embed_configured_provider(
         self, texts: Sequence[str], input_type: InputType
     ) -> list[list[float]]:
         provider = self._configured_provider()
+        await self._enforce_provider_policy(provider)
         try:
             if provider == "gemini":
                 vectors = await self._embed_gemini(texts, input_type)
