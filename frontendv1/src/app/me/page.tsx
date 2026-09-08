@@ -49,7 +49,12 @@ export default function MePage() {
   return (
     <article className="pt-16">
       <header>
-        <h1 className="text-2xl font-semibold tracking-tight">Your contributions</h1>
+        <div className="flex items-baseline justify-between">
+          <h1 className="text-2xl font-semibold tracking-tight">Your contributions</h1>
+          <Link href="/me/privacy" className="text-sm text-neutral-500 underline">
+            Privacy &amp; Data
+          </Link>
+        </div>
         <p className="mt-2 text-sm text-neutral-500">
           What you have added to the global capability layer.
         </p>
