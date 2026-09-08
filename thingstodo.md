@@ -170,12 +170,20 @@ stepping on each other or repeating work.
     (no migration applied, no Phase 2+ work, per founder instruction).
   - Files I will still touch: only the ones listed above + `thingstodo.md`.
 
-- **security-hardening resume / Claude Sonnet 5 — started 2026-09-08, branch `gate-2b`.**
-  Completing "Supabase Auth + Launch Security" (STEALTHLAB-LAUNCH-COMPLIANCE-SPEC-V1).
-  Phase 0 reconstruction audit is done and written to
-  `docs/launch_compliance_implementation_ledger.md` — read that for the full
-  phase 0–8 state. Now doing **Phase 1 (authentication)** only, then stopping to
-  notify the founder.
+- **security-hardening resume / Claude Sonnet 5 — 2026-09-08, branch `gate-2b`.**
+  **Phase 1 (authentication) CODE COMPLETE — commits `3e47906` (backend) +
+  `e63ba85` (frontend), not pushed.** Phase 0 audit + full ledger in
+  `docs/launch_compliance_implementation_ledger.md`.
+  Backend: `require_authenticated_user` dependency, boot-posture fix,
+  `POST /v1/procedures` + `/from_text` fast contribution (private+candidate).
+  Frontend (`frontendv1`): Supabase browser client, email/password + Google
+  sign-in, session/refresh, `/auth` + `/auth/callback`, `/submit` "Quick add"
+  fast form. `authHeaders()` signature preserved so `client.ts` is untouched.
+  NOT DONE (config only, needs the founder): Supabase dashboard (asymmetric
+  ES256 keys, Google provider, redirect URLs), `SUPABASE_*` in `backend/.env`,
+  `NEXT_PUBLIC_SUPABASE_*` in `frontendv1/.env.local`, `npm install`, and
+  applying migration 41 (one-way door). Original goal below kept for history:
+  ---
   Files I will touch for Phase 1:
   - BACKEND: `backend/app/api/deps.py` (add ONE central `require_authenticated_user`
     dependency + wire org-membership resolution into `get_scope`),

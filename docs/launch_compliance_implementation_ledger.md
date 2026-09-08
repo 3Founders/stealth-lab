@@ -164,7 +164,58 @@ pre/post the `33d4c05` merge.
 
 ## Phase checkpoints
 
-### Phase 0 — PARTIAL → completing
-- Status: reconstruction audit written (this file). Written artifact was the
-  only outstanding Phase 0 item per `5d03159`'s message.
-- Remaining: none once this file is committed.
+### Phase 0 — COMPLETE
+- Reconstruction audit written (this file). Committed `3e47906`.
+
+### Phase 1 (authentication) — CODE COMPLETE; awaiting live config + migration
+Commits: `3e47906` (backend), `e63ba85` (frontend). Both on `gate-2b`,
+stacked on core-b's `902096f`. Not pushed (branch push cadence is core-b's).
+
+Landed:
+- `deps.py` — `require_authenticated_user` → `AuthenticatedPrincipal`
+  (server-derived: verified token subject + provisioned `users` row +
+  resolved org memberships). Strict: validated bearer only. 401 missing /
+  403 deactivated / 409 ambiguous-org. `optional_authenticated_user`.
+  `principal.access_scope()` resolves org visibility before ranking.
+- `main.py` — boot posture uses `oidc_configured()` (Supabase preset
+  counts) and passes `hosted_execution_enabled`.
+- `procedures.py` — `POST /v1/procedures` + `POST /v1/procedures/from_text`,
+  authenticated, private + candidate, `provenance=system_pending_review`,
+  `scope_type=user`. Deterministic retrieval document; best-effort inline
+  embed.
+- `skill_ingestion.ingest_skill_md` — owner/visibility/scope/embed
+  passthrough; owner submissions are always `system_pending_review`.
+- Frontend `frontendv1`: `src/lib/supabase/client.ts` (anon-key browser
+  client, PKCE, persistSession + autoRefresh), `src/lib/auth.ts` reworked
+  onto Supabase (sync `authHeaders()` preserved — `client.ts` untouched),
+  `/auth` email-password + Google + dev-viewer fallback, `/auth/callback`,
+  `/submit` "Quick add (private)" fast form, `src/lib/api/contribute.ts`.
+- `.env.example` (backend) + `.env.local.example` (frontend) document the
+  Supabase vars and required dashboard config.
+
+Tests (offline): `test_supabase_auth_dependency_offline.py` (7),
+`test_procedure_fast_create_offline.py` (5) — green. Broader targeted
+regression: 492 passed / 4 failed — the 4 are the pre-existing
+ingestion-lane `embedding_model_id` baseline, unchanged by this work.
+Frontend `tsc --noEmit` clean (repo eslint is pre-broken, unrelated).
+
+STILL REQUIRED to make sign-in live (config only — no more code):
+1. Supabase dashboard (project `wckeklqxmiglivfolujn`):
+   - Project Settings → JWT Keys → migrate to **asymmetric (ES256)** keys.
+   - Authentication → Providers → enable **Google** (client id/secret).
+   - Authentication → URL Configuration → add `<origin>/auth/callback`
+     redirect URLs (localhost + deployed).
+2. `backend/.env`: `SUPABASE_PROJECT_URL=https://wckeklqxmiglivfolujn.supabase.co`,
+   `SUPABASE_JWT_AUDIENCE=authenticated`. (Leaving `REAL_AUTH_ENABLED` /
+   `PRIVATE_VISIBILITY_ENABLED` as-is is fine — the new endpoints require a
+   token regardless; flip those only when retrofitting the read surface.)
+3. `frontendv1/.env.local`: `NEXT_PUBLIC_SUPABASE_URL`,
+   `NEXT_PUBLIC_SUPABASE_ANON_KEY`.
+4. `cd frontendv1 && npm install` (lockfile already updated).
+
+BLOCKING (one-way door — needs explicit go-ahead):
+- Apply `backend/db/41_phase1_security_boundaries.sql` to the live DB
+  (`python scripts/migrate.py`). `ALTER TYPE ... ADD VALUE 'org'` is
+  irreversible. Not needed for basic sign-in + private procedures; IS
+  needed before enabling org-scoped visibility, hosted workspaces, or the
+  audit writer. The classifier declined the automated apply.
