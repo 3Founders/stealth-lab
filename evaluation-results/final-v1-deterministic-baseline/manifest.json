@@ -1,0 +1,187 @@
+{
+  "areas": [
+    {
+      "area": "gold_retrieval",
+      "failed": 0,
+      "passed": 8,
+      "skipped": 0,
+      "total": 8
+    },
+    {
+      "area": "gold_applicability",
+      "failed": 0,
+      "passed": 31,
+      "skipped": 0,
+      "total": 31
+    },
+    {
+      "area": "gold_procedures",
+      "failed": 0,
+      "passed": 9,
+      "skipped": 0,
+      "total": 9
+    },
+    {
+      "area": "gold_generalization",
+      "failed": 0,
+      "passed": 6,
+      "skipped": 0,
+      "total": 6
+    },
+    {
+      "area": "gold_transfer",
+      "failed": 2,
+      "passed": 2,
+      "skipped": 0,
+      "total": 4
+    },
+    {
+      "area": "gold_evidence",
+      "failed": 0,
+      "passed": 5,
+      "skipped": 0,
+      "total": 5
+    },
+    {
+      "area": "ingestion",
+      "failed": 0,
+      "passed": 9,
+      "skipped": 0,
+      "total": 9
+    },
+    {
+      "area": "security_offline",
+      "failed": 0,
+      "passed": 4,
+      "skipped": 0,
+      "total": 4
+    },
+    {
+      "area": "security_e2e",
+      "failed": 0,
+      "passed": 1,
+      "skipped": 0,
+      "total": 1
+    },
+    {
+      "area": "provenance",
+      "failed": 0,
+      "passed": 1,
+      "skipped": 0,
+      "total": 1
+    },
+    {
+      "area": "concurrency",
+      "failed": 0,
+      "passed": 5,
+      "skipped": 0,
+      "total": 5
+    },
+    {
+      "area": "product_model_offline",
+      "failed": 0,
+      "passed": 4,
+      "skipped": 0,
+      "total": 4
+    },
+    {
+      "area": "product_model_e2e",
+      "failed": 0,
+      "passed": 16,
+      "skipped": 0,
+      "total": 16
+    },
+    {
+      "area": "durable_offline",
+      "failed": 0,
+      "passed": 24,
+      "skipped": 0,
+      "total": 24
+    },
+    {
+      "area": "durable_e2e",
+      "failed": 0,
+      "passed": 9,
+      "skipped": 0,
+      "total": 9
+    },
+    {
+      "area": "implementation_descriptor_offline",
+      "failed": 0,
+      "passed": 32,
+      "skipped": 0,
+      "total": 32
+    },
+    {
+      "area": "ingestion_sources_repo_doc_offline",
+      "failed": 0,
+      "passed": 13,
+      "skipped": 0,
+      "total": 13
+    },
+    {
+      "area": "ingestion_sources_history_offline",
+      "failed": 0,
+      "passed": 18,
+      "skipped": 0,
+      "total": 18
+    },
+    {
+      "area": "ingestion_sources_admission_e2e",
+      "failed": 0,
+      "passed": 4,
+      "skipped": 0,
+      "total": 4
+    },
+    {
+      "area": "privacy_e2e",
+      "failed": 0,
+      "passed": 2,
+      "skipped": 0,
+      "total": 2
+    },
+    {
+      "area": "staleness_evaluation_connection_e2e",
+      "failed": 0,
+      "passed": 1,
+      "skipped": 0,
+      "total": 1
+    },
+    {
+      "area": "failure_learning_cross_checks_e2e",
+      "failed": 0,
+      "passed": 2,
+      "skipped": 0,
+      "total": 2
+    },
+    {
+      "area": "retrieval_live_e2e",
+      "failed": 0,
+      "passed": 1,
+      "skipped": 0,
+      "total": 1
+    },
+    {
+      "area": "concurrency_durable_e2e",
+      "failed": 0,
+      "passed": 1,
+      "skipped": 0,
+      "total": 1
+    }
+  ],
+  "branch": "evaluation-suite",
+  "config": {
+    "database_url_present": true,
+    "embedding_model": "real Voyage embeddings used ONLY in retrieval_live_e2e (tests.evaluation.retrieval.test_live_retrieval_e2e, spec \u00a717); every other area uses this suite's established FakeEmbedder stand-in",
+    "model": "n/a -- no live agent/LLM calls in this export (offline/gold-set + live-DB areas, plus one real-embedding retrieval area)"
+  },
+  "corpus_state": "final-v1-deterministic-baseline-pre-ingestion",
+  "evaluation_harness_commit": "f961c020ac3d5dbaad9b2df4337f83c8d3e2e1b2",
+  "final_v1_tag": null,
+  "generated_at": "2026-09-03T20:42:06.371973+00:00",
+  "historical_baseline_commit": "a5dace6ccbe52c7669e13fa0efe8eb17448d05a8",
+  "platform": "Windows-10-10.0.19045-SP0",
+  "python_version": "3.14.6",
+  "run_id": "0fd389f43df1",
+  "system_under_test_commit": "bd768e62a887b13a94fdd118693a5c671df1cf95"
+}

@@ -1,0 +1,66 @@
+{
+  "_comment": "Gold matrix for app.services.product_model.evaluations_comparable (task spec section 4: same-benchmark-version comparable, different-version/different-material-environment not comparable, incomplete not comparable). Labels are 'comparable' or one of the exact substrings evaluations_comparable's own reason strings must contain when not comparable, derived from reading product_model.py directly -- not from running the code and copying its output.",
+  "cases": [
+    {
+      "id": "same-benchmark-same-verification-same-env-is-comparable",
+      "a": {"benchmark_id": "b1", "status": "completed", "methodology": {"verification": "deterministic"}, "environment": {"runtime": "linux"}},
+      "b": {"benchmark_id": "b1", "status": "completed", "methodology": {"verification": "deterministic"}, "environment": {"runtime": "linux"}},
+      "expected": "comparable"
+    },
+    {
+      "id": "different-benchmark-id-not-comparable",
+      "a": {"benchmark_id": "b1", "status": "completed", "methodology": {"verification": "deterministic"}, "environment": {}},
+      "b": {"benchmark_id": "b2", "status": "completed", "methodology": {"verification": "deterministic"}, "environment": {}},
+      "expected": "different benchmark"
+    },
+    {
+      "id": "different-benchmark-version-means-different-benchmark-id-not-comparable",
+      "_note": "a benchmark version bump creates a new benchmarks row (new id) per migration 35's UNIQUE(problem_id,name,version) -- so a version change IS a different benchmark_id, exercised the same way as the case above with distinct ids representing v1 vs v2 of the same named benchmark",
+      "a": {"benchmark_id": "ctx-bench-v1", "status": "completed", "methodology": {"verification": "deterministic"}, "environment": {}},
+      "b": {"benchmark_id": "ctx-bench-v2", "status": "completed", "methodology": {"verification": "deterministic"}, "environment": {}},
+      "expected": "different benchmark"
+    },
+    {
+      "id": "different-verification-semantics-not-comparable",
+      "a": {"benchmark_id": "b1", "status": "completed", "methodology": {"verification": "deterministic"}, "environment": {}},
+      "b": {"benchmark_id": "b1", "status": "completed", "methodology": {"verification": "llm_judge"}, "environment": {}},
+      "expected": "different verification"
+    },
+    {
+      "id": "missing-verification-key-both-sides-is-comparable",
+      "a": {"benchmark_id": "b1", "status": "completed", "methodology": {}, "environment": {}},
+      "b": {"benchmark_id": "b1", "status": "completed", "methodology": {}, "environment": {}},
+      "expected": "comparable"
+    },
+    {
+      "id": "different-material-environment-not-comparable",
+      "a": {"benchmark_id": "b1", "status": "completed", "methodology": {"verification": "deterministic"}, "environment": {"gpu": "a100"}},
+      "b": {"benchmark_id": "b1", "status": "completed", "methodology": {"verification": "deterministic"}, "environment": {"gpu": "none"}},
+      "expected": "different material environment"
+    },
+    {
+      "id": "non-material-env-keys-ignored-note-operator-run-id-timestamp-seed-label",
+      "a": {"benchmark_id": "b1", "status": "completed", "methodology": {"verification": "deterministic"}, "environment": {"runtime": "linux", "operator": "alice", "run_id": "1", "note": "first pass", "timestamp": "t1", "seed_label": "s1"}},
+      "b": {"benchmark_id": "b1", "status": "completed", "methodology": {"verification": "deterministic"}, "environment": {"runtime": "linux", "operator": "bob", "run_id": "2", "note": "second pass", "timestamp": "t2", "seed_label": "s2"}},
+      "expected": "comparable"
+    },
+    {
+      "id": "one-evaluation-incomplete-not-comparable",
+      "a": {"benchmark_id": "b1", "status": "running", "methodology": {"verification": "deterministic"}, "environment": {}},
+      "b": {"benchmark_id": "b1", "status": "completed", "methodology": {"verification": "deterministic"}, "environment": {}},
+      "expected": "must be completed"
+    },
+    {
+      "id": "both-evaluations-requested-not-comparable",
+      "a": {"benchmark_id": "b1", "status": "requested", "methodology": {"verification": "deterministic"}, "environment": {}},
+      "b": {"benchmark_id": "b1", "status": "requested", "methodology": {"verification": "deterministic"}, "environment": {}},
+      "expected": "must be completed"
+    },
+    {
+      "id": "invalidated-evaluation-not-comparable",
+      "a": {"benchmark_id": "b1", "status": "invalidated", "methodology": {"verification": "deterministic"}, "environment": {}},
+      "b": {"benchmark_id": "b1", "status": "completed", "methodology": {"verification": "deterministic"}, "environment": {}},
+      "expected": "must be completed"
+    }
+  ]
+}

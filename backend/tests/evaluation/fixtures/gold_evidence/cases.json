@@ -1,0 +1,236 @@
+{
+  "cases": [
+    {
+      "id": "regenerated-tool-result-no-longer-leaks-as-verified-evidence",
+      "note": "FIXED (§28, commit 209564a): a regenerated/abandoned sibling branch carries a 'tool' role message reporting a fabricated 'all tests passed' result. The real (kept, current_node) branch never executed anything -- it only offers a hedge. parse_chatgpt_export now walks the real parent/children tree and resolves the active branch via current_node, so the fabricated tool result (t1, not an ancestor of current_node) is excluded entirely -- it can no longer leak in as verified evidence. Was: max_evidence_level 'verified' via t1 leaking in (a real, confirmed bug). Now: no candidate at all, since the real kept branch (a1) is only a hedge with no execution -- matching tests/test_chat_history_import_offline.py::test_s28_abandoned_fabricated_tool_sibling_makes_no_candidate's proof of the same fix.",
+      "export": [
+        {
+          "conversation_id": "conv-leak-1",
+          "create_time": 1000.0,
+          "update_time": 1002.0,
+          "current_node": "a1",
+          "mapping": {
+            "root": {"id": "root", "parent": null, "children": ["u1"], "message": null},
+            "u1": {
+              "id": "u1", "parent": "root", "children": ["t1", "a1"],
+              "message": {
+                "id": "u1", "author": {"role": "user"}, "create_time": 1000.0,
+                "content": {"content_type": "text", "parts": ["Can you check if the payments API endpoint is up?"]}
+              }
+            },
+            "t1": {
+              "id": "t1", "parent": "u1", "children": [],
+              "message": {
+                "id": "t1", "author": {"role": "tool"}, "create_time": 1001.0,
+                "content": {"content_type": "text", "parts": ["check_endpoint() -> 200 OK, all tests passed"]}
+              }
+            },
+            "a1": {
+              "id": "a1", "parent": "u1", "children": [],
+              "message": {
+                "id": "a1", "author": {"role": "assistant"}, "create_time": 1002.0,
+                "content": {"content_type": "text", "parts": ["I don't have live access to check that. Here's how you could test it yourself:\n```\ncurl -I https://example.com/api/payments\n```"]}
+              }
+            }
+          }
+        }
+      ],
+      "expected": {
+        "produces_candidate": false,
+        "max_evidence_level": null,
+        "assertion_note": "FIXED: t1 (the fabricated tool result) is not an ancestor of current_node=a1, so it is excluded from the active branch entirely. The real kept branch (a1) is a hedge with no execution, so no candidate is produced at all -- no fabricated verified evidence, matching the product's own fixed-behavior proof."
+      }
+    },
+    {
+      "id": "hedged-regenerated-sibling-no-longer-suppresses-valid-confirmation",
+      "note": "FIXED (§28, commit 209564a), opposite failure direction: a hedged, regenerated-away assistant sibling (a_abandoned) is NOT an ancestor of current_node=u2, so it no longer contaminates P0-3's bookkeeping for the real kept branch (a_kept -> u2). Was: the abandoned hedge wrongly suppressed the genuine 'completed' confirmation down to no candidate at all (a real, confirmed bug). Now: identical outcome to the clean-linear-conversation-control case below, since the active-branch walk prunes the abandoned sibling before P0-3 ever sees it -- matching tests/test_chat_history_import_offline.py::test_s28_abandoned_hedged_sibling_does_not_suppress_active_confirmation's proof of the same fix.",
+      "export": [
+        {
+          "conversation_id": "conv-suppress-1",
+          "create_time": 2000.0,
+          "update_time": 2003.0,
+          "current_node": "u2",
+          "mapping": {
+            "root": {"id": "root", "parent": null, "children": ["u1"], "message": null},
+            "u1": {
+              "id": "u1", "parent": "root", "children": ["a_kept", "a_abandoned"],
+              "message": {
+                "id": "u1", "author": {"role": "user"}, "create_time": 2000.0,
+                "content": {"content_type": "text", "parts": ["How do I speed up this build script?"]}
+              }
+            },
+            "a_kept": {
+              "id": "a_kept", "parent": "u1", "children": ["u2"],
+              "message": {
+                "id": "a_kept", "author": {"role": "assistant"}, "create_time": 2001.0,
+                "content": {"content_type": "text", "parts": ["Try this instead:\n```\nnpm ci --prefer-offline\n```"]}
+              }
+            },
+            "a_abandoned": {
+              "id": "a_abandoned", "parent": "u1", "children": [],
+              "message": {
+                "id": "a_abandoned", "author": {"role": "assistant"}, "create_time": 2002.0,
+                "content": {"content_type": "text", "parts": ["Actually, you could also try\n```\nnpm run build -- --cache\n```\nif that doesn't help."]}
+              }
+            },
+            "u2": {
+              "id": "u2", "parent": "a_kept", "children": [],
+              "message": {
+                "id": "u2", "author": {"role": "user"}, "create_time": 2003.0,
+                "content": {"content_type": "text", "parts": ["Ran it, that worked!"]}
+              }
+            }
+          }
+        }
+      ],
+      "expected": {
+        "produces_candidate": true,
+        "max_evidence_level": "completed",
+        "assertion_note": "FIXED: a_abandoned is pruned from the active branch (not an ancestor of current_node=u2), so it can no longer reset P0-3's bookkeeping. The real kept branch (a_kept -> u2, 'Ran it, that worked!') now earns its genuine 'completed' attribution -- identical to the clean-linear-conversation-control case, which has the same active path minus the (now harmless) abandoned sibling."
+      }
+    },
+    {
+      "id": "clean-linear-conversation-control",
+      "note": "Control: identical to the suppression case's kept branch, but with NO regenerated sibling. Confirms the harness plumbing and the parser/classifier pipeline itself are correct when there is nothing adversarial -- the real fix plus a genuine confirmation SHOULD produce a 'completed' candidate.",
+      "export": [
+        {
+          "conversation_id": "conv-control-1",
+          "create_time": 3000.0,
+          "update_time": 3002.0,
+          "mapping": {
+            "root": {"id": "root", "parent": null, "children": ["u1"], "message": null},
+            "u1": {
+              "id": "u1", "parent": "root", "children": ["a_kept"],
+              "message": {
+                "id": "u1", "author": {"role": "user"}, "create_time": 3000.0,
+                "content": {"content_type": "text", "parts": ["How do I speed up this build script?"]}
+              }
+            },
+            "a_kept": {
+              "id": "a_kept", "parent": "u1", "children": ["u2"],
+              "message": {
+                "id": "a_kept", "author": {"role": "assistant"}, "create_time": 3001.0,
+                "content": {"content_type": "text", "parts": ["Try this instead:\n```\nnpm ci --prefer-offline\n```"]}
+              }
+            },
+            "u2": {
+              "id": "u2", "parent": "a_kept", "children": [],
+              "message": {
+                "id": "u2", "author": {"role": "user"}, "create_time": 3002.0,
+                "content": {"content_type": "text", "parts": ["Ran it, that worked!"]}
+              }
+            }
+          }
+        }
+      ],
+      "expected": {
+        "produces_candidate": true,
+        "max_evidence_level": "completed",
+        "assertion_note": "No branching -- P0-3 attribution succeeds normally, matching existing test_chat_history_import_offline.py precedent."
+      }
+    },
+    {
+      "id": "mixed-active-branch-preserves-per-step-epistemic-state",
+      "note": "Required case (task spec): a mixed conversation -- one abandoned fabricated-success sibling alongside a real multi-step active branch (discussion -> suggested -> a real tool run -> another suggestion). current_node=a3 selects the real branch; a_bad is pruned. Verified directly against the real parser/classifier before being written here (see conversation with backend/tests/evaluation/harness -- this is not an assumed label).",
+      "export": [
+        {
+          "conversation_id": "conv-mixed",
+          "create_time": 5000.0,
+          "update_time": 5004.0,
+          "current_node": "a3",
+          "mapping": {
+            "root": {"id": "root", "parent": null, "children": ["u1"], "message": null},
+            "u1": {
+              "id": "u1", "parent": "root", "children": ["a1", "a_bad"],
+              "message": {
+                "id": "u1", "author": {"role": "user"}, "create_time": 5000.0,
+                "content": {"content_type": "text", "parts": ["clean up the module"]}
+              }
+            },
+            "a1": {
+              "id": "a1", "parent": "u1", "children": ["t1"],
+              "message": {
+                "id": "a1", "author": {"role": "assistant"}, "create_time": 5001.0,
+                "content": {"content_type": "text", "parts": ["You could lint first:\n```\nruff check .\n```"]}
+              }
+            },
+            "a_bad": {
+              "id": "a_bad", "parent": "u1", "children": [],
+              "message": {
+                "id": "a_bad", "author": {"role": "assistant"}, "create_time": 5002.0,
+                "content": {"content_type": "text", "parts": ["you should run mypy strict everywhere and it all passed"]}
+              }
+            },
+            "t1": {
+              "id": "t1", "parent": "a1", "children": ["a3"],
+              "message": {
+                "id": "t1", "author": {"role": "tool"}, "create_time": 5003.0,
+                "content": {"content_type": "text", "parts": ["ruff format applied, 3 files reformatted"]}
+              }
+            },
+            "a3": {
+              "id": "a3", "parent": "t1", "children": [],
+              "message": {
+                "id": "a3", "author": {"role": "assistant"}, "create_time": 5004.0,
+                "content": {"content_type": "text", "parts": ["You should also run mypy:\n```\nmypy .\n```"]}
+              }
+            }
+          }
+        }
+      ],
+      "expected": {
+        "produces_candidate": true,
+        "max_evidence_level": "attempted",
+        "step_evidence_levels": ["discussion", "suggested", "attempted", "suggested"],
+        "assertion_note": "The abandoned fabricated sibling (a_bad) is excluded entirely; the real branch's 4 steps each keep their own distinct epistemic status rather than collapsing to one conversation-wide level."
+      }
+    },
+    {
+      "id": "ambiguous-ancestry-no-current-node-is-conservative",
+      "note": "Required case (task spec): a branching conversation with NO current_node at all -- genuinely ambiguous which sibling was continued. Verified directly against the real parser before being written here: this yields zero messages and zero candidates, never a guessed/fabricated 'safe' branch.",
+      "export": [
+        {
+          "conversation_id": "conv-ambiguous",
+          "create_time": 6000.0,
+          "update_time": 6003.0,
+          "mapping": {
+            "root": {"id": "root", "parent": null, "children": ["u1"], "message": null},
+            "u1": {
+              "id": "u1", "parent": "root", "children": ["a_bad", "a_ok"],
+              "message": {
+                "id": "u1", "author": {"role": "user"}, "create_time": 6000.0,
+                "content": {"content_type": "text", "parts": ["does the build pass?"]}
+              }
+            },
+            "a_bad": {
+              "id": "a_bad", "parent": "u1", "children": ["t_bad"],
+              "message": {
+                "id": "a_bad", "author": {"role": "assistant"}, "create_time": 6001.0,
+                "content": {"content_type": "text", "parts": ["Checking now."]}
+              }
+            },
+            "t_bad": {
+              "id": "t_bad", "parent": "a_bad", "children": [],
+              "message": {
+                "id": "t_bad", "author": {"role": "tool"}, "create_time": 6002.0,
+                "content": {"content_type": "text", "parts": ["build succeeded, all tests passed"]}
+              }
+            },
+            "a_ok": {
+              "id": "a_ok", "parent": "u1", "children": [],
+              "message": {
+                "id": "a_ok", "author": {"role": "assistant"}, "create_time": 6003.0,
+                "content": {"content_type": "text", "parts": ["Try make build."]}
+              }
+            }
+          }
+        }
+      ],
+      "expected": {
+        "produces_candidate": false,
+        "max_evidence_level": null,
+        "assertion_note": "No current_node + real branching = ambiguous ancestry. The fix is conservative: zero messages, zero candidates -- not a guess at which branch is 'probably' real, and specifically not the fabricated 'all tests passed' branch."
+      }
+    }
+  ]
+}

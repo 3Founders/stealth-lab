@@ -478,6 +478,12 @@ class RealSoloAgent(RealAgentBase):
         ep = self._episode(task)
         decision, usage = await self._decide(
             build_messages("A", task, self.situations), task["task_id"])
+        # retries: additive (Phase 7) -- usage["calls"] counts every chat()
+        # round this episode made (1 normal + 1 repair round-trip when the
+        # first reply didn't parse); calls-1 is the retry count whether or
+        # not a decision was ultimately recovered, so this is set on BOTH
+        # the give-up path and the success path below.
+        ep["retries"] = max(0, usage["calls"] - 1)
         if decision is None:
             ep.update(valid=False,
                       invalid_reason="unparseable_decision_after_repair")
@@ -524,6 +530,7 @@ class RealMemoryAgent(RealSoloAgent):
                            rag_blob=blob["text"]
                            if (blob and rag != "none") else None),
             task["task_id"])
+        ep["retries"] = max(0, usage["calls"] - 1)
         if decision is None:
             ep.update(valid=False,
                       invalid_reason="unparseable_decision_after_repair")
@@ -590,6 +597,7 @@ class RealProcedureAgent(RealSoloAgent):
         decision, usage = await self._decide(
             build_messages("C", task, self.situations,
                            offered_cards=offered), task["task_id"])
+        ep["retries"] = max(0, usage["calls"] - 1)
         if decision is None:
             ep.update(valid=False,
                       invalid_reason="unparseable_decision_after_repair")
