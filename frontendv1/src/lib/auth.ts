@@ -140,14 +140,22 @@ export async function signInWithPassword(
   if (error) throw error;
 }
 
-export async function signInWithGoogle(): Promise<void> {
+async function _oauth(provider: "google" | "github"): Promise<void> {
   const supabase = _require();
   const { error } = await supabase.auth.signInWithOAuth({
-    provider: "google",
+    provider,
     options: { redirectTo: `${window.location.origin}/auth/callback` },
   });
   if (error) throw error;
-  // supabase redirects the browser to Google; nothing after this runs.
+  // supabase redirects the browser to the provider; nothing after this runs.
+}
+
+export function signInWithGoogle(): Promise<void> {
+  return _oauth("google");
+}
+
+export function signInWithGitHub(): Promise<void> {
+  return _oauth("github");
 }
 
 export async function signOut(): Promise<void> {
