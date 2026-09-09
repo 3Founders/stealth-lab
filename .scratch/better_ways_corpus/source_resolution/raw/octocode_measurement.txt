@@ -1,0 +1,6 @@
+octocode @ tag 0.24.0 (commit 28b9174f2f9ece1523b40c103655a49a5b1778cc), Apache-2.0 (verified via raw LICENSE fetch)
+Prebuilt binary: octocode-0.24.0-x86_64-pc-windows-msvc.zip (no Rust toolchain available in this sandbox)
+Command: octocode.exe view --format text app/services/product_model.py  (StealthLab's own real 594-line file)
+raw product_model.py: 6723 tokens (tiktoken cl100k_base)
+octocode view output: 1549 tokens (tiktoken cl100k_base)
+reduction: 77.0%

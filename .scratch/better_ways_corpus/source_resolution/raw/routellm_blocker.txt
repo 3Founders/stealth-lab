@@ -1,0 +1,8 @@
+RouteLLM @ commit 0b64fdafe049e596a3f5657c219329f24af24198, Apache-2.0 (LICENSE, verified)
+Inspected all 3 router implementations directly (routellm/routers/):
+- MatrixFactorization (MFModel.forward): calls OPENAI_CLIENT.embeddings.create(...) for every prompt -- requires a
+  live OpenAI API key and a real (billed, though cheap) embeddings call. No live LLM/API spend authorized this pass.
+- CausalLLMClassifier: hardcodes `.to("cuda")` -- requires a CUDA GPU, not available in this sandbox.
+- similarity_weighted router: `OPENAI_CLIENT = OpenAI()` at import time -- same live-API dependency.
+None of the three can be exercised fully offline/locally in this environment without either live API spend or a
+GPU. BLOCKED, not tested. Source verified, license verified, procedure extracted from source read (routers.py).

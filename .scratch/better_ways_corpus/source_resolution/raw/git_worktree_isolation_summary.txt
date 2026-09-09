@@ -1,0 +1,4 @@
+
+=== SUMMARY ===
+Scenario A (no isolation):      1/8 succeeded, 0.890s wall
+Scenario B (worktree isolation): 8/8 succeeded, 1.500s wall

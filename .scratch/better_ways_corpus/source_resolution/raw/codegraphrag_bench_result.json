@@ -1,0 +1,10 @@
+{
+  "corpus_name": "app",
+  "corpus_path": "C:\\Users\\user\\sl-evaluation\\backend\\app",
+  "cgr_version": "0.0.859",
+  "file_count": 176,
+  "node_count": 1998,
+  "edge_count": 8811,
+  "duration_seconds": 59.6473655999871,
+  "peak_rss_bytes": -1
+}

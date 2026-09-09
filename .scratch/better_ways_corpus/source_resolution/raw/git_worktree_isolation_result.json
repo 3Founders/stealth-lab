@@ -1,0 +1,352 @@
+{
+  "scenario_a_no_isolation": {
+    "n": 8,
+    "success_count": 1,
+    "wall_time_s": 0.89,
+    "results": [
+      {
+        "agent": 0,
+        "success": false,
+        "steps": [
+          [
+            "checkout",
+            0,
+            "Switched to a new branch 'agent-a-0'"
+          ],
+          [
+            "add",
+            128,
+            "fatal: Unable to create 'C:/Users/user/AppData/Local/Temp/claude/C--Users-user-sl-evaluation/11fda6f9-d7ee-4efe-9ed3-18f1ae3b1b83/scratchpad/bw_candidates/worktree_test/repo/.git/index.lock': File exi"
+          ],
+          [
+            "commit",
+            128,
+            "fatal: Unable to create 'C:/Users/user/AppData/Local/Temp/claude/C--Users-user-sl-evaluation/11fda6f9-d7ee-4efe-9ed3-18f1ae3b1b83/scratchpad/bw_candidates/worktree_test/repo/.git/index.lock': File exi"
+          ]
+        ]
+      },
+      {
+        "agent": 1,
+        "success": false,
+        "steps": [
+          [
+            "checkout",
+            0,
+            "Switched to a new branch 'agent-a-1'"
+          ],
+          [
+            "add",
+            128,
+            "fatal: Unable to create 'C:/Users/user/AppData/Local/Temp/claude/C--Users-user-sl-evaluation/11fda6f9-d7ee-4efe-9ed3-18f1ae3b1b83/scratchpad/bw_candidates/worktree_test/repo/.git/index.lock': File exi"
+          ],
+          [
+            "commit",
+            128,
+            "fatal: Unable to create 'C:/Users/user/AppData/Local/Temp/claude/C--Users-user-sl-evaluation/11fda6f9-d7ee-4efe-9ed3-18f1ae3b1b83/scratchpad/bw_candidates/worktree_test/repo/.git/index.lock': File exi"
+          ]
+        ]
+      },
+      {
+        "agent": 2,
+        "success": false,
+        "steps": [
+          [
+            "checkout",
+            0,
+            "Switched to a new branch 'agent-a-2'"
+          ],
+          [
+            "add",
+            128,
+            "fatal: Unable to create 'C:/Users/user/AppData/Local/Temp/claude/C--Users-user-sl-evaluation/11fda6f9-d7ee-4efe-9ed3-18f1ae3b1b83/scratchpad/bw_candidates/worktree_test/repo/.git/index.lock': File exi"
+          ],
+          [
+            "commit",
+            128,
+            "fatal: Unable to create 'C:/Users/user/AppData/Local/Temp/claude/C--Users-user-sl-evaluation/11fda6f9-d7ee-4efe-9ed3-18f1ae3b1b83/scratchpad/bw_candidates/worktree_test/repo/.git/index.lock': File exi"
+          ]
+        ]
+      },
+      {
+        "agent": 3,
+        "success": false,
+        "steps": [
+          [
+            "checkout",
+            0,
+            "Switched to a new branch 'agent-a-3'"
+          ],
+          [
+            "add",
+            0,
+            ""
+          ],
+          [
+            "commit",
+            128,
+            "fatal: cannot lock ref 'HEAD': is at 34985f54faea2054886dc09de918b2f2cb2b15ff but expected 0a4a9baa391005e4c5e3c431bdfd5dcc17b0698d"
+          ]
+        ]
+      },
+      {
+        "agent": 4,
+        "success": false,
+        "steps": [
+          [
+            "checkout",
+            0,
+            "Switched to a new branch 'agent-a-4'"
+          ],
+          [
+            "add",
+            0,
+            ""
+          ],
+          [
+            "commit",
+            128,
+            "fatal: Unable to create 'C:/Users/user/AppData/Local/Temp/claude/C--Users-user-sl-evaluation/11fda6f9-d7ee-4efe-9ed3-18f1ae3b1b83/scratchpad/bw_candidates/worktree_test/repo/.git/index.lock': File exi"
+          ]
+        ]
+      },
+      {
+        "agent": 5,
+        "success": false,
+        "steps": [
+          [
+            "checkout",
+            0,
+            "Switched to a new branch 'agent-a-5'"
+          ],
+          [
+            "add",
+            128,
+            "fatal: Unable to create 'C:/Users/user/AppData/Local/Temp/claude/C--Users-user-sl-evaluation/11fda6f9-d7ee-4efe-9ed3-18f1ae3b1b83/scratchpad/bw_candidates/worktree_test/repo/.git/index.lock': File exi"
+          ],
+          [
+            "commit",
+            0,
+            ""
+          ]
+        ]
+      },
+      {
+        "agent": 6,
+        "success": false,
+        "steps": [
+          [
+            "checkout",
+            0,
+            "Switched to a new branch 'agent-a-6'"
+          ],
+          [
+            "add",
+            128,
+            "fatal: Unable to create 'C:/Users/user/AppData/Local/Temp/claude/C--Users-user-sl-evaluation/11fda6f9-d7ee-4efe-9ed3-18f1ae3b1b83/scratchpad/bw_candidates/worktree_test/repo/.git/index.lock': File exi"
+          ],
+          [
+            "commit",
+            128,
+            "fatal: Unable to create 'C:/Users/user/AppData/Local/Temp/claude/C--Users-user-sl-evaluation/11fda6f9-d7ee-4efe-9ed3-18f1ae3b1b83/scratchpad/bw_candidates/worktree_test/repo/.git/index.lock': File exi"
+          ]
+        ]
+      },
+      {
+        "agent": 7,
+        "success": true,
+        "steps": [
+          [
+            "checkout",
+            0,
+            "Switched to a new branch 'agent-a-7'"
+          ],
+          [
+            "add",
+            0,
+            ""
+          ],
+          [
+            "commit",
+            0,
+            ""
+          ]
+        ]
+      }
+    ]
+  },
+  "scenario_b_worktree_isolation": {
+    "n": 8,
+    "success_count": 8,
+    "wall_time_s": 1.5,
+    "results": [
+      {
+        "agent": 0,
+        "success": true,
+        "steps": [
+          [
+            "worktree_add",
+            0,
+            "Preparing worktree (new branch 'agent-b-0')"
+          ],
+          [
+            "add",
+            0,
+            ""
+          ],
+          [
+            "commit",
+            0,
+            ""
+          ]
+        ]
+      },
+      {
+        "agent": 1,
+        "success": true,
+        "steps": [
+          [
+            "worktree_add",
+            0,
+            "Preparing worktree (new branch 'agent-b-1')"
+          ],
+          [
+            "add",
+            0,
+            ""
+          ],
+          [
+            "commit",
+            0,
+            ""
+          ]
+        ]
+      },
+      {
+        "agent": 2,
+        "success": true,
+        "steps": [
+          [
+            "worktree_add",
+            0,
+            "Preparing worktree (new branch 'agent-b-2')"
+          ],
+          [
+            "add",
+            0,
+            ""
+          ],
+          [
+            "commit",
+            0,
+            ""
+          ]
+        ]
+      },
+      {
+        "agent": 3,
+        "success": true,
+        "steps": [
+          [
+            "worktree_add",
+            0,
+            "Preparing worktree (new branch 'agent-b-3')"
+          ],
+          [
+            "add",
+            0,
+            ""
+          ],
+          [
+            "commit",
+            0,
+            ""
+          ]
+        ]
+      },
+      {
+        "agent": 4,
+        "success": true,
+        "steps": [
+          [
+            "worktree_add",
+            0,
+            "Preparing worktree (new branch 'agent-b-4')"
+          ],
+          [
+            "add",
+            0,
+            ""
+          ],
+          [
+            "commit",
+            0,
+            ""
+          ]
+        ]
+      },
+      {
+        "agent": 5,
+        "success": true,
+        "steps": [
+          [
+            "worktree_add",
+            0,
+            "Preparing worktree (new branch 'agent-b-5')"
+          ],
+          [
+            "add",
+            0,
+            ""
+          ],
+          [
+            "commit",
+            0,
+            ""
+          ]
+        ]
+      },
+      {
+        "agent": 6,
+        "success": true,
+        "steps": [
+          [
+            "worktree_add",
+            0,
+            "Preparing worktree (new branch 'agent-b-6')"
+          ],
+          [
+            "add",
+            0,
+            ""
+          ],
+          [
+            "commit",
+            0,
+            ""
+          ]
+        ]
+      },
+      {
+        "agent": 7,
+        "success": true,
+        "steps": [
+          [
+            "worktree_add",
+            0,
+            "Preparing worktree (new branch 'agent-b-7')"
+          ],
+          [
+            "add",
+            0,
+            ""
+          ],
+          [
+            "commit",
+            0,
+            ""
+          ]
+        ]
+      }
+    ]
+  }
+}

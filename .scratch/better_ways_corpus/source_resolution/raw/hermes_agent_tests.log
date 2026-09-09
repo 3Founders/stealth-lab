@@ -1,0 +1,5 @@
+# hermes-agent @ 63279301bcbdc185c1b07b98a9312eb0c862f26d, Python 3.11.9
+# tests/agent/test_protected_tail_pressure_61932.py + tests/agent/test_proactive_tool_result_pruning.py
+# (source-verified: seed 8 "tail protection" -> real mechanism at agent/context_compressor.py + hermes_state.py,
+#  seed 16 "tool-result filtering" -> real mechanism, both confirmed via grep of source + dedicated test files)
+9 passed in 4.38s
