@@ -2376,6 +2376,11 @@ async def submit_procedure(name: str, goal: str, steps_json: str, ctx: Context,
     pool = ctx.request_context.lifespan_context["pool"]
     from app.services.embeddings import Embedder
     from app.services.procedures import capture_procedure
+    from app.services.retrieval_document import (
+        RETRIEVAL_DOCUMENT_VERSION,
+        build_procedure_retrieval_document,
+        retrieval_document_sha256,
+    )
     from app.services.v0_gate import V0Violation
 
     try:
@@ -2383,8 +2388,16 @@ async def submit_procedure(name: str, goal: str, steps_json: str, ctx: Context,
     except json.JSONDecodeError as exc:
         return f"REFUSED: steps_json must be a JSON array ({exc})"
 
+    # ONE authoritative procedure representation: embed the canonical
+    # retrieval document, never a bare `goal`. A goal-only vector would be
+    # a competing, impoverished representation for the same corpus.
     embedder = Embedder()
-    goal_vec = await embedder.embed_one(goal, input_type="document")
+    retrieval_doc = build_procedure_retrieval_document(
+        {"name": name, "goal": goal, "steps": steps, "domain": domain}
+    )
+    doc_vec, meta = await embedder.embed_one_with_metadata(
+        retrieval_doc, input_type="document"
+    )
 
     try:
         result = await capture_procedure(
@@ -2392,7 +2405,14 @@ async def submit_procedure(name: str, goal: str, steps_json: str, ctx: Context,
             provenance=provenance, domain=domain,
             scope_type="entity" if domain else "global",
             created_by=_resolve_caller_identity(fallback="mcp_submit_procedure"),
-            embedding=goal_vec,
+            embedding=doc_vec,
+            embedding_model_id=meta.model_id,
+            embedding_provider=meta.provider,
+            embedding_input_type=meta.input_type,
+            embedding_text_hash=meta.text_sha256,
+            retrieval_document=retrieval_doc,
+            retrieval_document_version=RETRIEVAL_DOCUMENT_VERSION,
+            retrieval_document_sha256=retrieval_document_sha256(retrieval_doc),
         )
     except V0Violation as exc:
         return f"REFUSED: {exc}"

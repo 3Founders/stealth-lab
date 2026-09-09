@@ -77,6 +77,16 @@ class ParsedSkill:
     compatibility: Optional[str] = None
     allowed_tools: list[str] = field(default_factory=list)
     metadata: dict[str, Any] = field(default_factory=dict)
+    # --- source-authored semantic sections (procdoc_v2) --------------------
+    # Populated deterministically from the document's own headings when it
+    # has recognisable structure; each is honest source prose, never a
+    # fabricated predicate/guarantee. Empty when the source did not say it.
+    purpose: Optional[str] = None
+    when_not_to_use: Optional[str] = None
+    prerequisites: list[str] = field(default_factory=list)
+    limitations: list[str] = field(default_factory=list)
+    failure_modes: list[str] = field(default_factory=list)
+    expected_outcome: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -108,6 +118,130 @@ _STEP_HEADING_RE = re.compile(r"^\s*#{2,4}\s+Step\s+\d+\s*[:.)-]\s*(.+)$", re.IG
 _APPLIES_WHEN_RE = re.compile(
     r"^\s*(?:applies when|use when|when to use)\s*:?\s*(.+)$", re.IGNORECASE,
 )
+
+_HEADING_RE = re.compile(r"^\s{0,3}(#{1,6})\s+(.+?)\s*#*\s*$")
+
+# Deterministic heading classification. Each key is checked in this order
+# against the lower-cased, punctuation-stripped heading text; the FIRST
+# substring hit wins -- so "when not to use" is tested before "use", and
+# "failure" before "troubleshoot". These are the realistic spellings a
+# real SKILL.md uses; nothing here calls a model.
+_SECTION_KEYWORDS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("when_not", (
+        "when not to use", "when to avoid", "do not use", "don't use",
+        "dont use", "avoid when", "not appropriate", "not suitable",
+        "not recommended", "anti pattern", "antipattern", "not for",
+    )),
+    ("failure", (
+        "failure mode", "fails when", "failure condition", "troubleshoot",
+        "common failure", "common mistake", "pitfall", "gotcha",
+        "known issue", "what can go wrong",
+    )),
+    ("limitation", ("limitation", "constraint", "caveat", "restriction")),
+    ("prerequisite", (
+        "prerequisite", "pre-requisite", "requirement", "precondition",
+        "before you start", "before you begin", "assumption", "you will need",
+        "what you need",
+    )),
+    ("when_to_use", (
+        "when to use", "use when", "use this when", "applies when",
+        "when this is useful", "when to apply", "appropriate when",
+        "best for", "use case", "use-case", "ideal for", "good for",
+    )),
+    ("outcome", (
+        "expected outcome", "expected result", "expected behavior",
+        "expected behaviour", "outcome", "result", "what you get",
+        "what this produces", "success looks like",
+    )),
+    ("steps", (
+        "steps", "procedure", "workflow", "instructions",
+        "step-by-step", "step by step", "how to run", "how to use",
+    )),
+    ("tools", ("required tools", "tooling")),
+    ("dependencies", ("dependencies", "depends on", "related skills")),
+    ("compatibility", ("compatibility", "tested with", "requires version")),
+    ("purpose", (
+        "purpose", "overview", "why", "rationale", "motivation",
+        "what this does", "what it does",
+    )),
+)
+
+
+def _classify_heading(title: str) -> Optional[str]:
+    t = re.sub(r"[^a-z0-9 ]+", " ", title.lower()).strip()
+    t = re.sub(r"\s+", " ", t)
+    if not t:
+        return None
+    for classification, keywords in _SECTION_KEYWORDS:
+        if any(kw in t for kw in keywords):
+            return classification
+    return None
+
+
+def _split_sections(body: str) -> list[tuple[Optional[str], Optional[str], list[str]]]:
+    """Deterministically split a markdown body into (classification, title,
+    content_lines) tuples by ATX heading. The first tuple (classification
+    None, title None) is the pre-heading preamble. A `### Step N:` heading
+    is NOT treated as a section boundary -- it stays content of whatever
+    section it sits in, so the existing per-step-heading step scan still
+    works."""
+    out: list[tuple[Optional[str], Optional[str], list[str]]] = [(None, None, [])]
+    for line in body.splitlines():
+        m = _HEADING_RE.match(line)
+        if m and not _STEP_HEADING_RE.match(line):
+            title = m.group(2).strip()
+            out.append((_classify_heading(title), title, []))
+        else:
+            out[-1][2].append(line)
+    return out
+
+
+def _iter_content_lines(lines: list[str]):
+    """Yield a section's real content lines: no blank lines, no
+    sub-headings, no fenced code blocks, no Markdown table rows / rules.
+    Deterministic; carries no interpretation."""
+    in_fence = False
+    for line in lines:
+        s = line.strip()
+        if s.startswith("```") or s.startswith("~~~"):
+            in_fence = not in_fence
+            continue
+        if in_fence or not s or s.startswith("#"):
+            continue
+        if s.startswith("|") or re.match(r"^\|?\s*:?-{2,}", s):  # table row / rule
+            continue
+        yield s
+
+
+def _section_prose(lines: list[str], *, max_lines: int = 12) -> str:
+    """Join a section's content lines into one honest prose string:
+    strip a leading bullet / number marker, join with '; '. Bounded so a
+    long checklist can't dominate. No interpretation, no fabrication."""
+    parts: list[str] = []
+    for s in _iter_content_lines(lines):
+        s = re.sub(r"^\s*(?:[-*+]|\d+[.)])\s+", "", s).strip()
+        if s:
+            parts.append(s)
+        if len(parts) >= max_lines:
+            break
+    return "; ".join(parts)
+
+
+def _section_items(lines: list[str], *, max_items: int = 20) -> list[str]:
+    """A section's bullet / numbered items as a list (each an honest source
+    line), or -- if it has none -- its sentences. Used for prerequisites /
+    limitations / failure_modes, which read naturally as a list."""
+    items: list[str] = []
+    for s in _iter_content_lines(lines):
+        m = re.match(r"^(?:[-*+]|\d+[.)])\s+(.+)$", s)
+        if m:
+            items.append(m.group(1).strip())
+        if len(items) >= max_items:
+            break
+    if items:
+        return items
+    prose = _section_prose(lines)
+    return [p.strip() for p in re.split(r"(?<=[.!?])\s+", prose) if p.strip()][:max_items]
 
 
 def parse_skill_md(content: str, *, fallback_name: str = "unnamed-skill") -> ParsedSkill:
@@ -150,45 +284,109 @@ def parse_skill_md(content: str, *, fallback_name: str = "unnamed-skill") -> Par
     raw_metadata = frontmatter.get("metadata")
     metadata = dict(raw_metadata) if isinstance(raw_metadata, dict) else {}
 
-    heading_steps = [
-        match.group(1).strip()
-        for line in body.splitlines()
-        if (match := _STEP_HEADING_RE.match(line))
-    ]
-    numbered_steps = [
-        match.group(1).strip()
-        for line in body.splitlines()
-        if (match := _NUMBERED_STEP_RE.match(line))
-    ]
-    # Workflow-labelled headings are the strongest structure. Numbered
-    # lists come next. Bullets are a last resort because real SKILL.md
-    # documents use them heavily for examples, red flags, and checklists.
-    has_structured_steps = bool(heading_steps or numbered_steps)
-    steps: list[str] = list(heading_steps or numbered_steps)
+    sections = _split_sections(body)
+    preamble = sections[0][2] if sections else body.splitlines()
+    section_map: dict[str, list[str]] = {}
+    for classification, _title, sec_lines in sections:
+        if classification:
+            section_map.setdefault(classification, []).extend(sec_lines)
+
+    # Steps come ONLY from an explicit steps/procedure/workflow section
+    # when the document has one -- so numbered items under "Limitations",
+    # "When not to use", "Scale-out criteria" etc. never become fake
+    # steps. A document with NO recognised steps section keeps the exact
+    # historical whole-body scan (bullets included) so flat docs are
+    # unchanged.
+    step_section_lines = section_map.get("steps")
     applies_when: Optional[str] = None
     description_lines: list[str] = []
-    for line in body.splitlines():
-        stripped = line.strip()
-        if not stripped or stripped.startswith("#"):
-            continue
-        aw = _APPLIES_WHEN_RE.match(stripped)
-        if aw:
-            applies_when = aw.group(1).strip()
-            continue
-        if has_structured_steps:
-            continue
-        bullet = _BULLET_STEP_RE.match(line)
-        if bullet:
-            steps.append(bullet.group(1).strip())
-            continue
-        if not steps:
-            # Prose before any step list, not already claimed by
-            # frontmatter -- the closest thing to a body description a
-            # real SKILL.md offers when frontmatter has none.
-            description_lines.append(stripped)
+
+    if step_section_lines is not None:
+        heading_steps = [
+            m.group(1).strip() for line in step_section_lines
+            if (m := _STEP_HEADING_RE.match(line))
+        ]
+        numbered_steps = [
+            m.group(1).strip() for line in step_section_lines
+            if (m := _NUMBERED_STEP_RE.match(line))
+        ]
+        has_structured_steps = bool(heading_steps or numbered_steps)
+        steps: list[str] = list(heading_steps or numbered_steps)
+        if not has_structured_steps:
+            steps = [
+                m.group(1).strip() for line in step_section_lines
+                if (m := _BULLET_STEP_RE.match(line))
+            ]
+        for line in preamble:
+            stripped = line.strip()
+            if not stripped or stripped.startswith("#"):
+                continue
+            aw = _APPLIES_WHEN_RE.match(stripped)
+            if aw:
+                applies_when = aw.group(1).strip()
+                continue
+            if not steps and not _BULLET_STEP_RE.match(line):
+                description_lines.append(stripped)
+    else:
+        # No recognised steps section. Scan the preamble + any
+        # UNCLASSIFIED sections for steps -- but NOT sections we DID
+        # recognise as non-steps (Anti-patterns, Limitations, Failure
+        # modes, When not to use, ...). Their bullets are not procedure
+        # actions. (Fix #2: a numbered "do not ..." list must not become
+        # steps.) A fully flat doc has only the preamble, so its behaviour
+        # is unchanged.
+        scoop_lines: list[str] = list(preamble)
+        for classification, _title, sec_lines in sections[1:]:
+            if classification is None:
+                scoop_lines.extend(sec_lines)
+        heading_steps = [
+            m.group(1).strip() for line in scoop_lines
+            if (m := _STEP_HEADING_RE.match(line))
+        ]
+        numbered_steps = [
+            m.group(1).strip() for line in scoop_lines
+            if (m := _NUMBERED_STEP_RE.match(line))
+        ]
+        has_structured_steps = bool(heading_steps or numbered_steps)
+        steps = list(heading_steps or numbered_steps)
+        for line in scoop_lines:
+            stripped = line.strip()
+            if not stripped or stripped.startswith("#"):
+                continue
+            aw = _APPLIES_WHEN_RE.match(stripped)
+            if aw:
+                applies_when = aw.group(1).strip()
+                continue
+            if has_structured_steps:
+                continue
+            bullet = _BULLET_STEP_RE.match(line)
+            if bullet:
+                steps.append(bullet.group(1).strip())
+                continue
+            if not steps:
+                description_lines.append(stripped)
 
     if not description and description_lines:
         description = " ".join(description_lines[:3])
+
+    # --- source-authored semantic sections (procdoc_v2) ------------------
+    # Honest source prose only. Nothing here fabricates a predicate.
+    purpose = _section_prose(section_map["purpose"]) or None if "purpose" in section_map else None
+    when_not_to_use = (
+        _section_prose(section_map["when_not"]) or None if "when_not" in section_map else None
+    )
+    prerequisites = _section_items(section_map["prerequisite"]) if "prerequisite" in section_map else []
+    limitations = _section_items(section_map["limitation"]) if "limitation" in section_map else []
+    failure_modes = _section_items(section_map["failure"]) if "failure" in section_map else []
+    expected_outcome = (
+        _section_prose(section_map["outcome"]) or None if "outcome" in section_map else None
+    )
+    if applies_when is None and "when_to_use" in section_map:
+        applies_when = _section_prose(section_map["when_to_use"]) or None
+    section_compatibility = (
+        _section_prose(section_map["compatibility"]) or None
+        if "compatibility" in section_map else None
+    )
 
     if not steps and not description:
         raise SkillMdParseError(
@@ -208,8 +406,15 @@ def parse_skill_md(content: str, *, fallback_name: str = "unnamed-skill") -> Par
         instructions=body.strip(),
         license=str(frontmatter["license"]) if frontmatter.get("license") is not None else None,
         compatibility=(str(frontmatter["compatibility"])
-                       if frontmatter.get("compatibility") is not None else None),
+                       if frontmatter.get("compatibility") is not None
+                       else section_compatibility),
         allowed_tools=allowed_tools, metadata=metadata,
+        purpose=purpose,
+        when_not_to_use=when_not_to_use,
+        prerequisites=prerequisites,
+        limitations=limitations,
+        failure_modes=failure_modes,
+        expected_outcome=expected_outcome,
     )
 
 
@@ -279,6 +484,50 @@ def normalize_skill_package(artifact: Any) -> NormalizedSkillPackage:
 # ---------------------------------------------------------------------------
 
 
+def _structured_fields_from_parsed(parsed: ParsedSkill) -> dict[str, list]:
+    """Map the source-authored sections onto the procedure's structured
+    columns -- as HONEST PROSE, never a fabricated subject/predicate/object
+    or a z3 expression. Each entry records ``source`` so provenance of the
+    clause is inspectable. Empty lists when the source said nothing.
+
+      Prerequisites / Requirements  -> preconditions  (prose clauses)
+      Failure modes + Limitations   -> failure_conditions
+      Expected outcome              -> postconditions
+      When NOT to use               -> exclusions
+
+    These are NON-COMPENSATORY inputs only in as much as the applicability
+    cascade already treats a prose precondition: project_state() cannot
+    satisfy a free-text clause, so it stays advisory retrieval signal, not
+    a hard gate it could never pass. That is the same "un-normalizable
+    stays prose" discipline this module's header already states.
+    """
+    preconditions = [
+        {"description": p, "source": "skill_md:prerequisites"}
+        for p in parsed.prerequisites if p
+    ]
+    failure_conditions = [
+        {"description": f, "source": "skill_md:failure_modes"}
+        for f in parsed.failure_modes if f
+    ] + [
+        {"description": lim, "source": "skill_md:limitations"}
+        for lim in parsed.limitations if lim
+    ]
+    postconditions = (
+        [{"description": parsed.expected_outcome, "source": "skill_md:expected_outcome"}]
+        if parsed.expected_outcome else []
+    )
+    exclusions = (
+        [{"description": parsed.when_not_to_use, "source": "skill_md:when_not_to_use"}]
+        if parsed.when_not_to_use else []
+    )
+    return {
+        "preconditions": preconditions,
+        "failure_conditions": failure_conditions,
+        "postconditions": postconditions,
+        "exclusions": exclusions,
+    }
+
+
 def _parsed_skill_procedure_shape(
     parsed: ParsedSkill,
     *,
@@ -293,6 +542,8 @@ def _parsed_skill_procedure_shape(
         "applies_when": parsed.applies_when,
         "tool_requirements": list(parsed.allowed_tools),
         "compatibility": parsed.compatibility,
+        "purpose": parsed.purpose,
+        "when_not_to_use": parsed.when_not_to_use,
     }
     if artifact is not None:
         try:
@@ -301,6 +552,7 @@ def _parsed_skill_procedure_shape(
             payload["dependencies"] = [dep.__dict__ for dep in package.dependencies]
         except Exception:  # noqa: BLE001 -- a malformed package must not block ingestion here
             pass
+    structured = _structured_fields_from_parsed(parsed)
     return {
         "name": parsed.name,
         "goal": parsed.description,
@@ -308,10 +560,8 @@ def _parsed_skill_procedure_shape(
         "steps": [{"order": i, "goal": s} for i, s in enumerate(parsed.steps)],
         "domain": domain,
         "domain_payload": payload,
-        "preconditions": [],
         "invariants": [],
-        "postconditions": [],
-        "failure_conditions": [],
+        **structured,
     }
 
 
@@ -468,7 +718,16 @@ async def ingest_skill_md(
         "source": "skill_md",
         "applies_when": parsed.applies_when,  # kept as PROSE, never a fabricated Predicate
         "frontmatter": parsed.frontmatter,
+        "purpose": parsed.purpose,
+        "when_not_to_use": parsed.when_not_to_use,
+        "compatibility": parsed.compatibility,
     }
+
+    # Source-authored sections -> structured columns, as honest prose (see
+    # _structured_fields_from_parsed). These are the same fields the
+    # canonical retrieval document now renders, so the stored row and its
+    # embedded text agree.
+    structured_fields = _structured_fields_from_parsed(parsed)
 
     capture_kwargs: dict = dict(
         provenance=provenance, domain=domain,
@@ -486,6 +745,7 @@ async def ingest_skill_md(
         display_description=disp_desc,
         display_metadata_version=disp_version,
         invariants=invariants,
+        **structured_fields,
     )
 
     if embed:
@@ -889,6 +1149,8 @@ def _domain_payload(
     payload = {
         "source": _source_provenance(artifact),
         "applies_when": parsed.applies_when,  # PROSE, never a fabricated Predicate
+        "purpose": parsed.purpose,            # source-authored "why", prose
+        "when_not_to_use": parsed.when_not_to_use,  # source-authored, prose
         "frontmatter": parsed.frontmatter,
         "compatibility": parsed.compatibility,
         "tool_requirements": list(package.tool_requirements),
@@ -1190,6 +1452,8 @@ async def compile_skill_artifact(
             "display_name": disp_name,
             "display_description": disp_desc,
             "display_metadata_version": disp_version,
+            # Source-authored sections -> structured columns (honest prose).
+            **_structured_fields_from_parsed(parsed),
         }
         if capability_statement is not None:
             changed_fields["capability_statement"] = capability_statement
@@ -1309,6 +1573,7 @@ async def compile_skill_artifact(
         display_metadata_version=disp_version,
         invariants=invariants,
         owner_id=owner_id,
+        **_structured_fields_from_parsed(parsed),
     )
     if capability_statement is not None:
         await pool.execute(

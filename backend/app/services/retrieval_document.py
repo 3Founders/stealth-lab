@@ -57,7 +57,17 @@ from typing import Any, Iterable, Mapping, Optional, Sequence
 # Bump on ANY change to the recipe below. The backfill
 # (scripts/backfill_procedure_embeddings.py --representation) re-embeds
 # every live procedure whose stored retrieval_document_version differs.
-RETRIEVAL_DOCUMENT_VERSION = "procdoc_v1"
+#
+#   procdoc_v1 (2026-09-08): Name / Purpose / When to use / Domain / Steps /
+#     Tools / Depends on / Constraints / Fails when.
+#   procdoc_v2 (2026-09-09): + "When not to use" (scope/exclusions +
+#     domain_payload.when_not_to_use), + "Expected outcome" (postconditions
+#     + expected_effects; moved out of Constraints), "Purpose" also reads
+#     domain_payload.purpose, "When to use" also renders required_state,
+#     and _norm() now strips Markdown link syntax / autolinks / bare URLs /
+#     relative file paths from every rendered field. Materially richer text
+#     -> every procdoc_v1 row is stale and owed a re-embed.
+RETRIEVAL_DOCUMENT_VERSION = "procdoc_v2"
 
 # Stamped on a row whose embedding was produced OUTSIDE this recipe (a
 # local-procedure publish, a one-off seed that pre-computed a vector). The
@@ -83,6 +93,16 @@ _WS_RE = re.compile(r"\s+")
 _MD_EMPHASIS_RE = re.compile(r"(\*\*|__|\*|`)")
 _SLUG_RE = re.compile(r"^[a-z0-9]+(?:[-_][a-z0-9]+)+$")
 
+# Markdown / link / path noise carries no retrieval signal and pollutes both
+# the vector and the tsvector. Stripped in _norm() before emphasis markers.
+#   [Qdrant Console](https://cloud.qdrant.io/) -> Qdrant Console
+#   <https://x>, bare https://x           -> dropped
+#   ../../../qdrant-monitoring/SKILL.md    -> dropped
+_MD_LINK_RE = re.compile(r"\[([^\]\n]*?)\]\([^)\s]*(?:\s+\"[^\"]*\")?\)")
+_AUTOLINK_RE = re.compile(r"<https?://[^>\s]+>")
+_BARE_URL_RE = re.compile(r"https?://\S+")
+_REL_PATH_RE = re.compile(r"(?<![\w.])\.{1,2}/[\w./\-]+")
+
 
 # Unicode categories dropped from retrieval text: they carry ~no retrieval
 # signal and would let a stray emoji / mojibake byte make "same procedure
@@ -103,6 +123,10 @@ def _norm(value: Any) -> str:
     if value is None:
         return ""
     text = unicodedata.normalize("NFC", str(value))
+    text = _MD_LINK_RE.sub(r"\1", text)
+    text = _AUTOLINK_RE.sub(" ", text)
+    text = _BARE_URL_RE.sub(" ", text)
+    text = _REL_PATH_RE.sub(" ", text)
     text = _MD_EMPHASIS_RE.sub("", text)
     out = []
     for ch in text:
@@ -190,19 +214,64 @@ def _render_constraints(proc: Mapping[str, Any]) -> list[str]:
             text = _norm(inv)
             if text:
                 out.append(text)
-    for post in _as_list(proc.get("postconditions")):
-        if isinstance(post, Mapping):
-            text = _norm(post.get("description") or post.get("expr") or post.get("predicate"))
-        else:
-            text = _norm(post)
-        if text:
-            out.append(f"ensures {text}")
     payload = proc.get("domain_payload")
     if isinstance(payload, Mapping):
         compat = _norm(payload.get("compatibility"))
         if compat:
             out.append(compat)
     return out
+
+
+def _render_expected_outcome(proc: Mapping[str, Any]) -> list[str]:
+    """What a successful application should produce -- postconditions and
+    expected_effects, rendered as plain result clauses (no ``ensures``
+    prefix; this is its own section now, not a Constraints sub-line)."""
+    out: list[str] = []
+    for post in _as_list(proc.get("postconditions")):
+        if isinstance(post, Mapping):
+            text = _norm(post.get("description") or post.get("expr") or post.get("predicate"))
+        else:
+            text = _norm(post)
+        if text:
+            out.append(text)
+    for eff in _as_list(proc.get("expected_effects")):
+        if isinstance(eff, Mapping):
+            text = _norm(eff.get("description") or eff.get("effect") or eff.get("expr"))
+        else:
+            text = _norm(eff)
+        if text:
+            out.append(text)
+    return out
+
+
+def _render_exclusions(proc: Mapping[str, Any]) -> list[str]:
+    """"Do not use this when ..." -- source-authored non-applicability.
+    Reads procedures.exclusions (list) plus domain_payload.when_not_to_use
+    (skill-md prose). Never inferred: only what the source actually said."""
+    out: list[str] = []
+    for ex in _as_list(proc.get("exclusions")):
+        if isinstance(ex, Mapping):
+            text = _norm(ex.get("description") or ex.get("expr") or ex.get("reason"))
+        else:
+            text = _norm(ex)
+        if text:
+            out.append(text)
+    payload = proc.get("domain_payload")
+    if isinstance(payload, Mapping):
+        wnt = _norm(payload.get("when_not_to_use"))
+        if wnt and wnt.lower() not in ("none", "null"):
+            out.append(wnt)
+    # exclusions and domain_payload.when_not_to_use are frequently the same
+    # source prose stored twice (skill ingestion writes both) -- collapse.
+    seen: set[str] = set()
+    deduped: list[str] = []
+    for clause in out:
+        for piece in (p.strip() for p in clause.split(";")):
+            low = piece.lower()
+            if piece and low not in seen:
+                seen.add(low)
+                deduped.append(piece)
+    return deduped
 
 
 def _render_failure_conditions(proc: Mapping[str, Any]) -> list[str]:
@@ -248,7 +317,11 @@ def _dependency_refs(proc: Mapping[str, Any], dependencies: Optional[Sequence[An
             ref = dep.get("dependency_ref") or dep.get("reference") or dep.get("target_skill_path")
         else:
             ref = dep
-        ref = _norm(ref)
+        # NOTE: not _norm() here -- this function does its OWN path parsing
+        # (../aiq-deploy/SKILL.md -> aiq-deploy) and _norm's relative-path
+        # stripping would erase the very thing being parsed. The final
+        # _deslug() below normalises the extracted leaf.
+        ref = "" if ref is None else str(ref).strip()
         if not ref:
             continue
         # ../aiq-deploy/SKILL.md -> aiq-deploy ; skill:foo -> foo
@@ -275,6 +348,15 @@ def _when_to_use(proc: Mapping[str, Any], purpose: str) -> str:
     if goal and goal != purpose and re.match(r"(?i)\b(use|apply|trigger|invoke|when)\b", goal):
         parts.append(goal)
     parts += _render_preconditions(_as_list(proc.get("preconditions")))
+    required_state = proc.get("required_state")
+    if isinstance(required_state, Mapping) and required_state:
+        kv = "; ".join(
+            f"{_norm(k)} {_norm(v)}".strip()
+            for k, v in sorted(required_state.items(), key=lambda kv: str(kv[0]))
+            if _norm(k)
+        )
+        if kv:
+            parts.append(f"requires state {kv}")
     seen: set[str] = set()
     deduped = [p for p in parts if not (p.lower() in seen or seen.add(p.lower()))]
     return _clip(" ".join(deduped), _MAX_WHEN_CHARS)
@@ -314,9 +396,15 @@ def build_procedure_retrieval_document(
     Returns a section-labelled plain-text block. Deterministic: identical
     procedure content always yields byte-identical output.
     """
+    payload = proc.get("domain_payload") if isinstance(proc.get("domain_payload"), Mapping) else {}
     name = _deslug(_norm(proc.get("display_name") or proc.get("name")))
     purpose = _clip(
-        _norm(proc.get("capability_statement") or proc.get("goal") or proc.get("name")),
+        _norm(
+            proc.get("capability_statement")
+            or payload.get("purpose")
+            or proc.get("goal")
+            or proc.get("name")
+        ),
         _MAX_PURPOSE_CHARS,
     )
 
@@ -329,6 +417,10 @@ def build_procedure_retrieval_document(
     when = _when_to_use(proc, purpose)
     if when:
         sections.append(("When to use", when))
+
+    not_when = _render_exclusions(proc)
+    if not_when:
+        sections.append(("When not to use", _clip("; ".join(not_when), _MAX_WHEN_CHARS)))
 
     domain = _norm(proc.get("domain"))
     if domain:
@@ -349,6 +441,10 @@ def build_procedure_retrieval_document(
     constraints = _render_constraints(proc)
     if constraints:
         sections.append(("Constraints", _clip("; ".join(constraints), _MAX_CONSTRAINTS_CHARS)))
+
+    outcome = _render_expected_outcome(proc)
+    if outcome:
+        sections.append(("Expected outcome", _clip("; ".join(outcome), _MAX_CONSTRAINTS_CHARS)))
 
     failures = _render_failure_conditions(proc)
     if failures:

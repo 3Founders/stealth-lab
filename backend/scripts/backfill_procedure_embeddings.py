@@ -121,24 +121,32 @@ async def backfill_representation(
     pool = pool or await create_pool(min_size=1, max_size=4)
     stats = {"selected": 0, "reembedded": 0, "unchanged_text": 0, "skipped_dry": 0, "failed": 0}
     try:
+        embedder = embedder or Embedder(rate_limit_pool=pool, provider=provider)
+        # The configured target space: a row whose stored embedding_model_id
+        # is not THIS is on a different (incompatible) vector space and owes
+        # a re-embed, even if its retrieval_document_version already matches.
+        # embedding_model_id() reads settings only, no IO.
+        target_model_id = embedder.embedding_model_id()
+
         where = "t_invalid IS NULL"
         if not force:
             where += (
                 " AND (retrieval_document_version IS NULL "
-                f"OR retrieval_document_version <> '{RETRIEVAL_DOCUMENT_VERSION}')"
+                f"OR retrieval_document_version <> '{RETRIEVAL_DOCUMENT_VERSION}' "
+                "OR embedding IS NULL "
+                "OR embedding_model_id IS DISTINCT FROM $1)"
             )
         sql = f"SELECT * FROM procedures WHERE {where} ORDER BY t_created"
         if limit is not None:
             sql += f" LIMIT {int(limit)}"
-        rows = await pool.fetch(sql)
+        rows = await (pool.fetch(sql) if force else pool.fetch(sql, target_model_id))
         stats["selected"] = len(rows)
         print(f"{len(rows)} live procedure(s) selected for representation backfill "
-              f"-> {RETRIEVAL_DOCUMENT_VERSION}")
+              f"-> {RETRIEVAL_DOCUMENT_VERSION} @ {target_model_id}")
 
         deps = await _dependency_refs_by_procedure(
             pool, [r["procedure_id"] for r in rows]
         )
-        embedder = embedder or Embedder(rate_limit_pool=pool, provider=provider)
 
         # Build every doc first, split into the no-op fast path (canonical
         # text unchanged -> just stamp the version) and the real re-embed
@@ -155,7 +163,10 @@ async def backfill_representation(
                 not force
                 and proc.get("retrieval_document_sha256") == sha
                 and proc.get("embedding") is not None
+                and proc.get("embedding_model_id") == target_model_id
             ):
+                # canonical text unchanged AND the vector is already in the
+                # target space -> stamp the version, don't re-embed.
                 stats["unchanged_text"] += 1
                 if not dry_run:
                     await pool.execute(

@@ -694,9 +694,14 @@ class LocalAgentRunner:
                 # search_local_procedures has supported real cosine-
                 # similarity ranking since Phase 1+2. Same real Embedder
                 # this function already uses for its own search step above,
-                # storage-time convention (input_type="document"), matching
-                # submit_procedure's own real-embedding-at-storage precedent
-                # (app/mcp_server/server.py::submit_procedure).
+                # storage-time convention (input_type="document").
+                #
+                # SCOPE: this vector is for the LOCAL agent store only
+                # (plain-python cosine over its own SQLite rows). It is NOT
+                # a canonical procedure retrieval-document vector and it is
+                # NOT forwarded as authoritative on publish --
+                # publish_local_procedure() drops it and leaves the global
+                # row pending a canonical re-embed (see publish.py).
                 capture_embedding = await Embedder().embed_one(task_description, input_type="document")
                 captured = maybe_capture_local_candidate(
                     store, task_description=task_description, node_notes=node_notes,

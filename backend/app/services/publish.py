@@ -123,6 +123,11 @@ import asyncpg
 
 from app.local_agent.local_store import LocalProcedureNotFound, LocalProcedureStore
 from app.services.procedures import capture_procedure
+from app.services.retrieval_document import (
+    RETRIEVAL_DOCUMENT_IMPORT_VERSION,
+    build_procedure_retrieval_document,
+    retrieval_document_sha256,
+)
 from app.services.trace_redaction import redact_value
 
 PUBLISHED_PROVENANCE = "system_pending_review"
@@ -237,6 +242,24 @@ async def publish_local_procedure(
         "published_by": published_by,
     }
 
+    # The local row's `embedding` is a bare task-description vector from the
+    # local agent's own SQLite store (plain-python cosine) -- NOT a
+    # canonical retrieval-document vector. Forwarding it would make an
+    # impoverished, off-recipe vector authoritative for a global procedure.
+    # Instead: build + store the canonical retrieval document now (so the
+    # row is inspectable and lexically searchable immediately), stamp the
+    # import sentinel, and leave the vector for the canonical backfill
+    # (scripts/backfill_procedure_embeddings.py --representation).
+    published_retrieval_doc = build_procedure_retrieval_document({
+        "name": redacted_name,
+        "goal": redacted_goal,
+        "steps": redacted_steps,
+        "preconditions": redacted_preconditions,
+        "scope": redacted_scope,
+        "exclusions": redacted_exclusions,
+        "invariants": local_procedure.get("invariants") or [],
+    })
+
     result = await capture_procedure(
         pool,
         name=redacted_name,
@@ -253,7 +276,11 @@ async def publish_local_procedure(
         created_by=published_by,
         owner_id=published_by,
         visibility="public",
-        embedding=local_procedure.get("embedding"),
+        # No embedding forwarded (see note above): row lands pending a
+        # canonical re-embed, with the canonical retrieval document stored.
+        retrieval_document=published_retrieval_doc,
+        retrieval_document_version=RETRIEVAL_DOCUMENT_IMPORT_VERSION,
+        retrieval_document_sha256=retrieval_document_sha256(published_retrieval_doc),
         scope_type=scope_type,
         scope_entity_id=scope_entity_id,
         # verification_stats deliberately NOT forwarded -- see module

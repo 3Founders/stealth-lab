@@ -6,7 +6,9 @@ find_applicable_procedures`, the same function `search_procedures`'s MCP
 tool wraps) correctly ABSTAINS on a genuinely unrelated query, rather than
 returning the least-bad option regardless of true relevance -- the exact
 gap this pass's calibration (retrieval-calibration.md) found and fixed
-with `_MIN_RELEVANCE_SIMILARITY = 0.45`.
+with the measured relevance gate (services/relevance_gate.py::
+RELEVANCE_GATE_MIN_SIMILARITY), applied inside find_applicable_procedures
+via passes_relevance_gate().
 
 Before the fix: an irrigation-scheduling query returned all 3 admitted
 procedures at similarity 0.27-0.31 (real, measured, see
@@ -61,9 +63,8 @@ async def test_genuinely_unrelated_query_abstains_rather_than_returning_the_leas
             assert candidates == [], (
                 f"require_verified={require_verified}: a genuinely unrelated query "
                 f"returned {len(candidates)} candidate(s) instead of abstaining -- "
-                "the _MIN_RELEVANCE_SIMILARITY floor should have excluded them. "
-                "See retrieval-calibration.md for the calibration this floor was "
-                "set from."
+                "the measured relevance gate (relevance_gate.py::"
+                "RELEVANCE_GATE_MIN_SIMILARITY) should have excluded them."
             )
     finally:
         await pool.close()

@@ -71,7 +71,8 @@ class FakeEmbedder:
         return out
 
 
-def _proc(name, *, token, version=None, sha=None, embedding="[0.0]"):
+def _proc(name, *, token, version=None, sha=None, embedding="[0.0]",
+          embedding_model_id=None):
     return {
         "id": uuid4(), "procedure_id": uuid4(), "name": name,
         "goal": f"Do the {name} thing. token:{token}", "steps": [{"goal": "s1"}],
@@ -79,7 +80,7 @@ def _proc(name, *, token, version=None, sha=None, embedding="[0.0]"):
         "failure_conditions": [], "domain": None, "domain_payload": {},
         "capability_statement": None,
         "retrieval_document_version": version, "retrieval_document_sha256": sha,
-        "embedding": embedding,
+        "embedding": embedding, "embedding_model_id": embedding_model_id,
     }
 
 
@@ -120,7 +121,8 @@ def test_resumable_skips_rows_already_on_current_version_via_where_clause():
     # A row already on the current version is filtered out by the SQL, so
     # the FakePool would simply not return it; here we prove the fast path
     # for a row whose text is unchanged: version stamped, no provider call.
-    p = _proc("stable", token="S", version="procdoc_v0", embedding="[0.1]")
+    p = _proc("stable", token="S", version="procdoc_v0", embedding="[0.1]",
+              embedding_model_id="gemini:gemini-embedding-001")
     # precompute the sha the builder will produce for this row
     doc = bf.build_procedure_retrieval_document(_Row(p))
     p["retrieval_document_sha256"] = bf.retrieval_document_sha256(doc)
@@ -129,9 +131,22 @@ def test_resumable_skips_rows_already_on_current_version_via_where_clause():
     stats = asyncio.run(bf.backfill_representation(pool=pool, embedder=emb))
     assert stats["unchanged_text"] == 1 and stats["reembedded"] == 0
     assert emb.calls == []  # no embedding provider call
-    sql, args = pool.updates[0]
-    assert "embedding" not in sql.split("SET", 1)[1].split(",")[0]  # only doc/version/sha
-    assert bf.RETRIEVAL_DOCUMENT_VERSION in args
+
+
+def test_embedding_model_mismatch_forces_reembed_even_if_text_unchanged():
+    # Same canonical text + sha, but the stored vector is in a DIFFERENT
+    # model's space -> it must be re-embedded, not fast-path stamped.
+    p = _proc("stale-space", token="M", version=bf.RETRIEVAL_DOCUMENT_VERSION,
+              embedding="[0.1]", embedding_model_id="local:mxbai-embed-large")
+    doc = bf.build_procedure_retrieval_document(_Row(p))
+    p["retrieval_document_sha256"] = bf.retrieval_document_sha256(doc)
+    pool = FakePool([p])
+    emb = FakeEmbedder()  # embedding_model_id() -> gemini:gemini-embedding-001
+    stats = asyncio.run(bf.backfill_representation(pool=pool, embedder=emb))
+    assert stats["reembedded"] == 1 and stats["unchanged_text"] == 0
+    assert emb.calls  # provider WAS called
+    sql, _args = pool.updates[0]
+    assert "embedding = $2::vector" in sql  # the real re-embed UPDATE, not stamp-only
 
 
 def test_dry_run_writes_nothing():
