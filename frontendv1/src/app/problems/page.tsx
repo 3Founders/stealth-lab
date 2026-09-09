@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 
 import { listProblems, type Problem } from "@/lib/api/client";
 import { Skeleton } from "@/components/ui/skeleton";
+import { displayTitle } from "@/lib/text";
 
 export default function ProblemsPage() {
   const [problems, setProblems] = useState<Problem[] | null>(null);
@@ -69,7 +70,7 @@ export default function ProblemsPage() {
                 href={`/problems/${p.id}`}
                 className="text-base font-medium text-neutral-900 underline decoration-neutral-300 underline-offset-4 hover:decoration-neutral-900"
               >
-                {p.title}
+                {displayTitle(p.title)}
               </Link>
               {p.objective && (
                 <p className="mt-1 max-w-2xl text-sm text-neutral-500">

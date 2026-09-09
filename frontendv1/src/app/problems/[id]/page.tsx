@@ -18,6 +18,7 @@ import {
 } from "@/lib/api/client";
 import { Skeleton } from "@/components/ui/skeleton";
 import { LeaderboardTable } from "@/components/leaderboard";
+import { displayTitle } from "@/lib/text";
 
 export default function ProblemPage() {
   const params = useParams<{ id: string }>();
@@ -152,7 +153,7 @@ export default function ProblemPage() {
     <div className="pt-12">
       <p className="text-xs uppercase tracking-widest text-neutral-400">Problem</p>
       <h1 className="mt-2 text-3xl font-semibold tracking-tight text-neutral-900">
-        {problem.title}
+        {displayTitle(problem.title)}
       </h1>
       {problem.objective && (
         <p className="mt-3 max-w-2xl text-sm text-neutral-600">{problem.objective}</p>
