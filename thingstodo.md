@@ -306,28 +306,26 @@ _(security-hardening / auth+policy: moved to DONE — see the top of the DONE li
      binary codec in `db/session.py` to shrink egress further.
   Full detail and exact commands: `.scratch/retrieval-release-closure/FINAL-REPORT.md` §22.
 
-- **Deploy the V1 web app (`frontendv1`) to Vercel — BLOCKED on one value.**
+- **Deploy the V1 web app (`frontendv1`) to Vercel — done look-only; real backend still to wire.**
   — _frontend integration / Claude Sonnet 5 — 2026-09-09, branch `gate-2b`._
-  Goal: put `frontendv1` online as a Vercel project named `bestprocedures`. Its
-  address would be `bestprocedures.vercel.app` (a `.vercel.com` address is not
-  possible). The deploy uses the local working tree, not a git push.
-  - Ready: the Vercel CLI is installed and signed in as `chaitiitb`. The two
-    Supabase sign-in values in `frontendv1/.env.local` are real and fine to use.
-  - Blocked: `NEXT_PUBLIC_API_URL` in that file is `http://localhost:8000`. A
-    visitor's browser cannot reach that, and there is no hosted copy of the
-    FastAPI backend anywhere. Without a real backend address, search, problems,
-    people, the leaderboard and profile pages all fail on the live site
-    (sign-in would still work, because Supabase is external).
-  - The next person must decide one of: (a) give a real backend URL — a tunnel
-    to a local machine, or a proper host — to set before deploying; or (b)
-    accept a look-only deploy now and set the backend URL later.
-  - Steps once unblocked, run from `frontendv1/`:
-    `vercel link --project bestprocedures --yes`, then `vercel env add` for
-    `NEXT_PUBLIC_API_URL`, `NEXT_PUBLIC_SUPABASE_URL`,
-    `NEXT_PUBLIC_SUPABASE_ANON_KEY` (production), then
-    `vercel deploy --prod --yes`. After it is live, add
-    `https://bestprocedures.vercel.app/auth/callback` to the Supabase project's
-    Auth redirect URLs or Google sign-in will fail.
+  Deployed the current `frontendv1` working tree to a new Vercel project
+  `bestprocedures` (account `chaitiitb` / `chaitanyas-projects-45a1182b`).
+  - Live, public, no login gate: **https://bestprocedures-beta.vercel.app**
+    (the plain `bestprocedures.vercel.app` was already taken by another account;
+    `.vercel.com` is not a real deploy domain). Build passed, 20 routes.
+  - Production env vars set: `NEXT_PUBLIC_SUPABASE_URL` and
+    `NEXT_PUBLIC_SUPABASE_ANON_KEY` are the real values, so Supabase sign-in
+    works. `NEXT_PUBLIC_API_URL` is `http://localhost:8000` on purpose — so
+    search, problems, people, leaderboard and profile pages error / show empty
+    on the live site until a real backend exists. This was the accepted
+    trade-off.
+  - Left to do for a working site: (1) stand up / tunnel the FastAPI backend,
+    then `vercel env rm NEXT_PUBLIC_API_URL production` + re-add the real URL +
+    `vercel deploy --prod` from `frontendv1/`; (2) add
+    `https://bestprocedures-beta.vercel.app/auth/callback` to the Supabase
+    project's Auth redirect URLs or Google sign-in bounces.
+  - Deploys use the local working tree, not a git push. Inspector:
+    `https://vercel.com/chaitanyas-projects-45a1182b/bestprocedures`.
 
 ---
 
