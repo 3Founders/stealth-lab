@@ -1,0 +1,31 @@
+{
+  "held": [
+    {
+      "candidate_id": "C03",
+      "artifact": "code-graph-rag",
+      "decision": "C - HOLD FOR MORE EVIDENCE",
+      "reason": "Indexing/graph-construction stage genuinely measured (176 files, 1998 nodes, 8811 edges, 59.65s against StealthLab's own backend/app), but the actual value proposition -- querying the graph for structural questions (NL->Cypher over Memgraph) -- was never tested. Memgraph is real infrastructure this sandbox does not have.",
+      "epistemic_tag": "EXPERIMENTAL (partial -- indexing only)",
+      "what_would_change_the_decision": "A real Memgraph instance, and at least one real 'who calls X' / 'where is Y defined' query answered correctly against StealthLab's own indexed code.",
+      "not_ingested": true
+    },
+    {
+      "candidate_id": "C06",
+      "artifact": "hermes-agent tail-protection",
+      "decision": "C - HOLD FOR MORE EVIDENCE",
+      "reason": "Evidence is the upstream hermes-agent project's own test suite passing (2/2, real, reproducible) -- that is evidence about hermes-agent's implementation, not proof the technique improves Stealth. No StealthLab-context comparative measurement exists.",
+      "epistemic_tag": "SOURCE_DERIVED",
+      "what_would_change_the_decision": "A real StealthLab-context experiment comparing task outcomes with vs. without tail-protected context compression.",
+      "not_ingested": true
+    },
+    {
+      "candidate_id": "C07",
+      "artifact": "hermes-agent tool-result pruning",
+      "decision": "C - HOLD FOR MORE EVIDENCE",
+      "reason": "Same repo/commit and same reasoning as C06 -- upstream test suite passing (7/7) is evidence about the upstream implementation, not proof of a Stealth-context improvement.",
+      "epistemic_tag": "SOURCE_DERIVED",
+      "what_would_change_the_decision": "A real StealthLab-context experiment comparing task outcomes with vs. without proactive tool-result pruning.",
+      "not_ingested": true
+    }
+  ]
+}

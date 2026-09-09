@@ -1,0 +1,79 @@
+{
+  "admitted": [
+    {
+      "candidate_id": "C02",
+      "artifact": "octocode view",
+      "decision": "A - ADMIT",
+      "canonical_procedure_family": "structural-summary-before-full-read",
+      "procedure_row_id": "01a069ef-8ed8-72a8-9237-54627bcddb0a",
+      "procedure_id": "1695f672-e620-46b9-8f1c-16aee6c67761",
+      "task_node_ids": ["4b635968-40c6-4b23-8211-addf9b426526", "cbe950af-9f41-43c0-8861-5e1e696f67e9"],
+      "claim_ids": ["1adcc6b4-5117-4ed9-aa3e-9ad53550a1c2"],
+      "implementation_id": "01a069f1-042d-74eb-b7fd-152d2baa07c2",
+      "epistemic_tag": "EXPERIMENTAL",
+      "verification_status": {
+        "retrieval": "pass", "applicability": "pass (ALLOW)",
+        "implementation_resolution": "pass (resolves)", "execution": "not exercised this pass",
+        "marked_verified": false
+      }
+    },
+    {
+      "candidate_id": "C01",
+      "artifact": "TokenPilot",
+      "decision": "B - ADMIT WITH CONDITIONS (procedure concept only, implementation disqualified by latency)",
+      "canonical_procedure_family": "structural-summary-before-full-read",
+      "procedure_row_id": "01a069ef-8ed8-72a8-9237-54627bcddb0a",
+      "procedure_id": "1695f672-e620-46b9-8f1c-16aee6c67761",
+      "task_node_ids": ["4b635968-40c6-4b23-8211-addf9b426526", "cbe950af-9f41-43c0-8861-5e1e696f67e9"],
+      "claim_ids": ["4f8543cb-c993-4ad4-91d5-ea332e27f0a9", "f0a149d1-df28-40e3-97e0-418b06f0ccfc"],
+      "implementation_id": null,
+      "implementation_note": "deliberately NOT registered -- real ~35x latency SLA breach, architectural, unfixed by installing the tool's own documented accelerator",
+      "epistemic_tag": "EXPERIMENTAL",
+      "verification_status": {
+        "note": "no bound implementation to independently verify; its claims are attached to and readable from the admitted canonical procedure",
+        "marked_verified": false
+      }
+    },
+    {
+      "candidate_id": "C04",
+      "artifact": "Git-worktree isolation",
+      "decision": "A - ADMIT",
+      "canonical_procedure_family": "parallel-agent-git-worktree-isolation",
+      "procedure_row_id": "01a069f1-6a49-7ff8-963b-5e191756808e",
+      "procedure_id": "8539713c-787c-494d-87c3-64434e8ef705",
+      "task_node_ids": ["6e8b7637-8d2e-47bf-906e-564232b0a940", "cb488f63-6097-4d26-bc9c-2e78978f84e3"],
+      "claim_ids": ["d8d9b702-f775-4382-b3fb-96668b130912"],
+      "implementation_id": null,
+      "implementation_note": "deliberately none -- documented git-native step sequence, no separate bindable service/script",
+      "epistemic_tag": "EXPERIMENTAL",
+      "verification_status": {
+        "retrieval": "pass", "applicability": "pass (ALLOW)",
+        "implementation_resolution": "pass (correctly none)", "execution": "no implementation to execute (by design)",
+        "marked_verified": false
+      }
+    },
+    {
+      "candidate_id": "C05",
+      "artifact": "StealthLab deferred-tool loading (measured on a proxy system -- see caveat)",
+      "decision": "B - ADMIT WITH CONDITIONS (proxy-system measurement, mandatory caveat)",
+      "canonical_procedure_family": "defer-tool-schema-loading-until-needed",
+      "procedure_row_id": "01a069f2-3921-7f5f-ab8a-142e8a8a514b",
+      "procedure_id": "5af7ecbc-29bc-4618-a2f1-9f6098aabed1",
+      "task_node_ids": ["87a3fa45-480e-46d0-8563-8b2b0a692d23", "8e595f42-6566-482b-8f70-a1ce32991f10"],
+      "claim_ids": ["722d58e2-ffdc-4880-9a35-e1e7bb58de4b"],
+      "implementation_id": null,
+      "implementation_note": "deliberately none -- no bindable StealthLab-native artifact; architectural/descriptive knowledge",
+      "epistemic_tag": "EXPERIMENTAL",
+      "caveat": "measured on the evaluating agent's own Claude Code harness (ToolSearch), NOT StealthLab's own MCP tool surface -- never to be represented as StealthLab-verified",
+      "verification_status": {
+        "retrieval": "pass", "applicability": "pass (ALLOW)",
+        "implementation_resolution": "pass (correctly none)", "execution": "no implementation to execute (by design)",
+        "marked_verified": false
+      }
+    }
+  ],
+  "canonical_procedures_created": 3,
+  "claims_created": 5,
+  "task_nodes_created": 6,
+  "implementations_created": 1
+}

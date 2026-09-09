@@ -1,0 +1,4 @@
+{
+  "rejected": [],
+  "note": "Zero of the 7 SELECTED candidates were rejected outright at this admission-review stage. This is an honest result, not a gap: the task's own rejection criteria (no actionable procedure / cannot be tested / no meaningful improvement / evidence too weak / provenance-license unacceptable) were already applied once, harder, during the prior candidate-testing pass -- the 6 candidates that genuinely failed those bars (RouteLLM, gortex, InfiAgent, and 3 arXiv papers with no located companion artifact) are recorded in source_resolution/rejected.json and never reached the SELECTED set this review started from. Applying the same bars again to the 7 that DID survive testing correctly finds none of them fail outright -- 4 clear ADMIT/ADMIT-WITH-CONDITIONS and 3 genuine HOLDs (see held.json), not zero scrutiny."
+}
