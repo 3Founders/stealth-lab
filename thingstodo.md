@@ -148,6 +148,26 @@ stepping on each other or repeating work.
 - [x] **Checked the claim-graph `KeyError: 'relation'` bug.** It was already
   fixed earlier. Confirmed by running the tests (11 passed).
 
+- [x] **Stopped the e2e suite from seeding junk into the live database.**
+  — _frontend integration / Claude Sonnet 5 — 2026-09-09, branch `main`._
+  A problem titled `[staleness-eval-gap-e2e <run>] staleness vs evaluation
+  gap probe` was showing on the live Problems page. Cause: someone ran
+  `DATABASE_URL=<supabase> pytest`, so `test_staleness_evaluation_connection_e2e.py`
+  wrote its fixtures into production.
+  - Reverted the earlier frontend band-aid that hid the `[...]` prefix
+    (`d90d29e` reverts `dfeed42`); redeployed so the live site drops it.
+  - `tests/conftest.py`: if `DATABASE_URL` points at a hosted host
+    (`supabase.co`, `neon.tech`, `rds.amazonaws.com`, …) pytest now aborts
+    before collecting, unless `STEALTH_ALLOW_PROD_E2E=1`.
+  - `backend/docker-compose.test.yml`: one-command pgvector on port 5433.
+  - `backend/TESTING_DB.md`: the throwaway workflow (`TEST_DATABASE_URL`,
+    already supported by conftest) + SQL to delete the rows a past prod run
+    already seeded.
+  - Commit `ea34573`. Offline suite still 13/13 on the touched files;
+    a Supabase `DATABASE_URL` now aborts with guidance instead of writing.
+  - **Still needs a person:** run that `DELETE FROM problems WHERE title
+    LIKE '[%-e2e %]%'` against the Supabase DB to clear the rows already there.
+
 - [x] **Tidied the V1 web app and fixed the sign-in header.**
   — _frontend integration / Claude Sonnet 5 — branch `gate-2b` (two styling commits landed on `main`)._
   - The background is now a light warm off-white. The top bar sticks to the top
