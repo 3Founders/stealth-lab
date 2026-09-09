@@ -308,24 +308,29 @@ _(security-hardening / auth+policy: moved to DONE — see the top of the DONE li
 
 - **Deploy the V1 web app (`frontendv1`) to Vercel — done look-only; real backend still to wire.**
   — _frontend integration / Claude Sonnet 5 — 2026-09-09, branch `gate-2b`._
-  Deployed the current `frontendv1` working tree to a new Vercel project
-  `bestprocedures` (account `chaitiitb` / `chaitanyas-projects-45a1182b`).
-  - Live, public, no login gate: **https://bestprocedures-beta.vercel.app**
-    (the plain `bestprocedures.vercel.app` was already taken by another account;
-    `.vercel.com` is not a real deploy domain). Build passed, 20 routes.
-  - Production env vars set: `NEXT_PUBLIC_SUPABASE_URL` and
-    `NEXT_PUBLIC_SUPABASE_ANON_KEY` are the real values, so Supabase sign-in
-    works. `NEXT_PUBLIC_API_URL` is `http://localhost:8000` on purpose — so
-    search, problems, people, leaderboard and profile pages error / show empty
-    on the live site until a real backend exists. This was the accepted
-    trade-off.
+  Deployed the current `frontendv1` working tree to the Vercel project
+  `bestprocedures` under team **`stealth13`** (which already owned the domain).
+  - Live, public, no login gate: **https://bestprocedures.vercel.app**
+    Build passed, 20 routes.
+  - This pre-existing project had its framework preset set to "Other", so the
+    first deploy failed on a missing `public/` dir. Fixed by adding
+    `frontendv1/vercel.json` with `"framework": "nextjs"` (committed).
+  - Production env vars set on the `stealth13` project:
+    `NEXT_PUBLIC_SUPABASE_URL` + `NEXT_PUBLIC_SUPABASE_ANON_KEY` are the real
+    values, so Supabase sign-in works. `NEXT_PUBLIC_API_URL` is
+    `http://localhost:8000` on purpose — so search, problems, people,
+    leaderboard and profile pages error / show empty on the live site until a
+    real backend exists. Accepted trade-off.
   - Left to do for a working site: (1) stand up / tunnel the FastAPI backend,
     then `vercel env rm NEXT_PUBLIC_API_URL production` + re-add the real URL +
-    `vercel deploy --prod` from `frontendv1/`; (2) add
-    `https://bestprocedures-beta.vercel.app/auth/callback` to the Supabase
+    `vercel deploy --prod` from `frontendv1/` (CLI must be on scope `stealth13`);
+    (2) add `https://bestprocedures.vercel.app/auth/callback` to the Supabase
     project's Auth redirect URLs or Google sign-in bounces.
-  - Deploys use the local working tree, not a git push. Inspector:
-    `https://vercel.com/chaitanyas-projects-45a1182b/bestprocedures`.
+  - Dead end left behind: an earlier deploy went to a `bestprocedures` project
+    under a different team (`chaitanyas-projects-45a1182b`) at
+    `https://bestprocedures-beta.vercel.app`. Harmless; delete it from that
+    team's dashboard when convenient.
+  - Deploys use the local working tree, not a git push.
 
 ---
 
