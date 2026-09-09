@@ -1,13 +1,42 @@
 # StealthLab — Final Release Readiness (Auth / Policy / Launch Compliance)
 
-**Date:** 2026-09-08 (updated after Phases 2–8)
-**Branch:** `gate-2b` (not pushed)
+**Date:** 2026-09-09 (final — Option A)
+**Branch:** `gate-2b` · **Acceptance checkpoint tag:** `authpolicy-verified-a610645`
 **Specs:** `STEALTHLAB-LAUNCH-COMPLIANCE-SPEC-V1.md` (LC-001..012),
 `STEALTHLAB-DATA-FLOW-AND-PROVENANCE-SPEC-V1.md` (INV-01..10)
 **Companion:** `docs/launch_compliance_implementation_ledger.md` (Phase 0 audit + per-requirement ledger)
 
 Authoritative status of what is proven vs. designed vs. absent. Reconstructable
 from git + tests without chat history.
+
+---
+
+## MERGE DECISION — Option A (2026-09-09)
+
+The 19 auth/policy commits **cannot be cleanly cherry-picked onto `origin/main`**
+(still `33d4c05`): Phase 1's `skill_ingestion.py` hard-imports
+`RETRIEVAL_DOCUMENT_IMPORT_VERSION` which exists only in core-b's S3 retrieval
+commit `289947f`; Phase 5 `embeddings.py` sits on the S4/S5 + `e476e96` chain;
+Phase 7's frontend detail page conflicts with S8's redesign. A retrieval-free
+extraction would require re-authoring Phase 1/5/7 against an older base →
+untested code.
+
+**Decision: Option A.** Auth/policy is tagged `authpolicy-verified-a610645` as
+the verified-acceptance checkpoint on `gate-2b`. Nothing pushed to `main`. No
+branches deleted. The whole `gate-2b` stack merges to `main` in one unit once
+the **retrieval release gate** passes (core-b's retrieval *code* e2e is green;
+their open items are product-readiness — embedding-model apply/billing,
+threshold re-derivation, eval-label validation, abstention gap — see
+`.scratch/retrieval-release-closure/FINAL-REPORT.md`).
+
+```
+AUTH/POLICY IMPLEMENTATION: PASS
+AUTH/POLICY ACCEPTANCE:     PASS  (offline 2330/18/314, 0 net-new; disposable-DB e2e 75/0 + 24 + live smoke)
+PHASE 3 LAUNCH SCOPE:       OUT OF SCOPE  (hosted_execution_enabled resolves False)
+NEW REGRESSIONS:            NO
+MERGE TO MAIN:              DEFERRED (Option A) — pending retrieval gate + combined integration gate
+INGESTION RESUME:           BLOCKED — pending retrieval + combined gate
+```
 
 ---
 
@@ -33,18 +62,20 @@ from git + tests without chat history.
 |---|---|---|
 | 0 Reconstruction / audit | **COMPLETE** | ledger, `3e47906` |
 | 1 Authentication + canonical identity | **COMPLETE** (code + live config; JWKS bug fixed) | `3e47906` `e63ba85` `33463dc` `7d1e8fa` |
-| 2 Centralized authorization / scope | **COMPLETE for PERSONAL + GLOBAL; ORGANIZATION wired, pending mig 47** | `120a506` `a8d25dc` |
-| 3 Hosted repository / execution security | **PARTIAL — registration + resolution done; REST-exec guard + network isolation open** | `f18651a` (+ `5d03159`) |
-| 4 Global Commons publication | **COMPLETE (gate + records + withdrawal); pending mig 46 to run live** | `7ec8c51` |
-| 5 Data classification / provider policy | **COMPLETE (vocab + registry + can_send + embeddings gate); pending mig 46 seeds** | `6cea7fc` |
-| 6 Deletion / export / provenance | **COMPLETE (dependency-aware); pending mig 46 (`data_requests`)** | `939921a` `4ee89d5` |
-| 7 Audit + frontend policy UX | **COMPLETE (writer wired across transitions; scope labels; consequences; Privacy&Data page)** | `f18651a` `7f2fbb8` `4ee89d5` |
-| 8 Acceptance matrix | **this document + the regression run** | `593046b` + this update |
+| 2 Centralized authorization / scope | **COMPLETE + ACCEPTANCE-VERIFIED** (mig 47 applied; ORG isolation proven on disposable DB) | `120a506` `a8d25dc` |
+| 3 Hosted repository / execution security | **OUT OF LAUNCH SCOPE** — `hosted_execution_enabled` resolves False; registry dormant; local/loopback trusted posture preserved | `f18651a` (+ `5d03159`) |
+| 4 Global Commons publication | **COMPLETE + ACCEPTANCE-VERIFIED** (mig 46 applied; publish/withdraw e2e + live smoke green) | `7ec8c51` |
+| 5 Data classification / provider policy | **COMPLETE + ACCEPTANCE-VERIFIED** (mig 46 seeds live; can_send deny/allow + embeddings gate proven) | `6cea7fc` |
+| 6 Deletion / export / provenance | **COMPLETE + ACCEPTANCE-VERIFIED** (mig 46 `data_requests` live; dependency-aware, legal-hold) | `939921a` `4ee89d5` |
+| 7 Audit + frontend policy UX | **COMPLETE** (writer wired across all LC-011 transitions; scope labels; consequences; Privacy&Data page) | `f18651a` `7f2fbb8` `4ee89d5` |
+| 8 Acceptance matrix | **PASS** — full offline regression + DB-backed adversarial e2e on disposable Postgres | this document |
 
-"COMPLETE" here = implementation + offline proving tests green + audit +
-frontend where applicable. It does **not** mean DB-backed e2e verification (the
-`*_e2e.py` suites still `skip` offline and were not run against production), nor
-that migrations 46/47 are applied.
+"ACCEPTANCE-VERIFIED" = implementation + offline proving tests + DB-backed
+adversarial e2e on a **disposable local Postgres 17 + pgvector 0.8.0**
+(migrations 01→48 fresh, torn down after) — 75 passed / 0 failed — + a live
+gate smoke. Migrations 41/46/47/48 are all applied to the production Supabase
+DB (verified: 8 provider-policy rows, `procedures.tenant_id`, all tables
+present; no pending, no checksum mismatch).
 
 ---
 
@@ -284,9 +315,24 @@ See "Acceptance matrix" and "Regression" below.
 
 ## Regression
 
-Full offline suite (`DATABASE_URL` unset), on `b2265e9` (349s):
+Full offline suite (`DATABASE_URL` unset), latest run on `gate-2b` HEAD (401s):
 
-**RESULT: 2318 passed / 18 failed / 314 skipped.**
+**RESULT: 2330 passed / 18 failed / 314 skipped.** (Earlier run `2318` — the
+delta is the people-layer session's own new tests, not auth/policy.)
+
+Every one of the 18 failures classified:
+- `test_local_agent_runner_offline` ×13 + `test_gate3_experiment_offline` ×1 +
+  `test_behavioral_validation_offline` ×1 — **TEST DEFECT, PRE-EXISTING, UNRELATED**:
+  `tests/fake_embeddings.py` (commit `827d745`, ingestion lane) monkeypatches
+  `Embedder._embed_via_chain`, a method that never existed.
+- `test_mcp_six_tool_surface_offline` ×2 — **TEST DEFECT, PRE-EXISTING, UNRELATED**:
+  `fake_find()` missing an `embedding_model_id` kwarg the ingestion lane threaded.
+- `test_migration_upgrade_e2e` ×1 — **PRE-EXISTING, UNRELATED**: migration-order
+  bug since migration 42 (ingestion lane); confirmed still fails on a fresh DB.
+
+**NEW REGRESSIONS FROM AUTH/POLICY: NO.** Zero of the 18 touch auth/policy code.
+Independently corroborated by the retrieval session (16/18 fail on a checkout
+predating their first commit; identical set with their deltas stashed).
 
 The Phase-2 env-leak regression
 (`test_claim_graph_api_offline::…owner_viewing_their_own_private_claim`, one run
