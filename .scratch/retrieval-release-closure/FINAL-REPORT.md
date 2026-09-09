@@ -3,6 +3,30 @@
 _Branch `gate-2b`. Start SHA `e476e96`. Re-measured against the live repo
 + live DB, 2026-09-08. Companion docs in `.scratch/retrieval-release-closure/`._
 
+### Staleness re-check (parallel lanes moved HEAD `9070296` → `648c44d`)
+
+Verified after the launch-compliance lane landed Phases 2–8 + migrations 46–48:
+
+| item | this report said | current reality (HEAD `648c44d`) |
+|---|---|---|
+| my closure commits | `e5d12d7`, `9070296` | intact, ancestors of HEAD |
+| offline suite | 2276 / 19 / 314 | **2318 / 18 / 314** (their commit: "18 = pre-existing ingestion/embedding baseline, 0 net new") |
+| migrations | through 45; 41 pending | **through 48, none pending** (46 `model_provider_policies` seeded, 47 `procedures.tenant_id` all-NULL, 48 `contributor_profiles`) |
+| provider-policy gate (R4) | "no code-level gate" — **wrong now** | `model_provider_policies` table + `guard_send` **exists and is seeded conservatively** (external providers → PUBLIC/GLOBAL classes only; `local` may carry private). Remaining gap: the re-embed/backfill script does not pass `Embedder` a `data_classification`/`policy_pool`, so it does not currently invoke the gate. |
+| corpus | 2478 procdoc_v1, one space, 0 dups | **unchanged** |
+| display metadata | 576 `disp_v1_deslug_only` | **561 `disp_v1_deslug_only` + 7 `disp_v2_llm`** (S3 job `bwatrdbzi` complete — 7/568 passed the judge, rest kept deterministic; §13-17) |
+| retrieval + abstention e2e | 13/13 (isolation) | **13/13 on current HEAD** after the `tenant_id` / ORG-visibility changes — access-control-before-ranking + private-leak test still green |
+
+None of this changes the gate.
+
+### Making the re-embed cheap (the migration blocker in §5/§6 is affordable)
+
+Whole corpus = **2478 docs / ~518K tokens** (p50 135 tok/doc, p90 540, max ~1275). Both free tiers can do it at **$0** with batching:
+- **Gemini** (100 RPM / 30K TPM / 1K RPD × 3 keys): batch 64/req → ~39 requests, far under RPD; TPM floor ~17 min. The `RESOURCE_EXHAUSTED` seen was other processes (ingestion scheduler, tau2, debate panel) draining the shared daily quota — pause `INGESTION_AUTO_ENABLED` + tau2 and run in a clean window → **~20 min, $0**, and Gemini is the measured winner.
+- **Voyage free tier** (3 RPM / 10K TPM, 200M free voyage-3 tokens): 518K = 0.26% of the free allowance; batch ~12/req, pace ~20s → **~60–75 min, $0, resumable**.
+- `backfill_procedure_embeddings.py --representation` already batches (`_EMBED_BATCH=64`), is resumable, keeps old vectors on failure. Gemini works as-is; Voyage needs `--batch`/`--pace` args (port from `benchmark_embedding_models._embed_all`).
+- Note: the corpus model also embeds live queries (1 call/search) — Voyage's 3 RPM would throttle search bursts; Gemini's 100 RPM is fine. Free-tier or not, Gemini is the better operational pick.
+
 ## 0. Release gate result
 
 **Retrieval / procedural-memory release gate: NOT PASS.**
@@ -163,7 +187,8 @@ space, via `scripts/eval_retrieval_quality.py --measure`.
 | non-empty `display_name` | 2478 / 2478 |
 | non-empty `display_description` | 2478 / 2478 |
 | `disp_v1` (deterministic, usable) | 1902 |
-| `disp_v1_deslug_only` (flagged) | 576 → being reworked (§13-17) |
+| `disp_v1_deslug_only` (flagged fixtures) | 561 (LLM rework attempted, only 7 passed — §13-17) |
+| `disp_v2_llm` (LLM-regenerated, judge-passed) | 7 |
 
 ## 13–17. Display-name cleanup  (`display-name-*.jsonl`, S3 run `bwatrdbzi`)
 
@@ -184,9 +209,32 @@ Of the 576 `disp_v1_deslug_only`:
 - Verified working on the smoke sample — e.g. `build-zoom-bot` → "Build
   Zoom Bots Using SDKs And APIs", judge verdict PASS.
 
-**Final counts:** _(from `display-name-report.md` when `bwatrdbzi`
-completes — total affected 576 / generated N / accepted N / regenerated N
-/ human-review N / unresolved N)._
+**Final counts (job `bwatrdbzi` complete, `display-name-validation.jsonl`,
+568 rows — all `is_engineering_fixture=true`):**
+
+| outcome | count |
+|---|---|
+| affected rows processed | 568 |
+| LLM generation attempted (`deepseek-v3.1`) | 545 |
+| not generated (pre-filter / no usable content) | 23 |
+| generator self-flagged `content insufficient` | 536 |
+| **judge verdict PASS → persisted as `disp_v2_llm`** | **7** |
+| judge verdict HUMAN_REVIEW → review queue | 561 |
+
+**Outcome: the LLM display-name regeneration did not succeed at scale.**
+Only 7 / 568 rows produced a name+description that passed the independent
+`gpt-oss-120b` judge; the generator itself flagged 536 as having too
+little source content to describe. This is the expected result given §12
+/ R6 — these 568 rows are engineering fixtures whose `goal` is a
+placeholder and whose steps are stubs. There is no real procedure text
+for a model to summarise, and inventing one is disallowed.
+
+**Action taken:** the 7 PASS rows are persisted (`disp_v2_llm`, provenance
+in `domain_payload.display_provenance`). The remaining 561 **keep their
+deterministic `disp_v1_deslug_only` display metadata** — honest
+placeholders, not raw slugs. No LLM output was force-persisted. The
+review queue (`display-name-review-queue.jsonl`) is retained for a human
+pass if the fixture/product split (R6) is ever resolved.
 
 `canonical_name` is never touched.
 
@@ -293,5 +341,34 @@ milestone. Before a release claim, in order:
    downstream, or add structured preconditions / a compatibility step.
 5. Wire embedding + display-gen spend into `llm_spend`; add the
    provider-policy gate before enabling `PRIVATE_VISIBILITY_ENABLED`.
-6. Finish the display-name rework (S3 `bwatrdbzi`), review the human
-   queue.
+6. Display-name rework (S3 `bwatrdbzi`) is **done** — 7/568 fixtures
+   passed the judge and are persisted; the rest correctly keep
+   deterministic metadata. Only revisit if the fixture/product split
+   (R6) is resolved and real content is added.
+
+## 23. Egress fix (added 2026-09-09)
+
+Supabase egress hit 7 GB against a 0.382 GB database. Cause: the hot
+retrieval paths ran `SELECT * FROM procedures`, shipping the
+`VECTOR(1024)` `embedding` column (asyncpg serialises it as ~15 KB of
+text per row) plus `retrieval_document`, on rows where neither is read —
+`applicability._fetch_candidate_pool` did this for up to 200 rows on
+every search.
+
+- **`09f77af`** — new `PROCEDURE_COLS_NO_HEAVY` constant (every
+  `procedures` column except `embedding` / `retrieval_document` /
+  `retrieval_document_sha256`); 5 query sites in `applicability.py` +
+  `procedure_graph_api.py` now project it explicitly. Ranking output
+  unchanged (the `<=>` distance runs server-side, returns a float).
+  176 retrieval/applicability tests pass; 1 pre-existing unrelated
+  failure.
+- **`2062aba`** — `conftest.py` promotes `TEST_DATABASE_URL` →
+  `DATABASE_URL` for the test session only, so the `*_e2e.py` suite can
+  run against a local `pgvector/pgvector:pg15` container instead of the
+  production Supabase instance. No per-file changes; app/script runtime
+  untouched.
+
+Remaining (recommended, not done): register a pgvector binary codec in
+`db/session.py` (float4 binary ≈ 4 KB/row vs 15 KB text) for the paths
+that legitimately pull vectors (backfill, benchmark); move CI's live-DB
+suite onto a local container.
