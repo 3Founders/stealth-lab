@@ -25,6 +25,49 @@ stepping on each other or repeating work.
 
 ## DONE (already finished this session)
 
+- [x] **Auth and policy for launch — sign-in, private-by-default procedures, publish to the Global Commons, data export/delete, audit trail.**
+  — _security-hardening resume / Claude Sonnet 5 — branch `gate-2b`, tag `authpolicy-verified-a610645`._
+  What works now:
+  - People sign in with Supabase (email + password, or Google). The backend
+    checks the sign-in token itself. It never trusts a user id sent in a
+    request body.
+  - A signed-in person can add a procedure fast (`POST /v1/procedures` and
+    `/from_text`, and the `/submit` "Quick add" form). It is private by default;
+    only its owner can see it.
+  - There is one "publish to the Global Commons" operation. It checks who you
+    are, walks the procedure's dependencies, blocks secrets and private paths,
+    sanitises, and creates a fresh public candidate. Your private run history
+    and evidence stay private. A publication record and audit events are written.
+  - Every model or embedding call is checked against a policy table first.
+    Private text does not leave to an outside provider unless the policy allows
+    that data class. External providers are allowed public data only; the
+    self-hosted provider is allowed private data.
+  - "Export my data" and "Delete my data" both work. Deletion follows
+    dependencies (physical delete vs tombstone), respects legal hold, and keeps
+    Global Commons knowledge.
+  - Every sensitive change writes an audit row (`audit_events`).
+  - Frontend: `/auth` + `/auth/callback`, session restore and refresh, scope
+    labels (PRIVATE / ORGANIZATION / GLOBAL CANDIDATE / GLOBAL VERIFIED),
+    publication-consequences panel, `/me/privacy` page.
+  Commits: `3e47906` `e63ba85` `120a506` `7d1e8fa` `6cea7fc` `7ec8c51` `939921a`
+  `f18651a` `a8d25dc` `4ee89d5` `b2265e9` `7f2fbb8` `d9fd731` (+ docs on `gate-2b`,
+  not pushed). Migrations 46 (`model_provider_policies`, `publication_records`,
+  `data_requests`) and 47 (`procedures.tenant_id`) are applied to the live DB.
+  Tests: full offline suite **2330 pass / 18 fail / 314 skip** — the 18 fails are
+  old and belong to the ingestion tests (`fake_embeddings.py` patches a method
+  that never existed; `test_migration_upgrade_e2e` migration-order bug). Zero new
+  fails from this work. Adversarial database tests (cross-user, cross-org,
+  publish, IDOR, RLS) run against a throwaway local Postgres + pgvector: **75 pass
+  / 0 fail**, plus a live gate smoke.
+  Hosted repository execution (Phase 3) is **out of scope for this launch** and
+  stays off (`HOSTED_EXECUTION_ENABLED=false`).
+  **Not merged to `main` yet.** The auth/policy commits are tangled with the
+  retrieval commits in shared files (`skill_ingestion.py`, `embeddings.py`,
+  `procedures.py`, the procedure detail page), so they cannot be cherry-picked
+  out cleanly. The whole `gate-2b` stack goes to `main` in one step once the
+  retrieval team's release gate passes. Full detail:
+  `docs/launch_compliance_impl/FINAL-RELEASE-READINESS.md`.
+
 - [x] **Retrieval representation + measured relevance gate + human-facing display + frontend UX**
   — _core-b / Claude Sonnet 5 — branch `gate-2b`, commits `9223b54`..`b50b094`._
   One canonical deterministic procedure retrieval document (`procdoc_v1`:
@@ -42,6 +85,30 @@ stepping on each other or repeating work.
   `_fetch_candidate_pool`. Backend offline suite 2270 pass / 18 fail (merge baseline
   2227 / 27 — +43 passing, −9 failing, zero new); frontend `tsc` + `next build` green.
   Full evidence: `.scratch/retrieval-representation-FINAL-REPORT.md`.
+
+- [x] **Cut Supabase egress (was 7 GB against a 0.382 GB database).**
+  — _core-b / Claude Sonnet 5 — branch `gate-2b`, commits `09f77af`, `2062aba` (not pushed)._
+  The search code was doing `SELECT * FROM procedures`, which pulls the big
+  embedding vector (about 15 KB of text per row) on every query, for up to 200
+  rows per search, even though nothing reads it. Added a fixed column list that
+  leaves out the three heavy columns and used it at 5 query spots. Search
+  results are the same. Also added a `TEST_DATABASE_URL` setting so the
+  database tests can run against a local throwaway Postgres instead of the real
+  Supabase one. 176 retrieval tests pass (1 unrelated failure that was already
+  there).
+
+- [x] **Retrieval release-closure measurement pass.**
+  — _core-b / Claude Sonnet 5 — branch `gate-2b`, committed earlier this workstream._
+  Ran a controlled embedding-model benchmark (local vs Gemini vs Voyage on the
+  same procedures, queries and labels): Gemini wins on ranking quality, but
+  using it needs a paid Google plan, so the corpus stays on the local model for
+  now. Built a 28-query abstention test set: genuine "no match" returns nothing
+  22/22; found and measured a real gap where "same tool, wrong environment"
+  queries still leak (7 of ~12). Tried LLM regeneration of 568 flagged display
+  names — only 7 passed an independent judge because those rows are test
+  fixtures with no real content, so the rest keep their plain deterministic
+  names. Full write-up: `.scratch/retrieval-release-closure/FINAL-REPORT.md`.
+  Release gate for this workstream: **NOT PASS** (see PAUSED / HANDOFF).
 
 - [x] **Fixed the leaderboard "stale solution" bug (Bug #7).** The product
   leaderboard used to rank fixes that were built on out-of-date knowledge. Now it
@@ -167,52 +234,38 @@ stepping on each other or repeating work.
     (no migration applied, no Phase 2+ work, per founder instruction).
   - Files I will still touch: only the ones listed above + `thingstodo.md`.
 
-- **security-hardening resume / Claude Sonnet 5 — 2026-09-08, branch `gate-2b`.**
-  **Phase 1 auth DONE + config LIVE. Phase 2 partial, Phase 7 frontend done.**
-  Commits `3e47906` `e63ba85` `382d53b` `33463dc` `120a506` `7f2fbb8` `593046b`
-  (not pushed). Authority: `docs/launch_compliance_impl/FINAL-RELEASE-READINESS.md`
-  (phases 0-8 + 3 release gates: AUTH/POLICY NOT PASS, RETRIEVAL NOT PASS,
-  INGESTION RESUME NOT ALLOWED). Supabase auth verified working (P-256/ES256
-  JWKS live, backend boots, `/auth` renders email form). Migration 41 still
-  UNAPPLIED (irreversible `ALTER TYPE`; agent classifier-blocked — needs
-  `cd backend && python scripts/migrate.py`). Phase 0 audit + ledger in
-  `docs/launch_compliance_implementation_ledger.md`.
-  Backend: `require_authenticated_user` dependency, boot-posture fix,
-  `POST /v1/procedures` + `/from_text` fast contribution (private+candidate).
-  Frontend (`frontendv1`): Supabase browser client, email/password + Google
-  sign-in, session/refresh, `/auth` + `/auth/callback`, `/submit` "Quick add"
-  fast form. `authHeaders()` signature preserved so `client.ts` is untouched.
-  NOT DONE (config only, needs the founder): Supabase dashboard (asymmetric
-  ES256 keys, Google provider, redirect URLs), `SUPABASE_*` in `backend/.env`,
-  `NEXT_PUBLIC_SUPABASE_*` in `frontendv1/.env.local`, `npm install`, and
-  applying migration 41 (one-way door). Original goal below kept for history:
-  ---
-  Files I will touch for Phase 1:
-  - BACKEND: `backend/app/api/deps.py` (add ONE central `require_authenticated_user`
-    dependency + wire org-membership resolution into `get_scope`),
-    `backend/app/main.py` (boot-posture: account for the Supabase preset +
-    `hosted_execution_enabled`), `backend/app/services/authn.py` (surface a typed
-    request principal; no rewrite of the validator), new
-    `backend/tests/test_supabase_auth_*` , apply migration
-    `backend/db/41_phase1_security_boundaries.sql` (already committed, additive,
-    idempotent — never applied).
-  - FRONTEND (`frontendv1/`): `src/lib/auth.ts`, `src/app/auth/page.tsx`, new
-    `src/lib/supabase/*`, `package.json` (+`@supabase/supabase-js`,
-    `@supabase/ssr`), `.env.local.example`; a 1-line merge into
-    `src/lib/api/client.ts` (auth-header source).
-  COORDINATION: `frontend integration stealth-lab` is listed as "auth only"
-  owner — could not reach them via agent messaging; if that agent is active on
-  frontend auth, this line yields the frontend half to them and I take backend
-  only. `retrieval representation frontend` (core-b) owns
-  `frontendv1/src/lib/api/{client,types}.ts` — my touch there is additive
-  (header source), will rebase around their changes.
+_(security-hardening / auth+policy: moved to DONE — see the top of the DONE list.)_
 
 ---
 
 ## PAUSED / HANDOFF (started, not finished — read before picking up)
 ## PAUSED / HANDOFF (started, not finished — read before picking up)
 
-_(nothing here yet)_
+- **Retrieval release gate — NOT PASS.**
+  — _core-b / Claude Sonnet 5 — 2026-09-09, branch `gate-2b`._
+  The retrieval representation, relevance gate, display surfaces, frontend and
+  access-control ordering are done and measurably better. The gate does not
+  pass because these items need a person, not more code:
+  1. **Pick and pay for a production embedding model.** Gemini is the measured
+     winner but its free tier is exhausted; needs a paid Google plan. Until
+     then the corpus stays on the local model. (`CHITANYA-SETUP.md`)
+  2. **Re-embed all 2478 procedures** in whichever model is chosen, then
+     **re-derive the relevance threshold** against the full corpus. Both are
+     scripted (`backfill_procedure_embeddings.py --representation`,
+     `eval_retrieval_quality.py --measure`); they just need step 1 first.
+  3. **Human-label the 91-pair sample** (`label-validation-sample.jsonl`). An
+     independent model agrees with the eval labels only ~77% on the
+     relevant/not-relevant call, so absolute precision numbers are not yet
+     release-grade.
+  4. **Decide the "wrong environment" gap.** The relevance gate matches topic,
+     not compatibility, so "run the web test suite against a native iOS app"
+     still returns the web procedure. Either accept it with a downstream
+     "retrieved is not the same as safe to reuse" rule, or add real
+     preconditions / a compatibility check.
+  5. **Small cleanups:** record embedding spend in `llm_spend`; pass the
+     data-classification gate from the re-embed script; register a pgvector
+     binary codec in `db/session.py` to shrink egress further.
+  Full detail and exact commands: `.scratch/retrieval-release-closure/FINAL-REPORT.md` §22.
 
 ---
 
