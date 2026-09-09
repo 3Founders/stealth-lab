@@ -74,6 +74,20 @@ function QuickAdd({ initial }: { initial: string }) {
     );
   }
 
+  const publishNotice = (
+    <p className="mt-2 text-xs text-neutral-400">
+      Publishing to the Global Commons is a separate, explicit action. See the{" "}
+      <Link href="/legal/global-commons" className="underline">
+        Global Commons Terms
+      </Link>{" "}
+      for what becomes public and the{" "}
+      <Link href="/legal/verification" className="underline">
+        Verified vs. Candidate
+      </Link>{" "}
+      distinction.
+    </p>
+  );
+
   if (created) {
     return (
       <div className="mt-6 space-y-3 rounded-lg border border-emerald-200 bg-emerald-50 p-5 text-sm">
@@ -106,6 +120,7 @@ function QuickAdd({ initial }: { initial: string }) {
             Add another
           </button>
         </div>
+        {publishNotice}
       </div>
     );
   }

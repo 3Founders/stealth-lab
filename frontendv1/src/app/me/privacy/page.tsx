@@ -299,6 +299,13 @@ export default function PrivacyPage() {
         </p>
         <h2 className="mt-4 font-medium text-neutral-900">Privacy contact</h2>
         <p>privacy@stealthlab.example (replace before launch).</p>
+        <p className="mt-1">
+          Full details:{" "}
+          <Link href="/legal/privacy" className="underline">
+            Privacy Policy
+          </Link>
+          .
+        </p>
       </section>
 
       {error ? (

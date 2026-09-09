@@ -217,6 +217,18 @@ export default function AuthPage() {
         become public only if you turn on a public profile in Privacy &amp; Data.
       </p>
 
+      <p className="mt-3 max-w-xs text-center text-xs text-neutral-400">
+        By continuing you agree to the{" "}
+        <Link href="/legal/terms" className="underline">
+          Terms of Service
+        </Link>{" "}
+        and{" "}
+        <Link href="/legal/privacy" className="underline">
+          Privacy Policy
+        </Link>
+        .
+      </p>
+
       <Link href="/" className="mt-4 text-xs text-neutral-500 underline">
         Back to search
       </Link>

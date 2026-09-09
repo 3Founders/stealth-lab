@@ -46,6 +46,28 @@ export default function RootLayout({
           </div>
         </header>
         <main className="mx-auto max-w-5xl px-6 pb-24">{children}</main>
+        <footer className="border-t border-black/5 py-8">
+          <div className="mx-auto flex max-w-5xl flex-wrap items-center gap-x-5 gap-y-2 px-6 text-xs text-neutral-400">
+            <Link href="/legal/terms" className="hover:text-neutral-600">
+              Terms
+            </Link>
+            <Link href="/legal/privacy" className="hover:text-neutral-600">
+              Privacy
+            </Link>
+            <Link href="/legal/acceptable-use" className="hover:text-neutral-600">
+              Acceptable Use
+            </Link>
+            <Link href="/legal/global-commons" className="hover:text-neutral-600">
+              Global Commons Terms
+            </Link>
+            <Link href="/legal/security" className="hover:text-neutral-600">
+              Security
+            </Link>
+            <Link href="/legal" className="hover:text-neutral-600">
+              All legal documents
+            </Link>
+          </div>
+        </footer>
         <WebMcpProvider />
       </body>
     </html>
