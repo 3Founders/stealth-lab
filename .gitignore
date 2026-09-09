@@ -64,3 +64,11 @@ backend/logs/
 # retrieval-release-closure embedding vector caches (large, regenerable)
 .scratch/retrieval-release-closure/vectors/
 backend/.scratch/
+
+backend*.zip
+scripts.zip
+*.key
+*.key.pub
+*.mov
+.codex/
+
