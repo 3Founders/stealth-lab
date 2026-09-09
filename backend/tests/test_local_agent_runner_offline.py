@@ -544,6 +544,41 @@ async def test_runner_reports_no_match_without_crashing(monkeypatch):
     )
 
 
+def test_mcp_session_http_timeout_is_not_shorter_than_a_real_agent_run_can_take():
+    """Regression pin for a real live-pilot incident (Final Baseline vs
+    Stealth Agent Experiment, T7/B_default, 2/2 trials): _open_client_session
+    used to construct its httpx2.AsyncClient with timeout=60, and the MCP
+    session is held open for this transport's ENTIRE lifetime -- including
+    while _run_local_node blocks synchronously (asyncio.to_thread) running a
+    real Agent+RepoSandbox loop against GENERAL_COMPUTE, traffic that never
+    touches this MCP connection at all. Two real trials on a task requiring
+    more agent exploration each died at wall_clock_seconds_total 60.01s/
+    60.02s with `ExceptionGroup: unhandled errors in a TaskGroup (2
+    sub-exceptions)` -- the mcp package's own internal transport TaskGroup
+    (client/session.py, client/streamable_http.py), not backend/app or
+    experiments/swebench_pro code, raised when the underlying connection's
+    idle read timed out under this client-side timeout.
+
+    This test does not open a real connection (that would require a live
+    server) -- it pins the real, exported timeout constant itself, so a
+    future edit that quietly shrinks it back below a real agent run's
+    plausible duration fails CI instead of failing silently on the next
+    long-running live pilot."""
+    timeout = runner_module._MCP_SESSION_HTTP_TIMEOUT_SECONDS
+    # The orchestrator's own outer per-trial wall-clock ceiling is 600s
+    # (.scratch/final_agent_experiment/protocol.md) -- the MCP transport's
+    # own timeout must never be the thing that kills a trial before that
+    # already-designed outer budget does.
+    assert timeout >= 600, (
+        f"_MCP_SESSION_HTTP_TIMEOUT_SECONDS={timeout} is below the "
+        "orchestrator's 600s per-trial ceiling -- this would silently "
+        "reintroduce the T7 ExceptionGroup incident."
+    )
+    # The original incident-triggering value, pinned explicitly so nobody
+    # re-introduces exactly this number by copy-paste.
+    assert timeout != 60, "this is the exact value that caused the T7 crash"
+
+
 # ---------------------------------------------------------------------------
 # PART 1 regression: verification success criterion must gate on real
 # artifact validation, not just a "finished" stop_reason + non-empty patch.

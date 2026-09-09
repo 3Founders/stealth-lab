@@ -1,0 +1,29 @@
+{
+  "note": "Captured from the real, non-scored run's stdout (the process was terminated after the negative-control call hung for 333.93s on a pre-existing, already-documented MCP transport issue -- see retrieval-calibration.md's 'transport write blocked' finding from a prior pass -- so its own final-summary/file-write code never ran). No re-run was attempted to avoid further real Voyage-account load. This file is the honest record of what was actually observed.",
+  "no_provider_crash": true,
+  "relevant_control_ok": true,
+  "negative_control_ok": null,
+  "negative_control_note": "matched=false (technically an abstention) but reached via 'MCPError: SSE stream ended without a response' after 333.93s, not via a clean ranked=[] result -- confounded by a transport-layer failure, not attributable to the embedding fix either way. No EmbeddingError, no Gemini/Voyage failure logged for this call.",
+  "results": [
+    {
+      "label": "relevant_control",
+      "elapsed_s": 12.42,
+      "error": null,
+      "matched": true,
+      "ranked": [
+        {
+          "source": "global",
+          "name": "Parallel-agent git-worktree isolation",
+          "rank_key": [1, 0, 1, 0]
+        }
+      ]
+    },
+    {
+      "label": "negative_control",
+      "elapsed_s": 333.93,
+      "error": "MCPError: SSE stream ended without a response",
+      "matched": false,
+      "ranked": []
+    }
+  ]
+}

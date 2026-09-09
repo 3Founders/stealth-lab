@@ -1,6 +1,6 @@
 """
 Deterministic, offline stand-in for the ONE real network-reaching seam on
-`Embedder` (app/services/embeddings.py): `Embedder._embed_via_chain`.
+`Embedder` (app/services/embeddings.py): `Embedder._embed_configured_provider`.
 
 Root cause this exists to fix: three tests in test_local_agent_runner_offline.py
 instantiated the real `Embedder` (directly, or indirectly via the runner's
@@ -9,10 +9,10 @@ Voyage HTTP calls -- failing (or, worse, silently succeeding and billing)
 depending on whatever credentials happened to be configured in the
 environment running the "offline" suite.
 
-Why patch `_embed_via_chain` and not `embed`/`embed_one`: `embed()` also
+Why patch `_embed_configured_provider` and not `embed`/`embed_one`: `embed()` also
 contains real, non-network production logic this suite should keep
 exercising -- the cross-call cache and the input_type/task_type wiring.
-`_embed_via_chain` is the exact point where that logic hands off to a real
+`_embed_configured_provider` is the exact point where that logic hands off to a real
 provider (`_embed_gemini` / `_embed_voyage` / local model), so patching it
 removes only the network dependency and leaves everything else real.
 
@@ -89,7 +89,7 @@ def fake_embed_text(text: str, dimension: int) -> list[float]:
 
 
 def install_fake_embedder(monkeypatch) -> None:
-    """Patch `Embedder._embed_via_chain` for the duration of one test so
+    """Patch `Embedder._embed_configured_provider` for the duration of one test so
     no code path reachable from it -- caching, batching, `embed_one`, the
     local runner's own query/capture embedding calls -- can reach a real
     provider. Call once per test that exercises anything which embeds
@@ -98,9 +98,9 @@ def install_fake_embedder(monkeypatch) -> None:
     each test)."""
     import app.services.embeddings as embeddings_module
 
-    async def _fake_embed_via_chain(
+    async def _fake_embed_configured_provider(
         self, texts: Sequence[str], input_type: str
     ) -> list[list[float]]:
         return [fake_embed_text(t, self.dimension) for t in texts]
 
-    monkeypatch.setattr(embeddings_module.Embedder, "_embed_via_chain", _fake_embed_via_chain)
+    monkeypatch.setattr(embeddings_module.Embedder, "_embed_configured_provider", _fake_embed_configured_provider)

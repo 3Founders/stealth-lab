@@ -1,0 +1,62 @@
+    | Traceback (most recent call last):
+    |   File "C:\Users\user\AppData\Roaming\Python\Python314\site-packages\anyio\_core\_tasks.py", line 275, in _run_coro
+    |     retval = await self._coro
+    |              ^^^^^^^^^^^^^^^^
+    |   File "C:\Users\user\AppData\Roaming\Python\Python314\site-packages\mcp\client\streamable_http.py", line 609, in _handle_message
+    |     await handle_request_async()
+    |   File "C:\Users\user\AppData\Roaming\Python\Python314\site-packages\mcp\client\streamable_http.py", line 589, in handle_request_async
+    |     await self._handle_post_request(ctx)
+    |   File "C:\Users\user\AppData\Roaming\Python\Python314\site-packages\mcp\client\streamable_http.py", line 323, in _handle_post_request
+    |     async with ctx.client.stream(
+    |                ~~~~~~~~~~~~~~~~~^
+    |         "POST",
+    |         ^^^^^^^
+    |     ...<2 lines>...
+    |         headers=headers,
+    |         ^^^^^^^^^^^^^^^^
+    |     ) as response:
+    |     ^
+    |   File "C:\Python314\Lib\contextlib.py", line 214, in __aenter__
+    |     return await anext(self.gen)
+    |            ^^^^^^^^^^^^^^^^^^^^^
+    |   File "C:\Users\user\AppData\Roaming\Python\Python314\site-packages\httpx2\_client.py", line 1685, in stream
+    |     response = await self.send(
+    |                ^^^^^^^^^^^^^^^^
+    |     ...<4 lines>...
+    |     )
+    |     ^
+    |   File "C:\Users\user\AppData\Roaming\Python\Python314\site-packages\httpx2\_client.py", line 1825, in send
+    |     response = await self._send_handling_auth(
+    |                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |     ...<4 lines>...
+    |     )
+    |     ^
+    |   File "C:\Users\user\AppData\Roaming\Python\Python314\site-packages\httpx2\_client.py", line 1853, in _send_handling_auth
+    |     response = await self._send_handling_redirects(
+    |                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |     ...<3 lines>...
+    |     )
+    |     ^
+    |   File "C:\Users\user\AppData\Roaming\Python\Python314\site-packages\httpx2\_client.py", line 1888, in _send_handling_redirects
+    |     response = await self._send_single_request(request)
+    |                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |   File "C:\Users\user\AppData\Roaming\Python\Python314\site-packages\httpx2\_client.py", line 1922, in _send_single_request
+    |     response = await transport.handle_async_request(request)
+    |                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |   File "C:\Users\user\AppData\Roaming\Python\Python314\site-packages\httpx2\_transports\default.py", line 387, in handle_async_request
+    |     with map_httpcore_exceptions():
+    |          ~~~~~~~~~~~~~~~~~~~~~~~^^
+    |   File "C:\Python314\Lib\contextlib.py", line 162, in __exit__
+    |     self.gen.throw(value)
+    |     ~~~~~~~~~~~~~~^^^^^^^
+    |   File "C:\Users\user\AppData\Roaming\Python\Python314\site-packages\httpx2\_transports\default.py", line 115, in map_httpcore_exceptions
+    |     raise mapped_exc(message) from exc
+    | httpx2.ReadTimeout
+    +------------------------------------
+
+=== SUMMARY ===
+no_attempt_exceeded_the_bound True
+  relevant_control: elapsed=15.08s error=None bounded_timeout_fired=False
+  negative_control: elapsed=90.01s error='BOUNDED_TIMEOUT after 90s (script-level, same mechanism orchestrator.run_one_trial uses)' bounded_timeout_fired=True
+
+[exited with code 0]

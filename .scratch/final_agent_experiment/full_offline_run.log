@@ -1,0 +1,330 @@
+........................................................................ [  2%]
+......................ss...s........ssssssssssssss...................... [  5%]
+.......ss.........................sss................................... [  8%]
+........................................................................ [ 11%]
+..................................................................s..... [ 14%]
+...........................ss..........s.................sss............ [ 17%]
+.......................................................................s [ 20%]
+sss.................................sssssssss........................... [ 23%]
+........ssssss...ssssssssssssssssss.....ssssss.............ssss......... [ 26%]
+..........................................ssss.......................... [ 29%]
+........................................................ssss............ [ 32%]
+........................................................................ [ 35%]
+.......................sssssss.........................ssss...........ss [ 38%]
+s..................................ssssss............................... [ 41%]
+...............................ssss..................................... [ 44%]
+........................................................................ [ 46%]
+........................................................................ [ 49%]
+.........................ssss...............................ssss........ [ 52%]
+.........ss..............ssss........................................... [ 55%]
+......................ssssss............................................ [ 58%]
+..........................ssss....F.FF..................sssss........... [ 61%]
+...................................................ssssssssssssssss..... [ 64%]
+...........................sssss........................................ [ 67%]
+............F..................................................sssss.... [ 70%]
+......................................ss........ssssss.................. [ 73%]
+.................................ssssssssss............................. [ 76%]
+..............sssssss.............ssssssssssss.....................sssss [ 79%]
+s........................................sssss.....sssssssssssssssssssss [ 82%]
+s............sssss.................sssss.........................s...... [ 85%]
+....sssssssssss..............................ssssssssssss............... [ 88%]
+...................ssss.......................s......................... [ 90%]
+......sss.......sssssssss..................................ssss......... [ 93%]
+................s.................s.........sssss....................... [ 96%]
+......ssssssss.......................................................... [ 99%]
+.....                                                                    [100%]
+================================== FAILURES ===================================
+_____ test_runner_captures_a_local_candidate_from_a_successful_adhoc_run ______
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x0000029B4F1BE970>
+tmp_path = WindowsPath('C:/Users/user/AppData/Local/Temp/pytest-of-user/pytest-341/test_runner_captures_a_local_c0')
+
+    @pytest.mark.asyncio
+    async def test_runner_captures_a_local_candidate_from_a_successful_adhoc_run(monkeypatch, tmp_path):
+        """Phase 12 (personal learning loop) wired into the real runner: no
+        match anywhere (local or global) must no longer just give up -- a
+        real, successful ad-hoc run becomes a new local candidate procedure,
+        never reported/published globally (Rule 6)."""
+        import json
+    
+        from app.local_agent.local_store import LocalProcedureStore
+    
+        fake_session = FakeClientSession({"search_procedures": json.dumps([])})
+    
+        async def fake_run_node(node, **kwargs):
+            return NodeResult(status="success", notes=f"ran {node.goal}",
+                               data={"files_edited": ["new_thing.py"], "patch": "diff --git ..."})
+    
+        monkeypatch.setattr(runner_module, "_open_client_session", lambda url, token: fake_session)
+        monkeypatch.setattr(runner_module, "_run_local_node", fake_run_node)
+    
+>       result = await runner_module.LocalAgentRunner(
+            server_url="http://fake/mcp", token="fake-token",
+        ).run(task_description="add a new utility function", repo_path=str(tmp_path))
+
+tests\test_local_agent_runner_offline.py:220: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+app\local_agent\runner.py:378: in run
+    query_embedding = await Embedder().embed_one(task_description, input_type="query")
+                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+app\services\embeddings.py:359: in embed_one
+    vectors = await self.embed([text], input_type=input_type)
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+app\services\embeddings.py:192: in embed
+    vectors = await self._embed_via_chain(missing_texts, input_type)
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = <app.services.embeddings.Embedder object at 0x0000029B028D1F20>
+texts = ['add a new utility function'], input_type = 'query'
+
+    async def _embed_via_chain(
+        self, texts: Sequence[str], input_type: InputType
+    ) -> list[list[float]]:
+        # Provider chain, first success wins. A provider that errors
+        # (missing key, rate limit, outage) falls through to the next;
+        # only when EVERY provider fails does this raise. Failover is
+        # logged loudly rather than silently absorbed -- a silent swap
+        # would change the vector space under callers' feet without
+        # anyone knowing (the migration-11 drift lesson, at runtime).
+        chain = [p.strip() for p in settings.embedding_provider_chain.split(",") if p.strip()]
+        failures: list[str] = []
+        for provider in chain:
+            try:
+                if provider == "gemini":
+                    vectors = await self._embed_gemini(texts, input_type)
+                elif provider == "voyage":
+                    vectors = await self._embed_voyage(texts, input_type)
+                else:
+                    log.warning("unknown embedding provider %r in chain -- skipped", provider)
+                    continue
+            except EmbeddingError as exc:
+                failures.append(f"{provider}: {exc}")
+                log.warning("embedding provider %s failed (%s) -- falling through",
+                            provider, str(exc)[:200])
+                continue
+            self._check_dimension(vectors, f"{provider}:{self.model}")
+            return vectors
+    
+>       raise EmbeddingError(
+            "all embedding providers failed -- " + " | ".join(failures)
+        )
+E       app.services.embeddings.EmbeddingError: all embedding providers failed -- gemini: no Gemini API key configured | voyage: Voyage embedding failed: You have not yet added your payment method in the billing page and will have reduced rate limits of 3 RPM and 10K TPM. To unlock our standard rate limits, please add a payment method in the billing page for the appropriate organization in the user dashboard (https://dashboard.voyageai.com/). Even with payment methods entered, the free tokens (200M tokens for Voyage series 3) will still apply. After adding a payment method, you should see your rate limits increase after several minutes. See our pricing docs (https://docs.voyageai.com/docs/pricing) for the free tokens for your model.
+
+app\services\embeddings.py:233: EmbeddingError
+------------------------------ Captured log call ------------------------------
+WARNING  app.services.embeddings:embeddings.py:227 embedding provider gemini failed (no Gemini API key configured) -- falling through
+WARNING  app.services.embeddings:embeddings.py:227 embedding provider voyage failed (Voyage embedding failed: You have not yet added your payment method in the billing page and will have reduced rate limits of 3 RPM and 10K TPM. To unlock our standard rate limits, please add a payment) -- falling through
+_ test_runner_finds_a_local_procedure_via_semantic_similarity_not_lexical_overlap _
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x0000029B4F1BEC80>
+tmp_path = WindowsPath('C:/Users/user/AppData/Local/Temp/pytest-of-user/pytest-341/test_runner_finds_a_local_proc0')
+
+    @pytest.mark.asyncio
+    async def test_runner_finds_a_local_procedure_via_semantic_similarity_not_lexical_overlap(monkeypatch, tmp_path):
+        """P0 fix: local search must actually use the store's real cosine-
+        similarity ranking, not silently fall back to lexical-only matching
+        because no query embedding was ever supplied. Real embedding calls
+        (this repo's existing Embedder, no mock) prove genuine semantic
+        retrieval: the query shares NO words with the stored procedure's
+        name/goal, so a lexical-only search would find nothing."""
+        import json
+    
+        from app.local_agent.local_store import LocalProcedureStore
+        from app.services.embeddings import Embedder
+    
+        embedder = Embedder()
+        goal = "resolve a failing login attempt caused by an expired session token"
+>       goal_vec = await embedder.embed_one(goal, input_type="document")
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests\test_local_agent_runner_offline.py:289: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+app\services\embeddings.py:359: in embed_one
+    vectors = await self.embed([text], input_type=input_type)
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+app\services\embeddings.py:192: in embed
+    vectors = await self._embed_via_chain(missing_texts, input_type)
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = <app.services.embeddings.Embedder object at 0x0000029B4E4F4A50>
+texts = ['resolve a failing login attempt caused by an expired session token']
+input_type = 'document'
+
+    async def _embed_via_chain(
+        self, texts: Sequence[str], input_type: InputType
+    ) -> list[list[float]]:
+        # Provider chain, first success wins. A provider that errors
+        # (missing key, rate limit, outage) falls through to the next;
+        # only when EVERY provider fails does this raise. Failover is
+        # logged loudly rather than silently absorbed -- a silent swap
+        # would change the vector space under callers' feet without
+        # anyone knowing (the migration-11 drift lesson, at runtime).
+        chain = [p.strip() for p in settings.embedding_provider_chain.split(",") if p.strip()]
+        failures: list[str] = []
+        for provider in chain:
+            try:
+                if provider == "gemini":
+                    vectors = await self._embed_gemini(texts, input_type)
+                elif provider == "voyage":
+                    vectors = await self._embed_voyage(texts, input_type)
+                else:
+                    log.warning("unknown embedding provider %r in chain -- skipped", provider)
+                    continue
+            except EmbeddingError as exc:
+                failures.append(f"{provider}: {exc}")
+                log.warning("embedding provider %s failed (%s) -- falling through",
+                            provider, str(exc)[:200])
+                continue
+            self._check_dimension(vectors, f"{provider}:{self.model}")
+            return vectors
+    
+>       raise EmbeddingError(
+            "all embedding providers failed -- " + " | ".join(failures)
+        )
+E       app.services.embeddings.EmbeddingError: all embedding providers failed -- gemini: no Gemini API key configured | voyage: Voyage embedding failed: You have not yet added your payment method in the billing page and will have reduced rate limits of 3 RPM and 10K TPM. To unlock our standard rate limits, please add a payment method in the billing page for the appropriate organization in the user dashboard (https://dashboard.voyageai.com/). Even with payment methods entered, the free tokens (200M tokens for Voyage series 3) will still apply. After adding a payment method, you should see your rate limits increase after several minutes. See our pricing docs (https://docs.voyageai.com/docs/pricing) for the free tokens for your model.
+
+app\services\embeddings.py:233: EmbeddingError
+------------------------------ Captured log call ------------------------------
+WARNING  app.services.embeddings:embeddings.py:227 embedding provider gemini failed (no Gemini API key configured) -- falling through
+WARNING  app.services.embeddings:embeddings.py:227 embedding provider voyage failed (Voyage embedding failed: You have not yet added your payment method in the billing page and will have reduced rate limits of 3 RPM and 10K TPM. To unlock our standard rate limits, please add a payment) -- falling through
+______ test_runner_does_not_capture_a_candidate_from_a_failed_adhoc_run _______
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x0000029B4F301A90>
+tmp_path = WindowsPath('C:/Users/user/AppData/Local/Temp/pytest-of-user/pytest-341/test_runner_does_not_capture_a0')
+
+    @pytest.mark.asyncio
+    async def test_runner_does_not_capture_a_candidate_from_a_failed_adhoc_run(monkeypatch, tmp_path):
+        import json
+    
+        fake_session = FakeClientSession({"search_procedures": json.dumps([])})
+    
+        async def fake_run_node(node, **kwargs):
+            return NodeResult(status="failure", notes="gave up", data={"files_edited": [], "patch": ""})
+    
+        monkeypatch.setattr(runner_module, "_open_client_session", lambda url, token: fake_session)
+        monkeypatch.setattr(runner_module, "_run_local_node", fake_run_node)
+    
+>       result = await runner_module.LocalAgentRunner(
+            server_url="http://fake/mcp", token="fake-token",
+        ).run(task_description="a task that fails", repo_path=str(tmp_path))
+
+tests\test_local_agent_runner_offline.py:341: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+app\local_agent\runner.py:378: in run
+    query_embedding = await Embedder().embed_one(task_description, input_type="query")
+                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+app\services\embeddings.py:359: in embed_one
+    vectors = await self.embed([text], input_type=input_type)
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+app\services\embeddings.py:192: in embed
+    vectors = await self._embed_via_chain(missing_texts, input_type)
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = <app.services.embeddings.Embedder object at 0x0000029B028CBD50>
+texts = ['a task that fails'], input_type = 'query'
+
+    async def _embed_via_chain(
+        self, texts: Sequence[str], input_type: InputType
+    ) -> list[list[float]]:
+        # Provider chain, first success wins. A provider that errors
+        # (missing key, rate limit, outage) falls through to the next;
+        # only when EVERY provider fails does this raise. Failover is
+        # logged loudly rather than silently absorbed -- a silent swap
+        # would change the vector space under callers' feet without
+        # anyone knowing (the migration-11 drift lesson, at runtime).
+        chain = [p.strip() for p in settings.embedding_provider_chain.split(",") if p.strip()]
+        failures: list[str] = []
+        for provider in chain:
+            try:
+                if provider == "gemini":
+                    vectors = await self._embed_gemini(texts, input_type)
+                elif provider == "voyage":
+                    vectors = await self._embed_voyage(texts, input_type)
+                else:
+                    log.warning("unknown embedding provider %r in chain -- skipped", provider)
+                    continue
+            except EmbeddingError as exc:
+                failures.append(f"{provider}: {exc}")
+                log.warning("embedding provider %s failed (%s) -- falling through",
+                            provider, str(exc)[:200])
+                continue
+            self._check_dimension(vectors, f"{provider}:{self.model}")
+            return vectors
+    
+>       raise EmbeddingError(
+            "all embedding providers failed -- " + " | ".join(failures)
+        )
+E       app.services.embeddings.EmbeddingError: all embedding providers failed -- gemini: no Gemini API key configured | voyage: Voyage embedding failed: You have not yet added your payment method in the billing page and will have reduced rate limits of 3 RPM and 10K TPM. To unlock our standard rate limits, please add a payment method in the billing page for the appropriate organization in the user dashboard (https://dashboard.voyageai.com/). Even with payment methods entered, the free tokens (200M tokens for Voyage series 3) will still apply. After adding a payment method, you should see your rate limits increase after several minutes. See our pricing docs (https://docs.voyageai.com/docs/pricing) for the free tokens for your model.
+
+app\services\embeddings.py:233: EmbeddingError
+------------------------------ Captured log call ------------------------------
+WARNING  app.services.embeddings:embeddings.py:227 embedding provider gemini failed (no Gemini API key configured) -- falling through
+WARNING  app.services.embeddings:embeddings.py:227 embedding provider voyage failed (Voyage embedding failed: You have not yet added your payment method in the billing page and will have reduced rate limits of 3 RPM and 10K TPM. To unlock our standard rate limits, please add a payment) -- falling through
+____________ test_migration_upgrade_path_populated_v1_to_hardening ____________
+
+    def test_migration_upgrade_path_populated_v1_to_hardening():
+        # Grep proof (mirrors the acceptance note): the hardening migrations
+        # (35..38) carry no destructive DDL.
+        g = subprocess.run(
+            ["git", "grep", "-nE", "DROP TABLE|DROP COLUMN|TRUNCATE",
+             "--", "db/35_*", "db/36_*", "db/37_*", "db/38_*"],
+            capture_output=True, text=True, cwd=str(_BACKEND_ROOT),
+        )
+        assert g.returncode == 1 and g.stdout.strip() == "", (
+            f"hardening migrations contain destructive DDL:\n{g.stdout}"
+        )
+    
+        all_files = _migration_files()
+        baseline_files = [p for p in all_files if _prefix_num(p) <= _BASELINE_MAX]
+        hardening_files = [p for p in all_files if _prefix_num(p) > _BASELINE_MAX]
+>       assert {p.name for p in hardening_files} == {
+            "35_product_model.sql",
+            "36_durable_execution_runs.sql",
+            "37_execution_runs_terminal_chk_fix.sql",
+            "38_candidates_no_action_justified.sql",
+        }, [p.name for p in hardening_files]
+E       AssertionError: ['35_product_model.sql', '36_durable_execution_runs.sql', '37_execution_runs_terminal_chk_fix.sql', '38_candidates_no_action_justified.sql', '39_procedures_engineering_fixture_flag.sql', '40_procedures_engineering_fixture_backfill.sql']
+E       assert {'35_product_...backfill.sql'} == {'35_product_...ustified.sql'}
+E         
+E         Extra items in the left set:
+E         '39_procedures_engineering_fixture_flag.sql'
+E         '40_procedures_engineering_fixture_backfill.sql'
+E         Use -v to get more diff
+
+tests\test_migration_upgrade_e2e.py:519: AssertionError
+============================== warnings summary ===============================
+tests/test_authn_offline.py::test_hs256_confusion_rejected_by_whitelist
+  C:\Users\user\sl-core-b\backend\.venv\Lib\site-packages\jwt\api_jwt.py:147: InsecureKeyLengthWarning: The HMAC key is 21 bytes long, which is below the minimum recommended length of 32 bytes for SHA256. See RFC 7518 Section 3.2.
+    return self._jws.encode(
+
+tests/test_authn_offline.py::test_sync_validator_refuses_async_provider
+  C:\Users\user\sl-final-readiness\backend\tests\test_authn_offline.py:314: RuntimeWarning: coroutine 'test_sync_validator_refuses_async_provider.<locals>.AsyncOnly.get_key' was never awaited
+    with pytest.raises(TokenRejected, match="coroutine"):
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_implementation_executor_offline.py::test_execute_dispatches_to_deterministic_provider_for_bound_deterministic_kind
+tests/test_implementation_providers_offline.py::test_deterministic_provider_execute_runs_a_real_sandboxed_script
+tests/test_implementation_providers_offline.py::test_deterministic_provider_execute_reports_real_failure
+  C:\Users\user\sl-final-readiness\backend\app\execution\providers.py:294: UserWarning: SubprocessSandboxExecutor: network_access=False is NOT enforced -- this executor cannot actually block network calls. If the generated code makes one, it will succeed. See module docstring.
+    result = await self._executor.run(
+
+tests/test_local_agent_runner_offline.py::test_runner_probes_its_own_repo_and_sends_invariant_bindings
+  C:\Users\user\sl-core-b\backend\.venv\Lib\site-packages\google\genai\types.py:42: DeprecationWarning: '_UnionGenericAlias' is deprecated and slated for removal in Python 3.17
+    VersionedUnionType = Union[builtin_types.UnionType, _UnionGenericAlias]
+
+tests/test_sandbox_executor.py: 8 warnings
+tests/test_sandbox_input_path_escape.py: 2 warnings
+  C:\Python314\Lib\asyncio\events.py:94: UserWarning: SubprocessSandboxExecutor: network_access=False is NOT enforced -- this executor cannot actually block network calls. If the generated code makes one, it will succeed. See module docstring.
+    self._context.run(self._callback, *self._args)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ===========================
+FAILED tests/test_local_agent_runner_offline.py::test_runner_captures_a_local_candidate_from_a_successful_adhoc_run
+FAILED tests/test_local_agent_runner_offline.py::test_runner_finds_a_local_procedure_via_semantic_similarity_not_lexical_overlap
+FAILED tests/test_local_agent_runner_offline.py::test_runner_does_not_capture_a_candidate_from_a_failed_adhoc_run
+FAILED tests/test_migration_upgrade_e2e.py::test_migration_upgrade_path_populated_v1_to_hardening
+4 failed, 2146 passed, 303 skipped, 16 warnings in 428.58s (0:07:08)

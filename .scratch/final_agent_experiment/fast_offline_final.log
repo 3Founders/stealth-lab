@@ -1,0 +1,120 @@
+........................................................................ [  2%]
+......................ss...s........ssssssssssssss...................... [  5%]
+.......ss.........................sss................................... [  8%]
+........................................................................ [ 11%]
+..................................................................s..... [ 14%]
+...........................ss..........s.................sss............ [ 17%]
+.......................................................................s [ 20%]
+sss.................................sssssssss........................... [ 23%]
+........ssssss...ssssssssssssssssss.....ssssss.............ssss......... [ 26%]
+..........................................ssss.......................... [ 29%]
+........................................................ssss............ [ 32%]
+........................................................................ [ 35%]
+.......................sssssss.........................ssss...........ss [ 38%]
+s..................................ssssss............................... [ 41%]
+...............................ssss..................................... [ 44%]
+........................................................................ [ 46%]
+........................................................................ [ 49%]
+.........................ssss...............................ssss........ [ 52%]
+.........ss..............ssss........................................... [ 55%]
+......................ssssss............................................ [ 58%]
+..........................ssss....F.FF..................sssss........... [ 61%]
+...................................................ssssssssssssssss..... [ 64%]
+...........................sssss........................................ [ 67%]
+...............................................................sssss.... [ 70%]
+......................................ss........ssssss.................. [ 73%]
+.................................ssssssssss............................. [ 76%]
+..............sssssss.............ssssssssssss.....................sssss [ 79%]
+s........................................sssss.....sssssssssssssssssssss [ 82%]
+s............sssss.................sssss.........................s...... [ 85%]
+....sssssssssss..............................ssssssssssss............... [ 88%]
+...................ssss.......................s......................... [ 90%]
+......sss.......sssssssss..................................ssss......... [ 93%]
+................s.................s.........sssss....................... [ 96%]
+......ssssssss.......................................................... [ 99%]
+.....                                                                    [100%]
+================================== FAILURES ===================================
+_____ test_runner_captures_a_local_candidate_from_a_successful_adhoc_run ______
+tests\test_local_agent_runner_offline.py:220: in test_runner_captures_a_local_candidate_from_a_successful_adhoc_run
+    result = await runner_module.LocalAgentRunner(
+app\local_agent\runner.py:378: in run
+    query_embedding = await Embedder().embed_one(task_description, input_type="query")
+                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+app\services\embeddings.py:359: in embed_one
+    vectors = await self.embed([text], input_type=input_type)
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+app\services\embeddings.py:192: in embed
+    vectors = await self._embed_via_chain(missing_texts, input_type)
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+app\services\embeddings.py:233: in _embed_via_chain
+    raise EmbeddingError(
+E   app.services.embeddings.EmbeddingError: all embedding providers failed -- gemini: no Gemini API key configured | voyage: Voyage embedding failed: You have not yet added your payment method in the billing page and will have reduced rate limits of 3 RPM and 10K TPM. To unlock our standard rate limits, please add a payment method in the billing page for the appropriate organization in the user dashboard (https://dashboard.voyageai.com/). Even with payment methods entered, the free tokens (200M tokens for Voyage series 3) will still apply. After adding a payment method, you should see your rate limits increase after several minutes. See our pricing docs (https://docs.voyageai.com/docs/pricing) for the free tokens for your model.
+------------------------------ Captured log call ------------------------------
+WARNING  app.services.embeddings:embeddings.py:227 embedding provider gemini failed (no Gemini API key configured) -- falling through
+WARNING  app.services.embeddings:embeddings.py:227 embedding provider voyage failed (Voyage embedding failed: You have not yet added your payment method in the billing page and will have reduced rate limits of 3 RPM and 10K TPM. To unlock our standard rate limits, please add a payment) -- falling through
+_ test_runner_finds_a_local_procedure_via_semantic_similarity_not_lexical_overlap _
+tests\test_local_agent_runner_offline.py:289: in test_runner_finds_a_local_procedure_via_semantic_similarity_not_lexical_overlap
+    goal_vec = await embedder.embed_one(goal, input_type="document")
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+app\services\embeddings.py:359: in embed_one
+    vectors = await self.embed([text], input_type=input_type)
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+app\services\embeddings.py:192: in embed
+    vectors = await self._embed_via_chain(missing_texts, input_type)
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+app\services\embeddings.py:233: in _embed_via_chain
+    raise EmbeddingError(
+E   app.services.embeddings.EmbeddingError: all embedding providers failed -- gemini: no Gemini API key configured | voyage: Voyage embedding failed: You have not yet added your payment method in the billing page and will have reduced rate limits of 3 RPM and 10K TPM. To unlock our standard rate limits, please add a payment method in the billing page for the appropriate organization in the user dashboard (https://dashboard.voyageai.com/). Even with payment methods entered, the free tokens (200M tokens for Voyage series 3) will still apply. After adding a payment method, you should see your rate limits increase after several minutes. See our pricing docs (https://docs.voyageai.com/docs/pricing) for the free tokens for your model.
+------------------------------ Captured log call ------------------------------
+WARNING  app.services.embeddings:embeddings.py:227 embedding provider gemini failed (no Gemini API key configured) -- falling through
+WARNING  app.services.embeddings:embeddings.py:227 embedding provider voyage failed (Voyage embedding failed: You have not yet added your payment method in the billing page and will have reduced rate limits of 3 RPM and 10K TPM. To unlock our standard rate limits, please add a payment) -- falling through
+______ test_runner_does_not_capture_a_candidate_from_a_failed_adhoc_run _______
+tests\test_local_agent_runner_offline.py:341: in test_runner_does_not_capture_a_candidate_from_a_failed_adhoc_run
+    result = await runner_module.LocalAgentRunner(
+app\local_agent\runner.py:378: in run
+    query_embedding = await Embedder().embed_one(task_description, input_type="query")
+                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+app\services\embeddings.py:359: in embed_one
+    vectors = await self.embed([text], input_type=input_type)
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+app\services\embeddings.py:192: in embed
+    vectors = await self._embed_via_chain(missing_texts, input_type)
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+app\services\embeddings.py:233: in _embed_via_chain
+    raise EmbeddingError(
+E   app.services.embeddings.EmbeddingError: all embedding providers failed -- gemini: no Gemini API key configured | voyage: Voyage embedding failed: You have not yet added your payment method in the billing page and will have reduced rate limits of 3 RPM and 10K TPM. To unlock our standard rate limits, please add a payment method in the billing page for the appropriate organization in the user dashboard (https://dashboard.voyageai.com/). Even with payment methods entered, the free tokens (200M tokens for Voyage series 3) will still apply. After adding a payment method, you should see your rate limits increase after several minutes. See our pricing docs (https://docs.voyageai.com/docs/pricing) for the free tokens for your model.
+------------------------------ Captured log call ------------------------------
+WARNING  app.services.embeddings:embeddings.py:227 embedding provider gemini failed (no Gemini API key configured) -- falling through
+WARNING  app.services.embeddings:embeddings.py:227 embedding provider voyage failed (Voyage embedding failed: You have not yet added your payment method in the billing page and will have reduced rate limits of 3 RPM and 10K TPM. To unlock our standard rate limits, please add a payment) -- falling through
+============================== warnings summary ===============================
+tests/test_authn_offline.py::test_hs256_confusion_rejected_by_whitelist
+  C:\Users\user\sl-core-b\backend\.venv\Lib\site-packages\jwt\api_jwt.py:147: InsecureKeyLengthWarning: The HMAC key is 21 bytes long, which is below the minimum recommended length of 32 bytes for SHA256. See RFC 7518 Section 3.2.
+    return self._jws.encode(
+
+tests/test_authn_offline.py::test_sync_validator_refuses_async_provider
+  C:\Users\user\sl-final-remediation\backend\tests\test_authn_offline.py:314: RuntimeWarning: coroutine 'test_sync_validator_refuses_async_provider.<locals>.AsyncOnly.get_key' was never awaited
+    with pytest.raises(TokenRejected, match="coroutine"):
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_implementation_executor_offline.py::test_execute_dispatches_to_deterministic_provider_for_bound_deterministic_kind
+tests/test_implementation_providers_offline.py::test_deterministic_provider_execute_runs_a_real_sandboxed_script
+tests/test_implementation_providers_offline.py::test_deterministic_provider_execute_reports_real_failure
+  C:\Users\user\sl-final-remediation\backend\app\execution\providers.py:294: UserWarning: SubprocessSandboxExecutor: network_access=False is NOT enforced -- this executor cannot actually block network calls. If the generated code makes one, it will succeed. See module docstring.
+    result = await self._executor.run(
+
+tests/test_local_agent_runner_offline.py::test_runner_probes_its_own_repo_and_sends_invariant_bindings
+  C:\Users\user\sl-core-b\backend\.venv\Lib\site-packages\google\genai\types.py:42: DeprecationWarning: '_UnionGenericAlias' is deprecated and slated for removal in Python 3.17
+    VersionedUnionType = Union[builtin_types.UnionType, _UnionGenericAlias]
+
+tests/test_sandbox_executor.py: 8 warnings
+tests/test_sandbox_input_path_escape.py: 2 warnings
+  C:\Python314\Lib\asyncio\events.py:94: UserWarning: SubprocessSandboxExecutor: network_access=False is NOT enforced -- this executor cannot actually block network calls. If the generated code makes one, it will succeed. See module docstring.
+    self._context.run(self._callback, *self._args)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ===========================
+FAILED tests/test_local_agent_runner_offline.py::test_runner_captures_a_local_candidate_from_a_successful_adhoc_run
+FAILED tests/test_local_agent_runner_offline.py::test_runner_finds_a_local_procedure_via_semantic_similarity_not_lexical_overlap
+FAILED tests/test_local_agent_runner_offline.py::test_runner_does_not_capture_a_candidate_from_a_failed_adhoc_run
+3 failed, 2147 passed, 303 skipped, 16 warnings in 591.25s (0:09:51)

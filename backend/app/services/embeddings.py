@@ -475,7 +475,21 @@ class Embedder:
     ) -> list[list[float]]:
         import voyageai
 
-        client = voyageai.AsyncClient(api_key=settings.require("voyage_api_key"))
+        # ROOT CAUSE of the observed T1-v3/B_default provider crash: the SDK's
+        # own AsyncClient ships a real tenacity retry/backoff controller
+        # (exponential + jitter, retry_if_exception_type restricted to
+        # RateLimitError | ServiceUnavailableError | Timeout) but it is inert
+        # at the SDK's own max_retries=0 default -- a single 429 (observed:
+        # the reduced-tier "3 RPM / 10K TPM" billing throttle) then raises on
+        # its first and only attempt. Passing a bounded max_retries here is
+        # the entire fix: it turns on backoff the SDK already implements and
+        # already reviewed, for exactly the transient-only case the SDK's own
+        # retry predicate selects -- an auth/malformed-request failure still
+        # raises immediately, exactly as before.
+        client = voyageai.AsyncClient(
+            api_key=settings.require("voyage_api_key"),
+            max_retries=settings.voyage_max_retries,
+        )
         try:
             result = await client.embed(
                 list(texts), model=self.model, input_type=input_type

@@ -1,0 +1,40 @@
+{
+  "trial_id": "T3-A-62afbf18",
+  "task_id": "T3",
+  "arm": "A",
+  "frozen_commit": "bd768e62a887b13a94fdd118693a5c671df1cf95",
+  "scored": false,
+  "budget_exceeded": false,
+  "error": null,
+  "wall_clock_seconds_total": 24.136634099995717,
+  "task_success": null,
+  "graph_status": "failure",
+  "files_touched": [
+    "backend/app/services/procedure_extraction/capability.py",
+    "backend/app/services/product_model.py"
+  ],
+  "tool_calls": 25,
+  "recoveries": 0,
+  "wall_clock_seconds": 24.136530399904586,
+  "notes": "step 0 (backend/app/services/procedure_extraction/capability.py defines a function used by at least one other module in backend/app/services/. Find every real call site of that function across the whole backend/app/ tree, rename it to compute_wilson_lower_bound everywhere (definition and every call site), and confirm the existing test suite for that area still passes.): stop_reason=step_budget, tool_calls=25",
+  "stealth_retrieval_decision": null,
+  "input_tokens": 137977,
+  "output_tokens": 2534,
+  "total_tokens": 140511,
+  "model_calls": 25,
+  "cost_usd": null,
+  "cost_unavailable_reason": "no versioned GENERAL_COMPUTE/gpt-oss-120b pricing config exists in this repo (economics.py and openrouter_arms.py price OpenRouter only; PRICE_PER_MTOK's sole 'default' entry is an OpenRouter fallback for a different provider, not an authoritative GENERAL_COMPUTE price)",
+  "usage_raw": [
+    {
+      "instance_id": "local_agent_8a425fc28943_step0",
+      "prompt_tokens": 137977,
+      "completion_tokens": 2534,
+      "total_tokens": 140511,
+      "api_calls": 25
+    }
+  ],
+  "deterministic_correctness": null,
+  "verification_quality": null,
+  "verification_details": null,
+  "failure_category": "budget_exhaustion"
+}

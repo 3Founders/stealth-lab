@@ -1,0 +1,25 @@
+{
+  "trial_id": "SMOKE-B_default-5510e167",
+  "task_id": "SMOKE",
+  "arm": "B_default",
+  "frozen_commit": "bd768e62a887b13a94fdd118693a5c671df1cf95",
+  "scored": false,
+  "budget_exceeded": false,
+  "error": null,
+  "wall_clock_seconds_total": 48.57716510002501,
+  "task_success": null,
+  "graph_outcome": "failure",
+  "files_touched": [
+    "answer.txt"
+  ],
+  "model_calls": 1,
+  "wall_clock_seconds": 46.265468399971724,
+  "stealth_retrieval_decision": {
+    "matched": true,
+    "source": "global",
+    "procedure_id": "c534835e-3592-4788-a9f2-8f26d0e0cf2f"
+  },
+  "node_notes": [
+    "step 0 (explore repo): stop_reason=step_budget, tool_calls=8"
+  ]
+}

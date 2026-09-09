@@ -1,0 +1,50 @@
+{
+  "trial_id": "INSTRUMENTATION-VERIFY-B_default-cf6074cd",
+  "task_id": "SMOKE2",
+  "purpose": "Prove real provider usage fields (input_tokens/output_tokens/total_tokens/model_calls) appear end-to-end through the actual live pipeline, via a real Agent.run() call intercepted by orchestrator.py's new _UsageCapture patch. NOT part of the scored matrix -- no task in tasks.jsonl was executed.",
+  "arm": "B_default",
+  "frozen_commit": "bd768e62a887b13a94fdd118693a5c671df1cf95",
+  "scored": false,
+  "note_on_isolation": "Run via run_trial_arm_B() directly against this worktree's own checkout (not a fresh disposable git-worktree via run_one_trial's normal path) -- acceptable for a non-scored instrumentation-proof trial whose only purpose is confirming usage capture works, not measuring task outcome. The scored pilot/matrix must use run_one_trial's real per-trial isolated worktree as designed.",
+  "graph_outcome": "failure",
+  "task_success": null,
+  "files_touched": [],
+  "wall_clock_seconds": 24.173963999957778,
+  "stealth_retrieval_decision": {
+    "matched": true,
+    "source": "global",
+    "procedure_id": "c534835e-3592-4788-a9f2-8f26d0e0cf2f"
+  },
+  "node_notes": [
+    "step 0 (explore repo): stop_reason=step_budget, tool_calls=8"
+  ],
+  "input_tokens": 13148,
+  "output_tokens": 541,
+  "total_tokens": 13689,
+  "model_calls": 8,
+  "cost_usd": null,
+  "cost_unavailable_reason": "no versioned GENERAL_COMPUTE/gpt-oss-120b pricing config exists in this repo (economics.py and openrouter_arms.py price OpenRouter only; PRICE_PER_MTOK's sole 'default' entry is an OpenRouter fallback for a different provider, not an authoritative GENERAL_COMPUTE price)",
+  "usage_raw": [
+    {
+      "instance_id": "local_agent_cf6074cd4447_step0",
+      "prompt_tokens": 13148,
+      "completion_tokens": 541,
+      "total_tokens": 13689,
+      "api_calls": 8
+    }
+  ],
+  "attempts_before_success": [
+    {
+      "attempt": 1,
+      "result": "environment_failure",
+      "reason": "KeyError: 'GENERAL_COMPUTE_API_KEY' -- this process's own shell environment had STEALTHLAB_MCP_TOKEN exported but not the full .env; zero real API calls made, zero tokens spent.",
+      "model_calls_made": 0
+    },
+    {
+      "attempt": 2,
+      "result": "environment_failure",
+      "reason": "mcp.shared.exceptions.MCPError: Request 'tools/call' timed out inside orchestrate_unified_search's session.call_tool(search_procedures) -- failed before reaching Agent.run() / any model call. Zero real API calls made, zero tokens spent. Retried once with the full .env correctly sourced and succeeded (this record).",
+      "model_calls_made": 0
+    }
+  ]
+}

@@ -1,0 +1,20 @@
+[1/6] CALIBRATION max_steps=25 task=T1 arm=A starting...
+[1/6] done in 280.4s success=False steps_used~=None budget_exceeded=False error=None
+[2/6] CALIBRATION max_steps=25 task=T1 arm=B_default starting...
+embedding provider gemini failed (no Gemini API key configured) -- falling through
+[2/6] done in 185.4s success=False steps_used~=25 budget_exceeded=False error=None
+[3/6] CALIBRATION max_steps=25 task=T3 arm=A starting...
+[3/6] done in 33.2s success=False steps_used~=None budget_exceeded=False error=None
+[4/6] CALIBRATION max_steps=25 task=T3 arm=B_default starting...
+embedding provider gemini failed (no Gemini API key configured) -- falling through
+embedding provider gemini failed (no Gemini API key configured) -- falling through
+[4/6] done in 76.7s success=False steps_used~=25 budget_exceeded=False error=None
+[5/6] CALIBRATION max_steps=25 task=T7 arm=A starting...
+[5/6] done in 156.1s success=False steps_used~=None budget_exceeded=False error=None
+[6/6] CALIBRATION max_steps=25 task=T7 arm=B_default starting...
+embedding provider gemini failed (no Gemini API key configured) -- falling through
+embedding provider gemini failed (no Gemini API key configured) -- falling through
+Session termination failed: 
+[6/6] done in 888.7s success=False steps_used~=25 budget_exceeded=False error=None
+
+Wrote 6 calibration records to C:\Users\user\sl-final-readiness\.scratch\final_agent_experiment\calibration\calibration_max_steps_25.jsonl

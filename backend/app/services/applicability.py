@@ -389,7 +389,16 @@ async def check_hard_constraints(
 
 
 _CANDIDATE_BASE_WHERE = (
-    "t_invalid IS NULL AND staleness != 'stale' AND availability = 'active'"
+    "t_invalid IS NULL AND staleness != 'stale' AND availability = 'active' "
+    # db/39: ordinary user-facing retrieval never offers engineering/test/
+    # demo-created procedures as candidates -- fail-closed (new rows are
+    # excluded by default unless a real capture path explicitly marks
+    # itself real, db/40 backfills the known-real exceptions). Direct SQL
+    # (tests, admin tooling) is unaffected -- only this cascade's own
+    # candidate pool is filtered. See
+    # backend/tests/test_retrieval_fixture_isolation_e2e.py and
+    # .scratch/final_agent_experiment/corpus-eligibility-review.md.
+    "AND is_engineering_fixture = false"
 )
 # NOTE: excluding `is_engineering_fixture` rows was evaluated as a
 # precision lever and REJECTED -- on this corpus the flag marks 2475 of
@@ -772,6 +781,25 @@ async def find_applicable_procedures(
         rid = str(pid)
         if rid not in survivors_by_id:
             continue
+        # Final pre-score remediation pass, retrieval-abstention gate:
+        # a candidate WITH a real measured embedding similarity below
+        # _MIN_RELEVANCE_SIMILARITY is excluded here, at the final
+        # result-list stage -- not earlier, so it still legitimately
+        # participates in the RRF fusion/ranking math above (Rule 6's
+        # own "rank survivors, don't re-filter" contract stays intact),
+        # it simply never SURFACES as a result once ranked. A candidate
+        # with NO stored embedding at all (capability-only ranking, the
+        # existing "honest degradation" path a few lines up) is NOT
+        # touched by this floor -- there is no real similarity value to
+        # judge it against, and fabricating one would be worse than the
+        # gap this fixes. Calibrated empirically (26-query real set: 12
+        # relevant/paraphrased across the 3 admitted procedures, 10
+        # diverse irrelevant, 4 borderline) -- see
+        # .scratch/final_agent_experiment/retrieval-calibration.md for
+        # the full measured score distribution this threshold was
+        # chosen from. Frozen before any scored trial exists.
+        if rid in ranked_ids and ranked_ids[rid] < _MIN_RELEVANCE_SIMILARITY:
+            continue
         proc = dict(survivors_by_id[rid])
         if rid in ranked_ids:
             proc["_similarity_score"] = ranked_ids[rid]
@@ -779,6 +807,18 @@ async def find_applicable_procedures(
         if len(result_list) >= limit:
             break
     return result_list
+
+
+# Calibrated 2026-09-04 (final pre-score remediation pass) against a real
+# 26-query set over the live corpus's 3 genuinely admitted (non-fixture)
+# procedures: 10 real relevant-query top similarities measured in
+# [0.575, 0.739]; the corresponding irrelevant-query top similarities
+# measured in [0.306, 0.335] -- a clean, non-overlapping real gap. Set at
+# the midpoint (~0.455, rounded to 0.45) for margin on both sides rather
+# than hugging either boundary. See retrieval-calibration.md for the full
+# calibration set, every individual measured score, and the decision rule
+# this value was frozen from BEFORE any scored trial exists.
+_MIN_RELEVANCE_SIMILARITY = 0.45
 
 
 # ===========================================================================
