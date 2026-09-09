@@ -26,6 +26,7 @@ from app.services.retrieval_document import (
     retrieval_document_sha256,
 )
 from app.services.skill_ingestion import (
+    SkillMdParseError,
     _parsed_skill_procedure_shape,
     _structured_fields_from_parsed,
     parse_skill_md,
@@ -273,3 +274,102 @@ def test_when_not_to_use_spelling_variants(spelling):
     p = parse_skill_md(md)
     assert p.when_not_to_use == "the dataset is tiny"
     assert p.steps == ["do it"]
+
+
+# ============= Option C: ### N. subheadings + no-fabrication ============
+
+
+@pytest.mark.parametrize("marker", ["###", "####"])
+@pytest.mark.parametrize("sep", [".", ")"])
+def test_numbered_subheadings_are_ordered_steps(marker, sep):
+    md = (
+        "---\nname: setup-git-guardrails\n"
+        "description: Block dangerous git commands with hooks.\n---\n\n"
+        "## What gets blocked\npush, reset --hard, clean\n\n"
+        "## Steps\n"
+        f"{marker} 1{sep} Ask scope\nAsk which repo and which commands.\n"
+        f"{marker} 2{sep} Inspect code\nRead the current hook config.\n"
+        f"{marker} 3{sep} Add hook to settings\nWrite the pre-commit entry.\n"
+    )
+    p = parse_skill_md(md)
+    assert p.steps == ["Ask scope", "Inspect code", "Add hook to settings"]
+    # the subheadings are steps, not section boundaries -> no stray sections
+    assert p.when_not_to_use is None
+
+
+def test_numbered_subheadings_win_over_a_nested_numbered_list():
+    md = (
+        "---\nname: s\ndescription: d\n---\n\n## Process\n"
+        "### 1. Pin the point\n1. run git log\n2. copy the sha\n"
+        "### 2. Diff it\n1. git diff\n"
+    )
+    p = parse_skill_md(md)
+    assert p.steps == ["Pin the point", "Diff it"]
+
+
+def test_document_with_no_ordered_actions_is_rejected():
+    md = (
+        "---\nname: grilling\n"
+        "description: Grill the user relentlessly about a plan or idea.\n---\n\n"
+        "A relentless interview. It probes assumptions and forces specificity.\n"
+        "There is no fixed sequence -- follow the weakest answer.\n"
+    )
+    with pytest.raises(SkillMdParseError, match="no ordered actions"):
+        parse_skill_md(md)
+
+
+def test_reference_doc_with_only_prose_bullets_under_headings_is_rejected():
+    md = (
+        "---\nname: tdd-anti\ndescription: notes on test smells.\n---\n\n"
+        "## What a good test is\nindependent, behavioural, deterministic.\n"
+    )
+    with pytest.raises(SkillMdParseError, match="no ordered actions"):
+        parse_skill_md(md)
+
+
+@pytest.mark.parametrize("body", [
+    "1. clone the repo\n2. install deps\n3. run it\n",             # bare numbered list
+    "## Steps\n- clone the repo\n- install deps\n- run it\n",       # bulleted steps section
+    "## Step 1: clone\ntext\n## Step 2: install\ntext\n",           # "## Step N:" headings
+])
+def test_imperfect_but_genuinely_procedural_documents_survive(body):
+    p = parse_skill_md(f"---\nname: q\ndescription: get running.\n---\n\n{body}")
+    assert len(p.steps) >= 2
+
+
+def test_real_repo_skills_reject_only_the_non_procedural_ones():
+    """Anchors the corpus-level effect: git-guardrails-style docs with
+    ### N. steps now parse; pure router/heuristic docs are rejected."""
+    import glob
+    import os
+
+    parsed, rejected = [], []
+    for f in sorted(glob.glob(str(
+        Path(__file__).resolve().parents[2] / ".agents" / "skills" / "*" / "SKILL.md"
+    ))):
+        name = os.path.basename(os.path.dirname(f))
+        try:
+            p = parse_skill_md(open(f, encoding="utf-8").read(), fallback_name=name)
+            parsed.append((name, p))
+        except SkillMdParseError:
+            rejected.append(name)
+
+    if not parsed and not rejected:
+        pytest.skip("no repo SKILL.md fixtures available")
+
+    # ### N. docs now parse with real steps, not a fabricated single step
+    for name in ("git-guardrails-claude-code", "setup-pre-commit"):
+        hit = [p for n, p in parsed if n == name]
+        if hit:
+            steps = hit[0].steps
+            assert len(steps) >= 2
+            assert steps[0] != (hit[0].description or "")
+
+    # nothing that parsed is a fabricated 1-step == description procedure
+    for name, p in parsed:
+        assert not (len(p.steps) == 1 and p.steps[0].strip() == (p.description or "").strip()), name
+
+    # pure router / heuristic docs are rejected
+    for name in ("grilling", "wait-what"):
+        if os.path.isdir(Path(__file__).resolve().parents[2] / ".agents" / "skills" / name):
+            assert name in rejected, f"{name} should be rejected as non-procedural"

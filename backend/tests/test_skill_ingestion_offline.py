@@ -81,10 +81,13 @@ def test_missing_frontmatter_falls_back_to_heading_and_bullets():
     assert "passes sometimes and fails" in parsed.applies_when.lower()
 
 
-def test_no_steps_lands_one_honest_step_from_description():
-    parsed = parse_skill_md(NO_STEPS_SKILL_MD)
-    assert len(parsed.steps) == 1
-    assert parsed.steps[0] == parsed.description
+def test_no_ordered_actions_is_rejected_not_fabricated_into_a_procedure():
+    # A capability description with no numbered list, no "## Step N:" /
+    # "### 1." step sub-headings and no bulleted procedure section is a
+    # reference, not a procedure. The parser rejects it rather than
+    # emitting a one-item "procedure" whose only step is the description.
+    with pytest.raises(SkillMdParseError, match="no ordered actions"):
+        parse_skill_md(NO_STEPS_SKILL_MD)
 
 
 def test_empty_document_refuses_rather_than_fabricating():

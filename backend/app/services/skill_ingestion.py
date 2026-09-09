@@ -115,6 +115,11 @@ _FRONTMATTER_RE = re.compile(r"^---\s*\n(.*?)\n---\s*\n(.*)$", re.DOTALL)
 _NUMBERED_STEP_RE = re.compile(r"^\s*\d+[.)]\s+(.+)$")
 _BULLET_STEP_RE = re.compile(r"^\s*[-*]\s+(.+)$")
 _STEP_HEADING_RE = re.compile(r"^\s*#{2,4}\s+Step\s+\d+\s*[:.)-]\s*(.+)$", re.IGNORECASE)
+# A numbered ATX sub-heading used as a step, e.g. "### 1. Ask scope" or
+# "#### 2) Inspect code". A very common real SKILL.md pattern for the body
+# of a "## Steps" / "## Process" section. Recognised as an ordered step,
+# and NOT treated as a section boundary by _split_sections.
+_NUMBERED_SUBHEADING_RE = re.compile(r"^\s{0,3}#{2,6}\s+\d+[.)]\s+(.+?)\s*#*\s*$")
 _APPLIES_WHEN_RE = re.compile(
     r"^\s*(?:applies when|use when|when to use)\s*:?\s*(.+)$", re.IGNORECASE,
 )
@@ -188,7 +193,11 @@ def _split_sections(body: str) -> list[tuple[Optional[str], Optional[str], list[
     out: list[tuple[Optional[str], Optional[str], list[str]]] = [(None, None, [])]
     for line in body.splitlines():
         m = _HEADING_RE.match(line)
-        if m and not _STEP_HEADING_RE.match(line):
+        if (
+            m
+            and not _STEP_HEADING_RE.match(line)
+            and not _NUMBERED_SUBHEADING_RE.match(line)
+        ):
             title = m.group(2).strip()
             out.append((_classify_heading(title), title, []))
         else:
@@ -242,6 +251,25 @@ def _section_items(lines: list[str], *, max_items: int = 20) -> list[str]:
         return items
     prose = _section_prose(lines)
     return [p.strip() for p in re.split(r"(?<=[.!?])\s+", prose) if p.strip()][:max_items]
+
+
+def _ordered_steps(lines: list[str]) -> list[str]:
+    """Explicit ORDERED steps from a block of lines, in source order:
+      - "## Step N: ..." headings          (_STEP_HEADING_RE)
+      - "### 1. ..." / "#### 2) ..." numbered sub-headings  (_NUMBERED_SUBHEADING_RE)
+      - a "1." / "2)" numbered list         (_NUMBERED_STEP_RE)
+    The heading and sub-heading forms win over a bare numbered list when
+    both appear (a numbered list nested inside step sub-headings is detail,
+    not the step sequence). Returns [] when there is no ordered structure.
+    """
+    heading = [m.group(1).strip() for line in lines if (m := _STEP_HEADING_RE.match(line))]
+    subhead = [m.group(1).strip() for line in lines if (m := _NUMBERED_SUBHEADING_RE.match(line))]
+    numbered = [m.group(1).strip() for line in lines if (m := _NUMBERED_STEP_RE.match(line))]
+    return heading or subhead or numbered
+
+
+def _bullet_steps(lines: list[str]) -> list[str]:
+    return [m.group(1).strip() for line in lines if (m := _BULLET_STEP_RE.match(line))]
 
 
 def parse_skill_md(content: str, *, fallback_name: str = "unnamed-skill") -> ParsedSkill:
@@ -302,21 +330,10 @@ def parse_skill_md(content: str, *, fallback_name: str = "unnamed-skill") -> Par
     description_lines: list[str] = []
 
     if step_section_lines is not None:
-        heading_steps = [
-            m.group(1).strip() for line in step_section_lines
-            if (m := _STEP_HEADING_RE.match(line))
-        ]
-        numbered_steps = [
-            m.group(1).strip() for line in step_section_lines
-            if (m := _NUMBERED_STEP_RE.match(line))
-        ]
-        has_structured_steps = bool(heading_steps or numbered_steps)
-        steps: list[str] = list(heading_steps or numbered_steps)
-        if not has_structured_steps:
-            steps = [
-                m.group(1).strip() for line in step_section_lines
-                if (m := _BULLET_STEP_RE.match(line))
-            ]
+        steps: list[str] = _ordered_steps(step_section_lines)
+        if not steps:
+            # a Steps/Workflow section that is a bulleted list, not numbered
+            steps = _bullet_steps(step_section_lines)
         for line in preamble:
             stripped = line.strip()
             if not stripped or stripped.startswith("#"):
@@ -339,16 +356,8 @@ def parse_skill_md(content: str, *, fallback_name: str = "unnamed-skill") -> Par
         for classification, _title, sec_lines in sections[1:]:
             if classification is None:
                 scoop_lines.extend(sec_lines)
-        heading_steps = [
-            m.group(1).strip() for line in scoop_lines
-            if (m := _STEP_HEADING_RE.match(line))
-        ]
-        numbered_steps = [
-            m.group(1).strip() for line in scoop_lines
-            if (m := _NUMBERED_STEP_RE.match(line))
-        ]
-        has_structured_steps = bool(heading_steps or numbered_steps)
-        steps = list(heading_steps or numbered_steps)
+        steps = _ordered_steps(scoop_lines)
+        has_structured_steps = bool(steps)
         for line in scoop_lines:
             stripped = line.strip()
             if not stripped or stripped.startswith("#"):
@@ -394,11 +403,18 @@ def parse_skill_md(content: str, *, fallback_name: str = "unnamed-skill") -> Par
             "prose, no numbered/bulleted steps"
         )
     if not steps:
-        # A skill can legitimately be a single-paragraph capability with
-        # no numbered procedure (many real SKILL.md files are exactly
-        # this) -- one honest step carrying the description forward
-        # rather than a fabricated breakdown.
-        steps = [description]
+        # No ordered/list-based procedural actions anywhere: no numbered
+        # list, no "## Step N:" / "### 1." step sub-headings, no bulleted
+        # Steps/Workflow section. This document is a reference, a router,
+        # or a heuristic -- not a procedure. Reject it rather than
+        # fabricating a one-item "procedure" out of its own description
+        # (which was noise as a step and mislabelled non-procedural
+        # material as executable). The caller turns this into
+        # status="rejected"; nothing is written.
+        raise SkillMdParseError(
+            "no ordered actions -- document has no numbered steps, step "
+            "sub-headings, or a bulleted procedure section"
+        )
 
     return ParsedSkill(
         name=name, description=description or steps[0], steps=steps,
