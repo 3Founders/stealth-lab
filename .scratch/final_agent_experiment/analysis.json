@@ -1,0 +1,43 @@
+{
+  "pilot": "T1,T3,T7 x 2 trials x {A,B_default} = 12 scored trials",
+  "frozen_commit": "bd768e62a887b13a94fdd118693a5c671df1cf95",
+  "model": "gpt-oss-120b via GENERAL_COMPUTE",
+  "headline_finding": "0 of 12 scored trials reached task_success=True in EITHER arm. The frozen protocol's max_steps=8 budget was insufficient for any of T1/T3/T7 to reach a written, graded answer -- every non-crashed trial exhausted its 8 tool calls in exploration (stop_reason=step_budget, files_touched=[]) before ever writing answer.md. This is a real, honest pilot result: it validates the mechanism runs end-to-end for real money on real infrastructure, but the chosen budget cannot be evaluated for success-rate or success-normalized-efficiency from this data -- both arms are tied at 0%, which is not evidence of parity, it is an unmeasured comparison due to an underpowered budget.",
+  "pre_fix_environmental_failures": {
+    "count": 5,
+    "reason": "run_pilot.py's first invocation loaded .env only into the MCP-server subprocess, not this orchestrator process's own os.environ; GENERAL_COMPUTE_API_KEY was missing for in-process calls (arm A always, arm B's in-process retrieval). Zero tokens spent on any of the 5. Fixed before any scored trial ran (see trials.jsonl's environmental_failure=true rows and orchestrator run_pilot.py's own bugfix comment).",
+    "excluded_from_all_tables_below": true
+  },
+  "raw_aggregates_by_task_arm": {
+    "T1": {
+      "A": {"n": 2, "success_rate": 0.0, "mean_tokens": 15221.5, "mean_input_tokens": null, "mean_output_tokens": null, "mean_model_calls": 7.0, "mean_wall_clock_s": 42.1, "mean_tool_calls": 8, "retries": 0, "files_touched_any": false, "errors": 0},
+      "B_default": {"n": 2, "success_rate": 0.0, "mean_tokens": 12599.0, "mean_model_calls": 6.5, "mean_wall_clock_s": 63.05, "mean_tool_calls": 8, "retries": 0, "files_touched_any": false, "errors": 0, "stealth_matched_both_trials": true, "matched_procedure": "proc-test-planonly-root-2b7fb0f9 (e2e test fixture, name/goal are the literal fixture string -- NOT relevant to T1's real task)"}
+    },
+    "T3": {
+      "A": {"n": 2, "success_rate": 0.0, "mean_tokens": 17717.0, "mean_model_calls": 8.0, "mean_wall_clock_s": 8.6, "mean_tool_calls": 8, "retries": 0, "files_touched_any": false, "errors": 0},
+      "B_default": {"n": 2, "success_rate": 0.0, "mean_tokens": 8624.0, "mean_model_calls": 5.5, "mean_wall_clock_s": 119.25, "mean_tool_calls": null, "retries": 0, "files_touched_any": false, "errors": 0, "stealth_matched_both_trials": true, "matched_procedure": "proc-test-planonly-root-5149abb1 (e2e test fixture, same pattern as T1's match -- NOT relevant to T3's real task)"}
+    },
+    "T7": {
+      "A": {"n": 2, "success_rate": 0.0, "mean_tokens": 23477.5, "mean_model_calls": 8.0, "mean_wall_clock_s": 11.35, "mean_tool_calls": 8, "retries": 0, "files_touched_any": false, "errors": 0},
+      "B_default": {"n": 2, "success_rate": 0.0, "mean_tokens": null, "mean_model_calls": null, "mean_wall_clock_s": 60.0, "errors": 2, "error_type": "ExceptionGroup: unhandled errors in a TaskGroup (2 sub-exceptions), identical both trials", "stealth_matched": null, "note": "both B_default trials crashed with no usage/retrieval data captured -- see reliability_finding below"}
+    }
+  },
+  "success_normalized_efficiency": {
+    "status": "NOT COMPUTABLE",
+    "reason": "Per the frozen protocol's own dominance rule (success before efficiency), success-normalized comparison requires at least one successful trial per cell to normalize against. 0 of 12 scored trials succeeded in either arm on any task. Reporting a raw-token or raw-latency 'winner' here would violate the protocol's explicit instruction that a lower-token run which is incorrect is NOT a win -- so none is reported."
+  },
+  "reliability_finding": {
+    "description": "T7 (the composition task) is the only cell showing an asymmetry between arms: arm A completed both trials to a graceful step-budget exhaustion (no crash, real token usage captured, real partial exploration happened) both times; arm B_default hard-crashed with an identical ExceptionGroup both times, before any usage or Stealth-decision data could even be captured. This pattern is 100% reproducible across both trials of that one cell (n=2) and does not appear in any of the other 8 non-crashed trials (T1 and T3's B_default trials both ran to completion without error).",
+    "root_cause": "DIAGNOSED (found in experiments/swebench_pro/'s own auto-generated failed-request dumps, relocated to raw/provider_400_errors/ -- 6 files, all a real BadRequestError('Provider request failed with status 400') from GENERAL_COMPUTE, occurring at various steps (3, 3, 3, 4, 7, 7) across MULTIPLE trials during this run, not only the two that crashed. This is a real, intermittent GENERAL_COMPUTE provider reliability issue. In most trials it appears to have been absorbed/retried internally (those trials still completed with real token usage); the working hypothesis is that T7 (the largest-scope task) makes more than one such call inside the same asyncio TaskGroup, and when 2 of them 400 close together, both surface as sub-exceptions in one unhandled ExceptionGroup instead of being individually retried.",
+    "classification": "REAL, DIAGNOSED FINDING (upgraded from insufficient_evidence after inspecting the auto-generated request dumps): a genuine GENERAL_COMPUTE provider-reliability issue that the current execution path does not defend against when multiple failures land inside one TaskGroup. This is arguably a genuine product/harness robustness gap (no per-call retry/backoff around transient 400s in this execution path) rather than a Stealth-specific defect, but it disproportionately affects the Stealth-enabled arm on the largest task because that arm appears to issue more concurrent calls.",
+    "evidence_files": "raw/provider_400_errors/failed_request_local_agent_*.json (6 files, secrets-scanned clean, real system prompts + real error bodies)"
+  },
+  "stealth_retrieval_quality_finding": {
+    "description": "In the 4 B_default trials that ran to completion (T1 x2, T3 x2), Stealth's real retrieval matched a procedure in all 4 -- but independently queried against the live DB, both matched procedures turn out to be synthetic e2e-test fixtures ('proc-test-planonly-root-*', whose name AND goal fields are literally the same auto-generated fixture string), not real, task-relevant knowledge. T1's match is identical to the one this session's earlier smoke test also matched, for a completely unrelated trivial task -- suggesting this fixture may be an easy/generic lexical match that surfaces regardless of real task content.",
+    "implication": "This is a corpus-contamination finding, not a retrieval-mechanism bug: the mechanism correctly executed a real search and returned a real top hit, but the CORPUS it searched is ~99% engineering-fixture noise (confirmed by this session's own earlier Finding D characterization), so for a genuinely novel task with no real matching knowledge yet admitted, retrieval surfaces irrelevant noise rather than correctly returning 'no match'. Whether the agent actually acted on this irrelevant match (wasted a step investigating it) vs. ignored it could not be determined from the captured node_notes this pass -- worth a closer look before the full matrix."
+  },
+  "budget_finding": {
+    "description": "In every non-crashed trial across all 3 tasks and both arms, model_calls landed at exactly 5-8 and tool_calls at exactly 8 (the hard max_steps ceiling) with stop_reason=step_budget and files_touched=[] -- the agent was still exploring, never reached the point of writing an answer file, in 10 of 10 non-crashed trials.",
+    "implication": "max_steps=8 is very likely too tight for T1/T3/T7 as designed, independent of Stealth. This is a task/budget calibration finding, not a Stealth finding -- both arms hit it equally. Per the frozen protocol's own 'no mid-experiment changes' rule, this was NOT adjusted mid-pilot; it is reported as the top recommendation for revising the protocol before a full-matrix run."
+  }
+}

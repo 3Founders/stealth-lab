@@ -1,0 +1,20 @@
+=== T1/A starting ===
+=== T1/A done in 205.3s: ['step 0 (In this repository at commit bd768e62a887b13a94fdd118693a5c671df1cf95, examine backend/app/mcp_server/server.py and answer: (a) how many functions are decorated with @server.tool(), listing their exact names, and (b) which single function is the SHARED resolver that get_procedure, check_procedure, check_applicability, report_execution, and decide_procedure all use to accept either a procedures.procedure_id family handle or a procedures.id row key. Write the answer to answer.md as a short numbered list with exact function names and line numbers.): stop_reason=step_budget, tool_calls=40'] ===
+=== T1/B_default starting ===
+embedding provider gemini failed (no Gemini API key configured) -- falling through
+embedding provider gemini failed (no Gemini API key configured) -- falling through
+=== T1/B_default done in 145.9s: ['step 0 (In this repository at commit bd768e62a887b13a94fdd118693a5c671df1cf95, examine backend/app/mcp_server/server.py and answer: (a) how many functions are decorated with @server.tool(), listing their exact names, and (b) which single function is the SHARED resolver that get_procedure, check_procedure, check_applicability, report_execution, and decide_procedure all use to accept either a procedures.procedure_id family handle or a procedures.id row key. Write the answer to answer.md as a short numbered list with exact function names and line numbers.): stop_reason=step_budget, tool_calls=40'] ===
+=== T3/A starting ===
+=== T3/A done in 114.5s: ['step 0 (backend/app/services/procedure_extraction/capability.py defines a function used by at least one other module in backend/app/services/. Find every real call site of that function across the whole backend/app/ tree, rename it to compute_wilson_lower_bound everywhere (definition and every call site), and confirm the existing test suite for that area still passes.): stop_reason=step_budget, tool_calls=40'] ===
+=== T3/B_default starting ===
+embedding provider gemini failed (no Gemini API key configured) -- falling through
+embedding provider gemini failed (no Gemini API key configured) -- falling through
+=== T3/B_default done in 113.2s: ['step 0 (backend/app/services/procedure_extraction/capability.py defines a function used by at least one other module in backend/app/services/. Find every real call site of that function across the whole backend/app/ tree, rename it to compute_wilson_lower_bound everywhere (definition and every call site), and confirm the existing test suite for that area still passes.): stop_reason=step_budget, tool_calls=40'] ===
+=== T7-v2/A starting ===
+=== T7-v2/A done in 42.4s: ['step 0 (Across every top-level .py file directly under backend/app/services/ (NOT subdirectories), find the single function or method (including methods defined inside a class) with the largest number of physical lines in its body, counted from its `def` line through its last body line inclusive. Report in answer.md: the function/method name, its containing file (relative path), and its exact line count. Use as few full-file reads as you reasonably can; prefer targeted search/outline tools over reading every file in full.): stop_reason=no_tool_call, tool_calls=25'] ===
+=== T7-v2/B_default starting ===
+embedding provider gemini failed (no Gemini API key configured) -- falling through
+embedding provider gemini failed (no Gemini API key configured) -- falling through
+Session termination failed: 
+=== T7-v2/B_default done in 695.6s: ['step 0 (Across every top-level .py file directly under backend/app/services/ (NOT subdirectories), find the single function or method (including methods defined inside a class) with the largest number of physical lines in its body, counted from its `def` line through its last body line inclusive. Report in answer.md: the function/method name, its containing file (relative path), and its exact line count. Use as few full-file reads as you reasonably can; prefer targeted search/outline tools over reading every file in full.): stop_reason=no_tool_call, tool_calls=26'] ===
+all cells complete

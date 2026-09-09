@@ -1,0 +1,44 @@
+{
+  "trial_id": "T1-B_default-3527b32a",
+  "task_id": "T1",
+  "arm": "B_default",
+  "frozen_commit": "bd768e62a887b13a94fdd118693a5c671df1cf95",
+  "scored": true,
+  "budget_exceeded": false,
+  "error": null,
+  "wall_clock_seconds_total": 54.24567009997554,
+  "task_success": false,
+  "graph_outcome": "failure",
+  "files_touched": [],
+  "wall_clock_seconds": 54.245536700007506,
+  "stealth_retrieval_decision": {
+    "matched": true,
+    "source": "global",
+    "procedure_id": "c534835e-3592-4788-a9f2-8f26d0e0cf2f"
+  },
+  "node_notes": [
+    "step 0 (explore repo): stop_reason=step_budget, tool_calls=8"
+  ],
+  "input_tokens": 13887,
+  "output_tokens": 558,
+  "total_tokens": 14445,
+  "model_calls": 7,
+  "cost_usd": null,
+  "cost_unavailable_reason": "no versioned GENERAL_COMPUTE/gpt-oss-120b pricing config exists in this repo (economics.py and openrouter_arms.py price OpenRouter only; PRICE_PER_MTOK's sole 'default' entry is an OpenRouter fallback for a different provider, not an authoritative GENERAL_COMPUTE price)",
+  "usage_raw": [
+    {
+      "instance_id": "local_agent_039f6c8e6f2c_step0",
+      "prompt_tokens": 13887,
+      "completion_tokens": 558,
+      "total_tokens": 14445,
+      "api_calls": 7
+    }
+  ],
+  "deterministic_correctness": 0.0,
+  "verification_quality": {
+    "answer_file_found": false
+  },
+  "verification_details": {
+    "reason": "no answer.md/answer.txt found in worktree"
+  }
+}

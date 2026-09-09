@@ -183,6 +183,17 @@ class Settings(BaseSettings):
     # headroom under the free tier's 30K tokens/min ceiling. 0 disables.
     embed_tpm_budget: int = 25000
     gemini_usage_log: bool = True
+    # Voyage's own AsyncClient ships a real tenacity-based retry/backoff
+    # controller (exponential + jitter, capped at 16s/attempt) restricted to
+    # RateLimitError | ServiceUnavailableError | Timeout -- exactly the
+    # transient-only discipline this codebase already applies by hand in
+    # embed_batched. It sits UNUSED at max_retries=0 (the SDK's own default)
+    # unless a caller passes a higher value: a single 429 (e.g. the
+    # reduced-tier "3 RPM" billing throttle) then fails on the first and only
+    # attempt, with no retry at all. This is that value -- bounded, and never
+    # applied to a non-transient failure (bad key, malformed request) because
+    # the SDK's own retry predicate already excludes those.
+    voyage_max_retries: int = 5
 
     # Debate parameters (Section 7).
     max_debate_rounds: int = 5

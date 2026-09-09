@@ -1,0 +1,16 @@
+{
+  "trial_id": "T1-B_default-de2295d3",
+  "task_id": "T1",
+  "arm": "B_default",
+  "frozen_commit": "bd768e62a887b13a94fdd118693a5c671df1cf95",
+  "scored": true,
+  "budget_exceeded": false,
+  "error": "ExceptionGroup: unhandled errors in a TaskGroup (1 sub-exception)",
+  "wall_clock_seconds_total": 2.039639199967496,
+  "task_success": false,
+  "deterministic_correctness": 0.0,
+  "verification_quality": {
+    "reason": "budget_exceeded or error, not evaluated"
+  },
+  "verification_details": null
+}

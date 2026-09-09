@@ -1,0 +1,6 @@
+[Q1_structural_summary_unverified] require_verified=False -> 3 candidates in 7.62s
+[Q2_worktree_isolation_unverified] require_verified=False -> 3 candidates in 1.59s
+[Q3_deferred_tools_unverified] require_verified=False -> 3 candidates in 1.85s
+[Q1b_structural_summary_default_strict] require_verified=True -> 0 candidates in 0.85s
+[Q4_negative_control] require_verified=False -> 3 candidates in 1.46s
+wrote C:\Users\user\sl-final-readiness\.scratch\final_agent_experiment\retrieval_verification_results.jsonl

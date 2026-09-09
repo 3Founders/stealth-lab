@@ -1,0 +1,139 @@
+{
+  "trial_id": "T7-A-2da91050",
+  "task_id": "T7",
+  "arm": "A",
+  "frozen_commit": "bd768e62a887b13a94fdd118693a5c671df1cf95",
+  "scored": true,
+  "budget_exceeded": false,
+  "error": null,
+  "wall_clock_seconds_total": 9.77432119997684,
+  "task_success": false,
+  "graph_status": "failure",
+  "files_touched": [],
+  "tool_calls": 8,
+  "wall_clock_seconds": 9.774137699976563,
+  "notes": "step 0 (Across every file under backend/app/services/ (not just one file), find every function definition whose name starts with an underscore (a private/internal helper) that is called from at least 2 DIFFERENT files outside the one it's defined in. Produce a table in answer.md: function name, defining file, and the list of external calling files. Use as few full-file reads as you reasonably can; prefer targeted search.): stop_reason=step_budget, tool_calls=8",
+  "stealth_retrieval_decision": null,
+  "input_tokens": 23715,
+  "output_tokens": 1834,
+  "total_tokens": 25549,
+  "model_calls": 8,
+  "cost_usd": null,
+  "cost_unavailable_reason": "no versioned GENERAL_COMPUTE/gpt-oss-120b pricing config exists in this repo (economics.py and openrouter_arms.py price OpenRouter only; PRICE_PER_MTOK's sole 'default' entry is an OpenRouter fallback for a different provider, not an authoritative GENERAL_COMPUTE price)",
+  "usage_raw": [
+    {
+      "instance_id": "local_agent_9b5bd0c2523d_step0",
+      "prompt_tokens": 23715,
+      "completion_tokens": 1834,
+      "total_tokens": 25549,
+      "api_calls": 8
+    }
+  ],
+  "deterministic_correctness": 0.0,
+  "verification_quality": {
+    "recall": 0.0,
+    "precision": 0.0,
+    "true_count": 11,
+    "matched_count": 0,
+    "answer_private_identifiers_listed": 0
+  },
+  "verification_details": {
+    "ground_truth": {
+      "_vector_search": {
+        "defining_file": "backend\\app\\services\\agent_search.py",
+        "external_calling_files": [
+          "backend\\app\\services\\domain_search.py",
+          "backend\\app\\services\\retrieval.py"
+        ]
+      },
+      "_lexical_search": {
+        "defining_file": "backend\\app\\services\\agent_search.py",
+        "external_calling_files": [
+          "backend\\app\\services\\domain_search.py",
+          "backend\\app\\services\\retrieval.py"
+        ]
+      },
+      "_claim_matches_precondition": {
+        "defining_file": "backend\\app\\services\\applicability.py",
+        "external_calling_files": [
+          "backend\\app\\local_agent\\local_applicability.py",
+          "backend\\app\\services\\procedure_extraction\\derive.py"
+        ]
+      },
+      "_scope_matches": {
+        "defining_file": "backend\\app\\services\\applicability.py",
+        "external_calling_files": [
+          "backend\\app\\local_agent\\local_applicability.py",
+          "backend\\app\\services\\procedure_extraction\\__init__.py",
+          "backend\\app\\services\\procedure_extraction\\derive.py",
+          "backend\\app\\services\\procedure_extraction\\registry.py"
+        ]
+      },
+      "_excluded": {
+        "defining_file": "backend\\app\\services\\applicability.py",
+        "external_calling_files": [
+          "backend\\app\\local_agent\\local_applicability.py",
+          "backend\\app\\services\\procedure_extraction\\failure_handlers.py"
+        ]
+      },
+      "_now_iso": {
+        "defining_file": "backend\\app\\services\\ingestion_scheduler.py",
+        "external_calling_files": [
+          "backend\\app\\local_agent\\local_claims.py",
+          "backend\\app\\local_agent\\local_store.py",
+          "backend\\app\\mcp_server\\tasks_extension.py"
+        ]
+      },
+      "_render_graph_context": {
+        "defining_file": "backend\\app\\services\\loop.py",
+        "external_calling_files": [
+          "backend\\app\\services\\human_participation.py",
+          "backend\\app\\services\\knowledge_conflict.py"
+        ]
+      },
+      "_capability_estimate": {
+        "defining_file": "backend\\app\\services\\procedure_graph_api.py",
+        "external_calling_files": [
+          "backend\\app\\api\\implementations.py",
+          "backend\\app\\services\\capabilities.py"
+        ]
+      },
+      "_lexical_overlap": {
+        "defining_file": "backend\\app\\services\\reuse_detection.py",
+        "external_calling_files": [
+          "backend\\app\\services\\decomposition.py",
+          "backend\\app\\services\\dedup.py",
+          "backend\\app\\services\\hierarchy.py",
+          "backend\\app\\services\\method_library.py"
+        ]
+      },
+      "_vector_candidates": {
+        "defining_file": "backend\\app\\services\\reuse_detection.py",
+        "external_calling_files": [
+          "backend\\app\\mcp_server\\server.py",
+          "backend\\app\\services\\applicability.py"
+        ]
+      },
+      "_write_task_nodes": {
+        "defining_file": "backend\\app\\services\\skill_ingestion.py",
+        "external_calling_files": [
+          "backend\\app\\services\\claims.py",
+          "backend\\app\\services\\task_api.py"
+        ]
+      }
+    },
+    "missing": [
+      "_capability_estimate",
+      "_claim_matches_precondition",
+      "_excluded",
+      "_lexical_overlap",
+      "_lexical_search",
+      "_now_iso",
+      "_render_graph_context",
+      "_scope_matches",
+      "_vector_candidates",
+      "_vector_search",
+      "_write_task_nodes"
+    ]
+  }
+}

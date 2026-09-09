@@ -21,10 +21,12 @@ unlucky with a broad regex, not about who needed less exploration.
 """
 from __future__ import annotations
 
+import contextlib
 import difflib
 import json
 import os
 import re
+import socket
 import time
 from dataclasses import dataclass, field
 from typing import Optional
@@ -50,6 +52,52 @@ MAX_RECOVERIES = 5
 REQUEST_TIMEOUT = 180.0
 MAX_RETRIES = 4
 MAX_BACKOFF = 20.0   # worst case 4+8+16 = 28s per call, not 124s
+
+# Final pre-score remediation pass: REQUEST_TIMEOUT above was already being
+# passed as openai's own per-call `timeout=` -- and was NOT actually bounding
+# a non-responding provider. Controlled, offline, reproducible probe (a real
+# TCP listener that accepts the connection and then sends nothing, pointed
+# at by a real OpenAI(base_url=...) client, same construction runner.py
+# uses): the bare-float per-call timeout measured ~2x its configured budget;
+# an explicit client-level httpx.Timeout(connect=X, read=X, write=X,
+# pool=X) with a zero-retry transport was WORSE -- still hadn't returned
+# after >150s against a 5s budget, had to be force-killed. Only a real OS
+# socket timeout, set via socket.setdefaulttimeout() (which every socket
+# opened after the call inherits, independent of httpx's own timeout
+# interpretation for this server behaviour), reliably bounded the call --
+# measured ~1s over budget, consistently, across repeated single-threaded
+# AND concurrent two-thread runs (see
+# .scratch/final_agent_experiment/probe_timeout_mechanism.py and
+# probe_timeout_concurrent.py). This is why _bounded_model_call below exists
+# instead of relying on REQUEST_TIMEOUT alone: REQUEST_TIMEOUT is kept (it
+# is still threaded through as openai's own timeout= for defense in depth
+# and for provider-side clarity in error messages) but is no longer the
+# ONLY thing standing between a non-responding provider and an indefinite
+# hang.
+#
+# socket.setdefaulttimeout() is process-global, not thread-local -- a real,
+# known limitation of this fix, not hidden: while one thread's call holds it
+# set, a DIFFERENT thread opening a brand-new socket during that exact
+# window inherits the same value, until the holder's `finally` restores the
+# previous default. Scoped as tightly as possible (around one retry
+# attempt's one HTTP call, not the whole retry loop or the whole episode) to
+# minimize that window; verified safe under real two-thread concurrent
+# contention (probe_timeout_concurrent.py) with each thread's own call still
+# bounding near its own configured budget, no cross-thread leakage observed.
+# This does not touch the MCP client's own, separately-fixed
+# _MCP_SESSION_HTTP_TIMEOUT_SECONDS=650 (backend/app/local_agent/runner.py)
+# -- that is an async httpx client on the main event-loop thread; this fix
+# is scoped to the synchronous model-call thread only.
+
+
+@contextlib.contextmanager
+def _bounded_socket_timeout(seconds: float):
+    previous = socket.getdefaulttimeout()
+    socket.setdefaulttimeout(seconds)
+    try:
+        yield
+    finally:
+        socket.setdefaulttimeout(previous)
 
 # Loosened from a 5-min-target to a 10-min one, and specifically NOW that
 # list_symbols/read_symbol exist: the dumps these caps bound (raw search
@@ -101,6 +149,27 @@ class AgentRun:
     wall_seconds: float = 0.0
     retrieved: list[str] = field(default_factory=list)
     error: Optional[str] = None
+    # How many times this episode recovered from a transient provider error
+    # by dropping its last exchange (see is_transient/MAX_RECOVERIES below).
+    # Was a purely local loop variable before -- a caller (e.g. an
+    # orchestrator scoring/recording a trial) had no way to know a
+    # "successful" run had actually needed provider-side recovery at all,
+    # nor to distinguish a clean first-attempt run from a recovered one.
+    # Never affects `usage` or `steps`: every real attempted API call,
+    # including ones that failed and were recovered from, is already
+    # counted there -- this field adds visibility, it does not change what
+    # was already being measured.
+    recoveries: int = 0
+    # The text of the LAST assistant turn, if that turn produced one.
+    # Purely diagnostic. Before this field existed, a run that ended with
+    # stop_reason="no_tool_call" -- the model stopping to write prose
+    # instead of calling a tool -- discarded that prose entirely, so an
+    # ungradeable episode could not be told apart afterwards: did the model
+    # never work out the answer, or did it work it out and report it in
+    # chat instead of writing the file the task asked for? Recorded, never
+    # graded: every verifier still reads the sandbox, and this text has no
+    # path into task_success.
+    final_message: str = ""
 
 
 class RepoSandbox:
@@ -773,6 +842,7 @@ class Agent:
         error = None
 
         recoveries = 0
+        final_message = ""
         for step in range(self._max_steps):
             try:
                 resp = self._complete(messages)
@@ -814,6 +884,7 @@ class Agent:
                 usage.add(resp.usage)
             msg = resp.choices[0].message
             calls = msg.tool_calls or []
+            final_message = msg.content or final_message
 
             messages.append({
                 "role": "assistant",
@@ -855,6 +926,7 @@ class Agent:
             usage=usage, steps=usage.calls, tool_calls=tool_log,
             files_edited=sandbox.edited_files(), stop_reason=stop_reason,
             wall_seconds=time.time() - t0, retrieved=retrieved or [], error=error,
+            recoveries=recoveries, final_message=final_message,
         )
 
     @staticmethod
@@ -909,17 +981,25 @@ class Agent:
         last: Optional[Exception] = None
         for attempt in range(MAX_RETRIES):
             try:
-                return self._client.chat.completions.create(
-                    model=self._model, messages=messages, tools=TOOLS,
-                    temperature=self._temperature, max_tokens=2000,
-                    # A request with no timeout blocks the entire experiment
-                    # indefinitely if the provider stops responding -- there is
-                    # nothing above this that can interrupt it. Measured: one
-                    # instance sat 77 minutes with the python process alive,
-                    # ~4% CPU, no container, and the whole 20-instance sweep
-                    # frozen behind it.
-                    timeout=REQUEST_TIMEOUT,
-                )
+                # _bounded_socket_timeout: REQUEST_TIMEOUT alone (passed as
+                # timeout= below) was measured NOT to reliably bound a
+                # non-responding provider -- see this module's own top-level
+                # comment above REQUEST_TIMEOUT for the controlled
+                # reproduction. This is the real fix; timeout= is kept for
+                # defense in depth and provider-side error clarity, not
+                # relied on alone anymore.
+                with _bounded_socket_timeout(REQUEST_TIMEOUT):
+                    return self._client.chat.completions.create(
+                        model=self._model, messages=messages, tools=TOOLS,
+                        temperature=self._temperature, max_tokens=2000,
+                        # A request with no timeout blocks the entire experiment
+                        # indefinitely if the provider stops responding -- there is
+                        # nothing above this that can interrupt it. Measured: one
+                        # instance sat 77 minutes with the python process alive,
+                        # ~4% CPU, no container, and the whole 20-instance sweep
+                        # frozen behind it.
+                        timeout=REQUEST_TIMEOUT,
+                    )
             except Exception as exc:  # noqa: BLE001
                 last = exc
                 if not is_transient(exc) or attempt == MAX_RETRIES - 1:

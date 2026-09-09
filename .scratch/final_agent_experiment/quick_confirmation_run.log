@@ -1,0 +1,12 @@
+=== T1-v2/A attempt 1/2 (max_steps=40) ===
+=== T1-v2/A attempt 1 done in 237.3s hung=False provider_error=True error=None task_success=False verification_quality={'answer_file_found': False} ===
+=== T1-v2/A attempt 2/2 (max_steps=40) ===
+=== T1-v2/A attempt 2 done in 201.7s hung=False provider_error=True error=None task_success=False verification_quality={'answer_file_found': False} ===
+=== T1-v2/A: 2 consecutive provider errors, STOPPING this cell per retry discipline (not retrying further) ===
+=== T1-v2/B_default attempt 1/2 (max_steps=40) ===
+embedding provider gemini failed (no Gemini API key configured) -- falling through
+embedding provider gemini failed (no Gemini API key configured) -- falling through
+=== T1-v2/B_default attempt 1 done in 182.0s hung=False provider_error=False error=None task_success=False verification_quality={'answer_file_found': False} ===
+=== T3-v2/A attempt 1/2 (max_steps=40) ===
+=== T3-v2/A attempt 1 done in 79.8s hung=False provider_error=False error=None task_success=False verification_quality={'new_name_defined_in_capability_py': True, 'renamed_from_detected': False} ===
+quick confirmation check complete
