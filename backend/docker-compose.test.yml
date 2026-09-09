@@ -1,0 +1,31 @@
+# Throwaway Postgres + pgvector for the *_e2e.py suite.
+#
+#   docker compose -f backend/docker-compose.test.yml up -d
+#   DATABASE_URL=postgresql://postgres:postgres@localhost:5433/stealth_test \
+#     python scripts/migrate.py            # apply migrations to the throwaway
+#   TEST_DATABASE_URL=postgresql://postgres:postgres@localhost:5433/stealth_test \
+#     python -m pytest tests -q            # conftest promotes TEST_DATABASE_URL
+#   docker compose -f backend/docker-compose.test.yml down -v   # wipe it
+#
+# Port 5433 so it never clashes with a local Postgres on 5432. Data lives in a
+# named volume you can drop with `down -v`. NEVER point tests at the Supabase
+# DATABASE_URL in backend/.env — see backend/TESTING_DB.md.
+services:
+  stealth-test-db:
+    image: pgvector/pgvector:pg15
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: stealth_test
+    ports:
+      - "5433:5432"
+    volumes:
+      - stealth_test_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d stealth_test"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+volumes:
+  stealth_test_pgdata:

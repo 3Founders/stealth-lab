@@ -119,3 +119,29 @@ def pytest_configure(config):
                     pass
     except Exception:  # noqa: BLE001 - config import failure surfaces elsewhere
         pass
+
+    # Guardrail: the *_e2e.py suite WRITES fixture rows (problems, procedures,
+    # evaluations, ...). Running it against the production database seeds junk
+    # like "[staleness-eval-gap-e2e <run>] ..." into the live product. Refuse
+    # to run when DATABASE_URL points at a managed/hosted Postgres unless the
+    # operator has explicitly opted in. The throwaway path is TEST_DATABASE_URL
+    # (promoted above) pointing at a local pgvector container -- see
+    # backend/TESTING_DB.md.
+    _db = os.environ.get("DATABASE_URL", "")
+    _hosted_markers = ("supabase.co", "supabase.com", "neon.tech", "render.com",
+                       "rds.amazonaws.com")
+    if (
+        _db
+        and any(m in _db for m in _hosted_markers)
+        and os.environ.get("STEALTH_ALLOW_PROD_E2E") != "1"
+    ):
+        import pytest as _pytest
+
+        _pytest.exit(
+            "Refusing to run the e2e suite against a hosted database "
+            f"({_db.split('@')[-1].split('/')[0]}). Use a throwaway: "
+            "`docker compose -f backend/docker-compose.test.yml up -d` then "
+            "`TEST_DATABASE_URL=postgresql://postgres:postgres@localhost:5433/stealth_test pytest`. "
+            "Override with STEALTH_ALLOW_PROD_E2E=1 only if you really mean it.",
+            returncode=2,
+        )
