@@ -148,6 +148,45 @@ stepping on each other or repeating work.
 - [x] **Checked the claim-graph `KeyError: 'relation'` bug.** It was already
   fixed earlier. Confirmed by running the tests (11 passed).
 
+- [x] **Tidied the V1 web app and fixed the sign-in header.**
+  — _frontend integration / Claude Sonnet 5 — branch `gate-2b` (two styling commits landed on `main`)._
+  - The background is now a light warm off-white. The top bar sticks to the top
+    of the page and blurs whatever scrolls under it.
+  - Removed the "Procedures" and "Tasks" links from the top bar, and deleted
+    their two near-empty landing pages. You still open a procedure or a task from
+    search or from a problem page. Commits `ce8700c`, `b8e133e` (on `main`).
+  - Fixed a bug: the "Sign in" button stayed on screen after you had signed in.
+    Added a small piece that reads the sign-in state and shows your name and a
+    "Sign out" button instead. Commit `4abf2f0` (on `gate-2b`).
+
+- [x] **Built the people layer — opt-in public profiles, people search, contributor leaderboard.**
+  — _frontend integration / Claude Sonnet 5 — branch `gate-2b`, not pushed._
+  The system already recorded who made each procedure and claim, but there was
+  no way to see a person or look one up. This adds that.
+  - New: an opt-in public profile. It is OFF by default. If you turn it on (from
+    `/me/privacy`), your name and your contribution counts become public. You are
+    told exactly what becomes public before you choose, and you can switch it
+    back to private at any time. Turning it on is recorded with a timestamp, and
+    every change writes an audit row.
+  - New backend: a `contributor_profiles` table (migration 48), `GET`/`PUT
+    /v1/me/profile`, and a public read surface — `GET /v1/contributors/search`,
+    `/v1/contributors/leaderboard`, `/v1/contributors/{id}`. A private or missing
+    profile returns "not found", so it never leaks that an account exists.
+  - The counts (procedures authored, verified procedures, claims, Commons
+    publications) are worked out live from the existing owner columns each time.
+    Nothing is stored as a running total.
+  - "Export my data" now includes the profile and its disclosure state. "Delete
+    my data" removes the public listing.
+  - New pages: `/people` (search by name), `/contributors/[id]` (one public
+    profile), `/leaderboard` (rank contributors, switch the metric). The top bar
+    gains "Leaderboard" and "People".
+  - Commits: backend `5c6b2f1`, frontend `f43f6de`, plan note `a610645`.
+    Migration 48 is applied to the live DB. New backend offline tests: 12 pass
+    (`test_contributor_profiles_offline.py`); the data-rights test file stays
+    green. Frontend `tsc` and `next build` both pass (20 routes).
+  - Known limit: profile counts cover only 3 of the ~18 tables that record an
+    owner. A fuller "count everything a person made" pass is still open.
+
 ---
 
 ## IN PROGRESS (someone is working on this right now)
@@ -266,6 +305,29 @@ _(security-hardening / auth+policy: moved to DONE — see the top of the DONE li
      data-classification gate from the re-embed script; register a pgvector
      binary codec in `db/session.py` to shrink egress further.
   Full detail and exact commands: `.scratch/retrieval-release-closure/FINAL-REPORT.md` §22.
+
+- **Deploy the V1 web app (`frontendv1`) to Vercel — BLOCKED on one value.**
+  — _frontend integration / Claude Sonnet 5 — 2026-09-09, branch `gate-2b`._
+  Goal: put `frontendv1` online as a Vercel project named `bestprocedures`. Its
+  address would be `bestprocedures.vercel.app` (a `.vercel.com` address is not
+  possible). The deploy uses the local working tree, not a git push.
+  - Ready: the Vercel CLI is installed and signed in as `chaitiitb`. The two
+    Supabase sign-in values in `frontendv1/.env.local` are real and fine to use.
+  - Blocked: `NEXT_PUBLIC_API_URL` in that file is `http://localhost:8000`. A
+    visitor's browser cannot reach that, and there is no hosted copy of the
+    FastAPI backend anywhere. Without a real backend address, search, problems,
+    people, the leaderboard and profile pages all fail on the live site
+    (sign-in would still work, because Supabase is external).
+  - The next person must decide one of: (a) give a real backend URL — a tunnel
+    to a local machine, or a proper host — to set before deploying; or (b)
+    accept a look-only deploy now and set the backend URL later.
+  - Steps once unblocked, run from `frontendv1/`:
+    `vercel link --project bestprocedures --yes`, then `vercel env add` for
+    `NEXT_PUBLIC_API_URL`, `NEXT_PUBLIC_SUPABASE_URL`,
+    `NEXT_PUBLIC_SUPABASE_ANON_KEY` (production), then
+    `vercel deploy --prod --yes`. After it is live, add
+    `https://bestprocedures.vercel.app/auth/callback` to the Supabase project's
+    Auth redirect URLs or Google sign-in will fail.
 
 ---
 
