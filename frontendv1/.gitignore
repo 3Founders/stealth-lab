@@ -22,3 +22,5 @@ install.err.log
 /playwright/.cache/
 /e2e/.seed.json
 *.log
+.vercel
+.env*

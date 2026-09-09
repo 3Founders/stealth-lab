@@ -1,0 +1,35 @@
+{
+  "trial_id": "task1_lazy_multi_tool_B_rehearsal_20260908_074621",
+  "arm": "B",
+  "task_id": "task1_lazy_multi_tool",
+  "task_text": "The developer dashboard keeps timing out while loading our internal tool server. In tool_server.py, the default listing payload returned by list_tools() currently embeds every tool's full JSON input schema, which has become far too large for clients that are only doing discovery. Refactor the server so that:\n1. list_tools() returns only each tool's name and description (no input schema data of any kind in the listing payload), and\n2. a new function get_tool_schema(name) returns the full, exact JSON input schema for the single tool being asked about.\nDo not change what any existing tool does when invoked, and do not change call_tool(name, args)'s interface or behavior.",
+  "repo_path": "C:\\Users\\chait\\AppData\\Local\\Temp\\gate3_task1_lazy_multi_tool_B_3er1pz23",
+  "node_notes": [
+    "step 0 (Identify the tool-server module(s) that build the default tools/list payload and where each tool's full JSON schema is defined): stop_reason=finished, tool_calls=5",
+    "step 1 (Change the default listing to emit lightweight metadata only (name, description) -- no full input schema per entry): stop_reason=finished, tool_calls=3",
+    "step 2 (Expose or preserve a targeted retrieval mechanism (e.g. get_tool_schema(name)) that returns a tool's full declared JSON schema on demand): stop_reason=finished, tool_calls=3",
+    "step 3 (Confirm ordinary tool invocation paths still work unchanged (same names, same argument handling, same results)): stop_reason=finished, tool_calls=3",
+    "step 4 (Run the artifact import check and the behavioral contract checks: no schema keys in the default listing, targeted retrieval returns the declared schema, ordinary invocation succeeds): stop_reason=finished, tool_calls=3"
+  ],
+  "files_edited": [
+    "tool_server.py"
+  ],
+  "combined_patch_chars": 736,
+  "matched_procedure": {
+    "name": "mcp-lazy-tool-schema-loading",
+    "procedure_id": "4b60e1ad-c092-4b8b-96f3-19bd85e1c31b",
+    "version": 2,
+    "verification_state": "candidate"
+  },
+  "grader": {
+    "grader_success": true,
+    "checks": {
+      "import_ok": true,
+      "listing_lightweight": true,
+      "targeted_schema_exact": true,
+      "unknown_tool_safe": true,
+      "call_tool_regression": true
+    },
+    "error": null
+  }
+}

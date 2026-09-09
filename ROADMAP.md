@@ -13,6 +13,24 @@ Companion documents:
 - `done.md` — evidence base and fellowship milestones M1–M4
 - `0xAlphaplan.md` — τ³-Banking campaign (second-domain evaluation track)
 - `experiments/episode_assembly/FINDINGS.md` — episode segmentation findings
+- `commLLM.md` — consolidated research base, production-gap analysis (§14), launch roadmap (§12–13); annotated cross-references to this file
+- `assumptions.md` — falsifier-ranked belief register; its cheapest-falsification list feeds Band 3 arms
+- `RESEARCH_INTEGRATION_PLAN.md` — papers→repo mapping w/ Sync status block (CLEANER/GATS → post-launch weeks 2–3; EnvACE → flagship month-1; RL themes behind Day-30 gate)
+- `demo.md` — launch demo beat sheet (audit-mode honesty rules)
+- `securityupdates.md` — tiered data-protection obligations by deployment size; reclassifies embedding columns as document-equivalent per the vec2vec result (arXiv:2505.12540)
+- `researchmultiagent.md` — multi-agent semantic-search dossier (Kimi MoBA/KDA mechanisms, failure literature, cross-domain mitigations); source material for Band R
+
+### Cross-plan mapping note (2026-08-25)
+
+From `RESEARCH_INTEGRATION_PLAN.md`'s Sync status: **CLEANER-style purification**
+extends Band 1.8's extraction bundle (fixes known RIGHT_FILE_wrong_fix library
+pollution); **GATS three-tier lookup** lands in retrieval mixins — both scheduled
+post-launch, month-1 weeks 2–3. **EnvACE rehearsal hook** (predict DB effect against
+sandboxed state pre-commit; verified τ² avg 30.0→36.7 with an invalid-write caught
+pre-commit) is the flagship trust feature of that window — banking-vertical story.
+RL training-time themes (MolMem/ADRS/SDAR, TRIAL/EFCA, OCM/JEPA) stay behind the
+Day-30 external-signal gate. Competitive delta scan vs Quipu / Evidence-Gated-Memory
+/ SuperLocalMemory 4.0 / GapTime filed as research ticket (assumptions.md F1).
 
 ## How to read this
 
@@ -163,7 +181,12 @@ Before any corpus grows.*
     Formerly Band 4.1: establishing this at Band 4 meant retrofitting enforcement over
     accumulated UPDATE paths; under the fresh-start ruling it costs one test module at
     creation time. Entities managed: Event, Trace, Execution, Outcome, Artifact,
-    Evidence, Review. 🔒 **[S]**
+     Evidence, Review. 🔒 **[S]**
+11. **Redaction chokepoint inside the ingestion path** — `trace_redaction.py`
+    runs BEFORE any payload persists (GDPR Art.-25 pattern); contract test
+    asserts no unredacted hook/tool_output content reaches any `[H]` table.
+    Launch blocker once third-party traces flow; free while single-tenant.
+    🔒 **[S]**
 
 *Exit criteria:* zero scope-less writes accepted; V1–V6 green on every ingested row;
 plan persistence demonstrated end-to-end; the replay test regenerates derived objects
@@ -212,7 +235,23 @@ They remain numbered here for traceability; their acceptance criteria still appl
     machine intuition only *schedules*, per AblationBench's 38% design-recovery
     ceiling); ASSAY-style randomized evidence/procedure masking runs continuously over
     normal traffic, feeding difference-in-means causal effects into Capability inputs.
-    Verdicts land as Evidence rows — the rigor is the schema, not a side process. **[M]**
+     Verdicts land as Evidence rows — the rigor is the schema, not a side process. **[M]**
+
+11. **Failure-family fingerprinting + issue clustering** — fingerprint =
+    hash(tool_id, step_kind, normalized-arg-shape, env) over failure-routed
+    outcomes (2.4's queue); families group recurring failures so "40 noisy
+    incidents -> 1 clustered cause" (documented production differentiator).
+    Distinct from 2.6's ClaimFamily resolver, which groups claims, not
+    failures. **[M]**
+12. **Node-level execution-graph analysis — extend `route_graph.py` /
+    `replay_verify.py`, do not start fresh** (`experiments/model_routing/`
+    already classifies nodes into tiers from structural features and
+    ground-truths them by replay). Add: per-node anomaly features (causal
+    robust-z vs tool's own history), random-walk-restart root-cause mass
+    seeded at error nodes, belief-link attribution (which consumed claims fed
+    the step), `analyze_execution(execution_id)` MCP tool. Calibrated on
+    AgentTrace public benchmark + Who&When subset with pre-registered
+    thresholds; published regardless of outcome per P5 discipline. **[M]**
 
 ### Band 2 exit criteria *(completing the milestone-M1 gate)*
 
@@ -240,6 +279,17 @@ Nothing else builds the instrumentation those numbers require. Also the only pat
    including false reuse and capability-prediction quality. The strongest-result claim
    ("solves new tasks better and cheaper while correctly refusing stale procedures") is
    falsifiable only through this. **[L]** — start early, iterate forever.
+   **Falsifier arms from `assumptions.md` ride the same harness** — cheapest
+   information-per-hour experiments, decided before narrative hardens:
+   (a) `terminal_kb` arm — shell over raw docs vs `stealthlab_procedures`
+       (tests B2; if terminal wins, pitch formally shifts to governance/audit);
+   (b) gold-docs+scaffold vs gold-docs-bare on dev-12 (tests F2 wedge claim;
+       one afternoon of compute — run before any investor-facing number);
+   (c) trial-pair consistency metric in 3.1's instrumentation (tests C1's
+       reliability-tax assumption; blocks any scaffold-effectiveness claim);
+   (d) attribution-benchmark calibration — AgentTrace public benchmark +
+       Who&When subset for the failure-classifier and node-analysis scorer,
+       pre-registered thresholds, published regardless of outcome.
 3. Extraction-quality floor — labeled-sample precision/recall for observation→claim
    extraction. The whole trust story inherits extraction's error floor; nothing measures
    it today. **[M]**
@@ -290,6 +340,14 @@ plans, audits, and evidence documents accumulating while nothing user-visible sh
    (arm C vs arm A), plus stale-procedure refusal rate and false-reuse rate; reviewed
    monthly, published whatever it says — including null results. The honest-negative-
    results discipline applies to the product claim most of all. **[S] per review**
+6. **P6 — Integrations for each harness:** every harness we operate gets a native
+   outcome-telemetry connector so runs append evidence records without manual export —
+   (a) τ-bench harness: substrate tracker → evidence records per paired instance;
+   (b) SWE-bench Pro vendor runner: patch outcomes + failure classes → evidence records;
+   (c) MCP bridge path: external-agent sessions → same schema. Idempotent writes,
+   provenance stamped at source, no proxy metrics (audit rule). Harnesses are the
+   first power users of the verify-and-retire loop; their curves become P5's
+   scoreboard input. **[M]**
 
 *Exit criteria:* a stranger installs unaided in <10 minutes and gets the P3 experience
 on their own work; scoreboard public and never more than one month stale.
@@ -353,6 +411,34 @@ on their own work; scoreboard public and never more than one month stale.
 
 *Exit criteria:* shard rebalancing demonstrable without downtime; cross-region scope
 enforcement passing; sustained ingest above peak collector burst with bounded lag.
+
+---
+
+## Band R — Advanced retrieval & dynamic memory *(parallel research track)*
+
+*Runs beside Band 3; feeds Band 4/5 retrieval shapes. Nothing here blocks any
+band's exit criteria — items graduate into numbered bands only after their
+feasibility signal fires on real data. Source dossier:
+`researchmultiagent.md` (mechanisms, pessimism, cross-domain mitigations);
+working demo: `backend/scripts/demo_hierarchical_routing.py`. Standing rule
+inherited from the τ³ campaign (phaseP/Q): approximated or compressed
+representations may route and rank — they are never served as evidence.*
+
+| # | Work | Why it exists / feasibility gate |
+|---|------|-------------------------------|
+| R1 | **Hybrid fused retrieval v2** — symbol-aware chunking (tree-sitter) feeding dense + BM25 under Reciprocal Rank Fusion in the retrieval mixins; extends τ³-campaign item A5 rather than forking it | Vocabulary-mismatch queries are grep's structural blind spot and pure-dense misses identifiers; RRF is scale-free and commodity. Gate: offline recall@k harness beats current mixins before any agent-facing change |
+| R2 | **Same-space hierarchical routing** — category/module centroids as means of leaf embeddings (zero re-encode cost, one query vector navigates every level); ambiguity rule descends multiple branches when centroid margins < ε. Demo exists on the 698-procedure corpus: 6–7/8 routing at 128-dim MRL truncation, ~27% corpus examined | Proves "cheap embeddings by dimensional budgeting"; the scale path to Band 5.3's ANN split. Next step replaces metadata categories with k-means clusters of the embeddings themselves (metadata categories collide: business-vs-credit margins ≈ 0.000). Value appears at 10⁵+ chunks, not at 700 rows **[M]** |
+| R3 | **Co-access associative memory** — persistent decaying `(query_embedding → file/procedure touched)` edges written by every agent session; FSRS-style stability/retrievability reinforcement (`R=e^{−t/S}`, access raises S) instead of flat exponential decay; bandit exploration budget surfaces untested candidates; propensity-weighted reinforcement only on *useful* follow-through; embedding-norm monitoring against popularity monoculture | The KDA delta-rule insight translated to infrastructure: cheap always-on associative recall. Every named failure mode has a cited mitigation (RecSys'25 inherited-bias, cluster bandits SIGIR'21, CauSeR closed-loop debiasing). Depends on an event stream to learn from → after P6 connectors **[M–L]** |
+| R4 | **Multi-agent discovery leases** — exploration leases on scope/file subgraphs so parallel agents receive a lease-holder's partial findings instead of re-exploring; idempotent event writes via existing dedup-key machinery | Directly targets MAST FM-1.3 (step repetition, 15.7%), FM-2.4 (information withholding), FM-2.5 (ignored inputs) — structural fixes per MAST's finding that prompt patches don't move these. Centralized containment preferred per agent-scaling science (17.2×→4.4× error amplification) **[M]** |
+| R5 | **Diff-events layer** — git diffs embedded as first-class substrate events (trace_events pattern); change-stream retrieval ("when did X behavior land?"); agents subscribe to regions and get notified when incoming diff-vectors land near their working set; stale-chunk invalidation queue prioritizes re-embeds (Merkle tells you *what* changed, diff-embedding tells you *what it meant*) | Turns the staleness tax (the reason Sourcegraph abandoned embeddings) into an event-sourced system property. Diff text needs light cleaning (hunk headers/line numbers) before embedding **[M]** |
+| R6 | **Dynamic vector correction study (measurement first)** — across own-repo git history: how well does `E(old_doc) + f(E(diff))` preserve rank vs true `E(new_doc)`? D1 = naive additive baseline; D2 = tiny MLP correction head if D1 shows signal. Corrected vectors influence ranking/routing ONLY (standing rule above); served evidence always comes from genuinely embedded chunks | Unlimited free paired training data exists in any git history. Drift-accumulation without rebasing is the known failure shape; rebasing policy is part of the study's output. Do not build product on this before D1's number exists **[S for D1]** |
+| R7 | **Embedding-space translators for model migration** — ladder: (a) orthogonal Procrustes on ~500 paired texts (closed-form, no adversarial instability), (b) vec2vec-style unsupervised translation (arXiv:2505.12540) only if (a) falls short, (c) full re-embed as gold standard. Gate: translated-space top-k recall ≥90% of native on held-out queries at our query distribution | Kills the recurring migration-tax paid at every embedding-model swap (Voyage→Gemini cost two full re-embed campaigns). Requires Band 1.6 embedding stamps to be safe (know which space every row lives in). Security note: translators also mean leaked vectors invert more easily — `securityupdates.md` T3.4 review triggers on this work **[M]** |
+| R8 | **Validity-aware sweep harness promotion** — promote from vendor repo into `experiments/harness/`: latency probe gate (refuses launches when endpoint trivial-latency >4s), timeout-poison scrubber (empty `reward_basis` = missing data, never zero), pass^k analyzer with validity filtering, guard supervisor (child-PID pinning + stall detection) | The 2026-08 endpoint outage manufactured fake 0%/3.1%/41.7% conclusions across three phases before the audit caught it (~287 poisoned sims purged). Measurement infra hardening is Band 3.2's dependency; these pieces already exist and are proven **[S]** |
+
+Graduation rule: an R-item moves into a numbered band when its gate produces
+a number worth enforcing — e.g., R1's recall harness result becomes a Band
+A5 acceptance criterion; R6's D1 number decides whether dynamic vectors ever
+become a Band 4 retrieval-shape item.
 
 ---
 

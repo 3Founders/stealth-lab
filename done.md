@@ -114,7 +114,7 @@ claim at a scale where it could actually fail.
 sampling. `pass^k` conflates two independent decisions (item selection and refund destination),
 which is why the two are reported separately. Nothing here is significant.
 
-τ³-bench (the successor) was then profiled as the rigorous follow-up (`YC_EVIDENCE_PLAN.md`):
+τ³-bench (the successor) was then profiled as the rigorous follow-up (`FundingGrants/YC_EVIDENCE_PLAN.md`):
 its `banking_knowledge` domain has 97 tasks scored by **deterministic DB-state hashing — no
 judge LLM**, and every task ships `required_documents` (mean 9.78 doc ids) that the evaluator
 never uses — so retrieval recall can be scored offline against real labels, for free. That makes
@@ -294,7 +294,7 @@ Every milestone has a number attached that can come out negative. That is delibe
 | τ-bench arms, refund-destination accuracy, adversarial case | `3Found/TAUBENCH_RESULTS.md` (parent dir) |
 | τ-bench run design and its stated limits | `3Found/BRIEF_TAUBENCH.md` (parent dir) |
 | Pre-benchmark demos (`PAUSE QUEUE`) | `3Found/RESULTS.md` (parent dir) |
-| 74.4% token reduction, failure-class table | `YC_EVIDENCE_PLAN.md` |
+| 74.4% token reduction, failure-class table | `FundingGrants/YC_EVIDENCE_PLAN.md` |
 | Experimental design, holdout, statistics | `experiments/swebench_pro/GRAPH_EXPERIMENT.md` |
 | Dataset selection rationale | `experiments/swebench_pro/README.md` |
 | Raw per-run results | `experiments/swebench_pro/*_summary.json`, `*.jsonl` |
