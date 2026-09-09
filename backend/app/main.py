@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import logging
-import os
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -33,6 +32,10 @@ async def lifespan(app: FastAPI):
     # that combination would expose private content to anyone who sets
     # an X-Viewer-Id header.
     require_trustworthy_identity()
+    # Fail fast on a development-shaped config under ENVIRONMENT=production
+    # (default localhost/wildcard CORS origin) -- see
+    # Settings.assert_production_config's docstring.
+    settings.assert_production_config()
     # Band 2.9 frozen posture: multi-user exposure / real_auth_enabled
     # without OIDC configured refuses to boot -- the identity gate cannot
     # silently slip to a later band.
@@ -71,11 +74,12 @@ app = FastAPI(title="Workflow Debate Platform", version="0.1.0", lifespan=lifesp
 
 # CORS: a separately-hosted frontend (e.g. Vercel) is a different origin
 # from the API (e.g. Railway/Render), so the browser blocks requests here
-# by default without this. FRONTEND_ORIGIN is a single configured origin
-# for v0 -- tighten before this serves more than one frontend deployment.
+# by default without this. FRONTEND_ORIGIN (comma-separated for more than
+# one origin) is read through Settings, not os.environ directly, so it's
+# covered by assert_production_config()'s boot-time check above.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[os.environ.get("FRONTEND_ORIGIN", "http://localhost:3000")],
+    allow_origins=settings.frontend_origins,
     allow_methods=["GET", "POST"],
     allow_headers=["*"],
 )

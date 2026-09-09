@@ -26,6 +26,13 @@ dependencies = [
     # freshly-synced environment (confirmed live on a clean `uv sync`).
     "pytest-asyncio",
     "python-dotenv",
+    # Required at import time: app/services/authn.py does `import jwt`
+    # unconditionally, and app/main.py imports from app.services.authn at
+    # module load -- every boot of the REST app needs this. Was previously
+    # only declared in requirements.txt (a real drift; Railway/any installer
+    # using `pip install -e .` instead of requirements.txt would crash on
+    # first import with no clue why).
+    "PyJWT[crypto]",
     "PyYAML",
     "reportlab",
     "scipy",

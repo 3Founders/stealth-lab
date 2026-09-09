@@ -39,6 +39,16 @@ class Settings(BaseSettings):
 
     database_url: Optional[str] = None
 
+    # --- CORS (app/main.py) ---
+    # Comma-separated list of allowed browser origins. Single-origin default
+    # matches the previous hardcoded dev behavior (http://localhost:3000);
+    # production deployments must set this explicitly via the FRONTEND_ORIGIN
+    # env var to their real frontend URL(s) -- never "*", since the API
+    # accepts credentialed/authenticated requests. See
+    # assert_production_config() below, which refuses to boot with
+    # ENVIRONMENT=production and a still-default/localhost value here.
+    frontend_origin: str = "http://localhost:3000"
+
     # Heterogeneous debate panel (Section 7): three distinct model families.
     anthropic_api_key: Optional[str] = None
     fireworks_api_key: Optional[str] = None   # Kimi K3
@@ -345,6 +355,42 @@ class Settings(BaseSettings):
                 f"(see .env.example)."
             )
         return value
+
+    @property
+    def frontend_origins(self) -> list[str]:
+        """FRONTEND_ORIGIN split on commas, for CORSMiddleware's allow_origins."""
+        return [origin.strip() for origin in self.frontend_origin.split(",") if origin.strip()]
+
+    def assert_production_config(self) -> None:
+        """Refuse to boot with a development-shaped config under ENVIRONMENT=production.
+
+        Mirrors app/services/authn.py's assert_boot_posture: an explicit,
+        named check at startup rather than a silent inherited default.
+        ENVIRONMENT itself defaults to "local" and is never inferred --
+        Railway (or any production host) must set ENVIRONMENT=production
+        for this to run at all, so no existing local/dev/CI setup is
+        affected by adding this check.
+        """
+        if self.environment != "production":
+            return
+        bad_origins = [
+            origin
+            for origin in self.frontend_origins
+            if "localhost" in origin or "127.0.0.1" in origin
+        ]
+        if not self.frontend_origins or bad_origins:
+            raise RuntimeError(
+                "ENVIRONMENT=production but FRONTEND_ORIGIN is unset or still "
+                "points at a localhost/127.0.0.1 origin. Set FRONTEND_ORIGIN "
+                "to your real frontend URL(s) (comma-separated for more than "
+                "one) before deploying."
+            )
+        if "*" in self.frontend_origins:
+            raise RuntimeError(
+                "ENVIRONMENT=production but FRONTEND_ORIGIN is \"*\". The API "
+                "accepts credentialed requests, so a wildcard origin is not "
+                "safe in production -- list the exact frontend origin(s)."
+            )
 
 
 @lru_cache
