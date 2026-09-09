@@ -35,6 +35,26 @@ import os
 
 import dotenv
 
+# Point the live-DB suite at a throwaway Postgres without exporting the real
+# DATABASE_URL.
+#
+# Every *_e2e.py here gates on os.environ["DATABASE_URL"] and, unset, skips.
+# The obvious way to run them against a local `pgvector/pgvector:pg15`
+# container instead of the production Supabase instance -- `DATABASE_URL=...
+# pytest` -- also repoints anything else in the process that reads that var
+# (app.config.settings, scripts imported transitively). TEST_DATABASE_URL is
+# test-only: if it is set and DATABASE_URL is NOT already in the environment,
+# promote it to DATABASE_URL here -- at conftest import, before
+# DATABASE_URL_WAS_AMBIENT_AT_STARTUP is computed and before any .env load --
+# so the whole suite sees it, the leak-guard below treats it as an explicit
+# developer choice (not a .env regression), and nothing outside pytest is
+# affected. An explicitly exported DATABASE_URL still wins.
+#
+# This is deliberately NOT an app.config setting: production code must never
+# read a "test" database URL.
+if "DATABASE_URL" not in os.environ and os.environ.get("TEST_DATABASE_URL"):
+    os.environ["DATABASE_URL"] = os.environ["TEST_DATABASE_URL"]
+
 # Captured once, at conftest import -- before pytest_configure, before any
 # test module is collected, and before the wrapper below can run. True iff
 # DATABASE_URL was ALREADY in the environment when this process started
