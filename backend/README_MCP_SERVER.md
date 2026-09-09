@@ -88,6 +88,81 @@ registry to 27. `docs/final-v1.md` §1 documents the product-model tools._
 | `get_implementation_capability` | Capability estimate for one durable implementation | No -- read-only |
 | `get_claim_graph` | The current claim graph -- nodes (live claims + lifecycle state) and claim-to-claim relation edges -- the same feed the `/claim-graph` web page renders | No -- read-only |
 
+## MCP primitives: Tools, Resources, Prompts
+
+The server now uses all three MCP primitives, so a host can practise
+**progressive disclosure** — start from one Prompt and a couple of
+discovery Tools, and pull detail through Resources — instead of reasoning
+over ~30 tools every turn.
+
+| Primitive | What it is here | Mutates? |
+|---|---|---|
+| **Tools** | actions, computation, and mutation. All 29 existing tools are **retained** (nothing removed). The mutating ones: `find_best_way`, `reproduce_procedure`, `report_execution`, `submit_procedure`, `propose_synthesis`, `decompose_task`, `decide_decomposition`, `decide_procedure`, `submit_approval`, `detect_conflict_trigger`, `resume_execution_run`, `retry_run_node`. The rest are read / discovery / computation. | some |
+| **Resources** | canonical, id-addressable, read-only knowledge objects, rendered as Markdown. | never |
+| **Prompts** | reusable host workflows — orchestration policy text, not business logic and not autonomous execution. | never |
+
+### Resources (read-only)
+
+Each resolves the caller's visibility scope exactly like the tools
+(`_caller_access_scope()` — never `unrestricted`), calls the same
+underlying service function a tool would, and returns Markdown. An unknown
+or out-of-scope id returns a short `# Not found` body. Verification /
+approval / staleness state is shown verbatim — a `candidate` procedure is
+never rendered as "verified".
+
+| URI | Object | Backed by |
+|---|---|---|
+| `stealth://procedures/{procedure_id}` | one procedure: capability, use-when, steps, preconditions, constraints, failure modes, evidence summary, verification/approval state, provenance. Accepts the stable handle or a version row id. | `procedure_graph_api.get_procedure_detail` |
+| `stealth://problems/{problem_id}` | a Problem + benchmarks + associated solutions + evidence-derived leaderboard | `product_model.get_problem` / `list_problem_benchmarks` / `list_problem_solutions` / `problem_leaderboard` |
+| `stealth://problems/{problem_id}/solutions` | association rows for a Problem's Solutions | `product_model.list_problem_solutions` |
+| `stealth://claims/{claim_id}` | one structured claim + its live evidence | `claim_graph_api.get_claim` / `get_claim_evidence_api` |
+| `stealth://evaluations/{evaluation_id}` | one version-pinned Evaluation: metrics, verification summary, status, linked executions | `product_model.get_evaluation` |
+| `stealth://implementations/{implementation_id}` | one durable implementation's **secret-free** descriptor | `implementation_registry.get_descriptor` |
+| `stealth://tasks/{task_node_id}/implementations` | active implementations linked to a TaskNode | `implementation_registry.get_for_task` |
+| `stealth://runs/{run_id}` | a durable execution run: status, per-node attempt history | `durable_resume.run_status_by_id` / `node_history_by_id` |
+
+> **Not the same thing:** the *resources* inside an imported `SKILL.md`
+> package (files, scripts, references) are source-package assets. **MCP
+> Resources** are protocol-level readable objects. Different concept,
+> same word.
+
+There is also a `resolve_node_resources(node, environment, *, scope)`
+helper in `app/mcp_server/resources.py` — the documented seam for future
+**node-scoped** context (return only the Procedures / Claims /
+Implementations relevant to one TaskNode instead of global context). It
+is a thin aggregator over three existing reads and is **not wired into
+the execution path yet**.
+
+### Prompts (recommended workflows)
+
+| Prompt | Arguments | Policy it teaches |
+|---|---|---|
+| `solve_with_stealth` | `task`, `repo_path?` | reuse a verified procedure when one applies (search → read `stealth://procedures/<id>` → `check_applicability` → adapt), else `decompose_task` and solve normally; `report_execution` when done |
+| `debug_with_stealth` | `symptom`, `repo_path?` | pull debugging precedents + failure evidence, form competing hypotheses, use minimum claim context, verify the fix, `report_execution` |
+| `research_with_stealth` | `question` | read Procedures / Claims / Problems / Evaluations; separate evidence-backed from hypothesis; surface contradictions and gaps; never present a candidate as fact |
+| `improve_with_stealth` | `problem_id?`, `goal?` | inspect the incumbent + its benchmark, name one measurable weakness, `submit_procedure` a challenger, `compare_solutions` under the same benchmark |
+| `verify_with_stealth` | `procedure_id` | read stated pre/postconditions, `check_applicability`, `reproduce_procedure`, compare expected vs observed, `report_execution` |
+| `contribute_learning` | `summary?` | after novel successful work, capture the reusable method with provenance; distinguish observation / claim / verified procedure; don't submit noise |
+
+### Compact host example (Claude Desktop / Cursor style)
+
+```
+load prompt  solve_with_stealth(task="migrate the repo off DataFrame.append", repo_path="/work/app")
+  → tool     search_procedures(task="replace DataFrame.append")        # discovery
+  → resource read  stealth://procedures/<id>                           # detail, on demand
+  → tool     check_applicability(procedure_id=<id>, state={...})       # is it usable here?
+  → (adapt + do the work)
+  → tool     report_execution(procedure_id=<id>, success=true, context_key="repo:app", success_criteria={...})
+```
+
+For a Problem: `improve_with_stealth` → `find_problem` → read
+`stealth://problems/<id>` and `stealth://problems/<id>/solutions` →
+`compare_solutions`.
+
+Resources and Prompts respect the **same** auth / scope boundaries as the
+tools; a public/global object is readable, a private one is invisible
+unless the caller's resolved identity can see it.
+
 ### `report_execution`'s `success_criteria` is a structured object, not a JSON string
 
 `success_criteria` is a real JSON object argument -- `{"predicate": "...",

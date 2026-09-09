@@ -3079,5 +3079,19 @@ async def retry_run_node(run_id: str, node_order: int, ctx: Context, force: bool
     return json.dumps(result, default=str)
 
 
+# ---------------------------------------------------------------------------
+# ADDITIVE read-only MCP Resources + Prompts surface. Registered here, after
+# every @server.tool() above, so resources.py can import the tool-layer
+# helpers (_caller_access_scope / _resolve_live_procedure / ...) it composes
+# over -- nothing above this line changes. Resources are visibility-scoped
+# reads; prompts are orchestration-policy text. Neither mutates anything.
+# ---------------------------------------------------------------------------
+from app.mcp_server.resources import register_resources
+from app.mcp_server.prompts import register_prompts
+
+register_resources(server)
+register_prompts(server)
+
+
 if __name__ == "__main__":
     server.run()
