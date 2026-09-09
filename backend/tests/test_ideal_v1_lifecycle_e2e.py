@@ -426,7 +426,7 @@ def test_ideal_v1_full_lifecycle():
             _verify_local(store_a, pub_id)  # pub is now a verified local procedure
             published = await publish_local_procedure(
                 pool, local_store=store_a, local_row_id=pub_id,
-                published_by=USER_A, scope_type="global",
+                actor_subject=USER_A, scope_type="global",
             )
             gid = published["id"]
             fresh_global = await get_procedure(pool, gid)

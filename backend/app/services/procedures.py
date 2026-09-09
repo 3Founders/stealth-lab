@@ -130,6 +130,7 @@ async def capture_procedure(
     display_name: Optional[str] = None,
     display_description: Optional[str] = None,
     display_metadata_version: Optional[str] = None,
+    availability: str = "active",
 ) -> dict:
     """
     Inserts a new procedure, always starting `candidate` / `fresh` /
@@ -137,6 +138,18 @@ async def capture_procedure(
     {"id": ..., "procedure_id": ...}: `id` is this specific version row;
     `procedure_id` is the stable handle a caller uses across the version
     chain (see supersede_procedure() for how a new version is created).
+
+    `availability` (procedure_availability enum: active|quarantined|
+    disabled) defaults to 'active' -- unchanged behavior for every
+    existing caller. A caller that has already run its own admission
+    screening (see app.services.ingestion_admission) and decided a fresh
+    candidate needs human/LLM review before it is retrievable can pass
+    availability='quarantined' directly at capture time, reusing the
+    SAME circuit-breaker column and the SAME applicability.py
+    `_CANDIDATE_BASE_WHERE` exclusion record_execution_outcome's circuit
+    breaker already relies on -- a quarantined row is written (inspectable,
+    auditable, resumable) but excluded from every normal retrieval path
+    from the moment it is captured, with no new state machine required.
 
     Band 1.2/1.3: provenance and scope are V0-gated at this boundary --
     a procedure without explicit provenance or without a derivable scope
@@ -155,6 +168,10 @@ async def capture_procedure(
         raise ValueError(f"visibility must be 'public', 'private' or 'org', got {visibility!r}")
     if visibility == "org" and not tenant_id:
         raise ValueError("visibility='org' requires tenant_id (the owning organization)")
+    if availability not in ("active", "quarantined", "disabled"):
+        raise ValueError(
+            f"availability must be 'active', 'quarantined' or 'disabled', got {availability!r}"
+        )
 
     # --- V0 gate (Band 1.3): nothing enters without provenance + scope ---
     from app.services.v0_gate import validate_provenance, validate_scope
@@ -228,7 +245,8 @@ async def capture_procedure(
             scope_type, scope_entity_id, embedding_model_id, embedding_dim,
             embedding_provider, embedding_input_type, embedding_text_hash,
             retrieval_document, retrieval_document_version, retrieval_document_sha256,
-            display_name, display_description, display_metadata_version, tenant_id
+            display_name, display_description, display_metadata_version, tenant_id,
+            availability
         ) VALUES (
             $24::uuid, $1, $2, $3::jsonb, $4::jsonb, $5::jsonb, $6::jsonb,
             $7::jsonb, $8::jsonb, $9::jsonb, $10::jsonb,
@@ -236,7 +254,8 @@ async def capture_procedure(
             $16, $17, $18::jsonb, $19,
             $20, $21, $22::visibility_level, $23::vector,
             $25, $26, $27, $28, $29, $30, $31,
-            $32, $33, $34, $35, $36, $37, $38::uuid
+            $32, $33, $34, $35, $36, $37, $38::uuid,
+            $39::procedure_availability
         )
         RETURNING id, procedure_id
         """,
@@ -281,6 +300,7 @@ async def capture_procedure(
         display_description,
         display_metadata_version,
         tenant_id,
+        availability,
     )
     return {"id": str(row["id"]), "procedure_id": str(row["procedure_id"])}
 

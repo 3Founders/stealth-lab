@@ -186,10 +186,17 @@ def test_withdraw_with_independent_evidence_is_retained():
 
 
 def test_withdraw_clean_no_evidence_is_removed_from_retrieval():
+    """Real bug fix (found while hardening the sibling Local -> Global
+    path, app/services/publish.py): 'withdrawn' is not a real
+    procedure_availability enum value (active|quarantined|disabled,
+    db/18_procedures.sql) -- the old UPDATE would have raised
+    InvalidTextRepresentation against a real database the first time
+    this ever ran live. 'disabled' is the correct existing value for
+    "permanently excluded from retrieval"."""
     pool = FakePool(pubrec=_pubrec(), independent=0)
     out = asyncio.run(withdraw_publication(pool, publication_id="pub-uuid-1", actor_subject="alice"))
     assert out["withdrawal_state"] == "WITHDRAWN_FROM_RETRIEVAL"
-    assert any("availability = 'withdrawn'" in u[0] for u in pool.updates)
+    assert any("availability = 'disabled'" in u[0] for u in pool.updates)
 
 
 def test_withdraw_mixed_lineage_requires_remediation():

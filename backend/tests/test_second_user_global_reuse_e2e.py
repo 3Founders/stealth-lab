@@ -130,7 +130,7 @@ def test_second_user_finds_and_independently_reuses_a_published_procedure():
                     pool,
                     local_store=store,
                     local_row_id=local_row_id,
-                    published_by=USER_A,
+                    actor_subject=USER_A,
                     scope_type="global",
                 )
                 global_row_id = published["id"]

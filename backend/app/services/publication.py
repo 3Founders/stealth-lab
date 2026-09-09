@@ -341,10 +341,19 @@ async def withdraw_publication(
     )
     # WITHDRAWN_FROM_RETRIEVAL: hide the candidate from retrieval without
     # destroying it (tombstone, not physical delete) -- historical
-    # evidence stays queryable.
+    # evidence stays queryable. Real bug fix (found while hardening the
+    # sibling Local -> Global path): 'withdrawn' is not a real
+    # procedure_availability enum value (active|quarantined|disabled,
+    # db/18_procedures.sql) -- this UPDATE would have raised
+    # InvalidTextRepresentation the first time a real withdrawal with no
+    # independent evidence ever ran. 'disabled' is the correct existing
+    # value for "permanently excluded from retrieval" (applicability.py's
+    # `_CANDIDATE_BASE_WHERE` excludes anything but 'active' identically
+    # either way; 'disabled' is the semantically correct one -- distinct
+    # from 'quarantined', which means "pending review", not "withdrawn").
     if outcome == "WITHDRAWN_FROM_RETRIEVAL" and published_row:
         await pool.execute(
-            "UPDATE procedures SET availability = 'withdrawn' WHERE id = $1::uuid",
+            "UPDATE procedures SET availability = 'disabled' WHERE id = $1::uuid",
             published_row,
         )
 

@@ -37,6 +37,11 @@ import yaml
 
 from app.services.applicability import find_applicable_procedures
 from app.services.embeddings import Embedder
+from app.services.ingestion_admission import (
+    AdmissionCheck,
+    AdmissionDecision,
+    classify_admission,
+)
 from app.services.procedure_display import (
     DISPLAY_METADATA_FALLBACK_VERSION,
     DISPLAY_METADATA_VERSION,
@@ -884,6 +889,18 @@ class IngestOutcome:
     injection_screened: bool = False
     implementation_ids: list[str] = field(default_factory=list)
     dependency_count: int = 0
+    # Global internet/public-source admission gate (app.services.
+    # ingestion_admission). `admission_decision` is one of "admit" /
+    # "review" / "reject" -- "reject" always implies status=="rejected"
+    # (no procedures row at all); "review" always implies quarantined=True
+    # on an otherwise normal "captured"/"new_version" status (the row
+    # WAS written, as availability='quarantined', excluded from every
+    # normal retrieval surface but fully auditable). Never conflated with
+    # verification_state -- a quarantined row is still, and only ever,
+    # verification_state='candidate'.
+    admission_decision: Optional[str] = None
+    quarantined: bool = False
+    admission_escalated: bool = False
 
 
 def _slugify(text: str, *, maxlen: int = 80) -> str:
@@ -1224,12 +1241,36 @@ async def _write_task_nodes(
     return task_node_ids
 
 
+_ADMISSION_AUDIT_COLUMNS = (
+    "admission_decision, admission_checks, admission_reason, "
+    "admission_policy_version, admission_escalated, admission_llm_model, "
+    "admission_llm_verdict, admission_llm_reason"
+)
+
+
+def _admission_audit_values(admission: Optional[Any]) -> tuple:
+    """(migration 49) Positional values for _ADMISSION_AUDIT_COLUMNS.
+    `admission=None` (a caller that ran no admission gate at all, e.g. an
+    older/unrelated ingestion path) writes every column NULL/false -- an
+    honest "not screened by this gate", never a fabricated 'admitted'."""
+    if admission is None:
+        return (None, [], None, None, False, None, None, None)
+    audit = admission.to_audit_row()
+    return (
+        audit["admission_decision"], audit["admission_checks"], audit["admission_reason"],
+        audit["admission_policy_version"], audit["admission_escalated"],
+        audit["admission_llm_model"], audit["admission_llm_verdict"], audit["admission_llm_reason"],
+    )
+
+
 async def _write_artifact_row(
     pool: asyncpg.Pool, artifact: Any, *,
     run_id: Optional[str], procedure_id: Optional[str],
     procedure_row_id: Optional[str], extractor_version: str,
     owner_id: Optional[str] = None,
+    admission: Optional[Any] = None,
 ) -> str:
+    admission_values = _admission_audit_values(admission)
     if getattr(artifact, "source_type", None) == "skill_package":
         package = normalize_skill_package(artifact)
         row = await pool.fetchrow(
@@ -1237,9 +1278,12 @@ async def _write_artifact_row(
             "\"commit\", content_hash, extractor_version, procedure_id, procedure_row_id, "
             "run_id, first_seen, last_seen, owner_id, source_id, retrieved_at, "
             "license_metadata, bundle_hash, resource_manifest, parsed_metadata, "
-            "dependencies, requirements) VALUES (gen_random_uuid(), $1, $2, $3, $4, "
+            "dependencies, requirements, " + _ADMISSION_AUDIT_COLUMNS + ") "
+            "VALUES (gen_random_uuid(), $1, $2, $3, $4, "
             "$5, $6, $7, $8::uuid, $9::uuid, $10::uuid, now(), now(), $11, $12, $13, "
-            "$14::jsonb, $15, $16::jsonb, $17::jsonb, $18::jsonb, $19::jsonb) RETURNING id",
+            "$14::jsonb, $15, $16::jsonb, $17::jsonb, $18::jsonb, $19::jsonb, "
+            "$20::ingestion_admission_decision, $21::jsonb, $22, $23, $24, $25, $26, $27) "
+            "RETURNING id",
             artifact.source_type, artifact.uri, artifact.repository, artifact.path,
             artifact.commit, artifact.bundle_hash or artifact.content_hash, extractor_version,
             procedure_id, procedure_row_id, run_id, owner_id, artifact.source_id,
@@ -1249,17 +1293,21 @@ async def _write_artifact_row(
             package.metadata,
             [d.__dict__ for d in package.dependencies],
             {"tools": list(package.tool_requirements), "compatibility": parse_skill_md(artifact.content).compatibility},
+            *admission_values,
         )
         return str(row["id"])
     row = await pool.fetchrow(
         "INSERT INTO ingested_artifacts (id, source_type, uri, repository, path, "
         "\"commit\", content_hash, extractor_version, procedure_id, procedure_row_id, "
-        "run_id, first_seen, last_seen, owner_id) "
+        "run_id, first_seen, last_seen, owner_id, " + _ADMISSION_AUDIT_COLUMNS + ") "
         "VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, $6, $7, $8::uuid, $9::uuid, "
-        "$10::uuid, now(), now(), $11) RETURNING id",
+        "$10::uuid, now(), now(), $11, "
+        "$12::ingestion_admission_decision, $13::jsonb, $14, $15, $16, $17, $18, $19) "
+        "RETURNING id",
         artifact.source_type, artifact.uri, artifact.repository, artifact.path,
         artifact.commit, artifact.content_hash, extractor_version,
         procedure_id, procedure_row_id, run_id, owner_id,
+        *admission_values,
     )
     return str(row["id"])
 
@@ -1361,16 +1409,35 @@ async def compile_skill_artifact(
     created_by: str = "skill_md_ingestion",
     invariants: Optional[list[dict]] = None,
     owner_id: Optional[str] = None,
+    admission_llm_model: str = "gemma-4-31B-it",
 ) -> IngestOutcome:
     """Compile one SourceArtifact into the substrate. See the section
     comment above for the full contract. Never raises for an
-    unstructured document -- returns status="rejected" instead."""
+    unstructured document -- returns status="rejected" instead.
+
+    ADMISSION GATE (app.services.ingestion_admission -- see that module's
+    own docstring for the full decision contract): runs deterministically,
+    BEFORE any model call, on every artifact that parses. A "reject"
+    decision short-circuits here -- no procedures row, no capability
+    abstraction, no embedding call -- only an audit trail (migration 49)
+    is written. A "review" decision still produces a real candidate
+    (availability='quarantined'); an LLM escalation for that tier only
+    runs when `client` is supplied, reusing the SAME client the (separate,
+    unrelated) capability-abstraction call below already accepts."""
     try:
         parsed = parse_skill_md(
             artifact.content, fallback_name=_artifact_fallback_name(artifact),
         )
     except SkillMdParseError as exc:
-        return IngestOutcome(status="rejected", reason=str(exc))
+        await _write_artifact_row(
+            pool, artifact, run_id=run_id, procedure_id=None, procedure_row_id=None,
+            extractor_version=EXTRACTOR_VERSION_DETERMINISTIC, owner_id=owner_id,
+            admission=AdmissionDecision(
+                decision="reject",
+                checks=(AdmissionCheck("structural_unparseable", "reject", str(exc)),),
+            ),
+        )
+        return IngestOutcome(status="rejected", reason=str(exc), admission_decision="reject")
 
     embedder = embedder or Embedder()
 
@@ -1378,7 +1445,8 @@ async def compile_skill_artifact(
     # A document that carries injection / trust-escalation text is never
     # fed to the model, never gets a capability statement, and is captured
     # only as a deterministic procedure under 'system_pending_review'
-    # (fail closed). See the guard block above _abstract_capability.
+    # (fail closed). See the guard block above _abstract_capability. Also
+    # fed into the admission gate below as a review-tier finding.
     injection_signals = _screen_untrusted_document(parsed)
     provenance = "system_pending_review" if injection_signals else "prior_library"
     screen_reason = (
@@ -1386,8 +1454,28 @@ async def compile_skill_artifact(
         if injection_signals else None
     )
 
+    # --- global internet/public-source admission gate ---
+    admission = classify_admission(
+        parsed,
+        injection_signals=injection_signals,
+        resource_names=[r.path for r in getattr(artifact, "resources", ())],
+        llm_client=client,
+        llm_model=admission_llm_model,
+    )
+    if admission.decision == "reject":
+        await _write_artifact_row(
+            pool, artifact, run_id=run_id, procedure_id=None, procedure_row_id=None,
+            extractor_version=EXTRACTOR_VERSION_DETERMINISTIC, owner_id=owner_id,
+            admission=admission,
+        )
+        return IngestOutcome(
+            status="rejected", reason=admission.reason,
+            injection_screened=bool(injection_signals), admission_decision="reject",
+        )
+    quarantined = admission.decision == "review"
+
     capability_statement = (
-        None if injection_signals else _abstract_capability(client, parsed)
+        None if (injection_signals or quarantined) else _abstract_capability(client, parsed)
     )
     capability_abstained = capability_statement is None
     extractor_version = (
@@ -1416,6 +1504,8 @@ async def compile_skill_artifact(
             artifact_id=str(exact["id"]),
             capability_abstained=capability_abstained,
             injection_screened=bool(injection_signals),
+            admission_decision=admission.decision, quarantined=quarantined,
+            admission_escalated=admission.escalated,
         )
 
     prior_art = await pool.fetchrow(
@@ -1470,6 +1560,13 @@ async def compile_skill_artifact(
             "display_metadata_version": disp_version,
             # Source-authored sections -> structured columns (honest prose).
             **_structured_fields_from_parsed(parsed),
+            # Admission gate (this pass): a quarantined revision must not
+            # silently inherit the PRIOR version's 'active' availability
+            # via supersede_procedure's own carry-forward default (see
+            # procedures.py::_SUPERSEDE_CARRY_COLUMNS) -- explicit here,
+            # same "changed_fields overrides the carry" contract staleness
+            # above already relies on.
+            "availability": "quarantined" if quarantined else "active",
         }
         if capability_statement is not None:
             changed_fields["capability_statement"] = capability_statement
@@ -1516,6 +1613,7 @@ async def compile_skill_artifact(
                 procedure_id=superseded["procedure_id"],
                 procedure_row_id=superseded["id"],
                 extractor_version=extractor_version, owner_id=owner_id,
+                admission=admission,
             )
             return IngestOutcome(
                 status="new_version",
@@ -1526,9 +1624,11 @@ async def compile_skill_artifact(
                 capability_abstained=capability_abstained,
                 marked_stale=marked_stale,
                 injection_screened=bool(injection_signals),
-                reason=screen_reason,
+                reason=screen_reason or (admission.reason if quarantined else None),
                 implementation_ids=implementation_ids,
                 dependency_count=dependency_count,
+                admission_decision=admission.decision, quarantined=quarantined,
+                admission_escalated=admission.escalated,
             )
         # prior row already gone (concurrent merge/supersede) -- fall
         # through and treat this as a fresh capture.
@@ -1550,6 +1650,7 @@ async def compile_skill_artifact(
             procedure_id=str(existing["procedure_id"]),
             procedure_row_id=None,
             extractor_version=extractor_version, owner_id=owner_id,
+            admission=admission,
         )
         implementation_ids, dependency_count = await _persist_package_relations(
             pool, artifact, parsed, procedure_id=str(existing["procedure_id"]),
@@ -1564,6 +1665,8 @@ async def compile_skill_artifact(
             injection_screened=bool(injection_signals),
             implementation_ids=implementation_ids,
             dependency_count=dependency_count,
+            admission_decision=admission.decision, quarantined=quarantined,
+            admission_escalated=admission.escalated,
         )
 
     # --- fresh capture ---
@@ -1589,6 +1692,7 @@ async def compile_skill_artifact(
         display_metadata_version=disp_version,
         invariants=invariants,
         owner_id=owner_id,
+        availability="quarantined" if quarantined else "active",
         **_structured_fields_from_parsed(parsed),
     )
     if capability_statement is not None:
@@ -1610,16 +1714,19 @@ async def compile_skill_artifact(
         pool, artifact, run_id=run_id,
         procedure_id=result["procedure_id"], procedure_row_id=result["id"],
         extractor_version=extractor_version, owner_id=owner_id,
+        admission=admission,
     )
     return IngestOutcome(
         status="captured",
         procedure_id=result["procedure_id"],
+        admission_decision=admission.decision, quarantined=quarantined,
+        admission_escalated=admission.escalated,
         version_row_id=result["id"],
         task_node_ids=task_node_ids,
         artifact_id=artifact_id,
         capability_abstained=capability_abstained,
         injection_screened=bool(injection_signals),
-        reason=screen_reason,
+        reason=screen_reason or (admission.reason if quarantined else None),
         implementation_ids=implementation_ids,
         dependency_count=dependency_count,
     )
@@ -1639,6 +1746,7 @@ async def run_skill_ingestion(
     invariants: Optional[list[dict]] = None,
     owner_id: Optional[str] = None,
     limit: Optional[int] = None,
+    admission_llm_model: str = "gemma-4-31B-it",
 ) -> dict:
     """Drive one source adapter end to end and record a manifest.
 
@@ -1677,6 +1785,16 @@ async def run_skill_ingestion(
         "screened": 0,
         "implementation_candidates": 0,
         "procedure_dependencies": 0,
+        # Admission gate (this pass). `admission_rejected` overlaps
+        # `rejected` (every admission-gate reject IS a rejected outcome,
+        # a malformed-document reject is the other rejected sub-case);
+        # `quarantined` overlaps `accepted` (a quarantined row is still a
+        # real captured/new_version candidate, just availability=
+        # 'quarantined'). Kept separate so a run's own metrics can answer
+        # "why was anything excluded" without re-deriving it from outcomes.
+        "admission_rejected": 0,
+        "quarantined": 0,
+        "admission_escalated": 0,
     }
     outcomes: list[IngestOutcome] = []
 
@@ -1689,7 +1807,7 @@ async def run_skill_ingestion(
             outcome = await compile_skill_artifact(
                 pool, artifact, embedder=embedder, client=client, domain=domain,
                 run_id=run_id, created_by=created_by, invariants=invariants,
-                owner_id=owner_id,
+                owner_id=owner_id, admission_llm_model=admission_llm_model,
             )
         except Exception as exc:  # noqa: BLE001 -- one bad artifact must not
             # sink the run; the failure is counted and surfaced.
@@ -1719,6 +1837,12 @@ async def run_skill_ingestion(
             metrics["stale"] += 1
         if outcome.injection_screened:
             metrics["screened"] += 1
+        if outcome.admission_decision == "reject":
+            metrics["admission_rejected"] += 1
+        if outcome.quarantined:
+            metrics["quarantined"] += 1
+        if outcome.admission_escalated:
+            metrics["admission_escalated"] += 1
 
     await resolve_procedure_dependencies(pool)
 

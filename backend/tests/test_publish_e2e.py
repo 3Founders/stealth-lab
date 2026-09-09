@@ -101,7 +101,7 @@ def test_publish_local_procedure_redacts_scrubs_and_starts_fresh_candidate():
                     pool,
                     local_store=store,
                     local_row_id=local_row_id,
-                    published_by="tester@example.com",
+                    actor_subject="tester@example.com",
                     scope_type="global",
                 )
 
@@ -120,7 +120,7 @@ def test_publish_local_procedure_redacts_scrubs_and_starts_fresh_candidate():
                         pool,
                         local_store=store,
                         local_row_id=local_row_id,
-                        published_by="tester@example.com",
+                        actor_subject="tester@example.com",
                         scope_type="global",
                     )
 
@@ -131,7 +131,7 @@ def test_publish_local_procedure_redacts_scrubs_and_starts_fresh_candidate():
                     pool,
                     local_store=store,
                     local_row_id=local_row_id,
-                    published_by="tester@example.com",
+                    actor_subject="tester@example.com",
                     scope_type="global",
                     force=True,
                 )
@@ -190,12 +190,18 @@ def test_publish_local_procedure_requires_explicit_publisher():
                     provenance="system_pending_review", scope_type="user",
                     scope_entity_id="local-workspace-1",
                 )
-                with pytest.raises(ValueError):
+                # Hardening pass: an empty/anonymous actor_subject is now
+                # an authorization failure (UnauthorizedPublication), not
+                # a generic ValueError -- checked BEFORE the local row is
+                # even read.
+                from app.services.publish import UnauthorizedPublication
+
+                with pytest.raises(UnauthorizedPublication):
                     await publish_local_procedure(
                         pool,
                         local_store=store,
                         local_row_id=local_result["id"],
-                        published_by="",
+                        actor_subject="",
                     )
         finally:
             await pool.close()
@@ -218,7 +224,7 @@ def test_publish_local_procedure_unknown_row_raises_not_found():
                         pool,
                         local_store=store,
                         local_row_id="does-not-exist",
-                        published_by="tester@example.com",
+                        actor_subject="tester@example.com",
                     )
         finally:
             await pool.close()
@@ -287,7 +293,15 @@ def test_verification_promotion_never_auto_publishes():
     )
     for module in (local_learning, local_store_module, runner_module):
         source = inspect.getsource(module)
-        assert not call_or_import_re.search(source), (
+        # Check only the CODE portion of each line (before any '#') --
+        # a bare substring/regex search over the full source also matches
+        # inside comments, and a comment is legitimately allowed to name
+        # this function (e.g. explaining why a nearby value is deliberately
+        # NOT forwarded to it -- runner.py does exactly this around its
+        # own local-store embedding capture). That is documentation, not
+        # an import or a call.
+        code_only = "\n".join(line.split("#", 1)[0] for line in source.splitlines())
+        assert not call_or_import_re.search(code_only), (
             f"{module.__name__} must never import/call publish_local_procedure "
             "itself -- publication is explicit-only, never automatic"
         )
@@ -334,7 +348,7 @@ def test_publish_local_procedure_scrubs_absolute_paths_everywhere():
                     pool,
                     local_store=store,
                     local_row_id=local_row_id,
-                    published_by="tester@example.com",
+                    actor_subject="tester@example.com",
                     scope_type="global",
                 )
 

@@ -104,7 +104,7 @@ def format_publish_result(row_id: str, result: dict) -> str:
 async def do_publish(pool, store: LocalProcedureStore, row_id: str, published_by: str, force: bool) -> str:
     from app.services.publish import publish_local_procedure
     result = await publish_local_procedure(
-        pool, local_store=store, local_row_id=row_id, published_by=published_by, force=force,
+        pool, local_store=store, local_row_id=row_id, actor_subject=published_by, force=force,
     )
     return format_publish_result(row_id, result)
 
