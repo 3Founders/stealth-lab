@@ -300,16 +300,25 @@ async def decide_child_failure_strategy(
       2. `search_alternative` -- not retryable (or exhausted), but a REAL
                                  alternative exists: another ACTIVE
                                  Procedure<->Implementation binding for the
-                                 same child procedure (B23/B24), or another
-                                 REAL applicable procedure for the same
-                                 goal text (diagnose_candidates, excluding
-                                 the one that just failed) -- AND recursion
-                                 budgets would still allow trying it.
-      3. `ask_user`           -- no automated alternative exists, but
+                                 SAME child procedure (B23/B24) -- a
+                                 different TOOL/mechanism for the exact
+                                 same approach.
+      3. `branch`             -- no alternative Implementation for the
+                                 same Procedure, but a genuinely DIFFERENT
+                                 applicable Procedure exists for the same
+                                 goal (`diagnose_candidates`, the failed
+                                 one's `procedure_id` excluded via
+                                 `excluded_procedure_ids` -- B32's own
+                                 real exclusion primitive, not an ad-hoc
+                                 filter) -- a different PATH/approach
+                                 entirely, literally B11's own distinction
+                                 from `search_alternative` (a different
+                                 mechanism for the SAME approach).
+      4. `ask_user`           -- no automated alternative exists, but
                                  budgets allow further work -- a human
                                  decision is the honest next step (never
                                  silently picked FOR the human).
-      4. `fail_parent`        -- budgets are already exhausted (a new
+      5. `fail_parent`        -- budgets are already exhausted (a new
                                  child could not be created anyway) --
                                  REALLY applied here: the parent's own
                                  node is marked failed
@@ -319,11 +328,8 @@ async def decide_child_failure_strategy(
                                  child" as an enforced fact, not a
                                  recommendation nobody acts on.
 
-    `branch` is never auto-selected: stored Procedures have no branching
-    field (db/18's own schema) -- an honest, currently-unreachable member
-    of `FAILURE_STRATEGIES`, not a fabricated capability. A host may still
-    branch explicitly (start a different child run itself); this
-    function only decides what the SYSTEM can automate.
+    Every one of the 5 named strategies is real and automated where a
+    real signal exists; none is a fabricated trigger.
     """
     child_node = await pool.fetchrow(
         "SELECT error_class, attempt_count, max_attempts FROM execution_run_nodes "
@@ -374,16 +380,15 @@ async def decide_child_failure_strategy(
             candidates = await diagnose_candidates(
                 pool, goal_embedding=goal_vec, embedding_model_id=embedder.embedding_model_id(),
                 goal_text=plan_row["task_description"], limit=3,
+                excluded_procedure_ids=[child_procedure_id],
             )
-            alternative = next(
-                (c for c in candidates if c.applicable and str((c.procedure or {}).get("procedure_id")) != child_procedure_id),
-                None,
-            )
+            alternative = next((c for c in candidates if c.applicable), None)
             if alternative is not None:
                 return {
-                    "strategy": "search_alternative",
-                    "reason": f"a different applicable procedure "
-                    f"{(alternative.procedure or {}).get('procedure_id')!r} exists for the same goal",
+                    "strategy": "branch",
+                    "reason": f"a genuinely different applicable procedure "
+                    f"{(alternative.procedure or {}).get('procedure_id')!r} exists for the same goal "
+                    "-- a different path, not merely a different implementation of the failed one",
                 }
 
     if budget_allows_more:

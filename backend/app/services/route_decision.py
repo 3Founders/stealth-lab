@@ -214,6 +214,7 @@ async def decide_route(
     created_by: Optional[str] = None,
     scope_type: Optional[str] = None,
     scope_entity_id: Optional[str] = None,
+    excluded_procedure_ids: Optional[list[str]] = None,
 ) -> RouteDecision:
     """
     The B1 algorithm, now genuinely running every pipeline step the spec
@@ -255,7 +256,7 @@ async def decide_route(
         require_verified=require_verified, embedding_model_id=embedding_model_id,
         goal_text=goal_text, environment=environment, session_id=session_id,
         workspace_id=workspace_id, created_by=created_by, scope_type=scope_type,
-        scope_entity_id=scope_entity_id,
+        scope_entity_id=scope_entity_id, excluded_procedure_ids=excluded_procedure_ids,
     )
     decision.relevant_claim_refs = relevant_claim_refs
 
@@ -292,6 +293,7 @@ async def _decide_route_core(
     created_by: Optional[str] = None,
     scope_type: Optional[str] = None,
     scope_entity_id: Optional[str] = None,
+    excluded_procedure_ids: Optional[list[str]] = None,
 ) -> RouteDecision:
     """
     The applicability/intent core: normalize -> classify intent ->
@@ -322,7 +324,7 @@ async def _decide_route_core(
         pool, goal_embedding=goal_embedding, current_scope=current_scope,
         access_scope=access_scope, require_verified=require_verified,
         invariant_bindings=invariant_bindings, embedding_model_id=embedding_model_id,
-        goal_text=goal_text, limit=3,
+        goal_text=goal_text, limit=3, excluded_procedure_ids=excluded_procedure_ids,
     )
     best: Optional[ApplicabilityResult] = matched[0] if matched else None
 

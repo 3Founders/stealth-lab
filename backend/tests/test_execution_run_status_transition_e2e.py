@@ -142,6 +142,110 @@ async def test_terminal_state_cannot_be_left():
 
 
 @pytest.mark.asyncio
+async def test_pending_cannot_skip_straight_to_awaiting_verification_or_succeeded():
+    """B4 STRICT CLOSURE: a caller must not be able to cause a run to
+    advance past a required state without satisfying its prerequisites
+    -- a run that never even entered 'running' (EXECUTION_STARTED) must
+    not be able to jump straight to 'awaiting_verification' (VERIFICATION)
+    or 'succeeded' (OUTCOME/FINALIZED), skipping execution entirely."""
+    pool = await create_pool(statement_cache_size=0)
+    try:
+        run_id, row_id = await _fresh_run_row(pool)
+        with pytest.raises(asyncpg.exceptions.CheckViolationError, match="invalid execution_runs status transition"):
+            await pool.execute("UPDATE execution_runs SET status='awaiting_verification' WHERE id=$1", run_id)
+        with pytest.raises(asyncpg.exceptions.CheckViolationError, match="invalid execution_runs status transition"):
+            await pool.execute("UPDATE execution_runs SET status='succeeded' WHERE id=$1", run_id)
+        status = await pool.fetchval("SELECT status FROM execution_runs WHERE id=$1", run_id)
+        assert status == "pending"
+    finally:
+        await pool.execute("DELETE FROM execution_runs WHERE id=$1", run_id)
+        await _cleanup_procedure(pool, row_id)
+        await pool.close()
+
+
+@pytest.mark.asyncio
+async def test_awaiting_verification_cannot_go_back_to_running():
+    """The literal B16/B33 rule made a real DB edge: once every node has
+    genuinely succeeded, there is nothing left to RUN, only verification
+    remains -- 'awaiting_verification' has no edge back to 'running',
+    unlike 'paused'/'failed' which legitimately do."""
+    pool = await create_pool(statement_cache_size=0)
+    try:
+        run_id, row_id = await _fresh_run_row(pool)
+        await pool.execute("UPDATE execution_runs SET status='running' WHERE id=$1", run_id)
+        await pool.execute("UPDATE execution_runs SET status='awaiting_verification' WHERE id=$1", run_id)
+        with pytest.raises(asyncpg.exceptions.CheckViolationError, match="invalid execution_runs status transition"):
+            await pool.execute("UPDATE execution_runs SET status='running' WHERE id=$1", run_id)
+        status = await pool.fetchval("SELECT status FROM execution_runs WHERE id=$1", run_id)
+        assert status == "awaiting_verification"
+    finally:
+        await pool.execute("DELETE FROM execution_runs WHERE id=$1", run_id)
+        await _cleanup_procedure(pool, row_id)
+        await pool.close()
+
+
+@pytest.mark.asyncio
+async def test_awaiting_verification_may_reach_succeeded_or_failed_or_cancelled():
+    """The 3 real, legal outgoing edges the B16/B33 gate itself needs:
+    `finalize_after_verification` advancing to 'succeeded' or 'failed',
+    and an explicit cancel of a run stuck waiting on verification that
+    will never arrive."""
+    pool = await create_pool(statement_cache_size=0)
+    try:
+        run_id, row_id = await _fresh_run_row(pool)
+        await pool.execute("UPDATE execution_runs SET status='running' WHERE id=$1", run_id)
+        await pool.execute("UPDATE execution_runs SET status='awaiting_verification' WHERE id=$1", run_id)
+        await pool.execute("UPDATE execution_runs SET status='succeeded' WHERE id=$1", run_id)
+        status = await pool.fetchval("SELECT status FROM execution_runs WHERE id=$1", run_id)
+        assert status == "succeeded"
+    finally:
+        await pool.execute("DELETE FROM execution_runs WHERE id=$1", run_id)
+        await _cleanup_procedure(pool, row_id)
+        await pool.close()
+
+    pool = await create_pool(statement_cache_size=0)
+    try:
+        run_id, row_id = await _fresh_run_row(pool)
+        await pool.execute("UPDATE execution_runs SET status='running' WHERE id=$1", run_id)
+        await pool.execute("UPDATE execution_runs SET status='awaiting_verification' WHERE id=$1", run_id)
+        await pool.execute("UPDATE execution_runs SET status='cancelled' WHERE id=$1", run_id)
+        status = await pool.fetchval("SELECT status FROM execution_runs WHERE id=$1", run_id)
+        assert status == "cancelled"
+    finally:
+        await pool.execute("DELETE FROM execution_runs WHERE id=$1", run_id)
+        await _cleanup_procedure(pool, row_id)
+        await pool.close()
+
+
+@pytest.mark.asyncio
+async def test_procedure_version_pinned_is_a_real_not_null_prerequisite():
+    """B4 STRICT CLOSURE: PROCEDURE_VERSION_PINNED is not merely an
+    OBSERVED fact -- it is a real, structural prerequisite a caller
+    literally cannot bypass. A run row can never exist at all without a
+    real procedure_version, which is exactly why EXECUTION_STARTED can
+    never be reached without it -- proven directly against the schema,
+    not inferred."""
+    pool = await create_pool(statement_cache_size=0)
+    try:
+        run_id, row_id = await _fresh_run_row(pool)
+        plan_row = await pool.fetchrow(
+            "SELECT execution_plan_id, task_graph_id, procedure_id FROM execution_runs WHERE id=$1",
+            run_id,
+        )
+        with pytest.raises(asyncpg.exceptions.NotNullViolationError):
+            await pool.execute(
+                "INSERT INTO execution_runs (execution_plan_id, task_graph_id, procedure_id, "
+                " procedure_version, status, created_by) "
+                "VALUES ($1,$2,$3,NULL,'pending','ert_e2e')",
+                plan_row["execution_plan_id"], plan_row["task_graph_id"], plan_row["procedure_id"],
+            )
+    finally:
+        await pool.execute("DELETE FROM execution_runs WHERE id=$1", run_id)
+        await _cleanup_procedure(pool, row_id)
+        await pool.close()
+
+
+@pytest.mark.asyncio
 async def test_touch_only_update_with_unchanged_status_is_unaffected():
     """The fence must only fire when status itself changes -- a lease
     renewal / worker_id touch on a 'running' row is the most common

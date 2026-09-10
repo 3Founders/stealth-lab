@@ -644,8 +644,20 @@ async def find_applicable_procedures(
     invariant_bindings: Optional[dict[str, float]] = None,
     embedding_model_id: Optional[str] = None,
     goal_text: Optional[str] = None,
+    excluded_procedure_ids: Optional[list[str]] = None,
 ) -> list[dict]:
     """
+    `excluded_procedure_ids`: B32's own literal `find_best_way` input
+    field (`exclusions:`) and B11's "branch" failure strategy both need
+    the SAME real capability -- "match again, but never re-offer this
+    specific Procedure family". A real, caller-supplied stable
+    `procedure_id` (family handle, not a per-version row id) filtered
+    out of the candidate pool BEFORE the hard-constraint cascade runs
+    (never after -- excluding late would waste cascade work AND could
+    let an excluded candidate leak into `alternatives`/near-miss
+    reporting). `None`/`[]` is a complete no-op, byte-identical to
+    every existing caller.
+
     Real ticket-12 pipeline, end to end: cold-start gate, then the
     non-compensatory hard filter, then semantic-similarity ranking of
     survivors ONLY (never the reverse order -- ranking before filtering
@@ -709,6 +721,9 @@ async def find_applicable_procedures(
         pool, goal_embedding, candidate_pool_size, embedding_model_id,
         goal_text=goal_text, access_scope=access_scope,
     )
+    if excluded_procedure_ids:
+        excluded = {str(x) for x in excluded_procedure_ids}
+        rows = [r for r in rows if str(r["procedure_id"]) not in excluded]
 
     # ONE memo table + ONE pinned timestamp for the whole cascade: same
     # pool, same as_of, same access scope throughout -- exactly the
@@ -824,6 +839,7 @@ async def diagnose_candidates(
     goal_text: Optional[str] = None,
     limit: int = 3,
     candidate_pool_size: int = 200,
+    excluded_procedure_ids: Optional[list[str]] = None,
 ) -> list[ApplicabilityResult]:
     """
     Additive diagnostic sibling to find_applicable_procedures() (MCP
@@ -885,6 +901,10 @@ async def diagnose_candidates(
             pool, goal_embedding, candidate_pool_size, embedding_model_id,
             goal_text=goal_text, access_scope=access_scope,
         ))[:limit]
+
+    if excluded_procedure_ids:
+        excluded = {str(x) for x in excluded_procedure_ids}
+        rows = [r for r in rows if str(r["procedure_id"]) not in excluded]
 
     cascade_as_of = datetime.now(timezone.utc)
     state_cache = _new_state_cache()

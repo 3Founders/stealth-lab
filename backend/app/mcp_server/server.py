@@ -1207,8 +1207,19 @@ async def find_best_way(task_description: str, ctx: Context,
                          resume_run_id: Optional[str] = None,
                          workspace_id: Optional[str] = None,
                          parent_run_id: Optional[str] = None,
-                         parent_node_order: Optional[int] = None) -> str:
+                         parent_node_order: Optional[int] = None,
+                         exclusions: Optional[str] = None) -> str:
     """
+    `exclusions`: B32's own literal `find_best_way` input field -- an
+    optional JSON array of stable `procedure_id` family handles that
+    must never be (re-)offered as a match for this call, even if they
+    would otherwise be the single best candidate. Real uses: B11's
+    "branch" child-failure strategy re-invokes this tool for the exact
+    same subproblem excluding the Procedure that just failed, and any
+    caller who already knows a candidate is wrong for other reasons can
+    ask for a genuinely different one instead of re-litigating the same
+    match.
+
     Two-tier: find the best known way to do this, seamlessly callable at
     any point in a workflow -- not just as a heavyweight task entrypoint.
 
@@ -1364,6 +1375,16 @@ async def find_best_way(task_description: str, ctx: Context,
     if mode == "full_run" and repo_path is None:
         return await _refuse("mode='full_run' requires repo_path.")
 
+    excluded_procedure_ids: Optional[list[str]] = None
+    if exclusions:
+        try:
+            parsed_exclusions = json.loads(exclusions)
+        except json.JSONDecodeError as exc:
+            return await _refuse(f"exclusions must be a JSON array of procedure_id strings ({exc}).")
+        if not isinstance(parsed_exclusions, list) or not all(isinstance(x, str) for x in parsed_exclusions):
+            return await _refuse("exclusions must be a JSON array of procedure_id strings.")
+        excluded_procedure_ids = parsed_exclusions
+
     # Phase 1 P0: hosted-mode repo authorization. Local mode: passthrough.
     try:
         repo_path = await _authorize_repo_execution(ctx, repo_path, workspace_id)
@@ -1456,6 +1477,7 @@ async def find_best_way(task_description: str, ctx: Context,
         invariant_bindings=invariant_bindings,
         embedding_model_id=embedder.embedding_model_id(),
         access_scope=_caller_scope,
+        excluded_procedure_ids=excluded_procedure_ids,
     )
     matched_procedure = matched_procedures[0] if matched_procedures else None
 
@@ -1470,7 +1492,7 @@ async def find_best_way(task_description: str, ctx: Context,
         invariant_bindings=invariant_bindings,
         require_verified=not allow_unverified_procedures,
         embedding_model_id=embedder.embedding_model_id(),
-        access_scope=_caller_scope,
+        access_scope=_caller_scope, excluded_procedure_ids=excluded_procedure_ids,
         goal_text=task_description, session_id=session_id, workspace_id=workspace_id,
     )
     route_decision_id = await persist_route_decision(pool, route_decision)

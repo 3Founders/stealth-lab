@@ -33,7 +33,13 @@ from app.execution.recursion_guard import (
 from app.execution.plan_persistence import persist_compiled_plan
 from app.execution.plans import compile_plan
 from app.execution.procedure_graph import expand_procedure_steps
-from app.services.procedures import capture_procedure
+from app.services.procedures import (
+    MIN_DISTINCT_CONTEXTS_FOR_VERIFIED,
+    MIN_SUCCESSES_FOR_VERIFIED,
+    approve_procedure,
+    capture_procedure,
+    record_execution_outcome,
+)
 
 DATABASE_URL = os.environ.get("DATABASE_URL")
 
@@ -484,6 +490,70 @@ def test_decide_child_failure_strategy_finds_a_real_alternative_implementation()
                 await pool.execute("DELETE FROM procedure_implementations WHERE implementation_id=$1", iid)
                 await pool.execute("DELETE FROM implementations WHERE id=$1", iid)
             await _cleanup(pool, name)
+            await pool.close()
+
+    asyncio.run(_run())
+
+
+def test_decide_child_failure_strategy_branches_to_a_real_different_procedure():
+    """B11 STRICT CLOSURE: `branch` (distinct from `search_alternative`)
+    -- no alternative Implementation for the failed procedure, but a
+    genuinely DIFFERENT, real, verified+approved Procedure exists for
+    the same goal. Uses B32's own real `excluded_procedure_ids`
+    exclusion primitive, not an ad-hoc filter."""
+    async def _run():
+        from app.services.embeddings import Embedder
+
+        pool = await create_pool(DATABASE_URL, min_size=1, max_size=2)
+        run_id = uuid4().hex[:8]
+        name = f"proc-test-recfailbranch-{run_id}"
+        name_alt = f"proc-test-recfailbranchalt-{run_id}"
+        try:
+            embedder = Embedder()
+            goal_text = f"safely rotate the deployment credentials ({run_id})"
+            vec = await embedder.embed_one(goal_text, input_type="document")
+
+            procedure = await _capture(
+                pool, name, goal=goal_text, embedding=vec,
+                embedding_model_id=embedder.embedding_model_id(),
+                steps=[{"order": 0, "goal": "step"}],
+            )
+            compiled = await _compiled_plan(pool, procedure, goal_text)
+            root_id = await _start_run(pool, procedure, compiled)
+            node_row_id = await pool.fetchval(
+                "SELECT id FROM execution_run_nodes WHERE execution_run_id = $1 AND node_order = 0", root_id,
+            )
+            child_id = await _start_run(
+                pool, procedure, compiled, parent_run_id=root_id, parent_node_id=str(node_row_id),
+            )
+            await _fail_a_child_node(pool, child_id, exc=ValueError("non-retryable"), max_attempts=1)
+
+            # A genuinely different, real, VERIFIED+APPROVED procedure for
+            # the exact same goal -- diagnose_candidates' own
+            # require_verified=True default demands real evidence, never
+            # a bare candidate.
+            alt = await capture_procedure(
+                pool, name=name_alt, goal=goal_text, embedding=vec,
+                embedding_model_id=embedder.embedding_model_id(),
+                provenance="system_pending_review", scope_type="global",
+                steps=[{"order": 0, "goal": "a completely different approach"}],
+            )
+            for i in range(MIN_SUCCESSES_FOR_VERIFIED):
+                await record_execution_outcome(
+                    pool, procedure_row_id=alt["id"], success=True,
+                    context_key=f"ctx-{i % (MIN_DISTINCT_CONTEXTS_FOR_VERIFIED + 1)}",
+                )
+            await approve_procedure(pool, procedure_row_id=alt["id"], approved_by="test")
+            await pool.execute("UPDATE procedures SET is_engineering_fixture = false WHERE id = $1", alt["id"])
+
+            decision = await decide_child_failure_strategy(
+                pool, parent_run_id=root_id, parent_node_id=str(node_row_id), child_run_id=child_id,
+            )
+            assert decision["strategy"] == "branch", decision
+            assert str(alt["procedure_id"]) in decision["reason"]
+        finally:
+            await _cleanup(pool, name)
+            await _cleanup(pool, name_alt)
             await pool.close()
 
     asyncio.run(_run())
