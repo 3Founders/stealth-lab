@@ -185,6 +185,59 @@ def test_execute_dispatches_to_deterministic_provider_for_bound_deterministic_ki
     assert result.data["output_files"] == {"out.txt": b"ok"}
 
 
+def test_execute_refuses_with_a_typed_auth_required_failure_when_requirements_are_unmet(monkeypatch):
+    """B38: "missing dependencies/configuration produce typed terminal
+    errors" -- an implementation declaring `requirements={'credentials':
+    [...]}` must be refused BEFORE any real invocation attempt when the
+    caller's own context does not carry them, with a real, distinguishable
+    `error_class` -- never silently attempted (which could either fail
+    opaquely or, worse, appear to succeed against a misconfigured real
+    endpoint) and never a fabricated success."""
+    from app.execution import implementation_executor
+
+    async def fake_get(pool, implementation_id, *, scope):
+        return {
+            "id": IMPL_ID, "kind": "deterministic", "name": "needs-creds",
+            "requirements": {"credentials": ["graphify"]},
+        }
+
+    monkeypatch.setattr(implementation_executor.implementation_registry, "get", fake_get)
+
+    node = _node(implementation_id=IMPL_ID)
+    context = {"code": "open('out.txt', 'w').write('ok')"}  # no 'credentials' key at all
+    result = _run(execute_implementation(
+        pool=_FakeRegistryGetPool(), node=node, context=context, scope=AccessScope.unrestricted(),
+    ))
+    assert result.status == "failure"
+    assert result.data["error_class"] == "auth_required"
+    assert "graphify" in str(result.data["missing_requirements"])
+    assert "needs-creds" in result.notes
+
+
+def test_execute_proceeds_normally_once_the_missing_requirement_is_supplied(monkeypatch):
+    """The other half of the same rule: this is a real, narrow filter,
+    not a blanket refusal -- supplying the SAME requirement the previous
+    test withheld lets the real dispatch proceed exactly as before this
+    check existed."""
+    from app.execution import implementation_executor
+
+    async def fake_get(pool, implementation_id, *, scope):
+        return {
+            "id": IMPL_ID, "kind": "deterministic", "name": "needs-creds",
+            "requirements": {"credentials": ["graphify"]},
+        }
+
+    monkeypatch.setattr(implementation_executor.implementation_registry, "get", fake_get)
+
+    node = _node(implementation_id=IMPL_ID)
+    context = {"code": "open('out.txt', 'w').write('ok')", "credentials": ["graphify"]}
+    result = _run(execute_implementation(
+        pool=_FakeRegistryGetPool(), node=node, context=context, scope=AccessScope.unrestricted(),
+    ))
+    assert result.status == "success"
+    assert result.data["output_files"] == {"out.txt": b"ok"}
+
+
 # ---------------------------------------------------------------------
 # validate_invocation / check_requirements
 # ---------------------------------------------------------------------

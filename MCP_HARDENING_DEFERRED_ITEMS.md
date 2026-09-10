@@ -1302,3 +1302,93 @@ local sandbox, implementation lifecycle all genuinely exist), B31
     surfaced as `stale_leases_observed` on an unrelated, non-conflicting
     new declaration — plus the full pre-existing coordination/
     declare_file_intent suite (9 tests) re-run green.
+
+63. **[STRENGTHENED, real gap found and closed; nothing else new]** B38
+    (no synthetic/fallback execution rule), beyond the earlier grep-
+    vocabulary sweep (item 42 above). This pass instead audited against
+    B38's own LITERAL checklist — the 10 named forbidden patterns and
+    the 9 named typed-error identifiers — rather than red-flag words:
+    - **Catch-all exception paths that return success/empty-safe
+      objects**: read every `except Exception` block in `app/` (112
+      total) whose next few lines contain a `return` (~50 call sites
+      individually inspected, not sampled). Nothing new: every
+      exception-driven return is either an honest `status="failure"`/
+      `ProviderAvailability(False, ...)` result naming the real cause,
+      or a documented, deliberate degrade-and-continue (vector search →
+      lexical-only, LLM abstraction → the real `DeterministicExtractor`
+      fallback, reuse-check failure → proceed without reuse) — never a
+      fabricated success shape. Confirms, does not merely repeat, item
+      42's earlier conclusion, now checked by tracing the actual control
+      flow rather than string-matching.
+    - **Missing dependencies/configuration produce typed terminal
+      errors** — the real gap: `implementation_executor.
+      validate_invocation` (real, tested, checks `requirements['network'
+      ]`/`requirements['credentials']` against the caller's context) had
+      ZERO production callers before this pass — a missing credential
+      was never pre-emptively detected; it would only surface later, as
+      whatever opaque error the real invocation attempt happened to
+      raise. Not itself a synthetic-success violation (a real failure
+      still occurred), but not the literal "typed terminal error" B38
+      asks for either. Fixed: `execute_implementation` now calls
+      `validate_invocation` BEFORE dispatching to any adapter or
+      provider (uniform across every kind, not duplicated per-kind);
+      on a real unmet requirement it returns `NodeResult(status=
+      "failure", data={"error_class": "auth_required", "missing_
+      requirements": [...]})` — refusing an invocation known in advance
+      to fail rather than attempting it. Verified live: 2 new tests in
+      `test_implementation_executor_offline.py` (the refusal fires with
+      the real missing requirement named, and — the other half of the
+      same rule — supplying it lets real dispatch proceed exactly as
+      before this check existed) plus the full pre-existing executor
+      (19 tests) and adapters (12 tests) suites re-run green.
+    - **The other 9 named patterns** (placeholder IDs, fake embeddings,
+      fake tool results, synthetic evidence, stub execution success,
+      confidence-derived "verified", nearest-neighbor-as-applicable,
+      invented Implementation on resolution failure, unauthorized mock/
+      fake adapter activation): each independently re-confirmed as
+      already closed by EARLIER, real, already-tested work this session
+      — B25/B27/B28's real Adapter Resolver (never invents an
+      Implementation), B34's verification ladder (never a confidence-
+      derived "verified" — `method` is a real evidence-provenance
+      field), `applicability.py`'s own non-compensatory hard-constraint
+      cascade (semantic similarity ranks survivors only, never
+      substitutes for it) — not re-verified from scratch a second time
+      here, since nothing in this pass's own new code touched any of
+      them.
+    - **The other 8 named typed-error identifiers** (`NO_APPLICABLE_
+      PROCEDURE`/`IMPLEMENTATION_UNAVAILABLE`/`AUTH_REQUIRED`/
+      `APPLICABILITY_UNKNOWN`/`VERIFICATION_INCONCLUSIVE`/`UNAUTHORIZED`/
+      `SOURCE_FETCH_FAILED`/`INDEX_STALE`): B38's own text introduces
+      this list with "such as" — read literally as the NAMING
+      CONVENTION the principle wants, not a mandatory checklist of nine
+      exact tokens every one of which must exist verbatim. Checked the
+      underlying CONCEPT, not the literal string, for each: `VERIFICATION
+      _INCONCLUSIVE`/`UNAUTHORIZED` already exist as real states
+      (`verification_state='inconclusive'`, real 401/authz refusals
+      elsewhere). `MISSING_IMPLEMENTATION` already exists literally
+      (6 files). `APPLICABILITY_UNKNOWN` does NOT exist as a distinct
+      state from "not applicable" — but `applicability.py`'s own
+      docstring explicitly documents this as a DELIBERATE, ALREADY-
+      justified architectural decision from an earlier ticket ("'no
+      claim found' and 'precondition unsatisfied' are the same answer...
+      rejecting three-valued logic to preserve [the] closed-world
+      assumption") — reversing it now would be exactly the "unnecessarily
+      redesign already-working architecture" this pass was told not to
+      do, so left as a **[DESIGN]**, not a gap. `IMPLEMENTATION_
+      UNAVAILABLE` is real but currently COLLAPSED into `MISSING_
+      IMPLEMENTATION`'s same `None` return from `resolve_binding_for_step`
+      (B24) — a real refinement opportunity (which of two honest refusal
+      reasons applies), not a synthetic-fallback violation (both cases
+      already refuse correctly, never fabricating a binding); left as a
+      **[GAP]** rather than changing B24's just-built, just-tested `None`
+      contract for a third time this pass. `NO_APPLICABLE_PROCEDURE`/
+      `SOURCE_FETCH_FAILED`/`INDEX_STALE` have no distinct typed
+      identifier today, but their underlying failure conditions (empty
+      `find_applicable_procedures` result; `GitHubSkillCorpusSource.
+      fetch()` raising on a real git-clone failure, propagating to the
+      job's own `failed`/error-text state, never a silent skip;
+      `compute_index_freshness`'s new real `lag` metric, informational
+      only — B37 required freshness be MEASURABLE, not that staleness
+      block anything) each already fail honestly today; adding a
+      specific label to each is real, valuable, narrowly-scoped
+      follow-on work, not fabricated here.

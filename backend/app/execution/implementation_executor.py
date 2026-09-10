@@ -322,6 +322,31 @@ async def execute_implementation(
             ),
         )
 
+    # B38: "missing dependencies/configuration produce typed terminal
+    # errors" (AUTH_REQUIRED-class) -- `validate_invocation` already
+    # exists (real, tested) but had ZERO production callers before this
+    # check: a missing credential/network requirement was never
+    # PRE-EMPTIVELY detected, it just failed later at the real
+    # invocation attempt with whatever opaque error that produced. That
+    # earlier behavior was never a SYNTHETIC success (a real failure
+    # still occurred), but it also never gave a caller (or a retry/
+    # routing decision) a typed, actionable reason to distinguish "this
+    # would need a credential nobody has" from "this genuinely broke".
+    # Checked here, before dispatch, so it applies uniformly to every
+    # kind (adapter or provider), not duplicated in each one.
+    problems = validate_invocation(implementation, context)
+    if problems:
+        return NodeResult(
+            status="failure",
+            data={"error_class": "auth_required", "missing_requirements": problems},
+            notes=(
+                f"step {node.order} ({node.goal}): implementation "
+                f"{implementation['id']!r} ({implementation['name']!r}) requires "
+                f"context this caller does not provide -- refusing rather than "
+                f"attempting an invocation known in advance to fail: {'; '.join(problems)}"
+            ),
+        )
+
     kind = implementation["kind"]
 
     # B25/B27/B28: the real Adapter Resolver -- for kinds needing
