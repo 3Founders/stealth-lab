@@ -423,6 +423,23 @@ async def relate_claims(
                 to_claim_id,
             )
 
+    # B8: a SUPERSEDES/CONTRADICTS edge is a belief-revising event for the
+    # target claim -- its stored belief_score/claim_status must follow.
+    # Best-effort and lazily imported (claim_belief imports claims):
+    # the truth-maintenance write above has already committed and must not
+    # be undone by a downstream belief-recompute failure.
+    try:
+        from app.services import claim_belief
+
+        await claim_belief.recompute_claim_belief(
+            pool, to_claim_id, changeset_reason="claim relation changed"
+        )
+    except Exception:  # pragma: no cover - defensive
+        logger.warning(
+            "relate_claims: belief recompute failed for claim %s", to_claim_id,
+            exc_info=True,
+        )
+
     if not propagate:
         return []
     from app.services.claim_impact import propagate_claim_change
@@ -786,7 +803,13 @@ async def list_current_claims(
         )
 
     rows = await pool.fetch(
-        f"SELECT k.id, k.name, k.properties FROM knowledge_nodes k "
+        # belief_score/belief_method/claim_status (B8/B9): the stored,
+        # evidence-derived belief and its DERIVED status projection travel
+        # with every current-truth claim read shape, so a caller never has
+        # to issue a second query to learn how strongly a claim is held.
+        f"SELECT k.id, k.name, k.properties, "
+        f"k.belief_score, k.belief_method, k.claim_status "
+        f"FROM knowledge_nodes k "
         f"{task_join} "
         f"WHERE k.node_type = 'claim' AND k.t_invalid IS NULL "
         f"AND COALESCE(k.properties->>'truth_state', 'IN') <> 'OUT' "

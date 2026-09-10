@@ -30,9 +30,12 @@ composes over what already exists and is already tested elsewhere:
 """
 from __future__ import annotations
 
+import logging
 from typing import Any, Mapping, Optional
 
 import asyncpg
+
+logger = logging.getLogger(__name__)
 
 from app.execution.evidence import outcome_to_evidence
 from app.services.access import TenantScope, tenant_transaction
@@ -154,7 +157,27 @@ async def record_claim_evidence(
             evidence.owner_id,
             scope.tenant_id,
         )
-    return str(inserted["id"])
+    new_id = str(inserted["id"])
+
+    # B8: a claim's belief is a function of its evidence rows -- recording
+    # one is exactly when that number must move. Best-effort and lazily
+    # imported (claim_belief -> claim_evidence would otherwise be a cycle):
+    # the evidence row is already committed and must not be rolled back by
+    # a downstream belief-recompute failure.
+    try:
+        from app.services import claim_belief
+
+        await claim_belief.recompute_claim_belief(
+            pool, claim_id, changeset_reason="claim evidence recorded"
+        )
+    except Exception:  # pragma: no cover - defensive; see docstring
+        logger.warning(
+            "record_claim_evidence: belief recompute failed for claim %s",
+            claim_id,
+            exc_info=True,
+        )
+
+    return new_id
 
 
 async def get_claim_evidence(pool: asyncpg.Pool, claim_id: str) -> list[dict]:
