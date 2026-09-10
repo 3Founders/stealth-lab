@@ -445,3 +445,221 @@ def test_record_artifact_fires_through_the_real_durable_run_path():
             await pool.close()
 
     asyncio.run(_run())
+
+
+@pytestmark_db
+def test_externally_hosted_node_records_tool_called_and_result_and_stays_unverified():
+    """MCP hardening B27 STRICT CLOSURE: "record what Stealth requested,
+    the concrete endpoint/tool/version... returned results... and what
+    was independently verified versus merely reported" (V4 B27), read
+    together with B26's "Distinguish Stealth-observed execution from
+    provider-reported... evidence" / "Never use a permanent verified=true
+    as the only verification state".
+
+    Proves, through the SAME real durable_run.execute_run path as
+    test_record_artifact_fires_through_the_real_durable_run_path:
+      - a real HttpApiAdapter execution durably records `tool_called`
+        (endpoint/method/version) and `tool_result` (outcome_status) --
+        B8's own pre-existing vocabulary, real call sites for the first
+        time.
+      - the node's own verification_state is 'unverified', NOT silently
+        promoted to 'verified' -- the outcome is the external provider's
+        own report (HTTP 200), never something Stealth itself
+        independently checked.
+    """
+    async def _run():
+        from app.db.session import create_pool
+        from app.execution import implementation_registry
+        from app.execution.durable_run import execute_run, start_run
+        from app.execution.implementation_executor import execute_implementation
+        from app.execution.recorder import get_run_events
+        from app.services.access import AccessScope
+        from app.services.procedures import capture_procedure
+        from app.utils.ids import uuid7
+
+        pool = await create_pool(DATABASE_URL, min_size=1, max_size=2)
+        impl_id = None
+        row_id = None
+        exec_run_id = None
+        try:
+            with _real_http_server() as base_url:
+                impl = await implementation_registry.register(
+                    pool, name=f"tool-called-dispatch-{uuid.uuid4().hex[:8]}", kind="api",
+                    provider="adapter-e2e", created_by="adapter_e2e", version=3,
+                    locator={"endpoint": f"{base_url}/echo"},
+                )
+                impl_id = impl["id"]
+
+                res = await capture_procedure(
+                    pool, name=f"proc-test-tool-called-dispatch-{uuid.uuid4().hex[:8]}",
+                    goal="tool called dispatch probe", steps=[{"order": 0, "goal": "call the api"}],
+                    provenance="prior_library", scope_type="global", created_by="adapter_e2e",
+                    embedding=[0.01] * 1024,
+                )
+                proc_id, row_id = res["procedure_id"], res["id"]
+
+                async with pool.acquire() as c:
+                    pv = await c.fetchval("SELECT version FROM procedures WHERE id=$1", row_id)
+                    plan_id = await c.fetchval(
+                        "INSERT INTO execution_plans (id, procedure_id, procedure_version, procedure_row_id, "
+                        " task_description, procedure_content_hash, content_hash, scope_type) "
+                        "VALUES ($1,$2,$3,$4,$5,$6,$7,'global') RETURNING id",
+                        str(uuid7()), proc_id, pv, row_id, "tool-called-dispatch-e2e",
+                        f"pch-{uuid.uuid4().hex[:10]}", f"ch-{uuid.uuid4().hex[:10]}",
+                    )
+                    graph_id = await c.fetchval(
+                        "INSERT INTO task_graphs (id, execution_plan_id, graph_hash, nodes) "
+                        "VALUES ($1,$2,$3,'[]'::jsonb) RETURNING id",
+                        str(uuid7()), plan_id, f"gh-{uuid.uuid4().hex[:10]}",
+                    )
+
+                exec_run_id = await start_run(
+                    pool, execution_plan_id=plan_id, task_graph_id=graph_id,
+                    procedure_id=proc_id, procedure_version=pv,
+                    node_orders=[0], deps={0: []}, created_by="adapter_e2e",
+                )
+                await pool.execute(
+                    "UPDATE execution_run_nodes SET implementation_id=$2 "
+                    "WHERE execution_run_id=$1 AND node_order=0",
+                    exec_run_id, impl_id,
+                )
+
+                async def run_node(order: int, attempt: int) -> dict:
+                    node = PlanNode(order=order, goal="call the api", implementation_id=impl_id)
+                    result = await execute_implementation(pool, node, {"request_body": {"probe": True}}, scope=AccessScope.unrestricted())
+                    if result.status != "success":
+                        raise RuntimeError(result.notes)
+                    return {"notes": result.notes, "data": dict(result.data or {}), "attempt": attempt}
+
+                outcome = await execute_run(pool, exec_run_id, deps={0: []}, run_node=run_node, worker_id="tool-called-dispatch-w1")
+                assert outcome["status"] == "succeeded"
+
+                events = await get_run_events(pool, exec_run_id)
+                called = [e for e in events if e["event_type"] == "tool_called"]
+                resulted = [e for e in events if e["event_type"] == "tool_result"]
+                assert len(called) == 1
+                assert called[0]["node_order"] == 0
+                assert called[0]["payload"]["requested_endpoint"] == f"{base_url}/echo"
+                assert called[0]["payload"]["requested_method"] == "POST"
+                assert called[0]["payload"]["implementation_version"] == 3
+                assert len(resulted) == 1
+                assert resulted[0]["payload"]["outcome_status"] == "success"
+
+                node_state = await pool.fetchval(
+                    "SELECT verification_state FROM execution_run_nodes "
+                    "WHERE execution_run_id=$1 AND node_order=0",
+                    exec_run_id,
+                )
+                assert node_state == "unverified"
+        finally:
+            if exec_run_id is not None:
+                await pool.execute("DELETE FROM execution_runs WHERE id=$1", exec_run_id)
+            if row_id is not None:
+                deleted = await pool.execute(
+                    "DELETE FROM procedures WHERE id=$1 AND id NOT IN (SELECT procedure_row_id FROM execution_plans)",
+                    row_id,
+                )
+                if deleted == "DELETE 0":
+                    await pool.execute("UPDATE procedures SET is_engineering_fixture = true WHERE id=$1", row_id)
+            if impl_id is not None:
+                await pool.execute("DELETE FROM implementations WHERE id=$1", impl_id)
+            await pool.close()
+
+    asyncio.run(_run())
+
+
+@pytestmark_db
+def test_locally_executed_node_still_verifies_since_stealth_observes_it_directly():
+    """The counterpoint to the above: LocalAdapter's subprocess sandbox
+    runs under Stealth's own direct observation (real exit_code it reads
+    itself, no third-party report in between) -- B26's "Stealth-observed
+    execution" half. Its NodeResult carries no `requested_endpoint`/
+    `requested_server_url` (LocalAdapter's collect_evidence never sets
+    them), so `_node_finish` must still mark it 'verified', not silently
+    downgrade every successful node."""
+    async def _run():
+        from app.db.session import create_pool
+        from app.execution import implementation_registry
+        from app.execution.durable_run import execute_run, start_run
+        from app.execution.implementation_executor import execute_implementation
+        from app.services.access import AccessScope
+        from app.services.procedures import capture_procedure
+        from app.utils.ids import uuid7
+
+        pool = await create_pool(DATABASE_URL, min_size=1, max_size=2)
+        impl_id = None
+        row_id = None
+        exec_run_id = None
+        try:
+            impl = await implementation_registry.register(
+                pool, name=f"local-verified-dispatch-{uuid.uuid4().hex[:8]}", kind="deterministic",
+                provider="adapter-e2e", created_by="adapter_e2e",
+                invocation={"code": "print('ok')"},
+            )
+            impl_id = impl["id"]
+
+            res = await capture_procedure(
+                pool, name=f"proc-test-local-verified-dispatch-{uuid.uuid4().hex[:8]}",
+                goal="local verified dispatch probe", steps=[{"order": 0, "goal": "run the script"}],
+                provenance="prior_library", scope_type="global", created_by="adapter_e2e",
+                embedding=[0.01] * 1024,
+            )
+            proc_id, row_id = res["procedure_id"], res["id"]
+
+            async with pool.acquire() as c:
+                pv = await c.fetchval("SELECT version FROM procedures WHERE id=$1", row_id)
+                plan_id = await c.fetchval(
+                    "INSERT INTO execution_plans (id, procedure_id, procedure_version, procedure_row_id, "
+                    " task_description, procedure_content_hash, content_hash, scope_type) "
+                    "VALUES ($1,$2,$3,$4,$5,$6,$7,'global') RETURNING id",
+                    str(uuid7()), proc_id, pv, row_id, "local-verified-dispatch-e2e",
+                    f"pch-{uuid.uuid4().hex[:10]}", f"ch-{uuid.uuid4().hex[:10]}",
+                )
+                graph_id = await c.fetchval(
+                    "INSERT INTO task_graphs (id, execution_plan_id, graph_hash, nodes) "
+                    "VALUES ($1,$2,$3,'[]'::jsonb) RETURNING id",
+                    str(uuid7()), plan_id, f"gh-{uuid.uuid4().hex[:10]}",
+                )
+
+            exec_run_id = await start_run(
+                pool, execution_plan_id=plan_id, task_graph_id=graph_id,
+                procedure_id=proc_id, procedure_version=pv,
+                node_orders=[0], deps={0: []}, created_by="adapter_e2e",
+            )
+            await pool.execute(
+                "UPDATE execution_run_nodes SET implementation_id=$2 "
+                "WHERE execution_run_id=$1 AND node_order=0",
+                exec_run_id, impl_id,
+            )
+
+            async def run_node(order: int, attempt: int) -> dict:
+                node = PlanNode(order=order, goal="run the script", implementation_id=impl_id)
+                result = await execute_implementation(pool, node, {}, scope=AccessScope.unrestricted())
+                if result.status != "success":
+                    raise RuntimeError(result.notes)
+                return {"notes": result.notes, "data": dict(result.data or {}), "attempt": attempt}
+
+            outcome = await execute_run(pool, exec_run_id, deps={0: []}, run_node=run_node, worker_id="local-verified-dispatch-w1")
+            assert outcome["status"] == "succeeded"
+
+            node_state = await pool.fetchval(
+                "SELECT verification_state FROM execution_run_nodes "
+                "WHERE execution_run_id=$1 AND node_order=0",
+                exec_run_id,
+            )
+            assert node_state == "verified"
+        finally:
+            if exec_run_id is not None:
+                await pool.execute("DELETE FROM execution_runs WHERE id=$1", exec_run_id)
+            if row_id is not None:
+                deleted = await pool.execute(
+                    "DELETE FROM procedures WHERE id=$1 AND id NOT IN (SELECT procedure_row_id FROM execution_plans)",
+                    row_id,
+                )
+                if deleted == "DELETE 0":
+                    await pool.execute("UPDATE procedures SET is_engineering_fixture = true WHERE id=$1", row_id)
+            if impl_id is not None:
+                await pool.execute("DELETE FROM implementations WHERE id=$1", impl_id)
+            await pool.close()
+
+    asyncio.run(_run())

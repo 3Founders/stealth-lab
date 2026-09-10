@@ -311,14 +311,47 @@ async def _node_finish(pool: asyncpg.Pool, node_id: str, worker_id: str, *,
                        execution_run_id: Optional[str] = None, node_order: Optional[int] = None) -> None:
     async with pool.acquire() as conn, conn.transaction():
         if ok:
+            result = result or {}
+            # B27: an externally-hosted Adapter.execute() (HttpApiAdapter/
+            # McpToolAdapter, adapters.py) stamps NodeResult.data["evidence"]
+            # with requested_endpoint/requested_server_url/requested_tool_name
+            # -- the real signal that this node's outcome is PROVIDER-REPORTED,
+            # not Stealth-observed. B26: "Distinguish Stealth-observed
+            # execution from provider-reported... evidence" / "Never use a
+            # permanent verified=true as the only verification state" -- such
+            # a node's `verification_state` must not be silently promoted to
+            # 'verified' just because the provider's own status code/isError
+            # looked successful. Local, Stealth-driven execution (LocalAdapter's
+            # subprocess sandbox, or any ad-hoc run_node with no evidence dict
+            # at all) has no such third-party boundary and keeps 'verified'.
+            evidence = result.get("evidence") or (result.get("data") or {}).get("evidence") or {}
+            externally_reported = bool(
+                evidence.get("requested_endpoint") or evidence.get("requested_server_url")
+            )
+            node_verification_state = "unverified" if externally_reported else "verified"
             tag = await conn.execute(
                 "UPDATE execution_run_nodes SET status='succeeded', ended_at=now(), "
-                " result_ref=$2::jsonb, verification_state='verified', worker_id=NULL, lease_expires_at=NULL "
+                " result_ref=$2::jsonb, verification_state=$4, worker_id=NULL, lease_expires_at=NULL "
                 "WHERE id=$1 AND worker_id=$3",
-                node_id, result or {}, worker_id,
+                node_id, result, worker_id, node_verification_state,
             )
             if tag != "UPDATE 0" and execution_run_id is not None:
                 await _rec.record_node_succeeded(conn, execution_run_id, node_order=node_order)
+                if externally_reported:
+                    await _rec.record_tool_called(
+                        conn, execution_run_id, node_order=node_order,
+                        requested_endpoint=evidence.get("requested_endpoint"),
+                        requested_method=evidence.get("requested_method"),
+                        requested_server_url=evidence.get("requested_server_url"),
+                        requested_tool_name=evidence.get("requested_tool_name"),
+                        implementation_version=evidence.get("implementation_version"),
+                    )
+                    await _rec.record_tool_result(
+                        conn, execution_run_id, node_order=node_order,
+                        outcome_status=evidence.get("outcome_status", "success"),
+                        failure_class=evidence.get("failure_class"),
+                        detail=evidence.get("detail"),
+                    )
                 # B7's record_artifact(): a real Adapter.execute() (B25)
                 # composition populates NodeResult.data["artifacts"] with
                 # real references (never inline content). Checked at both
@@ -328,7 +361,6 @@ async def _node_finish(pool: asyncpg.Pool, node_id: str, worker_id: str, *,
                 # {"notes":..., "data": dict(result.data), "attempt":...})
                 # -- one durable event per artifact, same transaction as
                 # the node succeeding.
-                result = result or {}
                 artifacts_seen = result.get("artifacts") or (result.get("data") or {}).get("artifacts") or []
                 for artifact in artifacts_seen:
                     if not isinstance(artifact, dict) or not artifact.get("ref"):

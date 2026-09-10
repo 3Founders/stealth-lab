@@ -135,6 +135,48 @@ async def record_artifact(
     )
 
 
+async def record_tool_called(
+    conn: _Executor, execution_run_id: str, *, node_order: Optional[int],
+    requested_endpoint: Optional[str] = None, requested_method: Optional[str] = None,
+    requested_server_url: Optional[str] = None, requested_tool_name: Optional[str] = None,
+    implementation_version: Optional[str] = None,
+) -> None:
+    """B27: "record what Stealth requested, the concrete endpoint/
+    tool/version" -- an externally-hosted Adapter.execute() (adapters.py)
+    already builds this exact dict (requested_endpoint/requested_method
+    for HttpApiAdapter, requested_server_url/requested_tool_name for
+    McpToolAdapter); this is the durable event that carries it, using
+    B8's own pre-existing `tool_called` vocabulary entry (real since
+    migration 70, never emitted until now)."""
+    await record_event(
+        conn, execution_run_id=execution_run_id, event_type="tool_called",
+        node_order=node_order,
+        payload={
+            "requested_endpoint": requested_endpoint, "requested_method": requested_method,
+            "requested_server_url": requested_server_url, "requested_tool_name": requested_tool_name,
+            "implementation_version": implementation_version,
+        },
+    )
+
+
+async def record_tool_result(
+    conn: _Executor, execution_run_id: str, *, node_order: Optional[int],
+    outcome_status: str, failure_class: Optional[str] = None, detail: Optional[str] = None,
+) -> None:
+    """B27's other half: "returned results... what was independently
+    verified versus merely reported". This event's own payload IS the
+    merely-reported half (the external provider's self-reported status)
+    -- it is deliberately never written to `execution_run_nodes.
+    verification_state='verified'` by the caller, since Stealth did not
+    itself independently observe the underlying work (B26: "Distinguish
+    Stealth-observed execution from provider-reported... evidence")."""
+    await record_event(
+        conn, execution_run_id=execution_run_id, event_type="tool_result",
+        node_order=node_order,
+        payload={"outcome_status": outcome_status, "failure_class": failure_class, "detail": detail},
+    )
+
+
 async def record_route_decided(conn: _Executor, execution_run_id: str, *, route_decision_id: str, route: str) -> None:
     await record_event(
         conn, execution_run_id=execution_run_id, event_type="route_decided",
