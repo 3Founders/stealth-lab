@@ -4,8 +4,8 @@
 **Spec audited against:** `STEALTHLAB_EXTREME_FINAL_HARDENING_V4.md` (Part II Plan A, Part II-A §1–§38, Part IV G0–G14/G23/G24, Part VI, Testing T1–T15).
 **Repo revision at audit:** `main` @ `1663c94` for the original audit; Implementation Pass 1 rebased onto `main` @ `301b9bf` (incorporates upstream `976b647` "Global Internet Ingestion admission gate", which took `db/49`, so Pass 1's migrations are `db/50`–`db/55`).
 **Environment / DB:** two Postgres targets, switched via `backend/scripts/dbtarget.{py,ps1,sh}` (`DATABASE_URL_LOCAL` ⟷ hosted `DATABASE_URL`; see `backend/DB_TARGETS.md`).
-- **hosted** (Supabase, egress-limited): migrations 64–69 applied; `migrate.py --status` → 01–55 all applied.
-- **local** (native Postgres): schema built migration-by-migration; **migrations 64–69 verified applied from scratch** — all 6 new tables present, `procedure_implementations` carries all 6 new columns, `ingestion_context_id` back-link on all 9 target tables, ledger = 69 rows. (Pre-existing MISMATCH warnings on migrations 11–34 are cosmetic: ledger checksum written before `migrate.py` added CRLF→LF normalization vs the CRLF checkout — schema is correct.) **T2** (`test_migrations_64_69_t2_e2e.py`, 8 passed) and **T3** (`test_ingestion_canonical_chain_e2e.py`, 2 passed) verified against local; `test_schema_drift.py` → 2 passed (no drift).
+- **hosted** (Supabase, egress-limited): this lane's tables applied during Pass 1 under the **pre-renumber** names `50–55`; the `schema_migrations` ledger there still carries those 6 rows. Plan B's `50–63` + this lane's renamed `64–69` reconciliation on hosted is a **deliberate operator action** (see the re-audit section's ledger-reconciliation block) — not run from here, per the egress budget.
+- **local** (native Postgres): schema built migration-by-migration; this lane's 6 tables are present and correct (applied under old names `50–55`; `procedure_implementations` carries all 6 new columns; `ingestion_context_id` back-link on all target tables). Ledger has 6 orphan rows `50_sources.sql … 55_artifact_blocks.sql`; Plan B's `50–63` are `pending`. Reconciliation SQL in the re-audit section. (Pre-existing MISMATCH warnings on migrations 11–34 are cosmetic: ledger checksum predates `migrate.py`'s CRLF→LF normalization — schema is correct.) **T2** (`test_migrations_64_69_t2_e2e.py`, 8 passed) and **T3** (`test_ingestion_canonical_chain_e2e.py`, 2 passed) verified against local; `test_schema_drift.py` → 2 passed (no drift).
 
 Offline-suite progression (`DATABASE_URL` unset): baseline `2556 / 360 / 7` → Pass 1 `2736 / 360 / 7` → Pass 2 `2778 / 360 / 7` → Pass 3 (`035adf6`) + G1 trace `2784 / 361 / 6` (the extra skip is `test_migration_upgrade_e2e` correctly skipping with DATABASE_URL cleanly unset; +228 passing across all passes, **zero regressions**).
 
@@ -80,6 +80,95 @@ Wires the Pass 1 building blocks into the live paths and adds the two engines Pa
   - **G14 — global hierarchical retrieval + index freshness (§B37).** RRF fusion + the non-compensatory applicability cascade exist (`retrieval.py`, `applicability.py`); embedding backfill scripts exist. **Missing:** `canonical_revision` / `indexed_revision` / `index_lag` as tracked, queryable values; the "a stale index may return candidates but authoritative version/applicability checks run against canonical rows before selection" guarantee as a first-class enforced mechanism (grep for those terms → nothing). **State: OPEN** for the freshness-tracking contract; the retrieval stages themselves are PARTIAL.
 - **Board note owed** — `schema.md` `Implementation → Procedure` 1:1 vs Pass 1's M:N (`schema.md` frozen).
 - **External:** `backend/app/config.py` has an uncommitted `embedding_provider_chain` change from another lane (not part of this work; left untouched).
+
+---
+
+## RE-AUDIT vs merged Plan B — `7a6e18f` "MCP + procedure-conditioned execution hardening (B1–B38)" (2026-09-10)
+
+Plan B (the MCP execution lifecycle lane, explicitly **not this lane**) landed on
+`main` while this lane was mid-flight. It took migration numbers **50–63**, which
+collided with this lane's Pass-1 migrations (also 50–55). **Resolution
+(commit `9f9c876`, pushed to `main`):** this lane's six migrations were
+`git mv`'d to **64–69** — `64_sources` `65_ingestion_contexts`
+`66_procedure_claim_refs` `67_procedure_implementation_relation`
+`68_screening_decisions` `69_artifact_blocks` — with every `-- Migration NN`
+header, in-SQL sibling cross-ref, and `migration 5X` comment in the 12 touched
+services + 6 offline test suites + `publication_deps.py` + this doc bumped.
+`test_migrations_50_55_t2_e2e.py` → `test_migrations_64_69_t2_e2e.py`. The SQL
+bodies are unchanged; 89 offline tests across the six renumbered-table suites
+pass, imports clean.
+
+### Migration ordering — verified clean
+
+Fresh-DB apply order is now `… 39 … 58 → 59 … 64 … 67 …`. The interaction that
+mattered: Plan B's **`58_procedure_implementations_and_dependencies.sql`** does a
+faithful `CREATE TABLE IF NOT EXISTS procedure_implementations` capture that adds
+**exactly the same rich columns** this lane's `67` adds (`role`,
+`implementation_version[_constraint]`, `supported_steps`,
+`supported_capabilities`, `applicability`, `interface_binding`, `evidence_refs`,
+`status`, `ingestion_context_id`, `t_valid`, `t_invalid`), the same
+`idx_procedure_implementations_identity` partial-unique index, and the same
+`role`/`status` CHECK vocab (as named constraints). After `58`, migration `67`
+is **idempotent-inert on a fresh DB** — every `ADD COLUMN IF NOT EXISTS` and
+`CREATE … IF NOT EXISTS` no-ops — but still does two non-redundant things `58`
+does not: `ALTER COLUMN resource_path DROP NOT NULL` (migration `39` created it
+`NOT NULL`) and `DROP CONSTRAINT procedure_implementations_procedure_id_implementation_id_key`
+(the legacy 2-col unique from `39`). Both are `IF EXISTS`-guarded / inherently
+idempotent, so `67` is safe in either apply order (it already ran first on
+`local` under its old name `53_procedure_implementation_relation.sql`; Plan B's
+`58` will no-op against it there). **No conflict. Migration `67` kept as-is**
+(immutable-once-applied + still meaningful against the pre-`58` shared DB).
+
+### What Plan B closes / advances in THIS lane's gate matrix
+
+| Gate / Test | Was (this audit) | Now, given Plan B | Evidence in `7a6e18f` |
+|---|---|---|---|
+| **G13** `.stealth/` projection | **OPEN** (greenfield) | **CODE-COMPLETE (via Plan B)** — `app/execution/stealth_projection.py` (230 ln) writes `.stealth/{context.md,run.json,meta.json}` atomically, `[ROUTER]/[CLAIMS]/[PROCEDURES:SELECTED]/[IMPLEMENTATIONS]/[COORDINATION]` section model, `meta.json.projection_revision`; wired into `find_best_way` `plan_only` + `continue_run(repo_path=…)`. Named gaps (Plan B's own deferred doc, items 28–30): `[RELEVANT GLOBAL CLAIMS]` populated only as far as `relevant_claims.py` reaches; `projection_revision` is a gen-time unix ts not a monotonic counter. | `stealth_projection.py`, `test_find_best_way_stealth_projection_e2e.py`, `mcp_server/server.py` |
+| **T11** `.stealth/` budget test | **OPEN** (dep on G13) | **PARTIAL** — `test_find_best_way_stealth_projection_e2e.py` exercises the projection end-to-end; a dedicated large-corpus byte-budget/router-navigation assertion (T11 proper) is still not present. | same |
+| **T12 / B36** multi-agent file-intent coordination | **NONE** | **CLOSED (via Plan B)** — `app/execution/coordination.py` (239 ln) + `db/56_execution_run_node_file_intents.sql` + `declare_file_intent` MCP tool; read-glob / write-glob conflict + unmet-dependency advisory detection. Gaps (Plan B deferred items 31–34): glob-overlap is a deliberate shared-prefix over-approximation; `symbols_expected_to_modify` stored but not checked; advisory only (nothing forces a host to call it). | `coordination.py`, `test_coordination_e2e.py`, `test_coordination_offline.py`, `test_declare_file_intent_mcp_e2e.py` |
+| **G23** `report_execution` → Observation/Evidence/Claim-candidate learning | **PARTIAL** (deferred to Plan B lane) | **CODE-COMPLETE (via Plan B)** — B18 host-executed learning loop, private-by-default extraction from a reported execution. | `test_report_execution_learning_loop_e2e.py`, `server.py` `report_execution` |
+| **T8** procedure-conditioned execution E2E | **PARTIAL** | **ADVANCED (via Plan B)** — `test_procedure_run_e2e.py`, `test_mega_chain_e2e.py`, `test_find_best_way_plan_only_e2e.py`, `test_continue_run_implementation_binding_e2e.py`. Still no run through a real sandboxed LLM agent loop (key-gated). | those tests |
+| **T9** recursive-execution recovery / cycle+budget guards | **PARTIAL** | **ADVANCED (via Plan B)** — `app/execution/recursion_guard.py` (188 ln) + `db/52_execution_run_recursion.sql` + `durable_resume.py` (222 ln); `test_recursion_guard_e2e.py`, `test_find_best_way_recursion_e2e.py`, expanded `test_durable_run_e2e.py`. Complements this lane's G9 canonical-composition cycle gate (they guard different layers: G9 = authoring graph, Plan B = runtime child-run recursion). | those |
+| **T10** verification ladder | **PARTIAL** | **still PARTIAL** — Plan B added `app/services/verification.py` (272 ln) + `db/55_verification_results.sql` + `execution/behavior_verification.py` + `verifiers/`, but Plan B's **own** deferred doc (item 10) still calls the *ranked 6-class evidence ladder* (`SELF_REPORT`…`REAL_WORLD_OUTCOME`) a GAP — types exist, nothing ranks/requires them. Unchanged verdict. | `verification.py`, `test_*verification*` |
+| **T1** TEST/STAGING/PROD fail-closed gate | **CODE-COMPLETE (DB-UNVERIFIED)** (this lane, `7495878`) | **unchanged — this lane is ahead of Plan B here.** Plan B's deferred doc item 11 still lists this as a GAP ("safety is incidental, follows which API key is present"); this lane already shipped `config.py` `environment` tri-state + `runtime_guard.assert_production_safe` at `main.py` startup + `test_runtime_guard_offline.py` (the T1 proving test). No merge conflict — different code regions. | `runtime_guard.py` |
+| **G8** applicability integration | **CODE-COMPLETE (DB-VERIFIED)** | **unchanged**, note: Plan B added `app/services/relevant_claims.py` (96 ln, `test_relevant_claims_e2e.py`) — a *retrieval* surface for claims relevant to a goal/procedure, distinct from precondition-checking. It reads `procedure_claim_refs` (this lane's `db/66` table). Complementary, no conflict; a future G14 pass should fuse it. | `relevant_claims.py` |
+| **G10** Procedure↔Implementation M:N | **CODE-COMPLETE (DB-VERIFIED)** | **CODE-COMPLETE, with a convergence debt.** Two services now write **one table** (`procedure_implementations`): this lane's `services/procedure_implementations.py` (`bind_implementation` / `close_binding` / `add_evidence_ref`) and Plan B's `services/procedure_implementation_bindings.py` (207 ln — `resolve_binding_for_step`, `submit_implementation` MCP tool, wired into `continue_run`). They agree on the schema (same columns, same identity index) and neither is a parallel registry, but the split write API should be reconciled into one module. **New board/handoff item (B17-adjacent).** Plan B's mig `53/54` built a separate `procedure_implementation_bindings` table first, then `58/59` pivoted onto `procedure_implementations` and dropped it — so the final shape matches this lane's `67`. | mig `58/59`, `procedure_implementation_bindings.py`, `test_procedure_implementation_bindings_e2e.py` |
+| **G7 / A33** backfill scan window | mechanism proven; corpus run owed | Plan B's **`db/57_procedures_engineering_fixture_default_and_backfill.sql`** fixed an `is_engineering_fixture` visibility drift that had been hiding **~1496 real procedures** from the corpus. The eventual `backfill_refs_from_preconditions` production run now sees the full live set — pass `limit ≥` the corrected count. | mig `57` |
+
+### Still OPEN after the re-audit (unchanged by Plan B)
+
+- **G12** — local schema-aligned learning + private sync (A11–A13). Plan B did
+  **not** touch `app/local_agent/`; the middle sync tier is still absent.
+- **G14** — retrieval index-freshness contract (`canonical_revision` /
+  `indexed_revision` / `index_lag`). Plan B's retrieval-adjacent work
+  (`relevant_claims.py`, `applicability.py` +95 ln) does not add lag tracking.
+- **T13** — symlink-escape + SSRF-on-locator security E2E.
+- **T14** — latency p50/p95/p99 rig.
+- **T5–T7** — verification-ladder / adapter-matrix E2E (T10 partial as above).
+
+### Migration-ledger reconciliation (operational — NOT executed here)
+
+`migrate.py --status` against **local** now shows `50`–`69` all `pending`
+(Plan B `50`–`63` never applied; this lane's `64`–`69` recorded under the old
+names). The `schema_migrations` ledger carries **6 orphan rows**
+`50_sources.sql … 55_artifact_blocks.sql` (this lane's pre-renumber names — the
+schema objects they created are all present and correct on `local`). Because the
+renamed `64`–`69` files are fully idempotent, the safe reconciliation on
+**local** is:
+
+```sql
+DELETE FROM schema_migrations
+ WHERE filename IN ('50_sources.sql','51_ingestion_contexts.sql',
+   '52_procedure_claim_refs.sql','53_procedure_implementation_relation.sql',
+   '54_screening_decisions.sql','55_artifact_blocks.sql');
+```
+
+then `dbtarget.py local -- python scripts/migrate.py` (applies Plan B `50`–`63`
++ re-applies this lane's `64`–`69` as no-ops, recording them under the correct
+names). **Hosted** (Supabase, egress-limited): this lane's `50`–`55` were
+applied to hosted during Pass 1; the same 6-row `DELETE` + a hosted `migrate.py`
+run is owed there, but is a **deliberate operator action** given the egress
+budget — left for the user to schedule, not run from here.
 
 ---
 
@@ -264,10 +353,10 @@ Release-critical unless noted. `CLOSED` = spec requirement met **and** DB/E2E-ve
 | **G9** | Procedure composition validation (cycle rejection, version-pinned child refs, runtime≠canonical) | **CODE-COMPLETE (DB-VERIFIED)** | `procedure_graph.validate_procedure_composition_{definition,in_storage}` (`035adf6`) — write-time gate rejecting cycles / unresolved pinned refs / max-depth; wired into `capture_procedure` + `supersede_procedure`. `test_procedure_composition_e2e.py` (DB) + `test_procedure_graph_offline.py`. |
 | **G10** | Implementation Registry validation + Procedure↔Implementation M:N relation metadata | **CODE-COMPLETE (DB-VERIFIED)** | mig 67 generalizes `procedure_implementations` (T2: the new columns are usable + role vocab enforced against the live DB); `procedure_implementations.py`; `solution_implementations.py` reads it unioned with the legacy path. Remaining: converge `implementation_tasks`; board note for the `schema.md` 1:1↔M:N discrepancy (B17); a real 3-adapter T6. |
 | **G11** | Static/global ingestion refactor + corpus migration/backfill | **PARTIAL** (advanced) | **B1 done**: document path runs Source→IngestionContext→Observation→Evidence(document)→Claim→Procedure, plus `artifact_blocks` + `screening_decisions`; admission gate unioned. **B2 done**: no task_nodes at ingestion. Still: **corpus backfill un-run**; trace-path Source table; T3 golden E2E. |
-| **G12** | Local schema-aligned learning + scope / private sync | **OPEN** | Not touched this pass. |
-| **G13** | `.stealth/` projection service | **OPEN** | Not touched this pass. |
-| **G14** | Global hierarchical retrieval + index freshness | **OPEN** | Not touched this pass. |
-| **G23** | `report_execution` → Observation / Evidence / Claim-candidate learning | **PARTIAL** | Unchanged (Plan B lane). |
+| **G12** | Local schema-aligned learning + scope / private sync | **OPEN** | Not touched by this lane or Plan B. Middle sync tier still absent. |
+| **G13** | `.stealth/` projection service | **CODE-COMPLETE (via Plan B `7a6e18f`)** | `app/execution/stealth_projection.py` — atomic `.stealth/{context.md,run.json,meta.json}`, section-model router, wired into `find_best_way`/`continue_run`. Gaps: `[RELEVANT GLOBAL CLAIMS]` bounded by `relevant_claims.py` reach; `projection_revision` = gen-time ts. See re-audit section. |
+| **G14** | Global hierarchical retrieval + index freshness | **OPEN** | Retrieval stages exist; the `index_lag` freshness contract is still unbuilt. Plan B's `relevant_claims.py` adds a claims-retrieval surface but no lag tracking. |
+| **G23** | `report_execution` → Observation / Evidence / Claim-candidate learning | **CODE-COMPLETE (via Plan B `7a6e18f`)** | B18 host-executed learning loop, private-by-default extraction; `test_report_execution_learning_loop_e2e.py`. |
 | **G24** | Publication / privacy / license / IP dependency traversal | **CODE-COMPLETE (offline-only)** | **B11 done** (`acbd2f5`): `publication_deps.traverse_publication_dependencies` walks procedure→claims→observations→sources→artifacts→evidence, fail-closed (private/org, `PRIVATE_CLASSES`, unresolved/low-reliability source, or traversal-bound hit → blocking); "private evidence ≠ global verification" enforced (`verification_inherited` always false; `global_verification_required` unless ≥2 independent public verification groups). Wired into `publish_procedure`; `publication_records` carries the full traversal + verification determination. Remaining: independent *global* re-verification is recorded-as-required but not executed; license/IP checks are visibility/classification-based only; DB E2E. |
 
 ### Testing categories (state after Implementation Pass 1)
@@ -278,8 +367,13 @@ Release-critical unless noted. `CLOSED` = spec requirement met **and** DB/E2E-ve
 | T2 (per-migration fresh + representative-row + idempotency + rollback) | **DONE** — `test_migrations_64_69_t2_e2e.py` (8 passed, local): additive-only, idempotent re-run of each file, representative row + named-CHECK rejection per table. `test_schema_drift.py` → 2 passed. Rollback intentionally not automated (fresh-start rule 1). |
 | T3 (golden ingestion E2E) | **DONE** — `test_ingestion_canonical_chain_e2e.py` (2 passed, local): full 12-row document chain + no-Procedure for a non-procedural doc. |
 | T4 (claim-graph invariants) | **DONE** — `test_claim_graph_t4_e2e.py` (2 passed, local): B7 zero-anchor claim valid; one Claim → many typed refs in distinct roles; contradictory claims coexist + CONTRADICTS edge; belief change cites its evidence (result + ChangeSet). |
-| T5–T10, T12–T14 | **OPEN** — T6 partially covered (T2 + existing `*_e2e.py`); the rest need server / load rig / more adapters. |
-| T11 (`.stealth/` budget) | **OPEN** — depends on G13. |
+| T5–T7 | **OPEN** — need adapter matrix + verification-ladder E2E. |
+| T8 (procedure-conditioned execution E2E) | **ADVANCED (via Plan B)** — `test_procedure_run_e2e.py`, `test_mega_chain_e2e.py`, `test_continue_run_implementation_binding_e2e.py`, `test_find_best_way_plan_only_e2e.py`. Gap: no real sandboxed LLM agent loop (key-gated). |
+| T9 (recursive-execution recovery, cycle+budget guards) | **ADVANCED (via Plan B)** — `recursion_guard.py` + `db/52` + `durable_resume.py`; `test_recursion_guard_e2e.py`, `test_find_best_way_recursion_e2e.py`. Complements this lane's G9 authoring-graph gate. |
+| T10 (verification ladder) | **PARTIAL** — Plan B added `verification.py` + `db/55_verification_results.sql` + `behavior_verification.py`, but the *ranked 6-class* ladder is still a GAP (Plan B deferred item 10). |
+| T12 (multi-agent file-intent coordination) | **CLOSED (via Plan B)** — `coordination.py` + `db/56_execution_run_node_file_intents.sql` + `declare_file_intent` MCP tool; `test_coordination_e2e.py`, `test_declare_file_intent_mcp_e2e.py`. Gaps: glob-overlap over-approximation, `symbols_expected_to_modify` unchecked, advisory-only. |
+| T13–T14 | **OPEN** — symlink/SSRF security E2E (T13); latency p50/p95/p99 rig (T14). |
+| T11 (`.stealth/` budget) | **PARTIAL (via Plan B)** — `test_find_best_way_stealth_projection_e2e.py` exercises the projection; a dedicated large-corpus byte-budget/router-navigation assertion is still owed. |
 | T15 (this matrix) | **CLOSED** — delivered + updated here. |
 
 ### The 20 required ingestion tests (spec "TESTS" list)
@@ -312,7 +406,7 @@ Each step is one gated change: migration (additive + idempotent) + writer rewiri
 
 ---
 
-**Steps 1–13 landed across Pass 1 + Pass 2** (migrations 64–69 applied to hosted + local; 9 new services; wired into `compile_skill_artifact` incl. `artifact_blocks` + `screening` + document-Claim; `claim_belief.py`; `publication_deps.py`). Steps **15 (placeholder goal in `ingestion_jobs.py`)** untouched.
+**Steps 1–13 landed across Pass 1 + Pass 2** (this lane's 6 migrations — renamed `64–69` after the Plan B collision, `9f9c876` on `main`; schema objects applied to hosted + local under the old `50–55` names, ledger reconciliation owed; 9 new services; wired into `compile_skill_artifact` incl. `artifact_blocks` + `screening` + document-Claim; `claim_belief.py`; `publication_deps.py`). Step **15 (placeholder goal in `ingestion_jobs.py`)** — done in Pass 3 (`035adf6`, B15).
 
 ## Handoff — what remains
 
@@ -321,11 +415,9 @@ Each step is one gated change: migration (additive + idempotent) + writer rewiri
 3. **B15** — `ingestion_jobs.py` hardcoded placeholder goal + unconditional `outcome="success"` in the trace→procedure sweep.
 4. ~~**B9 residual**~~ — done (`4f39e9f`).
 5. **B1 residual** — block-level secret redaction (`artifact_blocks.text` is from raw content); cite the document Observation to a specific block span; a screen `REJECT` currently only warns, does not abort capture (policy call).
-6. **G9 / G12 / G13 / G14** — procedure-composition cycle rejection; local/private sync (A11–A13); `.stealth/` projection contract; retrieval index-lag tracking. None audited in depth or touched.
+6. **G9** — done (Pass 3). **G12 / G14** — still OPEN (local/private sync tier; retrieval index-lag contract). **G13** — now CODE-COMPLETE via merged Plan B (`stealth_projection.py`); T11 large-corpus budget assertion still owed.
 7. **Board note** — `schema.md` models `Implementation → Procedure` 1:1; Pass 1 + spec B23 use M:N via `procedure_implementations`. `schema.md` is frozen → board note, not an edit.
-8. **Not this lane** — Plan B (MCP execution lifecycle, `find_best_way` routing, recursive child runs, `RouteDecision`, `StealthExecutionContext`, ExecutionRecorder) — G15–G22, G25–G26, B1–B37.
-9. **External** — `backend/app/config.py` has an uncommitted `embedding_provider_chain: "gemini,voyage" → "gemini"` change from another lane; left untouched here.
-7. **Step 8 (claim belief):** populate `belief_score`/`belief_method` from `evidence` aggregation with independence de-dup; keep separate from observation confidence; converge the `claim_status` vs `truth_state` split (B9).
-8. **Step 14:** extend `publication._traverse_dependencies` to walk procedure→`procedure_claim_refs`→claims→observations→sources→artifacts→evidence; add an independent-global-verification gate (B11).
-9. **Board note:** B17 — `schema.md` models `Implementation.procedure_id → Procedure` (1:1); Pass 1 + spec B23 use M:N via `procedure_implementations`. `schema.md` is frozen → this is a board note, not an edit.
-- **Not this lane:** Plan B (MCP execution lifecycle, `find_best_way` routing, recursive child runs, `RouteDecision`, `StealthExecutionContext`, ExecutionRecorder) — G15–G22, G25–G26, B1–B37.
+8. **Migration renumber** — done (`9f9c876`, on `main`): this lane's `50–55` → `64–69` after the Plan B collision. **Ledger reconciliation** on local + hosted is owed (6-row `DELETE` + `migrate.py` re-run — SQL in the re-audit section); the renamed files are idempotent so the re-apply is a no-op.
+9. **G10 convergence debt (new)** — `services/procedure_implementations.py` (this lane) and `services/procedure_implementation_bindings.py` (Plan B) both write `procedure_implementations`. Same schema, no parallel registry, but the split write API should be merged into one module. Migration `67` is now idempotent-inert on a fresh DB after Plan B's `58` (verified clean); kept as-is (immutable + still meaningful pre-`58`).
+10. **Plan B is MERGED** (`7a6e18f`, on `main`) — no longer "pending / not this lane". Re-audit section above maps what it closes here (G13, G23, T12 CLOSED; T8/T9 advanced; T10 still partial). Plan B's remaining in-lane gaps: ranked verification ladder (T10), G15–G22/G25–G26 execution-lifecycle items per `MCP_HARDENING_DEFERRED_ITEMS.md`.
+11. **External** — `backend/app/config.py` has an uncommitted `embedding_provider_chain: "gemini,voyage" → "gemini"` change from another lane; left untouched here.
