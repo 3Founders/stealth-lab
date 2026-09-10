@@ -274,6 +274,7 @@ class HybridRetriever:
         expand_depth: int = 1,
         max_context_nodes: int = 25,
         query_vec: Optional[list[float]] = None,
+        coarse_route_table: Optional[str] = None,
     ) -> RetrievalResult:
         """
         Hybrid entrypoints, then bounded graph expansion.
@@ -287,6 +288,19 @@ class HybridRetriever:
         `query` again. decompose() embeds the problem text once and threads
         it through every reuse-check call site that would otherwise embed
         the identical string independently -- see decomposition.py.
+
+        `coarse_route_table`: B37's "coarse domain/topic routing" stage,
+        opt-in and additive (default `None` -- every existing caller's
+        behavior is byte-for-byte unchanged). When given (must be one of
+        `self._tables`), calls `hierarchy.coarse_route` ONCE to find which
+        top-level branch of that table's own hierarchy tree the query
+        belongs to, then restricts THIS retrieve() call's candidate hits
+        for that one table to real leaves under that branch, before RRF
+        fusion -- the other table in `self._tables`, if any, is left
+        unrestricted. `coarse_route` itself returns `None` (never a
+        fabricated routing decision) when no real hierarchy exists yet
+        for that table -- in that case this is a complete no-op, exactly
+        today's flat behavior.
         """
         vector_hits: list[tuple[UUID, str, int]] = []
         try:
@@ -300,6 +314,21 @@ class HybridRetriever:
             log.error("vector search unavailable, falling back to lexical only: %s", exc)
 
         lexical_hits = await self._lexical_search(query, top_k * 2)
+
+        if coarse_route_table is not None and coarse_route_table in self._tables:
+            from app.services.hierarchy import coarse_route as _coarse_route
+            routed_ids = await _coarse_route(
+                self._pool, coarse_route_table, query,
+                scope=self._scope, embedder=self._embedder, tenant_scope=self._tenant_scope,
+            )
+            if routed_ids is not None:
+                allowed = {UUID(i) for i in routed_ids}
+                vector_hits = [
+                    h for h in vector_hits if h[1] != coarse_route_table or h[0] in allowed
+                ]
+                lexical_hits = [
+                    h for h in lexical_hits if h[1] != coarse_route_table or h[0] in allowed
+                ]
 
         # Reciprocal Rank Fusion -- pure arithmetic, see fuse_rrf() above.
         scores, matched = fuse_rrf(

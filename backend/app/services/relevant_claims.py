@@ -58,7 +58,14 @@ async def get_relevant_claims(
     query_text = f"{goal}\n{context}" if context else goal
 
     retriever = HybridRetriever(pool, scope=access_scope or AccessScope.unrestricted(), tables=("knowledge_nodes",))
-    result = await retriever.retrieve(query_text, top_k=top_k, expand_depth=1, max_context_nodes=top_k)
+    # B37: coarse domain/topic routing, opt-in and additive -- a no-op
+    # until a real hierarchy exists over knowledge_nodes (hierarchy.py's
+    # build_hierarchy_for_table), at which point this narrows candidate
+    # retrieval to the query's own top-level branch before RRF fusion.
+    result = await retriever.retrieve(
+        query_text, top_k=top_k, expand_depth=1, max_context_nodes=top_k,
+        coarse_route_table="knowledge_nodes",
+    )
 
     if not result.nodes:
         return []

@@ -779,3 +779,152 @@ async def attach_new_leaf(
                 current = grandparent["source_id"] if grandparent else None
 
     return str(parent_id)
+
+
+# ---------------------------------------------------------------------
+# B37: coarse routing stage + measurable index freshness
+# ---------------------------------------------------------------------
+
+def _is_group_row_filter(table: str) -> str:
+    """Excludes this module's OWN internal aggregator rows -- they are
+    index metadata (the tree itself), never a canonical source object,
+    so they must never count toward `canonical_revision` or be offered
+    as a coarse-routing destination's "real object" leaf."""
+    if table == "task_nodes":
+        return "AND (n.success_criteria->>'internal_proxy') IS DISTINCT FROM 'true'"
+    return "AND n.node_type IS DISTINCT FROM 'hierarchy_group'"
+
+
+async def compute_index_freshness(
+    pool: asyncpg.Pool, table: str,
+    scope: Optional[AccessScope] = None, tenant_scope: Optional[TenantScope] = None,
+) -> dict:
+    """
+    B37: "Index freshness MUST be measurable: canonical_revision /
+    indexed_revision." Made literal over the ONE real index this
+    codebase has (the tree `build_hierarchy_for_table` builds over
+    `table`'s own canonical rows -- never a second knowledge store, per
+    B37's own rule): `canonical_revision` is the count of real, live
+    canonical objects in `table` right now (excluding this module's own
+    internal aggregator rows, which are the index, not source data);
+    `indexed_revision` is how many of those the tree has actually
+    incorporated (own an incoming PARENT_OF edge at ANY level -- a leaf
+    that is somebody's child, not just a current root). `lag` is the
+    real, computable gap: canonical objects that exist but the tree has
+    not yet absorbed (typically because they were added since the last
+    `build_hierarchy_for_table(..., apply=True)` run) -- these are
+    exactly the rows a caller would want to re-run that build over, not
+    a fabricated staleness heuristic.
+    """
+    scope = scope or AccessScope.unrestricted()
+    tenant = tenant_scope or TenantScope.unrestricted()
+    scope_sql, scope_params, _ = scope_predicates(scope, tenant, alias="n", param_index=1)
+    group_filter = _is_group_row_filter(table)
+
+    canonical_row = await pool.fetchrow(
+        f"SELECT count(*) AS c FROM {table} n WHERE n.t_invalid IS NULL {group_filter} AND {scope_sql}",
+        *scope_params,
+    )
+    indexed_row = await pool.fetchrow(
+        f"""
+        SELECT count(*) AS c FROM {table} n
+        WHERE n.t_invalid IS NULL {group_filter} AND {scope_sql}
+        AND EXISTS (
+            SELECT 1 FROM edges e WHERE e.t_invalid IS NULL AND {_OWNS_FILTER}
+            AND e.target_id = n.id AND e.target_table = '{table}'
+        )
+        """,
+        *scope_params,
+    )
+    canonical_revision = int(canonical_row["c"])
+    indexed_revision = int(indexed_row["c"])
+    return {
+        "table": table,
+        "canonical_revision": canonical_revision,
+        "indexed_revision": indexed_revision,
+        "lag": canonical_revision - indexed_revision,
+    }
+
+
+async def coarse_route(
+    pool: asyncpg.Pool, table: str, query_text: str,
+    scope: Optional[AccessScope] = None, embedder: Optional[Embedder] = None,
+    tenant_scope: Optional[TenantScope] = None,
+) -> Optional[list[str]]:
+    """
+    B37's "coarse domain/topic routing" stage, made real and additive
+    over whatever hierarchy already exists for `table` (built by
+    `build_hierarchy_for_table`) -- one shallow decision (which TOP-level
+    branch is this query about), not the full beam descent
+    `hierarchical_search` performs for a single best leaf: routing wants
+    a whole CANDIDATE SET for the next pipeline stage to rank, not one
+    winner.
+
+    Picks the single root whose own (mean-of-children) embedding is
+    closest to the query, then returns every real leaf id under that
+    root's subtree via a recursive walk of the SAME `PARENT_OF` edges
+    the tree is built from.
+
+    Returns `None` -- never a fabricated routing decision -- when fewer
+    than 2 roots exist (nothing has been organized into more than one
+    top-level branch yet, i.e. the corpus is still effectively flat) or
+    when the winning root has no real leaves under it. Callers MUST
+    treat `None` as "route nothing away -- fall back to an unrestricted,
+    flat candidate search", exactly today's pre-B37 behavior.
+    """
+    scope = scope or AccessScope.unrestricted()
+    embedder = embedder or Embedder()
+    roots = await _fetch_roots(pool, table, scope, tenant_scope=tenant_scope)
+    embedded_roots = [r for r in roots if r["has_embedding"]]
+    if len(embedded_roots) < 2:
+        return None
+
+    query_vec = await embedder.embed_one(query_text, input_type="query")
+    from app.services.embeddings import to_pgvector
+    vec_str = to_pgvector(query_vec)
+    # NOTE: a zero-norm embedding produces an undefined (NaN) cosine
+    # distance. Postgres's own float8 NaN handling makes NaN sort as
+    # the LARGEST value (its documented deviation from IEEE754, kept
+    # for btree-index consistency), so an unfiltered `ORDER BY
+    # similarity DESC` would let a degenerate zero-vector root always
+    # "win" over a real, exact-match candidate. The outer WHERE uses a
+    # plain `<=` comparison, which Postgres evaluates per real IEEE754
+    # semantics (NaN <= anything is false) -- filtering those rows out
+    # rather than letting a fabricated ranking artifact route the query.
+    scored = await pool.fetch(
+        f"""
+        SELECT id FROM (
+            SELECT id, 1 - (embedding <=> $1::vector) AS similarity FROM {table}
+            WHERE id = ANY($2::uuid[]) AND t_invalid IS NULL
+        ) scored_roots
+        WHERE similarity <= 1
+        ORDER BY similarity DESC LIMIT 1
+        """,
+        vec_str, [r["id"] for r in embedded_roots],
+    )
+    if not scored:
+        return None
+    best_root_id = scored[0]["id"]
+
+    group_filter = _is_group_row_filter(table)
+    leaves = await pool.fetch(
+        f"""
+        WITH RECURSIVE descendants(id) AS (
+            SELECT $1::uuid
+            UNION ALL
+            SELECT e.target_id FROM edges e
+            JOIN descendants d ON e.source_id = d.id
+            WHERE e.t_invalid IS NULL AND {_OWNS_FILTER}
+              AND e.source_table = '{table}' AND e.target_table = '{table}'
+        )
+        SELECT n.id FROM {table} n JOIN descendants d ON n.id = d.id
+        WHERE n.t_invalid IS NULL {group_filter}
+          AND NOT EXISTS (
+              SELECT 1 FROM edges e WHERE e.t_invalid IS NULL AND {_OWNS_FILTER}
+              AND e.source_id = n.id AND e.source_table = '{table}'
+          )
+        """,
+        best_root_id,
+    )
+    leaf_ids = [str(r["id"]) for r in leaves]
+    return leaf_ids or None

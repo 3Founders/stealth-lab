@@ -1171,7 +1171,86 @@ local sandbox, implementation lifecycle all genuinely exist), B31
     `get_bindings_for_procedure` columns changed nothing for existing
     callers.
 
-61. **[CLOSED]** B36's literal 5-item "before assigning/starting a node,
+61. **[CLOSED, real scope stated honestly]** B37's hierarchical
+    retrieval indexes and index-freshness requirement. `app/services/
+    hierarchy.py`'s tree (`build_hierarchy_for_table`/
+    `hierarchical_search`) was already real and query-time-traversable
+    before this pass, but had ZERO production callers wiring it into
+    any retrieval PIPELINE, and index freshness was never measured —
+    both real, previously-unflagged gaps this pass closes:
+    - **coarse domain/topic routing** (B37's own literal pipeline stage,
+      missing entirely from `HybridRetriever`'s flat RRF): new
+      `hierarchy.coarse_route(pool, table, query_text, ...)` picks the
+      single top-level branch whose mean embedding is closest to the
+      query, then returns every real leaf id under it via a recursive
+      walk of the SAME `PARENT_OF` edges the tree is built from —
+      `None` (never a fabricated routing decision) when fewer than 2
+      real top-level branches exist yet (the corpus is still flat).
+      Wired into `HybridRetriever.retrieve(coarse_route_table=...)` as
+      an opt-in, additive stage (default `None` — every existing
+      caller's behavior is byte-for-byte unchanged): when given, filters
+      that table's raw vector/lexical hits down to the routed branch
+      BEFORE RRF fusion. `get_relevant_claims` (B30, the real Claims
+      retrieval entrypoint) now passes `coarse_route_table=
+      "knowledge_nodes"` — a real, live no-op today (no hierarchy has
+      been built over `knowledge_nodes` in production yet) that
+      activates automatically the moment one is.
+    - **index freshness** (B37: "MUST be measurable: canonical_revision
+      / indexed_revision"): new `hierarchy.compute_index_freshness(pool,
+      table)` — `canonical_revision` is the real, live count of
+      canonical objects in `table` (excluding this module's own internal
+      aggregator rows, which are the index, not source data);
+      `indexed_revision` is how many of those the tree has actually
+      incorporated (own an incoming `PARENT_OF` edge at any level);
+      `lag` is the real, computable gap — canonical objects added since
+      the last `build_hierarchy_for_table` run.
+    - **REAL BUG found and fixed while building `coarse_route`**: a
+      zero-norm embedding produces an undefined (NaN) cosine distance,
+      and Postgres's own float8 NaN handling sorts NaN as the LARGEST
+      value (its documented deviation from IEEE754, kept for btree-index
+      consistency) — an unfiltered `ORDER BY similarity DESC` would let
+      a degenerate zero-vector root always "win" root-selection over a
+      real, exact-match candidate. Fixed by filtering `similarity <= 1`
+      in a wrapping subquery (a plain comparison, which Postgres
+      evaluates per real IEEE754 semantics — NaN fails it) before the
+      `ORDER BY`/`LIMIT 1`. Caught live: an early version of this
+      pass's own test suite returned a single unrelated production row
+      instead of the intended fixture's real branch until this fix
+      landed.
+    HONEST SCOPE, stated rather than glossed: this closes coarse routing
+    and freshness for the ONE hierarchical substrate this codebase
+    actually has (`task_nodes`/`knowledge_nodes`, i.e. Claims). B37 also
+    names Procedures and Implementations — NO hierarchy tree exists over
+    either table today (no caller of `build_hierarchy_for_table` has
+    ever targeted `procedures` or `implementations`, and building one
+    for real, with its own real tests, is a separate, comparably-sized
+    effort to `hierarchy.py` itself, not a small addition to this pass).
+    Extending the tree to those tables is real, scoped follow-on work,
+    not fabricated here.
+    Verified live: 3 new tests in `test_hierarchy_coarse_routing_e2e.py`
+    — a real two-branch tree (freshness before/after, exact-vector
+    routing to each real branch and no other), an isolated ungrouped
+    leaf correctly returned as its own honest size-1 branch (never
+    inflated), and a `HybridRetriever` integration proof that coarse
+    routing actually FILTERS a shared-lexical-word hit from the
+    unrouted branch, not merely adds the routed branch on top — plus the
+    full pre-existing hierarchy/retrieval/decomposition suite (44 tests)
+    re-run green. NOTE ON TEST METHOD: this file deliberately does NOT
+    call `build_hierarchy_for_table` itself (it scans the WHOLE shared
+    table with no per-test scoping, confirmed live — this session's DB
+    carries 75+ real knowledge_nodes rows and 43 pre-existing real
+    `hierarchy_group` rows); it constructs one small, fully-owned tree by
+    hand instead, so both construction and cleanup stay scoped to this
+    test's own prefixed rows. An earlier draft of this test DID call
+    `build_hierarchy_for_table(apply=True)` against the shared table and
+    leaked 16 orphaned `hierarchy_group` rows (their LLM-summary-derived
+    names carry no name-prefix a cleanup query could target) before this
+    was caught and fixed; those 16 rows were identified precisely (by
+    substring match on this test's own fixture names, confirmed not to
+    touch any of the 27 real, pre-existing `hierarchy_group` rows) and
+    deleted directly from the shared database.
+
+62. **[CLOSED]** B36's literal 5-item "before assigning/starting a node,
     detect" list. `coordination.py` previously covered only "exact
     write/write overlap", "overlapping write globs", and "dependency
     violations" — real, but 2 of 5 literal items were entirely missing,
