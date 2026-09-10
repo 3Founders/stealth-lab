@@ -290,6 +290,12 @@ async def backfill_refs_from_preconditions(
     `add_procedure_claim_ref` is itself ON CONFLICT DO NOTHING, so a
     concurrent run cannot create a duplicate either.
 
+    SCAN WINDOW: this reads `ORDER BY t_created ASC LIMIT limit`. A corpus
+    with more than `limit` live procedures needs `limit >= that count`
+    (the whole point is a one-shot backfill, so pass a generous value --
+    e.g. 1_000_000). Idempotency makes repeated runs with a growing limit
+    safe if you prefer to page.
+
     Returns `{"procedures_scanned", "refs_created", "already_present"}`.
     """
     rows = await pool.fetch(
