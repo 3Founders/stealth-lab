@@ -238,6 +238,119 @@ def decide(findings: list[dict]) -> str:
 
 
 # ---------------------------------------------------------------------------
+# SSRF / fetch-locator guard (G3 tail / T13)
+# ---------------------------------------------------------------------------
+class UnsafeLocatorError(Exception):
+    """Raised when the server is about to fetch a locator that points at a
+    non-http(s) scheme or a private / loopback / link-local / reserved
+    address (directly or via DNS). The fetch is aborted, not downgraded --
+    an SSRF attempt is an active security event, not questionable content.
+    """
+
+    def __init__(self, locator: str, reason: str) -> None:
+        self.locator = locator
+        self.reason = reason
+        super().__init__(f"unsafe fetch locator {locator!r}: {reason}")
+
+
+# Hosts an ingestion fetch is expected to hit. A locator whose host is not
+# on this list still passes if it resolves only to public IPs -- the list
+# is a fast-path, not the whole policy.
+_LOCATOR_HOST_ALLOWLIST: frozenset[str] = frozenset({
+    "github.com", "api.github.com", "raw.githubusercontent.com",
+    "codeload.github.com", "objects.githubusercontent.com",
+})
+
+_METADATA_HOSTS: frozenset[str] = frozenset({
+    "metadata.google.internal", "metadata", "instance-data",
+})
+
+
+def _ip_is_public(ip_text: str) -> bool:
+    import ipaddress
+
+    try:
+        ip = ipaddress.ip_address(ip_text)
+    except ValueError:
+        return False
+    return not (
+        ip.is_private or ip.is_loopback or ip.is_link_local
+        or ip.is_reserved or ip.is_multicast or ip.is_unspecified
+    )
+
+
+def screen_locator(locator: str, *, resolve: bool = True) -> dict[str, Any]:
+    """
+    Validate a URL the server itself is about to fetch. Pure except for an
+    optional DNS lookup (`resolve=True`).
+
+    Returns {"allowed": bool, "classification": "ALLOW"|"REJECT",
+             "reason": str, "scheme": str, "host": str,
+             "resolved_ips": [str, ...]}.
+
+    Blocks: non-http(s) schemes; a host that is / resolves to a loopback,
+    private, link-local, reserved, multicast or unspecified address; the
+    cloud-metadata hostnames; a bare-IP host that is not public.
+    """
+    from urllib.parse import urlsplit
+
+    parts = urlsplit((locator or "").strip())
+    scheme = (parts.scheme or "").lower()
+    host = (parts.hostname or "").lower()
+
+    def _deny(reason: str) -> dict[str, Any]:
+        return {"allowed": False, "classification": "REJECT", "reason": reason,
+                "scheme": scheme, "host": host, "resolved_ips": []}
+
+    if scheme not in ("http", "https"):
+        return _deny(f"scheme {scheme or '(none)'} is not http(s)")
+    if not host:
+        return _deny("no host in locator")
+    if host in _METADATA_HOSTS:
+        return _deny("cloud-metadata hostname")
+
+    import ipaddress
+
+    try:
+        literal_ip = ipaddress.ip_address(host)
+    except ValueError:
+        literal_ip = None
+    if literal_ip is not None and not _ip_is_public(host):
+        return _deny(f"bare-IP host {host} is not a public address")
+
+    resolved: list[str] = []
+    if resolve and literal_ip is None:
+        import socket
+
+        try:
+            infos = socket.getaddrinfo(host, parts.port or (443 if scheme == "https" else 80),
+                                       proto=socket.IPPROTO_TCP)
+        except socket.gaierror as exc:
+            return _deny(f"DNS resolution failed: {exc}")
+        resolved = sorted({info[4][0] for info in infos})
+        if not resolved:
+            return _deny("host resolved to no addresses")
+        bad = [ip for ip in resolved if not _ip_is_public(ip)]
+        if bad:
+            return _deny(f"host resolves to non-public address(es): {', '.join(bad)}")
+
+    return {"allowed": True, "classification": "ALLOW",
+            "reason": "host on allowlist" if host in _LOCATOR_HOST_ALLOWLIST
+            else "scheme + host/IP are public",
+            "scheme": scheme, "host": host, "resolved_ips": resolved}
+
+
+def assert_safe_locator(locator: str, *, resolve: bool = True) -> dict[str, Any]:
+    """`screen_locator` but raises `UnsafeLocatorError` on a deny. Returns
+    the ALLOW result dict. Call this immediately before any server-side
+    fetch (`httpx.get`, `git clone`) of an externally-influenced URL."""
+    result = screen_locator(locator, resolve=resolve)
+    if not result["allowed"]:
+        raise UnsafeLocatorError(locator, result["reason"])
+    return result
+
+
+# ---------------------------------------------------------------------------
 # Persistence
 # ---------------------------------------------------------------------------
 _INSERT_SQL = """

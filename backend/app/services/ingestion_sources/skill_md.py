@@ -34,12 +34,37 @@ HttpGet = Callable[[str], "tuple[int, str]"]
 def _default_http_get(url: str) -> tuple[int, str]:
     import httpx
 
-    resp = httpx.get(url, timeout=30, follow_redirects=True)
+    from app.services.screening import assert_safe_locator
+
+    # SSRF guard (G3 tail): screen the locator, then follow at most one
+    # redirect hop -- each hop re-screened -- so a benign-looking URL
+    # cannot 302 the server into the cloud-metadata endpoint or an
+    # internal host.
+    assert_safe_locator(url)
+    current = url
+    for _ in range(4):
+        resp = httpx.get(current, timeout=30, follow_redirects=False)
+        if resp.status_code in (301, 302, 303, 307, 308) and "location" in resp.headers:
+            current = str(httpx.URL(resp.url).join(resp.headers["location"]))
+            assert_safe_locator(current)
+            continue
+        return resp.status_code, resp.text
     return resp.status_code, resp.text
 
 
 def _is_skill_file(name: str) -> bool:
     return bool(_SKILL_FILENAME_RE.search(name))
+
+
+def _within_root(path: Path, root_resolved: Path) -> bool:
+    """True iff `path`, with every symlink resolved, stays under
+    `root_resolved`. Used to reject directory-traversal / symlink escapes
+    (T13)."""
+    try:
+        resolved = path.resolve()
+    except (OSError, RuntimeError):
+        return False
+    return resolved == root_resolved or root_resolved in resolved.parents
 
 
 class LocalDirSkillSource:
@@ -51,8 +76,14 @@ class LocalDirSkillSource:
         self._root = Path(root)
 
     def discover(self) -> Iterator[SourceRef]:
+        root_resolved = self._root.resolve()
         for p in sorted(self._root.rglob("*")):
             if not p.is_file() or not _is_skill_file(p.name):
+                continue
+            # T13: a symlink (or a `..` path) that resolves outside the
+            # ingestion root is a directory-traversal escape -- skip it,
+            # never read it.
+            if not _within_root(p, root_resolved):
                 continue
             yield SourceRef(
                 uri=p.resolve().as_uri(),
@@ -63,6 +94,8 @@ class LocalDirSkillSource:
 
     def fetch(self, ref: SourceRef) -> SourceArtifact:
         path = self._root / ref.path if ref.path else Path(_uri_to_path(ref.uri))
+        if not _within_root(path, self._root.resolve()):
+            raise ValueError(f"refusing to read {path} -- resolves outside the ingestion root")
         content = path.read_text(encoding="utf-8")
         return SourceArtifact(
             source_type=self.source_type,
