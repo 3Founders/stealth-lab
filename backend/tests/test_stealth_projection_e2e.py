@@ -90,7 +90,15 @@ def test_generate_projection_writes_real_files_with_valid_content():
                     assert key in result
 
                 stealth_dir = os.path.join(workspace, ".stealth")
-                assert set(os.listdir(stealth_dir)) == {"context.md", "run.json", "meta.json"}
+                # The compact B35 trio is always present; the generator now
+                # also writes the addressable pages + index/ (app.stealth).
+                entries = set(os.listdir(stealth_dir))
+                assert {"context.md", "run.json", "meta.json"} <= entries
+                assert {"claims.md", "procedures.md", "implementations.md", "run.md", "index"} <= entries
+                assert set(os.listdir(os.path.join(stealth_dir, "index"))) == {
+                    "root.idx", "claims.idx", "procedures.idx", "implementations.idx", "run.idx",
+                }
+                assert not [n for n in entries if n.startswith(".tmp-stealth-")]
 
                 with open(os.path.join(stealth_dir, "context.md"), encoding="utf-8") as f:
                     context_md = f.read()
@@ -147,8 +155,12 @@ def test_generate_projection_regeneration_is_idempotent_and_overwrites():
                 # Same canonical state -> same run.json content (minus
                 # nothing time-dependent in this fixture's node states).
                 assert first["run_json"]["node_states"] == second["run_json"]["node_states"]
+                assert first["root_idx"] == second["root_idx"]
                 stealth_dir = os.path.join(workspace, ".stealth")
-                assert set(os.listdir(stealth_dir)) == {"context.md", "run.json", "meta.json"}
+                entries = set(os.listdir(stealth_dir))
+                assert {"context.md", "run.json", "meta.json", "claims.md", "procedures.md",
+                        "implementations.md", "run.md", "index"} <= entries
+                assert not [n for n in entries if n.startswith(".tmp-stealth-")]
         finally:
             await _cleanup(pool, name)
             await pool.close()
@@ -171,6 +183,67 @@ def test_context_md_truncates_when_it_would_exceed_the_configured_budget(monkeyp
                 )
                 assert "TRUNCATED" in result["context_md"]
                 assert len(result["context_md"].encode("utf-8")) <= 50 + 200  # truncation marker itself
+        finally:
+            await _cleanup(pool, name)
+            await pool.close()
+
+    asyncio.run(_run())
+
+
+def test_every_index_row_resolves_to_exactly_its_block_and_regen_is_stable():
+    """T11 navigation contract against a real run: each `.idx` row's
+    (file, start, end) slices out exactly the object it names, the root
+    router stays within budget, regeneration is byte-identical, and
+    meta.json carries the staleness signal."""
+    from app.stealth.format import ROOT_IDX_MAX_BYTES, parse_idx
+
+    async def _run():
+        pool = await create_pool(DATABASE_URL, min_size=1, max_size=2)
+        run_id = uuid4().hex[:8]
+        name = f"proc-test-stealthproj-nav-{run_id}"
+        try:
+            procedure = await _capture(
+                pool, name, postconditions=["it works"],
+                preconditions=[
+                    {"subject": f"svc:{run_id}", "predicate": "lang", "object": "python"},
+                    {"subject": f"db:{run_id}", "predicate": "engine", "object": "postgres"},
+                ],
+                steps=[{"order": 0, "goal": "enumerate callers"},
+                       {"order": 1, "goal": "classify deps"}],
+            )
+            exec_run_id = await _start_run(pool, procedure)
+            with tempfile.TemporaryDirectory() as workspace:
+                first = await sp.generate_projection(
+                    pool, workspace_root=workspace, procedure_run_id=exec_run_id,
+                )
+                sdir = os.path.join(workspace, ".stealth")
+
+                root = open(os.path.join(sdir, "index", "root.idx"), encoding="utf-8").read()
+                assert len(root.encode("utf-8")) <= ROOT_IDX_MAX_BYTES
+
+                checked = 0
+                for idx_name in ("claims.idx", "procedures.idx", "implementations.idx"):
+                    text = open(os.path.join(sdir, "index", idx_name), encoding="utf-8").read()
+                    for fields in parse_idx(text):
+                        obj_id, _, _, _, _, mdfile, start, end, _ = fields
+                        md_lines = open(os.path.join(sdir, mdfile), encoding="utf-8").read().splitlines()
+                        window = md_lines[int(start) - 1:int(end)]
+                        assert window and window[0].startswith("## ")
+                        assert obj_id in window[0], (obj_id, window[0])
+                        assert not any(ln.startswith("## ") for ln in window[1:]), "block bled into next"
+                        checked += 1
+                assert checked >= 3
+
+                second = await sp.generate_projection(
+                    pool, workspace_root=workspace, procedure_run_id=exec_run_id,
+                )
+                for k in ("root_idx", "claims_idx", "procedures_idx", "implementations_idx", "run_idx"):
+                    assert first[k] == second[k]
+
+                meta = json.loads(open(os.path.join(sdir, "meta.json"), encoding="utf-8").read())
+                assert meta["change_cursor"].startswith(exec_run_id)
+                assert set(meta["revisions"]) == {"claims", "procedures", "implementations", "run"}
+                assert meta["counts"]["run_nodes"] == 2
         finally:
             await _cleanup(pool, name)
             await pool.close()

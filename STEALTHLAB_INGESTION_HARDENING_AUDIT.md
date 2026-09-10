@@ -170,6 +170,73 @@ applied to hosted during Pass 1; the same 6-row `DELETE` + a hosted `migrate.py`
 run is owed there, but is a **deliberate operator action** given the egress
 budget — left for the user to schedule, not run from here.
 
+> **Local reconciliation DONE (2026-09-10):** the 6 orphan rows were deleted
+> and `migrate.py` applied `50`–`69` on `local` in one clean pass — **confirms
+> the `58`→`67` ordering is conflict-free against a real DB.** Ledger = 69 rows,
+> 0 pending, 0 mismatch (beyond the pre-existing cosmetic 11–34 CRLF set).
+> Hosted still owed.
+
+---
+
+## LOCAL WORKING-SET ARCHITECTURE — ratified spec deviation + P1 (2026-09-10)
+
+**Decision (user-ratified).** The local side of StealthLab is redefined as a
+**filesystem-native working set + a durable runtime journal**, with **no local
+SQLite / local Postgres**. Global Postgres + pgvector stays authoritative for
+semantic retrieval, the Claim graph, ranking, permissions, publication. "Cloud
+decides what knowledge is relevant; the local filesystem makes that knowledge
+cheap for (small) agents to navigate and execute." Navigation is a *knowledge
+page fault*: `grep index/*.idx → object id + exact line range → sed the range →
+continue`; a local miss calls the Stealth MCP, which projects N objects locally
+and regenerates the index.
+
+**Frozen-spec deviation (board note owed — P6).** Spec v4 A11/A12/B35 model
+`.stealth/` as a *disposable projection* preferring a single `context.md`, and
+call local SQLite "a local registry/cache" to be reused. This decision (a)
+removes the SQLite local store entirely and (b) promotes `.stealth/` to the
+**authoritative local representation** an agent acts on (global remains
+long-term truth; `.stealth/` is page cache — trusted like a cache, staleness
+detected via `meta.json`, refilled on fault). Recorded here as deliberate; the
+`.scratch/` board note is P6.
+
+### Layout produced by `app.stealth.generator.generate_projection`
+
+```
+.stealth/
+  context.md            compact B35 router (kept — compat + B35 readers)
+  run.json              machine-readable current run (kept)
+  meta.json             projection_revision + per-type revisions + change_cursor (staleness)
+  claims.md  procedures.md  implementations.md  run.md     addressable object pages
+  index/
+    root.idx            name|target|hint            (router, ≤ 4096 B, generator raises if over)
+    claims.idx  procedures.idx  implementations.idx  id|version|scope|status|tags|file|start|end|summary
+    run.idx            node|status|owner|deps|globs|file|start|end|summary
+```
+
+Index line ranges are 1-based inclusive and **disposable** — regenerated every
+run, never edited in place. `|` / newlines in any field are sanitised so the
+parser stays one `str.split` and a value can't forge a second row.
+
+### P1 — landed (green-lit; D2 + D3 approved)
+
+| Piece | Where |
+|---|---|
+| `app/stealth/` package — `format.py` (idx/md codecs + budgets), `atomic.py` (`atomic_write` + `atomic_write_batch`, `meta.json` written LAST), `legacy_context.py` (the B35 `_render_*` verbatim), `generator.py` (`generate_projection`), `errors.py` | new |
+| `app/execution/stealth_projection.py` | now a **thin shim** re-exporting `generate_projection` / `_render_*` / `_atomic_write` / `STEALTH_DIRNAME` / `CONTEXT_MD_MAX_BYTES` / `StealthProjectionError` — every existing import + both `mcp_server/server.py` call sites unchanged |
+| `test_stealth_format_offline.py` (13) — codec round-trips, separator-injection safety, md line-range correctness, run-scoped builders, T11 bounded-router with a 400-object synthetic working set | new |
+| `test_stealth_projection_e2e.py` (+1, now 5) — every `.idx` row slices out exactly its block, root router ≤ budget, regeneration byte-identical, `meta.json` staleness signal | extended |
+| `test_stealth_projection_offline.py` (9), `test_find_best_way_stealth_projection_e2e.py` (1) — updated `listdir` assertions from exact-set to superset (new pages + `index/`); otherwise green | touched |
+
+**Verified:** `test_stealth_format_offline` + `test_stealth_projection_offline` → 21 passed (offline); `test_stealth_projection_e2e` + `test_find_best_way_stealth_projection_e2e` → 6 passed against `local`.
+
+### Still to do (P2–P6)
+
+- **P2** — MCP server as the single writer; `events.jsonl` append-only journal with `seq`; advisory file locking; `stealth` read-CLI.
+- **P3** — the knowledge page-fault: `project_knowledge(ids|query)` MCP tool → global retrieval → append `.md` + regenerate `.idx`; `[RELEVANT GLOBAL CLAIMS]` stops being honestly-empty.
+- **P4** — `exploration.md` + multi-agent owners / file-intents in `run.*` (reuses merged `coordination.py`).
+- **P5** — remove the SQLite local store: delete `local_store.py`, `local_claims.py`, `local_learning_sweep.py`, the 4 bootstrap importers, `publish_local_procedure`, `unified_retrieval.py`, `local_applicability.py`, `local_ingestion.py`, `local_episode_evidence.py`; **keep `runner.py`** (execution provider, Plan B); rewire `ingestion_scheduler` / `ingestion_admission`. Trace-derived private learning goes to the global DB private-scoped (the `ingestion_jobs.py` path).
+- **P6** — `.scratch/` board note for the deviation + gate-matrix close-out.
+
 ---
 
 ## A. Baseline architecture discovered
@@ -354,7 +421,7 @@ Release-critical unless noted. `CLOSED` = spec requirement met **and** DB/E2E-ve
 | **G10** | Implementation Registry validation + Procedure↔Implementation M:N relation metadata | **CODE-COMPLETE (DB-VERIFIED)** | mig 67 generalizes `procedure_implementations` (T2: the new columns are usable + role vocab enforced against the live DB); `procedure_implementations.py`; `solution_implementations.py` reads it unioned with the legacy path. Remaining: converge `implementation_tasks`; board note for the `schema.md` 1:1↔M:N discrepancy (B17); a real 3-adapter T6. |
 | **G11** | Static/global ingestion refactor + corpus migration/backfill | **PARTIAL** (advanced) | **B1 done**: document path runs Source→IngestionContext→Observation→Evidence(document)→Claim→Procedure, plus `artifact_blocks` + `screening_decisions`; admission gate unioned. **B2 done**: no task_nodes at ingestion. Still: **corpus backfill un-run**; trace-path Source table; T3 golden E2E. |
 | **G12** | Local schema-aligned learning + scope / private sync | **OPEN** | Not touched by this lane or Plan B. Middle sync tier still absent. |
-| **G13** | `.stealth/` projection service | **CODE-COMPLETE (via Plan B `7a6e18f`)** | `app/execution/stealth_projection.py` — atomic `.stealth/{context.md,run.json,meta.json}`, section-model router, wired into `find_best_way`/`continue_run`. Gaps: `[RELEVANT GLOBAL CLAIMS]` bounded by `relevant_claims.py` reach; `projection_revision` = gen-time ts. See re-audit section. |
+| **G13** | `.stealth/` projection service | **CODE-COMPLETE + P1 of the ratified local-architecture rebuild** | Plan B shipped the B35 trio; **P1** (this lane) adds the filesystem-native working set — `app/stealth/` package, addressable `claims/procedures/implementations/run.md` + `index/*.idx` grep routers, byte-budgeted root router, atomic batch write. `stealth_projection.py` is now a shim. P2–P6 (journal, page-fault, coordination, SQLite removal, board note) remain — see the "LOCAL WORKING-SET ARCHITECTURE" section. |
 | **G14** | Global hierarchical retrieval + index freshness | **OPEN** | Retrieval stages exist; the `index_lag` freshness contract is still unbuilt. Plan B's `relevant_claims.py` adds a claims-retrieval surface but no lag tracking. |
 | **G23** | `report_execution` → Observation / Evidence / Claim-candidate learning | **CODE-COMPLETE (via Plan B `7a6e18f`)** | B18 host-executed learning loop, private-by-default extraction; `test_report_execution_learning_loop_e2e.py`. |
 | **G24** | Publication / privacy / license / IP dependency traversal | **CODE-COMPLETE (offline-only)** | **B11 done** (`acbd2f5`): `publication_deps.traverse_publication_dependencies` walks procedure→claims→observations→sources→artifacts→evidence, fail-closed (private/org, `PRIVATE_CLASSES`, unresolved/low-reliability source, or traversal-bound hit → blocking); "private evidence ≠ global verification" enforced (`verification_inherited` always false; `global_verification_required` unless ≥2 independent public verification groups). Wired into `publish_procedure`; `publication_records` carries the full traversal + verification determination. Remaining: independent *global* re-verification is recorded-as-required but not executed; license/IP checks are visibility/classification-based only; DB E2E. |
@@ -373,7 +440,7 @@ Release-critical unless noted. `CLOSED` = spec requirement met **and** DB/E2E-ve
 | T10 (verification ladder) | **PARTIAL** — Plan B added `verification.py` + `db/55_verification_results.sql` + `behavior_verification.py`, but the *ranked 6-class* ladder is still a GAP (Plan B deferred item 10). |
 | T12 (multi-agent file-intent coordination) | **CLOSED (via Plan B)** — `coordination.py` + `db/56_execution_run_node_file_intents.sql` + `declare_file_intent` MCP tool; `test_coordination_e2e.py`, `test_declare_file_intent_mcp_e2e.py`. Gaps: glob-overlap over-approximation, `symbols_expected_to_modify` unchecked, advisory-only. |
 | T13–T14 | **OPEN** — symlink/SSRF security E2E (T13); latency p50/p95/p99 rig (T14). |
-| T11 (`.stealth/` budget) | **PARTIAL (via Plan B)** — `test_find_best_way_stealth_projection_e2e.py` exercises the projection; a dedicated large-corpus byte-budget/router-navigation assertion is still owed. |
+| T11 (`.stealth/` budget) | **PARTIAL → advancing** — `test_stealth_format_offline.py` asserts the bounded root router + per-object line-range navigation over a 400-object synthetic working set; `test_stealth_projection_e2e.py` asserts every `.idx` row resolves to exactly its block + staleness via `meta.json` against a real run. Remaining for full T11: a thousands-of-object corpus via the P3 page-fault path. |
 | T15 (this matrix) | **CLOSED** — delivered + updated here. |
 
 ### The 20 required ingestion tests (spec "TESTS" list)
