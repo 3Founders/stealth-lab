@@ -1,8 +1,8 @@
--- Migration 51 (Ingestion + Knowledge hardening, Plan A / G1 / audit B3):
+-- Migration 65 (Ingestion + Knowledge hardening, Plan A / G1 / audit B3):
 -- IngestionContext -- the one durable row every ingestion opens, that
 -- every object it derives can be traced back to.
 --
--- Next free migration number: 52.
+-- Next free migration number: 66.
 --
 -- WHY THIS EXISTS
 --   Today the "who / under what scope / by which extractor / from what
@@ -32,7 +32,7 @@ CREATE TABLE IF NOT EXISTS ingestion_contexts (
     id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
 
     -- WHAT is being ingested.
-    source_ref          UUID REFERENCES sources(id),   -- the origin (migration 50)
+    source_ref          UUID REFERENCES sources(id),   -- the origin (migration 64)
     source_type         TEXT NOT NULL,                 -- 'skill_md' | 'trace' | 'benchmark' | ...
     source_uri          TEXT,                          -- resolved locator at ingestion time
     source_hash         TEXT,                          -- content hash of exactly what was consumed

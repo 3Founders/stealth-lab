@@ -1,8 +1,8 @@
--- Migration 55 (V4-hardening Part II-A §3-§4 / Gate G2 / audit B16):
+-- Migration 69 (V4-hardening Part II-A §3-§4 / Gate G2 / audit B16):
 -- artifact_blocks -- the normalized, addressable structure of an ingested
 -- artifact, every block carrying the source location it was cut from.
 --
--- Next free migration number: 56.
+-- Next free migration number: 70.
 --
 -- WHY THIS EXISTS
 --   `ingested_artifacts` (migrations 32/39) records an artifact's
@@ -76,7 +76,7 @@ CREATE TABLE IF NOT EXISTS artifact_blocks (
 
     -- structural SHAPE, not meaning. TEXT + named CHECK (not an enum) so
     -- the vocabulary is widenable in a one-line migration, same call
-    -- migration 50 made for source_kind's later additions.
+    -- migration 64 made for source_kind's later additions.
     block_type              TEXT NOT NULL,
 
     -- heading level (1-6) or nesting depth; 0 for a top-level non-heading.
@@ -109,7 +109,7 @@ CREATE TABLE IF NOT EXISTS artifact_blocks (
     scope_entity_id         TEXT,
 
     -- nullable back-link to the IngestionContext every derived row stamps
-    -- (migration 51). NULL for a block written outside a context.
+    -- (migration 65). NULL for a block written outside a context.
     ingestion_context_id    UUID,
 
     -- Bi-temporal trio, evidence / sources style: t_valid / t_invalid =

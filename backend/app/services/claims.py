@@ -205,7 +205,7 @@ async def capture_claim(
 
     When accepted via (c) with no task_ids / episode: the knowledge_node
     is still written; `ingestion_context_id` is set on its own column
-    (migration 51) when given; a `claim_sources (claim_id, observation_id)`
+    (migration 65) when given; a `claim_sources (claim_id, observation_id)`
     row is written when `observation_id` is given (same join table
     observations.py's promotion path uses); `source_ref`, which has no
     column of its own, is stashed in `properties['source_ref']` rather

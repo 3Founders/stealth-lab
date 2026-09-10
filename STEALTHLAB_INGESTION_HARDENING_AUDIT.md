@@ -4,8 +4,8 @@
 **Spec audited against:** `STEALTHLAB_EXTREME_FINAL_HARDENING_V4.md` (Part II Plan A, Part II-A §1–§38, Part IV G0–G14/G23/G24, Part VI, Testing T1–T15).
 **Repo revision at audit:** `main` @ `1663c94` for the original audit; Implementation Pass 1 rebased onto `main` @ `301b9bf` (incorporates upstream `976b647` "Global Internet Ingestion admission gate", which took `db/49`, so Pass 1's migrations are `db/50`–`db/55`).
 **Environment / DB:** two Postgres targets, switched via `backend/scripts/dbtarget.{py,ps1,sh}` (`DATABASE_URL_LOCAL` ⟷ hosted `DATABASE_URL`; see `backend/DB_TARGETS.md`).
-- **hosted** (Supabase, egress-limited): migrations 50–55 applied; `migrate.py --status` → 01–55 all applied.
-- **local** (native Postgres): schema built migration-by-migration; **migrations 50–55 verified applied from scratch** — all 6 new tables present, `procedure_implementations` carries all 6 new columns, `ingestion_context_id` back-link on all 9 target tables, ledger = 55 rows. (Pre-existing MISMATCH warnings on migrations 11–34 are cosmetic: ledger checksum written before `migrate.py` added CRLF→LF normalization vs the CRLF checkout — schema is correct.) **T2** (`test_migrations_50_55_t2_e2e.py`, 8 passed) and **T3** (`test_ingestion_canonical_chain_e2e.py`, 2 passed) verified against local; `test_schema_drift.py` → 2 passed (no drift).
+- **hosted** (Supabase, egress-limited): this lane's tables applied during Pass 1 under the **pre-renumber** names `50–55`; the `schema_migrations` ledger there still carries those 6 rows. Plan B's `50–63` + this lane's renamed `64–69` reconciliation on hosted is a **deliberate operator action** (see the re-audit section's ledger-reconciliation block) — not run from here, per the egress budget.
+- **local** (native Postgres): schema built migration-by-migration; this lane's 6 tables are present and correct (applied under old names `50–55`; `procedure_implementations` carries all 6 new columns; `ingestion_context_id` back-link on all target tables). Ledger has 6 orphan rows `50_sources.sql … 55_artifact_blocks.sql`; Plan B's `50–63` are `pending`. Reconciliation SQL in the re-audit section. (Pre-existing MISMATCH warnings on migrations 11–34 are cosmetic: ledger checksum predates `migrate.py`'s CRLF→LF normalization — schema is correct.) **T2** (`test_migrations_64_69_t2_e2e.py`, 8 passed) and **T3** (`test_ingestion_canonical_chain_e2e.py`, 2 passed) verified against local; `test_schema_drift.py` → 2 passed (no drift).
 
 Offline-suite progression (`DATABASE_URL` unset): baseline `2556 / 360 / 7` → Pass 1 `2736 / 360 / 7` → Pass 2 `2778 / 360 / 7` → Pass 3 (`035adf6`) + G1 trace `2784 / 361 / 6` (the extra skip is `test_migration_upgrade_e2e` correctly skipping with DATABASE_URL cleanly unset; +228 passing across all passes, **zero regressions**).
 
@@ -21,12 +21,12 @@ Offline-suite progression (`DATABASE_URL` unset): baseline `2556 / 360 / 7` → 
 
 | File | Adds | Gate |
 |---|---|---|
-| `db/50_sources.sql` | `sources` origin registry (`source_kind` enum, identity `UNIQUE (source_type, locator, publisher)`, `reliability_score`/`_method` kept separate from claim belief); `ingested_artifacts.source_ref` | G2 / B12 |
-| `db/51_ingestion_contexts.sql` | `ingestion_contexts` (the §A1 field list — actor/workspace/scope/classification/extractor identity); `ingestion_context_id` back-link column on `ingested_artifacts`, `observations`, `procedures`, `evidence`, `knowledge_nodes` | G1 / B3 |
-| `db/52_procedure_claim_refs.sql` | `procedure_claim_refs` typed relation (8-role vocab, `UNIQUE (procedure_id, procedure_version, claim_id, role)`, partial strong-role index) | G8 / B4+B5 |
-| `db/53_procedure_implementation_relation.sql` | generalizes `procedure_implementations` — `role`/`implementation_version[_constraint]`/`supported_steps`/`supported_capabilities`/`applicability`/`interface_binding`/`evidence_refs`/`status`/bitemporal; drops the old 2-col UNIQUE for a partial `(procedure_id, implementation_id, role)` identity index | G10 / B6 |
-| `db/54_screening_decisions.sql` | `screening_decisions` (`ALLOW`/`QUARANTINE`/`REJECT` + `check_type` + `detector`@`detector_version` + `signals` + `reason`, auditable, not-deleted) | G3 / B14 |
-| `db/55_artifact_blocks.sql` | `artifact_blocks` — immutable normalized blocks with char `source_start`/`source_end` offsets into `artifact_content_hash`, heading nesting, stable `h{n}-{slug}` anchors | G2 / B16 |
+| `db/64_sources.sql` | `sources` origin registry (`source_kind` enum, identity `UNIQUE (source_type, locator, publisher)`, `reliability_score`/`_method` kept separate from claim belief); `ingested_artifacts.source_ref` | G2 / B12 |
+| `db/65_ingestion_contexts.sql` | `ingestion_contexts` (the §A1 field list — actor/workspace/scope/classification/extractor identity); `ingestion_context_id` back-link column on `ingested_artifacts`, `observations`, `procedures`, `evidence`, `knowledge_nodes` | G1 / B3 |
+| `db/66_procedure_claim_refs.sql` | `procedure_claim_refs` typed relation (8-role vocab, `UNIQUE (procedure_id, procedure_version, claim_id, role)`, partial strong-role index) | G8 / B4+B5 |
+| `db/67_procedure_implementation_relation.sql` | generalizes `procedure_implementations` — `role`/`implementation_version[_constraint]`/`supported_steps`/`supported_capabilities`/`applicability`/`interface_binding`/`evidence_refs`/`status`/bitemporal; drops the old 2-col UNIQUE for a partial `(procedure_id, implementation_id, role)` identity index | G10 / B6 |
+| `db/68_screening_decisions.sql` | `screening_decisions` (`ALLOW`/`QUARANTINE`/`REJECT` + `check_type` + `detector`@`detector_version` + `signals` + `reason`, auditable, not-deleted) | G3 / B14 |
+| `db/69_artifact_blocks.sql` | `artifact_blocks` — immutable normalized blocks with char `source_start`/`source_end` offsets into `artifact_content_hash`, heading nesting, stable `h{n}-{slug}` anchors | G2 / B16 |
 
 ### New services (offline-tested)
 
@@ -42,7 +42,7 @@ Offline-suite progression (`DATABASE_URL` unset): baseline `2556 / 360 / 7` → 
 
 ### Rewired existing writers
 
-- **`services/skill_ingestion.py`** — `compile_skill_artifact` now runs the canonical chain on the `captured`/`new_version` outcomes: `register_source(type=document)` → `open_ingestion_context` → `capture_procedure` → stamp `procedures.ingestion_context_id` → emit one `document_procedure` **Observation** → emit one `evidence(type='document', strength 0.3, independence_group='skill_md:'+hash)` row → `complete_ingestion_context`. `ingested_artifacts` now carries `source_ref` + `ingestion_context_id`. **B2:** both `_write_task_nodes` call sites removed (grep-confirmed no other callers) — ingestion no longer manufactures task_nodes. `_persist_package_relations` `ON CONFLICT` retargeted to migration 53's `(procedure_id, implementation_id, role) WHERE t_invalid IS NULL`. **Merged with upstream `976b647`'s admission gate** (`classify_admission` — `reject`/`review`/`admit`): the admission decision runs first; the canonical chain runs for `admit` and `review` (a `review` outcome writes the procedure `availability='quarantined'` but still fully provenance-tracked), a `reject` returns `status="rejected"` with an `ingested_artifacts` audit row and no Source/context. `IngestOutcome` carries both feature-sets' fields. Tests: `test_skill_ingestion_offline.py` (chain + admission both asserted); `test_ingestion_admission_offline.py` (upstream's, still green).
+- **`services/skill_ingestion.py`** — `compile_skill_artifact` now runs the canonical chain on the `captured`/`new_version` outcomes: `register_source(type=document)` → `open_ingestion_context` → `capture_procedure` → stamp `procedures.ingestion_context_id` → emit one `document_procedure` **Observation** → emit one `evidence(type='document', strength 0.3, independence_group='skill_md:'+hash)` row → `complete_ingestion_context`. `ingested_artifacts` now carries `source_ref` + `ingestion_context_id`. **B2:** both `_write_task_nodes` call sites removed (grep-confirmed no other callers) — ingestion no longer manufactures task_nodes. `_persist_package_relations` `ON CONFLICT` retargeted to migration 67's `(procedure_id, implementation_id, role) WHERE t_invalid IS NULL`. **Merged with upstream `976b647`'s admission gate** (`classify_admission` — `reject`/`review`/`admit`): the admission decision runs first; the canonical chain runs for `admit` and `review` (a `review` outcome writes the procedure `availability='quarantined'` but still fully provenance-tracked), a `reject` returns `status="rejected"` with an `ingested_artifacts` audit row and no Source/context. `IngestOutcome` carries both feature-sets' fields. Tests: `test_skill_ingestion_offline.py` (chain + admission both asserted); `test_ingestion_admission_offline.py` (upstream's, still green).
 - **`services/claims.py::capture_claim`** — **B7:** new kwargs `source_ref` / `ingestion_context_id` / `observation_id`; the claim is written when **any** anchor (task/episode) **or** any provenance ref is present; a truly unprovenanced claim is still a logged silent no-op. Writes `knowledge_nodes.ingestion_context_id` and a `claim_sources` row when given. Existing callers unaffected. Tests: `test_claims_offline.py` (4).
 - **`services/claim_impact.py`** — **B5:** `find_procedures_referencing_claim_grouped` returns `{strong, explanatory}` from `procedure_claim_refs` UNIONed with the verbatim legacy `preconditions @> …` scan (compat, de-duped by version row id). `propagate_claim_change` now marks stale **strong-role refs only**, returns explanatory refs untouched (`{marked_stale, explanatory_untouched}`). Flat `find_procedures_referencing_claim` kept for the out-of-lane `claim_graph_api` caller. `claims.py::relate_claims` call site adjusted; `test_claim_impact_e2e.py` assertions updated for the dict return. Tests: `test_claim_impact_offline.py` rewritten (13).
 - **`services/claim_evidence.py::record_claim_evidence`** — **B10:** now accepts `independence_group` (was impossible to pass → every claim-evidence row counted as independent, inflating claim corroboration counts). Tests: `test_claim_evidence_offline.py` +3.
@@ -68,7 +68,7 @@ Wires the Pass 1 building blocks into the live paths and adds the two engines Pa
 
 ### Still OPEN after Pass 3
 
-- ~~**T2**~~ **done** — `test_migrations_50_55_t2_e2e.py` (8 passed against local): additive-only check on all 6 files, idempotent re-run of each `db/5N_*.sql`, representative-row insert + named-CHECK rejection for every new table. `test_schema_drift.py` → 2 passed (no drift). Rollback is intentionally not automated (fresh-start rule 1), documented.
+- ~~**T2**~~ **done** — `test_migrations_64_69_t2_e2e.py` (8 passed against local): additive-only check on all 6 files, idempotent re-run of each `db/5N_*.sql`, representative-row insert + named-CHECK rejection for every new table. `test_schema_drift.py` → 2 passed (no drift). Rollback is intentionally not automated (fresh-start rule 1), documented.
 - ~~**T3**~~ **done** — `test_ingestion_canonical_chain_e2e.py` (2 passed against local): a real procedural SKILL.md → all 12 chain rows verified (Source → IngestionContext → Artifact → artifact_blocks → Observation → Evidence(document) → Claim → procedure_claim_ref(RATIONALE) → screening_decision → Procedure(candidate)), every derived row `ingestion_context_id`-stamped, **no task_nodes**; a non-procedural doc → no Procedure.
 - ~~**A33 corpus backfill**~~ **mechanism proven** — `test_backfill_refs_from_preconditions_e2e.py` (1 passed, local): seeds representative rows, asserts `preconditions[*].claim_id` → `PRECONDITION`/`backfilled` typed refs, claim-less preconditions ignored, full idempotency. The once-per-environment run against the production corpus is still a deploy step (pass a `limit` ≥ the live-procedure count — the scan is `ORDER BY t_created ASC LIMIT n`, documented).
 - **DB-backed regression sweep** — the full `dbtarget local -- pytest tests` run (offline + ~360 `*_e2e.py`) has ~35 pre-existing e2e failures from missing env (LLM keys, OIDC auth) / fixture drift / Plan B — none from this lane's work (triaged; only `test_skill_ingestion_e2e`'s B2 assertion was ours, fixed).
@@ -80,6 +80,95 @@ Wires the Pass 1 building blocks into the live paths and adds the two engines Pa
   - **G14 — global hierarchical retrieval + index freshness (§B37).** RRF fusion + the non-compensatory applicability cascade exist (`retrieval.py`, `applicability.py`); embedding backfill scripts exist. **Missing:** `canonical_revision` / `indexed_revision` / `index_lag` as tracked, queryable values; the "a stale index may return candidates but authoritative version/applicability checks run against canonical rows before selection" guarantee as a first-class enforced mechanism (grep for those terms → nothing). **State: OPEN** for the freshness-tracking contract; the retrieval stages themselves are PARTIAL.
 - **Board note owed** — `schema.md` `Implementation → Procedure` 1:1 vs Pass 1's M:N (`schema.md` frozen).
 - **External:** `backend/app/config.py` has an uncommitted `embedding_provider_chain` change from another lane (not part of this work; left untouched).
+
+---
+
+## RE-AUDIT vs merged Plan B — `7a6e18f` "MCP + procedure-conditioned execution hardening (B1–B38)" (2026-09-10)
+
+Plan B (the MCP execution lifecycle lane, explicitly **not this lane**) landed on
+`main` while this lane was mid-flight. It took migration numbers **50–63**, which
+collided with this lane's Pass-1 migrations (also 50–55). **Resolution
+(commit `9f9c876`, pushed to `main`):** this lane's six migrations were
+`git mv`'d to **64–69** — `64_sources` `65_ingestion_contexts`
+`66_procedure_claim_refs` `67_procedure_implementation_relation`
+`68_screening_decisions` `69_artifact_blocks` — with every `-- Migration NN`
+header, in-SQL sibling cross-ref, and `migration 5X` comment in the 12 touched
+services + 6 offline test suites + `publication_deps.py` + this doc bumped.
+`test_migrations_50_55_t2_e2e.py` → `test_migrations_64_69_t2_e2e.py`. The SQL
+bodies are unchanged; 89 offline tests across the six renumbered-table suites
+pass, imports clean.
+
+### Migration ordering — verified clean
+
+Fresh-DB apply order is now `… 39 … 58 → 59 … 64 … 67 …`. The interaction that
+mattered: Plan B's **`58_procedure_implementations_and_dependencies.sql`** does a
+faithful `CREATE TABLE IF NOT EXISTS procedure_implementations` capture that adds
+**exactly the same rich columns** this lane's `67` adds (`role`,
+`implementation_version[_constraint]`, `supported_steps`,
+`supported_capabilities`, `applicability`, `interface_binding`, `evidence_refs`,
+`status`, `ingestion_context_id`, `t_valid`, `t_invalid`), the same
+`idx_procedure_implementations_identity` partial-unique index, and the same
+`role`/`status` CHECK vocab (as named constraints). After `58`, migration `67`
+is **idempotent-inert on a fresh DB** — every `ADD COLUMN IF NOT EXISTS` and
+`CREATE … IF NOT EXISTS` no-ops — but still does two non-redundant things `58`
+does not: `ALTER COLUMN resource_path DROP NOT NULL` (migration `39` created it
+`NOT NULL`) and `DROP CONSTRAINT procedure_implementations_procedure_id_implementation_id_key`
+(the legacy 2-col unique from `39`). Both are `IF EXISTS`-guarded / inherently
+idempotent, so `67` is safe in either apply order (it already ran first on
+`local` under its old name `53_procedure_implementation_relation.sql`; Plan B's
+`58` will no-op against it there). **No conflict. Migration `67` kept as-is**
+(immutable-once-applied + still meaningful against the pre-`58` shared DB).
+
+### What Plan B closes / advances in THIS lane's gate matrix
+
+| Gate / Test | Was (this audit) | Now, given Plan B | Evidence in `7a6e18f` |
+|---|---|---|---|
+| **G13** `.stealth/` projection | **OPEN** (greenfield) | **CODE-COMPLETE (via Plan B)** — `app/execution/stealth_projection.py` (230 ln) writes `.stealth/{context.md,run.json,meta.json}` atomically, `[ROUTER]/[CLAIMS]/[PROCEDURES:SELECTED]/[IMPLEMENTATIONS]/[COORDINATION]` section model, `meta.json.projection_revision`; wired into `find_best_way` `plan_only` + `continue_run(repo_path=…)`. Named gaps (Plan B's own deferred doc, items 28–30): `[RELEVANT GLOBAL CLAIMS]` populated only as far as `relevant_claims.py` reaches; `projection_revision` is a gen-time unix ts not a monotonic counter. | `stealth_projection.py`, `test_find_best_way_stealth_projection_e2e.py`, `mcp_server/server.py` |
+| **T11** `.stealth/` budget test | **OPEN** (dep on G13) | **PARTIAL** — `test_find_best_way_stealth_projection_e2e.py` exercises the projection end-to-end; a dedicated large-corpus byte-budget/router-navigation assertion (T11 proper) is still not present. | same |
+| **T12 / B36** multi-agent file-intent coordination | **NONE** | **CLOSED (via Plan B)** — `app/execution/coordination.py` (239 ln) + `db/56_execution_run_node_file_intents.sql` + `declare_file_intent` MCP tool; read-glob / write-glob conflict + unmet-dependency advisory detection. Gaps (Plan B deferred items 31–34): glob-overlap is a deliberate shared-prefix over-approximation; `symbols_expected_to_modify` stored but not checked; advisory only (nothing forces a host to call it). | `coordination.py`, `test_coordination_e2e.py`, `test_coordination_offline.py`, `test_declare_file_intent_mcp_e2e.py` |
+| **G23** `report_execution` → Observation/Evidence/Claim-candidate learning | **PARTIAL** (deferred to Plan B lane) | **CODE-COMPLETE (via Plan B)** — B18 host-executed learning loop, private-by-default extraction from a reported execution. | `test_report_execution_learning_loop_e2e.py`, `server.py` `report_execution` |
+| **T8** procedure-conditioned execution E2E | **PARTIAL** | **ADVANCED (via Plan B)** — `test_procedure_run_e2e.py`, `test_mega_chain_e2e.py`, `test_find_best_way_plan_only_e2e.py`, `test_continue_run_implementation_binding_e2e.py`. Still no run through a real sandboxed LLM agent loop (key-gated). | those tests |
+| **T9** recursive-execution recovery / cycle+budget guards | **PARTIAL** | **ADVANCED (via Plan B)** — `app/execution/recursion_guard.py` (188 ln) + `db/52_execution_run_recursion.sql` + `durable_resume.py` (222 ln); `test_recursion_guard_e2e.py`, `test_find_best_way_recursion_e2e.py`, expanded `test_durable_run_e2e.py`. Complements this lane's G9 canonical-composition cycle gate (they guard different layers: G9 = authoring graph, Plan B = runtime child-run recursion). | those |
+| **T10** verification ladder | **PARTIAL** | **still PARTIAL** — Plan B added `app/services/verification.py` (272 ln) + `db/55_verification_results.sql` + `execution/behavior_verification.py` + `verifiers/`, but Plan B's **own** deferred doc (item 10) still calls the *ranked 6-class evidence ladder* (`SELF_REPORT`…`REAL_WORLD_OUTCOME`) a GAP — types exist, nothing ranks/requires them. Unchanged verdict. | `verification.py`, `test_*verification*` |
+| **T1** TEST/STAGING/PROD fail-closed gate | **CODE-COMPLETE (DB-UNVERIFIED)** (this lane, `7495878`) | **unchanged — this lane is ahead of Plan B here.** Plan B's deferred doc item 11 still lists this as a GAP ("safety is incidental, follows which API key is present"); this lane already shipped `config.py` `environment` tri-state + `runtime_guard.assert_production_safe` at `main.py` startup + `test_runtime_guard_offline.py` (the T1 proving test). No merge conflict — different code regions. | `runtime_guard.py` |
+| **G8** applicability integration | **CODE-COMPLETE (DB-VERIFIED)** | **unchanged**, note: Plan B added `app/services/relevant_claims.py` (96 ln, `test_relevant_claims_e2e.py`) — a *retrieval* surface for claims relevant to a goal/procedure, distinct from precondition-checking. It reads `procedure_claim_refs` (this lane's `db/66` table). Complementary, no conflict; a future G14 pass should fuse it. | `relevant_claims.py` |
+| **G10** Procedure↔Implementation M:N | **CODE-COMPLETE (DB-VERIFIED)** | **CODE-COMPLETE, with a convergence debt.** Two services now write **one table** (`procedure_implementations`): this lane's `services/procedure_implementations.py` (`bind_implementation` / `close_binding` / `add_evidence_ref`) and Plan B's `services/procedure_implementation_bindings.py` (207 ln — `resolve_binding_for_step`, `submit_implementation` MCP tool, wired into `continue_run`). They agree on the schema (same columns, same identity index) and neither is a parallel registry, but the split write API should be reconciled into one module. **New board/handoff item (B17-adjacent).** Plan B's mig `53/54` built a separate `procedure_implementation_bindings` table first, then `58/59` pivoted onto `procedure_implementations` and dropped it — so the final shape matches this lane's `67`. | mig `58/59`, `procedure_implementation_bindings.py`, `test_procedure_implementation_bindings_e2e.py` |
+| **G7 / A33** backfill scan window | mechanism proven; corpus run owed | Plan B's **`db/57_procedures_engineering_fixture_default_and_backfill.sql`** fixed an `is_engineering_fixture` visibility drift that had been hiding **~1496 real procedures** from the corpus. The eventual `backfill_refs_from_preconditions` production run now sees the full live set — pass `limit ≥` the corrected count. | mig `57` |
+
+### Still OPEN after the re-audit (unchanged by Plan B)
+
+- **G12** — local schema-aligned learning + private sync (A11–A13). Plan B did
+  **not** touch `app/local_agent/`; the middle sync tier is still absent.
+- **G14** — retrieval index-freshness contract (`canonical_revision` /
+  `indexed_revision` / `index_lag`). Plan B's retrieval-adjacent work
+  (`relevant_claims.py`, `applicability.py` +95 ln) does not add lag tracking.
+- **T13** — symlink-escape + SSRF-on-locator security E2E.
+- **T14** — latency p50/p95/p99 rig.
+- **T5–T7** — verification-ladder / adapter-matrix E2E (T10 partial as above).
+
+### Migration-ledger reconciliation (operational — NOT executed here)
+
+`migrate.py --status` against **local** now shows `50`–`69` all `pending`
+(Plan B `50`–`63` never applied; this lane's `64`–`69` recorded under the old
+names). The `schema_migrations` ledger carries **6 orphan rows**
+`50_sources.sql … 55_artifact_blocks.sql` (this lane's pre-renumber names — the
+schema objects they created are all present and correct on `local`). Because the
+renamed `64`–`69` files are fully idempotent, the safe reconciliation on
+**local** is:
+
+```sql
+DELETE FROM schema_migrations
+ WHERE filename IN ('50_sources.sql','51_ingestion_contexts.sql',
+   '52_procedure_claim_refs.sql','53_procedure_implementation_relation.sql',
+   '54_screening_decisions.sql','55_artifact_blocks.sql');
+```
+
+then `dbtarget.py local -- python scripts/migrate.py` (applies Plan B `50`–`63`
++ re-applies this lane's `64`–`69` as no-ops, recording them under the correct
+names). **Hosted** (Supabase, egress-limited): this lane's `50`–`55` were
+applied to hosted during Pass 1; the same 6-row `DELETE` + a hosted `migrate.py`
+run is owed there, but is a **deliberate operator action** given the egress
+budget — left for the user to schedule, not run from here.
 
 ---
 
@@ -158,7 +247,7 @@ Full per-writer detail is in the **Implementation Pass 1** section above.
 
 ## D. Exact migrations added / modified (Implementation Pass 1)
 
-**Added:** `db/50_sources.sql`, `db/51_ingestion_contexts.sql`, `db/52_procedure_claim_refs.sql`, `db/53_procedure_implementation_relation.sql`, `db/54_screening_decisions.sql`, `db/55_artifact_blocks.sql`. Migration series is now 56 files (upstream `49_ingestion_admission_audit.sql` + mine 50–55).
+**Added:** `db/64_sources.sql`, `db/65_ingestion_contexts.sql`, `db/66_procedure_claim_refs.sql`, `db/67_procedure_implementation_relation.sql`, `db/68_screening_decisions.sql`, `db/69_artifact_blocks.sql`. Migration series is now 56 files (upstream `49_ingestion_admission_audit.sql` + mine 64–69).
 **Modified:** none (migrations are immutable once applied; `migrate.py` checksums them).
 **Applied:** **none** — no Postgres in this environment. `scripts/migrate.py --status` NOT run. All six are additive + idempotent (`CREATE ... IF NOT EXISTS`, `ADD COLUMN IF NOT EXISTS`, guarded `ADD CONSTRAINT`), carry no in-file backfill (fresh-start rule), and each header states the next free number. **They are unverified against a real engine** — see "What Pass 1 does NOT do" above.
 Column/relation detail is in the **Implementation Pass 1** table above.
@@ -246,28 +335,28 @@ Harness suite and packaging suite: **not run** this pass.
 
 ## K. Remaining PARTIAL / OPEN items — gate matrix
 
-Release-critical unless noted. `CLOSED` = spec requirement met **and** DB/E2E-verified. `CODE-COMPLETE (DB-VERIFIED)` = migration applied + writer wired + offline proving tests + a T2/T3 DB assertion green, but coverage of adjacent concerns (e.g. more detector classes, trace-path parity) still owed. `PARTIAL` = substantial mechanism exists with a named gap. `OPEN` = not built / not started. Migrations 50–55 are **applied** (hosted + local, 0 pending, 0 mismatch); **T2** (`test_migrations_50_55_t2_e2e.py`) and **T3** (`test_ingestion_canonical_chain_e2e.py`) pass against local.
+Release-critical unless noted. `CLOSED` = spec requirement met **and** DB/E2E-verified. `CODE-COMPLETE (DB-VERIFIED)` = migration applied + writer wired + offline proving tests + a T2/T3 DB assertion green, but coverage of adjacent concerns (e.g. more detector classes, trace-path parity) still owed. `PARTIAL` = substantial mechanism exists with a named gap. `OPEN` = not built / not started. Migrations 64–69 are **applied** (hosted + local, 0 pending, 0 mismatch); **T2** (`test_migrations_64_69_t2_e2e.py`) and **T3** (`test_ingestion_canonical_chain_e2e.py`) pass against local.
 
 ### Plan A gates (state after Implementation Pass 2)
 
 | Gate | Item | State | Note |
 |---|---|---|---|
 | **G0** | Baseline SHA + schema/API contract + config inventory | **CLOSED** | This document. `main@1663c94`; offline baseline 2556/360/7; post-Pass-2 see §J. |
-| **G1** | `IngestionContext` / provenance manifest | **CODE-COMPLETE (DB-VERIFIED)** | mig 51 `ingestion_contexts` + back-links on 6 tables. **Both paths wired:** `compile_skill_artifact` (document, T3-verified end-to-end — every derived row stamped) and `ingestion_jobs.resolve_trace_ingestion_context` (trace, offline-tested — one context per session, stamps observation→claim→procedure→procedure-evidence). Remaining: trace-path DB E2E; the trace context is left `open` (spans many async jobs — documented). |
-| **G2** | Source + Artifact normalization + immutable block addressing | **CODE-COMPLETE (DB-VERIFIED)** | mig 50 `sources` + mig 55 `artifact_blocks`; `normalize_markdown` invoked by `compile_skill_artifact`. **T2** (offset + identity CHECKs) + **T3** (blocks in the live chain, `content[start:end]` round-trips) pass. Block-span citation + block-text secret redaction landed (`035adf6`). Remaining: a `Source [V]` for the trace path. |
-| **G3** | Security / policy screening (`ALLOW/QUARANTINE/REJECT` + detector provenance) | **CODE-COMPLETE (DB-VERIFIED)** for the record; **PARTIAL** for coverage | mig 54 `screening_decisions` (applied) + `screening.py`; **now invoked** by `compile_skill_artifact` (one row per finding, alongside the existing downgrade). Remaining: a screen `REJECT` does not yet abort capture (policy deferred); PII/license/malware detectors; SSRF check on locators; block-level redaction; T13. |
+| **G1** | `IngestionContext` / provenance manifest | **CODE-COMPLETE (DB-VERIFIED)** | mig 65 `ingestion_contexts` + back-links on 6 tables. **Both paths wired:** `compile_skill_artifact` (document, T3-verified end-to-end — every derived row stamped) and `ingestion_jobs.resolve_trace_ingestion_context` (trace, offline-tested — one context per session, stamps observation→claim→procedure→procedure-evidence). Remaining: trace-path DB E2E; the trace context is left `open` (spans many async jobs — documented). |
+| **G2** | Source + Artifact normalization + immutable block addressing | **CODE-COMPLETE (DB-VERIFIED)** | mig 64 `sources` + mig 69 `artifact_blocks`; `normalize_markdown` invoked by `compile_skill_artifact`. **T2** (offset + identity CHECKs) + **T3** (blocks in the live chain, `content[start:end]` round-trips) pass. Block-span citation + block-text secret redaction landed (`035adf6`). Remaining: a `Source [V]` for the trace path. |
+| **G3** | Security / policy screening (`ALLOW/QUARANTINE/REJECT` + detector provenance) | **CODE-COMPLETE (DB-VERIFIED)** for the record; **PARTIAL** for coverage | mig 68 `screening_decisions` (applied) + `screening.py`; **now invoked** by `compile_skill_artifact` (one row per finding, alongside the existing downgrade). Remaining: a screen `REJECT` does not yet abort capture (policy deferred); PII/license/malware detectors; SSRF check on locators; block-level redaction; T13. |
 | **G4** | Observation extraction / validation (+ structural source classification §6) | **PARTIAL** (advanced) | Document path emits one `document_procedure` Observation with `ingestion_context_id`. Still missing: Observations per `artifact_block` / block-span citation; the `PROCEDURE/REFERENCE/CLAIM/…` source classifier (B13). |
 | **G5** | Independent Claim normalization, belief, dedup, conflict/family | **PARTIAL** (advanced) | **B7/B10 done**. **B8 done** — `claim_belief.py`: evidence-only belief with independence de-dup + document ceiling 0.5, written via a ChangeSet citing evidence; hooked on `record_claim_evidence` + `relate_claims`. **B9 done** for evidence/relation paths (`status_from_belief`) — but `failure_handlers.py` still writes `claim_status` directly. **Document path now derives one Claim** (`bb2deba`). Still missing: structured `subject/predicate/object` columns unpopulated by `capture_claim`; T4. |
 | **G6** | Evidence normalization + independence accounting | **PARTIAL** (advanced) | **B10 done**. Document path writes a typed `evidence(type='document')` row (`independence_group='skill_md:'+hash`) for the procedure; belief engine consumes claim-targeted evidence with independence de-dup. Still: no per-Claim document Evidence row yet. |
 | **G7** | Procedure extraction / validation / versioning | **CLOSED** *(trace path, offline)* / **PARTIAL** *(overall)* | **B15 done** (`035adf6`): source-supplied `goal_text` required, no fabricated goal/outcome. Document path still has no groundedness validator. |
-| **G8** | Procedure↔Claim typed refs + applicability integration | **CODE-COMPLETE (DB-VERIFIED)** | mig 52 `procedure_claim_refs` + service + **B5 role-aware invalidation** (`claim_impact.py`); legacy scan kept as compat. Document path authors a `RATIONALE` ref (T3-verified in the live chain); T2 verifies the role vocab + identity UNIQUE. Remaining: run `backfill_refs_from_preconditions` (A33); wire `add_procedure_claim_ref` into the *trace* extractors. |
+| **G8** | Procedure↔Claim typed refs + applicability integration | **CODE-COMPLETE (DB-VERIFIED)** | mig 66 `procedure_claim_refs` + service + **B5 role-aware invalidation** (`claim_impact.py`); legacy scan kept as compat. Document path authors a `RATIONALE` ref (T3-verified in the live chain); T2 verifies the role vocab + identity UNIQUE. Remaining: run `backfill_refs_from_preconditions` (A33); wire `add_procedure_claim_ref` into the *trace* extractors. |
 | **G9** | Procedure composition validation (cycle rejection, version-pinned child refs, runtime≠canonical) | **CODE-COMPLETE (DB-VERIFIED)** | `procedure_graph.validate_procedure_composition_{definition,in_storage}` (`035adf6`) — write-time gate rejecting cycles / unresolved pinned refs / max-depth; wired into `capture_procedure` + `supersede_procedure`. `test_procedure_composition_e2e.py` (DB) + `test_procedure_graph_offline.py`. |
-| **G10** | Implementation Registry validation + Procedure↔Implementation M:N relation metadata | **CODE-COMPLETE (DB-VERIFIED)** | mig 53 generalizes `procedure_implementations` (T2: the new columns are usable + role vocab enforced against the live DB); `procedure_implementations.py`; `solution_implementations.py` reads it unioned with the legacy path. Remaining: converge `implementation_tasks`; board note for the `schema.md` 1:1↔M:N discrepancy (B17); a real 3-adapter T6. |
+| **G10** | Implementation Registry validation + Procedure↔Implementation M:N relation metadata | **CODE-COMPLETE (DB-VERIFIED)** | mig 67 generalizes `procedure_implementations` (T2: the new columns are usable + role vocab enforced against the live DB); `procedure_implementations.py`; `solution_implementations.py` reads it unioned with the legacy path. Remaining: converge `implementation_tasks`; board note for the `schema.md` 1:1↔M:N discrepancy (B17); a real 3-adapter T6. |
 | **G11** | Static/global ingestion refactor + corpus migration/backfill | **PARTIAL** (advanced) | **B1 done**: document path runs Source→IngestionContext→Observation→Evidence(document)→Claim→Procedure, plus `artifact_blocks` + `screening_decisions`; admission gate unioned. **B2 done**: no task_nodes at ingestion. Still: **corpus backfill un-run**; trace-path Source table; T3 golden E2E. |
-| **G12** | Local schema-aligned learning + scope / private sync | **OPEN** | Not touched this pass. |
-| **G13** | `.stealth/` projection service | **OPEN** | Not touched this pass. |
-| **G14** | Global hierarchical retrieval + index freshness | **OPEN** | Not touched this pass. |
-| **G23** | `report_execution` → Observation / Evidence / Claim-candidate learning | **PARTIAL** | Unchanged (Plan B lane). |
+| **G12** | Local schema-aligned learning + scope / private sync | **OPEN** | Not touched by this lane or Plan B. Middle sync tier still absent. |
+| **G13** | `.stealth/` projection service | **CODE-COMPLETE (via Plan B `7a6e18f`)** | `app/execution/stealth_projection.py` — atomic `.stealth/{context.md,run.json,meta.json}`, section-model router, wired into `find_best_way`/`continue_run`. Gaps: `[RELEVANT GLOBAL CLAIMS]` bounded by `relevant_claims.py` reach; `projection_revision` = gen-time ts. See re-audit section. |
+| **G14** | Global hierarchical retrieval + index freshness | **OPEN** | Retrieval stages exist; the `index_lag` freshness contract is still unbuilt. Plan B's `relevant_claims.py` adds a claims-retrieval surface but no lag tracking. |
+| **G23** | `report_execution` → Observation / Evidence / Claim-candidate learning | **CODE-COMPLETE (via Plan B `7a6e18f`)** | B18 host-executed learning loop, private-by-default extraction; `test_report_execution_learning_loop_e2e.py`. |
 | **G24** | Publication / privacy / license / IP dependency traversal | **CODE-COMPLETE (offline-only)** | **B11 done** (`acbd2f5`): `publication_deps.traverse_publication_dependencies` walks procedure→claims→observations→sources→artifacts→evidence, fail-closed (private/org, `PRIVATE_CLASSES`, unresolved/low-reliability source, or traversal-bound hit → blocking); "private evidence ≠ global verification" enforced (`verification_inherited` always false; `global_verification_required` unless ≥2 independent public verification groups). Wired into `publish_procedure`; `publication_records` carries the full traversal + verification determination. Remaining: independent *global* re-verification is recorded-as-required but not executed; license/IP checks are visibility/classification-based only; DB E2E. |
 
 ### Testing categories (state after Implementation Pass 1)
@@ -275,11 +364,16 @@ Release-critical unless noted. `CLOSED` = spec requirement met **and** DB/E2E-ve
 | T | State |
 |---|---|
 | T1 (TEST/STAGING/PROD separation; staging/prod fail-startup on a fake provider; proving test that prod cannot activate a test adapter) | **CODE-COMPLETE (DB-UNVERIFIED)** — `config.py` `environment` tri-state (fail-closed) + `runtime_guard.assert_production_safe` called at `main.py` startup + `test_runtime_guard_offline.py` (19, incl. the proving test). Was OPEN. Remaining: exercise against a real STAGING/PRODUCTION boot. |
-| T2 (per-migration fresh + representative-row + idempotency + rollback) | **DONE** — `test_migrations_50_55_t2_e2e.py` (8 passed, local): additive-only, idempotent re-run of each file, representative row + named-CHECK rejection per table. `test_schema_drift.py` → 2 passed. Rollback intentionally not automated (fresh-start rule 1). |
+| T2 (per-migration fresh + representative-row + idempotency + rollback) | **DONE** — `test_migrations_64_69_t2_e2e.py` (8 passed, local): additive-only, idempotent re-run of each file, representative row + named-CHECK rejection per table. `test_schema_drift.py` → 2 passed. Rollback intentionally not automated (fresh-start rule 1). |
 | T3 (golden ingestion E2E) | **DONE** — `test_ingestion_canonical_chain_e2e.py` (2 passed, local): full 12-row document chain + no-Procedure for a non-procedural doc. |
 | T4 (claim-graph invariants) | **DONE** — `test_claim_graph_t4_e2e.py` (2 passed, local): B7 zero-anchor claim valid; one Claim → many typed refs in distinct roles; contradictory claims coexist + CONTRADICTS edge; belief change cites its evidence (result + ChangeSet). |
-| T5–T10, T12–T14 | **OPEN** — T6 partially covered (T2 + existing `*_e2e.py`); the rest need server / load rig / more adapters. |
-| T11 (`.stealth/` budget) | **OPEN** — depends on G13. |
+| T5–T7 | **OPEN** — need adapter matrix + verification-ladder E2E. |
+| T8 (procedure-conditioned execution E2E) | **ADVANCED (via Plan B)** — `test_procedure_run_e2e.py`, `test_mega_chain_e2e.py`, `test_continue_run_implementation_binding_e2e.py`, `test_find_best_way_plan_only_e2e.py`. Gap: no real sandboxed LLM agent loop (key-gated). |
+| T9 (recursive-execution recovery, cycle+budget guards) | **ADVANCED (via Plan B)** — `recursion_guard.py` + `db/52` + `durable_resume.py`; `test_recursion_guard_e2e.py`, `test_find_best_way_recursion_e2e.py`. Complements this lane's G9 authoring-graph gate. |
+| T10 (verification ladder) | **PARTIAL** — Plan B added `verification.py` + `db/55_verification_results.sql` + `behavior_verification.py`, but the *ranked 6-class* ladder is still a GAP (Plan B deferred item 10). |
+| T12 (multi-agent file-intent coordination) | **CLOSED (via Plan B)** — `coordination.py` + `db/56_execution_run_node_file_intents.sql` + `declare_file_intent` MCP tool; `test_coordination_e2e.py`, `test_declare_file_intent_mcp_e2e.py`. Gaps: glob-overlap over-approximation, `symbols_expected_to_modify` unchecked, advisory-only. |
+| T13–T14 | **OPEN** — symlink/SSRF security E2E (T13); latency p50/p95/p99 rig (T14). |
+| T11 (`.stealth/` budget) | **PARTIAL (via Plan B)** — `test_find_best_way_stealth_projection_e2e.py` exercises the projection; a dedicated large-corpus byte-budget/router-navigation assertion is still owed. |
 | T15 (this matrix) | **CLOSED** — delivered + updated here. |
 
 ### The 20 required ingestion tests (spec "TESTS" list)
@@ -312,20 +406,18 @@ Each step is one gated change: migration (additive + idempotent) + writer rewiri
 
 ---
 
-**Steps 1–13 landed across Pass 1 + Pass 2** (migrations 50–55 applied to hosted + local; 9 new services; wired into `compile_skill_artifact` incl. `artifact_blocks` + `screening` + document-Claim; `claim_belief.py`; `publication_deps.py`). Steps **15 (placeholder goal in `ingestion_jobs.py`)** untouched.
+**Steps 1–13 landed across Pass 1 + Pass 2** (this lane's 6 migrations — renamed `64–69` after the Plan B collision, `9f9c876` on `main`; schema objects applied to hosted + local under the old `50–55` names, ledger reconciliation owed; 9 new services; wired into `compile_skill_artifact` incl. `artifact_blocks` + `screening` + document-Claim; `claim_belief.py`; `publication_deps.py`). Step **15 (placeholder goal in `ingestion_jobs.py`)** — done in Pass 3 (`035adf6`, B15).
 
 ## Handoff — what remains
 
-1. **DB proving tests (T2/T3).** A local Postgres is wired (`dbtarget local`). Owed: `test_schema_drift.py` + `test_migration_upgrade_e2e.py` green against it; per-migration T2 tests for 50–55 (fresh-DB apply / representative-row / idempotent re-run / rollback-or-documented-irreversibility); a golden ingestion E2E (T3) — real SKILL.md → assert `sources`/`ingestion_contexts`/`artifact_blocks`/`observations`/`evidence(document)`/`procedure_claim_refs`/`procedure` all present with correct provenance and **no** `task_nodes`; a non-procedural doc → Source + blocks + Observation, **no** Procedure.
+1. **DB proving tests (T2/T3).** A local Postgres is wired (`dbtarget local`). Owed: `test_schema_drift.py` + `test_migration_upgrade_e2e.py` green against it; per-migration T2 tests for 64–69 (fresh-DB apply / representative-row / idempotent re-run / rollback-or-documented-irreversibility); a golden ingestion E2E (T3) — real SKILL.md → assert `sources`/`ingestion_contexts`/`artifact_blocks`/`observations`/`evidence(document)`/`procedure_claim_refs`/`procedure` all present with correct provenance and **no** `task_nodes`; a non-procedural doc → Source + blocks + Observation, **no** Procedure.
 2. **Run `procedure_claim_refs.backfill_refs_from_preconditions`** against the real corpus (A33); record before/after counts. (Local DB is schema-only — run against a corpus-loaded DB.)
 3. **B15** — `ingestion_jobs.py` hardcoded placeholder goal + unconditional `outcome="success"` in the trace→procedure sweep.
 4. ~~**B9 residual**~~ — done (`4f39e9f`).
 5. **B1 residual** — block-level secret redaction (`artifact_blocks.text` is from raw content); cite the document Observation to a specific block span; a screen `REJECT` currently only warns, does not abort capture (policy call).
-6. **G9 / G12 / G13 / G14** — procedure-composition cycle rejection; local/private sync (A11–A13); `.stealth/` projection contract; retrieval index-lag tracking. None audited in depth or touched.
+6. **G9** — done (Pass 3). **G12 / G14** — still OPEN (local/private sync tier; retrieval index-lag contract). **G13** — now CODE-COMPLETE via merged Plan B (`stealth_projection.py`); T11 large-corpus budget assertion still owed.
 7. **Board note** — `schema.md` models `Implementation → Procedure` 1:1; Pass 1 + spec B23 use M:N via `procedure_implementations`. `schema.md` is frozen → board note, not an edit.
-8. **Not this lane** — Plan B (MCP execution lifecycle, `find_best_way` routing, recursive child runs, `RouteDecision`, `StealthExecutionContext`, ExecutionRecorder) — G15–G22, G25–G26, B1–B37.
-9. **External** — `backend/app/config.py` has an uncommitted `embedding_provider_chain: "gemini,voyage" → "gemini"` change from another lane; left untouched here.
-7. **Step 8 (claim belief):** populate `belief_score`/`belief_method` from `evidence` aggregation with independence de-dup; keep separate from observation confidence; converge the `claim_status` vs `truth_state` split (B9).
-8. **Step 14:** extend `publication._traverse_dependencies` to walk procedure→`procedure_claim_refs`→claims→observations→sources→artifacts→evidence; add an independent-global-verification gate (B11).
-9. **Board note:** B17 — `schema.md` models `Implementation.procedure_id → Procedure` (1:1); Pass 1 + spec B23 use M:N via `procedure_implementations`. `schema.md` is frozen → this is a board note, not an edit.
-- **Not this lane:** Plan B (MCP execution lifecycle, `find_best_way` routing, recursive child runs, `RouteDecision`, `StealthExecutionContext`, ExecutionRecorder) — G15–G22, G25–G26, B1–B37.
+8. **Migration renumber** — done (`9f9c876`, on `main`): this lane's `50–55` → `64–69` after the Plan B collision. **Ledger reconciliation** on local + hosted is owed (6-row `DELETE` + `migrate.py` re-run — SQL in the re-audit section); the renamed files are idempotent so the re-apply is a no-op.
+9. **G10 convergence debt (new)** — `services/procedure_implementations.py` (this lane) and `services/procedure_implementation_bindings.py` (Plan B) both write `procedure_implementations`. Same schema, no parallel registry, but the split write API should be merged into one module. Migration `67` is now idempotent-inert on a fresh DB after Plan B's `58` (verified clean); kept as-is (immutable + still meaningful pre-`58`).
+10. **Plan B is MERGED** (`7a6e18f`, on `main`) — no longer "pending / not this lane". Re-audit section above maps what it closes here (G13, G23, T12 CLOSED; T8/T9 advanced; T10 still partial). Plan B's remaining in-lane gaps: ranked verification ladder (T10), G15–G22/G25–G26 execution-lifecycle items per `MCP_HARDENING_DEFERRED_ITEMS.md`.
+11. **External** — `backend/app/config.py` has an uncommitted `embedding_provider_chain: "gemini,voyage" → "gemini"` change from another lane; left untouched here.

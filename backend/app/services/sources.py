@@ -28,7 +28,7 @@ HONEST SCOPE LIMITS
       a vetted external document is `prior_library`.
     - No retraction path yet: the `t_invalid` tombstone column exists but
       nothing here closes a validity window. Add that with the first real
-      source-retraction caller (same sequencing note migration 50 carries).
+      source-retraction caller (same sequencing note migration 64 carries).
 """
 from __future__ import annotations
 

@@ -1,5 +1,5 @@
 """
-DB-free coverage for app/services/procedure_claim_refs.py (migration 52,
+DB-free coverage for app/services/procedure_claim_refs.py (migration 66,
 the typed Procedure<->Claim relation).
 
 Hand-rolled FakeConn / FakePool per this repo's convention (each offline

@@ -27,7 +27,7 @@ HONEST SCOPE LIMITS
     - `status` is advisory bookkeeping. Nothing here enforces that a
       context reaches a terminal state; a crashed ingestion leaves it
       `open`, which is the honest record of what happened.
-    - No FK from the derived side (migration 51's choice): a context row
+    - No FK from the derived side (migration 65's choice): a context row
       stays queryable forever even after its derived rows are tombstoned.
     - `t_created` is the only temporal column; contexts are not
       bi-temporal (they are operational metadata, not world-state).
@@ -42,7 +42,7 @@ from app.services.access import TenantScope, tenant_transaction
 from app.services.v0_gate import validate_scope
 from app.utils.ids import uuid7
 
-# The CHECK on ingestion_contexts.status (migration 51).
+# The CHECK on ingestion_contexts.status (migration 65).
 INGESTION_CONTEXT_STATUSES = ("open", "completed", "failed", "rejected")
 
 
@@ -70,7 +70,7 @@ async def open_ingestion_context(
     Open one IngestionContext and return its id (a uuid7 string).
 
     ``scope_type`` is V0-gated (the 10 canonical values; a non-global scope
-    must name what it points at) -- the same rule migration 51's own CHECK
+    must name what it points at) -- the same rule migration 65's own CHECK
     encodes as engine teeth for direct-SQL writers.
 
     Write goes through ``tenant_transaction(pool, TenantScope.commons())``:

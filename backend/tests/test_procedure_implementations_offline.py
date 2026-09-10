@@ -1,6 +1,6 @@
 """
 DB-free coverage for app/services/procedure_implementations.py -- the
-first-class ProcedureImplementation relation (migration 53, spec
+first-class ProcedureImplementation relation (migration 67, spec
 v4-hardening Sec B23).
 
 Idiom: each test hand-rolls a FakeConn/FakePool that records emitted SQL

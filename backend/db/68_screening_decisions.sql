@@ -1,9 +1,9 @@
--- Migration 54 (Ingestion + Knowledge hardening, V4-hardening Part II-A
+-- Migration 68 (Ingestion + Knowledge hardening, V4-hardening Part II-A
 -- §5 / Gate G3 / audit B14): screening_decisions -- the persisted,
 -- auditable ALLOW / QUARANTINE / REJECT record for every ingestion-time
 -- security / policy screen.
 --
--- Next free migration number: 55.
+-- Next free migration number: 69.
 --   (49 sources, 50 ingestion_contexts, 51 procedure_claim_refs,
 --    52 procedure_implementation_relation already exist; 54 is claimed
 --    by a concurrent lane. This file takes 53 and nothing else.)
@@ -52,13 +52,13 @@
 CREATE TABLE IF NOT EXISTS screening_decisions (
     id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
 
-    -- Back-link to the IngestionContext (migration 51). Nullable: a
+    -- Back-link to the IngestionContext (migration 65). Nullable: a
     -- screen may run BEFORE a context is opened (fail-closed pre-flight),
     -- so the context id is stamped when it exists and left NULL when it
     -- does not.
     ingestion_context_id UUID,
 
-    -- The Source (migration 50) the screened material belongs to, when
+    -- The Source (migration 64) the screened material belongs to, when
     -- known. Nullable for the same reason.
     source_ref          UUID,
 
@@ -76,7 +76,7 @@ CREATE TABLE IF NOT EXISTS screening_decisions (
     -- life and will keep growing (pii / license / malicious_executable /
     -- source_trust are not all implemented yet), so a CHECK we can widen
     -- in a one-line migration beats ALTER TYPE ... ADD VALUE's
-    -- transaction constraints -- the exact call migration 50 made for
+    -- transaction constraints -- the exact call migration 64 made for
     -- source_kind.
     check_type          TEXT NOT NULL,
 

@@ -1,9 +1,9 @@
--- Migration 53 (Ingestion + Knowledge hardening, Plan A / G10 / audit B6):
+-- Migration 67 (Ingestion + Knowledge hardening, Plan A / G10 / audit B6):
 -- promote `procedure_implementations` from a thin link (procedure_id,
 -- implementation_id, resource_path) into the first-class
 -- ProcedureImplementation relation V4-hardening §B23 specifies.
 --
--- Next free migration number: 54.
+-- Next free migration number: 68.
 --
 -- WHY
 --   The table (migration 39) carried exactly one payload column,
