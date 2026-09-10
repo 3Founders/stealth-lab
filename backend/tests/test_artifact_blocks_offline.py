@@ -36,10 +36,25 @@ from app.services.artifact_blocks import (
     normalize_markdown,
     normalize_text,
     persist_artifact_blocks,
+    redact_blocks_for_persistence,
 )
 
 ARTIFACT_ID = "00000000-0000-4000-8000-0000000000a1"
 CONTENT_HASH = "sha256:deadbeef"
+
+
+def test_secret_shaped_block_text_is_redacted_but_source_span_is_preserved():
+    raw = "api_key=sk-abcdefghijklmnopqrstuvwxyz123456\n"
+    block = Block(
+        block_index=0, block_type="paragraph", depth=0, text=raw,
+        source_start=0, source_end=len(raw), anchor=None, parent_index=None,
+    )
+    safe, patterns = redact_blocks_for_persistence([block])
+    assert "sk-abcdefghijklmnopqrstuvwxyz123456" not in safe[0].text
+    assert "REDACTED" in safe[0].text
+    assert patterns
+    assert safe[0].source_start == block.source_start
+    assert safe[0].source_end == block.source_end
 
 
 def _norm(sql: str) -> str:

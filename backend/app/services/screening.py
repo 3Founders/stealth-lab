@@ -123,6 +123,30 @@ def _redacted_marker(check_type: str, offset: int) -> str:
     return f"<redacted:{check_type}>@{offset}"
 
 
+def redact_document_text(text: str) -> tuple[str, list[str]]:
+    """Return a safe derived-text representation for storage/search.
+
+    The raw Artifact remains immutable and addressable by content hash; this
+    function is for projections such as ``artifact_blocks.text`` that would
+    otherwise replicate detected credential material.  Every replacement is
+    length-independent on purpose: offsets continue to address the raw
+    Artifact, never this redacted rendering.
+    """
+    from app.services.trace_redaction import redact_value
+
+    matched: list[str] = []
+    redacted = redact_value(text or "", matched)
+    for label, pattern in (
+        ("private_key", _PRIVATE_KEY_HEADER_RE),
+        ("credential", _CREDENTIAL_KV_RE),
+    ):
+        def replace(_: re.Match[str], *, _label: str = label) -> str:
+            matched.append(_label)
+            return f"[REDACTED:{_label}]"
+        redacted = pattern.sub(replace, redacted)
+    return redacted, sorted(set(matched))
+
+
 def screen_document_text(
     text: str,
     *,

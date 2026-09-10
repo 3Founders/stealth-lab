@@ -9,6 +9,8 @@ not a synthetic "skill A/skill B" placeholder.
 """
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from app.services.skill_ingestion import (
@@ -408,6 +410,8 @@ class CompilerFakePool:
             self.captured["updates"].append(("procedures.ingestion_context_id", params))
         elif "UPDATE observations SET ingestion_context_id" in s:
             self.captured["updates"].append(("observations.ingestion_context_id", params))
+        elif "UPDATE observations SET properties" in s:
+            self.captured["updates"].append(("observations.artifact_block_ref", params))
         elif "UPDATE procedures SET evidence_refs" in s:
             self.captured["updates"].append(("procedures.evidence_refs", params))
         elif "UPDATE ingestion_runs SET finished_at" in s:
@@ -1390,6 +1394,14 @@ async def test_compile_captured_persists_artifact_blocks(no_dup):
     # and against the ingested_artifacts row id (index 1).
     assert all(p[2] == art.content_hash for p in pool.captured["artifact_blocks"])
     assert all(p[1] == outcome.artifact_id for p in pool.captured["artifact_blocks"])
+    refs = [p for name, p in pool.captured["updates"] if name == "observations.artifact_block_ref"]
+    assert len(refs) == 1
+    assert refs[0][0] == outcome.observation_id
+    ref_payload = json.loads(refs[0][1])
+    assert ref_payload == {
+        "artifact_id": outcome.artifact_id,
+        "artifact_block_id": outcome.artifact_block_ids[0],
+    }
 
 
 @pytest.mark.asyncio

@@ -5,7 +5,14 @@ from __future__ import annotations
 import pytest
 
 from app.execution.implementations import ImplementationViolation
-from app.execution.procedure_graph import steps_to_linear_nodes
+from app.execution.procedure_graph import (
+    ProcedureCompositionCycle,
+    UnresolvedSubprocedureRef,
+    steps_to_linear_nodes,
+    validate_procedure_composition_definition,
+)
+from uuid import uuid4
+import asyncio
 
 
 def test_linear_chain_derived_from_order():
@@ -93,3 +100,39 @@ def test_invalid_implementation_hint_is_rejected_at_the_gate_not_silently_accept
     steps = [{"order": 0, "goal": "do the work", "implementation_hint": "quantum_hivemind"}]
     with pytest.raises(ImplementationViolation):
         steps_to_linear_nodes(steps)
+
+
+def test_canonical_definition_rejects_an_unresolved_pinned_child_before_execution():
+    root = uuid4()
+    missing = uuid4()
+
+    async def fetch(_procedure_id, _version):
+        return None
+
+    with pytest.raises(UnresolvedSubprocedureRef, match="refusing to persist"):
+        asyncio.run(validate_procedure_composition_definition(
+            fetch, procedure_id=root, procedure_version=1,
+            steps=[{"order": 0, "goal": "call child", "subprocedure_ref": {
+                "procedure_id": str(missing), "version": 1,
+            }}],
+        ))
+
+
+def test_canonical_definition_rejects_an_indirect_cycle_before_execution():
+    root, child = uuid4(), uuid4()
+    rows = {
+        (child, 1): {"steps": [{"order": 0, "goal": "call root", "subprocedure_ref": {
+            "procedure_id": str(root), "version": 1,
+        }}]},
+    }
+
+    async def fetch(procedure_id, version):
+        return rows.get((procedure_id, version))
+
+    with pytest.raises(ProcedureCompositionCycle, match="canonical composition cycle"):
+        asyncio.run(validate_procedure_composition_definition(
+            fetch, procedure_id=root, procedure_version=1,
+            steps=[{"order": 0, "goal": "call child", "subprocedure_ref": {
+                "procedure_id": str(child), "version": 1,
+            }}],
+        ))

@@ -115,10 +115,19 @@ def extract_deterministic_observations(trace_event: dict) -> list[dict]:
                 "properties": {"command": command},
             })
         elif _looks_like_test_command(command):
+            # `trace_events.success` is the collector's recorded outcome
+            # for this concrete tool invocation. Preserve it when it is an
+            # actual boolean; absence remains absent (UNKNOWN), never an
+            # assumed pass. The episode->procedure gate requires this
+            # explicit signal rather than treating the command text itself
+            # as verification.
+            properties = {"command": command}
+            if isinstance(trace_event.get("success"), bool):
+                properties["passed"] = trace_event["success"]
             observations.append({
                 "observation_type": "test_run",
                 "label": f"Ran tests: {command.strip()}",
-                "properties": {"command": command},
+                "properties": properties,
             })
         else:
             observations.append({

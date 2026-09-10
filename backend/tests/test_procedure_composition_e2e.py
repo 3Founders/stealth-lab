@@ -250,6 +250,56 @@ def test_composition_refuses_an_unresolved_pinned_reference():
     asyncio.run(_run())
 
 
+def test_canonical_composition_is_rejected_at_the_supported_write_boundaries():
+    """The supported writers must reject invalid canonical dependencies
+    before a later plan/execution tries to expand them.  Runtime expansion
+    remains a backstop for historical or direct-SQL rows, not the primary
+    admission control."""
+    async def _run():
+        from uuid import uuid4
+        pool = await create_pool(DATABASE_URL, min_size=1, max_size=2)
+        try:
+            await _cleanup(pool, "proc-test-write-gate")
+
+            with pytest.raises(UnresolvedSubprocedureRef, match="persist"):
+                await capture_procedure(
+                    pool, name="proc-test-write-gate-missing", goal="bad ref",
+                    steps=[{"order": 0, "goal": "call missing", "subprocedure_ref": {
+                        "procedure_id": str(uuid4()), "version": 1,
+                    }}],
+                    provenance="system_pending_review", scope_type="global",
+                )
+
+            base = await capture_procedure(
+                pool, name="proc-test-write-gate-self", goal="base",
+                steps=[{"order": 0, "goal": "ordinary work"}],
+                provenance="system_pending_review", scope_type="global",
+            )
+            base_row = await pool.fetchrow(
+                "SELECT procedure_id, version FROM procedures WHERE id = $1", base["id"]
+            )
+            # The next version is v2; pointing v2 at itself must be refused
+            # before the INSERT/invalidation pair runs.
+            with pytest.raises(ProcedureCompositionCycle, match="canonical composition cycle"):
+                await supersede_procedure(
+                    pool, prior_row_id=base["id"],
+                    changed_fields={"steps": [{
+                        "order": 0, "goal": "recurse", "subprocedure_ref": {
+                            "procedure_id": str(base_row["procedure_id"]), "version": 2,
+                        },
+                    }]},
+                )
+            still_v1 = await pool.fetchval(
+                "SELECT version FROM procedures WHERE id = $1", base["id"]
+            )
+            assert still_v1 == 1, "rejected definition must not partially supersede its prior row"
+        finally:
+            await _cleanup(pool, "proc-test-write-gate")
+            await pool.close()
+
+    asyncio.run(_run())
+
+
 def test_composed_graph_executes_correctly_end_to_end():
     """A real, expanded composed graph run through execute_task_graph
     (the SAME scheduler find_best_way/LocalAgentRunner use) with a fake

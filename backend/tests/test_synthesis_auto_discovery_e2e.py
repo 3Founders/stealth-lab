@@ -256,7 +256,11 @@ def test_auto_discovery_generalizes_three_episodes_and_refuses_a_fourth():
                 (episode_c, sessions[2]),
             ):
                 await handle_extract_procedure_from_episode(
-                    pool, {"episode_id": episode_id, "session_id": session_id},
+                    pool, {
+                        "episode_id": episode_id, "session_id": session_id,
+                        "goal_text": "Resolve the fixture issue through implementation and tests",
+                        "outcome": "success",
+                    },
                 )
 
             # --- core claim: a generalized (L2) procedure now exists
@@ -294,7 +298,11 @@ def test_auto_discovery_generalizes_three_episodes_and_refuses_a_fourth():
             # synthesis), but auto-discovery must REFUSE to blend it into
             # a falsely-universal procedure with A/B/C. ---
             await handle_extract_procedure_from_episode(
-                pool, {"episode_id": episode_d, "session_id": sessions[3]},
+                pool, {
+                    "episode_id": episode_d, "session_id": sessions[3],
+                    "goal_text": "Resolve the fixture issue through implementation and tests",
+                    "outcome": "success",
+                },
             )
 
             d_solo = await pool.fetchrow(

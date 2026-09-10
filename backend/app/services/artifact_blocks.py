@@ -41,7 +41,7 @@ ANCHOR FORMAT
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Optional
 
 from app.services.access import TenantScope, tenant_transaction
@@ -80,6 +80,24 @@ class Block:
     source_end: int
     anchor: Optional[str]
     parent_index: Optional[int]
+
+
+def redact_blocks_for_persistence(blocks: list[Block]) -> tuple[list[Block], list[str]]:
+    """Redact detected secrets from derived block text, never from source.
+
+    ``source_start``/``source_end`` still cite the exact immutable Artifact;
+    the persisted text is deliberately a safe projection and must not be
+    used to reconstruct raw source bytes.
+    """
+    from app.services.screening import redact_document_text
+
+    matched: list[str] = []
+    safe: list[Block] = []
+    for block in blocks:
+        text, findings = redact_document_text(block.text)
+        matched.extend(findings)
+        safe.append(replace(block, text=text))
+    return safe, sorted(set(matched))
 
 
 # --------------------------------------------------------------------------

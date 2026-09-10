@@ -27,6 +27,7 @@ predicate" discipline the banking precondition work established.
 from __future__ import annotations
 
 import logging
+import json
 import re
 import posixpath
 from dataclasses import dataclass, field
@@ -1046,6 +1047,17 @@ async def _persist_document_blocks(
     blocks = artifact_blocks.normalize_markdown(artifact.content)
     if not blocks:
         return []
+    # `artifact.content` is the immutable source used by the offsets below.
+    # Blocks are a searchable projection, so never duplicate a detected
+    # secret into each normalized block. The exact source span remains
+    # available through artifact_id + source_start/source_end for authorized
+    # readers; the block text itself is safe to index/display.
+    blocks, redacted_patterns = artifact_blocks.redact_blocks_for_persistence(blocks)
+    if redacted_patterns:
+        log.warning(
+            "skill_ingestion: redacted secret-shaped content from %d derived block(s) for %s: %s",
+            len(blocks), artifact.uri, ", ".join(redacted_patterns),
+        )
     return await artifact_blocks.persist_artifact_blocks(
         pool,
         artifact_id=str(artifact_id),
@@ -1055,6 +1067,26 @@ async def _persist_document_blocks(
         ingestion_context_id=ingestion_context_id,
         scope_type=scope_type,
         scope_entity_id=scope_entity_id,
+    )
+
+
+async def _attach_observation_block_ref(
+    pool: asyncpg.Pool, *, observation_id: str, artifact_id: str, block_id: Optional[str],
+) -> None:
+    """Attach a durable, addressable source citation to a document Observation.
+
+    A single document-level Observation is intentionally broad; its first
+    normalized block is the stable root citation. Consumers resolve the
+    block to its immutable content hash and raw character span rather than
+    treating copied block text as authoritative source.
+    """
+    if not block_id:
+        return
+    await pool.execute(
+        "UPDATE observations SET properties = properties || $2::jsonb "
+        "WHERE id = $1::uuid",
+        observation_id,
+        json.dumps({"artifact_id": str(artifact_id), "artifact_block_id": str(block_id)}),
     )
 
 
@@ -2070,6 +2102,10 @@ async def compile_skill_artifact(
                 ingestion_context_id=ingestion_context_id, created_by=created_by,
                 scope_type=resolved_scope_type, scope_entity_id=domain,
             )
+            await _attach_observation_block_ref(
+                pool, observation_id=observation_id, artifact_id=artifact_id,
+                block_id=artifact_block_ids[0] if artifact_block_ids else None,
+            )
             await complete_ingestion_context(
                 pool, ingestion_context_id, status="completed",
             )
@@ -2240,6 +2276,10 @@ async def compile_skill_artifact(
         pool, artifact, artifact_id=artifact_id,
         ingestion_context_id=ingestion_context_id, created_by=created_by,
         scope_type=resolved_scope_type, scope_entity_id=domain,
+    )
+    await _attach_observation_block_ref(
+        pool, observation_id=observation_id, artifact_id=artifact_id,
+        block_id=artifact_block_ids[0] if artifact_block_ids else None,
     )
     await complete_ingestion_context(pool, ingestion_context_id, status="completed")
     return IngestOutcome(

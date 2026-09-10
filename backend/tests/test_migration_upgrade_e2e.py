@@ -330,7 +330,6 @@ async def _seed_pre_hardening(dsn: str) -> dict:
     from app.db.session import create_pool
     from app.execution import implementation_registry
     from app.services.claims import capture_claim
-    from app.services.procedures import capture_procedure
     from app.utils.ids import uuid7
 
     tag = uuid.uuid4().hex[:8]
@@ -339,23 +338,40 @@ async def _seed_pre_hardening(dsn: str) -> dict:
     try:
         emb = _FakeEmbedder()
 
-        # --- procedure via the real capture path (public; becomes a Solution) ---
-        pub = await capture_procedure(
-            pool, name=f"up-e2e-{tag}-public-proc", goal="public procedure goal",
+        async def capture_v1_procedure(*, name: str, goal: str, steps: list,
+                                       owner_id: str | None = None,
+                                       visibility: str = "public") -> dict:
+            """Seed through the actual V1 schema, not today's writer.
+
+            This test intentionally stops before migration 42, where the
+            current writer's embedding-provider fields were introduced. A
+            historical upgrade fixture must not require future columns just
+            to create a representative pre-hardening row.
+            """
+            row = await pool.fetchrow(
+                "INSERT INTO procedures (name, goal, steps, provenance, created_by, "
+                "owner_id, visibility, embedding, scope_type, embedding_model_id, embedding_dim) "
+                "VALUES ($1, $2, $3::jsonb, 'prior_library', 'up_e2e', $4, "
+                "$5::visibility_level, $6::vector, 'global', 'upgrade-fixture', 1024) "
+                "RETURNING id, procedure_id",
+                name, goal, steps, owner_id, visibility,
+                "[" + ",".join(str(v) for v in await emb.embed_one(name)) + "]",
+            )
+            return dict(row)
+
+        # --- procedure via the actual pre-hardening schema (public; becomes a Solution) ---
+        pub = await capture_v1_procedure(
+            name=f"up-e2e-{tag}-public-proc", goal="public procedure goal",
             steps=[{"order": 0, "goal": "step a"}, {"order": 1, "goal": "step b"}],
-            provenance="prior_library", scope_type="global",
-            created_by="up_e2e", embedding=await emb.embed_one("pub"),
         )
         rec["proc_pub_id"] = pub["procedure_id"]
         rec["proc_pub_row"] = pub["id"]
 
         # --- a private procedure -- the scope/visibility probe ---
-        priv = await capture_procedure(
-            pool, name=f"up-e2e-{tag}-private-proc", goal="private procedure goal",
+        priv = await capture_v1_procedure(
+            name=f"up-e2e-{tag}-private-proc", goal="private procedure goal",
             steps=[{"order": 0, "goal": "secret"}],
-            provenance="prior_library", scope_type="global",
-            created_by="up_e2e", visibility="private", owner_id="up-e2e-owner",
-            embedding=await emb.embed_one("priv"),
+            visibility="private", owner_id="up-e2e-owner",
         )
         rec["proc_priv_id"] = priv["procedure_id"]
         rec["proc_priv_row"] = priv["id"]
@@ -602,8 +618,8 @@ async def _assert_after_upgrade(dsn: str, rec: dict) -> None:
                 *params, [rec["proc_pub_id"], rec["proc_priv_id"]],
             )
             visible = {str(r["procedure_id"]) for r in rows}
-            assert rec["proc_pub_id"] in visible, "public proc vanished after upgrade"
-            assert rec["proc_priv_id"] not in visible, (
+            assert str(rec["proc_pub_id"]) in visible, "public proc vanished after upgrade"
+            assert str(rec["proc_priv_id"]) not in visible, (
                 "private proc leaked to an anonymous scope after upgrade -- "
                 "visibility semantics regressed"
             )

@@ -504,17 +504,15 @@ async def enqueue_pending_claim_promotions(
 #     completion signal (either)     :  17
 #     this gate, all three clauses   :  16   (7% of episodes)
 #
-# 1. COMPLETION SIGNAL REQUIRED (a test_run or commit_made observation
-#    inside the episode). This is not a quality heuristic, it is a
-#    correctness requirement: extract_procedure() refuses anything whose
-#    evidence.outcome != "success" (V5_evidence_sufficiency), and
-#    SessionEvidenceSource takes `outcome` as a CALLER-SUPPLIED argument.
-#    So a sweep that hardcodes outcome="success" is asserting something it
-#    has not observed -- fabricating the one field V5 exists to check. A
-#    test that ran or a commit that landed is the only real completion
-#    evidence this substrate actually records, so it is the only honest
-#    basis on which this sweep may claim success. Everything else is
-#    "some tool calls happened", which is not an outcome.
+# 1. EXPLICIT GOAL + OUTCOME REQUIRED. A test *command* or a commit is
+#    not a successful outcome. The row must carry a declared goal (episode
+#    metadata or agent_traces.intent) and explicitly passing test_run
+#    observations, with no failed or ungraded test. Both values are copied into the job
+#    payload and revalidated by the worker. This is a correctness
+#    requirement: extract_procedure() refuses anything whose
+#    evidence.outcome != "success" (V5_evidence_sufficiency). Inferring
+#    either field here would manufacture the evidence V5 is meant to
+#    require, so episodes lacking either stay unextracted.
 #
 # 2. n_obs >= 5. p25 is 4, so this drops the bottom quartile. Below five
 #    observations there is not enough tool sequence for
@@ -553,7 +551,30 @@ profile AS (
            count(DISTINCT o.id) AS n_obs,
            count(DISTINCT o.observation_type) AS n_types,
            count(DISTINCT o.id) FILTER (
-               WHERE o.observation_type IN ('test_run', 'commit_made')) AS completion
+               WHERE o.observation_type = 'test_run'
+                 AND o.properties->>'passed' = 'true'
+           ) AS passing_tests,
+           count(DISTINCT o.id) FILTER (
+               WHERE o.observation_type = 'test_run'
+                 AND o.properties->>'passed' = 'false'
+           ) AS failing_tests,
+           count(DISTINCT o.id) FILTER (
+               WHERE o.observation_type = 'test_run'
+                 AND (o.properties->>'passed') IS DISTINCT FROM 'true'
+                 AND (o.properties->>'passed') IS DISTINCT FROM 'false'
+           ) AS unknown_tests,
+           COALESCE(
+               NULLIF(BTRIM(ep.metadata->>'declared_goal'), ''),
+               NULLIF(BTRIM(ep.metadata->>'goal'), ''),
+               NULLIF(BTRIM(ep.metadata->>'intent'), ''),
+               NULLIF(BTRIM(ep.metadata->>'user_goal'), ''),
+               (SELECT NULLIF(BTRIM(at.intent), '')
+                  FROM agent_traces at
+                 WHERE at.session_id = ep.session_id
+                   AND at.intent IS NOT NULL
+                 ORDER BY at.started_at ASC
+                 LIMIT 1)
+           ) AS goal_text
     FROM episodes ep
     JOIN trace_events te ON te.session_id = ep.session_id
          AND te."timestamp" >= ep.start_ts
@@ -564,11 +585,15 @@ profile AS (
       AND ep.id IN (SELECT episode_id FROM claim_episode)
     GROUP BY ep.id, ep.session_id
 )
-SELECT p.episode_id, p.session_id, p.n_obs, p.n_types, p.completion
+SELECT p.episode_id, p.session_id, p.n_obs, p.n_types,
+       p.passing_tests, p.failing_tests, p.unknown_tests, p.goal_text
 FROM profile p
-WHERE p.completion > 0          -- clause 1: real outcome evidence
-  AND p.n_obs   >= $2           -- clause 2: enough sequence to derive from
-  AND p.n_types >= $3           -- clause 3: an actual task shape
+WHERE p.goal_text IS NOT NULL   -- clause 1: exact source-supplied goal
+  AND p.passing_tests > 0       -- clause 2: explicit success evidence
+  AND p.failing_tests = 0       -- no known failed test may be called success
+  AND p.unknown_tests = 0       -- no ungraded test may be called success
+  AND p.n_obs   >= $2           -- clause 3: enough sequence to derive from
+  AND p.n_types >= $3           -- clause 4: an actual task shape
   AND NOT EXISTS (
         -- idempotency: this episode already produced a procedure
         SELECT 1 FROM procedures pr
@@ -618,12 +643,18 @@ async def enqueue_pending_procedure_extractions(
             json.dumps({
                 "episode_id": str(r["episode_id"]),
                 "session_id": r["session_id"],
-                # Carried for the audit trail: which numbers let this
-                # episode through the gate at enqueue time.
+                # Source facts selected by _PENDING_EXTRACTION_SQL, never
+                # worker defaults. Durable jobs are revalidated below.
+                "goal_text": r["goal_text"],
+                "outcome": "success",
+                # Carried for the audit trail: which facts let this episode
+                # through the gate at enqueue time.
                 "gate": {
                     "n_obs": r["n_obs"],
                     "n_types": r["n_types"],
-                    "completion_observations": r["completion"],
+                    "passing_tests": r["passing_tests"],
+                    "failing_tests": r["failing_tests"],
+                    "unknown_tests": r["unknown_tests"],
                 },
             }),
         )
@@ -635,16 +666,23 @@ async def handle_extract_procedure_from_episode(
 ) -> None:
     """Run the real extract_procedure() over a gated episode.
 
-    outcome="success" is asserted here ONLY because the enqueue gate
-    required a test_run or commit_made observation inside this episode --
-    see _PENDING_EXTRACTION_SQL's clause 1. If that gate is ever loosened,
-    this line becomes a fabrication and V5 stops meaning anything.
+    The worker accepts only a source-derived `goal_text` and explicit
+    `outcome="success"` payload produced by _PENDING_EXTRACTION_SQL. It
+    never manufactures either value: old/manual jobs missing those facts
+    fail before an extraction call or a persisted candidate.
     """
     episode_id = payload.get("episode_id")
     session_id = payload.get("session_id")
-    if not episode_id or not session_id:
+    goal_text = payload.get("goal_text")
+    outcome = payload.get("outcome")
+    if not episode_id or not session_id or not isinstance(goal_text, str) or not goal_text.strip():
         raise ValueError(
-            f"extract_procedure_from_episode payload missing ids: {payload!r}")
+            "extract_procedure_from_episode payload missing source-derived ids or goal_text"
+        )
+    if outcome != "success":
+        raise ValueError(
+            "extract_procedure_from_episode requires an explicit successful outcome"
+        )
 
     from app.services.procedure_extraction import extract_procedure
     from app.services.procedure_extraction.evidence import AgentRunEvidenceSource
@@ -699,15 +737,8 @@ async def handle_extract_procedure_from_episode(
     ]
     tool_sequence = [r["tool_name"] for r in tool_rows]
 
-    # goal_text seeds the extractor; grounded_hybrid_v1 abstracts a real
-    # capability_statement off the tool-call summary rather than trusting
-    # it. Deliberately generic and evidence-token-free -- a goal string
-    # naming a file would be rejected by V4 the moment the extractor
-    # degrades to deterministic_v1.
-    goal_text = "Recurring engineering task observed in this episode"
-
     source = AgentRunEvidenceSource(
-        goal_text=goal_text, outcome="success", observations=observations,
+        goal_text=goal_text.strip(), outcome=outcome, observations=observations,
         tool_sequence=tool_sequence, started_at=ep["start_ts"],
         project_id=ep["project_id"], episode_id=str(episode_id),
         session_id=ep["session_id"], steps_used=len(tool_sequence),

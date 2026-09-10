@@ -47,9 +47,25 @@ class FakePool:
                 "project_id": None}
 
 
-def _ep(eid="ep-1", sess="sess-1", n_obs=12, n_types=3, completion=2):
+def _ep(eid="ep-1", sess="sess-1", n_obs=12, n_types=3,
+        passing_tests=2, failing_tests=0, unknown_tests=0,
+        goal_text="Fix the failing login test"):
     return {"episode_id": eid, "session_id": sess, "n_obs": n_obs,
-            "n_types": n_types, "completion": completion}
+            "n_types": n_types, "passing_tests": passing_tests,
+            "failing_tests": failing_tests, "unknown_tests": unknown_tests,
+            "goal_text": goal_text}
+
+
+def _payload(**overrides):
+    """A durable job payload selected by the real enqueue gate."""
+    payload = {
+        "episode_id": "11111111-1111-1111-1111-111111111111",
+        "session_id": "s1",
+        "goal_text": "Fix the failing login test",
+        "outcome": "success",
+    }
+    payload.update(overrides)
+    return payload
 
 
 def _inserts(pool):
@@ -85,19 +101,24 @@ async def test_gated_episode_is_enqueued_once():
     payload = json.loads(args[1])
     assert payload["episode_id"] == "ep-1"
     assert payload["session_id"] == "sess-1"
+    assert payload["goal_text"] == "Fix the failing login test"
+    assert payload["outcome"] == "success"
 
 
 @pytest.mark.asyncio
 async def test_payload_records_why_the_gate_let_it_through():
     """An auditor reading ingestion_jobs later must be able to see the
     numbers that justified spending a call, not just that one was spent."""
-    pool = FakePool([_ep(n_obs=17, n_types=3, completion=4)])
+    pool = FakePool([_ep(n_obs=17, n_types=3, passing_tests=4)])
     await ij.enqueue_pending_procedure_extractions(pool, limit=5)
     gate = json.loads(_inserts(pool)[0][1][1])["gate"]
-    assert gate == {"n_obs": 17, "n_types": 3, "completion_observations": 4}
+    assert gate == {
+        "n_obs": 17, "n_types": 3,
+        "passing_tests": 4, "failing_tests": 0, "unknown_tests": 0,
+    }
 
 
-# --------------------------------------------------- the three clauses
+# -------------------------------------------------- the four clauses
 
 @pytest.mark.asyncio
 async def test_thresholds_are_passed_as_query_params():
@@ -115,24 +136,25 @@ async def test_thresholds_are_passed_as_query_params():
 
 
 @pytest.mark.asyncio
-async def test_completion_signal_clause_is_present():
-    """THE correctness clause. handle_extract_procedure_from_episode
-    hardcodes outcome='success'; without this filter that is a
-    fabrication of the one field V5_evidence_sufficiency checks."""
+async def test_explicit_goal_and_verified_outcome_clauses_are_present():
+    """A test command/commit is not proof of success. The gate requires a
+    source-authored goal and explicit pass/fail observation evidence."""
     pool = FakePool([])
     await ij.enqueue_pending_procedure_extractions(pool, limit=1)
     sql = pool.fetched[0][0]
-    assert "'test_run', 'commit_made'" in sql
-    assert "p.completion > 0" in sql
+    assert "p.goal_text IS NOT NULL" in sql
+    assert "o.properties->>'passed' = 'true'" in sql
+    assert "p.passing_tests > 0" in sql
+    assert "p.failing_tests = 0" in sql
+    assert "p.unknown_tests = 0" in sql
 
 
-def test_handler_asserts_success_only_because_the_gate_earns_it():
-    """If someone loosens the gate, this pairing must be re-examined --
-    the docstring is the only thing tying the two together."""
+def test_handler_never_manufactures_goal_or_outcome():
     import inspect
     src = inspect.getsource(ij.handle_extract_procedure_from_episode)
-    assert 'outcome="success"' in src
-    assert "gate" in src.lower() and "V5" in src
+    assert 'payload.get("goal_text")' in src
+    assert 'payload.get("outcome")' in src
+    assert 'Recurring engineering task observed' not in src
 
 
 def test_thresholds_are_not_accidentally_zero():
@@ -229,10 +251,17 @@ def test_run_once_keeps_extraction_opt_in():
 
 @pytest.mark.asyncio
 async def test_missing_ids_are_a_loud_error():
-    with pytest.raises(ValueError, match="missing ids"):
+    with pytest.raises(ValueError, match="missing source-derived"):
         await ij.handle_extract_procedure_from_episode(FakePool(), {"session_id": "s"})
-    with pytest.raises(ValueError, match="missing ids"):
+    with pytest.raises(ValueError, match="missing source-derived"):
         await ij.handle_extract_procedure_from_episode(FakePool(), {"episode_id": "e"})
+
+
+@pytest.mark.asyncio
+async def test_non_success_outcome_is_a_loud_error():
+    with pytest.raises(ValueError, match="explicit successful outcome"):
+        await ij.handle_extract_procedure_from_episode(
+            FakePool(), _payload(outcome="failure"))
 
 
 @pytest.mark.asyncio
@@ -250,7 +279,7 @@ async def test_validator_refusal_is_not_an_exception(monkeypatch):
     monkeypatch.setattr(ij, "_extraction_client", lambda: None)
 
     await ij.handle_extract_procedure_from_episode(
-        FakePool(), {"episode_id": "ep-1", "session_id": "sess-1"})
+        FakePool(), _payload(episode_id="ep-1", session_id="sess-1"))
 
 
 @pytest.mark.asyncio
@@ -284,8 +313,7 @@ async def test_evidence_is_windowed_to_the_episode(monkeypatch):
     monkeypatch.setattr(ij, "_extraction_client", lambda: None)
 
     await ij.handle_extract_procedure_from_episode(
-        WindowPool(), {"episode_id": "11111111-1111-1111-1111-111111111111",
-                       "session_id": "s1"})
+        WindowPool(), _payload())
 
     assert seen["sqls"], "no evidence was gathered at all"
     for sql in seen["sqls"]:
@@ -305,7 +333,7 @@ async def test_abstained_extraction_is_retired_immediately(monkeypatch):
     from app.services.procedure_extraction.schema import ExtractedProcedure
     stub = ExtractedProcedure(
         name="x", goal="x",
-        capability_statement="Recurring engineering task observed in this episode")
+        capability_statement="Fix the failing login test")
 
     class P(FakePool):
         async def fetchrow(self, sql, *a):
@@ -324,8 +352,7 @@ async def test_abstained_extraction_is_retired_immediately(monkeypatch):
 
     pool = P()
     await ij.handle_extract_procedure_from_episode(
-        pool, {"episode_id": "11111111-1111-1111-1111-111111111111",
-               "session_id": "s1"})
+        pool, _payload())
 
     retires = [c for c in pool.executed
                if "UPDATE procedures" in c[0] and "t_invalid" in c[0]]
@@ -362,19 +389,11 @@ async def test_real_abstraction_is_kept(monkeypatch):
 
     pool = P()
     await ij.handle_extract_procedure_from_episode(
-        pool, {"episode_id": "11111111-1111-1111-1111-111111111111",
-               "session_id": "s1"})
+        pool, _payload())
     assert not [c for c in pool.executed if "UPDATE procedures" in c[0]]
 
 
-def test_goal_seed_carries_no_evidence_token():
-    """goal_text becomes capability_statement verbatim whenever the
-    extractor degrades to deterministic_v1. A goal naming a file or a
-    command would be rejected by V4 every single time, making the whole
-    sweep a guaranteed no-yield spend."""
+def test_goal_seed_is_the_source_derived_payload_value():
     import inspect
     src = inspect.getsource(ij.handle_extract_procedure_from_episode)
-    line = [l for l in src.splitlines() if "goal_text =" in l][0]
-    for token in ("/", "\\", ".py", "Modified", "Executed"):
-        assert token not in line.split("=", 1)[1], (
-            f"goal seed must not contain {token!r} -- V4 scans it")
+    assert 'goal_text=goal_text.strip()' in src
