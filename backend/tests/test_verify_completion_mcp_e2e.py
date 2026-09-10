@@ -97,6 +97,11 @@ def test_verify_completion_end_to_end_through_the_real_mcp_tool():
             initial = json.loads(await srv.verify_completion(procedure_run_id, ctx))
             assert initial["overall_state"] == "inconclusive"
             assert len(initial["criteria"]) == 2
+            # B16/B33: a plan_only run never reaches a real terminal
+            # state (nothing has driven it) -- procedure_run_complete
+            # must be honestly False, never true for an un-terminated run.
+            assert initial["procedure_run_complete"] is False
+            assert any("terminal state" in m for m in initial["missing_for_completion"])
 
             # Report a self_report for criterion 0, a deterministic_check
             # for criterion 1 -- overall must be the WEAKEST rung (claimed_done).
@@ -134,6 +139,118 @@ def test_verify_completion_end_to_end_through_the_real_mcp_tool():
             assert missing_run.startswith("REFUSED:")
         finally:
             await _cleanup(pool, name)
+            await pool.close()
+
+    asyncio.run(_run())
+
+
+def test_procedure_run_complete_requires_terminal_state_and_satisfied_verification():
+    """B16/B33: `procedure_run_complete` (verify_completion's own real,
+    literal answer to "refusing to mark the Procedure complete until
+    required verification is satisfied") is False for a real, terminal,
+    UNVERIFIED run, True only once BOTH the run is genuinely terminal AND
+    every required criterion is satisfied -- and vacuously True for a
+    real terminal run with NO postconditions at all (nothing required
+    was never withheld)."""
+    async def _run():
+        from app.execution.durable_run import execute_run, start_run
+        from app.utils.ids import uuid7
+
+        pool = await create_pool(DATABASE_URL, min_size=1, max_size=2)
+        run_id = uuid4().hex[:8]
+        name = f"proc-test-verifycomplete-{run_id}"
+        name_empty = f"proc-test-verifycompleteempty-{run_id}"
+        exec_run_id = None
+        exec_run_id2 = None
+        try:
+            embedder = Embedder()
+            goal_text = f"rotate the backup keys safely ({run_id})"
+            vec = await embedder.embed_one(goal_text, input_type="document")
+            procedure = await _make_verified_approved(
+                pool, name, goal=goal_text, embedding=vec,
+                steps=[{"order": 0, "goal": "rotate the key"}],
+                postconditions=["the key rotation completes"],
+            )
+
+            async with pool.acquire() as c:
+                pv = await c.fetchval("SELECT version FROM procedures WHERE id=$1", procedure["id"])
+                plan_id = await c.fetchval(
+                    "INSERT INTO execution_plans (id, procedure_id, procedure_version, procedure_row_id, "
+                    " task_description, procedure_content_hash, content_hash, scope_type) "
+                    "VALUES ($1,$2,$3,$4,$5,$6,$7,'global') RETURNING id",
+                    str(uuid7()), procedure["procedure_id"], pv, procedure["id"], "verifycomplete-e2e",
+                    f"pch-{run_id}", f"ch-{run_id}",
+                )
+                graph_id = await c.fetchval(
+                    "INSERT INTO task_graphs (id, execution_plan_id, graph_hash, nodes) "
+                    "VALUES ($1,$2,$3,'[]'::jsonb) RETURNING id",
+                    str(uuid7()), plan_id, f"gh-{run_id}",
+                )
+            exec_run_id = await start_run(
+                pool, execution_plan_id=plan_id, task_graph_id=graph_id,
+                procedure_id=procedure["procedure_id"], procedure_version=pv,
+                node_orders=[0], deps={0: []}, created_by="verifycomplete_e2e",
+            )
+
+            async def run_node(order: int, attempt: int) -> dict:
+                return {"order": order}
+
+            result = await execute_run(pool, exec_run_id, deps={0: []}, run_node=run_node, worker_id="verifycomplete-w1")
+            assert result["status"] == "succeeded"
+
+            ctx = _FakeContext(pool)
+            # Terminal, but NOT yet verified -- must be honestly incomplete.
+            before = json.loads(await srv.verify_completion(exec_run_id, ctx))
+            assert before["procedure_run_complete"] is False
+            assert any("required criterion" in m for m in before["missing_for_completion"])
+
+            # Submit the real required report -- now genuinely complete.
+            reports = json.dumps([
+                {"criterion_id": "postcondition:0", "method": "self_report", "claimed_success": True},
+            ])
+            after = json.loads(await srv.verify_completion(exec_run_id, ctx, reports_json=reports))
+            assert after["procedure_run_complete"] is True
+            assert after["missing_for_completion"] == []
+
+            # A procedure with NO postconditions at all -- vacuously
+            # complete the moment it terminates, never blocked on
+            # verification that was never required.
+            procedure2 = await _make_verified_approved(
+                pool, name_empty, goal=f"a procedure with no postconditions ({run_id})",
+                steps=[{"order": 0, "goal": "do the one thing"}],
+            )
+            async with pool.acquire() as c:
+                pv2 = await c.fetchval("SELECT version FROM procedures WHERE id=$1", procedure2["id"])
+                plan_id2 = await c.fetchval(
+                    "INSERT INTO execution_plans (id, procedure_id, procedure_version, procedure_row_id, "
+                    " task_description, procedure_content_hash, content_hash, scope_type) "
+                    "VALUES ($1,$2,$3,$4,$5,$6,$7,'global') RETURNING id",
+                    str(uuid7()), procedure2["procedure_id"], pv2, procedure2["id"], "verifycomplete-empty-e2e",
+                    f"pch2-{run_id}", f"ch2-{run_id}",
+                )
+                graph_id2 = await c.fetchval(
+                    "INSERT INTO task_graphs (id, execution_plan_id, graph_hash, nodes) "
+                    "VALUES ($1,$2,$3,'[]'::jsonb) RETURNING id",
+                    str(uuid7()), plan_id2, f"gh2-{run_id}",
+                )
+            exec_run_id2 = await start_run(
+                pool, execution_plan_id=plan_id2, task_graph_id=graph_id2,
+                procedure_id=procedure2["procedure_id"], procedure_version=pv2,
+                node_orders=[0], deps={0: []}, created_by="verifycomplete_e2e",
+            )
+            result2 = await execute_run(pool, exec_run_id2, deps={0: []}, run_node=run_node, worker_id="verifycomplete-w2")
+            assert result2["status"] == "succeeded"
+            empty_result = json.loads(await srv.verify_completion(exec_run_id2, ctx))
+            assert empty_result["criteria"] == []
+            assert empty_result["procedure_run_complete"] is True
+            assert empty_result["missing_for_completion"] == []
+        finally:
+            if exec_run_id is not None:
+                await pool.execute("DELETE FROM execution_runs WHERE id=$1", exec_run_id)
+            if exec_run_id2 is not None:
+                await pool.execute("DELETE FROM execution_runs WHERE id=$1", exec_run_id2)
+            await _cleanup(pool, name)
+            await _cleanup(pool, name_empty)
             await pool.close()
 
     asyncio.run(_run())

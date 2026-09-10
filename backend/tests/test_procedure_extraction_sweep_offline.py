@@ -44,7 +44,7 @@ class FakePool:
     async def fetchrow(self, sql, *args):
         # The handler reads the episode row before gathering evidence.
         return {"session_id": "s1", "start_ts": "T0", "end_ts": "T1",
-                "project_id": None}
+                "project_id": None, "owner_id": "tester"}
 
     async def fetchval(self, sql, *args):
         # G1: handle_extract_procedure_from_episode resolves a per-session
@@ -332,7 +332,7 @@ async def test_evidence_is_windowed_to_the_episode(monkeypatch):
     class WindowPool(FakePool):
         async def fetchrow(self, sql, *a):
             return {"session_id": "s1", "start_ts": "T0", "end_ts": "T1",
-                    "project_id": None}
+                    "project_id": None, "owner_id": "tester"}
 
         async def fetch(self, sql, *a):
             seen.setdefault("sqls", []).append(sql)
@@ -375,7 +375,7 @@ async def test_abstained_extraction_is_retired_immediately(monkeypatch):
     class P(FakePool):
         async def fetchrow(self, sql, *a):
             return {"session_id": "s1", "start_ts": "T0", "end_ts": "T1",
-                    "project_id": None}
+                    "project_id": None, "owner_id": "tester"}
 
     async def fake_extract(pool, source, **kw):
         return ExtractionResult(
@@ -413,7 +413,7 @@ async def test_real_abstraction_is_kept(monkeypatch):
     class P(FakePool):
         async def fetchrow(self, sql, *a):
             return {"session_id": "s1", "start_ts": "T0", "end_ts": "T1",
-                    "project_id": None}
+                    "project_id": None, "owner_id": "tester"}
 
     async def fake_extract(pool, source, **kw):
         return ExtractionResult(

@@ -167,9 +167,20 @@ async def get_bindings_for_procedure(
     if status is not None:
         params.append(status)
         clauses.append(f"b.status = ${len(params)}")
+    # B24: carry the IMPLEMENTATION's own (not the binding's)
+    # status/verification_status/requirements alongside every binding row
+    # -- resolve_binding_for_step's availability/verification/requirements
+    # weighing needs the real implementation-side facts, not just the
+    # binding's own role/supported_steps. Additive columns (aliased,
+    # never colliding with `procedure_implementations`' own column
+    # names) -- every existing caller reading `b["role"]`/
+    # `b["implementation_id"]`/etc. off this same dict is unaffected.
     rows = await pool.fetch(
         f"""
-        SELECT b.* FROM procedure_implementations b
+        SELECT b.*, i.status AS implementation_status,
+               i.verification_status AS implementation_verification_status,
+               i.requirements AS implementation_requirements
+        FROM procedure_implementations b
         JOIN implementations i ON i.id = b.implementation_id
         WHERE {' AND '.join(clauses)} AND {vis_sql}
         ORDER BY b.role
@@ -179,20 +190,103 @@ async def get_bindings_for_procedure(
     return [dict(r) for r in rows]
 
 
+# B24's own literal pipeline names these as terminal, unresolvable
+# implementation-level states -- an ACTIVE *binding* to a DISABLED/
+# QUARANTINED/DEPRECATED *implementation* is not a real resolution
+# candidate (same real signal implementation_lifecycle.py's UNAVAILABLE/
+# RETIRED derivation already uses -- not duplicated here, just applied
+# as a filter rather than surfaced as a named lifecycle state).
+_UNAVAILABLE_IMPLEMENTATION_STATUSES = frozenset({"disabled", "quarantined", "deprecated"})
+
+
+class AmbiguousBindingResolutionError(ProcedureImplementationBindingError):
+    """B24: "If resolution is ambiguous or unavailable, route to ask,
+    plan, or refuse rather than silently selecting an unsuitable
+    mechanism." Raised instead of silently returning one of several
+    equally-ranked, equally-qualified candidates -- the caller (a route
+    decision, `continue_run`, ...) is the one positioned to route to
+    ask/plan/refuse; this function must never pick on the caller's
+    behalf when nothing real distinguishes the tied candidates."""
+
+    def __init__(self, tied_implementation_ids: list[str]):
+        self.tied_implementation_ids = tied_implementation_ids
+        super().__init__(
+            f"resolution is ambiguous -- {len(tied_implementation_ids)} candidates "
+            f"tied after every real tiebreak: {tied_implementation_ids}"
+        )
+
+
 async def resolve_binding_for_step(
     pool: asyncpg.Pool,
     *,
     procedure_id: str,
     step_order: Optional[int] = None,
     access_scope: Optional[AccessScope] = None,
+    available_context: Optional[dict] = None,
 ) -> Optional[dict]:
     """
-    B24's resolution step for ONE step of ONE Procedure: among this
-    Procedure's `active` bindings, prefer the highest-priority role whose
-    `supported_steps` either is empty (unrestricted -- applies to every
-    step) or explicitly names `step_order`. Returns `None` -- never a
-    fabricated binding -- when nothing qualifies; the caller is
-    responsible for surfacing MISSING_IMPLEMENTATION.
+    B24's resolution step for ONE step of ONE Procedure -- the literal
+    pipeline ("candidate Implementations -> applicability -> requirements
+    -> environment -> permissions -> availability -> verification/
+    evidence -> freshness -> cost/latency -> selected Implementation:v"),
+    built from every REAL signal this codebase actually has, honest about
+    the two it does not:
+
+      - applicability:            `supported_steps` (unrestricted, or
+                                   names `step_order`) -- pre-existing.
+      - permissions:               already enforced one level up, inside
+                                   `get_bindings_for_procedure`'s own
+                                   `visibility_predicate` JOIN -- a
+                                   candidate this caller cannot see never
+                                   reaches this function at all.
+      - requirements / environment: when `available_context` is given
+                                   (the same shape `implementation_
+                                   executor.check_requirements` already
+                                   defines -- e.g. `{"network": True,
+                                   "credentials": [...]}`), excludes any
+                                   candidate whose implementation-level
+                                   `requirements` it does not satisfy.
+                                   Reuses that function rather than a
+                                   second copy of the same check. `None`
+                                   (the default) means no real context to
+                                   check against -- skips this stage
+                                   honestly rather than fabricating one.
+      - availability:              excludes any candidate whose
+                                   IMPLEMENTATION (not merely its binding)
+                                   is disabled/quarantined/deprecated --
+                                   the real gap an earlier pass left: this
+                                   function used to check only the
+                                   binding's own `status='active'` filter
+                                   (still applied, in `get_bindings_for_
+                                   procedure`) and never the bound
+                                   implementation's own lifecycle state.
+      - verification/evidence:     among still-tied candidates, a
+                                   `verification_status='verified'`
+                                   implementation is preferred over an
+                                   unverified one -- a real tiebreak, not
+                                   a hard filter (an unverified candidate
+                                   is still a real candidate when nothing
+                                   verified exists).
+      - freshness:                 HONEST GAP, not fabricated -- this
+                                   schema has no per-implementation
+                                   last-used/staleness timestamp to
+                                   threshold against (the same absence
+                                   `implementation_lifecycle.py`'s own
+                                   docstring already documents for STALE).
+      - cost / latency:            HONEST GAP -- no real cost/latency
+                                   estimate is stored on `implementations`
+                                   anywhere in this codebase; weighing one
+                                   would mean inventing a number, which
+                                   B38's no-fabricated-signal rule forbids.
+
+    Returns `None` -- never a fabricated binding -- when nothing
+    qualifies (including "every candidate that matched role/step is
+    unavailable or fails a real requirement"); the caller is responsible
+    for surfacing MISSING_IMPLEMENTATION. Raises
+    `AmbiguousBindingResolutionError` when, after every real tiebreak
+    above, more than one candidate remains equally best -- the literal
+    "ambiguous... route to ask/plan/refuse" case, never silently
+    resolved by insertion order.
     """
     candidates = await get_bindings_for_procedure(
         pool, procedure_id=procedure_id, status="active", access_scope=access_scope,
@@ -201,7 +295,31 @@ async def resolve_binding_for_step(
         c for c in candidates
         if step_order is None or not c["supported_steps"] or step_order in c["supported_steps"]
     ]
+    eligible = [
+        c for c in eligible
+        if c["implementation_status"] not in _UNAVAILABLE_IMPLEMENTATION_STATUSES
+    ]
+    if available_context is not None:
+        from app.execution.implementation_executor import check_requirements
+        eligible = [
+            c for c in eligible
+            if check_requirements(
+                {"requirements": c["implementation_requirements"] or {}}, available_context,
+            )
+        ]
     if not eligible:
         return None
+
     eligible.sort(key=lambda c: _ROLE_PRIORITY.get(c["role"], len(ROLES)))
-    return eligible[0]
+    best_role_rank = _ROLE_PRIORITY.get(eligible[0]["role"], len(ROLES))
+    tied = [c for c in eligible if _ROLE_PRIORITY.get(c["role"], len(ROLES)) == best_role_rank]
+
+    verified = [c for c in tied if c["implementation_verification_status"] == "verified"]
+    if verified:
+        tied = verified
+
+    if len(tied) > 1:
+        raise AmbiguousBindingResolutionError(
+            [str(c["implementation_id"]) for c in tied]
+        )
+    return tied[0]

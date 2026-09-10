@@ -292,8 +292,42 @@ async def evaluate_run_completion(
         pool, execution_run_id, overall_state=overall, criteria_count=len(per_criterion),
     )
 
+    # B16/B33: "refusing to mark the Procedure complete until required
+    # verification is satisfied" / "successful execution without
+    # persisted terminal reporting is a system failure". `procedure_run_
+    # complete` is the real, literal answer to that -- DISTINCT from
+    # `overall_state` above (which answers "how strongly is the work
+    # verified", an honest 'inconclusive' default even for a procedure
+    # with NOTHING required). Completion requires: (a) the run reached a
+    # REAL terminal state (never inferred from a caller's own claim),
+    # (b) every REQUIRED criterion is satisfied -- vacuously true when
+    # there are none (nothing required was never withheld), (c) a real
+    # trace_id exists (B16's own named field, always populated since the
+    # earlier B16 pass). Never silently coerced to True for a run that
+    # doesn't meet this.
+    run_row = await pool.fetchrow(
+        "SELECT status, trace_id FROM execution_runs WHERE id = $1::uuid", execution_run_id,
+    )
+    missing_for_completion: list[str] = []
+    if run_row is None:
+        missing_for_completion.append("execution_run not found")
+    else:
+        if run_row["status"] not in ("succeeded", "failed"):
+            missing_for_completion.append(f"run has not reached a terminal state (status={run_row['status']!r})")
+        if required_unmet:
+            missing_for_completion.append(
+                f"{len(required_unmet)} required criterion/criteria not yet satisfied: "
+                f"{[c['criterion_id'] for c in required_unmet]}"
+            )
+        if overall == "failed_verification":
+            missing_for_completion.append("at least one required criterion failed verification")
+        if run_row["trace_id"] is None:
+            missing_for_completion.append("no trace_id recorded on this run")
+
     return {
         "execution_run_id": execution_run_id,
         "overall_state": overall,
         "criteria": per_criterion,
+        "procedure_run_complete": not missing_for_completion,
+        "missing_for_completion": missing_for_completion,
     }

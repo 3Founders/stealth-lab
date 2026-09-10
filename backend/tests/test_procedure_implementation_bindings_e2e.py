@@ -19,6 +19,7 @@ from app.db.session import create_pool
 from app.execution import implementation_registry
 from app.services.access import AccessScope
 from app.services.procedure_implementation_bindings import (
+    AmbiguousBindingResolutionError,
     activate_binding,
     get_bindings_for_procedure,
     link_implementation,
@@ -208,6 +209,226 @@ def test_resolve_binding_for_step_returns_none_when_only_candidate_status_is_can
             assert result is None
         finally:
             await _cleanup_implementation(pool, impl_name)
+            await _cleanup_procedure(pool, proc_name)
+            await pool.close()
+
+    asyncio.run(_run())
+
+
+def test_resolve_binding_for_step_excludes_a_disabled_implementation_despite_an_active_binding():
+    """B24 availability: the earlier version of this function only
+    checked the BINDING's own status='active' -- never the bound
+    IMPLEMENTATION's own lifecycle status. A disabled implementation
+    must never be resolved just because its binding row is still
+    active."""
+    async def _run():
+        pool = await create_pool(DATABASE_URL, min_size=1, max_size=2)
+        run_id = uuid4().hex[:8]
+        proc_name = f"proc-test-pib-avail-{run_id}"
+        disabled_name = f"impl-test-pib-avail-disabled-{run_id}"
+        healthy_name = f"impl-test-pib-avail-healthy-{run_id}"
+        try:
+            procedure = await _capture(pool, proc_name)
+            disabled_impl = await implementation_registry.register(
+                pool, name=disabled_name, kind="tool", provider="test", created_by="tester",
+            )
+            healthy_impl = await implementation_registry.register(
+                pool, name=healthy_name, kind="tool", provider="test", created_by="tester",
+            )
+            await implementation_registry.activate(pool, disabled_impl["id"])
+            await implementation_registry.disable(pool, disabled_impl["id"])
+            await implementation_registry.activate(pool, healthy_impl["id"])
+
+            b_disabled = await link_implementation(
+                pool, procedure_id=procedure["procedure_id"], implementation_id=disabled_impl["id"],
+                role="primary", created_by="tester",
+            )
+            await activate_binding(pool, b_disabled["id"])
+
+            # Only the disabled implementation is bound so far -- its
+            # binding is active, but the implementation itself is not
+            # resolvable at all.
+            result = await resolve_binding_for_step(
+                pool, procedure_id=procedure["procedure_id"], step_order=0,
+            )
+            assert result is None, (
+                "a disabled implementation must never be resolved even "
+                "though its own binding row is status='active'"
+            )
+
+            # Now bind the healthy one too -- it must be the one resolved.
+            b_healthy = await link_implementation(
+                pool, procedure_id=procedure["procedure_id"], implementation_id=healthy_impl["id"],
+                role="primary", created_by="tester",
+            )
+            await activate_binding(pool, b_healthy["id"])
+            result2 = await resolve_binding_for_step(
+                pool, procedure_id=procedure["procedure_id"], step_order=0,
+            )
+            assert str(result2["implementation_id"]) == str(healthy_impl["id"])
+        finally:
+            for name in (disabled_name, healthy_name):
+                await _cleanup_implementation(pool, name)
+            await _cleanup_procedure(pool, proc_name)
+            await pool.close()
+
+    asyncio.run(_run())
+
+
+def test_resolve_binding_for_step_prefers_a_verified_implementation_among_tied_roles():
+    """B24 verification/evidence tiebreak: two candidates tied on role
+    (both 'primary', both unrestricted) must resolve to the VERIFIED one,
+    never an arbitrary pick."""
+    async def _run():
+        pool = await create_pool(DATABASE_URL, min_size=1, max_size=2)
+        run_id = uuid4().hex[:8]
+        proc_name = f"proc-test-pib-verify-{run_id}"
+        unverified_name = f"impl-test-pib-verify-unverified-{run_id}"
+        verified_name = f"impl-test-pib-verify-verified-{run_id}"
+        try:
+            procedure = await _capture(pool, proc_name)
+            unverified_impl = await implementation_registry.register(
+                pool, name=unverified_name, kind="tool", provider="test", created_by="tester",
+            )
+            verified_impl = await implementation_registry.register(
+                pool, name=verified_name, kind="tool", provider="test", created_by="tester",
+            )
+            await implementation_registry.activate(pool, unverified_impl["id"])
+            await implementation_registry.activate(pool, verified_impl["id"])
+            await implementation_registry.verify(pool, verified_impl["id"])
+
+            for impl in (unverified_impl, verified_impl):
+                b = await link_implementation(
+                    pool, procedure_id=procedure["procedure_id"], implementation_id=impl["id"],
+                    role="primary", created_by="tester",
+                )
+                await activate_binding(pool, b["id"])
+
+            result = await resolve_binding_for_step(
+                pool, procedure_id=procedure["procedure_id"], step_order=0,
+            )
+            assert str(result["implementation_id"]) == str(verified_impl["id"]), (
+                "the verified candidate must win the tie over the unverified one"
+            )
+        finally:
+            for name in (unverified_name, verified_name):
+                await _cleanup_implementation(pool, name)
+            await _cleanup_procedure(pool, proc_name)
+            await pool.close()
+
+    asyncio.run(_run())
+
+
+def test_resolve_binding_for_step_raises_ambiguous_when_nothing_real_breaks_the_tie():
+    """B24: "If resolution is ambiguous... route to ask, plan, or
+    refuse rather than silently selecting an unsuitable mechanism." Two
+    candidates, same role, both unrestricted, both active, neither
+    verified -- nothing REAL distinguishes them, so this must raise
+    rather than silently pick one by insertion order."""
+    async def _run():
+        pool = await create_pool(DATABASE_URL, min_size=1, max_size=2)
+        run_id = uuid4().hex[:8]
+        proc_name = f"proc-test-pib-ambiguous-{run_id}"
+        impl_a_name = f"impl-test-pib-ambiguous-a-{run_id}"
+        impl_b_name = f"impl-test-pib-ambiguous-b-{run_id}"
+        try:
+            procedure = await _capture(pool, proc_name)
+            impl_a = await implementation_registry.register(
+                pool, name=impl_a_name, kind="tool", provider="test", created_by="tester",
+            )
+            impl_b = await implementation_registry.register(
+                pool, name=impl_b_name, kind="tool", provider="test", created_by="tester",
+            )
+            await implementation_registry.activate(pool, impl_a["id"])
+            await implementation_registry.activate(pool, impl_b["id"])
+
+            for impl in (impl_a, impl_b):
+                b = await link_implementation(
+                    pool, procedure_id=procedure["procedure_id"], implementation_id=impl["id"],
+                    role="primary", created_by="tester",
+                )
+                await activate_binding(pool, b["id"])
+
+            with pytest.raises(AmbiguousBindingResolutionError) as exc_info:
+                await resolve_binding_for_step(
+                    pool, procedure_id=procedure["procedure_id"], step_order=0,
+                )
+            tied_ids = set(exc_info.value.tied_implementation_ids)
+            assert tied_ids == {str(impl_a["id"]), str(impl_b["id"])}
+        finally:
+            for name in (impl_a_name, impl_b_name):
+                await _cleanup_implementation(pool, name)
+            await _cleanup_procedure(pool, proc_name)
+            await pool.close()
+
+    asyncio.run(_run())
+
+
+def test_resolve_binding_for_step_excludes_a_candidate_failing_real_requirements():
+    """B24 requirements/environment: a candidate declaring
+    `requirements={"network": True}` must be excluded when the caller's
+    `available_context` honestly reports no network access -- reusing
+    `implementation_executor.check_requirements`, not a second copy of
+    the same check."""
+    async def _run():
+        pool = await create_pool(DATABASE_URL, min_size=1, max_size=2)
+        run_id = uuid4().hex[:8]
+        proc_name = f"proc-test-pib-requirements-{run_id}"
+        needs_net_name = f"impl-test-pib-requirements-net-{run_id}"
+        no_reqs_name = f"impl-test-pib-requirements-none-{run_id}"
+        try:
+            procedure = await _capture(pool, proc_name)
+            needs_net = await implementation_registry.register(
+                pool, name=needs_net_name, kind="tool", provider="test", created_by="tester",
+                requirements={"network": True},
+            )
+            no_reqs = await implementation_registry.register(
+                pool, name=no_reqs_name, kind="tool", provider="test", created_by="tester",
+            )
+            await implementation_registry.activate(pool, needs_net["id"])
+            await implementation_registry.activate(pool, no_reqs["id"])
+
+            b_net = await link_implementation(
+                pool, procedure_id=procedure["procedure_id"], implementation_id=needs_net["id"],
+                role="primary", created_by="tester",
+            )
+            await activate_binding(pool, b_net["id"])
+
+            # Only the network-requiring candidate exists so far -- no
+            # network in the real context means nothing resolves.
+            # `check_requirements` compares `available[key]` directly
+            # against `requirements[key]` (its own real convention,
+            # distinct from `validate_invocation`'s `network_access`
+            # key) -- reused here, not reimplemented.
+            result = await resolve_binding_for_step(
+                pool, procedure_id=procedure["procedure_id"], step_order=0,
+                available_context={"network": False},
+            )
+            assert result is None
+
+            # With network available, it resolves fine.
+            result_with_net = await resolve_binding_for_step(
+                pool, procedure_id=procedure["procedure_id"], step_order=0,
+                available_context={"network": True},
+            )
+            assert str(result_with_net["implementation_id"]) == str(needs_net["id"])
+
+            # Bind the no-requirements candidate too -- without network,
+            # it is the only one that resolves (real filtering, not a
+            # blanket refusal).
+            b_none = await link_implementation(
+                pool, procedure_id=procedure["procedure_id"], implementation_id=no_reqs["id"],
+                role="primary", created_by="tester",
+            )
+            await activate_binding(pool, b_none["id"])
+            result_no_net = await resolve_binding_for_step(
+                pool, procedure_id=procedure["procedure_id"], step_order=0,
+                available_context={"network": False},
+            )
+            assert str(result_no_net["implementation_id"]) == str(no_reqs["id"])
+        finally:
+            for name in (needs_net_name, no_reqs_name):
+                await _cleanup_implementation(pool, name)
             await _cleanup_procedure(pool, proc_name)
             await pool.close()
 

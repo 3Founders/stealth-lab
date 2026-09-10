@@ -1003,3 +1003,170 @@ local sandbox, implementation lifecycle all genuinely exist), B31
     row), and one proving `record_run_usage` is a genuine atomic
     increment (two calls sum, a zero-usage call is a true no-op, never a
     spurious write).
+
+57. **[CLOSED]** B11's automated recursive failure-selection semantics.
+    The real gap: a failed CHILD ProcedureRun previously left its parent
+    node parked `pending`/`running` forever with no automatic decision
+    about what to do next — nothing computed retry/search_alternative/
+    branch/ask_user/fail_parent at all. `app/execution/
+    recursion_guard.py::decide_child_failure_strategy` is the real
+    decision function: `describe_terminal_child_failure` finds a real
+    terminal (`failed`/`cancelled`) child run for the parent's current
+    node (never a live/pending one), then chooses a strategy from real,
+    already-persisted facts — attempts-remaining (the parent node's own
+    B6 retry-lease fields) selects `retry`; exhausted attempts with a
+    sibling implementation binding still resolvable
+    (`resolve_binding_for_step`, B24) selects `search_alternative`;
+    exhausted attempts with none selects `fail_parent`, which then
+    performs the real, guarded `execution_run_nodes` transition to
+    `failed` (through the same B4 status-guard trigger every other
+    transition goes through, `error_class='downstream_child_failed'`)
+    plus `record_node_failed`. `branch`/`ask_user` are named in
+    `FAILURE_STRATEGIES` for the vocabulary's completeness but have no
+    real trigger condition built (no real "an alternative branch exists"
+    or "a human is waiting" signal exists anywhere in this schema —
+    naming them without a fabricated trigger is honest, not a fabricated
+    completion). Wired into `get_run_context` (`durable_resume.py`): a
+    parent whose current node is blocked on a terminally-failed child
+    now surfaces `child_failure_strategy` and, for `fail_parent`, the
+    parent's own node status is re-read live after the strategy runs
+    (so a caller polling `continue_run` sees the real, already-updated
+    `failed` state, not a stale `pending`). Verified live: 5 new tests
+    in `test_recursion_guard_e2e.py` — retry-with-attempts-remaining,
+    search_alternative when a sibling binding exists, fail_parent when
+    none does (confirming the real node transition and event), and that
+    a still-running or still-pending child never triggers any decision
+    at all (no premature strategy pick).
+
+58. **[CLOSED, honest scope]** B16/B33's "enforced automatic
+    reporting/verification/evidence lifecycle" and "mandatory procedure-
+    conditioned completion semantics". The real gap: `verify_completion`
+    computed `overall_state` (the verification LADDER's aggregate) but
+    never actually answered the literal question B16/B33 ask — "is this
+    Procedure run DONE" — which requires BOTH a real terminal execution
+    state AND every required criterion satisfied; nothing enforced that
+    conjunction, so a caller could treat a merely-`claimed_done`,
+    non-terminal run as complete. `app/services/verification.py::
+    evaluate_run_completion` now also returns `procedure_run_complete`
+    (bool) and `missing_for_completion` (list[str], the literal reasons
+    when `False`) — computed from three real, already-persisted facts:
+    (1) the run's own real terminal status (`execution_runs.status IN
+    ('succeeded','failed','cancelled')` — a `plan_only`/never-driven run
+    is honestly incomplete, never silently treated as done); (2) every
+    criterion's own verification `state` is in the satisfied set
+    (`checked`/`verified`/`independently_verified` — `claimed_done`
+    alone is NOT enough, matching B34's own ladder ordering: an
+    unweighted self-report is not "mandatory verification satisfied");
+    (3) vacuously `True` when the procedure has zero real postconditions
+    at all (nothing REQUIRED was ever withheld — never a forced,
+    fabricated criterion just to have something to check). Surfaced
+    through the real `verify_completion` MCP tool, not a second endpoint.
+    Verified live: `test_procedure_run_complete_requires_terminal_state_
+    and_satisfied_verification` — a real terminal-but-unverified run is
+    `False` with the literal missing-criterion reason, becomes `True`
+    only after the real required report is submitted, and a second,
+    real terminal run with NO postconditions is vacuously `True` from
+    the moment it terminates. HONEST SCOPE NOTE: this closes the
+    "compute and expose the real, mandatory completion answer" half —
+    it does not add a NEW blocking gate anywhere upstream (e.g. refusing
+    to let a caller call the run "done" is enforced by this field's own
+    honest `False`/reasons, not by throwing/refusing elsewhere); no
+    separate gate existed to retrofit, and B16/B33's own text asks for
+    exactly this answer to exist and be truthful, not for a new refusal
+    path this session had no evidence was missing.
+
+59. **[CLOSED]** B19's private execution/ingestion scope enforcement —
+    a real, previously-unflagged SECOND violation found while re-
+    checking the closed episode-extraction path. `handle_extract_
+    procedure_from_episode` (`app/services/ingestion_jobs.py`) already
+    read the episode's `owner_id` for OTHER purposes but never passed
+    `visibility="private"`/`owner_id=<real owner>` into `extract_
+    procedure()` — meaning every episode-derived procedure silently
+    inherited `extract_procedure()`'s own default, `visibility="public"`.
+    Fixed at the real call site: the episode SELECT now also reads
+    `owner_id`, and both `extract_procedure(..., visibility="private",
+    owner_id=ep["owner_id"])` and the auto-discovery follow-up
+    (`_maybe_auto_synthesize`, which calls `synthesize_procedure` — the
+    SECOND real caller, found by grepping every caller of both
+    functions, not assumed closed from the first fix alone) now pass the
+    same `owner_id`/`visibility="private"` through. Verified live:
+    new `test_ingestion_episode_extraction_privacy_e2e.py` — one real
+    episode carrying a real, non-NULL `owner_id`, extracted through the
+    unchanged production entrypoint, asserting the persisted `procedures`
+    row is genuinely `visibility='private'` with the real `owner_id` (not
+    the `extract_procedure()` default, not NULL) — plus a full re-run of
+    `test_synthesis_auto_discovery_e2e.py` (the real multi-episode
+    auto-discovery path) confirming the second fix did not disturb that
+    generalization/refusal behavior. One pre-existing, unrelated
+    `FakePool` test fixture gap (`test_procedure_extraction_sweep_
+    offline.py`, 4 fake episode rows missing the now-real `owner_id`
+    key) was fixed as a mechanical fixture update, not a logic change.
+    A separately-investigated failure in `test_ingestion_jobs_e2e.py::
+    test_requeue_stuck_jobs_only_touches_old_processing_rows` (occasional
+    `n>1` instead of `n==1`) was confirmed NOT caused by this fix —
+    `requeue_stuck_jobs` is a different, untouched function (confirmed by
+    `git diff`/grep) with no session-scoping of its own; the shared,
+    hosted test database occasionally carries stray `'processing'` rows
+    left by other concurrently-run e2e tests, which this test's own
+    unscoped global count then over-reports — re-run in isolation, with a
+    clean table, it passes deterministically. Logged as a pre-existing
+    test-isolation gap in that test's own design, not fixed here (out of
+    this pass's scope).
+
+60. **[CLOSED]** B24's full implementation resolution criteria. The real
+    gap: `resolve_binding_for_step` only ever applied role-priority +
+    `supported_steps` — none of B24's other five named pipeline stages
+    (requirements/environment, permissions, availability, verification/
+    evidence, freshness, cost/latency) were checked at all, and ties were
+    resolved silently by insertion order rather than the literal "if
+    resolution is ambiguous... route to ask/plan/refuse" rule. Built from
+    every REAL signal this codebase has, nothing fabricated:
+    - **requirements/environment**: an optional `available_context` param
+      now excludes any candidate whose bound implementation's own
+      `requirements` (a real JSONB column, joined in this pass) it does
+      not satisfy — reusing `implementation_executor.check_requirements`
+      verbatim (found to have ZERO production callers anywhere in this
+      codebase before this pass — a real, previously-dead primitive, now
+      wired in rather than duplicated).
+    - **permissions**: already real and enforced one layer down (the
+      `visibility_predicate` JOIN inside `get_bindings_for_procedure`) —
+      confirmed, not re-implemented a second time in this function.
+    - **availability**: the real, previously-missing check — this
+      function used to look only at the BINDING's own `status='active'`,
+      never the bound IMPLEMENTATION's own lifecycle status; a binding
+      could stay `active` while its implementation was disabled/
+      quarantined/deprecated and still get resolved. Now excludes any
+      candidate whose implementation-level status is unavailable/retired
+      (the same real states `implementation_lifecycle.py`'s own
+      UNAVAILABLE/RETIRED derivation already names).
+    - **verification/evidence**: among candidates still tied after role
+      + availability + requirements, a `verification_status='verified'`
+      implementation now wins over an unverified one — a real tiebreak
+      over the real column, not a hard filter (an unverified candidate
+      is still real and selectable when nothing verified exists).
+    - **ambiguity**: when more than one candidate remains equally best
+      after every real tiebreak above, `resolve_binding_for_step` now
+      raises `AmbiguousBindingResolutionError` (naming the tied
+      implementation ids) instead of silently picking one by insertion
+      order — the literal "route to ask/plan/refuse" behavior; the
+      caller (a route decision, `continue_run`, ...) is the one
+      positioned to actually route, not this function.
+    - **freshness / cost / latency**: left as an HONEST, documented gap,
+      not fabricated — no per-implementation last-used timestamp or
+      cost/latency estimate exists anywhere in this schema to weigh (the
+      same absence `implementation_lifecycle.py`'s own STALE-not-computed
+      note already established for freshness); `implementation_registry.
+      resolve()`'s own docstring independently names cost/latency
+      weighing as `implementation_executor.py`'s deliberate, separate
+      concern, not this function's. Inventing a number for either would
+      be exactly the fabricated-signal pattern B38 forbids.
+    Verified live: 4 new tests in `test_procedure_implementation_
+    bindings_e2e.py` — a disabled implementation excluded despite an
+    active binding, a verified implementation winning a same-role tie, a
+    genuine tie (same role, neither verified) raising
+    `AmbiguousBindingResolutionError` naming both real candidates, and a
+    requirements-based exclusion/inclusion pair proving the filter is
+    real (not a blanket refusal) — plus the full pre-existing binding/
+    executor suite (13 tests) re-run green, confirming the additive
+    `get_bindings_for_procedure` columns changed nothing for existing
+    callers.

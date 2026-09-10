@@ -360,11 +360,43 @@ async def get_run_context(pool: asyncpg.Pool, run_id: str) -> Optional[dict[str,
     # a query over execution_runs.parent_run_id/parent_node_id, never a
     # separate "WAITING_CHILD" status value.
     waiting_child = None
+    child_failure_strategy = None
     if current is not None:
-        from app.execution.recursion_guard import describe_child_status
+        from app.execution.recursion_guard import (
+            decide_child_failure_strategy,
+            describe_child_status,
+            describe_terminal_child_failure,
+        )
         waiting_child = await describe_child_status(
             pool, run_id=run_id, node_row_id=str(current["id"]),
         )
+        if waiting_child is None:
+            # B11: no LIVE child, but was the most recent one a real,
+            # still-unhandled FAILURE? If so, decide (and, for
+            # fail_parent, REALLY apply) the automated strategy now,
+            # rather than leaving this node silently 'running' forever
+            # with nothing ever having looked at the failure.
+            terminal_failure = await describe_terminal_child_failure(
+                pool, run_id=run_id, node_row_id=str(current["id"]),
+            )
+            if terminal_failure is not None:
+                child_failure_strategy = await decide_child_failure_strategy(
+                    pool, parent_run_id=run_id, parent_node_id=str(current["id"]),
+                    child_run_id=terminal_failure["child_run_id"],
+                )
+                if child_failure_strategy["strategy"] == "fail_parent":
+                    # The node this snapshot's `current`/`nodes` describe
+                    # was just mutated for real -- reload it (a single
+                    # row, not the whole node list rebuild above) so the
+                    # phase logic below reflects the new, real state
+                    # instead of a stale "still running" read.
+                    fresh = await pool.fetchrow(
+                        "SELECT status FROM execution_run_nodes WHERE id = $1", current["id"],
+                    )
+                    if fresh is not None:
+                        current["status"] = fresh["status"]
+                    if current["status"] not in NON_TERMINAL:
+                        current = None
 
     if current is not None and waiting_child is not None:
         phase = f"node:{current['node_order']}:waiting_child"
@@ -375,6 +407,14 @@ async def get_run_context(pool: asyncpg.Pool, run_id: str) -> Optional[dict[str,
             "call continue_run on the CHILD to see its own next action, or "
             "poll this continue_run again once it terminates"
         )
+    elif current is not None and child_failure_strategy is not None:
+        # B11: a child just failed and the automated decision was NOT
+        # fail_parent (that branch already reloaded `current` to None or
+        # a fresh state above) -- surface the real, decided strategy
+        # instead of the generic "report progress" message.
+        phase = f"node:{current['node_order']}:child_failed:{child_failure_strategy['strategy']}"
+        objective = current.get("goal")
+        next_when_satisfied = child_failure_strategy["reason"]
     elif current is not None:
         phase = f"node:{current['node_order']}"
         objective = current.get("goal")
@@ -436,6 +476,7 @@ async def get_run_context(pool: asyncpg.Pool, run_id: str) -> Optional[dict[str,
         "current_phase_or_node": phase,
         "objective": objective,
         "waiting_child": waiting_child,
+        "child_failure_strategy": child_failure_strategy,
         "required_preconditions": required_preconditions,
         "relevant_claim_refs": relevant_claim_refs,
         "recommended_implementations": recommended_implementations,

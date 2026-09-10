@@ -133,14 +133,33 @@ async def start_run(
     # never has a null-then-backfilled root_run_id window.
     root_run_id: Optional[str] = None
     if parent_run_id is not None:
-        root_run_id = await pool.fetchval(
-            "SELECT root_run_id FROM execution_runs WHERE id = $1", parent_run_id,
+        parent_row = await pool.fetchrow(
+            "SELECT root_run_id, trace_id FROM execution_runs WHERE id = $1", parent_run_id,
         )
-        if root_run_id is None:
+        if parent_row is None or parent_row["root_run_id"] is None:
             raise DurableRunError(
                 f"parent_run_id {parent_run_id} not found or has no root_run_id"
             )
-        root_run_id = str(root_run_id)
+        root_run_id = str(parent_row["root_run_id"])
+        # B16: a child ALWAYS inherits its parent's real trace_id -- one
+        # causal chain, regardless of what (if anything) this specific
+        # call passed. Overrides an explicitly-passed trace_id too: a
+        # child cannot legitimately start a NEW trace, matching B16's own
+        # framing ("trace reference" ties a whole execution together).
+        if parent_row["trace_id"] is not None:
+            trace_id = str(parent_row["trace_id"])
+
+    # B16: "terminal state + outcome + verification + evidence + trace
+    # reference" -- every run gets a REAL trace_id, generated HERE (the
+    # one real canonical entry point every caller goes through), not
+    # only by callers that happen to resolve one themselves first
+    # (server.py's `_resolve_trace_id` still does that for find_best_way
+    # specifically, to inherit across a parent/child pair it already
+    # knows about before this call -- this is the backstop for every
+    # other real or future caller, never leaving trace_id NULL).
+    if trace_id is None:
+        from app.utils.ids import uuid7
+        trace_id = str(uuid7())
 
     try:
         async with pool.acquire() as conn, conn.transaction():

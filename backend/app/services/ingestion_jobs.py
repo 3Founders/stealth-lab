@@ -788,7 +788,7 @@ async def handle_extract_procedure_from_episode(
     # mcp_server/server.py already calls -- rather than reaching into
     # procedure_extraction/evidence.py, which this lane does not own.
     ep = await pool.fetchrow(
-        "SELECT session_id, start_ts, end_ts, project_id FROM episodes "
+        "SELECT session_id, start_ts, end_ts, project_id, owner_id FROM episodes "
         "WHERE id = $1::uuid AND t_invalid IS NULL",
         str(episode_id),
     )
@@ -828,7 +828,24 @@ async def handle_extract_procedure_from_episode(
         project_id=ep["project_id"], episode_id=str(episode_id),
         session_id=ep["session_id"], steps_used=len(tool_sequence),
     )
-    result = await extract_procedure(pool, source, client=_extraction_client())
+    # B19: "Private execution remains: scope = USER_PRIVATE... Publishing
+    # is explicit." This IS the execution-derived local-learning path
+    # (A11) -- a candidate extracted from one real episode/session's own
+    # recorded trace, the SAME conceptual path find_best_way's tier-2 ad-
+    # hoc capture and report_execution's B18 learning loop already fixed
+    # this session. This worker was the one real caller still missing
+    # that fix: it never passed visibility/owner_id at all, so every
+    # episode processed here silently defaulted to extract_procedure()'s
+    # own `visibility="public"` -- landing directly in global scope with
+    # no publish step, exactly the rule B19 forbids. `episodes.owner_id`
+    # (already a real, populated column) is the episode's actual owner;
+    # a `None` owner_id (a legacy/system episode with no real owner) is
+    # honestly left private-with-no-owner rather than silently promoted
+    # to public for lack of one to attribute it to.
+    result = await extract_procedure(
+        pool, source, client=_extraction_client(),
+        visibility="private", owner_id=ep["owner_id"],
+    )
 
     if result.validation_failures:
         # Not an error: the validators refusing a weak candidate is the
@@ -895,6 +912,7 @@ async def handle_extract_procedure_from_episode(
         pool, episode_id=str(episode_id),
         scope_type="project" if ep["project_id"] else "global",
         scope_entity_id=ep["project_id"],
+        owner_id=ep["owner_id"],
     )
 
 
@@ -945,7 +963,7 @@ async def _discover_synthesis_candidates(
 
 async def _maybe_auto_synthesize(
     pool: asyncpg.Pool, *, episode_id: str, scope_type: str,
-    scope_entity_id: Optional[str],
+    scope_entity_id: Optional[str], owner_id: Optional[str] = None,
 ) -> None:
     """Synchronous invocation at the natural trigger point -- no new
     scheduler/queue, reuses `synthesize_procedure()` completely unchanged.
@@ -953,7 +971,17 @@ async def _maybe_auto_synthesize(
     contradictory predicate) is the system working exactly as designed:
     the candidate batch is logged and left as distinct, un-blended
     single-episode procedures, never forced into one falsely-universal
-    result."""
+    result.
+
+    B19: same execution-derived-learning rule as `handle_extract_
+    procedure_from_episode` (its own caller) -- `synthesize_procedure()`
+    defaults `visibility="public"` too, and this call never overrode it,
+    so an auto-discovered generalization across several episodes landed
+    in public/global scope with no explicit publish step. `owner_id`
+    (the TRIGGERING episode's real owner -- other episodes in the batch
+    may differ, but attributing the batch to the episode that actually
+    triggered synthesis is honest, not arbitrary) makes this private,
+    matching the single-episode path."""
     from app.services.procedure_extraction.synthesis import (
         MIN_CANDIDATE_EPISODES,
         synthesize_procedure,
@@ -967,7 +995,7 @@ async def _maybe_auto_synthesize(
     if len(batch) < MIN_CANDIDATE_EPISODES:
         return
 
-    synth = await synthesize_procedure(pool, batch)
+    synth = await synthesize_procedure(pool, batch, owner_id=owner_id, visibility="private")
     if synth.synthesized:
         log.info(
             "extract_procedure_from_episode: auto-discovered synthesis over %s -> "
