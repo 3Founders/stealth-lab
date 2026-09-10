@@ -48,6 +48,7 @@ def test_all_registered_tools():
         "inspect_run",                # Final-V1 durable retry/resume surface (§2)
         "list_problem_solutions",     # Final-V1 product model (§37)
         "list_task_implementations",
+        "project_knowledge",          # G13 P3: .stealth/ knowledge page-fault
         "propose_synthesis",
         "report_execution",
         "report_node_progress",       # MCP hardening (B6): host-executed lease progress reporting
