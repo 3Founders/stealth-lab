@@ -923,7 +923,7 @@ async def _bind_plan_to_registry(pool, compiled_plan, procedure_payload: dict):
     )
 
 
-async def _respond_tier1_hit(pool, task_description: str, matched_procedure: dict) -> str:
+async def _respond_tier1_hit(pool, task_description: str, matched_procedure: dict, route: Optional[str] = None) -> str:
     """Tier-1 lookup hit: REAL execution now, not just a returned text
     listing -- one real, cheap LLM call per real stored step, in real
     dependency order, via the same graph_executor.py the tier-2 coding
@@ -1033,7 +1033,15 @@ async def _respond_tier1_hit(pool, task_description: str, matched_procedure: dic
         for order, node in enumerate(sorted(compiled_plan.graph.nodes, key=lambda n: n.order))
     )
 
+    # B32: the literal output-state vocabulary, prefixed onto the real
+    # response -- reuses the SAME `route` this call's caller already
+    # computed via decide_route (assist/execution_ready), never
+    # re-derived. `route=None` (a direct/offline caller of this helper)
+    # falls back to the honest default for what this function always
+    # does (a real execution, sandboxed or not).
+    response_state = (route or "execution_ready").upper()
     return (
+        f"{response_state}\n"
         f"Found existing best-known way ({status}): {matched_procedure['name']}\n"
         f"Reasoned through {len(compiled_plan.graph.nodes)} real step(s) "
         f"(outcome: {result.outcome}):\n{steps_text}\n\n"
@@ -1153,6 +1161,10 @@ async def _respond_plan_only(
     payload = {
         "mode": "plan_only",
         "route": route,
+        # B32: the literal output-state vocabulary, reusing the SAME
+        # real `route` value already computed above (never re-derived) --
+        # this MCP tool now emits it as one of the exact required tokens.
+        "response_state": (route or "plan_ready").upper(),
         "route_decision_id": route_decision_id,
         "procedure_run_id": procedure_run_id,
         "stealth_projection": stealth_projection_status,
@@ -1511,15 +1523,19 @@ async def find_best_way(task_description: str, ctx: Context,
         except RecursionCycleDetected as exc:
             return await _refuse(str(exc))
     if matched_procedure is not None and mode != "full_run":
-        return await _respond_tier1_hit(pool, task_description, matched_procedure)
+        return await _respond_tier1_hit(pool, task_description, matched_procedure, route=route_decision.route)
     if mode in ("lookup_only", "plan_only"):
+        # B32: the literal token, prefixed -- no strong match is an
+        # honest, real NO_APPLICABLE_PROCEDURE answer, not a failure.
         return (
+            "NO_APPLICABLE_PROCEDURE\n"
             "No strong existing match found (this is a normal, honest "
             "answer, not a failure) -- pass mode='full_run' with a "
             "repo_path to solve it fresh."
         )
     if repo_path is None:
         return (
+            "NO_APPLICABLE_PROCEDURE\n"
             "No strong existing match found, and no repo_path was given -- "
             "pass repo_path to run a full solve (mode='auto' or 'full_run')."
         )
@@ -1535,6 +1551,7 @@ async def find_best_way(task_description: str, ctx: Context,
         # execution is the thing being gated).
         return json.dumps({
             "route": "needs_clarification",
+            "response_state": "NEEDS_CLARIFICATION",
             "route_decision_id": route_decision_id,
             "reason": route_decision.reason,
             "near_miss_procedure_id": route_decision.procedure_id,
@@ -1841,6 +1858,10 @@ async def find_best_way(task_description: str, ctx: Context,
 
     errors = [r.error for r in node_runs.values() if r.error]
     lines = [
+        # B32: the literal output-state vocabulary -- this IS the real
+        # tier-2 execution path (route_decision.route was
+        # 'execution_ready' to reach here at all).
+        "EXECUTION_READY",
         f"procedure_run_id: {durable_run_id}",
         f"route_decision_id: {route_decision_id}",
         f"graph_outcome: {graph_result.outcome}",
