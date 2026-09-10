@@ -95,7 +95,9 @@ def test_find_best_way_and_continue_run_both_refresh_the_real_stealth_projection
                 procedure_run_id = payload["procedure_run_id"]
 
                 stealth_dir = os.path.join(repo_dir, ".stealth")
-                assert set(os.listdir(stealth_dir)) == {"context.md", "run.json", "meta.json"}
+                entries = set(os.listdir(stealth_dir))
+                assert {"context.md", "run.json", "meta.json", "index"} <= entries
+                assert "root.idx" in os.listdir(os.path.join(stealth_dir, "index"))
                 with open(os.path.join(stealth_dir, "run.json"), encoding="utf-8") as f:
                     run_json = json.load(f)
                 assert run_json["procedure_run_id"] == procedure_run_id
