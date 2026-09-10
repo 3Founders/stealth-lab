@@ -121,7 +121,7 @@ def test_http_api_adapter_full_lifecycle_against_a_real_server():
         with _real_http_server() as base_url:
             adapter = HttpApiAdapter()
             implementation = {
-                "id": str(uuid.uuid4()), "kind": "api",
+                "id": str(uuid.uuid4()), "kind": "api", "version": 3,
                 "locator": {"endpoint": f"{base_url}/echo"},
                 "invocation": {"headers": {"X-Test": "1"}, "timeout_seconds": 5},
             }
@@ -146,6 +146,10 @@ def test_http_api_adapter_full_lifecycle_against_a_real_server():
 
             evidence = await adapter.collect_evidence(invocation)
             assert evidence["outcome_status"] == "success"
+            # B27: "Record what Stealth requested, the concrete endpoint" --
+            # the real endpoint actually called must be recorded alongside
+            # the outcome, not just the response.
+            assert evidence["requested_endpoint"] == f"{base_url}/echo"
 
             await adapter.cleanup(prepared)
 
@@ -154,6 +158,10 @@ def test_http_api_adapter_full_lifecycle_against_a_real_server():
             assert full_result.status == "success"
             assert full_result.data["artifacts"]
             assert full_result.data["evidence"]["outcome_status"] == "success"
+            assert full_result.data["evidence"]["requested_endpoint"] == f"{base_url}/echo"
+            # B27: "...the concrete endpoint/tool/version" -- the real
+            # implementation version actually used must be recorded too.
+            assert full_result.data["evidence"]["implementation_version"] == 3
 
     asyncio.run(_run())
 
@@ -191,7 +199,7 @@ def test_mcp_tool_adapter_full_lifecycle_against_a_real_server():
         async with _real_mcp_server() as server_url:
             adapter = McpToolAdapter()
             implementation = {
-                "id": str(uuid.uuid4()), "kind": "tool",
+                "id": str(uuid.uuid4()), "kind": "tool", "version": 2,
                 "locator": {"server_url": server_url},
                 "invocation": {"tool_name": "echo"},
             }
@@ -205,6 +213,12 @@ def test_mcp_tool_adapter_full_lifecycle_against_a_real_server():
             assert "echo: hi" in result.data["content_text"]
             assert result.data["artifacts"]
             assert result.data["evidence"]["outcome_status"] == "success"
+            # B27: "Record what Stealth requested, the concrete
+            # endpoint/tool/version" -- the real server/tool/version
+            # actually invoked must be recorded alongside the outcome.
+            assert result.data["evidence"]["requested_server_url"] == server_url
+            assert result.data["evidence"]["requested_tool_name"] == "echo"
+            assert result.data["evidence"]["implementation_version"] == 2
 
     asyncio.run(_run())
 

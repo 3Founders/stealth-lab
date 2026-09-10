@@ -1392,3 +1392,63 @@ local sandbox, implementation lifecycle all genuinely exist), B31
       block anything) each already fail honestly today; adding a
       specific label to each is real, valuable, narrowly-scoped
       follow-on work, not fabricated here.
+
+64. **[RE-AUDITED — one real gap found and fixed]** B25/B28 re-audit
+    (user directive: inspect the actual implementation against every
+    literal requirement before deciding status, rather than trusting
+    item 53's own earlier "CLOSED" verdict). Re-read `app/execution/
+    adapters.py` line-for-line against B25's literal 8-method contract
+    and B27/B28's literal text a second time, independently of item 53's
+    own prose summary:
+    - **B25's 8-method contract** (`resolve/validate/prepare/invoke/
+      collect_result/collect_artifacts/collect_evidence/cleanup`):
+      confirmed present, in exact literal order, on `Adapter` and all
+      three concrete subclasses — `execute()` composes them for real
+      (not a decorative wrapper around a separately-implemented body),
+      confirmed by re-reading the composition, not just the method
+      names. No gap.
+    - **B28's literal 8-step lifecycle** (resolve concrete artifact →
+      verify identity/digest → create isolated runtime → mount declared
+      inputs → invoke → capture outputs/artifacts → verify → record
+      evidence): confirmed `LocalAdapter` maps each step 1:1, with real
+      sha256 digest verification (not a pass-through disguised as one)
+      and real per-run temp-dir isolation via the reused
+      `SubprocessSandboxExecutor`. No gap.
+    - **B27's "Record what Stealth requested, the concrete endpoint/
+      tool/version, returned results, observed artifacts, and what was
+      independently verified versus merely reported"**: a REAL gap,
+      missed by item 53's earlier pass — `HttpApiAdapter`/`McpToolAdapter`
+      recorded the RESPONSE (status code, response text/content, success/
+      failure) but never the REQUEST — no endpoint, no tool name, no
+      server URL, and no implementation version anywhere in the returned
+      `NodeResult.data`/evidence dict. A caller inspecting a past
+      execution's evidence could see "an HTTP call succeeded" but not
+      WHICH endpoint was actually called, or which implementation
+      VERSION made the call — the literal triple B27 names. Fixed:
+      `invoke()` on both adapters now echoes the real request it
+      actually sent (`requested_endpoint`/`requested_body` for HTTP,
+      `requested_server_url`/`requested_tool_name`/`requested_arguments`
+      for MCP) into its own returned dict — not re-derived, the exact
+      values used — and `collect_result`/`collect_evidence` on both now
+      surface them. The VERSION third of the triple is identical for
+      every adapter kind (`implementations.version`, the real column),
+      so it is recorded ONCE in the shared `Adapter.execute()`
+      composition (`evidence["implementation_version"]`) rather than
+      duplicated per subclass. Verified live: both existing full-
+      lifecycle tests in `test_adapters_e2e.py` extended with real
+      assertions (`evidence["requested_endpoint"]`/
+      `requested_server_url`/`requested_tool_name`/
+      `implementation_version` all match the REAL values used in that
+      test's own real HTTP/MCP call) — not new tests bolted on
+      separately, the SAME tests that already exercise the real
+      lifecycle now also check the previously-unrecorded fields; the
+      full pre-existing adapter suite (12 tests) re-run green,
+      confirming this is additive (no existing assertion changed or
+      loosened).
+    "verified versus merely reported" (the other half of B27's
+    sentence) is already real, unchanged by this pass: `evidence.method`
+    (B34's ladder) distinguishes `deterministic_check`/`independent_
+    agent`/`human_review` (Stealth- or third-party-observed) from
+    `self_report` (merely reported) — this adapter-level evidence dict
+    feeds INTO that same ladder via `evidence.py`'s writers, not a
+    second, competing verification concept.

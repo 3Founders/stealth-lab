@@ -149,6 +149,13 @@ class Adapter(ImplementationProvider):
             result = await self.collect_result(invocation)
             artifacts = await self.collect_artifacts(invocation)
             evidence = await self.collect_evidence(invocation)
+            # B27: "...the concrete endpoint/tool/version". The VERSION
+            # half of that triple is the same for every adapter kind (the
+            # real `implementations.version` this row carries) -- recorded
+            # once here rather than duplicated in each subclass's own
+            # collect_evidence, which already records its own kind-specific
+            # endpoint/tool half.
+            evidence = {**evidence, "implementation_version": implementation.get("version")}
             # NodeResult is a frozen dataclass (graph_executor.py's own
             # invariant -- a scheduler must never see a result mutated
             # out from under it) -- replace, never assign.
@@ -370,6 +377,13 @@ class HttpApiAdapter(Adapter):
         return {
             "status_code": response.status_code, "text": response.text,
             "headers": dict(response.headers), "method": prepared["method"],
+            # B27: "Record what Stealth requested, the concrete endpoint...".
+            # Echoed straight from `prepared` (the REAL request this call
+            # actually sent) rather than re-derived, so collect_result/
+            # collect_evidence below can record it alongside the response --
+            # not just the response, which is all this adapter captured
+            # before this fix.
+            "requested_endpoint": prepared["endpoint"], "requested_body": prepared["body"],
         }
 
     async def collect_result(self, invocation: dict) -> NodeResult:
@@ -377,8 +391,12 @@ class HttpApiAdapter(Adapter):
         succeeded = 200 <= status_code < 300
         return NodeResult(
             status="success" if succeeded else "failure",
-            notes=f"HTTP {invocation['method']} -> {status_code}",
-            data={"status_code": status_code, "response_text": invocation["text"][:4000]},
+            notes=f"HTTP {invocation['method']} {invocation['requested_endpoint']} -> {status_code}",
+            data={
+                "status_code": status_code, "response_text": invocation["text"][:4000],
+                "requested_endpoint": invocation["requested_endpoint"],
+                "requested_method": invocation["method"],
+            },
         )
 
     async def collect_artifacts(self, invocation: dict) -> list[dict]:
@@ -387,9 +405,17 @@ class HttpApiAdapter(Adapter):
 
     async def collect_evidence(self, invocation: dict) -> dict:
         status_code = invocation["status_code"]
+        # B27: evidence must record the concrete endpoint requested, not
+        # just the outcome -- "what was requested" is exactly this
+        # requirement's own words, distinct from B26's separate
+        # observed-output concern.
+        base = {
+            "requested_endpoint": invocation["requested_endpoint"],
+            "requested_method": invocation["method"],
+        }
         if 200 <= status_code < 300:
-            return {"outcome_status": "success", "detail": f"HTTP {status_code}"}
-        return {"outcome_status": "failure", "failure_class": "external_failure", "detail": f"HTTP {status_code}"}
+            return {**base, "outcome_status": "success", "detail": f"HTTP {status_code}"}
+        return {**base, "outcome_status": "failure", "failure_class": "external_failure", "detail": f"HTTP {status_code}"}
 
     async def cleanup(self, prepared: dict) -> None:
         return None  # httpx.AsyncClient is already closed by its own `async with` in invoke()
@@ -458,13 +484,28 @@ class McpToolAdapter(Adapter):
         content_text = "\n".join(
             block.text for block in result.content if hasattr(block, "text")
         )
-        return {"is_error": bool(result.is_error), "content_text": content_text}
+        return {
+            "is_error": bool(result.is_error), "content_text": content_text,
+            # B27: "Record what Stealth requested, the concrete
+            # endpoint/tool/version" -- echoed from `prepared` (the REAL
+            # request this call actually sent), not re-derived.
+            "requested_server_url": prepared["server_url"],
+            "requested_tool_name": prepared["tool_name"],
+            "requested_arguments": prepared["arguments"],
+        }
 
     async def collect_result(self, invocation: dict) -> NodeResult:
         return NodeResult(
             status="failure" if invocation["is_error"] else "success",
-            notes=f"MCP tool call isError={invocation['is_error']}",
-            data={"content_text": invocation["content_text"][:4000]},
+            notes=(
+                f"MCP tool {invocation['requested_tool_name']!r} @ "
+                f"{invocation['requested_server_url']} isError={invocation['is_error']}"
+            ),
+            data={
+                "content_text": invocation["content_text"][:4000],
+                "requested_server_url": invocation["requested_server_url"],
+                "requested_tool_name": invocation["requested_tool_name"],
+            },
         )
 
     async def collect_artifacts(self, invocation: dict) -> list[dict]:
@@ -475,9 +516,15 @@ class McpToolAdapter(Adapter):
         return [{"kind": "mcp_tool_result", "ref": f"sha256:{digest}", "sha256": digest, "size_bytes": len(text)}]
 
     async def collect_evidence(self, invocation: dict) -> dict:
+        # B27: evidence must record the concrete tool/endpoint requested,
+        # not just the outcome.
+        base = {
+            "requested_server_url": invocation["requested_server_url"],
+            "requested_tool_name": invocation["requested_tool_name"],
+        }
         if invocation["is_error"]:
-            return {"outcome_status": "failure", "failure_class": "external_failure", "detail": "MCP tool reported isError=true"}
-        return {"outcome_status": "success", "detail": "MCP tool call succeeded"}
+            return {**base, "outcome_status": "failure", "failure_class": "external_failure", "detail": "MCP tool reported isError=true"}
+        return {**base, "outcome_status": "success", "detail": "MCP tool call succeeded"}
 
     async def cleanup(self, prepared: dict) -> None:
         return None  # the streamable_http/ClientSession context managers in invoke() already close everything
