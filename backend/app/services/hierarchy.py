@@ -143,9 +143,27 @@ def plan_next_level(
 _OWNS_FILTER = "e.edge_type = 'OWNS' AND e.custom_edge_type = 'PARENT_OF'"
 
 
+def _live(table: str, alias: str) -> str:
+    """The real "is this row still live" predicate for `table` --
+    NOT uniform across the 4 tables this module now spans.
+    `task_nodes`/`knowledge_nodes`/`procedures` are all bi-temporal
+    (invalidate-and-append, `t_invalid IS NULL` means live); `implementations`
+    (migration 33) is NOT -- a new version is a new row (`(name, provider,
+    version)` identity), and the real "still current" signal is
+    `deprecated_at IS NULL` (B29's own real lifecycle column), never a
+    `t_invalid` column that table does not have."""
+    if table == "implementations":
+        return f"{alias}.deprecated_at IS NULL"
+    return f"{alias}.t_invalid IS NULL"
+
+
 def _name_expr(table: str, alias: str = "") -> str:
     prefix = f"{alias}." if alias else ""
     if table == "task_nodes":
+        return f"{prefix}name || ' ' || COALESCE({prefix}description, '')"
+    if table == "procedures":
+        return f"{prefix}name || ' ' || COALESCE({prefix}goal, '')"
+    if table == "implementations":
         return f"{prefix}name || ' ' || COALESCE({prefix}description, '')"
     return f"{prefix}name"
 
@@ -171,13 +189,21 @@ async def _fetch_roots(
         "AND (n.success_criteria->>'internal_proxy') IS DISTINCT FROM 'true' "
         if table == "task_nodes" else ""
     )
+    # `implementations` (migration 33) has no `embedding` column at all --
+    # B37/B38's own "use only real signals, never fake semantic
+    # embeddings" rule means this table's hierarchy is built on real
+    # LEXICAL similarity only (`_pairwise_similarity`'s own existing
+    # fallback path), never a fabricated vector. `has_embedding` is
+    # honestly always False here, not queried against a column that
+    # does not exist.
+    has_embedding_expr = "FALSE" if table == "implementations" else "(n.embedding IS NOT NULL)"
     tenant = tenant_scope or TenantScope.unrestricted()
     scope_sql, scope_params, _ = scope_predicates(scope, tenant, alias="n", param_index=1)
     rows = await pool.fetch(
-        f"SELECT n.id, n.name, (n.embedding IS NOT NULL) AS has_embedding, "
+        f"SELECT n.id, n.name, {has_embedding_expr} AS has_embedding, "
         f"{_name_expr(table, alias='n')} AS full_text "
         f"FROM {table} n "
-        f"WHERE n.t_invalid IS NULL AND {scope_sql} {proxy_filter}"
+        f"WHERE {_live(table, 'n')} AND {scope_sql} {proxy_filter}"
         f"AND NOT EXISTS (SELECT 1 FROM edges e WHERE e.t_invalid IS NULL AND {_OWNS_FILTER} "
         f"  AND e.target_id = n.id AND e.target_table = '{table}')",
         *scope_params,
@@ -237,6 +263,42 @@ async def _create_internal_node(
             "FROM task_nodes WHERE id = ANY($5::uuid[]) AND t_invalid IS NULL "
             "RETURNING id",
             name, f"Aggregates {len(child_ids)} related task(s).", now, created_by, ids,
+        )
+    elif table == "procedures":
+        # `provenance = 'company_debate'` is the REAL, precise group-row
+        # marker `_is_group_row_filter` checks -- never any real capture
+        # path's own provenance value. `is_engineering_fixture = true`
+        # is the pre-existing, real safety exclusion `_CANDIDATE_BASE_
+        # WHERE` (applicability.py) already enforces for EVERY real
+        # retrieval path -- this group row can never surface as a
+        # fabricated candidate Procedure, belt-and-suspenders with the
+        # provenance marker above.
+        row = await conn.fetchrow(
+            "INSERT INTO procedures (name, goal, provenance, embedding, is_engineering_fixture, "
+            "t_valid, t_created, created_by) "
+            "SELECT $1, $2, 'company_debate', avg(embedding), true, $3, $3, $4 "
+            "FROM procedures WHERE id = ANY($5::uuid[]) AND t_invalid IS NULL "
+            "RETURNING id",
+            name, f"Aggregates {len(child_ids)} related procedure(s) -- index metadata, never executable.",
+            now, created_by, ids,
+        )
+    elif table == "implementations":
+        # `implementations` (migration 33) has no `embedding` column at
+        # all (this table's hierarchy is lexical-only, see `_fetch_
+        # roots`) and no `t_valid`/`t_invalid` (a new version is a new
+        # row, never invalidate-and-append) -- `t_created` covers the
+        # "when" this row was made. `requirements->>'_hierarchy_group'`
+        # is the real, precise group-row marker; `status = 'disabled'`
+        # is the SAME real exclusion B24's own `resolve_binding_for_step`
+        # already enforces (a disabled implementation is never a real
+        # resolution candidate), belt-and-suspenders with the marker.
+        row = await conn.fetchrow(
+            "INSERT INTO implementations (name, description, kind, provider, requirements, "
+            "status, t_created, created_by) "
+            "VALUES ($1, $2, 'deterministic', 'hierarchy_builder', $3::jsonb, 'disabled', $4, $5) "
+            "RETURNING id",
+            name, f"Aggregates {len(child_ids)} related implementation(s) -- index metadata, never invocable.",
+            {"_hierarchy_group": True, "_member_count": len(child_ids)}, now, created_by,
         )
     else:
         row = await conn.fetchrow(
@@ -789,9 +851,29 @@ def _is_group_row_filter(table: str) -> str:
     """Excludes this module's OWN internal aggregator rows -- they are
     index metadata (the tree itself), never a canonical source object,
     so they must never count toward `canonical_revision` or be offered
-    as a coarse-routing destination's "real object" leaf."""
+    as a coarse-routing destination's "real object" leaf.
+
+    `procedures`/`implementations` have no `node_type` column
+    (knowledge_nodes' own discriminator) -- each real, precise group-row
+    marker is chosen from a column that table already has, reused for
+    identification, never fabricated:
+      - `procedures`: `provenance = 'company_debate'` -- the EXACT
+        marker `_create_internal_node` already writes for knowledge_nodes
+        group rows, reused here (never any REAL captured procedure's own
+        provenance -- V0-gate's real vocabulary is `company_ingested/
+        company_debate/public_generated/prior_library/
+        system_pending_review`, and every real capture path in this
+        codebase uses one of the other four).
+      - `implementations`: `requirements->>'_hierarchy_group'` -- a real,
+        dedicated JSONB marker (this table's `requirements` column is
+        never otherwise populated with this key by any real registration
+        path)."""
     if table == "task_nodes":
         return "AND (n.success_criteria->>'internal_proxy') IS DISTINCT FROM 'true'"
+    if table == "procedures":
+        return "AND n.provenance IS DISTINCT FROM 'company_debate'"
+    if table == "implementations":
+        return "AND (n.requirements->>'_hierarchy_group') IS DISTINCT FROM 'true'"
     return "AND n.node_type IS DISTINCT FROM 'hierarchy_group'"
 
 
@@ -822,13 +904,13 @@ async def compute_index_freshness(
     group_filter = _is_group_row_filter(table)
 
     canonical_row = await pool.fetchrow(
-        f"SELECT count(*) AS c FROM {table} n WHERE n.t_invalid IS NULL {group_filter} AND {scope_sql}",
+        f"SELECT count(*) AS c FROM {table} n WHERE {_live(table, 'n')} {group_filter} AND {scope_sql}",
         *scope_params,
     )
     indexed_row = await pool.fetchrow(
         f"""
         SELECT count(*) AS c FROM {table} n
-        WHERE n.t_invalid IS NULL {group_filter} AND {scope_sql}
+        WHERE {_live(table, 'n')} {group_filter} AND {scope_sql}
         AND EXISTS (
             SELECT 1 FROM edges e WHERE e.t_invalid IS NULL AND {_OWNS_FILTER}
             AND e.target_id = n.id AND e.target_table = '{table}'
