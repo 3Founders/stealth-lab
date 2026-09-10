@@ -202,6 +202,84 @@ def test_decide_route_execution_ready_when_applicable_and_intent_execute():
     asyncio.run(_run())
 
 
+def test_decide_route_runs_the_full_b1_pipeline_including_claims_and_implementations():
+    """B1's own pipeline text: 'retrieve Procedures -> retrieve relevant
+    Claims -> evaluate applicability -> resolve candidate Implementations
+    -> determine missing decision-critical facts -> choose route'. Both
+    retrieval steps must actually run and return REAL data (never
+    fabricated) -- this proves it with a real Claim and a real
+    Procedure<->Implementation binding, not just an empty-list default."""
+    async def _run():
+        pool = await create_pool(DATABASE_URL, min_size=1, max_size=2)
+        run_id = uuid4().hex[:8]
+        name_prefix = f"proc-test-routedec-pipeline-{run_id}"
+        claim_subject = f"project:routedec-pipeline-claim-{run_id}"
+        impl_id = None
+        try:
+            from app.execution import implementation_registry
+            from app.services.claims import capture_claim
+            from app.services.procedure_implementation_bindings import link_implementation
+
+            embedder = Embedder()
+            goal_text = f"rotate the deploy credentials for pipeline probe {run_id}"
+            vec = await embedder.embed_one(goal_text, input_type="document")
+            procedure = await _make_verified_approved(
+                pool, name_prefix, goal=goal_text, embedding=vec,
+                steps=[{"order": 0, "goal": "rotate the credential"}],
+            )
+
+            await pool.execute("INSERT INTO task_nodes (name, skill_ref) VALUES ('t', $1)", claim_subject)
+            claim_id = await capture_claim(
+                pool, statement=f"the deploy credential store is reachable for pipeline probe {run_id}",
+                task_ids=[claim_subject], subject=claim_subject,
+                predicate="reachability", object="reachable", claim_type="fact",
+                epistemic_status="observed", created_by="tester", scope_type="global", embedder=embedder,
+            )
+            assert claim_id is not None
+
+            impl = await implementation_registry.register(
+                pool, name=f"routedec-pipeline-impl-{run_id}", kind="tool",
+                provider="routedec-pipeline-e2e", created_by="tester",
+            )
+            impl_id = impl["id"]
+            await link_implementation(
+                pool, procedure_id=procedure["procedure_id"], implementation_id=impl_id,
+                role="primary", created_by="tester",
+            )
+            await implementation_registry.activate(pool, impl_id)
+            await pool.execute(
+                "UPDATE procedure_implementations SET status='active' "
+                "WHERE procedure_id=$1 AND implementation_id=$2",
+                procedure["procedure_id"], impl_id,
+            )
+
+            query_vec = await embedder.embed_one(goal_text, input_type="query")
+            decision = await decide_route(
+                pool, task_description=goal_text, mode="auto", repo_path="/tmp/some/repo",
+                authorized=True, authorization_detail={},
+                goal_embedding=query_vec, embedding_model_id=embedder.embedding_model_id(),
+                goal_text=goal_text,
+            )
+            assert decision.route == "execution_ready"
+            assert decision.relevant_claim_refs, "must retrieve the real claim it was just given"
+            assert any(r["claim_id"] == claim_id for r in decision.relevant_claim_refs)
+            assert decision.implementation_candidates, "must resolve the real binding it was just given"
+            assert any(str(c["implementation_id"]) == impl_id for c in decision.implementation_candidates)
+        finally:
+            if impl_id is not None:
+                await pool.execute("DELETE FROM procedure_implementations WHERE implementation_id=$1", impl_id)
+                await pool.execute("DELETE FROM implementations WHERE id=$1", impl_id)
+            await pool.execute(
+                "DELETE FROM knowledge_nodes WHERE node_type = 'claim' AND properties->>'subject' = $1",
+                claim_subject,
+            )
+            await pool.execute("DELETE FROM task_nodes WHERE skill_ref = $1", claim_subject)
+            await _cleanup(pool, name_prefix)
+            await pool.close()
+
+    asyncio.run(_run())
+
+
 def test_decide_route_assist_when_applicable_and_intent_assist_never_requires_confirmation():
     async def _run():
         pool = await create_pool(DATABASE_URL, min_size=1, max_size=2)

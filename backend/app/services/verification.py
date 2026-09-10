@@ -98,6 +98,8 @@ async def _upsert_result(
         evidence_refs or [], reviewer, reviewed_targets or [], criterion_answers or {},
         detail, created_by,
     )
+    from app.execution.recorder import record_verification_started
+    await record_verification_started(pool, execution_run_id, criterion_id=criterion_id, method=method)
     return dict(row)
 
 
@@ -264,6 +266,11 @@ async def evaluate_run_completion(
         # postconditions being almost universally empty) -- honestly
         # inconclusive, never silently "verified".
         overall = "inconclusive"
+
+    from app.execution.recorder import record_verification_completed
+    await record_verification_completed(
+        pool, execution_run_id, overall_state=overall, criteria_count=len(per_criterion),
+    )
 
     return {
         "execution_run_id": execution_run_id,

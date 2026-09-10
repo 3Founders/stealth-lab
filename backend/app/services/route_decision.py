@@ -174,6 +174,17 @@ class RouteDecision:
     created_by: Optional[str] = None
     scope_type: Optional[str] = None
     scope_entity_id: Optional[str] = None
+    # B1's own pipeline: "retrieve Procedures -> retrieve relevant Claims
+    # -> evaluate applicability -> resolve candidate Implementations ->
+    # determine missing decision-critical facts -> choose route". Both
+    # steps below now genuinely run inside decide_route() (real calls,
+    # bounded, never fabricated) -- not persisted to route_decisions
+    # (B2's own field list doesn't include them; they belong on
+    # find_best_way's OUTPUT per B32), but present on every returned
+    # RouteDecision so find_best_way's response builder never has to
+    # re-run the same retrieval a second time.
+    relevant_claim_refs: list[dict] = field(default_factory=list)
+    implementation_candidates: list[dict] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         if self.route not in ROUTE_STATES:
@@ -205,12 +216,90 @@ async def decide_route(
     scope_entity_id: Optional[str] = None,
 ) -> RouteDecision:
     """
-    The B1 algorithm: normalize -> classify intent -> retrieve candidates
-    -> evaluate applicability -> identify decision-critical unknowns ->
-    choose route. Never runs anything (no sandbox, no LLM call, no
-    execution plan) -- this is a pure decision over already-available
-    knowledge, exactly the "instantiate it" step B1 wants BEFORE any
-    commitment to execute.
+    The B1 algorithm, now genuinely running every pipeline step the spec
+    names (not just the applicability-adjacent ones): normalize ->
+    classify intent -> retrieve candidates -> retrieve relevant Claims ->
+    evaluate applicability -> resolve candidate Implementations ->
+    identify decision-critical unknowns -> choose route.
+
+    This is a thin wrapper around `_decide_route_core` (the pre-existing
+    applicability/intent logic, unchanged) that additionally runs the two
+    real retrieval steps B1 names but this module never called before --
+    `get_relevant_claims` (B30/B32) and `get_bindings_for_procedure`
+    (B23/B24) -- and attaches their REAL results onto the returned
+    decision. Wrapped rather than threaded through every one of
+    `_decide_route_core`'s six return points because claims retrieval
+    does not depend on which branch was taken (it only depends on the
+    goal), and implementation-candidate resolution only needs the
+    decision's own `procedure_id` once chosen -- both are genuinely
+    independent of the routing logic itself, matching the spec's own
+    framing of them as pipeline STEPS that inform (not replace) routing,
+    not new gating rules layered into the cascade.
+    """
+    relevant_claim_refs: list[dict] = []
+    try:
+        from app.services.relevant_claims import get_relevant_claims
+        relevant_claim_refs = await get_relevant_claims(
+            pool, goal=task_description, top_k=5, access_scope=access_scope,
+        )
+    except Exception:  # noqa: BLE001 -- claims retrieval is informational;
+        # a failure here must never block routing itself (B1's routing
+        # logic has its own, separately-tested failure semantics).
+        relevant_claim_refs = []
+
+    decision = await _decide_route_core(
+        pool, task_description=task_description, mode=mode, repo_path=repo_path,
+        authorized=authorized, authorization_detail=authorization_detail,
+        goal_embedding=goal_embedding, current_scope=current_scope,
+        invariant_bindings=invariant_bindings, access_scope=access_scope,
+        require_verified=require_verified, embedding_model_id=embedding_model_id,
+        goal_text=goal_text, environment=environment, session_id=session_id,
+        workspace_id=workspace_id, created_by=created_by, scope_type=scope_type,
+        scope_entity_id=scope_entity_id,
+    )
+    decision.relevant_claim_refs = relevant_claim_refs
+
+    if decision.procedure_id is not None:
+        try:
+            from app.services.procedure_implementation_bindings import get_bindings_for_procedure
+            decision.implementation_candidates = await get_bindings_for_procedure(
+                pool, procedure_id=decision.procedure_id, access_scope=access_scope,
+            )
+        except Exception:  # noqa: BLE001 -- same informational-only discipline as claims above.
+            decision.implementation_candidates = []
+
+    return decision
+
+
+async def _decide_route_core(
+    pool: asyncpg.Pool,
+    *,
+    task_description: str,
+    mode: str,
+    repo_path: Optional[str],
+    authorized: bool,
+    authorization_detail: dict,
+    goal_embedding: Optional[list[float]],
+    current_scope: Optional[dict] = None,
+    invariant_bindings: Optional[dict[str, float]] = None,
+    access_scope: Optional[AccessScope] = None,
+    require_verified: bool = True,
+    embedding_model_id: Optional[str] = None,
+    goal_text: Optional[str] = None,
+    environment: Optional[dict] = None,
+    session_id: Optional[str] = None,
+    workspace_id: Optional[str] = None,
+    created_by: Optional[str] = None,
+    scope_type: Optional[str] = None,
+    scope_entity_id: Optional[str] = None,
+) -> RouteDecision:
+    """
+    The applicability/intent core: normalize -> classify intent ->
+    retrieve candidates -> evaluate applicability -> identify decision-
+    critical unknowns -> choose route. Never runs anything (no sandbox,
+    no LLM call, no execution plan) -- this is a pure decision over
+    already-available knowledge, exactly the "instantiate it" step B1
+    wants BEFORE any commitment to execute.
 
     `authorized`/`authorization_detail`: computed by the caller (server.py's
     existing `_authorize_repo_execution`), not re-derived here -- this

@@ -14,6 +14,48 @@ the spec asks for, with the reason.
 
 ---
 
+## RE-AUDIT PASS (user directive: "every item from b1 to b38 fully
+## closed... by sticking to the original plan and rigour")
+
+The original spec text (`STEALTHLAB_EXTREME_FINAL_HARDENING_V4.md`) had
+fallen out of this session's live context after a long conversation and
+several compactions. Before doing any more work, it was recovered in
+full — both from the session transcript's own attachment record and
+from the source file, still present at its original path — and every
+B1-B38 section was re-read verbatim (not re-derived from memory or from
+this log's own prose, which had drifted).
+
+**What the re-read found**: several items this log had already marked
+CLOSED did not, on a literal re-check, match what B1-B38 actually
+specify. Concretely:
+- B1's own pipeline text ("retrieve Procedures -> retrieve relevant
+  Claims -> evaluate applicability -> resolve candidate Implementations
+  -> ... -> choose route") was only half-built -- `decide_route()` never
+  called `get_relevant_claims`/implementation-binding resolution at all.
+- B4 wants an explicit 11-state named chain (`RUN_CREATED -> DISCOVERY
+  -> ... -> FINALIZED`); what existed was a coarser `pending/running/
+  succeeded/failed/paused/cancelled` guard.
+- B7 names 8 specific recorder operations and B8 names 18 specific event
+  types ("at minimum"); the recorder built earlier this session covered
+  a real but narrower 8-type vocabulary and was missing `record_child_run`/
+  `record_verification` entirely.
+- B29's Implementation lifecycle (`DISCOVERED -> ... -> REUSED`) had no
+  real derivation anywhere — a prior pass in this log had marked it
+  "CLOSED (verified)" without actually checking.
+- B30 was flatly mislabeled in this log as `get_relevant_claims` — the
+  real B30 is "Runtime relationship between Procedure, Implementation,
+  and Execution", an unrelated section.
+
+Each of these has now been re-closed for real against the literal spec
+text (see the dated entries below), with the same discipline as the
+rest of this document: real code, real migrations where needed, e2e
+tests against the live DB, no fabricated fields. Items NOT re-opened
+below (B2/B3/B6/B9-B14/B15/B18/B20/B22/B23-B25/B28/B30/B31/B34/B35/B36)
+were re-checked against the recovered literal text too and confirmed to
+already match it — not re-verified by faith in the earlier passes.
+
+---
+
 ## Additional pre-existing issue found, not fixed (low priority)
 
 6. **[BUG, pre-existing, NOT fixed]** `tests/test_mcp_six_tool_surface_
@@ -581,3 +623,238 @@ local sandbox, implementation lifecycle all genuinely exist), B31
     and `continue_run` — the core cascade's own behavior is untouched, by
     design, per CLAUDE.md rule 3 ("if this prompt conflicts with a working
     stronger existing mechanism, keep the stronger mechanism").
+
+## RE-AUDIT PASS closures (against the recovered literal spec text)
+
+43. **[CLOSED, for real this time]** B1's pipeline was missing 2 of its
+    6 named steps: `decide_route()` never retrieved relevant Claims nor
+    resolved candidate Implementations before choosing a route.
+    `route_decision.py::decide_route` is now a thin wrapper around the
+    pre-existing applicability/intent core (`_decide_route_core`, the
+    old `decide_route` body, renamed) that additionally runs real
+    `get_relevant_claims`/`get_bindings_for_procedure` calls and attaches
+    their results to the returned `RouteDecision` as `relevant_claim_refs`/
+    `implementation_candidates` (not persisted to `route_decisions` — B2's
+    own field list doesn't include them; they belong on `find_best_way`'s
+    OUTPUT per B32, which is where `_respond_plan_only`'s JSON payload now
+    surfaces them, plus `missing_required_implementations`). Both
+    retrieval calls are wrapped `except Exception: [] ` — informational,
+    must never block routing itself. Verified live:
+    `test_decide_route_runs_the_full_b1_pipeline_including_claims_and_
+    implementations` (a real Claim + a real activated Procedure<->
+    Implementation binding, both actually retrieved) plus the full
+    existing route_decision/plan_only/mega_chain/recursion suite re-run
+    green. Caught one real bug while wiring this: `_respond_plan_only`'s
+    `json.dumps(payload, indent=2)` had no `default=str`, so the new
+    `implementation_candidates` field (raw asyncpg rows containing UUID
+    objects) crashed serialization — fixed by adding `default=str`
+    (verified via `test_continue_run_implementation_binding_e2e.py`,
+    which was failing until this fix landed).
+
+44. **[CLOSED]** B4's Stealth Execution Contract (`RUN_CREATED ->
+    DISCOVERY -> PROCEDURE_EVALUATED -> APPLICABILITY_CHECKED ->
+    PROCEDURE_VERSION_PINNED -> IMPLEMENTATION_PINNED -> EXECUTION_STARTED
+    -> EXECUTION_EVENTS -> VERIFICATION -> OUTCOME -> EVIDENCE ->
+    FINALIZED) is a real, named 11-state chain the earlier B4 pass (item
+    36 above, the status-transition-guard trigger) did not build — that
+    pass closed a DIFFERENT, real gap (invalid `execution_runs.status`
+    transitions) under the same spec letter, but not this one.
+    `app/execution/stealth_execution_contract.py::
+    compute_execution_contract_state` derives the full named chain from
+    real, already-transactionally-persisted facts across
+    `route_decisions`/`execution_run_nodes`/`execution_run_events`/
+    `verification_results`/`evidence` (see the module's own docstring
+    for the exact fact->state mapping and why a DERIVED view, not a
+    second mutable state column, per CLAUDE.md rule 2). Wired into
+    `inspect_run` (adds an `execution_contract` field). Verified live:
+    `test_stealth_execution_contract_e2e.py` drives one real run through
+    every state up to `OUTCOME` (an honest stop — no `executions`/evidence
+    row without a real compiled-and-executed run, matching every other
+    durable-run e2e test's own convention) via `start_run`/`execute_run`/
+    real `verify_completion`, asserting `reached`/`current_state`/
+    `skipped_optional` at each step and that `inspect_run`'s own output
+    matches the same derivation exactly.
+
+45. **[CLOSED]** B7/B8 rework. B7 names 8 recorder operations
+    (`start_run/append_event/record_node_transition/record_child_run/
+    record_artifact/record_verification/record_outcome/finalize_run`);
+    B8 names 18 event types "at minimum". The earlier B7/B8 pass (item
+    37) built a real, working, but narrower 8-type vocabulary with no
+    `record_child_run`/`record_verification` at all. Now: migration 70
+    widens `execution_run_events.event_type`'s CHECK to the full spec
+    vocabulary (additive — "at minimum" permits, doesn't forbid, the
+    earlier 8 types, which stay). `run_finalized` now correctly splits
+    into two DISTINCT event types on failure vs success (`run_failed` /
+    `run_finalized`) rather than one type with a status field, matching
+    B8's literal vocabulary (required updating one existing test
+    assertion that had encoded the old, less-faithful behavior). New,
+    really-wired functions: `record_child_run` (fires on the PARENT's own
+    event log when `start_run` is given a `parent_run_id` — verified live
+    via `test_find_best_way_child_run_carries_correct_parent_linkage`'s
+    new assertion that a `child_run_created` event exists with the right
+    `child_run_id`/`node_order`), `record_verification_started`/
+    `record_verification_completed` (wired into `verification.py`'s
+    `_upsert_result`/`evaluate_run_completion` — the single shared write/
+    aggregation paths every `record_*` verification function and
+    `verify_completion` already go through — verified live via
+    `test_stealth_execution_contract_e2e.py`'s new assertions). HONEST
+    REMAINING GAP: `record_artifact()` is NOT built — this codebase's
+    data model has no first-class Artifact entity distinct from
+    `execution_run_nodes.result_ref`; building one now, on spec text
+    alone, with no real second consumer demanding it, would be exactly
+    the speculative machinery CLAUDE.md's "no vague implementation" rule
+    warns against. Logged honestly, not silently glossed.
+
+46. **[RE-VERIFIED CLOSED]** B21 (authorization/security). Read
+    `_authorize_repo_execution` in full against the literal spec text
+    ("Local/loopback: bind to loopback, require configured HTTP
+    authentication, preserve caller identity... Hosted: authenticated
+    principal -> organization -> authorized repository -> authorized
+    workspace -> sandbox. Never treat an arbitrary host filesystem path
+    as hosted execution authorization.") — confirmed line-for-line: the
+    server binds loopback-only by default, `OidcAwareTokenVerifier`/
+    shared-secret auth is required, `_resolve_caller_identity` preserves
+    real identity, and the hosted-mode branch literally comments
+    "caller-supplied filesystem paths are not an authorization
+    mechanism" before resolving the real path from
+    `registered_workspaces` via `workspace_registry.resolve_workspace_
+    for_actor`/`enforce_hosted_repo_path`. Nothing changed — re-verified
+    against the accurate text rather than assumed correct from an
+    earlier, less-precise pass.
+
+47. **[RE-VERIFIED CLOSED via B34]** B26 (black-box Implementation
+    verification). Re-read literally: "verifies observable behavior at
+    the implementation boundary... distinguish Stealth-observed
+    execution from provider-reported/user-reported/third-party-attested
+    evidence... never use a permanent verified=true as the only
+    verification state." This is exactly what B34's verification ladder
+    (`app/services/verification.py`) already does — 6 real states
+    (`claimed_done/checked/verified/independently_verified/failed_
+    verification/inconclusive`, never a binary `verified=true`), with
+    `method` (self_report/artifact_inspection/deterministic_check/
+    independent_agent/human_review/real_world_outcome) as the literal
+    evidence-provenance distinction B26 asks for. Earlier passes treated
+    B26 as needing the SEPARATE `behavioral_validation.py`/`verifiers/`
+    registry (Gate 2B) wired in — re-reading the literal B26 text, that
+    registry integration is a real, valuable, but genuinely SEPARATE
+    enhancement (item 26 above, left as a GAP, correctly) — B26 ITSELF is
+    satisfied by the verification ladder alone. Correcting an earlier
+    over-conservative classification, not new work.
+
+48. **[CLOSED, data-model half only — honest]** B27 (external
+    implementation hosting). "type=HTTP_API/MCP_TOOL, execution_location=
+    THIRD_PARTY_HOSTED... first-class." Migration 71 adds a real
+    `execution_location` column (`stealth_hosted`/`user_hosted`/
+    `third_party_hosted`, CHECK-constrained) to `implementations`,
+    wired into `implementation_registry.register()` (validated, rejects
+    a bogus value rather than silently accepting one) and visible on
+    every real row (`get()`/`inspect_implementation`). Verified live:
+    `test_execution_location_defaults_and_accepts_third_party_hosted`.
+    HONEST REMAINING GAP, unchanged from item 23 above: no real HTTP_API/
+    MCP_TOOL EXECUTOR exists (`PROVIDER_REGISTRY` only realizes
+    `frontier`/`deterministic`) — this migration closes the "first-class,
+    storable" half of B27 for real; building a working external-call
+    adapter with no real external endpoint to test against would be
+    fabricated, untested machinery, not a real closure.
+
+49. **[CLOSED]** B29 (Implementation lifecycle: `DISCOVERED -> REGISTERED
+    -> RESOLVABLE -> AVAILABLE -> VERIFIED_IN_CONTEXT -> REUSED`, plus
+    `UNAVAILABLE/INCOMPATIBLE/FAILED_EXECUTION/FAILED_VERIFICATION/
+    STALE/RETIRED`). An EARLIER pass in this log (item 13's "B15/B20/
+    B25/B28/B29... all genuinely exist") had marked this CLOSED without
+    actually checking — confirmed live this pass that NO real lifecycle-
+    state derivation existed anywhere; a real, previously-unflagged gap.
+    `app/execution/implementation_lifecycle.py::
+    compute_implementation_lifecycle_state` derives the chain from real
+    `implementations.status`/`verification_status` plus real `evidence`/
+    `procedure_implementations` binding facts (same derived-view
+    reasoning as B4's module). DISCOVERED collapses into REGISTERED
+    (this codebase's data model has no distinct "noticed but not yet
+    registered" signal — documented, not fabricated). STALE is NOT
+    computed (no freshness/last-used timestamp exists to threshold
+    against — forcing one would itself be the fabricated-signal pattern
+    B38 forbids). INCOMPATIBLE/FAILED_EXECUTION/FAILED_VERIFICATION
+    collapse into a single real signal (`evidence.failure_class`, the
+    actual recorded value, surfaced as `failure_classes_seen` rather
+    than force-guessed onto one of the three spec names). Wired into
+    `inspect_implementation`. Verified live:
+    `test_implementation_lifecycle_e2e.py` drives one real Implementation
+    through every state (REGISTERED -> RESOLVABLE via a real invocation
+    -> AVAILABLE via real `activate()` -> VERIFIED_IN_CONTEXT via real
+    `verify()` -> REUSED via two real distinct Procedure bindings),
+    records one real failure-class evidence row and confirms it doesn't
+    retroactively un-reach REUSED, and confirms RETIRED via real
+    `deprecate()` through the real MCP tool.
+
+50. **[RE-VERIFIED CORRECT, not a gap]** B32 (minimal MCP surface): the
+    exact tool names `inspect_procedure`/`get_run_context` are not
+    literal tools. Re-reading B32's own text confirms this is
+    intentional, not missed: "reuse equivalent existing names where they
+    already exist." `get_procedure` already is the `inspect_procedure`
+    equivalent (same operation); `continue_run`'s own docstring already
+    says "B4/B32" and its return shape is a byte-for-byte match of
+    B32's `get_run_context` output yaml (`current_phase_or_node`,
+    `objective`, `required_preconditions`, `relevant_claim_refs`,
+    `recommended_implementations`, `required_checks`, `allowed_branches`,
+    `blocking_unknowns`, `next_when_satisfied` — all present, confirmed
+    by reading the real return statement). Forcing two near-duplicate
+    tool names for operations that already have equivalent names would
+    itself violate this same section's other instruction ("Do not
+    expose separate low-level tools for every internal table/edge
+    merely because those services exist"). This reverses nothing from
+    item 40 above (still correct) but now cites the literal spec
+    sentence that justifies it, rather than inferring it.
+
+    One REAL bug found while re-checking this, though: `continue_run`'s
+    `relevant_claim_refs` field was a placeholder — `get_run_context`
+    literally echoed `required_preconditions` back under that key,
+    never calling `get_relevant_claims` at all (the function didn't
+    exist yet when that code was written). Fixed: now a real
+    `get_relevant_claims` call keyed on the current node's own goal
+    (falling back to the procedure's own goal when there is no current
+    node), wrapped `except Exception: []` (informational, must never
+    break `continue_run` itself). Verified live:
+    `test_continue_run_implementation_binding_e2e.py`'s new assertion
+    that a real, independently-created Claim is retrieved and that
+    `relevant_claim_refs != required_preconditions` (the old bug's
+    signature).
+
+51. **[CLOSED]** B17 (planned vs actual execution) / B33's "detecting
+    material deviation from the selected Procedure" — the same real
+    capability named twice. Both "planned" (`task_graphs.nodes`, frozen
+    at compile time) and "actual" (`execution_run_nodes`, mutable) were
+    ALREADY persisted separately by separate writers — nothing new to
+    store, per B17's own text ("Persist separately..."). What was
+    missing was comparing them. `app/execution/plan_deviation.py::
+    compute_plan_deviation` derives a real per-node comparison (node
+    failed / blocked / needed a retry / ran under a DIFFERENT
+    implementation than the compiled plan named / a planned node that
+    never executed at all / an executed node absent from the compiled
+    plan), plus a run-level `material_deviation` boolean and a summary
+    count — a live, derived comparison rather than a cached flag (same
+    reasoning as B4/B29's derived-view modules: `task_graphs` is frozen,
+    `execution_run_nodes` already mutates through its own guarded
+    transitions, so a stored "deviation" field could only go stale).
+    Wired into `inspect_run` (`plan_deviation` field). Verified live:
+    `test_plan_deviation_e2e.py` — one run with a real implementation
+    pinned DIFFERENT from its compiled-plan hint plus a real first-
+    attempt failure (confirms `implementation_diverged_from_plan`/
+    `required_retry`/`node_failed` are each detected correctly and
+    `material_deviation=True`), and a second, clean first-pass run
+    (confirms an empty `deviations` list and `material_deviation=False`
+    when nothing actually diverged — never a false positive).
+
+52. **[BUG, pre-existing, NOT fixed]** A broad regression sweep across
+    this re-audit pass's affected areas (201 passed) also surfaced
+    `test_domain_search_e2e.py::test_find_best_way_recommends_a_real_
+    verified_procedure_with_evidence` and `::test_find_best_way_honest_
+    empty_when_precondition_unsatisfied` failing with `AttributeError:
+    'FakeEmbedder' object has no attribute 'embedding_model_id'` inside
+    `app/services/domain_search.py`. Confirmed unrelated to this pass —
+    `git diff --stat` shows neither `domain_search.py` nor this test
+    file anywhere in this session's changes. Same class of bug already
+    logged as item 6 above (a test's own stub embedder is stale relative
+    to a real caller that now requires `embedding_model_id`) — a second,
+    independent instance of it, not a new kind of problem. Not fixed
+    here — isolated test-fixture staleness, unrelated to the B1-B38
+    scope this pass is closing.

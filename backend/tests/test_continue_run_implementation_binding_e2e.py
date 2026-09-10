@@ -18,6 +18,7 @@ import pytest
 import app.mcp_server.server as srv
 from app.db.session import create_pool
 from app.execution import implementation_registry
+from app.services.claims import capture_claim
 from app.services.embeddings import Embedder
 from app.services.procedure_implementation_bindings import activate_binding
 from app.services.procedures import (
@@ -103,6 +104,20 @@ def test_continue_run_surfaces_the_active_procedure_implementation_binding():
             binding = json.loads(submit_result)["binding"]
             await activate_binding(pool, binding["id"])
 
+            # B1/B32: continue_run's relevant_claim_refs must be a REAL
+            # get_relevant_claims() call keyed on the current node's own
+            # goal ("generate new key"), not the old placeholder that
+            # just echoed required_preconditions back.
+            claim_subject = f"project:continuebinding-claim-{run_id}"
+            await pool.execute("INSERT INTO task_nodes (name, skill_ref) VALUES ('t', $1)", claim_subject)
+            claim_id = await capture_claim(
+                pool, statement=f"generate new key requires the HSM to be online (probe {run_id})",
+                task_ids=[claim_subject], subject=claim_subject,
+                predicate="requires", object="hsm_online", claim_type="fact",
+                epistemic_status="observed", created_by="tester", scope_type="global", embedder=embedder,
+            )
+            assert claim_id is not None
+
             with tempfile.TemporaryDirectory() as repo_dir:
                 plan_result = await srv.find_best_way(
                     task_description=goal_text, ctx=ctx, mode="plan_only", repo_path=repo_dir,
@@ -114,7 +129,16 @@ def test_continue_run_surfaces_the_active_procedure_implementation_binding():
             impl_ids = {r["implementation_id"] for r in context["recommended_implementations"]}
             assert "procedure_implementation_binding" in sources
             assert binding["implementation_id"] in impl_ids
+
+            assert context["relevant_claim_refs"], "must retrieve the real claim, not echo preconditions"
+            assert any(r["claim_id"] == claim_id for r in context["relevant_claim_refs"])
+            assert context["relevant_claim_refs"] != context["required_preconditions"]
         finally:
+            await pool.execute(
+                "DELETE FROM knowledge_nodes WHERE node_type = 'claim' AND properties->>'subject' = $1",
+                claim_subject,
+            )
+            await pool.execute("DELETE FROM task_nodes WHERE skill_ref = $1", claim_subject)
             await _cleanup(pool, proc_name, impl_name)
             await pool.close()
 

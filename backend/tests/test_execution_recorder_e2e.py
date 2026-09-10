@@ -169,8 +169,13 @@ async def test_failed_node_records_a_node_failed_event_with_error_class():
         assert failed[0]["node_order"] == 0
         assert failed[0]["payload"]["error_class"] == "validation"
 
-        finalized = [e for e in events if e["event_type"] == "run_finalized"][0]
-        assert finalized["payload"]["status"] == "failed"
+        # B8's own vocabulary distinguishes run_failed from run_finalized
+        # as two separate event types (not one type with a status field)
+        # -- a failed run emits run_failed, never run_finalized.
+        assert "run_finalized" not in [e["event_type"] for e in events]
+        failed_run_events = [e for e in events if e["event_type"] == "run_failed"]
+        assert len(failed_run_events) == 1
+        assert failed_run_events[0]["payload"]["status"] == "failed"
     finally:
         await pool.execute("DELETE FROM execution_runs WHERE id=$1", run_id)
         await _cleanup_procedure(pool, row_id)

@@ -124,6 +124,7 @@ async def register(
     scope_type: Optional[str] = None,
     scope_entity_id: Optional[str] = None,
     task_node_ids: Optional[list[str]] = None,
+    execution_location: str = "stealth_hosted",
 ) -> dict:
     """
     Registers one new, durable implementation identity. Always starts
@@ -154,6 +155,11 @@ async def register(
     """
     if visibility not in ("public", "private"):
         raise ValueError(f"visibility must be 'public' or 'private', got {visibility!r}")
+    if execution_location not in ("stealth_hosted", "user_hosted", "third_party_hosted"):
+        raise ValueError(
+            f"execution_location must be 'stealth_hosted', 'user_hosted', or "
+            f"'third_party_hosted', got {execution_location!r}"
+        )
     _require_registrable_kind(kind)
     if not name.strip():
         raise ImplementationRegistryError("name must not be blank")
@@ -186,13 +192,15 @@ async def register(
                     locator, invocation, input_schema, output_schema,
                     requirements, auth_requirements, resource_requirements,
                     source_ref, author, license, derived_from, content_hash,
-                    created_by, visibility, owner_id, scope_type, scope_entity_id
+                    created_by, visibility, owner_id, scope_type, scope_entity_id,
+                    execution_location
                 ) VALUES (
                     $1::uuid, $2, $3, $4, $5, $6,
                     $7::jsonb, $8::jsonb, $9::jsonb, $10::jsonb,
                     $11::jsonb, $12::jsonb, $13::jsonb,
                     $14, $15, $16, $17::uuid, $18,
-                    $19, $20::visibility_level, $21, $22, $23
+                    $19, $20::visibility_level, $21, $22, $23,
+                    $24
                 )
                 RETURNING *
                 """,
@@ -201,6 +209,7 @@ async def register(
                 requirements or {}, auth_requirements or {}, resource_requirements or {},
                 source_ref, author, license, derived_from, content_hash,
                 created_by, visibility, owner_id, resolved_scope_type, resolved_scope_entity_id,
+                execution_location,
             )
             for task_node_id in (task_node_ids or []):
                 await conn.execute(

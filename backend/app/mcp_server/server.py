@@ -1045,6 +1045,8 @@ async def _respond_plan_only(
     workspace_id: Optional[str] = None, session_id: Optional[str] = None,
     parent_run_id: Optional[str] = None, parent_node_id: Optional[str] = None,
     ancestor_chain=None, repo_path: Optional[str] = None,
+    relevant_claim_refs: Optional[list[dict]] = None,
+    implementation_candidates: Optional[list[dict]] = None,
 ) -> str:
     """`mode='plan_only'`: compile and persist the real execution graph
     (same expand_procedure_steps -> compile_plan -> persist_compiled_plan
@@ -1155,6 +1157,13 @@ async def _respond_plan_only(
         "verification_state": matched_procedure.get("verification_state"),
         "invariants": matched_procedure.get("invariants") or [],
         "preconditions": matched_procedure.get("preconditions") or [],
+        # B1/B32: real results of this call's own relevant-Claims-retrieval
+        # and candidate-Implementation-resolution pipeline steps (route_
+        # decision.py::decide_route) -- never fabricated, and empty exactly
+        # when nothing real was found (never padded to look complete).
+        "relevant_claim_refs": relevant_claim_refs or [],
+        "implementation_candidates": implementation_candidates or [],
+        "missing_required_implementations": not bool(implementation_candidates),
         "steps": [
             {
                 "order": node.order, "goal": node.goal,
@@ -1179,7 +1188,7 @@ async def _respond_plan_only(
             "steps_used=<int>) so the outcome becomes real evidence."
         ),
     }
-    return json.dumps(payload, indent=2)
+    return json.dumps(payload, indent=2, default=str)
 
 
 @server.tool()
@@ -1459,6 +1468,8 @@ async def find_best_way(task_description: str, ctx: Context,
                 workspace_id=workspace_id, session_id=session_id,
                 parent_run_id=parent_run_id, parent_node_id=parent_node_row_id,
                 ancestor_chain=ancestor_chain, repo_path=repo_path,
+                relevant_claim_refs=route_decision.relevant_claim_refs,
+                implementation_candidates=route_decision.implementation_candidates,
             )
         except RecursionCycleDetected as exc:
             return await _refuse(str(exc))
@@ -3146,14 +3157,25 @@ async def inspect_implementation(implementation_id: str, ctx: Context) -> str:
     wrapper around `implementation_registry.get()` -- public/read-only,
     same anti-enumeration posture as the REST endpoint (a missing or
     invisible row REFUSES the same way, never distinguishing the two).
+
+    Also includes the B29 Implementation lifecycle position (REGISTERED
+    -> RESOLVABLE -> AVAILABLE -> VERIFIED_IN_CONTEXT -> REUSED, plus
+    UNAVAILABLE/RETIRED flags and any real recorded failure classes),
+    derived from this row's own status/verification_status plus real
+    evidence/binding facts -- see
+    app/execution/implementation_lifecycle.py.
     """
     pool = ctx.request_context.lifespan_context["pool"]
     row = await implementation_registry.get(pool, implementation_id, scope=AccessScope.unrestricted())
     if row is None:
         return f"REFUSED: no implementation found for id {implementation_id!r}."
+    from app.execution.implementation_lifecycle import compute_implementation_lifecycle_state
+    lifecycle = await compute_implementation_lifecycle_state(pool, implementation_id)
     # Full row for humans + the canonical, deterministic, secret-free
     # execution descriptor (§1/§22/§27) a harness consumer binds against.
-    return json.dumps({**row, "descriptor": implementation_registry.descriptor(row)}, default=str)
+    return json.dumps(
+        {**row, "descriptor": implementation_registry.descriptor(row), "lifecycle": lifecycle}, default=str,
+    )
 
 
 @server.tool()
@@ -3701,16 +3723,36 @@ async def inspect_run(run_id: str, ctx: Context) -> str:
     """
     Inspect a durable execution run: overall status, per-node status /
     attempt_count / max_attempts / error_class, the pinned implementation
-    binding, worker/lease, first-pass vs final, and the full per-node
-    attempt history. Read-only. JSON: {status, nodes:[...], history:[...]}.
-    REFUSED if the run does not exist.
+    binding, worker/lease, first-pass vs final, the full per-node attempt
+    history, the run's position in the B4 Stealth Execution Contract
+    (RUN_CREATED -> ... -> FINALIZED, derived from real transactionally-
+    persisted facts across route_decisions/execution_run_nodes/
+    execution_run_events/verification_results/evidence -- see
+    app/execution/stealth_execution_contract.py), and the B17/B33
+    planned-vs-actual deviation report (per-node: did it fail, get
+    blocked, need a retry, or run under a DIFFERENT implementation than
+    the compiled plan named -- see app/execution/plan_deviation.py).
+    Read-only. JSON: {status, nodes:[...], history:[...],
+    execution_contract:{reached, current_state, skipped_optional},
+    plan_deviation:{per_node, material_deviation, summary}}. REFUSED if
+    the run does not exist.
     """
     pool = ctx.request_context.lifespan_context["pool"]
     status = await _dres.run_status_by_id(pool, run_id)
     if status is None:
         return f"REFUSED: execution run {run_id!r} not found"
     history = await _dres.node_history_by_id(pool, run_id)
-    return json.dumps({"status": status, "history": history}, default=str)
+    from app.execution.plan_deviation import compute_plan_deviation
+    from app.execution.stealth_execution_contract import compute_execution_contract_state
+    contract_state = await compute_execution_contract_state(pool, run_id)
+    deviation = await compute_plan_deviation(pool, run_id)
+    return json.dumps(
+        {
+            "status": status, "history": history, "execution_contract": contract_state,
+            "plan_deviation": deviation,
+        },
+        default=str,
+    )
 
 
 @server.tool()

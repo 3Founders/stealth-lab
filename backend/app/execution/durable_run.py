@@ -185,6 +185,17 @@ async def start_run(
             )
             if route_decision_id is not None:
                 await _rec.record_route_decided(conn, str(run_id), route_decision_id=route_decision_id, route=None)
+            if parent_run_id is not None:
+                parent_node_order = None
+                if parent_node_id is not None:
+                    parent_node_order = await conn.fetchval(
+                        "SELECT node_order FROM execution_run_nodes WHERE id = $1", parent_node_id,
+                    )
+                await _rec.record_child_run(
+                    conn, str(parent_run_id), parent_node_order=parent_node_order,
+                    child_run_id=str(run_id), child_procedure_id=str(procedure_id),
+                    child_procedure_version=procedure_version,
+                )
     except asyncpg.UniqueViolationError:
         # Concurrent create_or_return race on the same request_id: the
         # other insert won, this one lost the unique index -- return the

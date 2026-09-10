@@ -389,6 +389,25 @@ async def get_run_context(pool: asyncpg.Pool, run_id: str) -> Optional[dict[str,
         phase, objective = run["status"], None
         next_when_satisfied = "no further node is runnable -- inspect_run for the failure/blocking detail"
 
+    # B1/B32: real relevant-Claims retrieval (get_relevant_claims, B30),
+    # bounded, keyed on the current node's own goal when there is one
+    # (falls back to the procedure's own goal for a terminal/no-current-
+    # node run) -- NOT a reuse of required_preconditions (that was a
+    # placeholder; preconditions and "claims relevant to what I'm doing
+    # right now" are different bounded sets, per B36's own text: "Claims
+    # = what is believed/known" is distinct from a run's precondition
+    # checklist).
+    relevant_claim_refs: list[dict] = []
+    claims_query = (objective if current is not None else None) or (procedure or {}).get("goal")
+    if claims_query:
+        from app.services.relevant_claims import get_relevant_claims
+        try:
+            relevant_claim_refs = await get_relevant_claims(
+                pool, goal=claims_query, top_k=5, access_scope=access_scope,
+            )
+        except Exception:  # noqa: BLE001 -- informational; must never break continue_run itself.
+            relevant_claim_refs = []
+
     return {
         "procedure_run_id": str(run_id),
         "procedure_id": str(run["procedure_id"]),
@@ -401,7 +420,7 @@ async def get_run_context(pool: asyncpg.Pool, run_id: str) -> Optional[dict[str,
         "objective": objective,
         "waiting_child": waiting_child,
         "required_preconditions": required_preconditions,
-        "relevant_claim_refs": required_preconditions,  # same bounded set; see docstring
+        "relevant_claim_refs": relevant_claim_refs,
         "recommended_implementations": recommended_implementations,
         "required_checks": (procedure or {}).get("postconditions") or [],
         "allowed_branches": [],  # honest: stored procedures have no branching field (db/18)

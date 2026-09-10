@@ -128,6 +128,16 @@ def test_find_best_way_child_run_carries_correct_parent_linkage():
             parent_row = await pool.fetchrow("SELECT trace_id FROM execution_runs WHERE id = $1", parent_run_id)
             assert parent_row["trace_id"] is not None
             assert str(row["trace_id"]) == str(parent_row["trace_id"])
+
+            # B7's record_child_run(): the PARENT's own event log must
+            # show a real child_run_created event naming this exact
+            # child, not just the DB columns above.
+            from app.execution.recorder import get_run_events
+            parent_events = await get_run_events(pool, parent_run_id)
+            child_events = [e for e in parent_events if e["event_type"] == "child_run_created"]
+            assert len(child_events) == 1
+            assert child_events[0]["payload"]["child_run_id"] == child_run_id
+            assert child_events[0]["node_order"] == 0
         finally:
             await _cleanup(pool, parent_name)
             await _cleanup(pool, child_name)

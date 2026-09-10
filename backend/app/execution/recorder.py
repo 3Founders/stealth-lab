@@ -21,9 +21,17 @@ from typing import Any, Optional, Union
 import asyncpg
 
 EVENT_TYPES: tuple[str, ...] = (
+    # pre-existing (this session's earlier B7/B8 pass)
     "run_created", "run_claimed", "run_paused", "run_finalized",
     "route_decided",
     "node_claimed", "node_succeeded", "node_failed",
+    # B8's own named vocabulary ("at minimum") -- additive, migration 70
+    "run_started", "procedure_retrieved", "applicability_checked",
+    "plan_created", "implementation_bound", "node_started",
+    "tool_called", "tool_result", "knowledge_requested",
+    "child_run_created", "node_waiting", "child_run_completed",
+    "node_resumed", "verification_started", "verification_completed",
+    "run_failed",
 )
 
 _Executor = Union[asyncpg.Connection, asyncpg.Pool]
@@ -61,9 +69,52 @@ async def record_run_paused(conn: _Executor, execution_run_id: str, *, node_orde
 
 
 async def record_run_finalized(conn: _Executor, execution_run_id: str, *, status: str, outcome: str) -> None:
+    """B8 names `run_failed` and `run_finalized` as two DISTINCT event
+    types (not one type with a status field) -- a failed run emits
+    `run_failed`, everything else (succeeded/cancelled) emits
+    `run_finalized`, matching the spec's own vocabulary literally rather
+    than folding both into one type distinguished only by payload."""
+    event_type = "run_failed" if status == "failed" else "run_finalized"
     await record_event(
-        conn, execution_run_id=execution_run_id, event_type="run_finalized",
+        conn, execution_run_id=execution_run_id, event_type=event_type,
         payload={"status": status, "outcome": outcome},
+    )
+
+
+async def record_child_run(
+    conn: _Executor, parent_execution_run_id: str, *,
+    parent_node_order: Optional[int], child_run_id: str,
+    child_procedure_id: str, child_procedure_version: int,
+) -> None:
+    """B7's `record_child_run()` -- recorded on the PARENT's own event
+    log when a child ProcedureRun is created (B9-B13's recursive child
+    retrieval), so the parent's event trail shows exactly which children
+    it spawned and when, not just its own node transitions."""
+    await record_event(
+        conn, execution_run_id=parent_execution_run_id, event_type="child_run_created",
+        node_order=parent_node_order,
+        payload={
+            "child_run_id": child_run_id, "child_procedure_id": child_procedure_id,
+            "child_procedure_version": child_procedure_version,
+        },
+    )
+
+
+async def record_verification_started(
+    conn: _Executor, execution_run_id: str, *, criterion_id: str, method: str,
+) -> None:
+    await record_event(
+        conn, execution_run_id=execution_run_id, event_type="verification_started",
+        payload={"criterion_id": criterion_id, "method": method},
+    )
+
+
+async def record_verification_completed(
+    conn: _Executor, execution_run_id: str, *, overall_state: str, criteria_count: int,
+) -> None:
+    await record_event(
+        conn, execution_run_id=execution_run_id, event_type="verification_completed",
+        payload={"overall_state": overall_state, "criteria_count": criteria_count},
     )
 
 
