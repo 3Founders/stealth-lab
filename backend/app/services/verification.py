@@ -232,18 +232,28 @@ async def record_real_world_outcome(
     )
 
 
-async def evaluate_run_completion(
+async def compute_verification_satisfaction(
     pool: asyncpg.Pool, *, execution_run_id: str, procedure: dict,
 ) -> dict:
     """
-    `verify_completion`'s engine: derives the real criteria from
-    `procedure["postconditions"]`, loads whatever `verification_results`
-    already exist for this run, and reports -- per criterion -- the
-    strongest state reached, the evidence/method behind it, and which
-    required criteria have NO result at all yet (`inconclusive`, never
-    silently treated as passing). Never grades anything itself; a
-    criterion with no recorded result stays `inconclusive` until a
-    `record_*` call above is made for it.
+    The pure verification-satisfaction half of `evaluate_run_completion`,
+    extracted so a caller can ask "is required verification satisfied"
+    WITHOUT first requiring the run to already be terminal -- the
+    question `durable_run.py::_finalize` (B16/B33's real enforcement
+    point) must answer BEFORE it decides whether a run may become
+    'succeeded' at all. `evaluate_run_completion` below calls this same
+    function and layers the terminal-status/trace_id checks on top for
+    its own caller-facing `procedure_run_complete` answer -- one real
+    computation, two real callers, never two competing ones.
+
+    Derives the real criteria from `procedure["postconditions"]`, loads
+    whatever `verification_results` already exist for this run, and
+    reports -- per criterion -- the strongest state reached, the
+    evidence/method behind it, and which required criteria have NO
+    result at all yet (`inconclusive`, never silently treated as
+    passing). Never grades anything itself; a criterion with no recorded
+    result stays `inconclusive` until a `record_*` call above is made
+    for it.
     """
     criteria = derive_criteria(procedure)
     rows = await pool.fetch(
@@ -286,6 +296,27 @@ async def evaluate_run_completion(
         # postconditions being almost universally empty) -- honestly
         # inconclusive, never silently "verified".
         overall = "inconclusive"
+
+    return {
+        "per_criterion": per_criterion, "overall": overall, "required_unmet": required_unmet,
+    }
+
+
+async def evaluate_run_completion(
+    pool: asyncpg.Pool, *, execution_run_id: str, procedure: dict,
+) -> dict:
+    """
+    `verify_completion`'s engine: see `compute_verification_satisfaction`
+    for the criteria/ladder computation this wraps; this function adds
+    the terminal-status/trace_id checks needed for a caller-facing
+    `procedure_run_complete` answer.
+    """
+    satisfaction = await compute_verification_satisfaction(
+        pool, execution_run_id=execution_run_id, procedure=procedure,
+    )
+    per_criterion = satisfaction["per_criterion"]
+    overall = satisfaction["overall"]
+    required_unmet = satisfaction["required_unmet"]
 
     from app.execution.recorder import record_verification_completed
     await record_verification_completed(

@@ -1212,10 +1212,21 @@ async def check_procedure_reuse(
     except (ValueError, AttributeError, TypeError) as exc:
         raise ProcedureNotFound(f"{procedure_id!r} is not a valid procedure id (UUID)") from exc
 
+    # B19: this row read itself must respect the caller's real access
+    # scope -- `access_scope` was already threaded to `check_hard_
+    # constraints` below for applicability, but this fetch had NO
+    # visibility filter at all, so a private procedure's full row
+    # (goal/steps/preconditions) leaked to any caller who merely knew
+    # its procedure_id. A private, invisible row now raises the exact
+    # same `ProcedureNotFound` a genuinely-missing id would -- never a
+    # distinct "found but hidden" signal.
+    vis_sql, vis_params = visibility_predicate(
+        access_scope or AccessScope.unrestricted(), param_index=2,
+    )
     row = await pool.fetchrow(
         f"SELECT {PROCEDURE_COLS_NO_HEAVY} FROM procedures "
-        "WHERE procedure_id = $1::uuid AND t_invalid IS NULL",
-        proc_uuid,
+        f"WHERE procedure_id = $1::uuid AND t_invalid IS NULL AND {vis_sql}",
+        proc_uuid, *vis_params,
     )
     if row is None:
         raise ProcedureNotFound(f"no live procedure for procedure_id={procedure_id}")

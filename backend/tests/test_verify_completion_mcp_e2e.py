@@ -196,21 +196,57 @@ def test_procedure_run_complete_requires_terminal_state_and_satisfied_verificati
                 return {"order": order}
 
             result = await execute_run(pool, exec_run_id, deps={0: []}, run_node=run_node, worker_id="verifycomplete-w1")
-            assert result["status"] == "succeeded"
+            # B16/B33 STRICT CLOSURE: every node succeeding is necessary but
+            # NOT sufficient -- this Procedure has a real, required
+            # postcondition with no satisfying evidence yet, so the run's
+            # own terminal transition (durable_run.py::_finalize's real,
+            # fail-closed gate) must stop at 'awaiting_verification', never
+            # silently advance to 'succeeded'.
+            assert result["status"] == "awaiting_verification", (
+                "a run with an unsatisfied required verification criterion "
+                "must not become 'succeeded' just because every node did"
+            )
+            assert "postcondition:0" in result["note"]
+
+            run_row = await pool.fetchrow(
+                "SELECT status, final_outcome, final_execution_id FROM execution_runs WHERE id = $1",
+                exec_run_id,
+            )
+            assert run_row["status"] == "awaiting_verification"
+            assert run_row["final_outcome"] is None
+            assert run_row["final_execution_id"] is None
 
             ctx = _FakeContext(pool)
-            # Terminal, but NOT yet verified -- must be honestly incomplete.
+            # Terminal-adjacent, but NOT yet verified -- must be honestly incomplete.
             before = json.loads(await srv.verify_completion(exec_run_id, ctx))
             assert before["procedure_run_complete"] is False
             assert any("required criterion" in m for m in before["missing_for_completion"])
+            # Still parked at awaiting_verification -- verify_completion's
+            # own read-only call (no reports) must not have advanced it.
+            still_awaiting = await pool.fetchval(
+                "SELECT status FROM execution_runs WHERE id = $1", exec_run_id,
+            )
+            assert still_awaiting == "awaiting_verification"
 
-            # Submit the real required report -- now genuinely complete.
+            # Submit the real required report -- now genuinely complete,
+            # and THIS is the only thing that may advance the real
+            # terminal transition out of 'awaiting_verification'.
             reports = json.dumps([
                 {"criterion_id": "postcondition:0", "method": "self_report", "claimed_success": True},
             ])
             after = json.loads(await srv.verify_completion(exec_run_id, ctx, reports_json=reports))
             assert after["procedure_run_complete"] is True
             assert after["missing_for_completion"] == []
+
+            final_row = await pool.fetchrow(
+                "SELECT status, final_outcome FROM execution_runs WHERE id = $1", exec_run_id,
+            )
+            assert final_row["status"] == "succeeded", (
+                "verify_completion must have performed the real, guarded "
+                "awaiting_verification -> succeeded transition once every "
+                "required criterion was genuinely satisfied"
+            )
+            assert final_row["final_outcome"] == "success"
 
             # A procedure with NO postconditions at all -- vacuously
             # complete the moment it terminates, never blocked on
@@ -251,6 +287,163 @@ def test_procedure_run_complete_requires_terminal_state_and_satisfied_verificati
                 await pool.execute("DELETE FROM execution_runs WHERE id=$1", exec_run_id2)
             await _cleanup(pool, name)
             await _cleanup(pool, name_empty)
+            await pool.close()
+
+    asyncio.run(_run())
+
+
+def test_awaiting_verification_stays_held_with_partial_required_criteria():
+    """B16/B33 STRICT CLOSURE negative test: TWO required postconditions,
+    only one satisfied -- the run must stay at 'awaiting_verification',
+    never advance on a partial set."""
+    async def _run():
+        from app.execution.durable_run import execute_run, start_run
+        from app.utils.ids import uuid7
+
+        pool = await create_pool(DATABASE_URL, min_size=1, max_size=2)
+        run_id = uuid4().hex[:8]
+        name = f"proc-test-verifypartial-{run_id}"
+        exec_run_id = None
+        try:
+            embedder = Embedder()
+            goal_text = f"rotate two keys safely ({run_id})"
+            vec = await embedder.embed_one(goal_text, input_type="document")
+            procedure = await _make_verified_approved(
+                pool, name, goal=goal_text, embedding=vec,
+                steps=[{"order": 0, "goal": "rotate both keys"}],
+                postconditions=["the first key rotation completes", "the second key rotation completes"],
+            )
+            async with pool.acquire() as c:
+                pv = await c.fetchval("SELECT version FROM procedures WHERE id=$1", procedure["id"])
+                plan_id = await c.fetchval(
+                    "INSERT INTO execution_plans (id, procedure_id, procedure_version, procedure_row_id, "
+                    " task_description, procedure_content_hash, content_hash, scope_type) "
+                    "VALUES ($1,$2,$3,$4,$5,$6,$7,'global') RETURNING id",
+                    str(uuid7()), procedure["procedure_id"], pv, procedure["id"], "verifypartial-e2e",
+                    f"pch-{run_id}", f"ch-{run_id}",
+                )
+                graph_id = await c.fetchval(
+                    "INSERT INTO task_graphs (id, execution_plan_id, graph_hash, nodes) "
+                    "VALUES ($1,$2,$3,'[]'::jsonb) RETURNING id",
+                    str(uuid7()), plan_id, f"gh-{run_id}",
+                )
+            exec_run_id = await start_run(
+                pool, execution_plan_id=plan_id, task_graph_id=graph_id,
+                procedure_id=procedure["procedure_id"], procedure_version=pv,
+                node_orders=[0], deps={0: []}, created_by="verifypartial_e2e",
+            )
+
+            async def run_node(order: int, attempt: int) -> dict:
+                return {"order": order}
+
+            result = await execute_run(pool, exec_run_id, deps={0: []}, run_node=run_node, worker_id="verifypartial-w1")
+            assert result["status"] == "awaiting_verification"
+
+            ctx = _FakeContext(pool)
+            reports = json.dumps([
+                {"criterion_id": "postcondition:0", "method": "self_report", "claimed_success": True},
+            ])
+            await srv.verify_completion(exec_run_id, ctx, reports_json=reports)
+            status_after_one = await pool.fetchval(
+                "SELECT status FROM execution_runs WHERE id = $1", exec_run_id,
+            )
+            assert status_after_one == "awaiting_verification", (
+                "one of two required criteria satisfied must not be enough to advance"
+            )
+
+            reports2 = json.dumps([
+                {"criterion_id": "postcondition:1", "method": "self_report", "claimed_success": True},
+            ])
+            await srv.verify_completion(exec_run_id, ctx, reports_json=reports2)
+            status_after_both = await pool.fetchval(
+                "SELECT status FROM execution_runs WHERE id = $1", exec_run_id,
+            )
+            assert status_after_both == "succeeded"
+        finally:
+            if exec_run_id is not None:
+                await pool.execute("DELETE FROM execution_runs WHERE id=$1", exec_run_id)
+            await _cleanup(pool, name)
+            await pool.close()
+
+    asyncio.run(_run())
+
+
+def test_failed_verification_marks_the_run_failed_not_stuck_forever():
+    """B16/B33 STRICT CLOSURE negative test: a required criterion that is
+    explicitly reported as FAILED (not merely unreported) must move the
+    run to a real 'failed' terminal state -- never stuck at
+    'awaiting_verification' forever, and never silently 'succeeded'."""
+    async def _run():
+        from app.execution.durable_run import execute_run, start_run
+        from app.utils.ids import uuid7
+
+        pool = await create_pool(DATABASE_URL, min_size=1, max_size=2)
+        run_id = uuid4().hex[:8]
+        name = f"proc-test-verifyfail-{run_id}"
+        exec_run_id = None
+        try:
+            embedder = Embedder()
+            goal_text = f"rotate a key that turns out broken ({run_id})"
+            vec = await embedder.embed_one(goal_text, input_type="document")
+            procedure = await _make_verified_approved(
+                pool, name, goal=goal_text, embedding=vec,
+                steps=[{"order": 0, "goal": "rotate the key"}],
+                postconditions=["the key rotation completes"],
+            )
+            async with pool.acquire() as c:
+                pv = await c.fetchval("SELECT version FROM procedures WHERE id=$1", procedure["id"])
+                plan_id = await c.fetchval(
+                    "INSERT INTO execution_plans (id, procedure_id, procedure_version, procedure_row_id, "
+                    " task_description, procedure_content_hash, content_hash, scope_type) "
+                    "VALUES ($1,$2,$3,$4,$5,$6,$7,'global') RETURNING id",
+                    str(uuid7()), procedure["procedure_id"], pv, procedure["id"], "verifyfail-e2e",
+                    f"pch-{run_id}", f"ch-{run_id}",
+                )
+                graph_id = await c.fetchval(
+                    "INSERT INTO task_graphs (id, execution_plan_id, graph_hash, nodes) "
+                    "VALUES ($1,$2,$3,'[]'::jsonb) RETURNING id",
+                    str(uuid7()), plan_id, f"gh-{run_id}",
+                )
+            exec_run_id = await start_run(
+                pool, execution_plan_id=plan_id, task_graph_id=graph_id,
+                procedure_id=procedure["procedure_id"], procedure_version=pv,
+                node_orders=[0], deps={0: []}, created_by="verifyfail_e2e",
+            )
+
+            async def run_node(order: int, attempt: int) -> dict:
+                return {"order": order}
+
+            result = await execute_run(pool, exec_run_id, deps={0: []}, run_node=run_node, worker_id="verifyfail-w1")
+            assert result["status"] == "awaiting_verification"
+
+            ctx = _FakeContext(pool)
+            reports = json.dumps([
+                {"criterion_id": "postcondition:0", "method": "self_report", "claimed_success": False},
+            ])
+            await srv.verify_completion(exec_run_id, ctx, reports_json=reports)
+
+            final_row = await pool.fetchrow(
+                "SELECT status, final_outcome FROM execution_runs WHERE id = $1", exec_run_id,
+            )
+            assert final_row["status"] == "failed", (
+                "a definitively failed required criterion must produce a real "
+                "'failed' terminal state, never leave the run stuck waiting "
+                "for evidence that already arrived and said no"
+            )
+            assert final_row["final_outcome"] == "failure"
+            # The MORE specific reason ('failed_verification', distinct
+            # from a real node-execution failure) lives on the real
+            # verification_results row + the run_failed event payload,
+            # not invented as an illegal final_outcome value.
+            vr = await pool.fetchrow(
+                "SELECT state FROM verification_results WHERE execution_run_id = $1 "
+                "AND criterion_id = 'postcondition:0'", exec_run_id,
+            )
+            assert vr["state"] == "failed_verification"
+        finally:
+            if exec_run_id is not None:
+                await pool.execute("DELETE FROM execution_runs WHERE id=$1", exec_run_id)
+            await _cleanup(pool, name)
             await pool.close()
 
     asyncio.run(_run())

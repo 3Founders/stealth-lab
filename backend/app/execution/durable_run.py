@@ -485,6 +485,65 @@ async def _drive(pool: asyncpg.Pool, run_id: str, *, deps: dict[int, list[int]],
     return await _finalize(pool, run_id, compiled=compiled)
 
 
+async def _fetch_verification_satisfaction(pool: asyncpg.Pool, run: dict, run_id: str) -> dict:
+    """B16/B33's real gate input: this run's real Procedure's
+    verification satisfaction, computed from the SAME ladder
+    `verify_completion` itself uses -- never a second, competing
+    verification concept. `required_unmet=[]`/`overall='inconclusive'`
+    with no criteria (nothing required, or everything already
+    satisfied) is the honest, common, vacuous case; a Procedure the
+    run's own `procedure_id`/`procedure_version` no longer resolves to
+    (deleted/superseded mid-run) is treated as having nothing to check
+    -- a real, if rare, edge this codebase's own `expand_procedure_
+    steps` callers already handle the same way (refuse to fabricate a
+    check against knowledge that no longer exists)."""
+    from app.execution.procedure_graph import fetch_procedure_version
+    from app.services.verification import compute_verification_satisfaction
+
+    procedure = await fetch_procedure_version(
+        pool, run["procedure_id"], run["procedure_version"],
+    ) or {}
+    if not procedure:
+        return {"per_criterion": [], "overall": "inconclusive", "required_unmet": []}
+    return await compute_verification_satisfaction(
+        pool, execution_run_id=run_id, procedure=procedure,
+    )
+
+
+async def _persist_success_transition(
+    pool: asyncpg.Pool, run_id: str, run: dict, *, from_statuses: tuple[str, ...], compiled=None,
+) -> None:
+    """The real, shared terminal-success write -- used both by a run
+    whose Procedure has nothing required to verify (straight from
+    'running') and by `finalize_after_verification` advancing a run that
+    WAS held at 'awaiting_verification' once real evidence satisfied
+    every required criterion. One real write path, not duplicated."""
+    async with pool.acquire() as conn, conn.transaction():
+        impl_id = None
+        exec_id = None
+        if compiled is not None:
+            try:
+                from app.execution.implementation_executor import plan_implementation_id
+                impl_id = plan_implementation_id(compiled)
+            except Exception:  # noqa: BLE001 -- an unbound plan is fine, record None
+                impl_id = None
+            exec_id = str(await record_plan_execution(
+                conn, compiled=compiled, outcome="success", created_by=run.get("created_by"),
+                scope_type=run.get("scope_type"), scope_entity_id=run.get("scope_entity_id"),
+                implementation_id=impl_id,
+            ))
+        placeholders = ",".join(f"${i + 2}" for i in range(len(from_statuses)))
+        exec_id_param = len(from_statuses) + 2
+        tag = await conn.execute(
+            f"UPDATE execution_runs SET status='succeeded', final_outcome='success', "
+            f" final_execution_id=${exec_id_param}, ended_at=now(), worker_id=NULL, lease_expires_at=NULL "
+            f"WHERE id=$1 AND status IN ({placeholders})",
+            run_id, *from_statuses, exec_id,
+        )
+        if tag != "UPDATE 0":
+            await _rec.record_run_finalized(conn, run_id, status="succeeded", outcome="success")
+
+
 async def _finalize(pool: asyncpg.Pool, run_id: str, *, compiled=None) -> dict[str, Any]:
     run, nodes = await _load(pool, run_id)
     statuses = {n["status"] for n in nodes.values()}
@@ -496,6 +555,44 @@ async def _finalize(pool: asyncpg.Pool, run_id: str, *, compiled=None) -> dict[s
     else:
         return {"run_id": run_id, "status": run["status"], "nodes": _node_summary(nodes),
                 "note": "run not terminal -- resumable"}
+
+    if run_status_v == "succeeded":
+        # B16/B33, made a real, fail-closed gate on the terminal
+        # transition itself: "Successful execution without persisted
+        # terminal reporting is a system failure" / "refusing to mark
+        # the Procedure complete until required verification is
+        # satisfied". Every node succeeding is necessary but NOT
+        # sufficient -- a Procedure with real, required postconditions
+        # that have no satisfying evidence yet must stop here, not
+        # silently become 'succeeded'.
+        satisfaction = await _fetch_verification_satisfaction(pool, run, run_id)
+        required_unmet = satisfaction["required_unmet"]
+        if required_unmet:
+            async with pool.acquire() as conn, conn.transaction():
+                tag = await conn.execute(
+                    "UPDATE execution_runs SET status='awaiting_verification', "
+                    " worker_id=NULL, lease_expires_at=NULL "
+                    "WHERE id=$1 AND status = 'running'",
+                    run_id,
+                )
+                if tag != "UPDATE 0":
+                    await _rec.record_run_finalized(
+                        conn, run_id, status="awaiting_verification", outcome="pending_verification",
+                    )
+            run, nodes = await _load(pool, run_id)
+            return {
+                "run_id": run_id, "status": run["status"], "nodes": _node_summary(nodes),
+                "note": (
+                    "all nodes succeeded but required verification is not yet "
+                    "satisfied -- awaiting: "
+                    f"{[c['criterion_id'] for c in required_unmet]}"
+                ),
+            }
+        await _persist_success_transition(pool, run_id, run, from_statuses=("running",), compiled=compiled)
+        run, nodes = await _load(pool, run_id)
+        return {"run_id": run_id, "status": run["status"], "final_outcome": run["final_outcome"],
+                "final_execution_id": str(run["final_execution_id"]) if run["final_execution_id"] else None,
+                "resume_count": run["resume_count"], "nodes": _node_summary(nodes)}
 
     exec_id = None
     async with pool.acquire() as conn, conn.transaction():
@@ -519,6 +616,80 @@ async def _finalize(pool: asyncpg.Pool, run_id: str, *, compiled=None) -> dict[s
         )
         if tag != "UPDATE 0":
             await _rec.record_run_finalized(conn, run_id, status=run_status_v, outcome=outcome)
+    run, nodes = await _load(pool, run_id)
+    return {"run_id": run_id, "status": run["status"], "final_outcome": run["final_outcome"],
+            "final_execution_id": str(run["final_execution_id"]) if run["final_execution_id"] else None,
+            "resume_count": run["resume_count"], "nodes": _node_summary(nodes)}
+
+
+async def finalize_after_verification(pool: asyncpg.Pool, run_id: str, *, compiled=None) -> dict[str, Any]:
+    """
+    B16/B33's OTHER real half: the only function that may advance a run
+    OUT of 'awaiting_verification' into 'succeeded'. Called from
+    `verify_completion` (the real, only caller-facing verification-
+    advancement path) after processing new reports -- if every required
+    criterion is NOW satisfied, this performs the real, guarded
+    transition (through the SAME B4 transition-fence trigger every other
+    status change goes through); if not, it is an honest no-op that
+    reports exactly what remains.
+
+    A run not currently sitting at 'awaiting_verification' (still
+    running, already succeeded/failed/cancelled) is also an honest
+    no-op -- this function only ever ADVANCES a run already parked
+    here by `_finalize`'s own gate, never fabricates a transition from
+    an unrelated state.
+    """
+    run, nodes = await _load(pool, run_id)
+    if run["status"] != "awaiting_verification":
+        return {"run_id": run_id, "status": run["status"], "nodes": _node_summary(nodes),
+                "note": f"run is not awaiting verification (status={run['status']!r}) -- no-op"}
+
+    satisfaction = await _fetch_verification_satisfaction(pool, run, run_id)
+    required_unmet = satisfaction["required_unmet"]
+    if satisfaction["overall"] == "failed_verification":
+        # A required criterion definitively FAILED (not merely
+        # unreported) -- every node executed successfully, but the work
+        # itself did not hold up under verification. This is a real,
+        # different terminal outcome from "still waiting", and the B4
+        # fence explicitly permits `awaiting_verification -> failed` for
+        # exactly this case -- never left stuck forever waiting for
+        # evidence that already arrived and said no.
+        async with pool.acquire() as conn, conn.transaction():
+            # `execution_runs.final_outcome` is CHECK-constrained to the
+            # real, pre-existing vocabulary ('success'/'failure'/
+            # 'needs_rework', migration 36) -- 'failed_verification' is
+            # not a legal value there (it already IS the real, more
+            # specific state on `verification_results`/`evidence`, not a
+            # second copy invented here); the column gets the honest
+            # coarse value, the event payload below carries the specific
+            # reason.
+            tag = await conn.execute(
+                "UPDATE execution_runs SET status='failed', final_outcome='failure', "
+                " ended_at=now(), worker_id=NULL, lease_expires_at=NULL "
+                "WHERE id=$1 AND status = 'awaiting_verification'",
+                run_id,
+            )
+            if tag != "UPDATE 0":
+                await _rec.record_run_finalized(conn, run_id, status="failed", outcome="failed_verification")
+        run, nodes = await _load(pool, run_id)
+        return {"run_id": run_id, "status": run["status"], "final_outcome": run["final_outcome"],
+                "nodes": _node_summary(nodes),
+                "note": (
+                    "required verification failed -- run marked failed: "
+                    f"{[c['criterion_id'] for c in required_unmet]}"
+                )}
+    if required_unmet:
+        return {
+            "run_id": run_id, "status": run["status"], "nodes": _node_summary(nodes),
+            "note": (
+                "still awaiting verification -- required criteria not yet "
+                f"satisfied: {[c['criterion_id'] for c in required_unmet]}"
+            ),
+        }
+
+    await _persist_success_transition(
+        pool, run_id, run, from_statuses=("awaiting_verification",), compiled=compiled,
+    )
     run, nodes = await _load(pool, run_id)
     return {"run_id": run_id, "status": run["status"], "final_outcome": run["final_outcome"],
             "final_execution_id": str(run["final_execution_id"]) if run["final_execution_id"] else None,

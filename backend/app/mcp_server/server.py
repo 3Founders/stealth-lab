@@ -71,7 +71,7 @@ from app.execution import durable_run as _dr
 from app.execution import implementation_registry
 from app.api.approval import decide, ApprovalRequest
 from app.api.decompose import decompose, decide as decide_decomposition_fn, DecomposeRequest, DecideRequest
-from app.services.access import AccessScope
+from app.services.access import AccessScope, visibility_predicate
 from app.services.applicability import verified_procedure_candidates
 from app.services.authn import (
     FetchingJwks,
@@ -699,8 +699,9 @@ async def retrieve_precedent(query: str, ctx: Context) -> str:
 
     embedder = Embedder()
     query_vec = await embedder.embed_one(query, input_type="query")
-    raw_candidates = await _vector_candidates(pool, query_vec, AccessScope.unrestricted())
-    procedure_rows = await verified_procedure_candidates(pool, query_vec, AccessScope.unrestricted())
+    _scope = _caller_access_scope()
+    raw_candidates = await _vector_candidates(pool, query_vec, _scope)
+    procedure_rows = await verified_procedure_candidates(pool, query_vec, access_scope=_scope)
     raw_candidates = raw_candidates + [
         ReusableNode(
             id=str(r["id"]), table="procedures", name=r["name"], description=r["goal"],
@@ -915,7 +916,9 @@ async def _bind_plan_to_registry(pool, compiled_plan, procedure_payload: dict):
     from app.execution.implementation_executor import bind_plan_implementations
 
     return await bind_plan_implementations(
-        pool, compiled_plan, scope=AccessScope.unrestricted(),
+        # B19: real caller scope -- a private implementation must not be
+        # silently frozen into another caller's compiled plan.
+        pool, compiled_plan, scope=_caller_access_scope(),
         task_node_ids={n.order: str(task_node_id) for n in compiled_plan.graph.nodes},
     )
 
@@ -1443,11 +1446,16 @@ async def find_best_way(task_description: str, ctx: Context,
     # real evidence (>=10 successes, 0 failures, >=3 distinct contexts) --
     # which this exact call path is what will, over repeated real use,
     # accumulate.
+    # B19: the caller's REAL resolved scope, not an internal-maintenance
+    # unrestricted() bypass -- a private procedure another caller cannot
+    # see must never surface here as a tier-1 match.
+    _caller_scope = _caller_access_scope()
     matched_procedures = await find_applicable_procedures(
         pool, goal_embedding=query_vec, current_scope=procedure_scope, limit=1,
         require_verified=not allow_unverified_procedures,
         invariant_bindings=invariant_bindings,
         embedding_model_id=embedder.embedding_model_id(),
+        access_scope=_caller_scope,
     )
     matched_procedure = matched_procedures[0] if matched_procedures else None
 
@@ -1462,6 +1470,7 @@ async def find_best_way(task_description: str, ctx: Context,
         invariant_bindings=invariant_bindings,
         require_verified=not allow_unverified_procedures,
         embedding_model_id=embedder.embedding_model_id(),
+        access_scope=_caller_scope,
         goal_text=task_description, session_id=session_id, workspace_id=workspace_id,
     )
     route_decision_id = await persist_route_decision(pool, route_decision)
@@ -1523,7 +1532,9 @@ async def find_best_way(task_description: str, ctx: Context,
     # TIER 2 -- execution. Everything below is what this tool always did
     # unconditionally under its previous name (solve_task); it now only
     # runs when tier 1 didn't already answer the question.
-    raw_candidates = await _vector_candidates(pool, query_vec, AccessScope.unrestricted())
+    # B19: real caller scope, not unrestricted() -- retrieval-grounding
+    # memory_block must never surface another user's private precedent.
+    raw_candidates = await _vector_candidates(pool, query_vec, _caller_access_scope())
     candidates = [c for c in raw_candidates if c.similarity >= RETRIEVE_PRECEDENT_THRESHOLD]
     memory_block = ""
     if candidates:
@@ -2297,19 +2308,23 @@ async def check_procedure(procedure_id: str, query: str, ctx: Context) -> str:
 
     from app.services.applicability import ProcedureNotFound, check_procedure_reuse
 
+    # B19: real caller scope -- a procedure_id someone else already knows
+    # (from another harness, a prior search) must not answer a reuse
+    # verdict against a private procedure this caller cannot see.
+    _scope = _caller_access_scope()
     try:
         result = await check_procedure_reuse(
-            pool, procedure_id=procedure_id, access_scope=AccessScope.unrestricted(),
+            pool, procedure_id=procedure_id, access_scope=_scope,
         )
     except ProcedureNotFound as exc:
         # finding C: the caller may have passed the procedures.id row key
         # instead of the stable handle -- resolve it and retry once.
-        canonical = await _canonical_procedure_id(pool, procedure_id)
+        canonical = await _canonical_procedure_id(pool, procedure_id, _scope)
         if canonical is None or canonical == procedure_id:
             return f"REFUSED: {exc}"
         try:
             result = await check_procedure_reuse(
-                pool, procedure_id=canonical, access_scope=AccessScope.unrestricted(),
+                pool, procedure_id=canonical, access_scope=_scope,
             )
         except ProcedureNotFound as exc2:
             return f"REFUSED: {exc2}"
@@ -2335,48 +2350,72 @@ async def check_procedure(procedure_id: str, query: str, ctx: Context) -> str:
 # ---------------------------------------------------------------------------
 
 
-async def _canonical_procedure_id(pool, given: str) -> "str | None":
+async def _canonical_procedure_id(
+    pool, given: str, access_scope: Optional[AccessScope] = None,
+) -> "str | None":
     """Accept EITHER the stable ``procedures.procedure_id`` family handle OR
     a per-version ``procedures.id`` row key, and return the stable handle
     for the live version. Final-V1 eval finding C: the MCP procedure tools
     take the family handle, but the row key is what a caller sees in the
     DB / the /procedure-graph viewer / another tool's output, and passing
     it was bounced with an unhelpful "no live procedure". Returns None when
-    neither resolves to a live row (``t_invalid IS NULL``)."""
+    neither resolves to a live row (``t_invalid IS NULL``) VISIBLE to
+    `access_scope` (B19: a private row a caller cannot see must resolve
+    exactly like a row that does not exist at all -- never distinguished,
+    the same anti-enumeration posture this file's other read tools already
+    keep)."""
     try:
         u = UUID(str(given))
     except (ValueError, AttributeError, TypeError):
         return None
+    vis_sql, vis_params = visibility_predicate(
+        access_scope or AccessScope.unrestricted(), param_index=2,
+    )
     row = await pool.fetchrow(
-        "SELECT procedure_id::text AS pid FROM procedures "
-        "WHERE (procedure_id = $1::uuid OR id = $1::uuid) AND t_invalid IS NULL "
-        "ORDER BY (procedure_id = $1::uuid) DESC LIMIT 1",
-        u,
+        f"SELECT procedure_id::text AS pid FROM procedures "
+        f"WHERE (procedure_id = $1::uuid OR id = $1::uuid) AND t_invalid IS NULL "
+        f"AND {vis_sql} "
+        f"ORDER BY (procedure_id = $1::uuid) DESC LIMIT 1",
+        u, *vis_params,
     )
     return row["pid"] if row else None
 
 
-async def _resolve_live_procedure(pool, procedure_id: str) -> dict:
+async def _resolve_live_procedure(
+    pool, procedure_id: str, access_scope: Optional[AccessScope] = None,
+) -> dict:
     """Shared resolver: a procedure handle -> its current live version row.
     Accepts the stable ``procedure_id`` OR the ``procedures.id`` row key
     (finding C) via ``_canonical_procedure_id``; the row read itself is the
     exact query applicability.py::check_procedure_reuse() uses, so both
-    paths agree by construction on "the current live version"."""
+    paths agree by construction on "the current live version".
+
+    B19: `access_scope` (defaulting to unrestricted only for a caller that
+    genuinely passes none -- every real MCP tool below now resolves and
+    passes the real caller's own scope) is enforced on BOTH the id
+    resolution above and this function's own final row fetch -- a private
+    procedure this caller cannot see raises the exact same
+    `ProcedureNotFound` a genuinely-missing id would, never a distinct
+    "found but hidden" signal."""
     from app.services.applicability import ProcedureNotFound
 
     try:
         UUID(str(procedure_id))
     except (ValueError, AttributeError, TypeError) as exc:
         raise ProcedureNotFound(f"{procedure_id!r} is not a valid procedure id (UUID)") from exc
-    canonical = await _canonical_procedure_id(pool, procedure_id)
+    canonical = await _canonical_procedure_id(pool, procedure_id, access_scope)
     if canonical is None:
         raise ProcedureNotFound(
             f"no live procedure for {procedure_id} -- tried it as both the "
             "procedure_id family handle and the procedures.id row key"
         )
+    vis_sql, vis_params = visibility_predicate(
+        access_scope or AccessScope.unrestricted(), param_index=2,
+    )
     row = await pool.fetchrow(
-        "SELECT * FROM procedures WHERE procedure_id = $1::uuid AND t_invalid IS NULL",
-        UUID(canonical),
+        f"SELECT * FROM procedures WHERE procedure_id = $1::uuid AND t_invalid IS NULL "
+        f"AND {vis_sql}",
+        UUID(canonical), *vis_params,
     )
     if row is None:
         raise ProcedureNotFound(f"no live procedure for procedure_id={procedure_id}")
@@ -2437,6 +2476,9 @@ async def search_procedures(task: str, ctx: Context, state: str = "{}", limit: i
         require_verified=require_verified, limit=limit,
         invariant_bindings=bindings,
         embedding_model_id=embedder.embedding_model_id(),
+        # B19: real caller scope -- never surface a private procedure
+        # another caller cannot see.
+        access_scope=_caller_access_scope(),
     )
     return json.dumps([
         {
@@ -2485,7 +2527,8 @@ async def get_claim_graph(ctx: Context, limit: int = 200, include_retired: bool 
     """
     pool = ctx.request_context.lifespan_context["pool"]
     result = await claim_graph_api.get_claim_graph_overview(
-        pool, scope=AccessScope.unrestricted(),
+        # B19: real caller scope -- this tool must not dump private Claims.
+        pool, scope=_caller_access_scope(),
         limit=limit, include_retired=include_retired, q=q, with_status=with_status,
         link_mode=link_mode, sim_k=sim_k, sim_threshold=sim_threshold,
     )
@@ -2538,7 +2581,7 @@ async def get_procedure(procedure_id: str, ctx: Context) -> str:
     from app.services.applicability import ProcedureNotFound
 
     try:
-        procedure = await _resolve_live_procedure(pool, procedure_id)
+        procedure = await _resolve_live_procedure(pool, procedure_id, _caller_access_scope())
     except ProcedureNotFound as exc:
         return f"REFUSED: {exc}"
 
@@ -2575,7 +2618,7 @@ async def check_applicability(procedure_id: str, ctx: Context, state: str = "{}"
     from app.services.applicability import ProcedureNotFound, check_hard_constraints
 
     try:
-        procedure = await _resolve_live_procedure(pool, procedure_id)
+        procedure = await _resolve_live_procedure(pool, procedure_id, _caller_access_scope())
     except ProcedureNotFound as exc:
         return f"REFUSED: {exc}"
 
@@ -2667,7 +2710,7 @@ async def report_execution(procedure_id: str, success: bool, context_key: str, c
     from app.services.procedures import record_execution_outcome
 
     try:
-        procedure = await _resolve_live_procedure(pool, procedure_id)
+        procedure = await _resolve_live_procedure(pool, procedure_id, _caller_access_scope())
     except ProcedureNotFound as exc:
         return f"REFUSED: {exc}"
 
@@ -2865,7 +2908,7 @@ async def decide_procedure(procedure_id: str, approver_id: str, decision: str, c
         return f"REFUSED: decision must be 'approved' or 'rejected', got {decision!r}."
 
     try:
-        procedure = await _resolve_live_procedure(pool, procedure_id)
+        procedure = await _resolve_live_procedure(pool, procedure_id, _caller_access_scope())
     except ProcedureNotFound as exc:
         return f"REFUSED: {exc}"
 
@@ -2883,7 +2926,7 @@ async def decide_procedure(procedure_id: str, approver_id: str, decision: str, c
     else:
         await reject_procedure(pool, procedure_row_id=str(procedure["id"]), approved_by=resolved_approver)
 
-    updated = await _resolve_live_procedure(pool, procedure_id)
+    updated = await _resolve_live_procedure(pool, procedure_id, _caller_access_scope())
     return json.dumps({
         "procedure_id": procedure_id,
         "approval_status": updated["approval_status"],
@@ -2949,7 +2992,9 @@ async def decompose_task(problem: str, ctx: Context) -> str:
     result = await decompose(
         DecomposeRequest(problem=problem),
         pool=pool,
-        scope=AccessScope.unrestricted(),
+        # B19: real caller scope -- novelty/reuse checks must not read or
+        # reveal another caller's private task/knowledge nodes.
+        scope=_caller_access_scope(),
         scope_key="mcp_decompose_task",
     )
 
@@ -3121,9 +3166,10 @@ async def resolve_implementation(task_node_id: str, ctx: Context,
     Directive Sec 44/76: "which concrete, durable implementation should
     satisfy this task node?" Thin wrapper around
     `app.execution.implementation_registry.resolve()` -- no new business
-    logic, same read-only/public posture as `find_best_way`/
-    `get_procedure` (scope=AccessScope.unrestricted(), matching every
-    other read tool in this file).
+    logic. B19: resolves against the REAL caller's own access scope
+    (`_caller_access_scope()`), never `AccessScope.unrestricted()` -- a
+    private implementation another caller registered must not resolve
+    here just because this caller happens to know the task_node_id.
 
     task_node_id: the task_nodes row id to resolve against.
     hint_kinds_json: optional JSON array of kind strings, an ordered
@@ -3151,7 +3197,7 @@ async def resolve_implementation(task_node_id: str, ctx: Context,
         hint_kinds = tuple(parsed)
 
     resolved = await implementation_registry.resolve(
-        pool, task_node_id, scope=AccessScope.unrestricted(), hint_kinds=hint_kinds,
+        pool, task_node_id, scope=_caller_access_scope(), hint_kinds=hint_kinds,
     )
     if resolved is None:
         reason = (
@@ -3190,7 +3236,9 @@ async def inspect_implementation(implementation_id: str, ctx: Context) -> str:
     app/execution/implementation_lifecycle.py.
     """
     pool = ctx.request_context.lifespan_context["pool"]
-    row = await implementation_registry.get(pool, implementation_id, scope=AccessScope.unrestricted())
+    # B19: real caller scope -- a private implementation must resolve
+    # exactly like a missing one for a caller who cannot see it.
+    row = await implementation_registry.get(pool, implementation_id, scope=_caller_access_scope())
     if row is None:
         return f"REFUSED: no implementation found for id {implementation_id!r}."
     from app.execution.implementation_lifecycle import compute_implementation_lifecycle_state
@@ -3218,7 +3266,7 @@ async def list_task_implementations(task_node_id: str, ctx: Context, status: str
             f"(valid: {implementation_registry.STATUS_VALUES}, or 'all')."
         )
     rows = await implementation_registry.get_for_task(
-        pool, task_node_id, scope=AccessScope.unrestricted(), status=resolved_status,
+        pool, task_node_id, scope=_caller_access_scope(), status=resolved_status,
     )
     return json.dumps(rows, default=str)
 
@@ -3342,7 +3390,9 @@ async def get_implementation_capability(implementation_id: str, ctx: Context) ->
     credential exposure -- same posture as every read tool in this file.
     """
     pool = ctx.request_context.lifespan_context["pool"]
-    scope = AccessScope.unrestricted()
+    # B19: real caller scope -- never estimate/expose capability for a
+    # private implementation this caller cannot see.
+    scope = _caller_access_scope()
 
     parent = await implementation_registry.get(pool, implementation_id, scope=scope)
     if parent is None:
@@ -3670,6 +3720,17 @@ async def verify_completion(procedure_run_id: str, ctx: Context, reports_json: s
             return f"REFUSED: report for {criterion_id!r} (method={method!r}) missing required field {exc}"
         except _verif.VerificationError as exc:
             return f"REFUSED: {exc}"
+
+    # B16/B33: advance a run held at 'awaiting_verification' (durable_
+    # run.py::_finalize's own real, fail-closed gate) into 'succeeded'
+    # BEFORE reporting completion, so the result below reflects the
+    # run's real, up-to-date terminal status rather than a stale
+    # snapshot -- this is the ONLY caller-facing path that can perform
+    # that advance, and only once every required criterion genuinely
+    # is satisfied. A run not currently parked there (still running,
+    # already succeeded/failed) is an honest no-op.
+    from app.execution.durable_run import finalize_after_verification
+    await finalize_after_verification(pool, procedure_run_id)
 
     result = await _verif.evaluate_run_completion(pool, execution_run_id=procedure_run_id, procedure=procedure)
     return json.dumps(result, default=str)

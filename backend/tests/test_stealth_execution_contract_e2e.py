@@ -150,25 +150,29 @@ def test_execution_contract_progresses_through_every_state_to_finalized():
                 return {"order": order, "artifact": "real output"}
 
             result = await execute_run(pool, exec_run_id, deps=DEPS, run_node=run_node, worker_id="se-contract-w1")
-            assert result["status"] == "succeeded"
+            # B16/B33 STRICT CLOSURE: this Procedure has a real, required
+            # postcondition with no satisfying evidence yet -- every node
+            # succeeding is necessary but not sufficient, so the run's
+            # own terminal transition holds at 'awaiting_verification'
+            # rather than silently becoming 'succeeded' (and therefore
+            # `final_outcome` -- OUTCOME's own real fact -- stays unset
+            # until real verification evidence actually arrives, below).
+            assert result["status"] == "awaiting_verification"
 
             mid = await compute_execution_contract_state(pool, exec_run_id)
             for expected in (
-                "IMPLEMENTATION_PINNED", "EXECUTION_STARTED", "EXECUTION_EVENTS", "OUTCOME",
+                "IMPLEMENTATION_PINNED", "EXECUTION_STARTED", "EXECUTION_EVENTS",
             ):
                 assert expected in mid["reached"], f"expected {expected} in {mid['reached']}"
-            # execute_run() here was called WITHOUT `compiled=`, so no
-            # `executions`/evidence row is appended (matches
-            # test_durable_run_e2e.py's own pattern) -- FINALIZED and
-            # EVIDENCE correctly stay unreached without a real evidence
-            # trail, never faked. Both are AHEAD of current_state
-            # (OUTCOME), not "skipped" -- `skipped_optional` only names
-            # gaps BEFORE the furthest point actually reached (here,
-            # VERIFICATION, since no reports were submitted yet).
+            # OUTCOME/EVIDENCE/FINALIZED correctly stay unreached: the run
+            # is held at 'awaiting_verification', not yet terminal, so
+            # `final_outcome`/`final_execution_id` are honestly still
+            # unset -- nothing here is faked to look further along than
+            # the real facts support.
+            assert "OUTCOME" not in mid["reached"]
             assert "FINALIZED" not in mid["reached"]
             assert "EVIDENCE" not in mid["reached"]
-            assert mid["current_state"] == "OUTCOME"
-            assert mid["skipped_optional"] == ["VERIFICATION"]
+            assert mid["current_state"] == "EXECUTION_EVENTS"
 
             # VERIFICATION, through the real MCP tool where the spec asks
             # for it.
@@ -178,6 +182,14 @@ def test_execution_contract_progresses_through_every_state_to_finalized():
             ])
             verified = json.loads(await srv.verify_completion(exec_run_id, ctx, reports_json=reports))
             assert verified["overall_state"] == "claimed_done"
+
+            # B16/B33: this real report satisfies the run's only required
+            # criterion -- verify_completion must have performed the
+            # real, guarded awaiting_verification -> succeeded advance.
+            status_now = await pool.fetchval(
+                "SELECT status FROM execution_runs WHERE id = $1", exec_run_id,
+            )
+            assert status_now == "succeeded"
 
             # B7's record_verification_started/completed: real events,
             # not just the verification_results row.
