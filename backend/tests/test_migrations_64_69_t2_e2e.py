@@ -1,6 +1,6 @@
 """
 T2 -- per-migration proving tests for the V4-hardening ingestion+knowledge
-migrations 50..55, run against a real Postgres.
+migrations 64..69, run against a real Postgres.
 
 For each file the spec's T2 asks for: fresh/representative apply, idempotent
 re-run, constraint verification, and a rollback statement. Concretely here:
@@ -15,7 +15,7 @@ re-run, constraint verification, and a rollback statement. Concretely here:
   * ADDITIVE-ONLY (rollback posture) -- assert each 5N file contains no
     statement that destroys pre-existing data (`DROP TABLE` of a table it
     did not create, `DELETE`, `TRUNCATE`, `ALTER ... DROP COLUMN`). The
-    one allowed exception is migration 53's deliberate, documented
+    one allowed exception is migration 67's deliberate, documented
     widening of `procedure_implementations` (drop a UNIQUE constraint /
     a NOT NULL) -- an additive relaxation, no row loss. Rollback is
     therefore "drop the new objects"; it is intentionally NOT automated
@@ -45,12 +45,12 @@ pytestmark = pytest.mark.skipif(
 
 DB_DIR = Path(__file__).resolve().parents[1] / "db"
 FILES = {
-    50: "50_sources.sql",
-    51: "51_ingestion_contexts.sql",
-    52: "52_procedure_claim_refs.sql",
-    53: "53_procedure_implementation_relation.sql",
-    54: "54_screening_decisions.sql",
-    55: "55_artifact_blocks.sql",
+    64: "64_sources.sql",
+    65: "65_ingestion_contexts.sql",
+    66: "66_procedure_claim_refs.sql",
+    67: "67_procedure_implementation_relation.sql",
+    68: "68_screening_decisions.sql",
+    69: "69_artifact_blocks.sql",
 }
 
 
@@ -64,9 +64,9 @@ _DESTRUCTIVE = re.compile(
     r"\b(DROP\s+TABLE|TRUNCATE|DELETE\s+FROM|ALTER\s+TABLE\s+\w+\s+DROP\s+COLUMN)\b",
     re.IGNORECASE,
 )
-# migration 53 deliberately relaxes procedure_implementations (created by
+# migration 67 deliberately relaxes procedure_implementations (created by
 # migration 39): drop the 2-col UNIQUE, drop a NOT NULL. Additive relaxation.
-_ALLOWED_53 = re.compile(
+_ALLOWED_67 = re.compile(
     r"DROP\s+CONSTRAINT\s+procedure_implementations_procedure_id_implementation_id_key"
     r"|ALTER\s+COLUMN\s+resource_path\s+DROP\s+NOT\s+NULL",
     re.IGNORECASE,
@@ -80,8 +80,8 @@ def test_all_six_migrations_are_additive_only():
         # strip -- line comments so a destructive keyword in prose doesn't trip it
         code = "\n".join(line.split("--", 1)[0] for line in body.splitlines())
         hits = [h.group(0) for h in _DESTRUCTIVE.finditer(code)]
-        if n == 53:
-            hits = [h for h in hits if not _ALLOWED_53.search(h)]
+        if n == 67:
+            hits = [h for h in hits if not _ALLOWED_67.search(h)]
             # the guarded DROP CONSTRAINT / DROP NOT NULL still shows as an
             # ALTER ... but our regex targets DROP COLUMN specifically, so
             # only genuinely destructive statements remain here
@@ -230,7 +230,7 @@ def test_procedure_implementations_generalized_columns_and_role_check():
                 "VALUES (gen_random_uuid(), $1, $2, 'supporting', 'active', 't2')",
                 pid, impl_id,
             )
-            # migration 53 columns exist and take JSON
+            # migration 67 columns exist and take JSON
             await pool.execute(
                 "UPDATE procedure_implementations SET applicability = $2::jsonb, "
                 "evidence_refs = $3::jsonb WHERE procedure_id = $1",

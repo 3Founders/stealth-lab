@@ -13,7 +13,7 @@ WHY THIS EXISTS
     information ... This is what makes later claims auditable back to the
     source." This module cuts a document into ordered blocks, each
     carrying `source_start` / `source_end` back into the raw content, and
-    persists them into `artifact_blocks` (migration 55).
+    persists them into `artifact_blocks` (migration 69).
 
 HONEST LIMIT
     `normalize_markdown` / `normalize_text` are DETERMINISTIC STRUCTURAL
@@ -49,7 +49,7 @@ from app.utils.ids import uuid7
 
 NORMALIZER_VERSION = "block_normalizer@v1"
 
-# schema.md / migration 55 vocabulary. Widenable there and here together.
+# schema.md / migration 69 vocabulary. Widenable there and here together.
 BLOCK_TYPES: tuple[str, ...] = (
     "heading",
     "paragraph",

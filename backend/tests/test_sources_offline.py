@@ -1,6 +1,6 @@
 """
 DB-free coverage for app/services/sources.py -- the Source origin
-registry (migration 50).
+registry (migration 64).
 
 FakeConn / FakeTxnPool mirror tests/test_claim_evidence_offline.py's own
 idiom (this repo hand-rolls a fake per file; they are not shared). The

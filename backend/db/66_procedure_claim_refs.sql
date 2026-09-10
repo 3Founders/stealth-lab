@@ -1,9 +1,9 @@
--- Migration 52 (Ingestion + Knowledge hardening, Plan A / G8 / audit B4+B5):
+-- Migration 66 (Ingestion + Knowledge hardening, Plan A / G8 / audit B4+B5):
 -- ProcedureClaimRef -- the typed, role-bearing relation between a
 -- Procedure version and a Claim, replacing the JSON-blob
 -- `procedures.preconditions[*].claim_id` as the primary lookup.
 --
--- Next free migration number: 53.
+-- Next free migration number: 67.
 --
 -- WHY THIS EXISTS
 --   `claim_impact.find_procedures_referencing_claim` does
@@ -66,7 +66,7 @@ CREATE TABLE IF NOT EXISTS procedure_claim_refs (
                             CHECK (ref_origin IN ('authored', 'derived', 'backfilled')),
 
     extractor_version       TEXT,             -- when ref_origin='derived'
-    ingestion_context_id    UUID,             -- migration 51 back-link
+    ingestion_context_id    UUID,             -- migration 65 back-link
     created_by              TEXT,
 
     -- Bi-temporal: a ref is closed (t_invalid) when a new procedure

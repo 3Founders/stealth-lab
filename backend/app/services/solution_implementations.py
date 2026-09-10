@@ -11,7 +11,7 @@ procedure, if any."
 TWO LINK SOURCES, UNIONED (v4-hardening Sec B23):
 
   1. `procedure_implementations` -- the first-class ProcedureImplementation
-     relation (migration 53). Keyed by the STABLE `procedures.procedure_id`,
+     relation (migration 67). Keyed by the STABLE `procedures.procedure_id`,
      it is the general case: any procedure can bind an implementation in a
      role, with no task_node involvement. Read via
      `procedure_implementations.list_implementations_for_procedure`.
@@ -21,7 +21,7 @@ TWO LINK SOURCES, UNIONED (v4-hardening Sec B23):
      A procedure captured directly via `capture_procedure` carries `NULL`
      here, which is honest, not an error.
 
-Before migration 53 this module used ONLY source 2 and therefore returned
+Before migration 67 this module used ONLY source 2 and therefore returned
 `[]` for the common case (`migrated_from_task_node_id IS NULL`). It now
 also consults source 1, so a directly-captured procedure with real
 `procedure_implementations` bindings returns a non-empty list.

@@ -1,6 +1,6 @@
 """
 DB-free coverage for app/services/ingestion_context.py -- the
-IngestionContext provenance-unit lifecycle (migration 51).
+IngestionContext provenance-unit lifecycle (migration 65).
 
 FakeConn / FakeTxnPool follow tests/test_claim_evidence_offline.py's
 idiom (hand-rolled per file). Assertions:

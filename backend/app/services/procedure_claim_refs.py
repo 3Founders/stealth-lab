@@ -1,6 +1,6 @@
 """
 ProcedureClaimRef -- the typed, role-bearing relation between one
-Procedure *version* and one Claim (migration 52, `db/52_procedure_claim_refs.sql`).
+Procedure *version* and one Claim (migration 66, `db/66_procedure_claim_refs.sql`).
 
 WHY THIS EXISTS
     Until this module, "which procedures depend on this claim?" was
@@ -30,7 +30,7 @@ HONEST SCOPE LIMITS
       from a migration.
     - The readers here degrade to `[]` (not an error) when
       `procedure_claim_refs` does not exist yet -- a database mid-rollout
-      where migration 52 has not been applied. Callers that also consult
+      where migration 66 has not been applied. Callers that also consult
       the JSON scan (`claim_impact`) therefore keep working unchanged on
       such a database.
     - `claim_version` is only ever a nullable snapshot of the claim's
@@ -49,7 +49,7 @@ from app.utils.ids import uuid7
 
 logger = logging.getLogger(__name__)
 
-# The 8-value role vocabulary, verbatim from migration 52's CHECK
+# The 8-value role vocabulary, verbatim from migration 66's CHECK
 # constraint. Kept here as the single Python-side source of truth so a
 # bad role fails loudly in the service layer before any SQL is emitted.
 ROLES: tuple[str, ...] = (
@@ -155,7 +155,7 @@ async def list_claim_refs_for_procedure(
     version, optionally filtered to a subset of roles. Oldest first.
 
     Returns `[]` -- not an error -- if `procedure_claim_refs` does not
-    exist yet (migration 52 not applied on this database).
+    exist yet (migration 66 not applied on this database).
     """
     params: list[Any] = [procedure_id, procedure_version]
     role_clause = ""
@@ -174,7 +174,7 @@ async def list_claim_refs_for_procedure(
             *params,
         )
     except asyncpg.UndefinedTableError:
-        logger.warning("procedure_claim_refs missing; migration 52 not applied?")
+        logger.warning("procedure_claim_refs missing; migration 66 not applied?")
         return []
     return [_row_to_dict(r) for r in rows]
 
@@ -196,7 +196,7 @@ async def list_procedures_for_claim(
 
     Optional `roles` filter (e.g. `STRONG_ROLES`) narrows to those roles.
     Returns `[]` -- not an error -- if `procedure_claim_refs` does not
-    exist yet (migration 52 not applied on this database).
+    exist yet (migration 66 not applied on this database).
     """
     params: list[Any] = [claim_id]
     role_clause = ""
@@ -217,7 +217,7 @@ async def list_procedures_for_claim(
             *params,
         )
     except asyncpg.UndefinedTableError:
-        logger.warning("procedure_claim_refs missing; migration 52 not applied?")
+        logger.warning("procedure_claim_refs missing; migration 66 not applied?")
         return []
     return [
         {
@@ -281,7 +281,7 @@ async def backfill_refs_from_preconditions(
     element carrying a `claim_id`, ensure a `role='PRECONDITION'`,
     `ref_origin='backfilled'` typed ref exists.
 
-    This is the out-of-band backfill for data that predates migration 52.
+    This is the out-of-band backfill for data that predates migration 66.
     It is NOT run from a migration (fresh-start rule) -- it is an explicit
     callable an operator invokes once per environment.
 

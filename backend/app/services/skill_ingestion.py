@@ -840,7 +840,7 @@ async def ingest_skill_md(
 EXTRACTOR_VERSION_DETERMINISTIC = "skill_md_v5"
 EXTRACTOR_VERSION_GROUNDED = "skill_md_grounded_v5"
 
-# --- canonical ingestion chain (migrations 50/51) --------------------------
+# --- canonical ingestion chain (migrations 64/65) --------------------------
 # A captured / new-version SKILL.md now lands on the SAME episode ->
 # observation -> claim/evidence -> Source spine every other ingestion path
 # uses, instead of jumping straight to capture_procedure() and creating zero
@@ -928,7 +928,7 @@ async def _emit_document_observation(
     is empty -- ``persist_observation`` tolerates that (its per-event link
     loop simply does not run). ``persist_observation`` does not accept an
     ``ingestion_context_id`` (it lives in a module this lane does not own),
-    so the migration-51 column is stamped with a follow-up UPDATE -- the
+    so the migration-65 column is stamped with a follow-up UPDATE -- the
     same pattern this file already uses for a procedure's
     ``capability_statement``."""
     observation_id = await persist_observation(
@@ -973,7 +973,7 @@ async def _emit_document_evidence(
     group so repeated ingests never inflate independent-corroboration
     counts. Raw INSERT mirrors ``claim_evidence.py``'s column list, plus
     ``target_version`` (required for a procedure target,
-    ``evidence_proc_version_chk``) and the migration-51
+    ``evidence_proc_version_chk``) and the migration-65
     ``ingestion_context_id``. Written through ``tenant_transaction``."""
     evidence_id = uuid7()
     scope = TenantScope.commons()
@@ -1281,7 +1281,7 @@ class IngestOutcome:
     admission_decision: Optional[str] = None
     quarantined: bool = False
     admission_escalated: bool = False
-    # Canonical ingestion chain (migrations 50/51): the Source the document
+    # Canonical ingestion chain (migrations 64/65): the Source the document
     # was registered as, the IngestionContext every derived row stamps, and
     # the one Observation + one document-Evidence row that chain emits.
     # None on outcomes that do not run the chain (unchanged / duplicate /
@@ -1680,7 +1680,7 @@ async def _write_artifact_row(
     source_ref: Optional[str] = None,
     ingestion_context_id: Optional[str] = None,
 ) -> str:
-    # source_ref / ingestion_context_id (migrations 50/51): point this
+    # source_ref / ingestion_context_id (migrations 64/65): point this
     # per-artifact provenance row AT the Source identity anchor and the
     # IngestionContext that produced it. Nullable -- the duplicate path has
     # no context, and legacy rows keep NULL.
@@ -2026,7 +2026,7 @@ async def compile_skill_artifact(
                 )
                 marked_stale = True
 
-            # --- canonical ingestion chain (migrations 50/51) ---
+            # --- canonical ingestion chain (migrations 64/65) ---
             source_id, _source_reused, ingestion_context_id = (
                 await _open_ingestion_provenance(
                     pool, artifact, parsed, domain=domain, created_by=created_by,
@@ -2172,7 +2172,7 @@ async def compile_skill_artifact(
         )
 
     # --- fresh capture ---
-    # Canonical ingestion chain (migrations 50/51): register the Source and
+    # Canonical ingestion chain (migrations 64/65): register the Source and
     # open the IngestionContext BEFORE capture_procedure, so every derived
     # row (procedure, observation, document evidence, artifact) can stamp
     # ingestion_context_id.
@@ -2369,7 +2369,7 @@ async def run_skill_ingestion(
         "admission_rejected": 0,
         "quarantined": 0,
         "admission_escalated": 0,
-        # Canonical ingestion chain (migrations 50/51): one Source row, one
+        # Canonical ingestion chain (migrations 64/65): one Source row, one
         # Observation, one document-Evidence row per accepted artifact.
         "sources": 0,
         "observations": 0,

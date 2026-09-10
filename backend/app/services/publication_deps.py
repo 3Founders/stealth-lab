@@ -10,12 +10,12 @@ WHY THIS EXISTS
 
         Procedure version
           -> procedure dependencies      (procedure_dependencies)
-          -> claims                      (procedure_claim_refs, migration 52)
+          -> claims                      (procedure_claim_refs, migration 66)
           -> observations                (claim_sources, migration 26)
           -> sources                     (claim.properties.source_ref,
                                           ingestion_contexts.source_ref,
                                           ingested_artifacts.source_ref;
-                                          migrations 50/51)
+                                          migrations 64/65)
           -> artifacts                   (ingested_artifacts + artifact_blocks
                                           for the procedure's IngestionContext;
                                           migrations 32/55)
@@ -23,7 +23,7 @@ WHY THIS EXISTS
                                           procedure OR any of its claims;
                                           migration 24)
 
-    Documents now populate every one of those objects (migrations 50-55),
+    Documents now populate every one of those objects (migrations 64-69),
     so "publish this procedure" can silently drag a private claim, a
     private observation, an un-vetted source, or private execution
     evidence into the Global Commons unless the gate looks.
@@ -54,7 +54,7 @@ HONEST SCOPE LIMITS
       classification, or a traversal that hits the node bound all count as
       `blocking` -- we cannot prove the lineage is clean, so we refuse.
     - Graceful degradation. A missing table (a database mid-rollout where
-      migrations 50-55 are not applied) makes that ONE leg `[]` with a
+      migrations 64-69 are not applied) makes that ONE leg `[]` with a
       logged note, exactly the posture `claim_impact.py` takes for
       `procedure_claim_refs`. It never makes the gate pass something it
       would otherwise block on a fully-migrated database -- a missing
@@ -189,7 +189,7 @@ async def _safe_fetch(
     pool: Any, sql: str, *args: Any, leg: str, degraded: set
 ) -> list:
     """One sub-query, with the `claim_impact.py` graceful-degradation
-    posture: a table that does not exist yet (migrations 50-55 not applied
+    posture: a table that does not exist yet (migrations 64-69 not applied
     on this database) degrades THIS leg to `[]`, records the leg name in
     `degraded`, and logs. Any other Postgres error propagates -- a real
     query bug must not be silently swallowed into a passing gate.
@@ -205,7 +205,7 @@ async def _safe_fetch(
         degraded.add(leg)
         logger.warning(
             "publication_deps: table for leg %r missing; treating as [] "
-            "(migrations 50-55 not applied on this database?)",
+            "(migrations 64-69 not applied on this database?)",
             leg,
         )
         return []
@@ -321,7 +321,7 @@ async def traverse_publication_dependencies(
                    f"dependency {ref!r} ({_rget(d, 'target_name')}) is "
                    f"{(vis or 'UNKNOWN').upper()} and cannot be generalized automatically")
 
-    # ---- 2. procedure -> claims (procedure_claim_refs, migration 52) ---
+    # ---- 2. procedure -> claims (procedure_claim_refs, migration 66) ---
     claims: list[dict] = []
     claim_ids: list[str] = []
     claim_source_refs: set[str] = set()

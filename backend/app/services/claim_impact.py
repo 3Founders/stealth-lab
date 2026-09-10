@@ -22,7 +22,7 @@ ROLE-AWARE INVALIDATION (V4-hardening "CLAIM INVALIDATION", B5)
         caller can log/annotate, and does nothing else to them.
 
 COMPATIBILITY
-    Corpora that predate migration 52 carry the dependency only as
+    Corpora that predate migration 66 carry the dependency only as
     `procedures.preconditions[*].claim_id`. The old JSONB containment
     scan is kept as a fallback and its hits are treated as
     `role='PRECONDITION'` (strong) -- so invalidation never silently
@@ -70,7 +70,7 @@ _COMPAT_PRECONDITION_SQL = (
 
 
 async def _compat_precondition_hits(pool: asyncpg.Pool, claim_id: str) -> list[dict]:
-    """The pre-migration-52 fallback: any live procedure whose
+    """The pre-migration-66 fallback: any live procedure whose
     `preconditions` JSONB array contains an element with this
     `claim_id`. Each hit is a strong PRECONDITION-role dependency."""
     probe = [{"claim_id": claim_id}]
@@ -113,7 +113,7 @@ async def find_procedures_referencing_claim_grouped(
     try:
         typed = await list_procedures_for_claim(pool, claim_id)
     except (asyncpg.PostgresError, AssertionError, NotImplementedError) as exc:
-        # `procedure_claim_refs` is unavailable: migration 52 is not
+        # `procedure_claim_refs` is unavailable: migration 66 is not
         # applied on this database, OR an offline test double that
         # predates the typed relation rejects the query. The
         # compatibility precondition scan below still covers every

@@ -60,9 +60,9 @@ from app.utils.ids import uuid7
 # ---------------------------------------------------------------------------
 DECISIONS: tuple[str, ...] = ("ALLOW", "QUARANTINE", "REJECT")
 
-# TEXT, not an enum -- this list will grow (see migration 54's header).
+# TEXT, not an enum -- this list will grow (see migration 68's header).
 # Kept 1:1 with `check_type_chk_screening_decisions` in
-# db/53_screening_decisions.sql.
+# db/68_screening_decisions.sql.
 CHECK_TYPES: tuple[str, ...] = (
     "prompt_injection",
     "trust_escalation",

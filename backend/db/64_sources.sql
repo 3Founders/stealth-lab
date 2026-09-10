@@ -1,8 +1,8 @@
--- Migration 50 (Ingestion + Knowledge hardening, Plan A / G2 / audit B12):
+-- Migration 64 (Ingestion + Knowledge hardening, Plan A / G2 / audit B12):
 -- the `sources` origin registry that `schema.md`'s `Source [V]` object has
 -- always specified but nothing ever backed.
 --
--- Next free migration number: 51.
+-- Next free migration number: 65.
 --
 -- WHY THIS EXISTS
 --   `evidence.source_id` (migration 24) and `knowledge_nodes` provenance
