@@ -24,15 +24,32 @@ from app.services.publication import (
 
 
 class FakePool:
-    def __init__(self, *, src=None, deps=(), impls=(), pubrec=None, independent=0):
+    def __init__(self, *, src=None, deps=(), impls=(), pubrec=None, independent=0,
+                 claim_refs=(), claim_nodes=(), claim_sources=(), observations=(),
+                 ingestion_contexts=(), ingested_artifacts=(), artifact_blocks=(),
+                 sources=(), evidence=(), proc_ctx_id=None):
         self.src = src
         self.deps = list(deps)
         self.impls = list(impls)
         self.pubrec = pubrec
         self.independent = independent
+        # B11/G24 full-graph traversal legs -- default empty so every
+        # pre-existing test keeps its exact behaviour (an empty leg is a
+        # non-blocking leg).
+        self.claim_refs = list(claim_refs)
+        self.claim_nodes = list(claim_nodes)
+        self.claim_sources = list(claim_sources)
+        self.observations = list(observations)
+        self.ingestion_contexts = list(ingestion_contexts)
+        self.ingested_artifacts = list(ingested_artifacts)
+        self.artifact_blocks = list(artifact_blocks)
+        self.sources = list(sources)
+        self.evidence = list(evidence)
+        self.proc_ctx_id = proc_ctx_id
         self.captured = None            # kwargs passed to the procedures INSERT
         self.audits = []               # (action, object_type, object_id)
         self.updates = []
+        self.pubrec_insert_args = None  # args bound to the publication_records INSERT
 
     def _flat(self, sql):
         return " ".join(sql.split())
@@ -58,14 +75,35 @@ class FakePool:
             return self.deps
         if "FROM procedure_implementations" in f:
             return self.impls
+        if "FROM procedure_claim_refs" in f:
+            return self.claim_refs
+        if "FROM knowledge_nodes" in f:
+            return self.claim_nodes
+        if "FROM claim_sources" in f:
+            return self.claim_sources
+        if "FROM observations" in f:
+            return self.observations
+        if "FROM ingestion_contexts" in f:
+            return self.ingestion_contexts
+        if "FROM ingested_artifacts" in f:
+            return self.ingested_artifacts
+        if "FROM artifact_blocks" in f:
+            return self.artifact_blocks
+        if "FROM sources" in f:
+            return self.sources
+        if "FROM evidence" in f:
+            return self.evidence
         raise AssertionError("unexpected fetch: " + f[:80])
 
     async def fetchval(self, sql, *a):
         f = self._flat(sql)
         if "INSERT INTO publication_records" in f:
+            self.pubrec_insert_args = a
             return "pub-uuid-1"
         if "independent_success_count" in f:
             return self.independent
+        if "ingestion_context_id FROM procedures" in f:
+            return self.proc_ctx_id
         raise AssertionError("unexpected fetchval: " + f[:80])
 
     async def execute(self, sql, *a):
@@ -164,6 +202,65 @@ def test_unknown_source_is_404_shaped():
     pool = FakePool(src=None)
     with pytest.raises(SourceProcedureNotFound):
         asyncio.run(publish_procedure(pool, source_row_id="nope", actor_subject="alice"))
+
+
+# ------------------------------------------------ B11/G24: full-graph deps
+
+_CLAIM_UUID = "00000000-0000-4000-8000-0000000000a1"
+
+
+def test_private_referenced_claim_blocks_publication():
+    """B11/G24: the gate now walks procedure -> claims. A PRIVATE claim in
+    the lineage is a disqualification even when every procedure dependency
+    is public."""
+    pool = FakePool(
+        src=_proc(procedure_id="p-1", version=1),
+        deps=[_dep("public")],
+        claim_refs=[{"claim_id": _CLAIM_UUID, "role": "PRECONDITION",
+                     "ingestion_context_id": None}],
+        claim_nodes=[{"id": _CLAIM_UUID, "visibility": "private",
+                      "scope_type": "user", "properties": {}}],
+    )
+    with pytest.raises(PublicationDenied) as ei:
+        asyncio.run(publish_procedure(pool, source_row_id="src-1", actor_subject="alice"))
+    assert any("claim" in r and _CLAIM_UUID in r for r in ei.value.reasons)
+    assert pool.captured is None
+
+
+def test_dependency_report_insert_carries_full_traversal():
+    """The publication_records.dependency_report JSONB now holds the FULL
+    traversal result (per-kind counts + blocking), not just the procedure
+    counters."""
+    import json
+
+    pool = FakePool(src=_proc(procedure_id="p-1", version=1), deps=[_dep("public")])
+    asyncio.run(publish_procedure(pool, source_row_id="src-1", actor_subject="alice"))
+
+    dep_blob = json.loads(pool.pubrec_insert_args[8])
+    assert "full_traversal" in dep_blob
+    ft = dep_blob["full_traversal"]
+    assert set(ft["counts"]) == {
+        "procedures", "claims", "observations", "sources", "artifacts", "evidence"
+    }
+    assert ft["blocking"] == []
+    assert ft["classification"] == "PUBLIC"
+
+
+def test_clean_publish_records_verification_not_inherited():
+    """A16: a clean publish still does NOT inherit private verification --
+    classification_report says so and the return echoes it."""
+    import json
+
+    pool = FakePool(src=_proc(procedure_id="p-1", version=1), deps=[_dep("public")])
+    out = asyncio.run(
+        publish_procedure(pool, source_row_id="src-1", actor_subject="alice")
+    )
+
+    cls_report = json.loads(pool.pubrec_insert_args[9])
+    assert cls_report["verification_inherited"] is False
+    assert cls_report["global_verification_required"] is True
+    assert out["verification"] == "candidate"
+    assert out["verification_inherited"] is False
 
 
 # ---------------------------------------------------------------- withdrawal

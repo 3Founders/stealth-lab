@@ -30,6 +30,7 @@ from dataclasses import dataclass, field
 from typing import Any, Optional
 
 from app.services.classification import DataClass, PRIVATE_CLASSES, classify_procedure_row
+from app.services.publication_deps import traverse_publication_dependencies
 from app.services.publish import _scrub_value  # reuse the real secret + path scrub
 from app.services.trace_redaction import redact_value
 
@@ -185,8 +186,33 @@ async def publish_procedure(
         reasons.append(f"source is classified {src_class.value}; not publishable")
 
     # 4. dependency traversal.
+    #
+    # B11/G24: the procedure -> procedure walk (`_traverse_dependencies`,
+    # unchanged) is only the first edge. `traverse_publication_dependencies`
+    # walks the WHOLE lineage spec A14/§34 names -- claims, observations,
+    # sources, artifacts, evidence -- and returns a per-kind blocking
+    # verdict. We keep BOTH: `dep_report` still owns the compat
+    # classification string that withdrawal + the audit trail read, and
+    # the full traversal owns the extended blocking set and the durable
+    # dependency_report JSONB.
     dep_report = await _traverse_dependencies(pool, source_row_id)
     reasons.extend(dep_report.blocking)
+
+    full_deps = await traverse_publication_dependencies(
+        pool,
+        procedure_row_id=source_row_id,
+        procedure_id=str(src.get("procedure_id") or source_row_id),
+        procedure_version=int(src.get("version") or 1),
+    )
+    # procedure -> procedure blockers are already covered by `dep_report`;
+    # add every OTHER kind's blockers, each naming its object.
+    for b in full_deps["blocking"]:
+        if b.get("kind") == "procedure":
+            continue
+        reasons.append(f"{b['kind']} {b['id']}: {b['reason']}")
+    # carry the compat classification string onto the full result so a
+    # stored dependency_report answers `.classification` exactly as before.
+    full_deps["classification"] = dep_report.classification
 
     # 5. provenance / license presence.
     dp = src.get("domain_payload") or {}
@@ -250,18 +276,46 @@ async def publish_procedure(
         scope_entity_id=None,
     )
 
+    # Independent-verification determination (B11/G24, spec A14). A
+    # successful publish NEVER inherits the private lineage's verification:
+    # the global candidate starts at `candidate` with zero independent
+    # evidence. `verification_inherited` is therefore always False here.
+    # `global_verification_required` stays True unless the procedure
+    # already carries an independently-corroborated set of PUBLIC
+    # execution/reproduction evidence of its own (the traversal computes
+    # this over `evidence` rows it reached).
+    verification_note = dict(full_deps.get("verification") or {})
+    verification_note["verification_inherited"] = False
+
+    dependency_report_blob = {
+        # legacy DependencyReport counters (compat: several readers key off
+        # these and off `classification`)
+        "total": dep_report.total, "public": dep_report.public,
+        "private": dep_report.private, "organization": dep_report.organization,
+        "unknown": dep_report.unknown,
+        "classification": dep_report.classification,
+        # B11/G24: the FULL graph traversal -- every kind, its counts, and
+        # every blocking entry (empty on a clean publish).
+        "full_traversal": full_deps,
+    }
+
     pub_id = await pool.fetchval(
         _PUBREC_INSERT,
         source_row_id, result["id"], actor_subject, actor_user_id, organization_id,
         PUBLICATION_SANITIZER_VERSION,
         _json(sanitization_record),
         "v0_gate@1",
+        _json(dependency_report_blob),
         _json({
-            "total": dep_report.total, "public": dep_report.public,
-            "private": dep_report.private, "organization": dep_report.organization,
-            "unknown": dep_report.unknown, "classification": dep_report.classification,
+            "source_class": src_class.value,
+            "verification_inherited": False,
+            "global_verification_required": verification_note.get(
+                "global_verification_required", True
+            ),
+            "independent_public_verification": verification_note.get(
+                "independent_public_verification", False
+            ),
         }),
-        _json({"source_class": src_class.value}),
         source_license,
     )
 
@@ -288,10 +342,17 @@ async def publish_procedure(
         "global_row_id": result["id"],
         "dependency_report": {
             "total": dep_report.total, "classification": dep_report.classification,
+            "counts": full_deps.get("counts", {}),
+            "blocking": full_deps.get("blocking", []),
+            "notes": full_deps.get("notes", []),
         },
         "classification": src_class.value,
         "sanitization": sanitization_record,
         "verification": "candidate",
+        "verification_inherited": False,
+        "global_verification_required": verification_note.get(
+            "global_verification_required", True
+        ),
         "scope": "GLOBAL CANDIDATE",
     }
 
