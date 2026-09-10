@@ -3732,7 +3732,9 @@ async def declare_file_intent(
             "conflicts": [
                 {
                     "execution_run_id": c.execution_run_id, "node_order": c.node_order,
-                    "owner_agent_id": c.owner_agent_id, "overlapping_files": c.overlapping_files,
+                    "owner_agent_id": c.owner_agent_id, "kind": c.kind,
+                    "overlapping_files": c.overlapping_files,
+                    "overlapping_symbols": c.overlapping_symbols,
                 }
                 for c in exc.conflicts
             ],

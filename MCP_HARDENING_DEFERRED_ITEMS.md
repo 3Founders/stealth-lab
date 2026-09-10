@@ -1170,3 +1170,56 @@ local sandbox, implementation lifecycle all genuinely exist), B31
     executor suite (13 tests) re-run green, confirming the additive
     `get_bindings_for_procedure` columns changed nothing for existing
     callers.
+
+61. **[CLOSED]** B36's literal 5-item "before assigning/starting a node,
+    detect" list. `coordination.py` previously covered only "exact
+    write/write overlap", "overlapping write globs", and "dependency
+    violations" — real, but 2 of 5 literal items were entirely missing,
+    and `symbols_expected_to_modify` (a field B36 explicitly requires
+    every node to be ABLE to declare) was stored/returned but never
+    checked at all:
+    - **write/read overlap when ordering matters**: `_ordering_matters`
+      is the literal reading of B36's own phrase — two declarations in
+      DIFFERENT execution runs have NO possible dependency edge at all
+      (a `deps` edge only ever exists within one run's own compiled
+      `task_graphs.nodes`), so ordering always "matters" across runs;
+      within the SAME run, a real BFS over that same `deps` structure
+      (`_is_transitively_ordered`, reusing `_unmet_dependencies`'s own
+      data source) checks whether one node transitively depends on the
+      other — if so, durable_run's own execution-order enforcement
+      already guarantees they never run concurrently, so no hazard is
+      flagged. `check_file_intent_conflicts` now also compares this
+      declaration's write scope against every OTHER live declaration's
+      READ scope (and vice versa), returning a distinct `kind="write_
+      read"` `ConflictEntry` only when ordering does not already apply.
+    - **expired/stale leases**: `find_stale_leases` is a real, separate
+      read — a non-terminal node whose lease has already expired (the
+      real signature of a crashed/forgetful agent) — surfaced on
+      `declare_file_intent`'s own return as `stale_leases_observed`,
+      informational per B36's own "advisory... not OS filesystem locks"
+      framing, never itself blocking a clean declaration.
+    - **symbol-level conflict** (the field B36 requires nodes be able to
+      declare, closing item 32's named gap): exact string-set overlap
+      between two live declarations' `symbols_expected_to_modify` — the
+      SAME honesty level `_paths_overlap`'s own exact-path arm already
+      uses for files (a literal-string match, never semantic/AST
+      resolution — no static analysis exists in this codebase to do
+      that, and inventing one would be exactly B38's fabricated-signal
+      pattern) — now returned as its own `kind="symbol"` `ConflictEntry`,
+      independent of any file overlap (catches two nodes editing
+      DIFFERENT files but the SAME named symbol, e.g. via a shared
+      generated stub).
+    `ConflictEntry` gained `kind`/`overlapping_symbols` fields (additive
+    — every existing consumer reading `.overlapping_files`/
+    `.execution_run_id`/`.owner_agent_id` is unaffected; `kind` defaults
+    to `"write_write"`, the only kind that existed before this pass).
+    The `declare_file_intent` MCP tool's REFUSED/conflict JSON now
+    surfaces `kind`/`overlapping_symbols` alongside the pre-existing
+    fields. Verified live: 4 new tests in `test_coordination_e2e.py` —
+    a symbol-only conflict across two files that never overlap on disk,
+    a write/read hazard flagged across two unordered runs, the SAME
+    write/read pair correctly NOT flagged when a real same-run dependency
+    already orders them, and a stale lease from an abandoned node
+    surfaced as `stale_leases_observed` on an unrelated, non-conflicting
+    new declaration — plus the full pre-existing coordination/
+    declare_file_intent suite (9 tests) re-run green.
