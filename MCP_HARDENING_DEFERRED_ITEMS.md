@@ -858,3 +858,148 @@ local sandbox, implementation lifecycle all genuinely exist), B31
     independent instance of it, not a new kind of problem. Not fixed
     here — isolated test-fixture staleness, unrelated to the B1-B38
     scope this pass is closing.
+
+## STRICT COMPLETION PASS (user directive: literal requirements only —
+## no analogous/joined/inferred/advisory substitution counts as closed
+## unless the spec explicitly permits it). Implementation work only in
+## this pass; the final B1-B38 closure audit is deliberately deferred to
+## a separate pass per explicit instruction.
+
+53. **[CLOSED]** B25/B27/B28, audited and rebuilt together (B27's real
+    executors need B25's adapter contract; B28's literal lifecycle is a
+    concrete instance of that same contract). Audited `providers.py`
+    first, honestly: `ImplementationProvider` had only 3 methods
+    (`discover`/`inspect`/`execute`) — NOT B25's literal 8
+    (`resolve`/`validate`/`prepare`/`invoke`/`collect_result`/
+    `collect_artifacts`/`collect_evidence`/`cleanup`). An earlier pass's
+    "B25 verified closed" claim (cited in this session's own strict-audit
+    report) was WRONG, same as the B29 case. New `app/execution/
+    adapters.py`: `Adapter(ImplementationProvider)` implements the
+    literal 8 methods for real, with `execute()` now genuinely composing
+    them in order (not a decorative addition) — `AdapterResolutionError`
+    on a row with nothing to resolve, never an invented target (B38).
+    `LocalAdapter` (kind='deterministic', B28) wraps the SAME
+    `SubprocessSandboxExecutor` with the literal 8-step lifecycle
+    (resolve concrete artifact -> REAL sha256 digest verification against
+    `content_hash` -> create isolated runtime -> mount inputs -> invoke ->
+    capture real output-file artifacts/hashes -> verify -> record real
+    evidence). `HttpApiAdapter` (kind='api'/HTTP_API, B27) makes a REAL
+    `httpx` call. `McpToolAdapter` (kind='tool'/MCP_TOOL, B27) makes a
+    REAL `mcp.client` streamable-HTTP session call. `build_adapter()` is
+    the literal "Adapter Resolver" — wired into `implementation_executor.
+    execute_implementation` (checked BEFORE the pre-existing
+    `PROVIDER_REGISTRY` singleton lookup, so 'deterministic' now
+    genuinely dispatches through the 8-step lifecycle) and into
+    `discover_providers()` (so it stays honest about what's really
+    available). No parallel registry: `providers.PROVIDER_REGISTRY` is
+    untouched, `build_adapter` is the ADDITIONAL resolution path for
+    kinds needing per-implementation config. Real bugs found and fixed
+    while building this: `NodeResult` is a frozen dataclass (`result.data
+    = ...` raised `FrozenInstanceError` — fixed with `dataclasses.
+    replace`); the installed `mcp` SDK's real function/field names
+    differ from what was assumed (`streamable_http_client` not
+    `streamablehttp_client`, a 2-tuple `(read, write)` not a 3-tuple,
+    `result.is_error` not `.isError`) — found by actually running against
+    a real local MCP server, not by reading docs; `LocalAdapter.resolve()`
+    initially only checked `implementation.invocation.code`, breaking
+    EVERY existing `DeterministicProvider` caller (which supplies code via
+    `context['code']` per-call, never pre-registered) — fixed by checking
+    `context['code']` FIRST (backward compatible) with the row as
+    fallback, and widening `resolve()`'s signature to accept `context`
+    across all three adapters. B27's data-model half (migration 71,
+    `execution_location`) from the earlier pass stays; this pass adds the
+    REAL executors that make it actually invocable, not just storable.
+    Verified live: `tests/test_adapters_e2e.py` (12 tests) — a REAL local
+    HTTP server (stdlib `http.server`, a real bound socket, a real
+    background thread) for `HttpApiAdapter` (full lifecycle, a real
+    upstream 500 reported as `external_failure` evidence, resolve
+    refusing a row with no endpoint), a REAL local MCP server (`mcp.
+    server.mcpserver.MCPServer` + real `uvicorn` on a real loopback
+    socket) for `McpToolAdapter` (full lifecycle including a real tool
+    exception surfaced as failure), `LocalAdapter` (real digest match AND
+    a real tampered-digest rejection), `build_adapter`'s exact kind
+    coverage, and one full real-DB dispatch-integration test
+    (`execute_implementation` -> `build_adapter` -> a real implementations
+    row -> a real HTTP call). `test_implementation_providers_offline.py`
+    updated (not weakened) to assert 'tool' now genuinely reports a real
+    adapter via `discover_providers` — the old assertion was itself
+    proven wrong by the new real capability, not loosened to pass.
+    61 pre-existing implementation_executor/provider/durable-run tests
+    re-run clean after the dispatch-path change.
+
+54. **[CLOSED]** B7's `record_artifact()` — the last of B7's 8 named
+    recorder operations, closing it for real (the earlier B7/B8 pass
+    built the other 7). Migration 72 adds `'artifact_recorded'` to
+    `execution_run_events`'s vocabulary (additive, B8's own "at minimum"
+    framing — not one of the 18 named types, same as this session's
+    earlier 8 additions). `recorder.record_artifact()` stores a
+    REFERENCE (`kind`/`ref`/`sha256`/`size_bytes` — B8's own rule: "large
+    data is stored as artifact references/hashes"), never inline content.
+    Wired into `durable_run.py::_node_finish`'s success path — reads
+    `result["artifacts"]` (a direct caller) or `result["data"]["artifacts"]`
+    (the real shape `durable_resume.py::_make_runner` and `durable_graph.
+    py`'s own `_cb` wrap a `NodeResult` into, both pre-existing) — so a
+    real `Adapter.execute()` (item 53) composition's artifacts become
+    real, durable events automatically, with zero new caller-side
+    plumbing. Verified live: `test_record_artifact_fires_through_the_
+    real_durable_run_path` — a real HTTP adapter call driven through
+    `start_run`/`execute_run` end to end, confirming exactly one
+    `artifact_recorded` event with the real sha256 ref.
+
+55. **[CLOSED]** B3's two remaining literal `StealthExecutionContext`
+    fields (`verification_plan_id`, `implementation_bindings`) — the
+    earlier B3 pass deliberately left both unadded as a DESIGN choice;
+    re-examined under the strict rule ("an inferred/joined substitution
+    does not count as closed unless the spec permits it") and closed for
+    real, WITHOUT creating a duplicate source of truth (this pass's own
+    explicit instruction). `verification_plan_id`: NOT a new
+    `verification_plans` table (duplicating `procedures.postconditions`,
+    already durable and versioned) — `verification.py::
+    compute_verification_plan_id` is a real, deterministic sha256
+    fingerprint of the ordered criteria `derive_criteria()` would
+    produce, computed by the three real callers that already have the
+    full procedure payload in scope (`_respond_plan_only`, `find_best_
+    way`'s tier-2 path, `reproduce_procedure`) and passed through
+    `create_pending_run`/`run_graph_durably` into `start_run` (migration
+    73 adds the column). `None` for a procedure with no real
+    postconditions — never a fabricated id for an empty plan.
+    `implementation_bindings`: NOT a run-level copy of per-node bindings
+    (which would drift from `execution_run_nodes.implementation_id`, the
+    real source) — `get_run_context` (continue_run's engine) now returns
+    one real entry per node, read live off the SAME `nodes` list it
+    already loads. Verified live:
+    `test_continue_run_surfaces_verification_plan_id_and_implementation_
+    bindings` — a real plan_only run with real postconditions, asserting
+    the fingerprint is reproducible from the same payload, is `None` for
+    an empty-postcondition payload, and that `implementation_bindings`
+    reflects the real (unbound, at plan_only time) per-node state.
+
+56. **[CLOSED]** B12's three remaining named budgets (token/execution-
+    cost/tool-call — ancestor-chain/depth/child-count/wall-clock/
+    idempotency were already real). B12's own footer text ("make sure
+    you don't hardcode these things, and discuss before implementing")
+    is honored two ways: (a) no arbitrary default — the three new
+    settings (`procedure_run_max_tokens`/`_tool_calls`/`_cost_usd`)
+    default to `None` (disabled), the same explicit-opt-out discipline
+    `procedure_run_max_wall_clock_seconds` already established, not a
+    guessed ceiling; (b) usage is REAL, atomic, accumulated telemetry
+    (migration 74's three columns + `durable_run.record_run_usage`,
+    `UPDATE ... SET tokens_used = tokens_used + $2`), fed from the ONE
+    real signal source this codebase has — `find_best_way`'s tier-2 path,
+    which already aggregates real `AgentRun.usage`/`tool_calls` for its
+    own response text — never an estimate. No cost-per-token pricing
+    table exists anywhere in this codebase, so `cost_usd` stays
+    genuinely unfed by that call site (an honest "not tracked", not a
+    guessed dollar figure) — `record_run_usage` itself is fully real and
+    tested for cost too, for a caller that does have a real dollar
+    figure to report. `recursion_guard.check_recursion_limits` sums each
+    counter across the WHOLE ancestor chain (same `root_run_id` pattern
+    `max_child_executions` already used), raising three new typed errors
+    (`TokenBudgetExceeded`/`ToolCallBudgetExceeded`/`CostBudgetExceeded`),
+    wired into `find_best_way`'s existing recursion-refusal `except`
+    clause. Verified live: 5 new tests in `test_recursion_guard_e2e.py`
+    — each budget enforced independently, one proving the SUM is real
+    across two different runs in one chain (not just the parent's own
+    row), and one proving `record_run_usage` is a genuine atomic
+    increment (two calls sum, a zero-usage call is a true no-op, never a
+    spurious write).

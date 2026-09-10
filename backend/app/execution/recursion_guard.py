@@ -50,6 +50,23 @@ class WallClockBudgetExceeded(_dr.DurableRunError):
     `settings.procedure_run_max_wall_clock_seconds` ago."""
 
 
+class TokenBudgetExceeded(_dr.DurableRunError):
+    """The chain's real, accumulated token usage (SUM across every run
+    sharing this chain's root_run_id -- `durable_run.record_run_usage`,
+    never estimated) already meets or exceeds
+    `settings.procedure_run_max_tokens`."""
+
+
+class ToolCallBudgetExceeded(_dr.DurableRunError):
+    """The chain's real, accumulated tool-call usage already meets or
+    exceeds `settings.procedure_run_max_tool_calls`."""
+
+
+class CostBudgetExceeded(_dr.DurableRunError):
+    """The chain's real, accumulated cost usage (USD) already meets or
+    exceeds `settings.procedure_run_max_cost_usd`."""
+
+
 @dataclass
 class AncestorChain:
     """One entry per ancestor, ROOT FIRST (`chain[0]` is the root run)."""
@@ -155,6 +172,39 @@ async def check_recursion_limits(
             raise WallClockBudgetExceeded(
                 f"chain rooted at {chain.root_run_id} started {elapsed:.0f}s ago, "
                 f"exceeding configured procedure_run_max_wall_clock_seconds={max_wall_clock}"
+            )
+
+    # B12's remaining three named budgets -- real, ATOMIC accumulation
+    # (durable_run.record_run_usage), never estimated, summed across
+    # every run in the chain (same "root_run_id" pattern as
+    # max_child_executions above). Each check is skipped when its
+    # setting is None (an explicit opt-out, matching wall-clock's own
+    # discipline) -- no silent, hardcoded default.
+    max_tokens = settings.procedure_run_max_tokens
+    max_tool_calls = settings.procedure_run_max_tool_calls
+    max_cost_usd = settings.procedure_run_max_cost_usd
+    if max_tokens is not None or max_tool_calls is not None or max_cost_usd is not None:
+        usage = await pool.fetchrow(
+            "SELECT COALESCE(SUM(tokens_used), 0) AS tokens, "
+            " COALESCE(SUM(tool_calls_used), 0) AS tool_calls, "
+            " COALESCE(SUM(cost_usd_used), 0) AS cost_usd "
+            "FROM execution_runs WHERE root_run_id = $1",
+            chain.root_run_id,
+        )
+        if max_tokens is not None and usage["tokens"] >= max_tokens:
+            raise TokenBudgetExceeded(
+                f"chain rooted at {chain.root_run_id} has used {usage['tokens']} tokens, "
+                f"at or over configured procedure_run_max_tokens={max_tokens}"
+            )
+        if max_tool_calls is not None and usage["tool_calls"] >= max_tool_calls:
+            raise ToolCallBudgetExceeded(
+                f"chain rooted at {chain.root_run_id} has used {usage['tool_calls']} tool calls, "
+                f"at or over configured procedure_run_max_tool_calls={max_tool_calls}"
+            )
+        if max_cost_usd is not None and float(usage["cost_usd"]) >= max_cost_usd:
+            raise CostBudgetExceeded(
+                f"chain rooted at {chain.root_run_id} has used ${usage['cost_usd']:.4f}, "
+                f"at or over configured procedure_run_max_cost_usd={max_cost_usd}"
             )
 
     return chain

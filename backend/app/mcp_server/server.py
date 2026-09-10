@@ -1117,6 +1117,8 @@ async def _respond_plan_only(
         assert_no_cycle(ancestor_chain, matched_procedure["procedure_id"])
 
     trace_id = await _resolve_trace_id(pool, parent_run_id=parent_run_id, session_id=session_id)
+    from app.services.verification import compute_verification_plan_id
+    verification_plan_id = compute_verification_plan_id(matched_procedure)
     procedure_run_id = await create_pending_run(
         pool, compiled_plan,
         procedure_id=matched_procedure["procedure_id"],
@@ -1125,6 +1127,7 @@ async def _respond_plan_only(
         scope_type=compiled_plan.plan.scope_type,
         scope_entity_id=compiled_plan.plan.scope_entity_id,
         workspace_id=workspace_id, trace_id=trace_id,
+        verification_plan_id=verification_plan_id,
         route_decision_id=route_decision_id,
         parent_run_id=parent_run_id, parent_node_id=parent_node_id,
     )
@@ -1375,9 +1378,9 @@ async def find_best_way(task_description: str, ctx: Context,
     # the cycle check (needs a candidate procedure) runs later, once one
     # is chosen, right before any child run is actually created.
     from app.execution.recursion_guard import (
-        ChildExecutionBudgetExceeded, RecursionCycleDetected,
-        RecursionDepthExceeded, WallClockBudgetExceeded, assert_no_cycle,
-        check_recursion_limits,
+        ChildExecutionBudgetExceeded, CostBudgetExceeded, RecursionCycleDetected,
+        RecursionDepthExceeded, ToolCallBudgetExceeded, TokenBudgetExceeded,
+        WallClockBudgetExceeded, assert_no_cycle, check_recursion_limits,
     )
 
     parent_node_row_id: Optional[str] = None
@@ -1397,7 +1400,10 @@ async def find_best_way(task_description: str, ctx: Context,
             ancestor_chain = await check_recursion_limits(
                 pool, parent_run_id=parent_run_id, parent_node_id=parent_node_row_id,
             )
-        except (RecursionDepthExceeded, ChildExecutionBudgetExceeded, WallClockBudgetExceeded) as exc:
+        except (
+            RecursionDepthExceeded, ChildExecutionBudgetExceeded, WallClockBudgetExceeded,
+            TokenBudgetExceeded, ToolCallBudgetExceeded, CostBudgetExceeded,
+        ) as exc:
             return await _refuse(str(exc))
 
     from app.services.applicability import find_applicable_procedures
@@ -1705,6 +1711,7 @@ async def find_best_way(task_description: str, ctx: Context,
     from app.execution.durable_graph import run_graph_durably
 
     trace_id = await _resolve_trace_id(pool, parent_run_id=parent_run_id, session_id=session_id)
+    from app.services.verification import compute_verification_plan_id
     graph_result = await run_graph_durably(
         pool, compiled_plan, run_node,
         procedure_id=str(compiled_plan.plan.procedure.procedure_id),
@@ -1713,6 +1720,7 @@ async def find_best_way(task_description: str, ctx: Context,
         parent_run_id=parent_run_id, parent_node_id=parent_node_row_id,
         scope_type=compiled_plan.plan.scope_type,
         scope_entity_id=compiled_plan.plan.scope_entity_id,
+        verification_plan_id=compute_verification_plan_id(procedure_payload),
         side_effecting_orders=set(),  # V1: sandbox is rebuilt per invocation, so a step is replayable on resume (prior steps ride forward as context) -- not a park-on-crash side effect
         resume_run_id=resume_run_id,
         workspace_id=workspace_id, trace_id=trace_id,
@@ -1729,6 +1737,19 @@ async def find_best_way(task_description: str, ctx: Context,
     total_completion_tokens = sum(r.usage.completion_tokens for r in node_runs.values())
     total_calls = sum(r.usage.calls for r in node_runs.values())
     total_wall_seconds = sum(r.wall_seconds for r in node_runs.values())
+
+    # B12: real, atomic accumulation of this run's own resource usage --
+    # the ONLY real signal source for tokens/tool-calls this codebase has
+    # (AgentRun.usage/tool_calls, already aggregated above for the
+    # response text). No cost-per-token pricing table exists anywhere in
+    # this codebase, so cost_usd stays 0 here -- an honest "not tracked",
+    # never a guessed dollar figure.
+    from app.execution.durable_run import record_run_usage
+
+    await record_run_usage(
+        pool, durable_run_id, tokens=total_prompt_tokens + total_completion_tokens,
+        tool_calls=len(all_tool_calls),
+    )
 
     # Real success proxy, same spirit as the old single-call check --
     # the WHOLE graph must have finished (not partial/needs_rework) AND
@@ -2076,6 +2097,8 @@ async def reproduce_procedure(procedure_id: str, repo_path: str, ctx: Context,
         # durable_run appends the immutable executions row.
         from app.execution.durable_graph import run_graph_durably
 
+        from app.services.verification import compute_verification_plan_id
+
         graph_result = await run_graph_durably(
             pool, compiled_plan, run_node,
             procedure_id=str(compiled_plan.plan.procedure.procedure_id),
@@ -2083,6 +2106,7 @@ async def reproduce_procedure(procedure_id: str, repo_path: str, ctx: Context,
             created_by=_resolve_caller_identity(fallback="reproduce_procedure"),
             scope_type=compiled_plan.plan.scope_type,
             scope_entity_id=compiled_plan.plan.scope_entity_id,
+            verification_plan_id=compute_verification_plan_id(procedure_payload),
             side_effecting_orders=set(),  # V1: sandbox rebuilt per run -> step is replayable on resume
         )
 

@@ -377,6 +377,15 @@ async def discover_providers(
             )
         kinds = (kind,)
 
+    # B25/B27/B28: kinds realized by the Adapter Resolver (app.execution.
+    # adapters.build_adapter) rather than this module's own PROVIDER_
+    # REGISTRY -- checked here too so discover_providers stays honest
+    # (its own contract: "never fabricates availability") now that
+    # 'api'/'tool'/'deterministic' have real executors reachable a
+    # different way than the frontier/deterministic singleton pattern
+    # this module owns directly.
+    from app.execution.adapters import build_adapter
+
     entries: list[ProviderDiscoveryEntry] = []
     for k in kinds:
         provider = PROVIDER_REGISTRY.get(k)
@@ -387,13 +396,22 @@ async def discover_providers(
                     kind=k, provider_name=type(provider).__name__, availability=availability,
                 )
             )
-        else:
-            reason = _UNAVAILABLE_KIND_REASONS.get(k, "no real executor wired up yet")
+            continue
+        adapter = build_adapter(k)
+        if adapter is not None:
+            availability = await adapter.discover(requirements)
             entries.append(
                 ProviderDiscoveryEntry(
-                    kind=k, provider_name=None, availability=ProviderAvailability(False, reason),
+                    kind=k, provider_name=type(adapter).__name__, availability=availability,
                 )
             )
+            continue
+        reason = _UNAVAILABLE_KIND_REASONS.get(k, "no real executor wired up yet")
+        entries.append(
+            ProviderDiscoveryEntry(
+                kind=k, provider_name=None, availability=ProviderAvailability(False, reason),
+            )
+        )
     return entries
 
 

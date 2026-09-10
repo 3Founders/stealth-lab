@@ -73,6 +73,26 @@ def derive_criteria(procedure: dict) -> list[Criterion]:
     return criteria
 
 
+def compute_verification_plan_id(procedure: dict) -> Optional[str]:
+    """B3's literal `verification_plan_id` context field. A STABLE
+    fingerprint of the ordered (criterion_id, statement, required) tuples
+    `derive_criteria(procedure)` would produce for this exact procedure
+    payload -- NOT a new stored entity (this module's own docstring:
+    "postconditions ARE the plan"). `None` for a procedure with no real
+    postconditions -- nothing to fingerprint, never a fabricated id for
+    an empty plan."""
+    criteria = derive_criteria(procedure)
+    if not criteria:
+        return None
+    import hashlib
+    import json
+
+    fingerprint_input = json.dumps(
+        [(c.criterion_id, c.statement, c.required) for c in criteria], sort_keys=True,
+    )
+    return hashlib.sha256(fingerprint_input.encode("utf-8")).hexdigest()
+
+
 async def _upsert_result(
     pool: asyncpg.Pool, *, execution_run_id: str, criterion_id: str, statement: str,
     method: str, required: bool, state: str, evidence_refs: list,

@@ -323,6 +323,26 @@ async def execute_implementation(
         )
 
     kind = implementation["kind"]
+
+    # B25/B27/B28: the real Adapter Resolver -- for kinds needing
+    # PER-IMPLEMENTATION resolution (different 'api'/'tool' rows point
+    # at different real endpoints, so there is no single process-wide
+    # singleton the way frontier/deterministic have), `build_adapter`
+    # constructs a fresh `Adapter` and this module injects the resolved
+    # implementation row into `context["implementation"]` so `Adapter.
+    # execute()`'s own resolve()/validate()/prepare()/invoke()/
+    # collect_*()/cleanup() lifecycle (app/execution/adapters.py) can see
+    # it. Checked BEFORE the pre-existing `providers.PROVIDER_REGISTRY`
+    # singleton lookup so 'deterministic' now genuinely dispatches
+    # through the literal B28 8-step lifecycle (LocalAdapter) rather than
+    # the older DeterministicProvider shortcut -- same underlying
+    # SubprocessSandboxExecutor, not a second sandbox mechanism.
+    from app.execution.adapters import build_adapter
+
+    adapter = build_adapter(kind)
+    if adapter is not None:
+        return await adapter.execute(node, {**context, "implementation": implementation})
+
     provider = providers.get_provider(kind)
     if provider is None:
         return NodeResult(

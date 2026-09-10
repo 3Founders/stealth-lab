@@ -41,14 +41,29 @@ def test_discover_providers_covers_every_implementation_kind():
 
 
 def test_unavailable_kinds_report_available_false_with_honest_reason():
+    # 'tool' now has a REAL executor (McpToolAdapter, B25/B27's Adapter
+    # Resolver, app.execution.adapters.build_adapter) -- it correctly
+    # reports a provider_name, not None. Only 'slm'/'human' still have
+    # no real executor anywhere in this codebase.
     entries = asyncio.run(discover_providers())
     by_kind = {e.kind: e for e in entries}
-    for kind in ("slm", "tool", "human"):
+    for kind in ("slm", "human"):
         entry = by_kind[kind]
         assert entry.provider_name is None
         assert entry.availability.available is False
         assert entry.availability.reason  # non-empty, real explanation
         assert "no real executor" in entry.availability.reason
+
+
+def test_tool_kind_reports_a_real_adapter_via_the_adapter_resolver():
+    entries = asyncio.run(discover_providers())
+    by_kind = {e.kind: e for e in entries}
+    entry = by_kind["tool"]
+    assert entry.provider_name == "McpToolAdapter"
+    # availability itself depends on whether the real `mcp` client
+    # package is importable in this environment -- checked for real by
+    # McpToolAdapter.discover(), not assumed either way here.
+    assert entry.availability.reason
 
 
 def test_unknown_kind_is_rejected_not_silently_ignored():

@@ -354,6 +354,19 @@ class Settings(BaseSettings):
     # explicit opt-out, not an accidental one (the field must be set to
     # None, not merely omitted, since the default below is a real number).
     procedure_run_max_wall_clock_seconds: Optional[int] = 3600
+    # Token/tool-call/cost budgets for a whole recursive chain (summed
+    # across every execution_runs row sharing the chain's root_run_id,
+    # recursion_guard.py::check_recursion_limits) -- the three named
+    # budgets B12 lists beyond depth/children/wall-clock. None disables
+    # the respective check entirely, same explicit-opt-out discipline as
+    # `procedure_run_max_wall_clock_seconds` above. Real usage is
+    # accumulated by `durable_run.record_run_usage`, called by the ONE
+    # real caller that already aggregates real AgentRun.usage/tool_calls
+    # counts (server.py's tier-2 execution path) -- never a hardcoded or
+    # estimated figure.
+    procedure_run_max_tokens: Optional[int] = None
+    procedure_run_max_tool_calls: Optional[int] = None
+    procedure_run_max_cost_usd: Optional[float] = None
 
     # --- Observability (app/observability.py) ---
     # Optional like every other secret here: absent DSN means Sentry stays

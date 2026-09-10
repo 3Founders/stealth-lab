@@ -143,3 +143,68 @@ def test_continue_run_surfaces_the_active_procedure_implementation_binding():
             await pool.close()
 
     asyncio.run(_run())
+
+
+def test_continue_run_surfaces_verification_plan_id_and_implementation_bindings():
+    """B3's literal StealthExecutionContext fields: `verification_plan_id`
+    (a real, stable fingerprint of this run's pinned postconditions --
+    NOT a new stored entity, see verification.py::compute_verification_
+    plan_id) and `implementation_bindings` (every node's REAL pinned
+    binding, read live off execution_run_nodes -- not a duplicate copy
+    of it)."""
+    async def _run():
+        pool = await create_pool(DATABASE_URL, min_size=1, max_size=2)
+        run_id = uuid4().hex[:8]
+        proc_name = f"proc-test-b3context-{run_id}"
+        impl_name = f"impl-test-b3context-{run_id}"
+        try:
+            embedder = Embedder()
+            goal_text = f"rebuild the search index carefully ({run_id})"
+            vec = await embedder.embed_one(goal_text, input_type="document")
+            procedure = await _make_verified_approved(
+                pool, proc_name, goal=goal_text, embedding=vec,
+                steps=[{"order": 0, "goal": "rebuild the index"}],
+                postconditions=["the index rebuild completes", "no documents are lost"],
+            )
+
+            ctx = _FakeContext(pool)
+            submit_result = await srv.submit_implementation(
+                procedure_id=str(procedure["procedure_id"]), role="primary", ctx=ctx,
+                name=impl_name, kind="tool", provider="test",
+            )
+            binding = json.loads(submit_result)["binding"]
+            await activate_binding(pool, binding["id"])
+
+            with tempfile.TemporaryDirectory() as repo_dir:
+                plan_result = await srv.find_best_way(
+                    task_description=goal_text, ctx=ctx, mode="plan_only", repo_path=repo_dir,
+                )
+            procedure_run_id = json.loads(plan_result)["procedure_run_id"]
+
+            context = json.loads(await srv.continue_run(procedure_run_id, ctx))
+
+            # verification_plan_id: real, non-null (real postconditions
+            # exist), and reproducible from the same procedure payload.
+            assert context["verification_plan_id"] is not None
+            from app.services.verification import compute_verification_plan_id
+            expected = compute_verification_plan_id({
+                "postconditions": ["the index rebuild completes", "no documents are lost"],
+            })
+            assert context["verification_plan_id"] == expected
+
+            # implementation_bindings: one real entry per node (here,
+            # exactly one node, unbound at plan_only time -- no
+            # execute_run has run yet to pin anything).
+            assert len(context["implementation_bindings"]) == 1
+            assert context["implementation_bindings"][0]["node_order"] == 0
+            assert context["implementation_bindings"][0]["implementation_id"] is None
+
+            # A procedure with NO postconditions gets an honest None,
+            # never a fabricated id for an empty plan.
+            assert compute_verification_plan_id({"postconditions": []}) is None
+            assert compute_verification_plan_id({}) is None
+        finally:
+            await _cleanup(pool, proc_name, impl_name)
+            await pool.close()
+
+    asyncio.run(_run())

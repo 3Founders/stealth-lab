@@ -1,0 +1,27 @@
+-- Migration 73 (B3): the literal `verification_plan_id` field on the
+-- StealthExecutionContext.
+--
+-- WHY A DETERMINISTIC HASH, NOT A NEW `verification_plans` TABLE
+-- (CLAUDE.md rule 2, and this pass's own instruction: "do not introduce
+-- parallel registries or duplicate sources of truth merely to satisfy a
+-- field requirement"): `verification.py`'s own existing docstring
+-- already establishes the design this column extends, not duplicates --
+-- "Criteria themselves are NOT a new stored entity... postconditions
+-- ARE the plan. derive_criteria only computes a stable criterion_id for
+-- each one; it never copies or mutates the Procedure row." A
+-- `verification_plan_id` is the SAME idea one level up: a stable
+-- fingerprint of the ordered criterion_ids derive_criteria() would
+-- produce for this run's pinned procedure_version, computed by
+-- `verification.py::compute_verification_plan_id` (added alongside this
+-- migration) and stored ONCE at `start_run()` time. No new table, no
+-- second copy of the postconditions -- the id is a hash of what
+-- `procedures.postconditions` (already durable, already versioned via
+-- the pinned `procedure_version`) already contains.
+--
+-- NULL is honest for a procedure with no postconditions (derive_criteria
+-- returns [] -- nothing to fingerprint), matching B3's own framing that
+-- fields may be UNKNOWN, never fabricated.
+--
+-- Next free number: 74 (73 is highest).
+
+ALTER TABLE execution_runs ADD COLUMN IF NOT EXISTS verification_plan_id TEXT;

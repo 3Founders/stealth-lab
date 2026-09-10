@@ -32,6 +32,9 @@ EVENT_TYPES: tuple[str, ...] = (
     "child_run_created", "node_waiting", "child_run_completed",
     "node_resumed", "verification_started", "verification_completed",
     "run_failed",
+    # B7's record_artifact() -- not in B8's 18 named types, but B8's own
+    # text is "at minimum" -- additive, migration 72.
+    "artifact_recorded",
 )
 
 _Executor = Union[asyncpg.Connection, asyncpg.Pool]
@@ -115,6 +118,20 @@ async def record_verification_completed(
     await record_event(
         conn, execution_run_id=execution_run_id, event_type="verification_completed",
         payload={"overall_state": overall_state, "criteria_count": criteria_count},
+    )
+
+
+async def record_artifact(
+    conn: _Executor, execution_run_id: str, *, node_order: Optional[int],
+    kind: str, ref: str, sha256: Optional[str] = None, size_bytes: Optional[int] = None,
+) -> None:
+    """B7's `record_artifact()`. `ref`/`sha256` are a REFERENCE (B8:
+    "Large data is stored as artifact references/hashes"), never the
+    artifact's own inline content -- the payload here carries a pointer,
+    not a copy."""
+    await record_event(
+        conn, execution_run_id=execution_run_id, event_type="artifact_recorded",
+        node_order=node_order, payload={"kind": kind, "ref": ref, "sha256": sha256, "size_bytes": size_bytes},
     )
 
 

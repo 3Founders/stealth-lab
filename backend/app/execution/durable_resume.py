@@ -408,6 +408,21 @@ async def get_run_context(pool: asyncpg.Pool, run_id: str) -> Optional[dict[str,
         except Exception:  # noqa: BLE001 -- informational; must never break continue_run itself.
             relevant_claim_refs = []
 
+    # B3's literal `implementation_bindings` StealthExecutionContext field
+    # -- every node's REAL pinned binding (not just the current node's
+    # `recommended_implementations` candidates above), read straight off
+    # `nodes` (already loaded, already the canonical source --
+    # execution_run_nodes.implementation_id/implementation_version --
+    # never a second copy of it).
+    implementation_bindings = [
+        {
+            "node_order": n["node_order"],
+            "implementation_id": str(n["implementation_id"]) if n.get("implementation_id") else None,
+            "implementation_version": n.get("implementation_version"),
+        }
+        for n in nodes
+    ]
+
     return {
         "procedure_run_id": str(run_id),
         "procedure_id": str(run["procedure_id"]),
@@ -415,6 +430,8 @@ async def get_run_context(pool: asyncpg.Pool, run_id: str) -> Optional[dict[str,
         "route_decision_id": str(run["route_decision_id"]) if run.get("route_decision_id") else None,
         "parent_run_id": str(run["parent_run_id"]) if run.get("parent_run_id") else None,
         "root_run_id": str(run["root_run_id"]) if run.get("root_run_id") else None,
+        "verification_plan_id": run.get("verification_plan_id"),
+        "implementation_bindings": implementation_bindings,
         "status": run["status"],
         "current_phase_or_node": phase,
         "objective": objective,

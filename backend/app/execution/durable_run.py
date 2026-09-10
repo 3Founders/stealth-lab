@@ -107,6 +107,7 @@ async def start_run(
     parent_node_id: Optional[str] = None,
     claim_working_set_revision: Optional[datetime] = None,
     route_decision_id: Optional[str] = None,
+    verification_plan_id: Optional[str] = None,
 ) -> str:
     """
     B4's "create or return a durable ProcedureRun": when `request_id` is
@@ -147,8 +148,8 @@ async def start_run(
                 "INSERT INTO execution_runs (execution_plan_id, task_graph_id, procedure_id, "
                 " procedure_version, status, parameters, created_by, scope_type, scope_entity_id, "
                 " request_id, workspace_id, trace_id, parent_run_id, parent_node_id, "
-                " claim_working_set_revision, route_decision_id, root_run_id, started_at) "
-                "VALUES ($1,$2,$3,$4,'pending',$5::jsonb,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16, now()) "
+                " claim_working_set_revision, route_decision_id, root_run_id, verification_plan_id, started_at) "
+                "VALUES ($1,$2,$3,$4,'pending',$5::jsonb,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17, now()) "
                 "RETURNING id",
                 execution_plan_id, task_graph_id, procedure_id, procedure_version,
                 # Raw Python dict, NOT json.dumps()'d -- the pool's
@@ -161,7 +162,7 @@ async def start_run(
                 # `json.dumps()` call sites below in this same function).
                 parameters or {}, created_by, scope_type, scope_entity_id,
                 request_id, workspace_id, trace_id, parent_run_id, parent_node_id,
-                claim_working_set_revision, route_decision_id, root_run_id,
+                claim_working_set_revision, route_decision_id, root_run_id, verification_plan_id,
             )
             if root_run_id is None:
                 # A fresh root: points at itself. Done in the same
@@ -299,6 +300,25 @@ async def _node_finish(pool: asyncpg.Pool, node_id: str, worker_id: str, *,
             )
             if tag != "UPDATE 0" and execution_run_id is not None:
                 await _rec.record_node_succeeded(conn, execution_run_id, node_order=node_order)
+                # B7's record_artifact(): a real Adapter.execute() (B25)
+                # composition populates NodeResult.data["artifacts"] with
+                # real references (never inline content). Checked at both
+                # the top level (an ad-hoc run_node closure that returns
+                # artifacts directly) and under "data" (durable_resume.py
+                # ::_make_runner's real NodeResult -> dict wrapping,
+                # {"notes":..., "data": dict(result.data), "attempt":...})
+                # -- one durable event per artifact, same transaction as
+                # the node succeeding.
+                result = result or {}
+                artifacts_seen = result.get("artifacts") or (result.get("data") or {}).get("artifacts") or []
+                for artifact in artifacts_seen:
+                    if not isinstance(artifact, dict) or not artifact.get("ref"):
+                        continue
+                    await _rec.record_artifact(
+                        conn, execution_run_id, node_order=node_order,
+                        kind=artifact.get("kind", "unknown"), ref=artifact["ref"],
+                        sha256=artifact.get("sha256"), size_bytes=artifact.get("size_bytes"),
+                    )
         else:
             tag = await conn.execute(
                 "UPDATE execution_run_nodes SET status='failed', ended_at=now(), "
@@ -588,6 +608,26 @@ async def retry_node(
                             worker_id=worker_id, compiled=compiled)
     finally:
         await _release_run(pool, run_id, worker_id)
+
+
+async def record_run_usage(
+    pool: asyncpg.Pool, run_id: str, *, tokens: int = 0, tool_calls: int = 0, cost_usd: float = 0.0,
+) -> None:
+    """MCP hardening B12: real, ATOMIC accumulation of this run's own
+    token/tool-call/cost usage (migration 74) -- called by a real caller
+    after it has genuinely spent them (server.py's tier-2 path, which
+    already aggregates real `AgentRun.usage`/`tool_calls` counts), never
+    a guessed or hardcoded figure. `recursion_guard.check_recursion_
+    limits` sums this across the whole ancestor chain to enforce the
+    configured budgets."""
+    if tokens == 0 and tool_calls == 0 and cost_usd == 0.0:
+        return
+    await pool.execute(
+        "UPDATE execution_runs SET tokens_used = tokens_used + $2, "
+        " tool_calls_used = tool_calls_used + $3, cost_usd_used = cost_usd_used + $4 "
+        "WHERE id = $1",
+        run_id, tokens, tool_calls, cost_usd,
+    )
 
 
 async def run_status(pool: asyncpg.Pool, run_id: str) -> dict[str, Any]:

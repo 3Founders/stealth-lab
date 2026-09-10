@@ -77,6 +77,7 @@ async def run_graph_durably(
     parent_node_id: Optional[str] = None,
     claim_working_set_revision: Optional[datetime] = None,
     route_decision_id: Optional[str] = None,
+    verification_plan_id: Optional[str] = None,
 ) -> "DurableGraphResult":
     """
     Execute (or resume) `compiled`'s graph as a durable run.
@@ -127,6 +128,7 @@ async def run_graph_durably(
             parent_run_id=parent_run_id, parent_node_id=parent_node_id,
             claim_working_set_revision=claim_working_set_revision,
             route_decision_id=route_decision_id,
+            verification_plan_id=verification_plan_id,
         )
         result = await _dr.execute_run(
             pool, run_id, deps=deps, run_node=_cb, worker_id=worker_id, compiled=compiled,
@@ -162,6 +164,7 @@ async def create_pending_run(
     parent_node_id: Optional[str] = None,
     claim_working_set_revision: Optional[datetime] = None,
     route_decision_id: Optional[str] = None,
+    verification_plan_id: Optional[str] = None,
 ) -> str:
     """
     MCP hardening B3: a real, durable `procedure_run_id` for a Procedure
@@ -197,4 +200,5 @@ async def create_pending_run(
         parent_run_id=parent_run_id, parent_node_id=parent_node_id,
         claim_working_set_revision=claim_working_set_revision,
         route_decision_id=route_decision_id,
+        verification_plan_id=verification_plan_id,
     )

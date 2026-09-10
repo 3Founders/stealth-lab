@@ -19,8 +19,11 @@ from app.db.session import create_pool
 from app.execution import durable_run as _dr
 from app.execution.recursion_guard import (
     ChildExecutionBudgetExceeded,
+    CostBudgetExceeded,
     RecursionCycleDetected,
     RecursionDepthExceeded,
+    ToolCallBudgetExceeded,
+    TokenBudgetExceeded,
     WallClockBudgetExceeded,
     check_recursion_limits,
     describe_child_status,
@@ -201,6 +204,111 @@ def test_check_recursion_limits_enforces_configured_wall_clock_budget(monkeypatc
             )
             with pytest.raises(WallClockBudgetExceeded):
                 await check_recursion_limits(pool, parent_run_id=root_id, candidate_procedure_id=str(uuid4()))
+        finally:
+            await _cleanup(pool, name)
+            await pool.close()
+
+    asyncio.run(_run())
+
+
+def test_check_recursion_limits_enforces_configured_token_budget(monkeypatch):
+    """B12's token budget: real, ATOMIC usage (durable_run.record_run_usage)
+    summed across the whole chain (same root_run_id), never estimated."""
+    async def _run():
+        pool = await create_pool(DATABASE_URL, min_size=1, max_size=2)
+        run_id = uuid4().hex[:8]
+        name = f"proc-test-rectokens-{run_id}"
+        monkeypatch.setattr(settings, "procedure_run_max_tokens", 100)
+        try:
+            procedure = await _capture(pool, name, steps=[{"order": 0, "goal": "step"}])
+            compiled = await _compiled_plan(pool, procedure, name)
+
+            root_id = await _start_run(pool, procedure, compiled)
+            await check_recursion_limits(pool, parent_run_id=root_id, candidate_procedure_id=str(uuid4()))
+
+            await _dr.record_run_usage(pool, root_id, tokens=150)
+            with pytest.raises(TokenBudgetExceeded):
+                await check_recursion_limits(pool, parent_run_id=root_id, candidate_procedure_id=str(uuid4()))
+        finally:
+            await _cleanup(pool, name)
+            await pool.close()
+
+    asyncio.run(_run())
+
+
+def test_check_recursion_limits_enforces_configured_tool_call_budget(monkeypatch):
+    async def _run():
+        pool = await create_pool(DATABASE_URL, min_size=1, max_size=2)
+        run_id = uuid4().hex[:8]
+        name = f"proc-test-rectoolcalls-{run_id}"
+        monkeypatch.setattr(settings, "procedure_run_max_tool_calls", 5)
+        try:
+            procedure = await _capture(pool, name, steps=[{"order": 0, "goal": "step"}])
+            compiled = await _compiled_plan(pool, procedure, name)
+
+            root_id = await _start_run(pool, procedure, compiled)
+            child_id = await _start_run(pool, procedure, compiled, parent_run_id=root_id)
+            # Split across TWO runs in the same chain -- proves this is a
+            # real SUM over the chain, not just the parent's own row.
+            await _dr.record_run_usage(pool, root_id, tool_calls=3)
+            await _dr.record_run_usage(pool, child_id, tool_calls=3)
+
+            with pytest.raises(ToolCallBudgetExceeded):
+                await check_recursion_limits(pool, parent_run_id=child_id, candidate_procedure_id=str(uuid4()))
+        finally:
+            await _cleanup(pool, name)
+            await pool.close()
+
+    asyncio.run(_run())
+
+
+def test_check_recursion_limits_enforces_configured_cost_budget(monkeypatch):
+    async def _run():
+        pool = await create_pool(DATABASE_URL, min_size=1, max_size=2)
+        run_id = uuid4().hex[:8]
+        name = f"proc-test-reccost-{run_id}"
+        monkeypatch.setattr(settings, "procedure_run_max_cost_usd", 1.0)
+        try:
+            procedure = await _capture(pool, name, steps=[{"order": 0, "goal": "step"}])
+            compiled = await _compiled_plan(pool, procedure, name)
+
+            root_id = await _start_run(pool, procedure, compiled)
+            await _dr.record_run_usage(pool, root_id, cost_usd=1.5)
+
+            with pytest.raises(CostBudgetExceeded):
+                await check_recursion_limits(pool, parent_run_id=root_id, candidate_procedure_id=str(uuid4()))
+        finally:
+            await _cleanup(pool, name)
+            await pool.close()
+
+    asyncio.run(_run())
+
+
+def test_record_run_usage_is_a_real_atomic_increment_not_an_overwrite():
+    async def _run():
+        pool = await create_pool(DATABASE_URL, min_size=1, max_size=2)
+        run_id = uuid4().hex[:8]
+        name = f"proc-test-recusageinc-{run_id}"
+        try:
+            procedure = await _capture(pool, name, steps=[{"order": 0, "goal": "step"}])
+            compiled = await _compiled_plan(pool, procedure, name)
+            root_id = await _start_run(pool, procedure, compiled)
+
+            await _dr.record_run_usage(pool, root_id, tokens=10, tool_calls=1, cost_usd=0.1)
+            await _dr.record_run_usage(pool, root_id, tokens=10, tool_calls=1, cost_usd=0.1)
+
+            row = await pool.fetchrow(
+                "SELECT tokens_used, tool_calls_used, cost_usd_used FROM execution_runs WHERE id = $1", root_id,
+            )
+            assert row["tokens_used"] == 20
+            assert row["tool_calls_used"] == 2
+            assert float(row["cost_usd_used"]) == pytest.approx(0.2)
+
+            # A zero-usage call is a real, honest no-op -- never a
+            # spurious UPDATE for nothing actually spent.
+            await _dr.record_run_usage(pool, root_id)
+            row2 = await pool.fetchrow("SELECT tokens_used FROM execution_runs WHERE id = $1", root_id)
+            assert row2["tokens_used"] == 20
         finally:
             await _cleanup(pool, name)
             await pool.close()
