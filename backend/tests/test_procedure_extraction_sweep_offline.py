@@ -46,6 +46,43 @@ class FakePool:
         return {"session_id": "s1", "start_ts": "T0", "end_ts": "T1",
                 "project_id": None}
 
+    async def fetchval(self, sql, *args):
+        # G1: handle_extract_procedure_from_episode resolves a per-session
+        # IngestionContext (SELECT id FROM ingestion_contexts ...). None ->
+        # open_ingestion_context() runs and generates its own uuid7 id.
+        self.fetched.append((sql, args))
+        return None
+
+    def acquire(self):
+        pool = self
+
+        class _Conn:
+            async def execute(self, sql, *a):
+                pool.executed.append((sql, a))
+
+            async def fetchrow(self, sql, *a):
+                pool.executed.append((sql, a))
+                return {"id": "00000000-0000-0000-0000-000000000abc"}
+
+            def transaction(self):
+                class _Txn:
+                    async def __aenter__(self_):
+                        return None
+
+                    async def __aexit__(self_, *exc):
+                        return False
+
+                return _Txn()
+
+        class _CM:
+            async def __aenter__(self_):
+                return _Conn()
+
+            async def __aexit__(self_, *exc):
+                return False
+
+        return _CM()
+
 
 def _ep(eid="ep-1", sess="sess-1", n_obs=12, n_types=3,
         passing_tests=2, failing_tests=0, unknown_tests=0,
@@ -390,7 +427,11 @@ async def test_real_abstraction_is_kept(monkeypatch):
     pool = P()
     await ij.handle_extract_procedure_from_episode(
         pool, _payload())
-    assert not [c for c in pool.executed if "UPDATE procedures" in c[0]]
+    # A kept abstraction must not be RETIRED. The G1 provenance stamp
+    # (UPDATE procedures SET ingestion_context_id ...) is expected and fine.
+    retires = [c for c in pool.executed
+               if "UPDATE procedures" in c[0] and "t_invalid" in c[0]]
+    assert not retires, "a kept abstraction must not be retired"
 
 
 def test_goal_seed_is_the_source_derived_payload_value():
