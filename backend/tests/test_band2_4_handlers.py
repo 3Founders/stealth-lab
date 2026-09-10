@@ -41,7 +41,6 @@ from app.services.procedure_extraction.failure_handlers import (
     HANDLER_STAMP,
     HANDLED_ROUTES,
     LEDGER_PREFIX,
-    REVIEW_CLAIM_STATUS,
     REVALIDATION_CLAIM_STATUS,
     NARROWING_SCOPE_KEY,
     _DERIVED_CLAIMS_SQL,
@@ -416,7 +415,11 @@ def test_dependency_queue_with_no_resolvable_dependents_stays_queued():
 # ============================================== 4. requires_review
 
 
-def test_requires_review_stamps_claim_uncertain_for_unclassified_failures():
+def test_requires_review_flags_claim_and_leaves_status_to_the_belief_projection():
+    # B9: requires_review no longer hand-stamps claim_status='uncertain'
+    # (that value is owned by claim_belief.status_from_belief). It writes a
+    # non-status `properties.review` marker and delegates the status to
+    # recompute_claim_belief; the route's ChangeSet is the idempotency proof.
     pool = FakePool()
     install_changeset_rules(pool)
     pool.rule("WHERE reason = $1", False)
@@ -436,18 +439,20 @@ def test_requires_review_stamps_claim_uncertain_for_unclassified_failures():
     updates = [(sql, args) for _, sql, args in pool.writes if sql.startswith("UPDATE knowledge_nodes")]
     assert len(updates) == 1
     sql, args = updates[0]
-    assert "claim_status = $2" in sql and "$1::uuid" in sql and "t_invalid IS NULL" in sql
+    # marker-only update -- NO claim_status assignment
+    assert "claim_status" not in sql
+    assert "properties = properties || $2::jsonb" in sql and "$1::uuid" in sql
     assert args[0] == CLAIM_A
-    assert args[1] == REVIEW_CLAIM_STATUS == "uncertain"
-    marker = json.loads(args[2])
+    marker = json.loads(args[1])
     assert marker["review"]["reason"] == "unclassified_failure"
     assert marker["review"]["evidence_id"] == EVIDENCE_ID
 
     ops = changeset_ops(pool)
     assert len(ops) == 1
     detail = json.loads(ops[0][4])
+    assert detail["flagged_for_review"] is True
     assert detail["prior_claim_status"] == "supported"
-    assert detail["claim_status"] == "uncertain"
+    assert "recomputed_claim_status" in detail  # None here (FakePool can't run recompute)
 
 
 def test_requires_review_skips_non_claim_targets_and_missing_claims():
@@ -564,4 +569,5 @@ def test_claim_status_stamps_are_legal_migration21_vocabulary():
         "db", "21_band1_contracts.sql").read_text(encoding="utf-8")
     block = ddl.split("kn_claim_status_chk", 1)[1].split(");", 1)[0]
     allowed = set(re.findall(r"'([a-z]+)'", block))
-    assert {REVIEW_CLAIM_STATUS, REVALIDATION_CLAIM_STATUS} <= allowed
+    # The one lifecycle value this module still stamps directly.
+    assert REVALIDATION_CLAIM_STATUS in allowed

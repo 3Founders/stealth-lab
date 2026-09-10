@@ -68,9 +68,12 @@ nesting, same discipline as failures.py itself.
 from __future__ import annotations
 
 import json
+import logging
 from typing import Any, Awaitable, Callable, Mapping, Optional
 
 import asyncpg
+
+_LOG = logging.getLogger(__name__)
 
 # READ-IMPORT ONLY per the scoped grant: failures.py is CORE-A's file.
 from app.execution.failures import (
@@ -117,9 +120,18 @@ UNRECORDED_ENVIRONMENT = "(unrecorded)"
 # context vocabulary, consumed by applicability._excluded() unchanged.
 NARROWING_SCOPE_KEY = "context_key"
 
-# claim_status stamps (migration 21's kn_claim_status_chk vocabulary).
-REVIEW_CLAIM_STATUS = "uncertain"
-REVALIDATION_CLAIM_STATUS = "stale"
+# claim_status vocabulary (migration 21's kn_claim_status_chk).
+#
+# B9 ownership boundary: `candidate | supported | disputed | uncertain` are
+# a DERIVED PROJECTION of belief + conflict (claim_belief.status_from_belief)
+# -- no handler hand-stamps them. `stale | superseded | invalid | retracted`
+# are LIFECYCLE transitions that this module and relate_claims own directly.
+#
+# So handle_dependency_queue sets 'stale' (a lifecycle transition: the
+# claim's extraction environment drifted -> it must be revalidated), while
+# handle_requires_review no longer sets 'uncertain' -- it records a
+# non-status `properties.review` marker and calls recompute_claim_belief.
+REVALIDATION_CLAIM_STATUS = "stale"  # lifecycle: environment-drift revalidation
 
 # Batch ceiling for the dependency fan-out; mirrors fetch_route_queue's
 # default page size so one consume flags at most one page of dependents.
@@ -413,11 +425,23 @@ async def handle_dependency_queue(
 async def handle_requires_review(
     pool: asyncpg.Pool, route_row: Mapping[str, Any],
 ) -> bool:
-    """The unclassified-failure mandate: stamp the targeted CLAIM
-    uncertain -- nobody could say why this execution failed, so the
-    claim it ran against must not keep its prior standing while a human
-    looks. Non-claim targets have no claim_status to stamp; the routing
-    row itself remains the human-review worklist."""
+    """The unclassified-failure mandate: flag the targeted CLAIM for human
+    review, and re-derive its standing from the evidence.
+
+    B9 ownership boundary (`claim_belief.status_from_belief`): the values
+    `candidate | supported | disputed | uncertain` are a DERIVED PROJECTION
+    of belief + conflict state -- no path hand-stamps them. So instead of
+    `SET claim_status = 'uncertain'`, this records a non-status
+    `properties.review` marker ("a human is looking at this") and calls
+    `recompute_claim_belief`, which re-derives `claim_status` from the
+    claim's evidence and any open conflict. A claim with only weak/no
+    evidence lands `uncertain` anyway; a claim with strong evidence stays
+    `supported` -- flagged for review, but not falsely downgraded.
+    (`stale | superseded | invalid | retracted` remain lifecycle
+    transitions owned by `handle_dependency_queue` / `relate_claims`.)
+
+    Non-claim targets have no `claim_status`; the routing row itself
+    remains the human-review worklist."""
     route = route_row["route"]
     fr_id = _route_id(route_row)
     if await _already_applied(pool, route, fr_id):
@@ -445,12 +469,28 @@ async def handle_requires_review(
             "evidence_id": str(route_row["evidence_id"]),
         },
     }
+    # The review marker only -- claim_status is NOT set here.
     await pool.execute(
-        "UPDATE knowledge_nodes SET claim_status = $2, "
-        "properties = properties || $3::jsonb "
+        "UPDATE knowledge_nodes SET properties = properties || $2::jsonb "
         "WHERE id = $1::uuid AND t_invalid IS NULL",
-        claim_id, REVIEW_CLAIM_STATUS, json.dumps(marker),
+        claim_id, json.dumps(marker),
     )
+
+    # Re-derive claim_status from evidence + conflict state. recompute
+    # records its own evidence-citing ChangeSet; the route's ledger row
+    # below is the idempotency proof for _already_applied.
+    recomputed_status = None
+    try:
+        from app.services.claim_belief import recompute_claim_belief
+
+        belief = await recompute_claim_belief(
+            pool, claim_id,
+            changeset_reason=f"claim flagged for review by failure routing ({route}:{fr_id})",
+        )
+        recomputed_status = belief.get("claim_status") if isinstance(belief, dict) else None
+    except Exception as exc:  # noqa: BLE001 -- best-effort; the review marker + ledger still land
+        _LOG.warning("requires_review: belief recompute failed for %s: %s", claim_id, exc)
+
     await record_change_set(
         pool,
         author=HANDLER_STAMP,
@@ -460,8 +500,9 @@ async def handle_requires_review(
             target_table="knowledge_nodes",
             target_id=claim_id,
             detail={
-                "claim_status": REVIEW_CLAIM_STATUS,
+                "flagged_for_review": True,
                 "prior_claim_status": prior,
+                "recomputed_claim_status": recomputed_status,
                 "reason": "unclassified_failure",
             },
         )],
