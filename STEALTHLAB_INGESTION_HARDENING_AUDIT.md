@@ -3,9 +3,9 @@
 **Lane:** INGESTION + KNOWLEDGE architecture hardening.
 **Spec audited against:** `STEALTHLAB_EXTREME_FINAL_HARDENING_V4.md` (Part II Plan A, Part II-A §1–§38, Part IV G0–G14/G23/G24, Part VI, Testing T1–T15).
 **Repo revision at audit:** `main` @ `1663c94` for the original audit; Implementation Pass 1 rebased onto `main` @ `301b9bf` (incorporates upstream `976b647` "Global Internet Ingestion admission gate", which took `db/49`, so Pass 1's migrations are `db/50`–`db/55`).
-**Environment constraint:** the audit was written with `DATABASE_URL` unset (offline suite only). A **hosted Supabase Postgres is now reachable** via `backend/.env` (`DATABASE_URL`), but its egress budget is nearly exhausted, so DB use is deliberately minimal: `migrate.py --status` was run (migrations 01–49 applied, **50–55 pending**, all checksums match); nothing else. Migrations 50–55 were **NOT applied** (blocked pending explicit approval — see Handoff). The full DB/E2E/backfill test surface (T2–T14) remains un-run. Baseline offline suite: **2556 passed / 360 skipped / 7 failed**.
+**Environment constraint:** the audit was written with `DATABASE_URL` unset (offline suite only). A hosted Supabase Postgres is reachable via `backend/.env` (`DATABASE_URL`); its egress budget is nearly exhausted, so DB use is deliberately minimal. **Migrations 50–55 have now been applied** (`migrate.py --status`: 01–55 all `applied`, 0 pending, 0 checksum mismatch). The full DB/E2E/backfill test surface (T2–T14) still has **not** been run against the DB (egress). Baseline offline suite: **2556 passed / 360 skipped / 7 failed**; after Pass 1 + rebase: **2736 passed / 360 skipped / 7 failed** (same 7, zero regressions).
 
-**Verdict:** `EXTREME FINAL HARDENING INCOMPLETE` — but **Implementation Pass 1 has landed** (see the next section). The program is 29 gates (G0–G28) + 34 A-phases + 15 test categories; Pass 1 closes or advances 8 of the ingestion+knowledge gaps identified below, all as additive migrations + writer rewiring + offline proving tests. **No gate is fully CLOSED** because "CLOSED" per the spec requires the migration *applied* and DB/E2E tests green — migrations 50–55 are written and offline-verified but not yet applied. The per-item state below says exactly what remains.
+**Verdict:** `EXTREME FINAL HARDENING INCOMPLETE` — but **Implementation Pass 1 has landed** (see the next section). The program is 29 gates (G0–G28) + 34 A-phases + 15 test categories; Pass 1 closes or advances 8 of the ingestion+knowledge gaps identified below, as additive migrations (now applied) + writer rewiring + offline proving tests. **No gate is fully CLOSED** because "CLOSED" per the spec also requires the DB-backed / E2E proving tests (T2–T14) green, which have not been run. The per-item state below says exactly what remains.
 
 ---
 
@@ -13,7 +13,7 @@
 
 **Merged-tree offline suite: `2688 passed / 360 skipped / 7 failed`** (`python -m pytest tests -q`, `DATABASE_URL` unset, 305 s). The 7 failures are byte-identical to the documented baseline-7 (embedder `_embed_via_chain` rename ×3, `test_mcp_six_tool_surface` `fake_find()` signature ×2, `test_injection_adversarial` test-setup bug ×1, `test_migration_upgrade_e2e` needs a DB ×1). **Zero regressions. +132 passing tests** from ~170 new offline tests.
 
-### New migrations (additive + idempotent, `IF NOT EXISTS` throughout, NO in-migration backfill — un-run: no Postgres)
+### New migrations (additive + idempotent, `IF NOT EXISTS` throughout, NO in-migration backfill — APPLIED to the hosted DB; T2 tests still owed)
 
 | File | Adds | Gate |
 |---|---|---|
@@ -47,7 +47,7 @@
 
 ### What Pass 1 does NOT do (still OPEN / next)
 
-- **Migrations 50–55 are written and offline-verified but NOT APPLIED.** `migrate.py --status` against the hosted DB confirms 01–49 applied and **50–55 pending, checksums clean** — but the apply step is gated (needs explicit approval; egress budget is tight). No fresh-DB / representative-row / rollback tests (T2), no schema-drift check. This is the single largest remaining verification gap.
+- **Migrations 50–55 are applied** (01–55 all `applied`, 0 pending, 0 checksum mismatch) — but with **no T2 tests**: no fresh-DB apply test, no representative-row test, no idempotent-re-run test, no rollback/irreversibility doc, no `test_schema_drift.py` run. The migrations executed cleanly once against one DB; that is not the same as proven.
 - **The historical corpus backfill (A33) has not run.** `backfill_refs_from_preconditions` is written and offline-tested but is an explicit callable, not wired anywhere.
 - The document path emits an Observation + Evidence(document) for the **procedure**, but does **not** yet derive **Claims** from the document (B1 is partially closed — the chain exists, Claim derivation from `artifact_blocks` is the next step).
 - `artifact_blocks` normalization is **not yet invoked** by `compile_skill_artifact` (the table + normalizer exist; wiring them in, and citing the emitted Observation back to a block span, is the next step).
@@ -287,7 +287,7 @@ Each step is one gated change: migration (additive + idempotent) + writer rewiri
 ## Handoff — what the next session must do
 
 1. **Get a Postgres 15 + pgvector instance** (`pgvector/pgvector:pg15`). Nothing below is real until this exists.
-2. **Apply migrations 50–55** (`python scripts/migrate.py`), then `--status` to confirm 56/56, 0 checksum mismatches. Run `test_schema_drift.py` and `test_migration_upgrade_e2e.py` against the fresh DB.
+2. **Migrations 50–55 applied.** Still owed: run `test_schema_drift.py` + `test_migration_upgrade_e2e.py` against the DB; write the T2 per-migration fresh-DB/representative-row/idempotency tests.
 3. **Write T2 tests** for each of 50–55: fresh-DB apply, representative-row apply, idempotent re-run, (rollback or documented irreversibility).
 4. **Run `procedure_claim_refs.backfill_refs_from_preconditions`** against the real corpus (A33); record before/after counts.
 5. **Wire the three not-yet-invoked pieces into `compile_skill_artifact`:** `artifact_blocks.normalize_markdown` + `persist_artifact_blocks` (and cite the Observation to a block span); `screening.record_screening_run` (route the existing inline injection screen through it); Claim derivation from the blocks (`capture_claim(source_ref=…, ingestion_context_id=…, observation_id=…)`).
