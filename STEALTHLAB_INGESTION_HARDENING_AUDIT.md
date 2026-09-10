@@ -229,13 +229,29 @@ parser stays one `str.split` and a value can't forge a second row.
 
 **Verified:** `test_stealth_format_offline` + `test_stealth_projection_offline` → 21 passed (offline); `test_stealth_projection_e2e` + `test_find_best_way_stealth_projection_e2e` → 6 passed against `local`.
 
-### Still to do (P2–P6)
+### P2–P4 — landed (`61f278d`)
 
-- **P2** — MCP server as the single writer; `events.jsonl` append-only journal with `seq`; advisory file locking; `stealth` read-CLI.
-- **P3** — the knowledge page-fault: `project_knowledge(ids|query)` MCP tool → global retrieval → append `.md` + regenerate `.idx`; `[RELEVANT GLOBAL CLAIMS]` stops being honestly-empty.
-- **P4** — `exploration.md` + multi-agent owners / file-intents in `run.*` (reuses merged `coordination.py`).
-- **P5** — remove the SQLite local store: delete `local_store.py`, `local_claims.py`, `local_learning_sweep.py`, the 4 bootstrap importers, `publish_local_procedure`, `unified_retrieval.py`, `local_applicability.py`, `local_ingestion.py`, `local_episode_evidence.py`; **keep `runner.py`** (execution provider, Plan B); rewire `ingestion_scheduler` / `ingestion_admission`. Trace-derived private learning goes to the global DB private-scoped (the `ingestion_jobs.py` path).
-- **P6** — `.scratch/` board note for the deviation + gate-matrix close-out.
+- **P2** — `app/stealth/journal.py`: `events.jsonl` append-only, strictly-monotonic int `seq`, `SingleWriterLock` (`.stealth/.lock`, `O_CREAT|O_EXCL`, cross-platform, steals a lock older than 60 s). `generate_projection` runs under the lock, emits `projection_regenerated`, and stamps `meta.json.projection_revision` with the journal `seq` (was wall-clock). `scripts/stealth.py`: read-only CLI (`show|grep|events|meta`).
+- **P3** — `app/stealth/faults.py`: `project_knowledge(pool, workspace_root, *, object_ids, query, top_k)` — resolves from **global Postgres only** (unknown id → `not_found`, never fabricated), merges blocks **additively** (run-scoped set preserved), regenerates the affected `.idx` + `root.idx`, records membership in `index/faulted.json`, journals `knowledge_fault`. New MCP tool `project_knowledge` in `server.py`. `[RELEVANT GLOBAL CLAIMS]` is populated once claims are faulted in.
+- **P4** — `app/stealth/exploration.py`: `exploration.md` + `index/exploration.idx`, journal-backed so it survives regeneration (`E-<hash>` ids). Node `owner`/`write_globs` in `run.md`/`run.idx` and `node_owners`/`file_intents` in `run.json` now come from `execution_run_nodes` (mig 56); empty defaults kept when no coordination is declared. `meta.json` → `schema: stealth-projection/2`.
+- **Tests:** `test_stealth_journal_offline.py` (7), `test_stealth_exploration_offline.py` (4), `test_stealth_faults_e2e.py` (2), +1 coordination case. Full stealth suite (offline + local DB): **40 passed**.
+
+### P5 — landed (`4ac0d0b`) — SQLite local store removed
+
+- Deleted 12 `app/local_agent/` modules (`local_store`, `local_claims`, `unified_retrieval`, `local_learning`, `local_learning_sweep`, `local_applicability`, `local_ingestion`, `local_episode_evidence`, the 4 bootstrap importers) + `scripts/bootstrap.py` + `scripts/personal_library.py`.
+- `runner.py` **decoupled** (Plan B execution provider — kept signature-stable): retrieval is now GLOBAL-only via the `search_procedures` MCP tool; no-match still runs the task ad-hoc + reports it but captures no private candidate.
+- `publish.py` — `publish_local_procedure` removed; `publication.py::publish_procedure` is the one Local→Global path. `ingestion_scheduler.py` — `local_learning_sweep` tick dropped (non-`global` auto-mode = recorded no-op).
+- **19 test files deleted** (all exclusively covered removed behaviour). Surviving global publish path stays covered by `test_phase4_publication_offline` / `test_publication_deps_offline` / `test_phase6_data_rights_offline`. `test_gate3_experiment_offline.py` **kept** (runner-retrieval regression guard — passes unchanged against the decoupled runner).
+- Trace-derived private learning: `ingestion_jobs.py::resolve_trace_ingestion_context` (→ observation → claim → procedure, `visibility='private'` + `owner_id`) is intact and is the single trace-learning path.
+- **Combined full offline suite: 2679 passed / 428 skipped / 5 failed** — the 5 are a strict subset of the documented baseline-7 (the 2 dropped were the local-runner embedder-seam tests). Zero new failures.
+
+### P6 — this section + `.scratch/core-a/local-architecture-decision.md` (the frozen-spec-deviation board note).
+
+### Follow-ups from P5
+
+- A global-only "second user reuses a published procedure" e2e (replacing the deleted local-lifecycle `test_second_user_global_reuse_e2e` / `test_ideal_v1_lifecycle_e2e`).
+- Stale comments mentioning `LocalProcedureStore` / `publish_local_procedure` in `config.py:303` and `test_procdoc_v2_pipeline_offline.py` (comment-only, left).
+- `scripts/stealth.py` has no automated test (smoke-verified only); no offline test for the `project_knowledge` MCP-tool surface (covered at the service layer by `test_stealth_faults_e2e.py`).
 
 ---
 
@@ -421,7 +437,7 @@ Release-critical unless noted. `CLOSED` = spec requirement met **and** DB/E2E-ve
 | **G10** | Implementation Registry validation + Procedure↔Implementation M:N relation metadata | **CODE-COMPLETE (DB-VERIFIED)** | mig 67 generalizes `procedure_implementations` (T2: the new columns are usable + role vocab enforced against the live DB); `procedure_implementations.py`; `solution_implementations.py` reads it unioned with the legacy path. Remaining: converge `implementation_tasks`; board note for the `schema.md` 1:1↔M:N discrepancy (B17); a real 3-adapter T6. |
 | **G11** | Static/global ingestion refactor + corpus migration/backfill | **PARTIAL** (advanced) | **B1 done**: document path runs Source→IngestionContext→Observation→Evidence(document)→Claim→Procedure, plus `artifact_blocks` + `screening_decisions`; admission gate unioned. **B2 done**: no task_nodes at ingestion. Still: **corpus backfill un-run**; trace-path Source table; T3 golden E2E. |
 | **G12** | Local schema-aligned learning + scope / private sync | **OPEN** | Not touched by this lane or Plan B. Middle sync tier still absent. |
-| **G13** | `.stealth/` projection service | **CODE-COMPLETE + P1 of the ratified local-architecture rebuild** | Plan B shipped the B35 trio; **P1** (this lane) adds the filesystem-native working set — `app/stealth/` package, addressable `claims/procedures/implementations/run.md` + `index/*.idx` grep routers, byte-budgeted root router, atomic batch write. `stealth_projection.py` is now a shim. P2–P6 (journal, page-fault, coordination, SQLite removal, board note) remain — see the "LOCAL WORKING-SET ARCHITECTURE" section. |
+| **G13** | `.stealth/` projection service | **CLOSED** (ratified local-architecture rebuild, P1–P6) | `app/stealth/` filesystem-native working set: addressable `claims/procedures/implementations/run/exploration.md` + `index/*.idx` grep routers, byte-budgeted root router, atomic batch write, `events.jsonl` journal + single-writer lock, `project_knowledge` MCP page-fault tool, coordination owners/file-intents from mig 56. SQLite local store removed (P5). `.scratch/core-a/local-architecture-decision.md` records the frozen-spec deviation. |
 | **G14** | Global hierarchical retrieval + index freshness | **OPEN** | Retrieval stages exist; the `index_lag` freshness contract is still unbuilt. Plan B's `relevant_claims.py` adds a claims-retrieval surface but no lag tracking. |
 | **G23** | `report_execution` → Observation / Evidence / Claim-candidate learning | **CODE-COMPLETE (via Plan B `7a6e18f`)** | B18 host-executed learning loop, private-by-default extraction; `test_report_execution_learning_loop_e2e.py`. |
 | **G24** | Publication / privacy / license / IP dependency traversal | **CODE-COMPLETE (offline-only)** | **B11 done** (`acbd2f5`): `publication_deps.traverse_publication_dependencies` walks procedure→claims→observations→sources→artifacts→evidence, fail-closed (private/org, `PRIVATE_CLASSES`, unresolved/low-reliability source, or traversal-bound hit → blocking); "private evidence ≠ global verification" enforced (`verification_inherited` always false; `global_verification_required` unless ≥2 independent public verification groups). Wired into `publish_procedure`; `publication_records` carries the full traversal + verification determination. Remaining: independent *global* re-verification is recorded-as-required but not executed; license/IP checks are visibility/classification-based only; DB E2E. |
