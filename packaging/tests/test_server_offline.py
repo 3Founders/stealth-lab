@@ -28,8 +28,10 @@ def test_all_registered_tools():
         "check_applicability",
         "check_procedure",
         "compare_solutions",          # Final-V1 product model (§37)
+        "continue_run",               # MCP hardening (B3/B9-B14): ProcedureRun resume/inspect
         "decide_decomposition",
         "decide_procedure",
+        "declare_file_intent",        # MCP hardening: multi-agent file-intent coordination
         "decompose_task",
         "detect_conflict_trigger",
         "find_best_solution",         # Final-V1 product model (§37)
@@ -38,6 +40,8 @@ def test_all_registered_tools():
         "get_claim_graph",            # claim-graph viewer
         "get_implementation_capability",
         "get_procedure",
+        "get_relevant_claims",        # MCP hardening (B30): relevant-claims retrieval
+        "get_route_decision",         # MCP hardening (B1/B2): persisted RouteDecision readback
         "inspect_evaluation",         # Final-V1 product model (§37)
         "inspect_implementation",
         "inspect_problem",            # Final-V1 product model (§37)
@@ -46,6 +50,7 @@ def test_all_registered_tools():
         "list_task_implementations",
         "propose_synthesis",
         "report_execution",
+        "report_node_progress",       # MCP hardening (B6): host-executed lease progress reporting
         "reproduce_procedure",
         "resolve_implementation",
         "resume_execution_run",       # Final-V1 durable retry/resume surface (§2)
@@ -53,7 +58,9 @@ def test_all_registered_tools():
         "retry_run_node",             # Final-V1 durable retry/resume surface (§2)
         "search_procedures",
         "submit_approval",
+        "submit_implementation",      # MCP hardening (B23/B24): Procedure<->Implementation binding
         "submit_procedure",
+        "verify_completion",          # MCP hardening (B31/B34): verification ladder
     ]
 
 

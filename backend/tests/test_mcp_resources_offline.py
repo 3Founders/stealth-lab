@@ -95,8 +95,14 @@ def test_all_eight_resource_uris_registered():
     }
 
 
-def test_existing_29_tools_still_registered():
-    assert len(srv.server._tool_manager.list_tools()) == 29
+def test_existing_tools_still_registered():
+    # Was a hardcoded `== 29`, the exact count when MCP Resources was
+    # added -- real intent is "resources didn't clobber the tool
+    # surface", not "the tool count is frozen at 29 forever". The MCP
+    # hardening pass (B1-B38) added 7 more real tools since; >= 29 keeps
+    # proving the original intent without going stale every time a tool
+    # is added.
+    assert len(srv.server._tool_manager.list_tools()) >= 29
 
 
 # --------------------------------------------------------------------------

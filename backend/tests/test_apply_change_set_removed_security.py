@@ -59,16 +59,22 @@ def _registered_tool_names() -> list[str]:
 
 
 # ---------------------------------------------------------------------
-# 1 + 10: the tool surface no longer exposes apply_change_set; total 29;
-#          the expected authorized non-write tools still register.
+# 1 + 10: the tool surface no longer exposes apply_change_set; the
+#          expected authorized non-write tools still register.
+#
+# EXPECTED_29 was originally asserted with `==` (exact 29, exact set) --
+# that goes stale every time a legitimate new tool is added (the MCP
+# hardening pass, B1-B38, added 7 real ones since). The actual security
+# property this test exists to prove is narrower and does not go stale:
+# apply_change_set stays gone, and no tool present at the freeze point
+# silently vanished either (a subset check, not exact equality).
 # ---------------------------------------------------------------------
 
 
 def test_apply_change_set_not_in_registered_tools():
     names = _registered_tool_names()
     assert "apply_change_set" not in names
-    assert len(names) == 29
-    assert names == EXPECTED_29
+    assert set(EXPECTED_29).issubset(names)
 
 
 def test_tools_list_method_also_omits_apply_change_set():
@@ -85,7 +91,7 @@ def test_tools_list_method_also_omits_apply_change_set():
         if isinstance(reg, dict):
             seen.update(reg.keys())
     assert "apply_change_set" not in seen
-    assert seen == set(EXPECTED_29)
+    assert set(EXPECTED_29).issubset(seen)
 
 
 def test_expected_authorized_tools_still_present():
