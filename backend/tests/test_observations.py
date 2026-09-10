@@ -41,6 +41,16 @@ class TestDeterministicExtractor:
         event = {"tool_name": "Bash", "tool_input": {"command": "pytest tests/ -v"}}
         obs = extract_deterministic_observations(event)
         assert obs[0]["observation_type"] == "test_run"
+        assert "passed" not in obs[0]["properties"], "unknown must not become success"
+
+    def test_bash_test_result_preserves_the_recorded_boolean_outcome(self):
+        for success in (True, False):
+            obs = extract_deterministic_observations({
+                "tool_name": "Bash",
+                "tool_input": {"command": "pytest tests/ -q"},
+                "success": success,
+            })
+            assert obs[0]["properties"]["passed"] is success
 
     def test_bash_npm_test_produces_test_run(self):
         event = {"tool_name": "Bash", "tool_input": {"command": "npm test"}}

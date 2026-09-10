@@ -173,6 +173,21 @@ async def capture_procedure(
             f"availability must be 'active', 'quarantined' or 'disabled', got {availability!r}"
         )
 
+    # A canonical subprocedure reference is a persisted graph edge, not a
+    # best-effort execution hint.  Allocate the stable identity before the
+    # insert so the validator can also reject a self-reference, then refuse
+    # dangling/cyclic exact-version edges before this writer creates a row.
+    procedure_id = uuid7()
+    canonical_steps = steps if steps is not None else []
+    if any(isinstance(step, Mapping) and "subprocedure_ref" in step for step in canonical_steps):
+        from app.execution.procedure_graph import validate_procedure_composition_in_storage
+        await validate_procedure_composition_in_storage(
+            pool,
+            procedure_id=procedure_id,
+            procedure_version=1,
+            steps=canonical_steps,
+        )
+
     # --- V0 gate (Band 1.3): nothing enters without provenance + scope ---
     from app.services.v0_gate import validate_provenance, validate_scope
 
@@ -237,7 +252,7 @@ async def capture_procedure(
     row = await pool.fetchrow(
         """
         INSERT INTO procedures (
-            id, name, goal, steps, parameter_schema, preconditions, required_state,
+            id, procedure_id, name, goal, steps, parameter_schema, preconditions, required_state,
             expected_effects, postconditions, invariants, failure_conditions,
             scope, exclusions, family_id, evidence_refs, source_episode_ids,
             provenance, domain, domain_payload, migrated_from_task_node_id,
@@ -248,7 +263,7 @@ async def capture_procedure(
             display_name, display_description, display_metadata_version, tenant_id,
             availability
         ) VALUES (
-            $24::uuid, $1, $2, $3::jsonb, $4::jsonb, $5::jsonb, $6::jsonb,
+            $24::uuid, $40::uuid, $1, $2, $3::jsonb, $4::jsonb, $5::jsonb, $6::jsonb,
             $7::jsonb, $8::jsonb, $9::jsonb, $10::jsonb,
             $11::jsonb, $12::jsonb, $13, $14::jsonb, $15,
             $16, $17, $18::jsonb, $19,
@@ -301,6 +316,7 @@ async def capture_procedure(
         display_metadata_version,
         tenant_id,
         availability,
+        str(procedure_id),
     )
     return {"id": str(row["id"]), "procedure_id": str(row["procedure_id"])}
 
@@ -431,6 +447,20 @@ async def supersede_procedure(
 
             new_version = prior["version"] + 1
             procedure_id = prior["procedure_id"]
+
+            # A version can change its steps, but it cannot introduce an
+            # unresolved or cyclic canonical composition edge.  Validate the
+            # fully carried-forward definition, not merely changed_fields,
+            # because a non-step edit still creates a new exact version.
+            new_steps = changed["steps"] if "steps" in changed else prior["steps"]
+            if any(isinstance(step, Mapping) and "subprocedure_ref" in step for step in new_steps):
+                from app.execution.procedure_graph import validate_procedure_composition_in_storage
+                await validate_procedure_composition_in_storage(
+                    conn,
+                    procedure_id=procedure_id,
+                    procedure_version=new_version,
+                    steps=new_steps,
+                )
 
             # Build the carry-forward column list + params in a fixed order.
             insert_cols = ["id", "procedure_id", "version"]

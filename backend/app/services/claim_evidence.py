@@ -30,9 +30,12 @@ composes over what already exists and is already tested elsewhere:
 """
 from __future__ import annotations
 
+import logging
 from typing import Any, Mapping, Optional
 
 import asyncpg
+
+logger = logging.getLogger(__name__)
 
 from app.execution.evidence import outcome_to_evidence
 from app.services.access import TenantScope, tenant_transaction
@@ -52,6 +55,7 @@ async def record_claim_evidence(
     direction: Optional[str] = None,
     strength_score: float = 1.0,
     strength_method: str = "recorded_outcome",
+    independence_group: Optional[str] = None,
     context_key: Optional[str] = None,
     failure_class: Optional[str] = None,
     created_by: Optional[str] = None,
@@ -81,6 +85,19 @@ async def record_claim_evidence(
     shared-commons posture) is the honest default rather than inventing
     a parameter this module has no real caller for.
 
+    `independence_group` (V4-hardening §14 / B10): rows sharing a named
+    group NEVER count as independent corroboration of each other
+    (`db/24_evidence.sql` CHECK + the `DISTINCT COALESCE(independence_group,
+    id::text)` aggregators). Before this parameter existed every
+    claim-evidence row was self-grouped (NULL), so five writes derived
+    from the SAME source each inflated a claim's independent-evidence
+    count. A caller that knows two rows come from one underlying source
+    (same document, same deterministic fixture, same execution replayed)
+    MUST pass the same non-blank string for both. NULL stays the default:
+    self-grouped, i.e. genuinely independent. The real
+    `outcome_to_evidence()`/`validate_evidence()` gate rejects a blank
+    string verbatim -- this module does not re-implement that check.
+
     Returns the new evidence row's real `id` (as `str`).
     """
     evidence = outcome_to_evidence(
@@ -95,6 +112,7 @@ async def record_claim_evidence(
         direction=direction,
         strength_score=strength_score,
         strength_method=strength_method,
+        independence_group=independence_group,
         context_key=context_key,
         failure_class=failure_class,
         created_by=created_by or CLAIM_EVIDENCE_WRITER_STAMP,
@@ -139,7 +157,27 @@ async def record_claim_evidence(
             evidence.owner_id,
             scope.tenant_id,
         )
-    return str(inserted["id"])
+    new_id = str(inserted["id"])
+
+    # B8: a claim's belief is a function of its evidence rows -- recording
+    # one is exactly when that number must move. Best-effort and lazily
+    # imported (claim_belief -> claim_evidence would otherwise be a cycle):
+    # the evidence row is already committed and must not be rolled back by
+    # a downstream belief-recompute failure.
+    try:
+        from app.services import claim_belief
+
+        await claim_belief.recompute_claim_belief(
+            pool, claim_id, changeset_reason="claim evidence recorded"
+        )
+    except Exception:  # pragma: no cover - defensive; see docstring
+        logger.warning(
+            "record_claim_evidence: belief recompute failed for claim %s",
+            claim_id,
+            exc_info=True,
+        )
+
+    return new_id
 
 
 async def get_claim_evidence(pool: asyncpg.Pool, claim_id: str) -> list[dict]:

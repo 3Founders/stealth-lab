@@ -54,6 +54,41 @@ class FakePool:
     async def execute(self, sql, *args):
         self.executed.append((sql, args))
 
+    # Added when the trace path started opening an IngestionContext (G1):
+    # resolve_trace_ingestion_context -> open_ingestion_context uses
+    # `async with tenant_transaction(pool, ...) as conn:` which needs
+    # pool.acquire(). The fake conn just records SQL; open_ingestion_context
+    # generates its own uuid7 id and ignores the RETURNING row.
+    def acquire(self):
+        pool = self
+
+        class _Conn:
+            async def execute(self, sql, *args):
+                pool.executed.append((sql, args))
+
+            async def fetchrow(self, sql, *args):
+                pool.executed.append((sql, args))
+                return {"id": "00000000-0000-0000-0000-000000000abc"}
+
+            def transaction(self):
+                class _Txn:
+                    async def __aenter__(self_):
+                        return None
+
+                    async def __aexit__(self_, *exc):
+                        return False
+
+                return _Txn()
+
+        class _AcquireCM:
+            async def __aenter__(self_):
+                return _Conn()
+
+            async def __aexit__(self_, *exc):
+                return False
+
+        return _AcquireCM()
+
 
 def _trace_row(tool_input):
     # session_id/timestamp are real trace_events columns; Option B's

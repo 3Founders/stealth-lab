@@ -221,7 +221,9 @@ async def test_ambiguous_local_procedure_is_quarantined_not_silently_active():
     # availability is the LAST positional param in capture_procedure's
     # own INSERT values tuple (see test_skill_ingestion_offline.py's
     # _PROC_AVAILABILITY_IX pin for the same index).
-    assert pool.captured_procedures[0][-1] == "quarantined"
+    # 035adf6 appended ingestion_context_id to the procedures INSERT, so the
+    # availability value is no longer the last positional -- assert by membership.
+    assert "quarantined" in pool.captured_procedures[0]
 
 
 @pytest.mark.asyncio
@@ -231,7 +233,7 @@ async def test_clean_local_procedure_publishes_as_active():
     result = await publish_local_procedure(
         pool, local_store=store, local_row_id=row_id, actor_subject="tester@example.com",
     )
-    assert pool.captured_procedures[0][-1] == "active"
+    assert "active" in pool.captured_procedures[0]
 
 
 # ---------------------------------------------------------------------------

@@ -26,6 +26,8 @@ predicate" discipline the banking precondition work established.
 """
 from __future__ import annotations
 
+import logging
+import json
 import re
 import posixpath
 from dataclasses import dataclass, field
@@ -35,13 +37,24 @@ from typing import Any, Optional
 import asyncpg
 import yaml
 
+from app.services import artifact_blocks
+from app.services.access import TenantScope, tenant_transaction
 from app.services.applicability import find_applicable_procedures
+from app.services.claims import capture_claim
 from app.services.embeddings import Embedder
+from app.services.procedure_claim_refs import add_procedure_claim_ref
 from app.services.ingestion_admission import (
     AdmissionCheck,
     AdmissionDecision,
     classify_admission,
 )
+from app.services.ingestion_context import (
+    complete_ingestion_context,
+    open_ingestion_context,
+)
+from app.services.observations import persist_observation
+from app.services.sources import register_source
+from app.utils.ids import uuid7
 from app.services.procedure_display import (
     DISPLAY_METADATA_FALLBACK_VERSION,
     DISPLAY_METADATA_VERSION,
@@ -58,6 +71,8 @@ from app.services.retrieval_document import (
     build_procedure_retrieval_document,
     retrieval_document_sha256,
 )
+
+log = logging.getLogger(__name__)
 
 NOVELTY_THRESHOLD = 0.90
 """Same value applicability.py's own retrieval code treats as "confidently
@@ -825,6 +840,371 @@ async def ingest_skill_md(
 EXTRACTOR_VERSION_DETERMINISTIC = "skill_md_v5"
 EXTRACTOR_VERSION_GROUNDED = "skill_md_grounded_v5"
 
+# --- canonical ingestion chain (migrations 50/51) --------------------------
+# A captured / new-version SKILL.md now lands on the SAME episode ->
+# observation -> claim/evidence -> Source spine every other ingestion path
+# uses, instead of jumping straight to capture_procedure() and creating zero
+# Source / Observation / Evidence rows. Named, greppable constants -- no bare
+# literals at the call sites.
+SKILL_MD_INGESTION_SOURCE_TYPE = "document"        # sources.source_type (source_kind enum)
+SKILL_MD_INGESTION_CONTEXT_SOURCE_TYPE = "skill_md"  # ingestion_contexts.source_type (free TEXT)
+SKILL_MD_DISCOVERED_VIA = "skill_md_ingestion"
+SKILL_MD_CLASSIFICATION_PUBLIC = "PUBLIC_SOURCE"
+SKILL_MD_CLASSIFICATION_SCREENED = "system_pending_review"
+DOCUMENT_OBSERVATION_TYPE = "document_procedure"
+# A source merely ASSERTING a procedure is weak, single-origin evidence --
+# never an executed outcome. Modest strength, its own named method.
+DOCUMENT_EVIDENCE_STRENGTH = 0.3
+DOCUMENT_EVIDENCE_STRENGTH_METHOD = "source_document_assertion"
+# A fresh capture is always procedures.version = 1 (DB default, 18_procedures.sql).
+_FRESH_PROCEDURE_VERSION = 1
+
+
+async def _open_ingestion_provenance(
+    pool: asyncpg.Pool,
+    artifact: Any,
+    parsed: ParsedSkill,
+    *,
+    domain: Optional[str],
+    created_by: str,
+    extractor_version: str,
+    run_id: Optional[str],
+    injection_signals: list[str],
+    owner_id: Optional[str],
+) -> tuple[str, bool, str]:
+    """Register the document's Source (reusing an existing row on re-ingest)
+    and open the IngestionContext every derived row will stamp.
+
+    Returns ``(source_id, source_reused, ingestion_context_id)``. The Source
+    is `provenance='prior_library'` (vetted external material -- this
+    codebase's existing convention, onboarding/seed.py uses the same value);
+    a screened document still gets a real Source but its context carries the
+    `system_pending_review` classification so downstream can see it was
+    flagged."""
+    source = await register_source(
+        pool,
+        source_type=SKILL_MD_INGESTION_SOURCE_TYPE,
+        locator=artifact.uri,
+        publisher=artifact.repository,
+        title=parsed.name,
+        license=parsed.license,
+        discovered_via=SKILL_MD_DISCOVERED_VIA,
+        provenance="prior_library",
+        created_by=created_by,
+        owner_id=owner_id,
+    )
+    resolved_scope_type = "entity" if domain else "global"
+    classification = (
+        SKILL_MD_CLASSIFICATION_SCREENED if injection_signals
+        else SKILL_MD_CLASSIFICATION_PUBLIC
+    )
+    context_id = await open_ingestion_context(
+        pool,
+        source_type=SKILL_MD_INGESTION_CONTEXT_SOURCE_TYPE,
+        extractor_id=created_by,
+        extractor_version=extractor_version,
+        actor_id=created_by,
+        scope_type=resolved_scope_type,
+        scope_entity_id=domain,
+        source_ref=source["id"],
+        source_uri=artifact.uri,
+        source_hash=artifact.content_hash,
+        classification=classification,
+        owner_id=owner_id,
+        run_ref=run_id,
+    )
+    return source["id"], source["reused"], context_id
+
+
+async def _emit_document_observation(
+    pool: asyncpg.Pool,
+    parsed: ParsedSkill,
+    *,
+    ingestion_context_id: str,
+    owner_id: Optional[str],
+) -> str:
+    """One observation capturing what the source asserts: a procedure named
+    X with N steps. The document path has NO trace events, so ``event_ids``
+    is empty -- ``persist_observation`` tolerates that (its per-event link
+    loop simply does not run). ``persist_observation`` does not accept an
+    ``ingestion_context_id`` (it lives in a module this lane does not own),
+    so the migration-51 column is stamped with a follow-up UPDATE -- the
+    same pattern this file already uses for a procedure's
+    ``capability_statement``."""
+    observation_id = await persist_observation(
+        pool,
+        observation_type=DOCUMENT_OBSERVATION_TYPE,
+        label=(
+            f"source documents a procedure '{parsed.name}' "
+            f"with {len(parsed.steps)} steps"
+        ),
+        extractor_kind="deterministic",
+        event_ids=[],
+        properties={
+            "procedure_name": parsed.name,
+            "step_count": len(parsed.steps),
+            "source": "skill_md",
+        },
+        owner_id=owner_id,
+        visibility="public",
+    )
+    await pool.execute(
+        "UPDATE observations SET ingestion_context_id = $1::uuid WHERE id = $2::uuid",
+        ingestion_context_id, observation_id,
+    )
+    return observation_id
+
+
+async def _emit_document_evidence(
+    pool: asyncpg.Pool,
+    *,
+    procedure_row_id: str,
+    target_version: int,
+    source_hash: str,
+    context_key: str,
+    extractor_version: str,
+    ingestion_context_id: str,
+    created_by: str,
+) -> str:
+    """One ``evidence_type='document'`` row: the source ASSERTS this
+    procedure (``direction='supports'``), modest strength. NOT
+    outcome-bearing -> no ``outcome_status``. ``independence_group`` ties
+    every re-ingest of the same document (keyed by content hash) into one
+    group so repeated ingests never inflate independent-corroboration
+    counts. Raw INSERT mirrors ``claim_evidence.py``'s column list, plus
+    ``target_version`` (required for a procedure target,
+    ``evidence_proc_version_chk``) and the migration-51
+    ``ingestion_context_id``. Written through ``tenant_transaction``."""
+    evidence_id = uuid7()
+    scope = TenantScope.commons()
+    async with tenant_transaction(pool, scope) as conn:
+        row = await conn.fetchrow(
+            """
+            INSERT INTO evidence (
+                id, evidence_type, target_type, target_id, target_version,
+                direction, strength_score, strength_method,
+                independence_group, context_key,
+                extractor_version, created_by, visibility, tenant_id,
+                ingestion_context_id
+            ) VALUES (
+                $1::uuid, 'document', 'procedure', $2::uuid, $3,
+                'supports', $4, $5,
+                $6, $7,
+                $8, $9, 'public', $10::uuid,
+                $11::uuid
+            )
+            RETURNING id
+            """,
+            evidence_id, procedure_row_id, target_version,
+            DOCUMENT_EVIDENCE_STRENGTH, DOCUMENT_EVIDENCE_STRENGTH_METHOD,
+            f"skill_md:{source_hash}", context_key,
+            extractor_version, created_by, scope.tenant_id,
+            ingestion_context_id,
+        )
+    return str(row["id"])
+
+
+# --- B16 / G3 / B1 wiring (this pass) --------------------------------------
+# Three services that already existed, were offline-tested, but were never
+# called by the ingestion path. Wired in here, additively, on the
+# captured / new_version outcomes only, and only after the admission gate
+# returned admit or review (a reject short-circuits before any of this).
+#
+# The document's own proposition, captured as ONE explanatory Claim, is
+# linked to the procedure version as role=RATIONALE -- NOT a strong role.
+# A "this document describes X" claim is explanatory: a later change to it
+# must not auto-invalidate the procedure (that is exactly what
+# procedure_claim_refs' STRONG vs EXPLANATORY split, B5, is for).
+DOCUMENT_CLAIM_ROLE = "RATIONALE"
+DOCUMENT_CLAIM_TYPE = "procedural"
+DOCUMENT_CLAIM_REF_ORIGIN = "derived"
+# compile_skill_artifact captures procedures at capture_procedure()'s own
+# default visibility ("public"); it never threads a non-default value. The
+# derived Claim tracks that same visibility rather than inventing its own.
+_DOCUMENT_PROCEDURE_VISIBILITY = "public"
+
+
+async def _persist_document_blocks(
+    pool: asyncpg.Pool,
+    artifact: Any,
+    *,
+    artifact_id: str,
+    ingestion_context_id: str,
+    created_by: str,
+    scope_type: str,
+    scope_entity_id: Optional[str],
+) -> list[str]:
+    """B16: normalize the artifact's markdown body into immutable,
+    char-offset-addressable blocks and persist them under the artifact's
+    content hash, so a Claim / Observation derived from this document can
+    be cited back to the exact characters that justify it.
+
+    ``normalize_markdown`` returning ``[]`` (e.g. a skill_package with no
+    markdown body) is a no-op, NOT an error. Blocks are written over
+    ``artifact.content`` verbatim -- offsets are only meaningful against
+    the exact bytes whose sha256 is ``artifact.content_hash``.
+    """
+    blocks = artifact_blocks.normalize_markdown(artifact.content)
+    if not blocks:
+        return []
+    # `artifact.content` is the immutable source used by the offsets below.
+    # Blocks are a searchable projection, so never duplicate a detected
+    # secret into each normalized block. The exact source span remains
+    # available through artifact_id + source_start/source_end for authorized
+    # readers; the block text itself is safe to index/display.
+    blocks, redacted_patterns = artifact_blocks.redact_blocks_for_persistence(blocks)
+    if redacted_patterns:
+        log.warning(
+            "skill_ingestion: redacted secret-shaped content from %d derived block(s) for %s: %s",
+            len(blocks), artifact.uri, ", ".join(redacted_patterns),
+        )
+    return await artifact_blocks.persist_artifact_blocks(
+        pool,
+        artifact_id=str(artifact_id),
+        artifact_content_hash=artifact.content_hash,
+        blocks=blocks,
+        created_by=created_by,
+        ingestion_context_id=ingestion_context_id,
+        scope_type=scope_type,
+        scope_entity_id=scope_entity_id,
+    )
+
+
+async def _attach_observation_block_ref(
+    pool: asyncpg.Pool, *, observation_id: str, artifact_id: str, block_id: Optional[str],
+) -> None:
+    """Attach a durable, addressable source citation to a document Observation.
+
+    A single document-level Observation is intentionally broad; its first
+    normalized block is the stable root citation. Consumers resolve the
+    block to its immutable content hash and raw character span rather than
+    treating copied block text as authoritative source.
+    """
+    if not block_id:
+        return
+    await pool.execute(
+        "UPDATE observations SET properties = properties || $2::jsonb "
+        "WHERE id = $1::uuid",
+        observation_id,
+        json.dumps({"artifact_id": str(artifact_id), "artifact_block_id": str(block_id)}),
+    )
+
+
+async def _emit_document_screening_and_claim(
+    pool: asyncpg.Pool,
+    artifact: Any,
+    parsed: ParsedSkill,
+    *,
+    source_id: str,
+    ingestion_context_id: str,
+    observation_id: str,
+    procedure_id: str,
+    procedure_version: int,
+    capability_statement: Optional[str],
+    extractor_version: str,
+    created_by: str,
+    scope_type: Optional[str],
+    scope_entity_id: Optional[str],
+    visibility: str,
+    embedder: Optional[Embedder],
+) -> tuple[Optional[str], list[str], Optional[str]]:
+    """G3 + B1 completion.
+
+    G3 -- persist the untrusted-document screen as an auditable
+    ``screening_decisions`` record. This runs ALONGSIDE the existing
+    ``injection_signals``-based provenance downgrade in
+    ``compile_skill_artifact`` (which is unchanged and is still the thing
+    that decides provenance / ``system_pending_review``). This adds the
+    persisted audit trail that §5 requires: which detector decided, at
+    what version, over what content, and why.
+
+    A ``screen_document_text`` REJECT verdict is RECORDED and warned about
+    here but does NOT abort capture -- the existing admission gate +
+    injection screen already decided this row's fate, and whether a screen
+    REJECT should additionally hard-block capture is a deliberate policy
+    call left for a later pass.
+
+    B1 -- the document path already emits an Observation + a procedure
+    Evidence row but no Claim. Derive exactly ONE explanatory Claim from
+    the document's own core proposition, anchored purely by
+    document / observation provenance (B7: no task, no episode), and link
+    it to the procedure version as ``role=RATIONALE`` (explanatory, never
+    a hard precondition -- see B5 role-awareness).
+
+    Returns ``(screening_decision, screening_decision_ids, document_claim_id)``.
+    """
+    from app.services import screening  # deferred: screening imports this module
+
+    # --- G3: persisted screening audit record ---
+    findings = screening.screen_document_text(
+        artifact.content, name=parsed.name, steps=parsed.steps,
+    )
+    screen_result = await screening.record_screening_run(
+        pool,
+        findings=findings,
+        ingestion_context_id=ingestion_context_id,
+        source_ref=source_id,
+        artifact_uri=artifact.uri,
+        content_hash=artifact.content_hash,
+        created_by=created_by,
+    )
+    screening_decision = screen_result["decision"]
+    screening_decision_ids = list(screen_result["decision_ids"])
+    if screening_decision == "REJECT":
+        # POLICY NOTE: capture is intentionally NOT aborted on a screen
+        # REJECT in this pass. The admission gate and the injection screen
+        # above already gate this row; making screen_document_text a
+        # capture-blocking gate is a separate policy decision. Recorded +
+        # warned so the audit trail carries it either way.
+        log.warning(
+            "skill_ingestion: screen_document_text REJECT for %s "
+            "(%d finding(s)); row still captured per existing flow",
+            artifact.uri, len(findings),
+        )
+
+    # --- B1: one explanatory Claim from the document's core proposition ---
+    proposition = parsed.description or capability_statement or parsed.name
+    statement = (
+        f"The source {artifact.uri} documents a procedure for: {proposition}"
+    )
+    document_claim_id = await capture_claim(
+        pool,
+        statement=statement,
+        task_ids=[],
+        source_ref=source_id,
+        ingestion_context_id=ingestion_context_id,
+        observation_id=observation_id,
+        created_by=created_by,
+        scope_type=scope_type,
+        scope_entity_id=scope_entity_id,
+        visibility=visibility,
+        embedder=embedder,
+        claim_type=DOCUMENT_CLAIM_TYPE,
+    )
+    if document_claim_id is None:
+        # Should not happen: source_ref + ingestion_context_id +
+        # observation_id are all valid B7 anchors. If capture_claim still
+        # no-ops, there is no claim to link -- skip the ref, don't guess.
+        log.warning(
+            "skill_ingestion: capture_claim returned None for %s despite "
+            "document/observation provenance; skipping procedure_claim_ref",
+            artifact.uri,
+        )
+    else:
+        await add_procedure_claim_ref(
+            pool,
+            procedure_id=str(procedure_id),
+            procedure_version=int(procedure_version),
+            claim_id=document_claim_id,
+            role=DOCUMENT_CLAIM_ROLE,
+            ref_origin=DOCUMENT_CLAIM_REF_ORIGIN,
+            extractor_version=extractor_version,
+            ingestion_context_id=ingestion_context_id,
+            created_by=created_by,
+        )
+    return screening_decision, screening_decision_ids, document_claim_id
+
+
 _SKILL_ABSTRACTION_SYSTEM_PROMPT = """You restate a software skill's capability as ONE abstract, \
 reusable sentence.
 
@@ -901,6 +1281,34 @@ class IngestOutcome:
     admission_decision: Optional[str] = None
     quarantined: bool = False
     admission_escalated: bool = False
+    # Canonical ingestion chain (migrations 50/51): the Source the document
+    # was registered as, the IngestionContext every derived row stamps, and
+    # the one Observation + one document-Evidence row that chain emits.
+    # None on outcomes that do not run the chain (unchanged / duplicate /
+    # rejected).
+    source_id: Optional[str] = None
+    ingestion_context_id: Optional[str] = None
+    observation_id: Optional[str] = None
+    document_evidence_id: Optional[str] = None
+    # B16 / G3 / B1 completion (this pass), on captured / new_version only:
+    #   - artifact_block_ids: the immutable, char-offset-addressable blocks
+    #     persisted from the document body so a derived Claim/Observation
+    #     can be cited back to an exact source span. [] when the body has
+    #     no markdown structure (e.g. a package with no SKILL.md prose).
+    #   - screening_decision / screening_decision_ids: the PERSISTED
+    #     screening verdict ("ALLOW"/"QUARANTINE"/"REJECT") and its
+    #     screening_decisions row ids. This is the audit trail that runs
+    #     ALONGSIDE the existing injection_signals provenance downgrade --
+    #     it does not itself change the capture decision (a screen REJECT
+    #     is recorded + warned, not enforced here -- deferred policy call).
+    #   - document_claim_id: the one explanatory Claim ("this source
+    #     documents a procedure for X") derived from the document's own
+    #     proposition, linked to the procedure version as role=RATIONALE
+    #     (so a later change to it never auto-invalidates the procedure).
+    artifact_block_ids: list[str] = field(default_factory=list)
+    screening_decision: Optional[str] = None
+    screening_decision_ids: list[str] = field(default_factory=list)
+    document_claim_id: Optional[str] = None
 
 
 def _slugify(text: str, *, maxlen: int = 80) -> str:
@@ -1269,7 +1677,13 @@ async def _write_artifact_row(
     procedure_row_id: Optional[str], extractor_version: str,
     owner_id: Optional[str] = None,
     admission: Optional[Any] = None,
+    source_ref: Optional[str] = None,
+    ingestion_context_id: Optional[str] = None,
 ) -> str:
+    # source_ref / ingestion_context_id (migrations 50/51): point this
+    # per-artifact provenance row AT the Source identity anchor and the
+    # IngestionContext that produced it. Nullable -- the duplicate path has
+    # no context, and legacy rows keep NULL.
     admission_values = _admission_audit_values(admission)
     if getattr(artifact, "source_type", None) == "skill_package":
         package = normalize_skill_package(artifact)
@@ -1278,12 +1692,13 @@ async def _write_artifact_row(
             "\"commit\", content_hash, extractor_version, procedure_id, procedure_row_id, "
             "run_id, first_seen, last_seen, owner_id, source_id, retrieved_at, "
             "license_metadata, bundle_hash, resource_manifest, parsed_metadata, "
-            "dependencies, requirements, " + _ADMISSION_AUDIT_COLUMNS + ") "
+            "dependencies, requirements, " + _ADMISSION_AUDIT_COLUMNS + ", "
+            "source_ref, ingestion_context_id) "
             "VALUES (gen_random_uuid(), $1, $2, $3, $4, "
             "$5, $6, $7, $8::uuid, $9::uuid, $10::uuid, now(), now(), $11, $12, $13, "
             "$14::jsonb, $15, $16::jsonb, $17::jsonb, $18::jsonb, $19::jsonb, "
-            "$20::ingestion_admission_decision, $21::jsonb, $22, $23, $24, $25, $26, $27) "
-            "RETURNING id",
+            "$20::ingestion_admission_decision, $21::jsonb, $22, $23, $24, $25, $26, $27, "
+            "$28::uuid, $29::uuid) RETURNING id",
             artifact.source_type, artifact.uri, artifact.repository, artifact.path,
             artifact.commit, artifact.bundle_hash or artifact.content_hash, extractor_version,
             procedure_id, procedure_row_id, run_id, owner_id, artifact.source_id,
@@ -1294,20 +1709,23 @@ async def _write_artifact_row(
             [d.__dict__ for d in package.dependencies],
             {"tools": list(package.tool_requirements), "compatibility": parse_skill_md(artifact.content).compatibility},
             *admission_values,
+            source_ref, ingestion_context_id,
         )
         return str(row["id"])
     row = await pool.fetchrow(
         "INSERT INTO ingested_artifacts (id, source_type, uri, repository, path, "
         "\"commit\", content_hash, extractor_version, procedure_id, procedure_row_id, "
-        "run_id, first_seen, last_seen, owner_id, " + _ADMISSION_AUDIT_COLUMNS + ") "
+        "run_id, first_seen, last_seen, owner_id, " + _ADMISSION_AUDIT_COLUMNS + ", "
+        "source_ref, ingestion_context_id) "
         "VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, $6, $7, $8::uuid, $9::uuid, "
         "$10::uuid, now(), now(), $11, "
-        "$12::ingestion_admission_decision, $13::jsonb, $14, $15, $16, $17, $18, $19) "
-        "RETURNING id",
+        "$12::ingestion_admission_decision, $13::jsonb, $14, $15, $16, $17, $18, $19, "
+        "$20::uuid, $21::uuid) RETURNING id",
         artifact.source_type, artifact.uri, artifact.repository, artifact.path,
         artifact.commit, artifact.content_hash, extractor_version,
         procedure_id, procedure_row_id, run_id, owner_id,
         *admission_values,
+        source_ref, ingestion_context_id,
     )
     return str(row["id"])
 
@@ -1353,9 +1771,16 @@ async def _persist_package_relations(
         implementation_id = str(row["id"])
         implementation_ids.append(implementation_id)
         await pool.execute(
+            # Migration 52 dropped the old UNIQUE (procedure_id, implementation_id)
+            # in favour of the partial identity index
+            # idx_procedure_implementations_identity (procedure_id,
+            # implementation_id, role) WHERE t_invalid IS NULL. This INSERT
+            # omits `role`, so the row takes role='primary' by DEFAULT and the
+            # conflict target must name all three columns of that index.
             "INSERT INTO procedure_implementations (id, procedure_id, implementation_id, "
             "resource_path, created_by) VALUES (gen_random_uuid(), $1::uuid, $2::uuid, $3, $4) "
-            "ON CONFLICT (procedure_id, implementation_id) DO NOTHING",
+            "ON CONFLICT (procedure_id, implementation_id, role) WHERE t_invalid IS NULL "
+            "DO NOTHING",
             procedure_id, implementation_id, resource.path, created_by,
         )
     for dependency in package.dependencies:
@@ -1473,6 +1898,10 @@ async def compile_skill_artifact(
             injection_screened=bool(injection_signals), admission_decision="reject",
         )
     quarantined = admission.decision == "review"
+    # The parent procedure's own scope -- inherited verbatim by the
+    # artifact blocks (B16) and the derived document Claim (B1); a step /
+    # block / claim is only ever as scoped as the procedure it belongs to.
+    resolved_scope_type = "entity" if domain else "global"
 
     capability_statement = (
         None if (injection_signals or quarantined) else _abstract_capability(client, parsed)
@@ -1597,16 +2026,66 @@ async def compile_skill_artifact(
                 )
                 marked_stale = True
 
-            task_node_ids = []
-            if artifact.source_type != "skill_package":
-                task_node_ids = await _write_task_nodes(
-                    pool, procedure_row_id=superseded["id"],
-                    steps=parsed.steps, created_by=created_by,
-                    scope_type="entity" if domain else "global", scope_entity_id=domain,
+            # --- canonical ingestion chain (migrations 50/51) ---
+            source_id, _source_reused, ingestion_context_id = (
+                await _open_ingestion_provenance(
+                    pool, artifact, parsed, domain=domain, created_by=created_by,
+                    extractor_version=extractor_version, run_id=run_id,
+                    injection_signals=injection_signals, owner_id=owner_id,
                 )
+            )
+            await pool.execute(
+                "UPDATE procedures SET ingestion_context_id = $1::uuid WHERE id = $2::uuid",
+                ingestion_context_id, superseded["id"],
+            )
+            observation_id = await _emit_document_observation(
+                pool, parsed, ingestion_context_id=ingestion_context_id,
+                owner_id=owner_id,
+            )
+
+            superseded_version = int(
+                superseded.get("version") or _FRESH_PROCEDURE_VERSION
+            )
+            # G3 (persisted screening audit) + B1 (one explanatory
+            # document Claim linked role=RATIONALE). Additive: does not
+            # touch the injection-screen downgrade or the Observation /
+            # Evidence emit above.
+            (
+                screening_decision,
+                screening_decision_ids,
+                document_claim_id,
+            ) = await _emit_document_screening_and_claim(
+                pool, artifact, parsed,
+                source_id=source_id,
+                ingestion_context_id=ingestion_context_id,
+                observation_id=observation_id,
+                procedure_id=str(superseded["procedure_id"]),
+                procedure_version=superseded_version,
+                capability_statement=capability_statement,
+                extractor_version=extractor_version,
+                created_by=created_by,
+                scope_type=resolved_scope_type,
+                scope_entity_id=domain,
+                visibility=_DOCUMENT_PROCEDURE_VISIBILITY,
+                embedder=embedder,
+            )
+
+            # B2: task_nodes are NOT manufactured from source steps at
+            # ingestion time. Migration 39's own header ("does not
+            # materialize generic source steps as task_nodes") and
+            # V4-hardening rule 8 ("NO REUSABLE TASK ONTOLOGY"). The
+            # procedure's `steps` JSON is the sole home of the step list.
+            task_node_ids: list[str] = []
             implementation_ids, dependency_count = await _persist_package_relations(
                 pool, artifact, parsed, procedure_id=str(superseded["procedure_id"]),
                 created_by=created_by,
+            )
+            document_evidence_id = await _emit_document_evidence(
+                pool, procedure_row_id=str(superseded["id"]),
+                target_version=superseded_version,
+                source_hash=artifact.content_hash,
+                context_key=artifact.uri, extractor_version=extractor_version,
+                ingestion_context_id=ingestion_context_id, created_by=created_by,
             )
             artifact_id = await _write_artifact_row(
                 pool, artifact, run_id=run_id,
@@ -1614,6 +2093,21 @@ async def compile_skill_artifact(
                 procedure_row_id=superseded["id"],
                 extractor_version=extractor_version, owner_id=owner_id,
                 admission=admission,
+                source_ref=source_id, ingestion_context_id=ingestion_context_id,
+            )
+            # B16: immutable, source-span-addressable blocks of the
+            # document body, keyed on the artifact row + its content hash.
+            artifact_block_ids = await _persist_document_blocks(
+                pool, artifact, artifact_id=artifact_id,
+                ingestion_context_id=ingestion_context_id, created_by=created_by,
+                scope_type=resolved_scope_type, scope_entity_id=domain,
+            )
+            await _attach_observation_block_ref(
+                pool, observation_id=observation_id, artifact_id=artifact_id,
+                block_id=artifact_block_ids[0] if artifact_block_ids else None,
+            )
+            await complete_ingestion_context(
+                pool, ingestion_context_id, status="completed",
             )
             return IngestOutcome(
                 status="new_version",
@@ -1629,6 +2123,14 @@ async def compile_skill_artifact(
                 dependency_count=dependency_count,
                 admission_decision=admission.decision, quarantined=quarantined,
                 admission_escalated=admission.escalated,
+                source_id=source_id,
+                ingestion_context_id=ingestion_context_id,
+                observation_id=observation_id,
+                document_evidence_id=document_evidence_id,
+                artifact_block_ids=artifact_block_ids,
+                screening_decision=screening_decision,
+                screening_decision_ids=screening_decision_ids,
+                document_claim_id=document_claim_id,
             )
         # prior row already gone (concurrent merge/supersede) -- fall
         # through and treat this as a fresh capture.
@@ -1670,6 +2172,17 @@ async def compile_skill_artifact(
         )
 
     # --- fresh capture ---
+    # Canonical ingestion chain (migrations 50/51): register the Source and
+    # open the IngestionContext BEFORE capture_procedure, so every derived
+    # row (procedure, observation, document evidence, artifact) can stamp
+    # ingestion_context_id.
+    source_id, _source_reused, ingestion_context_id = (
+        await _open_ingestion_provenance(
+            pool, artifact, parsed, domain=domain, created_by=created_by,
+            extractor_version=extractor_version, run_id=run_id,
+            injection_signals=injection_signals, owner_id=owner_id,
+        )
+    )
     result = await capture_procedure(
         pool, name=parsed.name, goal=parsed.description, steps=steps_json,
         provenance=provenance, domain=domain,
@@ -1700,22 +2213,75 @@ async def compile_skill_artifact(
             "UPDATE procedures SET capability_statement = $2 WHERE id = $1::uuid",
             result["id"], capability_statement,
         )
-    task_node_ids = []
-    if artifact.source_type != "skill_package":
-        task_node_ids = await _write_task_nodes(
-            pool, procedure_row_id=result["id"], steps=parsed.steps, created_by=created_by,
-            scope_type="entity" if domain else "global", scope_entity_id=domain,
-        )
+    # Stamp the procedure with its IngestionContext (follow-up UPDATE --
+    # capture_procedure has no ingestion_context_id kwarg and lives in a
+    # module this lane does not own; same pattern as capability_statement).
+    await pool.execute(
+        "UPDATE procedures SET ingestion_context_id = $1::uuid WHERE id = $2::uuid",
+        ingestion_context_id, result["id"],
+    )
+    observation_id = await _emit_document_observation(
+        pool, parsed, ingestion_context_id=ingestion_context_id, owner_id=owner_id,
+    )
+
+    # G3 (persisted screening audit) + B1 (one explanatory document Claim
+    # linked role=RATIONALE). Additive: the injection-screen downgrade and
+    # the Observation / Evidence emit are untouched.
+    (
+        screening_decision,
+        screening_decision_ids,
+        document_claim_id,
+    ) = await _emit_document_screening_and_claim(
+        pool, artifact, parsed,
+        source_id=source_id,
+        ingestion_context_id=ingestion_context_id,
+        observation_id=observation_id,
+        procedure_id=str(result["procedure_id"]),
+        procedure_version=_FRESH_PROCEDURE_VERSION,
+        capability_statement=capability_statement,
+        extractor_version=extractor_version,
+        created_by=created_by,
+        scope_type=resolved_scope_type,
+        scope_entity_id=domain,
+        visibility=_DOCUMENT_PROCEDURE_VISIBILITY,
+        embedder=embedder,
+    )
+
+    # B2: task_nodes are NOT manufactured from source steps at ingestion
+    # time -- migration 39's own header and V4-hardening rule 8 ("NO
+    # REUSABLE TASK ONTOLOGY"). The procedure's `steps` JSON is the sole
+    # home of the step list.
+    task_node_ids: list[str] = []
     implementation_ids, dependency_count = await _persist_package_relations(
         pool, artifact, parsed, procedure_id=str(result["procedure_id"]),
         created_by=created_by,
+    )
+    document_evidence_id = await _emit_document_evidence(
+        pool, procedure_row_id=str(result["id"]),
+        target_version=_FRESH_PROCEDURE_VERSION,
+        source_hash=artifact.content_hash,
+        context_key=artifact.uri, extractor_version=extractor_version,
+        ingestion_context_id=ingestion_context_id, created_by=created_by,
     )
     artifact_id = await _write_artifact_row(
         pool, artifact, run_id=run_id,
         procedure_id=result["procedure_id"], procedure_row_id=result["id"],
         extractor_version=extractor_version, owner_id=owner_id,
         admission=admission,
+        source_ref=source_id, ingestion_context_id=ingestion_context_id,
     )
+    # B16: immutable, source-span-addressable blocks of the document body,
+    # keyed on the artifact row + its content hash.
+    artifact_block_ids = await _persist_document_blocks(
+        pool, artifact, artifact_id=artifact_id,
+        ingestion_context_id=ingestion_context_id, created_by=created_by,
+        scope_type=resolved_scope_type, scope_entity_id=domain,
+    )
+    await _attach_observation_block_ref(
+        pool, observation_id=observation_id, artifact_id=artifact_id,
+        block_id=artifact_block_ids[0] if artifact_block_ids else None,
+    )
+    await complete_ingestion_context(pool, ingestion_context_id, status="completed")
     return IngestOutcome(
         status="captured",
         procedure_id=result["procedure_id"],
@@ -1729,6 +2295,14 @@ async def compile_skill_artifact(
         reason=screen_reason or (admission.reason if quarantined else None),
         implementation_ids=implementation_ids,
         dependency_count=dependency_count,
+        artifact_block_ids=artifact_block_ids,
+        screening_decision=screening_decision,
+        screening_decision_ids=screening_decision_ids,
+        document_claim_id=document_claim_id,
+        source_id=source_id,
+        ingestion_context_id=ingestion_context_id,
+        observation_id=observation_id,
+        document_evidence_id=document_evidence_id,
     )
 
 
@@ -1795,6 +2369,22 @@ async def run_skill_ingestion(
         "admission_rejected": 0,
         "quarantined": 0,
         "admission_escalated": 0,
+        # Canonical ingestion chain (migrations 50/51): one Source row, one
+        # Observation, one document-Evidence row per accepted artifact.
+        "sources": 0,
+        "observations": 0,
+        "document_evidence": 0,
+        # B16 / G3 / B1 completion (this pass): artifact blocks persisted,
+        # persisted screening verdicts by tier, and derived document
+        # Claims. `screening_quarantine`/`screening_reject` count the
+        # PERSISTED screen verdict (screening.decide) -- distinct from
+        # `quarantined` (the admission gate's decision) and `screened`
+        # (the injection-signal downgrade); a screen REJECT here is
+        # recorded, not enforced.
+        "artifact_blocks": 0,
+        "screening_quarantine": 0,
+        "screening_reject": 0,
+        "document_claims": 0,
     }
     outcomes: list[IngestOutcome] = []
 
@@ -1843,6 +2433,19 @@ async def run_skill_ingestion(
             metrics["quarantined"] += 1
         if outcome.admission_escalated:
             metrics["admission_escalated"] += 1
+        if outcome.source_id:
+            metrics["sources"] += 1
+        if outcome.observation_id:
+            metrics["observations"] += 1
+        if outcome.document_evidence_id:
+            metrics["document_evidence"] += 1
+        metrics["artifact_blocks"] += len(outcome.artifact_block_ids)
+        if outcome.screening_decision == "QUARANTINE":
+            metrics["screening_quarantine"] += 1
+        elif outcome.screening_decision == "REJECT":
+            metrics["screening_reject"] += 1
+        if outcome.document_claim_id:
+            metrics["document_claims"] += 1
 
     await resolve_procedure_dependencies(pool)
 

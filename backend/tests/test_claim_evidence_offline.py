@@ -166,6 +166,67 @@ def test_record_claim_evidence_defaults_writer_stamp_when_created_by_omitted():
     assert insert_args[13] == "claim_evidence.record_claim_evidence@v1"
 
 
+def test_record_claim_evidence_forwards_independence_group_to_the_insert():
+    """B10 / V4-hardening §14: a caller that knows two rows share one
+    underlying source can pass a named group so they stop counting as
+    independent. The group binds at arg index 8 -- the same position
+    procedures.py's real evidence writer uses."""
+    conn = FakeConn()
+    pool = FakeTxnPool(conn)
+
+    _run(record_claim_evidence(
+        pool,
+        claim_id=CLAIM_ID,
+        evidence_type="execution_result",
+        outcome_status="success",
+        success_criteria={"predicate": "the source asserts X"},
+        independence_group="skill_md:acme/repo@deadbeef",
+    ))
+
+    _, insert_args = next(
+        (s, p) for s, p in conn.statements if "INSERT INTO evidence" in s
+    )
+    assert insert_args[8] == "skill_md:acme/repo@deadbeef"
+
+
+def test_record_claim_evidence_independence_group_defaults_to_null_self_grouped():
+    conn = FakeConn()
+    pool = FakeTxnPool(conn)
+
+    _run(record_claim_evidence(
+        pool,
+        claim_id=CLAIM_ID,
+        evidence_type="execution_result",
+        outcome_status="success",
+        success_criteria={"metrics": {"ok": True}},
+    ))
+
+    _, insert_args = next(
+        (s, p) for s, p in conn.statements if "INSERT INTO evidence" in s
+    )
+    assert insert_args[8] is None
+
+
+def test_record_claim_evidence_rejects_a_blank_independence_group():
+    """The reused outcome_to_evidence() gate refuses a blank group
+    (a blank would silently merge every blank-grouped row into one
+    non-corroborating bucket). Not re-implemented here -- just proven
+    to still apply through this call path."""
+    conn = FakeConn()
+    pool = FakeTxnPool(conn)
+
+    with pytest.raises(EvidenceViolation):
+        _run(record_claim_evidence(
+            pool,
+            claim_id=CLAIM_ID,
+            evidence_type="execution_result",
+            outcome_status="success",
+            success_criteria={"predicate": "x"},
+            independence_group="   ",
+        ))
+    assert conn.statements == [], "a rejected payload must never reach the INSERT"
+
+
 def test_record_claim_evidence_rejects_bare_success_with_no_criteria():
     """The real outcome_to_evidence()/validate_evidence() gate applies
     verbatim -- invariant #13 is not re-implemented, just reused."""
@@ -180,6 +241,88 @@ def test_record_claim_evidence_rejects_bare_success_with_no_criteria():
             outcome_status="success",
         ))
     assert conn.statements == [], "a rejected payload must never reach the INSERT"
+
+
+# ---------------------------------------------------------------------
+# B8 hook: recording claim evidence triggers a belief recompute
+# ---------------------------------------------------------------------
+
+
+class _BeliefHookPool:
+    """Pool + conn in one, wide enough for record_claim_evidence AND the
+    claim_belief.recompute_claim_belief hook it fires afterwards
+    (get_claim_evidence fetch, open-conflict fetchval, the belief UPDATE
+    inside a tenant_transaction, and the ChangeSet insert)."""
+
+    def __init__(self):
+        self.statements: list[tuple[str, tuple]] = []
+        self.executemany_calls: list[tuple[str, list]] = []
+
+    class _CM:
+        def __init__(self, val):
+            self._val = val
+
+        async def __aenter__(self):
+            return self._val
+
+        async def __aexit__(self, *exc):
+            return False
+
+    def acquire(self):
+        return _BeliefHookPool._CM(self)
+
+    def transaction(self):
+        return _BeliefHookPool._CM(None)
+
+    async def execute(self, sql, *args):
+        self.statements.append((_norm(sql), args))
+        return "OK"
+
+    async def fetch(self, sql, *args):
+        self.statements.append((_norm(sql), args))
+        if "FROM evidence" in _norm(sql):
+            return []  # belief recompute reads live evidence; empty is fine
+        raise AssertionError(f"unexpected fetch: {_norm(sql)[:120]}")
+
+    async def fetchrow(self, sql, *args):
+        self.statements.append((_norm(sql), args))
+        if "INSERT INTO evidence" in _norm(sql):
+            return _Row({"id": args[0]})
+        raise AssertionError(f"unexpected fetchrow: {_norm(sql)[:120]}")
+
+    async def fetchval(self, sql, *args):
+        self.statements.append((_norm(sql), args))
+        n = _norm(sql)
+        if "FROM knowledge_nodes k WHERE k.id = $1::uuid" in n:
+            return False
+        if "INSERT INTO change_sets" in n:
+            return "11111111-1111-1111-1111-111111111111"
+        raise AssertionError(f"unexpected fetchval: {n[:120]}")
+
+    async def executemany(self, sql, args):
+        self.executemany_calls.append((_norm(sql), list(args)))
+        return "OK"
+
+
+def test_record_claim_evidence_triggers_belief_recompute():
+    pool = _BeliefHookPool()
+
+    _run(record_claim_evidence(
+        pool,
+        claim_id=CLAIM_ID,
+        evidence_type="execution_result",
+        outcome_status="success",
+        success_criteria={"predicate": "ran without error"},
+    ))
+
+    sqls = [s for s, _ in pool.statements]
+    ev_insert = next(i for i, s in enumerate(sqls) if "INSERT INTO evidence" in s)
+    belief_upd = next(i for i, s in enumerate(sqls) if "UPDATE knowledge_nodes SET belief_score" in s)
+    assert ev_insert < belief_upd, "belief recompute runs AFTER the evidence row is written"
+    assert any("INSERT INTO change_sets" in s for s in sqls), "recompute must record a ChangeSet"
+    assert pool.executemany_calls, "ChangeSet operations row must be written"
+    op = pool.executemany_calls[0][1][0]
+    assert op[2] == "knowledge_nodes" and op[3] == CLAIM_ID
 
 
 # ---------------------------------------------------------------------

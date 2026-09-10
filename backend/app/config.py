@@ -12,11 +12,18 @@ message rather than an opaque None.
 """
 from __future__ import annotations
 
+import os
 from functools import lru_cache
 from pathlib import Path
 from typing import Optional
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# V4-hardening Testing §T1 ("NO SYNTHETIC FALLBACKS"): the only three
+# runtime environments the substrate recognises. Anything else is a
+# misconfiguration and is treated as PRODUCTION (strictest) by
+# `Settings.environment` below -- fail closed, never fail open.
+_RUNTIME_ENVIRONMENTS = ("TEST", "STAGING", "PRODUCTION")
 
 # backend/, i.e. the directory that actually holds .env.
 #
@@ -358,9 +365,57 @@ class Settings(BaseSettings):
     # signal here is errors. Overridable per deployment.
     sentry_traces_sample_rate: float = 0.1
     # Tags every event so api/mcp/worker errors are separable in one
-    # project rather than three.
-    environment: str = "local"
+    # project rather than three. `environment` is now a computed property
+    # (see below): the tri-state TEST/STAGING/PRODUCTION reading doubles as
+    # Sentry's environment tag, which is strictly more informative than the
+    # former literal "local".
     release: Optional[str] = None
+
+    # --- Explicit runtime environment (V4-hardening T1 / K->T1) ----------
+    # Tri-state: TEST | STAGING | PRODUCTION. Deliberately a COMPUTED
+    # PROPERTY, not a stored pydantic field:
+    #   1. it must re-read os.environ on every access so the pytest bypass
+    #      (rule 4 below) needs no conftest/fixture change touching every
+    #      test in the suite;
+    #   2. fail closed -- an unset OR unrecognised value resolves to
+    #      PRODUCTION, the strictest reading, never to a permissive guess.
+    #      Blanking an env var must never be a way to unlock TEST-only
+    #      fakes (mock embedder, no-op auth, in-memory storage).
+    #
+    # Resolution precedence, first hit wins:
+    #   1. STEALTHLAB_ENV env var, upper-cased, if one of the tri-state;
+    #   2. ENVIRONMENT env var (legacy fallback), same normalisation;
+    #      -- for 1 and 2, an explicit but UNRECOGNISED value yields
+    #         PRODUCTION (fail closed) and does NOT fall through to pytest
+    #         detection: a garbled explicit signal is a misconfiguration,
+    #         not licence to run as TEST;
+    #   3. PYTEST_CURRENT_TEST present in os.environ  -> TEST (pytest sets
+    #      this per test; keeps the offline suite green with zero edits);
+    #   4. otherwise                                  -> PRODUCTION.
+    # A recognised explicit value ALWAYS beats the pytest heuristic, so a
+    # test may still exercise STAGING/PRODUCTION by exporting STEALTHLAB_ENV.
+    @property
+    def environment(self) -> str:
+        for _var in ("STEALTHLAB_ENV", "ENVIRONMENT"):
+            _raw = os.environ.get(_var)
+            if _raw and _raw.strip():
+                _norm = _raw.strip().upper()
+                return _norm if _norm in _RUNTIME_ENVIRONMENTS else "PRODUCTION"
+        if os.environ.get("PYTEST_CURRENT_TEST"):
+            return "TEST"
+        return "PRODUCTION"
+
+    @property
+    def is_test(self) -> bool:
+        return self.environment == "TEST"
+
+    @property
+    def is_staging(self) -> bool:
+        return self.environment == "STAGING"
+
+    @property
+    def is_production(self) -> bool:
+        return self.environment == "PRODUCTION"
 
     def require(self, field: str) -> str:
         value = getattr(self, field, None)

@@ -207,6 +207,81 @@ async def fetch_procedure_version(pool: Any, procedure_id: UUID, version: int) -
 FetchProcedureVersion = Callable[[UUID, int], Awaitable[Optional[Mapping[str, Any]]]]
 
 
+# --------------------------------------------------------- write validation
+
+
+async def validate_procedure_composition_definition(
+    fetch: FetchProcedureVersion,
+    *,
+    procedure_id: UUID,
+    procedure_version: int,
+    steps: list[dict],
+    max_depth: int = DEFAULT_MAX_COMPOSITION_DEPTH,
+) -> None:
+    """Validate a canonical procedure definition before it is persisted.
+
+    Expansion remains a necessary defence for historical/direct-DB rows,
+    but it is too late to be the *only* defence: a supported writer must not
+    save a dangling or cyclic canonical dependency and defer the failure to a
+    later execution.  References are exact-version edges, so validation walks
+    those exact edges only; it deliberately does not resolve a newer version
+    of a referenced procedure.
+
+    ``fetch`` is injected for the same reason it is in
+    :func:`expand_composed_nodes`: the graph rule is independently testable
+    and the storage adapter remains small.
+    """
+    async def _walk(
+        current_steps: list[dict],
+        chain: tuple[tuple[UUID, int], ...],
+        depth: int,
+    ) -> None:
+        if depth > max_depth:
+            raise ProcedureCompositionDepthExceeded(
+                f"V-COMPOSE: canonical definition nested past max_depth={max_depth}"
+            )
+        for step in current_steps:
+            ref = _step_ref(step)
+            if ref is None:
+                continue
+            key = (ref.procedure_id, ref.version)
+            if key in chain:
+                raise ProcedureCompositionCycle(
+                    f"V-COMPOSE: canonical composition cycle -- procedure {key[0]} "
+                    f"v{key[1]} is already in dependency chain {chain}"
+                )
+            child = await fetch(*key)
+            if child is None:
+                raise UnresolvedSubprocedureRef(
+                    f"V-COMPOSE: pinned sub-procedure {key[0]} v{key[1]} does not "
+                    "exist -- refusing to persist an unresolved canonical dependency"
+                )
+            await _walk(child.get("steps") or [], chain + (key,), depth + 1)
+
+    await _walk(steps, ((procedure_id, procedure_version),), 0)
+
+
+async def validate_procedure_composition_in_storage(
+    pool: Any,
+    *,
+    procedure_id: UUID,
+    procedure_version: int,
+    steps: list[dict],
+    max_depth: int = DEFAULT_MAX_COMPOSITION_DEPTH,
+) -> None:
+    """Storage-backed writer gate for canonical composition definitions."""
+    async def _fetch(pid: UUID, version: int) -> Optional[dict]:
+        return await fetch_procedure_version(pool, pid, version)
+
+    await validate_procedure_composition_definition(
+        _fetch,
+        procedure_id=procedure_id,
+        procedure_version=procedure_version,
+        steps=steps,
+        max_depth=max_depth,
+    )
+
+
 # ------------------------------------------------------------- splicing
 
 

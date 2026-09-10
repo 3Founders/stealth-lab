@@ -72,12 +72,21 @@ def test_real_skill_md_ingestion_end_to_end():
             assert row["domain_payload"]["source"]["source_type"] == "skill_md"
             assert row["domain_payload"]["source"]["content_hash"]
 
-            # Real task_nodes + edges (brief §4/§4 mapping).
+            # V4-hardening B2 / rule 8 ("NO REUSABLE TASK ONTOLOGY"):
+            # document ingestion no longer materialises a task_nodes row per
+            # parsed step. task_nodes are execution-time only. The procedure's
+            # own `steps` JSON carries the ordered actions; nothing is owed
+            # to `task_nodes` at ingestion.
             edges = await pool.fetch(
                 "SELECT target_id FROM edges WHERE source_id = $1 AND source_table = 'procedures' "
                 "AND target_table = 'task_nodes'", row["id"],
             )
-            assert len(edges) == 5, "the fixture's 5 numbered steps must each produce a task_nodes row"
+            assert edges == [], (
+                "B2: skill_md ingestion must NOT manufacture task_nodes -- "
+                f"found {len(edges)} DECOMPOSES_TO edges"
+            )
+            steps = row["domain_payload"].get("source", {})  # sanity: the row still exists
+            assert steps.get("source_type") == "skill_md"
 
             # Real ingested_artifacts row (brief §7/§11 provenance).
             artifact = await pool.fetchrow(

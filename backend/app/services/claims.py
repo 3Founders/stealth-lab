@@ -37,6 +37,7 @@ fold in.
 """
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any, Literal, Optional
 
@@ -45,6 +46,8 @@ from pydantic import BaseModel, Field
 
 from app.services.access import AccessScope, TenantScope, scope_predicates
 from app.services.embeddings import Embedder, to_pgvector
+
+logger = logging.getLogger(__name__)
 
 CREATED_BY = "claim_capture"
 
@@ -160,6 +163,9 @@ async def capture_claim(
     visibility: str = "public",
     scope_type: Optional[str] = None,
     scope_entity_id: Optional[str] = None,
+    source_ref: Optional[str] = None,
+    ingestion_context_id: Optional[str] = None,
+    observation_id: Optional[str] = None,
 ) -> Optional[str]:
     """
     Write one claim knowledge_node plus one PRODUCES/CLAIM_OF edge to
@@ -180,11 +186,33 @@ async def capture_claim(
     confidence/epistemic_status value fails loudly here, not silently at
     some later read.
 
-    Returns the new claim's id, or None if none of `task_ids` resolve to
-    a live task_node -- a claim that supports nothing has nothing to
-    link to, so it is dropped rather than written orphaned. Matches
-    capture_failure()'s silent-no-op discipline: best-effort telemetry
-    must never be able to fail the run it is attached to.
+    ANCHORING (B7 / V4-hardening "CLAIM CREATION"): a Claim no longer has
+    to be anchored to a task_node. It is written when AT LEAST ONE of the
+    following holds:
+
+      (a) >=1 `task_ids` resolves to a live task_node   (existing), or
+      (b) `justification_episode_id` is given            (existing), or
+      (c) `source_ref` OR `ingestion_context_id` OR `observation_id` is
+          given -- document / observation provenance     (NEW).
+
+    (c) exists so a Claim extracted from a document corpus or promoted
+    from an observation -- neither of which has a task_node to point at --
+    is first-class, not degraded. What (c) is NOT: a licence to write a
+    totally unprovenanced opaque claim. If NONE of (a)/(b)/(c) hold the
+    call is still a silent no-op (`return None`, logged at info) -- the
+    same "nothing to anchor to" safety net capture_failure() keeps, so
+    best-effort telemetry can never fail the run it rides on.
+
+    When accepted via (c) with no task_ids / episode: the knowledge_node
+    is still written; `ingestion_context_id` is set on its own column
+    (migration 51) when given; a `claim_sources (claim_id, observation_id)`
+    row is written when `observation_id` is given (same join table
+    observations.py's promotion path uses); `source_ref`, which has no
+    column of its own, is stashed in `properties['source_ref']` rather
+    than dropped. The PRODUCES/CLAIM_OF edge loop naturally no-ops with no
+    task_ids (it needs a task_node target).
+
+    Returns the new claim's id, or None per the anchoring rule above.
 
     REAL GAP FIXED (found while working ticket 09's production gaps,
     confirmed by grepping the whole app/ tree): this INSERT never set
@@ -240,6 +268,20 @@ async def capture_claim(
         **(properties or {}),
         **validated.model_dump(exclude_none=True),
     }
+    # `source_ref` has no column of its own on knowledge_nodes -- keep it
+    # rather than drop it. `setdefault` so an explicit properties value wins.
+    if source_ref is not None:
+        props.setdefault("source_ref", source_ref)
+
+    # B7: a document/observation provenance ref is a valid anchor on its
+    # own. When one is present (or an episode is), acceptability is known
+    # without touching the DB -- mirror the existing early-return and skip
+    # the embedding spend when there is demonstrably nothing to anchor to.
+    has_provenance_ref = bool(source_ref or ingestion_context_id or observation_id)
+    accepted_pre_db = has_provenance_ref or justification_episode_id is not None
+    if not accepted_pre_db and not task_ids:
+        logger.info("capture_claim: no anchor and no provenance ref; dropping")
+        return None
 
     embedder = embedder or Embedder()
     embedding = await embedder.embed_one(statement, input_type="document")
@@ -265,17 +307,35 @@ async def capture_claim(
             # an empty `rows`, so an episode-justified claim simply carries
             # no task edge -- which is the real provenance shape, not a
             # degraded one.
-            if not rows and justification_episode_id is None:
+            #
+            # B7: a document/observation provenance ref
+            # (source_ref / ingestion_context_id / observation_id) is also
+            # a valid anchor. Only when NONE of task_nodes / episode /
+            # provenance-ref is present is there nothing to anchor to.
+            if not rows and justification_episode_id is None and not has_provenance_ref:
+                logger.info("capture_claim: no anchor and no provenance ref; dropping")
                 return None
-            node_id = await conn.fetchval(
-                "INSERT INTO knowledge_nodes "
-                "(node_type, name, properties, embedding, created_by, provenance, "
-                " owner_id, visibility, scope_type, scope_entity_id) "
-                "VALUES ('claim', $1, $2, $3::vector, $4, 'company_ingested', $5, $6::visibility_level, $7, $8) "
-                "RETURNING id",
-                statement[:200], props, to_pgvector(embedding), created_by,
-                owner_id, visibility, scope_type, scope_entity_id,
-            )
+            if ingestion_context_id is not None:
+                node_id = await conn.fetchval(
+                    "INSERT INTO knowledge_nodes "
+                    "(node_type, name, properties, embedding, created_by, provenance, "
+                    " owner_id, visibility, scope_type, scope_entity_id, ingestion_context_id) "
+                    "VALUES ('claim', $1, $2, $3::vector, $4, 'company_ingested', $5, "
+                    " $6::visibility_level, $7, $8, $9::uuid) "
+                    "RETURNING id",
+                    statement[:200], props, to_pgvector(embedding), created_by,
+                    owner_id, visibility, scope_type, scope_entity_id, ingestion_context_id,
+                )
+            else:
+                node_id = await conn.fetchval(
+                    "INSERT INTO knowledge_nodes "
+                    "(node_type, name, properties, embedding, created_by, provenance, "
+                    " owner_id, visibility, scope_type, scope_entity_id) "
+                    "VALUES ('claim', $1, $2, $3::vector, $4, 'company_ingested', $5, $6::visibility_level, $7, $8) "
+                    "RETURNING id",
+                    statement[:200], props, to_pgvector(embedding), created_by,
+                    owner_id, visibility, scope_type, scope_entity_id,
+                )
             for row in rows:
                 await conn.execute(
                     "INSERT INTO edges (edge_type, custom_edge_type, "
@@ -290,6 +350,16 @@ async def capture_claim(
                     "INSERT INTO episode_links (episode_id, target_id, target_table) "
                     "VALUES ($1::uuid, $2, 'knowledge_nodes')",
                     justification_episode_id, node_id,
+                )
+            if observation_id is not None:
+                # Same join table + ON CONFLICT idempotency as
+                # observations.py::promote_observation_to_claim, but written
+                # inside this transaction so the claim and its source link
+                # commit atomically.
+                await conn.execute(
+                    "INSERT INTO claim_sources (claim_id, observation_id) "
+                    "VALUES ($1::uuid, $2::uuid) ON CONFLICT DO NOTHING",
+                    node_id, observation_id,
                 )
     return str(node_id)
 
@@ -353,14 +423,37 @@ async def relate_claims(
                 to_claim_id,
             )
 
+    # B8: a SUPERSEDES/CONTRADICTS edge is a belief-revising event for the
+    # target claim -- its stored belief_score/claim_status must follow.
+    # Best-effort and lazily imported (claim_belief imports claims):
+    # the truth-maintenance write above has already committed and must not
+    # be undone by a downstream belief-recompute failure.
+    try:
+        from app.services import claim_belief
+
+        await claim_belief.recompute_claim_belief(
+            pool, to_claim_id, changeset_reason="claim relation changed"
+        )
+    except Exception:  # pragma: no cover - defensive
+        logger.warning(
+            "relate_claims: belief recompute failed for claim %s", to_claim_id,
+            exc_info=True,
+        )
+
     if not propagate:
         return []
     from app.services.claim_impact import propagate_claim_change
-    return await propagate_claim_change(
+    # propagate_claim_change now returns a dict
+    # ({"marked_stale": [...], "explanatory_untouched": [...]}) so it can
+    # report explanatory-role refs it deliberately did NOT invalidate.
+    # relate_claims' own contract is unchanged: the list of procedure row
+    # ids actually marked stale.
+    impact = await propagate_claim_change(
         pool, to_claim_id,
         reason=f"claim {to_claim_id} was {relation.lower()} by {from_claim_id} ({created_by})",
         detected_by="claim_impact.relate_claims",
     )
+    return impact["marked_stale"]
 
 
 async def supersede_claim(
@@ -710,7 +803,13 @@ async def list_current_claims(
         )
 
     rows = await pool.fetch(
-        f"SELECT k.id, k.name, k.properties FROM knowledge_nodes k "
+        # belief_score/belief_method/claim_status (B8/B9): the stored,
+        # evidence-derived belief and its DERIVED status projection travel
+        # with every current-truth claim read shape, so a caller never has
+        # to issue a second query to learn how strongly a claim is held.
+        f"SELECT k.id, k.name, k.properties, "
+        f"k.belief_score, k.belief_method, k.claim_status "
+        f"FROM knowledge_nodes k "
         f"{task_join} "
         f"WHERE k.node_type = 'claim' AND k.t_invalid IS NULL "
         f"AND COALESCE(k.properties->>'truth_state', 'IN') <> 'OUT' "

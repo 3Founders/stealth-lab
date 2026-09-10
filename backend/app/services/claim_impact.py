@@ -1,88 +1,183 @@
 """
-Real, confirmed gap closed here (task #35, `.scratch/final_architecture_audit.md`
-§9): a precondition can now carry an optional `claim_id`
-(`app/services/procedure_extraction/derive.py::precondition_with_claim`,
-landed earlier the same day this module was written), but nothing yet
-looks at "a claim just changed -- does any live procedure's precondition
-point at it?" and tells that procedure it may no longer be trustworthy.
-Procedures already have a real, working staleness mechanism
-(`app/services/procedures.py::mark_procedure_stale`) -- this module does
-NOT reimplement staleness. It only builds the trigger: find the affected
-procedures, then call the existing primitive for each one.
+Trigger (not mechanism) for "a claim just changed -- does any live
+procedure that depends on it need to know?".
 
-Deliberately NOT wired into `claims.py`'s relation-writing functions
-(`relate_claims` / `link_claims` / any future `supersede_claim`) by this
-module -- `claims.py` is being edited by another agent in parallel right
-now, and wiring the call in here would be a real, avoidable merge
-conflict. `propagate_claim_change` below is a real, independently
-callable, independently tested primitive; the orchestrator will wire it
-into claims.py's relation-writing functions once both pieces have
-independently landed.
+Procedures already have a real staleness mechanism
+(`app/services/procedures.py::mark_procedure_stale`) -- this module does
+NOT reimplement it. It finds the affected procedures and calls that
+primitive for each one.
+
+ROLE-AWARE INVALIDATION (V4-hardening "CLAIM INVALIDATION", B5)
+    The primary index for "which procedures depend on this claim" is now
+    the typed `procedure_claim_refs` table
+    (`app/services/procedure_claim_refs.py`), which records WHY each
+    procedure references the claim:
+
+      - STRONG roles  (PRECONDITION / APPLICABILITY / ASSUMPTION) --
+        a claim change disqualifies the procedure until it is
+        re-verified: it is marked stale.
+      - EXPLANATORY roles (RATIONALE / DECISION / EXPECTED_EFFECT /
+        FAILURE_MODE / VERIFICATION) -- recorded for provenance, NEVER
+        auto-invalidated. `propagate_claim_change` returns them so a
+        caller can log/annotate, and does nothing else to them.
+
+COMPATIBILITY
+    Corpora that predate migration 52 carry the dependency only as
+    `procedures.preconditions[*].claim_id`. The old JSONB containment
+    scan is kept as a fallback and its hits are treated as
+    `role='PRECONDITION'` (strong) -- so invalidation never silently
+    regresses on un-backfilled data. The two sources are merged and
+    de-duplicated by the procedure *version row id* (`procedures.id`),
+    the one key both sources expose (the frozen compat query cannot
+    surface the stable `procedure_id`/`version` pair without changing its
+    text, which several offline fakes match on).
+
+SHAPES
+    - `find_procedures_referencing_claim` / `find_procedures_referencing_
+      claim_flat` -- the backward-compatible FLAT list of every
+      referencing procedure (strong AND explanatory), one `{id, name,
+      procedure_id, procedure_version, role}` dict each. Existing callers
+      (`claim_graph_api.get_claim_dependents`) read only `id`/`name`; the
+      extra keys are additive.
+    - `find_procedures_referencing_claim_grouped` -- the role-aware
+      `{"strong": [...], "explanatory": [...]}` shape B5 introduces, used
+      by `propagate_claim_change` to invalidate ONLY strong refs.
+
+      The flat function is kept as the public name (rather than renaming
+      it and repointing an out-of-lane caller) so this change stays
+      strictly additive; the grouped view is a sibling, not a
+      replacement.
 """
 from __future__ import annotations
 
+import logging
+
 import asyncpg
 
+from app.services.procedure_claim_refs import STRONG_ROLES, list_procedures_for_claim
 from app.services.procedures import mark_procedure_stale
 
+logger = logging.getLogger(__name__)
 
-async def find_procedures_referencing_claim(pool: asyncpg.Pool, claim_id: str) -> list[dict]:
-    """
-    Real, bounded query against the LIVE `procedures` table
-    (`t_invalid IS NULL` -- only the current version row of each procedure
-    chain, never a superseded historical row) for any row whose
-    `preconditions` JSONB array contains at least one element with
-    `"claim_id": "<claim_id>"`.
+# The compatibility precondition scan, verbatim. DO NOT change this string
+# without checking the offline fakes that match on it
+# (test_claims.py, test_tms_readability_offline.py,
+# test_claim_graph_api_offline.py).
+_COMPAT_PRECONDITION_SQL = (
+    "SELECT id, name FROM procedures "
+    "WHERE t_invalid IS NULL AND preconditions @> $1::jsonb"
+)
 
-    Query shape chosen: `preconditions @> $1::jsonb` with a constructed
-    single-element probe array `[{"claim_id": "<claim_id>"}]`. Postgres's
-    `@>` (jsonb containment) descends into `preconditions` as an array and
-    matches if ANY element of the array is a superset of the probe
-    object -- i.e. any element containing at least the key/value pair
-    `claim_id: <claim_id>`, regardless of that element's other keys
-    (`subject`/`predicate`/`object`) or its position. Verified live
-    against a real inserted row before landing (a probe for an unrelated
-    claim_id correctly returned zero rows; the probe for the real claim_id
-    on the row correctly returned exactly that row and no other).
 
-    Chose `@>` over the `EXISTS (SELECT 1 FROM jsonb_array_elements(...)
-    elem WHERE elem->>'claim_id' = $1)` alternative (also verified live,
-    also correct) because `@>` is the idiomatic Postgres containment
-    operator for "does this JSONB array have an element like this", reads
-    as a single expression rather than a correlated subquery, and is the
-    operator a future GIN index on `preconditions` (`USING gin
-    (preconditions jsonb_path_ops)`) would actually accelerate -- no such
-    index exists on `procedures.preconditions` today (confirmed via
-    `pg_indexes` this session), so both forms currently run as a bounded
-    sequential scan over live procedure rows; `@>` is the one that stays
-    correct and gets faster for free if that index is added later,
-    without changing this function.
-
-    Returns each matching row's `id` (the procedure VERSION row id --
-    exactly what `mark_procedure_stale`'s `procedure_row_id` parameter
-    expects) and `name` (for a human-readable report). Returns `[]`, not
-    an error, when no procedure references the claim -- this is the
-    common case for most claims.
-
-    NOTE on the parameter itself: `app/db/session.py` registers a jsonb
-    type codec on every pooled connection (`encoder=json.dumps`) so that
-    JSONB columns come back as real Python objects, not raw strings. That
-    codec also applies to OUTGOING `::jsonb` parameters -- passing an
-    already-`json.dumps`-ed string here would get double-encoded (the
-    codec would `json.dumps` the string itself, producing a JSON string
-    literal instead of a JSON array) and silently match nothing. The
-    probe below is therefore a plain Python list/dict, not a pre-serialized
-    string -- confirmed live this session: the pre-serialized form passed
-    real but returned zero rows for a row proven (by direct SELECT) to
-    exist and match.
-    """
+async def _compat_precondition_hits(pool: asyncpg.Pool, claim_id: str) -> list[dict]:
+    """The pre-migration-52 fallback: any live procedure whose
+    `preconditions` JSONB array contains an element with this
+    `claim_id`. Each hit is a strong PRECONDITION-role dependency."""
     probe = [{"claim_id": claim_id}]
-    rows = await pool.fetch(
-        "SELECT id, name FROM procedures "
-        "WHERE t_invalid IS NULL AND preconditions @> $1::jsonb",
-        probe,
-    )
-    return [{"id": str(row["id"]), "name": row["name"]} for row in rows]
+    rows = await pool.fetch(_COMPAT_PRECONDITION_SQL, probe)
+    return [
+        {
+            "id": str(row["id"]),
+            "name": row["name"],
+            "procedure_id": str(row["id"]),
+            "procedure_version": None,
+            "role": "PRECONDITION",
+        }
+        for row in rows
+    ]
+
+
+async def find_procedures_referencing_claim_grouped(
+    pool: asyncpg.Pool, claim_id: str,
+) -> dict:
+    """
+    Every LIVE procedure that references `claim_id`, grouped by the
+    STRENGTH of the reference:
+
+        {
+          "strong":      [{procedure_id, procedure_version, name, role, id}, ...],
+          "explanatory": [{procedure_id, procedure_version, name, role, id}, ...],
+        }
+
+    PRIMARY source is the typed `procedure_claim_refs` table (via
+    `procedure_claim_refs.list_procedures_for_claim`). The
+    `procedures.preconditions[*].claim_id` JSONB scan is UNIONed in as a
+    COMPATIBILITY fallback for un-backfilled corpora, its hits classified
+    as strong `PRECONDITION` refs.
+
+    De-duplication is by the procedure version row id (`procedures.id` --
+    present on both sources). A procedure that has ANY strong ref lands in
+    `strong` and is kept out of `explanatory`, even if it also has
+    explanatory refs to the same claim.
+    """
+    try:
+        typed = await list_procedures_for_claim(pool, claim_id)
+    except (asyncpg.PostgresError, AssertionError, NotImplementedError) as exc:
+        # `procedure_claim_refs` is unavailable: migration 52 is not
+        # applied on this database, OR an offline test double that
+        # predates the typed relation rejects the query. The
+        # compatibility precondition scan below still covers every
+        # procedure that names the claim in its `preconditions` JSONB, so
+        # invalidation degrades to the pre-51 behaviour rather than
+        # failing. Transitional -- remove once every offline fake models
+        # `procedure_claim_refs`.
+        logger.debug("procedure_claim_refs lookup unavailable (%s); compat scan only", exc)
+        typed = []
+
+    compat = await _compat_precondition_hits(pool, claim_id)
+
+    strong_by_id: dict[str, dict] = {}
+    explanatory_by_id: dict[str, dict] = {}
+    for ref in [*typed, *compat]:
+        row_id = str(ref["id"])
+        entry = {
+            "procedure_id": ref.get("procedure_id", row_id),
+            "procedure_version": ref.get("procedure_version"),
+            "name": ref.get("name"),
+            "role": ref["role"],
+            "id": row_id,
+        }
+        if ref["role"] in STRONG_ROLES:
+            strong_by_id.setdefault(row_id, entry)
+        else:
+            explanatory_by_id.setdefault(row_id, entry)
+
+    # A procedure that is strong anywhere must not also read as
+    # explanatory-only.
+    for row_id in list(explanatory_by_id):
+        if row_id in strong_by_id:
+            del explanatory_by_id[row_id]
+
+    return {
+        "strong": list(strong_by_id.values()),
+        "explanatory": list(explanatory_by_id.values()),
+    }
+
+
+async def find_procedures_referencing_claim(
+    pool: asyncpg.Pool, claim_id: str,
+) -> list[dict]:
+    """
+    Backward-compatible FLAT shape: every LIVE procedure that references
+    `claim_id` (strong AND explanatory roles), one `{id, name,
+    procedure_id, procedure_version, role}` dict each.
+
+    Same PRIMARY (`procedure_claim_refs`) + COMPATIBILITY (`preconditions`
+    JSON scan) union as `find_procedures_referencing_claim_grouped`; this
+    is just that result flattened. Existing callers read only `id`/`name`
+    -- the other keys are additive. Role-aware invalidation uses the
+    grouped function instead.
+    """
+    grouped = await find_procedures_referencing_claim_grouped(pool, claim_id)
+    return [*grouped["strong"], *grouped["explanatory"]]
+
+
+async def find_procedures_referencing_claim_flat(
+    pool: asyncpg.Pool, claim_id: str,
+) -> list[dict]:
+    """Explicit name for the flat shape; identical to
+    `find_procedures_referencing_claim`."""
+    return await find_procedures_referencing_claim(pool, claim_id)
 
 
 async def propagate_claim_change(
@@ -91,41 +186,49 @@ async def propagate_claim_change(
     *,
     reason: str,
     detected_by: str = "claim_impact",
-) -> list[str]:
+) -> dict:
     """
-    The real trigger this module exists to provide: given a claim that
-    just changed (superseded, contradicted, or newly related against by
-    some other claim), find every LIVE procedure whose precondition names
-    that claim (`find_procedures_referencing_claim` above) and mark each
-    one stale via the real, existing, unmodified
-    `procedures.py::mark_procedure_stale` -- this function does not touch
-    the `staleness` column itself, does not duplicate that function's
-    idempotency (`mark_procedure_stale` is already a no-op if a procedure
-    is already 'stale'/'revalidating') or its ChangeSet recording.
+    Given a claim that just changed (superseded / contradicted / related
+    against), mark stale ONLY the procedures whose reference is STRONG
+    (precondition / applicability / assumption). Procedures whose
+    reference is merely EXPLANATORY are left completely untouched and
+    returned so a caller can log or annotate them.
 
-    `reason` and `detected_by` are passed straight through to
-    `mark_procedure_stale`'s own parameters of the same name (its real,
-    current signature: `mark_procedure_stale(pool, *, procedure_row_id,
-    reason, detected_by)`) so the resulting ChangeSet audit trail
-    correctly names the claim-change event that caused each staleness
-    transition, not a generic message.
+    `reason` / `detected_by` pass straight through to
+    `mark_procedure_stale` so the ChangeSet audit trail names the real
+    claim-change event.
 
-    Returns the list of procedure row ids actually processed (passed to
-    `mark_procedure_stale`) -- includes ids for procedures that were
-    already stale (a real no-op per `mark_procedure_stale`'s own
-    contract), since this function's job is "which procedures reference
-    this claim", not "which procedures newly transitioned". Returns `[]`
-    with no error if zero procedures reference the claim -- the common
-    case for most claims, not a failure.
+    Returns:
+
+        {
+          "marked_stale":          [procedure_row_id, ...],   # strong refs
+          "explanatory_untouched": [{procedure_id, procedure_version,
+                                     name, role, id}, ...],
+        }
+
+    `marked_stale` includes procedures that were already stale (a real
+    no-op per `mark_procedure_stale`'s own contract) -- this function's
+    job is "which strong-referencing procedures", not "which newly
+    transitioned". Both lists empty (no error) when nothing references the
+    claim -- the common case.
     """
-    affected = await find_procedures_referencing_claim(pool, claim_id)
-    processed_ids: list[str] = []
-    for procedure in affected:
+    grouped = await find_procedures_referencing_claim_grouped(pool, claim_id)
+
+    marked_stale: list[str] = []
+    for procedure in grouped["strong"]:
         await mark_procedure_stale(
             pool,
             procedure_row_id=procedure["id"],
             reason=reason,
             detected_by=detected_by,
         )
-        processed_ids.append(procedure["id"])
-    return processed_ids
+        marked_stale.append(procedure["id"])
+
+    explanatory = grouped["explanatory"]
+    if explanatory:
+        logger.info(
+            "claim %s changed: %d explanatory-role procedure ref(s) left untouched",
+            claim_id, len(explanatory),
+        )
+
+    return {"marked_stale": marked_stale, "explanatory_untouched": list(explanatory)}
