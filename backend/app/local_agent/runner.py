@@ -20,17 +20,16 @@ Swapping both lets the offline test prove the CALL SEQUENCE (search ->
 get -> execute -> report) and the no-match short-circuit, independent of
 whether the real mechanisms underneath ever change.
 
-UNIFIED LOCAL+GLOBAL RETRIEVAL (product spec Phase 1+2, wired in here):
-when `repo_path` is a real, existing directory, `run()` checks that
-workspace's own private `LocalProcedureStore` (app.local_agent.local_store)
-ALONGSIDE the remote global corpus, via
-app.local_agent.unified_retrieval.orchestrate_unified_search, before
-falling through to the prior global-only call sequence for a fake/
-nonexistent path (offline tests, a bare sandbox with no real workspace).
-A `local`-sourced match never leaves this process: its outcome is
-recorded into the SAME local store (record_local_execution_outcome), never
-reported to the remote server -- Rule 6, no implicit private->global
-promotion, evidence included. NOTE this module now transitively imports
+RETRIEVAL (P5 decouple): `run()` retrieves from the GLOBAL corpus only,
+via the `search_procedures` MCP tool. The per-workspace private
+`LocalProcedureStore` and the unified local+global fusion
+(`orchestrate_unified_search`) were removed with the local-architecture
+rebuild -- the local side is now the filesystem `.stealth/` working set
+(app.stealth), and trace-derived private learning flows through
+app.services.ingestion_jobs (global, private-scoped). A no-match against
+a real checkout still runs the task ad-hoc as a single step and reports
+it; it no longer writes a private candidate. NOTE this module transitively
+imports
 `app.services.procedures` (for its real, shared verification-threshold
 constants, not a second copy -- Rule 6) which itself imports `asyncpg` as
 a library; that import never opens a connection or touches
@@ -67,11 +66,17 @@ from app.execution.behavioral_validation import (
 from app.execution.graph_executor import NodeResult, execute_task_graph
 from app.execution.implementations import resolve_implementation
 from app.execution.procedure_graph import steps_to_linear_nodes
-from app.local_agent.local_learning import maybe_capture_local_candidate
-from app.local_agent.local_store import LocalProcedureStore
-from app.local_agent.unified_retrieval import orchestrate_unified_search
+# P5 decouple: the per-workspace SQLite local store (LocalProcedureStore),
+# its automatic private-learning capture (maybe_capture_local_candidate),
+# and the unified local+global retrieval that fused them
+# (orchestrate_unified_search) were removed with the local-architecture
+# rebuild. `run()` now always retrieves from the GLOBAL corpus via the
+# `search_procedures` MCP tool; trace-derived private learning flows
+# through app.services.ingestion_jobs (global, private-scoped) instead.
 from app.models.plan import TaskGraph
-from app.services.embeddings import Embedder
+# P5 decouple: Embedder is no longer used here -- the only two embed
+# calls were in the removed local-store retrieval + candidate-capture
+# paths. Global `search_procedures` embeds server-side.
 from app.services.environment_facts import (
     invariant_bindings_from_facts,
     probe_environment,
@@ -569,16 +574,11 @@ class LocalAgentRunner:
             local_facts = local_facts + [probe_python_version()]
             invariant_bindings = invariant_bindings_from_facts(local_facts)
 
-            # Phase 1+2 (memory-substrate map): check the workspace's own
-            # private procedure library ALONGSIDE the remote global corpus,
-            # ranked by one real policy (unified_retrieval.py) -- rather
-            # than always going straight to global. Real, existing
-            # directory only: a fake/nonexistent repo_path (offline tests,
-            # a bare CI sandbox with no real workspace) skips the local
-            # store entirely and falls back to the prior global-only
-            # behavior verbatim, rather than trying to create a store file
-            # under a path that was never a real workspace.
-            store = LocalProcedureStore(repo_path) if os.path.isdir(repo_path) else None
+            # P5 decouple: retrieval is GLOBAL-only now (the private
+            # per-workspace store was removed). `repo_real` still gates
+            # whether a no-match falls through to an ad-hoc single-step
+            # run (needs a real checkout to act on) vs. returns no_match.
+            repo_real = os.path.isdir(repo_path)
             # Gate 3: full ranked retrieval evidence, surfaced verbatim from
             # whatever the retrieval layer below actually produced (rank,
             # name, ids, verification_state, source). Empty when retrieval
@@ -597,36 +597,9 @@ class LocalAgentRunner:
                 no_retrieval_note = (
                     "EXPERIMENTAL NO-RETRIEVAL ARM: StealthLab procedure "
                     "retrieval bypassed by explicit caller request.")
-            elif store is not None:
-                # REAL GAP CLOSED: orchestrate_unified_search's
-                # query_embedding param has existed since Phase 1+2, and
-                # LocalProcedureStore.search_local_procedures() only ranks
-                # by real cosine similarity when one is supplied -- this
-                # call site never supplied it, so every local search was
-                # silently lexical-only, substring-matching the task
-                # description against stored name/goal text no matter how
-                # differently a real procedure's own wording described the
-                # same capability. One real embedding call (the same
-                # Embedder every other real caller in this codebase uses,
-                # no second provider) now makes semantic ranking real here
-                # too, matching what the store has supported since it was
-                # built.
-                query_embedding = await Embedder().embed_one(task_description, input_type="query")
-                ranked = await orchestrate_unified_search(
-                    session, store,
-                    task_description=task_description,
-                    invariant_bindings=invariant_bindings,
-                    environment_facts=local_facts,
-                    require_verified=not allow_unverified,
-                    limit=3,
-                    query_embedding=query_embedding,
-                )
-                matched, source = (ranked[0].procedure, ranked[0].source) if ranked else (None, None)
-                retrieval_log = [
-                    _retrieval_entry(r.procedure, r.source, i)
-                    for i, r in enumerate(ranked)
-                ]
             else:
+                # P5 decouple: GLOBAL-only retrieval via the MCP tool
+                # (the local store + unified fusion were removed).
                 search_result = await session.call_tool(
                     "search_procedures",
                     {
@@ -640,15 +613,17 @@ class LocalAgentRunner:
                     _retrieval_entry(m, "global", i) for i, m in enumerate(matches)
                 ]
 
-            # Phase 12 (personal learning loop): nothing matched, local or
-            # global -- rather than giving up (the prior behavior), run
-            # the task ad-hoc as a single real step, mirroring find_best_
-            # way's own server-side ad-hoc-run precedent. A real success
-            # becomes a new local candidate procedure (never global --
-            # Rule 6), so future similar tasks in this workspace have
-            # something to match against.
+            # Phase 12 (personal learning loop): nothing matched globally --
+            # rather than giving up, run the task ad-hoc as a single real
+            # step, mirroring find_best_way's own server-side ad-hoc-run
+            # precedent. P5 decouple: the ad-hoc run no longer captures a
+            # private local-store candidate (the store was removed);
+            # trace-derived private learning flows through
+            # app.services.ingestion_jobs instead. A fake/nonexistent
+            # repo_path (offline call-sequence tests, a bare sandbox) has
+            # no checkout to act on -> no_match, unchanged.
             if matched is None:
-                if store is None:
+                if not repo_real:
                     return LocalRunResult(
                         matched_procedure=None, graph_outcome="no_match",
                         retrieval_log=retrieval_log,
@@ -686,55 +661,18 @@ class LocalAgentRunner:
                 )
                 if validation_failure_reason is not None:
                     node_notes.append(f"ARTIFACT VALIDATION FAILED: {validation_failure_reason}")
-                # REAL GAP CLOSED: an ad-hoc-captured candidate previously
-                # got no embedding at all (local_learning.py never computed
-                # or accepted one), so it was only ever findable by lexical
-                # substring match against its own name/goal text -- a later
-                # task worded differently could never match it even though
-                # search_local_procedures has supported real cosine-
-                # similarity ranking since Phase 1+2. Same real Embedder
-                # this function already uses for its own search step above,
-                # storage-time convention (input_type="document").
-                #
-                # SCOPE: this vector is for the LOCAL agent store only
-                # (plain-python cosine over its own SQLite rows). It is NOT
-                # a canonical procedure retrieval-document vector and it is
-                # NOT forwarded as authoritative on publish --
-                # publish_local_procedure() drops it and leaves the global
-                # row pending a canonical re-embed (see publish.py).
-                capture_embedding = await Embedder().embed_one(task_description, input_type="document")
-                captured = maybe_capture_local_candidate(
-                    store, task_description=task_description, node_notes=node_notes,
-                    files_edited=all_files_edited, combined_patch=combined_patch,
-                    run_succeeded=run_succeeded, repo_root=repo_path,
-                    node_results=node_results, environment_facts=local_facts,
-                    embedding=capture_embedding,
-                )
-                # REAL GAP CLOSED: the run that JUST succeeded and produced
-                # this candidate is the run's own first real evidence --
-                # leaving it uncounted meant every freshly captured
-                # candidate started at attempts=0 despite one genuine,
-                # already-known-successful execution existing for it. This
-                # is the SAME record_local_execution_outcome real reuse
-                # already calls for a MATCHED local procedure below, applied
-                # here to the procedure's own originating run. Uses the same
-                # meaningful context_key this module now derives (see
-                # _local_context_key) rather than a bare repo folder name.
-                if captured is not None:
-                    adhoc_tool_calls = sum(r.data.get("tool_calls", 0) for r in node_results.values())
-                    store.record_local_execution_outcome(
-                        row_id=captured["id"], success=True,
-                        context_key=_local_context_key(repo_path, local_facts),
-                        steps_used=adhoc_tool_calls,
-                    )
+                # P5 decouple: no private local-store capture. The ad-hoc
+                # run still executes and is reported; a reusable procedure
+                # is learned from the trace later via the global
+                # (private-scoped) ingestion path, not written here.
                 return LocalRunResult(
                     matched_procedure=None,
                     graph_outcome=graph_result.outcome,
                     files_edited=all_files_edited,
                     combined_patch=combined_patch,
                     node_notes=node_notes,
-                    source="local_adhoc" if captured else None,
-                    captured_candidate=captured,
+                    source="global_adhoc" if run_succeeded else None,
+                    captured_candidate=None,
                     retrieval_log=retrieval_log,
                     metrics=_run_metrics(
                         run_started, node_results, node_notes,
@@ -742,16 +680,11 @@ class LocalAgentRunner:
                     ),
                 )
 
-            if source == "local":
-                # Already has full steps/etc from LocalProcedureStore --
-                # no remote round trip needed, and nothing about this
-                # workspace's private procedure is ever sent out.
-                procedure = matched
-            else:
-                proc_result = await session.call_tool(
-                    "get_procedure", {"procedure_id": matched["procedure_id"]},
-                )
-                procedure = json.loads(proc_result.content[0].text)
+            # P5 decouple: a match is always global now.
+            proc_result = await session.call_tool(
+                "get_procedure", {"procedure_id": matched["procedure_id"]},
+            )
+            procedure = json.loads(proc_result.content[0].text)
 
             steps = procedure.get("steps") or [{"order": 0, "goal": task_description}]
             node_notes, node_results, graph_result = await self._execute_steps(
@@ -794,22 +727,14 @@ class LocalAgentRunner:
             # _local_context_key.
             context_key = _local_context_key(repo_path, local_facts)
 
-            if source == "local":
-                # Stays entirely in this process -- a local procedure's
-                # outcome is never reported to the remote server (Rule 6:
-                # no implicit private -> global promotion, evidence
-                # included).
-                store.record_local_execution_outcome(
-                    row_id=matched["id"], success=run_succeeded,
-                    context_key=context_key, steps_used=total_tool_calls,
-                )
-            else:
-                await session.call_tool("report_execution", {
-                    "procedure_id": matched["procedure_id"],
-                    "success": run_succeeded,
-                    "context_key": context_key,
-                    "steps_used": total_tool_calls,
-                })
+            # P5 decouple: matches are always global now -> always report
+            # to the server.
+            await session.call_tool("report_execution", {
+                "procedure_id": matched["procedure_id"],
+                "success": run_succeeded,
+                "context_key": context_key,
+                "steps_used": total_tool_calls,
+            })
 
             return LocalRunResult(
                 matched_procedure=matched,

@@ -5,27 +5,22 @@ on shutdown. No new dependency -- a `while True: sleep; sweep` loop is the
 same weight class as the in-process worker `ingestion_jobs.py` already
 runs.
 
-TWO MODES (settings.ingestion_auto_mode):
+MODE (settings.ingestion_auto_mode):
 
-  "local"  -- P0-1, the V1 DEFAULT. Each tick runs
-              `app.local_agent.local_learning_sweep.run_local_learning_sweep()`:
-              read the local trace collector output
-              (.claude/traces/<session>.jsonl) and write PRIVATE candidates
-              into the workspace `LocalProcedureStore`. DB-FREE. A raw
-              local trace is never uploaded to the global server just
-              because auto-learning is enabled -- crossing to the shared
-              corpus stays the explicit `publish.py` path.
+  "global" -- the shared-substrate path, now the only mode. Each tick
+              calls `app.api.admin.process_ingestion()` (the exact
+              function `POST /v1/admin/ingestion/process` calls), driving
+              trace_events -> observations -> claims -> procedures
+              (private-scoped where the trace is private). Needs a DB.
 
-  "global" -- the shared-substrate path. Each tick calls
-              `app.api.admin.process_ingestion()` (the exact function
-              `POST /v1/admin/ingestion/process` calls), driving
-              trace_events -> observations -> claims -> shared procedures.
-              For a deliberate shared/company deployment only; needs a DB.
+P5: the old "local" mode (each tick swept `.claude/traces/*.jsonl` into a
+per-workspace SQLite `LocalProcedureStore`) was removed with the local
+store. A non-"global" `ingestion_auto_mode` now produces a no-op tick
+that records why. Trace-derived private learning flows through the
+global private-scoped ingestion path instead.
 
-REUSES, DOES NOT DUPLICATE: neither mode reimplements extraction. "local"
-calls the same trace reader + `LocalProcedureStore` writer the one-shot
-bootstrap uses; "global" calls the same admin function the REST endpoint
-does.
+REUSES, DOES NOT DUPLICATE: "global" calls the same admin function the
+REST endpoint does.
 
 COST CONTROL: unlike the manual endpoint's promote_limit=0/extract_limit=0
 safe-by-default, this loop's whole purpose is to actually do bounded work
@@ -117,24 +112,6 @@ class IngestionSchedulerState:
         }
 
 
-async def _run_local_tick(state: IngestionSchedulerState) -> dict:
-    """One local-mode sweep: local traces -> PRIVATE LocalProcedureStore
-    candidates. DB-free. Imported here, not at module top, so a bare
-    `import app.services.ingestion_scheduler` never pulls the local_agent
-    tree in."""
-    from app.local_agent.local_learning_sweep import run_local_learning_sweep
-    from app.local_agent.local_store import LocalProcedureStore
-
-    workspace = state.workspace or os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd()
-    trace_dir = state.trace_dir or os.path.join(workspace, ".claude", "traces")
-    store = LocalProcedureStore(workspace)
-    return run_local_learning_sweep(
-        store, trace_dir,
-        max_sessions=state.max_sessions,
-        workspace_entity_id=os.path.abspath(workspace),
-    )
-
-
 async def _run_global_tick(app: FastAPI, state: IngestionSchedulerState) -> dict:
     """One global-mode tick: the exact function POST
     /v1/admin/ingestion/process calls. Needs app.state.pool."""
@@ -162,10 +139,18 @@ async def _loop(app: FastAPI, state: IngestionSchedulerState) -> None:
         state.run_count += 1
         state.last_run_started_at = _now_iso()
         try:
+            # P5: "local" mode (trace -> private SQLite LocalProcedureStore
+            # sweep) was removed with the local store. Only the shared
+            # "global" pipeline remains; any other configured mode is a
+            # no-op tick that records why rather than silently doing work.
             if state.mode == "global":
                 state.last_result = await _run_global_tick(app, state)
             else:
-                state.last_result = await _run_local_tick(state)
+                state.last_result = {
+                    "skipped": "ingestion_auto_mode != 'global'; local-store "
+                    "sweep removed (P5). Trace-derived private learning now "
+                    "flows through the global private-scoped ingestion path."
+                }
             state.last_error = None
         except asyncio.CancelledError:
             raise

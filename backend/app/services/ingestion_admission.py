@@ -10,9 +10,9 @@ app/services/skill_ingestion.py for where this plugs in):
 This is the ONLY entry point for internet/public-source ingestion
 (app.services.skill_ingestion.compile_skill_artifact /
 ingest_skill_md). It is NOT the Local -> Global explicit user
-publication path (app.services.publish.publish_local_procedure) --
-that path has its own, already-shipped redaction/dedup/provenance
-discipline and is intentionally untouched here.
+publication path (app.services.publication.publish_procedure, for an
+already-Postgres-resident private/org row) -- that path has its own
+redaction/dedup/provenance discipline and is untouched here.
 
 WHAT "ADMISSION" MEANS, AND WHAT IT DOES NOT MEAN:
 A Global Candidate produced by this gate is captured with

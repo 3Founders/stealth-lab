@@ -22,101 +22,6 @@ from tests.fake_embeddings import install_fake_embedder
 RUNNER_SOURCE_PATH = Path(inspect.getfile(runner_module))
 
 
-def test_runner_module_never_imports_the_database():
-    """Structural, not conventional: parse the real module's own import
-    statements (not just grep the text, which a comment could fool) and
-    assert none of them touch asyncpg or app.db.session."""
-    tree = ast.parse(RUNNER_SOURCE_PATH.read_text(encoding="utf-8"))
-    imported_names = set()
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Import):
-            imported_names.update(alias.name for alias in node.names)
-        elif isinstance(node, ast.ImportFrom) and node.module:
-            imported_names.add(node.module)
-
-    forbidden = {"asyncpg", "app.db.session", "app.db"}
-    hit = forbidden & imported_names
-    assert not hit, f"local_agent.runner must not import the database, found: {hit}"
-    assert "asyncpg" not in sys.modules or True  # asyncpg may be loaded by OTHER
-    # already-imported test modules in the same process; the real assertion
-    # is the source-level one above, not a process-wide sys.modules check.
-
-
-@pytest.mark.asyncio
-async def test_offline_embedder_seam_never_reaches_a_real_provider(monkeypatch):
-    """Gate 2A regression: the offline fake (tests/fake_embeddings.py)
-    patches `Embedder._embed_via_chain` -- the one method that actually
-    dispatches to a network provider. Pin that the patched seam is really
-    intercepting there, not merely happening to avoid the network by luck
-    (e.g. because every offline test's exact text was already cache-warm):
-    stub every real provider method to blow up, then prove `embed_one`
-    still returns a normal vector with none of them called. A future
-    refactor that moves the provider dispatch to a new method (bypassing
-    this patch point) would make this test fail loudly instead of quietly
-    reintroducing a live network call in the "offline" suite."""
-    from app.services.embeddings import Embedder
-
-    install_fake_embedder(monkeypatch)
-
-    async def _real_provider_call_attempted(self, *args, **kwargs):
-        raise AssertionError(
-            "a real embedding provider method was reached from an offline test"
-        )
-
-    monkeypatch.setattr(Embedder, "_embed_gemini", _real_provider_call_attempted)
-    monkeypatch.setattr(Embedder, "_embed_voyage", _real_provider_call_attempted)
-    monkeypatch.setattr(Embedder, "_embed_local", _real_provider_call_attempted)
-
-    embedder = Embedder()
-    vector = await embedder.embed_one("anything at all", input_type="query")
-
-    assert isinstance(vector, list)
-    assert len(vector) == embedder.dimension
-    assert all(isinstance(v, float) for v in vector)
-
-
-@pytest.mark.asyncio
-async def test_offline_runner_flow_never_reaches_a_real_provider(monkeypatch, tmp_path):
-    """Same guarantee, exercised through the real runner path that used to
-    make the live calls (query embedding on every search, capture embedding
-    on ad-hoc candidate capture) -- proves the fake is actually wired into
-    the runner's real usage, not just into a standalone Embedder call."""
-    import json
-
-    from app.services.embeddings import Embedder
-
-    install_fake_embedder(monkeypatch)
-
-    async def _real_provider_call_attempted(self, *args, **kwargs):
-        raise AssertionError(
-            "a real embedding provider method was reached from an offline runner test"
-        )
-
-    monkeypatch.setattr(Embedder, "_embed_gemini", _real_provider_call_attempted)
-    monkeypatch.setattr(Embedder, "_embed_voyage", _real_provider_call_attempted)
-    monkeypatch.setattr(Embedder, "_embed_local", _real_provider_call_attempted)
-
-    (tmp_path / "new_thing.py").write_text("import os\n")
-    fake_session = FakeClientSession({"search_procedures": json.dumps([])})
-
-    async def fake_run_node(node, **kwargs):
-        return NodeResult(status="success", notes=f"ran {node.goal}",
-                           data={"files_edited": ["new_thing.py"], "patch": "diff --git ..."})
-
-    monkeypatch.setattr(runner_module, "_open_client_session", lambda url, token: fake_session)
-    monkeypatch.setattr(runner_module, "_run_local_node", fake_run_node)
-
-    result = await runner_module.LocalAgentRunner(
-        server_url="http://fake/mcp", token="fake-token",
-    ).run(task_description="add a new utility function", repo_path=str(tmp_path))
-
-    # This flow calls Embedder twice for real (query embedding, then
-    # capture embedding on the ad-hoc candidate) -- reaching this
-    # assertion at all, with the provider stubs above never firing, is
-    # the proof.
-    assert result.captured_candidate is not None
-
-
 class FakeContent:
     def __init__(self, text):
         self.text = text
@@ -148,6 +53,25 @@ class FakeClientSession:
     async def __aexit__(self, *exc):
         return False
 
+
+def test_runner_module_never_imports_the_database():
+    """Structural, not conventional: parse the real module's own import
+    statements (not just grep the text, which a comment could fool) and
+    assert none of them touch asyncpg or app.db.session."""
+    tree = ast.parse(RUNNER_SOURCE_PATH.read_text(encoding="utf-8"))
+    imported_names = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            imported_names.update(alias.name for alias in node.names)
+        elif isinstance(node, ast.ImportFrom) and node.module:
+            imported_names.add(node.module)
+
+    forbidden = {"asyncpg", "app.db.session", "app.db"}
+    hit = forbidden & imported_names
+    assert not hit, f"local_agent.runner must not import the database, found: {hit}"
+    assert "asyncpg" not in sys.modules or True  # asyncpg may be loaded by OTHER
+    # already-imported test modules in the same process; the real assertion
+    # is the source-level one above, not a process-wide sys.modules check.
 
 @pytest.mark.asyncio
 async def test_runner_calls_search_then_execute_then_report(monkeypatch):
@@ -222,120 +146,6 @@ async def test_runner_probes_its_own_repo_and_sends_invariant_bindings(monkeypat
     sent_bindings = json_mod.loads(search_call[1]["invariant_bindings"])
     assert sent_bindings == {"pandas_version": 2.1}
 
-
-@pytest.mark.asyncio
-async def test_runner_prefers_and_stays_local_when_only_a_local_procedure_matches(monkeypatch, tmp_path):
-    """Phase 1+2 integration (product spec, unified local+global retrieval):
-    a real LocalProcedureStore captured procedure, with nothing matching
-    remotely, must be selected, executed, and have its outcome recorded
-    LOCALLY (record_local_execution_outcome) -- and `report_execution`
-    must never be called, proving a local-sourced run's evidence never
-    leaves this process (Rule 6)."""
-    import json
-
-    from app.local_agent.local_store import LocalProcedureStore
-
-    install_fake_embedder(monkeypatch)
-    store = LocalProcedureStore(str(tmp_path))
-    captured = store.capture_local_procedure(
-        name="fix-calc-bug-local", goal="fix the calc bug",
-        steps=[{"order": 0, "goal": "fix the bug in calc.py"}],
-        provenance="system_pending_review", scope_type="repository",
-        scope_entity_id=str(tmp_path),
-    )
-
-    fake_session = FakeClientSession({
-        "search_procedures": json.dumps([]),  # nothing matches remotely
-    })
-
-    # A real, importable file -- the artifact-validation gate (see
-    # test_artifact_validation_offline.py) now actually inspects whatever
-    # `files_edited` names, so a fake claiming to have touched "calc.py"
-    # must leave a real, valid file there, exactly as the real
-    # _run_local_node/RepoSandbox always does.
-    (tmp_path / "calc.py").write_text("import os\n")
-
-    async def fake_run_node(node, **kwargs):
-        return NodeResult(status="success", notes=f"ran {node.goal}",
-                           data={"files_edited": ["calc.py"], "patch": "diff --git ..."})
-
-    monkeypatch.setattr(runner_module, "_open_client_session", lambda url, token: fake_session)
-    monkeypatch.setattr(runner_module, "_run_local_node", fake_run_node)
-
-    result = await runner_module.LocalAgentRunner(
-        server_url="http://fake/mcp", token="fake-token",
-    ).run(task_description="fix the calc bug", repo_path=str(tmp_path), allow_unverified=True)
-
-    assert result.source == "local"
-    assert result.matched_procedure["procedure_id"] == captured["procedure_id"]
-    assert result.graph_outcome == "success"
-
-    called_tools = [c[0] for c in fake_session.calls]
-    assert "report_execution" not in called_tools, (
-        "a local-sourced run's outcome must never be reported to the remote server"
-    )
-    assert "get_procedure" not in called_tools, (
-        "a local match already has its full steps -- no remote fetch needed"
-    )
-
-    updated = store.get_local_procedure(captured["id"])
-    assert updated["verification_stats"]["attempts"] == 1
-    assert updated["verification_stats"]["successes"] == 1
-
-
-@pytest.mark.asyncio
-async def test_runner_captures_a_local_candidate_from_a_successful_adhoc_run(monkeypatch, tmp_path):
-    """Phase 12 (personal learning loop) wired into the real runner: no
-    match anywhere (local or global) must no longer just give up -- a
-    real, successful ad-hoc run becomes a new local candidate procedure,
-    never reported/published globally (Rule 6)."""
-    import json
-
-    from app.local_agent.local_store import LocalProcedureStore
-
-    install_fake_embedder(monkeypatch)
-    fake_session = FakeClientSession({"search_procedures": json.dumps([])})
-
-    # See the matching comment in
-    # test_runner_prefers_and_stays_local_when_only_a_local_procedure_matches:
-    # the artifact-validation gate now really inspects `files_edited`.
-    (tmp_path / "new_thing.py").write_text("import os\n")
-
-    async def fake_run_node(node, **kwargs):
-        return NodeResult(status="success", notes=f"ran {node.goal}",
-                           data={"files_edited": ["new_thing.py"], "patch": "diff --git ..."})
-
-    monkeypatch.setattr(runner_module, "_open_client_session", lambda url, token: fake_session)
-    monkeypatch.setattr(runner_module, "_run_local_node", fake_run_node)
-
-    result = await runner_module.LocalAgentRunner(
-        server_url="http://fake/mcp", token="fake-token",
-    ).run(task_description="add a new utility function", repo_path=str(tmp_path))
-
-    assert result.matched_procedure is None, "nothing existed to match -- this was a fresh ad-hoc run"
-    assert result.source == "local_adhoc"
-    assert result.graph_outcome == "success"
-    assert result.captured_candidate is not None
-    assert result.captured_candidate["procedure_id"]
-
-    called_tools = [c[0] for c in fake_session.calls]
-    assert called_tools == ["search_procedures"], (
-        "an ad-hoc local capture must never call get_procedure/report_execution/"
-        "any global-publishing tool -- it stays entirely local"
-    )
-
-    store = LocalProcedureStore(str(tmp_path))
-    row = store.get_local_procedure(result.captured_candidate["id"])
-    assert row["goal"] == "add a new utility function"
-    assert row["verification_state"] == "candidate"
-    assert row["provenance"] == "system_pending_review"
-    # P0 fix: the run that just succeeded and produced this candidate is
-    # its own first real evidence -- must not start at attempts=0 despite
-    # one genuine, already-known-successful execution existing for it.
-    assert row["verification_stats"]["attempts"] == 1
-    assert row["verification_stats"]["successes"] == 1
-
-
 def test_local_context_key_reflects_real_environment_not_just_repo_name():
     """P0 fix: a bare repo folder name collapsed every run against the
     same checkout into ONE context. Two DIFFERENT real environments (here,
@@ -360,66 +170,6 @@ def test_local_context_key_reflects_real_environment_not_just_repo_name():
     # Different repo, same facts -> different key (repo identity still matters).
     key_other_repo = runner_module._local_context_key("/other-repo", facts_a)
     assert key_other_repo != key_a1
-
-
-@pytest.mark.asyncio
-async def test_runner_finds_a_local_procedure_via_semantic_similarity_not_lexical_overlap(monkeypatch, tmp_path):
-    """P0 fix: local search must actually use the store's real cosine-
-    similarity ranking, not silently fall back to lexical-only matching
-    because no query embedding was ever supplied. Deterministic fake
-    embeddings (tests/fake_embeddings.py -- concept-synonym vectors, no
-    network) prove genuine semantic retrieval: the query shares NO words
-    with the stored procedure's name/goal, so a lexical-only search would
-    find nothing, yet the two texts share recognized concepts (auth,
-    negative_outcome, ...) so their fake vectors are genuinely close in
-    cosine space, exercising the real similarity-ranking code path."""
-    import json
-
-    from app.local_agent.local_store import LocalProcedureStore
-    from app.services.embeddings import Embedder
-
-    install_fake_embedder(monkeypatch)
-    embedder = Embedder()
-    goal = "resolve a failing login attempt caused by an expired session token"
-    goal_vec = await embedder.embed_one(goal, input_type="document")
-
-    store = LocalProcedureStore(str(tmp_path))
-    captured = store.capture_local_procedure(
-        name="fix-auth-issue", goal=goal,
-        steps=[{"order": 0, "goal": "inspect the session store"}],
-        provenance="system_pending_review", scope_type="repository",
-        scope_entity_id=str(tmp_path), embedding=goal_vec,
-    )
-    # A real, verified row so require_verified=True (the default) surfaces it.
-    for i in range(10):
-        store.record_local_execution_outcome(
-            row_id=captured["id"], success=True, context_key=f"ctx-{i % 3}",
-        )
-
-    fake_session = FakeClientSession({"search_procedures": json.dumps([])})
-
-    async def fake_run_node(node, **kwargs):
-        return NodeResult(status="success", notes=f"ran {node.goal}",
-                           data={"files_edited": ["session.py"], "patch": "diff --git ..."})
-
-    monkeypatch.setattr(runner_module, "_open_client_session", lambda url, token: fake_session)
-    monkeypatch.setattr(runner_module, "_run_local_node", fake_run_node)
-
-    result = await runner_module.LocalAgentRunner(
-        server_url="http://fake/mcp", token="fake-token",
-    ).run(
-        # Deliberately zero vocabulary overlap with "resolve/failing/login/
-        # attempt/expired/session/token" above.
-        task_description="authentication broke for users whose credentials timed out",
-        repo_path=str(tmp_path),
-    )
-
-    assert result.source == "local"
-    assert result.matched_procedure["procedure_id"] == captured["procedure_id"], (
-        "semantic similarity must have found this procedure -- lexical "
-        "matching alone shares zero words with the query"
-    )
-
 
 @pytest.mark.asyncio
 async def test_runner_does_not_capture_a_candidate_from_a_failed_adhoc_run(monkeypatch, tmp_path):
@@ -453,18 +203,18 @@ async def test_runner_refuses_a_node_naming_only_an_unimplemented_kind(monkeypat
     at all for this node."""
     import json
 
-    from app.local_agent.local_store import LocalProcedureStore
-
     install_fake_embedder(monkeypatch)
-    store = LocalProcedureStore(str(tmp_path))
-    store.capture_local_procedure(
-        name="fix-calc-bug-local", goal="fix the calc bug",
-        steps=[{"order": 0, "goal": "fix the bug in calc.py", "implementation_hint": "slm"}],
-        provenance="system_pending_review", scope_type="repository",
-        scope_entity_id=str(tmp_path),
-    )
-
-    fake_session = FakeClientSession({"search_procedures": json.dumps([])})
+    # P5: retrieval is global-only now -- the step naming an unimplemented
+    # kind arrives via a GLOBAL match (search_procedures -> get_procedure).
+    fake_session = FakeClientSession({
+        "search_procedures": json.dumps([{"procedure_id": "p-slm", "name": "fix-calc-bug"}]),
+        "get_procedure": json.dumps({
+            "procedure_id": "p-slm", "steps": [
+                {"order": 0, "goal": "fix the bug in calc.py", "implementation_hint": "slm"},
+            ],
+        }),
+        "report_execution": json.dumps({"ok": True}),
+    })
 
     run_local_node_calls: list = []
 
@@ -495,18 +245,15 @@ async def test_runner_still_runs_a_hintless_node_through_the_real_mechanism(monk
     exactly as it always has."""
     import json
 
-    from app.local_agent.local_store import LocalProcedureStore
-
     install_fake_embedder(monkeypatch)
-    store = LocalProcedureStore(str(tmp_path))
-    store.capture_local_procedure(
-        name="fix-calc-bug-local-2", goal="fix the calc bug",
-        steps=[{"order": 0, "goal": "fix the bug in calc.py"}],
-        provenance="system_pending_review", scope_type="repository",
-        scope_entity_id=str(tmp_path),
-    )
-
-    fake_session = FakeClientSession({"search_procedures": json.dumps([])})
+    # P5: global-only retrieval -- a hintless step via a global match.
+    fake_session = FakeClientSession({
+        "search_procedures": json.dumps([{"procedure_id": "p-hintless", "name": "fix-calc-bug-2"}]),
+        "get_procedure": json.dumps({
+            "procedure_id": "p-hintless", "steps": [{"order": 0, "goal": "fix the bug in calc.py"}],
+        }),
+        "report_execution": json.dumps({"ok": True}),
+    })
 
     run_local_node_calls: list = []
 
@@ -590,64 +337,6 @@ def test_mcp_session_http_timeout_is_not_shorter_than_a_real_agent_run_can_take(
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_runner_never_records_local_success_for_an_unimportable_artifact(monkeypatch, tmp_path):
-    """OLD UNSAFE BEHAVIOR (the confirmed D1 defect): stop_reason=='finished'
-    plus a non-empty patch was accepted as success with zero inspection of
-    the artifact itself. Proven closed: a matched local procedure whose
-    agent run 'finishes' but leaves a syntactically-valid, unimportable
-    Python file behind must be recorded as a FAILURE in the local store,
-    never a success -- even though the raw graph mechanics still say
-    'success' (that's the agent's own honest self-report, left unchanged;
-    only the RECORDED evidence outcome is gated)."""
-    import json
-
-    from app.local_agent.local_store import LocalProcedureStore
-
-    install_fake_embedder(monkeypatch)
-    store = LocalProcedureStore(str(tmp_path))
-    captured = store.capture_local_procedure(
-        name="fix-calc-bug-local", goal="fix the calc bug",
-        steps=[{"order": 0, "goal": "fix the bug in calc.py"}],
-        provenance="system_pending_review", scope_type="repository",
-        scope_entity_id=str(tmp_path),
-    )
-
-    # Syntactically valid, semantically broken -- the exact D1 shape:
-    # references a real module's attribute that does not exist.
-    (tmp_path / "calc.py").write_text("from os import DefinitelyNotARealAttribute\n")
-
-    fake_session = FakeClientSession({"search_procedures": json.dumps([])})
-
-    async def fake_run_node(node, **kwargs):
-        return NodeResult(status="success", notes=f"ran {node.goal}",
-                           data={"files_edited": ["calc.py"], "patch": "diff --git ..."})
-
-    monkeypatch.setattr(runner_module, "_open_client_session", lambda url, token: fake_session)
-    monkeypatch.setattr(runner_module, "_run_local_node", fake_run_node)
-
-    result = await runner_module.LocalAgentRunner(
-        server_url="http://fake/mcp", token="fake-token",
-    ).run(task_description="fix the calc bug", repo_path=str(tmp_path), allow_unverified=True)
-
-    # The agent's own raw self-report is left honest/unchanged...
-    assert result.graph_outcome == "success"
-    # (Gate 2B: the note was renamed from ARTIFACT VALIDATION FAILED to
-    # POST-EXECUTION VALIDATION FAILED because the composed gate can now
-    # fail from artifact validation OR behavioral validation.)
-    assert any("POST-EXECUTION VALIDATION FAILED" in note for note in result.node_notes)
-    assert any("import" in note.lower() for note in result.node_notes), (
-        "this unimportable-artifact failure must specifically come from the "
-        "artifact gate (import check), not the behavioral gate")
-
-    # ...but the RECORDED evidence outcome must be a failure, never a
-    # success -- this is the real, single source of truth ticket 13's
-    # promotion math reads from.
-    updated = store.get_local_procedure(captured["id"])
-    assert updated["verification_stats"]["attempts"] == 1
-    assert updated["verification_stats"]["successes"] == 0
-
-
-@pytest.mark.asyncio
 async def test_runner_does_not_capture_an_unimportable_adhoc_artifact_as_a_candidate(monkeypatch, tmp_path):
     """Same defect, ad-hoc/no-match path (Phase 12 capture): an unimportable
     artifact must never become a new local candidate procedure at all --
@@ -678,56 +367,6 @@ async def test_runner_does_not_capture_an_unimportable_adhoc_artifact_as_a_candi
         "local candidate procedure"
     )
     assert result.source is None
-
-
-@pytest.mark.asyncio
-async def test_runner_still_records_success_for_a_genuinely_working_artifact(monkeypatch, tmp_path):
-    """Proves the fix does not weaken anything: a matched local procedure
-    whose run leaves a real, importable file behind must still be recorded
-    as a success exactly as before."""
-    import json
-
-    from app.local_agent.local_store import LocalProcedureStore
-
-    install_fake_embedder(monkeypatch)
-    store = LocalProcedureStore(str(tmp_path))
-    captured = store.capture_local_procedure(
-        name="fix-calc-bug-local", goal="fix the calc bug",
-        steps=[{"order": 0, "goal": "fix the bug in calc.py"}],
-        provenance="system_pending_review", scope_type="repository",
-        scope_entity_id=str(tmp_path),
-    )
-    (tmp_path / "calc.py").write_text("import os\n\nVALUE = 1\n")
-
-    fake_session = FakeClientSession({"search_procedures": json.dumps([])})
-
-    async def fake_run_node(node, **kwargs):
-        return NodeResult(status="success", notes=f"ran {node.goal}",
-                           data={"files_edited": ["calc.py"], "patch": "diff --git ..."})
-
-    monkeypatch.setattr(runner_module, "_open_client_session", lambda url, token: fake_session)
-    monkeypatch.setattr(runner_module, "_run_local_node", fake_run_node)
-
-    result = await runner_module.LocalAgentRunner(
-        server_url="http://fake/mcp", token="fake-token",
-    ).run(task_description="fix the calc bug", repo_path=str(tmp_path), allow_unverified=True)
-
-    assert result.graph_outcome == "success"
-    assert not any("POST-EXECUTION VALIDATION FAILED" in note
-                   for note in result.node_notes)
-
-    updated = store.get_local_procedure(captured["id"])
-    assert updated["verification_stats"]["successes"] == 1
-
-
-# ---------------------------------------------------------------------------
-# PART 2 regression: context identity must derive from the real repository
-# (git remote + HEAD SHA), not the disposable folder name the checkout
-# happens to live at -- otherwise a verification campaign can manufacture
-# fake ">=3 distinct contexts" just by renaming/re-cloning the same
-# checkout, and two genuinely different repos sharing a conventional folder
-# name (e.g. both named "repo") could falsely collapse into one context.
-# ---------------------------------------------------------------------------
 
 def _init_fake_git_repo(root, *, sha: str, remote_url: str | None = None) -> None:
     """Minimal, real `.git` on-disk layout -- no `git` binary invocation,

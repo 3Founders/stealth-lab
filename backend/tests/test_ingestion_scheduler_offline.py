@@ -2,10 +2,10 @@
 Offline tests for app/services/ingestion_scheduler.py -- the in-process
 background loop that turns normal agent work into procedure candidates.
 
-V1 default is mode="local" (P0-1): local trace files -> PRIVATE
-LocalProcedureStore candidates, DB-free. mode="global" is the
-shared-substrate path (process_ingestion). Both are tested here with the
-real sweep functions and a monkeypatched process_ingestion respectively.
+mode="global" is the shared-substrate path (process_ingestion), tested
+here with a monkeypatched process_ingestion. P5 removed the old
+mode="local" (trace files -> private SQLite LocalProcedureStore); a
+non-"global" mode is now a recorded no-op tick.
 """
 from __future__ import annotations
 
@@ -102,15 +102,15 @@ def test_state_as_dict_matches_the_admin_status_response_shape():
     IngestionAutoStatusResponse(**d)
 
 
-def test_local_mode_tick_writes_private_candidates_from_real_traces(tmp_path, monkeypatch):
-    """P0-1: the DEFAULT loop reads local traces and writes into the
-    workspace LocalProcedureStore -- no DB, no global write."""
+def test_non_global_mode_tick_is_a_recorded_noop(tmp_path, monkeypatch):
+    """P5: the old mode="local" trace -> private SQLite sweep was removed
+    with the local store. A non-"global" ingestion_auto_mode now produces
+    a no-op tick that records WHY (not a silent skip, not a crash), and
+    process_ingestion is never called."""
     workspace = _trace_dir(tmp_path)
-    # process_ingestion must NOT be called in local mode.
-    called = []
     monkeypatch.setattr(
         "app.api.admin.process_ingestion",
-        lambda **kw: called.append(kw) or (_ for _ in ()).throw(AssertionError("global path hit")),
+        lambda **kw: (_ for _ in ()).throw(AssertionError("global path must not be hit")),
     )
     state = _state(mode="local", workspace=workspace, interval_seconds=0)
     app = _fake_app()
@@ -127,19 +127,9 @@ def test_local_mode_tick_writes_private_candidates_from_real_traces(tmp_path, mo
 
     asyncio.run(scenario())
 
-    assert called == []
     assert state.last_error is None
-    res = state.last_result
-    assert res["sessions_seen"] == 1
-    assert res["captured"] == 1
-
-    from app.local_agent.local_store import LocalProcedureStore
-    store = LocalProcedureStore(workspace)
-    rows = store.list_local_procedures()
-    assert len(rows) == 1
-    row = store.get_local_procedure(rows[0]["id"])
-    assert row["verification_state"] == "candidate"
-    assert all(r["privacy"] == "local" for r in row["evidence_refs"])
+    assert "skipped" in state.last_result
+    assert "local-store sweep removed" in state.last_result["skipped"]
 
 
 def test_global_mode_tick_calls_process_ingestion(tmp_path, monkeypatch):
