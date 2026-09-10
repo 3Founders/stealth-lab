@@ -3780,6 +3780,48 @@ async def verify_completion(procedure_run_id: str, ctx: Context, reports_json: s
 
 
 @server.tool()
+async def generate_review_packet(procedure_run_id: str, criterion_id: str, ctx: Context) -> str:
+    """
+    MCP hardening B34: "For human review, generate a bounded review
+    packet" -- the literal 7-field packet the spec names (objective,
+    exact Procedure/version, the criterion being reviewed, exact
+    files/diff/ranges to inspect, relevant Claim refs, automated
+    evidence already collected, specific yes/no questions), built from
+    real, already-persisted facts only. "Do not ask a human to 'review
+    the repo'" -- this tool exists so no caller has to hand-assemble
+    that bounded context themselves.
+
+    The reviewer answers the packet's own real question(s), then a
+    caller submits the actual review via `verify_completion`'s
+    `reports_json` with `method="human_review"` -- this tool never
+    accepts or records a verdict itself, only generates what a human
+    needs to reach one. REFUSED for an unknown run or criterion_id --
+    never a fabricated packet.
+    """
+    from app.execution.procedure_graph import fetch_procedure_version
+    from app.services.verification import ReviewPacketError, generate_human_review_packet
+
+    pool = ctx.request_context.lifespan_context["pool"]
+    run = await pool.fetchrow(
+        "SELECT procedure_id, procedure_version FROM execution_runs WHERE id = $1::uuid",
+        procedure_run_id,
+    )
+    if run is None:
+        return f"REFUSED: procedure_run_id {procedure_run_id!r} not found"
+    procedure = await fetch_procedure_version(pool, run["procedure_id"], run["procedure_version"])
+    if procedure is None:
+        return f"REFUSED: pinned procedure version not found for run {procedure_run_id!r}"
+
+    try:
+        packet = await generate_human_review_packet(
+            pool, execution_run_id=procedure_run_id, criterion_id=criterion_id, procedure=procedure,
+        )
+    except ReviewPacketError as exc:
+        return f"REFUSED: {exc}"
+    return json.dumps(packet, default=str)
+
+
+@server.tool()
 async def declare_file_intent(
     procedure_run_id: str, node_order: int, owner_agent_id: str, ctx: Context,
     write_exact_json: str = "[]", write_globs_json: str = "[]",
