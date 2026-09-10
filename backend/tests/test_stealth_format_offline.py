@@ -137,7 +137,7 @@ def test_build_claims_page_no_preconditions_is_honest_not_fabricated():
     ctx = dict(_FAKE_CONTEXT, required_preconditions=[])
     md, rows = _build_claims_page(ctx)
     assert rows == []
-    assert "not canonical" in md and "P3" in md
+    assert "not canonical" in md and "no page-faulted global claims" in md
 
 
 def test_build_implementations_page_missing_is_flagged():

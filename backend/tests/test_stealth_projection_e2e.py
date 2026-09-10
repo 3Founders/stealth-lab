@@ -242,9 +242,63 @@ def test_every_index_row_resolves_to_exactly_its_block_and_regen_is_stable():
 
                 meta = json.loads(open(os.path.join(sdir, "meta.json"), encoding="utf-8").read())
                 assert meta["change_cursor"].startswith(exec_run_id)
-                assert set(meta["revisions"]) == {"claims", "procedures", "implementations", "run"}
+                assert {"claims", "procedures", "implementations", "run"} <= set(meta["revisions"])
                 assert meta["counts"]["run_nodes"] == 2
+                assert isinstance(meta["projection_revision"], int) and meta["projection_revision"] >= 1
         finally:
+            await _cleanup(pool, name)
+            await pool.close()
+
+    asyncio.run(_run())
+
+
+def test_declared_file_intent_shows_up_in_run_projection():
+    """P4: a coordination lease declared via coordination.declare_file_intent
+    is projected into run.json (node_owners / file_intents) and run.idx."""
+    from app.execution.coordination import declare_file_intent
+
+    async def _run():
+        pool = await create_pool(DATABASE_URL, min_size=1, max_size=2)
+        run_id = uuid4().hex[:8]
+        name = f"proc-test-stealthproj-coord-{run_id}"
+        exec_run_id = None
+        try:
+            procedure = await _capture(
+                pool, name, steps=[{"order": 0, "goal": "touch payments"}],
+            )
+            exec_run_id = await _start_run(pool, procedure)
+
+            with tempfile.TemporaryDirectory() as workspace:
+                # before: no coordination declared -> empty defaults
+                before = await sp.generate_projection(
+                    pool, workspace_root=workspace, procedure_run_id=exec_run_id,
+                )
+                assert before["run_json"]["node_owners"] == {}
+                assert before["run_json"]["file_intents"] == []
+
+                glob = f"src/pay-{run_id}/**"
+                await declare_file_intent(
+                    pool, execution_run_id=exec_run_id, node_order=0,
+                    owner_agent_id="agent-A", write_globs=[glob],
+                    write_exact=[f"src/pay-{run_id}/service.py"],
+                )
+                after = await sp.generate_projection(
+                    pool, workspace_root=workspace, procedure_run_id=exec_run_id,
+                )
+                assert after["run_json"]["node_owners"] == {"0": "agent-A"}
+                fi = after["run_json"]["file_intents"]
+                assert len(fi) == 1 and fi[0]["owner"] == "agent-A"
+                assert glob in fi[0]["write_globs"]
+                assert "agent-A" in after["run_idx"]
+                assert glob in after["run_idx"]
+                assert after["meta_json"]["coordination_declared"] is True
+        finally:
+            if exec_run_id is not None:
+                try:
+                    from app.execution.coordination import release_file_intent
+                    await release_file_intent(pool, execution_run_id=exec_run_id, node_order=0)
+                except Exception:
+                    pass
             await _cleanup(pool, name)
             await pool.close()
 

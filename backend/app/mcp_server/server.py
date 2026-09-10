@@ -3877,6 +3877,54 @@ async def get_route_decision(route_decision_id: str, ctx: Context) -> str:
     return json.dumps(decision, default=str)
 
 
+@server.tool()
+async def project_knowledge(
+    repo_path: str, ctx: Context,
+    object_ids_json: str = "[]", query: str = "", top_k: int = 8,
+) -> str:
+    """
+    G13 P3 -- the "knowledge page fault". When an agent greps
+    `.stealth/index/*.idx` and misses, it calls this to pull specific
+    global objects into the local working set.
+
+    `repo_path`: workspace root that already has a `.stealth/` projection
+      (run `find_best_way(mode='plan_only', repo_path=...)` or
+      `continue_run(repo_path=...)` first).
+    `object_ids_json`: JSON array of
+      `{"kind": "claim"|"procedure"|"implementation", "id": "<uuid>"}`.
+    `query`: free text -> relevant global claims via `get_relevant_claims`.
+
+    Resolves from global Postgres ONLY (an id that resolves to nothing is
+    reported as `not_found`, never fabricated), merges the blocks
+    additively into the existing `.stealth/` pages (the run-scoped
+    working set is preserved), regenerates the affected `.idx` +
+    `root.idx`, records membership in `index/faulted.json`, and journals
+    a `knowledge_fault` event. Returns the merge summary as JSON.
+    """
+    pool = ctx.request_context.lifespan_context["pool"]
+    from app.stealth.errors import StealthProjectionError
+    from app.stealth.faults import project_knowledge as _project_knowledge
+
+    try:
+        object_ids = json.loads(object_ids_json or "[]")
+    except json.JSONDecodeError as exc:
+        return f"REFUSED: object_ids_json must be a JSON array -- {exc}"
+    if not isinstance(object_ids, list):
+        return "REFUSED: object_ids_json must be a JSON array of {kind,id} objects"
+    if not object_ids and not query.strip():
+        return "REFUSED: pass object_ids_json and/or a non-empty query"
+
+    try:
+        result = await _project_knowledge(
+            pool, repo_path, object_ids=object_ids, query=query.strip() or None, top_k=top_k,
+        )
+    except StealthProjectionError as exc:
+        return f"REFUSED: {exc}"
+    except OSError as exc:
+        return f"REFUSED: .stealth/ write failed -- {exc}"
+    return json.dumps(result, default=str)
+
+
 # ---------------------------------------------------------------------------
 # ADDITIVE read-only MCP Resources + Prompts surface. Registered here, after
 # every @server.tool() above, so resources.py can import the tool-layer
