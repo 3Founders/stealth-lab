@@ -52,6 +52,7 @@ async def record_claim_evidence(
     direction: Optional[str] = None,
     strength_score: float = 1.0,
     strength_method: str = "recorded_outcome",
+    independence_group: Optional[str] = None,
     context_key: Optional[str] = None,
     failure_class: Optional[str] = None,
     created_by: Optional[str] = None,
@@ -81,6 +82,19 @@ async def record_claim_evidence(
     shared-commons posture) is the honest default rather than inventing
     a parameter this module has no real caller for.
 
+    `independence_group` (V4-hardening §14 / B10): rows sharing a named
+    group NEVER count as independent corroboration of each other
+    (`db/24_evidence.sql` CHECK + the `DISTINCT COALESCE(independence_group,
+    id::text)` aggregators). Before this parameter existed every
+    claim-evidence row was self-grouped (NULL), so five writes derived
+    from the SAME source each inflated a claim's independent-evidence
+    count. A caller that knows two rows come from one underlying source
+    (same document, same deterministic fixture, same execution replayed)
+    MUST pass the same non-blank string for both. NULL stays the default:
+    self-grouped, i.e. genuinely independent. The real
+    `outcome_to_evidence()`/`validate_evidence()` gate rejects a blank
+    string verbatim -- this module does not re-implement that check.
+
     Returns the new evidence row's real `id` (as `str`).
     """
     evidence = outcome_to_evidence(
@@ -95,6 +109,7 @@ async def record_claim_evidence(
         direction=direction,
         strength_score=strength_score,
         strength_method=strength_method,
+        independence_group=independence_group,
         context_key=context_key,
         failure_class=failure_class,
         created_by=created_by or CLAIM_EVIDENCE_WRITER_STAMP,

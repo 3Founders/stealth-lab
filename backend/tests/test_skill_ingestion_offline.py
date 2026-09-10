@@ -270,10 +270,35 @@ class FakeLLMClient:
         return type("R", (), {"choices": [choice]})()
 
 
+class _NoopTxn:
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc):
+        return False
+
+
+class _AcquireCM:
+    def __init__(self, conn):
+        self._conn = conn
+
+    async def __aenter__(self):
+        return self._conn
+
+    async def __aexit__(self, *exc):
+        return False
+
+
 class CompilerFakePool:
     """Captures every SQL the compiler emits, dispatched by substring.
     Deliberately not shared with the FakePool above -- per this repo's
-    'fakes are hand-rolled per file' convention."""
+    'fakes are hand-rolled per file' convention.
+
+    Doubles as its own connection: `acquire()` yields self and
+    `transaction()` is a no-op CM, so the `tenant_transaction(...)` /
+    `pool.acquire()` write paths (register_source, open_ingestion_context,
+    persist_observation, _emit_document_evidence, complete_ingestion_context)
+    run against the same capture buffers."""
 
     def __init__(self, *, exact_artifact=None, prior_artifact=None):
         self.exact_artifact = exact_artifact
@@ -282,8 +307,18 @@ class CompilerFakePool:
         self.captured: dict[str, list] = {
             "procedures": [], "task_nodes": [], "edges": [],
             "ingested_artifacts": [], "ingestion_runs": [], "updates": [],
+            "sources": [], "ingestion_contexts": [], "observations": [],
+            "evidence": [],
         }
-        self._seq = {"proc": 0, "task": 0, "art": 0}
+        self._seq = {"proc": 0, "task": 0, "art": 0, "src": 0, "ctx": 0,
+                     "obs": 0, "ev": 0}
+
+    # -- connection protocol --------------------------------------------
+    def acquire(self):
+        return _AcquireCM(self)
+
+    def transaction(self):
+        return _NoopTxn()
 
     @staticmethod
     def _norm(sql: str) -> str:
@@ -292,6 +327,15 @@ class CompilerFakePool:
     async def fetch(self, sql, *params):
         self.calls.append(("fetch", self._norm(sql), params))
         return []
+
+    async def fetchval(self, sql, *params):
+        s = self._norm(sql)
+        self.calls.append(("fetchval", s, params))
+        if "INSERT INTO observations" in s:
+            self._seq["obs"] += 1
+            self.captured["observations"].append(params)
+            return f"obs-{self._seq['obs']}"
+        return None
 
     async def fetchrow(self, sql, *params):
         s = self._norm(sql)
@@ -305,6 +349,18 @@ class CompilerFakePool:
             n = self._seq["proc"]
             self.captured["procedures"].append(params)
             return {"id": f"proc-row-{n}", "procedure_id": f"proc-{n}"}
+        if "INSERT INTO sources" in s:
+            self._seq["src"] += 1
+            self.captured["sources"].append(params)
+            return {"id": f"source-{self._seq['src']}", "inserted": True}
+        if "INSERT INTO ingestion_contexts" in s:
+            self._seq["ctx"] += 1
+            self.captured["ingestion_contexts"].append(params)
+            return {"id": f"ctx-{self._seq['ctx']}"}
+        if "INSERT INTO evidence" in s:
+            self._seq["ev"] += 1
+            self.captured["evidence"].append(params)
+            return {"id": f"ev-{self._seq['ev']}"}
         if "INSERT INTO task_nodes" in s:
             self._seq["task"] += 1
             self.captured["task_nodes"].append(params)
@@ -323,14 +379,22 @@ class CompilerFakePool:
         self.calls.append(("execute", s, params))
         if "INSERT INTO edges" in s:
             self.captured["edges"].append(params)
+        elif "INSERT INTO observation_events" in s:
+            self.captured["updates"].append(("observation_events", params))
         elif "UPDATE ingested_artifacts SET last_seen" in s:
             self.captured["updates"].append(("ingested_artifacts.last_seen", params))
         elif "UPDATE procedures SET capability_statement" in s:
             self.captured["updates"].append(("procedures.capability_statement", params))
+        elif "UPDATE procedures SET ingestion_context_id" in s:
+            self.captured["updates"].append(("procedures.ingestion_context_id", params))
+        elif "UPDATE observations SET ingestion_context_id" in s:
+            self.captured["updates"].append(("observations.ingestion_context_id", params))
         elif "UPDATE procedures SET evidence_refs" in s:
             self.captured["updates"].append(("procedures.evidence_refs", params))
         elif "UPDATE ingestion_runs SET finished_at" in s:
             self.captured["updates"].append(("ingestion_runs.finish", params))
+        elif "UPDATE ingestion_contexts SET status" in s:
+            self.captured["updates"].append(("ingestion_contexts.complete", params))
         return "OK"
 
 
@@ -344,23 +408,22 @@ def no_dup(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_compile_emits_one_task_node_and_edge_per_step(no_dup):
+async def test_compile_skill_artifact_does_not_manufacture_task_nodes(no_dup):
+    """B2: the SKILL.md compile path no longer materializes source steps as
+    task_nodes. Migration 39's own header ("does not materialize generic
+    source steps as task_nodes") and V4-hardening rule 8 ("NO REUSABLE TASK
+    ONTOLOGY"). The step list lives only in the procedure's `steps` JSON."""
     pool = CompilerFakePool()
     outcome = await compile_skill_artifact(
         pool, _skill_artifact(), embedder=FakeEmbedder(), client=None,
     )
     assert outcome.status == "captured"
-    # PANDAS_APPEND_SKILL_MD has exactly three numbered steps.
-    assert len(pool.captured["task_nodes"]) == 3
-    assert len(pool.captured["edges"]) == 3
-    assert len(outcome.task_node_ids) == 3
-
-    proc_row_id = outcome.version_row_id
-    for i, edge_params in enumerate(pool.captured["edges"]):
-        source_id, target_id, properties, _created_by = edge_params
-        assert source_id == proc_row_id            # edge points procedure -> task
-        assert target_id == outcome.task_node_ids[i]
-        assert properties == {"order": i}          # step order preserved
+    # PANDAS_APPEND_SKILL_MD has three numbered steps -- none become task_nodes.
+    assert pool.captured["task_nodes"] == []
+    assert pool.captured["edges"] == []
+    assert outcome.task_node_ids == []
+    # the step list still rode into the procedure row itself
+    assert len(pool.captured["procedures"][0][2]) == 3  # steps JSON, index 2
 
 
 @pytest.mark.asyncio
@@ -386,6 +449,7 @@ async def test_compile_carries_full_source_provenance(no_dup):
         admission_decision, admission_checks, admission_reason,
         admission_policy_version, admission_escalated, admission_llm_model,
         admission_llm_verdict, admission_llm_reason,
+        source_ref, ingestion_context_id,
     ) = pool.captured["ingested_artifacts"][0]
     assert (source_type, uri, repository, path, commit) == (
         "skill_md", art.uri, art.repository, art.path, "abc123",
@@ -404,6 +468,17 @@ async def test_compile_carries_full_source_provenance(no_dup):
     assert admission_llm_model is None
     assert admission_llm_verdict is None
     assert admission_llm_reason is None
+    # migrations 50/51: the artifact row points at the Source + IngestionContext
+    assert source_ref == "source-1"
+    ctx_id = str(pool.captured["ingestion_contexts"][0][0])   # INSERT arg $1 == id
+    assert ingestion_context_id == ctx_id
+    # the context's source_ref (arg $2) is the Source we just registered
+    assert pool.captured["ingestion_contexts"][0][1] == "source-1"
+    # procedure + observation rows were both stamped with that context id
+    assert ("procedures.ingestion_context_id", (ctx_id, "proc-row-1")) in pool.captured["updates"]
+    assert ("observations.ingestion_context_id", (ctx_id, "obs-1")) in pool.captured["updates"]
+    # the context was closed 'completed'
+    assert ("ingestion_contexts.complete", (ctx_id, "completed")) in pool.captured["updates"]
 
 
 @pytest.mark.asyncio
@@ -507,11 +582,28 @@ async def test_compile_changed_source_produces_a_new_version(no_dup, monkeypatch
     # superseded row is flagged stale (brief sections 11/12).
     assert outcome.marked_stale is True
     assert stale_calls == ["proc-row-v1"]
-    # task nodes + provenance row hang off the NEW version row.
-    assert len(pool.captured["task_nodes"]) == 3
-    for edge_params in pool.captured["edges"]:
-        assert edge_params[0] == "proc-row-v2"
+    # B2: NO task_nodes / edges are manufactured on the new-version path either.
+    assert pool.captured["task_nodes"] == []
+    assert pool.captured["edges"] == []
+    assert outcome.task_node_ids == []
+    # provenance row hangs off the NEW version row.
     assert pool.captured["ingested_artifacts"][0][8] == "proc-row-v2"  # procedure_row_id
+    # canonical chain also runs on new_version: Source + context + obs + evidence
+    assert outcome.source_id == "source-1"
+    assert outcome.observation_id == "obs-1"
+    assert outcome.document_evidence_id == "ev-1"
+    assert len(pool.captured["sources"]) == 1
+    assert len(pool.captured["ingestion_contexts"]) == 1
+    assert len(pool.captured["observations"]) == 1
+    assert len(pool.captured["evidence"]) == 1
+    ctx_id = str(pool.captured["ingestion_contexts"][0][0])
+    assert outcome.ingestion_context_id == ctx_id
+    # the new procedure version row was stamped with the context id
+    assert ("procedures.ingestion_context_id", (ctx_id, "proc-row-v2")) in pool.captured["updates"]
+    # document evidence targets the new version row, type 'document', supports
+    ev_params = pool.captured["evidence"][0]
+    assert ev_params[1] == "proc-row-v2"          # target_id (arg $2 after id)
+    assert ev_params[2] == 2                       # target_version (superseded version)
 
 
 @pytest.mark.asyncio
@@ -1052,3 +1144,153 @@ async def test_run_skill_ingestion_bulk_path_makes_no_llm_call_and_counts_admiss
     assert m["admission_escalated"] == 0     # no client configured -> zero LLM calls
     assert m["accepted"] == 2                # clean + quarantined both produced a candidate
     assert m["rejected"] == 1
+
+
+# ===========================================================================
+# Canonical ingestion chain (migrations 50/51): a captured / new-version
+# SKILL.md now lands on the Source -> IngestionContext -> Observation ->
+# document-Evidence spine, not straight into capture_procedure().
+# ===========================================================================
+
+
+@pytest.mark.asyncio
+async def test_compile_captured_emits_the_full_canonical_chain(no_dup):
+    pool = CompilerFakePool()
+    outcome = await compile_skill_artifact(
+        pool, _skill_artifact(), embedder=FakeEmbedder(), client=None,
+    )
+    assert outcome.status == "captured"
+
+    # one row on each table of the spine, and NO task_nodes
+    assert len(pool.captured["sources"]) == 1
+    assert len(pool.captured["ingestion_contexts"]) == 1
+    assert len(pool.captured["observations"]) == 1
+    assert len(pool.captured["evidence"]) == 1
+    assert pool.captured["task_nodes"] == []
+
+    # sources upsert carries ON CONFLICT identity dedup
+    src_sql = next(s for _k, s, _p in pool.calls if "INSERT INTO sources" in s)
+    assert "ON CONFLICT (source_type, locator, publisher) DO UPDATE" in src_sql
+    assert "(xmax = 0) AS inserted" in src_sql
+
+    # evidence row: type 'document', supports, procedure target, modest strength
+    ev_sql = next(s for _k, s, _p in pool.calls if "INSERT INTO evidence" in s)
+    assert "'document', 'procedure'" in ev_sql
+    assert "'supports'" in ev_sql
+    ev = pool.captured["evidence"][0]
+    assert ev[1] == outcome.version_row_id          # target_id
+    assert ev[2] == 1                                # target_version (fresh capture)
+    assert ev[3] == 0.3                              # strength_score
+    assert ev[4] == "source_document_assertion"     # strength_method
+    assert ev[5].startswith("skill_md:")            # independence_group by content hash
+
+    # follow-up ingestion_context_id stamps on procedures + observations
+    ctx_id = str(pool.captured["ingestion_contexts"][0][0])
+    assert outcome.ingestion_context_id == ctx_id
+    assert ("procedures.ingestion_context_id", (ctx_id, outcome.version_row_id)) in pool.captured["updates"]
+    assert ("observations.ingestion_context_id", (ctx_id, outcome.observation_id)) in pool.captured["updates"]
+    # and the ingested_artifacts row points at both anchors. After the
+    # union with the admission gate, the 8 admission-audit values sit
+    # between owner_id (idx 10) and source_ref, so source_ref/ingestion_
+    # context_id are idx 19/20.
+    art = pool.captured["ingested_artifacts"][0]
+    assert art[19] == outcome.source_id            # source_ref
+    assert art[20] == ctx_id                        # ingestion_context_id
+    # context closed 'completed'
+    assert ("ingestion_contexts.complete", (ctx_id, "completed")) in pool.captured["updates"]
+
+
+@pytest.mark.asyncio
+async def test_compile_observation_is_document_procedure_type_with_no_events(no_dup):
+    pool = CompilerFakePool()
+    await compile_skill_artifact(
+        pool, _skill_artifact(), embedder=FakeEmbedder(), client=None,
+    )
+    obs_sql = next(s for _k, s, _p in pool.calls if "INSERT INTO observations" in s)
+    assert "INSERT INTO observations" in obs_sql
+    # document path has no trace events -> no observation_events link rows
+    assert not any("observation_events" == k for k, _ in pool.captured["updates"])
+
+
+@pytest.mark.asyncio
+async def test_compile_screened_document_still_opens_a_source_and_context(no_dup):
+    """An injection-shaped doc is still captured deterministically, and the
+    canonical chain still runs -- but the context carries the screened
+    classification."""
+    pool = CompilerFakePool()
+    outcome = await compile_skill_artifact(
+        pool, _skill_artifact(content=INJECTION_SKILL_MD),
+        embedder=FakeEmbedder(), client=ExplodingLLMClient(),
+    )
+    assert outcome.status == "captured"
+    assert outcome.injection_screened is True
+    assert len(pool.captured["sources"]) == 1
+    assert len(pool.captured["ingestion_contexts"]) == 1
+    # ingestion_contexts INSERT arg order: classification is arg index 13
+    assert pool.captured["ingestion_contexts"][0][13] == "system_pending_review"
+
+
+@pytest.mark.asyncio
+async def test_compile_non_procedural_doc_writes_nothing_at_all(no_dup):
+    """A SkillMdParseError (no ordered actions) short-circuits before any
+    Source / context / observation / evidence is written."""
+    pool = CompilerFakePool()
+    outcome = await compile_skill_artifact(
+        pool, _skill_artifact(content=NO_STEPS_SKILL_MD),
+        embedder=FakeEmbedder(), client=None,
+    )
+    assert outcome.status == "rejected"
+    assert pool.captured["sources"] == []
+    assert pool.captured["ingestion_contexts"] == []
+    assert pool.captured["observations"] == []
+    assert pool.captured["evidence"] == []
+    assert pool.captured["procedures"] == []
+    # Union with the admission gate: a parse-error reject still short-
+    # circuits the canonical chain (no Source/context/observation/evidence),
+    # but upstream's admission audit trail writes exactly ONE ingested_
+    # artifacts row (no procedure_id / procedure_row_id) -- same behaviour
+    # pinned by test_compile_rejects_unstructured_document above.
+    assert len(pool.captured["ingested_artifacts"]) == 1
+    assert pool.captured["ingested_artifacts"][0][7] is None   # procedure_id
+    assert pool.captured["ingested_artifacts"][0][8] is None   # procedure_row_id
+
+
+@pytest.mark.asyncio
+async def test_compile_duplicate_does_not_run_the_chain(monkeypatch):
+    async def fake_check_novelty(pool, embedder, goal_text):
+        return {"procedure_id": "proc-existing", "_similarity_score": 0.96}
+
+    monkeypatch.setattr("app.services.skill_ingestion.check_novelty", fake_check_novelty)
+    pool = CompilerFakePool()
+    outcome = await compile_skill_artifact(
+        pool, _skill_artifact(), embedder=FakeEmbedder(), client=None,
+    )
+    assert outcome.status == "duplicate"
+    # chain is for captured / new_version only
+    assert pool.captured["sources"] == []
+    assert pool.captured["ingestion_contexts"] == []
+    assert pool.captured["observations"] == []
+    assert pool.captured["evidence"] == []
+    assert outcome.source_id is None
+    assert outcome.ingestion_context_id is None
+
+
+@pytest.mark.asyncio
+async def test_run_skill_ingestion_counts_the_chain_rows(monkeypatch):
+    async def _none(pool, embedder, goal_text):
+        return None
+
+    monkeypatch.setattr("app.services.skill_ingestion.check_novelty", _none)
+    artifacts = [
+        _skill_artifact(uri="file:///skills/a/SKILL.md", path="a/SKILL.md"),
+        _skill_artifact(uri="file:///skills/b/SKILL.md", path="b/SKILL.md"),
+    ]
+    pool = CompilerFakePool()
+    result = await run_skill_ingestion(
+        pool, _FakeAdapter(artifacts), embedder=FakeEmbedder(), client=None,
+    )
+    m = result["metrics"]
+    assert m["accepted"] == 2
+    assert m["sources"] == 2
+    assert m["observations"] == 2
+    assert m["document_evidence"] == 2

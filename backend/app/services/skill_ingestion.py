@@ -35,6 +35,7 @@ from typing import Any, Optional
 import asyncpg
 import yaml
 
+from app.services.access import TenantScope, tenant_transaction
 from app.services.applicability import find_applicable_procedures
 from app.services.embeddings import Embedder
 from app.services.ingestion_admission import (
@@ -42,6 +43,13 @@ from app.services.ingestion_admission import (
     AdmissionDecision,
     classify_admission,
 )
+from app.services.ingestion_context import (
+    complete_ingestion_context,
+    open_ingestion_context,
+)
+from app.services.observations import persist_observation
+from app.services.sources import register_source
+from app.utils.ids import uuid7
 from app.services.procedure_display import (
     DISPLAY_METADATA_FALLBACK_VERSION,
     DISPLAY_METADATA_VERSION,
@@ -825,6 +833,169 @@ async def ingest_skill_md(
 EXTRACTOR_VERSION_DETERMINISTIC = "skill_md_v5"
 EXTRACTOR_VERSION_GROUNDED = "skill_md_grounded_v5"
 
+# --- canonical ingestion chain (migrations 50/51) --------------------------
+# A captured / new-version SKILL.md now lands on the SAME episode ->
+# observation -> claim/evidence -> Source spine every other ingestion path
+# uses, instead of jumping straight to capture_procedure() and creating zero
+# Source / Observation / Evidence rows. Named, greppable constants -- no bare
+# literals at the call sites.
+SKILL_MD_INGESTION_SOURCE_TYPE = "document"        # sources.source_type (source_kind enum)
+SKILL_MD_INGESTION_CONTEXT_SOURCE_TYPE = "skill_md"  # ingestion_contexts.source_type (free TEXT)
+SKILL_MD_DISCOVERED_VIA = "skill_md_ingestion"
+SKILL_MD_CLASSIFICATION_PUBLIC = "PUBLIC_SOURCE"
+SKILL_MD_CLASSIFICATION_SCREENED = "system_pending_review"
+DOCUMENT_OBSERVATION_TYPE = "document_procedure"
+# A source merely ASSERTING a procedure is weak, single-origin evidence --
+# never an executed outcome. Modest strength, its own named method.
+DOCUMENT_EVIDENCE_STRENGTH = 0.3
+DOCUMENT_EVIDENCE_STRENGTH_METHOD = "source_document_assertion"
+# A fresh capture is always procedures.version = 1 (DB default, 18_procedures.sql).
+_FRESH_PROCEDURE_VERSION = 1
+
+
+async def _open_ingestion_provenance(
+    pool: asyncpg.Pool,
+    artifact: Any,
+    parsed: ParsedSkill,
+    *,
+    domain: Optional[str],
+    created_by: str,
+    extractor_version: str,
+    run_id: Optional[str],
+    injection_signals: list[str],
+    owner_id: Optional[str],
+) -> tuple[str, bool, str]:
+    """Register the document's Source (reusing an existing row on re-ingest)
+    and open the IngestionContext every derived row will stamp.
+
+    Returns ``(source_id, source_reused, ingestion_context_id)``. The Source
+    is `provenance='prior_library'` (vetted external material -- this
+    codebase's existing convention, onboarding/seed.py uses the same value);
+    a screened document still gets a real Source but its context carries the
+    `system_pending_review` classification so downstream can see it was
+    flagged."""
+    source = await register_source(
+        pool,
+        source_type=SKILL_MD_INGESTION_SOURCE_TYPE,
+        locator=artifact.uri,
+        publisher=artifact.repository,
+        title=parsed.name,
+        license=parsed.license,
+        discovered_via=SKILL_MD_DISCOVERED_VIA,
+        provenance="prior_library",
+        created_by=created_by,
+        owner_id=owner_id,
+    )
+    resolved_scope_type = "entity" if domain else "global"
+    classification = (
+        SKILL_MD_CLASSIFICATION_SCREENED if injection_signals
+        else SKILL_MD_CLASSIFICATION_PUBLIC
+    )
+    context_id = await open_ingestion_context(
+        pool,
+        source_type=SKILL_MD_INGESTION_CONTEXT_SOURCE_TYPE,
+        extractor_id=created_by,
+        extractor_version=extractor_version,
+        actor_id=created_by,
+        scope_type=resolved_scope_type,
+        scope_entity_id=domain,
+        source_ref=source["id"],
+        source_uri=artifact.uri,
+        source_hash=artifact.content_hash,
+        classification=classification,
+        owner_id=owner_id,
+        run_ref=run_id,
+    )
+    return source["id"], source["reused"], context_id
+
+
+async def _emit_document_observation(
+    pool: asyncpg.Pool,
+    parsed: ParsedSkill,
+    *,
+    ingestion_context_id: str,
+    owner_id: Optional[str],
+) -> str:
+    """One observation capturing what the source asserts: a procedure named
+    X with N steps. The document path has NO trace events, so ``event_ids``
+    is empty -- ``persist_observation`` tolerates that (its per-event link
+    loop simply does not run). ``persist_observation`` does not accept an
+    ``ingestion_context_id`` (it lives in a module this lane does not own),
+    so the migration-51 column is stamped with a follow-up UPDATE -- the
+    same pattern this file already uses for a procedure's
+    ``capability_statement``."""
+    observation_id = await persist_observation(
+        pool,
+        observation_type=DOCUMENT_OBSERVATION_TYPE,
+        label=(
+            f"source documents a procedure '{parsed.name}' "
+            f"with {len(parsed.steps)} steps"
+        ),
+        extractor_kind="deterministic",
+        event_ids=[],
+        properties={
+            "procedure_name": parsed.name,
+            "step_count": len(parsed.steps),
+            "source": "skill_md",
+        },
+        owner_id=owner_id,
+        visibility="public",
+    )
+    await pool.execute(
+        "UPDATE observations SET ingestion_context_id = $1::uuid WHERE id = $2::uuid",
+        ingestion_context_id, observation_id,
+    )
+    return observation_id
+
+
+async def _emit_document_evidence(
+    pool: asyncpg.Pool,
+    *,
+    procedure_row_id: str,
+    target_version: int,
+    source_hash: str,
+    context_key: str,
+    extractor_version: str,
+    ingestion_context_id: str,
+    created_by: str,
+) -> str:
+    """One ``evidence_type='document'`` row: the source ASSERTS this
+    procedure (``direction='supports'``), modest strength. NOT
+    outcome-bearing -> no ``outcome_status``. ``independence_group`` ties
+    every re-ingest of the same document (keyed by content hash) into one
+    group so repeated ingests never inflate independent-corroboration
+    counts. Raw INSERT mirrors ``claim_evidence.py``'s column list, plus
+    ``target_version`` (required for a procedure target,
+    ``evidence_proc_version_chk``) and the migration-51
+    ``ingestion_context_id``. Written through ``tenant_transaction``."""
+    evidence_id = uuid7()
+    scope = TenantScope.commons()
+    async with tenant_transaction(pool, scope) as conn:
+        row = await conn.fetchrow(
+            """
+            INSERT INTO evidence (
+                id, evidence_type, target_type, target_id, target_version,
+                direction, strength_score, strength_method,
+                independence_group, context_key,
+                extractor_version, created_by, visibility, tenant_id,
+                ingestion_context_id
+            ) VALUES (
+                $1::uuid, 'document', 'procedure', $2::uuid, $3,
+                'supports', $4, $5,
+                $6, $7,
+                $8, $9, 'public', $10::uuid,
+                $11::uuid
+            )
+            RETURNING id
+            """,
+            evidence_id, procedure_row_id, target_version,
+            DOCUMENT_EVIDENCE_STRENGTH, DOCUMENT_EVIDENCE_STRENGTH_METHOD,
+            f"skill_md:{source_hash}", context_key,
+            extractor_version, created_by, scope.tenant_id,
+            ingestion_context_id,
+        )
+    return str(row["id"])
+
 _SKILL_ABSTRACTION_SYSTEM_PROMPT = """You restate a software skill's capability as ONE abstract, \
 reusable sentence.
 
@@ -901,6 +1072,15 @@ class IngestOutcome:
     admission_decision: Optional[str] = None
     quarantined: bool = False
     admission_escalated: bool = False
+    # Canonical ingestion chain (migrations 50/51): the Source the document
+    # was registered as, the IngestionContext every derived row stamps, and
+    # the one Observation + one document-Evidence row that chain emits.
+    # None on outcomes that do not run the chain (unchanged / duplicate /
+    # rejected).
+    source_id: Optional[str] = None
+    ingestion_context_id: Optional[str] = None
+    observation_id: Optional[str] = None
+    document_evidence_id: Optional[str] = None
 
 
 def _slugify(text: str, *, maxlen: int = 80) -> str:
@@ -1269,7 +1449,13 @@ async def _write_artifact_row(
     procedure_row_id: Optional[str], extractor_version: str,
     owner_id: Optional[str] = None,
     admission: Optional[Any] = None,
+    source_ref: Optional[str] = None,
+    ingestion_context_id: Optional[str] = None,
 ) -> str:
+    # source_ref / ingestion_context_id (migrations 50/51): point this
+    # per-artifact provenance row AT the Source identity anchor and the
+    # IngestionContext that produced it. Nullable -- the duplicate path has
+    # no context, and legacy rows keep NULL.
     admission_values = _admission_audit_values(admission)
     if getattr(artifact, "source_type", None) == "skill_package":
         package = normalize_skill_package(artifact)
@@ -1278,12 +1464,13 @@ async def _write_artifact_row(
             "\"commit\", content_hash, extractor_version, procedure_id, procedure_row_id, "
             "run_id, first_seen, last_seen, owner_id, source_id, retrieved_at, "
             "license_metadata, bundle_hash, resource_manifest, parsed_metadata, "
-            "dependencies, requirements, " + _ADMISSION_AUDIT_COLUMNS + ") "
+            "dependencies, requirements, " + _ADMISSION_AUDIT_COLUMNS + ", "
+            "source_ref, ingestion_context_id) "
             "VALUES (gen_random_uuid(), $1, $2, $3, $4, "
             "$5, $6, $7, $8::uuid, $9::uuid, $10::uuid, now(), now(), $11, $12, $13, "
             "$14::jsonb, $15, $16::jsonb, $17::jsonb, $18::jsonb, $19::jsonb, "
-            "$20::ingestion_admission_decision, $21::jsonb, $22, $23, $24, $25, $26, $27) "
-            "RETURNING id",
+            "$20::ingestion_admission_decision, $21::jsonb, $22, $23, $24, $25, $26, $27, "
+            "$28::uuid, $29::uuid) RETURNING id",
             artifact.source_type, artifact.uri, artifact.repository, artifact.path,
             artifact.commit, artifact.bundle_hash or artifact.content_hash, extractor_version,
             procedure_id, procedure_row_id, run_id, owner_id, artifact.source_id,
@@ -1294,20 +1481,23 @@ async def _write_artifact_row(
             [d.__dict__ for d in package.dependencies],
             {"tools": list(package.tool_requirements), "compatibility": parse_skill_md(artifact.content).compatibility},
             *admission_values,
+            source_ref, ingestion_context_id,
         )
         return str(row["id"])
     row = await pool.fetchrow(
         "INSERT INTO ingested_artifacts (id, source_type, uri, repository, path, "
         "\"commit\", content_hash, extractor_version, procedure_id, procedure_row_id, "
-        "run_id, first_seen, last_seen, owner_id, " + _ADMISSION_AUDIT_COLUMNS + ") "
+        "run_id, first_seen, last_seen, owner_id, " + _ADMISSION_AUDIT_COLUMNS + ", "
+        "source_ref, ingestion_context_id) "
         "VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, $6, $7, $8::uuid, $9::uuid, "
         "$10::uuid, now(), now(), $11, "
-        "$12::ingestion_admission_decision, $13::jsonb, $14, $15, $16, $17, $18, $19) "
-        "RETURNING id",
+        "$12::ingestion_admission_decision, $13::jsonb, $14, $15, $16, $17, $18, $19, "
+        "$20::uuid, $21::uuid) RETURNING id",
         artifact.source_type, artifact.uri, artifact.repository, artifact.path,
         artifact.commit, artifact.content_hash, extractor_version,
         procedure_id, procedure_row_id, run_id, owner_id,
         *admission_values,
+        source_ref, ingestion_context_id,
     )
     return str(row["id"])
 
@@ -1353,9 +1543,16 @@ async def _persist_package_relations(
         implementation_id = str(row["id"])
         implementation_ids.append(implementation_id)
         await pool.execute(
+            # Migration 52 dropped the old UNIQUE (procedure_id, implementation_id)
+            # in favour of the partial identity index
+            # idx_procedure_implementations_identity (procedure_id,
+            # implementation_id, role) WHERE t_invalid IS NULL. This INSERT
+            # omits `role`, so the row takes role='primary' by DEFAULT and the
+            # conflict target must name all three columns of that index.
             "INSERT INTO procedure_implementations (id, procedure_id, implementation_id, "
             "resource_path, created_by) VALUES (gen_random_uuid(), $1::uuid, $2::uuid, $3, $4) "
-            "ON CONFLICT (procedure_id, implementation_id) DO NOTHING",
+            "ON CONFLICT (procedure_id, implementation_id, role) WHERE t_invalid IS NULL "
+            "DO NOTHING",
             procedure_id, implementation_id, resource.path, created_by,
         )
     for dependency in package.dependencies:
@@ -1597,16 +1794,39 @@ async def compile_skill_artifact(
                 )
                 marked_stale = True
 
-            task_node_ids = []
-            if artifact.source_type != "skill_package":
-                task_node_ids = await _write_task_nodes(
-                    pool, procedure_row_id=superseded["id"],
-                    steps=parsed.steps, created_by=created_by,
-                    scope_type="entity" if domain else "global", scope_entity_id=domain,
+            # --- canonical ingestion chain (migrations 50/51) ---
+            source_id, _source_reused, ingestion_context_id = (
+                await _open_ingestion_provenance(
+                    pool, artifact, parsed, domain=domain, created_by=created_by,
+                    extractor_version=extractor_version, run_id=run_id,
+                    injection_signals=injection_signals, owner_id=owner_id,
                 )
+            )
+            await pool.execute(
+                "UPDATE procedures SET ingestion_context_id = $1::uuid WHERE id = $2::uuid",
+                ingestion_context_id, superseded["id"],
+            )
+            observation_id = await _emit_document_observation(
+                pool, parsed, ingestion_context_id=ingestion_context_id,
+                owner_id=owner_id,
+            )
+
+            # B2: task_nodes are NOT manufactured from source steps at
+            # ingestion time. Migration 39's own header ("does not
+            # materialize generic source steps as task_nodes") and
+            # V4-hardening rule 8 ("NO REUSABLE TASK ONTOLOGY"). The
+            # procedure's `steps` JSON is the sole home of the step list.
+            task_node_ids: list[str] = []
             implementation_ids, dependency_count = await _persist_package_relations(
                 pool, artifact, parsed, procedure_id=str(superseded["procedure_id"]),
                 created_by=created_by,
+            )
+            document_evidence_id = await _emit_document_evidence(
+                pool, procedure_row_id=str(superseded["id"]),
+                target_version=int(superseded.get("version") or _FRESH_PROCEDURE_VERSION),
+                source_hash=artifact.content_hash,
+                context_key=artifact.uri, extractor_version=extractor_version,
+                ingestion_context_id=ingestion_context_id, created_by=created_by,
             )
             artifact_id = await _write_artifact_row(
                 pool, artifact, run_id=run_id,
@@ -1614,6 +1834,10 @@ async def compile_skill_artifact(
                 procedure_row_id=superseded["id"],
                 extractor_version=extractor_version, owner_id=owner_id,
                 admission=admission,
+                source_ref=source_id, ingestion_context_id=ingestion_context_id,
+            )
+            await complete_ingestion_context(
+                pool, ingestion_context_id, status="completed",
             )
             return IngestOutcome(
                 status="new_version",
@@ -1629,6 +1853,10 @@ async def compile_skill_artifact(
                 dependency_count=dependency_count,
                 admission_decision=admission.decision, quarantined=quarantined,
                 admission_escalated=admission.escalated,
+                source_id=source_id,
+                ingestion_context_id=ingestion_context_id,
+                observation_id=observation_id,
+                document_evidence_id=document_evidence_id,
             )
         # prior row already gone (concurrent merge/supersede) -- fall
         # through and treat this as a fresh capture.
@@ -1670,6 +1898,17 @@ async def compile_skill_artifact(
         )
 
     # --- fresh capture ---
+    # Canonical ingestion chain (migrations 50/51): register the Source and
+    # open the IngestionContext BEFORE capture_procedure, so every derived
+    # row (procedure, observation, document evidence, artifact) can stamp
+    # ingestion_context_id.
+    source_id, _source_reused, ingestion_context_id = (
+        await _open_ingestion_provenance(
+            pool, artifact, parsed, domain=domain, created_by=created_by,
+            extractor_version=extractor_version, run_id=run_id,
+            injection_signals=injection_signals, owner_id=owner_id,
+        )
+    )
     result = await capture_procedure(
         pool, name=parsed.name, goal=parsed.description, steps=steps_json,
         provenance=provenance, domain=domain,
@@ -1700,22 +1939,41 @@ async def compile_skill_artifact(
             "UPDATE procedures SET capability_statement = $2 WHERE id = $1::uuid",
             result["id"], capability_statement,
         )
-    task_node_ids = []
-    if artifact.source_type != "skill_package":
-        task_node_ids = await _write_task_nodes(
-            pool, procedure_row_id=result["id"], steps=parsed.steps, created_by=created_by,
-            scope_type="entity" if domain else "global", scope_entity_id=domain,
-        )
+    # Stamp the procedure with its IngestionContext (follow-up UPDATE --
+    # capture_procedure has no ingestion_context_id kwarg and lives in a
+    # module this lane does not own; same pattern as capability_statement).
+    await pool.execute(
+        "UPDATE procedures SET ingestion_context_id = $1::uuid WHERE id = $2::uuid",
+        ingestion_context_id, result["id"],
+    )
+    observation_id = await _emit_document_observation(
+        pool, parsed, ingestion_context_id=ingestion_context_id, owner_id=owner_id,
+    )
+
+    # B2: task_nodes are NOT manufactured from source steps at ingestion
+    # time -- migration 39's own header and V4-hardening rule 8 ("NO
+    # REUSABLE TASK ONTOLOGY"). The procedure's `steps` JSON is the sole
+    # home of the step list.
+    task_node_ids: list[str] = []
     implementation_ids, dependency_count = await _persist_package_relations(
         pool, artifact, parsed, procedure_id=str(result["procedure_id"]),
         created_by=created_by,
+    )
+    document_evidence_id = await _emit_document_evidence(
+        pool, procedure_row_id=str(result["id"]),
+        target_version=_FRESH_PROCEDURE_VERSION,
+        source_hash=artifact.content_hash,
+        context_key=artifact.uri, extractor_version=extractor_version,
+        ingestion_context_id=ingestion_context_id, created_by=created_by,
     )
     artifact_id = await _write_artifact_row(
         pool, artifact, run_id=run_id,
         procedure_id=result["procedure_id"], procedure_row_id=result["id"],
         extractor_version=extractor_version, owner_id=owner_id,
         admission=admission,
+        source_ref=source_id, ingestion_context_id=ingestion_context_id,
     )
+    await complete_ingestion_context(pool, ingestion_context_id, status="completed")
     return IngestOutcome(
         status="captured",
         procedure_id=result["procedure_id"],
@@ -1729,6 +1987,10 @@ async def compile_skill_artifact(
         reason=screen_reason or (admission.reason if quarantined else None),
         implementation_ids=implementation_ids,
         dependency_count=dependency_count,
+        source_id=source_id,
+        ingestion_context_id=ingestion_context_id,
+        observation_id=observation_id,
+        document_evidence_id=document_evidence_id,
     )
 
 
@@ -1795,6 +2057,11 @@ async def run_skill_ingestion(
         "admission_rejected": 0,
         "quarantined": 0,
         "admission_escalated": 0,
+        # Canonical ingestion chain (migrations 50/51): one Source row, one
+        # Observation, one document-Evidence row per accepted artifact.
+        "sources": 0,
+        "observations": 0,
+        "document_evidence": 0,
     }
     outcomes: list[IngestOutcome] = []
 
@@ -1843,6 +2110,12 @@ async def run_skill_ingestion(
             metrics["quarantined"] += 1
         if outcome.admission_escalated:
             metrics["admission_escalated"] += 1
+        if outcome.source_id:
+            metrics["sources"] += 1
+        if outcome.observation_id:
+            metrics["observations"] += 1
+        if outcome.document_evidence_id:
+            metrics["document_evidence"] += 1
 
     await resolve_procedure_dependencies(pool)
 

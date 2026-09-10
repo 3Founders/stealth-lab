@@ -166,6 +166,67 @@ def test_record_claim_evidence_defaults_writer_stamp_when_created_by_omitted():
     assert insert_args[13] == "claim_evidence.record_claim_evidence@v1"
 
 
+def test_record_claim_evidence_forwards_independence_group_to_the_insert():
+    """B10 / V4-hardening §14: a caller that knows two rows share one
+    underlying source can pass a named group so they stop counting as
+    independent. The group binds at arg index 8 -- the same position
+    procedures.py's real evidence writer uses."""
+    conn = FakeConn()
+    pool = FakeTxnPool(conn)
+
+    _run(record_claim_evidence(
+        pool,
+        claim_id=CLAIM_ID,
+        evidence_type="execution_result",
+        outcome_status="success",
+        success_criteria={"predicate": "the source asserts X"},
+        independence_group="skill_md:acme/repo@deadbeef",
+    ))
+
+    _, insert_args = next(
+        (s, p) for s, p in conn.statements if "INSERT INTO evidence" in s
+    )
+    assert insert_args[8] == "skill_md:acme/repo@deadbeef"
+
+
+def test_record_claim_evidence_independence_group_defaults_to_null_self_grouped():
+    conn = FakeConn()
+    pool = FakeTxnPool(conn)
+
+    _run(record_claim_evidence(
+        pool,
+        claim_id=CLAIM_ID,
+        evidence_type="execution_result",
+        outcome_status="success",
+        success_criteria={"metrics": {"ok": True}},
+    ))
+
+    _, insert_args = next(
+        (s, p) for s, p in conn.statements if "INSERT INTO evidence" in s
+    )
+    assert insert_args[8] is None
+
+
+def test_record_claim_evidence_rejects_a_blank_independence_group():
+    """The reused outcome_to_evidence() gate refuses a blank group
+    (a blank would silently merge every blank-grouped row into one
+    non-corroborating bucket). Not re-implemented here -- just proven
+    to still apply through this call path."""
+    conn = FakeConn()
+    pool = FakeTxnPool(conn)
+
+    with pytest.raises(EvidenceViolation):
+        _run(record_claim_evidence(
+            pool,
+            claim_id=CLAIM_ID,
+            evidence_type="execution_result",
+            outcome_status="success",
+            success_criteria={"predicate": "x"},
+            independence_group="   ",
+        ))
+    assert conn.statements == [], "a rejected payload must never reach the INSERT"
+
+
 def test_record_claim_evidence_rejects_bare_success_with_no_criteria():
     """The real outcome_to_evidence()/validate_evidence() gate applies
     verbatim -- invariant #13 is not re-implemented, just reused."""

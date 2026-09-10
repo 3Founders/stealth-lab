@@ -142,7 +142,12 @@ def test_propagate_claim_change_marks_referencing_procedure_stale():
                 reason="claim superseded by a fresher measurement",
                 detected_by="test-claim-impact",
             )
-            assert processed == [row_id]
+            # propagate_claim_change now returns a dict (B5 role-aware
+            # invalidation): strong-role refs are marked stale, explanatory
+            # refs are returned untouched. This precondition claim ref is a
+            # strong role, so it lands in marked_stale.
+            assert processed["marked_stale"] == [row_id]
+            assert processed["explanatory_untouched"] == []
 
             after = await pool.fetchrow("SELECT staleness::text FROM procedures WHERE id = $1", row_id)
             assert after["staleness"] == "stale"
@@ -171,7 +176,8 @@ def test_propagate_claim_change_is_a_noop_for_unreferenced_claim():
                 pool, str(uuid.uuid4()),
                 reason="irrelevant", detected_by="test-claim-impact",
             )
-            assert processed == []
+            assert processed["marked_stale"] == []
+            assert processed["explanatory_untouched"] == []
         finally:
             await _cleanup(pool)
             await pool.close()

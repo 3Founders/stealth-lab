@@ -33,6 +33,9 @@ NOW = datetime.now(timezone.utc)
 IMPL_ID = str(uuid4())
 TASK_ID = str(uuid4())
 PROC_ROW_ID = str(uuid4())
+# Stable logical procedure id (migration 52's procedure_implementations
+# relation is keyed by this, not by the version row id).
+PROC_ID = str(uuid4())
 
 UNRESTRICTED = AccessScope.unrestricted()
 ANON = AccessScope.anonymous()
@@ -94,6 +97,7 @@ def _evidence(evidence_id, **overrides):
 def _procedure(**overrides):
     row = {
         "id": PROC_ROW_ID,
+        "procedure_id": PROC_ID,
         "migrated_from_task_node_id": None,
         "visibility": "public",
         "owner_id": None,
@@ -109,12 +113,16 @@ def _passes_visibility(row: dict, sql: str) -> bool:
 
 
 class FakePool:
-    def __init__(self, *, implementations=(), evidence=(), implementation_tasks=(), procedures=()):
+    def __init__(self, *, implementations=(), evidence=(), implementation_tasks=(),
+                 procedures=(), procedure_implementations=()):
         self._implementations = list(implementations)
         self._evidence = list(evidence)
         # list of (implementation_id, task_node_id)
         self._implementation_tasks = list(implementation_tasks)
         self._procedures = list(procedures)
+        # migration 52 relation rows: dicts with at least procedure_id +
+        # the joined implementations columns. Empty for the common case.
+        self._procedure_implementations = list(procedure_implementations)
         self.fetch_calls = []
         self.fetchrow_calls = []
 
@@ -138,6 +146,15 @@ class FakePool:
     async def fetch(self, sql, *params):
         norm = " ".join(sql.split())
         self.fetch_calls.append((norm, params))
+        if "FROM procedure_implementations pi JOIN implementations i" in norm:
+            procedure_id = str(params[0])
+            status = params[1] if "pi.status = $2" in norm else None
+            rows = [
+                dict(r) for r in self._procedure_implementations
+                if str(r.get("procedure_id")) == procedure_id
+                and (status is None or r.get("binding_status", "active") == status)
+            ]
+            return rows
         if "FROM implementations i JOIN implementation_tasks it" in norm:
             task_node_id = str(params[0])
             status = None

@@ -28,6 +28,14 @@ logging.basicConfig(
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # V4-hardening T1 (K->T1, "NO SYNTHETIC FALLBACKS"): before anything
+    # else, refuse to start STAGING/PRODUCTION on a fake embedder, a no-op
+    # auth validator, or an in-memory/absent durable store. No-op under
+    # environment == "TEST". Imported lazily so importing app.main for a
+    # unit test never trips the guard.
+    from app.services.runtime_guard import assert_production_safe
+
+    assert_production_safe(settings)
     # Fail fast if private visibility is enabled without real auth --
     # that combination would expose private content to anyone who sets
     # an X-Viewer-Id header.
