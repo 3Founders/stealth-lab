@@ -657,6 +657,17 @@ async def find_applicable_procedures(
     holds -- an empty list is the caller's real signal to fall back to
     generative planning (ticket 15), not an error.
 
+    INDEX FRESHNESS (G14 / spec B37): the vector + lexical legs are
+    advisory. Every surviving candidate is re-fetched from its live
+    `procedures` row (the `visibility_predicate` re-fetch below, and
+    `_resolve_live_procedure` on the MCP path) before the hard-constraint
+    cascade and before ranking, so an embedding that lags its source text
+    can never cause selection on outdated canonical content -- there is no
+    detached index to be stale against. `procedure_index_lag` (migration
+    72) + `app.services.index_freshness.get_index_lag` surface rows whose
+    embedding is behind canonical, for the resumable
+    `scripts/backfill_procedure_embeddings.py` rebuild.
+
     `candidate_pool_size`: ticket 15's match-cost-aware ordering ("order
     candidate procedures cheapest-to-match first") is preserved, but it is
     no longer the ONLY signal choosing which candidates are even fetched.
