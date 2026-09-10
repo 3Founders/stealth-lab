@@ -27,7 +27,7 @@ this rewrite chose to narrow.
 """
 from __future__ import annotations
 
-from typing import Optional
+from typing import Literal, Optional
 
 import asyncpg
 
@@ -216,6 +216,74 @@ class AmbiguousBindingResolutionError(ProcedureImplementationBindingError):
         )
 
 
+# B38 STRICT CLOSURE: V4's typed-state vocabulary distinguishes
+# MISSING_IMPLEMENTATION ("no candidate implementation names this
+# role/step at all") from IMPLEMENTATION_UNAVAILABLE ("candidates
+# exist, but every one is disabled/quarantined/deprecated, or fails a
+# real requirements/environment check") -- two states this function's
+# own cascade already computes at different stages (see the docstring
+# below), never fabricated to satisfy the vocabulary. `None` (no
+# reason available) means resolution actually succeeded.
+BindingUnresolvedReason = Literal["missing", "unavailable"]
+
+
+async def resolve_binding_for_step_with_reason(
+    pool: asyncpg.Pool,
+    *,
+    procedure_id: str,
+    step_order: Optional[int] = None,
+    access_scope: Optional[AccessScope] = None,
+    available_context: Optional[dict] = None,
+) -> tuple[Optional[dict], Optional["BindingUnresolvedReason"]]:
+    """The same real resolution cascade `resolve_binding_for_step` runs,
+    additionally reporting WHY resolution failed when it does -- see
+    `BindingUnresolvedReason`. `resolve_binding_for_step` itself stays
+    the pre-existing, unchanged `Optional[dict]` contract (every
+    existing caller/test keeps working); this is the typed-state-aware
+    entry point for a caller that needs to surface V4's literal
+    MISSING_IMPLEMENTATION/IMPLEMENTATION_UNAVAILABLE distinction
+    rather than a bare `None`.
+    """
+    candidates = await get_bindings_for_procedure(
+        pool, procedure_id=procedure_id, status="active", access_scope=access_scope,
+    )
+    eligible = [
+        c for c in candidates
+        if step_order is None or not c["supported_steps"] or step_order in c["supported_steps"]
+    ]
+    if not eligible:
+        return None, "missing"
+
+    eligible = [
+        c for c in eligible
+        if c["implementation_status"] not in _UNAVAILABLE_IMPLEMENTATION_STATUSES
+    ]
+    if available_context is not None:
+        from app.execution.implementation_executor import check_requirements
+        eligible = [
+            c for c in eligible
+            if check_requirements(
+                {"requirements": c["implementation_requirements"] or {}}, available_context,
+            )
+        ]
+    if not eligible:
+        return None, "unavailable"
+
+    eligible.sort(key=lambda c: _ROLE_PRIORITY.get(c["role"], len(ROLES)))
+    best_role_rank = _ROLE_PRIORITY.get(eligible[0]["role"], len(ROLES))
+    tied = [c for c in eligible if _ROLE_PRIORITY.get(c["role"], len(ROLES)) == best_role_rank]
+
+    verified = [c for c in tied if c["implementation_verification_status"] == "verified"]
+    if verified:
+        tied = verified
+
+    if len(tied) > 1:
+        raise AmbiguousBindingResolutionError(
+            [str(c["implementation_id"]) for c in tied]
+        )
+    return tied[0], None
+
+
 async def resolve_binding_for_step(
     pool: asyncpg.Pool,
     *,
@@ -288,38 +356,8 @@ async def resolve_binding_for_step(
     "ambiguous... route to ask/plan/refuse" case, never silently
     resolved by insertion order.
     """
-    candidates = await get_bindings_for_procedure(
-        pool, procedure_id=procedure_id, status="active", access_scope=access_scope,
+    candidate, _reason = await resolve_binding_for_step_with_reason(
+        pool, procedure_id=procedure_id, step_order=step_order,
+        access_scope=access_scope, available_context=available_context,
     )
-    eligible = [
-        c for c in candidates
-        if step_order is None or not c["supported_steps"] or step_order in c["supported_steps"]
-    ]
-    eligible = [
-        c for c in eligible
-        if c["implementation_status"] not in _UNAVAILABLE_IMPLEMENTATION_STATUSES
-    ]
-    if available_context is not None:
-        from app.execution.implementation_executor import check_requirements
-        eligible = [
-            c for c in eligible
-            if check_requirements(
-                {"requirements": c["implementation_requirements"] or {}}, available_context,
-            )
-        ]
-    if not eligible:
-        return None
-
-    eligible.sort(key=lambda c: _ROLE_PRIORITY.get(c["role"], len(ROLES)))
-    best_role_rank = _ROLE_PRIORITY.get(eligible[0]["role"], len(ROLES))
-    tied = [c for c in eligible if _ROLE_PRIORITY.get(c["role"], len(ROLES)) == best_role_rank]
-
-    verified = [c for c in tied if c["implementation_verification_status"] == "verified"]
-    if verified:
-        tied = verified
-
-    if len(tied) > 1:
-        raise AmbiguousBindingResolutionError(
-            [str(c["implementation_id"]) for c in tied]
-        )
-    return tied[0]
+    return candidate

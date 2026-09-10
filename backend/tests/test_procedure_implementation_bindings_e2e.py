@@ -24,6 +24,7 @@ from app.services.procedure_implementation_bindings import (
     get_bindings_for_procedure,
     link_implementation,
     resolve_binding_for_step,
+    resolve_binding_for_step_with_reason,
 )
 from app.services.procedures import capture_procedure
 
@@ -269,6 +270,68 @@ def test_resolve_binding_for_step_excludes_a_disabled_implementation_despite_an_
         finally:
             for name in (disabled_name, healthy_name):
                 await _cleanup_implementation(pool, name)
+            await _cleanup_procedure(pool, proc_name)
+            await pool.close()
+
+    asyncio.run(_run())
+
+
+def test_resolve_binding_for_step_with_reason_reports_missing_when_no_candidate_exists():
+    """MCP hardening B38 STRICT CLOSURE: V4's typed-state vocabulary
+    distinguishes MISSING_IMPLEMENTATION ("no candidate implementation
+    names this role/step at all") from IMPLEMENTATION_UNAVAILABLE
+    ("candidates exist but are all disabled/quarantined/deprecated or
+    fail a real requirement") -- this proves the "missing" half:
+    a procedure with zero bindings at all."""
+    async def _run():
+        pool = await create_pool(DATABASE_URL, min_size=1, max_size=2)
+        run_id = uuid4().hex[:8]
+        proc_name = f"proc-test-pib-reason-missing-{run_id}"
+        try:
+            procedure = await _capture(pool, proc_name)
+            result, reason = await resolve_binding_for_step_with_reason(
+                pool, procedure_id=procedure["procedure_id"], step_order=0,
+            )
+            assert result is None
+            assert reason == "missing"
+        finally:
+            await _cleanup_procedure(pool, proc_name)
+            await pool.close()
+
+    asyncio.run(_run())
+
+
+def test_resolve_binding_for_step_with_reason_reports_unavailable_when_every_candidate_is_disabled():
+    """The "unavailable" half of the same distinction: a real binding
+    exists, but the only implementation it names is disabled -- a
+    genuinely different real state from "missing" above, not a
+    fabricated one (the cascade already computes it at a later stage)."""
+    async def _run():
+        pool = await create_pool(DATABASE_URL, min_size=1, max_size=2)
+        run_id = uuid4().hex[:8]
+        proc_name = f"proc-test-pib-reason-unavail-{run_id}"
+        disabled_name = f"impl-test-pib-reason-unavail-{run_id}"
+        try:
+            procedure = await _capture(pool, proc_name)
+            disabled_impl = await implementation_registry.register(
+                pool, name=disabled_name, kind="tool", provider="test", created_by="tester",
+            )
+            await implementation_registry.activate(pool, disabled_impl["id"])
+            await implementation_registry.disable(pool, disabled_impl["id"])
+
+            b_disabled = await link_implementation(
+                pool, procedure_id=procedure["procedure_id"], implementation_id=disabled_impl["id"],
+                role="primary", created_by="tester",
+            )
+            await activate_binding(pool, b_disabled["id"])
+
+            result, reason = await resolve_binding_for_step_with_reason(
+                pool, procedure_id=procedure["procedure_id"], step_order=0,
+            )
+            assert result is None
+            assert reason == "unavailable"
+        finally:
+            await _cleanup_implementation(pool, disabled_name)
             await _cleanup_procedure(pool, proc_name)
             await pool.close()
 
