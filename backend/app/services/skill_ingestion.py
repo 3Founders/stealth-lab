@@ -931,6 +931,18 @@ async def _emit_document_observation(
     so the migration-65 column is stamped with a follow-up UPDATE -- the
     same pattern this file already uses for a procedure's
     ``capability_statement``."""
+    # G4 / B13: record what KIND of source this is (procedure / reference /
+    # claim / mixed), with the classifier version, as a provenance signal
+    # on the Observation. Heuristic, DB-free; not a hard gate here --
+    # `parse_skill_md` already structurally rejects a stepless document.
+    from app.services.source_classification import classify_source_content
+
+    classification = classify_source_content(
+        parsed.description or "",
+        name=parsed.name,
+        steps=parsed.steps,
+    )
+
     observation_id = await persist_observation(
         pool,
         observation_type=DOCUMENT_OBSERVATION_TYPE,
@@ -944,6 +956,7 @@ async def _emit_document_observation(
             "procedure_name": parsed.name,
             "step_count": len(parsed.steps),
             "source": "skill_md",
+            "source_classification": classification,
         },
         owner_id=owner_id,
         visibility="public",
