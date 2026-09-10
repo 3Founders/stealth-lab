@@ -12,6 +12,7 @@ want a single in-memory pass (offline tests, non-stateful helpers).
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import datetime
 from typing import Any, Awaitable, Callable, Optional
 
 import asyncpg
@@ -67,6 +68,15 @@ async def run_graph_durably(
     scope_entity_id: Optional[str] = None,
     max_attempts: int = 3,
     resume_run_id: Optional[str] = None,
+    # MCP hardening B3: ProcedureRun identity (migration 51), forwarded to
+    # start_run() unchanged. Ignored when resuming an existing run (its
+    # identity was already fixed at creation) -- only meaningful on the
+    # `resume_run_id=None` (fresh-run) branch.
+    request_id: Optional[str] = None, workspace_id: Optional[str] = None,
+    trace_id: Optional[str] = None, parent_run_id: Optional[str] = None,
+    parent_node_id: Optional[str] = None,
+    claim_working_set_revision: Optional[datetime] = None,
+    route_decision_id: Optional[str] = None,
 ) -> "DurableGraphResult":
     """
     Execute (or resume) `compiled`'s graph as a durable run.
@@ -113,6 +123,10 @@ async def run_graph_durably(
             created_by=created_by,
             scope_type=scope_type,
             scope_entity_id=scope_entity_id,
+            request_id=request_id, workspace_id=workspace_id, trace_id=trace_id,
+            parent_run_id=parent_run_id, parent_node_id=parent_node_id,
+            claim_working_set_revision=claim_working_set_revision,
+            route_decision_id=route_decision_id,
         )
         result = await _dr.execute_run(
             pool, run_id, deps=deps, run_node=_cb, worker_id=worker_id, compiled=compiled,
@@ -130,4 +144,57 @@ async def run_graph_durably(
         node_summary=result.get("nodes", []),
         resume_count=result.get("resume_count", 0),
         final_execution_id=result.get("final_execution_id"),
+    )
+
+
+async def create_pending_run(
+    pool: asyncpg.Pool,
+    compiled,
+    *,
+    procedure_id: str,
+    procedure_version: int,
+    created_by: Optional[str] = None,
+    scope_type: Optional[str] = None,
+    scope_entity_id: Optional[str] = None,
+    max_attempts: int = 3,
+    request_id: Optional[str] = None, workspace_id: Optional[str] = None,
+    trace_id: Optional[str] = None, parent_run_id: Optional[str] = None,
+    parent_node_id: Optional[str] = None,
+    claim_working_set_revision: Optional[datetime] = None,
+    route_decision_id: Optional[str] = None,
+) -> str:
+    """
+    MCP hardening B3: a real, durable `procedure_run_id` for a Procedure
+    that was ACCEPTED FOR USE but not (yet, or ever, for `assist`) driven
+    -- `find_best_way`'s assist/plan_ready routes. Same `start_run()` this
+    module's own `run_graph_durably()` uses for the tier-2/execute path,
+    just without the matching `execute_run()` call -- the run stays
+    `pending`, exactly the state a caller-driven `continue_run()` (B4)
+    expects to find and hand back a next-action packet for.
+
+    Deliberately NOT a new mechanism: same execution_runs/execution_run_nodes
+    rows, same idempotent request_id semantics, same terminal-state fence.
+    A caller may later drive this exact run_id through `execute_run`/
+    `resume_run` (via `run_graph_durably(..., resume_run_id=run_id)`) if a
+    plan_ready/assist decision later turns into a real execution -- no
+    second run is created for that continuation.
+    """
+    graph = compiled.graph
+    deps = _deps_from_graph(graph)
+    return await _dr.start_run(
+        pool,
+        execution_plan_id=str(compiled.plan.id),
+        task_graph_id=str(compiled.graph.id),
+        procedure_id=str(procedure_id),
+        procedure_version=int(procedure_version),
+        node_orders=[n.order for n in graph.nodes],
+        deps=deps,
+        max_attempts=max_attempts,
+        created_by=created_by,
+        scope_type=scope_type,
+        scope_entity_id=scope_entity_id,
+        request_id=request_id, workspace_id=workspace_id, trace_id=trace_id,
+        parent_run_id=parent_run_id, parent_node_id=parent_node_id,
+        claim_working_set_revision=claim_working_set_revision,
+        route_decision_id=route_decision_id,
     )

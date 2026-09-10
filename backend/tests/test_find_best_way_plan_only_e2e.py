@@ -61,9 +61,33 @@ async def _cleanup(pool, name_prefix: str) -> None:
         "AND id NOT IN (SELECT procedure_row_id FROM execution_plans)",
         f"{name_prefix}%",
     )
+    # A row this test made is_engineering_fixture=false that survives the
+    # DELETE above (pinned by a frozen execution_plans row) must not stay
+    # is_engineering_fixture=false forever -- that leaves it permanently
+    # visible to applicability.py's retrieval as if it were real corpus
+    # content, including any dangling sub-procedure refs from THIS test's
+    # own since-cleaned-up sub-procedures. Confirmed live: exactly this
+    # leftover state (multiple accumulated runs) leaked into an unrelated
+    # test's tier-1 match in this same session.
+    await pool.execute(
+        "UPDATE procedures SET is_engineering_fixture = true WHERE name LIKE $1",
+        f"{name_prefix}%",
+    )
 
 
 async def _make_verified_approved(pool, name: str, **kwargs) -> dict:
+    # capture_procedure() defaults embedding_model_id to
+    # settings.embedding_model ("voyage-3-large") whenever it is
+    # omitted -- NOT to whichever embedder actually produced
+    # `embedding=vec` below (Gemini in this environment). An omitted
+    # embedding_model_id silently tags the row with the wrong model id,
+    # making it invisible to find_applicable_procedures' embedding_
+    # model_id-scoped similarity leg -- confirmed live: this exact test's
+    # root procedure returned zero similarity-leg matches until this was
+    # fixed (same root cause diagnosed and fixed for this session's own
+    # new test fixtures earlier -- this file predates that fix).
+    if "embedding" in kwargs and "embedding_model_id" not in kwargs:
+        kwargs["embedding_model_id"] = Embedder().embedding_model_id()
     result = await capture_procedure(
         pool, name=name, goal=name, provenance="system_pending_review",
         scope_type="global", **kwargs,
@@ -105,6 +129,7 @@ def test_plan_only_returns_real_composed_plan_with_zero_llm_calls():
                 pool, name=f"proc-test-planonly-sub-{run_id}", goal=sub_goal,
                 steps=[{"order": 0, "goal": "run linter"}, {"order": 1, "goal": "fix lint errors"}],
                 provenance="system_pending_review", scope_type="global", embedding=sub_vec,
+                embedding_model_id=embedder.embedding_model_id(),
             )
             sub_row = await pool.fetchrow("SELECT procedure_id, version FROM procedures WHERE id = $1", sub["id"])
 

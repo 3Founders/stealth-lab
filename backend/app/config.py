@@ -333,6 +333,21 @@ class Settings(BaseSettings):
     # refused.
     mcp_worker_count: int = 1
 
+    # --- Recursive child ProcedureRuns (MCP hardening B9-B13) ---
+    # Explicitly configurable, never hardcoded in the recursion-guard code
+    # itself (per the hardening spec's own instruction: "Make sure you
+    # don't hardcode these things, and discuss before implementing").
+    # Defaults are deliberately conservative -- a genuinely deep/wide
+    # legitimate recursive workflow should raise these via config, not by
+    # this code silently having no limit.
+    procedure_run_max_recursion_depth: int = 5
+    procedure_run_max_child_executions: int = 20
+    # Wall-clock budget for a whole recursive chain, measured from the
+    # ROOT run's started_at. None disables the check entirely -- an
+    # explicit opt-out, not an accidental one (the field must be set to
+    # None, not merely omitted, since the default below is a real number).
+    procedure_run_max_wall_clock_seconds: Optional[int] = 3600
+
     # --- Observability (app/observability.py) ---
     # Optional like every other secret here: absent DSN means Sentry stays
     # off and init() is a no-op, so nothing about local or offline work

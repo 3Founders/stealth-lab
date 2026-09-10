@@ -190,6 +190,228 @@ async def node_history_by_id(pool: asyncpg.Pool, run_id: str) -> Optional[dict[s
 
 
 # ---------------------------------------------------------------------------
+# report_node_progress_by_id (MCP hardening B6): the context-free,
+# auth-gated entrypoint over durable_run.report_node_progress -- the ONE
+# host-executed-lease progress-reporting mutation. Same ownership check
+# every other mutation in this module already uses; no rebuild of a
+# runnable CompiledPlan is needed here (nothing is being DRIVEN, only a
+# real, already-observed outcome recorded), unlike resume/retry.
+# ---------------------------------------------------------------------------
+async def report_node_progress_by_id(
+    pool: asyncpg.Pool, run_id: str, node_order: int, *, actor_id: Optional[str],
+    ok: bool, result: Optional[dict[str, Any]] = None,
+    error_class: Optional[str] = None, error: Optional[dict[str, Any]] = None,
+    worker_id: Optional[str] = None,
+) -> dict[str, Any]:
+    row = await _run_row(pool, run_id)
+    if row is None:
+        raise _dr.DurableRunError(f"execution_run {run_id} not found")
+    authorize_run_mutation(row["created_by"], actor_id)
+    return await _dr.report_node_progress(
+        pool, run_id, node_order, ok=ok, result=result,
+        error_class=error_class, error=error, worker_id=worker_id,
+    )
+
+
+# ---------------------------------------------------------------------------
+# get_run_context (MCP hardening B4/B32): the smallest useful next-action
+# packet, anchored to the run's PINNED Procedure version -- "continue_run"'s
+# actual assembly. Deliberately built from existing reads (this function's
+# own siblings above, fetch_procedure_version, project_state) rather than a
+# new retrieval mechanism, per CLAUDE.md rule 2.
+# ---------------------------------------------------------------------------
+async def get_run_context(pool: asyncpg.Pool, run_id: str) -> Optional[dict[str, Any]]:
+    """
+    B4's `continue_run` packet: loads the exact pinned Procedure version,
+    current PlanNode/run state, and a bounded precondition-derived Claim
+    working set, then returns the smallest useful next-action packet --
+    never the whole Procedure or Claim corpus (B30's own rule, honored
+    here even though the full relevant-Claim-working-set service itself
+    is a separate, later gate).
+
+    `None` when the run does not exist.
+    """
+    from app.execution.procedure_graph import fetch_procedure_version
+    from app.services.route_decision import classify_precondition_gap
+    from app.services.state import project_state
+
+    run = await _run_row(pool, run_id)
+    if run is None:
+        return None
+
+    procedure = await fetch_procedure_version(pool, run["procedure_id"], run["procedure_version"])
+
+    async with pool.acquire() as conn:
+        graph_row = await conn.fetchrow(
+            "SELECT tg.nodes FROM task_graphs tg WHERE tg.id = $1", run["task_graph_id"],
+        )
+        node_rows = await conn.fetch(
+            "SELECT id, node_order, status, attempt_count, max_attempts, error_class, "
+            " implementation_id, implementation_version, verification_state "
+            "FROM execution_run_nodes WHERE execution_run_id = $1 ORDER BY node_order",
+            run_id,
+        )
+    plan_nodes: dict[int, dict] = {}
+    if graph_row is not None:
+        raw = graph_row["nodes"]
+        for gn in (json.loads(raw) if isinstance(raw, str) else (raw or [])):
+            plan_nodes[gn.get("order")] = gn
+
+    nodes = [dict(n) for n in node_rows]
+    for n in nodes:
+        plan_node = plan_nodes.get(n["node_order"], {})
+        n["goal"] = plan_node.get("goal")
+        n["deps"] = plan_node.get("deps") or []
+
+    NON_TERMINAL = ("pending", "running", "resumable", "blocked")
+    current = next((n for n in nodes if n["status"] in NON_TERMINAL), None)
+
+    # Preconditions: TRUE/FALSE/UNKNOWN, never collapsed (B27) -- reuses
+    # the exact UNKNOWN-vs-FALSE distinction route_decision.py's
+    # classify_precondition_gap already established for the router, so
+    # this and the router never disagree about what "unknown" means.
+    as_of = run["started_at"] or run["created_at"]
+    access_scope = AccessScope.for_user(run["created_by"]) if run["created_by"] else AccessScope.unrestricted()
+    required_preconditions: list[dict] = []
+    blocking_unknowns: list[dict] = []
+    for precondition in (procedure or {}).get("preconditions") or []:
+        subject = precondition.get("subject")
+        predicate = precondition.get("predicate")
+        expected_object = precondition.get("object")
+        if not subject:
+            continue
+        claims = await project_state(pool, subjects=[subject], as_of=as_of, scope=access_scope)
+        satisfied = any(
+            c["properties"].get("predicate") == predicate
+            and c["properties"].get("object") == expected_object
+            for c in claims
+        )
+        if satisfied:
+            truth = "TRUE"
+        elif not claims:
+            truth = "UNKNOWN"
+        else:
+            truth = "FALSE"
+        entry = {"subject": subject, "predicate": predicate, "object": expected_object, "status": truth}
+        required_preconditions.append(entry)
+        if truth == "UNKNOWN":
+            blocking_unknowns.append(entry)
+
+    # Implementation options for the CURRENT node only (bounded, not the
+    # whole registry): per-node binding first (execution_run_nodes /
+    # compiled-plan hint), else the registry's own task-linked candidates
+    # when this procedure has a real migrated_from_task_node_id -- never
+    # an invented Implementation when neither exists (B23).
+    recommended_implementations: list[dict] = []
+    if current is not None:
+        if current.get("implementation_id"):
+            recommended_implementations.append({
+                "implementation_id": str(current["implementation_id"]),
+                "implementation_version": current.get("implementation_version"),
+                "source": "pinned_on_node",
+            })
+        else:
+            plan_impl = plan_nodes.get(current["node_order"], {}).get("implementation_id")
+            if plan_impl:
+                recommended_implementations.append(
+                    {"implementation_id": str(plan_impl), "source": "compiled_plan_hint"}
+                )
+            elif procedure is not None:
+                # B23/B24: the real Procedure<->Implementation relation
+                # (migration 53) is the preferred resolution source now
+                # that it exists -- checked before the legacy task-node
+                # registry path, never instead of it (a procedure minted
+                # before this relation existed still resolves via its old
+                # migrated_from_task_node_id link, per CLAUDE.md rule 6:
+                # preserve compatibility paths until replacements are
+                # proven, don't rip out the old path on day one).
+                from app.services.procedure_implementation_bindings import (
+                    get_bindings_for_procedure,
+                )
+                bindings = await get_bindings_for_procedure(
+                    pool, procedure_id=procedure["procedure_id"],
+                    status="active", access_scope=access_scope,
+                )
+                step_bindings = [
+                    b for b in bindings
+                    if not b["supported_steps"] or current["node_order"] in b["supported_steps"]
+                ]
+                if step_bindings:
+                    recommended_implementations = [
+                        {
+                            "implementation_id": str(b["implementation_id"]),
+                            "role": b["role"], "source": "procedure_implementation_binding",
+                        }
+                        for b in step_bindings
+                    ]
+                elif procedure.get("migrated_from_task_node_id"):
+                    from app.execution import implementation_registry as _impl_registry
+                    registry_hits = await _impl_registry.get_for_task(
+                        pool, str(procedure["migrated_from_task_node_id"]),
+                        scope=access_scope, status="active",
+                    )
+                    recommended_implementations = [
+                        {"implementation_id": str(h["id"]), "kind": h.get("kind"), "source": "registry"}
+                        for h in registry_hits
+                    ]
+
+    # B9-B13: is the current node actively waiting on a live child run
+    # right now? Derived, not stored (migration 52's own rationale) --
+    # a query over execution_runs.parent_run_id/parent_node_id, never a
+    # separate "WAITING_CHILD" status value.
+    waiting_child = None
+    if current is not None:
+        from app.execution.recursion_guard import describe_child_status
+        waiting_child = await describe_child_status(
+            pool, run_id=run_id, node_row_id=str(current["id"]),
+        )
+
+    if current is not None and waiting_child is not None:
+        phase = f"node:{current['node_order']}:waiting_child"
+        objective = current.get("goal")
+        next_when_satisfied = (
+            f"the child run {waiting_child['child_run_id']} (status="
+            f"{waiting_child['child_status']}) must reach a terminal state; "
+            "call continue_run on the CHILD to see its own next action, or "
+            "poll this continue_run again once it terminates"
+        )
+    elif current is not None:
+        phase = f"node:{current['node_order']}"
+        objective = current.get("goal")
+        next_when_satisfied = (
+            f"report progress for node {current['node_order']} (report_execution / "
+            "retry_run_node on failure), then call continue_run again"
+        )
+    elif run["status"] == "succeeded":
+        phase, objective = "complete", None
+        next_when_satisfied = "call verify_completion, then report_execution to finalize"
+    else:
+        phase, objective = run["status"], None
+        next_when_satisfied = "no further node is runnable -- inspect_run for the failure/blocking detail"
+
+    return {
+        "procedure_run_id": str(run_id),
+        "procedure_id": str(run["procedure_id"]),
+        "procedure_version": run["procedure_version"],
+        "route_decision_id": str(run["route_decision_id"]) if run.get("route_decision_id") else None,
+        "parent_run_id": str(run["parent_run_id"]) if run.get("parent_run_id") else None,
+        "root_run_id": str(run["root_run_id"]) if run.get("root_run_id") else None,
+        "status": run["status"],
+        "current_phase_or_node": phase,
+        "objective": objective,
+        "waiting_child": waiting_child,
+        "required_preconditions": required_preconditions,
+        "relevant_claim_refs": required_preconditions,  # same bounded set; see docstring
+        "recommended_implementations": recommended_implementations,
+        "required_checks": (procedure or {}).get("postconditions") or [],
+        "allowed_branches": [],  # honest: stored procedures have no branching field (db/18)
+        "blocking_unknowns": blocking_unknowns,
+        "next_when_satisfied": next_when_satisfied,
+        "nodes": nodes,
+    }
+
+
+# ---------------------------------------------------------------------------
 # rebuild + context-free runner
 # ---------------------------------------------------------------------------
 async def _rebuild(pool: asyncpg.Pool, run_id: str):

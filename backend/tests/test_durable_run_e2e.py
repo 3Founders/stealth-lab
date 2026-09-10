@@ -67,14 +67,31 @@ async def _plan_chain(pool):
             "VALUES ($1,$2,$3,'[]'::jsonb) RETURNING id",
             str(uuid7()), plan_id, f"gh-{uuid.uuid4().hex[:10]}",
         )
-    return proc_id, pv, plan_id, graph_id
+    return proc_id, pv, plan_id, graph_id, row_id
+
+
+async def _cleanup_procedure(pool, row_id) -> None:
+    """B38 sweep finding (this session): this file never cleaned up the
+    procedures `_plan_chain` creates -- every run of this test file
+    permanently left `is_engineering_fixture=false` corpus rows behind
+    (each one pinned by a frozen `execution_plans` row the moment a run
+    is started against it, so DELETE alone can never remove them). Same
+    hygiene bug already found and fixed in
+    test_find_best_way_plan_only_e2e.py earlier this session -- fixed
+    here too now that the sweep surfaced it in this file as well."""
+    deleted = await pool.execute(
+        "DELETE FROM procedures WHERE id=$1 AND id NOT IN (SELECT procedure_row_id FROM execution_plans)",
+        row_id,
+    )
+    if deleted == "DELETE 0":
+        await pool.execute("UPDATE procedures SET is_engineering_fixture = true WHERE id=$1", row_id)
 
 
 @pytest.mark.asyncio
 async def test_durable_retry_resume_crash_and_continue():
     pool = await create_pool(statement_cache_size=0)
     try:
-        proc_id, pv, plan_id, graph_id = await _plan_chain(pool)
+        proc_id, pv, plan_id, graph_id, row_id = await _plan_chain(pool)
         run_id = await start_run(
             pool, execution_plan_id=plan_id, task_graph_id=graph_id,
             procedure_id=proc_id, procedure_version=pv,
@@ -131,6 +148,7 @@ async def test_durable_retry_resume_crash_and_continue():
                     "WHERE execution_run_id=$1 AND node_order=0", run_id,
                 )
     finally:
+        await _cleanup_procedure(pool, row_id)
         await pool.close()
 
 
@@ -138,7 +156,7 @@ async def test_durable_retry_resume_crash_and_continue():
 async def test_non_retryable_failure_stays_visible_until_explicit_retry_node():
     pool = await create_pool(statement_cache_size=0)
     try:
-        proc_id, pv, plan_id, graph_id = await _plan_chain(pool)
+        proc_id, pv, plan_id, graph_id, row_id = await _plan_chain(pool)
         run_id = await start_run(
             pool, execution_plan_id=plan_id, task_graph_id=graph_id,
             procedure_id=proc_id, procedure_version=pv,
@@ -169,6 +187,7 @@ async def test_non_retryable_failure_stays_visible_until_explicit_retry_node():
         assert r3["status"] == "succeeded", r3
         assert {n["node_order"]: n["status"] for n in r3["nodes"]} == {0: "succeeded", 1: "succeeded", 2: "succeeded"}
     finally:
+        await _cleanup_procedure(pool, row_id)
         await pool.close()
 
 
@@ -180,7 +199,7 @@ async def test_concurrent_resume_is_refused_not_duplicated():
 
     pool = await create_pool(statement_cache_size=0)
     try:
-        proc_id, pv, plan_id, graph_id = await _plan_chain(pool)
+        proc_id, pv, plan_id, graph_id, row_id = await _plan_chain(pool)
         run_id = await start_run(
             pool, execution_plan_id=plan_id, task_graph_id=graph_id,
             procedure_id=proc_id, procedure_version=pv,
@@ -204,4 +223,5 @@ async def test_concurrent_resume_is_refused_not_duplicated():
         done = await execute_run(pool, run_id, deps=DEPS, run_node=ok_node, worker_id="workerC")
         assert done["status"] == "succeeded"
     finally:
+        await _cleanup_procedure(pool, row_id)
         await pool.close()

@@ -69,6 +69,12 @@ class ApplicabilityResult:
     # not every one), so this is diagnostic, not exhaustive.
     failed_constraints: list[str] = field(default_factory=list)
     similarity_score: Optional[float] = None
+    # Additive (MCP hardening B1): the candidate row itself, attached only
+    # by diagnose_candidates() below -- find_applicable_procedures() never
+    # sets this, and every existing construction site
+    # (`ApplicabilityResult(row_id, False, [...])`) stays byte-identical
+    # since this is a trailing, defaulted field.
+    procedure: Optional[dict] = None
 
 
 async def should_disable_procedure_retrieval(
@@ -804,6 +810,95 @@ async def find_applicable_procedures(
         if len(result_list) >= limit:
             break
     return result_list
+
+
+async def diagnose_candidates(
+    pool: asyncpg.Pool,
+    *,
+    goal_embedding: Optional[list[float]] = None,
+    current_scope: Optional[dict] = None,
+    access_scope: Optional[AccessScope] = None,
+    require_verified: bool = True,
+    invariant_bindings: Optional[dict[str, float]] = None,
+    embedding_model_id: Optional[str] = None,
+    goal_text: Optional[str] = None,
+    limit: int = 3,
+    candidate_pool_size: int = 200,
+) -> list[ApplicabilityResult]:
+    """
+    Additive diagnostic sibling to find_applicable_procedures() (MCP
+    hardening B1: `find_best_way`'s router needs to know WHY the single
+    BEST-MATCHING candidate did not qualify -- e.g. to distinguish
+    "genuinely inapplicable" from "blocked on an unknown precondition,
+    ask". find_applicable_procedures() itself only ever returns
+    survivors and intentionally discards every failure reason (see its
+    own docstring), so re-implementing that discarding is not an option
+    -- but its own `_fetch_candidate_pool` pre-filter is DELIBERATELY
+    cost-aware (RRF-fuses "cheapest to verify" with relevance), which is
+    right for THAT function's job (find something applicable, cheaply)
+    and wrong for this one: over a large corpus, procedures with fewer
+    preconditions crowd the cost leg and can bury the actual closest
+    semantic match outside a small `limit`, even though check_hard_
+    constraints() would have flagged its one precondition as UNKNOWN
+    rather than genuinely disqualifying -- confirmed live (a freshly
+    captured procedure whose embedding is a near-exact match for its own
+    goal text still ranked outside the top 3 of the cost-fused pool in a
+    ~2500-row corpus). "The single best-matching procedure" is a
+    nearest-neighbor question, not a cost-aware one, so this ranks by
+    embedding similarity ALONE (falling back to _fetch_candidate_pool's
+    existing cost/lexical fusion only when no goal_embedding is given --
+    there is no relevance signal to rank by in that case, matching that
+    function's own honest-degradation precedent). Reuses the SAME
+    _CANDIDATE_BASE_WHERE/PROCEDURE_COLS_NO_HEAVY/visibility_predicate
+    building blocks find_applicable_procedures() itself is built from --
+    a different ranking query, not a new access-control or filtering
+    mechanism.
+
+    Does not change find_applicable_procedures()'s behavior, callers, or
+    return value in any way -- this is a pure, non-mutating read.
+    """
+    if require_verified and await should_disable_procedure_retrieval(pool, access_scope):
+        return []
+
+    if goal_embedding is not None:
+        vis_sql, vis_params = visibility_predicate(
+            access_scope or AccessScope.unrestricted(),
+            param_index=4 if embedding_model_id is not None else 3,
+        )
+        if embedding_model_id is None:
+            rows = await pool.fetch(
+                f"SELECT {PROCEDURE_COLS_NO_HEAVY} FROM procedures "
+                f"WHERE {_CANDIDATE_BASE_WHERE} AND embedding IS NOT NULL AND {vis_sql} "
+                "ORDER BY embedding <=> $1::vector ASC LIMIT $2",
+                to_pgvector(goal_embedding), limit, *vis_params,
+            )
+        else:
+            rows = await pool.fetch(
+                f"SELECT {PROCEDURE_COLS_NO_HEAVY} FROM procedures "
+                f"WHERE {_CANDIDATE_BASE_WHERE} AND embedding IS NOT NULL "
+                f"AND embedding_model_id = $2 AND {vis_sql} "
+                "ORDER BY embedding <=> $1::vector ASC LIMIT $3",
+                to_pgvector(goal_embedding), embedding_model_id, limit, *vis_params,
+            )
+    else:
+        rows = (await _fetch_candidate_pool(
+            pool, goal_embedding, candidate_pool_size, embedding_model_id,
+            goal_text=goal_text, access_scope=access_scope,
+        ))[:limit]
+
+    cascade_as_of = datetime.now(timezone.utc)
+    state_cache = _new_state_cache()
+    results: list[ApplicabilityResult] = []
+    for row in rows[:limit]:
+        procedure = dict(row)
+        result = await check_hard_constraints(
+            pool, procedure, current_scope=current_scope, access_scope=access_scope,
+            require_verified=require_verified, invariant_bindings=invariant_bindings,
+            as_of=cascade_as_of, state_cache=state_cache,
+        )
+        result.procedure = procedure
+        results.append(result)
+    return results
 
 
 # The relevance floor lives in ONE place: services/relevance_gate.py's

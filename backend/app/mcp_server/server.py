@@ -46,6 +46,8 @@ import os
 import secrets
 import subprocess
 import sys
+
+import asyncpg
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, AsyncIterator, Optional
@@ -538,6 +540,37 @@ def _resolve_caller_identity(fallback: str) -> str:
     return fallback
 
 
+async def _resolve_trace_id(pool, *, parent_run_id: Optional[str], session_id: Optional[str]) -> str:
+    """MCP hardening B16: a real trace_id, always populated, distinct
+    from session_id (a caller/session-scoped identifier that can span
+    many unrelated calls) -- a trace is ONE causal chain: a root run plus
+    every recursive child it spawns.
+
+    Before this: both find_best_way call sites passed `trace_id=
+    session_id` directly into start_run/run_graph_durably -- a child run
+    got its OWN session's id (or None, if the child call carried none)
+    instead of inheriting the parent's, and a root call with no
+    session_id left trace_id NULL forever (never auto-generated).
+
+    Fix: a child (parent_run_id given) inherits its parent's real,
+    already-persisted trace_id -- the SAME chain, regardless of what
+    session_id (if any) the child call happens to carry. A root call
+    keeps using session_id when the caller supplied one (byte-identical
+    to before for every existing caller that does), and only generates a
+    fresh id via uuid7() when there truly is nothing to key off of.
+    """
+    if parent_run_id is not None:
+        parent_trace_id = await pool.fetchval(
+            "SELECT trace_id FROM execution_runs WHERE id = $1", parent_run_id,
+        )
+        if parent_trace_id:
+            return str(parent_trace_id)
+    if session_id:
+        return session_id
+    from app.utils.ids import uuid7
+    return str(uuid7())
+
+
 def _caller_access_scope() -> AccessScope:
     """Read-path visibility scope for the product-model tools -- the MCP
     analogue of the REST ``get_scope`` dependency (``app/api/deps.py``).
@@ -571,11 +604,21 @@ class _RepoExecutionRefused(Exception):
 
 async def _authorize_repo_execution(
     ctx: Context, repo_path: Optional[str], workspace_id: Optional[str]
-) -> str:
+) -> Optional[str]:
     """Phase 1 P0 hosted-repository authorization boundary.
 
     Local/loopback mode (hosted_execution_enabled=False, the default):
-    repo_path passes through unchanged -- the documented local dev posture.
+    repo_path passes through UNCHANGED -- including `None`. This
+    function is an authorization boundary, not a "repo_path is required
+    for this tool" validator -- several callers (find_best_way's
+    lookup-only paths, reproduce_procedure's optional transfer tier)
+    legitimately call it with repo_path=None and are responsible for
+    their OWN "do I actually need a repo_path here" check afterward.
+    (Fixed: this used to raise `_RepoExecutionRefused("repo_path is
+    required.")` on None even in local mode, contradicting this exact
+    docstring and this module's own callers' expectations -- confirmed
+    live via test_find_best_way_plan_only_e2e.py's two tests, which this
+    fix makes pass again.)
 
     Hosted mode: repo_path is NOT the authorization mechanism. The caller
     names a registered workspace id; the server resolves the filesystem
@@ -588,8 +631,6 @@ async def _authorize_repo_execution(
     from app.services import workspace_registry as wr
 
     if not getattr(settings, "hosted_execution_enabled", False):
-        if repo_path is None:
-            raise _RepoExecutionRefused("repo_path is required.")
         return repo_path
 
     subject = None
@@ -908,7 +949,7 @@ async def _respond_tier1_hit(pool, task_description: str, matched_procedure: dic
     from app.execution.graph_executor import NodeResult, execute_task_graph
     from app.execution.plan_persistence import persist_compiled_plan, record_plan_execution
     from app.execution.plans import compile_plan
-    from app.execution.procedure_graph import expand_procedure_steps
+    from app.execution.procedure_graph import ProcedureCompositionError, expand_procedure_steps
 
     steps = matched_procedure.get("steps") or [{"order": 0, "goal": task_description}]
     is_verified = matched_procedure.get("verification_state") == "verified"
@@ -923,10 +964,24 @@ async def _respond_tier1_hit(pool, task_description: str, matched_procedure: dic
     # compile_plan itself stays pure/pool-free (its own documented
     # invariant); expansion is the async, DB-touching step that runs
     # before it, same as every other real caller of compile_plan.
-    nodes = await expand_procedure_steps(
-        pool, procedure_id=matched_procedure["procedure_id"],
-        procedure_version=matched_procedure["version"], steps=steps,
-    )
+    #
+    # Robustness fix (found live once the is_engineering_fixture drift
+    # was fixed and 1496 previously-hidden real corpus procedures became
+    # matchable again): a matched procedure with a dangling/cyclic/too-
+    # deep subprocedure_ref must REFUSE gracefully, not crash
+    # find_best_way with an unhandled exception -- a single corrupted
+    # corpus row must never be able to take the whole tool down for
+    # every future caller whose query happens to match it.
+    try:
+        nodes = await expand_procedure_steps(
+            pool, procedure_id=matched_procedure["procedure_id"],
+            procedure_version=matched_procedure["version"], steps=steps,
+        )
+    except ProcedureCompositionError as exc:
+        return (
+            f"REFUSED: matched procedure {matched_procedure['procedure_id']} has an "
+            f"unresolvable composed step -- {exc}"
+        )
     compiled_plan = compile_plan(
         procedure_id=matched_procedure["procedure_id"],
         procedure_version=matched_procedure["version"],
@@ -984,7 +1039,13 @@ async def _respond_tier1_hit(pool, task_description: str, matched_procedure: dic
     )
 
 
-async def _respond_plan_only(pool, task_description: str, matched_procedure: dict) -> str:
+async def _respond_plan_only(
+    pool, task_description: str, matched_procedure: dict,
+    route: Optional[str] = None, route_decision_id: Optional[str] = None,
+    workspace_id: Optional[str] = None, session_id: Optional[str] = None,
+    parent_run_id: Optional[str] = None, parent_node_id: Optional[str] = None,
+    ancestor_chain=None, repo_path: Optional[str] = None,
+) -> str:
     """`mode='plan_only'`: compile and persist the real execution graph
     (same expand_procedure_steps -> compile_plan -> persist_compiled_plan
     pipeline `_respond_tier1_hit` uses) and hand it back as structured
@@ -1012,13 +1073,19 @@ async def _respond_plan_only(pool, task_description: str, matched_procedure: dic
     """
     from app.execution.plan_persistence import persist_compiled_plan
     from app.execution.plans import compile_plan
-    from app.execution.procedure_graph import expand_procedure_steps
+    from app.execution.procedure_graph import ProcedureCompositionError, expand_procedure_steps
 
     steps = matched_procedure.get("steps") or [{"order": 0, "goal": task_description}]
-    nodes = await expand_procedure_steps(
-        pool, procedure_id=matched_procedure["procedure_id"],
-        procedure_version=matched_procedure["version"], steps=steps,
-    )
+    try:
+        nodes = await expand_procedure_steps(
+            pool, procedure_id=matched_procedure["procedure_id"],
+            procedure_version=matched_procedure["version"], steps=steps,
+        )
+    except ProcedureCompositionError as exc:
+        return (
+            f"REFUSED: matched procedure {matched_procedure['procedure_id']} has an "
+            f"unresolvable composed step -- {exc}"
+        )
     compiled_plan = compile_plan(
         procedure_id=matched_procedure["procedure_id"],
         procedure_version=matched_procedure["version"],
@@ -1032,8 +1099,55 @@ async def _respond_plan_only(pool, task_description: str, matched_procedure: dic
     compiled_plan = await _bind_plan_to_registry(pool, compiled_plan, matched_procedure)
     compiled_plan, _ = await persist_compiled_plan(pool, compiled_plan)
 
+    # MCP hardening B3/B32: a real, durable procedure_run_id for a
+    # Procedure accepted for use via plan_only -- created 'pending', never
+    # driven (no execute_run call). The host later reports progress via
+    # report_execution and, once this gate's continue_run tool exists,
+    # inspects/advances it by that id instead of re-searching.
+    from app.execution.durable_graph import create_pending_run
+
+    # B9-B13: the cycle check needs a concrete candidate -- only known
+    # now, this call's own matched_procedure. Depth/budget/wall-clock
+    # were already checked (cheaply, before any of this compile/persist
+    # work) by the caller.
+    if ancestor_chain is not None:
+        from app.execution.recursion_guard import assert_no_cycle
+        assert_no_cycle(ancestor_chain, matched_procedure["procedure_id"])
+
+    trace_id = await _resolve_trace_id(pool, parent_run_id=parent_run_id, session_id=session_id)
+    procedure_run_id = await create_pending_run(
+        pool, compiled_plan,
+        procedure_id=matched_procedure["procedure_id"],
+        procedure_version=matched_procedure["version"],
+        created_by=_resolve_caller_identity(fallback="find_best_way_plan_only"),
+        scope_type=compiled_plan.plan.scope_type,
+        scope_entity_id=compiled_plan.plan.scope_entity_id,
+        workspace_id=workspace_id, trace_id=trace_id,
+        route_decision_id=route_decision_id,
+        parent_run_id=parent_run_id, parent_node_id=parent_node_id,
+    )
+
+    # MCP hardening B35: best-effort .stealth/ projection refresh -- a
+    # filesystem write failure (permissions, no repo_path, read-only
+    # mount) must never break the primary MCP response, but it must also
+    # never be silently swallowed; the payload's own `stealth_projection`
+    # field says what happened.
+    stealth_projection_status: Optional[str] = None
+    if repo_path is not None:
+        from app.execution.stealth_projection import generate_projection
+
+        try:
+            await generate_projection(pool, workspace_root=repo_path, procedure_run_id=procedure_run_id)
+            stealth_projection_status = "written"
+        except OSError as exc:
+            stealth_projection_status = f"write_failed: {exc}"
+
     payload = {
         "mode": "plan_only",
+        "route": route,
+        "route_decision_id": route_decision_id,
+        "procedure_run_id": procedure_run_id,
+        "stealth_projection": stealth_projection_status,
         "procedure_id": str(matched_procedure["procedure_id"]),
         "procedure_row_id": str(matched_procedure["id"]),
         "version": matched_procedure["version"],
@@ -1056,11 +1170,13 @@ async def _respond_plan_only(pool, task_description: str, matched_procedure: dic
         "instructions": (
             "No StealthLab-side LLM call was made for this plan. Execute "
             "these steps yourself, in dependency order, using your own "
-            "reasoning and tools against the real repository. When done, "
-            "call report_execution(procedure_id=<procedure_id above>, "
-            "success=<bool>, context_key=<a real identifier for this run's "
-            "environment, e.g. the repo name>, steps_used=<int>) so the "
-            "outcome becomes real evidence."
+            "reasoning and tools against the real repository. Call "
+            "continue_run(procedure_run_id=<procedure_run_id above>) at any "
+            "point to get the current next-action packet anchored to this "
+            "exact run. When done, call report_execution(procedure_id=<"
+            "procedure_id above>, success=<bool>, context_key=<a real "
+            "identifier for this run's environment, e.g. the repo name>, "
+            "steps_used=<int>) so the outcome becomes real evidence."
         ),
     }
     return json.dumps(payload, indent=2)
@@ -1074,7 +1190,9 @@ async def find_best_way(task_description: str, ctx: Context,
                          session_id: Optional[str] = None,
                          allow_unverified_procedures: bool = False,
                          resume_run_id: Optional[str] = None,
-                         workspace_id: Optional[str] = None) -> str:
+                         workspace_id: Optional[str] = None,
+                         parent_run_id: Optional[str] = None,
+                         parent_node_order: Optional[int] = None) -> str:
     """
     Two-tier: find the best known way to do this, seamlessly callable at
     any point in a workflow -- not just as a heavyweight task entrypoint.
@@ -1203,23 +1321,75 @@ async def find_best_way(task_description: str, ctx: Context,
     """
     pool = ctx.request_context.lifespan_context["pool"]
 
+    from app.services.route_decision import (
+        RouteDecision as _RouteDecision,
+        classify_intent,
+        decide_route,
+        persist_route_decision,
+    )
+
+    async def _refuse(reason: str) -> str:
+        # B2: every route, including refusals, is persisted -- "routing
+        # becomes observable and testable", not merely a returned string.
+        await persist_route_decision(pool, _RouteDecision(
+            route="refused", reason=reason, intent=classify_intent(task_description, mode),
+            task_description=task_description, mode=mode, repo_path=repo_path,
+            session_id=session_id, workspace_id=workspace_id,
+            requires_repository=repo_path is not None,
+        ))
+        return f"REFUSED: {reason}"
+
     if mode not in ("auto", "lookup_only", "full_run", "plan_only"):
-        return (
-            "REFUSED: mode must be one of 'auto', 'lookup_only', 'full_run', "
+        return await _refuse(
+            "mode must be one of 'auto', 'lookup_only', 'full_run', "
             f"'plan_only' (got {mode!r})."
         )
     if repo_path is not None and not os.path.isdir(repo_path):
-        return f"REFUSED: repo_path {repo_path!r} is not a directory on this server."
+        return await _refuse(f"repo_path {repo_path!r} is not a directory on this server.")
     if mode == "full_run" and repo_path is None:
-        return "REFUSED: mode='full_run' requires repo_path."
+        return await _refuse("mode='full_run' requires repo_path.")
 
     # Phase 1 P0: hosted-mode repo authorization. Local mode: passthrough.
     try:
         repo_path = await _authorize_repo_execution(ctx, repo_path, workspace_id)
     except _RepoExecutionRefused as exc:
-        return f"REFUSED: {exc}"
+        return await _refuse(str(exc))
     if repo_path is not None and not os.path.isdir(repo_path):
-        return f"REFUSED: repo_path {repo_path!r} is not a directory on this server."
+        return await _refuse(f"repo_path {repo_path!r} is not a directory on this server.")
+
+    # MCP hardening B9-B14: dynamic recursive child retrieval. A caller
+    # (typically the host, mid-execution of a PARENT run) names
+    # parent_run_id/parent_node_order to signal "this find_best_way call
+    # is for a reusable subproblem of that specific run/step" -- exactly
+    # B14's "find_best_way(goal=subproblem, parent_run_id=..., ...)".
+    # Budget/depth/wall-clock are checked NOW (cheap, no embedding cost);
+    # the cycle check (needs a candidate procedure) runs later, once one
+    # is chosen, right before any child run is actually created.
+    from app.execution.recursion_guard import (
+        ChildExecutionBudgetExceeded, RecursionCycleDetected,
+        RecursionDepthExceeded, WallClockBudgetExceeded, assert_no_cycle,
+        check_recursion_limits,
+    )
+
+    parent_node_row_id: Optional[str] = None
+    ancestor_chain = None
+    if parent_run_id is not None:
+        if parent_node_order is not None:
+            parent_node_row_id = await pool.fetchval(
+                "SELECT id FROM execution_run_nodes WHERE execution_run_id = $1 AND node_order = $2",
+                parent_run_id, parent_node_order,
+            )
+            if parent_node_row_id is None:
+                return await _refuse(
+                    f"parent_node_order {parent_node_order} not found on parent_run_id {parent_run_id!r}"
+                )
+            parent_node_row_id = str(parent_node_row_id)
+        try:
+            ancestor_chain = await check_recursion_limits(
+                pool, parent_run_id=parent_run_id, parent_node_id=parent_node_row_id,
+            )
+        except (RecursionDepthExceeded, ChildExecutionBudgetExceeded, WallClockBudgetExceeded) as exc:
+            return await _refuse(str(exc))
 
     from app.services.applicability import find_applicable_procedures
     from app.services.environment_probe import invariant_bindings_from_facts, probe_environment
@@ -1266,8 +1436,32 @@ async def find_best_way(task_description: str, ctx: Context,
     )
     matched_procedure = matched_procedures[0] if matched_procedures else None
 
+    # B1/B2: the formal RouteDecision, computed and persisted regardless
+    # of which branch below ends up answering -- by this point repo
+    # authorization has already succeeded (or repo_path is None), so
+    # `authorized=True` here reflects that, not a re-check.
+    route_decision = await decide_route(
+        pool, task_description=task_description, mode=mode, repo_path=repo_path,
+        authorized=True, authorization_detail={},
+        goal_embedding=query_vec, current_scope=procedure_scope,
+        invariant_bindings=invariant_bindings,
+        require_verified=not allow_unverified_procedures,
+        embedding_model_id=embedder.embedding_model_id(),
+        goal_text=task_description, session_id=session_id, workspace_id=workspace_id,
+    )
+    route_decision_id = await persist_route_decision(pool, route_decision)
+
     if matched_procedure is not None and mode == "plan_only":
-        return await _respond_plan_only(pool, task_description, matched_procedure)
+        try:
+            return await _respond_plan_only(
+                pool, task_description, matched_procedure,
+                route=route_decision.route, route_decision_id=route_decision_id,
+                workspace_id=workspace_id, session_id=session_id,
+                parent_run_id=parent_run_id, parent_node_id=parent_node_row_id,
+                ancestor_chain=ancestor_chain, repo_path=repo_path,
+            )
+        except RecursionCycleDetected as exc:
+            return await _refuse(str(exc))
     if matched_procedure is not None and mode != "full_run":
         return await _respond_tier1_hit(pool, task_description, matched_procedure)
     if mode in ("lookup_only", "plan_only"):
@@ -1281,6 +1475,33 @@ async def find_best_way(task_description: str, ctx: Context,
             "No strong existing match found, and no repo_path was given -- "
             "pass repo_path to run a full solve (mode='auto' or 'full_run')."
         )
+    if route_decision.route == "needs_clarification":
+        # B1's core new behavior: do NOT silently fall through to a real
+        # sandboxed tier-2 run when the single best-matching procedure is
+        # blocked only on an UNKNOWN (not violated) precondition -- ask,
+        # rather than either fabricate applicability or refuse outright.
+        # Only reachable here: matched_procedure is None (a genuine match
+        # can never be "needs_clarification" -- see decide_route), mode
+        # is 'auto' or 'full_run' (lookup_only/plan_only already returned
+        # above, unchanged), and repo_path is not None (side-effecting
+        # execution is the thing being gated).
+        return json.dumps({
+            "route": "needs_clarification",
+            "route_decision_id": route_decision_id,
+            "reason": route_decision.reason,
+            "near_miss_procedure_id": route_decision.procedure_id,
+            "near_miss_procedure_row_id": route_decision.procedure_row_id,
+            "blocking_unknowns": route_decision.decision_critical_unknowns,
+            "instructions": (
+                "One or more preconditions above have no known answer in "
+                "the current scope (not violated -- simply never asserted). "
+                "Resolve them (e.g. supply the missing fact as a claim, or "
+                "probe the environment) and call find_best_way again, or "
+                "pass allow_unverified_procedures=True / a different "
+                "task_description if you want to proceed without this "
+                "procedure's guidance."
+            ),
+        }, indent=2)
 
     # TIER 2 -- execution. Everything below is what this tool always did
     # unconditionally under its previous name (solve_task); it now only
@@ -1348,14 +1569,41 @@ async def find_best_way(task_description: str, ctx: Context,
     if matched_procedure is not None:
         plan_procedure_row_id = str(matched_procedure["id"])
     else:
+        adhoc_owner = _resolve_caller_identity(fallback="find_best_way_adhoc")
         adhoc = await capture_procedure(
             pool, name=f"ad-hoc: {task_description[:80]}", goal=task_description,
             steps=[{"order": 0, "goal": task_description}],
             provenance="system_pending_review", scope_type="global",
-            created_by=_resolve_caller_identity(fallback="find_best_way_adhoc"),
+            created_by=adhoc_owner,
+            # B19 fix: local runtime learning from a user's own execution
+            # starts PRIVATE, never implicitly public (spec rule 11:
+            # "Local/private knowledge never becomes global implicitly").
+            # capture_procedure()'s own default is 'public' -- correct
+            # for its OTHER real callers (bulk skill-package ingestion,
+            # explicit publication, explicit submit_procedure), wrong for
+            # this one, which app/api/procedures.py's own REST capture
+            # endpoints already get right (visibility="private" there
+            # too) -- this call site was the one outlier, now fixed to
+            # match that established, already-correct precedent.
+            # owner_id MUST be set alongside visibility="private" --
+            # access.py's visibility_predicate() matches private rows via
+            # `owner_id = viewer_id`; a NULL owner_id would make this row
+            # invisible to EVERYONE, including its own creator.
+            visibility="private", owner_id=adhoc_owner,
         )
         plan_procedure_row_id = adhoc["id"]
     procedure_payload = await get_procedure(pool, plan_procedure_row_id)
+
+    # B9-B13: same deferred cycle check as the plan_only path, done here
+    # (before any compile/persist/sandbox work) rather than after --
+    # only meaningful for a FRESH run (resuming an existing run_id can
+    # never create a new cycle; its parent linkage, if any, was already
+    # validated when IT was first created).
+    if ancestor_chain is not None and resume_run_id is None:
+        try:
+            assert_no_cycle(ancestor_chain, procedure_payload["procedure_id"])
+        except RecursionCycleDetected as exc:
+            return await _refuse(str(exc))
 
     sandbox = RepoSandbox(repo_path)
     client = OpenAI(
@@ -1372,16 +1620,22 @@ async def find_best_way(task_description: str, ctx: Context,
     from app.execution.graph_executor import NodeResult
     from app.execution.plan_persistence import persist_compiled_plan
     from app.execution.plans import compile_plan
-    from app.execution.procedure_graph import expand_procedure_steps
+    from app.execution.procedure_graph import ProcedureCompositionError, expand_procedure_steps
 
     steps = procedure_payload.get("steps") or [{"order": 0, "goal": task_description}]
     # Phase 10: same real expansion as the tier-1 lookup path above --
     # a composed procedure's referenced sub-procedure steps are spliced
     # in before compile_plan sees them.
-    nodes = await expand_procedure_steps(
-        pool, procedure_id=procedure_payload["procedure_id"],
-        procedure_version=procedure_payload["version"], steps=steps,
-    )
+    try:
+        nodes = await expand_procedure_steps(
+            pool, procedure_id=procedure_payload["procedure_id"],
+            procedure_version=procedure_payload["version"], steps=steps,
+        )
+    except ProcedureCompositionError as exc:
+        return await _refuse(
+            f"procedure {procedure_payload['procedure_id']} has an unresolvable "
+            f"composed step -- {exc}"
+        )
     compiled_plan = compile_plan(
         procedure_id=procedure_payload["procedure_id"],
         procedure_version=procedure_payload["version"],
@@ -1439,15 +1693,19 @@ async def find_best_way(task_description: str, ctx: Context,
     # record_plan_execution call below any more.
     from app.execution.durable_graph import run_graph_durably
 
+    trace_id = await _resolve_trace_id(pool, parent_run_id=parent_run_id, session_id=session_id)
     graph_result = await run_graph_durably(
         pool, compiled_plan, run_node,
         procedure_id=str(compiled_plan.plan.procedure.procedure_id),
         procedure_version=int(compiled_plan.plan.procedure.version),
         created_by=_resolve_caller_identity(fallback="find_best_way"),
+        parent_run_id=parent_run_id, parent_node_id=parent_node_row_id,
         scope_type=compiled_plan.plan.scope_type,
         scope_entity_id=compiled_plan.plan.scope_entity_id,
         side_effecting_orders=set(),  # V1: sandbox is rebuilt per invocation, so a step is replayable on resume (prior steps ride forward as context) -- not a park-on-crash side effect
         resume_run_id=resume_run_id,
+        workspace_id=workspace_id, trace_id=trace_id,
+        route_decision_id=route_decision_id,
     )
     durable_run_id = graph_result.run_id
 
@@ -1498,6 +1756,12 @@ async def find_best_way(task_description: str, ctx: Context,
         extraction = await extract_procedure(
             pool, evidence_source, client=client, repo_root=repo_path,
             entry_seed_files=seed_files, extractor_scope=procedure_scope,
+            # B19 fix: same reasoning as the ad-hoc capture_procedure()
+            # call above -- a procedure LEARNED from this user's own
+            # execution starts private, never implicitly public. owner_id
+            # set alongside it for the same reason (visibility_predicate
+            # matches private rows via owner_id = viewer_id).
+            visibility="private", owner_id=_resolve_caller_identity(fallback="find_best_way_extract"),
         )
         if extraction.procedure_id:
             extraction_note = (
@@ -1512,6 +1776,8 @@ async def find_best_way(task_description: str, ctx: Context,
 
     errors = [r.error for r in node_runs.values() if r.error]
     lines = [
+        f"procedure_run_id: {durable_run_id}",
+        f"route_decision_id: {route_decision_id}",
         f"graph_outcome: {graph_result.outcome}",
         f"steps: {len(compiled_plan.graph.nodes)} total, {len(node_runs)} executed "
         f"({len(compiled_plan.graph.nodes) - len(node_runs)} skipped)",
@@ -1732,7 +1998,7 @@ async def reproduce_procedure(procedure_id: str, repo_path: str, ctx: Context,
     from app.execution.graph_executor import NodeResult
     from app.execution.plan_persistence import persist_compiled_plan
     from app.execution.plans import compile_plan
-    from app.execution.procedure_graph import expand_procedure_steps
+    from app.execution.procedure_graph import ProcedureCompositionError, expand_procedure_steps
 
     client = OpenAI(
         max_retries=0,
@@ -1743,10 +2009,16 @@ async def reproduce_procedure(procedure_id: str, repo_path: str, ctx: Context,
     # Phase 10: expand once, reused by both the same-repo and (when
     # requested) transfer-tier runs below -- both replay the SAME
     # procedure's same steps, just against different target repos.
-    expanded_nodes = await expand_procedure_steps(
-        pool, procedure_id=procedure_payload["procedure_id"],
-        procedure_version=procedure_payload["version"], steps=steps,
-    )
+    try:
+        expanded_nodes = await expand_procedure_steps(
+            pool, procedure_id=procedure_payload["procedure_id"],
+            procedure_version=procedure_payload["version"], steps=steps,
+        )
+    except ProcedureCompositionError as exc:
+        return (
+            f"REFUSED: procedure {procedure_payload['procedure_id']} has an "
+            f"unresolvable composed step -- {exc}"
+        )
 
     async def _run_tier(target_repo_path: str, context_key: str) -> dict:
         """One full replay/transfer run of the procedure's OWN stored
@@ -2186,6 +2458,37 @@ async def get_claim_graph(ctx: Context, limit: int = 200, include_retired: bool 
 
 
 @server.tool()
+async def get_relevant_claims(goal: str, ctx: Context, context: Optional[str] = None, top_k: int = 10) -> str:
+    """
+    MCP hardening B30: bounded, compact Claim references relevant to a
+    goal/subproblem -- NEVER the whole Claim graph (for that, see
+    `get_claim_graph`). Reuses the same hybrid vector+lexical retrieval
+    `retrieve_precedent`/`decompose_task` already use
+    (`HybridRetriever`), restricted to real Claims (`knowledge_nodes`
+    where `node_type='claim'` -- a claim_family hub or other non-Claim
+    knowledge_node is never presented as one).
+
+    `context`: optional free text (environment facts, constraints) --
+    concatenated into the same retrieval query, not a second query path.
+    `top_k`: capped at 25 regardless of what is requested -- the working
+    set MUST be bounded.
+
+    Returns a JSON array of compact refs: {claim_id, version, scope,
+    status, belief, statement, reason_for_relevance, applicability,
+    evidence_summary}. `evidence_summary` is a pointer, not the full
+    evidence -- fetch that lazily via `stealth://claims/{claim_id}` or
+    `get_claim_graph` when actually needed.
+    """
+    from app.services.relevant_claims import get_relevant_claims as _get_relevant_claims
+
+    pool = ctx.request_context.lifespan_context["pool"]
+    refs = await _get_relevant_claims(
+        pool, goal=goal, context=context, top_k=top_k, access_scope=_caller_access_scope(),
+    )
+    return json.dumps(refs, default=str)
+
+
+@server.tool()
 async def get_procedure(procedure_id: str, ctx: Context) -> str:
     """
     Fetch one procedure's full current detail by its stable handle.
@@ -2260,7 +2563,11 @@ async def check_applicability(procedure_id: str, ctx: Context, state: str = "{}"
 async def report_execution(procedure_id: str, success: bool, context_key: str, ctx: Context,
                             steps_used: int | None = None,
                             success_criteria: dict[str, Any] | None = None,
-                            failure_class: str | None = None) -> str:
+                            failure_class: str | None = None,
+                            observations_json: str | None = None,
+                            tool_sequence_json: str | None = None,
+                            task_description: str | None = None,
+                            session_id: str | None = None) -> str:
     """
     Report a real execution outcome for a NAMED procedure. Thin wrapper
     around app.services.procedures.record_execution_outcome() -- the
@@ -2291,9 +2598,34 @@ async def report_execution(procedure_id: str, success: bool, context_key: str, c
     success=false and the caller knows the cause. Omitted is honest
     (lands in the requires_review queue) rather than guessed.
 
+    MCP hardening B18 fix: this used to be the ONLY thing this tool did,
+    which meant a HOST-EXECUTED run (the `plan_only`/`continue_run`
+    lease pattern -- the host runs outside Stealth's own sandbox) could
+    never feed the learning loop the way `find_best_way`'s own tier-2
+    sandboxed runs already do (they call `extract_procedure()` directly
+    on success). `observations_json`/`tool_sequence_json` are the OPTIONAL
+    evidence a host can now attach: when `success=True` and
+    `observations_json` is given, this ALSO calls the SAME
+    `extract_procedure()` pipeline tier-2 uses (same
+    `AgentRunEvidenceSource`, same private-by-default visibility/owner_id
+    this session's B19 fix already established, same V5 novelty/
+    validation gate -- "if existing Procedure succeeded, do not
+    duplicate it" is `extract_procedure()`'s OWN job, not re-implemented
+    here). `observations_json`: JSON array of
+    `{"observation_type","label","properties"}` objects (the same shape
+    `AgentRunEvidenceSource` already documents). `tool_sequence_json`:
+    JSON array of tool-call name strings. `task_description`: the
+    original goal text (falls back to `context_key` if omitted -- less
+    accurate, but never blocks extraction over a missing label).
+    Omitting both `observations_json`/`tool_sequence_json` (the default)
+    is byte-identical to this tool's pre-existing behavior -- outcome
+    recording only, no extraction attempt.
+
     Returns the procedure row's state AFTER any transition this call
-    caused (promotion to verified, quarantine opening/closing) -- so a
-    caller can observe a state change as a direct result of its own report.
+    caused (promotion to verified, quarantine opening/closing), plus
+    `extraction` (present only when an extraction attempt was made):
+    `{"procedure_id": ...}` on a new candidate, or
+    `{"skipped": "<validation failure reason>"}` when V5 refused it.
     """
     pool = ctx.request_context.lifespan_context["pool"]
     from app.services.applicability import ProcedureNotFound
@@ -2329,12 +2661,46 @@ async def report_execution(procedure_id: str, success: bool, context_key: str, c
         # refusal, not an unhandled 500.
         return f"REFUSED: {exc}"
 
-    return json.dumps({
+    response = {
         "procedure_id": procedure_id,
         "verification_state": updated["verification_state"],
         "availability": updated["availability"],
         "verification_stats": updated["verification_stats"],
-    }, default=str)
+    }
+
+    # B18 fix: host-executed learning loop. Gated on success AND real
+    # evidence being supplied -- never attempted from bare success=True
+    # alone (that would be exactly the self-report-as-evidence anti-
+    # pattern this codebase's evidence layer exists to refuse).
+    if success and observations_json is not None:
+        try:
+            observations = json.loads(observations_json)
+            tool_sequence = json.loads(tool_sequence_json) if tool_sequence_json else []
+        except json.JSONDecodeError as exc:
+            response["extraction"] = {"skipped": f"malformed JSON -- {exc}"}
+        else:
+            from app.services.procedure_extraction import extract_procedure
+            from app.services.procedure_extraction.evidence import AgentRunEvidenceSource
+
+            owner = _resolve_caller_identity(fallback="report_execution_extract")
+            evidence_source = AgentRunEvidenceSource(
+                goal_text=task_description or context_key, outcome="success",
+                observations=observations, tool_sequence=tool_sequence,
+                session_id=session_id, steps_used=steps_used,
+            )
+            extraction = await extract_procedure(
+                pool, evidence_source,
+                # B19: same private-by-default posture as find_best_way's
+                # own tier-2 extraction call -- learning from a host-
+                # executed run never implicitly goes public.
+                visibility="private", owner_id=owner,
+            )
+            response["extraction"] = (
+                {"procedure_id": str(extraction.procedure_id)} if extraction.procedure_id
+                else {"skipped": "; ".join(extraction.validation_failures) or "no candidate extracted"}
+            )
+
+    return json.dumps(response, default=str)
 
 
 @server.tool()
@@ -2812,6 +3178,110 @@ async def list_task_implementations(task_node_id: str, ctx: Context, status: str
 
 
 @server.tool()
+async def submit_implementation(
+    procedure_id: str, role: str, ctx: Context,
+    implementation_id: Optional[str] = None,
+    name: Optional[str] = None, kind: Optional[str] = None, provider: Optional[str] = None,
+    version: int = 1, description: Optional[str] = None,
+    supported_steps_json: str = "[]", locator_json: str = "{}",
+    invocation_json: str = "{}", input_schema_json: str = "{}", output_schema_json: str = "{}",
+    requirements_json: str = "{}", source_ref: Optional[str] = None,
+    author: Optional[str] = None, license: Optional[str] = None,
+) -> str:
+    """
+    MCP hardening B23: "a tool builder MUST be able to submit/register an
+    Implementation against one or more existing Procedures without
+    creating a reusable TaskNode." Two modes, both ending in a real
+    `procedure_implementations` row (the pre-existing, real, bi-temporal
+    relation table `app/services/skill_ingestion.py` already writes and
+    `publication.py` already reads -- migration 58 gave it the migration
+    file it never had; this tool is a second, independent writer of the
+    SAME table, not a parallel one):
+
+    1. `implementation_id` given -- links that ALREADY-registered,
+       durable Implementation (`inspect_implementation`/
+       `resolve_implementation`'s own identity) to `procedure_id`.
+    2. `implementation_id` omitted -- registers a brand-new Implementation
+       first (via `implementation_registry.register()`, same "nothing is
+       born trusted" candidate/unverified posture every other capture
+       path here uses), THEN links it. Requires `name`/`kind`/`provider`.
+
+    The relation itself is always born `status='candidate'` via THIS
+    call path -- calling this does not make the binding `active`; that
+    is a separate, evidence-driven promotion (not automated here,
+    matching B23's own "Do not invent numeric coverage/quality scores
+    unless they come from recorded evaluation"). Note: `skill_ingestion.
+    py`'s OWN, separate, unrelated call path relies on this table's
+    column default (`'active'`) for its bundled-script implementations,
+    whose trust comes from package admission elsewhere -- this tool
+    never relies on that default, it always states `candidate` itself.
+
+    `procedure_id` is the STABLE Procedure family id (not a specific
+    version's row id) -- same identity `execution_runs.procedure_id`
+    already uses. HONEST LIMITATION inherited from the real table: there
+    is no per-Procedure-version pinning -- a relation applies to the
+    whole family, every version, always (the real table has no
+    `procedure_version` column at all).
+
+    `role`: primary | supporting | partial | verification (B23's own
+    vocabulary). `supported_steps_json`: JSON array of step orders this
+    Implementation actually covers -- `"[]"` (the default) means
+    unrestricted (applies to every step), NOT "covers zero steps".
+    """
+    from app.services.procedure_implementation_bindings import (
+        ROLES, ProcedureImplementationBindingError, link_implementation,
+    )
+
+    if role not in ROLES:
+        return f"REFUSED: role must be one of {ROLES}, got {role!r}."
+    try:
+        supported_steps = json.loads(supported_steps_json)
+        locator = json.loads(locator_json)
+        invocation = json.loads(invocation_json)
+        input_schema = json.loads(input_schema_json)
+        output_schema = json.loads(output_schema_json)
+        requirements = json.loads(requirements_json)
+    except json.JSONDecodeError as exc:
+        return f"REFUSED: malformed JSON parameter -- {exc}"
+
+    pool = ctx.request_context.lifespan_context["pool"]
+    created_by = _resolve_caller_identity(fallback="submit_implementation")
+
+    if implementation_id is None:
+        if not (name and kind and provider):
+            return (
+                "REFUSED: implementation_id was omitted, so name, kind, and "
+                "provider are all required to register a new Implementation."
+            )
+        try:
+            new_impl = await implementation_registry.register(
+                pool, name=name, kind=kind, provider=provider, created_by=created_by,
+                description=description, version=version, locator=locator,
+                invocation=invocation, input_schema=input_schema, output_schema=output_schema,
+                requirements=requirements, source_ref=source_ref, author=author, license=license,
+            )
+        except implementation_registry.ImplementationRegistryError as exc:
+            return f"REFUSED: {exc}"
+        except asyncpg.UniqueViolationError:
+            return (
+                f"REFUSED: an implementation named {name!r} from provider {provider!r} "
+                f"version {version} already exists -- resolve/inspect it and pass its "
+                "implementation_id instead of re-registering."
+            )
+        implementation_id = new_impl["id"]
+
+    try:
+        binding = await link_implementation(
+            pool, procedure_id=procedure_id, implementation_id=implementation_id, role=role,
+            supported_steps=supported_steps,
+            created_by=created_by,
+        )
+    except ProcedureImplementationBindingError as exc:
+        return f"REFUSED: {exc}"
+    return json.dumps({"implementation_id": implementation_id, "binding": binding}, default=str)
+
+
+@server.tool()
 async def get_implementation_capability(implementation_id: str, ctx: Context) -> str:
     """
     Directive Sec 76: capability estimate for one durable implementation.
@@ -3006,6 +3476,227 @@ async def find_best_solution(goal: str, ctx: Context) -> str:
 # resolved caller identity matching execution_runs.created_by.
 # ---------------------------------------------------------------------------
 @server.tool()
+async def continue_run(procedure_run_id: str, ctx: Context, repo_path: Optional[str] = None) -> str:
+    """
+    MCP hardening B4/B32: the normal way to keep working against a
+    Procedure a prior `find_best_way` call already selected, instead of
+    re-searching. Loads the EXACT pinned Procedure version this run was
+    created against, the current node/run state, each precondition's
+    live TRUE/FALSE/UNKNOWN status (never collapsed -- B27), and
+    (bounded, current-node-only) recommended Implementations, then
+    returns the smallest useful next-action packet: current_phase_or_node,
+    objective, required_preconditions, relevant_claim_refs,
+    recommended_implementations, required_checks, allowed_branches,
+    blocking_unknowns, next_when_satisfied.
+
+    Read-only -- this tool does not advance the run. Report real progress
+    via `report_execution`; retry a specific failed/blocked node via
+    `retry_run_node`; resume after a crash via `resume_execution_run`.
+    (Host-executed progress reporting that itself transitions node state
+    is a separate, later gate -- B6 -- not built here.)
+
+    `repo_path`: optional -- when given, also refreshes this run's
+    `.stealth/{context.md,run.json,meta.json}` projection (B35) under
+    that workspace root, from the SAME canonical state just returned.
+    Best-effort: a write failure never turns this call into a REFUSED
+    (the primary MCP response is the source of truth either way), but
+    is surfaced via `stealth_projection` in the response, never swallowed.
+
+    REFUSED if `procedure_run_id` does not exist.
+    """
+    pool = ctx.request_context.lifespan_context["pool"]
+    context = await _dres.get_run_context(pool, procedure_run_id)
+    if context is None:
+        return f"REFUSED: procedure_run_id {procedure_run_id!r} not found"
+    if repo_path is not None:
+        from app.execution.stealth_projection import generate_projection
+
+        try:
+            await generate_projection(pool, workspace_root=repo_path, procedure_run_id=procedure_run_id)
+            context["stealth_projection"] = "written"
+        except OSError as exc:
+            context["stealth_projection"] = f"write_failed: {exc}"
+    return json.dumps(context, default=str)
+
+
+@server.tool()
+async def verify_completion(procedure_run_id: str, ctx: Context, reports_json: str = "[]") -> str:
+    """
+    MCP hardening B34/B32: evaluates the SELECTED Procedure's explicit
+    success criteria (`postconditions`) for this run -- never "did the
+    host say it finished?". Criteria are derived from the pinned
+    Procedure version itself (`postcondition:0`, `postcondition:1`, ...,
+    in order); a criterion with no recorded evidence stays
+    `inconclusive`, never silently passing.
+
+    `reports_json`: optional JSON array of evidence reports to record
+    BEFORE evaluating, one object per criterion, each shaped
+    `{"criterion_id": "postcondition:0", "method": "...", ...}` where
+    the remaining fields depend on `method`:
+      self_report           -- claimed_success: bool
+      artifact_inspection   -- passed: bool, evidence_refs?: [str]
+      deterministic_check   -- passed: bool, evidence_refs?: [str]
+      independent_agent     -- passed: bool, evidence_refs?: [str]
+      real_world_outcome    -- passed: bool, evidence_refs?: [str]
+      human_review          -- reviewer: str, reviewed_targets: [str],
+                                 criterion_answers: {}, verdict: bool,
+                                 evidence_refs?: [str]
+    every shape may also carry `detail`: str.
+
+    THE STRONGEST STATE IS NEVER CALLER-WRITABLE: `method` selects which
+    evidence-class-specific function records the result, and each one
+    computes the resulting state itself from what that class can
+    actually support -- `self_report` can never produce `verified` no
+    matter what `passed`/`claimed_success` says.
+
+    Omit `reports_json` (or pass `"[]"`) to just READ the current
+    evaluation without recording anything new.
+
+    Returns `{execution_run_id, overall_state, criteria: [...]}`.
+    REFUSED if `procedure_run_id` does not exist or a report names an
+    unknown `criterion_id`/`method`.
+    """
+    from app.execution.procedure_graph import fetch_procedure_version
+    from app.services import verification as _verif
+
+    pool = ctx.request_context.lifespan_context["pool"]
+    run = await pool.fetchrow(
+        "SELECT procedure_id, procedure_version, created_by FROM execution_runs WHERE id = $1::uuid",
+        procedure_run_id,
+    )
+    if run is None:
+        return f"REFUSED: procedure_run_id {procedure_run_id!r} not found"
+    procedure = await fetch_procedure_version(pool, run["procedure_id"], run["procedure_version"])
+    if procedure is None:
+        return f"REFUSED: pinned procedure version not found for run {procedure_run_id!r}"
+
+    try:
+        reports = json.loads(reports_json)
+    except json.JSONDecodeError as exc:
+        return f"REFUSED: malformed reports_json -- {exc}"
+    if not isinstance(reports, list):
+        return "REFUSED: reports_json must be a JSON array."
+
+    criteria_by_id = {c.criterion_id: c for c in _verif.derive_criteria(procedure)}
+    created_by = _resolve_caller_identity(fallback="verify_completion")
+
+    for report in reports:
+        if not isinstance(report, dict):
+            return f"REFUSED: each report must be a JSON object, got {report!r}"
+        criterion_id = report.get("criterion_id")
+        method = report.get("method")
+        criterion = criteria_by_id.get(criterion_id)
+        if criterion is None:
+            return f"REFUSED: unknown criterion_id {criterion_id!r} for this pinned procedure version."
+        if method not in _verif.METHODS:
+            return f"REFUSED: unknown method {method!r} (valid: {_verif.METHODS})."
+        common = dict(
+            pool=pool, execution_run_id=procedure_run_id, criterion_id=criterion_id,
+            statement=criterion.statement, required=criterion.required,
+            detail=report.get("detail"), created_by=created_by,
+        )
+        try:
+            if method == "self_report":
+                await _verif.record_self_report(claimed_success=bool(report["claimed_success"]), **common)
+            elif method == "artifact_inspection":
+                await _verif.record_artifact_inspection(
+                    passed=bool(report["passed"]), evidence_refs=report.get("evidence_refs"), **common,
+                )
+            elif method == "deterministic_check":
+                await _verif.record_deterministic_check(
+                    passed=bool(report["passed"]), evidence_refs=report.get("evidence_refs"), **common,
+                )
+            elif method == "independent_agent":
+                await _verif.record_independent_agent(
+                    passed=bool(report["passed"]), evidence_refs=report.get("evidence_refs"), **common,
+                )
+            elif method == "real_world_outcome":
+                await _verif.record_real_world_outcome(
+                    passed=bool(report["passed"]), evidence_refs=report.get("evidence_refs"), **common,
+                )
+            elif method == "human_review":
+                await _verif.record_human_review(
+                    reviewer=report["reviewer"], reviewed_targets=report["reviewed_targets"],
+                    criterion_answers=report.get("criterion_answers", {}),
+                    verdict=bool(report["verdict"]), evidence_refs=report.get("evidence_refs"), **common,
+                )
+        except KeyError as exc:
+            return f"REFUSED: report for {criterion_id!r} (method={method!r}) missing required field {exc}"
+        except _verif.VerificationError as exc:
+            return f"REFUSED: {exc}"
+
+    result = await _verif.evaluate_run_completion(pool, execution_run_id=procedure_run_id, procedure=procedure)
+    return json.dumps(result, default=str)
+
+
+@server.tool()
+async def declare_file_intent(
+    procedure_run_id: str, node_order: int, owner_agent_id: str, ctx: Context,
+    write_exact_json: str = "[]", write_globs_json: str = "[]",
+    read_exact_json: str = "[]", read_globs_json: str = "[]",
+    symbols_expected_to_modify_json: str = "[]", lease_seconds: int = 3600,
+) -> str:
+    """
+    MCP hardening B36: declare (or renew) which files/globs one node of
+    a ProcedureRun expects to read/write, BEFORE starting substantial
+    work -- so a second agent working on an overlapping run can detect
+    the conflict instead of silently racing it. Advisory coordination,
+    not an OS lock (nothing here stops an actual filesystem write) --
+    but the declaration itself is real and durable, and overlap
+    detection is real, not a placeholder.
+
+    Checks for conflicts FIRST: if `write_exact`/`write_globs` overlaps
+    ANOTHER node's still-live declaration (any run, any owner -- not
+    this exact (procedure_run_id, node_order), which may freely
+    re-declare/renew its own intent), REFUSES with the exact conflicting
+    run/node/owner/files rather than silently allowing the overlap or
+    overwriting the other declaration.
+
+    `lease_seconds`: how long this declaration stays live before it is
+    honestly stale and excluded from future conflict checks (B36:
+    "expired/stale lease" must itself be detected, never treated as
+    still-claiming).
+    """
+    from app.execution.coordination import (
+        DependencyViolation, FileIntentConflict, declare_file_intent as _declare,
+    )
+
+    try:
+        write_exact = json.loads(write_exact_json)
+        write_globs = json.loads(write_globs_json)
+        read_exact = json.loads(read_exact_json)
+        read_globs = json.loads(read_globs_json)
+        symbols = json.loads(symbols_expected_to_modify_json)
+    except json.JSONDecodeError as exc:
+        return f"REFUSED: malformed JSON parameter -- {exc}"
+
+    pool = ctx.request_context.lifespan_context["pool"]
+    try:
+        row = await _declare(
+            pool, execution_run_id=procedure_run_id, node_order=node_order,
+            owner_agent_id=owner_agent_id, read_exact=read_exact, read_globs=read_globs,
+            write_exact=write_exact, write_globs=write_globs,
+            symbols_expected_to_modify=symbols, lease_seconds=lease_seconds,
+        )
+    except DependencyViolation as exc:
+        return f"REFUSED: {exc}"
+    except FileIntentConflict as exc:
+        return json.dumps({
+            "conflict": True,
+            "conflicts": [
+                {
+                    "execution_run_id": c.execution_run_id, "node_order": c.node_order,
+                    "owner_agent_id": c.owner_agent_id, "overlapping_files": c.overlapping_files,
+                }
+                for c in exc.conflicts
+            ],
+        }, default=str)
+    except ValueError as exc:
+        return f"REFUSED: {exc}"
+    return json.dumps({"conflict": False, "declaration": row}, default=str)
+
+
+@server.tool()
 async def inspect_run(run_id: str, ctx: Context) -> str:
     """
     Inspect a durable execution run: overall status, per-node status /
@@ -3077,6 +3768,71 @@ async def retry_run_node(run_id: str, node_order: int, ctx: Context, force: bool
     except _dr.DurableRunError as e:
         return f"REFUSED: {e}"
     return json.dumps(result, default=str)
+
+
+@server.tool()
+async def report_node_progress(
+    run_id: str, node_order: int, ok: bool, ctx: Context,
+    result_json: str = "{}", error_class: Optional[str] = None, error_json: str = "{}",
+) -> str:
+    """
+    MCP hardening B6: host-executed Procedure lease progress reporting.
+    For a run whose node was executed OUTSIDE Stealth's own sandbox (the
+    `plan_only`/`continue_run` pattern -- `find_best_way(mode='plan_only')`
+    hands back real steps for the host's OWN tools to execute), this is
+    how the host reports that ONE node's real, observed outcome back so
+    the durable run's own state actually reflects it -- rather than that
+    node sitting `pending` forever.
+
+    Transitions through the EXACT SAME node-claim/finish mechanics the
+    server's own driving loop (`execute_run`/`resume_run`) uses -- no
+    second state-transition path, and the terminal-state fence still
+    applies (an already-`succeeded` node cannot be rewritten). REFUSED
+    if the run/node does not exist, the resolved caller is not the run's
+    creator, or `result_json`/`error_json` is malformed. `{"claimed":
+    false, "status": ...}` (NOT a REFUSED) is the honest answer when
+    this node could not be claimed right now (already succeeded, or
+    claimed by a live different worker) -- distinct from a genuine
+    authorization/not-found refusal.
+    """
+    try:
+        result = json.loads(result_json)
+        error = json.loads(error_json)
+    except json.JSONDecodeError as exc:
+        return f"REFUSED: malformed JSON parameter -- {exc}"
+
+    pool = ctx.request_context.lifespan_context["pool"]
+    actor_id = _dres.resolved_caller_identity_or_none()
+    worker_id = f"mcp-host-report-{_resolve_caller_identity(fallback='report_node_progress')}"
+    try:
+        outcome = await _dres.report_node_progress_by_id(
+            pool, run_id, node_order, actor_id=actor_id, ok=ok,
+            result=result, error_class=error_class, error=error, worker_id=worker_id,
+        )
+    except _dres.NotYourRun as e:
+        return f"REFUSED: not your run -- {e}"
+    except _dr.DurableRunError as e:
+        return f"REFUSED: {e}"
+    return json.dumps(outcome, default=str)
+
+
+@server.tool()
+async def get_route_decision(route_decision_id: str, ctx: Context) -> str:
+    """
+    Read-only inspection of one persisted RouteDecision (MCP hardening
+    B2: "routing becomes observable and testable"). Every `find_best_way`
+    call -- REFUSED, needs_clarification, assist, plan_ready,
+    execution_ready, or no_applicable_procedure -- persists exactly one
+    of these; this tool is how a caller (or a test) inspects why a
+    specific call was routed the way it was, after the fact.
+    REFUSED if no such route decision exists.
+    """
+    pool = ctx.request_context.lifespan_context["pool"]
+    from app.services.route_decision import get_route_decision as _get_route_decision
+    decision = await _get_route_decision(pool, route_decision_id)
+    if decision is None:
+        return f"REFUSED: route_decision {route_decision_id!r} not found"
+    return json.dumps(decision, default=str)
 
 
 # ---------------------------------------------------------------------------

@@ -27,12 +27,12 @@ testimony; `execution_runs` is the mutable working state beside it.
 """
 from __future__ import annotations
 
-import json
 from datetime import datetime, timedelta, timezone
 from typing import Any, Awaitable, Callable, Optional
 
 import asyncpg
 
+from app.execution import recorder as _rec
 from app.execution.plan_persistence import record_plan_execution
 
 # §33 -- retry is explicit and bounded.
@@ -99,22 +99,105 @@ async def start_run(
     max_attempts: int = 3, parameters: Optional[dict] = None,
     created_by: Optional[str] = None, scope_type: Optional[str] = None,
     scope_entity_id: Optional[str] = None,
+    # MCP hardening B3: ProcedureRun identity fields (migration 51).
+    # All optional/None for every existing caller -- byte-identical
+    # behavior when omitted.
+    request_id: Optional[str] = None, workspace_id: Optional[str] = None,
+    trace_id: Optional[str] = None, parent_run_id: Optional[str] = None,
+    parent_node_id: Optional[str] = None,
+    claim_working_set_revision: Optional[datetime] = None,
+    route_decision_id: Optional[str] = None,
 ) -> str:
+    """
+    B4's "create or return a durable ProcedureRun": when `request_id` is
+    given and a run already exists with that exact request_id, THAT run's
+    id is returned unchanged -- no new row, no duplicate execution_run_nodes
+    -- rather than creating a second run for what is semantically the same
+    accepted-procedure decision replayed (an idempotency key, not a lookup
+    convenience). Without `request_id` (every pre-existing caller), this is
+    byte-identical to before: always insert a fresh run.
+    """
     side_effecting = side_effecting or set()
-    async with pool.acquire() as conn, conn.transaction():
-        run_id = await conn.fetchval(
-            "INSERT INTO execution_runs (execution_plan_id, task_graph_id, procedure_id, "
-            " procedure_version, status, parameters, created_by, scope_type, scope_entity_id, "
-            " started_at) VALUES ($1,$2,$3,$4,'pending',$5::jsonb,$6,$7,$8, now()) RETURNING id",
-            execution_plan_id, task_graph_id, procedure_id, procedure_version,
-            json.dumps(parameters or {}), created_by, scope_type, scope_entity_id,
+    if request_id is not None:
+        existing = await pool.fetchval(
+            "SELECT id FROM execution_runs WHERE request_id = $1", request_id,
         )
-        for order in node_orders:
-            await conn.execute(
-                "INSERT INTO execution_run_nodes (execution_run_id, node_order, status, "
-                " max_attempts, side_effecting) VALUES ($1,$2,'pending',$3,$4)",
-                run_id, order, max_attempts, order in side_effecting,
+        if existing is not None:
+            return str(existing)
+
+    # MCP hardening B9-B13 (migration 52): root_run_id is a materialized-
+    # path denormalization of the SAME parent_run_id chain -- a root run
+    # (no parent) points at itself; a child copies its parent's
+    # root_run_id. Read the parent's root BEFORE inserting so the new row
+    # never has a null-then-backfilled root_run_id window.
+    root_run_id: Optional[str] = None
+    if parent_run_id is not None:
+        root_run_id = await pool.fetchval(
+            "SELECT root_run_id FROM execution_runs WHERE id = $1", parent_run_id,
+        )
+        if root_run_id is None:
+            raise DurableRunError(
+                f"parent_run_id {parent_run_id} not found or has no root_run_id"
             )
+        root_run_id = str(root_run_id)
+
+    try:
+        async with pool.acquire() as conn, conn.transaction():
+            run_id = await conn.fetchval(
+                "INSERT INTO execution_runs (execution_plan_id, task_graph_id, procedure_id, "
+                " procedure_version, status, parameters, created_by, scope_type, scope_entity_id, "
+                " request_id, workspace_id, trace_id, parent_run_id, parent_node_id, "
+                " claim_working_set_revision, route_decision_id, root_run_id, started_at) "
+                "VALUES ($1,$2,$3,$4,'pending',$5::jsonb,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16, now()) "
+                "RETURNING id",
+                execution_plan_id, task_graph_id, procedure_id, procedure_version,
+                # Raw Python dict, NOT json.dumps()'d -- the pool's
+                # registered jsonb codec (app/db/session.py::
+                # _init_connection) already encodes this; pre-encoding
+                # here double-encodes (confirmed empirically: a
+                # pre-dumped string bound to a jsonb column round-trips
+                # as a JSON STRING containing the object's text, not the
+                # real object -- fixed here and at the two other
+                # `json.dumps()` call sites below in this same function).
+                parameters or {}, created_by, scope_type, scope_entity_id,
+                request_id, workspace_id, trace_id, parent_run_id, parent_node_id,
+                claim_working_set_revision, route_decision_id, root_run_id,
+            )
+            if root_run_id is None:
+                # A fresh root: points at itself. Done in the same
+                # transaction as the INSERT above so no reader can ever
+                # observe a row with root_run_id still NULL.
+                await conn.execute(
+                    "UPDATE execution_runs SET root_run_id = id WHERE id = $1", run_id,
+                )
+            for order in node_orders:
+                await conn.execute(
+                    "INSERT INTO execution_run_nodes (execution_run_id, node_order, status, "
+                    " max_attempts, side_effecting) VALUES ($1,$2,'pending',$3,$4)",
+                    run_id, order, max_attempts, order in side_effecting,
+                )
+            # B7/B8: durable event log, same transaction as the row it
+            # describes -- never observable as "created but not recorded".
+            await _rec.record_run_created(
+                conn, str(run_id), procedure_id=str(procedure_id), procedure_version=procedure_version,
+                parent_run_id=str(parent_run_id) if parent_run_id else None,
+                root_run_id=str(root_run_id) if root_run_id else str(run_id),
+            )
+            if route_decision_id is not None:
+                await _rec.record_route_decided(conn, str(run_id), route_decision_id=route_decision_id, route=None)
+    except asyncpg.UniqueViolationError:
+        # Concurrent create_or_return race on the same request_id: the
+        # other insert won, this one lost the unique index -- return the
+        # winner's row rather than raising, which is what "idempotent"
+        # actually has to mean under real concurrency (CLAUDE.md rule 12).
+        if request_id is None:
+            raise
+        winner = await pool.fetchval(
+            "SELECT id FROM execution_runs WHERE request_id = $1", request_id,
+        )
+        if winner is None:
+            raise
+        return str(winner)
     return str(run_id)
 
 
@@ -122,6 +205,7 @@ async def _claim_run(pool: asyncpg.Pool, run_id: str, worker_id: str) -> dict:
     """Take the run's single-driver lease. Raises ResumeInProgress if a
     different worker holds it under a lease that has not expired."""
     async with pool.acquire() as conn, conn.transaction():
+        prior_status = await conn.fetchval("SELECT status FROM execution_runs WHERE id=$1 FOR UPDATE", run_id)
         row = await conn.fetchrow(
             "UPDATE execution_runs SET status = CASE WHEN status IN ('pending','paused','failed') "
             "   THEN 'running' ELSE status END, "
@@ -132,6 +216,8 @@ async def _claim_run(pool: asyncpg.Pool, run_id: str, worker_id: str) -> dict:
             run_id, worker_id, RUN_LEASE_SECONDS,
         )
         if row is not None:
+            if prior_status in ("pending", "paused", "failed"):
+                await _rec.record_run_claimed(conn, run_id, worker_id=worker_id, from_status=prior_status)
             return dict(row)
         cur = await conn.fetchrow("SELECT id, status, worker_id FROM execution_runs WHERE id=$1", run_id)
     if cur is None:
@@ -170,7 +256,7 @@ def _blocked(order: int, deps: dict[int, list[int]], nodes: dict[int, dict]) -> 
 
 
 async def _node_claim(pool: asyncpg.Pool, node: dict, attempt: int, worker_id: str) -> bool:
-    async with pool.acquire() as conn:
+    async with pool.acquire() as conn, conn.transaction():
         got = await conn.fetchval(
             "UPDATE execution_run_nodes SET status='running', attempt_count=$2, worker_id=$3, "
             " lease_expires_at = now() + make_interval(secs => $4), "
@@ -180,28 +266,79 @@ async def _node_claim(pool: asyncpg.Pool, node: dict, attempt: int, worker_id: s
             "RETURNING id",
             node["id"], attempt, worker_id, NODE_LEASE_SECONDS,
         )
+        if got is not None:
+            await _rec.record_node_claimed(
+                conn, node["execution_run_id"], node_order=node["node_order"],
+                worker_id=worker_id, attempt=attempt,
+            )
     return got is not None
 
 
 async def _node_finish(pool: asyncpg.Pool, node_id: str, worker_id: str, *,
                        ok: bool, result: Optional[dict] = None,
-                       error_class: Optional[str] = None, error: Optional[dict] = None) -> None:
-    async with pool.acquire() as conn:
+                       error_class: Optional[str] = None, error: Optional[dict] = None,
+                       execution_run_id: Optional[str] = None, node_order: Optional[int] = None) -> None:
+    async with pool.acquire() as conn, conn.transaction():
         if ok:
-            await conn.execute(
+            tag = await conn.execute(
                 "UPDATE execution_run_nodes SET status='succeeded', ended_at=now(), "
                 " result_ref=$2::jsonb, verification_state='verified', worker_id=NULL, lease_expires_at=NULL "
                 "WHERE id=$1 AND worker_id=$3",
-                node_id, json.dumps(result or {}), worker_id,
+                node_id, result or {}, worker_id,
             )
+            if tag != "UPDATE 0" and execution_run_id is not None:
+                await _rec.record_node_succeeded(conn, execution_run_id, node_order=node_order)
         else:
-            await conn.execute(
+            tag = await conn.execute(
                 "UPDATE execution_run_nodes SET status='failed', ended_at=now(), "
                 " error_class=$2, error_ref=$3::jsonb, verification_state='failed', "
                 " worker_id=NULL, lease_expires_at=NULL "
                 "WHERE id=$1 AND worker_id=$4",
-                node_id, error_class, json.dumps(error or {}), worker_id,
+                node_id, error_class, error or {}, worker_id,
             )
+            if tag != "UPDATE 0" and execution_run_id is not None:
+                await _rec.record_node_failed(conn, execution_run_id, node_order=node_order, error_class=error_class)
+
+
+async def report_node_progress(
+    pool: asyncpg.Pool, execution_run_id: str, node_order: int, *, ok: bool,
+    result: Optional[dict] = None, error_class: Optional[str] = None,
+    error: Optional[dict] = None, worker_id: Optional[str] = None,
+) -> dict[str, Any]:
+    """
+    MCP hardening B6: host-executed Procedure lease progress reporting.
+    A caller who executed ONE node OUTSIDE Stealth's own sandbox (the
+    `plan_only`/`continue_run` pattern -- the node was never driven by
+    `execute_run`/`resume_run`'s own `run_node` callback) reports that
+    node's REAL outcome here, and it transitions through the EXACT SAME
+    `_node_claim`/`_node_finish` mechanics the server's own driving loop
+    uses -- no second state-transition path, and migration 36's
+    terminal-state fence trigger still applies exactly as it does for a
+    server-driven node (an already-`succeeded` node cannot be rewritten
+    by this function either).
+
+    Fails closed on a genuine claim conflict (the node is not in
+    `pending`/`failed`/`resumable`, or is already claimed by a live
+    different worker) -- returns `{"claimed": False, "status": ...}`
+    rather than silently overwriting another claim. Never invents a
+    result for a node it could not actually claim.
+    """
+    _, nodes = await _load(pool, execution_run_id)
+    if node_order not in nodes:
+        raise DurableRunError(f"no node at order {node_order} for execution_run_id {execution_run_id}")
+    node = nodes[node_order]
+    worker_id = worker_id or f"host-report-{node['id']}"
+    attempt = node["attempt_count"] + 1
+    claimed = await _node_claim(pool, node, attempt, worker_id)
+    if not claimed:
+        _, fresh = await _load(pool, execution_run_id)
+        return {"claimed": False, "status": fresh[node_order]["status"]}
+    await _node_finish(
+        pool, node["id"], worker_id, ok=ok, result=result, error_class=error_class, error=error,
+        execution_run_id=execution_run_id, node_order=node_order,
+    )
+    _, fresh = await _load(pool, execution_run_id)
+    return {"claimed": True, "status": fresh[node_order]["status"]}
 
 
 async def _mark(pool: asyncpg.Pool, node_id: str, status: str) -> None:
@@ -232,14 +369,16 @@ async def _run_one_node(pool: asyncpg.Pool, order: int, node: dict, *,
         except BaseException as exc:  # noqa: BLE001 -- a node failure is data
             ec = classify_error(exc)
             await _node_finish(pool, node["id"], worker_id, ok=False, error_class=ec,
-                               error={"type": type(exc).__name__, "message": str(exc)[:500]})
+                               error={"type": type(exc).__name__, "message": str(exc)[:500]},
+                               execution_run_id=node["execution_run_id"], node_order=order)
             if _is_retryable(ec) and attempt < max_attempts:
                 _, fresh = await _load(pool, node["execution_run_id"])
                 node = fresh[order]
                 continue
             return "failed"
         else:
-            await _node_finish(pool, node["id"], worker_id, ok=True, result=result or {})
+            await _node_finish(pool, node["id"], worker_id, ok=True, result=result or {},
+                               execution_run_id=node["execution_run_id"], node_order=order)
             return "succeeded"
     return "failed"
 
@@ -259,9 +398,14 @@ async def _drive(pool: asyncpg.Pool, run_id: str, *, deps: dict[int, list[int]],
                 # crashed mid-node. §32: park a side-effecting node, retry a pure one.
                 if node["side_effecting"]:
                     await _mark(pool, node["id"], "resumable")
-                    async with pool.acquire() as conn:
-                        await conn.execute(
+                    async with pool.acquire() as conn, conn.transaction():
+                        tag = await conn.execute(
                             "UPDATE execution_runs SET status='paused' WHERE id=$1 AND status='running'", run_id)
+                        if tag != "UPDATE 0":
+                            await _rec.record_run_paused(
+                                conn, run_id, node_order=order,
+                                reason=f"node {order} (side-effecting) crashed mid-flight",
+                            )
                     return {"run_id": run_id, "status": "paused",
                             "note": f"node {order} (side-effecting) crashed mid-flight -- parked; "
                                     "call retry_node() with an explicit decision",
@@ -317,12 +461,14 @@ async def _finalize(pool: asyncpg.Pool, run_id: str, *, compiled=None) -> dict[s
                 scope_type=run.get("scope_type"), scope_entity_id=run.get("scope_entity_id"),
                 implementation_id=impl_id,
             ))
-        await conn.execute(
+        tag = await conn.execute(
             "UPDATE execution_runs SET status=$2, final_outcome=$3, final_execution_id=$4, "
             " ended_at=now(), worker_id=NULL, lease_expires_at=NULL "
             "WHERE id=$1 AND status NOT IN ('succeeded','failed','cancelled')",
             run_id, run_status_v, outcome, exec_id,
         )
+        if tag != "UPDATE 0":
+            await _rec.record_run_finalized(conn, run_id, status=run_status_v, outcome=outcome)
     run, nodes = await _load(pool, run_id)
     return {"run_id": run_id, "status": run["status"], "final_outcome": run["final_outcome"],
             "final_execution_id": str(run["final_execution_id"]) if run["final_execution_id"] else None,
