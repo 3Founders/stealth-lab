@@ -7,7 +7,7 @@
 - **hosted** (Supabase, egress-limited): migrations 50–55 applied; `migrate.py --status` → 01–55 all applied.
 - **local** (native Postgres): schema built migration-by-migration; **migrations 50–55 verified applied from scratch** — all 6 new tables present, `procedure_implementations` carries all 6 new columns, `ingestion_context_id` back-link on all 9 target tables, ledger = 55 rows. (Pre-existing MISMATCH warnings on migrations 11–34 are cosmetic: ledger checksum written before `migrate.py` added CRLF→LF normalization vs the CRLF checkout — schema is correct.) The **full DB-backed suite (offline + the ~360 `*_e2e.py`) is being run against local** — result in §J once it completes.
 
-Offline-suite progression (`DATABASE_URL` unset): baseline `2556 / 360 / 7` → Pass 1 `2736 / 360 / 7` → Pass 2 `2778 / 360 / 7` (same 7 pre-existing failures, zero regressions).
+Offline-suite progression (`DATABASE_URL` unset): baseline `2556 / 360 / 7` → Pass 1 `2736 / 360 / 7` → Pass 2 `2778 / 360 / 7` → Pass 3 (`035adf6`) + G1 trace `2784 / 361 / 6` (the extra skip is `test_migration_upgrade_e2e` correctly skipping with DATABASE_URL cleanly unset; +228 passing across all passes, **zero regressions**).
 
 **Verdict:** `EXTREME FINAL HARDENING INCOMPLETE` — but **Implementation Pass 1 has landed** (see the next section). The program is 29 gates (G0–G28) + 34 A-phases + 15 test categories; Pass 1 closes or advances 8 of the ingestion+knowledge gaps identified below, as additive migrations (now applied) + writer rewiring + offline proving tests. **No gate is fully CLOSED** because "CLOSED" per the spec also requires the DB-backed / E2E proving tests (T2–T14) green, which have not been run. The per-item state below says exactly what remains.
 
@@ -222,8 +222,9 @@ That is the only runnable proving path in this environment. `*_e2e.py` and `test
 - baseline (pre-work, `main@1663c94`): `2556 passed / 360 skipped / 7 failed`
 - after Implementation Pass 1 (rebased branch): `2736 passed / 360 skipped / 7 failed`
 - after Implementation Pass 2 (A+B+C integrated): `2778 passed / 360 skipped / 7 failed` (283 s)
+- after Pass 3 (`035adf6`) + G1 trace threading: `2784 passed / 361 skipped / 6 failed` (290 s)
 
-**+222 passed across both passes, 0 new failures, skipped unchanged.** The 7 failures are byte-identical throughout — pre-existing on `main`, none in this lane's target files:
+**+228 passed across all passes, 0 new failures.** The failing set is pre-existing on `main` (`test_migration_upgrade_e2e` now correctly *skips* with DATABASE_URL cleanly unset, so 6 not 7). None is in this lane's target files:
 
 | Test | Cause (pre-existing) |
 |---|---|
