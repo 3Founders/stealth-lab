@@ -25,6 +25,8 @@ CONTEXT_MD_MAX_BYTES = 8192
 
 def _render_context_md(
     *, context: dict[str, Any], procedure: dict, verification: dict[str, Any],
+    relevant_claim_refs: Optional[list[dict]] = None,
+    file_intents: Optional[list[dict]] = None,
 ) -> str:
     lines: list[str] = []
     lines.append("# .stealth/context.md -- GENERATED, not canonical. Do not hand-edit.")
@@ -48,9 +50,12 @@ def _render_context_md(
     lines.append("")
 
     lines.append("[RELEVANT GLOBAL CLAIMS]")
-    lines.append("  (not projected -- get_relevant_claims is not yet a distinct retrieval")
-    lines.append("   surface separate from precondition checking; see B30 in")
-    lines.append("   MCP_HARDENING_DEFERRED_ITEMS.md. Never fabricated as empty-but-real.)")
+    if relevant_claim_refs:
+        for c in relevant_claim_refs:
+            belief = c.get("belief") or "-"
+            lines.append(f"  {c['claim_id']} [{belief}] {c.get('statement') or ''}")
+    else:
+        lines.append("  (no relevant global Claims retrieved for this objective)")
     lines.append("")
 
     lines.append("[SELECTED PROCEDURES]")
@@ -81,8 +86,15 @@ def _render_context_md(
     if context.get("waiting_child"):
         wc = context["waiting_child"]
         lines.append(f"  waiting on child run {wc['child_run_id']} (status={wc['child_status']})")
-    else:
-        lines.append("  no multi-agent file-intent coordination declared for this run (B36 not yet built)")
+    if file_intents:
+        for fi in file_intents:
+            symbols = f" symbols={fi['symbols_expected_to_modify']}" if fi.get("symbols_expected_to_modify") else ""
+            lines.append(
+                f"  node {fi['node_order']} owner={fi.get('owner_agent_id') or '-'} "
+                f"write={fi.get('write_exact') or []}+{fi.get('write_globs') or []}{symbols}"
+            )
+    if not context.get("waiting_child") and not file_intents:
+        lines.append("  no live multi-agent file-intent coordination declared for this run")
     lines.append("")
 
     return "\n".join(lines)
@@ -90,7 +102,9 @@ def _render_context_md(
 
 def _render_run_json(
     *, context: dict[str, Any], run_row: dict, verification: dict[str, Any],
+    file_intents: Optional[list[dict]] = None,
 ) -> dict:
+    file_intents = file_intents or []
     return {
         "procedure_run_id": context["procedure_run_id"],
         "execution_plan_id": str(run_row["execution_plan_id"]),
@@ -104,8 +118,25 @@ def _render_run_json(
             {"node_order": n["node_order"], "status": n["status"], "deps": n.get("deps") or []}
             for n in context["nodes"]
         ],
-        "node_owners": {},  # B36 (multi-agent coordination) not yet built -- honest empty, not fabricated
-        "file_intents": [],  # B36 not yet built
+        # B36: real, live (non-expired) file-intent declarations from
+        # execution_run_nodes -- honestly empty when none are currently
+        # declared, never fabricated.
+        "node_owners": {
+            fi["node_order"]: fi["owner_agent_id"] for fi in file_intents if fi.get("owner_agent_id")
+        },
+        "file_intents": [
+            {
+                "node_order": fi["node_order"], "owner_agent_id": fi.get("owner_agent_id"),
+                "read_exact": fi.get("read_exact") or [], "read_globs": fi.get("read_globs") or [],
+                "write_exact": fi.get("write_exact") or [], "write_globs": fi.get("write_globs") or [],
+                "symbols_expected_to_modify": fi.get("symbols_expected_to_modify") or [],
+                "lease_expires_at": (
+                    fi["file_intent_lease_expires_at"].isoformat()
+                    if fi.get("file_intent_lease_expires_at") else None
+                ),
+            }
+            for fi in file_intents
+        ],
         "implementation_bindings": context["recommended_implementations"],
         "verification_state": verification["overall_state"],
         "change_cursor": run_row["updated_at"].isoformat() if run_row.get("updated_at") else None,

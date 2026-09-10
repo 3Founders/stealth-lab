@@ -90,14 +90,17 @@ def test_generate_projection_writes_real_files_with_valid_content():
                     assert key in result
 
                 stealth_dir = os.path.join(workspace, ".stealth")
-                # The compact B35 trio is always present; the generator now
-                # also writes the addressable pages + index/ (app.stealth).
+                # B35 STRICT CLOSURE: the compact trio is the literal,
+                # UNCONDITIONAL default -- no addressable pages/index
+                # unless a caller explicitly opts in (see the dedicated
+                # test below for that opt-in path). B35's own text: "Do
+                # not maintain large duplicated claims.md/procedures.md/
+                # implementations.md/run.md files unless an existing
+                # integration strictly requires them" -- no real caller
+                # anywhere in this codebase reads them, so the default
+                # must not write them.
                 entries = set(os.listdir(stealth_dir))
-                assert {"context.md", "run.json", "meta.json"} <= entries
-                assert {"claims.md", "procedures.md", "implementations.md", "run.md", "index"} <= entries
-                assert set(os.listdir(os.path.join(stealth_dir, "index"))) == {
-                    "root.idx", "claims.idx", "procedures.idx", "implementations.idx", "run.idx",
-                }
+                assert entries == {"context.md", "run.json", "meta.json"}
                 assert not [n for n in entries if n.startswith(".tmp-stealth-")]
 
                 with open(os.path.join(stealth_dir, "context.md"), encoding="utf-8") as f:
@@ -115,6 +118,90 @@ def test_generate_projection_writes_real_files_with_valid_content():
                 assert meta_json["workspace_root"] == workspace
                 assert "projection_revision" in meta_json
         finally:
+            await _cleanup(pool, name)
+            await pool.close()
+
+    asyncio.run(_run())
+
+
+def test_generate_projection_surfaces_real_relevant_claims_and_live_coordination():
+    """B35 STRICT CLOSURE: the two remaining projection gaps, closed
+    against the now-real B30 (`get_relevant_claims`) and B36
+    (`coordination.py`'s live file-intent declarations) systems --
+    `context.md`'s `[RELEVANT GLOBAL CLAIMS]`/`[COORDINATION]` sections
+    and `run.json`'s `node_owners`/`file_intents` now surface real data,
+    not permanent placeholders."""
+    async def _run():
+        from app.execution.coordination import declare_file_intent
+        from app.services.claims import capture_claim
+        from app.services.embeddings import Embedder
+
+        pool = await create_pool(DATABASE_URL, min_size=1, max_size=2)
+        run_id = uuid4().hex[:8]
+        name = f"proc-test-stealthproj-claims-{run_id}"
+        claim_id = None
+        claim_subject = f"b35-projection-claims-{run_id}"
+        try:
+            goal_text = f"provision the b35 projection claims cluster ({run_id})"
+            embedder = Embedder()
+            vec = await embedder.embed_one(goal_text, input_type="document")
+
+            # capture_claim() requires >=1 live task_node to link to
+            # (task_ids resolve against task_nodes.skill_ref) -- same
+            # minimal real fixture test_relevant_claims_e2e.py's own
+            # _capture_standalone_claim helper uses.
+            await pool.execute("INSERT INTO task_nodes (name, skill_ref) VALUES ('t', $1)", claim_subject)
+            claim_id = await capture_claim(
+                pool, statement=f"the {claim_subject} service uses postgres",
+                task_ids=[claim_subject], subject=claim_subject,
+                predicate="uses", object="postgres", claim_type="fact",
+                epistemic_status="observed", created_by="tester", scope_type="global",
+                embedder=embedder,
+            )
+            assert claim_id is not None, "capture_claim silently dropped the claim"
+
+            # get_run_context's own `objective` field is the CURRENT
+            # NODE's real step goal (`current.get("goal")`), not the
+            # top-level procedure goal -- the step goal must itself
+            # share real words with the claim for get_relevant_claims'
+            # hybrid retrieval to have a genuine lexical/semantic reason
+            # to surface it over the rest of a large, real corpus.
+            procedure = await _capture(
+                pool, name, goal=goal_text, embedding=vec,
+                embedding_model_id=embedder.embedding_model_id(),
+                steps=[{"order": 0, "goal": goal_text}],
+            )
+            exec_run_id = await _start_run(pool, procedure)
+
+            # A real, live file-intent declaration on this run's node 0.
+            await declare_file_intent(
+                pool, execution_run_id=exec_run_id, node_order=0, owner_agent_id="agent-b35-e2e",
+                write_exact=[f"src/b35_{run_id}.py"], symbols_expected_to_modify=[f"B35Handler.{run_id}"],
+            )
+
+            with tempfile.TemporaryDirectory() as workspace:
+                result = await sp.generate_projection(
+                    pool, workspace_root=workspace, procedure_run_id=exec_run_id,
+                )
+                context_md = result["context_md"]
+                claims_section = context_md.split("[RELEVANT GLOBAL CLAIMS]")[1].split("[SELECTED PROCEDURES]")[0]
+                assert "postgres" in claims_section, claims_section
+
+                coord_section = context_md.split("[COORDINATION]")[1]
+                assert "agent-b35-e2e" in coord_section
+                assert f"src/b35_{run_id}.py" in coord_section
+                assert f"B35Handler.{run_id}" in coord_section
+
+                run_json = result["run_json"]
+                assert run_json["node_owners"] == {0: "agent-b35-e2e"}
+                assert len(run_json["file_intents"]) == 1
+                fi = run_json["file_intents"][0]
+                assert fi["write_exact"] == [f"src/b35_{run_id}.py"]
+                assert fi["symbols_expected_to_modify"] == [f"B35Handler.{run_id}"]
+        finally:
+            if claim_id:
+                await pool.execute("DELETE FROM knowledge_nodes WHERE id = $1", claim_id)
+            await pool.execute("DELETE FROM task_nodes WHERE skill_ref = $1", claim_subject)
             await _cleanup(pool, name)
             await pool.close()
 
@@ -148,9 +235,11 @@ def test_generate_projection_regeneration_is_idempotent_and_overwrites():
             with tempfile.TemporaryDirectory() as workspace:
                 first = await sp.generate_projection(
                     pool, workspace_root=workspace, procedure_run_id=exec_run_id,
+                    include_addressable_pages=True,
                 )
                 second = await sp.generate_projection(
                     pool, workspace_root=workspace, procedure_run_id=exec_run_id,
+                    include_addressable_pages=True,
                 )
                 # Same canonical state -> same run.json content (minus
                 # nothing time-dependent in this fixture's node states).
@@ -215,6 +304,7 @@ def test_every_index_row_resolves_to_exactly_its_block_and_regen_is_stable():
             with tempfile.TemporaryDirectory() as workspace:
                 first = await sp.generate_projection(
                     pool, workspace_root=workspace, procedure_run_id=exec_run_id,
+                    include_addressable_pages=True,
                 )
                 sdir = os.path.join(workspace, ".stealth")
 
@@ -236,6 +326,7 @@ def test_every_index_row_resolves_to_exactly_its_block_and_regen_is_stable():
 
                 second = await sp.generate_projection(
                     pool, workspace_root=workspace, procedure_run_id=exec_run_id,
+                    include_addressable_pages=True,
                 )
                 for k in ("root_idx", "claims_idx", "procedures_idx", "implementations_idx", "run_idx"):
                     assert first[k] == second[k]

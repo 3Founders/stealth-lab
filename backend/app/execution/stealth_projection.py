@@ -56,13 +56,21 @@ __all__ = [
 
 async def generate_projection(
     pool: asyncpg.Pool, *, workspace_root: str, procedure_run_id: str,
+    include_addressable_pages: bool = False,
 ) -> dict[str, Any]:
     """See `app.stealth.generator.generate_projection`. This wrapper
     passes the module-level `CONTEXT_MD_MAX_BYTES` (looked up per call, so
-    a test that monkeypatches it on this module still takes effect)."""
+    a test that monkeypatches it on this module still takes effect).
+
+    `include_addressable_pages` defaults to False (B35 STRICT CLOSURE):
+    the compact trio (`context.md`/`run.json`/`meta.json`) is the
+    literal, canonical, unconditional default per B35's own text; the
+    per-type addressable pages are an explicit opt-in extension, not
+    generated unless a real caller asks for them."""
     return await _generate_projection(
         pool,
         workspace_root=workspace_root,
         procedure_run_id=procedure_run_id,
         context_md_max_bytes=CONTEXT_MD_MAX_BYTES,
+        include_addressable_pages=include_addressable_pages,
     )

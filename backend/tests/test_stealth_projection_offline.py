@@ -67,9 +67,22 @@ def test_render_context_md_names_the_unknown_precondition():
 
 
 def test_render_context_md_never_fabricates_relevant_global_claims():
+    """B35 STRICT CLOSURE: `get_relevant_claims` (B30) is now real, so
+    the section is no longer a permanent placeholder -- it is honestly
+    empty only when the caller genuinely passes no real refs, and shows
+    the exact real ones passed otherwise (never fabricated either way)."""
     md = _render_context_md(context=_FAKE_CONTEXT, procedure=_FAKE_PROCEDURE, verification=_FAKE_VERIFICATION)
     section = md.split("[RELEVANT GLOBAL CLAIMS]")[1].split("[SELECTED PROCEDURES]")[0]
-    assert "not projected" in section
+    assert "no relevant global Claims retrieved" in section
+
+    real_refs = [{"claim_id": "c-123", "belief": "IN", "statement": "the service uses postgres"}]
+    md_with_claims = _render_context_md(
+        context=_FAKE_CONTEXT, procedure=_FAKE_PROCEDURE, verification=_FAKE_VERIFICATION,
+        relevant_claim_refs=real_refs,
+    )
+    section_with_claims = md_with_claims.split("[RELEVANT GLOBAL CLAIMS]")[1].split("[SELECTED PROCEDURES]")[0]
+    assert "c-123" in section_with_claims
+    assert "the service uses postgres" in section_with_claims
 
 
 def test_render_context_md_honest_when_no_implementation_recommended():

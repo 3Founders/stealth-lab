@@ -241,13 +241,41 @@ def _revision() -> int:
 async def generate_projection(
     pool: asyncpg.Pool, *, workspace_root: str, procedure_run_id: str,
     context_md_max_bytes: int | None = None,
+    include_addressable_pages: bool = False,
 ) -> dict[str, Any]:
     """
     Regenerate `.stealth/` under `workspace_root` for `procedure_run_id`
-    from canonical state only. Returns
-    `{context_md, run_json, meta_json, paths}` -- `paths` maps every
-    written file (including the new pages and `index/*.idx`) to its
-    absolute path.
+    from canonical state only.
+
+    B35 STRICT CLOSURE (re-read against the literal spec text): B35's
+    own words are "Use ONE compact human/agent-readable context file
+    plus machine-readable runtime files: context.md, run.json,
+    meta.json... Do NOT maintain large duplicated claims.md,
+    procedures.md, implementations.md, run.md... files UNLESS an
+    existing integration strictly requires them." No real caller
+    anywhere in this codebase (grepped: only this module's own tests)
+    reads `claims.md`/`procedures.md`/`implementations.md`/`run.md`/
+    `index/*.idx` -- the "existing integration" exception does not
+    apply. The compact trio is therefore the literal, canonical,
+    UNCONDITIONAL default (`include_addressable_pages` defaults False);
+    both real production call sites (`server.py`'s `_respond_plan_only`/
+    `continue_run`) call this with no override and now get exactly the
+    compact trio, nothing else.
+
+    The addressable-page architecture (`claims.md`/`procedures.md`/
+    `implementations.md`/`run.md` + `index/*.idx`) that a PRIOR pass in
+    this codebase built is real, tested, and NOT deleted here (CLAUDE.md
+    rule 2: don't discard working code) -- it becomes an explicit
+    opt-in (`include_addressable_pages=True`) for a caller with a real,
+    demonstrated integration need for it, exactly the shape B35's own
+    exception clause describes, rather than an unconditional default
+    that clause does not license.
+
+    Returns `{context_md, run_json, meta_json, paths}` always;
+    `{claims_md, procedures_md, implementations_md, run_md, root_idx,
+    claims_idx, procedures_idx, implementations_idx, run_idx}` are
+    additionally present, and `paths` additionally includes them, only
+    when `include_addressable_pages=True`.
 
     `context_md_max_bytes` overrides the `context.md` router budget
     (the back-compat shim passes its own patchable module constant so
@@ -279,79 +307,123 @@ async def generate_projection(
         pool, execution_run_id=procedure_run_id, procedure=procedure
     )
 
+    # B35 remaining projection gaps, closed against the now-real B30/B36
+    # systems: relevant GLOBAL Claims (get_relevant_claims, bounded,
+    # never the whole graph) and live multi-agent file-intent
+    # coordination (real execution_run_nodes declarations -- B36).
+    # Both informational: a failure here must never block projection
+    # generation itself.
+    relevant_claim_refs: list[dict] = []
+    objective = context.get("objective")
+    if objective:
+        try:
+            from app.services.relevant_claims import get_relevant_claims
+            relevant_claim_refs = await get_relevant_claims(pool, goal=objective, top_k=5)
+        except Exception:  # noqa: BLE001
+            relevant_claim_refs = []
+
+    file_intent_rows = await pool.fetch(
+        "SELECT node_order, owner_agent_id, read_exact, read_globs, write_exact, write_globs, "
+        "symbols_expected_to_modify, file_intent_lease_expires_at FROM execution_run_nodes "
+        "WHERE execution_run_id = $1::uuid AND file_intent_lease_expires_at IS NOT NULL "
+        "AND file_intent_lease_expires_at > now() "
+        "AND (write_exact != '[]' OR write_globs != '[]' OR read_exact != '[]' OR read_globs != '[]')",
+        procedure_run_id,
+    )
+    file_intents = [dict(r) for r in file_intent_rows]
+
     # --- compact B35 trio (unchanged behaviour) ---------------------------
-    context_md = _render_context_md(context=context, procedure=procedure, verification=verification)
+    context_md = _render_context_md(
+        context=context, procedure=procedure, verification=verification,
+        relevant_claim_refs=relevant_claim_refs, file_intents=file_intents,
+    )
     if len(context_md.encode("utf-8")) > ctx_budget:
         context_md = (
             context_md[:ctx_budget]
             + f"\n... [TRUNCATED at {ctx_budget} bytes -- exceeded projection budget]\n"
         )
-    run_json = _render_run_json(context=context, run_row=run_row, verification=verification)
+    run_json = _render_run_json(
+        context=context, run_row=run_row, verification=verification, file_intents=file_intents,
+    )
     meta_json = _render_meta_json(
         run_row=run_row, workspace_root=workspace_root,
         scope_type=run_row.get("scope_type"), scope_entity_id=run_row.get("scope_entity_id"),
         revision=_revision(),
     )
 
-    # --- addressable per-type pages + indexes ----------------------------
-    claims_md, claims_rows = _build_claims_page(context)
-    procedures_md, procedures_rows = _build_procedures_page(context, procedure, verification)
-    implementations_md, impl_rows = _build_implementations_page(context)
-    run_md, run_rows = _build_run_page(context)
+    # --- addressable per-type pages + indexes (B35 STRICT CLOSURE:
+    # opt-in only -- see this function's own docstring for why the
+    # literal spec text makes the compact trio above the unconditional
+    # default) --------------------------------------------------------
+    claims_md = procedures_md = implementations_md = run_md = None
+    claims_idx = procedures_idx = implementations_idx = run_idx = root_idx = None
+    claims_rows: list = []
+    procedures_rows: list = []
+    impl_rows: list = []
+    run_rows: list = []
+    if include_addressable_pages:
+        claims_md, claims_rows = _build_claims_page(context)
+        procedures_md, procedures_rows = _build_procedures_page(context, procedure, verification)
+        implementations_md, impl_rows = _build_implementations_page(context)
+        run_md, run_rows = _build_run_page(context)
 
-    claims_idx = render_idx(claims_rows, header="claims.idx  id|version|scope|status|tags|file|start|end|summary")
-    procedures_idx = render_idx(procedures_rows, header="procedures.idx  id|version|scope|status|tags|file|start|end|summary")
-    implementations_idx = render_idx(impl_rows, header="implementations.idx  id|version|scope|status|tags|file|start|end|summary")
-    run_idx = render_idx(run_rows, header="run.idx  node|status|owner|deps|globs|file|start|end|summary")
+        claims_idx = render_idx(claims_rows, header="claims.idx  id|version|scope|status|tags|file|start|end|summary")
+        procedures_idx = render_idx(procedures_rows, header="procedures.idx  id|version|scope|status|tags|file|start|end|summary")
+        implementations_idx = render_idx(impl_rows, header="implementations.idx  id|version|scope|status|tags|file|start|end|summary")
+        run_idx = render_idx(run_rows, header="run.idx  node|status|owner|deps|globs|file|start|end|summary")
 
-    for name, content in (("claims.idx", claims_idx), ("procedures.idx", procedures_idx),
-                          ("implementations.idx", implementations_idx), ("run.idx", run_idx)):
-        if len(content.encode("utf-8")) > TYPE_IDX_MAX_BYTES:
+        for name, content in (("claims.idx", claims_idx), ("procedures.idx", procedures_idx),
+                              ("implementations.idx", implementations_idx), ("run.idx", run_idx)):
+            if len(content.encode("utf-8")) > TYPE_IDX_MAX_BYTES:
+                raise StealthProjectionError(
+                    f"{name} is {len(content)} bytes -- over the {TYPE_IDX_MAX_BYTES} working-set "
+                    "index budget; the projection pulled in too much"
+                )
+
+        root_idx = render_root_idx([
+            RootRow("claims", "claims.idx", "facts, preconditions, assumptions in scope"),
+            RootRow("procedures", "procedures.idx", "the selected procedure + steps"),
+            RootRow("implementations", "implementations.idx", "resolved executors/tools"),
+            RootRow("run", "run.idx", "current nodes, status, blockers"),
+        ])
+        if len(root_idx.encode("utf-8")) > ROOT_IDX_MAX_BYTES:
             raise StealthProjectionError(
-                f"{name} is {len(content)} bytes -- over the {TYPE_IDX_MAX_BYTES} working-set "
-                "index budget; the projection pulled in too much"
+                f"index/root.idx is {len(root_idx)} bytes -- over the {ROOT_IDX_MAX_BYTES} router budget"
             )
-
-    root_idx = render_root_idx([
-        RootRow("claims", "claims.idx", "facts, preconditions, assumptions in scope"),
-        RootRow("procedures", "procedures.idx", "the selected procedure + steps"),
-        RootRow("implementations", "implementations.idx", "resolved executors/tools"),
-        RootRow("run", "run.idx", "current nodes, status, blockers"),
-    ])
-    if len(root_idx.encode("utf-8")) > ROOT_IDX_MAX_BYTES:
-        raise StealthProjectionError(
-            f"index/root.idx is {len(root_idx)} bytes -- over the {ROOT_IDX_MAX_BYTES} router budget"
-        )
 
     # --- enrich meta.json ----------------------------------------------
     now_iso = datetime.now(timezone.utc).isoformat()
     updated_at = run_row.get("updated_at")
     change_cursor = f"{run_row['id']}:{updated_at.isoformat() if updated_at else '0'}"
+    files = ["context.md", "run.json", "meta.json"]
     meta_json.update({
         "schema": "stealth-projection/1",
         "workspace_id": str(run_row.get("scope_entity_id") or _short(hashlib.sha1(
             workspace_root.encode("utf-8")).hexdigest(), 12)),
         "change_cursor": change_cursor,
-        "revisions": {
-            "claims": len(claims_rows),
-            "procedures": len(procedures_rows),
-            "implementations": len(impl_rows),
-            "run": len(run_rows),
-        },
-        "counts": {
-            "claims": len(claims_rows),
-            "procedures": len(procedures_rows),
-            "implementations": len(impl_rows),
-            "run_nodes": len([r for r in run_rows if r.node_id.startswith("N")]),
-        },
         "generated_at": now_iso,
-        "files": [
-            "context.md", "run.json", "meta.json",
+    })
+    if include_addressable_pages:
+        meta_json.update({
+            "revisions": {
+                "claims": len(claims_rows),
+                "procedures": len(procedures_rows),
+                "implementations": len(impl_rows),
+                "run": len(run_rows),
+            },
+            "counts": {
+                "claims": len(claims_rows),
+                "procedures": len(procedures_rows),
+                "implementations": len(impl_rows),
+                "run_nodes": len([r for r in run_rows if r.node_id.startswith("N")]),
+            },
+        })
+        files += [
             "claims.md", "procedures.md", "implementations.md", "run.md",
             "index/root.idx", "index/claims.idx", "index/procedures.idx",
             "index/implementations.idx", "index/run.idx",
-        ],
-    })
+        ]
+    meta_json["files"] = files
 
     # --- atomic batch write (meta.json LAST) --------------------------
     stealth_dir = os.path.join(workspace_root, STEALTH_DIRNAME)
@@ -359,33 +431,42 @@ async def generate_projection(
     plan: list[tuple[str, str]] = [
         (os.path.join(stealth_dir, "context.md"), context_md),
         (os.path.join(stealth_dir, "run.json"), json.dumps(run_json, indent=2, default=str)),
-        (os.path.join(stealth_dir, "claims.md"), claims_md),
-        (os.path.join(stealth_dir, "procedures.md"), procedures_md),
-        (os.path.join(stealth_dir, "implementations.md"), implementations_md),
-        (os.path.join(stealth_dir, "run.md"), run_md),
-        (os.path.join(index_dir, "root.idx"), root_idx),
-        (os.path.join(index_dir, "claims.idx"), claims_idx),
-        (os.path.join(index_dir, "procedures.idx"), procedures_idx),
-        (os.path.join(index_dir, "implementations.idx"), implementations_idx),
-        (os.path.join(index_dir, "run.idx"), run_idx),
-        (os.path.join(stealth_dir, "meta.json"), json.dumps(meta_json, indent=2, default=str)),
     ]
+    if include_addressable_pages:
+        plan += [
+            (os.path.join(stealth_dir, "claims.md"), claims_md),
+            (os.path.join(stealth_dir, "procedures.md"), procedures_md),
+            (os.path.join(stealth_dir, "implementations.md"), implementations_md),
+            (os.path.join(stealth_dir, "run.md"), run_md),
+            (os.path.join(index_dir, "root.idx"), root_idx),
+            (os.path.join(index_dir, "claims.idx"), claims_idx),
+            (os.path.join(index_dir, "procedures.idx"), procedures_idx),
+            (os.path.join(index_dir, "implementations.idx"), implementations_idx),
+            (os.path.join(index_dir, "run.idx"), run_idx),
+        ]
+    # meta.json LAST regardless -- a reader keying off its own revision
+    # must never see a partial set, in either mode.
+    plan.append((os.path.join(stealth_dir, "meta.json"), json.dumps(meta_json, indent=2, default=str)))
     atomic_write_batch(plan)
 
     paths = {os.path.basename(p) if not p.endswith(".idx") else "index/" + os.path.basename(p): p
              for p, _ in plan}
-    return {
+    result = {
         "context_md": context_md,
         "run_json": run_json,
         "meta_json": meta_json,
-        "claims_md": claims_md,
-        "procedures_md": procedures_md,
-        "implementations_md": implementations_md,
-        "run_md": run_md,
-        "root_idx": root_idx,
-        "claims_idx": claims_idx,
-        "procedures_idx": procedures_idx,
-        "implementations_idx": implementations_idx,
-        "run_idx": run_idx,
         "paths": paths,
     }
+    if include_addressable_pages:
+        result.update({
+            "claims_md": claims_md,
+            "procedures_md": procedures_md,
+            "implementations_md": implementations_md,
+            "run_md": run_md,
+            "root_idx": root_idx,
+            "claims_idx": claims_idx,
+            "procedures_idx": procedures_idx,
+            "implementations_idx": implementations_idx,
+            "run_idx": run_idx,
+        })
+    return result
