@@ -37,6 +37,61 @@ from app.services.observations import (
     promote_observation_to_claim,
 )
 
+# --------------------------------------------------------------------------
+# IngestionContext for the TRACE / execution-derived path (Gate G1, §A1).
+#
+# The document path (skill_ingestion.compile_skill_artifact) already opens
+# one. The trace path did not, so every observation / claim / procedure it
+# produced carried a NULL ingestion_context_id -- unanswerable "who / under
+# what scope / by which extractor produced this". The unit is the SESSION:
+# a trace's events arrive as many jobs, and episodes group by session, so
+# one context spans a whole session's ingestion. It is resolved from the
+# DB (not an in-process cache) so it survives worker restarts and stays
+# idempotent -- never a fabricated duplicate.
+# --------------------------------------------------------------------------
+TRACE_INGESTION_EXTRACTOR = "trace_ingestion"
+TRACE_INGESTION_EXTRACTOR_VERSION = "deterministic_v1"
+
+
+async def resolve_trace_ingestion_context(
+    pool: asyncpg.Pool,
+    session_id: str,
+    *,
+    owner_id: Optional[str] = None,
+    visibility: str = "public",
+) -> Optional[str]:
+    """The open IngestionContext for one trace session, opening one on first
+    call. Returns None only if `session_id` is falsy. Idempotent: a second
+    call for the same session returns the same row (looked up by
+    source_uri), so concurrent workers converge instead of duplicating."""
+    if not session_id:
+        return None
+    from app.services.ingestion_context import open_ingestion_context
+
+    source_uri = f"session:{session_id}"
+    existing = await pool.fetchval(
+        "SELECT id FROM ingestion_contexts "
+        "WHERE source_uri = $1 AND status = 'open' "
+        "ORDER BY started_at DESC LIMIT 1",
+        source_uri,
+    )
+    if existing is not None:
+        return str(existing)
+    return await open_ingestion_context(
+        pool,
+        source_type="trace",
+        source_uri=source_uri,
+        source_hash=None,
+        extractor_id=TRACE_INGESTION_EXTRACTOR,
+        extractor_version=TRACE_INGESTION_EXTRACTOR_VERSION,
+        actor_id=owner_id or TRACE_INGESTION_EXTRACTOR,
+        scope_type="session",
+        scope_entity_id=str(session_id),
+        classification="EXECUTION_DERIVED",
+        visibility=visibility,
+        owner_id=owner_id,
+    )
+
 
 async def handle_ingest_skill_package(pool: asyncpg.Pool, payload: dict) -> None:
     """Ingest exactly one immutable skill package, retryably and idempotently."""
@@ -112,7 +167,7 @@ async def handle_normalize_trace_event(pool: asyncpg.Pool, payload: dict) -> Non
         raise ValueError(f"normalize_trace_event payload missing trace_event_id: {payload!r}")
 
     row = await pool.fetchrow(
-        "SELECT id, event_type, tool_name, tool_input, tool_output, "
+        "SELECT id, session_id, event_type, tool_name, tool_input, tool_output, "
         "       owner_id, visibility::text AS visibility "
         "FROM trace_events WHERE id = $1",
         trace_event_id,
@@ -120,6 +175,14 @@ async def handle_normalize_trace_event(pool: asyncpg.Pool, payload: dict) -> Non
     if row is None:
         log.info("normalize_trace_event: trace_event %s no longer exists, skipping", trace_event_id)
         return
+
+    # G1: one IngestionContext per session; every observation this handler
+    # persists is stamped with it, and the id rides the promote job so the
+    # derived claim carries it too.
+    ingestion_context_id = await resolve_trace_ingestion_context(
+        pool, str(row["session_id"]) if row["session_id"] else "",
+        owner_id=row["owner_id"], visibility=row["visibility"],
+    )
 
     trace_event = dict(row)
     # tool_input comes back from asyncpg as a str (JSONB decoded to text
@@ -141,6 +204,14 @@ async def handle_normalize_trace_event(pool: asyncpg.Pool, payload: dict) -> Non
             owner_id=row["owner_id"],
             visibility=row["visibility"],
         )
+        # persist_observation takes no ingestion_context_id kwarg -- stamp
+        # it in a follow-up UPDATE, the same pattern skill_ingestion uses
+        # for the document Observation.
+        if ingestion_context_id is not None:
+            await pool.execute(
+                "UPDATE observations SET ingestion_context_id = $1::uuid WHERE id = $2::uuid",
+                ingestion_context_id, observation_id,
+            )
         # The other half of the observation -> claim hop. Same enqueue
         # idiom trace_worker.py:303-307 uses to create THIS job, kept
         # deliberately identical so there is one pattern to learn.
@@ -164,6 +235,7 @@ async def handle_normalize_trace_event(pool: asyncpg.Pool, payload: dict) -> Non
                 "justification_episode_id": (
                     str(justification_episode_id) if justification_episode_id else None
                 ),
+                "ingestion_context_id": ingestion_context_id,
             }),
         )
 
@@ -299,6 +371,19 @@ async def handle_promote_observation_to_claim(pool: asyncpg.Pool, payload: dict)
         log.info(
             "promote_observation_to_claim: observation %s produced no claim "
             "(missing or out of scope)", observation_id,
+        )
+        return
+
+    # G1: carry the session's IngestionContext onto the derived claim. The
+    # id rides the payload from handle_normalize_trace_event; a legacy job
+    # without it leaves the column NULL rather than paying for a lookup
+    # (the recovery sweep re-enqueues with a fresh payload).
+    ingestion_context_id = payload.get("ingestion_context_id")
+    if ingestion_context_id:
+        await pool.execute(
+            "UPDATE knowledge_nodes SET ingestion_context_id = $1::uuid "
+            "WHERE id = $2::uuid AND ingestion_context_id IS NULL",
+            ingestion_context_id, claim_id,
         )
 
 
@@ -780,6 +865,26 @@ async def handle_extract_procedure_from_episode(
             episode_id, result.version_row_id,
         )
         return
+
+    # G1: stamp the session's IngestionContext onto the new procedure
+    # version row and any procedure-targeted evidence extract_procedure
+    # wrote for it. Follow-up UPDATEs -- extract_procedure()/capture_procedure()
+    # take no ingestion_context_id kwarg and this lane does not own them.
+    ingestion_context_id = await resolve_trace_ingestion_context(
+        pool, str(ep["session_id"]),
+    )
+    if ingestion_context_id is not None and result.version_row_id is not None:
+        await pool.execute(
+            "UPDATE procedures SET ingestion_context_id = $1::uuid "
+            "WHERE id = $2::uuid AND ingestion_context_id IS NULL",
+            ingestion_context_id, str(result.version_row_id),
+        )
+        await pool.execute(
+            "UPDATE evidence SET ingestion_context_id = $1::uuid "
+            "WHERE target_type = 'procedure' AND target_id = $2::uuid "
+            "AND ingestion_context_id IS NULL",
+            ingestion_context_id, str(result.version_row_id),
+        )
 
     log.info(
         "extract_procedure_from_episode: episode %s -> procedure %s (by %s)",
