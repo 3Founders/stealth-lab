@@ -200,11 +200,131 @@ def test_plan_deviation_reports_no_deviation_for_a_clean_first_pass_run():
             assert deviation["summary"] == {
                 "nodes_planned": 1, "nodes_executed": 1, "nodes_with_deviations": 0,
             }
+            assert deviation["per_node"][0]["actual_tools_called"] == []
+            assert deviation["per_node"][0]["actual_artifacts"] == []
         finally:
             if exec_run_id is not None:
                 await pool.execute("DELETE FROM execution_runs WHERE id=$1", exec_run_id)
             if row_id is not None:
                 await _cleanup_procedure(pool, row_id)
+            await pool.close()
+
+    asyncio.run(_run())
+
+
+def test_plan_deviation_surfaces_the_real_tools_called_and_artifacts_per_node():
+    """MCP hardening B17 STRICT CLOSURE: the literal requirement names
+    "actual ... tools/artifacts", not just implementation identity --
+    both are already real, durably recorded per-node facts (B27's
+    record_tool_called via HttpApiAdapter's real evidence, B7/B8's
+    record_artifact) that this comparison never folded in. Proves a
+    real HTTP adapter execution's own tool_called/artifact_recorded
+    events show up on the matching node's per_node entry."""
+    import http.server
+    import threading
+    import contextlib
+
+    class _EchoHandler(http.server.BaseHTTPRequestHandler):
+        def do_POST(self):
+            length = int(self.headers.get("Content-Length", 0))
+            self.rfile.read(length)
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(b'{"ok": true}')
+
+        def log_message(self, format, *args):  # noqa: A002
+            pass
+
+    @contextlib.contextmanager
+    def _real_http_server():
+        server = http.server.HTTPServer(("127.0.0.1", 0), _EchoHandler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            yield f"http://127.0.0.1:{server.server_port}"
+        finally:
+            server.shutdown()
+            thread.join(timeout=5)
+
+    async def _run():
+        from app.execution import implementation_registry
+        from app.execution.implementation_executor import execute_implementation
+        from app.services.access import AccessScope
+        from app.models.plan import PlanNode
+
+        pool = await create_pool(os.environ["DATABASE_URL"], min_size=1, max_size=2)
+        suffix = uuid.uuid4().hex[:8]
+        name = f"proc-test-plandeviation-tools-{suffix}"
+        row_id = None
+        exec_run_id = None
+        impl_id = None
+        try:
+            with _real_http_server() as base_url:
+                impl = await implementation_registry.register(
+                    pool, name=f"plandev-tools-impl-{suffix}", kind="api",
+                    provider="plandev-e2e", created_by="plandev_e2e",
+                    locator={"endpoint": f"{base_url}/echo"},
+                )
+                impl_id = impl["id"]
+
+                res = await capture_procedure(
+                    pool, name=name, goal="tools plan deviation probe",
+                    steps=[{"order": 0, "goal": "call the api"}],
+                    provenance="prior_library", scope_type="global", created_by="plandev_e2e",
+                    embedding=[0.01] * 1024,
+                )
+                proc_id, row_id = res["procedure_id"], res["id"]
+
+                async with pool.acquire() as c:
+                    pv = await c.fetchval("SELECT version FROM procedures WHERE id=$1", row_id)
+                    plan_id = await c.fetchval(
+                        "INSERT INTO execution_plans (id, procedure_id, procedure_version, procedure_row_id, "
+                        " task_description, procedure_content_hash, content_hash, scope_type) "
+                        "VALUES ($1,$2,$3,$4,$5,$6,$7,'global') RETURNING id",
+                        str(uuid7()), proc_id, pv, row_id, "plandev-tools-e2e",
+                        f"pch-{suffix}", f"ch-{suffix}",
+                    )
+                    nodes_json = json.dumps([{"order": 0, "goal": "call the api", "deps": []}])
+                    graph_id = await c.fetchval(
+                        "INSERT INTO task_graphs (id, execution_plan_id, graph_hash, nodes) "
+                        "VALUES ($1,$2,$3,$4::jsonb) RETURNING id",
+                        str(uuid7()), plan_id, f"gh-{suffix}", nodes_json,
+                    )
+
+                exec_run_id = await start_run(
+                    pool, execution_plan_id=plan_id, task_graph_id=graph_id,
+                    procedure_id=proc_id, procedure_version=pv,
+                    node_orders=[0], deps={0: []}, max_attempts=3, created_by="plandev_e2e",
+                )
+
+                async def run_node(order: int, attempt: int) -> dict:
+                    node = PlanNode(order=order, goal="call the api", implementation_id=impl_id)
+                    result = await execute_implementation(
+                        pool, node, {"request_body": {"probe": True}}, scope=AccessScope.unrestricted(),
+                    )
+                    if result.status != "success":
+                        raise RuntimeError(result.notes)
+                    return {"notes": result.notes, "data": dict(result.data or {}), "attempt": attempt}
+
+                result = await execute_run(
+                    pool, exec_run_id, deps={0: []}, run_node=run_node, worker_id="plandev-tools-w1",
+                )
+                assert result["status"] == "succeeded"
+
+                deviation = await compute_plan_deviation(pool, exec_run_id)
+                node0 = deviation["per_node"][0]
+                assert len(node0["actual_tools_called"]) == 1
+                assert node0["actual_tools_called"][0]["requested_endpoint"] == f"{base_url}/echo"
+                assert len(node0["actual_artifacts"]) == 1
+                assert node0["actual_artifacts"][0]["kind"] == "http_response"
+        finally:
+            if exec_run_id is not None:
+                await pool.execute("DELETE FROM execution_runs WHERE id=$1", exec_run_id)
+            if row_id is not None:
+                await _cleanup_procedure(pool, row_id)
+            if impl_id is not None:
+                await pool.execute("DELETE FROM implementations WHERE id=$1", impl_id)
             await pool.close()
 
     asyncio.run(_run())

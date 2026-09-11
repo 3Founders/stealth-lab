@@ -69,6 +69,30 @@ async def compute_plan_deviation(pool: asyncpg.Pool, execution_run_id: str) -> O
         execution_run_id,
     )
 
+    # B17: "actual ... tools/artifacts" -- both are already real, durably
+    # recorded per-node facts (record_tool_called via B27's adapter
+    # evidence, record_artifact via B7/B8), just never folded into this
+    # comparison. No new persistence, same discipline as the rest of
+    # this module -- a live read over the SAME execution_run_events rows
+    # B8's own vocabulary already writes.
+    event_rows = await pool.fetch(
+        "SELECT node_order, event_type, payload FROM execution_run_events "
+        "WHERE execution_run_id = $1 AND event_type IN ('tool_called', 'artifact_recorded') "
+        "ORDER BY node_order, id",
+        execution_run_id,
+    )
+    actual_tools_by_node: dict[int, list[dict]] = {}
+    actual_artifacts_by_node: dict[int, list[dict]] = {}
+    for ev in event_rows:
+        order = ev["node_order"]
+        if order is None:
+            continue
+        payload = json.loads(ev["payload"]) if isinstance(ev["payload"], str) else (ev["payload"] or {})
+        if ev["event_type"] == "tool_called":
+            actual_tools_by_node.setdefault(order, []).append(payload)
+        else:
+            actual_artifacts_by_node.setdefault(order, []).append(payload)
+
     per_node: list[dict[str, Any]] = []
     for row in actual_rows:
         order = row["node_order"]
@@ -96,6 +120,8 @@ async def compute_plan_deviation(pool: asyncpg.Pool, execution_run_id: str) -> O
             "actual_implementation_id": actual_impl,
             "attempt_count": row["attempt_count"],
             "error_class": row["error_class"],
+            "actual_tools_called": actual_tools_by_node.get(order, []),
+            "actual_artifacts": actual_artifacts_by_node.get(order, []),
             "deviations": deviations,
         })
 
@@ -105,6 +131,7 @@ async def compute_plan_deviation(pool: asyncpg.Pool, execution_run_id: str) -> O
                 "node_order": order, "planned_goal": planned_nodes[order].get("goal"),
                 "planned_implementation_id": None, "actual_status": None,
                 "actual_implementation_id": None, "attempt_count": 0, "error_class": None,
+                "actual_tools_called": [], "actual_artifacts": [],
                 "deviations": ["planned_node_never_executed"],
             })
     per_node.sort(key=lambda n: n["node_order"])
