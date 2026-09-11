@@ -117,7 +117,7 @@ def test_implementation_lifecycle_progresses_and_records_failure():
 
             state = await compute_implementation_lifecycle_state(pool, impl_id)
             assert state["reached"] == ["REGISTERED"]
-            assert state["status_flags"] == {"unavailable": False, "retired": False}
+            assert state["status_flags"] == {"unavailable": False, "retired": False, "stale": False}
             assert state["failure_classes_seen"] == []
 
             missing = await compute_implementation_lifecycle_state(pool, str(uuid.uuid4()))
@@ -161,9 +161,12 @@ def test_implementation_lifecycle_progresses_and_records_failure():
                 )
 
             state = await compute_implementation_lifecycle_state(pool, impl_id)
-            assert state["reached"] == list(CHAIN)
+            # This implementation was never DISCOVERED (no matching real
+            # environment_fact claim exists for its randomly-suffixed
+            # name/provider) -- an honest gap, not a fabricated rung.
+            assert state["reached"] == [s for s in CHAIN if s != "DISCOVERED"]
             assert state["current_state"] == "REUSED"
-            assert state["skipped_optional"] == []
+            assert state["skipped_optional"] == ["DISCOVERED"]
 
             # A real recorded failure: evidence, outcome_status='failure'.
             await pool.execute(
@@ -206,6 +209,168 @@ def test_implementation_lifecycle_progresses_and_records_failure():
                     impl_id,
                 )
                 await pool.execute("DELETE FROM implementations WHERE id=$1", impl_id)
+            await pool.close()
+
+    asyncio.run(_run())
+
+
+def test_discovered_is_real_when_a_prior_environment_fact_claim_names_this_implementation():
+    """MCP hardening B29 STRICT CLOSURE: DISCOVERED is real -- a real
+    `environment_fact` claim (app.services.environment_probe.
+    assert_environment_claims's own real INSERT shape, mirrored here to
+    stay scoped to this test's own prefixed rows, exactly the pattern
+    every other hierarchy/coarse-routing e2e test in this session
+    already uses) asserted BEFORE this implementation's own
+    registration, naming its exact `provider`, is honestly surfaced as
+    DISCOVERED preceding REGISTERED. A claim asserted AFTER registration
+    (too late) or naming something else entirely must NOT count."""
+    async def _run():
+        from datetime import datetime, timedelta, timezone
+
+        pool = await create_pool(os.environ["DATABASE_URL"], min_size=1, max_size=2)
+        suffix = uuid.uuid4().hex[:8]
+        subject = f"project:lifecycle-discovered-{suffix}"
+        provider_name = f"lifecycle-discovered-provider-{suffix}"
+        impl_id = None
+        try:
+            before = datetime.now(timezone.utc) - timedelta(minutes=5)
+            await pool.execute(
+                "INSERT INTO knowledge_nodes (node_type, name, properties, created_by, provenance, "
+                "t_valid, t_created) "
+                "VALUES ('claim', $1, $2, 'environment_probe', 'company_ingested', $3, $3)",
+                f"{subject} package_manager={provider_name}"[:200],
+                # A raw dict, NOT json.dumps()'d -- the pool's registered
+                # jsonb codec already encodes this (app/db/session.py);
+                # pre-encoding here would double-encode it into a JSON
+                # STRING, making every ->> lookup return NULL.
+                {
+                    "statement": f"{subject} package_manager={provider_name}",
+                    "subject": subject, "predicate": "package_manager", "object": provider_name,
+                    "truth_state": "IN", "claim_type": "environment_fact",
+                    "epistemic_status": "observed", "extraction_version": "environment_probe:1",
+                },
+                before,
+            )
+
+            impl = await implementation_registry.register(
+                pool, name=f"lifecycle-discovered-impl-{suffix}", kind="tool",
+                provider=provider_name, created_by="lifecycle_e2e",
+            )
+            impl_id = impl["id"]
+
+            state = await compute_implementation_lifecycle_state(pool, impl_id)
+            assert "DISCOVERED" in state["reached"]
+            assert state["reached"][0] == "DISCOVERED"
+            assert state["reached"][1] == "REGISTERED"
+        finally:
+            await pool.execute(
+                "DELETE FROM knowledge_nodes WHERE node_type='claim' AND properties->>'subject' = $1",
+                subject,
+            )
+            if impl_id is not None:
+                await pool.execute("DELETE FROM implementations WHERE id=$1", impl_id)
+            await pool.close()
+
+    asyncio.run(_run())
+
+
+def test_discovered_is_absent_when_the_only_matching_claim_postdates_registration():
+    """The negative half: a claim naming the same provider that was
+    asserted AFTER this implementation's own registration must never
+    count as DISCOVERED -- Stealth cannot have discovered something
+    before an event that has not happened yet."""
+    async def _run():
+        pool = await create_pool(os.environ["DATABASE_URL"], min_size=1, max_size=2)
+        suffix = uuid.uuid4().hex[:8]
+        subject = f"project:lifecycle-toolate-{suffix}"
+        provider_name = f"lifecycle-toolate-provider-{suffix}"
+        impl_id = None
+        try:
+            impl = await implementation_registry.register(
+                pool, name=f"lifecycle-toolate-impl-{suffix}", kind="tool",
+                provider=provider_name, created_by="lifecycle_e2e",
+            )
+            impl_id = impl["id"]
+
+            # Asserted AFTER registration -- must not count.
+            await pool.execute(
+                "INSERT INTO knowledge_nodes (node_type, name, properties, created_by, provenance) "
+                "VALUES ('claim', $1, $2, 'environment_probe', 'company_ingested')",
+                f"{subject} package_manager={provider_name}"[:200],
+                {
+                    "statement": f"{subject} package_manager={provider_name}",
+                    "subject": subject, "predicate": "package_manager", "object": provider_name,
+                    "truth_state": "IN", "claim_type": "environment_fact",
+                    "epistemic_status": "observed", "extraction_version": "environment_probe:1",
+                },
+            )
+
+            state = await compute_implementation_lifecycle_state(pool, impl_id)
+            assert "DISCOVERED" not in state["reached"]
+            assert state["reached"][0] == "REGISTERED"
+        finally:
+            await pool.execute(
+                "DELETE FROM knowledge_nodes WHERE node_type='claim' AND properties->>'subject' = $1",
+                subject,
+            )
+            if impl_id is not None:
+                await pool.execute("DELETE FROM implementations WHERE id=$1", impl_id)
+            await pool.close()
+
+    asyncio.run(_run())
+
+
+def test_stale_is_real_when_a_verified_implementation_is_superseded_by_a_newer_version():
+    """MCP hardening B29 STRICT CLOSURE: STALE is real -- grounded
+    directly in this item's own literal text ("a new implementation
+    version does not inherit verification automatically"). A verified
+    v1 with a real, registered v2 of the SAME (name, provider) identity
+    now existing is exactly a real, superseded verification -- never an
+    invented elapsed-time threshold. v2 itself (the newer one) must
+    never be marked stale merely for existing."""
+    async def _run():
+        pool = await create_pool(os.environ["DATABASE_URL"], min_size=1, max_size=2)
+        suffix = uuid.uuid4().hex[:8]
+        name = f"lifecycle-stale-impl-{suffix}"
+        provider_name = f"lifecycle-stale-provider-{suffix}"
+        v1_id = None
+        v2_id = None
+        try:
+            v1 = await implementation_registry.register(
+                pool, name=name, kind="tool", provider=provider_name,
+                version=1, created_by="lifecycle_e2e",
+            )
+            v1_id = v1["id"]
+            await implementation_registry.verify(pool, v1_id)
+
+            state_before_v2 = await compute_implementation_lifecycle_state(pool, v1_id)
+            assert state_before_v2["status_flags"]["stale"] is False, (
+                "the only real version must never be marked stale"
+            )
+
+            v2 = await implementation_registry.register(
+                pool, name=name, kind="tool", provider=provider_name,
+                version=2, created_by="lifecycle_e2e",
+            )
+            v2_id = v2["id"]
+
+            state_v1 = await compute_implementation_lifecycle_state(pool, v1_id)
+            assert state_v1["status_flags"]["stale"] is True
+            assert state_v1["current_state"] == "VERIFIED_IN_CONTEXT", (
+                "STALE is a flag alongside real progress, never a rewrite of it"
+            )
+
+            state_v2 = await compute_implementation_lifecycle_state(pool, v2_id)
+            assert state_v2["status_flags"]["stale"] is False, (
+                "the newer version is never stale merely for existing -- it "
+                "has not even reached VERIFIED_IN_CONTEXT yet (new implementation "
+                "version does not inherit verification automatically)"
+            )
+        finally:
+            if v1_id is not None:
+                await pool.execute("DELETE FROM implementations WHERE id=$1", v1_id)
+            if v2_id is not None:
+                await pool.execute("DELETE FROM implementations WHERE id=$1", v2_id)
             await pool.close()
 
     asyncio.run(_run())

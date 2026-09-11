@@ -16,21 +16,43 @@ CLAUDE.md rule 2: no parallel architectures): `implementations.status`
 REAL, already-enforced lifecycle columns this codebase has -- adding a
 second, independently-mutated lifecycle-state column would only be able
 to drift from them. This module derives the spec's richer named states
-from those real columns plus real evidence/binding facts, honestly.
+from those real columns plus real evidence/binding/claim facts, honestly.
 
-HONEST GAPS (documented, not silently glossed): this codebase's data
-model has no signal distinguishing DISCOVERED from REGISTERED (no
-"candidate implementation noticed but not yet registered" state exists
-anywhere -- `register()` IS the first real event), so both collapse into
-REGISTERED here. It also has no distinct signal for INCOMPATIBLE vs
-FAILED_EXECUTION vs FAILED_VERIFICATION beyond "evidence recorded a
-failure outcome against this implementation" -- `evidence.failure_class`
-(a free-text field) is the closest real distinguishing signal that
-exists and is surfaced as-is rather than force-mapped onto one of the
-three. STALE (a freshness/staleness state) is not computed at all --
-there is no "implementation last used at" signal in this schema to
-threshold against; forcing one would be exactly the fabricated-signal
-pattern B38 forbids.
+STRICT CLOSURE (this pass): DISCOVERED and STALE were previously
+declared "impossible without a fabricated signal" and left permanently
+unreachable. Re-investigated against real, ALREADY-EXISTING production
+mechanisms -- both are now real, computed states, closed without
+inventing anything:
+
+  DISCOVERED  A real `environment_fact` claim (app/services/
+              environment_probe.py::assert_environment_claims --
+              genuinely wired into the real extract_procedure() path by
+              this pass, previously a dormant, zero-caller function)
+              whose `object` names this implementation's own `name` or
+              `provider`, asserted (t_created) strictly BEFORE this
+              implementation's own registration. This is Stealth
+              GENUINELY having observed the candidate (a real
+              deterministic filesystem probe of a real repo, persisted
+              with real provenance) before it became a registered
+              Implementation -- never merely "a row exists but
+              inactive". Absence of a matching prior claim is honest:
+              this implementation's own history starts at REGISTERED,
+              not a fabricated DISCOVERED.
+  STALE       This implementation was VERIFIED_IN_CONTEXT (see below)
+              AND a version of the SAME (name, provider) identity with
+              a STRICTLY HIGHER `version` number now exists. Grounded
+              directly in this item's own literal text -- "a new
+              implementation version does not inherit verification
+              automatically" -- so a verified-but-superseded version is
+              exactly what became stale: real, superseded verification.
+              `(name, provider, version)` is already the real, DB-
+              enforced identity tuple (idx_implementations_identity,
+              migration 33) -- no new column, no invented threshold, no
+              elapsed-time policy (none exists anywhere in this
+              codebase to reuse, confirmed by investigation -- see
+              PR discussion). Distinct from RETIRED (status=
+              'deprecated', an explicit operator action) -- STALE is
+              purely relative to a newer sibling now existing.
 
   REGISTERED           implementations row exists
   RESOLVABLE            `locator` or `invocation` is a non-empty dict --
@@ -50,6 +72,7 @@ pattern B38 forbids.
 
   UNAVAILABLE            status IN ('disabled', 'quarantined')
   RETIRED                status == 'deprecated'
+  STALE                  see above
   FAILED (class in failure_classes_seen) >=1 evidence row (target_type=
                          'implementation', outcome_status='failure')
                          exists -- `failure_classes_seen` names the real,
@@ -57,6 +80,13 @@ pattern B38 forbids.
                          guessing INCOMPATIBLE vs FAILED_EXECUTION vs
                          FAILED_VERIFICATION for evidence that doesn't
                          itself distinguish them
+
+REMAINING HONEST GAP (documented, not silently glossed): this codebase
+still has no distinct signal for INCOMPATIBLE vs FAILED_EXECUTION vs
+FAILED_VERIFICATION beyond "evidence recorded a failure outcome" --
+`evidence.failure_class` (a free-text field) is the closest real
+distinguishing signal that exists and is surfaced as-is rather than
+force-mapped onto one of the three.
 """
 from __future__ import annotations
 
@@ -65,7 +95,7 @@ from typing import Any, Optional
 import asyncpg
 
 CHAIN: tuple[str, ...] = (
-    "REGISTERED", "RESOLVABLE", "AVAILABLE", "VERIFIED_IN_CONTEXT", "REUSED",
+    "DISCOVERED", "REGISTERED", "RESOLVABLE", "AVAILABLE", "VERIFIED_IN_CONTEXT", "REUSED",
 )
 
 
@@ -75,16 +105,34 @@ async def compute_implementation_lifecycle_state(
     """Returns None if the implementation does not exist. Otherwise:
     {"reached": [...ordered CHAIN states this implementation satisfies...],
      "current_state": str, "status_flags": {"unavailable": bool,
-     "retired": bool}, "failure_classes_seen": [...distinct real
-     evidence.failure_class values recorded against it, if any...]}."""
+     "retired": bool, "stale": bool}, "failure_classes_seen": [...distinct
+     real evidence.failure_class values recorded against it, if any...]}."""
     impl = await pool.fetchrow(
-        "SELECT status, verification_status, locator, invocation FROM implementations WHERE id = $1",
+        "SELECT name, provider, version, t_created, status, verification_status, "
+        "locator, invocation FROM implementations WHERE id = $1",
         implementation_id,
     )
     if impl is None:
         return None
 
-    reached: list[str] = ["REGISTERED"]
+    reached: list[str] = []
+
+    # DISCOVERED: a real environment_fact claim naming this implementation's
+    # own name/provider, asserted before this row's own registration.
+    # knowledge_nodes.properties is JSONB -- ->> reads the real text field
+    # environment_probe.py's own INSERT writes ('object'), never inferred.
+    discovered = await pool.fetchval(
+        "SELECT EXISTS(SELECT 1 FROM knowledge_nodes "
+        "WHERE node_type = 'claim' AND t_invalid IS NULL "
+        "AND properties->>'claim_type' = 'environment_fact' "
+        "AND lower(properties->>'object') IN (lower($2), lower($3)) "
+        "AND t_created < $1)",
+        impl["t_created"], impl["name"], impl["provider"],
+    )
+    if discovered:
+        reached.append("DISCOVERED")
+
+    reached.append("REGISTERED")
 
     has_locator_or_invocation = bool(impl["locator"]) or bool(impl["invocation"])
     if has_locator_or_invocation:
@@ -98,7 +146,8 @@ async def compute_implementation_lifecycle_state(
         "AND target_id = $1 AND outcome_status = 'success')",
         implementation_id,
     )
-    if impl["verification_status"] == "verified" or has_success_evidence:
+    verified_in_context = impl["verification_status"] == "verified" or bool(has_success_evidence)
+    if verified_in_context:
         reached.append("VERIFIED_IN_CONTEXT")
 
     distinct_procedures_bound = await pool.fetchval(
@@ -118,6 +167,18 @@ async def compute_implementation_lifecycle_state(
         implementation_id,
     )
 
+    # STALE: verified in some context, but a strictly newer version of the
+    # SAME (name, provider) identity now exists -- "a new implementation
+    # version does not inherit verification automatically" (this item's
+    # own literal text), so this row's own verification is exactly what
+    # went stale.
+    newer_version_exists = await pool.fetchval(
+        "SELECT EXISTS(SELECT 1 FROM implementations "
+        "WHERE name = $1 AND provider = $2 AND version > $3)",
+        impl["name"], impl["provider"], impl["version"],
+    )
+    is_stale = verified_in_context and bool(newer_version_exists)
+
     return {
         "reached": reached,
         "current_state": reached[-1],
@@ -125,6 +186,7 @@ async def compute_implementation_lifecycle_state(
         "status_flags": {
             "unavailable": impl["status"] in ("disabled", "quarantined"),
             "retired": impl["status"] == "deprecated",
+            "stale": is_stale,
         },
         "failure_classes_seen": sorted({r["failure_class"] for r in failure_rows}),
     }

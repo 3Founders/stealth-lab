@@ -17,6 +17,8 @@ _verify_precondition), and an approval UI are all separate, later work.
 """
 from __future__ import annotations
 
+import hashlib
+import os
 from typing import Any, Optional
 
 import asyncpg
@@ -35,6 +37,17 @@ from app.services.procedures import capture_procedure
 from app.services.reuse_detection import LEXICAL_FULL_MATCH_THRESHOLD, _lexical_overlap
 
 _DETERMINISTIC_TAG = "deterministic_v1@1"
+
+
+def _project_id_from_repo_root(repo_root: str) -> str:
+    """A real, deterministic project identifier derived from a real
+    filesystem location -- migration 17's own project_id is likewise "a
+    derived, stable identifier computed at collection time" (from
+    cwd+gitBranch there; from the real repo_root already in hand here,
+    since a repo_root-only caller has no gitBranch to combine it with).
+    Stable per real path, never a random/fabricated value: the exact
+    same repo_root always yields the exact same id."""
+    return hashlib.sha256(os.path.realpath(repo_root).encode("utf-8")).hexdigest()[:24]
 
 
 def _evidence_tokens(evidence: ProcedureEvidence) -> frozenset[str]:
@@ -108,6 +121,35 @@ async def extract_procedure(
                 f"{'failed' if evidence.outcome != 'success' else 'observation-free'} episode",
             ],
         )
+
+    # B29 STRICT CLOSURE: DISCOVERED. `assert_environment_claims` (app.
+    # services.environment_probe) is a real, pre-existing, DB-writing
+    # environment probe -- genuinely detects real filesystem facts
+    # (has_build_tool/has_test_runner/package_manager, ...) and persists
+    # them as real `environment_fact` claims -- but had ZERO real
+    # callers anywhere in this codebase before this pass (confirmed by
+    # investigation), so DISCOVERED could never actually be reached for
+    # any implementation. Called here, BEFORE this same episode's own
+    # extraction/registration ever runs, so any implementation later
+    # registered whose name/provider matches one of these real,
+    # already-persisted facts can honestly show DISCOVERED preceding
+    # REGISTERED (implementation_lifecycle.py's own real query).
+    # `project_id` prefers the evidence's own real, transcript-derived
+    # id (migration 17: cwd+gitBranch, collection-time) when the episode
+    # actually carries one; a repo_root-only caller (find_best_way's
+    # tier-2, report_execution -- neither passes a real project_id
+    # today) gets a real, deterministic identifier computed from the
+    # SAME repo_root already available, the identical "derive a stable
+    # id from a real location" reasoning migration 17's own project_id
+    # already uses, never a fabricated value.
+    if repo_root:
+        try:
+            from app.services.environment_probe import assert_environment_claims
+
+            project_id = evidence.project_id or _project_id_from_repo_root(repo_root)
+            await assert_environment_claims(pool, project_id=project_id, repo_root=repo_root)
+        except Exception:  # noqa: BLE001 -- informational; must never block real extraction.
+            pass
 
     strategy, extracted_by, allowed_binders = await _select_strategy(
         pool, client=client, extractor_scope=extractor_scope,

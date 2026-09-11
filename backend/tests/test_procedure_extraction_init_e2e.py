@@ -194,3 +194,56 @@ def test_failed_episode_is_refused_before_any_strategy_runs():
             await pool.close()
 
     asyncio.run(_run())
+
+
+def test_extract_procedure_wires_a_real_discovery_claim_automatically(tmp_path):
+    """MCP hardening B29 STRICT CLOSURE: `assert_environment_claims` was
+    a real, DB-writing function with ZERO real callers anywhere in this
+    codebase before this pass -- DISCOVERED could never actually be
+    reached for any implementation. Proves `extract_procedure(repo_root=
+    ...)` now calls it AUTOMATICALLY (no manual pre-call, unlike this
+    file's other tests, which seed environment claims by hand as setup)
+    -- a real npm-project repo_root produces a real `package_manager=
+    npm` environment_fact claim as a genuine SIDE EFFECT of extraction,
+    with no separate wiring the test itself has to perform."""
+    async def _run():
+        pool = await _real_create_pool(DATABASE_URL, min_size=1, max_size=2)
+        try:
+            await _cleanup(pool)
+            (tmp_path / "package.json").write_text('{"dependencies": {}}')
+            (tmp_path / "package-lock.json").write_text("{}")
+
+            await _seed_real_session(pool)
+            source = SessionEvidenceSource(
+                pool, session_id=SESSION_ID,
+                goal_text="procext-init-test: auto-discovery probe",
+                outcome="success",
+            )
+
+            from app.services.procedure_extraction import _project_id_from_repo_root
+
+            project_id = _project_id_from_repo_root(str(tmp_path))
+            subject = f"project:{project_id}"
+
+            result = await extract_procedure(pool, source, client=None, repo_root=str(tmp_path))
+            assert result.procedure_id is not None, f"extraction failed: {result.validation_failures}"
+
+            claim = await pool.fetchrow(
+                "SELECT properties->>'predicate' AS predicate, properties->>'object' AS object "
+                "FROM knowledge_nodes WHERE node_type = 'claim' AND t_invalid IS NULL "
+                "AND properties->>'subject' = $1 AND properties->>'predicate' = 'package_manager'",
+                subject,
+            )
+            assert claim is not None, (
+                "extract_procedure(repo_root=...) must have called "
+                "assert_environment_claims automatically -- no manual pre-call was made"
+            )
+            assert claim["object"] == "npm"
+        finally:
+            await pool.execute(
+                "DELETE FROM knowledge_nodes WHERE properties->>'subject' = $1", subject,
+            )
+            await _cleanup(pool)
+            await pool.close()
+
+    asyncio.run(_run())
