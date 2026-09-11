@@ -2,7 +2,7 @@
 MCP hardening B36: pure-logic half of multi-agent coordination --
 `_paths_overlap`/`_glob_prefix` need no database.
 """
-from app.execution.coordination import _glob_prefix, _paths_overlap
+from app.execution.coordination import _glob_prefix, _paths_overlap, _symbols_overlap
 
 
 def test_glob_prefix_stops_at_first_wildcard_char():
@@ -38,3 +38,21 @@ def test_identical_globs_overlap():
 
 def test_no_declared_paths_on_either_side_means_no_overlap():
     assert _paths_overlap([], [], [], []) == []
+
+
+def test_symbols_overlap_is_exact_name_match():
+    assert _symbols_overlap(["process_payment"], ["process_payment"]) == ["process_payment"]
+    assert _symbols_overlap(["process_payment"], ["ProcessPayment"]) == [], \
+        "exact, case-sensitive match only -- no fuzzy/casefold matching"
+    assert _symbols_overlap(["process_payment"], ["payments.process_payment"]) == [], \
+        "no qualified-name resolution -- different strings never match"
+
+
+def test_symbols_overlap_empty_on_either_side_is_no_overlap():
+    assert _symbols_overlap([], ["foo"]) == []
+    assert _symbols_overlap(["foo"], []) == []
+    assert _symbols_overlap([], []) == []
+
+
+def test_symbols_overlap_multiple_shared_names_sorted():
+    assert _symbols_overlap(["b", "a", "c"], ["a", "b"]) == ["a", "b"]

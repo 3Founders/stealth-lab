@@ -117,6 +117,25 @@ atomic-renames.
   deleted local-lifecycle `test_second_user_global_reuse_e2e` /
   `test_ideal_v1_lifecycle_e2e`.
 
+### G12 addendum 2 — the Claim publish gate (closed)
+
+Found while testing the write-back above: once a resolved exploration
+became a private Claim, there was no explicit path to ever promote it to
+global — only `publish_procedure` existed; Claims had no equivalent.
+`app/services/claim_publication.py::publish_claim` closes it: ownership
+check, G3 content screening (block-severity findings refuse), a
+source-lineage check (a claim citing a private Source cannot be
+generalized to public), `_scrub_value` scrubbing, audited via a
+ChangeSet — the same posture `publish_procedure` already has, never
+automatic. `test_claim_publication_e2e.py` proves the full private ->
+global loop end to end starting from an exploration resolution. Also
+fixed in passing: `close_exploration`'s own registered Source was
+`visibility='private'`, which would have made every exploration-derived
+claim permanently unpublishable (the source-lineage check blocks on any
+private source) — changed to `'public'` since the Source only records
+the fact-of-investigation, not confidential content; privacy lives on
+the Claim, not the provenance pointer.
+
 ### G12 addendum — the exploration write-back gap (closed)
 
 Found post-landing: P1–P4 built `exploration.md`/`open_exploration`/
@@ -135,3 +154,42 @@ cross-device-sync half.
 
 See `STEALTHLAB_INGESTION_HARDENING_AUDIT.md` § "LOCAL WORKING-SET ARCHITECTURE"
 for the running detail.
+
+### A13 resolved — local↔cloud sync is architecturally N/A for the product (2026-09-11)
+
+Founder-confirmed shape: **local Postgres is a dev-only fixture for this
+machine (and other developers'), never a shipped product component.** Real
+end users' MCP clients connect to Supabase (the shared, multi-tenant
+database) directly — there is no per-user local database in the product at
+all.
+
+```
+developer's laptop -- local Postgres (dev/test only)
+        |
+        | (no sync -- this DB is never a shipped product component)
+        v
+   (nothing -- it's just a dev fixture)
+
+real end user's machine -- MCP client
+        |
+        | direct connection
+        v
+   Supabase (shared, multi-tenant, the ONLY database real users touch)
+```
+
+**Consequence for the gate matrix**: A13 ("Local → cloud synchronization")
+reclassifies from PARTIAL/BLOCKED to **NOT_APPLICABLE** — the architecture
+genuinely has no local↔cloud boundary to sync across in the shipped
+product. `dbtarget.py`'s local/hosted switch stays exactly what it always
+was: a developer convenience for working against a real Postgres without
+touching the (egress-limited) hosted one, not a preview of a per-user sync
+tier. The `.stealth/` local working set (G13) is unaffected by this — it
+projects FROM whichever single database (Supabase, in production) the MCP
+server is actually configured against; it was never a second database.
+
+**What stays a real gate, unaffected by this resolution**: the private/global
+split WITHIN Supabase itself (`visibility='private'` vs `'public'`, owner_id,
+scope_type) — G12's write-back (exploration → private Claim) and the new
+explicit publish gate (`claim_publication.py::publish_claim`) both operate
+entirely within the one shared Supabase database and remain exactly as
+built. Nothing about this resolution touches them.

@@ -1482,6 +1482,13 @@ async def find_best_way(task_description: str, ctx: Context,
     # B19: the caller's REAL resolved scope, not an internal-maintenance
     # unrestricted() bypass -- a private procedure another caller cannot
     # see must never surface here as a tier-1 match.
+    # B19 residual fix: this is an automatic search, not a by-id fetch --
+    # omitting access_scope silently fell back to AccessScope.unrestricted()
+    # (applicability.py's own `access_scope or AccessScope.unrestricted()`),
+    # which surfaces every caller's private rows to every other caller. The
+    # caller's real (or anonymous/public-only) scope now applies here exactly
+    # as it already does on search_procedures below -- resolved once and
+    # reused for decide_route() below too, so both calls see the same scope.
     _caller_scope = _caller_access_scope()
     matched_procedures = await find_applicable_procedures(
         pool, goal_embedding=query_vec, current_scope=procedure_scope, limit=1,
@@ -2572,11 +2579,13 @@ async def search_procedures(task: str, ctx: Context, state: str = "{}", limit: i
     matches = await find_applicable_procedures(
         pool, goal_embedding=goal_vec, current_scope=current_scope,
         require_verified=require_verified, limit=limit,
-        invariant_bindings=bindings,
-        embedding_model_id=embedder.embedding_model_id(),
-        # B19: real caller scope -- never surface a private procedure
+        # B19 residual fix -- see find_best_way's identical fix above; this
+        # tool's own name says "search", the exact surface the founder
+        # flagged. Real caller scope -- never surface a private procedure
         # another caller cannot see.
         access_scope=_caller_access_scope(),
+        invariant_bindings=bindings,
+        embedding_model_id=embedder.embedding_model_id(),
     )
     return json.dumps([
         {

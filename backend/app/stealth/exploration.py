@@ -96,10 +96,20 @@ async def close_exploration(
     # synthetic ref -- identity-deduped per workspace by register_source's
     # own (source_type, locator, publisher) key, so repeated closes in the
     # same workspace reuse one Source rather than growing a new row each time.
+    #
+    # visibility='public' is deliberate here, even though the CLAIM it
+    # provenances is private: the Source only records THAT an agent
+    # investigated something in this workspace (a structural fact, not
+    # confidential content) -- `owner_id` still attributes it. Privacy
+    # lives on the Claim (its content, its review status), not on the
+    # fact-of-investigation; a private Source here would make every
+    # exploration-derived claim permanently unpublishable via
+    # claim_publication.py's source-lineage check, which is not the
+    # intended effect (see that module's docstring).
     src = await register_source(
         pool, source_type="agent_execution", locator=f"stealth-exploration:{workspace_root}",
         provenance="company_ingested", created_by=created_by or owner_id or "stealth_exploration",
-        visibility="private", owner_id=owner_id, scope_type=scope_type, scope_entity_id=scope_entity_id,
+        visibility="public", owner_id=owner_id, scope_type=scope_type, scope_entity_id=scope_entity_id,
     )
 
     return await capture_claim(

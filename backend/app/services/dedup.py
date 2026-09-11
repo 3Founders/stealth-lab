@@ -473,7 +473,7 @@ async def merge_cluster(
 
 async def run_dedup_sweep(
     pool: asyncpg.Pool,
-    tables: tuple[str, ...] = ("task_nodes", "knowledge_nodes"),
+    tables: tuple[str, ...] = ("task_nodes", "knowledge_nodes", "procedures"),
     scope: Optional[AccessScope] = None,
     embedder: Optional[Embedder] = None,
     approver_id: str = "dedup_sweep",
@@ -481,6 +481,24 @@ async def run_dedup_sweep(
 ) -> list[MergeReport]:
     """
     Find and (if `apply`) merge duplicate clusters across `tables`.
+
+    "procedures" closes the memory-substrate map's own tracked "gap #8"
+    (see skill_ingestion.py's docstring): find_duplicate_clusters/
+    merge_cluster already special-case the procedures table (embed
+    name+goal, complete-linkage cluster, tombstone-never-delete via
+    SUPERSEDES/DUPLICATE_OF) and are tested
+    (test_procedure_dedup_e2e.py) -- this was coded and proven but never
+    turned on by default. We want procedures to stay as MINIMAL/canonical
+    a set as possible; this is the batch half of that (check_novelty in
+    skill_ingestion.py is the write-time half -- it can refuse an
+    incoming near-duplicate but can never reconcile two rows that already
+    both exist).
+
+    Deliberately NOT "implementations": the opposite density is wanted
+    there -- many diverse candidate Implementations per Procedure (so a
+    cheap one can be tried before escalating), not a minimal set. Adding
+    it here by well-intentioned analogy to procedures would be wrong;
+    this omission is a decision, not an oversight.
 
     Defaults to a dry run -- callers (scripts/dedup_sweep.py) must pass
     apply=True explicitly to write anything, same cautious-by-default

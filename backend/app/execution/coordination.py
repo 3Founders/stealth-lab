@@ -151,6 +151,21 @@ def _paths_overlap(a_exact: list[str], a_globs: list[str], b_exact: list[str], b
     return sorted(overlaps)
 
 
+def _symbols_overlap(a_symbols: list[str], b_symbols: list[str]) -> list[str]:
+    """Exact-name overlap between two declarations' own self-reported
+    `symbols_expected_to_modify` lists. Same honest discipline as
+    `_paths_overlap`'s exact-path leg: no fuzzy matching, no attempt to
+    resolve aliases/qualified names -- a caller that declares
+    `"process_payment"` and another that declares
+    `"payments.process_payment"` are NOT flagged as the same symbol here;
+    over-approximating THAT would risk false conflicts between genuinely
+    unrelated same-named-but-different symbols across a large codebase,
+    which is the wrong direction to be wrong in for a purely advisory,
+    high-volume signal like this one. Case-sensitive, exact string match
+    only."""
+    return sorted(set(a_symbols) & set(b_symbols))
+
+
 async def _load_plan_nodes(pool: asyncpg.Pool, execution_run_id: str) -> list[dict]:
     """The compiled plan's own `task_graphs.nodes` JSON for this run --
     the single real source of `deps` this module (and durable_run/
@@ -295,7 +310,7 @@ async def check_file_intent_conflicts(
                 owner_agent_id=row["owner_agent_id"], overlapping_files=write_write, kind="write_write",
             ))
 
-        symbol_overlap = sorted(set(symbols_expected_to_modify) & set(row["symbols_expected_to_modify"] or []))
+        symbol_overlap = _symbols_overlap(symbols_expected_to_modify, row["symbols_expected_to_modify"] or [])
         if symbol_overlap:
             conflicts.append(ConflictEntry(
                 execution_run_id=str(row["execution_run_id"]), node_order=row["node_order"],

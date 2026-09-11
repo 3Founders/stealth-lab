@@ -1252,18 +1252,15 @@ async def _emit_document_screening_and_claim(
     """G3 + B1 completion.
 
     G3 -- persist the untrusted-document screen as an auditable
-    ``screening_decisions`` record. This runs ALONGSIDE the existing
-    ``injection_signals``-based provenance downgrade in
-    ``compile_skill_artifact`` (which is unchanged and is still the thing
-    that decides provenance / ``system_pending_review``). This adds the
-    persisted audit trail that §5 requires: which detector decided, at
-    what version, over what content, and why.
-
-    A ``screen_document_text`` REJECT verdict is RECORDED and warned about
-    here but does NOT abort capture -- the existing admission gate +
-    injection screen already decided this row's fate, and whether a screen
-    REJECT should additionally hard-block capture is a deliberate policy
-    call left for a later pass.
+    ``screening_decisions`` record for a row that reaches this point --
+    which, per the hard reject gate `compile_skill_artifact` now runs
+    immediately after parsing, means `findings` here is ALWAYS `[]` /
+    ALLOW. Any real finding was already caught and rejected before a
+    Source, IngestionContext, or Procedure ever existed for this
+    artifact -- see that function's own "content-screen" block. This
+    call still runs (cheap, pure regex over already-known-clean text) so
+    the ALLOW audit row -- "a screen ran and found nothing" -- is still
+    written, unchanged from before.
 
     B1 -- the document path already emits an Observation + a procedure
     Evidence row but no Claim. Derive exactly ONE explanatory Claim from
@@ -1291,16 +1288,15 @@ async def _emit_document_screening_and_claim(
     )
     screening_decision = screen_result["decision"]
     screening_decision_ids = list(screen_result["decision_ids"])
-    if screening_decision == "REJECT":
-        # POLICY NOTE: capture is intentionally NOT aborted on a screen
-        # REJECT in this pass. The admission gate and the injection screen
-        # above already gate this row; making screen_document_text a
-        # capture-blocking gate is a separate policy decision. Recorded +
-        # warned so the audit trail carries it either way.
-        log.warning(
-            "skill_ingestion: screen_document_text REJECT for %s "
-            "(%d finding(s)); row still captured per existing flow",
-            artifact.uri, len(findings),
+    if screening_decision != "ALLOW":
+        # Should be unreachable: compile_skill_artifact's own pre-capture
+        # screen already rejects anything that would land here as
+        # non-ALLOW. Logged, not silently trusted, in case that invariant
+        # is ever violated by a future edit.
+        log.error(
+            "skill_ingestion: unexpected non-ALLOW screening_decision %r for "
+            "%s reaching post-capture screening -- the pre-capture reject "
+            "gate should have caught this", screening_decision, artifact.uri,
         )
 
     # --- B1: one explanatory Claim from the document's core proposition ---
@@ -2015,6 +2011,46 @@ async def compile_skill_artifact(
             ),
         )
         return IngestOutcome(status="rejected", reason=str(exc), admission_decision="reject")
+
+    # --- G3 policy hardening: a content-screen finding (block OR flag --
+    # secrets, PII, a restrictive license, malicious-executable shapes,
+    # an unsafe locator) now REJECTS outright, before anything else is
+    # computed or stored. No quarantine tier: the founder's directive is
+    # "just don't accept" + "make the system the smallest size" -- a
+    # flagged document sitting around half-admitted is exactly the stored
+    # footprint being removed. This is a pure, DB-free check (no Source,
+    # no IngestionContext, no embedding call has happened yet), so a
+    # reject here costs nothing beyond the one audit row below.
+    from app.services import screening
+
+    pre_findings = screening.screen_document_text(
+        artifact.content, name=parsed.name, steps=parsed.steps,
+    )
+    if pre_findings:
+        screen_result = await screening.record_screening_run(
+            pool, findings=pre_findings, artifact_uri=artifact.uri,
+            content_hash=artifact.content_hash, created_by=created_by,
+        )
+        reason = "content screen blocked ingestion: " + ", ".join(
+            sorted({f["check_type"] for f in pre_findings})
+        )
+        await _write_artifact_row(
+            pool, artifact, run_id=run_id, procedure_id=None, procedure_row_id=None,
+            extractor_version=EXTRACTOR_VERSION_DETERMINISTIC, owner_id=owner_id,
+            admission=AdmissionDecision(
+                decision="reject",
+                checks=tuple(
+                    AdmissionCheck(f"content_screen_{f['check_type']}", "reject",
+                                   ",".join(f.get("signals") or []))
+                    for f in pre_findings
+                ),
+            ),
+        )
+        return IngestOutcome(
+            status="rejected", reason=reason, admission_decision="reject",
+            screening_decision=screen_result["decision"],
+            screening_decision_ids=list(screen_result["decision_ids"]),
+        )
 
     embedder = embedder or Embedder()
 
