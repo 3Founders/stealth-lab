@@ -1568,6 +1568,51 @@ async def find_best_way(task_description: str, ctx: Context,
             ),
         }, indent=2)
 
+    if route_decision.route == "assist":
+        # B1 STRICT CLOSURE: "ambiguous intent with side effects MUST
+        # route to ask; informational intent MUST NOT silently execute".
+        # Only reachable here with matched_procedure is None (a real
+        # match already answered via _respond_tier1_hit above, itself
+        # prefixed with this SAME literal ASSIST token) -- decide_route
+        # computed "assist" specifically because intent=="assist" and no
+        # applicable procedure survived the cascade, which is exactly
+        # the "no side effect this call should ever cause" case. Never
+        # silently fall through into a real sandboxed Tier-2 run for a
+        # purely informational query.
+        return json.dumps({
+            "route": "assist",
+            "response_state": "ASSIST",
+            "route_decision_id": route_decision_id,
+            "reason": route_decision.reason,
+            "instructions": (
+                "This looks informational, not a request to make changes -- "
+                "no procedure matched and nothing was executed. If you do "
+                "want a real change made, call find_best_way again with a "
+                "task_description that states the concrete action to take."
+            ),
+        }, indent=2)
+
+    if route_decision.route == "no_applicable_procedure":
+        # B1 STRICT CLOSURE: an EXPLICIT "plan" request (never "execute"
+        # or ambiguous-with-repo_path -- decide_route routes those to
+        # execution_ready below, honestly labeled exploratory execution)
+        # with no applicable procedure must get a clearly-labeled
+        # exploratory-plan answer, never a real Tier-2 sandboxed
+        # execution the caller never asked for.
+        return json.dumps({
+            "route": "no_applicable_procedure",
+            "response_state": "NO_APPLICABLE_PROCEDURE",
+            "route_decision_id": route_decision_id,
+            "reason": route_decision.reason,
+            "instructions": (
+                "No existing procedure applies to this plan request -- "
+                "this is a normal, honest answer, not a failure. Call "
+                "find_best_way again with mode='full_run' (or 'auto' with "
+                "an execute-phrased task_description) if you want a fresh, "
+                "exploratory solve attempt instead of a plan."
+            ),
+        }, indent=2)
+
     # TIER 2 -- execution. Everything below is what this tool always did
     # unconditionally under its previous name (solve_task); it now only
     # runs when tier 1 didn't already answer the question.
