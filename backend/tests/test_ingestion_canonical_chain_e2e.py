@@ -19,6 +19,7 @@ tests/test_ingestion_canonical_chain_e2e.py -q`.
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 from pathlib import Path
 
@@ -213,6 +214,37 @@ def test_procedural_skill_md_produces_the_full_canonical_chain():
                 claim["id"], obs_id
             )
             assert link == 1, "Claim not linked to its Observation via claim_sources"
+
+            # G5: the claim carries a real, non-fabricated subject/
+            # predicate/object triple (templated from artifact.uri + the
+            # document's own proposition -- see skill_ingestion.
+            # _emit_document_screening_and_claim). capture_claim() folds
+            # the triple into `properties` (NOT the top-level subject/
+            # predicate/object columns -- those stay NULL; a separate,
+            # pre-existing gap in claims.py, out of this scope).
+            props_row = await pool.fetchval(
+                "SELECT properties FROM knowledge_nodes WHERE id = $1", claim["id"],
+            )
+            props = json.loads(props_row) if isinstance(props_row, str) else props_row
+            assert props.get("predicate") == "documents_procedure_for"
+            assert props.get("subject")
+            assert props.get("object")
+
+            # G6: a SECOND evidence row, targeting the Claim itself (not
+            # just the Procedure) -- same independence_group keying so a
+            # re-ingest of this document doesn't inflate corroboration on
+            # the claim either.
+            claim_ev = await pool.fetchrow(
+                "SELECT evidence_type::text, target_type, target_version, direction, "
+                "independence_group, ingestion_context_id "
+                "FROM evidence WHERE target_type = 'claim' AND target_id = $1 "
+                "AND evidence_type = 'document'", claim["id"],
+            )
+            assert claim_ev is not None, "no document Evidence row for the Claim"
+            assert claim_ev["target_version"] is None
+            assert claim_ev["direction"] == "supports"
+            assert claim_ev["independence_group"] == ev["independence_group"]
+            assert claim_ev["ingestion_context_id"] == ctx_id
 
             # 8. procedure_claim_refs -- explanatory RATIONALE role.
             ref = await pool.fetchrow(

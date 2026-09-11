@@ -916,12 +916,74 @@ async def _open_ingestion_provenance(
     return source["id"], source["reused"], context_id
 
 
+_WS_RE = re.compile(r"\s+")
+
+
+def _normalize_for_overlap(text: str) -> str:
+    """Lowercase + collapse whitespace, for a loose (non-exact) substring
+    comparison. Not a general text-similarity metric -- just enough to
+    tell "this step's words appear in the source" from "this step was
+    synthesized from nowhere"."""
+    return _WS_RE.sub(" ", (text or "").lower()).strip()
+
+
+def _check_document_groundedness(parsed: ParsedSkill, artifact_content: str) -> dict:
+    """G7: a pure, deterministic sanity check that the captured Procedure
+    is actually grounded in the source document rather than
+    over-extrapolated. This is NOT a groundedness proof (no LLM call, no
+    semantic comparison) -- it is a cheap floor that catches an extraction
+    bug or a step synthesized from somewhere other than the document body.
+    Never blocks capture (see the call site); it is recorded for audit,
+    the same posture G3's screening REJECT and G4's classifier already
+    use in this file.
+
+    Returns {"grounded": bool, "reasons": [str, ...]}. `reasons` is empty
+    iff `grounded` is True.
+    """
+    reasons: list[str] = []
+    norm_content = _normalize_for_overlap(artifact_content)
+
+    # 1. every step's own words should appear, verbatim (after
+    #    normalization), somewhere in the source -- steps are extracted
+    #    FROM the content by parse_skill_md, so this should hold whenever
+    #    extraction behaved.
+    for i, step in enumerate(parsed.steps):
+        norm_step = _normalize_for_overlap(step)
+        if norm_step and norm_step not in norm_content:
+            reasons.append(f"step {i} not found verbatim in source: {step[:80]!r}")
+
+    # 2. name/description must be real, not the structural fallback.
+    if not parsed.name or parsed.name == "unnamed-skill":
+        reasons.append("name is empty or the fallback placeholder")
+    if not (parsed.description or "").strip():
+        reasons.append("description is empty")
+
+    # 3. step count should not wildly exceed the raw numbered/bulleted
+    #    line count in the source -- a sanity check against synthesizing
+    #    extra steps beyond what the document actually lists. Generous
+    #    slack (+3) so legitimately-parsed sub-steps / nested lists don't
+    #    false-positive.
+    raw_lines = artifact_content.splitlines() if artifact_content else []
+    raw_list_line_count = sum(
+        1 for ln in raw_lines
+        if _NUMBERED_STEP_RE.match(ln) or _BULLET_STEP_RE.match(ln)
+    )
+    if len(parsed.steps) > raw_list_line_count + 3:
+        reasons.append(
+            f"{len(parsed.steps)} steps parsed but only {raw_list_line_count} "
+            "numbered/bulleted lines found in the source"
+        )
+
+    return {"grounded": not reasons, "reasons": reasons}
+
+
 async def _emit_document_observation(
     pool: asyncpg.Pool,
     parsed: ParsedSkill,
     *,
     ingestion_context_id: str,
     owner_id: Optional[str],
+    artifact_content: str = "",
 ) -> str:
     """One observation capturing what the source asserts: a procedure named
     X with N steps. The document path has NO trace events, so ``event_ids``
@@ -930,7 +992,13 @@ async def _emit_document_observation(
     ``ingestion_context_id`` (it lives in a module this lane does not own),
     so the migration-65 column is stamped with a follow-up UPDATE -- the
     same pattern this file already uses for a procedure's
-    ``capability_statement``."""
+    ``capability_statement``.
+
+    G7: also stamps ``properties.groundedness`` -- a deterministic,
+    non-blocking sanity check (see ``_check_document_groundedness``) that
+    the parsed steps/name/description are actually grounded in
+    ``artifact_content`` rather than over-extrapolated. Recorded for
+    audit; never aborts capture."""
     # G4 / B13: record what KIND of source this is (procedure / reference /
     # claim / mixed), with the classifier version, as a provenance signal
     # on the Observation. Heuristic, DB-free; not a hard gate here --
@@ -942,6 +1010,12 @@ async def _emit_document_observation(
         name=parsed.name,
         steps=parsed.steps,
     )
+    groundedness = _check_document_groundedness(parsed, artifact_content)
+    if not groundedness["grounded"]:
+        log.warning(
+            "skill_ingestion: document groundedness check failed for '%s': %s",
+            parsed.name, "; ".join(groundedness["reasons"]),
+        )
 
     observation_id = await persist_observation(
         pool,
@@ -957,6 +1031,7 @@ async def _emit_document_observation(
             "step_count": len(parsed.steps),
             "source": "skill_md",
             "source_classification": classification,
+            "groundedness": groundedness,
         },
         owner_id=owner_id,
         visibility="public",
@@ -1009,6 +1084,59 @@ async def _emit_document_evidence(
             RETURNING id
             """,
             evidence_id, procedure_row_id, target_version,
+            DOCUMENT_EVIDENCE_STRENGTH, DOCUMENT_EVIDENCE_STRENGTH_METHOD,
+            f"skill_md:{source_hash}", context_key,
+            extractor_version, created_by, scope.tenant_id,
+            ingestion_context_id,
+        )
+    return str(row["id"])
+
+
+async def _emit_document_claim_evidence(
+    pool: asyncpg.Pool,
+    *,
+    claim_id: str,
+    source_hash: str,
+    context_key: str,
+    extractor_version: str,
+    ingestion_context_id: str,
+    created_by: str,
+) -> str:
+    """G6: the per-Claim analogue of ``_emit_document_evidence`` -- one
+    ``evidence_type='document'`` row targeting the document's own
+    explanatory Claim (``target_type='claim'``), not the Procedure.
+    Without this row ``claim_belief.py``'s aggregation never sees any
+    evidence for a document-derived Claim and it can never move off its
+    zero-evidence floor.
+
+    ``target_version`` is NULL: ``evidence_proc_version_chk`` only requires
+    a version when ``target_type='procedure'`` (migration 24); forcing a
+    procedure-style version onto a claim row would be meaningless. Reuses
+    the SAME ``independence_group`` keying as the procedure evidence
+    (``f"skill_md:{source_hash}"``) so a re-ingest of the same document
+    does not inflate independent-corroboration counts on the claim
+    either."""
+    evidence_id = uuid7()
+    scope = TenantScope.commons()
+    async with tenant_transaction(pool, scope) as conn:
+        row = await conn.fetchrow(
+            """
+            INSERT INTO evidence (
+                id, evidence_type, target_type, target_id, target_version,
+                direction, strength_score, strength_method,
+                independence_group, context_key,
+                extractor_version, created_by, visibility, tenant_id,
+                ingestion_context_id
+            ) VALUES (
+                $1::uuid, 'document', 'claim', $2::uuid, NULL,
+                'supports', $3, $4,
+                $5, $6,
+                $7, $8, 'public', $9::uuid,
+                $10::uuid
+            )
+            RETURNING id
+            """,
+            evidence_id, claim_id,
             DOCUMENT_EVIDENCE_STRENGTH, DOCUMENT_EVIDENCE_STRENGTH_METHOD,
             f"skill_md:{source_hash}", context_key,
             extractor_version, created_by, scope.tenant_id,
@@ -1193,6 +1321,13 @@ async def _emit_document_screening_and_claim(
         visibility=visibility,
         embedder=embedder,
         claim_type=DOCUMENT_CLAIM_TYPE,
+        # G5: an honest, non-fabricated structured triple -- `subject`/
+        # `object` are the SAME components the statement above was
+        # templated from (never separately inferred), so this is
+        # structuring data already known, not extracting new meaning.
+        subject=artifact.uri,
+        predicate="documents_procedure_for",
+        object=proposition,
     )
     if document_claim_id is None:
         # Should not happen: source_ref + ingestion_context_id +
@@ -1322,6 +1457,10 @@ class IngestOutcome:
     screening_decision: Optional[str] = None
     screening_decision_ids: list[str] = field(default_factory=list)
     document_claim_id: Optional[str] = None
+    # G6: the evidence row analogous to document_evidence_id, but targeting
+    # the document Claim (target_type='claim') instead of the Procedure.
+    # None whenever document_claim_id is None (nothing to attach it to).
+    document_claim_evidence_id: Optional[str] = None
 
 
 def _slugify(text: str, *, maxlen: int = 80) -> str:
@@ -2053,7 +2192,7 @@ async def compile_skill_artifact(
             )
             observation_id = await _emit_document_observation(
                 pool, parsed, ingestion_context_id=ingestion_context_id,
-                owner_id=owner_id,
+                owner_id=owner_id, artifact_content=artifact.content,
             )
 
             superseded_version = int(
@@ -2100,6 +2239,17 @@ async def compile_skill_artifact(
                 context_key=artifact.uri, extractor_version=extractor_version,
                 ingestion_context_id=ingestion_context_id, created_by=created_by,
             )
+            # G6: the analogous evidence row for the document Claim itself
+            # (not just the Procedure) -- only when a claim was actually
+            # captured (B7: capture_claim can no-op on an unanchored claim).
+            document_claim_evidence_id = None
+            if document_claim_id is not None:
+                document_claim_evidence_id = await _emit_document_claim_evidence(
+                    pool, claim_id=document_claim_id,
+                    source_hash=artifact.content_hash,
+                    context_key=artifact.uri, extractor_version=extractor_version,
+                    ingestion_context_id=ingestion_context_id, created_by=created_by,
+                )
             artifact_id = await _write_artifact_row(
                 pool, artifact, run_id=run_id,
                 procedure_id=superseded["procedure_id"],
@@ -2140,6 +2290,7 @@ async def compile_skill_artifact(
                 ingestion_context_id=ingestion_context_id,
                 observation_id=observation_id,
                 document_evidence_id=document_evidence_id,
+                document_claim_evidence_id=document_claim_evidence_id,
                 artifact_block_ids=artifact_block_ids,
                 screening_decision=screening_decision,
                 screening_decision_ids=screening_decision_ids,
@@ -2235,6 +2386,7 @@ async def compile_skill_artifact(
     )
     observation_id = await _emit_document_observation(
         pool, parsed, ingestion_context_id=ingestion_context_id, owner_id=owner_id,
+        artifact_content=artifact.content,
     )
 
     # G3 (persisted screening audit) + B1 (one explanatory document Claim
@@ -2276,6 +2428,17 @@ async def compile_skill_artifact(
         context_key=artifact.uri, extractor_version=extractor_version,
         ingestion_context_id=ingestion_context_id, created_by=created_by,
     )
+    # G6: the analogous evidence row for the document Claim itself (not
+    # just the Procedure) -- only when a claim was actually captured (B7:
+    # capture_claim can no-op on an unanchored claim).
+    document_claim_evidence_id = None
+    if document_claim_id is not None:
+        document_claim_evidence_id = await _emit_document_claim_evidence(
+            pool, claim_id=document_claim_id,
+            source_hash=artifact.content_hash,
+            context_key=artifact.uri, extractor_version=extractor_version,
+            ingestion_context_id=ingestion_context_id, created_by=created_by,
+        )
     artifact_id = await _write_artifact_row(
         pool, artifact, run_id=run_id,
         procedure_id=result["procedure_id"], procedure_row_id=result["id"],
@@ -2316,6 +2479,7 @@ async def compile_skill_artifact(
         ingestion_context_id=ingestion_context_id,
         observation_id=observation_id,
         document_evidence_id=document_evidence_id,
+        document_claim_evidence_id=document_claim_evidence_id,
     )
 
 

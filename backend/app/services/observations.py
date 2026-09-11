@@ -323,6 +323,19 @@ async def promote_observation_to_claim(
     known) as scope_type='project'. When neither an explicit value nor a
     derivable project_id exists, left None -- same as capture_claim()'s
     own honest default, not silently promoted to 'global'.
+
+    G5: `subject`/`predicate`/`object` are deliberately left unpopulated
+    on the `capture_claim()` call below. `row["label"]` is free prose
+    (e.g. "source documents a procedure 'X' with N steps") with no
+    separately-known triple components anywhere on the observation row --
+    unlike the document-ingestion path's claim (skill_ingestion.py's
+    `_emit_document_screening_and_claim`, which templates its statement
+    from already-separate `artifact.uri` / `proposition` fields and can
+    honestly pass them through). Parsing a subject/predicate/object out of
+    `label` here would mean INVENTING structure that was never separately
+    recorded -- exactly the synthetic/fabricated data this codebase's hard
+    rules forbid. Left None until a real structured source exists on the
+    Observation itself.
     """
     scope = scope or AccessScope.unrestricted()
     if scope_type is None and justification_episode_id is not None:
