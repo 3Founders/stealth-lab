@@ -1440,6 +1440,12 @@ async def find_best_way(task_description: str, ctx: Context,
     matched_procedures = await find_applicable_procedures(
         pool, goal_embedding=query_vec, current_scope=procedure_scope, limit=1,
         require_verified=not allow_unverified_procedures,
+        access_scope=_caller_access_scope(),  # B19 residual fix: this is an automatic
+        # search, not a by-id fetch -- omitting access_scope silently fell back to
+        # AccessScope.unrestricted() (applicability.py's own `access_scope or
+        # AccessScope.unrestricted()`), which surfaces every caller's private rows to
+        # every other caller. The caller's real (or anonymous/public-only) scope now
+        # applies here exactly as it already does on search_procedures below.
         invariant_bindings=invariant_bindings,
         embedding_model_id=embedder.embedding_model_id(),
     )
@@ -2411,6 +2417,9 @@ async def search_procedures(task: str, ctx: Context, state: str = "{}", limit: i
     matches = await find_applicable_procedures(
         pool, goal_embedding=goal_vec, current_scope=current_scope,
         require_verified=require_verified, limit=limit,
+        access_scope=_caller_access_scope(),  # B19 residual fix -- see find_best_way's
+        # identical fix above; this tool's own name says "search", the exact
+        # surface the founder flagged.
         invariant_bindings=bindings,
         embedding_model_id=embedder.embedding_model_id(),
     )
