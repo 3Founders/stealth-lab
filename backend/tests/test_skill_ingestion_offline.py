@@ -850,25 +850,21 @@ async def test_benign_document_ingests_normally_with_grounded_capability(no_dup)
 
 @pytest.mark.asyncio
 async def test_injection_document_downgrades_to_pending_review_and_drops_capability(no_dup):
-    """An injection-shaped document: NO verified/trusted state, NO capability
-    statement, the model is never called, and the procedure is captured only
-    as provenance='system_pending_review'."""
+    """G3 policy hardening: an injection-shaped document trips the SAME
+    detectors (_META_DIRECTIVE_RE/_TRUST_ASSERTION_RE) as
+    screen_document_text's block-severity prompt_injection/trust_escalation
+    checks -- compile_skill_artifact's pre-capture reject gate now catches
+    it before the old downgrade-only path ever runs. Nothing is captured,
+    no provenance downgrade to apply -- the document never becomes a
+    procedure at all."""
     pool = CompilerFakePool()
     outcome = await compile_skill_artifact(
         pool, _skill_artifact(content=INJECTION_SKILL_MD),
         embedder=FakeEmbedder(), client=ExplodingLLMClient(),
     )
-    assert outcome.status == "captured"          # deterministic procedure still captured
-    assert outcome.injection_screened is True
-    assert outcome.capability_abstained is True
-    # provenance downgraded -- never 'prior_library'
-    assert pool.captured["procedures"][0][_PROC_PROVENANCE_IX] == "system_pending_review"
-    # capability statement never written
-    assert not any(
-        k == "procedures.capability_statement" for k, _ in pool.captured["updates"]
-    )
-    # deterministic extractor version, not the grounded one
-    assert pool.captured["ingested_artifacts"][0][6] == "skill_md_v5"
+    assert outcome.status == "rejected"
+    assert outcome.screening_decision == "REJECT"
+    assert pool.captured["procedures"] == [], "an injection-shaped document must capture nothing"
 
 
 @pytest.mark.asyncio
@@ -980,8 +976,9 @@ async def test_run_skill_ingestion_counts_screened_documents(monkeypatch):
         pool, _FakeAdapter(artifacts), embedder=FakeEmbedder(), client=None,
     )
     m = result["metrics"]
-    assert m["accepted"] == 2       # both captured deterministically
-    assert m["screened"] == 1       # one of them tripped the screen
+    assert m["accepted"] == 1       # the clean one only
+    assert m["rejected"] == 1       # G3 pre-capture reject gate caught the injection-shaped one
+    assert m["screening_reject"] == 1
     assert m["errors"] == 0
 
 
@@ -1083,27 +1080,27 @@ async def test_compile_admits_clean_document_as_active(no_dup):
 
 @pytest.mark.asyncio
 async def test_compile_redacts_a_leaked_secret_before_it_is_ever_written(no_dup):
-    """Phase 7 #3: a secret literal is redacted BEFORE the retrieval
-    document / domain_payload / task_nodes are built from the parsed
-    text -- the raw key must never reach any written row, including the
-    embedding-input text."""
+    """G3 policy hardening: a document with a leaked secret literal trips
+    screen_document_text's block-severity secret_exposure check (the SAME
+    KNOWN_TOKEN_PATTERNS this used to only redact-and-still-capture on),
+    so compile_skill_artifact's pre-capture reject gate now refuses it
+    outright -- STRONGER than the old redact-then-capture behavior:
+    the raw key never reaches ANY written row because nothing is written
+    at all, not even a redacted copy."""
     pool = CompilerFakePool()
     outcome = await compile_skill_artifact(
         pool, _skill_artifact(SECRET_EXAMPLE_SKILL_MD,
                                uri="file:///skills/aws-cli/SKILL.md", path="aws-cli/SKILL.md"),
         embedder=FakeEmbedder(), client=None,
     )
-    assert outcome.status == "captured"
-    assert outcome.admission_decision == "review"
-    assert outcome.quarantined is True
-
-    proc_params = pool.captured["procedures"][0]
-    steps_json = proc_params[2]
-    domain_payload = proc_params[_PROC_DOMAIN_PAYLOAD_IX]
-    assert "AKIAABCDEFGHIJKLMNOP" not in str(steps_json)
-    assert "AKIAABCDEFGHIJKLMNOP" not in str(domain_payload)
-    for node_params in pool.captured["task_nodes"]:
-        assert "AKIAABCDEFGHIJKLMNOP" not in str(node_params)
+    assert outcome.status == "rejected"
+    assert outcome.screening_decision == "REJECT"
+    assert pool.captured["procedures"] == []
+    assert pool.captured["task_nodes"] == []
+    # the finding's own audit signal never carries the raw key either --
+    # screening.py's own redaction discipline (_redacted_marker), proven
+    # again here at the ingestion call site, not just in screening's own tests.
+    assert "AKIAABCDEFGHIJKLMNOP" not in outcome.reason
 
 
 @pytest.mark.asyncio
@@ -1269,21 +1266,26 @@ async def test_compile_observation_is_document_procedure_type_with_no_events(no_
 
 
 @pytest.mark.asyncio
-async def test_compile_screened_document_still_opens_a_source_and_context(no_dup):
-    """An injection-shaped doc is still captured deterministically, and the
-    canonical chain still runs -- but the context carries the screened
-    classification."""
+async def test_compile_screened_document_opens_nothing_at_all(no_dup):
+    """G3 policy hardening (was: 'still opens a source and context' --
+    inverted on purpose). An injection-shaped doc now trips the
+    pre-capture reject gate before parse-adjacent work even reaches the
+    canonical chain: no Source, no IngestionContext, no Observation, no
+    Evidence, no Procedure -- same "write nothing but the audit row"
+    contract test_compile_non_procedural_doc_writes_nothing_at_all pins
+    for a parse-error reject, now true for a content-screen reject too."""
     pool = CompilerFakePool()
     outcome = await compile_skill_artifact(
         pool, _skill_artifact(content=INJECTION_SKILL_MD),
         embedder=FakeEmbedder(), client=ExplodingLLMClient(),
     )
-    assert outcome.status == "captured"
-    assert outcome.injection_screened is True
-    assert len(pool.captured["sources"]) == 1
-    assert len(pool.captured["ingestion_contexts"]) == 1
-    # ingestion_contexts INSERT arg order: classification is arg index 13
-    assert pool.captured["ingestion_contexts"][0][13] == "system_pending_review"
+    assert outcome.status == "rejected"
+    assert outcome.screening_decision == "REJECT"
+    assert pool.captured["sources"] == []
+    assert pool.captured["ingestion_contexts"] == []
+    assert pool.captured["observations"] == []
+    assert pool.captured["evidence"] == []
+    assert pool.captured["procedures"] == []
 
 
 @pytest.mark.asyncio
@@ -1463,18 +1465,19 @@ async def test_compile_records_a_screening_decision(no_dup):
     assert pool.captured["screening_decisions"][0][5] == "ALLOW"  # decision col
     assert outcome.screening_decision == "ALLOW"
 
-    # (b) an injection-shaped document -> a REJECT/QUARANTINE row is
-    # recorded AND the existing system_pending_review downgrade still fires.
+    # (b) G3 policy hardening: a screen finding (REJECT-severity OR the
+    # softer QUARANTINE-severity -- founder directive: no middle tier,
+    # "just don't accept" for either) now rejects outright, before the
+    # procedure or a screening_decisions row for it is ever written.
     pool2 = CompilerFakePool()
     outcome2 = await compile_skill_artifact(
         pool2, _skill_artifact(content=SCREEN_INJECTION_SKILL_MD),
         embedder=FakeEmbedder(), client=ExplodingLLMClient(),
     )
-    assert outcome2.status == "captured"
-    assert outcome2.injection_screened is True
-    assert pool2.captured["procedures"][0][_PROC_PROVENANCE_IX] == "system_pending_review"
-    assert len(pool2.captured["screening_decisions"]) >= 1
+    assert outcome2.status == "rejected"
+    assert pool2.captured["procedures"] == []
     assert outcome2.screening_decision in ("REJECT", "QUARANTINE")
+    assert len(pool2.captured["screening_decisions"]) >= 1
     assert all(
         r[5] in ("REJECT", "QUARANTINE")
         for r in pool2.captured["screening_decisions"]
