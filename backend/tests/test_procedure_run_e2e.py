@@ -312,6 +312,78 @@ def test_get_run_context_reports_implementation_unavailable_when_the_only_bindin
     asyncio.run(_run())
 
 
+def test_get_run_context_never_silently_picks_one_of_two_equally_real_tied_implementations():
+    """MCP hardening B24 STRICT CLOSURE: "Ambiguous ... resolution routes
+    to ask ... never silently selecting an unsuitable mechanism." Two
+    real ACTIVE bindings, same role, both verified -- genuinely tied
+    after every real tiebreak `resolve_binding_for_step_with_reason`
+    applies (confirmed by test_procedure_implementation_bindings_e2e.py
+    ::test_resolve_binding_for_step_raises_ambiguous_when_nothing_real_
+    breaks_the_tie, which calls that function directly). `get_run_
+    context`'s own recommended_implementations cascade is a DIFFERENT,
+    earlier real query (get_bindings_for_procedure's own step_bindings
+    filter) that lists every real matching active binding without
+    picking a winner -- proving the real production path never
+    silently narrows to one arbitrary tied candidate; a caller sees
+    both and must choose, the honest form of "ask" for a next-action
+    packet (no interactive prompt exists at this layer)."""
+    async def _run():
+        from app.execution import implementation_registry
+        from app.services.procedure_implementation_bindings import (
+            activate_binding, link_implementation,
+        )
+
+        pool = await create_pool(DATABASE_URL, min_size=1, max_size=2)
+        run_id = uuid4().hex[:8]
+        name = f"proc-test-runctx-tiedimpl-{run_id}"
+        impl_a_name = f"impl-test-runctx-tiedimpl-a-{run_id}"
+        impl_b_name = f"impl-test-runctx-tiedimpl-b-{run_id}"
+        try:
+            procedure = await _make_verified_approved(
+                pool, name, steps=[{"order": 0, "goal": "do the only thing"}],
+            )
+            impl_ids = []
+            for impl_name in (impl_a_name, impl_b_name):
+                impl = await implementation_registry.register(
+                    pool, name=impl_name, kind="tool", provider="test", created_by="tester",
+                )
+                await implementation_registry.activate(pool, impl["id"])
+                binding = await link_implementation(
+                    pool, procedure_id=procedure["procedure_id"], implementation_id=impl["id"],
+                    role="primary", created_by="tester",
+                )
+                await activate_binding(pool, binding["id"])
+                impl_ids.append(str(impl["id"]))
+
+            compiled_plan = await _compile_and_persist(pool, procedure, name)
+            pending_id = await create_pending_run(
+                pool, compiled_plan, procedure_id=procedure["procedure_id"],
+                procedure_version=procedure["version"], created_by="tester",
+            )
+
+            context = await get_run_context(pool, pending_id)
+            recommended_ids = {r["implementation_id"] for r in context["recommended_implementations"]}
+            assert recommended_ids == set(impl_ids), (
+                "both real tied candidates must be surfaced, never one "
+                "silently chosen for the caller"
+            )
+            assert context["implementation_resolution_state"] is None, (
+                "a real recommendation set (even if ambiguous) is not the "
+                "same state as 'nothing found at all'"
+            )
+        finally:
+            for impl_name in (impl_a_name, impl_b_name):
+                await pool.execute(
+                    "DELETE FROM procedure_implementations WHERE implementation_id IN "
+                    "(SELECT id FROM implementations WHERE name = $1)", impl_name,
+                )
+                await pool.execute("DELETE FROM implementations WHERE name = $1", impl_name)
+            await _cleanup(pool, name)
+            await pool.close()
+
+    asyncio.run(_run())
+
+
 def test_continue_run_mcp_tool_roundtrips_through_plan_only():
     """End-to-end through the real MCP surface: find_best_way(mode='plan_only')
     now returns a real procedure_run_id, and continue_run(procedure_run_id)
