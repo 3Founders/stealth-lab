@@ -63,6 +63,14 @@ class SingleWriterLock:
             fd = os.open(self._path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
         except FileExistsError:
             return False
+        except PermissionError:
+            # Windows: a concurrent os.unlink() releasing the lock can put
+            # the directory entry into a delete-pending state that makes a
+            # racing O_CREAT|O_EXCL raise PermissionError instead of
+            # FileExistsError (POSIX has no such state). Treat it exactly
+            # like "another writer holds it" -- retry, don't fail the
+            # acquire outright.
+            return False
         try:
             os.write(fd, json.dumps({"pid": os.getpid(), "ts": time.time()}).encode("utf-8"))
         finally:
