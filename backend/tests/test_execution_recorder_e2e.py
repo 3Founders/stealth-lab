@@ -105,6 +105,157 @@ async def test_full_successful_run_leaves_the_expected_event_trail():
 
 
 @pytest.mark.asyncio
+async def test_full_successful_run_emits_the_b8_named_types_previously_declared_but_never_fired():
+    """MCP hardening B8 STRICT CLOSURE: 10 of the 18 "at minimum" named
+    event types were declared in EVENT_TYPES but had zero real emission
+    call sites anywhere in production -- dead vocabulary. Proves 6 of
+    them (run_started, procedure_retrieved, applicability_checked,
+    plan_created, node_started, knowledge_requested) fire on the same
+    real run/continue_run path this file's other tests already use for
+    the pre-existing types. The remaining 4 (implementation_bound,
+    node_waiting, child_run_completed, node_resumed) need real
+    implementation bindings / a real child run / an explicit retry --
+    covered by dedicated, more targeted tests elsewhere."""
+    pool = await create_pool(statement_cache_size=0)
+    try:
+        proc_id, pv, plan_id, graph_id, row_id = await _plan_chain(pool)
+        from app.services.route_decision import decide_route, persist_route_decision
+
+        route_decision = await decide_route(
+            pool, task_description="execution recorder probe", mode="full_run",
+            repo_path=None, authorized=True, authorization_detail={}, goal_embedding=None,
+        )
+        route_decision_id = await persist_route_decision(pool, route_decision)
+
+        run_id = await start_run(
+            pool, execution_plan_id=plan_id, task_graph_id=graph_id,
+            procedure_id=proc_id, procedure_version=pv,
+            node_orders=[0, 1], deps=DEPS, max_attempts=3, created_by="exrec_e2e",
+            route_decision_id=route_decision_id,
+        )
+
+        async def run_node(order: int, attempt: int) -> dict:
+            return {"order": order, "attempt": attempt, "ok": True}
+
+        result = await execute_run(pool, run_id, deps=DEPS, run_node=run_node, worker_id="exrec-worker-b8")
+        assert result["status"] == "succeeded"
+
+        from app.execution.durable_resume import get_run_context
+        await get_run_context(pool, run_id)
+
+        events = await get_run_events(pool, run_id)
+        types = {e["event_type"] for e in events}
+        for expected in (
+            "run_started", "procedure_retrieved", "applicability_checked",
+            "plan_created", "node_started", "knowledge_requested",
+        ):
+            assert expected in types, f"{expected} never fired: {sorted(types)}"
+
+        assert len([e for e in events if e["event_type"] == "run_started"]) == 1
+        assert len([e for e in events if e["event_type"] == "node_started"]) == 2
+    finally:
+        await pool.execute("DELETE FROM execution_runs WHERE id=$1", run_id)
+        await _cleanup_procedure(pool, row_id)
+        await pool.close()
+
+
+@pytest.mark.asyncio
+async def test_retry_node_emits_node_resumed():
+    pool = await create_pool(statement_cache_size=0)
+    try:
+        proc_id, pv, plan_id, graph_id, row_id = await _plan_chain(pool)
+        run_id = await start_run(
+            pool, execution_plan_id=plan_id, task_graph_id=graph_id,
+            procedure_id=proc_id, procedure_version=pv,
+            node_orders=[0, 1], deps=DEPS, max_attempts=1, created_by="exrec_e2e",
+        )
+
+        async def failing_run_node(order: int, attempt: int) -> dict:
+            if order == 0:
+                raise ValueError("deliberately not retryable")
+            return {"order": order}
+
+        result = await execute_run(pool, run_id, deps=DEPS, run_node=failing_run_node, worker_id="exrec-retry-1")
+        assert result["status"] == "failed"
+
+        async def succeeding_run_node(order: int, attempt: int) -> dict:
+            return {"order": order, "attempt": attempt}
+
+        from app.execution.durable_run import retry_node
+
+        retried = await retry_node(
+            pool, run_id, 0, deps=DEPS, run_node=succeeding_run_node,
+            worker_id="exrec-retry-2", force=True,
+        )
+        assert retried["status"] == "succeeded"
+
+        events = await get_run_events(pool, run_id)
+        resumed = [e for e in events if e["event_type"] == "node_resumed"]
+        assert len(resumed) == 1
+        assert resumed[0]["node_order"] == 0
+    finally:
+        await pool.execute("DELETE FROM execution_runs WHERE id=$1", run_id)
+        await _cleanup_procedure(pool, row_id)
+        await pool.close()
+
+
+@pytest.mark.asyncio
+async def test_child_run_creation_and_completion_emit_node_waiting_and_child_run_completed_on_the_parent():
+    pool = await create_pool(statement_cache_size=0)
+    parent_row_id = None
+    child_row_id = None
+    parent_run_id = None
+    child_run_id = None
+    try:
+        parent_proc_id, parent_pv, parent_plan_id, parent_graph_id, parent_row_id = await _plan_chain(pool)
+        parent_run_id = await start_run(
+            pool, execution_plan_id=parent_plan_id, task_graph_id=parent_graph_id,
+            procedure_id=parent_proc_id, procedure_version=parent_pv,
+            node_orders=[0, 1], deps=DEPS, max_attempts=3, created_by="exrec_e2e",
+        )
+
+        child_proc_id, child_pv, child_plan_id, child_graph_id, child_row_id = await _plan_chain(pool)
+        parent_node_id = await pool.fetchval(
+            "SELECT id FROM execution_run_nodes WHERE execution_run_id=$1 AND node_order=0", parent_run_id,
+        )
+        child_run_id = await start_run(
+            pool, execution_plan_id=child_plan_id, task_graph_id=child_graph_id,
+            procedure_id=child_proc_id, procedure_version=child_pv,
+            node_orders=[0, 1], deps=DEPS, max_attempts=3, created_by="exrec_e2e",
+            parent_run_id=parent_run_id, parent_node_id=str(parent_node_id),
+        )
+
+        parent_events = await get_run_events(pool, parent_run_id)
+        waiting = [e for e in parent_events if e["event_type"] == "node_waiting"]
+        assert len(waiting) == 1
+        assert waiting[0]["node_order"] == 0
+        assert waiting[0]["payload"]["child_run_id"] == child_run_id
+
+        async def run_node(order: int, attempt: int) -> dict:
+            return {"order": order}
+
+        result = await execute_run(pool, child_run_id, deps=DEPS, run_node=run_node, worker_id="exrec-child-1")
+        assert result["status"] == "succeeded"
+
+        parent_events_after = await get_run_events(pool, parent_run_id)
+        completed = [e for e in parent_events_after if e["event_type"] == "child_run_completed"]
+        assert len(completed) == 1
+        assert completed[0]["node_order"] == 0
+        assert completed[0]["payload"]["child_run_id"] == child_run_id
+        assert completed[0]["payload"]["child_status"] == "succeeded"
+    finally:
+        if child_run_id is not None:
+            await pool.execute("DELETE FROM execution_runs WHERE id=$1", child_run_id)
+        if parent_run_id is not None:
+            await pool.execute("DELETE FROM execution_runs WHERE id=$1", parent_run_id)
+        if child_row_id is not None:
+            await _cleanup_procedure(pool, child_row_id)
+        if parent_row_id is not None:
+            await _cleanup_procedure(pool, parent_row_id)
+        await pool.close()
+
+
+@pytest.mark.asyncio
 async def test_crashed_node_records_a_pause_event():
     """WorkerLost only marks the node's lease already-expired and
     re-raises (durable_run.py's own docstring: it propagates rather than

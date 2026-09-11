@@ -663,3 +663,89 @@ def test_locally_executed_node_still_verifies_since_stealth_observes_it_directly
             await pool.close()
 
     asyncio.run(_run())
+
+
+@pytestmark_db
+def test_implementation_bound_event_fires_through_the_real_resume_run_by_id_path():
+    """MCP hardening B8 STRICT CLOSURE: `implementation_bound` was
+    declared in EVENT_TYPES but had zero real emission call sites --
+    `execution_run_nodes.implementation_id` is never written by any
+    production code path (the real binding lives on the compiled
+    PlanNode from `bind_plan_implementations`, persisted into
+    `task_graphs.nodes`, never copied onto the row). The real, correct
+    place to record the fact is the one real dispatch point every
+    context-free-resumed node goes through: `durable_resume.py::
+    _make_runner`'s own `_run_node`, right before it hands the already-
+    bound node to `execute_implementation`. Proven through the real
+    public entry point (`resume_run_by_id`), not by calling the
+    private runner directly."""
+    async def _run():
+        from app.db.session import create_pool
+        from app.execution import implementation_registry
+        from app.execution.durable_resume import resume_run_by_id
+        from app.execution.durable_run import start_run
+        from app.execution.plan_persistence import persist_compiled_plan
+        from app.execution.plans import compile_plan
+        from app.execution.recorder import get_run_events
+        from app.services.procedures import capture_procedure
+
+        pool = await create_pool(DATABASE_URL, min_size=1, max_size=2)
+        impl_id = None
+        row_id = None
+        exec_run_id = None
+        try:
+            impl = await implementation_registry.register(
+                pool, name=f"implbound-dispatch-{uuid.uuid4().hex[:8]}", kind="deterministic",
+                provider="adapter-e2e", created_by="adapter_e2e",
+                invocation={"code": "print('ok')"},
+            )
+            impl_id = impl["id"]
+
+            res = await capture_procedure(
+                pool, name=f"proc-test-implbound-dispatch-{uuid.uuid4().hex[:8]}",
+                goal="implementation bound dispatch probe", steps=[{"order": 0, "goal": "run it"}],
+                provenance="prior_library", scope_type="global", created_by="adapter_e2e",
+                embedding=[0.01] * 1024,
+            )
+            proc_id, row_id = res["procedure_id"], res["id"]
+            pv = await pool.fetchval("SELECT version FROM procedures WHERE id=$1", row_id)
+
+            compiled = compile_plan(
+                procedure_id=proc_id, procedure_version=pv, procedure_row_id=row_id,
+                procedure_payload=res, task_description="implbound-dispatch-e2e",
+                nodes=[PlanNode(order=0, goal="run it", implementation_id=impl_id)],
+                extractor_version="test_adapters_e2e@1", created_by="adapter_e2e",
+            )
+            compiled, _ = await persist_compiled_plan(pool, compiled)
+
+            exec_run_id = await start_run(
+                pool, execution_plan_id=str(compiled.plan.id), task_graph_id=str(compiled.graph.id),
+                procedure_id=proc_id, procedure_version=pv,
+                node_orders=[0], deps={0: []}, created_by="adapter_e2e",
+            )
+
+            outcome = await resume_run_by_id(
+                pool, exec_run_id, worker_id="implbound-dispatch-w1", actor_id=None,
+            )
+            assert outcome["status"] == "succeeded", outcome
+
+            events = await get_run_events(pool, exec_run_id)
+            bound = [e for e in events if e["event_type"] == "implementation_bound"]
+            assert len(bound) == 1
+            assert bound[0]["node_order"] == 0
+            assert bound[0]["payload"]["implementation_id"] == str(impl_id)
+        finally:
+            if exec_run_id is not None:
+                await pool.execute("DELETE FROM execution_runs WHERE id=$1", exec_run_id)
+            if row_id is not None:
+                deleted = await pool.execute(
+                    "DELETE FROM procedures WHERE id=$1 AND id NOT IN (SELECT procedure_row_id FROM execution_plans)",
+                    row_id,
+                )
+                if deleted == "DELETE 0":
+                    await pool.execute("UPDATE procedures SET is_engineering_fixture = true WHERE id=$1", row_id)
+            if impl_id is not None:
+                await pool.execute("DELETE FROM implementations WHERE id=$1", impl_id)
+            await pool.close()
+
+    asyncio.run(_run())

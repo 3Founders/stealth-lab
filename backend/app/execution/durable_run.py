@@ -203,8 +203,26 @@ async def start_run(
                 parent_run_id=str(parent_run_id) if parent_run_id else None,
                 root_run_id=str(root_run_id) if root_run_id else str(run_id),
             )
+            # B8: procedure_retrieved/plan_created -- both real facts
+            # already established by the time a run exists (the exact
+            # Procedure version and the exact ExecutionPlan/TaskGraph
+            # this run was created against), recorded once here rather
+            # than duplicated at every one of this function's callers.
+            await _rec.record_procedure_retrieved(
+                conn, str(run_id), procedure_id=str(procedure_id), procedure_version=procedure_version,
+            )
+            await _rec.record_plan_created(
+                conn, str(run_id), execution_plan_id=str(execution_plan_id), task_graph_id=str(task_graph_id),
+            )
             if route_decision_id is not None:
                 await _rec.record_route_decided(conn, str(run_id), route_decision_id=route_decision_id, route=None)
+                # B8: applicability_checked -- a route_decision_id only
+                # ever exists because decide_route's own real
+                # applicability cascade already ran and was persisted
+                # before this run was created.
+                await _rec.record_applicability_checked(
+                    conn, str(run_id), route_decision_id=route_decision_id,
+                )
             if parent_run_id is not None:
                 parent_node_order = None
                 if parent_node_id is not None:
@@ -216,6 +234,15 @@ async def start_run(
                     child_run_id=str(run_id), child_procedure_id=str(procedure_id),
                     child_procedure_version=procedure_version,
                 )
+                # B8: node_waiting -- the parent's own node genuinely
+                # begins waiting the moment a real child run is created
+                # for it (derived at read-time elsewhere -- B10's own
+                # design -- this is the durable EVENT recording that the
+                # real transition happened, not a second stored status).
+                if parent_node_order is not None:
+                    await _rec.record_node_waiting(
+                        conn, str(parent_run_id), node_order=parent_node_order, child_run_id=str(run_id),
+                    )
     except asyncpg.UniqueViolationError:
         # Concurrent create_or_return race on the same request_id: the
         # other insert won, this one lost the unique index -- return the
@@ -249,6 +276,8 @@ async def _claim_run(pool: asyncpg.Pool, run_id: str, worker_id: str) -> dict:
         if row is not None:
             if prior_status in ("pending", "paused", "failed"):
                 await _rec.record_run_claimed(conn, run_id, worker_id=worker_id, from_status=prior_status)
+            if prior_status == "pending":
+                await _rec.record_run_started(conn, run_id)
             return dict(row)
         cur = await conn.fetchrow("SELECT id, status, worker_id FROM execution_runs WHERE id=$1", run_id)
     if cur is None:
@@ -440,6 +469,8 @@ async def _run_one_node(pool: asyncpg.Pool, order: int, node: dict, *,
         if not await _node_claim(pool, node, attempt, worker_id):
             _, fresh = await _load(pool, node["execution_run_id"])
             return fresh[order]["status"]
+        async with pool.acquire() as conn:
+            await _rec.record_node_started(conn, node["execution_run_id"], node_order=order, attempt=attempt)
         try:
             result = await run_node(order, attempt)
         except WorkerLost:
@@ -542,6 +573,24 @@ async def _fetch_verification_satisfaction(pool: asyncpg.Pool, run: dict, run_id
     )
 
 
+async def _record_child_run_completed_on_parent(conn: asyncpg.Connection, run: dict, *, status: str) -> None:
+    """B8: `child_run_completed` -- recorded on the PARENT's own event
+    log the moment a real child run reaches a genuinely terminal status
+    (never at 'awaiting_verification', which is not yet terminal). A
+    root run (no parent_run_id) has nothing to notify."""
+    if run.get("parent_run_id") is None:
+        return
+    parent_node_order = None
+    if run.get("parent_node_id") is not None:
+        parent_node_order = await conn.fetchval(
+            "SELECT node_order FROM execution_run_nodes WHERE id = $1", run["parent_node_id"],
+        )
+    await _rec.record_child_run_completed(
+        conn, str(run["parent_run_id"]), parent_node_order=parent_node_order,
+        child_run_id=str(run["id"]), child_status=status,
+    )
+
+
 async def _persist_success_transition(
     pool: asyncpg.Pool, run_id: str, run: dict, *, from_statuses: tuple[str, ...], compiled=None,
 ) -> None:
@@ -574,6 +623,7 @@ async def _persist_success_transition(
         )
         if tag != "UPDATE 0":
             await _rec.record_run_finalized(conn, run_id, status="succeeded", outcome="success")
+            await _record_child_run_completed_on_parent(conn, run, status="succeeded")
 
 
 async def _finalize(pool: asyncpg.Pool, run_id: str, *, compiled=None) -> dict[str, Any]:
@@ -648,6 +698,7 @@ async def _finalize(pool: asyncpg.Pool, run_id: str, *, compiled=None) -> dict[s
         )
         if tag != "UPDATE 0":
             await _rec.record_run_finalized(conn, run_id, status=run_status_v, outcome=outcome)
+            await _record_child_run_completed_on_parent(conn, run, status=run_status_v)
     run, nodes = await _load(pool, run_id)
     return {"run_id": run_id, "status": run["status"], "final_outcome": run["final_outcome"],
             "final_execution_id": str(run["final_execution_id"]) if run["final_execution_id"] else None,
@@ -703,6 +754,7 @@ async def finalize_after_verification(pool: asyncpg.Pool, run_id: str, *, compil
             )
             if tag != "UPDATE 0":
                 await _rec.record_run_finalized(conn, run_id, status="failed", outcome="failed_verification")
+                await _record_child_run_completed_on_parent(conn, run, status="failed")
         run, nodes = await _load(pool, run_id)
         return {"run_id": run_id, "status": run["status"], "final_outcome": run["final_outcome"],
                 "nodes": _node_summary(nodes),
@@ -826,6 +878,13 @@ async def retry_node(
             await conn.execute(
                 "UPDATE execution_runs SET status='running' WHERE id=$1 AND status IN ('paused','failed','pending')",
                 run_id)
+            # B8: node_resumed -- an explicit, caller-initiated retry of
+            # a node already in a real failed/resumable/blocked state,
+            # distinct from the routine first node_claimed/node_started
+            # pair `_run_one_node`'s own normal attempt loop emits.
+            await _rec.record_node_resumed(
+                conn, run_id, node_order=node_order, attempt=n["attempt_count"],
+            )
         return await _drive(pool, run_id, deps=deps, run_node=run_node,
                             worker_id=worker_id, compiled=compiled)
     finally:

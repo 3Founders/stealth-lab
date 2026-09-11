@@ -135,6 +135,99 @@ async def record_artifact(
     )
 
 
+async def record_run_started(conn: _Executor, execution_run_id: str) -> None:
+    """B8's `run_started` -- the first-ever pending->running transition
+    for this run (never re-emitted on a later resume/retry claim; that
+    real, separate fact is `run_claimed`, already recorded)."""
+    await record_event(conn, execution_run_id=execution_run_id, event_type="run_started")
+
+
+async def record_procedure_retrieved(
+    conn: _Executor, execution_run_id: str, *, procedure_id: str, procedure_version: int,
+) -> None:
+    await record_event(
+        conn, execution_run_id=execution_run_id, event_type="procedure_retrieved",
+        payload={"procedure_id": procedure_id, "procedure_version": procedure_version},
+    )
+
+
+async def record_applicability_checked(
+    conn: _Executor, execution_run_id: str, *, route_decision_id: str,
+) -> None:
+    await record_event(
+        conn, execution_run_id=execution_run_id, event_type="applicability_checked",
+        payload={"route_decision_id": route_decision_id},
+    )
+
+
+async def record_plan_created(
+    conn: _Executor, execution_run_id: str, *, execution_plan_id: str, task_graph_id: str,
+) -> None:
+    await record_event(
+        conn, execution_run_id=execution_run_id, event_type="plan_created",
+        payload={"execution_plan_id": execution_plan_id, "task_graph_id": task_graph_id},
+    )
+
+
+async def record_implementation_bound(
+    conn: _Executor, execution_run_id: str, *, node_order: int, implementation_id: str,
+) -> None:
+    await record_event(
+        conn, execution_run_id=execution_run_id, event_type="implementation_bound",
+        node_order=node_order, payload={"implementation_id": implementation_id},
+    )
+
+
+async def record_node_started(conn: _Executor, execution_run_id: str, *, node_order: int, attempt: int) -> None:
+    """B8's `node_started` -- the real invocation begins (the caller's
+    own `run_node` callback is about to be awaited), distinct from
+    `node_claimed` (lease/ownership, may happen without the node ever
+    actually running if the claim is later lost to a crash)."""
+    await record_event(
+        conn, execution_run_id=execution_run_id, event_type="node_started",
+        node_order=node_order, payload={"attempt": attempt},
+    )
+
+
+async def record_knowledge_requested(
+    conn: _Executor, execution_run_id: str, *, goal: str, result_count: int,
+) -> None:
+    await record_event(
+        conn, execution_run_id=execution_run_id, event_type="knowledge_requested",
+        payload={"goal": goal[:200], "result_count": result_count},
+    )
+
+
+async def record_node_waiting(
+    conn: _Executor, execution_run_id: str, *, node_order: int, child_run_id: str,
+) -> None:
+    await record_event(
+        conn, execution_run_id=execution_run_id, event_type="node_waiting",
+        node_order=node_order, payload={"child_run_id": child_run_id},
+    )
+
+
+async def record_child_run_completed(
+    conn: _Executor, parent_execution_run_id: str, *,
+    parent_node_order: Optional[int], child_run_id: str, child_status: str,
+) -> None:
+    await record_event(
+        conn, execution_run_id=parent_execution_run_id, event_type="child_run_completed",
+        node_order=parent_node_order,
+        payload={"child_run_id": child_run_id, "child_status": child_status},
+    )
+
+
+async def record_node_resumed(conn: _Executor, execution_run_id: str, *, node_order: int, attempt: int) -> None:
+    """B8's `node_resumed` -- an explicit `retry_node` reactivation of a
+    node that had already reached a real failed/resumable state, distinct
+    from the routine first `node_claimed`/`node_started` pair."""
+    await record_event(
+        conn, execution_run_id=execution_run_id, event_type="node_resumed",
+        node_order=node_order, payload={"attempt": attempt},
+    )
+
+
 async def record_tool_called(
     conn: _Executor, execution_run_id: str, *, node_order: Optional[int],
     requested_endpoint: Optional[str] = None, requested_method: Optional[str] = None,

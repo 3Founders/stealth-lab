@@ -52,6 +52,7 @@ import asyncpg
 
 from app.execution import durable_run as _dr
 from app.execution import providers
+from app.execution import recorder as _rec
 from app.execution.implementation_executor import execute_implementation
 from app.execution.plan_persistence import _row_to_compiled_plan
 from app.services.access import AccessScope
@@ -474,6 +475,13 @@ async def get_run_context(pool: asyncpg.Pool, run_id: str) -> Optional[dict[str,
             relevant_claim_refs = await get_relevant_claims(
                 pool, goal=claims_query, top_k=5, access_scope=access_scope,
             )
+            # B8: knowledge_requested -- a real Claim retrieval genuinely
+            # happened for this run; recorded after success only (a
+            # failed/empty attempt at retrieving knowledge is not the
+            # same real fact as one that ran).
+            await _rec.record_knowledge_requested(
+                pool, run_id, goal=claims_query, result_count=len(relevant_claim_refs),
+            )
         except Exception:  # noqa: BLE001 -- informational; must never break continue_run itself.
             relevant_claim_refs = []
 
@@ -599,6 +607,18 @@ def _make_runner(
             )
         context = dict(run_params)
         context.update(getattr(node, "parameters", {}) or {})
+        # B8: implementation_bound -- the real, durable binding already
+        # made at compile time (bind_plan_implementations) is about to
+        # actually drive an execution attempt; recorded here (the one
+        # real dispatch point every context-free-resumed node goes
+        # through) rather than at bind time, since no execution_run
+        # exists yet when a plan is first compiled.
+        if getattr(node, "implementation_id", None):
+            async with pool.acquire() as conn:
+                await _rec.record_implementation_bound(
+                    conn, str(run_row["id"]), node_order=node_order,
+                    implementation_id=str(node.implementation_id),
+                )
         result = await execute_implementation(
             pool, node, context, scope=AccessScope.unrestricted(),
         )
