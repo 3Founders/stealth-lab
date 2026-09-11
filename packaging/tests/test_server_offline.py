@@ -38,6 +38,7 @@ def test_all_registered_tools():
         "find_best_solution",         # Final-V1 product model (§37)
         "find_best_way",
         "find_problem",               # Final-V1 product model (§37)
+        "generate_review_packet",     # MCP hardening (B34): bounded human-review packet
         "get_claim_graph",            # claim-graph viewer
         "get_implementation_capability",
         "get_procedure",
