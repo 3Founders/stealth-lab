@@ -163,6 +163,80 @@ def test_declare_file_intent_detects_a_real_cross_run_conflict():
     asyncio.run(_run())
 
 
+def test_declare_file_intent_detects_a_symbol_name_conflict_across_different_files():
+    """Two nodes declaring DIFFERENT, non-overlapping write scopes but the
+    SAME symbol name must still conflict -- the exact-name-overlap check
+    on `symbols_expected_to_modify` runs independently of file-path
+    overlap (a shared function/class name across files can mean a shared
+    interface both agents are about to change)."""
+    async def _run():
+        pool = await create_pool(DATABASE_URL, min_size=1, max_size=2)
+        run_id = uuid4().hex[:8]
+        name_a = f"proc-test-coordsyma-{run_id}"
+        name_b = f"proc-test-coordsymb-{run_id}"
+        try:
+            proc_a = await _capture(pool, name_a)
+            proc_b = await _capture(pool, name_b)
+            run_a = await _start_run(pool, proc_a)
+            run_b = await _start_run(pool, proc_b)
+
+            await declare_file_intent(
+                pool, execution_run_id=run_a, node_order=0, owner_agent_id="agent-a",
+                write_exact=[f"payments_v1_{run_id}.py"],
+                symbols_expected_to_modify=[f"process_payment_{run_id}"],
+            )
+            with pytest.raises(FileIntentConflict) as exc_info:
+                await declare_file_intent(
+                    pool, execution_run_id=run_b, node_order=0, owner_agent_id="agent-b",
+                    write_exact=[f"payments_v2_{run_id}.py"],  # a DIFFERENT file --
+                    symbols_expected_to_modify=[f"process_payment_{run_id}"],  # same symbol
+                )
+            conflicts = exc_info.value.conflicts
+            assert len(conflicts) == 1
+            assert conflicts[0].execution_run_id == run_a
+            assert conflicts[0].overlapping_files == []  # no file-path overlap at all
+            assert conflicts[0].overlapping_symbols == [f"process_payment_{run_id}"]
+        finally:
+            await _cleanup(pool, name_a)
+            await _cleanup(pool, name_b)
+            await pool.close()
+
+    asyncio.run(_run())
+
+
+def test_disjoint_symbols_and_disjoint_files_never_conflict():
+    """Sanity check in the other direction: neither files nor symbols
+    overlap -> no conflict at all, even though both nodes declared
+    symbols."""
+    async def _run():
+        pool = await create_pool(DATABASE_URL, min_size=1, max_size=2)
+        run_id = uuid4().hex[:8]
+        name_a = f"proc-test-coordnosyma-{run_id}"
+        name_b = f"proc-test-coordnosymb-{run_id}"
+        try:
+            proc_a = await _capture(pool, name_a)
+            proc_b = await _capture(pool, name_b)
+            run_a = await _start_run(pool, proc_a)
+            run_b = await _start_run(pool, proc_b)
+
+            await declare_file_intent(
+                pool, execution_run_id=run_a, node_order=0, owner_agent_id="agent-a",
+                write_exact=[f"a_{run_id}.py"], symbols_expected_to_modify=[f"foo_{run_id}"],
+            )
+            # must NOT raise
+            result = await declare_file_intent(
+                pool, execution_run_id=run_b, node_order=0, owner_agent_id="agent-b",
+                write_exact=[f"b_{run_id}.py"], symbols_expected_to_modify=[f"bar_{run_id}"],
+            )
+            assert result["owner_agent_id"] == "agent-b"
+        finally:
+            await _cleanup(pool, name_a)
+            await _cleanup(pool, name_b)
+            await pool.close()
+
+    asyncio.run(_run())
+
+
 def test_expired_lease_is_excluded_from_conflict_detection():
     async def _run():
         pool = await create_pool(DATABASE_URL, min_size=1, max_size=2)

@@ -19,10 +19,19 @@ HONEST SCOPE:
     harder problem this pass does not attempt to solve exactly. Over-
     flagging a false conflict is the safe direction to be wrong in for a
     coordination gate; silently missing a real one is not.
-  - `symbols_expected_to_modify` is stored and returned but NOT used in
-    conflict detection -- no symbol-level static analysis exists in this
-    codebase to check it against, and inventing a fake check would be
-    worse than an honest gap.
+  - `symbols_expected_to_modify` IS used in conflict detection now, on
+    the exact same honest terms every other declaration here is checked
+    on: an EXACT-NAME overlap between two live declarations' own
+    self-reported symbol lists is a conflict, checked regardless of
+    whether their write-path scopes also overlap (the same symbol name
+    declared in two different files can still mean two agents are about
+    to touch the same shared interface/contract). This is NOT static
+    analysis -- nothing here parses source code to confirm a symbol is
+    actually present or actually gets modified; it is the declarative
+    layer B36 already is, extended to one more self-reported field,
+    exactly like `write_exact`/`write_globs` were. Inventing real
+    per-language AST-based symbol analysis remains a separate, much
+    larger, and still-open piece of work.
   - Claims (`knowledge_nodes` where `node_type='claim'`) are NEVER
     touched by this module -- B36's own rule: "Claims remain separate
     from coordination."
@@ -60,7 +69,7 @@ class FileIntentConflict(Exception):
             f"{len(conflicts)} conflicting file-intent declaration(s): "
             + "; ".join(
                 f"run={c.execution_run_id} node={c.node_order} owner={c.owner_agent_id!r} "
-                f"files={c.overlapping_files}"
+                f"files={c.overlapping_files} symbols={c.overlapping_symbols}"
                 for c in conflicts
             )
         )
@@ -72,6 +81,7 @@ class ConflictEntry:
     node_order: int
     owner_agent_id: Optional[str]
     overlapping_files: list[str] = field(default_factory=list)
+    overlapping_symbols: list[str] = field(default_factory=list)
 
 
 def _glob_prefix(pattern: str) -> str:
@@ -107,6 +117,21 @@ def _paths_overlap(a_exact: list[str], a_globs: list[str], b_exact: list[str], b
     return sorted(overlaps)
 
 
+def _symbols_overlap(a_symbols: list[str], b_symbols: list[str]) -> list[str]:
+    """Exact-name overlap between two declarations' own self-reported
+    `symbols_expected_to_modify` lists. Same honest discipline as
+    `_paths_overlap`'s exact-path leg: no fuzzy matching, no attempt to
+    resolve aliases/qualified names -- a caller that declares
+    `"process_payment"` and another that declares
+    `"payments.process_payment"` are NOT flagged as the same symbol here;
+    over-approximating THAT would risk false conflicts between genuinely
+    unrelated same-named-but-different symbols across a large codebase,
+    which is the wrong direction to be wrong in for a purely advisory,
+    high-volume signal like this one. Case-sensitive, exact string match
+    only."""
+    return sorted(set(a_symbols) & set(b_symbols))
+
+
 async def _unmet_dependencies(pool: asyncpg.Pool, *, execution_run_id: str, node_order: int) -> list[int]:
     """This node's `deps` (from the compiled plan's task_graphs.nodes
     JSON -- the SAME structure durable_run/get_run_context already
@@ -136,24 +161,31 @@ async def _unmet_dependencies(pool: asyncpg.Pool, *, execution_run_id: str, node
 
 async def check_file_intent_conflicts(
     pool: asyncpg.Pool, *, write_exact: list[str], write_globs: list[str],
+    symbols: Optional[list[str]] = None,
     exclude_execution_run_id: Optional[str] = None, exclude_node_order: Optional[int] = None,
 ) -> list[ConflictEntry]:
     """
     Pure read: every OTHER live (non-expired-lease, non-terminal-status)
-    declaration whose write scope overlaps `write_exact`/`write_globs`.
-    Never writes anything -- `declare_file_intent` is the only writer,
-    and calls this first.
+    declaration whose write scope overlaps `write_exact`/`write_globs`,
+    OR whose declared `symbols_expected_to_modify` shares an exact name
+    with `symbols` -- checked independently, so a symbol-name collision
+    is flagged even when the two declarations' file scopes don't overlap
+    at all (see `_symbols_overlap`'s own docstring for exactly what "exact
+    name" means here). Never writes anything -- `declare_file_intent` is
+    the only writer, and calls this first.
     """
-    if not write_exact and not write_globs:
+    symbols = symbols or []
+    if not write_exact and not write_globs and not symbols:
         return []
     rows = await pool.fetch(
         """
-        SELECT execution_run_id, node_order, owner_agent_id, write_exact, write_globs
+        SELECT execution_run_id, node_order, owner_agent_id, write_exact, write_globs,
+               symbols_expected_to_modify
         FROM execution_run_nodes
         WHERE file_intent_lease_expires_at IS NOT NULL
           AND file_intent_lease_expires_at > now()
           AND status NOT IN ('succeeded', 'cancelled')
-          AND (write_exact != '[]' OR write_globs != '[]')
+          AND (write_exact != '[]' OR write_globs != '[]' OR symbols_expected_to_modify != '[]')
         """
     )
     conflicts: list[ConflictEntry] = []
@@ -166,10 +198,12 @@ async def check_file_intent_conflicts(
         ):
             continue
         overlap = _paths_overlap(write_exact, write_globs, row["write_exact"], row["write_globs"])
-        if overlap:
+        symbol_overlap = _symbols_overlap(symbols, row["symbols_expected_to_modify"] or [])
+        if overlap or symbol_overlap:
             conflicts.append(ConflictEntry(
                 execution_run_id=str(row["execution_run_id"]), node_order=row["node_order"],
                 owner_agent_id=row["owner_agent_id"], overlapping_files=overlap,
+                overlapping_symbols=symbol_overlap,
             ))
     return conflicts
 
@@ -202,8 +236,10 @@ async def declare_file_intent(
 
     write_exact = write_exact or []
     write_globs = write_globs or []
+    symbols_expected_to_modify = symbols_expected_to_modify or []
     conflicts = await check_file_intent_conflicts(
         pool, write_exact=write_exact, write_globs=write_globs,
+        symbols=symbols_expected_to_modify,
         exclude_execution_run_id=execution_run_id, exclude_node_order=node_order,
     )
     if conflicts:
