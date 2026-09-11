@@ -267,6 +267,14 @@ async def _claim_run(pool: asyncpg.Pool, run_id: str, worker_id: str) -> dict:
         row = await conn.fetchrow(
             "UPDATE execution_runs SET status = CASE WHEN status IN ('pending','paused','failed') "
             "   THEN 'running' ELSE status END, "
+            # B4: reactivating out of 'failed' must clear the terminal
+            # fields that status implied, same real invariant as
+            # retry_node's own explicit reactivation below -- this is
+            # the OTHER, earlier real reactivation point (every retry/
+            # resume path claims the run via THIS function first).
+            " final_outcome = CASE WHEN status = 'failed' THEN NULL ELSE final_outcome END, "
+            " final_execution_id = CASE WHEN status = 'failed' THEN NULL ELSE final_execution_id END, "
+            " ended_at = CASE WHEN status = 'failed' THEN NULL ELSE ended_at END, "
             " worker_id=$2, lease_expires_at = now() + make_interval(secs => $3) "
             "WHERE id=$1 AND status NOT IN ('succeeded','cancelled') "
             "  AND (worker_id IS NULL OR worker_id=$2 OR lease_expires_at IS NULL OR lease_expires_at < now()) "
@@ -875,8 +883,16 @@ async def retry_node(
             else:
                 await conn.execute(
                     "UPDATE execution_run_nodes SET status='resumable', worker_id=NULL WHERE id=$1", n["id"])
+            # B4: reactivating a run out of a terminal 'failed' status
+            # must clear the terminal fields that status implied --
+            # otherwise the row is left claiming BOTH "running" and "has
+            # a final outcome" at once (execution_runs_final_outcome_
+            # implies_terminal_chk, migration 77, exists precisely to
+            # catch this real, previously-unenforced inconsistency).
             await conn.execute(
-                "UPDATE execution_runs SET status='running' WHERE id=$1 AND status IN ('paused','failed','pending')",
+                "UPDATE execution_runs SET status='running', final_outcome=NULL, "
+                " final_execution_id=NULL, ended_at=NULL "
+                "WHERE id=$1 AND status IN ('paused','failed','pending')",
                 run_id)
             # B8: node_resumed -- an explicit, caller-initiated retry of
             # a node already in a real failed/resumable/blocked state,

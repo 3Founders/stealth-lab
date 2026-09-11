@@ -263,3 +263,71 @@ async def test_touch_only_update_with_unchanged_status_is_unaffected():
         await pool.execute("DELETE FROM execution_runs WHERE id=$1", run_id)
         await _cleanup_procedure(pool, row_id)
         await pool.close()
+
+
+@pytest.mark.asyncio
+async def test_final_outcome_cannot_be_set_without_a_real_terminal_status():
+    """MCP hardening B4 STRICT CLOSURE: stealth_execution_contract.py's
+    own OUTCOME step claims "already true of every step" -- real for
+    every existing application-level write site, but until migration 77
+    never actually enforced by the schema itself: migration 36's
+    execution_runs_final_outcome_chk only constrains the VALUE of
+    final_outcome, never its relationship to status. A stray write
+    setting final_outcome on a non-terminal run must now fail closed
+    with a typed DB error, never be silently accepted."""
+    pool = await create_pool(statement_cache_size=0)
+    try:
+        run_id, row_id = await _fresh_run_row(pool)
+        await pool.execute("UPDATE execution_runs SET status='running' WHERE id=$1", run_id)
+        with pytest.raises(asyncpg.exceptions.CheckViolationError):
+            await pool.execute(
+                "UPDATE execution_runs SET final_outcome='success' WHERE id=$1", run_id,
+            )
+    finally:
+        await pool.execute("DELETE FROM execution_runs WHERE id=$1", run_id)
+        await _cleanup_procedure(pool, row_id)
+        await pool.close()
+
+
+@pytest.mark.asyncio
+async def test_retry_node_clears_final_outcome_when_reactivating_a_failed_run():
+    """The real bug migration 77's own constraint surfaced while being
+    applied against this session's live corpus: `retry_node` reset a
+    failed run's status back to 'running' WITHOUT clearing final_
+    outcome/final_execution_id, leaving a real row simultaneously
+    claiming "still running" and "has a final outcome" -- exactly the
+    inconsistency B4 forbids. Proven end to end through the real
+    retry_node service function, not by only checking the constraint."""
+    from app.execution.durable_run import retry_node
+
+    pool = await create_pool(statement_cache_size=0)
+    try:
+        run_id, row_id = await _fresh_run_row(pool)
+        await pool.execute(
+            "INSERT INTO execution_run_nodes (execution_run_id, node_order, status, max_attempts) "
+            "VALUES ($1, 0, 'failed', 3)", run_id,
+        )
+        await pool.execute("UPDATE execution_runs SET status='running' WHERE id=$1", run_id)
+        await pool.execute(
+            "UPDATE execution_runs SET status='failed', final_outcome='failure', ended_at=now() "
+            "WHERE id=$1", run_id,
+        )
+
+        async def run_node(order: int, attempt: int) -> dict:
+            return {"order": order, "attempt": attempt}
+
+        result = await retry_node(pool, run_id, 0, deps={0: []}, run_node=run_node, worker_id="ert-retry-1")
+        assert result["status"] == "succeeded"
+
+        row = await pool.fetchrow(
+            "SELECT status, final_outcome FROM execution_runs WHERE id=$1", run_id,
+        )
+        # Reactivation cleared the stale terminal fields; the real
+        # terminal write (via _persist_success_transition, once the
+        # node actually succeeded again) then set them correctly.
+        assert row["status"] == "succeeded"
+        assert row["final_outcome"] == "success"
+    finally:
+        await pool.execute("DELETE FROM execution_runs WHERE id=$1", run_id)
+        await _cleanup_procedure(pool, row_id)
+        await pool.close()
