@@ -68,6 +68,9 @@ class FakeEmbedder:
                 return vec
         return self._default
 
+    def embedding_model_id(self) -> str:
+        return "fake:test_domain_search_e2e"
+
 
 def _run(coro):
     return asyncio.run(coro)

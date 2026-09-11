@@ -168,7 +168,7 @@ async def handle_normalize_trace_event(pool: asyncpg.Pool, payload: dict) -> Non
 
     row = await pool.fetchrow(
         "SELECT id, session_id, event_type, tool_name, tool_input, tool_output, "
-        "       owner_id, visibility::text AS visibility "
+        "       success, owner_id, visibility::text AS visibility "
         "FROM trace_events WHERE id = $1",
         trace_event_id,
     )

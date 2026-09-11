@@ -73,7 +73,7 @@ def test_render_context_md_never_fabricates_relevant_global_claims():
     the exact real ones passed otherwise (never fabricated either way)."""
     md = _render_context_md(context=_FAKE_CONTEXT, procedure=_FAKE_PROCEDURE, verification=_FAKE_VERIFICATION)
     section = md.split("[RELEVANT GLOBAL CLAIMS]")[1].split("[SELECTED PROCEDURES]")[0]
-    assert "no relevant global Claims retrieved" in section
+    assert "no global Claims faulted into this working set yet" in section
 
     real_refs = [{"claim_id": "c-123", "belief": "IN", "statement": "the service uses postgres"}]
     md_with_claims = _render_context_md(

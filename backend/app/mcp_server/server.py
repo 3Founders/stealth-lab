@@ -1509,6 +1509,42 @@ async def find_best_way(task_description: str, ctx: Context,
     )
     route_decision_id = await persist_route_decision(pool, route_decision)
 
+    if route_decision.route == "needs_clarification":
+        # B1 STRICT CLOSURE (real gap found this pass): `matched_procedure`
+        # above comes from a SEPARATE, earlier `find_applicable_procedures`
+        # call -- NOT from decide_route's own internal cascade -- so it can
+        # be truthy at the exact same time route_decision.route is
+        # "needs_clarification" (find_applicable_procedures's hard-
+        # constraint check and decide_route's decision-critical-unknown
+        # classification are not guaranteed to agree on the same near-miss
+        # candidate). This check MUST run before any matched_procedure-
+        # based dispatch below (_respond_plan_only/_respond_tier1_hit,
+        # which would otherwise still answer confidently -- or, in
+        # _respond_tier1_hit's case, construct a real LLM client -- for a
+        # procedure whose applicability is genuinely unknown on a
+        # critical precondition), and before any mode-specific branch,
+        # since NEEDS_CLARIFICATION is not specific to Tier 2 execution
+        # risk -- it means the answer is not safely computable yet,
+        # regardless of mode.
+        return json.dumps({
+            "route": "needs_clarification",
+            "response_state": "NEEDS_CLARIFICATION",
+            "route_decision_id": route_decision_id,
+            "reason": route_decision.reason,
+            "near_miss_procedure_id": route_decision.procedure_id,
+            "near_miss_procedure_row_id": route_decision.procedure_row_id,
+            "blocking_unknowns": route_decision.decision_critical_unknowns,
+            "instructions": (
+                "One or more preconditions above have no known answer in "
+                "the current scope (not violated -- simply never asserted). "
+                "Resolve them (e.g. supply the missing fact as a claim, or "
+                "probe the environment) and call find_best_way again, or "
+                "pass allow_unverified_procedures=True / a different "
+                "task_description if you want to proceed without this "
+                "procedure's guidance."
+            ),
+        }, indent=2)
+
     if matched_procedure is not None and mode == "plan_only":
         try:
             return await _respond_plan_only(
@@ -1539,35 +1575,6 @@ async def find_best_way(task_description: str, ctx: Context,
             "No strong existing match found, and no repo_path was given -- "
             "pass repo_path to run a full solve (mode='auto' or 'full_run')."
         )
-    if route_decision.route == "needs_clarification":
-        # B1's core new behavior: do NOT silently fall through to a real
-        # sandboxed tier-2 run when the single best-matching procedure is
-        # blocked only on an UNKNOWN (not violated) precondition -- ask,
-        # rather than either fabricate applicability or refuse outright.
-        # Only reachable here: matched_procedure is None (a genuine match
-        # can never be "needs_clarification" -- see decide_route), mode
-        # is 'auto' or 'full_run' (lookup_only/plan_only already returned
-        # above, unchanged), and repo_path is not None (side-effecting
-        # execution is the thing being gated).
-        return json.dumps({
-            "route": "needs_clarification",
-            "response_state": "NEEDS_CLARIFICATION",
-            "route_decision_id": route_decision_id,
-            "reason": route_decision.reason,
-            "near_miss_procedure_id": route_decision.procedure_id,
-            "near_miss_procedure_row_id": route_decision.procedure_row_id,
-            "blocking_unknowns": route_decision.decision_critical_unknowns,
-            "instructions": (
-                "One or more preconditions above have no known answer in "
-                "the current scope (not violated -- simply never asserted). "
-                "Resolve them (e.g. supply the missing fact as a claim, or "
-                "probe the environment) and call find_best_way again, or "
-                "pass allow_unverified_procedures=True / a different "
-                "task_description if you want to proceed without this "
-                "procedure's guidance."
-            ),
-        }, indent=2)
-
     if route_decision.route == "assist":
         # B1 STRICT CLOSURE: "ambiguous intent with side effects MUST
         # route to ask; informational intent MUST NOT silently execute".
@@ -4107,6 +4114,116 @@ async def get_route_decision(route_decision_id: str, ctx: Context) -> str:
     if decision is None:
         return f"REFUSED: route_decision {route_decision_id!r} not found"
     return json.dumps(decision, default=str)
+
+
+@server.tool()
+async def project_knowledge(
+    repo_path: str, ctx: Context,
+    object_ids_json: str = "[]", query: str = "", top_k: int = 8,
+) -> str:
+    """
+    G13 P3 -- the "knowledge page fault". When an agent greps
+    `.stealth/index/*.idx` and misses, it calls this to pull specific
+    global objects into the local working set.
+
+    `repo_path`: workspace root that already has a `.stealth/` projection
+      (run `find_best_way(mode='plan_only', repo_path=...)` or
+      `continue_run(repo_path=...)` first).
+    `object_ids_json`: JSON array of
+      `{"kind": "claim"|"procedure"|"implementation", "id": "<uuid>"}`.
+    `query`: free text -> relevant global claims via `get_relevant_claims`.
+
+    Resolves from global Postgres ONLY (an id that resolves to nothing is
+    reported as `not_found`, never fabricated), merges the blocks
+    additively into the existing `.stealth/` pages (the run-scoped
+    working set is preserved), regenerates the affected `.idx` +
+    `root.idx`, records membership in `index/faulted.json`, and journals
+    a `knowledge_fault` event. Returns the merge summary as JSON.
+    """
+    pool = ctx.request_context.lifespan_context["pool"]
+    from app.stealth.errors import StealthProjectionError
+    from app.stealth.faults import project_knowledge as _project_knowledge
+
+    try:
+        object_ids = json.loads(object_ids_json or "[]")
+    except json.JSONDecodeError as exc:
+        return f"REFUSED: object_ids_json must be a JSON array -- {exc}"
+    if not isinstance(object_ids, list):
+        return "REFUSED: object_ids_json must be a JSON array of {kind,id} objects"
+    if not object_ids and not query.strip():
+        return "REFUSED: pass object_ids_json and/or a non-empty query"
+
+    try:
+        result = await _project_knowledge(
+            pool, repo_path, object_ids=object_ids, query=query.strip() or None, top_k=top_k,
+        )
+    except StealthProjectionError as exc:
+        return f"REFUSED: {exc}"
+    except OSError as exc:
+        return f"REFUSED: .stealth/ write failed -- {exc}"
+    return json.dumps(result, default=str)
+
+
+@server.tool()
+async def open_exploration(repo_path: str, question: str, ctx: Context, scope: str = "-") -> str:
+    """
+    G12 -- record an active unknown an agent is investigating, so a second
+    agent working the same `.stealth/` workspace sees it and does not
+    independently re-investigate the same question (`grep ACTIVE
+    .stealth/index/exploration.idx`). Journal-only, local to `repo_path`;
+    reflected in `exploration.md` on the next projection regeneration
+    (`find_best_way` / `continue_run` / `project_knowledge`).
+
+    Returns the stable exploration id (`E-<hash>`, deterministic from
+    `question`+`scope` -- re-opening the same question re-uses it, never
+    duplicates it).
+    """
+    from app.stealth.exploration import open_exploration as _open_exploration
+
+    if not question.strip():
+        return "REFUSED: question must be non-empty"
+    owner = _resolve_caller_identity(fallback="stealth_exploration")
+    try:
+        eid = _open_exploration(repo_path, owner=owner, question=question.strip(), scope=scope or "-")
+    except OSError as exc:
+        return f"REFUSED: .stealth/ write failed -- {exc}"
+    return json.dumps({"exploration_id": eid, "status": "ACTIVE"})
+
+
+@server.tool()
+async def close_exploration(
+    repo_path: str, exploration_id: str, ctx: Context,
+    status: str = "RESOLVED", resolution: str = "",
+) -> str:
+    """
+    G12 -- close (or abandon) an exploration opened with `open_exploration`.
+
+    When `status="RESOLVED"` and `resolution` is non-empty, this ALSO
+    captures the answer as a durable, PRIVATE Claim in global Postgres
+    (`visibility='private'`, owned by the caller) -- a local unknown that
+    got answered is real knowledge, and the journal alone would lose it
+    the moment this workspace disappears. `status="ABANDONED"`, or a
+    `RESOLVED` with no `resolution`, records the closure but captures no
+    claim -- there is nothing learned to make durable. This does NOT
+    publish anything globally; the private Claim sits exactly where every
+    other private Claim does, reachable by the existing explicit-publish
+    path, never auto-promoted.
+    """
+    from app.stealth.exploration import close_exploration as _close_exploration
+
+    if status not in ("RESOLVED", "ABANDONED"):
+        return "REFUSED: status must be 'RESOLVED' or 'ABANDONED'"
+    pool = ctx.request_context.lifespan_context["pool"]
+    scope = _caller_access_scope()
+    owner = _resolve_caller_identity(fallback="stealth_exploration")
+    try:
+        claim_id = await _close_exploration(
+            repo_path, exploration_id, status=status, resolution=resolution,
+            pool=pool, created_by=owner, owner_id=scope.viewer_id,
+        )
+    except OSError as exc:
+        return f"REFUSED: .stealth/ write failed -- {exc}"
+    return json.dumps({"exploration_id": exploration_id, "status": status, "claim_id": claim_id})
 
 
 # ---------------------------------------------------------------------------

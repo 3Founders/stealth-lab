@@ -52,6 +52,20 @@ class _FakeEmbedder:
         h = abs(hash(text))
         return [((h >> (i % 40)) & 1) * 0.1 + 0.01 for i in range(1024)]
 
+    async def embed_one_with_metadata(self, text, input_type="document"):
+        import hashlib
+
+        from app.services.embeddings import EmbeddingMetadata
+
+        vector = await self.embed_one(text, input_type=input_type)
+        return vector, EmbeddingMetadata(
+            provider="fake",
+            model_id="fake:test_source_admission_e2e",
+            dimension=len(vector),
+            input_type=input_type,
+            text_sha256=hashlib.sha256(text.encode("utf-8")).hexdigest(),
+        )
+
 
 def _tag() -> str:
     return uuid.uuid4().hex[:8]

@@ -37,10 +37,14 @@ WHAT THIS IS -- AND IS NOT
 
 SCOPE LIMIT (stated in-code, not just here)
     The pattern sets are best-effort floors for DETECTED shapes, the same
-    honest limit `trace_redaction`'s own module docstring states. `pii`,
-    `license`, `malicious_executable` and `source_trust` are declared
-    check types (the DB CHECK lists them, callers may record them) but
-    `screen_document_text` does not yet implement detectors for them.
+    honest limit `trace_redaction`'s own module docstring states.
+    `source_trust` is a declared check type (the DB CHECK lists it,
+    callers may record it) but `screen_document_text` does not implement
+    a detector for it -- that is a source-registry-level judgment, not a
+    per-document text pattern. `pii` / `license` / `malicious_executable`
+    ARE implemented below (curated, narrow patterns -- not full PII/DLP or
+    SPDX classification; see each detector's own comment for exactly what
+    it does and does not catch).
 """
 from __future__ import annotations
 
@@ -113,6 +117,90 @@ _UNSAFE_LOCATOR_RE = re.compile(
     r")"
 )
 
+# (pii) US Social Security Number shape. A shape check, not a validity
+# check (there is no public SSN validity algorithm) -- deliberately narrow
+# (the exact dashed grouping) to avoid flagging arbitrary NNN-NN-NNNN-
+# shaped IDs from unrelated domains as a false negative risk we accept in
+# exchange for not flagging every dashed numeric code in a document.
+_SSN_RE = re.compile(r"\b\d{3}-\d{2}-\d{4}\b")
+
+# (pii) A credit-card-shaped run of 13-19 digits, optionally grouped by
+# spaces or dashes. Luhn-validated below (`_luhn_valid`) so a random
+# same-length number (e.g. an invoice id) is not flagged -- only a
+# number that actually passes the card checksum is.
+_CREDIT_CARD_RE = re.compile(r"\b(?:\d[ -]?){12,18}\d\b")
+
+# (pii) standard email address shape. Flagged only when >= 3 DISTINCT
+# addresses appear in one document (see screen_document_text) -- a single
+# email is normal attribution (an author byline), a list of addresses is
+# the actual leak shape.
+_EMAIL_RE = re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b")
+
+# (pii) a conservative NANP-shaped phone number. Same ">= 3 distinct"
+# threshold as email, same reasoning.
+_PHONE_RE = re.compile(r"\(?\d{3}\)?[-.\s]\d{3}[-.\s]\d{4}\b")
+
+# (license) a short, CURATED list of restrictive/copyleft phrases. This is
+# NOT SPDX classification -- it is a narrow phrase-match on signals that a
+# document asserts terms incompatible with a permissively-licensed global
+# commons. Permissive phrasing (MIT, Apache-2.0, BSD, "public domain") is
+# deliberately NOT in this list -- it is the unflagged, expected case.
+_LICENSE_PHRASES: tuple[str, ...] = (
+    "all rights reserved",
+    "proprietary and confidential",
+    "do not distribute",
+    "no license granted",
+    "gnu general public license",
+    "gpl-3.0",
+    "gpl-2.0",
+    "agpl",
+)
+_LICENSE_RE = re.compile(
+    "(?i)(" + "|".join(re.escape(p) for p in _LICENSE_PHRASES) + ")"
+)
+
+# (malicious_executable) classic dropper shapes: decode-then-execute or
+# pipe-to-shell, across the shells/languages an ingested doc's embedded
+# snippet might target. Narrow on purpose -- a bare base64 blob or a bare
+# `curl` is NOT enough (both are everywhere legitimately); the pattern
+# requires the decode/fetch AND the execution verb together.
+_DROPPER_RE = re.compile(
+    r"(?i)(?:"
+    r"base64\s+(?:-d|--decode)\s*\|\s*(?:sh|bash|zsh)\b"
+    r"|curl\b[^\n|]{0,200}\|\s*(?:sudo\s+)?(?:sh|bash|zsh)\b"
+    r"|wget\b[^\n|]{0,200}\|\s*(?:sudo\s+)?(?:sh|bash|zsh)\b"
+    r"|atob\([^)]*\)[^\n]{0,80}\beval\("
+    r"|eval\(\s*atob\("
+    r"|exec\(\s*base64\.b64decode\("
+    r"|\[Convert\]::FromBase64String\([^\n]{0,120}Invoke-Expression"
+    r"|Invoke-Expression[^\n]{0,120}\[Convert\]::FromBase64String"
+    r")"
+)
+# A long base64-shaped blob is only suspicious in PROXIMITY to an
+# execution keyword (see screen_document_text) -- alone it is routine
+# (embedded images, keys, fixtures).
+_LONG_B64_RE = re.compile(r"[A-Za-z0-9+/]{200,}={0,2}")
+_EXEC_KEYWORD_RE = re.compile(
+    r"(?i)\b(eval|exec|invoke-expression|iex|system\(|os\.system|subprocess|"
+    r"processstartinfo)\b"
+)
+_EXEC_PROXIMITY_WINDOW = 200  # chars either side of a long base64 blob
+
+
+def _luhn_valid(digits: str) -> bool:
+    """Standard Luhn checksum over a digit string (no separators)."""
+    if not digits.isdigit():
+        return False
+    total = 0
+    for i, ch in enumerate(reversed(digits)):
+        d = int(ch)
+        if i % 2 == 1:
+            d *= 2
+            if d > 9:
+                d -= 9
+        total += d
+    return total % 10 == 0
+
 
 # ---------------------------------------------------------------------------
 # Pure detection
@@ -159,13 +247,13 @@ def screen_document_text(
 
         {"check_type": str, "signals": [str, ...], "severity": "block" | "flag"}
 
-    `[]` means clean. `signals` NEVER contains a raw secret -- a matched
-    secret is replaced with `_redacted_marker(...)`. Severity is encoded
+    `[]` means clean. `signals` NEVER contains a raw secret/PII value -- a
+    match is replaced with `_redacted_marker(...)`. Severity is encoded
     here so `decide` stays a trivial fold:
 
       block  -> prompt_injection, trust_escalation, secret_exposure
-                (incl. a private-key header)
-      flag   -> unsafe_locator
+                (incl. a private-key header), malicious_executable
+      flag   -> unsafe_locator, pii, license
 
     (`decide` maps any block -> REJECT, any flag -> QUARANTINE.)
     """
@@ -213,6 +301,25 @@ def screen_document_text(
             "severity": "block",
         })
 
+    # 2b. malicious executable -- decode-then-execute / pipe-to-shell
+    # dropper shapes (block: this is the most dangerous class), plus a
+    # long base64 blob ONLY when an execution keyword sits within
+    # _EXEC_PROXIMITY_WINDOW chars of it (a bare blob alone is routine).
+    exec_signals: list[str] = []
+    for m in _DROPPER_RE.finditer(haystack):
+        exec_signals.append(f"dropper_pattern@{m.start()}")
+    for m in _LONG_B64_RE.finditer(haystack):
+        window_start = max(0, m.start() - _EXEC_PROXIMITY_WINDOW)
+        window_end = min(len(haystack), m.end() + _EXEC_PROXIMITY_WINDOW)
+        if _EXEC_KEYWORD_RE.search(haystack[window_start:window_end]):
+            exec_signals.append(f"base64_near_exec_keyword@{m.start()}")
+    if exec_signals:
+        findings.append({
+            "check_type": "malicious_executable",
+            "signals": exec_signals,
+            "severity": "block",
+        })
+
     # 3. unsafe locator.
     locs = [m for m in _UNSAFE_LOCATOR_RE.finditer(haystack)]
     if locs:
@@ -220,6 +327,45 @@ def screen_document_text(
             "check_type": "unsafe_locator",
             # the locator is not a secret -- keep it, truncated, for audit.
             "signals": [f"{m.group(0)[:120]}@{m.start()}" for m in locs],
+            "severity": "flag",
+        })
+
+    # 4. PII -- SSN shape, Luhn-valid card numbers, and email/phone LISTS
+    # (>= 3 distinct occurrences; a single one is normal attribution).
+    # Never the raw value in a signal, always `_redacted_marker`.
+    pii_signals: list[str] = []
+    for m in _SSN_RE.finditer(haystack):
+        pii_signals.append(f"ssn {_redacted_marker('pii', m.start())}")
+    for m in _CREDIT_CARD_RE.finditer(haystack):
+        digits = re.sub(r"[ -]", "", m.group(0))
+        if 13 <= len(digits) <= 19 and _luhn_valid(digits):
+            pii_signals.append(f"credit_card {_redacted_marker('pii', m.start())}")
+    email_matches = list(_EMAIL_RE.finditer(haystack))
+    if len({m.group(0) for m in email_matches}) >= 3:
+        pii_signals.append(
+            f"email_list(n={len({m.group(0) for m in email_matches})}) "
+            f"{_redacted_marker('pii', email_matches[0].start())}"
+        )
+    phone_matches = list(_PHONE_RE.finditer(haystack))
+    if len({m.group(0) for m in phone_matches}) >= 3:
+        pii_signals.append(
+            f"phone_list(n={len({m.group(0) for m in phone_matches})}) "
+            f"{_redacted_marker('pii', phone_matches[0].start())}"
+        )
+    if pii_signals:
+        findings.append({
+            "check_type": "pii",
+            "signals": pii_signals,
+            "severity": "flag",
+        })
+
+    # 5. license -- a narrow curated restrictive/copyleft phrase match
+    # (NOT SPDX classification; see _LICENSE_PHRASES' own comment).
+    lic = [m for m in _LICENSE_RE.finditer(haystack)]
+    if lic:
+        findings.append({
+            "check_type": "license",
+            "signals": [f"license:{m.group(0).lower()}@{m.start()}" for m in lic],
             "severity": "flag",
         })
 
@@ -235,6 +381,119 @@ def decide(findings: list[dict]) -> str:
     if "flag" in severities:
         return "QUARANTINE"
     return "ALLOW"
+
+
+# ---------------------------------------------------------------------------
+# SSRF / fetch-locator guard (G3 tail / T13)
+# ---------------------------------------------------------------------------
+class UnsafeLocatorError(Exception):
+    """Raised when the server is about to fetch a locator that points at a
+    non-http(s) scheme or a private / loopback / link-local / reserved
+    address (directly or via DNS). The fetch is aborted, not downgraded --
+    an SSRF attempt is an active security event, not questionable content.
+    """
+
+    def __init__(self, locator: str, reason: str) -> None:
+        self.locator = locator
+        self.reason = reason
+        super().__init__(f"unsafe fetch locator {locator!r}: {reason}")
+
+
+# Hosts an ingestion fetch is expected to hit. A locator whose host is not
+# on this list still passes if it resolves only to public IPs -- the list
+# is a fast-path, not the whole policy.
+_LOCATOR_HOST_ALLOWLIST: frozenset[str] = frozenset({
+    "github.com", "api.github.com", "raw.githubusercontent.com",
+    "codeload.github.com", "objects.githubusercontent.com",
+})
+
+_METADATA_HOSTS: frozenset[str] = frozenset({
+    "metadata.google.internal", "metadata", "instance-data",
+})
+
+
+def _ip_is_public(ip_text: str) -> bool:
+    import ipaddress
+
+    try:
+        ip = ipaddress.ip_address(ip_text)
+    except ValueError:
+        return False
+    return not (
+        ip.is_private or ip.is_loopback or ip.is_link_local
+        or ip.is_reserved or ip.is_multicast or ip.is_unspecified
+    )
+
+
+def screen_locator(locator: str, *, resolve: bool = True) -> dict[str, Any]:
+    """
+    Validate a URL the server itself is about to fetch. Pure except for an
+    optional DNS lookup (`resolve=True`).
+
+    Returns {"allowed": bool, "classification": "ALLOW"|"REJECT",
+             "reason": str, "scheme": str, "host": str,
+             "resolved_ips": [str, ...]}.
+
+    Blocks: non-http(s) schemes; a host that is / resolves to a loopback,
+    private, link-local, reserved, multicast or unspecified address; the
+    cloud-metadata hostnames; a bare-IP host that is not public.
+    """
+    from urllib.parse import urlsplit
+
+    parts = urlsplit((locator or "").strip())
+    scheme = (parts.scheme or "").lower()
+    host = (parts.hostname or "").lower()
+
+    def _deny(reason: str) -> dict[str, Any]:
+        return {"allowed": False, "classification": "REJECT", "reason": reason,
+                "scheme": scheme, "host": host, "resolved_ips": []}
+
+    if scheme not in ("http", "https"):
+        return _deny(f"scheme {scheme or '(none)'} is not http(s)")
+    if not host:
+        return _deny("no host in locator")
+    if host in _METADATA_HOSTS:
+        return _deny("cloud-metadata hostname")
+
+    import ipaddress
+
+    try:
+        literal_ip = ipaddress.ip_address(host)
+    except ValueError:
+        literal_ip = None
+    if literal_ip is not None and not _ip_is_public(host):
+        return _deny(f"bare-IP host {host} is not a public address")
+
+    resolved: list[str] = []
+    if resolve and literal_ip is None:
+        import socket
+
+        try:
+            infos = socket.getaddrinfo(host, parts.port or (443 if scheme == "https" else 80),
+                                       proto=socket.IPPROTO_TCP)
+        except socket.gaierror as exc:
+            return _deny(f"DNS resolution failed: {exc}")
+        resolved = sorted({info[4][0] for info in infos})
+        if not resolved:
+            return _deny("host resolved to no addresses")
+        bad = [ip for ip in resolved if not _ip_is_public(ip)]
+        if bad:
+            return _deny(f"host resolves to non-public address(es): {', '.join(bad)}")
+
+    return {"allowed": True, "classification": "ALLOW",
+            "reason": "host on allowlist" if host in _LOCATOR_HOST_ALLOWLIST
+            else "scheme + host/IP are public",
+            "scheme": scheme, "host": host, "resolved_ips": resolved}
+
+
+def assert_safe_locator(locator: str, *, resolve: bool = True) -> dict[str, Any]:
+    """`screen_locator` but raises `UnsafeLocatorError` on a deny. Returns
+    the ALLOW result dict. Call this immediately before any server-side
+    fetch (`httpx.get`, `git clone`) of an externally-influenced URL."""
+    result = screen_locator(locator, resolve=resolve)
+    if not result["allowed"]:
+        raise UnsafeLocatorError(locator, result["reason"])
+    return result
 
 
 # ---------------------------------------------------------------------------

@@ -14,10 +14,11 @@ Flow:
   2. Apply migrations 01..34 ONLY -- the pre-hardening baseline. Assert the
      ledger holds exactly those rows.
   3. Populate a realistic pre-hardening dataset through the REAL service
-     write paths where practical (capture_procedure, capture_claim,
-     implementation_registry.register) plus direct INSERTs matching the
-     real shapes for the plan/graph/executions/evidence lineage. Record
-     ids + column values.
+     write paths where practical (capture_procedure, capture_claim), plus
+     direct INSERTs matching the actual migration-33 (implementations)
+     shape and the plan/graph/executions/evidence lineage where today's
+     writer has since grown a dependency on a later migration's column.
+     Record ids + column values.
   4. Apply migrations 35, 36, 37 via the REAL runner (scripts/migrate.py).
   5. Assert, on the upgraded DB:
        - no checksum drift; every migration applied; ledger count == the
@@ -328,7 +329,6 @@ class _FakeEmbedder:
 async def _seed_pre_hardening(dsn: str) -> dict:
     """Insert a realistic V1 dataset and return the recorded ids/values."""
     from app.db.session import create_pool
-    from app.execution import implementation_registry
     from app.services.claims import capture_claim
     from app.utils.ids import uuid7
 
@@ -447,15 +447,28 @@ async def _seed_pre_hardening(dsn: str) -> dict:
         assert claim_id, "capture_claim returned None -- task anchor did not resolve"
         rec["claim_id"] = claim_id
 
-        # --- implementation via the real registry write path ---
-        impl = await implementation_registry.register(
-            pool, name=f"up-e2e-{tag}-impl", kind="deterministic", provider="up_e2e",
-            created_by="up_e2e", description="pre-hardening implementation",
-            task_node_ids=[str(tn_id)],
+        # --- implementation, seeded through the actual V1 schema, not
+        # today's writer. `implementation_registry.register()` now always
+        # writes `execution_location` (added by migration 71, long after
+        # this test's own migration-33 baseline) -- same reasoning as
+        # capture_v1_procedure above, a historical upgrade fixture must
+        # not require a future column just to create a representative
+        # pre-hardening row. ---
+        impl_id = str(uuid7())
+        impl_row = await pool.fetchrow(
+            "INSERT INTO implementations (id, name, description, kind, provider, "
+            "created_by) VALUES ($1::uuid, $2, $3, $4, $5, $6) RETURNING id, name, provider",
+            impl_id, f"up-e2e-{tag}-impl", "pre-hardening implementation",
+            "deterministic", "up_e2e", "up_e2e",
         )
-        rec["impl_id"] = impl["id"]
-        rec["impl_name"] = impl["name"]
-        rec["impl_provider"] = impl["provider"]
+        await pool.execute(
+            "INSERT INTO implementation_tasks (id, implementation_id, task_node_id, created_by) "
+            "VALUES ($1::uuid, $2::uuid, $3::uuid, $4) ON CONFLICT (implementation_id, task_node_id) DO NOTHING",
+            str(uuid7()), impl_id, tn_id, "up_e2e",
+        )
+        rec["impl_id"] = str(impl_row["id"])
+        rec["impl_name"] = impl_row["name"]
+        rec["impl_provider"] = impl_row["provider"]
 
         # --- freeze the "before" snapshot of every recorded row ---
         rec["snapshot_before"] = await _snapshot(pool, rec)
@@ -561,32 +574,45 @@ def test_migration_upgrade_path_populated_v1_to_hardening():
         assert asyncio.run(_count(dsn)) == len(baseline_files)
 
         # --- phase 2: populate the pre-hardening dataset ---
-        os.environ.pop("DATABASE_URL", None)  # force explicit-dsn everywhere
-        rec = asyncio.run(_seed_pre_hardening(dsn))
+        # force explicit-dsn everywhere for the rest of THIS test only --
+        # must be restored afterward, or every test that runs later in
+        # the same pytest process (a bare full-suite invocation, not this
+        # file in isolation) starts raising KeyError('DATABASE_URL') the
+        # moment it does os.environ["DATABASE_URL"] directly. A real,
+        # previously-latent leak: it never manifested before because a
+        # broken, unrelated global pytest plugin crashed collection
+        # before any test could run in a full-suite invocation.
+        _saved_database_url = os.environ.get("DATABASE_URL")
+        os.environ.pop("DATABASE_URL", None)
+        try:
+            rec = asyncio.run(_seed_pre_hardening(dsn))
 
-        # --- phase 3: apply 35/36/37 via the REAL runner ---
-        up = _run_real_migrate(dsn)
-        assert up.returncode == 0, f"migrate.py upgrade run failed:\n{up.stdout}\n{up.stderr}"
-        for name in ("35_product_model.sql", "36_durable_execution_runs.sql",
-                     "37_execution_runs_terminal_chk_fix.sql",
-                     "38_candidates_no_action_justified.sql",
-                     "39_structured_skill_ingestion.sql",
-                     "40_ingested_artifact_extractor_identity.sql",
-                     "42_worker_ingestion_integrity.sql",
-                     "43_skill_job_payload_object.sql"):
-            assert f"applied   {name}" in up.stdout, up.stdout
+            # --- phase 3: apply 35/36/37 via the REAL runner ---
+            up = _run_real_migrate(dsn)
+            assert up.returncode == 0, f"migrate.py upgrade run failed:\n{up.stdout}\n{up.stderr}"
+            for name in ("35_product_model.sql", "36_durable_execution_runs.sql",
+                         "37_execution_runs_terminal_chk_fix.sql",
+                         "38_candidates_no_action_justified.sql",
+                         "39_structured_skill_ingestion.sql",
+                         "40_ingested_artifact_extractor_identity.sql",
+                         "42_worker_ingestion_integrity.sql",
+                         "43_skill_job_payload_object.sql"):
+                assert f"applied   {name}" in up.stdout, up.stdout
 
-        # --- phase 4: assertions on the upgraded DB ---
-        status = _run_real_migrate(dsn, "--status")
-        assert status.returncode == 0, status.stderr
-        assert "MISMATCH" not in status.stdout, status.stdout
-        assert "pending" not in status.stdout, status.stdout
-        applied_lines = [ln for ln in status.stdout.splitlines()
-                         if ln.startswith("applied   ")]
-        assert len(applied_lines) == len(all_files), status.stdout
-        assert asyncio.run(_count(dsn)) == len(all_files)
+            # --- phase 4: assertions on the upgraded DB ---
+            status = _run_real_migrate(dsn, "--status")
+            assert status.returncode == 0, status.stderr
+            assert "MISMATCH" not in status.stdout, status.stdout
+            assert "pending" not in status.stdout, status.stdout
+            applied_lines = [ln for ln in status.stdout.splitlines()
+                             if ln.startswith("applied   ")]
+            assert len(applied_lines) == len(all_files), status.stdout
+            assert asyncio.run(_count(dsn)) == len(all_files)
 
-        asyncio.run(_assert_after_upgrade(dsn, rec))
+            asyncio.run(_assert_after_upgrade(dsn, rec))
+        finally:
+            if _saved_database_url is not None:
+                os.environ["DATABASE_URL"] = _saved_database_url
 
 
 async def _assert_after_upgrade(dsn: str, rec: dict) -> None:

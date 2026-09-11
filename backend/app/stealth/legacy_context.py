@@ -55,7 +55,14 @@ def _render_context_md(
             belief = c.get("belief") or "-"
             lines.append(f"  {c['claim_id']} [{belief}] {c.get('statement') or ''}")
     else:
-        lines.append("  (no relevant global Claims retrieved for this objective)")
+        # `app.stealth.generator`'s real caller supplies this only when
+        # a page fault has already resolved global objects into scope
+        # (`_inject_global_claims`, run before this section reaches its
+        # final byte budget) -- the ratified architecture is pull
+        # (grep -> page fault), never automatic retrieval, so an empty
+        # section here honestly means "nothing faulted in yet", not
+        # "nothing relevant exists".
+        lines.append("  (no global Claims faulted into this working set yet -- see project_knowledge)")
     lines.append("")
 
     lines.append("[SELECTED PROCEDURES]")

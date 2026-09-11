@@ -234,7 +234,8 @@ async def backfill_representation(
                     "embedding_text_hash = $7, retrieval_document = $8, "
                     "retrieval_document_version = $9, retrieval_document_sha256 = $10, "
                     "domain_payload = jsonb_set(COALESCE(domain_payload, '{}'::jsonb), "
-                    "'{embedding}', $11::jsonb, true), updated_at = now() "
+                    "'{embedding}', $11::jsonb, true), updated_at = now(), "
+                    "retrieval_indexed_at = now() "  # G14: this row's index is now current
                     "WHERE id = $1",
                     proc["id"], to_pgvector(vec), model_id, embedder.dimension,
                     provider, "document", _text_sha256(doc), doc,
@@ -296,7 +297,8 @@ async def backfill_missing_embeddings(*, dry_run: bool = False, limit: int | Non
                 "embedding_dim = $4, embedding_provider = $5, embedding_input_type = $6, "
                 "embedding_text_hash = $7, retrieval_document = $8, "
                 "retrieval_document_version = $9, retrieval_document_sha256 = $10, "
-                "updated_at = now() WHERE id = $1",
+                "updated_at = now(), retrieval_indexed_at = now() "  # G14
+                "WHERE id = $1",
                 proc["id"], to_pgvector(vec), meta.model_id, meta.dimension, meta.provider,
                 meta.input_type, meta.text_sha256, doc, RETRIEVAL_DOCUMENT_VERSION,
                 retrieval_document_sha256(doc),

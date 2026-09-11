@@ -73,6 +73,14 @@ async def _cleanup(pool) -> None:
         "AND id NOT IN (SELECT procedure_row_id FROM execution_plans)",
         f"{NAME_PREFIX}%",
     )
+    # A row referenced by its own execution_plans survives the DELETE above
+    # (FK-safe by design) -- it must never be left visible to real retrieval
+    # across runs, so fall it back to an explicit fixture flag rather than
+    # relying on the procedures.is_engineering_fixture column default (same
+    # pattern test_mega_chain_e2e.py's own _cleanup uses).
+    await pool.execute(
+        "UPDATE procedures SET is_engineering_fixture = true WHERE name LIKE $1", f"{NAME_PREFIX}%",
+    )
     await pool.execute("DELETE FROM task_nodes WHERE name LIKE $1", f"{NAME_PREFIX}%")
     await pool.execute("DELETE FROM knowledge_nodes WHERE name LIKE $1", f"{NAME_PREFIX}%")
     await pool.execute("DELETE FROM observations WHERE label LIKE $1", f"{NAME_PREFIX}%")
@@ -181,6 +189,15 @@ def test_canonical_episodic_and_procedural_memory_lifecycle():
                 scope_type="project",
                 scope_entity_id=project_id,
                 steps=[{"order": 0, "goal": "do the demonstrated work"}],
+                # Deliberately real/visible (is_engineering_fixture defaults
+                # to False since db/57), not a fixture, for this test's own
+                # duration -- it exercises this exact procedure through
+                # find_applicable_procedures further down and must be able
+                # to see it. This row's own execution_plans keep _cleanup()
+                # from ever deleting it (FK-safe by design), so it survives
+                # every run of this test in the shared hosted DB -- _cleanup()
+                # below flips it to is_engineering_fixture=true as its very
+                # last step, only after this test is done needing it visible.
             )
             procedure_row_id = root["id"]
             procedure_id = root["procedure_id"]

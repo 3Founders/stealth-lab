@@ -3,7 +3,7 @@ Regression coverage for the T1-v3/B_default provider-crash root cause.
 
 Observed: T1-v3-B_default-42d351a0 / -08e41225 both died in ~5s with
 `ExceptionGroup: unhandled errors in a TaskGroup (1 sub-exception)`. Traced
-to `app/services/embeddings.py::Embedder._embed_via_chain` ->
+to `app/services/embeddings.py::Embedder._embed_configured_provider` ->
 `_embed_voyage`, raised from `runner.py:378`
 (`Embedder().embed_one(task_description, input_type="query")`) while inside
 the MCP client session's own nested anyio TaskGroups (`_open_client_session`),
@@ -122,7 +122,7 @@ async def test_before_the_fix_max_retries_zero_fails_on_the_first_rate_limit(mon
 async def test_exhausting_every_retry_still_raises_a_real_embeddingerror(monkeypatch):
     """The retry budget is BOUNDED, not infinite: a provider that never
     recovers within voyage_max_retries attempts must still fail loudly (as
-    an EmbeddingError, so _embed_via_chain's fall-through-to-next-provider
+    an EmbeddingError, so _embed_configured_provider's fall-through-to-next-provider
     and eventual all-providers-failed raise both still work), never hang
     and never silently return a wrong/empty result."""
     monkeypatch.setattr(settings, "voyage_max_retries", 3)
@@ -163,12 +163,17 @@ async def test_a_non_transient_failure_is_never_retried(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_missing_gemini_key_still_falls_through_to_voyage_unaffected(monkeypatch):
-    """The provider-chain fallback this fix must NOT touch: with no Gemini
-    key configured (this experiment's real environment), gemini still fails
-    fast with zero network calls and the chain still falls through to
-    Voyage -- which then recovers via its own retry, unaffected by any
-    change to Gemini's key-rotation path."""
+async def test_voyage_configured_as_the_provider_retries_unaffected_by_gemini_key_state(monkeypatch):
+    """_embed_configured_provider() deliberately never falls through
+    between providers (see that function's own docstring: mixing
+    embedding spaces silently is exactly the fabricated-signal pattern
+    B38 forbids) -- it dispatches to whichever ONE provider
+    `embedding_provider_chain` names first. With Voyage configured as
+    that provider, Gemini's own key state (present, absent, doesn't
+    matter) never enters the picture at all; Voyage's real retry/
+    backoff still recovers from a transient RateLimitError exactly as
+    the other tests in this file prove for `_embed_voyage` directly."""
+    monkeypatch.setattr(settings, "embedding_provider_chain", "voyage")
     monkeypatch.setattr(settings, "gemini_api_key", None)
     monkeypatch.setattr(settings, "gemini_api_keys", None)
     monkeypatch.setattr(settings, "voyage_max_retries", 5)
@@ -183,10 +188,33 @@ async def test_missing_gemini_key_still_falls_through_to_voyage_unaffected(monke
     monkeypatch.setattr(voyageai.Embedding, "acreate", fake, raising=True)
 
     embedder = Embedder(model="voyage-3-large", dimension=3)
-    vectors = await embedder._embed_via_chain(["find the largest function"], "query")
+    vectors = await embedder._embed_configured_provider(["find the largest function"], "query")
 
     assert vectors == [[0.4, 0.5, 0.6]]
     assert fake.calls == 2
+
+
+@pytest.mark.asyncio
+async def test_gemini_configured_with_no_key_fails_closed_never_silently_switches_provider(monkeypatch):
+    """The negative half of the same real contract: with Gemini
+    configured (the real default chain's first entry) and no key
+    present, the call must raise an honest EmbeddingError -- never
+    silently switch to Voyage's own, semantically different vector
+    space. Voyage's own retry mock is wired here too, precisely to
+    prove it is NEVER invoked."""
+    monkeypatch.setattr(settings, "embedding_provider_chain", "gemini,voyage")
+    monkeypatch.setattr(settings, "gemini_api_key", None)
+    monkeypatch.setattr(settings, "gemini_api_keys", None)
+    monkeypatch.setattr(settings, "embedding_dimension", 3)
+    monkeypatch.setattr(settings, "use_local_models", False)
+
+    fake = _FlakyThenOK(n_failures=0, exc_factory=lambda: None, vectors=[[0.4, 0.5, 0.6]])
+    monkeypatch.setattr(voyageai.Embedding, "acreate", fake, raising=True)
+
+    embedder = Embedder(model="voyage-3-large", dimension=3)
+    with pytest.raises(EmbeddingError, match="no Gemini API key configured"):
+        await embedder._embed_configured_provider(["find the largest function"], "query")
+    assert fake.calls == 0, "must never fall through to Voyage on a Gemini failure"
 
 
 if __name__ == "__main__":

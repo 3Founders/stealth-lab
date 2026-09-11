@@ -80,7 +80,7 @@ async def test_search_procedures_returns_real_matches(monkeypatch):
         return [0.1] * 1024
 
     async def fake_find(pool, *, goal_embedding, current_scope, require_verified, limit,
-                         invariant_bindings=None):
+                         invariant_bindings=None, **_ignored_kwargs):
         captured["require_verified"] = require_verified
         return [dict(PROCEDURE_ROW, _similarity_score=0.9)]
 
@@ -111,7 +111,7 @@ async def test_search_procedures_threads_invariant_bindings_through(monkeypatch)
     captured = {}
 
     async def fake_find(pool, *, goal_embedding, current_scope, require_verified, limit,
-                         invariant_bindings=None):
+                         invariant_bindings=None, **_ignored_kwargs):
         captured["invariant_bindings"] = invariant_bindings
         return [dict(PROCEDURE_ROW, _similarity_score=0.9)]
 

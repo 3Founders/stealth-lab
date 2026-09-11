@@ -218,7 +218,7 @@ def test_retrieve_precedent_fuses_a_verified_procedure_into_the_output(monkeypat
     async def fake_vector_candidates(pool, query_vec, scope):
         return []
 
-    async def fake_verified_procedure_candidates(pool, query_vec, scope):
+    async def fake_verified_procedure_candidates(pool, query_vec, access_scope=None):
         return [{"id": "proc-verified", "name": "pagination fix", "goal": "paginate", "similarity": 0.91}]
 
     monkeypatch.setattr(server_module, "Embedder", lambda: FakeEmbedder([0.1, 0.2]))
@@ -239,7 +239,7 @@ def test_retrieve_precedent_threshold_still_applies_to_fused_procedure_candidate
     async def fake_vector_candidates(pool, query_vec, scope):
         return []
 
-    async def fake_low_similarity_procedure(pool, query_vec, scope):
+    async def fake_low_similarity_procedure(pool, query_vec, access_scope=None):
         assert server_module.RETRIEVE_PRECEDENT_THRESHOLD > 0.10
         return [{"id": "proc-weak", "name": "weak match", "goal": "unrelated", "similarity": 0.10}]
 
@@ -259,7 +259,7 @@ def test_retrieve_precedent_threshold_still_applies_to_fused_procedure_candidate
 
 
 def test_retrieve_precedent_falls_back_when_both_candidate_sources_are_empty(monkeypatch):
-    async def fake_empty(pool, query_vec, scope):
+    async def fake_empty(pool, query_vec, access_scope=None):
         return []
 
     monkeypatch.setattr(server_module, "Embedder", lambda: FakeEmbedder([0.1, 0.2]))

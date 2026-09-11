@@ -34,6 +34,13 @@ async def _cleanup(pool, name_prefix: str) -> None:
         "AND id NOT IN (SELECT procedure_row_id FROM execution_plans)",
         f"{name_prefix}%",
     )
+    # A row referenced by its own execution_plans survives the DELETE above
+    # (FK-safe by design) -- it must never be left visible to real retrieval
+    # across runs, so fall it back to an explicit fixture flag rather than
+    # relying on the procedures.is_engineering_fixture column default.
+    await pool.execute(
+        "UPDATE procedures SET is_engineering_fixture = true WHERE name LIKE $1", f"{name_prefix}%",
+    )
 
 
 def test_valid_implementation_hint_survives_real_storage_round_trip():

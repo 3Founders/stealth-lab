@@ -618,7 +618,11 @@ async def test_compile_changed_source_produces_a_new_version(no_dup, monkeypatch
     assert len(pool.captured["sources"]) == 1
     assert len(pool.captured["ingestion_contexts"]) == 1
     assert len(pool.captured["observations"]) == 1
-    assert len(pool.captured["evidence"]) == 1
+    # G6: two evidence rows now -- one targeting the procedure (existing),
+    # one targeting the document Claim (new).
+    assert len(pool.captured["evidence"]) == 2
+    assert outcome.document_claim_id is not None
+    assert outcome.document_claim_evidence_id == "ev-2"
     ctx_id = str(pool.captured["ingestion_contexts"][0][0])
     assert outcome.ingestion_context_id == ctx_id
     # the new procedure version row was stamped with the context id
@@ -627,6 +631,11 @@ async def test_compile_changed_source_produces_a_new_version(no_dup, monkeypatch
     ev_params = pool.captured["evidence"][0]
     assert ev_params[1] == "proc-row-v2"          # target_id (arg $2 after id)
     assert ev_params[2] == 2                       # target_version (superseded version)
+    # the second evidence row targets the claim, no target_version param
+    claim_ev_params = pool.captured["evidence"][1]
+    assert claim_ev_params[1] == outcome.document_claim_id
+    claim_ev_sql = [s for _k, s, p in pool.calls if "INSERT INTO evidence" in s][1]
+    assert "'document', 'claim'" in claim_ev_sql
 
 
 @pytest.mark.asyncio
@@ -1188,7 +1197,8 @@ async def test_compile_captured_emits_the_full_canonical_chain(no_dup):
     assert len(pool.captured["sources"]) == 1
     assert len(pool.captured["ingestion_contexts"]) == 1
     assert len(pool.captured["observations"]) == 1
-    assert len(pool.captured["evidence"]) == 1
+    # G6: one evidence row for the procedure, one for the document Claim.
+    assert len(pool.captured["evidence"]) == 2
     assert pool.captured["task_nodes"] == []
 
     # sources upsert carries ON CONFLICT identity dedup
@@ -1196,16 +1206,39 @@ async def test_compile_captured_emits_the_full_canonical_chain(no_dup):
     assert "ON CONFLICT (source_type, locator, publisher) DO UPDATE" in src_sql
     assert "(xmax = 0) AS inserted" in src_sql
 
-    # evidence row: type 'document', supports, procedure target, modest strength
-    ev_sql = next(s for _k, s, _p in pool.calls if "INSERT INTO evidence" in s)
-    assert "'document', 'procedure'" in ev_sql
-    assert "'supports'" in ev_sql
+    # evidence rows: type 'document', supports; first targets the
+    # procedure (modest strength), second targets the document Claim.
+    ev_sqls = [s for _k, s, _p in pool.calls if "INSERT INTO evidence" in s]
+    assert "'document', 'procedure'" in ev_sqls[0]
+    assert "'supports'" in ev_sqls[0]
+    assert "'document', 'claim'" in ev_sqls[1]
+    assert "'supports'" in ev_sqls[1]
     ev = pool.captured["evidence"][0]
     assert ev[1] == outcome.version_row_id          # target_id
     assert ev[2] == 1                                # target_version (fresh capture)
     assert ev[3] == 0.3                              # strength_score
     assert ev[4] == "source_document_assertion"     # strength_method
     assert ev[5].startswith("skill_md:")            # independence_group by content hash
+
+    # G6: the claim-evidence row targets the document Claim, no
+    # target_version param (NULL is a SQL literal for a claim target).
+    assert outcome.document_claim_id is not None
+    assert outcome.document_claim_evidence_id == "ev-2"
+    claim_ev = pool.captured["evidence"][1]
+    assert claim_ev[1] == outcome.document_claim_id  # target_id
+    assert claim_ev[2] == 0.3                         # strength_score (no target_version slot)
+    assert claim_ev[3] == "source_document_assertion"
+    assert claim_ev[4].startswith("skill_md:")        # independence_group
+
+    # G5: the document claim carries a real, non-fabricated
+    # subject/predicate/object triple templated from artifact.uri + the
+    # same proposition the statement text uses (capture_claim folds them
+    # into the knowledge_nodes.properties dict via ClaimProperties).
+    claim_params = pool.captured["claims"][0]
+    props = next(v for v in claim_params if isinstance(v, dict) and "predicate" in v)
+    assert props["predicate"] == "documents_procedure_for"
+    assert props["subject"] == _skill_artifact().uri
+    assert props["object"]  # the proposition text, non-empty
 
     # follow-up ingestion_context_id stamps on procedures + observations
     ctx_id = str(pool.captured["ingestion_contexts"][0][0])

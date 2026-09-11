@@ -152,6 +152,20 @@ def render_root_idx(rows: Iterable[RootRow]) -> str:
     return text
 
 
+def standard_root_rows(*, has_exploration: bool = False) -> list[RootRow]:
+    """The canonical `index/root.idx` rows, shared by the generator and
+    the P3 page-fault merge so both produce a byte-identical router."""
+    rows = [
+        RootRow("claims", "claims.idx", "facts, preconditions, assumptions in scope"),
+        RootRow("procedures", "procedures.idx", "the selected procedure + steps"),
+        RootRow("implementations", "implementations.idx", "resolved executors/tools"),
+        RootRow("run", "run.idx", "current nodes, status, owners, blockers"),
+    ]
+    if has_exploration:
+        rows.append(RootRow("exploration", "exploration.idx", "open unknowns agents are chasing"))
+    return rows
+
+
 # --------------------------------------------------------------------------
 # markdown pages  (claims.md / procedures.md / implementations.md / run.md)
 # --------------------------------------------------------------------------
@@ -206,3 +220,36 @@ def render_md_page(title: str, blocks: list[MdBlock]) -> RenderedPage:
 
 def kv(key: str, value: object) -> str:
     return f"{key}: {_clean(value)}"
+
+
+def parse_md_page(text: str) -> list[MdBlock]:
+    """Parse a rendered page back into its blocks (heading + body lines).
+    Used by the P3 knowledge-page-fault merge to append to an existing
+    page without regenerating the run-scoped working set. `obj_id` is
+    recovered from the heading's last whitespace-free token that looks
+    like an id (falls back to the whole heading)."""
+    blocks: list[MdBlock] = []
+    cur: MdBlock | None = None
+    for line in text.splitlines():
+        if line.startswith("## "):
+            if cur is not None:
+                while cur.body and not cur.body[-1].strip():
+                    cur.body.pop()
+                blocks.append(cur)
+            heading = line[3:].strip()
+            cur = MdBlock(obj_id=_id_from_heading(heading), heading=heading, body=[])
+        elif line.startswith("# "):
+            continue  # page title
+        elif cur is not None:
+            cur.body.append(line)
+    if cur is not None:
+        while cur.body and not cur.body[-1].strip():
+            cur.body.pop()
+        blocks.append(cur)
+    return blocks
+
+
+def _id_from_heading(heading: str) -> str:
+    # every generator heading is "<TYPE> <stable-id> [extra...]"
+    toks = heading.split()
+    return toks[1] if len(toks) > 1 else heading

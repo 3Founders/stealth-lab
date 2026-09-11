@@ -96,11 +96,11 @@ def test_find_best_way_and_continue_run_both_refresh_the_real_stealth_projection
 
                 stealth_dir = os.path.join(repo_dir, ".stealth")
                 entries = set(os.listdir(stealth_dir))
-                # B35 STRICT CLOSURE: the compact trio is the literal,
-                # unconditional default -- find_best_way/continue_run
-                # (real production callers) never opt into the
-                # addressable-page extension, so no `index/` here.
-                assert entries == {"context.md", "run.json", "meta.json"}
+                # Ratified local-architecture decision (.scratch/core-a/
+                # local-architecture-decision.md): the compact trio is
+                # always present; the generator also writes the
+                # addressable pages + index/ + journal unconditionally.
+                assert {"context.md", "run.json", "meta.json"} <= entries
                 with open(os.path.join(stealth_dir, "run.json"), encoding="utf-8") as f:
                     run_json = json.load(f)
                 assert run_json["procedure_run_id"] == procedure_run_id

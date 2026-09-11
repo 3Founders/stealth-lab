@@ -36,6 +36,7 @@ HONEST SCOPE for this pass:
 """
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Optional
@@ -486,13 +487,18 @@ async def _fetch_candidate_pool(
             candidate_pool_size,
         )
 
-    cost_rows = await pool.fetch(
+    # These four legs are all independent reads (no shared mutable state,
+    # each its own connection off the pool) -- fired concurrently rather
+    # than as four sequential round trips, which otherwise dominates cost
+    # on exactly the case with the least real work to do (few/no real
+    # candidates -- test_empty_result_path_has_no_outsized_fixed_floor_cost).
+    cost_task = pool.fetch(
         f"SELECT id FROM procedures WHERE {_CANDIDATE_BASE_WHERE} "
         "ORDER BY jsonb_array_length(preconditions) ASC LIMIT $1",
         candidate_pool_size,
     )
     if embedding_model_id is None:
-        similarity_rows = await pool.fetch(
+        similarity_task = pool.fetch(
             f"SELECT id FROM procedures WHERE {_CANDIDATE_BASE_WHERE} "
             "AND embedding IS NOT NULL "
             "ORDER BY embedding <=> $1::vector ASC LIMIT $2",
@@ -502,17 +508,21 @@ async def _fetch_candidate_pool(
         # pgvector has no awareness of model provenance: vectors from two
         # embedding models may have the same dimension but no shared
         # semantic geometry. Only compare vectors from the query's space.
-        similarity_rows = await pool.fetch(
+        similarity_task = pool.fetch(
             f"SELECT id FROM procedures WHERE {_CANDIDATE_BASE_WHERE} "
             "AND embedding IS NOT NULL AND embedding_model_id = $2 "
             "ORDER BY embedding <=> $1::vector ASC LIMIT $3",
             to_pgvector(goal_embedding), embedding_model_id, candidate_pool_size,
         )
-    lexical_rows: list[asyncpg.Record] = []
-    if goal_text and goal_text.strip():
-        lexical_rows = await pool.fetch(
-            _PROC_LEXICAL_SQL, goal_text, candidate_pool_size,
-        )
+
+    async def _empty() -> list:
+        return []
+
+    has_goal_text = bool(goal_text and goal_text.strip())
+    lexical_task = (
+        pool.fetch(_PROC_LEXICAL_SQL, goal_text, candidate_pool_size)
+        if has_goal_text else _empty()
+    )
 
     # B37 STRICT CLOSURE: hierarchy.py's derived routing/index was real
     # and DB-tested for `procedures` but never wired into the real
@@ -525,16 +535,22 @@ async def _fetch_candidate_pool(
     # not-yet-clustered candidate. `None`/empty (no real hierarchy built
     # for `procedures` yet) is a complete no-op, byte-identical to
     # today's behavior.
-    if goal_text and goal_text.strip():
+    if has_goal_text:
         from app.services.hierarchy import coarse_route_safe_exclusions
-        excluded_ids = await coarse_route_safe_exclusions(
+        exclusions_task = coarse_route_safe_exclusions(
             pool, "procedures", goal_text, scope=access_scope,
         )
-        if excluded_ids:
-            excluded = {UUID(i) for i in excluded_ids}
-            cost_rows = [r for r in cost_rows if r["id"] not in excluded]
-            similarity_rows = [r for r in similarity_rows if r["id"] not in excluded]
-            lexical_rows = [r for r in lexical_rows if r["id"] not in excluded]
+    else:
+        exclusions_task = _empty()
+
+    cost_rows, similarity_rows, lexical_rows, excluded_ids = await asyncio.gather(
+        cost_task, similarity_task, lexical_task, exclusions_task,
+    )
+    if excluded_ids:
+        excluded = {UUID(i) for i in excluded_ids}
+        cost_rows = [r for r in cost_rows if r["id"] not in excluded]
+        similarity_rows = [r for r in similarity_rows if r["id"] not in excluded]
+        lexical_rows = [r for r in lexical_rows if r["id"] not in excluded]
 
     ranked_lists = [
         ([(r["id"], "procedures", i) for i, r in enumerate(cost_rows)], "cost"),
@@ -694,6 +710,17 @@ async def find_applicable_procedures(
     holds -- an empty list is the caller's real signal to fall back to
     generative planning (ticket 15), not an error.
 
+    INDEX FRESHNESS (G14 / spec B37): the vector + lexical legs are
+    advisory. Every surviving candidate is re-fetched from its live
+    `procedures` row (the `visibility_predicate` re-fetch below, and
+    `_resolve_live_procedure` on the MCP path) before the hard-constraint
+    cascade and before ranking, so an embedding that lags its source text
+    can never cause selection on outdated canonical content -- there is no
+    detached index to be stale against. `procedure_index_lag` (migration
+    72) + `app.services.index_freshness.get_index_lag` surface rows whose
+    embedding is behind canonical, for the resumable
+    `scripts/backfill_procedure_embeddings.py` rebuild.
+
     `candidate_pool_size`: ticket 15's match-cost-aware ordering ("order
     candidate procedures cheapest-to-match first") is preserved, but it is
     no longer the ONLY signal choosing which candidates are even fetched.
@@ -757,16 +784,33 @@ async def find_applicable_procedures(
     # timestamps in the cache keys and quietly defeat the memo.
     cascade_as_of = datetime.now(timezone.utc)
     state_cache = _new_state_cache()
-    survivors = []
-    for row in rows:
-        procedure = dict(row)
-        result = await check_hard_constraints(
+    # Each candidate's hard-constraint check is a pure read against a
+    # shared, deterministic snapshot (same pool/as_of/access_scope) with
+    # no ordering dependency between candidates -- fired concurrently
+    # rather than as one sequential round trip per candidate, which
+    # otherwise dominates cost at real corpus sizes (each check_hard_
+    # constraints call can itself be 1+ round trips via project_state()).
+    # asyncio.gather preserves input order, so survivors keeps exactly
+    # the fused cost/similarity/lexical order _fetch_candidate_pool
+    # produced -- required by the goal_embedding=None branch below,
+    # which returns survivors[:limit] unranked. state_cache is a plain
+    # dict shared across the concurrent calls: worst case on a shared
+    # cache key is a redundant project_state() call (a cache-miss race,
+    # not a correctness issue -- every concurrent caller computes the
+    # exact same deterministic result), never a wrong answer.
+    candidates = [dict(row) for row in rows]
+    check_results = await asyncio.gather(*[
+        check_hard_constraints(
             pool, procedure, current_scope=current_scope, access_scope=access_scope,
             require_verified=require_verified, invariant_bindings=invariant_bindings,
             as_of=cascade_as_of, state_cache=state_cache,
         )
-        if result.applicable:
-            survivors.append(procedure)
+        for procedure in candidates
+    ])
+    survivors = [
+        procedure for procedure, result in zip(candidates, check_results)
+        if result.applicable
+    ]
 
     if not survivors:
         return []
@@ -933,14 +977,20 @@ async def diagnose_candidates(
 
     cascade_as_of = datetime.now(timezone.utc)
     state_cache = _new_state_cache()
-    results: list[ApplicabilityResult] = []
-    for row in rows[:limit]:
-        procedure = dict(row)
-        result = await check_hard_constraints(
+    # Same concurrency reasoning as find_applicable_procedures above --
+    # independent per-candidate reads against one shared, deterministic
+    # snapshot, order preserved by asyncio.gather.
+    candidates = [dict(row) for row in rows[:limit]]
+    check_results = await asyncio.gather(*[
+        check_hard_constraints(
             pool, procedure, current_scope=current_scope, access_scope=access_scope,
             require_verified=require_verified, invariant_bindings=invariant_bindings,
             as_of=cascade_as_of, state_cache=state_cache,
         )
+        for procedure in candidates
+    ])
+    results: list[ApplicabilityResult] = []
+    for procedure, result in zip(candidates, check_results):
         result.procedure = procedure
         results.append(result)
     return results

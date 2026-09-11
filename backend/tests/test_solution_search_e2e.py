@@ -43,6 +43,9 @@ class FakeEmbedder:
                 return vec
         return self._default
 
+    def embedding_model_id(self) -> str:
+        return "fake:test_solution_search_e2e"
+
 
 def _run(coro):
     return asyncio.run(coro)
@@ -138,8 +141,15 @@ def test_search_solutions_blends_a_real_procedure_and_a_real_task():
             proc_hit = next(h for h in result["results"] if h["type"] == "procedure" and h["id"] == made["id"])
             task_hit = next(h for h in result["results"] if h["type"] == "task" and h["id"] == task_id)
 
+            from app.services.procedure_display import build_display_name
+
             assert proc_hit["applicable"] is True
-            assert proc_hit["title"] == proc_name
+            # `capture_procedure` auto-derives `display_name` from `name`
+            # (build_display_name) whenever the caller doesn't supply one
+            # explicitly, and `_base_result` prefers display_name for a
+            # procedure's title -- assert against the real function's own
+            # output, not a hand-duplicated title-casing rule.
+            assert proc_hit["title"] == build_display_name({"name": proc_name})
             assert task_hit["applicable"] is None
             assert task_hit["title"] == f"{prefix}-task roll out the release checklist"
 
@@ -221,10 +231,15 @@ def test_rest_solutions_search_route_end_to_end_against_real_db(monkeypatch):
                     "q": f"{prefix} drain the queue",
                     "limit": 100,
                 })
+                from app.services.procedure_display import build_display_name
+
                 assert resp.status_code == 200
                 body = resp.json()
                 names = [hit["title"] for hit in body["results"]]
-                assert proc_name in names
+                # Same display-name derivation as the in-process test above
+                # -- the REST route serializes through the same _base_result
+                # path, which prefers display_name over the raw name.
+                assert build_display_name({"name": proc_name}) in names
         finally:
             await _cleanup(pool, prefix)
             await pool.close()

@@ -131,6 +131,7 @@ async def capture_procedure(
     display_description: Optional[str] = None,
     display_metadata_version: Optional[str] = None,
     availability: str = "active",
+    is_engineering_fixture: bool = False,
 ) -> dict:
     """
     Inserts a new procedure, always starting `candidate` / `fresh` /
@@ -261,7 +262,7 @@ async def capture_procedure(
             embedding_provider, embedding_input_type, embedding_text_hash,
             retrieval_document, retrieval_document_version, retrieval_document_sha256,
             display_name, display_description, display_metadata_version, tenant_id,
-            availability
+            availability, is_engineering_fixture
         ) VALUES (
             $24::uuid, $40::uuid, $1, $2, $3::jsonb, $4::jsonb, $5::jsonb, $6::jsonb,
             $7::jsonb, $8::jsonb, $9::jsonb, $10::jsonb,
@@ -270,7 +271,7 @@ async def capture_procedure(
             $20, $21, $22::visibility_level, $23::vector,
             $25, $26, $27, $28, $29, $30, $31,
             $32, $33, $34, $35, $36, $37, $38::uuid,
-            $39::procedure_availability
+            $39::procedure_availability, $41
         )
         RETURNING id, procedure_id
         """,
@@ -317,6 +318,7 @@ async def capture_procedure(
         tenant_id,
         availability,
         str(procedure_id),
+        is_engineering_fixture,
     )
     return {"id": str(row["id"]), "procedure_id": str(row["procedure_id"])}
 

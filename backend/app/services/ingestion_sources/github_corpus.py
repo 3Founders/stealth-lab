@@ -54,18 +54,24 @@ _BACKTICK_PATH_RE = re.compile(
 def _default_http_get(url: str) -> tuple[int, bytes]:
     import httpx
 
+    from app.services.screening import assert_safe_locator
+
     headers = {
         "Accept": "application/vnd.github+json",
         "User-Agent": "stealthlab-skill-ingestion",
     }
     if os.environ.get("GITHUB_TOKEN"):
         headers["Authorization"] = f"Bearer {os.environ['GITHUB_TOKEN']}"
-    response = httpx.get(
-        url,
-        timeout=60,
-        follow_redirects=True,
-        headers=headers,
-    )
+    # SSRF guard (G3 tail): screen every locator + redirect hop.
+    assert_safe_locator(url)
+    current = url
+    for _ in range(4):
+        response = httpx.get(current, timeout=60, follow_redirects=False, headers=headers)
+        if response.status_code in (301, 302, 303, 307, 308) and "location" in response.headers:
+            current = str(httpx.URL(response.url).join(response.headers["location"]))
+            assert_safe_locator(current)
+            continue
+        return response.status_code, response.content
     return response.status_code, response.content
 
 

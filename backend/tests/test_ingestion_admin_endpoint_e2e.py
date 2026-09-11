@@ -40,6 +40,7 @@ import asyncio
 import json
 import os
 import uuid
+from datetime import datetime, timedelta, timezone
 
 import asyncpg
 import pytest
@@ -132,7 +133,17 @@ def test_admin_ingestion_endpoint_drives_real_traces_to_a_real_procedure_candida
             # -- 1. real collector .jsonl, genuine tool-call sequence.
             trace_dir = tmp_path / "traces"
             trace_dir.mkdir()
-            base_ts = "2026-09-02T10:00:00.000Z"
+            # Must fall inside the stand-in episode's window below
+            # (start_ts = now() - 1h, end_ts = NULL/unbounded) -- a fixed
+            # historical timestamp here is a time bomb: resolve_
+            # justification_episode's real WHERE clause requires
+            # start_ts <= event_ts, so a hardcoded date drifts out of that
+            # window as calendar time moves past it, silently making every
+            # promote_observation_to_claim job a no-op (no task_ids either)
+            # without ever raising -- exactly what happened here.
+            base_ts = (datetime.now(timezone.utc) - timedelta(minutes=30)).strftime(
+                "%Y-%m-%dT%H:%M:%S.%f"
+            )[:-3] + "Z"
             records = [
                 _record(
                     session_id=session_id, trace_id=trace_id, sequence=0,
@@ -176,13 +187,21 @@ def test_admin_ingestion_endpoint_drives_real_traces_to_a_real_procedure_candida
             )
 
             # -- 2. real episode row spanning the sequence (episode assembly
-            # stand-in, same precedent as the rest of this suite).
+            # stand-in, same precedent as the rest of this suite). Real
+            # episode assembly always supplies a declared goal; the real
+            # extraction quality gate (_PENDING_EXTRACTION_SQL, ingestion_
+            # jobs.py) hard-requires goal_text IS NOT NULL (sourced from
+            # metadata->>'declared_goal'/'goal'/'intent'/'user_goal', or
+            # agent_traces.intent as a last resort) -- an empty metadata
+            # object here is not a realistic stand-in and always fails
+            # that gate.
             episode_id = await pool.fetchval(
                 "INSERT INTO episodes (episode_type, content_ref, timestamp, metadata, "
                 "session_id, project_id, start_ts, end_ts) "
-                "VALUES ('trace', $1, now(), '{}'::jsonb, $2, NULL, "
+                "VALUES ('trace', $1, now(), $3::jsonb, $2, NULL, "
                 "now() - interval '1 hour', NULL) RETURNING id",
                 f"{TAG}#0:7", session_id,
+                {"declared_goal": f"{TAG}: fix the bug in mod_a.py and mod_b.py"},
             )
 
             os.environ["STEALTHLAB_TRACE_DIR"] = str(trace_dir)

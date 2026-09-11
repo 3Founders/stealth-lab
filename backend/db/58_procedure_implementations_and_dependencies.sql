@@ -57,6 +57,33 @@ CREATE TABLE IF NOT EXISTS procedure_implementations (
     t_invalid                       TIMESTAMPTZ
 );
 
+-- `procedure_implementations` also already exists, with an OLDER, simpler
+-- shape, from db/39_structured_skill_ingestion.sql's own earlier
+-- `CREATE TABLE IF NOT EXISTS` of the SAME table name (id, procedure_id,
+-- implementation_id, resource_path, created_by, t_created only) --
+-- unnoticed at the time because the shared dev DB already had the full
+-- shape below from a pre-migration ad-hoc creation, making BOTH 39's and
+-- this file's own CREATE TABLE no-ops there. On a genuinely fresh
+-- bootstrap (a fresh CI database, this repo's own disposable-Postgres
+-- migration-upgrade test), 39 runs first and wins, leaving this table
+-- missing every column below -- these ADD COLUMN IF NOT EXISTS calls are
+-- true no-ops everywhere this file's own CREATE TABLE already succeeded
+-- (this shared dev DB included), and bring migration 39's older shape up
+-- to this one wherever it did not.
+ALTER TABLE procedure_implementations
+    ADD COLUMN IF NOT EXISTS role TEXT NOT NULL DEFAULT 'primary',
+    ADD COLUMN IF NOT EXISTS implementation_version INTEGER,
+    ADD COLUMN IF NOT EXISTS implementation_version_constraint TEXT,
+    ADD COLUMN IF NOT EXISTS supported_steps JSONB NOT NULL DEFAULT '[]',
+    ADD COLUMN IF NOT EXISTS supported_capabilities JSONB NOT NULL DEFAULT '[]',
+    ADD COLUMN IF NOT EXISTS applicability JSONB NOT NULL DEFAULT '{}',
+    ADD COLUMN IF NOT EXISTS interface_binding JSONB NOT NULL DEFAULT '{}',
+    ADD COLUMN IF NOT EXISTS evidence_refs JSONB NOT NULL DEFAULT '[]',
+    ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'active',
+    ADD COLUMN IF NOT EXISTS ingestion_context_id UUID,
+    ADD COLUMN IF NOT EXISTS t_valid TIMESTAMPTZ NOT NULL DEFAULT now(),
+    ADD COLUMN IF NOT EXISTS t_invalid TIMESTAMPTZ;
+
 DO $$ BEGIN
     IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='procedure_implementations_role_check') THEN
         ALTER TABLE procedure_implementations ADD CONSTRAINT procedure_implementations_role_check

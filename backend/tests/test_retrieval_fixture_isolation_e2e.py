@@ -27,19 +27,22 @@ shared dev corpus are engineering smoke/demo/test data (5 x
 
 THIS TEST WAS ORIGINALLY WRITTEN TO FAIL against the code as it stood when
 this file was first added, pinning the real gap honestly rather than being
-written to pass. It now PASSES: db/39 (`procedures.is_engineering_fixture`,
-fail-closed DEFAULT true) + db/40 (explicit backfill classification) +
-`applicability.py::_CANDIDATE_BASE_WHERE`'s new `AND is_engineering_fixture
-= false` predicate together close the gap. This test's own fixture below
-does NOT pass `is_engineering_fixture=False` at capture time -- it relies
-entirely on the new column's fail-closed DEFAULT, which is the point: an
-ordinary `capture_procedure()` call that does not explicitly claim to be
-real knowledge is now conservatively excluded from default retrieval,
-exactly matching the production behavior a real (unmarked) test fixture
-gets. See .scratch/final_agent_experiment/corpus-eligibility-review.md for
-the full investigation and fix rationale. Do not weaken this assertion --
-if it ever starts failing again, that is a real regression of the fix, not
-something to loosen.
+written to pass. db/39 (`procedures.is_engineering_fixture`) + db/40
+(explicit backfill classification) + `applicability.py::
+_CANDIDATE_BASE_WHERE`'s `AND is_engineering_fixture = false` predicate
+together close the gap. This test's own fixture below originally relied
+entirely on the column's DEFAULT to become a fixture -- that DEFAULT was
+`true` (fail-closed) when this file was written, but db/57 (this session)
+deliberately flipped the column's DEFAULT to `false`, because that
+fail-closed default was also silently hiding ~1500-2700 real, bulk-
+ingested procedures that had never explicitly opted in as fixtures (see
+db/57's own docstring). Any caller that wants fixture semantics now must
+say so explicitly, this test's fixture included -- `is_engineering_
+fixture=True` is passed below rather than left to the (now permissive)
+column default. See .scratch/final_agent_experiment/corpus-eligibility-
+review.md for the original investigation. Do not weaken the assertion
+below -- if it ever starts failing again with the explicit flag still in
+place, that is a real regression of the fix, not something to loosen.
 """
 from __future__ import annotations
 
@@ -92,6 +95,7 @@ async def test_test_fixture_procedure_does_not_surface_as_normal_knowledge_in_us
             pool, name=f"regression-test-fixture-isolation-{run_id}", goal=goal_text,
             steps=[{"order": 0, "goal": "run linter"}],
             provenance="system_pending_review", scope_type="global", embedding=goal_vec,
+            is_engineering_fixture=True,
         )
         row_id = result["id"]
         for i in range(MIN_SUCCESSES_FOR_VERIFIED):

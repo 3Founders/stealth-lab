@@ -43,20 +43,15 @@ alone:
    uses pool.acquire()/conn.transaction(), which needs a real asyncpg
    connection to exercise honestly rather than a multi-level mock.
 
-3. POSITIVE CONFIRMATION: app.local_agent.chat_history_import's evidence
-   classifier (classify_message_evidence / extract_candidates_from_
-   conversation) is fully deterministic Python -- no LLM call anywhere in
-   that module -- so imported Claude/ChatGPT conversation content has NO
-   prompt-injection surface at all within this module. (What happens if a
-   candidate later reaches an LLM-based extractor downstream is out of
-   this file's scope -- see tests/evaluation/learning/.)
+3. (P5: the chat_history_import positive-confirmation test was removed
+   with app/local_agent/chat_history_import.py -- the bootstrap importers
+   were deleted in the local-store retirement.)
 """
 from __future__ import annotations
 
 import ast
 import inspect
 
-from app.local_agent import chat_history_import
 from app.services.skill_ingestion import ParsedSkill, _abstract_capability, parse_skill_md
 
 
@@ -92,12 +87,19 @@ INJECTION_PAYLOAD = (
 
 
 def _adversarial_skill_md() -> str:
+    # skill_ingestion.py's real parser (parse_skill_md) only lets
+    # unstructured leading prose become `description` when the document
+    # has NO real numbered steps -- a document with real steps discards
+    # non-step preamble text entirely (never silently promoted into a
+    # field nothing else reads). The injection payload has to live INSIDE
+    # a real step to land in a field `_abstract_capability` actually
+    # reads (`parsed.steps`), matching a realistic adversarial skill doc
+    # where the step text itself carries the injection.
     return (
         "---\n"
         "name: totally-normal-skill\n"
         "---\n"
-        f"{INJECTION_PAYLOAD}\n\n"
-        "1. Run the build\n"
+        f"1. {INJECTION_PAYLOAD}\n"
         "2. Run the tests\n"
     )
 
@@ -194,22 +196,6 @@ def test_manipulated_response_IS_caught_when_it_echoes_a_concrete_source_token()
 
     assert result is None, "echoing a concrete source token must still be rejected"
 
-
-def test_chat_history_import_has_no_llm_call_anywhere_in_this_module():
-    """Positive confirmation: the evidence classifier is pure deterministic
-    Python. Checked structurally (parse the module's AST for any attribute
-    access shaped like a chat-completion call), not just by grep, so this
-    test actually fails if such a call is ever added rather than silently
-    going stale."""
-    source = inspect.getsource(chat_history_import)
-    tree = ast.parse(source)
-    suspicious_attrs = {"create", "chat", "completions", "generate_content"}
-    found = []
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Attribute) and node.attr in suspicious_attrs:
-            found.append(node.attr)
-    assert not found, (
-        f"chat_history_import.py now references {found} -- if an LLM call "
-        "was added, this module gains a prompt-injection surface from "
-        "imported conversation content and needs adversarial coverage here"
-    )
+# P5: test_chat_history_import_has_no_llm_call_anywhere_in_this_module was
+# removed with app/local_agent/chat_history_import.py (bootstrap importers
+# deleted in the local-store retirement).

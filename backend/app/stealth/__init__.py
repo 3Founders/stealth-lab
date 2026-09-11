@@ -36,6 +36,32 @@ Nothing in this codebase reads `.stealth/` back and trusts it as truth;
 a missing or stale projection is always rehydrated from Postgres.
 """
 from app.stealth.errors import StealthProjectionError
+from app.stealth.exploration import (
+    close_exploration,
+    list_explorations,
+    open_exploration,
+)
+from app.stealth.faults import project_knowledge, read_faulted
 from app.stealth.generator import generate_projection
+from app.stealth.journal import (
+    SingleWriterLock,
+    StealthLockError,
+    append_event,
+    latest_seq,
+    read_events,
+)
 
-__all__ = ["StealthProjectionError", "generate_projection"]
+__all__ = [
+    "StealthProjectionError",
+    "generate_projection",
+    "project_knowledge",
+    "read_faulted",
+    "open_exploration",
+    "close_exploration",
+    "list_explorations",
+    "append_event",
+    "read_events",
+    "latest_seq",
+    "SingleWriterLock",
+    "StealthLockError",
+]

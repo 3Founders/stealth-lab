@@ -69,6 +69,14 @@ class OrderAwareFakePool:
             ranked = sorted(self._procedures.values(), key=lambda p: p["n_preconditions"])
             return [{"id": p["id"]} for p in ranked[:limit]]
 
+        # B37's real coarse_route_safe_exclusions wiring (applicability.py
+        # ::_fetch_candidate_pool) queries hierarchy.py::_fetch_roots
+        # whenever goal_text is given -- honestly no real hierarchy exists
+        # in this fake corpus, matching the real function's own "fewer
+        # than 2 real roots -> no-op" contract.
+        if "FROM procedures n WHERE n.t_invalid IS NULL" in normalized and "has_embedding" in normalized:
+            return []
+
         raise AssertionError(f"unexpected query shape: {normalized}")
 
 
