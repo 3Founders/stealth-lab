@@ -958,6 +958,34 @@ async def coarse_route(
     embedder = embedder or Embedder()
     roots = await _fetch_roots(pool, table, scope, tenant_scope=tenant_scope)
     embedded_roots = [r for r in roots if r["has_embedding"]]
+
+    # B37 STRICT CLOSURE (real-corpus finding, not a construction-time
+    # concern -- `_fetch_roots` itself stays unchanged; it is correctly
+    # reused by `build_hierarchy_for_table`'s own bottom-up clustering
+    # loop, where an unclustered LEAF being its own current "root" is
+    # exactly the right meaning). At QUERY time, "root" must mean a REAL
+    # top-of-branch internal node (this module's own docstring: "Internal
+    # is a STRUCTURAL property -- has outgoing OWNS/PARENT_OF edges"),
+    # never an ordinary unclustered leaf that merely happens to have no
+    # PARENT yet. Before any real `build_hierarchy_for_table(apply=True)`
+    # run over a table, EVERY leaf is rootless -- `_fetch_roots` returns
+    # the whole flat corpus, `len(embedded_roots) < 2` never protects a
+    # populated table, and the naive nearest-neighbor "winner" would be
+    # an arbitrary single leaf treated as if it were a legitimate branch
+    # (confirmed live against this session's own real, unclustered
+    # `knowledge_nodes`/`procedures` rows -- not a hypothetical). Filter
+    # to roots that actually OWN >=1 real child before ranking at all.
+    if embedded_roots:
+        owning_ids = {
+            r["id"] for r in await pool.fetch(
+                f"SELECT DISTINCT e.source_id AS id FROM edges e "
+                f"WHERE e.t_invalid IS NULL AND {_OWNS_FILTER} "
+                f"AND e.source_table = '{table}' AND e.target_table = '{table}' "
+                f"AND e.source_id = ANY($1::uuid[])",
+                [r["id"] for r in embedded_roots],
+            )
+        }
+        embedded_roots = [r for r in embedded_roots if r["id"] in owning_ids]
     if len(embedded_roots) < 2:
         return None
 
@@ -988,6 +1016,11 @@ async def coarse_route(
         return None
     best_root_id = scored[0]["id"]
 
+    leaf_ids = await _real_leaves_under(pool, table, best_root_id)
+    return leaf_ids or None
+
+
+async def _real_leaves_under(pool: asyncpg.Pool, table: str, root_id) -> list[str]:
     group_filter = _is_group_row_filter(table)
     leaves = await pool.fetch(
         f"""
@@ -1006,7 +1039,77 @@ async def coarse_route(
               AND e.source_id = n.id AND e.source_table = '{table}'
           )
         """,
-        best_root_id,
+        root_id,
     )
-    leaf_ids = [str(r["id"]) for r in leaves]
-    return leaf_ids or None
+    return [str(r["id"]) for r in leaves]
+
+
+async def coarse_route_safe_exclusions(
+    pool: asyncpg.Pool, table: str, query_text: str,
+    scope: Optional[AccessScope] = None, embedder: Optional[Embedder] = None,
+    tenant_scope: Optional[TenantScope] = None,
+) -> Optional[set[str]]:
+    """B37 STRICT CLOSURE (index-staleness-safe narrowing): `coarse_route`
+    itself answers "what belongs to the query's matched branch", which is
+    the wrong question for a caller that wants to RESTRICT a candidate
+    set -- a real hierarchy built at some point in the past is, by
+    construction, always potentially STALE relative to canonical rows
+    created since (V4 B37: "index freshness measurable... a stale index
+    may return candidates, but authoritative checks must occur against
+    canonical rows"). Confirmed live and load-bearing: a real vector/
+    lexical search over the full canonical table WILL surface a brand
+    new, still-uncategorized row (get_relevant_claims's own "must find
+    the claim it was just given" contract) -- filtering candidates down
+    to ONLY the matched branch's known members would silently drop that
+    real, current row purely because indexing hasn't caught up yet.
+
+    This function instead identifies rows SAFE to exclude: real leaves
+    confirmed to belong to a DIFFERENT real branch than the one the
+    query matched. A caller filters with `hit_id not in exclusions`,
+    never `hit_id in routed_ids` -- keeping every hit coarse_route
+    cannot positively place elsewhere (including any row never absorbed
+    into any real branch at all, by construction). Returns `None` under
+    the exact same honest conditions `coarse_route` does (fewer than 2
+    real branches exist yet -- nothing to safely exclude by).
+    """
+    scope = scope or AccessScope.unrestricted()
+    embedder = embedder or Embedder()
+    roots = await _fetch_roots(pool, table, scope, tenant_scope=tenant_scope)
+    embedded_roots = [r for r in roots if r["has_embedding"]]
+    if embedded_roots:
+        owning_ids = {
+            r["id"] for r in await pool.fetch(
+                f"SELECT DISTINCT e.source_id AS id FROM edges e "
+                f"WHERE e.t_invalid IS NULL AND {_OWNS_FILTER} "
+                f"AND e.source_table = '{table}' AND e.target_table = '{table}' "
+                f"AND e.source_id = ANY($1::uuid[])",
+                [r["id"] for r in embedded_roots],
+            )
+        }
+        embedded_roots = [r for r in embedded_roots if r["id"] in owning_ids]
+    if len(embedded_roots) < 2:
+        return None
+
+    query_vec = await embedder.embed_one(query_text, input_type="query")
+    from app.services.embeddings import to_pgvector
+    vec_str = to_pgvector(query_vec)
+    scored = await pool.fetch(
+        f"""
+        SELECT id FROM (
+            SELECT id, 1 - (embedding <=> $1::vector) AS similarity FROM {table}
+            WHERE id = ANY($2::uuid[]) AND t_invalid IS NULL
+        ) scored_roots
+        WHERE similarity <= 1
+        ORDER BY similarity DESC LIMIT 1
+        """,
+        vec_str, [r["id"] for r in embedded_roots],
+    )
+    if not scored:
+        return None
+    best_root_id = scored[0]["id"]
+
+    other_roots = [r["id"] for r in embedded_roots if r["id"] != best_root_id]
+    excluded: set[str] = set()
+    for other_root_id in other_roots:
+        excluded.update(await _real_leaves_under(pool, table, other_root_id))
+    return excluded

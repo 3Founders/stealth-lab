@@ -508,14 +508,39 @@ async def _fetch_candidate_pool(
             "ORDER BY embedding <=> $1::vector ASC LIMIT $3",
             to_pgvector(goal_embedding), embedding_model_id, candidate_pool_size,
         )
-    ranked_lists = [
-        ([(r["id"], "procedures", i) for i, r in enumerate(cost_rows)], "cost"),
-        ([(r["id"], "procedures", i) for i, r in enumerate(similarity_rows)], "relevance"),
-    ]
+    lexical_rows: list[asyncpg.Record] = []
     if goal_text and goal_text.strip():
         lexical_rows = await pool.fetch(
             _PROC_LEXICAL_SQL, goal_text, candidate_pool_size,
         )
+
+    # B37 STRICT CLOSURE: hierarchy.py's derived routing/index was real
+    # and DB-tested for `procedures` but never wired into the real
+    # find_applicable_procedures path. Uses `coarse_route_safe_
+    # exclusions` (never the inclusion-list `coarse_route` itself) --
+    # excludes only rows CONFIRMED to belong to a different real branch
+    # than the query matched, so a real hierarchy that only covers PART
+    # of the corpus (always true in practice -- indexing is necessarily
+    # behind live writes) can never silently drop a fresh, real,
+    # not-yet-clustered candidate. `None`/empty (no real hierarchy built
+    # for `procedures` yet) is a complete no-op, byte-identical to
+    # today's behavior.
+    if goal_text and goal_text.strip():
+        from app.services.hierarchy import coarse_route_safe_exclusions
+        excluded_ids = await coarse_route_safe_exclusions(
+            pool, "procedures", goal_text, scope=access_scope,
+        )
+        if excluded_ids:
+            excluded = {UUID(i) for i in excluded_ids}
+            cost_rows = [r for r in cost_rows if r["id"] not in excluded]
+            similarity_rows = [r for r in similarity_rows if r["id"] not in excluded]
+            lexical_rows = [r for r in lexical_rows if r["id"] not in excluded]
+
+    ranked_lists = [
+        ([(r["id"], "procedures", i) for i, r in enumerate(cost_rows)], "cost"),
+        ([(r["id"], "procedures", i) for i, r in enumerate(similarity_rows)], "relevance"),
+    ]
+    if lexical_rows:
         ranked_lists.append(
             ([(r["id"], "procedures", i) for i, r in enumerate(lexical_rows)], "lexical")
         )

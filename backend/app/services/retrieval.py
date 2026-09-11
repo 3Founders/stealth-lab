@@ -316,18 +316,31 @@ class HybridRetriever:
         lexical_hits = await self._lexical_search(query, top_k * 2)
 
         if coarse_route_table is not None and coarse_route_table in self._tables:
-            from app.services.hierarchy import coarse_route as _coarse_route
-            routed_ids = await _coarse_route(
+            # B37 STRICT CLOSURE (index-staleness-safe narrowing):
+            # `coarse_route_safe_exclusions` answers "which real leaves
+            # are CONFIRMED to belong to a different branch than the
+            # query matched" -- never "which leaves are IN the matched
+            # branch". A real hierarchy built at some point in the past
+            # is, by construction, potentially stale relative to rows
+            # created since; excluding a hit only when it is positively
+            # known to belong elsewhere keeps every hit the index simply
+            # hasn't absorbed yet (a brand new row is never a member of
+            # ANY branch, so it is never excluded) -- confirmed load-
+            # bearing by test_relevant_claims_e2e.py's own "must find the
+            # claim it was just given" contract against this table's real,
+            # only-partially-clustered production corpus.
+            from app.services.hierarchy import coarse_route_safe_exclusions
+            excluded_ids = await coarse_route_safe_exclusions(
                 self._pool, coarse_route_table, query,
                 scope=self._scope, embedder=self._embedder, tenant_scope=self._tenant_scope,
             )
-            if routed_ids is not None:
-                allowed = {UUID(i) for i in routed_ids}
+            if excluded_ids:
+                excluded = {UUID(i) for i in excluded_ids}
                 vector_hits = [
-                    h for h in vector_hits if h[1] != coarse_route_table or h[0] in allowed
+                    h for h in vector_hits if h[1] != coarse_route_table or h[0] not in excluded
                 ]
                 lexical_hits = [
-                    h for h in lexical_hits if h[1] != coarse_route_table or h[0] in allowed
+                    h for h in lexical_hits if h[1] != coarse_route_table or h[0] not in excluded
                 ]
 
         # Reciprocal Rank Fusion -- pure arithmetic, see fuse_rrf() above.

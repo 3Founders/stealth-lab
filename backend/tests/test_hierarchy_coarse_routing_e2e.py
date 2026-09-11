@@ -172,12 +172,21 @@ def test_coarse_route_and_index_freshness_over_a_real_two_branch_hierarchy():
     asyncio.run(_run())
 
 
-def test_coarse_route_returns_a_real_single_leaf_branch_honestly_not_a_fabricated_group():
-    """`coarse_route` never raises, and when the query's own exact-match
-    root happens to be an isolated, ungrouped leaf (no real hierarchy
-    exists over it), the honest answer is a real size-1 branch naming
-    exactly that leaf -- never a larger, fabricated set pretending a
-    grouping exists that does not."""
+def test_coarse_route_never_treats_an_isolated_ungrouped_leaf_as_its_own_branch():
+    """MCP hardening B37 STRICT CLOSURE (real-corpus finding): this
+    module's own docstring says "Internal is a STRUCTURAL property --
+    has outgoing OWNS/PARENT_OF edges" -- an isolated, ungrouped leaf
+    (no real hierarchy exists over it) has none, and must therefore
+    NEVER be treated as a legitimate routable branch on its own, even
+    when it wins top-1 exact-vector similarity against every other real
+    root. (Superseded behavior, confirmed live against this session's
+    own real, unclustered `knowledge_nodes` rows: before this fix,
+    `_fetch_roots`'s "no incoming PARENT_OF edge" test alone made every
+    ordinary ungrouped leaf indistinguishable from a real branch root,
+    so an isolated leaf could win and be returned as a fabricated
+    size-1 "branch" containing only itself -- silently treating "nothing
+    has been organized here yet" as "this is its own tiny organized
+    group", which is not the same real state.)"""
     async def _run():
         pool = await create_pool(DATABASE_URL, min_size=1, max_size=2)
         prefix = "hier-coarse-noroute-test"
@@ -188,14 +197,63 @@ def test_coarse_route_returns_a_real_single_leaf_branch_honestly_not_a_fabricate
                 pool, "knowledge_nodes", "anything", embedder=FakeEmbedder(_GROUP_A_VEC),
             )
             # An exact-match query vector against this leaf's own real
-            # embedding wins top-1 similarity outright (1.0, the
-            # maximum) -- the real, honest answer here is a size-1
-            # branch containing only this leaf, never anything larger.
-            if result is not None and leaf in result:
-                assert result == [leaf], (
-                    "an isolated, ungrouped leaf's own branch must be exactly "
-                    "itself, never inflated with unrelated real nodes"
-                )
+            # embedding would win top-1 similarity outright (1.0, the
+            # maximum) under the OLD root definition -- proving it is
+            # never even offered as a candidate root now, regardless of
+            # whatever real branch (if any) the query actually routes to.
+            assert result is None or leaf not in result, (
+                "an isolated, ungrouped leaf with no real children must "
+                "never be returned as if it were its own branch"
+            )
+        finally:
+            await _cleanup(pool, prefix)
+            await pool.close()
+
+    asyncio.run(_run())
+
+
+def test_coarse_route_safe_exclusions_never_excludes_a_fresh_unclustered_row():
+    """MCP hardening B37 STRICT CLOSURE (index-staleness-safe
+    narrowing): `coarse_route_safe_exclusions` -- the real function
+    `HybridRetriever.retrieve(coarse_route_table=...)` now calls instead
+    of treating `coarse_route`'s own inclusion list as ground truth --
+    must return only rows CONFIRMED to belong to the query's non-matched
+    real branch. A brand new leaf that was never added to either real
+    branch is a member of neither, so it must never appear in the
+    exclusion set (get_relevant_claims's own real, tested "must find the
+    claim it was just given" contract depends on exactly this)."""
+    async def _run():
+        pool = await create_pool(DATABASE_URL, min_size=1, max_size=2)
+        prefix = "hier-coarse-safeexcl-test"
+        try:
+            await _cleanup(pool, prefix)
+            a1 = await _insert_claim_node(pool, f"{prefix}-alpha-1", _GROUP_A_VEC)
+            a2 = await _insert_claim_node(pool, f"{prefix}-alpha-2", _GROUP_A_VEC)
+            b1 = await _insert_claim_node(pool, f"{prefix}-beta-1", _GROUP_B_VEC)
+            b2 = await _insert_claim_node(pool, f"{prefix}-beta-2", _GROUP_B_VEC)
+            await _build_owned_group(pool, f"{prefix}-group-alpha", _GROUP_A_VEC, [a1, a2])
+            await _build_owned_group(pool, f"{prefix}-group-beta", _GROUP_B_VEC, [b1, b2])
+
+            # Added AFTER both real branches were built -- never absorbed
+            # into either one's real membership.
+            fresh = await _insert_claim_node(pool, f"{prefix}-fresh-alpha-like", _GROUP_A_VEC)
+
+            from app.services.hierarchy import coarse_route_safe_exclusions
+
+            excluded = await coarse_route_safe_exclusions(
+                pool, "knowledge_nodes", "query about alpha", embedder=FakeEmbedder(_GROUP_A_VEC),
+            )
+            assert excluded is not None
+            assert b1 in excluded and b2 in excluded, (
+                "the OTHER real branch's own confirmed members must be excluded"
+            )
+            assert a1 not in excluded and a2 not in excluded, (
+                "the matched branch's own members must never be excluded"
+            )
+            assert fresh not in excluded, (
+                "a row never absorbed into any real branch must never be "
+                "excluded just because indexing has not caught up to it"
+            )
         finally:
             await _cleanup(pool, prefix)
             await pool.close()

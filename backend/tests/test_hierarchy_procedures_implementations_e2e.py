@@ -40,7 +40,7 @@ import pytest
 from app.db.session import create_pool
 from app.execution import implementation_registry
 from app.services.embeddings import to_pgvector
-from app.services.hierarchy import coarse_route, compute_index_freshness
+from app.services.hierarchy import coarse_route, coarse_route_safe_exclusions, compute_index_freshness
 from app.services.procedures import capture_procedure
 from app.utils.ids import uuid7
 
@@ -121,6 +121,70 @@ async def _build_owned_procedure_group(pool, name: str, embedding: list[float], 
             group_row_id, child_row_id, now, "test",
         )
     return str(group_row_id)
+
+
+def test_find_applicable_procedures_candidate_pool_excludes_only_the_confirmed_other_branch(monkeypatch):
+    """MCP hardening B37 STRICT CLOSURE: hierarchy.py's routing/index
+    for `procedures` was real and DB-tested in isolation, but never
+    actually invoked by the real production retrieval path
+    (find_applicable_procedures/`_fetch_candidate_pool`) -- this proves
+    the wiring, using exclusion-only semantics
+    (`coarse_route_safe_exclusions`) so a real-but-partial hierarchy
+    can never silently drop a fresh, not-yet-clustered candidate (the
+    exact live regression found and fixed for Claims retrieval in this
+    same pass)."""
+    import app.services.hierarchy as hierarchy_module
+
+    class _FakeEmbedder:
+        async def embed_one(self, text, input_type="document"):
+            return _GROUP_A_VEC
+
+    # `_fetch_candidate_pool` calls `coarse_route_safe_exclusions` with
+    # its own default (real) Embedder -- patch the class hierarchy.py
+    # resolves at call time so the "sharedtopic" query text routes
+    # deterministically to group A, exactly the existing hierarchy e2e
+    # tests' own real pattern.
+    monkeypatch.setattr(hierarchy_module, "Embedder", _FakeEmbedder)
+
+    async def _run():
+        pool = await create_pool(DATABASE_URL, min_size=1, max_size=2)
+        prefix = f"proc-test-hier37route-{uuid4().hex[:8]}"
+        try:
+            await _cleanup_procedures(pool, prefix)
+
+            a1 = await _capture_procedure(pool, f"{prefix}-sharedtopic-alpha", _GROUP_A_VEC)
+            a2 = await _capture_procedure(pool, f"{prefix}-alpha-2", _GROUP_A_VEC)
+            b1 = await _capture_procedure(pool, f"{prefix}-sharedtopic-beta", _GROUP_B_VEC)
+            b2 = await _capture_procedure(pool, f"{prefix}-beta-2", _GROUP_B_VEC)
+
+            await _build_owned_procedure_group(pool, f"{prefix}-group-alpha", _GROUP_A_VEC, [a1, a2])
+            await _build_owned_procedure_group(pool, f"{prefix}-group-beta", _GROUP_B_VEC, [b1, b2])
+
+            a1_row_id = str(await pool.fetchval(
+                "SELECT id FROM procedures WHERE procedure_id = $1::uuid", a1,
+            ))
+            b1_row_id = str(await pool.fetchval(
+                "SELECT id FROM procedures WHERE procedure_id = $1::uuid", b1,
+            ))
+
+            from app.services.applicability import _fetch_candidate_pool
+
+            rows = await _fetch_candidate_pool(
+                pool, _GROUP_A_VEC, candidate_pool_size=50, goal_text="sharedtopic",
+            )
+
+            row_ids = {str(r["id"]) for r in rows}
+            assert a1_row_id in row_ids, (
+                "the matched branch's own real member must never be excluded"
+            )
+            assert b1_row_id not in row_ids, (
+                "the OTHER real branch's confirmed member must be excluded"
+            )
+        finally:
+            await _cleanup_procedures(pool, prefix)
+            await pool.close()
+
+    asyncio.run(_run())
 
 
 def test_procedures_coarse_route_and_index_freshness_over_a_real_two_branch_hierarchy():
