@@ -117,5 +117,21 @@ atomic-renames.
   deleted local-lifecycle `test_second_user_global_reuse_e2e` /
   `test_ideal_v1_lifecycle_e2e`.
 
+### G12 addendum — the exploration write-back gap (closed)
+
+Found post-landing: P1–P4 built `exploration.md`/`open_exploration`/
+`close_exploration` as a purely local, journal-only mechanism — no MCP tool
+exposed it to an agent, and a `RESOLVED` exploration was never captured
+anywhere durable. That is exactly the "local learning → private global
+candidate" pipeline G12 is about, just for the *new* filesystem-based local
+architecture rather than the removed SQLite one. Closed: `close_exploration`
+now captures a real resolution as a private, owner-scoped Claim (real
+`agent_execution` Source provenance, honest subject/predicate/object from
+the already-known question/resolution — never fabricated), and
+`open_exploration`/`close_exploration` are now real MCP tools. The A13
+cloud-sync *tier* (a separate local↔hosted cursor protocol) is still
+deferred — this closes the local-write-back half of G12, not the
+cross-device-sync half.
+
 See `STEALTHLAB_INGESTION_HARDENING_AUDIT.md` § "LOCAL WORKING-SET ARCHITECTURE"
 for the running detail.

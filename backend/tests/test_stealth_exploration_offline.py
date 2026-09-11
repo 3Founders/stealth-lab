@@ -4,6 +4,10 @@ unknowns folded from the journal, pure filesystem, no database.
 """
 from __future__ import annotations
 
+import asyncio
+
+import pytest
+
 from app.stealth.exploration import (
     close_exploration,
     exploration_id,
@@ -23,10 +27,21 @@ def test_open_close_list_round_trip_via_journal(tmp_path):
     assert len(rows) == 1 and rows[0]["status"] == "ACTIVE"
     assert rows[0]["owner"] == "agent-C" and rows[0]["scope"] == "src/plugins/**"
 
-    close_exploration(ws, eid, status="RESOLVED", resolution="no, it is static")
+    claim_id = asyncio.run(close_exploration(ws, eid, status="RESOLVED", resolution="no, it is static"))
+    assert claim_id is None  # no pool given -> journal-only, no claim capture
     rows = list_explorations(ws)
     assert rows[0]["status"] == "RESOLVED" and rows[0]["resolution"] == "no, it is static"
     assert list_explorations(ws, include_closed=False) == []
+
+
+def test_close_without_pool_never_touches_the_database(tmp_path, monkeypatch):
+    """Pool-based claim capture is opt-in: omitting `pool` (every existing
+    caller) must not even import app.services.claims, let alone call it."""
+    ws = str(tmp_path)
+    eid = open_exploration(ws, owner="a", question="q", scope="s")
+    assert asyncio.run(close_exploration(ws, eid, status="RESOLVED", resolution="r")) is None
+    assert asyncio.run(close_exploration(ws, eid, status="ABANDONED", pool=object())) is None
+    assert asyncio.run(close_exploration(ws, eid, status="RESOLVED", resolution="", pool=object())) is None
 
 
 def test_id_is_stable_for_same_question_and_scope(tmp_path):

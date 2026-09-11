@@ -8,11 +8,25 @@ State lives in the journal (`exploration_opened` / `exploration_closed`
 events) and is folded on read, so `exploration.md` is rebuilt correctly
 on every projection regeneration -- it is never the source of truth, the
 journal is.
+
+G12 write-back: the journal alone is NOT durable knowledge -- it lives
+only in this one workspace's `.stealth/` directory. When an exploration
+resolves with a real answer, `close_exploration` (given a `pool`) also
+captures it as a private, owner-scoped Claim in global Postgres --
+otherwise a locally-resolved unknown is lost the moment the workspace is
+gone, and can never become a reviewable global candidate later (the
+existing `publication.py::publish_procedure` path is the promotion gate;
+this only makes the private candidate durable enough to reach it). The
+question/resolution are both already-known separate strings BEFORE this
+call -- `subject`/`predicate`/`object` on the Claim are honest structuring
+of them, not inferred. `pool` is optional and defaults to None so every
+existing offline caller (and this module's own pure journal semantics)
+is unaffected.
 """
 from __future__ import annotations
 
 import hashlib
-from typing import Any
+from typing import Any, Optional
 
 from app.stealth.format import IdxRow, MdBlock, kv, render_md_page
 from app.stealth.journal import append_event, read_events
@@ -39,13 +53,69 @@ def open_exploration(
     return eid
 
 
-def close_exploration(
+async def close_exploration(
     workspace_root: str, exploration_id: str, *, status: str = "RESOLVED",
     resolution: str = "", _lock_held: bool = False,
-) -> None:
+    pool: Optional[Any] = None,
+    created_by: Optional[str] = None,
+    owner_id: Optional[str] = None,
+    scope_type: str = "global",
+    scope_entity_id: Optional[str] = None,
+) -> Optional[str]:
+    """Close (or abandon) an exploration. Returns the durable Claim id if
+    one was captured, else None.
+
+    Journal write always happens (the local record). A private Claim is
+    ALSO captured when all of: `pool` is given, `status == "RESOLVED"`,
+    and `resolution` is non-empty -- an exploration closed as `ABANDONED`
+    or with an empty resolution records no claim (there is nothing learned
+    to make durable). The claim cites the exploration id in `properties`
+    so it is traceable back to this workspace's journal.
+    """
     append_event(
         workspace_root, _CLOSE, _lock_held=_lock_held,
         exploration_id=exploration_id, status=status, resolution=resolution,
+    )
+    if pool is None or status != "RESOLVED" or not resolution.strip():
+        return None
+
+    question = "-"
+    scope = "-"
+    for r in list_explorations(workspace_root):
+        if r["id"] == exploration_id:
+            question, scope = r["question"], r["scope"]
+            break
+
+    from app.services.claims import capture_claim
+    from app.services.sources import register_source
+
+    # capture_claim requires a real provenance anchor (B7) -- task_ids=[]
+    # alone is a silent no-op. A workspace exploration is a real, distinct
+    # provenance origin (an agent's own local investigation, not a document
+    # or a prior-library reference), so it gets a real Source row -- not a
+    # synthetic ref -- identity-deduped per workspace by register_source's
+    # own (source_type, locator, publisher) key, so repeated closes in the
+    # same workspace reuse one Source rather than growing a new row each time.
+    src = await register_source(
+        pool, source_type="agent_execution", locator=f"stealth-exploration:{workspace_root}",
+        provenance="company_ingested", created_by=created_by or owner_id or "stealth_exploration",
+        visibility="private", owner_id=owner_id, scope_type=scope_type, scope_entity_id=scope_entity_id,
+    )
+
+    return await capture_claim(
+        pool,
+        statement=f"{question} -> {resolution}",
+        task_ids=[],
+        source_ref=src["id"],
+        subject=question,
+        predicate="resolved_as",
+        object=resolution,
+        properties={"exploration_id": exploration_id, "scope": scope, "source": "stealth_exploration"},
+        created_by=created_by or owner_id or "stealth_exploration",
+        owner_id=owner_id,
+        visibility="private",
+        scope_type=scope_type,
+        scope_entity_id=scope_entity_id,
     )
 
 

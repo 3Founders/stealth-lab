@@ -3925,6 +3925,68 @@ async def project_knowledge(
     return json.dumps(result, default=str)
 
 
+@server.tool()
+async def open_exploration(repo_path: str, question: str, ctx: Context, scope: str = "-") -> str:
+    """
+    G12 -- record an active unknown an agent is investigating, so a second
+    agent working the same `.stealth/` workspace sees it and does not
+    independently re-investigate the same question (`grep ACTIVE
+    .stealth/index/exploration.idx`). Journal-only, local to `repo_path`;
+    reflected in `exploration.md` on the next projection regeneration
+    (`find_best_way` / `continue_run` / `project_knowledge`).
+
+    Returns the stable exploration id (`E-<hash>`, deterministic from
+    `question`+`scope` -- re-opening the same question re-uses it, never
+    duplicates it).
+    """
+    from app.stealth.exploration import open_exploration as _open_exploration
+
+    if not question.strip():
+        return "REFUSED: question must be non-empty"
+    owner = _resolve_caller_identity(fallback="stealth_exploration")
+    try:
+        eid = _open_exploration(repo_path, owner=owner, question=question.strip(), scope=scope or "-")
+    except OSError as exc:
+        return f"REFUSED: .stealth/ write failed -- {exc}"
+    return json.dumps({"exploration_id": eid, "status": "ACTIVE"})
+
+
+@server.tool()
+async def close_exploration(
+    repo_path: str, exploration_id: str, ctx: Context,
+    status: str = "RESOLVED", resolution: str = "",
+) -> str:
+    """
+    G12 -- close (or abandon) an exploration opened with `open_exploration`.
+
+    When `status="RESOLVED"` and `resolution` is non-empty, this ALSO
+    captures the answer as a durable, PRIVATE Claim in global Postgres
+    (`visibility='private'`, owned by the caller) -- a local unknown that
+    got answered is real knowledge, and the journal alone would lose it
+    the moment this workspace disappears. `status="ABANDONED"`, or a
+    `RESOLVED` with no `resolution`, records the closure but captures no
+    claim -- there is nothing learned to make durable. This does NOT
+    publish anything globally; the private Claim sits exactly where every
+    other private Claim does, reachable by the existing explicit-publish
+    path, never auto-promoted.
+    """
+    from app.stealth.exploration import close_exploration as _close_exploration
+
+    if status not in ("RESOLVED", "ABANDONED"):
+        return "REFUSED: status must be 'RESOLVED' or 'ABANDONED'"
+    pool = ctx.request_context.lifespan_context["pool"]
+    scope = _caller_access_scope()
+    owner = _resolve_caller_identity(fallback="stealth_exploration")
+    try:
+        claim_id = await _close_exploration(
+            repo_path, exploration_id, status=status, resolution=resolution,
+            pool=pool, created_by=owner, owner_id=scope.viewer_id,
+        )
+    except OSError as exc:
+        return f"REFUSED: .stealth/ write failed -- {exc}"
+    return json.dumps({"exploration_id": exploration_id, "status": status, "claim_id": claim_id})
+
+
 # ---------------------------------------------------------------------------
 # ADDITIVE read-only MCP Resources + Prompts surface. Registered here, after
 # every @server.tool() above, so resources.py can import the tool-layer

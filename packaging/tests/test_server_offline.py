@@ -27,6 +27,7 @@ def test_all_registered_tools():
     assert names == [
         "check_applicability",
         "check_procedure",
+        "close_exploration",          # G12: exploration resolution -> private Claim
         "compare_solutions",          # Final-V1 product model (§37)
         "continue_run",               # MCP hardening (B3/B9-B14): ProcedureRun resume/inspect
         "decide_decomposition",
@@ -48,6 +49,7 @@ def test_all_registered_tools():
         "inspect_run",                # Final-V1 durable retry/resume surface (§2)
         "list_problem_solutions",     # Final-V1 product model (§37)
         "list_task_implementations",
+        "open_exploration",           # G12: .stealth/ active-unknown tracking
         "project_knowledge",          # G13 P3: .stealth/ knowledge page-fault
         "propose_synthesis",
         "report_execution",
