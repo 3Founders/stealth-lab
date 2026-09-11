@@ -326,6 +326,7 @@ async def get_run_context(pool: asyncpg.Pool, run_id: str) -> Optional[dict[str,
                 # preserve compatibility paths until replacements are
                 # proven, don't rip out the old path on day one).
                 from app.services.procedure_implementation_bindings import (
+                    _UNAVAILABLE_IMPLEMENTATION_STATUSES,
                     get_bindings_for_procedure,
                 )
                 bindings = await get_bindings_for_procedure(
@@ -334,7 +335,13 @@ async def get_run_context(pool: asyncpg.Pool, run_id: str) -> Optional[dict[str,
                 )
                 step_bindings = [
                     b for b in bindings
-                    if not b["supported_steps"] or current["node_order"] in b["supported_steps"]
+                    if (not b["supported_steps"] or current["node_order"] in b["supported_steps"])
+                    # B38: an ACTIVE binding to a DISABLED/QUARANTINED/
+                    # DEPRECATED implementation is not a real recommendation
+                    # -- the same real availability check
+                    # `resolve_binding_for_step_with_reason` already
+                    # applies, never duplicated as a second definition.
+                    and b["implementation_status"] not in _UNAVAILABLE_IMPLEMENTATION_STATUSES
                 ]
                 if step_bindings:
                     recommended_implementations = [
@@ -354,6 +361,28 @@ async def get_run_context(pool: asyncpg.Pool, run_id: str) -> Optional[dict[str,
                         {"implementation_id": str(h["id"]), "kind": h.get("kind"), "source": "registry"}
                         for h in registry_hits
                     ]
+
+    # B38 STRICT CLOSURE: `resolve_binding_for_step_with_reason` computes
+    # the real, literal MISSING_IMPLEMENTATION ("no candidate names this
+    # role/step at all") vs IMPLEMENTATION_UNAVAILABLE ("candidates exist
+    # but are all disabled/quarantined/deprecated, or fail a real
+    # requirement") distinction, but had zero real callers -- decorative,
+    # not load-bearing. Surfaced here as an honest, typed signal ONLY
+    # when nothing above found a real recommendation (never overrides a
+    # real hit, never fabricated when one exists).
+    implementation_resolution_state = None
+    if current is not None and procedure is not None and not recommended_implementations:
+        from app.services.procedure_implementation_bindings import (
+            resolve_binding_for_step_with_reason,
+        )
+        _, reason = await resolve_binding_for_step_with_reason(
+            pool, procedure_id=procedure["procedure_id"], step_order=current["node_order"],
+            access_scope=access_scope,
+        )
+        if reason == "missing":
+            implementation_resolution_state = "MISSING_IMPLEMENTATION"
+        elif reason == "unavailable":
+            implementation_resolution_state = "IMPLEMENTATION_UNAVAILABLE"
 
     # B9-B13: is the current node actively waiting on a live child run
     # right now? Derived, not stored (migration 52's own rationale) --
@@ -480,6 +509,7 @@ async def get_run_context(pool: asyncpg.Pool, run_id: str) -> Optional[dict[str,
         "required_preconditions": required_preconditions,
         "relevant_claim_refs": relevant_claim_refs,
         "recommended_implementations": recommended_implementations,
+        "implementation_resolution_state": implementation_resolution_state,
         "required_checks": (procedure or {}).get("postconditions") or [],
         "allowed_branches": [],  # honest: stored procedures have no branching field (db/18)
         "blocking_unknowns": blocking_unknowns,

@@ -3635,6 +3635,14 @@ async def continue_run(procedure_run_id: str, ctx: Context, repo_path: Optional[
     recommended_implementations, required_checks, allowed_branches,
     blocking_unknowns, next_when_satisfied.
 
+    `implementation_resolution_state`: B38's literal typed vocabulary --
+    "MISSING_IMPLEMENTATION" (no candidate Implementation names this
+    role/step at all) or "IMPLEMENTATION_UNAVAILABLE" (candidates exist
+    but are all disabled/quarantined/deprecated, or fail a real
+    requirement) -- set ONLY when `recommended_implementations` came
+    back empty; `null` whenever a real recommendation was found (or
+    there is no current node to resolve one for at all).
+
     Read-only -- this tool does not advance the run. Report real progress
     via `report_execution`; retry a specific failed/blocked node via
     `retry_run_node`; resume after a crash via `resume_execution_run`.

@@ -228,6 +228,90 @@ def test_get_run_context_returns_none_for_missing_run():
     asyncio.run(_run())
 
 
+def test_get_run_context_reports_missing_implementation_when_no_binding_exists():
+    """MCP hardening B38 STRICT CLOSURE: `resolve_binding_for_step_with_
+    reason` computed the real MISSING_IMPLEMENTATION vs
+    IMPLEMENTATION_UNAVAILABLE distinction but had zero real callers.
+    Wired into `get_run_context`'s own `recommended_implementations`
+    assembly -- a procedure with no bindings at all, no compiled-plan
+    hint, and no legacy task-node registry link must surface the
+    literal MISSING_IMPLEMENTATION token, never a bare empty list with
+    no reason."""
+    async def _run():
+        pool = await create_pool(DATABASE_URL, min_size=1, max_size=2)
+        run_id = uuid4().hex[:8]
+        name = f"proc-test-runctx-missingimpl-{run_id}"
+        try:
+            procedure = await _make_verified_approved(
+                pool, name, steps=[{"order": 0, "goal": "do the only thing"}],
+            )
+            compiled_plan = await _compile_and_persist(pool, procedure, name)
+            pending_id = await create_pending_run(
+                pool, compiled_plan, procedure_id=procedure["procedure_id"],
+                procedure_version=procedure["version"], created_by="tester",
+            )
+
+            context = await get_run_context(pool, pending_id)
+            assert context["recommended_implementations"] == []
+            assert context["implementation_resolution_state"] == "MISSING_IMPLEMENTATION"
+        finally:
+            await _cleanup(pool, name)
+            await pool.close()
+
+    asyncio.run(_run())
+
+
+def test_get_run_context_reports_implementation_unavailable_when_the_only_binding_is_disabled():
+    """The other real half of the same distinction: a real binding
+    exists, but the only Implementation it names is disabled -- a
+    genuinely different real state from "missing" above, surfaced as
+    the literal IMPLEMENTATION_UNAVAILABLE token."""
+    async def _run():
+        from app.execution import implementation_registry
+        from app.services.procedure_implementation_bindings import (
+            activate_binding, link_implementation,
+        )
+
+        pool = await create_pool(DATABASE_URL, min_size=1, max_size=2)
+        run_id = uuid4().hex[:8]
+        name = f"proc-test-runctx-unavailimpl-{run_id}"
+        impl_name = f"impl-test-runctx-unavailimpl-{run_id}"
+        try:
+            procedure = await _make_verified_approved(
+                pool, name, steps=[{"order": 0, "goal": "do the only thing"}],
+            )
+            impl = await implementation_registry.register(
+                pool, name=impl_name, kind="tool", provider="test", created_by="tester",
+            )
+            await implementation_registry.activate(pool, impl["id"])
+            await implementation_registry.disable(pool, impl["id"])
+            binding = await link_implementation(
+                pool, procedure_id=procedure["procedure_id"], implementation_id=impl["id"],
+                role="primary", created_by="tester",
+            )
+            await activate_binding(pool, binding["id"])
+
+            compiled_plan = await _compile_and_persist(pool, procedure, name)
+            pending_id = await create_pending_run(
+                pool, compiled_plan, procedure_id=procedure["procedure_id"],
+                procedure_version=procedure["version"], created_by="tester",
+            )
+
+            context = await get_run_context(pool, pending_id)
+            assert context["recommended_implementations"] == []
+            assert context["implementation_resolution_state"] == "IMPLEMENTATION_UNAVAILABLE"
+        finally:
+            await pool.execute(
+                "DELETE FROM procedure_implementations WHERE implementation_id IN "
+                "(SELECT id FROM implementations WHERE name = $1)", impl_name,
+            )
+            await pool.execute("DELETE FROM implementations WHERE name = $1", impl_name)
+            await _cleanup(pool, name)
+            await pool.close()
+
+    asyncio.run(_run())
+
+
 def test_continue_run_mcp_tool_roundtrips_through_plan_only():
     """End-to-end through the real MCP surface: find_best_way(mode='plan_only')
     now returns a real procedure_run_id, and continue_run(procedure_run_id)
