@@ -1223,12 +1223,81 @@ async def _attach_observation_block_ref(
     """
     if not block_id:
         return
+    # BUG FIXED: this used to pass json.dumps({...}) here, but create_pool()
+    # already registers a JSONB codec that calls json.dumps on whatever's
+    # given -- double-encoding turned this into a JSON STRING, not an
+    # object, so `properties || <string>` (not an object) silently produced
+    # a malformed 2-element array (the original dict, plus a raw escaped-
+    # JSON string) instead of a merged dict. Every "first block" citation
+    # ever written by this function was consequently unusable by anything
+    # that reads properties.artifact_block_id. Pass the dict itself.
     await pool.execute(
         "UPDATE observations SET properties = properties || $2::jsonb "
         "WHERE id = $1::uuid",
         observation_id,
-        json.dumps({"artifact_id": str(artifact_id), "artifact_block_id": str(block_id)}),
+        {"artifact_id": str(artifact_id), "artifact_block_id": str(block_id)},
     )
+
+
+async def _emit_block_observations(
+    pool: asyncpg.Pool, artifact_block_ids: list[str], *,
+    ingestion_context_id: str, owner_id: Optional[str], procedure_name: str,
+) -> list[str]:
+    """G4 residual (audit doc): one Observation per artifact_block, each
+    citing its own block's id/index/span -- ADDITIVE to the existing
+    single whole-document Observation (_emit_document_observation) and
+    its root-block citation (_attach_observation_block_ref), never
+    replacing either. Closes "Observations per artifact_block / block-
+    span citation" -- previously only the FIRST block was ever cited
+    (from anywhere), by design, per _attach_observation_block_ref's own
+    docstring ("a single document-level Observation is intentionally
+    broad"); this gives every OTHER block a real, addressable citation
+    too, for claim/evidence chains that need to point at a specific
+    paragraph rather than "the document as a whole".
+
+    Re-fetches the persisted rows by id (rather than trusting the
+    caller's pre-persist `blocks` list to still line up 1:1) because
+    persist_artifact_blocks' own ON CONFLICT DO NOTHING can make a
+    re-ingest of byte-identical content return fewer/reordered ids than
+    were passed in -- the row is the only honest source of its own
+    block_index/block_type/span after persistence.
+
+    [] (never fabricated) when there are no blocks -- same as its caller."""
+    if not artifact_block_ids:
+        return []
+    rows = await pool.fetch(
+        "SELECT id, block_index, block_type, source_start, source_end "
+        "FROM artifact_blocks WHERE id = ANY($1::uuid[]) ORDER BY block_index",
+        artifact_block_ids,
+    )
+    observation_ids: list[str] = []
+    for row in rows:
+        obs_id = await persist_observation(
+            pool,
+            observation_type="document_block",
+            label=(
+                f"block {row['block_index']} ({row['block_type']}) "
+                f"of the source documenting '{procedure_name}'"
+            ),
+            extractor_kind="deterministic",
+            event_ids=[],
+            properties={
+                "artifact_block_id": str(row["id"]),
+                "block_index": row["block_index"],
+                "block_type": row["block_type"],
+                "source_start": row["source_start"],
+                "source_end": row["source_end"],
+            },
+            owner_id=owner_id,
+        )
+        # persist_observation has no ingestion_context_id kwarg (same
+        # reason _emit_document_observation's own follow-up UPDATE gives).
+        await pool.execute(
+            "UPDATE observations SET ingestion_context_id = $1::uuid WHERE id = $2::uuid",
+            ingestion_context_id, obs_id,
+        )
+        observation_ids.append(obs_id)
+    return observation_ids
 
 
 async def _emit_document_screening_and_claim(
@@ -1450,6 +1519,11 @@ class IngestOutcome:
     #     proposition, linked to the procedure version as role=RATIONALE
     #     (so a later change to it never auto-invalidates the procedure).
     artifact_block_ids: list[str] = field(default_factory=list)
+    # G4 residual: one Observation per artifact_block (see
+    # _emit_block_observations) -- additive to observation_id (the single
+    # whole-document Observation), never a replacement for it. [] when
+    # artifact_block_ids is [] (nothing to cite per-block).
+    block_observation_ids: list[str] = field(default_factory=list)
     screening_decision: Optional[str] = None
     screening_decision_ids: list[str] = field(default_factory=list)
     document_claim_id: Optional[str] = None
@@ -1918,6 +1992,18 @@ async def _persist_package_relations(
             )
         implementation_id = str(row["id"])
         implementation_ids.append(implementation_id)
+        # Which of the procedure's own ordered steps actually name this
+        # resource -- a plain text match against the resource's full repo
+        # path or bare filename (a step almost always references a script
+        # by one of those two spellings, e.g. "run scripts/scan.py" or
+        # "run scan.py"). [] (never fabricated) when no step mentions it;
+        # this is a real, if narrow, DAG-position signal -- NOT a claim
+        # that the step ONLY runs this implementation.
+        basename = resource.path.rsplit("/", 1)[-1]
+        supported_steps = [
+            i for i, step in enumerate(parsed.steps)
+            if resource.path in step or basename in step
+        ]
         await pool.execute(
             # Migration 52 dropped the old UNIQUE (procedure_id, implementation_id)
             # in favour of the partial identity index
@@ -1926,10 +2012,11 @@ async def _persist_package_relations(
             # omits `role`, so the row takes role='primary' by DEFAULT and the
             # conflict target must name all three columns of that index.
             "INSERT INTO procedure_implementations (id, procedure_id, implementation_id, "
-            "resource_path, created_by) VALUES (gen_random_uuid(), $1::uuid, $2::uuid, $3, $4) "
+            "resource_path, supported_steps, created_by) VALUES "
+            "(gen_random_uuid(), $1::uuid, $2::uuid, $3, $4::jsonb, $5) "
             "ON CONFLICT (procedure_id, implementation_id, role) WHERE t_invalid IS NULL "
             "DO NOTHING",
-            procedure_id, implementation_id, resource.path, created_by,
+            procedure_id, implementation_id, resource.path, supported_steps, created_by,
         )
     for dependency in package.dependencies:
         dependency_ref = dependency.target_skill_path or dependency.reference
@@ -1983,6 +2070,7 @@ async def compile_skill_artifact(
     invariants: Optional[list[dict]] = None,
     owner_id: Optional[str] = None,
     admission_llm_model: str = "gemma-4-31B-it",
+    capability_llm_model: str = "gemma-4-31B-it",
 ) -> IngestOutcome:
     """Compile one SourceArtifact into the substrate. See the section
     comment above for the full contract. Never raises for an
@@ -2092,7 +2180,8 @@ async def compile_skill_artifact(
     resolved_scope_type = "entity" if domain else "global"
 
     capability_statement = (
-        None if (injection_signals or quarantined) else _abstract_capability(client, parsed)
+        None if (injection_signals or quarantined)
+        else _abstract_capability(client, parsed, model=capability_llm_model)
     )
     capability_abstained = capability_statement is None
     extractor_version = (
@@ -2305,6 +2394,10 @@ async def compile_skill_artifact(
                 pool, observation_id=observation_id, artifact_id=artifact_id,
                 block_id=artifact_block_ids[0] if artifact_block_ids else None,
             )
+            block_observation_ids = await _emit_block_observations(
+                pool, artifact_block_ids, ingestion_context_id=ingestion_context_id,
+                owner_id=owner_id, procedure_name=parsed.name,
+            )
             await complete_ingestion_context(
                 pool, ingestion_context_id, status="completed",
             )
@@ -2328,6 +2421,7 @@ async def compile_skill_artifact(
                 document_evidence_id=document_evidence_id,
                 document_claim_evidence_id=document_claim_evidence_id,
                 artifact_block_ids=artifact_block_ids,
+                block_observation_ids=block_observation_ids,
                 screening_decision=screening_decision,
                 screening_decision_ids=screening_decision_ids,
                 document_claim_id=document_claim_id,
@@ -2493,6 +2587,10 @@ async def compile_skill_artifact(
         pool, observation_id=observation_id, artifact_id=artifact_id,
         block_id=artifact_block_ids[0] if artifact_block_ids else None,
     )
+    block_observation_ids = await _emit_block_observations(
+        pool, artifact_block_ids, ingestion_context_id=ingestion_context_id,
+        owner_id=owner_id, procedure_name=parsed.name,
+    )
     await complete_ingestion_context(pool, ingestion_context_id, status="completed")
     return IngestOutcome(
         status="captured",
@@ -2508,6 +2606,7 @@ async def compile_skill_artifact(
         implementation_ids=implementation_ids,
         dependency_count=dependency_count,
         artifact_block_ids=artifact_block_ids,
+        block_observation_ids=block_observation_ids,
         screening_decision=screening_decision,
         screening_decision_ids=screening_decision_ids,
         document_claim_id=document_claim_id,
@@ -2534,6 +2633,7 @@ async def run_skill_ingestion(
     owner_id: Optional[str] = None,
     limit: Optional[int] = None,
     admission_llm_model: str = "gemma-4-31B-it",
+    capability_llm_model: str = "gemma-4-31B-it",
 ) -> dict:
     """Drive one source adapter end to end and record a manifest.
 
@@ -2598,6 +2698,10 @@ async def run_skill_ingestion(
         "screening_quarantine": 0,
         "screening_reject": 0,
         "document_claims": 0,
+        # G4 residual: one Observation per artifact_block (block-span
+        # citation), additive to `observation_id` (the single whole-
+        # document Observation every accepted artifact already gets).
+        "block_observations": 0,
     }
     outcomes: list[IngestOutcome] = []
 
@@ -2611,6 +2715,7 @@ async def run_skill_ingestion(
                 pool, artifact, embedder=embedder, client=client, domain=domain,
                 run_id=run_id, created_by=created_by, invariants=invariants,
                 owner_id=owner_id, admission_llm_model=admission_llm_model,
+                capability_llm_model=capability_llm_model,
             )
         except Exception as exc:  # noqa: BLE001 -- one bad artifact must not
             # sink the run; the failure is counted and surfaced.
@@ -2653,6 +2758,7 @@ async def run_skill_ingestion(
         if outcome.document_evidence_id:
             metrics["document_evidence"] += 1
         metrics["artifact_blocks"] += len(outcome.artifact_block_ids)
+        metrics["block_observations"] += len(outcome.block_observation_ids)
         if outcome.screening_decision == "QUARANTINE":
             metrics["screening_quarantine"] += 1
         elif outcome.screening_decision == "REJECT":

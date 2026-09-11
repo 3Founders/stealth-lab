@@ -603,7 +603,16 @@ def test_migration_upgrade_path_populated_v1_to_hardening():
             status = _run_real_migrate(dsn, "--status")
             assert status.returncode == 0, status.stderr
             assert "MISMATCH" not in status.stdout, status.stdout
-            assert "pending" not in status.stdout, status.stdout
+            # A bare substring check on "pending" is a real false positive
+            # once a migration file's own NAME legitimately contains that
+            # word (e.g. db/74_pending_global_verifications.sql, applied
+            # and reported as "applied   74_pending_..." -- exactly the
+            # same status.stdout the "MISMATCH" check above scans, but
+            # this one needs the line-prefix precision `applied_lines`
+            # below already uses, not a bare substring).
+            assert not any(
+                ln.startswith("pending   ") for ln in status.stdout.splitlines()
+            ), status.stdout
             applied_lines = [ln for ln in status.stdout.splitlines()
                              if ln.startswith("applied   ")]
             assert len(applied_lines) == len(all_files), status.stdout

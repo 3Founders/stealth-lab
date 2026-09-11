@@ -110,6 +110,36 @@ class FakePool:
         self.updates.append((self._flat(sql), a))
         return "UPDATE 1"
 
+    # G24 residual: publish_procedure now writes a pending_global_
+    # verifications row via tenant_transaction(), which needs a real
+    # pool.acquire() -> conn.transaction() -> conn.execute(...) chain.
+    # The "conn" this yields is this same FakePool -- its own execute()
+    # above already accepts anything (permissive, unlike fetchrow/fetch).
+    def acquire(self):
+        return _AcquireCM(self)
+
+    def transaction(self):
+        return _NoopTxn()
+
+
+class _NoopTxn:
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc):
+        return False
+
+
+class _AcquireCM:
+    def __init__(self, conn):
+        self._conn = conn
+
+    async def __aenter__(self):
+        return self._conn
+
+    async def __aexit__(self, *exc):
+        return False
+
 
 def _proc(**over):
     row = {

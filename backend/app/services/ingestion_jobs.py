@@ -93,8 +93,32 @@ async def resolve_trace_ingestion_context(
     )
 
 
+def _general_compute_client() -> Optional[Any]:
+    """One shared, general-purpose chat-completions client for the
+    capability-abstraction / admission-escalation model calls this worker
+    makes -- General Compute (`app.debate.panel.OpenAICompatAgent`'s same
+    OpenAI-compatible construction) is this codebase's existing named
+    tier for "some general-purpose hosted model," reused here rather than
+    inventing a second provider concept. Returns None (never fails the
+    ingestion job) if General Compute isn't configured -- compile_skill_
+    artifact's own client=None path already handles that by honestly
+    abstaining from capability-statement generation, exactly as it did
+    before this function existed."""
+    from app.config import settings
+
+    if not settings.general_compute_api_key or not settings.general_compute_judge_model:
+        return None
+    from openai import OpenAI
+
+    return OpenAI(
+        api_key=settings.general_compute_api_key,
+        base_url=settings.general_compute_base_url,
+    )
+
+
 async def handle_ingest_skill_package(pool: asyncpg.Pool, payload: dict) -> None:
     """Ingest exactly one immutable skill package, retryably and idempotently."""
+    from app.config import settings
     from app.services.embeddings import Embedder
     from app.services.ingestion_sources import GitHubSkillCorpusSource
     from app.services.ingestion_sources.base import SourceRef
@@ -124,9 +148,13 @@ async def handle_ingest_skill_package(pool: asyncpg.Pool, payload: dict) -> None
         uri=uri, repository=adapter.slug, path=path, commit=commit,
         source_id=spec.id,
     ))
+    client = _general_compute_client()
     await compile_skill_artifact(
         pool, artifact, embedder=Embedder(rate_limit_pool=pool),
         created_by="structured_skill_ingestion_worker",
+        client=client,
+        admission_llm_model=settings.general_compute_judge_model or "gemma-4-31B-it",
+        capability_llm_model=settings.general_compute_judge_model or "gemma-4-31B-it",
     )
 
 log = logging.getLogger(__name__)
