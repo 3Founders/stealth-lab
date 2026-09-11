@@ -138,6 +138,23 @@ def test_find_best_way_child_run_carries_correct_parent_linkage():
             assert len(child_events) == 1
             assert child_events[0]["payload"]["child_run_id"] == child_run_id
             assert child_events[0]["node_order"] == 0
+
+            # MCP hardening B15: this codebase's ONLY canonical
+            # "A depends_on B" composition mechanism is a step's own
+            # inline `subprocedure_ref` (app/execution/procedure_graph.py
+            # -- no separate edges/depends_on table exists for
+            # procedures). A dynamic RUNTIME child selection above must
+            # never write one -- the parent's own authored `steps` must
+            # be byte-for-byte the same JSONB this test itself supplied,
+            # proving the runtime relationship (parent_run_id/root_run_id/
+            # child_run_created, asserted above) stayed entirely separate
+            # from the canonical procedure DEFINITION.
+            parent_steps = await pool.fetchval(
+                "SELECT steps FROM procedures WHERE procedure_id = $1::uuid AND t_invalid IS NULL",
+                parent_payload["procedure_id"],
+            )
+            assert parent_steps == [{"order": 0, "goal": "reserve capacity"}]
+            assert "subprocedure_ref" not in json.dumps(parent_steps)
         finally:
             await _cleanup(pool, parent_name)
             await _cleanup(pool, child_name)

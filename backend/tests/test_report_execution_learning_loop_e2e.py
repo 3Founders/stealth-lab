@@ -54,9 +54,9 @@ async def _cleanup(pool, name_prefix: str) -> None:
     )
 
 
-async def _make_verified_approved(pool, name: str) -> dict:
+async def _make_verified_approved(pool, name: str, *, goal: str | None = None) -> dict:
     result = await capture_procedure(
-        pool, name=name, goal=name, provenance="system_pending_review", scope_type="global",
+        pool, name=name, goal=goal or name, provenance="system_pending_review", scope_type="global",
     )
     row_id = result["id"]
     for i in range(MIN_SUCCESSES_FOR_VERIFIED):
@@ -143,6 +143,56 @@ def test_report_execution_with_observations_extracts_a_private_candidate():
             )
             bad_payload = json.loads(bad_result)
             assert "skipped" in bad_payload["extraction"]
+        finally:
+            await _cleanup(pool, name)
+            await pool.close()
+
+    asyncio.run(_run())
+
+
+def test_report_execution_does_not_duplicate_the_procedure_it_just_reused():
+    """MCP hardening B18 STRICT CLOSURE: V4's literal "if an existing
+    procedure was reused, do not automatically duplicate it". `procedure`
+    (resolved from the caller's own `procedure_id`) IS the procedure this
+    call is reporting an outcome for -- by construction, always a real
+    reuse. Passing `task_description` equal to that SAME procedure's own
+    `goal` (DeterministicExtractor.extract sets `extracted.goal =
+    evidence.goal_text` verbatim -- confirmed real, not assumed) drives
+    the extracted candidate's own goal to overlap 1.0 with the reused
+    procedure -- `extract_procedure`'s new `reused_procedure_goal` check
+    must refuse to persist a near-duplicate, never silently create one."""
+    async def _run():
+        pool = await create_pool(DATABASE_URL, min_size=1, max_size=2)
+        run_id = uuid4().hex[:8]
+        name = f"proc-test-reportlearn-nodup-{run_id}"
+        try:
+            reused_goal = f"deploy the canary release for probe {run_id}"
+            procedure = await _make_verified_approved(pool, name, goal=reused_goal)
+            ctx = _FakeContext(pool)
+            observations = json.dumps([
+                {"observation_type": "file_touched", "label": "deploy/canary.yaml",
+                 "properties": {"file_path": "deploy/canary.yaml"}},
+            ])
+            tool_sequence = json.dumps(["read_file", "edit_file", "run_tests"])
+            result = await srv.report_execution(
+                procedure_id=str(procedure["procedure_id"]), success=True,
+                context_key=f"ctx-nodup-{run_id}", ctx=ctx,
+                observations_json=observations, tool_sequence_json=tool_sequence,
+                task_description=reused_goal,
+            )
+            payload = json.loads(result)
+            assert "skipped" in payload["extraction"], (
+                "reporting success for the SAME procedure just reused must "
+                "never fabricate a duplicate candidate"
+            )
+            assert "B18_no_auto_duplicate" in payload["extraction"]["skipped"]
+
+            # No new row was actually created under this name prefix.
+            dup_count = await pool.fetchval(
+                "SELECT count(*) FROM procedures WHERE goal = $1 AND procedure_id != $2::uuid",
+                reused_goal, procedure["procedure_id"],
+            )
+            assert dup_count == 0
         finally:
             await _cleanup(pool, name)
             await pool.close()

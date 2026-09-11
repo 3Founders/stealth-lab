@@ -1844,6 +1844,9 @@ async def find_best_way(task_description: str, ctx: Context,
             # set alongside it for the same reason (visibility_predicate
             # matches private rows via owner_id = viewer_id).
             visibility="private", owner_id=_resolve_caller_identity(fallback="find_best_way_extract"),
+            # B18 fix: `matched_procedure` (when set) is the real
+            # procedure this run just reused -- never auto-duplicate it.
+            reused_procedure_goal=matched_procedure["goal"] if matched_procedure else None,
         )
         if extraction.procedure_id:
             extraction_note = (
@@ -2815,6 +2818,10 @@ async def report_execution(procedure_id: str, success: bool, context_key: str, c
                 # own tier-2 extraction call -- learning from a host-
                 # executed run never implicitly goes public.
                 visibility="private", owner_id=owner,
+                # B18: `procedure` is ALWAYS the real, already-existing
+                # procedure this call is reporting an outcome for -- never
+                # auto-duplicate it just because this episode succeeded.
+                reused_procedure_goal=procedure["goal"],
             )
             response["extraction"] = (
                 {"procedure_id": str(extraction.procedure_id)} if extraction.procedure_id

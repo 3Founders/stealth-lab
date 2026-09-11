@@ -32,6 +32,7 @@ from app.services.procedure_extraction.strategies import (
 )
 from app.services.procedure_extraction.validators import ValidationContext, validate
 from app.services.procedures import capture_procedure
+from app.services.reuse_detection import LEXICAL_FULL_MATCH_THRESHOLD, _lexical_overlap
 
 _DETERMINISTIC_TAG = "deterministic_v1@1"
 
@@ -64,6 +65,7 @@ async def extract_procedure(
     owner_id: Optional[str] = None,
     visibility: str = "public",
     dry_run: bool = False,
+    reused_procedure_goal: Optional[str] = None,
 ) -> ExtractionResult:
     """
     The full pipeline: collect evidence, select an extractor (registry,
@@ -83,6 +85,19 @@ async def extract_procedure(
     `dry_run=True`: runs source -> strategy -> validators and returns
     the candidate WITHOUT persisting -- the loop needed to iterate on
     an extractor's prompt/config without polluting the procedures table.
+
+    `reused_procedure_goal`: B18's literal "if an existing procedure was
+    reused, do not automatically duplicate it" -- the caller's own real
+    signal that this episode executed an ALREADY-KNOWN procedure (its
+    `goal` text, passed by every real caller that resolved one:
+    find_best_way's tier-2 `matched_procedure`, report_execution's
+    resolved `procedure`). When given, the freshly extracted candidate's
+    own `goal` is compared against it with the SAME real lexical-overlap
+    primitive and threshold `dedup.py`'s own near-duplicate detection
+    already uses (`reuse_detection.LEXICAL_FULL_MATCH_THRESHOLD` -- never
+    a newly-invented number); a match refuses to persist a near-identical
+    candidate. `None` (no reused procedure known) skips this check
+    entirely -- honest, since there is nothing real to compare against.
     """
     evidence = await evidence_source.collect()
 
@@ -101,6 +116,19 @@ async def extract_procedure(
     extracted: ExtractedProcedure = await strategy.extract(
         pool, evidence, repo_root=repo_root, entry_seed_files=entry_seed_files,
     )
+
+    if reused_procedure_goal is not None:
+        overlap = _lexical_overlap(extracted.goal, reused_procedure_goal)
+        if overlap >= LEXICAL_FULL_MATCH_THRESHOLD:
+            return ExtractionResult(
+                extracted=extracted, extracted_by=extracted_by,
+                validation_failures=[
+                    "B18_no_auto_duplicate: extracted candidate's goal overlaps "
+                    f"{overlap:.2f} (>= {LEXICAL_FULL_MATCH_THRESHOLD}) with the "
+                    "procedure already reused for this episode -- refusing to "
+                    "create a near-duplicate candidate",
+                ],
+            )
 
     from app.services.environment_probe import PROBE_PREDICATE_VOCABULARY
     ctx = ValidationContext(
