@@ -33,6 +33,7 @@ from app.services.classification import DataClass, PRIVATE_CLASSES, classify_pro
 from app.services.publication_deps import traverse_publication_dependencies
 from app.services.publish import _scrub_value  # reuse the real secret + path scrub
 from app.services.trace_redaction import redact_value
+from app.services.verification_queue import record_pending_global_verification
 
 PUBLICATION_SANITIZER_VERSION = "pub_sanitize_v1"
 PUBLICATION_PROVENANCE = "prior_library"  # a vetted contribution entering the commons
@@ -318,6 +319,18 @@ async def publish_procedure(
         }),
         source_license,
     )
+
+    # G24 residual: this determination was already computed correctly
+    # above (verification_note); the only thing that was missing is a
+    # durable, queryable record of it. Never executes re-verification --
+    # see verification_queue.py's own docstring.
+    if verification_note.get("global_verification_required", True):
+        await record_pending_global_verification(
+            pool, procedure_id=result["procedure_id"], procedure_row_id=result["id"],
+            publication_id=pub_id,
+            reason="published without >=2 independent public verification groups",
+            created_by=actor_subject,
+        )
 
     await record_audit_event(
         pool, actor_subject=actor_subject, action="publication_approved",

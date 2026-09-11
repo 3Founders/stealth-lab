@@ -30,11 +30,14 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
 from datetime import datetime, timezone
 from typing import Any
 
 import asyncpg
+
+logger = logging.getLogger(__name__)
 
 from app.stealth.atomic import atomic_write_batch
 from app.stealth.errors import StealthProjectionError
@@ -272,7 +275,18 @@ def _build_run_page(
 
 async def _fetch_file_intents(pool: asyncpg.Pool, run_id: str) -> dict[int, dict]:
     """Live (non-expired) file-intent declarations for the run's nodes
-    (migration 56 columns on `execution_run_nodes`). Empty when none."""
+    (migration 56 columns on `execution_run_nodes`). Empty when none.
+
+    BUG FIXED (synthetic-fallback sweep, 2026-09-11): this used to catch
+    the entire `asyncpg.PostgresError` hierarchy and return `{}` for
+    ANYTHING -- a real connection drop, a permissions error, a genuine
+    query bug -- indistinguishable from the one case this is actually
+    meant to tolerate (migration 56 not applied on this DB yet). A real
+    DB failure must surface, not silently render as "no coordination
+    declared" in the `.stealth/` projection. Narrowed to
+    UndefinedColumnError (migration 56 adds columns, not a new table) and
+    logged, mirroring `app/services/procedure_claim_refs.py`'s own
+    UndefinedTableError/migration-66 pattern."""
     try:
         rows = await pool.fetch(
             "SELECT node_order, owner_agent_id, read_exact, read_globs, write_exact, "
@@ -282,7 +296,8 @@ async def _fetch_file_intents(pool: asyncpg.Pool, run_id: str) -> dict[int, dict
             "     OR write_globs <> '[]'::jsonb OR write_exact <> '[]'::jsonb)",
             run_id,
         )
-    except asyncpg.PostgresError:
+    except asyncpg.UndefinedColumnError:
+        logger.warning("execution_run_nodes missing file-intent columns; migration 56 not applied?")
         return {}
     out: dict[int, dict] = {}
     for r in rows:

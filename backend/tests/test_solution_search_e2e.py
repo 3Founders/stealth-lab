@@ -43,6 +43,9 @@ class FakeEmbedder:
                 return vec
         return self._default
 
+    def embedding_model_id(self) -> str:
+        return "fake:test-embedder"
+
 
 def _run(coro):
     return asyncio.run(coro)

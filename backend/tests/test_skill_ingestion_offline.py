@@ -217,6 +217,7 @@ async def test_ingest_writes_with_a_real_embedding_when_novel(monkeypatch):
 from app.services.ingestion_sources import (  # noqa: E402
     SourceArtifact,
     SourceRef,
+    SourceResource,
     compute_content_hash,
 )
 from app.services.skill_ingestion import (  # noqa: E402
@@ -224,6 +225,7 @@ from app.services.skill_ingestion import (  # noqa: E402
     compile_skill_artifact,
     run_skill_ingestion,
 )
+from app.services.skill_ingestion import _persist_package_relations  # noqa: E402
 
 # procedures INSERT: positional param order is fixed by capture_procedure()'s
 # own INSERT statement. index 8 == invariants (pinned by an existing test
@@ -1432,8 +1434,13 @@ async def test_compile_captured_persists_artifact_blocks(no_dup):
     refs = [p for name, p in pool.captured["updates"] if name == "observations.artifact_block_ref"]
     assert len(refs) == 1
     assert refs[0][0] == outcome.observation_id
-    ref_payload = json.loads(refs[0][1])
-    assert ref_payload == {
+    # BUG FIXED (see _attach_observation_block_ref): this must be passed as
+    # a real dict, not json.dumps(...) -- create_pool()'s registered JSONB
+    # codec already calls json.dumps on whatever it's given, and double-
+    # encoding silently turned this into an unusable JSON *string* against
+    # real Postgres. This test previously asserted the OLD, broken shape
+    # (json.loads(refs[0][1])); it must assert the dict directly now.
+    assert refs[0][1] == {
         "artifact_id": outcome.artifact_id,
         "artifact_block_id": outcome.artifact_block_ids[0],
     }
@@ -1600,3 +1607,99 @@ async def test_run_skill_ingestion_counts_blocks_screening_and_claims(monkeypatc
         + len(normalize_markdown(MULTI_HEADING_SKILL_MD))
     )
     assert m["artifact_blocks"] == expected_blocks
+
+
+class _PackageRelationsFakePool:
+    """Minimal fake, local to this test -- captures the
+    procedure_implementations INSERT params so supported_steps can be
+    asserted on directly, without a real DB."""
+
+    def __init__(self):
+        self.pi_calls: list[tuple] = []
+
+    async def fetchrow(self, sql, *params):
+        s = " ".join(sql.split())
+        if "INSERT INTO implementations" in s:
+            return {"id": "impl-1"}
+        if "SELECT procedure_id FROM ingested_artifacts" in s:
+            return None
+        return None
+
+    async def execute(self, sql, *params):
+        s = " ".join(sql.split())
+        if "INSERT INTO procedure_implementations" in s:
+            self.pi_calls.append(params)
+        return None
+
+
+@pytest.mark.asyncio
+async def test_persist_package_relations_records_which_step_names_the_script():
+    """B36-adjacent DAG-position wiring: a resource file mentioned by name
+    (full path or bare filename) inside one of the procedure's own steps
+    gets that step's index recorded in supported_steps -- real signal,
+    not a fabricated one."""
+    parsed = ParsedSkill(
+        name="acquire-codebase-knowledge",
+        description="Explore an unfamiliar repository.",
+        steps=[
+            "List the top-level directories to get oriented.",
+            "Run scripts/scan.py to build a dependency graph.",
+            "Read the generated report and summarize findings.",
+        ],
+    )
+    resource = SourceResource(
+        path="skills/acquire-codebase-knowledge/scripts/scan.py",
+        kind="script", sha256="a" * 64, size=10,
+    )
+    artifact = SourceArtifact(
+        source_type="skill_package", uri="https://github.com/o/r/blob/c/p",
+        content="---\nname: x\ndescription: A test skill.\n---\n1. step one\n",
+        content_hash="h" * 64,
+        repository="o/r", path="skills/acquire-codebase-knowledge/SKILL.md",
+        commit="c" * 40, source_id="github-awesome-copilot",
+        resources=(resource,),
+    )
+    pool = _PackageRelationsFakePool()
+
+    implementation_ids, dependency_count = await _persist_package_relations(
+        pool, artifact, parsed, procedure_id="11111111-1111-1111-1111-111111111111",
+        created_by="test",
+    )
+
+    assert implementation_ids == ["impl-1"]
+    assert dependency_count == 0
+    assert len(pool.pi_calls) == 1
+    (proc_id, impl_id, resource_path, supported_steps, created_by) = pool.pi_calls[0]
+    assert resource_path == resource.path
+    assert supported_steps == [1], (
+        "the script is named in step index 1 only -- must not match step 0 or 2"
+    )
+
+
+@pytest.mark.asyncio
+async def test_persist_package_relations_supported_steps_empty_when_unmentioned():
+    """No step names the resource at all -- honest [], not a guess."""
+    parsed = ParsedSkill(
+        name="some-skill", description="Does a thing.",
+        steps=["Do the first part.", "Do the second part."],
+    )
+    resource = SourceResource(
+        path="skills/some-skill/scripts/helper.py",
+        kind="script", sha256="b" * 64, size=5,
+    )
+    artifact = SourceArtifact(
+        source_type="skill_package", uri="https://github.com/o/r/blob/c/p",
+        content="---\nname: x\ndescription: A test skill.\n---\n1. step one\n",
+        content_hash="h" * 64,
+        repository="o/r", path="skills/some-skill/SKILL.md",
+        commit="c" * 40, source_id="src", resources=(resource,),
+    )
+    pool = _PackageRelationsFakePool()
+
+    await _persist_package_relations(
+        pool, artifact, parsed, procedure_id="22222222-2222-2222-2222-222222222222",
+        created_by="test",
+    )
+
+    (_, _, _, supported_steps, _) = pool.pi_calls[0]
+    assert supported_steps == []
