@@ -1696,10 +1696,25 @@ async def find_best_way(task_description: str, ctx: Context,
         plan_procedure_row_id = str(matched_procedure["id"])
     else:
         adhoc_owner = _resolve_caller_identity(fallback="find_best_way_adhoc")
+        # B19 residual (confirmed still real by reading this call site
+        # directly, contra MCP_HARDENING_DEFERRED_ITEMS.md item 20's
+        # stale "no visibility override" text -- visibility/owner_id were
+        # already fixed; scope_type="global" was the still-open half):
+        # a candidate learned from a user's own local coding session must
+        # never carry a "global" scope_type -- that is the ownership axis
+        # schema.md's universal scope{type, entity_id} field describes,
+        # independent of the visibility="private" gate that already
+        # controls WHO can read the row. Real, caller-supplied scope: the
+        # declared workspace when one exists (this call is genuinely
+        # repository-scoped), else the caller's own user scope -- never a
+        # fabricated "global" default for lack of a better answer.
+        adhoc_scope_type = "repository" if workspace_id else "user"
+        adhoc_scope_entity_id = workspace_id or adhoc_owner
         adhoc = await capture_procedure(
             pool, name=f"ad-hoc: {task_description[:80]}", goal=task_description,
             steps=[{"order": 0, "goal": task_description}],
-            provenance="system_pending_review", scope_type="global",
+            provenance="system_pending_review",
+            scope_type=adhoc_scope_type, scope_entity_id=adhoc_scope_entity_id,
             created_by=adhoc_owner,
             # B19 fix: local runtime learning from a user's own execution
             # starts PRIVATE, never implicitly public (spec rule 11:

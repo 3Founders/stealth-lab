@@ -32,6 +32,7 @@ from typing import Any, Awaitable, Callable, Optional
 
 import asyncpg
 
+from app.execution import episode as _episode
 from app.execution import recorder as _rec
 from app.execution.plan_persistence import record_plan_execution
 
@@ -243,6 +244,16 @@ async def start_run(
                     await _rec.record_node_waiting(
                         conn, str(parent_run_id), node_order=parent_node_order, child_run_id=str(run_id),
                     )
+            # Local experiential-learning wiring: every durable run gets a
+            # real Episode[H] boundary, opened in the same transaction as
+            # the run itself so an execution_run can never exist without
+            # one. See app/execution/episode.py's own docstring for why
+            # this is a thin seam rather than a second Trace/Event store.
+            await _episode.open_episode_for_run(
+                conn, str(run_id), created_by=created_by, scope_type=scope_type,
+                scope_entity_id=scope_entity_id, trace_id=trace_id,
+                parent_run_id=str(parent_run_id) if parent_run_id else None,
+            )
     except asyncpg.UniqueViolationError:
         # Concurrent create_or_return race on the same request_id: the
         # other insert won, this one lost the unique index -- return the
@@ -599,6 +610,30 @@ async def _record_child_run_completed_on_parent(conn: asyncpg.Connection, run: d
     )
 
 
+async def _close_episode_and_enqueue_consolidation(conn: asyncpg.Connection, run_id: str, *, outcome: str) -> None:
+    """Shared terminal-close hook, called from every real place a run's
+    `execution_runs.status` becomes terminal (success, failure, or
+    verification-failure), always from inside the caller's own
+    `tag != "UPDATE 0"` guard so a duplicate finalize never runs this
+    twice. `close_episode_for_run` is independently idempotent besides
+    (its own `end_ts IS NULL` guard), so this stays safe even if that
+    invariant is ever violated by a future caller.
+
+    Enqueuing consolidation is the ONLY new side effect on the historical
+    Episode/Trace/Event chain -- the actual semantic work (Observation/
+    Claim/Evidence/Procedure) happens later, out of this transaction,
+    in app.services.ingestion_jobs::handle_consolidate_local_episode, so
+    an LLM outage can never block a run from reaching a terminal state.
+    """
+    episode_id = await _episode.close_episode_for_run(conn, run_id, outcome=outcome)
+    if episode_id is not None:
+        await conn.execute(
+            "INSERT INTO ingestion_jobs (job_type, payload) VALUES ($1, $2::jsonb)",
+            "consolidate_local_episode",
+            {"episode_id": episode_id, "execution_run_id": run_id},
+        )
+
+
 async def _persist_success_transition(
     pool: asyncpg.Pool, run_id: str, run: dict, *, from_statuses: tuple[str, ...], compiled=None,
 ) -> None:
@@ -632,6 +667,7 @@ async def _persist_success_transition(
         if tag != "UPDATE 0":
             await _rec.record_run_finalized(conn, run_id, status="succeeded", outcome="success")
             await _record_child_run_completed_on_parent(conn, run, status="succeeded")
+            await _close_episode_and_enqueue_consolidation(conn, run_id, outcome="success")
 
 
 async def _finalize(pool: asyncpg.Pool, run_id: str, *, compiled=None) -> dict[str, Any]:
@@ -707,6 +743,7 @@ async def _finalize(pool: asyncpg.Pool, run_id: str, *, compiled=None) -> dict[s
         if tag != "UPDATE 0":
             await _rec.record_run_finalized(conn, run_id, status=run_status_v, outcome=outcome)
             await _record_child_run_completed_on_parent(conn, run, status=run_status_v)
+            await _close_episode_and_enqueue_consolidation(conn, run_id, outcome=outcome)
     run, nodes = await _load(pool, run_id)
     return {"run_id": run_id, "status": run["status"], "final_outcome": run["final_outcome"],
             "final_execution_id": str(run["final_execution_id"]) if run["final_execution_id"] else None,
@@ -763,6 +800,7 @@ async def finalize_after_verification(pool: asyncpg.Pool, run_id: str, *, compil
             if tag != "UPDATE 0":
                 await _rec.record_run_finalized(conn, run_id, status="failed", outcome="failed_verification")
                 await _record_child_run_completed_on_parent(conn, run, status="failed")
+                await _close_episode_and_enqueue_consolidation(conn, run_id, outcome="failed_verification")
         run, nodes = await _load(pool, run_id)
         return {"run_id": run_id, "status": run["status"], "final_outcome": run["final_outcome"],
                 "nodes": _node_summary(nodes),

@@ -25,14 +25,17 @@ should not retry forever unattended).
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 from typing import Any, Optional
 
 import asyncpg
 
+from app.services.claim_evidence import record_claim_evidence
 from app.services.observations import (
     extract_deterministic_observations,
+    extract_deterministic_observations_from_run_event,
     persist_observation,
     promote_observation_to_claim,
 )
@@ -943,6 +946,298 @@ async def handle_extract_procedure_from_episode(
         scope_entity_id=ep["project_id"],
         owner_id=ep["owner_id"],
     )
+
+
+# ---------------------------------------------------------------------
+# Local MCP-execution learning: closes the real gap found by reading
+# durable_run.py/observations.py/claims.py directly (not from the audit
+# docs, which claim this chain already exists end to end -- it did not).
+# A local execution_run's Episode (app.execution.episode) is closed and
+# THIS job enqueued from inside the SAME transaction as the run's
+# terminal status write (durable_run._close_episode_and_enqueue_
+# consolidation) -- everything from here on runs OUT of that transaction,
+# so an LLM outage can never block a run from reaching a terminal state.
+#
+# Reuses the SAME canonical Observation/Claim/Evidence/Procedure
+# machinery the global (ingested-transcript) pipeline above uses --
+# persist_observation(), claim_extraction.persist_claim_candidate()
+# (which already does dedup/equivalence DETECTION via claim_equivalence.py,
+# never auto-merge -- exactly the ADD/REFINE/CONTRADICT/SUPERSEDE
+# distinction the local-learning spec asks for, with no second
+# implementation of it), record_claim_evidence(), and extract_procedure()
+# unchanged. The only genuinely new code is the LOCAL-side assembly (which
+# events/artifacts/text feed the one bounded LLM pass) -- never a second
+# Claim/Procedure engine.
+# ---------------------------------------------------------------------
+CONSOLIDATION_EXTRACTOR = "local_execution_consolidation@1"
+
+# execution_run_events.event_type values worth turning into deterministic
+# Observations -- see extract_deterministic_observations_from_run_event()
+# for the per-type shape. Deliberately excludes pure state-machine
+# bookkeeping (run_created/run_claimed/node_claimed/...) that carries no
+# durable knowledge on its own.
+_MEANINGFUL_RUN_EVENT_TYPES = frozenset({
+    "node_succeeded", "node_failed", "artifact_recorded",
+    "verification_completed", "tool_result",
+})
+
+
+def _render_local_episode_text(
+    *, goal_text: str, outcome: str, observation_dicts: list[dict],
+) -> str:
+    """Deterministic, non-fabricated Markdown rendering of what actually
+    happened in one local Episode -- fed to `normalize_markdown()` so the
+    SAME structural chunking/grounding machinery `claim_extraction.py`
+    already uses for documents applies here too, unchanged. Every line
+    traces to a real persisted Observation; nothing here is invented or
+    summarized by a model."""
+    lines = ["# Local execution episode", "", f"Goal: {goal_text}", f"Outcome: {outcome}", ""]
+    for obs in observation_dicts:
+        props = obs.get("properties") or {}
+        prop_str = ", ".join(f"{k}={v}" for k, v in props.items() if v is not None)
+        lines.append(f"- [{obs['observation_type']}] {obs['label']}" + (f" ({prop_str})" if prop_str else ""))
+    return "\n".join(lines)
+
+
+async def handle_consolidate_local_episode(pool: asyncpg.Pool, payload: dict) -> None:
+    """One bounded semantic-consolidation pass for one closed local
+    Episode: deterministic Observations (cheap, always run), then ONE
+    LLM-backed Claim-candidate extraction pass over a real rendering of
+    those Observations, then (only on a real success outcome, only when
+    extract_procedure()'s own evidence-sufficiency gate agrees) a
+    Procedure candidate -- mirroring handle_extract_procedure_from_episode
+    above, but assembled from execution_run_events instead of trace_events
+    (see migration 79's observation_events.execution_run_event_id seam).
+
+    Idempotent: guarded by `episodes.metadata.consolidated_at`, checked
+    first and set last -- a re-enqueue of an already-consolidated episode
+    (duplicate finalize, requeued job) is a real no-op, not a duplicate
+    Observation/Claim/Procedure write. An LLM failure mid-pass leaves the
+    deterministic Observations already committed untouched and the
+    episode UNMARKED (consolidated_at stays unset) -- the job is left
+    'failed' by process_pending_jobs()'s own existing semantics, safe to
+    re-enqueue later; nothing here fabricates a Claim/Procedure to paper
+    over the failure.
+    """
+    episode_id = payload.get("episode_id")
+    execution_run_id = payload.get("execution_run_id")
+    if not episode_id or not execution_run_id:
+        raise ValueError("consolidate_local_episode payload missing episode_id/execution_run_id")
+
+    ep = await pool.fetchrow(
+        "SELECT id, metadata, owner_id, visibility, scope_type, scope_entity_id "
+        "FROM episodes WHERE id = $1::uuid AND execution_run_id = $2::uuid",
+        str(episode_id), str(execution_run_id),
+    )
+    if ep is None:
+        log.info(
+            "consolidate_local_episode: episode %s/run %s not found; skipping",
+            episode_id, execution_run_id,
+        )
+        return
+    metadata = dict(ep["metadata"] or {})
+    if metadata.get("consolidated_at"):
+        log.info("consolidate_local_episode: episode %s already consolidated; skipping", episode_id)
+        return
+
+    run = await pool.fetchrow(
+        "SELECT id, procedure_id, procedure_version, created_by, final_outcome, status "
+        "FROM execution_runs WHERE id = $1::uuid", str(execution_run_id),
+    )
+    if run is None:
+        log.info("consolidate_local_episode: execution_run %s gone; skipping", execution_run_id)
+        return
+    if run["final_outcome"] is None:
+        raise ValueError(
+            f"consolidate_local_episode: execution_run {execution_run_id} has no final_outcome "
+            "-- episode was closed before the run reached a real terminal state"
+        )
+
+    owner_id = ep["owner_id"]
+    visibility = ep["visibility"]
+    scope_type = ep["scope_type"]
+    scope_entity_id = ep["scope_entity_id"]
+    outcome = run["final_outcome"]
+
+    events = await pool.fetch(
+        "SELECT id, node_order, event_type, payload FROM execution_run_events "
+        "WHERE execution_run_id = $1::uuid AND event_type = ANY($2::text[]) ORDER BY seq ASC",
+        str(execution_run_id), list(_MEANINGFUL_RUN_EVENT_TYPES),
+    )
+
+    # 1. Deterministic per-event Observations -- cheap, no LLM, run
+    # unconditionally (schema.md: "do NOT make an LLM call after every
+    # Event" -- this is the cheap half of that split).
+    observation_dicts: list[dict] = []
+    for ev in events:
+        derived = extract_deterministic_observations_from_run_event(dict(ev))
+        if derived is None:
+            continue
+        obs_id = await persist_observation(
+            pool, observation_type=derived["observation_type"], label=derived["label"],
+            extractor_kind="deterministic", execution_run_event_ids=[str(ev["id"])],
+            properties=derived.get("properties"), owner_id=owner_id, visibility=visibility,
+        )
+        observation_dicts.append({
+            "id": obs_id, "observation_type": derived["observation_type"],
+            "label": derived["label"], "properties": derived.get("properties") or {},
+        })
+
+    if not observation_dicts:
+        # Nothing meaningful happened (e.g. a run with no artifacts/
+        # verification/failed nodes at all) -- mark consolidated so this
+        # is not retried forever, but fabricate nothing.
+        await pool.execute(
+            "UPDATE episodes SET metadata = metadata || jsonb_build_object('consolidated_at', now()::text) "
+            "WHERE id = $1::uuid", str(episode_id),
+        )
+        return
+
+    # execution_runs.procedure_id is the STABLE family id (procedures.
+    # procedure_id), not the versioned row id (procedures.id) -- the
+    # same distinction app.execution.procedure_graph.fetch_procedure_version's
+    # own docstring draws; a plain `WHERE id = ...` would silently match
+    # nothing (or worse, a coincidentally-existing unrelated row).
+    goal_text = None
+    if run["procedure_id"] is not None:
+        goal_text = await pool.fetchval(
+            "SELECT goal FROM procedures WHERE procedure_id = $1::uuid AND version = $2",
+            run["procedure_id"], run["procedure_version"],
+        )
+    goal_text = (goal_text or "").strip() or f"local execution run {execution_run_id}"
+
+    # 2. Evidence: the run's own real terminal outcome, evidence_type
+    # 'execution_result' (matches procedures.py::record_execution_outcome's
+    # own choice for the same kind of fact) -- recorded once per Claim
+    # this episode produces, in step 3 below, not once per Observation.
+    #
+    # failure_class is deliberately left unset here: FAILURE_CLASSES
+    # (app/execution/failures.py) is real and wired for the
+    # report_execution/named-procedure path via classify_and_route(), but
+    # that function's own routing table (failure_routes) is keyed to a
+    # PROCEDURE's evidence, not a bare durable-run's. execution_run_nodes.
+    # error_class uses a DIFFERENT vocabulary entirely (timeout/network/
+    # validation/... -- durable_run.classify_error()) -- conflating the
+    # two would mislabel evidence with a value from the wrong enum. An
+    # unclassified failure_class is honest (NULL), not a gap papered over.
+
+    # 3. One bounded LLM pass: real Claim-candidate extraction over a
+    # real, non-fabricated rendering of what this episode's Observations
+    # established -- reuses claim_extraction.py's existing chunking/
+    # grounding/quality-gate machinery unchanged.
+    from app.services.artifact_blocks import normalize_markdown
+    from app.services.claim_extraction import extract_claim_candidates_cached, persist_claim_candidate
+
+    episode_text = _render_local_episode_text(
+        goal_text=goal_text, outcome=outcome, observation_dicts=observation_dicts,
+    )
+    blocks = normalize_markdown(episode_text)
+    content_hash = hashlib.sha256(episode_text.encode()).hexdigest()
+
+    candidates = await extract_claim_candidates_cached(
+        pool, _extraction_client(), blocks, content_hash=content_hash,
+        document_hints={"goal": goal_text, "outcome": outcome},
+    )
+
+    # capture_claim()'s B7 anchoring rule refuses to write a Claim with no
+    # anchor at all (no live task_ids, no justification_episode_id, and no
+    # source_ref/ingestion_context_id/observation_id) -- silently, by
+    # design, to stop unanchored claims accumulating. persist_claim_
+    # candidate() only exposes source_ref/ingestion_context_id/
+    # observation_id of those three; observation_dicts[0] is a REAL,
+    # already-persisted Observation this exact episode produced (step 1
+    # above always runs first and this branch is unreachable when it's
+    # empty), so anchoring every candidate to it is honest, not synthetic.
+    anchor_observation_id = observation_dicts[0]["id"]
+
+    persisted_claim_ids: list[str] = []
+    for candidate in candidates:
+        claim_id = await persist_claim_candidate(
+            pool, candidate,
+            observation_id=anchor_observation_id,
+            created_by=CONSOLIDATION_EXTRACTOR,
+            owner_id=owner_id, visibility=visibility,
+            scope_type=scope_type, scope_entity_id=scope_entity_id,
+        )
+        if claim_id is not None:
+            persisted_claim_ids.append(claim_id)
+            await pool.execute(
+                "INSERT INTO episode_links (episode_id, target_id, target_table) "
+                "VALUES ($1::uuid, $2::uuid, 'knowledge_nodes') ON CONFLICT DO NOTHING",
+                str(episode_id), claim_id,
+            )
+
+    # Invariant #13 (app/execution/evidence.py::_check_success_criteria):
+    # a 'success' outcome requires a real predicate/metrics -- a bare fact
+    # dict is not a criterion. The SAME invariant refuses success_criteria
+    # on any non-success outcome (V-EVD: "success_criteria belong to
+    # successes -- failures classify via failure_class instead"), so this
+    # is built once here, correctly, for whichever branch `outcome` is.
+    evidence_success_criteria = (
+        {
+            "predicate": (
+                f"execution_run {execution_run_id} reached terminal "
+                f"status '{run['status']}' with final_outcome '{outcome}'"
+            ),
+            "metrics": {"execution_run_id": str(execution_run_id), "terminal_status": run["status"]},
+        }
+        if outcome == "success" else None
+    )
+    for claim_id in persisted_claim_ids:
+        await record_claim_evidence(
+            pool, claim_id=claim_id, evidence_type="execution_result",
+            outcome_status=outcome,
+            success_criteria=evidence_success_criteria,
+            created_by=CONSOLIDATION_EXTRACTOR, owner_id=owner_id, visibility=visibility,
+        )
+
+    # 4. Procedure candidate, only on a real success and only when
+    # extract_procedure()'s own evidence-sufficiency gate agrees --
+    # SAME function tier-2/report_execution/handle_extract_procedure_
+    # from_episode all already use, unchanged.
+    if outcome == "success":
+        from app.services.procedure_extraction import extract_procedure
+        from app.services.procedure_extraction.evidence import AgentRunEvidenceSource
+
+        tool_sequence = [str(ev["event_type"]) for ev in events]
+        source = AgentRunEvidenceSource(
+            goal_text=goal_text, outcome="success", observations=observation_dicts,
+            tool_sequence=tool_sequence, project_id=scope_entity_id if scope_type in ("project", "repository") else None,
+            episode_id=str(episode_id), session_id=str(execution_run_id),
+            steps_used=len(tool_sequence),
+        )
+        result = await extract_procedure(
+            pool, source, client=_extraction_client(),
+            visibility=visibility, owner_id=owner_id,
+        )
+        if result.validation_failures:
+            log.info(
+                "consolidate_local_episode: episode %s procedure candidate refused by validators: %s",
+                episode_id, result.validation_failures,
+            )
+        elif result.extracted is not None and result.extracted.capability_statement == goal_text:
+            # Same abstention signature handle_extract_procedure_from_episode
+            # checks for: grounded_hybrid_v1 degraded to deterministic_v1
+            # and found no real shape to abstract. Retire immediately
+            # rather than leave a no-op candidate() row live.
+            await pool.execute(
+                "UPDATE procedures SET t_invalid = now(), verification_state = 'retired' "
+                "WHERE id = $1::uuid AND t_invalid IS NULL",
+                str(result.version_row_id),
+            )
+        elif result.procedure_id is not None:
+            log.info(
+                "consolidate_local_episode: episode %s -> procedure %s (by %s)",
+                episode_id, result.procedure_id, result.extracted_by,
+            )
+
+    await pool.execute(
+        "UPDATE episodes SET metadata = metadata || jsonb_build_object('consolidated_at', now()::text) "
+        "WHERE id = $1::uuid", str(episode_id),
+    )
+
+
+JOB_HANDLERS["consolidate_local_episode"] = handle_consolidate_local_episode
 
 
 # ---------------------------------------------------------------------
