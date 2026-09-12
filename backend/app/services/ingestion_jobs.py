@@ -155,6 +155,7 @@ async def handle_ingest_skill_package(pool: asyncpg.Pool, payload: dict) -> None
         client=client,
         admission_llm_model=settings.general_compute_judge_model or "gemma-4-31B-it",
         capability_llm_model=settings.general_compute_judge_model or "gemma-4-31B-it",
+        claim_extraction_llm_model=settings.general_compute_judge_model or "gemma-4-31B-it",
     )
 
 log = logging.getLogger(__name__)

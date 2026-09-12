@@ -274,6 +274,62 @@ class FakeLLMClient:
         return type("R", (), {"choices": [choice]})()
 
 
+class FakeClaimExtractionClient:
+    """A real, grounded extraction response for `app.services.claim_extraction`:
+    it reads the SAME `[block N] <text>` prompt the real extractor builds
+    and cites one real block's exact index with a verbatim quote FROM that
+    block's own text -- exercising the real structural + grounding
+    validation, not a hand-typed answer, and generically reusable across
+    different fixture documents. Prefers the block matching `needle` when
+    given and present; otherwise the first prose block found. Falls back
+    to `{"claims": []}` (never an error) for any OTHER call sharing this
+    same client with no `[block` lines at all (e.g. `_abstract_capability`'s
+    own, differently-shaped prompt), matching how that function already
+    treats unexpected-format output."""
+
+    def __init__(self, *, needle: Optional[str] = None, **claim_overrides):
+        self._needle = needle
+        self._overrides = claim_overrides
+
+    @property
+    def chat(self):
+        return self
+
+    @property
+    def completions(self):
+        return self
+
+    def create(self, *, model, messages, temperature=0.0, max_tokens=0):
+        block_lines = [
+            ln for ln in messages[1]["content"].splitlines() if ln.startswith("[block")
+        ]
+        if not block_lines:
+            content = '{"claims": []}'
+        else:
+            chosen = next(
+                (ln for ln in block_lines if self._needle and self._needle in ln),
+                block_lines[0],
+            )
+            block_index = int(chosen.split("]")[0].removeprefix("[block").strip())
+            block_text = chosen.split("]", 1)[1].strip()
+            claim = {
+                "statement": "A DataFrame lacking the append attribute indicates pandas >= 2.0 removed it.",
+                "claim_type": "environment_fact",
+                "scope": "global",
+                "conditions": [],
+                "source_block_index": block_index,
+                "source_quote": block_text[:40],
+                "confidence_of_extraction": 0.85,
+                "suggested_procedure_role": "RATIONALE",
+                "rationale_for_extraction": "Explicit applicability condition in the source.",
+                **self._overrides,
+            }
+            content = json.dumps({"claims": [claim]})
+        message = type("M", (), {"content": content})()
+        choice = type("C", (), {"message": message})()
+        return type("R", (), {"choices": [choice]})()
+
+
 class _NoopTxn:
     async def __aenter__(self):
         return self
@@ -620,11 +676,13 @@ async def test_compile_changed_source_produces_a_new_version(no_dup, monkeypatch
     assert len(pool.captured["sources"]) == 1
     assert len(pool.captured["ingestion_contexts"]) == 1
     assert len(pool.captured["observations"]) == 1
-    # G6: two evidence rows now -- one targeting the procedure (existing),
-    # one targeting the document Claim (new).
-    assert len(pool.captured["evidence"]) == 2
-    assert outcome.document_claim_id is not None
-    assert outcome.document_claim_evidence_id == "ev-2"
+    # No client configured -> claim extraction fails closed with zero
+    # candidates (never a fabricated fallback Claim) -- only the one
+    # procedure-targeted evidence row is written.
+    assert len(pool.captured["evidence"]) == 1
+    assert outcome.document_claim_ids == []
+    assert outcome.document_claim_evidence_ids == []
+    assert pool.captured["claims"] == []
     ctx_id = str(pool.captured["ingestion_contexts"][0][0])
     assert outcome.ingestion_context_id == ctx_id
     # the new procedure version row was stamped with the context id
@@ -633,11 +691,6 @@ async def test_compile_changed_source_produces_a_new_version(no_dup, monkeypatch
     ev_params = pool.captured["evidence"][0]
     assert ev_params[1] == "proc-row-v2"          # target_id (arg $2 after id)
     assert ev_params[2] == 2                       # target_version (superseded version)
-    # the second evidence row targets the claim, no target_version param
-    claim_ev_params = pool.captured["evidence"][1]
-    assert claim_ev_params[1] == outcome.document_claim_id
-    claim_ev_sql = [s for _k, s, p in pool.calls if "INSERT INTO evidence" in s][1]
-    assert "'document', 'claim'" in claim_ev_sql
 
 
 @pytest.mark.asyncio
@@ -1196,8 +1249,9 @@ async def test_compile_captured_emits_the_full_canonical_chain(no_dup):
     assert len(pool.captured["sources"]) == 1
     assert len(pool.captured["ingestion_contexts"]) == 1
     assert len(pool.captured["observations"]) == 1
-    # G6: one evidence row for the procedure, one for the document Claim.
-    assert len(pool.captured["evidence"]) == 2
+    # No client configured -> claim extraction fails closed with zero
+    # candidates -- only the procedure-targeted evidence row is written.
+    assert len(pool.captured["evidence"]) == 1
     assert pool.captured["task_nodes"] == []
 
     # sources upsert carries ON CONFLICT identity dedup
@@ -1205,13 +1259,13 @@ async def test_compile_captured_emits_the_full_canonical_chain(no_dup):
     assert "ON CONFLICT (source_type, locator, publisher) DO UPDATE" in src_sql
     assert "(xmax = 0) AS inserted" in src_sql
 
-    # evidence rows: type 'document', supports; first targets the
-    # procedure (modest strength), second targets the document Claim.
+    # evidence rows: type 'document', supports, targeting the procedure.
+    # No client configured -> claim extraction fails closed with zero
+    # candidates, so no document-Claim evidence row exists.
     ev_sqls = [s for _k, s, _p in pool.calls if "INSERT INTO evidence" in s]
     assert "'document', 'procedure'" in ev_sqls[0]
     assert "'supports'" in ev_sqls[0]
-    assert "'document', 'claim'" in ev_sqls[1]
-    assert "'supports'" in ev_sqls[1]
+    assert len(ev_sqls) == 1
     ev = pool.captured["evidence"][0]
     assert ev[1] == outcome.version_row_id          # target_id
     assert ev[2] == 1                                # target_version (fresh capture)
@@ -1219,25 +1273,9 @@ async def test_compile_captured_emits_the_full_canonical_chain(no_dup):
     assert ev[4] == "source_document_assertion"     # strength_method
     assert ev[5].startswith("skill_md:")            # independence_group by content hash
 
-    # G6: the claim-evidence row targets the document Claim, no
-    # target_version param (NULL is a SQL literal for a claim target).
-    assert outcome.document_claim_id is not None
-    assert outcome.document_claim_evidence_id == "ev-2"
-    claim_ev = pool.captured["evidence"][1]
-    assert claim_ev[1] == outcome.document_claim_id  # target_id
-    assert claim_ev[2] == 0.3                         # strength_score (no target_version slot)
-    assert claim_ev[3] == "source_document_assertion"
-    assert claim_ev[4].startswith("skill_md:")        # independence_group
-
-    # G5: the document claim carries a real, non-fabricated
-    # subject/predicate/object triple templated from artifact.uri + the
-    # same proposition the statement text uses (capture_claim folds them
-    # into the knowledge_nodes.properties dict via ClaimProperties).
-    claim_params = pool.captured["claims"][0]
-    props = next(v for v in claim_params if isinstance(v, dict) and "predicate" in v)
-    assert props["predicate"] == "documents_procedure_for"
-    assert props["subject"] == _skill_artifact().uri
-    assert props["object"]  # the proposition text, non-empty
+    assert outcome.document_claim_ids == []
+    assert outcome.document_claim_evidence_ids == []
+    assert pool.captured["claims"] == []
 
     # follow-up ingestion_context_id stamps on procedures + observations
     ctx_id = str(pool.captured["ingestion_contexts"][0][0])
@@ -1492,10 +1530,29 @@ async def test_compile_records_a_screening_decision(no_dup):
 
 
 @pytest.mark.asyncio
-async def test_compile_derives_one_document_claim_linked_as_rationale(no_dup):
+async def test_compile_without_client_extracts_zero_claims(no_dup):
+    """No client configured -> claim extraction fails closed with zero
+    candidates -- never a fabricated fallback Claim (the old bug this
+    replaces)."""
     pool = CompilerFakePool()
     outcome = await compile_skill_artifact(
         pool, _skill_artifact(), embedder=FakeEmbedder(), client=None,
+    )
+    assert outcome.status == "captured"
+    assert pool.captured["claims"] == []
+    assert pool.captured["procedure_claim_refs"] == []
+    assert pool.captured["claim_sources"] == []
+    assert outcome.document_claim_ids == []
+
+
+@pytest.mark.asyncio
+async def test_compile_with_client_extracts_a_real_grounded_claim_linked_as_rationale(no_dup):
+    pool = CompilerFakePool()
+    client = FakeClaimExtractionClient(
+        needle="no attribute", quote="an AttributeError says 'DataFrame' object has no attribute 'append'",
+    )
+    outcome = await compile_skill_artifact(
+        pool, _skill_artifact(), embedder=FakeEmbedder(), client=client,
     )
     assert outcome.status == "captured"
 
@@ -1506,25 +1563,52 @@ async def test_compile_derives_one_document_claim_linked_as_rationale(no_dup):
     # 0 statement, 1 properties, ..., 8 ingestion_context_id
     ctx_id = str(pool.captured["ingestion_contexts"][0][0])
     assert claim_params[8] == ctx_id
-    assert claim_params[0].startswith("The source ")
-    assert claim_params[1].get("source_ref") == outcome.source_id
-    assert outcome.document_claim_id == "claim-1"
+    # NOT the old "The source X documents a procedure for" template --
+    # the real, grounded, independently meaningful proposition instead.
+    assert not claim_params[0].startswith("The source ")
+    assert "pandas" in claim_params[0]
+    props = claim_params[1]
+    assert props.get("source_ref") == outcome.source_id
+    assert props.get("claim_type") == "environment_fact"
+    assert props.get("epistemic_status") == "inferred"
+    assert props.get("confidence") == 0.85
+    assert props.get("source_quote")
+    assert isinstance(props.get("source_block_index"), int)
+    assert outcome.document_claim_ids == ["claim-1"]
     # claim_sources link written with the observation id
     assert len(pool.captured["claim_sources"]) == 1
     assert pool.captured["claim_sources"][0][1] == outcome.observation_id
 
-    # exactly one typed ref, role=RATIONALE, ref_origin=derived
+    # exactly one typed ref, role=RATIONALE (the fake's suggestion), ref_origin=derived
     assert len(pool.captured["procedure_claim_refs"]) == 1
     ref = pool.captured["procedure_claim_refs"][0]
     # add_procedure_claim_ref INSERT arg order:
     # 0 id, 1 procedure_id, 2 procedure_version, 3 claim_id, 4 claim_version,
     # 5 role, 6 step_refs, 7 ref_origin, 8 extractor_version,
     # 9 ingestion_context_id, 10 created_by
-    assert ref[3] == outcome.document_claim_id
+    assert ref[3] == outcome.document_claim_ids[0]
     assert ref[5] == "RATIONALE"
     assert ref[7] == "derived"
     assert ref[2] == 1  # fresh capture is procedure version 1
     assert ref[9] == ctx_id
+
+
+@pytest.mark.asyncio
+async def test_compile_never_assigns_a_role_when_extractor_suggests_none(no_dup):
+    """A Claim independent of any Procedure: the extractor's own
+    `suggested_procedure_role=None` means NO ProcedureClaimRef is written
+    -- role-linking is never mechanical."""
+    pool = CompilerFakePool()
+    client = FakeClaimExtractionClient(
+        needle="no attribute",
+        quote="an AttributeError says 'DataFrame' object has no attribute 'append'",
+        suggested_procedure_role=None,
+    )
+    outcome = await compile_skill_artifact(
+        pool, _skill_artifact(), embedder=FakeEmbedder(), client=client,
+    )
+    assert outcome.document_claim_ids == ["claim-1"]
+    assert pool.captured["procedure_claim_refs"] == []
 
 
 @pytest.mark.asyncio
@@ -1543,7 +1627,7 @@ async def test_compile_non_procedural_doc_still_writes_no_claim_no_blocks_for_a_
     assert pool.captured["procedure_claim_refs"] == []
     assert outcome.artifact_block_ids == []
     assert outcome.screening_decision is None
-    assert outcome.document_claim_id is None
+    assert outcome.document_claim_ids == []
     # upstream still writes exactly one ingested_artifacts audit row
     assert len(pool.captured["ingested_artifacts"]) == 1
 
@@ -1564,8 +1648,11 @@ async def test_compile_new_version_also_derives_a_document_claim(no_dup, monkeyp
         "id": "art-prior", "procedure_id": "proc-logical",
         "procedure_row_id": "proc-row-v1", "content_hash": "oldhash0000",
     })
+    client = FakeClaimExtractionClient(
+        needle="no attribute", quote="an AttributeError says 'DataFrame' object has no attribute 'append'",
+    )
     outcome = await compile_skill_artifact(
-        pool, _skill_artifact(), embedder=FakeEmbedder(), client=None,
+        pool, _skill_artifact(), embedder=FakeEmbedder(), client=client,
     )
     assert outcome.status == "new_version"
     assert len(pool.captured["claims"]) == 1
@@ -1577,7 +1664,7 @@ async def test_compile_new_version_also_derives_a_document_claim(no_dup, monkeyp
     assert len(pool.captured["artifact_blocks"]) == len(
         normalize_markdown(PANDAS_APPEND_SKILL_MD)
     )
-    assert outcome.document_claim_id == "claim-1"
+    assert outcome.document_claim_ids == ["claim-1"]
 
 
 @pytest.mark.asyncio
@@ -1595,11 +1682,13 @@ async def test_run_skill_ingestion_counts_blocks_screening_and_claims(monkeypatc
     ]
     pool = CompilerFakePool()
     result = await run_skill_ingestion(
-        pool, _FakeAdapter(artifacts), embedder=FakeEmbedder(), client=None,
+        pool, _FakeAdapter(artifacts), embedder=FakeEmbedder(),
+        client=FakeClaimExtractionClient(),
     )
     m = result["metrics"]
     assert m["accepted"] == 2
     assert m["document_claims"] == 2
+    assert m["zero_claim_documents"] == 0
     assert m["screening_quarantine"] == 0
     assert m["screening_reject"] == 0
     expected_blocks = (
@@ -1607,6 +1696,104 @@ async def test_run_skill_ingestion_counts_blocks_screening_and_claims(monkeypatc
         + len(normalize_markdown(MULTI_HEADING_SKILL_MD))
     )
     assert m["artifact_blocks"] == expected_blocks
+
+
+@pytest.mark.asyncio
+async def test_run_skill_ingestion_counts_zero_claim_documents_without_a_client(monkeypatch):
+    async def _none(pool, embedder, goal_text):
+        return None
+
+    monkeypatch.setattr("app.services.skill_ingestion.check_novelty", _none)
+    pool = CompilerFakePool()
+    result = await run_skill_ingestion(
+        pool, _FakeAdapter([_skill_artifact()]), embedder=FakeEmbedder(), client=None,
+    )
+    m = result["metrics"]
+    assert m["accepted"] == 1
+    assert m["document_claims"] == 0
+    assert m["zero_claim_documents"] == 1
+
+
+@pytest.mark.asyncio
+async def test_run_skill_ingestion_concurrency_default_is_sequential_and_unchanged(monkeypatch):
+    """concurrency=1 (the default) must produce byte-identical results to
+    never passing the parameter at all -- a strictly opt-in change."""
+    async def _none(pool, embedder, goal_text):
+        return None
+
+    monkeypatch.setattr("app.services.skill_ingestion.check_novelty", _none)
+    artifacts = [
+        _skill_artifact(uri="file:///skills/a/SKILL.md", path="a/SKILL.md"),
+        _skill_artifact(
+            content=MULTI_HEADING_SKILL_MD,
+            uri="file:///skills/b/SKILL.md", path="b/SKILL.md",
+        ),
+    ]
+    pool = CompilerFakePool()
+    result = await run_skill_ingestion(
+        pool, _FakeAdapter(artifacts), embedder=FakeEmbedder(), client=None, concurrency=1,
+    )
+    assert result["metrics"]["accepted"] == 2
+    assert result["metrics"]["errors"] == 0
+    assert len(result["outcomes"]) == 2
+
+
+@pytest.mark.asyncio
+async def test_run_skill_ingestion_concurrency_greater_than_one_processes_all_artifacts(monkeypatch):
+    """A higher concurrency must still process every artifact exactly
+    once, preserve `outcomes` order matching `adapter.discover()`, and
+    aggregate metrics correctly -- no artifact silently dropped or
+    double-counted."""
+    async def _none(pool, embedder, goal_text):
+        return None
+
+    monkeypatch.setattr("app.services.skill_ingestion.check_novelty", _none)
+    artifacts = [
+        _skill_artifact(uri=f"file:///skills/{i}/SKILL.md", path=f"{i}/SKILL.md")
+        for i in range(5)
+    ]
+    pool = CompilerFakePool()
+    result = await run_skill_ingestion(
+        pool, _FakeAdapter(artifacts), embedder=FakeEmbedder(), client=None, concurrency=3,
+    )
+    m = result["metrics"]
+    assert m["artifacts_seen"] == 5
+    assert m["accepted"] == 5
+    assert m["errors"] == 0
+    assert len(result["outcomes"]) == 5
+    assert [o.status for o in result["outcomes"]] == ["captured"] * 5
+    # order matches discover() order, not completion order
+    uris_in_order = [a.uri for a in artifacts]
+    assert uris_in_order == [f"file:///skills/{i}/SKILL.md" for i in range(5)]
+
+
+@pytest.mark.asyncio
+async def test_run_skill_ingestion_concurrency_isolates_per_artifact_errors(monkeypatch):
+    """One artifact raising must not sink the others, at any concurrency."""
+    async def _none(pool, embedder, goal_text):
+        return None
+
+    monkeypatch.setattr("app.services.skill_ingestion.check_novelty", _none)
+
+    class _FlakyAdapter(_FakeAdapter):
+        def fetch(self, ref):
+            if "bad" in ref.uri:
+                raise RuntimeError("simulated fetch failure")
+            return super().fetch(ref)
+
+    artifacts = [
+        _skill_artifact(uri="file:///skills/good1/SKILL.md", path="good1/SKILL.md"),
+        _skill_artifact(uri="file:///skills/bad/SKILL.md", path="bad/SKILL.md"),
+        _skill_artifact(uri="file:///skills/good2/SKILL.md", path="good2/SKILL.md"),
+    ]
+    pool = CompilerFakePool()
+    result = await run_skill_ingestion(
+        pool, _FlakyAdapter(artifacts), embedder=FakeEmbedder(), client=None, concurrency=3,
+    )
+    m = result["metrics"]
+    assert m["artifacts_seen"] == 3
+    assert m["errors"] == 1
+    assert m["accepted"] == 2
 
 
 class _PackageRelationsFakePool:

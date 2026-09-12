@@ -26,6 +26,7 @@ predicate" discipline the banking precondition work established.
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import json
 import re
@@ -40,7 +41,6 @@ import yaml
 from app.services import artifact_blocks
 from app.services.access import TenantScope, tenant_transaction
 from app.services.applicability import find_applicable_procedures
-from app.services.claims import capture_claim
 from app.services.embeddings import Embedder
 from app.services.procedure_claim_refs import add_procedure_claim_ref
 from app.services.ingestion_admission import (
@@ -1145,19 +1145,18 @@ async def _emit_document_claim_evidence(
     return str(row["id"])
 
 
-# --- B16 / G3 / B1 wiring (this pass) --------------------------------------
-# Three services that already existed, were offline-tested, but were never
-# called by the ingestion path. Wired in here, additively, on the
-# captured / new_version outcomes only, and only after the admission gate
-# returned admit or review (a reject short-circuits before any of this).
+# --- B16 / G3 / real Claim extraction wiring -------------------------------
+# Wired in here, additively, on the captured / new_version outcomes only,
+# and only after the admission gate returned admit or review (a reject
+# short-circuits before any of this).
 #
-# The document's own proposition, captured as ONE explanatory Claim, is
-# linked to the procedure version as role=RATIONALE -- NOT a strong role.
-# A "this document describes X" claim is explanatory: a later change to it
-# must not auto-invalidate the procedure (that is exactly what
-# procedure_claim_refs' STRONG vs EXPLANATORY split, B5, is for).
-DOCUMENT_CLAIM_ROLE = "RATIONALE"
-DOCUMENT_CLAIM_TYPE = "procedural"
+# 0..N real Claims are extracted from the document's own body text
+# (app.services.claim_extraction) and linked to the procedure version via a
+# typed ProcedureClaimRef ONLY when the extractor itself suggested a valid
+# role -- see procedure_claim_refs' STRONG vs EXPLANATORY role split (B5):
+# an EXPLANATORY role (RATIONALE/DECISION/EXPECTED_EFFECT/FAILURE_MODE/
+# VERIFICATION) never auto-invalidates the procedure on a later Claim
+# change; a STRONG role (PRECONDITION/APPLICABILITY/ASSUMPTION) does.
 DOCUMENT_CLAIM_REF_ORIGIN = "derived"
 # compile_skill_artifact captures procedures at capture_procedure()'s own
 # default visibility ("public"); it never threads a non-default value. The
@@ -1300,7 +1299,7 @@ async def _emit_block_observations(
     return observation_ids
 
 
-async def _emit_document_screening_and_claim(
+async def _emit_document_screening_and_claims(
     pool: asyncpg.Pool,
     artifact: Any,
     parsed: ParsedSkill,
@@ -1310,15 +1309,17 @@ async def _emit_document_screening_and_claim(
     observation_id: str,
     procedure_id: str,
     procedure_version: int,
-    capability_statement: Optional[str],
     extractor_version: str,
     created_by: str,
     scope_type: Optional[str],
     scope_entity_id: Optional[str],
     visibility: str,
     embedder: Optional[Embedder],
-) -> tuple[Optional[str], list[str], Optional[str]]:
-    """G3 + B1 completion.
+    client: Any,
+    claim_extraction_llm_model: str,
+    skip_extraction: bool,
+) -> tuple[Optional[str], list[str], list[str]]:
+    """G3 + real Claim extraction (replaces the old B1 templated Claim).
 
     G3 -- persist the untrusted-document screen as an auditable
     ``screening_decisions`` record for a row that reaches this point --
@@ -1331,16 +1332,23 @@ async def _emit_document_screening_and_claim(
     the ALLOW audit row -- "a screen ran and found nothing" -- is still
     written, unchanged from before.
 
-    B1 -- the document path already emits an Observation + a procedure
-    Evidence row but no Claim. Derive exactly ONE explanatory Claim from
-    the document's own core proposition, anchored purely by
-    document / observation provenance (B7: no task, no episode), and link
-    it to the procedure version as ``role=RATIONALE`` (explanatory, never
-    a hard precondition -- see B5 role-awareness).
+    Claim extraction -- 0..N real, independently meaningful Claims are
+    extracted from the document's own BODY text via
+    ``app.services.claim_extraction``, each grounded to an exact source
+    block. This is NOT the old "one Claim per document" template: a
+    document with no independently useful proposition legitimately
+    produces zero Claims, and a rich document can produce several. A
+    Claim is linked to this Procedure version via a typed
+    ``ProcedureClaimRef`` ONLY when the extractor itself suggested a
+    valid role for it (never mechanically, never for every Claim).
+    ``skip_extraction`` mirrors the SAME injection-screen / quarantine
+    gate `_abstract_capability` is already skipped under -- an untrusted
+    or quarantined document never reaches the model for Claim extraction
+    either.
 
-    Returns ``(screening_decision, screening_decision_ids, document_claim_id)``.
+    Returns ``(screening_decision, screening_decision_ids, document_claim_ids)``.
     """
-    from app.services import screening  # deferred: screening imports this module
+    from app.services import artifact_blocks, claim_extraction, screening
 
     # --- G3: persisted screening audit record ---
     findings = screening.screen_document_text(
@@ -1368,54 +1376,61 @@ async def _emit_document_screening_and_claim(
             "gate should have caught this", screening_decision, artifact.uri,
         )
 
-    # --- B1: one explanatory Claim from the document's core proposition ---
-    proposition = parsed.description or capability_statement or parsed.name
-    statement = (
-        f"The source {artifact.uri} documents a procedure for: {proposition}"
+    if skip_extraction:
+        return screening_decision, screening_decision_ids, []
+
+    blocks = artifact_blocks.normalize_markdown(artifact.content)
+    document_hints = {
+        "purpose": parsed.purpose,
+        "when_not_to_use": parsed.when_not_to_use,
+        "prerequisites": "; ".join(parsed.prerequisites) if parsed.prerequisites else None,
+        "limitations": "; ".join(parsed.limitations) if parsed.limitations else None,
+        "failure_modes": "; ".join(parsed.failure_modes) if parsed.failure_modes else None,
+    }
+    candidates = await claim_extraction.extract_claim_candidates_cached(
+        pool, client, blocks, content_hash=artifact.content_hash,
+        document_hints=document_hints, model=claim_extraction_llm_model,
     )
-    document_claim_id = await capture_claim(
-        pool,
-        statement=statement,
-        task_ids=[],
-        source_ref=source_id,
-        ingestion_context_id=ingestion_context_id,
-        observation_id=observation_id,
-        created_by=created_by,
-        scope_type=scope_type,
-        scope_entity_id=scope_entity_id,
-        visibility=visibility,
-        embedder=embedder,
-        claim_type=DOCUMENT_CLAIM_TYPE,
-        # G5: an honest, non-fabricated structured triple -- `subject`/
-        # `object` are the SAME components the statement above was
-        # templated from (never separately inferred), so this is
-        # structuring data already known, not extracting new meaning.
-        subject=artifact.uri,
-        predicate="documents_procedure_for",
-        object=proposition,
-    )
-    if document_claim_id is None:
-        # Should not happen: source_ref + ingestion_context_id +
-        # observation_id are all valid B7 anchors. If capture_claim still
-        # no-ops, there is no claim to link -- skip the ref, don't guess.
-        log.warning(
-            "skill_ingestion: capture_claim returned None for %s despite "
-            "document/observation provenance; skipping procedure_claim_ref",
-            artifact.uri,
-        )
-    else:
-        await add_procedure_claim_ref(
-            pool,
-            procedure_id=str(procedure_id),
-            procedure_version=int(procedure_version),
-            claim_id=document_claim_id,
-            role=DOCUMENT_CLAIM_ROLE,
-            ref_origin=DOCUMENT_CLAIM_REF_ORIGIN,
-            extractor_version=extractor_version,
+
+    document_claim_ids: list[str] = []
+    for candidate in candidates:
+        claim_id = await claim_extraction.persist_claim_candidate(
+            pool, candidate,
+            source_ref=source_id,
             ingestion_context_id=ingestion_context_id,
+            observation_id=observation_id,
             created_by=created_by,
+            scope_type=scope_type,
+            scope_entity_id=scope_entity_id,
+            visibility=visibility,
+            embedder=embedder,
+            equivalence_client=client,
+            equivalence_model=claim_extraction_llm_model,
         )
-    return screening_decision, screening_decision_ids, document_claim_id
+        if claim_id is None:
+            # B7 anchor rule declined it (should not happen: source_ref +
+            # ingestion_context_id + observation_id are all valid anchors)
+            # -- skip the ref, don't guess.
+            log.warning(
+                "skill_ingestion: capture_claim returned None for an extracted "
+                "candidate on %s despite document/observation provenance",
+                artifact.uri,
+            )
+            continue
+        document_claim_ids.append(claim_id)
+        if candidate.suggested_procedure_role is not None:
+            await add_procedure_claim_ref(
+                pool,
+                procedure_id=str(procedure_id),
+                procedure_version=int(procedure_version),
+                claim_id=claim_id,
+                role=candidate.suggested_procedure_role,
+                ref_origin=DOCUMENT_CLAIM_REF_ORIGIN,
+                extractor_version=extractor_version,
+                ingestion_context_id=ingestion_context_id,
+                created_by=created_by,
+            )
+    return screening_decision, screening_decision_ids, document_claim_ids
 
 
 _SKILL_ABSTRACTION_SYSTEM_PROMPT = """You restate a software skill's capability as ONE abstract, \
@@ -1514,10 +1529,14 @@ class IngestOutcome:
     #     ALONGSIDE the existing injection_signals provenance downgrade --
     #     it does not itself change the capture decision (a screen REJECT
     #     is recorded + warned, not enforced here -- deferred policy call).
-    #   - document_claim_id: the one explanatory Claim ("this source
-    #     documents a procedure for X") derived from the document's own
-    #     proposition, linked to the procedure version as role=RATIONALE
-    #     (so a later change to it never auto-invalidates the procedure).
+    #   - document_claim_ids: 0..N real Claims extracted from the
+    #     document's own BODY text (app.services.claim_extraction), each
+    #     independently meaningful and grounded to an exact source block --
+    #     NOT "this source documents a procedure for X" (that templated,
+    #     document-about-itself statement was the real bug; see
+    #     claim_extraction.py's own docstring). A claim is linked to this
+    #     procedure version via a typed ProcedureClaimRef ONLY when the
+    #     extractor suggested a valid role for it -- never mechanically.
     artifact_block_ids: list[str] = field(default_factory=list)
     # G4 residual: one Observation per artifact_block (see
     # _emit_block_observations) -- additive to observation_id (the single
@@ -1526,11 +1545,11 @@ class IngestOutcome:
     block_observation_ids: list[str] = field(default_factory=list)
     screening_decision: Optional[str] = None
     screening_decision_ids: list[str] = field(default_factory=list)
-    document_claim_id: Optional[str] = None
-    # G6: the evidence row analogous to document_evidence_id, but targeting
-    # the document Claim (target_type='claim') instead of the Procedure.
-    # None whenever document_claim_id is None (nothing to attach it to).
-    document_claim_evidence_id: Optional[str] = None
+    document_claim_ids: list[str] = field(default_factory=list)
+    # G6: one evidence row per document_claim_id, analogous to
+    # document_evidence_id but targeting the Claim (target_type='claim')
+    # instead of the Procedure. Same length/order as document_claim_ids.
+    document_claim_evidence_ids: list[str] = field(default_factory=list)
 
 
 def _slugify(text: str, *, maxlen: int = 80) -> str:
@@ -2071,6 +2090,7 @@ async def compile_skill_artifact(
     owner_id: Optional[str] = None,
     admission_llm_model: str = "gemma-4-31B-it",
     capability_llm_model: str = "gemma-4-31B-it",
+    claim_extraction_llm_model: str = "gemma-4-31B-it",
 ) -> IngestOutcome:
     """Compile one SourceArtifact into the substrate. See the section
     comment above for the full contract. Never raises for an
@@ -2323,28 +2343,31 @@ async def compile_skill_artifact(
             superseded_version = int(
                 superseded.get("version") or _FRESH_PROCEDURE_VERSION
             )
-            # G3 (persisted screening audit) + B1 (one explanatory
-            # document Claim linked role=RATIONALE). Additive: does not
-            # touch the injection-screen downgrade or the Observation /
-            # Evidence emit above.
+            # G3 (persisted screening audit) + real Claim extraction from
+            # the document body (0..N independently meaningful Claims,
+            # never the old one-per-document template). Additive: does
+            # not touch the injection-screen downgrade or the Observation
+            # / Evidence emit above.
             (
                 screening_decision,
                 screening_decision_ids,
-                document_claim_id,
-            ) = await _emit_document_screening_and_claim(
+                document_claim_ids,
+            ) = await _emit_document_screening_and_claims(
                 pool, artifact, parsed,
                 source_id=source_id,
                 ingestion_context_id=ingestion_context_id,
                 observation_id=observation_id,
                 procedure_id=str(superseded["procedure_id"]),
                 procedure_version=superseded_version,
-                capability_statement=capability_statement,
                 extractor_version=extractor_version,
                 created_by=created_by,
                 scope_type=resolved_scope_type,
                 scope_entity_id=domain,
                 visibility=_DOCUMENT_PROCEDURE_VISIBILITY,
                 embedder=embedder,
+                client=client,
+                claim_extraction_llm_model=claim_extraction_llm_model,
+                skip_extraction=bool(injection_signals) or quarantined,
             )
 
             # B2: task_nodes are NOT manufactured from source steps at
@@ -2364,17 +2387,18 @@ async def compile_skill_artifact(
                 context_key=artifact.uri, extractor_version=extractor_version,
                 ingestion_context_id=ingestion_context_id, created_by=created_by,
             )
-            # G6: the analogous evidence row for the document Claim itself
-            # (not just the Procedure) -- only when a claim was actually
-            # captured (B7: capture_claim can no-op on an unanchored claim).
-            document_claim_evidence_id = None
-            if document_claim_id is not None:
-                document_claim_evidence_id = await _emit_document_claim_evidence(
-                    pool, claim_id=document_claim_id,
+            # G6: one analogous evidence row per extracted document Claim
+            # (not just the Procedure) -- 0..N, same length/order as
+            # document_claim_ids.
+            document_claim_evidence_ids = [
+                await _emit_document_claim_evidence(
+                    pool, claim_id=claim_id,
                     source_hash=artifact.content_hash,
                     context_key=artifact.uri, extractor_version=extractor_version,
                     ingestion_context_id=ingestion_context_id, created_by=created_by,
                 )
+                for claim_id in document_claim_ids
+            ]
             artifact_id = await _write_artifact_row(
                 pool, artifact, run_id=run_id,
                 procedure_id=superseded["procedure_id"],
@@ -2419,12 +2443,12 @@ async def compile_skill_artifact(
                 ingestion_context_id=ingestion_context_id,
                 observation_id=observation_id,
                 document_evidence_id=document_evidence_id,
-                document_claim_evidence_id=document_claim_evidence_id,
+                document_claim_evidence_ids=document_claim_evidence_ids,
                 artifact_block_ids=artifact_block_ids,
                 block_observation_ids=block_observation_ids,
                 screening_decision=screening_decision,
                 screening_decision_ids=screening_decision_ids,
-                document_claim_id=document_claim_id,
+                document_claim_ids=document_claim_ids,
             )
         # prior row already gone (concurrent merge/supersede) -- fall
         # through and treat this as a fresh capture.
@@ -2519,27 +2543,30 @@ async def compile_skill_artifact(
         artifact_content=artifact.content,
     )
 
-    # G3 (persisted screening audit) + B1 (one explanatory document Claim
-    # linked role=RATIONALE). Additive: the injection-screen downgrade and
-    # the Observation / Evidence emit are untouched.
+    # G3 (persisted screening audit) + real Claim extraction from the
+    # document body (0..N independently meaningful Claims). Additive: the
+    # injection-screen downgrade and the Observation / Evidence emit are
+    # untouched.
     (
         screening_decision,
         screening_decision_ids,
-        document_claim_id,
-    ) = await _emit_document_screening_and_claim(
+        document_claim_ids,
+    ) = await _emit_document_screening_and_claims(
         pool, artifact, parsed,
         source_id=source_id,
         ingestion_context_id=ingestion_context_id,
         observation_id=observation_id,
         procedure_id=str(result["procedure_id"]),
         procedure_version=_FRESH_PROCEDURE_VERSION,
-        capability_statement=capability_statement,
         extractor_version=extractor_version,
         created_by=created_by,
         scope_type=resolved_scope_type,
         scope_entity_id=domain,
         visibility=_DOCUMENT_PROCEDURE_VISIBILITY,
         embedder=embedder,
+        client=client,
+        claim_extraction_llm_model=claim_extraction_llm_model,
+        skip_extraction=bool(injection_signals) or quarantined,
     )
 
     # B2: task_nodes are NOT manufactured from source steps at ingestion
@@ -2558,17 +2585,17 @@ async def compile_skill_artifact(
         context_key=artifact.uri, extractor_version=extractor_version,
         ingestion_context_id=ingestion_context_id, created_by=created_by,
     )
-    # G6: the analogous evidence row for the document Claim itself (not
-    # just the Procedure) -- only when a claim was actually captured (B7:
-    # capture_claim can no-op on an unanchored claim).
-    document_claim_evidence_id = None
-    if document_claim_id is not None:
-        document_claim_evidence_id = await _emit_document_claim_evidence(
-            pool, claim_id=document_claim_id,
+    # G6: one analogous evidence row per extracted document Claim (not
+    # just the Procedure) -- 0..N, same length/order as document_claim_ids.
+    document_claim_evidence_ids = [
+        await _emit_document_claim_evidence(
+            pool, claim_id=claim_id,
             source_hash=artifact.content_hash,
             context_key=artifact.uri, extractor_version=extractor_version,
             ingestion_context_id=ingestion_context_id, created_by=created_by,
         )
+        for claim_id in document_claim_ids
+    ]
     artifact_id = await _write_artifact_row(
         pool, artifact, run_id=run_id,
         procedure_id=result["procedure_id"], procedure_row_id=result["id"],
@@ -2609,12 +2636,12 @@ async def compile_skill_artifact(
         block_observation_ids=block_observation_ids,
         screening_decision=screening_decision,
         screening_decision_ids=screening_decision_ids,
-        document_claim_id=document_claim_id,
+        document_claim_ids=document_claim_ids,
         source_id=source_id,
         ingestion_context_id=ingestion_context_id,
         observation_id=observation_id,
         document_evidence_id=document_evidence_id,
-        document_claim_evidence_id=document_claim_evidence_id,
+        document_claim_evidence_ids=document_claim_evidence_ids,
     )
 
 
@@ -2634,6 +2661,8 @@ async def run_skill_ingestion(
     limit: Optional[int] = None,
     admission_llm_model: str = "gemma-4-31B-it",
     capability_llm_model: str = "gemma-4-31B-it",
+    claim_extraction_llm_model: str = "gemma-4-31B-it",
+    concurrency: int = 1,
 ) -> dict:
     """Drive one source adapter end to end and record a manifest.
 
@@ -2641,7 +2670,28 @@ async def run_skill_ingestion(
     adapter discovers (a per-artifact failure is counted, never aborts the
     batch -- same discipline as ingestion_jobs.process_pending_jobs), then
     finalizes the row with the brief section 14 metrics. Returns
-    {"run_id", "metrics", "outcomes"}."""
+    {"run_id", "metrics", "outcomes"}.
+
+    `concurrency` (Phase 10): default 1 preserves the ORIGINAL exact
+    sequential behavior byte-for-byte (same order, same per-artifact
+    exception isolation) -- this is a strictly opt-in change, never a
+    default-behavior change for existing callers. `concurrency > 1` runs
+    up to that many `compile_skill_artifact` calls concurrently via a
+    bounded semaphore; `outcomes` is still returned in the SAME order as
+    `adapter.discover()` regardless of completion order (metrics are
+    aggregated afterward, sequentially, from the ordered results -- never
+    from concurrent dict mutation).
+
+    KNOWN RISK, read before raising this above 1: `check_novelty`'s
+    near-duplicate detection reads-then-decides per artifact. If TWO
+    artifacts in the SAME batch are near-duplicates of EACH OTHER (not of
+    prior history) and run concurrently, both can pass the "not a
+    duplicate" check before either commits, producing two procedures
+    instead of one correctly marked `duplicate` of the other -- a race
+    that does not exist at concurrency=1. Safe to raise for a corpus
+    whose members are not expected to duplicate each other within one
+    run (the common bulk-crawl case); leave at 1 if that is not true for
+    your source."""
     embedder = embedder or Embedder()
     source_spec = {
         "adapter": type(adapter).__name__,
@@ -2698,32 +2748,51 @@ async def run_skill_ingestion(
         "screening_quarantine": 0,
         "screening_reject": 0,
         "document_claims": 0,
+        # Phase 19/20: a document producing zero real Claims is a normal,
+        # correct, and common outcome now (no forced 1:1 mapping) --
+        # tracked explicitly so "the extractor never runs" and "the
+        # extractor runs and correctly finds nothing" stay distinguishable
+        # in the manifest, not just silently invisible.
+        "zero_claim_documents": 0,
         # G4 residual: one Observation per artifact_block (block-span
         # citation), additive to `observation_id` (the single whole-
         # document Observation every accepted artifact already gets).
         "block_observations": 0,
     }
-    outcomes: list[IngestOutcome] = []
+    refs = list(adapter.discover())
+    if limit is not None:
+        refs = refs[:limit]
 
-    for ref in adapter.discover():
-        if limit is not None and metrics["artifacts_seen"] >= limit:
-            break
-        metrics["artifacts_seen"] += 1
+    async def _process_one(ref: Any) -> IngestOutcome:
         try:
             artifact = adapter.fetch(ref)
-            outcome = await compile_skill_artifact(
+            return await compile_skill_artifact(
                 pool, artifact, embedder=embedder, client=client, domain=domain,
                 run_id=run_id, created_by=created_by, invariants=invariants,
                 owner_id=owner_id, admission_llm_model=admission_llm_model,
                 capability_llm_model=capability_llm_model,
+                claim_extraction_llm_model=claim_extraction_llm_model,
             )
         except Exception as exc:  # noqa: BLE001 -- one bad artifact must not
             # sink the run; the failure is counted and surfaced.
-            metrics["errors"] += 1
-            outcomes.append(IngestOutcome(status="error", reason=repr(exc)))
-            continue
+            return IngestOutcome(status="error", reason=repr(exc))
 
-        outcomes.append(outcome)
+    if concurrency <= 1:
+        outcomes: list[IngestOutcome] = [await _process_one(ref) for ref in refs]
+    else:
+        semaphore = asyncio.Semaphore(concurrency)
+
+        async def _bounded(ref: Any) -> IngestOutcome:
+            async with semaphore:
+                return await _process_one(ref)
+
+        outcomes = await asyncio.gather(*(_bounded(ref) for ref in refs))
+
+    for outcome in outcomes:
+        metrics["artifacts_seen"] += 1
+        if outcome.status == "error":
+            metrics["errors"] += 1
+            continue
         metrics["implementation_candidates"] += len(outcome.implementation_ids)
         metrics["procedure_dependencies"] += outcome.dependency_count
         # `candidates` counts every artifact that reached the compiler,
@@ -2763,8 +2832,9 @@ async def run_skill_ingestion(
             metrics["screening_quarantine"] += 1
         elif outcome.screening_decision == "REJECT":
             metrics["screening_reject"] += 1
-        if outcome.document_claim_id:
-            metrics["document_claims"] += 1
+        metrics["document_claims"] += len(outcome.document_claim_ids)
+        if outcome.status in _ACCEPTED_STATUSES and not outcome.document_claim_ids:
+            metrics["zero_claim_documents"] += 1
 
     await resolve_procedure_dependencies(pool)
 

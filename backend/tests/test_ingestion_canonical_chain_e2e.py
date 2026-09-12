@@ -30,6 +30,53 @@ from app.services.embeddings import Embedder
 from app.services.ingestion_sources.skill_md import LocalDirSkillSource
 from app.services.skill_ingestion import run_skill_ingestion
 
+
+class _FakeClaimExtractionClient:
+    """A real, grounded extraction response: it reads the SAME
+    `[block N] <text>` prompt the real extractor builds, finds the block
+    whose text mentions "corrupt" (the fixture's own failure-mode bullet),
+    and cites that exact block index with a verbatim quote from it --
+    proving the golden chain end to end through the real validation path
+    (structural shape + grounding check), without a live model call."""
+
+    class _Choice:
+        def __init__(self, content: str):
+            self.message = type("Msg", (), {"content": content})()
+
+    class _Completions:
+        def create(self, *, model, messages, temperature, max_tokens):
+            user_content = messages[1]["content"]
+            block_line = next(
+                (ln for ln in user_content.splitlines() if ln.startswith("[block") and "corrupt" in ln),
+                None,
+            )
+            if block_line is None:
+                return _FakeClaimExtractionClient._Response('{"claims": []}')
+            block_index = int(block_line.split("]")[0].removeprefix("[block").strip())
+            quote = "The ledger table itself is corrupt"
+            payload = json.dumps({"claims": [{
+                "statement": (
+                    "A corrupt migration ledger table must be restored from "
+                    "backup before re-running drifted migrations against it."
+                ),
+                "claim_type": "failure_mode",
+                "scope": "source_scoped",
+                "conditions": ["the ledger table itself is corrupt"],
+                "source_block_index": block_index,
+                "source_quote": quote,
+                "confidence_of_extraction": 0.9,
+                "suggested_procedure_role": "RATIONALE",
+                "rationale_for_extraction": "Explicit failure-mode bullet in the source.",
+            }]})
+            return _FakeClaimExtractionClient._Response(payload)
+
+    class _Response:
+        def __init__(self, content: str):
+            self.choices = [_FakeClaimExtractionClient._Choice(content)]
+
+    def __init__(self):
+        self.chat = type("Chat", (), {"completions": self._Completions()})()
+
 DATABASE_URL = os.environ.get("DATABASE_URL")
 
 pytestmark = pytest.mark.skipif(
@@ -115,6 +162,7 @@ def test_procedural_skill_md_produces_the_full_canonical_chain():
             result = await run_skill_ingestion(
                 pool, adapter, embedder=Embedder(),
                 created_by="test_ingestion_canonical_chain_e2e",
+                client=_FakeClaimExtractionClient(),
             )
             m = result["metrics"]
             assert m["errors"] == 0, m
@@ -215,20 +263,21 @@ def test_procedural_skill_md_produces_the_full_canonical_chain():
             )
             assert link == 1, "Claim not linked to its Observation via claim_sources"
 
-            # G5: the claim carries a real, non-fabricated subject/
-            # predicate/object triple (templated from artifact.uri + the
-            # document's own proposition -- see skill_ingestion.
-            # _emit_document_screening_and_claim). capture_claim() folds
-            # the triple into `properties` (NOT the top-level subject/
-            # predicate/object columns -- those stay NULL; a separate,
-            # pre-existing gap in claims.py, out of this scope).
+            # Real Claim extraction (app.services.claim_extraction): the
+            # claim is grounded to an exact source block/quote from the
+            # fixture's own "Failure modes" section, carries extraction
+            # confidence (never promoted to truth_state), and is tagged
+            # 'inferred' (model-derived, as opposed to 'observed').
             props_row = await pool.fetchval(
                 "SELECT properties FROM knowledge_nodes WHERE id = $1", claim["id"],
             )
             props = json.loads(props_row) if isinstance(props_row, str) else props_row
-            assert props.get("predicate") == "documents_procedure_for"
-            assert props.get("subject")
-            assert props.get("object")
+            assert props.get("claim_type") == "failure_mode"
+            assert props.get("epistemic_status") == "inferred"
+            assert props.get("confidence") == 0.9
+            assert props.get("source_quote") == "The ledger table itself is corrupt"
+            assert isinstance(props.get("source_block_index"), int)
+            assert props.get("extraction_version")
 
             # G6: a SECOND evidence row, targeting the Claim itself (not
             # just the Procedure) -- same independence_group keying so a

@@ -162,6 +162,7 @@ async def _cmd_ingest_manifest(args: argparse.Namespace) -> None:
                 pool, adapter, embedder=Embedder(),
                 domain=(spec.repo if spec.type == "github_subtree" else None),
                 created_by="structured_skill_ingestion_wave1", limit=args.limit,
+                concurrency=args.concurrency,
             )
             results.append({
                 "source": spec.id,
@@ -287,6 +288,13 @@ def main() -> None:
     p_ingest.add_argument("--process-jobs", action="store_true",
                           help="Queue packages and process a bounded worker batch inline.")
     p_ingest.add_argument("--worker-limit", type=int, default=100)
+    p_ingest.add_argument(
+        "--concurrency", type=int, default=1,
+        help="Concurrent compile_skill_artifact calls per source (default 1, "
+             "strictly sequential). Raise only for a corpus not expected to "
+             "duplicate itself within one run -- see run_skill_ingestion's "
+             "own docstring for the near-duplicate race this can introduce.",
+    )
     p_ingest.set_defaults(func=_cmd_ingest_manifest, needs_db=True)
 
     p_qa = sub.add_parser("retrieval-qa", help="Run the structured-skill retrieval suite.")
