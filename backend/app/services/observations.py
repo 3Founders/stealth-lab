@@ -139,6 +139,73 @@ def extract_deterministic_observations(trace_event: dict) -> list[dict]:
     return observations
 
 
+def extract_deterministic_observations_from_run_event(event: dict) -> Optional[dict]:
+    """
+    Sibling of `extract_deterministic_observations()` above, for LOCAL
+    MCP-execution events (`execution_run_events` rows) instead of
+    ingested `trace_events` rows. Pure function, no I/O, no LLM call --
+    same reasoning as the trace_event version: trivially unit-testable,
+    and cheap enough to run per-event rather than deferred to the one
+    bounded per-Episode consolidation pass (app.services.ingestion_jobs::
+    handle_consolidate_local_episode), which is reserved for the one real
+    LLM call per Episode.
+
+    `execution_run_events.event_type` is the real, already-populated
+    vocabulary from migrations 61/70/72 (node_succeeded/node_failed/
+    artifact_recorded/verification_completed/tool_called/tool_result/...)
+    -- deliberately narrower than the trace_event extractor: this only
+    covers event types that mean something on their own, without needing
+    to join back to a tool_input/tool_output shape that host-executed
+    (`report_node_progress`) nodes may never populate.
+
+    Returns a single dict (this table's rows are 1:1 per real occurrence,
+    unlike a trace_event's tool call which can imply more than one
+    observation) or None when the event has nothing worth observing.
+    """
+    event_type = event.get("event_type")
+    payload = _decode_json_field(event.get("payload"))
+
+    if event_type == "node_succeeded":
+        return {
+            "observation_type": "node_succeeded",
+            "label": f"Node {event.get('node_order')} succeeded",
+            "properties": {"node_order": event.get("node_order"), **payload},
+        }
+    if event_type == "node_failed":
+        return {
+            "observation_type": "node_failed",
+            "label": f"Node {event.get('node_order')} failed",
+            "properties": {"node_order": event.get("node_order"), **payload},
+        }
+    if event_type == "artifact_recorded":
+        return {
+            "observation_type": "artifact_recorded",
+            "label": f"Artifact recorded: {payload.get('kind', 'unknown')}",
+            "properties": payload,
+        }
+    if event_type == "verification_completed":
+        return {
+            "observation_type": "test_run",
+            "label": f"Verification completed: {payload.get('overall_state', 'unknown')}",
+            # Same explicit tri-state discipline as the trace_event
+            # extractor above: only a real, unambiguous boolean outcome
+            # is stamped as 'passed' -- anything else stays UNKNOWN
+            # rather than assumed.
+            "properties": {
+                **payload,
+                **({"passed": True} if payload.get("overall_state") == "satisfied" else {}),
+                **({"passed": False} if payload.get("overall_state") == "failed_verification" else {}),
+            },
+        }
+    if event_type == "tool_result":
+        return {
+            "observation_type": "tool_result",
+            "label": f"Tool call produced a result at node {event.get('node_order')}",
+            "properties": {"node_order": event.get("node_order"), **payload},
+        }
+    return None
+
+
 _SEMANTIC_LABEL_SYSTEM_PROMPT = """You interpret a single coding-agent tool call and produce a
 TERSE semantic label describing what it actually did, in the same spirit as this real example:
 "edit file X" -> "authentication implementation was modified".
@@ -220,7 +287,8 @@ async def persist_observation(
     observation_type: str,
     label: str,
     extractor_kind: str,
-    event_ids: list[str],
+    event_ids: Optional[list[str]] = None,
+    execution_run_event_ids: Optional[list[str]] = None,
     properties: Optional[dict] = None,
     model_id: Optional[str] = None,
     prompt_hash: Optional[str] = None,
@@ -230,13 +298,23 @@ async def persist_observation(
 ) -> str:
     """
     Writes one observation row plus one observation_events link per real
-    event_id given. Real idempotency note, stated honestly rather than
+    event cited. Real idempotency note, stated honestly rather than
     silently assumed: this function does NOT deduplicate -- re-extracting
     from the same event twice produces two distinct observation rows,
     consistent with observations being immutable/re-derived rather than
     superseded (ticket 04's own reasoning). Deduplication, if wanted, is
     the caller's job (e.g. checking observation_events for this event_id
     + this extractor_name before calling this).
+
+    `event_ids` (real `trace_events` ids, the global/ingested-transcript
+    universe) and `execution_run_event_ids` (real `execution_run_events`
+    ids, the local MCP-execution universe -- see migration 79) must never
+    both be non-empty at once, matching `observation_events`'
+    `observation_events_exactly_one_event_chk` CHECK constraint: a single
+    citation row lives in exactly one event universe. Zero citations in
+    both (a document-derived observation with no underlying event at all
+    -- a real, pre-existing call shape, e.g. skill_ingestion.py's document
+    Claim capture) stays legal, exactly as before this parameter existed.
 
     REAL GAP FIXED: `14_observations.sql` gives this table real
     `owner_id`/`visibility` columns (ticket 09's pair, correctly present
@@ -247,6 +325,14 @@ async def persist_observation(
     """
     if visibility not in ("public", "private"):
         raise ValueError(f"visibility must be 'public' or 'private', got {visibility!r}")
+    event_ids = event_ids or []
+    execution_run_event_ids = execution_run_event_ids or []
+    if event_ids and execution_run_event_ids:
+        raise ValueError(
+            "persist_observation: event_ids and execution_run_event_ids "
+            "must not both be non-empty -- an observation_events row cites "
+            "exactly one event universe"
+        )
 
     extractor_name = (
         DETERMINISTIC_EXTRACTOR_NAME if extractor_kind == "deterministic"
@@ -275,6 +361,12 @@ async def persist_observation(
                     "INSERT INTO observation_events (observation_id, event_id) "
                     "VALUES ($1, $2)",
                     obs_id, event_id,
+                )
+            for run_event_id in execution_run_event_ids:
+                await conn.execute(
+                    "INSERT INTO observation_events (observation_id, execution_run_event_id) "
+                    "VALUES ($1, $2)",
+                    obs_id, run_event_id,
                 )
     return str(obs_id)
 
