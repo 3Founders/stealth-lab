@@ -298,3 +298,58 @@ def test_promoting_a_private_observation_is_blocked_for_a_different_viewer():
             await pool.close()
 
     asyncio.run(_run())
+
+
+def test_promote_standalone_observation_with_no_task_ids_or_episode():
+    """
+    REAL BUG FIXED: promote_observation_to_claim's own capture_claim() call
+    never passed observation_id -- capture_claim's B7 anchor rule accepts
+    observation_id as anchor (c), specifically for "a claim... promoted
+    from an observation... [with] no task_node to point at", but this
+    function silently dropped that anchor on the floor. Every existing
+    test above happens to pass real task_ids, which independently satisfy
+    anchor (a) -- masking that anchor (c) was dead code. This is the exact
+    shape a trace with no task_node representation (e.g. an agent trace
+    that never went through graph_ingest.py's task_node creation) hits:
+    zero task_ids, zero episode, observation_id only. Confirmed failing
+    (claim_id is None) before the fix; must pass after it."""
+    async def _run():
+        pool = await _real_create_pool(DATABASE_URL, min_size=1, max_size=2)
+        obs_id = None
+        claim_id = None
+        try:
+            obs_id = await persist_observation(
+                pool, observation_type="test_run",
+                label="obs-test standalone observation with no task/episode anchor",
+                extractor_kind="model", event_ids=[], model_id="fake-model",
+            )
+            claim_id = await promote_observation_to_claim(
+                pool, observation_id=obs_id, task_ids=[], embedder=FakeEmbedder(),
+            )
+            assert claim_id is not None, (
+                "promote_observation_to_claim must succeed via the observation_id "
+                "anchor alone -- no task_ids, no episode required"
+            )
+            claim_row = await pool.fetchrow(
+                "SELECT properties FROM knowledge_nodes WHERE id = $1", claim_id
+            )
+            props = dict(claim_row["properties"])
+            assert props["statement"] == "obs-test standalone observation with no task/episode anchor"
+            source_row = await pool.fetchrow(
+                "SELECT 1 FROM claim_sources WHERE claim_id = $1 AND observation_id = $2",
+                claim_id, obs_id,
+            )
+            assert source_row is not None, "claim_sources link must exist for the promoted claim"
+        finally:
+            if claim_id is not None:
+                await pool.execute(
+                    "DELETE FROM claim_sources WHERE claim_id = $1", claim_id,
+                )
+                await pool.execute(
+                    "DELETE FROM knowledge_nodes WHERE id = $1", claim_id,
+                )
+            if obs_id is not None:
+                await pool.execute("DELETE FROM observations WHERE id = $1", obs_id)
+            await pool.close()
+
+    asyncio.run(_run())

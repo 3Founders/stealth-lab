@@ -361,6 +361,7 @@ async def promote_observation_to_claim(
         statement=row["label"],
         task_ids=task_ids,
         justification_episode_id=justification_episode_id,
+        observation_id=observation_id,
         claim_type=row["observation_type"],
         epistemic_status=epistemic_status,
         extraction_version=extraction_version,
