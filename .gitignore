@@ -32,6 +32,13 @@ backend/data/raw_payloads/
 # shared history: it's this checkout's own local substrate, not global data.
 .stealthlab/
 
+# B35 agent-facing working-set projection (app/stealth/generator.py) --
+# regenerated from canonical Postgres state on every find_best_way/
+# continue_run call given a repo_path. Every file in it says so in its own
+# header ("GENERATED, not canonical. Do not hand-edit."); never source of
+# truth, never meant to be committed.
+.stealth/
+
 # Python bytecode
 __pycache__/
 *.pyc
