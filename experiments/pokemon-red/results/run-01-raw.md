@@ -2,9 +2,16 @@
 
 **Read this first:** the row currently in `results/summary.csv` and in
 `runs/20260912T221700Z-9f160f.json` is a **recorder smoke test**, not the
-RAW (Condition A) experimental run. The recorder did not exist yet when
-Condition A was actually played, so that run has no machine-recorded
-metrics. Both facts are laid out separately below — do not merge them.
+RAW (Condition A) experimental run. Condition A has no machine-recorded
+metrics, but *not* because the recorder didn't exist during it — an
+investigation (file timestamps, git history, and a live read-only query
+against pokemon-agent) found the recorder was built and smoke-tested
+roughly 35–40 minutes *into* Run A's session, and Run A's session kept
+running for over four more hours after that. `recorder.py start` was
+simply never invoked for Run A at any point — the instrumentation existed
+and worked, but was never turned on for that specific run. See
+`README.md` section D for the full timeline. Both facts (smoke test vs.
+Condition A) are laid out separately below — do not merge them.
 
 ## The only recorder run on disk (smoke test — excluded from analysis)
 
@@ -31,26 +38,41 @@ correctly tallied and written to `runs/` and `results/summary.csv`). It
 involved zero gameplay and is not comparable to a real A/B/C run — **exclude
 it from any cross-condition comparison.**
 
-## Condition A (RAW) — actual played run, qualitative outcome only
+## Condition A (RAW) — actual played run, qualitative outcome + one recovered metric
 
-No JSON/JSONL record exists for this run (played before the recorder was
-built), so the table below has no quantitative columns to report — this doc
-does not invent wall-clock/action/call counts for it.
+No recorder-format JSON/JSONL record exists for this run — not because it
+predates the recorder, but because `recorder.py start` was never invoked
+for it (see `README.md` section D for the evidence). This doc does not
+invent recorder-schema numbers (`game_actions`, call counts, wall-clock)
+for it. One number *is* independently recoverable, from pokemon-agent's
+own session bookkeeping rather than our recorder:
 
 | Field | Value |
 |---|---|
 | Condition | A — RAW |
-| Run ID | not recorded (recorder did not exist yet) |
+| Run ID | not recorded (recorder never started for this run) |
+| pokemon-agent session | `20260912_213553_179047` |
 | Start checkpoint | `pokemon_experiment_start_v2` |
 | Outcome | **Failure** — did not obtain the Boulder Badge |
-| Wall clock | not recorded |
-| Game actions | not recorded |
-| State calls | not recorded |
-| Screenshot calls | not recorded |
-| Saves | not recorded |
-| Loads | not recorded |
-| Resets | not recorded |
+| Session created_at | `2026-09-12T21:35:53Z` (live `GET /games`) |
+| Session updated_at (last activity) | `2026-09-13T02:05:12Z` (live `GET /games`) |
+| pokemon-agent `turns` (session-native counter, **not** the recorder's `game_actions`) | 837 |
+| Wall clock | not recorded (recorder schema; approximate elapsed span above is ~4h29m by session timestamps, not the same measurement) |
+| game_state_calls / game_screenshot_calls | not recorded |
+| Saves | not recorded (session has 1 save total — the checkpoint itself, `save_count: 1`) |
+| Loads / Resets | not recorded |
 | Failure reason | Never connected obtaining Oak's Parcel to returning it to Professor Oak in Pallet Town, so the northern Route 2 gate stayed shut; concluded the route was inaccessible rather than backtracking to Oak |
+
+`turns: 837` and the recorder's `game_actions` are **not interchangeable**
+— different system, different counting method, never cross-validated
+against each other. Report them separately if you cite both; don't relabel
+one as the other in any comparison table.
+
+As of this correction, that same session's live emulator state is still
+sitting at Run A's exact end point (Squirtle, Oak's Parcel in bag, Viridian
+City, 0 badges) — it has not been reset or reloaded since. That state will
+be lost the moment the session is reset/reloaded/overwritten unless it's
+explicitly saved under its own name first.
 
 ### Narrative
 
@@ -64,10 +86,13 @@ Boulder Badge.
 
 ## What to do differently for B and C
 
-Start the recorder (`recorder.py start --condition {notes|stealth} ...`)
-*before* giving the agent the objective, and finish it
+Run A's gap was not a timing problem (recorder-doesn't-exist-yet) — it was
+that `recorder.py start` was never actually run. Start the recorder
+(`recorder.py start --condition {notes|stealth} ...`) as the **very first
+step**, before the checkpoint is even loaded, and finish it
 (`recorder.py finish --success` / `--failure-reason "..."`) the moment each
-run reaches a genuine terminal outcome. That will give B and C real
-`game_actions` / call-count / wall-clock data that this baseline lacks —
-comparable to each other, even though Condition A predates the
-instrumentation.
+run reaches a genuine terminal outcome. Check `recorder.py status` right
+after starting to confirm it actually took effect. That will give B and C
+real `game_actions` / call-count / wall-clock data that this baseline
+lacks — comparable to each other, and comparable to Condition A only via
+its qualitative outcome and the recovered `turns: 837` data point.

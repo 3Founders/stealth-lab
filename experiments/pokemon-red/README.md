@@ -54,22 +54,60 @@ Exactly three conditions. Do not add others without updating this doc.
 
 ## D. Run A (RAW) result — actual recorded data
 
-**Important, read before using this section for comparison:** the recorder
-(`experiments/pokemon-red/recorder.py`) did not exist yet when Run A was
-played. The only run currently on disk in `experiments/pokemon-red/runs/`
-is a post-hoc **smoke test** of the recorder itself
-(`20260912T221700Z-9f160f`, condition `recorder-smoke`) — it exercised one
-`game_load`, one `game_state`, and one `game_screenshot` call with **zero
-gameplay actions**, purely to prove the recorder's hook, file formats, and
-`summarize` command work. It is not an experimental run and must be
-excluded from any A/B/C comparison (see `results/run-01-raw.md` and
-`results/summary.csv`).
+**Important, read before using this section for comparison:** Run A has no
+recorder-format record — but the reason is more specific than "the recorder
+didn't exist yet," and was confirmed by cross-checking file timestamps, git
+history, and a live (read-only) query against the still-running
+pokemon-agent process:
 
-Because of that, Run A has **no recorded `game_actions` / `game_state_calls`
-/ `game_screenshot_calls` / saves / loads / resets / wall-clock-seconds** —
-none of that was captured at the time, and this doc does not invent numbers
-for it. What is known about Run A is the qualitative outcome, established
-from the actual play session:
+- pokemon-agent session `20260912_213553_179047` ("pokemon_experiment_start_v2_session")
+  was created at **2026-09-12T21:35:53Z**, and its checkpoint save
+  (`pokemon_experiment_start_v2`, `save_count: 1`) was made in that same
+  session — this is the session Run A was played in.
+- The recorder module and Game MCP's hook into it
+  (`backend/app/experiments/pokemon_red_recorder.py`,
+  `backend/app/game_mcp/server.py`) were written **later that session**, at
+  **2026-09-13 03:40–03:47 IST (2026-09-12 22:10–22:17 UTC)** — i.e.
+  roughly 35–40 minutes *into* Run A's session, not before it.
+- The recorder's own smoke test (`20260912T221700Z-9f160f`, condition
+  `recorder-smoke`) ran at **2026-09-12T22:17:00–22:17:23Z**, and its one
+  `game_load` call loaded that exact same already-active Run A session —
+  proving the recorder worked, mid-Run-A.
+- Per pokemon-agent's own `GET /games`, that session kept accumulating
+  activity (`turns: 837`) until **`updated_at` 2026-09-13T02:05:12Z** —
+  **over four more hours after the recorder existed and was proven
+  working.**
+
+So the recorder was not simply "too late to exist" — it existed and worked
+for the majority of Run A's session, but **`recorder.py start` was never
+invoked for Run A**, at any point in its timeline. The hook
+(`log_mcp_call`) is a true no-op whenever no run is active (checked via the
+`.active_run` pointer file), so every one of Run A's real tool calls simply
+went unlogged — not lost, never captured, because instrumentation was never
+turned on for that specific run. There is no orphaned/partial run record
+and no second `.json`/`.jsonl` pair anywhere in `runs/` — the only run file
+on disk is the smoke test above, and it must still be excluded from any
+A/B/C comparison (see `results/run-01-raw.md` and `results/summary.csv`).
+
+The one quantitative artifact that *did* survive, because pokemon-agent
+tracks it independently of our recorder, is that session's own turn
+counter: **`turns: 837`** (per live `GET /games` as of this correction).
+This is **not** equivalent to the recorder's `game_actions` (different
+counting method, tracked by a different system, not validated against our
+`_classify_call` logic) — report it as a separate, pokemon-agent-native
+data point if you cite it, never relabel it as `game_actions`. No
+`game_state_calls` / `game_screenshot_calls` / saves / loads / resets /
+wall-clock-seconds are recoverable at all — pokemon-agent's schema doesn't
+track those, and this doc does not invent numbers for them.
+
+**Also of note:** as of this correction, that session's live emulator state
+still matches Run A's exact end-of-run state (Squirtle, Oak's Parcel in
+bag, Viridian City, 0 badges) — nobody has reset or reloaded it since. If
+that session is ever reset/reloaded/overwritten before someone deliberately
+saves this state under its own name, that end-state is gone permanently.
+
+What is known about Run A beyond the above is the qualitative outcome,
+established from the actual play session:
 
 **Outcome: FAILURE.** RAW Claude did not obtain the Boulder Badge.
 
@@ -92,9 +130,16 @@ This is baseline data for comparison against B and C. **Do not turn this
 into a hint and do not inject it into Condition C** — C must discover (or
 fail to discover) the Oak's Parcel connection on its own.
 
-Going forward, run **both** B and C through the recorder from the start
-(`recorder.py start ... --condition {notes|stealth}`) so their runs get real
-quantitative data that Run A lacks.
+Going forward, **always run `recorder.py start` before the very first tool
+call of a run**, not just before the objective is handed to the agent —
+Run A's own gap happened because the recorder was built mid-session and
+never explicitly started for the run already in progress. Run **both** B
+and C through the recorder from the start
+(`recorder.py start ... --condition {notes|stealth}`) so their runs get
+real quantitative data that Run A lacks, and treat Run A itself as
+qualitative-only plus the one recovered pokemon-agent-native data point
+(`turns: 837`) in any comparison — do not backfill fabricated recorder
+counters for it.
 
 ## E. Recorder usage
 
