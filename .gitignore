@@ -79,3 +79,18 @@ scripts.zip
 *.mov
 .codex/
 
+# Pokemon Red experiment (experiments/pokemon-red/, backend/app/game_mcp/) --
+# the ROM, emulator save states, and pokemon-agent's own runtime data are
+# machine-local and/or legally-obtained-per-machine; never committed. The
+# experiment's OWN result files (experiments/pokemon-red/runs/*.json[l],
+# experiments/pokemon-red/results/*.csv, *.md) are plain text/data checked
+# in on purpose and are NOT covered by any pattern below.
+*.gb
+*.gbc
+*.state
+*.sav
+pokemon_red.gb
+pokemon_red.gbc
+pokemon-agent/saves/
+pokemon-agent/roms/
+

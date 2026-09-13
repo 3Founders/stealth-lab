@@ -1,0 +1,5 @@
+{"ts": "2026-09-12T22:17:00.369720+00:00", "event": "run_started", "run_id": "20260912T221700Z-9f160f", "condition": "recorder-smoke", "checkpoint": "pokemon_experiment_start_v2", "model": "claude-sonnet-5"}
+{"ts": "2026-09-12T22:17:07.841260+00:00", "event": "game_load", "run_id": "20260912T221700Z-9f160f", "session_path": "/games/20260912_213553_179047/load"}
+{"ts": "2026-09-12T22:17:13.592815+00:00", "event": "game_state", "run_id": "20260912T221700Z-9f160f"}
+{"ts": "2026-09-12T22:17:15.738504+00:00", "event": "game_screenshot", "run_id": "20260912T221700Z-9f160f"}
+{"ts": "2026-09-12T22:17:23.135265+00:00", "event": "run_finished", "run_id": "20260912T221700Z-9f160f", "success": true, "failure_reason": null, "ending_checkpoint": "pokemon_experiment_start_v2"}
