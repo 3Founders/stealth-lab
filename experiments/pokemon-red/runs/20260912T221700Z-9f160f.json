@@ -1,0 +1,22 @@
+{
+  "run_id": "20260912T221700Z-9f160f",
+  "condition": "recorder-smoke",
+  "model": "claude-sonnet-5",
+  "objective": "defeat Brock and obtain the Boulder Badge",
+  "starting_checkpoint": "pokemon_experiment_start_v2",
+  "started_at": "2026-09-12T22:17:00.366593+00:00",
+  "ended_at": "2026-09-12T22:17:23.133441+00:00",
+  "wall_clock_seconds": 22.767,
+  "success": true,
+  "failure_reason": null,
+  "game_actions": 0,
+  "game_state_calls": 1,
+  "game_screenshot_calls": 1,
+  "game_saves": 0,
+  "game_loads": 1,
+  "game_resets": 0,
+  "blackouts": null,
+  "battle_losses": null,
+  "ending_checkpoint": "pokemon_experiment_start_v2",
+  "notes": "smoke test complete, no gameplay actions taken"
+}

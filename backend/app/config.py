@@ -340,6 +340,17 @@ class Settings(BaseSettings):
     # refused.
     mcp_worker_count: int = 1
 
+    # --- Game MCP (backend/app/game_mcp/server.py) ---
+    # Base URL of the already-running `pokemon-agent` HTTP server (a
+    # separate process, not started by this repo) that this MCP server
+    # is a thin pass-through client for. Follows the same
+    # "central Settings field, Optional/defaulted, overridable via env"
+    # convention as local_base_url/general_compute_base_url above --
+    # POKEMON_AGENT_BASE_URL overrides it. Defaults to the emulator's
+    # documented local dev address; the Game MCP server itself uses no
+    # port of its own (stdio transport only, see that module's docstring).
+    pokemon_agent_base_url: str = "http://localhost:8765"
+
     # --- Recursive child ProcedureRuns (MCP hardening B9-B13) ---
     # Explicitly configurable, never hardcoded in the recursion-guard code
     # itself (per the hardening spec's own instruction: "Make sure you

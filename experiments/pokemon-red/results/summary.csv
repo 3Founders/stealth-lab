@@ -1,0 +1,2 @@
+run_id,condition,model,objective,starting_checkpoint,started_at,ended_at,wall_clock_seconds,success,failure_reason,game_actions,game_state_calls,game_screenshot_calls,game_saves,game_loads,game_resets,blackouts,battle_losses,ending_checkpoint,notes
+20260912T221700Z-9f160f,recorder-smoke,claude-sonnet-5,defeat Brock and obtain the Boulder Badge,pokemon_experiment_start_v2,2026-09-12T22:17:00.366593+00:00,2026-09-12T22:17:23.133441+00:00,22.767,True,,0,1,1,0,1,0,,,pokemon_experiment_start_v2,"smoke test complete, no gameplay actions taken"
