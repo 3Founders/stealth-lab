@@ -36,12 +36,11 @@ dependencies = [
     "PyYAML",
     "reportlab",
     "scipy",
-    # Real, newly-confirmed transitive requirement: app/mcp_server/server.py's
-    # find_best_way imports experiments/swebench_pro/agent.py, which imports
-    # app/services/code_index.py, which imports this at module level. Not
-    # previously declared anywhere in backend/ (confirmed: same real gap the
-    # SWEBENCH_RUNBOOK.md already flagged for a different reason -- this is
-    # the same missing package, newly load-bearing for a different path).
+    # Real transitive requirement: app/mcp_server/server.py's find_best_way
+    # imports app/execution/coding_agent.py (moved here from
+    # experiments/swebench_pro/agent.py so backend/ has zero runtime
+    # dependency on the sibling experiments/ tree), which imports
+    # app/services/code_index.py, which imports this at module level.
     "tree-sitter-language-pack",
     "uvicorn",
     "voyageai",

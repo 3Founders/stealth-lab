@@ -21,6 +21,7 @@ from abc import ABC, abstractmethod
 from typing import Any, Optional
 
 import asyncpg
+from pydantic import BaseModel, Field, ValidationError, field_validator
 
 from app.services.procedure_extraction.derive import (
     derive_failure_conditions,
@@ -81,15 +82,18 @@ _ABSTRACTION_SYSTEM_PROMPT = """You compress a coding episode's tool-call patter
 procedure description. You are given: the concrete goal that was accomplished, and a compressed \
 sequence of tool-call groups (e.g. "Read x3, Edit x1, Bash x2").
 
-Produce exactly two things, each on its own line prefixed by its label:
-CAPABILITY: <one abstract sentence describing the general skill this demonstrates, with NO file \
-names, symbol names, repo names, or other specifics from this episode -- it must describe \
-something that would apply to a DIFFERENT project doing a similar kind of work>
-STEPS: <a semicolon-separated list of generalized step phrases matching the tool-call groups' \
-ORDER and COUNT, each phrase describing the ACTION pattern (e.g. "locate the relevant files", \
-"apply a targeted edit", "run the test suite"), never naming a specific file or symbol>
+Reply with ONLY a JSON object, no other text, matching exactly this shape:
+{"capability_statement": "<one abstract sentence describing the general skill this demonstrates, \
+with NO file names, symbol names, repo names, or other specifics from this episode -- it must \
+describe something that would apply to a DIFFERENT project doing a similar kind of work>",
+ "step_phrases": ["<generalized step phrase>", ...]}
 
-If you cannot produce a genuinely abstract capability statement, reply with exactly: ABSTAIN
+`step_phrases` must have EXACTLY one entry per tool-call group given, in the SAME order, each \
+describing the ACTION pattern (e.g. "locate the relevant files", "apply a targeted edit", \
+"run the test suite"), never naming a specific file or symbol.
+
+If you cannot produce a genuinely abstract capability statement, reply with exactly this JSON
+object instead: {"abstain": true}
 """
 
 
@@ -120,6 +124,22 @@ class GroundedHybridExtractor(ExtractionStrategy):
         self._temperature = temperature
         self._fallback = DeterministicExtractor()
 
+    async def _marked_fallback(
+        self, pool: asyncpg.Pool, evidence: ProcedureEvidence, *,
+        repo_root: Optional[str], entry_seed_files: Optional[list[str]],
+    ) -> ExtractedProcedure:
+        """Every internal degradation path routes through here so
+        `used_fallback` is ALWAYS set on the result -- the real fix for
+        the caller-visible bug this closes: extract_procedure() used to
+        trust the SELECTED extractor's registry tag even when this class
+        silently produced DeterministicExtractor's own output underneath
+        it, so `extracted_by='grounded_hybrid_v1@1'` could describe a row
+        that never actually saw a real LLM abstraction succeed."""
+        result = await self._fallback.extract(
+            pool, evidence, repo_root=repo_root, entry_seed_files=entry_seed_files,
+        )
+        return result.model_copy(update={"used_fallback": True})
+
     async def extract(
         self, pool: asyncpg.Pool, evidence: ProcedureEvidence, *,
         repo_root: Optional[str] = None, entry_seed_files: Optional[list[str]] = None,
@@ -131,7 +151,7 @@ class GroundedHybridExtractor(ExtractionStrategy):
         failure_conditions = derive_failure_conditions(evidence)
 
         if self._client is None or not skeleton:
-            return await self._fallback.extract(
+            return await self._marked_fallback(
                 pool, evidence, repo_root=repo_root, entry_seed_files=entry_seed_files,
             )
 
@@ -153,13 +173,13 @@ class GroundedHybridExtractor(ExtractionStrategy):
         except Exception:  # noqa: BLE001 -- an LLM call's own real failure
             # must degrade to the honest fallback, never propagate and
             # abort extraction outright.
-            return await self._fallback.extract(
+            return await self._marked_fallback(
                 pool, evidence, repo_root=repo_root, entry_seed_files=entry_seed_files,
             )
 
         parsed = _parse_abstraction_response(text, expected_step_count=len(skeleton))
         if parsed is None:
-            return await self._fallback.extract(
+            return await self._marked_fallback(
                 pool, evidence, repo_root=repo_root, entry_seed_files=entry_seed_files,
             )
         capability_statement, step_phrases = parsed
@@ -193,31 +213,81 @@ class GroundedHybridExtractor(ExtractionStrategy):
         )
 
 
+class _AbstractionResponse(BaseModel):
+    """The real, enforced schema for GroundedHybridExtractor's one LLM
+    call -- Pydantic validates shape (non-empty capability_statement,
+    non-empty step_phrases, every phrase itself non-empty), not just a
+    manual isinstance check. `model_validate` raising ValidationError is
+    treated identically to malformed JSON: a parse failure, triggering
+    the caller's fallback."""
+
+    capability_statement: str = Field(min_length=1)
+    step_phrases: list[str] = Field(min_length=1)
+
+    @field_validator("capability_statement")
+    @classmethod
+    def _not_blank(cls, v: str) -> str:
+        v = v.strip()
+        if not v:
+            raise ValueError("capability_statement must not be blank")
+        return v
+
+    @field_validator("step_phrases")
+    @classmethod
+    def _phrases_not_blank(cls, v: list[str]) -> list[str]:
+        cleaned = [s.strip() for s in v]
+        if not all(cleaned):
+            raise ValueError("step_phrases must not contain a blank entry")
+        return cleaned
+
+
 def _parse_abstraction_response(
     text: str, *, expected_step_count: int,
 ) -> Optional[tuple[str, list[str]]]:
     """
     Pure, testable without a client at all -- strict parsing, not
-    forgiving: a response missing either label, an explicit ABSTAIN, or
-    a STEPS list whose length doesn't match the derived skeleton's own
-    step count is treated as a parse failure (returns None), triggering
-    the caller's fallback rather than silently accepting a malformed
-    result. The step-count check specifically catches an LLM inventing
-    or dropping steps relative to what actually happened.
+    forgiving: malformed JSON, a schema-invalid payload (Pydantic
+    `_AbstractionResponse`), an explicit `{"abstain": true}`, or a
+    `step_phrases` list whose length doesn't match the derived skeleton's
+    own step count is treated as a parse failure (returns None),
+    triggering the caller's fallback rather than silently accepting a
+    malformed result. The step-count check specifically catches an LLM
+    inventing or dropping steps relative to what actually happened.
+
+    Real JSON parsing (matching claim_extraction.py's own
+    prompted-JSON-plus-schema-validation convention), replacing the prior
+    hand-rolled `CAPABILITY:`/`STEPS:` line-prefix format -- same two
+    fields, same schema, just a less fragile wire format, now with a real
+    Pydantic model doing the shape enforcement instead of manual
+    isinstance checks. A model that wraps its JSON in a code fence or
+    leading prose is still accepted (the fence/prose is stripped) since
+    that is a real, observed response shape from some OpenAI-compatible
+    providers, not a parse-success worth losing an otherwise-valid
+    extraction over.
     """
-    if text.strip() == "ABSTAIN":
+    import json
+
+    stripped = text.strip()
+    if stripped.startswith("```"):
+        stripped = stripped.strip("`")
+        if stripped.lower().startswith("json"):
+            stripped = stripped[4:]
+        stripped = stripped.strip()
+
+    try:
+        parsed = json.loads(stripped)
+    except json.JSONDecodeError:
         return None
-    capability = None
-    steps: Optional[list[str]] = None
-    for line in text.splitlines():
-        line = line.strip()
-        if line.startswith("CAPABILITY:"):
-            capability = line[len("CAPABILITY:"):].strip()
-        elif line.startswith("STEPS:"):
-            raw = line[len("STEPS:"):].strip()
-            steps = [s.strip() for s in raw.split(";") if s.strip()]
-    if not capability or not steps:
+    if not isinstance(parsed, dict):
         return None
-    if len(steps) != expected_step_count:
+    if parsed.get("abstain"):
         return None
-    return capability, steps
+
+    try:
+        validated = _AbstractionResponse.model_validate(parsed)
+    except ValidationError:
+        return None
+
+    if len(validated.step_phrases) != expected_step_count:
+        return None
+    return validated.capability_statement, validated.step_phrases

@@ -1,0 +1,17 @@
+Metadata-Version: 2.4
+Name: pokemon-stealth
+Version: 0.1.0
+Summary: Experimental harness: does persistent external procedural knowledge (Stealth) make a frozen LLM better/cheaper at Pokemon Red over repeated runs, vs a fresh-every-run baseline?
+Requires-Python: >=3.10
+Requires-Dist: pyboy>=2.0.0
+Requires-Dist: pydantic>=2.0
+Requires-Dist: typer>=0.12
+Requires-Dist: anthropic
+Requires-Dist: openai
+Requires-Dist: python-dotenv
+Requires-Dist: PyYAML
+Provides-Extra: dev
+Requires-Dist: pytest; extra == "dev"
+Requires-Dist: pytest-asyncio; extra == "dev"
+Provides-Extra: demo
+Requires-Dist: rich; extra == "demo"

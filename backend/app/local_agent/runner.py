@@ -346,17 +346,6 @@ def _local_context_key(repo_path: str, facts: list) -> str:
     return f"{repo_identity}:{fact_hash}"
 
 
-def _ensure_swebench_pro_on_path() -> None:
-    """experiments/swebench_pro is a sibling of backend/, same sys.path
-    pattern app/mcp_server/server.py already uses. Factored into its own
-    function so both real call sites below share one implementation."""
-    import sys
-    from pathlib import Path
-    experiments_swebench_pro = str(Path(__file__).resolve().parents[3] / "experiments" / "swebench_pro")
-    if experiments_swebench_pro not in sys.path:
-        sys.path.insert(0, experiments_swebench_pro)
-
-
 async def _run_local_node(node, *, task_description: str, repo_path: str,
                            model: str, max_steps: int,
                            node_notes: list[str]) -> NodeResult:
@@ -380,8 +369,8 @@ async def _run_local_node(node, *, task_description: str, repo_path: str,
     call site in this codebase (server.py's find_best_way and
     reproduce_procedure) refuses upfront with os.path.isdir(repo_path)
     before doing anything else -- this was the one real execution
-    boundary that didn't. RepoSandbox.__init__ (experiments/swebench_pro/
-    agent.py) never validates root exists; without this check, a
+    boundary that didn't. RepoSandbox.__init__ (app/execution/coding_agent.py)
+    never validates root exists; without this check, a
     nonexistent repo_path silently reached a real, billed OpenAI call
     (Agent.run()) that could only ever fail deep inside the tool-calling
     loop with a confusing raw OS error, rather than refusing cleanly and
@@ -400,8 +389,7 @@ async def _run_local_node(node, *, task_description: str, repo_path: str,
         node_notes.append(note)
         return NodeResult(status="failure", notes=note)
 
-    _ensure_swebench_pro_on_path()
-    from agent import Agent, RepoSandbox
+    from app.execution.coding_agent import Agent, RepoSandbox
     from openai import OpenAI
 
     sandbox = RepoSandbox(repo_path)
@@ -426,7 +414,7 @@ async def _run_local_node(node, *, task_description: str, repo_path: str,
     node_notes.append(note)
     succeeded = run_result.stop_reason == "finished"
     # Gate 3 (experiment instrumentation): surface the Agent's real token
-    # accounting (experiments/swebench_pro/agent.py Usage) alongside the
+    # accounting (app/execution/coding_agent.py's Usage) alongside the
     # existing tool-call count. Real numbers from the real provider usage
     # object, or 0 when the provider did not report them -- never estimates.
     return NodeResult(

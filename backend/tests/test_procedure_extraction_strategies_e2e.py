@@ -47,7 +47,7 @@ class FakeClient:
 
     def _create(self, **kw):
         self.requests.append(kw)
-        content = self.script.pop(0) if self.script else "ABSTAIN"
+        content = self.script.pop(0) if self.script else '{"abstain": true}'
         msg = types.SimpleNamespace(content=content)
         choice = types.SimpleNamespace(message=msg)
         return types.SimpleNamespace(choices=[choice])
@@ -115,8 +115,8 @@ def test_grounded_hybrid_extractor_uses_llm_output_when_well_formed():
             await _cleanup(pool)
             ev = _evidence(None, None)  # no project_id -- preconditions/scope stay empty, fine here
             client = FakeClient([
-                "CAPABILITY: locate the failing test's source file and apply a targeted fix\n"
-                "STEPS: read the relevant files; apply a fix; run the test suite",
+                '{"capability_statement": "locate the failing test\'s source file and apply a targeted fix", '
+                '"step_phrases": ["read the relevant files", "apply a fix", "run the test suite"]}',
             ])
             extractor = GroundedHybridExtractor(client)
             proc = await extractor.extract(pool, ev)
@@ -171,7 +171,7 @@ def test_grounded_hybrid_extractor_falls_back_on_step_count_mismatch():
         try:
             ev = _evidence(None, None)  # skeleton has 3 groups: Read, Edit, Bash
             client = FakeClient([
-                "CAPABILITY: do a thing\nSTEPS: only one step",
+                '{"capability_statement": "do a thing", "step_phrases": ["only one step"]}',
             ])
             extractor = GroundedHybridExtractor(client)
             proc = await extractor.extract(pool, ev)

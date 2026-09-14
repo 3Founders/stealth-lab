@@ -29,6 +29,17 @@ run_symbolic_instance, compare_embeddings -- dead at import. It is
 restored here rather than there because it subclasses a backend service
 and is injected into backend read paths; experiments/after/ was removed
 on purpose and should stay removed.
+
+MOVED AGAIN: the default cache file itself used to live at
+experiments/swebench_pro/.cache_joint/embeddings.json -- a real runtime
+dependency of backend/ reaching into the sibling experiments/ tree. The
+real, populated 1173-entry cache was copied (not moved) to
+backend/.cache_joint/embeddings.json so backend/ owns its own copy and
+has zero filesystem dependency on experiments/; any experiments-side
+script still constructing this class with no cache_path (e.g. the old
+run_graph_experiment.py) now misses backend's copy -- an accepted,
+one-way split, not an oversight, since fixing backend's isolation is the
+point.
 """
 from __future__ import annotations
 
@@ -45,18 +56,16 @@ from app.services.embeddings import Embedder, EmbeddingError, InputType
 
 log = logging.getLogger(__name__)
 
-# Resolved against the repo root, NOT against __file__'s own directory.
-# The original default was `Path(__file__).parent / ".cache"`, which under
-# the old location pointed inside experiments/after/ and under this one
-# would point at backend/app/services/.cache/ -- neither is where the real
-# cache lives. Getting this wrong is silent and expensive rather than
-# loud: every lookup misses, every run re-embeds from scratch at
-# MIN_REQUEST_INTERVAL seconds per request, and nothing errors.
-# run_graph_experiment.py constructs this class with no cache_path at all,
-# so this default is the only thing pointing it at the real 1173-entry
-# cache.
-_REPO_ROOT = Path(__file__).resolve().parents[3]
-_CACHE_PATH = _REPO_ROOT / "experiments" / "swebench_pro" / ".cache_joint" / "embeddings.json"
+# Resolved against the BACKEND root, NOT against __file__'s own directory
+# and NOT against the repo root. The original default was
+# `Path(__file__).parent / ".cache"`, which under the old location pointed
+# inside experiments/after/ and under this one would point at
+# backend/app/services/.cache/ -- neither is where the real cache lives.
+# Getting this wrong is silent and expensive rather than loud: every
+# lookup misses, every run re-embeds from scratch at MIN_REQUEST_INTERVAL
+# seconds per request, and nothing errors.
+_BACKEND_ROOT = Path(__file__).resolve().parents[2]
+_CACHE_PATH = _BACKEND_ROOT / ".cache_joint" / "embeddings.json"
 
 
 class CachedEmbedder(Embedder):

@@ -1,0 +1,73 @@
+import pytest
+from unittest.mock import AsyncMock, MagicMock
+from pathlib import Path
+from tasknode_driver import mark_step_done, run_step
+
+def test_mark_step_done_success(tmp_path):
+    tasknode = tmp_path / "tasknode.md"
+    content = (
+        "1. [ ] Step one\n"
+        "2. [ ] Step two\n"
+        "3. [x] Step three\n"
+    )
+    tasknode.write_text(content, encoding="utf-8")
+
+    mark_step_done(tasknode, 1)
+    updated = tasknode.read_text(encoding="utf-8")
+    assert "1. [x] Step one" in updated
+    assert "2. [ ] Step two" in updated
+    assert "3. [x] Step three" in updated
+
+def test_mark_step_done_already_done(tmp_path):
+    tasknode = tmp_path / "tasknode.md"
+    content = "1. [x] Step one\n"
+    tasknode.write_text(content, encoding="utf-8")
+
+    with pytest.raises(ValueError, match="unchecked line for step 1 not found"):
+        mark_step_done(tasknode, 1)
+
+def test_mark_step_done_nonexistent(tmp_path):
+    tasknode = tmp_path / "tasknode.md"
+    content = "1. [ ] Step one\n"
+    tasknode.write_text(content, encoding="utf-8")
+
+    with pytest.raises(ValueError, match="unchecked line for step 99 not found"):
+        mark_step_done(tasknode, 99)
+
+@pytest.mark.asyncio
+async def test_run_step_facts_accumulation():
+    # Mock client and its response
+    mock_client = AsyncMock()
+    mock_resp = MagicMock()
+    mock_msg = MagicMock()
+    
+    # Simulate a tool call that returns a fact
+    mock_msg.tool_calls = [MagicMock()]
+    mock_msg.tool_calls[0].function.name = "api_fetch"
+    mock_msg.tool_calls[0].function.arguments = '{"url": "http://test", "method": "GET"}'
+    mock_msg.tool_calls[0].id = "call_1"
+    
+    # We need to mock api_fetch. Since it's imported in tasknode_driver, 
+    # we might need to patch it or just let it run if it doesn't do much.
+    # But it's better to patch it.
+    import tasknode_driver
+    original_api_fetch = tasknode_driver.api_fetch
+    tasknode_driver.api_fetch = MagicMock(return_value={"id": "123", "name": "Test Object"})
+    
+    mock_resp.choices = [MagicMock(message=mock_msg)]
+    mock_resp.usage = MagicMock(prompt_tokens=10, completion_tokens=20)
+    
+    # First call returns tool call, second call returns DONE
+    mock_client.chat.completions.create.side_effect = [
+        mock_resp,
+        MagicMock(choices=[MagicMock(message=MagicMock(tool_calls=[]))], usage=mock_resp.usage)
+    ]
+    
+    world = MagicMock()
+    log, facts = await run_step(mock_client, "model", world, "Step 1")
+    
+    assert len(facts) > 0
+    assert "123" in facts[0]
+    
+    # Restore original
+    tasknode_driver.api_fetch = original_api_fetch

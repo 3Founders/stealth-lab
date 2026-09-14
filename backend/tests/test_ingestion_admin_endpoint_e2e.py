@@ -333,3 +333,110 @@ def test_admin_ingestion_endpoint_is_reachable_and_reuses_real_functions():
             await pool.close()
 
     asyncio.run(_run())
+
+
+def test_register_extractor_endpoint_is_the_real_missing_registration_entrypoint():
+    """POST /v1/admin/extractors (app.api.admin.register_extractor) closes
+    a real, previously-confirmed gap: app.services.procedure_extraction.
+    registry.py's create_extractor_version()/approve_extractor() had NO
+    caller anywhere outside the test suite, so procedure_extractors could
+    never gain a real enabled+approved row in production, and
+    select_extractor() always returned None -- every real extraction
+    silently fell back to deterministic_v1 regardless of whether an LLM
+    client was configured. This proves the endpoint is a real, working
+    caller of those exact functions (not a reimplementation): a row it
+    creates is immediately selectable by the real registry.select_extractor()
+    tie-break rule (non-deterministic wins a version tie).
+
+    version="999": this repo's real database can legitimately carry OTHER
+    enabled+approved llm-kind extractors at the same time (e.g. a real,
+    permanently-registered `grounded_hybrid_v1@1`) -- an earlier version
+    of this test asserted `selected["name"] == name` at version "1" and
+    broke the moment a second real llm extractor existed, because
+    select_extractor()'s tie-break only prefers non-deterministic OVER
+    deterministic on a version tie; it has no secondary tie-break between
+    two non-deterministic candidates of the SAME version, so either could
+    legitimately win. A distinctly higher version sidesteps that ambiguity
+    entirely -- version comparison runs before the kind tie-break, so
+    this row wins deterministically regardless of what else is registered."""
+    async def _run():
+        from app.api.admin import RegisterExtractorRequest, register_extractor
+        from app.services.procedure_extraction.registry import select_extractor
+
+        pool = await _real_create_pool(DATABASE_URL, min_size=1, max_size=2)
+        name = f"{TAG}-grounded-hybrid"
+        try:
+            await pool.execute(
+                "DELETE FROM procedure_extractors WHERE name = $1", name,
+            )
+
+            response = await register_extractor(
+                RegisterExtractorRequest(
+                    name=name, description="test extractor registration", kind="llm",
+                    version="999", config={"model": "gemma-4-31B-it", "temperature": 0.2},
+                ),
+                pool=pool,
+            )
+            assert response.enabled is True
+            assert response.kind == "llm"
+
+            row = await pool.fetchrow(
+                "SELECT kind::text, review_state::text, enabled, config FROM procedure_extractors "
+                "WHERE id = $1::uuid", response.extractor_id,
+            )
+            assert row is not None, "expected a real procedure_extractors row"
+            assert row["kind"] == "llm"
+            assert row["review_state"] == "approved"
+            assert row["enabled"] is True
+            assert dict(row["config"])["model"] == "gemma-4-31B-it"
+
+            # Real registry selection now actually returns this row --
+            # the whole point of registering it: deterministic_v1 (seeded
+            # by migration 20, version "1") and this new "1"-version llm
+            # row tie on version, and select_extractor's own tie-break
+            # picks the non-deterministic kind.
+            selected = await select_extractor(pool, current_scope={})
+            assert selected is not None
+            assert selected["kind"] == "llm"
+            assert selected["name"] == name
+        finally:
+            await pool.execute("DELETE FROM procedure_extractors WHERE name = $1", name)
+            await pool.close()
+
+    asyncio.run(_run())
+
+
+def test_register_extractor_endpoint_supports_registering_without_enabling():
+    """enable=False registers a candidate for comparison/review without
+    making it live -- approve_extractor's own enable=False option,
+    reachable through the endpoint."""
+    async def _run():
+        from app.api.admin import RegisterExtractorRequest, register_extractor
+
+        pool = await _real_create_pool(DATABASE_URL, min_size=1, max_size=2)
+        name = f"{TAG}-candidate-only"
+        try:
+            await pool.execute("DELETE FROM procedure_extractors WHERE name = $1", name)
+
+            response = await register_extractor(
+                RegisterExtractorRequest(
+                    name=name, description="candidate, not yet trusted", kind="llm",
+                    version="1", enable=False,
+                ),
+                pool=pool,
+            )
+            assert response.enabled is False
+
+            row = await pool.fetchrow(
+                "SELECT review_state::text, enabled FROM procedure_extractors WHERE id = $1::uuid",
+                response.extractor_id,
+            )
+            assert row["review_state"] == "approved", (
+                "approved-for-listing and enabled-for-selection are deliberately separate"
+            )
+            assert row["enabled"] is False
+        finally:
+            await pool.execute("DELETE FROM procedure_extractors WHERE name = $1", name)
+            await pool.close()
+
+    asyncio.run(_run())

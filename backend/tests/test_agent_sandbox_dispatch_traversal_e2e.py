@@ -1,6 +1,6 @@
 """
 Path-traversal / sandbox-escape proving test at the REAL entrypoint: the
-tool-call dispatcher (`Agent._dispatch`, experiments/swebench_pro/agent.py)
+tool-call dispatcher (`Agent._dispatch`, app/execution/coding_agent.py)
 that every live `find_best_way`/`reproduce_procedure` MCP tool call and
 every `Agent.run()` step feeds a model's tool-call arguments through.
 
@@ -23,14 +23,8 @@ sandbox root is ever read, written, or deleted.
 from __future__ import annotations
 
 import os
-import sys
 
-sys.path.insert(
-    0, os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                    "..", "..", "experiments", "swebench_pro")
-)
-
-from agent import Agent, RepoSandbox  # noqa: E402
+from app.execution.coding_agent import Agent, RepoSandbox
 
 
 def _make_repo_and_secret(tmp_path):

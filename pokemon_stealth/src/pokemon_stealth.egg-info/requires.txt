@@ -1,0 +1,14 @@
+pyboy>=2.0.0
+pydantic>=2.0
+typer>=0.12
+anthropic
+openai
+python-dotenv
+PyYAML
+
+[demo]
+rich
+
+[dev]
+pytest
+pytest-asyncio

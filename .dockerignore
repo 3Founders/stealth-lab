@@ -1,11 +1,10 @@
-# Build context for backend/Dockerfile is the REPO ROOT, not backend/ --
-# app/mcp_server/server.py imports Agent/RepoSandbox from
-# experiments/swebench_pro/ as a real sibling of backend/ at MODULE IMPORT
-# TIME (README_MCP_SERVER.md setup step #3; see server.py's own
-# `Path(__file__).resolve().parents[3] / "experiments" / "swebench_pro"`).
-# A backend-only context can't provide that sibling directory, so
-# docker-compose.yml points `build.context` at `.` and this file has to
-# reason about the whole repo, not just backend/.
+# Build context for backend/Dockerfile is still the REPO ROOT (docker-
+# compose.yml points `build.context` at `.`), though this is no longer
+# STRICTLY required -- app/mcp_server/server.py's Agent/RepoSandbox import
+# now resolves entirely inside backend/ (app/execution/coding_agent.py,
+# moved from experiments/swebench_pro/agent.py so backend/ has zero
+# runtime dependency on the sibling experiments/ tree). A backend-only
+# context is a safe follow-up simplification, not made in this pass.
 #
 # Everything listed below is excluded because it's a virtualenv, secrets,
 # a huge stray result file, or simply irrelevant to running the image --

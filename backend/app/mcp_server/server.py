@@ -101,15 +101,13 @@ from app.debate.panel import default_panel, default_judge
 from app.debate.state_machine import DebateStateMachine
 from app.services.loop import LoopOrchestrator
 
-# RepoSandbox/Agent/TOOLS live in experiments/swebench_pro/, a SIBLING of
-# backend/ (confirmed via the exact same sys.path pattern
-# tests/test_agent_sandbox.py and tests/test_htn_agent.py already use to
-# reach it -- not a new convention invented for this file).
-_EXPERIMENTS_SWEBENCH_PRO = str(
-    Path(__file__).resolve().parents[3] / "experiments" / "swebench_pro"
-)
-sys.path.insert(0, _EXPERIMENTS_SWEBENCH_PRO)
-from agent import Agent, RepoSandbox  # noqa: E402
+# RepoSandbox/Agent/TOOLS: moved into backend/ (app/execution/coding_agent.py)
+# from experiments/swebench_pro/agent.py so backend/ has zero runtime
+# dependency on the sibling experiments/ tree -- the prior sys.path/bare-
+# import shim is exactly what caused a real incident: with no local `agent`
+# module resolvable, Python silently imported an unrelated global package
+# of the same name and crashed deep inside it on an incompatible dependency.
+from app.execution.coding_agent import Agent, RepoSandbox
 
 from openai import OpenAI
 
@@ -432,6 +430,25 @@ async def procedure_graph_data(request: Request) -> JSONResponse:
         link_mode=(qp.get("link_mode") or "all"),
     )
     return JSONResponse(json.loads(json.dumps(result, default=str)))
+
+
+# ---------------------------------------------------------------------------
+# Root health/info route. Before this, GET / had no route at all -- a
+# 404 that reads as noise in the access log for every stray liveness
+# probe or accidental browser hit (a real, observed example: a stray
+# Chrome DevTools /json/version discovery request landing on this same
+# port). Deliberately unauthenticated (same posture as /claim-graph and
+# /procedure-graph below) and deliberately minimal -- no secrets, no
+# tool listing, just enough to confirm this IS the StealthLab MCP server
+# and point a human at the real endpoint.
+# ---------------------------------------------------------------------------
+@server.custom_route("/", methods=["GET"], include_in_schema=False)
+async def root_health(request: Request) -> JSONResponse:  # noqa: ARG001
+    return JSONResponse({
+        "service": "stealthlab-mcp",
+        "status": "ok",
+        "mcp_endpoint": "/mcp",
+    })
 
 
 app = server.streamable_http_app()
@@ -1277,7 +1294,7 @@ async def find_best_way(task_description: str, ctx: Context,
     (this module's own docstring's "no new business logic" claim does not
     fully hold here, stated plainly rather than glossed over):
       - RepoSandbox and Agent are reused VERBATIM from
-        experiments/swebench_pro/agent.py -- the real, already-tested
+        app/execution/coding_agent.py -- the real, already-tested
         sandboxed file-edit/read/search machinery and tool-calling loop
         (retry/backoff on transient provider errors included).
       - Agent.run()'s `instance` dict normally carries SWE-bench-specific

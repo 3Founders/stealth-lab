@@ -56,7 +56,7 @@ class FakeClient:
         self.requests.append(kw)
         if self._raises:
             raise RuntimeError("upstream call failed")
-        content = self.script.pop(0) if self.script else "ABSTAIN"
+        content = self.script.pop(0) if self.script else '{"abstain": true}'
         msg = types.SimpleNamespace(content=content)
         choice = types.SimpleNamespace(message=msg)
         return types.SimpleNamespace(choices=[choice])
@@ -70,6 +70,11 @@ def test_deterministic_extractor_produces_a_literal_procedure_offline():
     assert len(proc.steps) == 3  # Read x2, Edit, Bash -> 3 run-length groups
     assert proc.capability_statement == ev.goal_text[:200]
     assert proc.preconditions == []  # no project_id -- honestly empty, not fabricated
+    assert proc.used_fallback is False, (
+        "DeterministicExtractor called directly isn't 'falling back' to "
+        "anything -- used_fallback only means a NON-deterministic strategy "
+        "degraded to this shape underneath a caller expecting real abstraction"
+    )
 
 
 # --- GroundedHybridExtractor.extract: fallback paths ---
@@ -78,6 +83,10 @@ def test_grounded_hybrid_falls_back_with_no_client():
     ev = _evidence()
     proc = _run(GroundedHybridExtractor(None).extract(PoolThatMustNotBeTouched(), ev))
     assert proc.capability_statement == ev.goal_text[:200]
+    assert proc.used_fallback is True, (
+        "the real bug fix: a caller must be able to tell this degraded, "
+        "not just infer it from the content shape"
+    )
 
 
 def test_grounded_hybrid_skips_the_model_call_with_no_skeleton_even_with_a_client():
@@ -95,7 +104,7 @@ def test_grounded_hybrid_skips_the_model_call_with_no_skeleton_even_with_a_clien
     this same ValidationError uncaught -- a pre-existing gap in that
     pre-check, out of scope for a coverage-only pass."""
     ev = _evidence(tool_sequence=[])
-    client = FakeClient(["CAPABILITY: x\nSTEPS: y"])
+    client = FakeClient(['{"capability_statement": "x", "step_phrases": ["y"]}'])
     with pytest.raises(Exception, match="zero steps"):
         _run(GroundedHybridExtractor(client).extract(PoolThatMustNotBeTouched(), ev))
     assert client.requests == [], "must never call the model over an empty skeleton"
@@ -106,6 +115,7 @@ def test_grounded_hybrid_falls_back_when_the_client_call_raises():
     client = FakeClient(raises=True)
     proc = _run(GroundedHybridExtractor(client).extract(PoolThatMustNotBeTouched(), ev))
     assert proc.capability_statement == ev.goal_text[:200]
+    assert proc.used_fallback is True
 
 
 def test_grounded_hybrid_falls_back_on_a_malformed_response():
@@ -113,13 +123,34 @@ def test_grounded_hybrid_falls_back_on_a_malformed_response():
     client = FakeClient(["this is not the expected format at all"])
     proc = _run(GroundedHybridExtractor(client).extract(PoolThatMustNotBeTouched(), ev))
     assert proc.capability_statement == ev.goal_text[:200]
+    assert proc.used_fallback is True
 
 
 def test_grounded_hybrid_falls_back_on_step_count_mismatch():
     ev = _evidence()  # skeleton has 3 groups: Read, Edit, Bash
-    client = FakeClient(["CAPABILITY: do a thing\nSTEPS: only one step"])
+    client = FakeClient(['{"capability_statement": "do a thing", "step_phrases": ["only one step"]}'])
     proc = _run(GroundedHybridExtractor(client).extract(PoolThatMustNotBeTouched(), ev))
     assert proc.capability_statement == ev.goal_text[:200]
+    assert proc.used_fallback is True, (
+        "a valid, well-formed JSON response that still mismatches the real "
+        "skeleton's step count must still be flagged as a fallback -- this "
+        "is the exact real-world case found live: gemma-4-31B-it returned "
+        "complete, parseable JSON with the wrong number of steps"
+    )
+
+
+def test_grounded_hybrid_falls_back_on_json_wrapped_in_prose():
+    """A response that isn't ONLY the JSON object (leading prose, no code
+    fence) is still a parse failure -- the fence-stripping in
+    _parse_abstraction_response only handles a ```-wrapped block, not
+    arbitrary surrounding text, so this must degrade like any other
+    malformed response rather than silently succeed on a lucky substring
+    match."""
+    ev = _evidence()
+    client = FakeClient(['Sure, here you go: {"capability_statement": "c", "step_phrases": ["a", "b", "c"]}'])
+    proc = _run(GroundedHybridExtractor(client).extract(PoolThatMustNotBeTouched(), ev))
+    assert proc.capability_statement == ev.goal_text[:200]
+    assert proc.used_fallback is True
 
 
 # --- GroundedHybridExtractor.extract: the real abstraction path ---
@@ -127,12 +158,13 @@ def test_grounded_hybrid_falls_back_on_step_count_mismatch():
 def test_grounded_hybrid_uses_llm_output_when_well_formed():
     ev = _evidence()
     client = FakeClient([
-        "CAPABILITY: locate the failing test's source file and apply a targeted fix\n"
-        "STEPS: read the relevant files; apply a fix; run the test suite",
+        '{"capability_statement": "locate the failing test\'s source file and apply a targeted fix", '
+        '"step_phrases": ["read the relevant files", "apply a fix", "run the test suite"]}',
     ])
     proc = _run(GroundedHybridExtractor(client).extract(PoolThatMustNotBeTouched(), ev))
 
     assert "locate the failing test" in proc.capability_statement
+    assert proc.used_fallback is False, "a genuine, well-formed abstraction must never be flagged as a fallback"
     assert len(proc.steps) == 3
     assert [s.goal for s in proc.steps] == [
         "read the relevant files", "apply a fix", "run the test suite",
@@ -145,9 +177,22 @@ def test_grounded_hybrid_uses_llm_output_when_well_formed():
     assert client.requests[0]["temperature"] == 0.2
 
 
+def test_grounded_hybrid_accepts_a_code_fenced_json_response():
+    """Some OpenAI-compatible providers wrap JSON in a ```json ... ```
+    fence even when told not to -- a real, observed response shape, so
+    this must parse successfully rather than being treated as malformed."""
+    ev = _evidence()
+    client = FakeClient([
+        '```json\n{"capability_statement": "c", "step_phrases": ["a", "b", "c"]}\n```',
+    ])
+    proc = _run(GroundedHybridExtractor(client).extract(PoolThatMustNotBeTouched(), ev))
+    assert proc.capability_statement == "c"
+    assert [s.goal for s in proc.steps] == ["a", "b", "c"]
+
+
 def test_grounded_hybrid_threads_model_and_temperature_to_the_call():
     ev = _evidence()
-    client = FakeClient(["CAPABILITY: c\nSTEPS: a; b; c"])
+    client = FakeClient(['{"capability_statement": "c", "step_phrases": ["a", "b", "c"]}'])
     _run(GroundedHybridExtractor(client, model="a-model", temperature=0.9).extract(
         PoolThatMustNotBeTouched(), ev,
     ))

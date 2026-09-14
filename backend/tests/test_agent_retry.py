@@ -1,5 +1,5 @@
 """
-Tests for the retry policy in Agent._complete (agent.py):
+Tests for the retry policy in Agent._complete (app/execution/coding_agent.py):
 is_transient()/backoff_seconds().
 
 This path had NO coverage, which is exactly why it shipped a bug that
@@ -31,19 +31,12 @@ identically is what makes these tests exercise the real matching rule.
 """
 from __future__ import annotations
 
-import os
-import sys
 import types
 
 import pytest
 
-sys.path.insert(
-    0, os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                    "..", "..", "experiments", "swebench_pro")
-)
-
-import agent as agent_mod  # noqa: E402
-from agent import MAX_RETRIES, Agent, backoff_seconds, is_transient  # noqa: E402
+import app.execution.coding_agent as agent_mod
+from app.execution.coding_agent import MAX_RETRIES, Agent, backoff_seconds, is_transient
 
 
 # --- stand-ins for the provider SDK's exception hierarchy -------------------

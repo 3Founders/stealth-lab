@@ -44,6 +44,32 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_MANIFEST = REPO_ROOT / "config" / "skill_sources.yaml"
 
 
+def _extraction_client():
+    """Same OpenAI-compatible client app/services/ingestion_jobs.py's own
+    _extraction_client() builds for the job-queue ingestion path -- this
+    CLI's skill-dir/skill-repo/ingest commands drive compile_skill_artifact
+    directly (not through a job), and previously never passed a client at
+    all, so run_skill_ingestion's own `client: Any = None` default meant
+    claim_extraction.py's LLM extraction (and capability abstraction)
+    silently never fired for anything ingested through this CLI -- fail-
+    closed by that module's own design, so no error, just an always-empty
+    result. Fail-closed here too: returns None (never raises) on a missing
+    key or any construction error, which is exactly what makes
+    GroundedHybridExtractor/claim_extraction degrade to the deterministic
+    fallback rather than break the CLI."""
+    try:
+        from openai import OpenAI
+
+        from app.config import settings
+
+        key = settings.general_compute_api_key
+        if not key:
+            return None
+        return OpenAI(max_retries=0, api_key=key, base_url=settings.general_compute_base_url)
+    except Exception:  # noqa: BLE001 -- never block ingestion on this
+        return None
+
+
 async def _cmd_skill_dir(args: argparse.Namespace) -> None:
     pool = await create_pool(os.environ["DATABASE_URL"])
     try:
@@ -56,9 +82,13 @@ async def _cmd_skill_dir(args: argparse.Namespace) -> None:
                 indent=2,
             ))
             return
+        from app.config import settings as _settings
+        judge_model = _settings.general_compute_judge_model or "gemma-4-31B-it"
         result = await run_skill_ingestion(
             pool, adapter, embedder=Embedder(), domain=args.domain,
-            created_by="ingest_skills_cli",
+            created_by="ingest_skills_cli", client=_extraction_client(),
+            admission_llm_model=judge_model, capability_llm_model=judge_model,
+            claim_extraction_llm_model=judge_model,
         )
         print(json.dumps({"run_id": result["run_id"], "metrics": result["metrics"]}, indent=2))
     finally:
@@ -69,9 +99,13 @@ async def _cmd_skill_repo(args: argparse.Namespace) -> None:
     pool = await create_pool(os.environ["DATABASE_URL"])
     try:
         adapter = GitHubSkillSource(args.repo_url, ref=args.ref)
+        from app.config import settings as _settings
+        judge_model = _settings.general_compute_judge_model or "gemma-4-31B-it"
         result = await run_skill_ingestion(
             pool, adapter, embedder=Embedder(), domain=args.domain,
-            created_by="ingest_skills_cli",
+            created_by="ingest_skills_cli", client=_extraction_client(),
+            admission_llm_model=judge_model, capability_llm_model=judge_model,
+            claim_extraction_llm_model=judge_model,
         )
         print(json.dumps({"run_id": result["run_id"], "metrics": result["metrics"]}, indent=2))
     finally:
@@ -158,11 +192,15 @@ async def _cmd_ingest_manifest(args: argparse.Namespace) -> None:
                 spec, include_paths=set(args.skill_path or []),
             )
             snapshot = await persist_source_snapshot(pool, adapter)
+            from app.config import settings as _settings
+            judge_model = _settings.general_compute_judge_model or "gemma-4-31B-it"
             result = await run_skill_ingestion(
                 pool, adapter, embedder=Embedder(),
                 domain=(spec.repo if spec.type == "github_subtree" else None),
                 created_by="structured_skill_ingestion_wave1", limit=args.limit,
-                concurrency=args.concurrency,
+                concurrency=args.concurrency, client=_extraction_client(),
+                admission_llm_model=judge_model, capability_llm_model=judge_model,
+                claim_extraction_llm_model=judge_model,
             )
             results.append({
                 "source": spec.id,

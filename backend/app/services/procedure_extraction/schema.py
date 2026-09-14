@@ -130,6 +130,16 @@ class ExtractedProcedure(BaseModel):
     # constraint must not invent one.
     invariants: list[dict] = Field(default_factory=list)
 
+    # True only when a NON-deterministic strategy (e.g. GroundedHybridExtractor)
+    # internally degraded to DeterministicExtractor's own output (no client,
+    # no skeleton, an API failure, or a malformed/wrong-step-count response) --
+    # never set by DeterministicExtractor itself, since being called directly
+    # isn't "falling back" to anything. This is the real signal extract_procedure()
+    # (procedure_extraction/__init__.py) uses to correct `extracted_by` so it
+    # never claims a real LLM abstraction happened when the stored content is
+    # actually the literal, non-generalized fallback shape.
+    used_fallback: bool = False
+
     @field_validator("steps")
     @classmethod
     def steps_not_empty(cls, v: list[ProcedureStep]) -> list[ProcedureStep]:

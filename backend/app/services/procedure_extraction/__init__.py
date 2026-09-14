@@ -159,6 +159,20 @@ async def extract_procedure(
         pool, evidence, repo_root=repo_root, entry_seed_files=entry_seed_files,
     )
 
+    # REAL BUG FOUND AND FIXED: `extracted_by` used to carry whatever
+    # _select_strategy() SELECTED, never checking whether the strategy
+    # itself silently degraded internally (GroundedHybridExtractor ->
+    # its own DeterministicExtractor fallback on no client, no skeleton,
+    # an API failure, or a malformed/wrong-step-count response). A
+    # stored row could therefore read `extracted_by='grounded_hybrid_v1@1'`
+    # while its actual content -- capability_statement, step phrasing --
+    # was the literal, non-generalized deterministic output. `used_fallback`
+    # (schema.py) is the strategy's own honest signal that this happened;
+    # trusting it here (rather than the pre-call selection) is what makes
+    # `extracted_by` describe what ACTUALLY produced the stored content.
+    if extracted.used_fallback:
+        extracted_by = _DETERMINISTIC_TAG
+
     if reused_procedure_goal is not None:
         overlap = _lexical_overlap(extracted.goal, reused_procedure_goal)
         if overlap >= LEXICAL_FULL_MATCH_THRESHOLD:

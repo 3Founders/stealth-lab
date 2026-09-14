@@ -9,17 +9,10 @@ substring of the source, not just "looks plausible".
 """
 from __future__ import annotations
 
-import os
-import sys
-
 import pytest
 
-sys.path.insert(
-    0, os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                    "..", "..", "experiments", "swebench_pro"))
-
-from app.services import code_index  # noqa: E402
-from agent import RepoSandbox  # noqa: E402
+from app.services import code_index
+from app.execution.coding_agent import RepoSandbox
 
 PY_SRC = b'''def add(a, b):
     """Adds two numbers."""
@@ -224,12 +217,12 @@ class TestRepoSandboxIntegration:
 
 class TestToolsWiring:
     def test_list_symbols_and_read_symbol_are_declared_and_dispatched(self):
-        from agent import TOOLS, Agent
+        from app.execution.coding_agent import TOOLS, Agent
         names = {t["function"]["name"] for t in TOOLS}
         assert {"list_symbols", "read_symbol"} <= names
 
     def test_dispatch_reaches_the_sandbox(self, tmp_path):
-        from agent import Agent
+        from app.execution.coding_agent import Agent
         (tmp_path / "m.py").write_bytes(PY_SRC)
         sb = RepoSandbox(str(tmp_path))
         out, done = Agent._dispatch("read_symbol", {"path": "m.py", "name": "add"}, sb)

@@ -260,7 +260,10 @@ def test_all_rules_run_failures_are_not_short_circuited():
 # --- strategies.py: _parse_abstraction_response, pure, no client needed ---
 
 def test_parse_abstraction_response_happy_path():
-    text = "CAPABILITY: locate the failing symbol and apply a minimal fix\nSTEPS: find the relevant files; apply a targeted edit; run the tests"
+    text = (
+        '{"capability_statement": "locate the failing symbol and apply a minimal fix", '
+        '"step_phrases": ["find the relevant files", "apply a targeted edit", "run the tests"]}'
+    )
     result = _parse_abstraction_response(text, expected_step_count=3)
     assert result is not None
     capability, steps = result
@@ -269,18 +272,22 @@ def test_parse_abstraction_response_happy_path():
 
 
 def test_parse_abstraction_response_explicit_abstain_returns_none():
-    assert _parse_abstraction_response("ABSTAIN", expected_step_count=2) is None
+    assert _parse_abstraction_response('{"abstain": true}', expected_step_count=2) is None
 
 
 def test_parse_abstraction_response_wrong_step_count_returns_none():
     """The model inventing or dropping steps relative to what actually
     happened must trigger the fallback, not silently be accepted."""
-    text = "CAPABILITY: x\nSTEPS: a; b"
+    text = '{"capability_statement": "x", "step_phrases": ["a", "b"]}'
     assert _parse_abstraction_response(text, expected_step_count=3) is None
 
 
 def test_parse_abstraction_response_missing_label_returns_none():
     assert _parse_abstraction_response("just some text with no labels", expected_step_count=1) is None
+
+
+def test_parse_abstraction_response_malformed_json_returns_none():
+    assert _parse_abstraction_response("not json at all", expected_step_count=1) is None
 
 
 # --- section-13 step fields: tool binding survives extraction ---

@@ -28,6 +28,7 @@ from app.api.deps import enforce_limits, make_cost_recorder
 from app.debate.panel import default_judge, default_layer2_agent, default_panel
 from app.services.loop import LoopOrchestrator
 from app.services.procedure_extraction.failure_handlers import run_failure_handlers
+from app.services.procedure_extraction.registry import approve_extractor, create_extractor_version
 from app.services.triggers import ThresholdRule, TriggerDetector
 
 log = logging.getLogger(__name__)
@@ -258,6 +259,60 @@ async def ingestion_auto_status(request: Request) -> IngestionAutoStatusResponse
     if state is None:
         raise HTTPException(500, "ingestion scheduler state not initialized (app not started via lifespan)")
     return IngestionAutoStatusResponse(**state.as_dict())
+
+
+class RegisterExtractorRequest(BaseModel):
+    name: str
+    description: str
+    kind: str
+    version: str
+    config: Optional[dict] = None
+    scope: Optional[dict] = None
+    enable: bool = True
+
+
+class RegisterExtractorResponse(BaseModel):
+    extractor_id: str
+    name: str
+    version: str
+    kind: str
+    enabled: bool
+
+
+@router.post("/extractors", response_model=RegisterExtractorResponse)
+async def register_extractor(
+    body: RegisterExtractorRequest, pool=Depends(get_pool),
+) -> RegisterExtractorResponse:
+    """
+    The one missing production entry point for
+    app.services.procedure_extraction.registry.py's own
+    create_extractor_version()/approve_extractor() -- both real, already
+    tested functions with, until this endpoint, NO caller outside the
+    test suite anywhere in this codebase. Without a live row in
+    procedure_extractors, registry.select_extractor() always returns
+    None and every real extraction silently falls back to
+    deterministic_v1, regardless of whether an LLM client is configured
+    -- this is the endpoint that actually lets a real GroundedHybridExtractor
+    variant (e.g. grounded_hybrid_v1) become selectable.
+
+    Same seam discipline as every other endpoint in this file: no
+    business logic here, just a real caller for two already-real,
+    already-tested functions. `enable` defaults True so a single call is
+    enough to make the new extractor immediately selectable -- pass
+    False to register a candidate for comparison/review first, matching
+    approve_extractor's own enable=False option for that case.
+    """
+    extractor_id = await create_extractor_version(
+        pool, name=body.name, description=body.description, kind=body.kind,
+        version=body.version, config=body.config, scope=body.scope,
+    )
+    await approve_extractor(
+        pool, extractor_id=extractor_id, approver="admin_api", enable=body.enable,
+    )
+    return RegisterExtractorResponse(
+        extractor_id=extractor_id, name=body.name, version=body.version,
+        kind=body.kind, enabled=body.enable,
+    )
 
 
 class FailureRouteProcessResponse(BaseModel):

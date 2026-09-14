@@ -174,6 +174,87 @@ def test_successful_extraction_persists_and_applies_the_migration_20_update(monk
     assert params[2] == "deterministic_v1@1"
 
 
+# --- extract_procedure: extracted_by must reflect what ACTUALLY ran ---
+
+def test_extracted_by_is_corrected_to_deterministic_when_the_selected_strategy_falls_back(monkeypatch):
+    """REAL BUG FOUND AND FIXED: extracted_by used to carry whatever
+    _select_strategy() SELECTED (the registry row's tag), even when
+    GroundedHybridExtractor silently degraded to its own
+    DeterministicExtractor fallback underneath -- so a stored row could
+    read extracted_by='grounded_hybrid_v1@1' while its actual content
+    (capability_statement, step phrasing) was the literal, non-generalized
+    fallback shape. Reproduced live: gemma-4-31B-it returned well-formed
+    JSON with the wrong step count for a real, complex goal, and the
+    stored row still claimed the LLM tag. This proves the fix: a
+    registered llm-kind extractor whose client returns a malformed
+    response must persist extracted_by='deterministic_v1@1', not the
+    registry tag it was selected under."""
+    captured = {}
+
+    async def _fake_capture_procedure(pool, **kwargs):
+        captured.update(kwargs)
+        return {"id": "version-row-1", "procedure_id": "procedure-1"}
+
+    monkeypatch.setattr(
+        "app.services.procedure_extraction.capture_procedure", _fake_capture_procedure,
+    )
+    pool = FakePool(rows=[_row(name="grounded_hybrid_v1", version="1", kind="llm")])
+    client = types.SimpleNamespace(
+        chat=types.SimpleNamespace(completions=types.SimpleNamespace(
+            create=lambda **kw: types.SimpleNamespace(
+                choices=[types.SimpleNamespace(
+                    message=types.SimpleNamespace(content="not valid json at all"),
+                )],
+            ),
+        )),
+    )
+    source = FakeEvidenceSource(_evidence())
+
+    result = _run(extract_procedure(pool, source, client=client))
+
+    assert result.extracted.used_fallback is True
+    assert result.extracted_by == "deterministic_v1@1", (
+        "must report what actually produced the stored content, not what "
+        "the registry selected"
+    )
+    assert captured["parameter_schema"]["extraction_method"] == "deterministic_v1@1"
+    sql, params = pool.execute_calls[0]
+    assert params[2] == "deterministic_v1@1", (
+        "the persisted procedures.extracted_by column must also carry the "
+        "corrected tag, not the registry's original selection"
+    )
+
+
+def test_extracted_by_stays_the_llm_tag_when_the_strategy_genuinely_succeeds(monkeypatch):
+    """Control: a real, well-formed abstraction must NOT be corrected --
+    the fix only overrides extracted_by on a genuine fallback."""
+    async def _fake_capture_procedure(pool, **kwargs):
+        return {"id": "version-row-1", "procedure_id": "procedure-1"}
+
+    monkeypatch.setattr(
+        "app.services.procedure_extraction.capture_procedure", _fake_capture_procedure,
+    )
+    pool = FakePool(rows=[_row(name="grounded_hybrid_v1", version="1", kind="llm")])
+    client = types.SimpleNamespace(
+        chat=types.SimpleNamespace(completions=types.SimpleNamespace(
+            create=lambda **kw: types.SimpleNamespace(
+                choices=[types.SimpleNamespace(
+                    message=types.SimpleNamespace(
+                        content='{"capability_statement": "locate and fix a defect", '
+                                '"step_phrases": ["find the issue", "apply a fix"]}',
+                    ),
+                )],
+            ),
+        )),
+    )
+    source = FakeEvidenceSource(_evidence(tool_sequence=("Read", "Edit")))
+
+    result = _run(extract_procedure(pool, source, client=client))
+
+    assert result.extracted.used_fallback is False
+    assert result.extracted_by == "grounded_hybrid_v1@1"
+
+
 # --- _select_strategy: registry-driven branching ---
 
 def test_select_strategy_falls_back_to_seeded_baseline_with_no_candidates():
@@ -290,7 +371,7 @@ def test_evaluate_extractor_counts_per_rule_failures_and_uses_an_llm_strategy_wh
 
         def _create(self, **kw):
             self.calls += 1
-            msg = types.SimpleNamespace(content="ABSTAIN")
+            msg = types.SimpleNamespace(content='{"abstain": true}')
             return types.SimpleNamespace(choices=[types.SimpleNamespace(message=msg)])
 
     client = FakeClient()

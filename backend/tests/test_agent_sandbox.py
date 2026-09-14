@@ -15,16 +15,10 @@ So the language coverage assertions below are the point of this file.
 from __future__ import annotations
 
 import os
-import sys
 
 import pytest
 
-sys.path.insert(
-    0, os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                    "..", "..", "experiments", "swebench_pro")
-)
-
-from agent import RepoSandbox  # noqa: E402
+from app.execution.coding_agent import RepoSandbox
 
 # Matches both the snake_case and camelCase spellings the fixture uses, so a
 # miss below means the file was unreadable rather than merely named
@@ -388,7 +382,7 @@ class TestToolsExposedToTheModel:
         """A tool the sandbox implements but TOOLS does not declare is
         invisible to the model -- the capability would exist and never be
         used, which is exactly the bug being fixed here."""
-        from agent import TOOLS
+        from app.execution.coding_agent import TOOLS
         names = {t["function"]["name"] for t in TOOLS}
         assert {"create_file", "delete_file"} <= names
         assert {"list_dir", "search", "read_file", "edit_file", "finish"} <= names
@@ -402,7 +396,7 @@ class TestToolsExposedToTheModel:
         This test pins that absence: adding a shell- or network-shaped tool
         name here without a matching allow/deny boundary is exactly the
         regression this pass is guarding against."""
-        from agent import TOOLS
+        from app.execution.coding_agent import TOOLS
         names = {t["function"]["name"] for t in TOOLS}
         assert names == {
             "list_dir", "search", "read_file", "list_symbols",
@@ -421,7 +415,7 @@ class TestToolsExposedToTheModel:
         not a generic `getattr(sandbox, name)` or `eval`/`exec` dispatch --
         so a procedure step naming an arbitrary method or expression cannot
         reach anything beyond the nine declared tools."""
-        from agent import Agent, RepoSandbox
+        from app.execution.coding_agent import Agent, RepoSandbox
         import tempfile
         with tempfile.TemporaryDirectory() as d:
             sb = RepoSandbox(d)

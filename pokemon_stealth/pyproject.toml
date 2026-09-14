@@ -1,0 +1,28 @@
+[project]
+name = "pokemon-stealth"
+version = "0.1.0"
+description = "Experimental harness: does persistent external procedural knowledge (Stealth) make a frozen LLM better/cheaper at Pokemon Red over repeated runs, vs a fresh-every-run baseline?"
+requires-python = ">=3.10"
+dependencies = [
+    "pyboy>=2.0.0",
+    "pydantic>=2.0",
+    "typer>=0.12",
+    "anthropic",
+    "openai",
+    "python-dotenv",
+    "PyYAML",
+]
+
+[project.optional-dependencies]
+dev = ["pytest", "pytest-asyncio"]
+demo = ["rich"]
+
+[project.scripts]
+pokemon-stealth = "pokemon_stealth.cli:app"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]

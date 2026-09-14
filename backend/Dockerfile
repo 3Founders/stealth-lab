@@ -1,13 +1,16 @@
 # Image for the StealthLab MCP server (demo.md C1's "backend service").
 #
-# BUILD CONTEXT MUST BE THE REPO ROOT, not this directory -- see
-# .dockerignore's header comment for why: app/mcp_server/server.py imports
-# Agent/RepoSandbox from experiments/swebench_pro/ as a real sibling of
-# backend/ at module import time (README_MCP_SERVER.md setup step #3).
-# docker-compose.yml builds this with `context: .` + `dockerfile:
-# backend/Dockerfile`; building it standalone requires the same:
-#   docker build -f backend/Dockerfile -t stealthlab-backend .
-# (note the trailing `.` -- repo root, not `backend/.`)
+# Build context is still the REPO ROOT for now (docker-compose.yml builds
+# this with `context: .` + `dockerfile: backend/Dockerfile`; building it
+# standalone: `docker build -f backend/Dockerfile -t stealthlab-backend .`,
+# trailing `.` = repo root). This is no longer STRICTLY required the way it
+# used to be -- app/mcp_server/server.py's Agent/RepoSandbox import now
+# resolves entirely inside backend/ (app/execution/coding_agent.py, moved
+# from experiments/swebench_pro/agent.py specifically so backend/ has zero
+# runtime dependency on the sibling experiments/ tree). A backend-only
+# build context is a real, safe follow-up simplification now, just not
+# made in this pass (untested against an actual docker build in this
+# environment).
 
 FROM python:3.12-slim
 
@@ -31,11 +34,7 @@ RUN apt-get update \
 COPY backend/requirements.txt backend/requirements.txt
 RUN pip install --no-cache-dir -r backend/requirements.txt
 
-# Both trees, preserving the sibling relationship the import above
-# requires -- copying backend/ alone (a backend-scoped context) would
-# leave that import unresolved and the container would crash on boot.
 COPY backend/ backend/
-COPY experiments/swebench_pro/ experiments/swebench_pro/
 
 WORKDIR /repo/backend
 

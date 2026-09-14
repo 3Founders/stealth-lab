@@ -72,6 +72,13 @@ backend/logs/
 .scratch/retrieval-release-closure/vectors/
 backend/.scratch/
 
+# embed_cache.py's real but regenerable joint-embedding cache (~27MB JSON,
+# copied here from experiments/swebench_pro/.cache_joint/ so backend/ has
+# zero filesystem dependency on the sibling experiments/ tree) -- a build
+# artifact of real API calls, not source; keep it out of git history the
+# same way the vectors above are.
+backend/.cache_joint/
+
 backend*.zip
 scripts.zip
 *.key
@@ -79,3 +86,4 @@ scripts.zip
 *.mov
 .codex/
 
+AutomationBench/

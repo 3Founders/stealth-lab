@@ -1,0 +1,11 @@
+# ROM path is user-provided and never committed; nothing to ignore for it
+# here since it lives outside this repo by design.
+
+checkpoints/*.state
+results/runs.csv
+results/runs.jsonl
+notes_baseline/
+raw_history/
+__pycache__/
+*.pyc
+.venv/
