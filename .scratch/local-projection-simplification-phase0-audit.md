@@ -88,6 +88,15 @@ canonical DB → .stealth/ projection:
    into `events.jsonl` at generation time — not a new event system, and not repurposing the
    existing journal's own bookkeeping semantics.
 
+   **Addendum (2026-09-14):** the `ingestion` lane applied 4 previously-pending migrations
+   (73, 74, 78, 79) directly against the real database while doing unrelated pipeline-hardening
+   work. Migration **79 (`79_local_episode_learning.sql`) adds `episodes.execution_run_id`**,
+   which was missing before and is exactly the join key this bridge needs — an `episodes` row
+   can now be traced back to the `execution_runs`/`execution_run_events` it came from without a
+   separate lookup table. This closes part of the gap above; the bridge function itself (project
+   a bounded tail of `execution_run_events` for the active run into `events.jsonl`) is still
+   unbuilt, but it no longer needs its own schema change to find the right run.
+
 5. **`supersede_procedure()` (`app/services/procedures.py`) is a real, working production path**
    (bi-temporal new-version-row + carry-forward + `SUPERSEDES` edge + ChangeSet, one transaction),
    already called from `skill_ingestion.py`. No new supersession mechanism is needed for
@@ -163,6 +172,16 @@ canonical DB → .stealth/ projection:
   (`execution_run_node_id UUID REFERENCES execution_run_nodes(id)`, nullable so run-scoped
   criteria with no single owning node remain valid) so `VERIFY|N-xxx|V-xxx|...` can be a real
   per-node projection of real rows, not a re-derivation.
+  **Decision (2026-09-14): yes, build this column.** Populate it from a source that already
+  exists but isn't used for this today — `ProcedureStep.verification`
+  (`procedure_extraction/schema.py`) is captured per step at extraction time but currently only
+  `procedures.postconditions` feeds `derive_criteria()`. Derive additional criteria from each
+  step's `verification` at plan-compile/node-creation time, tied to the `execution_run_nodes`
+  row whose `node_order` matches that step's order. Procedure-wide `postconditions` stay
+  `execution_run_node_id = NULL` and render as run-level `VERIFY|R-xx|...` lines rather than
+  being forced onto one node. `execution_run_nodes.verification_state` (the existing scalar)
+  is unchanged — it stays a fast rollup, computed the same way `evaluate_run_completion`
+  already rolls up run-level criteria, just now also over the per-node ones.
 - New migration: a `claim_relation_state` classification enum
   (SUPPORT/REFINE/SUPERSEDE/CONTRADICT/INVALIDATE/NEW_SCOPE/UNRELATED) surfaced either as a new
   narrow table or as an extension of `claim_relation_candidates`, wired to actually call
