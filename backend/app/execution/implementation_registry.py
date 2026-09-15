@@ -301,6 +301,61 @@ async def list_implementations(
     return [_row_to_dict(r) for r in rows]
 
 
+async def list_implementations_by_goal(
+    pool: asyncpg.Pool,
+    goal: str,
+    *,
+    scope: AccessScope,
+    status: Optional[str] = "active",
+    limit: int = 50,
+) -> list[dict]:
+    """Every implementation whose `goal` (migration 80's
+    ProcedureStep.goal <-> Implementation.goal column) exactly matches,
+    visibility-filtered, bounded. This is the "search finds candidates"
+    half of the meta-harness's Implementation-selection stage -- grouping
+    by goal is a structured lookup, never an LLM call (founder directive
+    Sec 8: "No LLM needed for grouping. Use structured lookup/search.").
+
+    `status='active'` by default, same rationale as `get_for_task`: a
+    candidate/deprecated/disabled/quarantined row is not an ordinary
+    selection candidate. Pass `status=None` for an administrative/
+    inspection view over every lifecycle state.
+
+    Exact match only, deliberately -- `goal` is free text (migration 80's
+    own choice, "so the real vocabulary can grow without a migration per
+    new goal"), not an enum. A caller wanting fuzzy/related-goal matching
+    composes over `list_implementations`'s own scope, not this function;
+    inventing a similarity heuristic here would silently make matching
+    non-deterministic for a stage the founder directive explicitly wants
+    to stay structured lookup, not semantic guessing.
+
+    Returns `[]` (never a fabricated candidate) for a goal nothing has
+    ever been classified against -- most goals today, since migration 80's
+    own docstring records only one writer populates this column so far.
+    """
+    if not goal or not goal.strip():
+        raise ImplementationRegistryError("goal must be a non-blank string")
+    vis_sql, vis_params = visibility_predicate(scope, param_index=2)
+    params: list[Any] = [goal, *vis_params]
+    status_clause = ""
+    if status is not None:
+        if status not in STATUS_VALUES:
+            raise ImplementationRegistryError(f"unknown status {status!r} (valid: {STATUS_VALUES})")
+        params.append(status)
+        status_clause = f"AND status = ${len(params)}"
+    params.append(max(1, min(limit, 200)))
+    rows = await pool.fetch(
+        f"""
+        SELECT * FROM implementations
+        WHERE goal = $1 AND {vis_sql} {status_clause}
+        ORDER BY t_created DESC
+        LIMIT ${len(params)}
+        """,
+        *params,
+    )
+    return [_row_to_dict(r) for r in rows]
+
+
 async def resolve(
     pool: asyncpg.Pool,
     task_node_id: str,
