@@ -1799,14 +1799,19 @@ async def test_run_skill_ingestion_concurrency_isolates_per_artifact_errors(monk
 class _PackageRelationsFakePool:
     """Minimal fake, local to this test -- captures the
     procedure_implementations INSERT params so supported_steps can be
-    asserted on directly, without a real DB."""
+    asserted on directly, without a real DB. Also captures the
+    implementations INSERT params (migration 80's goal/verification_contract/
+    classification columns) so the real wiring in
+    _persist_package_relations can be asserted without a real DB."""
 
     def __init__(self):
         self.pi_calls: list[tuple] = []
+        self.impl_calls: list[tuple] = []
 
     async def fetchrow(self, sql, *params):
         s = " ".join(sql.split())
         if "INSERT INTO implementations" in s:
+            self.impl_calls.append(params)
             return {"id": "impl-1"}
         if "SELECT procedure_id FROM ingested_artifacts" in s:
             return None
@@ -1890,3 +1895,78 @@ async def test_persist_package_relations_supported_steps_empty_when_unmentioned(
 
     (_, _, _, supported_steps, _) = pool.pi_calls[0]
     assert supported_steps == []
+
+
+@pytest.mark.asyncio
+async def test_persist_package_relations_wires_real_goal_classification():
+    """Migration 80's real first writer: a bundled script whose basename
+    carries a recognizable signal (scan.py -> static_analysis) gets a real
+    goal + the deterministic-kind verification contract + classification
+    'heuristic' -- not left NULL/'unclassified' just because this is a new
+    column nobody has to populate."""
+    parsed = ParsedSkill(
+        name="acquire-codebase-knowledge",
+        description="Explore an unfamiliar repository.",
+        steps=["Run scripts/scan.py to build a dependency graph."],
+    )
+    resource = SourceResource(
+        path="skills/acquire-codebase-knowledge/scripts/scan.py",
+        kind="script", sha256="a" * 64, size=10,
+    )
+    artifact = SourceArtifact(
+        source_type="skill_package", uri="https://github.com/o/r/blob/c/p",
+        content="---\nname: x\ndescription: A test skill.\n---\n1. step one\n",
+        content_hash="h" * 64,
+        repository="o/r", path="skills/acquire-codebase-knowledge/SKILL.md",
+        commit="c" * 40, source_id="github-awesome-copilot",
+        resources=(resource,),
+    )
+    pool = _PackageRelationsFakePool()
+
+    await _persist_package_relations(
+        pool, artifact, parsed, procedure_id="33333333-3333-3333-3333-333333333333",
+        created_by="test",
+    )
+
+    assert len(pool.impl_calls) == 1
+    params = pool.impl_calls[0]
+    goal, goal_spec, expected_outcome, verification_contract, classification = params[-5:]
+    assert goal == "static_analysis"
+    assert goal_spec is None
+    assert expected_outcome is None
+    assert verification_contract == {"type": "deterministic", "check": "exit_code_zero"}
+    assert classification == "heuristic"
+
+
+@pytest.mark.asyncio
+async def test_persist_package_relations_leaves_goal_unclassified_when_unrecognized():
+    """The honest counter-case: a filename with no recognizable signal
+    gets goal=None, classification='unclassified' -- never a fabricated
+    goal just to fill the column."""
+    parsed = ParsedSkill(
+        name="some-skill", description="Does a thing.",
+        steps=["Do the first part."],
+    )
+    resource = SourceResource(
+        path="skills/some-skill/scripts/helper.py",
+        kind="script", sha256="b" * 64, size=5,
+    )
+    artifact = SourceArtifact(
+        source_type="skill_package", uri="https://github.com/o/r/blob/c/p",
+        content="---\nname: x\ndescription: A test skill.\n---\n1. step one\n",
+        content_hash="h" * 64,
+        repository="o/r", path="skills/some-skill/SKILL.md",
+        commit="c" * 40, source_id="src", resources=(resource,),
+    )
+    pool = _PackageRelationsFakePool()
+
+    await _persist_package_relations(
+        pool, artifact, parsed, procedure_id="44444444-4444-4444-4444-444444444444",
+        created_by="test",
+    )
+
+    goal, _, expected_outcome, verification_contract, classification = pool.impl_calls[0][-5:]
+    assert goal is None
+    assert expected_outcome is None
+    assert verification_contract == {"type": "deterministic", "check": "exit_code_zero"}
+    assert classification == "unclassified"

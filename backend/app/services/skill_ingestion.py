@@ -1988,12 +1988,17 @@ async def _persist_package_relations(
             f"https://raw.githubusercontent.com/{artifact.repository}/"
             f"{artifact.commit}/{resource.path}"
         )
+        from app.services.implementation_goals import classify_skill_package_script
+
+        goal_fields = classify_skill_package_script(resource.path, kind="deterministic")
         row = await pool.fetchrow(
             "INSERT INTO implementations (id, name, description, kind, provider, version, "
             "locator, invocation, requirements, source_ref, author, license, content_hash, "
-            "created_by, visibility, scope_type) VALUES (gen_random_uuid(), $1, $2, "
+            "created_by, visibility, scope_type, goal, goal_spec, expected_outcome, "
+            "verification_contract, classification) VALUES (gen_random_uuid(), $1, $2, "
             "'deterministic', 'skill-package', 1, $3::jsonb, $4::jsonb, $5::jsonb, "
-            "$6, $7, $8, $9, $10, 'public', 'global') "
+            "$6, $7, $8, $9, $10, 'public', 'global', $11, $12::jsonb, $13::jsonb, "
+            "$14::jsonb, $15) "
             "ON CONFLICT (name, provider, version) DO NOTHING RETURNING id",
             name, f"Bundled executable resource for {parsed.name}",
             {"type": "immutable_github_raw", "url": raw_url,
@@ -2003,6 +2008,8 @@ async def _persist_package_relations(
             (artifact.repository or "").split("/", 1)[0] or None,
             parsed.license or artifact.license_metadata.get("spdx_id"),
             resource.sha256, created_by,
+            goal_fields["goal"], goal_fields["goal_spec"], goal_fields["expected_outcome"],
+            goal_fields["verification_contract"], goal_fields["classification"],
         )
         if row is None:
             row = await pool.fetchrow(
