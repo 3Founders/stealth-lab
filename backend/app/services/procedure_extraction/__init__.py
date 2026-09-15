@@ -26,7 +26,11 @@ import asyncpg
 from app.services.applicability import _scope_matches
 from app.services.procedure_extraction.evidence import EvidenceSource, ProcedureEvidence
 from app.services.procedure_extraction.registry import select_extractor
-from app.services.procedure_extraction.schema import ExtractedProcedure, ExtractionResult
+from app.services.procedure_extraction.schema import (
+    ExtractedProcedure,
+    ExtractionResult,
+    ExtractionTransientFailure,
+)
 from app.services.procedure_extraction.strategies import (
     DeterministicExtractor,
     ExtractionStrategy,
@@ -155,23 +159,22 @@ async def extract_procedure(
         pool, client=client, extractor_scope=extractor_scope,
     )
 
-    extracted: ExtractedProcedure = await strategy.extract(
+    # ExtractionTransientFailure (strategies.py) is deliberately NOT caught
+    # here -- it must propagate to the caller (the ingestion job handler)
+    # so the job lands as failed and gets retried, rather than this
+    # function silently substituting a different strategy's output under
+    # the selected extractor's tag. See schema.py's own docstring on the
+    # exception for the full reasoning; this replaces the old
+    # `used_fallback`-relabeling behavior entirely.
+    extracted: Optional[ExtractedProcedure] = await strategy.extract(
         pool, evidence, repo_root=repo_root, entry_seed_files=entry_seed_files,
     )
 
-    # REAL BUG FOUND AND FIXED: `extracted_by` used to carry whatever
-    # _select_strategy() SELECTED, never checking whether the strategy
-    # itself silently degraded internally (GroundedHybridExtractor ->
-    # its own DeterministicExtractor fallback on no client, no skeleton,
-    # an API failure, or a malformed/wrong-step-count response). A
-    # stored row could therefore read `extracted_by='grounded_hybrid_v1@1'`
-    # while its actual content -- capability_statement, step phrasing --
-    # was the literal, non-generalized deterministic output. `used_fallback`
-    # (schema.py) is the strategy's own honest signal that this happened;
-    # trusting it here (rather than the pre-call selection) is what makes
-    # `extracted_by` describe what ACTUALLY produced the stored content.
-    if extracted.used_fallback:
-        extracted_by = _DETERMINISTIC_TAG
+    if extracted is None:
+        # A genuine abstain -- the selected strategy determined no real
+        # procedure exists in this episode. A real, final answer: nothing
+        # is written, distinct from a validation failure.
+        return ExtractionResult(extracted_by=extracted_by, abstained=True)
 
     if reused_procedure_goal is not None:
         overlap = _lexical_overlap(extracted.goal, reused_procedure_goal)
@@ -325,6 +328,8 @@ async def evaluate_extractor(
     per_rule_failures: dict[str, int] = {}
     attempted = 0
     well_formed = 0
+    abstained = 0
+    transient_failures = 0
 
     for episode_id in golden_episode_ids:
         source = build_evidence_source(episode_id)
@@ -333,7 +338,21 @@ async def evaluate_extractor(
             continue
         attempted += 1
 
-        extracted = await strategy.extract(pool, evidence)
+        # A candidate extractor can hit the SAME two real outcomes a
+        # selected one does (strategies.py): a genuine abstain (None --
+        # not a failure, just nothing to score) or ExtractionTransientFailure
+        # (an infra/parse failure -- counted here, not raised, so one
+        # flaky episode does not abort scoring the rest of the golden
+        # set). Neither counts toward well_formed.
+        try:
+            extracted = await strategy.extract(pool, evidence)
+        except ExtractionTransientFailure:
+            transient_failures += 1
+            continue
+        if extracted is None:
+            abstained += 1
+            continue
+
         ctx = ValidationContext(
             probe_vocabulary=PROBE_PREDICATE_VOCABULARY,
             evidence_tokens=_evidence_tokens(evidence),
@@ -353,5 +372,7 @@ async def evaluate_extractor(
         "attempted": attempted,
         "well_formed": well_formed,
         "well_formed_rate": (well_formed / attempted) if attempted else None,
+        "abstained": abstained,
+        "transient_failures": transient_failures,
         "failures_by_rule": per_rule_failures,
     }

@@ -16,6 +16,7 @@ import pytest
 from app.db.session import create_pool as _real_create_pool
 from app.services.environment_probe import assert_environment_claims
 from app.services.procedure_extraction.evidence import ProcedureEvidence
+from app.services.procedure_extraction.schema import ExtractionTransientFailure
 from app.services.procedure_extraction.strategies import (
     DeterministicExtractor,
     GroundedHybridExtractor,
@@ -130,42 +131,39 @@ def test_grounded_hybrid_extractor_uses_llm_output_when_well_formed():
     asyncio.run(_run())
 
 
-def test_grounded_hybrid_extractor_falls_back_on_malformed_llm_response():
-    """Degradation is explicit: a response that doesn't parse must fall
-    back to DeterministicExtractor's real output, never propagate a
-    malformed procedure."""
+def test_grounded_hybrid_extractor_raises_on_malformed_llm_response():
+    """No silent degrade: a response that doesn't parse must raise
+    ExtractionTransientFailure, never silently propagate
+    DeterministicExtractor's output under this extractor's own name."""
     async def _run():
         pool = await _real_create_pool(DATABASE_URL, min_size=1, max_size=2)
         try:
             ev = _evidence(None, None)
             client = FakeClient(["this is not the expected format at all"])
             extractor = GroundedHybridExtractor(client)
-            proc = await extractor.extract(pool, ev)
-
-            # Fallback signature: literal capability_statement, same as
-            # DeterministicExtractor's own direct output for this evidence.
-            assert proc.capability_statement == ev.goal_text[:200]
+            with pytest.raises(ExtractionTransientFailure):
+                await extractor.extract(pool, ev)
         finally:
             await pool.close()
 
     asyncio.run(_run())
 
 
-def test_grounded_hybrid_extractor_falls_back_with_no_client():
+def test_grounded_hybrid_extractor_raises_with_no_client():
     async def _run():
         pool = await _real_create_pool(DATABASE_URL, min_size=1, max_size=2)
         try:
             ev = _evidence(None, None)
             extractor = GroundedHybridExtractor(None)
-            proc = await extractor.extract(pool, ev)
-            assert proc.capability_statement == ev.goal_text[:200]
+            with pytest.raises(ExtractionTransientFailure):
+                await extractor.extract(pool, ev)
         finally:
             await pool.close()
 
     asyncio.run(_run())
 
 
-def test_grounded_hybrid_extractor_falls_back_on_step_count_mismatch():
+def test_grounded_hybrid_extractor_raises_on_step_count_mismatch():
     async def _run():
         pool = await _real_create_pool(DATABASE_URL, min_size=1, max_size=2)
         try:
@@ -174,10 +172,8 @@ def test_grounded_hybrid_extractor_falls_back_on_step_count_mismatch():
                 '{"capability_statement": "do a thing", "step_phrases": ["only one step"]}',
             ])
             extractor = GroundedHybridExtractor(client)
-            proc = await extractor.extract(pool, ev)
-            assert proc.capability_statement == ev.goal_text[:200], (
-                "a STEPS list that doesn't match the real skeleton's group count must fall back"
-            )
+            with pytest.raises(ExtractionTransientFailure):
+                await extractor.extract(pool, ev)
         finally:
             await pool.close()
 

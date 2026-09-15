@@ -315,6 +315,162 @@ async def register_extractor(
     )
 
 
+class ReextractProcedureResponse(BaseModel):
+    prior_row_id: str
+    procedure_id: str
+    new_version_row_id: Optional[str] = None
+    new_version: Optional[int] = None
+    extracted_by: Optional[str] = None
+    abstained: bool = False
+    validation_failures: list[str] = []
+
+
+@router.post("/procedures/{procedure_row_id}/reextract", response_model=ReextractProcedureResponse)
+async def reextract_procedure(
+    procedure_row_id: str, pool=Depends(get_pool),
+) -> ReextractProcedureResponse:
+    """
+    The real fix for episodes permanently stuck with a procedure written
+    under a silent-fallback tag before ExtractionTransientFailure existed
+    (app.services.procedure_extraction.schema): `enqueue_pending_
+    procedure_extractions`'s gate excludes any episode with a live
+    procedure regardless of which extractor produced it, so those rows
+    were otherwise unreachable by any future, better extraction. This
+    endpoint re-runs extraction for the SAME source episode against
+    whichever extractor is currently selected, and on a real success
+    calls `supersede_procedure()` (procedures.py) -- giving that function
+    its first real, non-test, non-automatic caller -- to close the old
+    row and append the new one. `supersede_procedure` is untouched;
+    `create_extractor_version`/`approve_extractor` above are this file's
+    own precedent for exposing an existing, well-tested service function
+    with no other production entry point.
+
+    Refuses (400) a procedure sourced from zero or more than one episode
+    -- build_episode_evidence_source() reads exactly one episode's
+    window, the same real constraint handle_extract_procedure_from_episode
+    already has.
+
+    On ExtractionTransientFailure (LLM call failed, response didn't
+    parse), returns a real error and touches nothing -- the same
+    no-silent-fallback guarantee as the background extraction path,
+    never a partial/incorrect supersede.
+    """
+    from app.services.ingestion_jobs import _extraction_client, build_episode_evidence_source
+    from app.services.procedure_extraction import extract_procedure
+    from app.services.procedure_extraction.schema import ExtractionTransientFailure
+    from app.services.procedures import supersede_procedure
+
+    prior = await pool.fetchrow(
+        "SELECT id, procedure_id, goal, source_episode_ids, owner_id, visibility "
+        "FROM procedures WHERE id = $1::uuid AND t_invalid IS NULL",
+        procedure_row_id,
+    )
+    if prior is None:
+        raise HTTPException(404, f"no live procedure row {procedure_row_id!r}")
+
+    episode_ids = prior["source_episode_ids"] or []
+    if len(episode_ids) != 1:
+        raise HTTPException(
+            400,
+            f"reextract requires a procedure with exactly one source episode "
+            f"(found {len(episode_ids)}) -- multi-episode/synthesized procedures "
+            f"are not re-extractable this way",
+        )
+
+    built = await build_episode_evidence_source(
+        pool, str(episode_ids[0]), goal_text=prior["goal"],
+    )
+    if built is None:
+        raise HTTPException(410, f"source episode {episode_ids[0]!r} is gone")
+    source, _ep = built
+
+    try:
+        result = await extract_procedure(
+            pool, source, client=_extraction_client(),
+            visibility=prior["visibility"], owner_id=prior["owner_id"],
+        )
+    except ExtractionTransientFailure as exc:
+        raise HTTPException(502, f"extraction failed, nothing changed: {exc}") from exc
+
+    if result.validation_failures:
+        return ReextractProcedureResponse(
+            prior_row_id=procedure_row_id, procedure_id=prior["procedure_id"],
+            extracted_by=result.extracted_by, validation_failures=result.validation_failures,
+        )
+    if result.abstained:
+        return ReextractProcedureResponse(
+            prior_row_id=procedure_row_id, procedure_id=prior["procedure_id"],
+            extracted_by=result.extracted_by, abstained=True,
+        )
+
+    # A real, successful re-extraction: supersede the prior row rather
+    # than leaving two live rows -- extract_procedure() already persisted
+    # the new candidate as its OWN procedure_id (it has no way to target
+    # an existing family), so the real content to carry forward is read
+    # back from that fresh row and superseded into place under the
+    # ORIGINAL procedure_id/family, then the fresh standalone row is
+    # retired (tombstoned, never deleted, this table's own idiom).
+    fresh = await pool.fetchrow(
+        "SELECT steps, goal, capability_statement, extracted_by, preconditions, "
+        "scope, failure_conditions, invariants FROM procedures WHERE id = $1::uuid",
+        result.version_row_id,
+    )
+    superseded = await supersede_procedure(
+        pool, prior_row_id=procedure_row_id,
+        changed_fields={
+            "steps": fresh["steps"], "goal": fresh["goal"],
+            "capability_statement": fresh["capability_statement"],
+            "extracted_by": fresh["extracted_by"],
+            "preconditions": fresh["preconditions"], "scope": fresh["scope"],
+            "failure_conditions": fresh["failure_conditions"],
+            "invariants": fresh["invariants"],
+            "source_episode_ids": episode_ids,
+        },
+        superseded_by="admin_reextract", reason="re-extraction with the currently-selected extractor",
+    )
+    await pool.execute(
+        "UPDATE procedures SET t_invalid = now(), verification_state = 'retired' "
+        "WHERE id = $1::uuid AND t_invalid IS NULL",
+        result.version_row_id,
+    )
+    if superseded is None:
+        raise HTTPException(409, "prior row was concurrently superseded/merged; nothing changed")
+
+    return ReextractProcedureResponse(
+        prior_row_id=procedure_row_id, procedure_id=superseded["procedure_id"],
+        new_version_row_id=str(superseded["id"]), new_version=superseded["version"],
+        extracted_by=fresh["extracted_by"],
+    )
+
+
+class IndexLagResponse(BaseModel):
+    current_recipe: str
+    lag_count: int
+    recipe_drift_count: int
+    total_stale: int
+    sample: list[dict]
+
+
+@router.get("/index-lag", response_model=IndexLagResponse)
+async def index_lag(limit: int = 100, pool=Depends(get_pool)) -> IndexLagResponse:
+    """
+    Read-only visibility for app.services.index_freshness.get_index_lag()
+    -- a real, already-tested function with zero production callers
+    before this endpoint (grepped: only referenced in a docstring). Makes
+    embedding/retrieval_document staleness observable on demand instead
+    of silently accumulating; scripts/run_ingestion.py's `--once` loop
+    logs a warning from this same function when `total_stale` crosses a
+    threshold. Fixing the drift (scripts/backfill_procedure_embeddings.py)
+    stays a deliberate manual/CLI step -- it spends real embedding-API
+    calls, so this endpoint reports the problem without silently paying
+    to fix it.
+    """
+    from app.services.index_freshness import get_index_lag
+
+    result = await get_index_lag(pool, limit=limit)
+    return IndexLagResponse(**result)
+
+
 class FailureRouteProcessResponse(BaseModel):
     applied: dict[str, int]
 

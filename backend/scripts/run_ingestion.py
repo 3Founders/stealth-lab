@@ -29,6 +29,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import logging
 import os
 import sys
 import time
@@ -41,12 +42,24 @@ load_dotenv()
 
 from app import observability
 from app.db.session import create_pool
+from app.services.index_freshness import get_index_lag
 from app.services.ingestion_jobs import (
     enqueue_pending_claim_promotions,
     enqueue_pending_procedure_extractions,
     process_pending_jobs,
+    resume_failed_extraction_jobs,
 )
 from app.services.trace_worker import process_collector_file
+
+log = logging.getLogger(__name__)
+
+# Above this many stale (embedding/retrieval_document behind source, or
+# on an old retrieval_document_version recipe) rows, a plain log warning
+# fires each pass -- visibility, not an automatic fix. Fixing the drift
+# (scripts/backfill_procedure_embeddings.py) spends real embedding-API
+# calls, so it stays a deliberate manual step; this constant only decides
+# when staleness is loud enough to be worth a human looking.
+_INDEX_LAG_WARN_THRESHOLD = 20
 
 
 def _default_trace_dir() -> Path:
@@ -66,6 +79,22 @@ async def _run_once(trace_dir: Path, promote_limit: int = 0,
                     extract_limit: int = 0) -> dict:
     pool = await create_pool()
     try:
+        # Self-healing for ExtractionTransientFailure (procedure_extraction/
+        # schema.py): a job that failed because the LLM call errored or a
+        # response didn't parse wrote no procedure, so requeuing it here is
+        # the real retry -- rate-limited failures back off per
+        # resume_failed_extraction_jobs' own min_age_seconds default before
+        # they requeue, so this does not hammer an exhausted quota every pass.
+        resumed_extractions = await resume_failed_extraction_jobs(pool)
+
+        lag = await get_index_lag(pool)
+        if lag["total_stale"] >= _INDEX_LAG_WARN_THRESHOLD:
+            log.warning(
+                "procedure retrieval index lag: %d stale rows (recipe_drift=%d) "
+                "-- consider scripts/backfill_procedure_embeddings.py",
+                lag["total_stale"], lag["recipe_drift_count"],
+            )
+
         collector_totals = {"records_seen": 0, "inserted": 0, "skipped_duplicate": 0, "quarantined": 0}
         files = sorted(trace_dir.glob("*.jsonl")) if trace_dir.is_dir() else []
         for f in files:
@@ -100,6 +129,8 @@ async def _run_once(trace_dir: Path, promote_limit: int = 0,
             "files_processed": len(files),
             "collector": collector_totals,
             "jobs": job_totals,
+            "resumed_failed_extractions": resumed_extractions,
+            "index_lag_total_stale": lag["total_stale"],
         }
         if requeued is not None:
             summary["requeued_promotions"] = requeued

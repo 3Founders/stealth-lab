@@ -18,6 +18,7 @@ import types
 import pytest
 
 from app.services.procedure_extraction.evidence import ProcedureEvidence
+from app.services.procedure_extraction.schema import ExtractionTransientFailure
 from app.services.procedure_extraction.strategies import (
     DeterministicExtractor,
     GroundedHybridExtractor,
@@ -55,7 +56,7 @@ class FakeClient:
     def _create(self, **kw):
         self.requests.append(kw)
         if self._raises:
-            raise RuntimeError("upstream call failed")
+            raise self._raises if isinstance(self._raises, Exception) else RuntimeError("upstream call failed")
         content = self.script.pop(0) if self.script else '{"abstain": true}'
         msg = types.SimpleNamespace(content=content)
         choice = types.SimpleNamespace(message=msg)
@@ -70,87 +71,81 @@ def test_deterministic_extractor_produces_a_literal_procedure_offline():
     assert len(proc.steps) == 3  # Read x2, Edit, Bash -> 3 run-length groups
     assert proc.capability_statement == ev.goal_text[:200]
     assert proc.preconditions == []  # no project_id -- honestly empty, not fabricated
-    assert proc.used_fallback is False, (
-        "DeterministicExtractor called directly isn't 'falling back' to "
-        "anything -- used_fallback only means a NON-deterministic strategy "
-        "degraded to this shape underneath a caller expecting real abstraction"
-    )
 
 
-# --- GroundedHybridExtractor.extract: fallback paths ---
+# --- GroundedHybridExtractor.extract: ExtractionTransientFailure paths ---
+#
+# No silent degrade-to-deterministic anymore: every one of these must
+# raise ExtractionTransientFailure and leave no result at all, so a
+# caller can never mistake a fallback for a real abstraction.
 
-def test_grounded_hybrid_falls_back_with_no_client():
+def test_grounded_hybrid_raises_with_no_client():
     ev = _evidence()
-    proc = _run(GroundedHybridExtractor(None).extract(PoolThatMustNotBeTouched(), ev))
-    assert proc.capability_statement == ev.goal_text[:200]
-    assert proc.used_fallback is True, (
-        "the real bug fix: a caller must be able to tell this degraded, "
-        "not just infer it from the content shape"
-    )
+    with pytest.raises(ExtractionTransientFailure):
+        _run(GroundedHybridExtractor(None).extract(PoolThatMustNotBeTouched(), ev))
 
 
-def test_grounded_hybrid_skips_the_model_call_with_no_skeleton_even_with_a_client():
-    """`not skeleton` short-circuits BEFORE the LLM call either way -- but
-    this is a genuine dead end, not a graceful fallback: schema.py's
-    ExtractedProcedure refuses zero steps unconditionally (ticket
-    steps_not_empty), so DeterministicExtractor cannot produce a valid
-    result from an empty tool_sequence either. Both extractors raise
-    identically here; the guard only saves a wasted model call, it does
-    not avoid the crash. DISCLOSED, not fixed by this pass: evidence with
-    real observations but an empty tool_sequence (possible per
-    evidence.py -- observations and tool_sequence are independently
-    populated) reaches extract_procedure()'s V5 pre-check (which only
-    inspects has_observations(), not tool_sequence) and would propagate
-    this same ValidationError uncaught -- a pre-existing gap in that
-    pre-check, out of scope for a coverage-only pass."""
+def test_grounded_hybrid_abstains_with_no_skeleton_even_with_a_client():
+    """`not skeleton` returns None (a genuine abstain -- nothing to
+    summarize is a structural fact about the evidence, not something a
+    retry fixes), WITHOUT ever calling the model."""
     ev = _evidence(tool_sequence=[])
     client = FakeClient(['{"capability_statement": "x", "step_phrases": ["y"]}'])
-    with pytest.raises(Exception, match="zero steps"):
-        _run(GroundedHybridExtractor(client).extract(PoolThatMustNotBeTouched(), ev))
+    result = _run(GroundedHybridExtractor(client).extract(PoolThatMustNotBeTouched(), ev))
+    assert result is None
     assert client.requests == [], "must never call the model over an empty skeleton"
 
 
-def test_grounded_hybrid_falls_back_when_the_client_call_raises():
+def test_grounded_hybrid_raises_transient_failure_when_the_client_call_raises():
     ev = _evidence()
     client = FakeClient(raises=True)
-    proc = _run(GroundedHybridExtractor(client).extract(PoolThatMustNotBeTouched(), ev))
-    assert proc.capability_statement == ev.goal_text[:200]
-    assert proc.used_fallback is True
+    with pytest.raises(ExtractionTransientFailure) as excinfo:
+        _run(GroundedHybridExtractor(client).extract(PoolThatMustNotBeTouched(), ev))
+    assert excinfo.value.is_rate_limit is False
 
 
-def test_grounded_hybrid_falls_back_on_a_malformed_response():
+def test_grounded_hybrid_raises_transient_failure_marked_rate_limit_on_a_429():
+    ev = _evidence()
+    client = FakeClient(raises=RuntimeError("Error code: 429 - rate_limit_exceeded"))
+    with pytest.raises(ExtractionTransientFailure) as excinfo:
+        _run(GroundedHybridExtractor(client).extract(PoolThatMustNotBeTouched(), ev))
+    assert excinfo.value.is_rate_limit is True
+
+
+def test_grounded_hybrid_raises_transient_failure_on_a_malformed_response():
     ev = _evidence()
     client = FakeClient(["this is not the expected format at all"])
-    proc = _run(GroundedHybridExtractor(client).extract(PoolThatMustNotBeTouched(), ev))
-    assert proc.capability_statement == ev.goal_text[:200]
-    assert proc.used_fallback is True
+    with pytest.raises(ExtractionTransientFailure):
+        _run(GroundedHybridExtractor(client).extract(PoolThatMustNotBeTouched(), ev))
 
 
-def test_grounded_hybrid_falls_back_on_step_count_mismatch():
+def test_grounded_hybrid_raises_transient_failure_on_step_count_mismatch():
     ev = _evidence()  # skeleton has 3 groups: Read, Edit, Bash
     client = FakeClient(['{"capability_statement": "do a thing", "step_phrases": ["only one step"]}'])
-    proc = _run(GroundedHybridExtractor(client).extract(PoolThatMustNotBeTouched(), ev))
-    assert proc.capability_statement == ev.goal_text[:200]
-    assert proc.used_fallback is True, (
-        "a valid, well-formed JSON response that still mismatches the real "
-        "skeleton's step count must still be flagged as a fallback -- this "
-        "is the exact real-world case found live: gemma-4-31B-it returned "
-        "complete, parseable JSON with the wrong number of steps"
-    )
+    with pytest.raises(ExtractionTransientFailure, match="did not parse"):
+        _run(GroundedHybridExtractor(client).extract(PoolThatMustNotBeTouched(), ev))
 
 
-def test_grounded_hybrid_falls_back_on_json_wrapped_in_prose():
+def test_grounded_hybrid_raises_transient_failure_on_json_wrapped_in_prose():
     """A response that isn't ONLY the JSON object (leading prose, no code
     fence) is still a parse failure -- the fence-stripping in
     _parse_abstraction_response only handles a ```-wrapped block, not
-    arbitrary surrounding text, so this must degrade like any other
+    arbitrary surrounding text, so this must raise like any other
     malformed response rather than silently succeed on a lucky substring
     match."""
     ev = _evidence()
     client = FakeClient(['Sure, here you go: {"capability_statement": "c", "step_phrases": ["a", "b", "c"]}'])
-    proc = _run(GroundedHybridExtractor(client).extract(PoolThatMustNotBeTouched(), ev))
-    assert proc.capability_statement == ev.goal_text[:200]
-    assert proc.used_fallback is True
+    with pytest.raises(ExtractionTransientFailure):
+        _run(GroundedHybridExtractor(client).extract(PoolThatMustNotBeTouched(), ev))
+
+
+def test_grounded_hybrid_returns_none_on_explicit_abstain():
+    """A genuine {"abstain": true} response is the model's real, final
+    answer -- distinct from a parse failure, never raises."""
+    ev = _evidence()
+    client = FakeClient(['{"abstain": true}'])
+    result = _run(GroundedHybridExtractor(client).extract(PoolThatMustNotBeTouched(), ev))
+    assert result is None
 
 
 # --- GroundedHybridExtractor.extract: the real abstraction path ---
@@ -164,7 +159,6 @@ def test_grounded_hybrid_uses_llm_output_when_well_formed():
     proc = _run(GroundedHybridExtractor(client).extract(PoolThatMustNotBeTouched(), ev))
 
     assert "locate the failing test" in proc.capability_statement
-    assert proc.used_fallback is False, "a genuine, well-formed abstraction must never be flagged as a fallback"
     assert len(proc.steps) == 3
     assert [s.goal for s in proc.steps] == [
         "read the relevant files", "apply a fix", "run the test suite",

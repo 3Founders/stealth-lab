@@ -174,29 +174,23 @@ def test_successful_extraction_persists_and_applies_the_migration_20_update(monk
     assert params[2] == "deterministic_v1@1"
 
 
-# --- extract_procedure: extracted_by must reflect what ACTUALLY ran ---
+# --- extract_procedure: no silent fallback -- a transient failure or an
+# abstain from the selected strategy must never write a mislabeled row ---
 
-def test_extracted_by_is_corrected_to_deterministic_when_the_selected_strategy_falls_back(monkeypatch):
-    """REAL BUG FOUND AND FIXED: extracted_by used to carry whatever
-    _select_strategy() SELECTED (the registry row's tag), even when
-    GroundedHybridExtractor silently degraded to its own
-    DeterministicExtractor fallback underneath -- so a stored row could
-    read extracted_by='grounded_hybrid_v1@1' while its actual content
-    (capability_statement, step phrasing) was the literal, non-generalized
-    fallback shape. Reproduced live: gemma-4-31B-it returned well-formed
-    JSON with the wrong step count for a real, complex goal, and the
-    stored row still claimed the LLM tag. This proves the fix: a
-    registered llm-kind extractor whose client returns a malformed
-    response must persist extracted_by='deterministic_v1@1', not the
-    registry tag it was selected under."""
-    captured = {}
-
-    async def _fake_capture_procedure(pool, **kwargs):
-        captured.update(kwargs)
-        return {"id": "version-row-1", "procedure_id": "procedure-1"}
-
+def test_transient_failure_propagates_and_persists_nothing(monkeypatch):
+    """REAL BUG FOUND AND FIXED (superseding the old, removed
+    extracted_by-relabeling behavior): a registered llm-kind extractor
+    whose client returns a malformed response used to silently degrade
+    to DeterministicExtractor's own output and persist a row tagged
+    'deterministic_v1@1' after the fact -- so a caller reading
+    extracted_by could never tell a genuine deterministic extraction
+    from a masqueraded LLM failure without inspecting content by eye.
+    Now ExtractionTransientFailure (schema.py) propagates out of
+    extract_procedure() untouched; capture_procedure() must never run."""
+    def _must_not_be_called(*a, **kw):
+        raise AssertionError("capture_procedure must not run on a transient failure")
     monkeypatch.setattr(
-        "app.services.procedure_extraction.capture_procedure", _fake_capture_procedure,
+        "app.services.procedure_extraction.capture_procedure", _must_not_be_called,
     )
     pool = FakePool(rows=[_row(name="grounded_hybrid_v1", version="1", kind="llm")])
     client = types.SimpleNamespace(
@@ -210,24 +204,15 @@ def test_extracted_by_is_corrected_to_deterministic_when_the_selected_strategy_f
     )
     source = FakeEvidenceSource(_evidence())
 
-    result = _run(extract_procedure(pool, source, client=client))
-
-    assert result.extracted.used_fallback is True
-    assert result.extracted_by == "deterministic_v1@1", (
-        "must report what actually produced the stored content, not what "
-        "the registry selected"
-    )
-    assert captured["parameter_schema"]["extraction_method"] == "deterministic_v1@1"
-    sql, params = pool.execute_calls[0]
-    assert params[2] == "deterministic_v1@1", (
-        "the persisted procedures.extracted_by column must also carry the "
-        "corrected tag, not the registry's original selection"
-    )
+    from app.services.procedure_extraction.schema import ExtractionTransientFailure
+    with pytest.raises(ExtractionTransientFailure):
+        _run(extract_procedure(pool, source, client=client))
+    assert pool.execute_calls == []
 
 
 def test_extracted_by_stays_the_llm_tag_when_the_strategy_genuinely_succeeds(monkeypatch):
-    """Control: a real, well-formed abstraction must NOT be corrected --
-    the fix only overrides extracted_by on a genuine fallback."""
+    """Control: a real, well-formed abstraction persists under the
+    registry's own selected tag."""
     async def _fake_capture_procedure(pool, **kwargs):
         return {"id": "version-row-1", "procedure_id": "procedure-1"}
 
@@ -251,8 +236,36 @@ def test_extracted_by_stays_the_llm_tag_when_the_strategy_genuinely_succeeds(mon
 
     result = _run(extract_procedure(pool, source, client=client))
 
-    assert result.extracted.used_fallback is False
     assert result.extracted_by == "grounded_hybrid_v1@1"
+
+
+def test_explicit_abstain_persists_nothing_and_reports_abstained(monkeypatch):
+    """A genuine {"abstain": true} response is a real, final answer --
+    extract_procedure() returns ExtractionResult(abstained=True) and
+    never calls capture_procedure()."""
+    def _must_not_be_called(*a, **kw):
+        raise AssertionError("capture_procedure must not run on a genuine abstain")
+    monkeypatch.setattr(
+        "app.services.procedure_extraction.capture_procedure", _must_not_be_called,
+    )
+    pool = FakePool(rows=[_row(name="grounded_hybrid_v1", version="1", kind="llm")])
+    client = types.SimpleNamespace(
+        chat=types.SimpleNamespace(completions=types.SimpleNamespace(
+            create=lambda **kw: types.SimpleNamespace(
+                choices=[types.SimpleNamespace(
+                    message=types.SimpleNamespace(content='{"abstain": true}'),
+                )],
+            ),
+        )),
+    )
+    source = FakeEvidenceSource(_evidence())
+
+    result = _run(extract_procedure(pool, source, client=client))
+
+    assert result.abstained is True
+    assert result.procedure_id is None
+    assert result.extracted_by == "grounded_hybrid_v1@1"
+    assert pool.execute_calls == []
 
 
 # --- _select_strategy: registry-driven branching ---
@@ -357,7 +370,14 @@ def test_evaluate_extractor_reports_none_rate_and_empty_failures_with_nothing_at
     assert report["failures_by_rule"] == {}
 
 
-def test_evaluate_extractor_counts_per_rule_failures_and_uses_an_llm_strategy_when_not_deterministic():
+def test_evaluate_extractor_counts_a_genuine_abstain_without_crashing_or_validating():
+    """No silent fallback here either: a candidate extractor's own
+    genuine {"abstain": true} response returns None from strategy.extract()
+    (strategies.py), which evaluate_extractor() must count as `abstained`
+    -- never pass to validate() (that used to crash validators.py's V1
+    rule outright once GroundedHybridExtractor stopped always returning
+    an ExtractedProcedure) and never silently score it against
+    DeterministicExtractor's old fallback shape."""
     class FakeRowPool:
         async def fetchrow(self, sql, *params):
             return _row(name="challenger", version="1", kind="llm", config={"model": "m"})
@@ -375,7 +395,6 @@ def test_evaluate_extractor_counts_per_rule_failures_and_uses_an_llm_strategy_wh
             return types.SimpleNamespace(choices=[types.SimpleNamespace(message=msg)])
 
     client = FakeClient()
-    # Empty goal_text -> capability_statement empty -> V5 failure recorded.
     report = _run(evaluate_extractor(
         FakeRowPool(), "ext-id", ["e1"],
         client=client, build_evidence_source=lambda eid: FakeEvidenceSource(_evidence(goal_text="")),
@@ -383,5 +402,37 @@ def test_evaluate_extractor_counts_per_rule_failures_and_uses_an_llm_strategy_wh
     assert report["extractor"] == "challenger@1"
     assert report["attempted"] == 1
     assert report["well_formed"] == 0
-    assert report["failures_by_rule"].get("V5_evidence_sufficiency") == 1
-    assert client.calls == 1  # ABSTAIN still calls the model once before falling back
+    assert report["abstained"] == 1
+    assert report["transient_failures"] == 0
+    assert report["failures_by_rule"] == {}, "an abstained episode is never passed to validate()"
+    assert client.calls == 1
+
+
+def test_evaluate_extractor_counts_a_transient_failure_without_crashing():
+    """The other real outcome: a malformed LLM response raises
+    ExtractionTransientFailure (schema.py). evaluate_extractor() must
+    catch it per-episode and keep scoring the rest of the golden set,
+    not abort the whole sweep."""
+    class FakeRowPool:
+        async def fetchrow(self, sql, *params):
+            return _row(name="challenger", version="1", kind="llm", config={"model": "m"})
+
+    class FakeClient:
+        def __init__(self):
+            self.chat = types.SimpleNamespace(
+                completions=types.SimpleNamespace(create=self._create)
+            )
+
+        def _create(self, **kw):
+            msg = types.SimpleNamespace(content="not json at all")
+            return types.SimpleNamespace(choices=[types.SimpleNamespace(message=msg)])
+
+    report = _run(evaluate_extractor(
+        FakeRowPool(), "ext-id", ["e1"],
+        client=FakeClient(), build_evidence_source=lambda eid: FakeEvidenceSource(_evidence()),
+    ))
+    assert report["attempted"] == 1
+    assert report["well_formed"] == 0
+    assert report["abstained"] == 0
+    assert report["transient_failures"] == 1
+    assert report["failures_by_rule"] == {}

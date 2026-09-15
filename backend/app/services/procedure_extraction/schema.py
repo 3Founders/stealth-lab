@@ -16,6 +16,34 @@ from typing import Optional
 from pydantic import BaseModel, Field, field_validator
 
 
+class ExtractionTransientFailure(Exception):
+    """
+    Raised by a non-deterministic ExtractionStrategy (GroundedHybridExtractor)
+    when it cannot produce a trustworthy result -- an LLM call that errored,
+    timed out, or returned a response that doesn't parse into the expected
+    shape. This REPLACES the old silent-degrade-to-DeterministicExtractor
+    behavior: storing a literal, non-generalized procedure under the
+    `grounded_hybrid_v1@1` tag was worse than storing nothing, because a
+    caller reading `extracted_by` had no way to tell a real abstraction from
+    a masqueraded fallback without inspecting `capability_statement` by eye.
+
+    The caller (extract_procedure(), then the ingestion job handler) must
+    let this propagate -- no procedure gets written, and the episode stays
+    eligible for a real extraction attempt later (see
+    ingestion_jobs.resume_failed_extraction_jobs). `is_rate_limit` lets the
+    job-resume path apply a backoff instead of hammering an exhausted quota
+    on the very next pass.
+
+    Distinct from a genuine abstain (the model explicitly decided no real
+    procedure exists in this episode) -- that is a real, final answer, not a
+    failure, and a strategy signals it by returning None from `extract()`.
+    """
+
+    def __init__(self, message: str, *, is_rate_limit: bool = False):
+        super().__init__(message)
+        self.is_rate_limit = is_rate_limit
+
+
 class Predicate(BaseModel):
     """One {subject, predicate, object} triple -- the exact shape
     applicability.py's check_hard_constraints() reads back out of
@@ -130,16 +158,6 @@ class ExtractedProcedure(BaseModel):
     # constraint must not invent one.
     invariants: list[dict] = Field(default_factory=list)
 
-    # True only when a NON-deterministic strategy (e.g. GroundedHybridExtractor)
-    # internally degraded to DeterministicExtractor's own output (no client,
-    # no skeleton, an API failure, or a malformed/wrong-step-count response) --
-    # never set by DeterministicExtractor itself, since being called directly
-    # isn't "falling back" to anything. This is the real signal extract_procedure()
-    # (procedure_extraction/__init__.py) uses to correct `extracted_by` so it
-    # never claims a real LLM abstraction happened when the stored content is
-    # actually the literal, non-generalized fallback shape.
-    used_fallback: bool = False
-
     @field_validator("steps")
     @classmethod
     def steps_not_empty(cls, v: list[ProcedureStep]) -> list[ProcedureStep]:
@@ -161,7 +179,12 @@ class ExtractionResult(BaseModel):
     extracted_by: Optional[str] = None
     extracted: Optional[ExtractedProcedure] = None
     validation_failures: list[str] = Field(default_factory=list)
-    used_fallback: bool = False
+
+    # True when the selected strategy explicitly determined no real
+    # procedure exists in this episode (GroundedHybridExtractor's LLM call
+    # returned {"abstain": true}) -- a real, final answer, distinct from a
+    # validation failure. No procedure is written in this case.
+    abstained: bool = False
 
     @property
     def succeeded(self) -> bool:

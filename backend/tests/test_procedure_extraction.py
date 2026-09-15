@@ -271,13 +271,20 @@ def test_parse_abstraction_response_happy_path():
     assert steps == ["find the relevant files", "apply a targeted edit", "run the tests"]
 
 
-def test_parse_abstraction_response_explicit_abstain_returns_none():
-    assert _parse_abstraction_response('{"abstain": true}', expected_step_count=2) is None
+def test_parse_abstraction_response_explicit_abstain_returns_the_abstain_sentinel():
+    """Distinct from a parse failure (None): an explicit abstain is a
+    real, final answer -- the caller returns None from extract() for
+    this, never raises ExtractionTransientFailure."""
+    from app.services.procedure_extraction.strategies import _ABSTAIN
+    result = _parse_abstraction_response('{"abstain": true}', expected_step_count=2)
+    assert result is _ABSTAIN
+    assert result is not None
 
 
 def test_parse_abstraction_response_wrong_step_count_returns_none():
     """The model inventing or dropping steps relative to what actually
-    happened must trigger the fallback, not silently be accepted."""
+    happened is a parse failure (None), which the caller turns into
+    ExtractionTransientFailure -- not silently accepted."""
     text = '{"capability_statement": "x", "step_phrases": ["a", "b"]}'
     assert _parse_abstraction_response(text, expected_step_count=3) is None
 

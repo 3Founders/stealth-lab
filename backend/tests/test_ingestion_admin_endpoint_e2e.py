@@ -406,6 +406,80 @@ def test_register_extractor_endpoint_is_the_real_missing_registration_entrypoint
     asyncio.run(_run())
 
 
+def test_index_lag_endpoint_returns_real_freshness_counts():
+    """GET /v1/admin/index-lag (app.api.admin.index_lag) closes the real
+    gap app.services.index_freshness.get_index_lag() had before this
+    endpoint: a real, already-tested function with zero production
+    callers (grepped: only referenced in a docstring). This proves the
+    endpoint is a real, working caller, not a reimplementation -- the
+    same real counts get_index_lag() itself computes."""
+    async def _run():
+        from app.api.admin import index_lag
+        from app.services.index_freshness import get_index_lag
+
+        pool = await _real_create_pool(DATABASE_URL, min_size=1, max_size=2)
+        try:
+            direct = await get_index_lag(pool, limit=5)
+            response = await index_lag(limit=5, pool=pool)
+            assert response.current_recipe == direct["current_recipe"]
+            assert response.lag_count == direct["lag_count"]
+            assert response.recipe_drift_count == direct["recipe_drift_count"]
+            assert response.total_stale == direct["total_stale"]
+            assert isinstance(response.sample, list)
+        finally:
+            await pool.close()
+
+    asyncio.run(_run())
+
+
+def test_reextract_endpoint_404s_on_a_missing_procedure():
+    async def _run():
+        from fastapi import HTTPException
+
+        from app.api.admin import reextract_procedure
+
+        pool = await _real_create_pool(DATABASE_URL, min_size=1, max_size=2)
+        try:
+            with pytest.raises(HTTPException) as excinfo:
+                await reextract_procedure("00000000-0000-0000-0000-000000000000", pool=pool)
+            assert excinfo.value.status_code == 404
+        finally:
+            await pool.close()
+
+    asyncio.run(_run())
+
+
+def test_reextract_endpoint_refuses_a_procedure_with_no_source_episode():
+    """The real guard this endpoint needs: build_episode_evidence_source()
+    (ingestion_jobs.py) reads exactly one episode's window, so a
+    procedure with zero or multiple source episodes (a multi-episode
+    synthesis result, or a hand-submitted procedure with no episode at
+    all) must be refused (400), not silently re-extracted from the wrong
+    evidence or crash on an empty list."""
+    async def _run():
+        from fastapi import HTTPException
+
+        from app.api.admin import reextract_procedure
+        from app.services.procedures import capture_procedure
+
+        pool = await _real_create_pool(DATABASE_URL, min_size=1, max_size=2)
+        name = f"{TAG}-no-episode"
+        try:
+            captured = await capture_procedure(
+                pool, name=name, goal="a hand-submitted procedure with no episode",
+                steps=[{"order": 0, "goal": "do a thing"}],
+                provenance="system_pending_review", scope_type="global",
+            )
+            with pytest.raises(HTTPException) as excinfo:
+                await reextract_procedure(captured["id"], pool=pool)
+            assert excinfo.value.status_code == 400
+        finally:
+            await pool.execute("DELETE FROM procedures WHERE name = $1", name)
+            await pool.close()
+
+    asyncio.run(_run())
+
+
 def test_register_extractor_endpoint_supports_registering_without_enabling():
     """enable=False registers a candidate for comparison/review without
     making it live -- approve_extractor's own enable=False option,

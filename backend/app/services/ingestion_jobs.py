@@ -484,6 +484,39 @@ async def resume_failed_skill_jobs(
     return int(tail) if tail.isdigit() else 0
 
 
+async def resume_failed_extraction_jobs(
+    pool: asyncpg.Pool, *, min_age_seconds: int = 300,
+) -> int:
+    """Requeue failed `extract_procedure_from_episode` jobs -- the real
+    retry path for ExtractionTransientFailure (schema.py): since that
+    failure means no procedure row was written, requeuing the job is
+    exactly what lets the episode get a real extraction attempt on the
+    next pass, same idea as resume_failed_skill_jobs() above but for the
+    other extraction pipeline.
+
+    Rate-limited failures (`last_error` naming a 429/rate-limit, per
+    strategies.py's `_looks_like_rate_limit`) only requeue once
+    `completed_at` is older than `min_age_seconds` -- a real backoff, so
+    calling this on every ingestion pass does not immediately re-hit the
+    same exhausted quota. Non-rate-limit transient failures (a malformed
+    LLM response, a transport error) requeue immediately: those are more
+    likely genuine model flakiness than a sustained outage.
+    """
+    result = await pool.execute(
+        "UPDATE ingestion_jobs SET status='pending', claimed_at=NULL, completed_at=NULL "
+        "WHERE job_type='extract_procedure_from_episode' AND status='failed' "
+        "AND ("
+        "  ((last_error ILIKE '%rate_limit%' OR last_error ILIKE '%429%') "
+        "   AND completed_at < now() - ($1 || ' seconds')::interval)"
+        "  OR last_error IS NULL"
+        "  OR (last_error NOT ILIKE '%rate_limit%' AND last_error NOT ILIKE '%429%')"
+        ")",
+        str(min_age_seconds),
+    )
+    tail = result.rsplit(" ", 1)[-1]
+    return int(tail) if tail.isdigit() else 0
+
+
 # The episode-arrived-late recovery path. Ordering matters here and there
 # is no way around it: resolve_justification_episode() runs at ENQUEUE
 # time, so an observation whose session has not been through episode
@@ -778,56 +811,35 @@ async def enqueue_pending_procedure_extractions(
     return {"examined": len(rows), "enqueued": len(rows)}
 
 
-async def handle_extract_procedure_from_episode(
-    pool: asyncpg.Pool, payload: dict,
-) -> None:
-    """Run the real extract_procedure() over a gated episode.
+async def build_episode_evidence_source(
+    pool: asyncpg.Pool, episode_id: str, *, goal_text: str, outcome: str = "success",
+):
+    """EPISODE-WINDOWED evidence assembly for extract_procedure() -- the
+    real evidence-reading half of handle_extract_procedure_from_episode,
+    factored out so the admin re-extraction entry point (admin.py's
+    `POST /v1/admin/procedures/{id}/reextract`) can rebuild the SAME real
+    evidence a background job would, instead of duplicating this query.
 
-    The worker accepts only a source-derived `goal_text` and explicit
-    `outcome="success"` payload produced by _PENDING_EXTRACTION_SQL. It
-    never manufactures either value: old/manual jobs missing those facts
-    fail before an extraction call or a persisted candidate.
+    NOT session-wide (SessionEvidenceSource would be the obvious choice
+    and is the WRONG one here: it reads every observation/tool call for
+    the whole session_id and treats episode_id as a label only -- proved
+    by running it: three different gated episodes from one session
+    produced three byte-identical procedures because all three saw
+    exactly the same session-wide evidence). AgentRunEvidenceSource takes
+    the evidence in memory, which lets the window be applied here.
+
+    Returns None if the episode is gone (soft-deleted since it was
+    gated) -- an honest "nothing to extract from", not an error.
     """
-    episode_id = payload.get("episode_id")
-    session_id = payload.get("session_id")
-    goal_text = payload.get("goal_text")
-    outcome = payload.get("outcome")
-    if not episode_id or not session_id or not isinstance(goal_text, str) or not goal_text.strip():
-        raise ValueError(
-            "extract_procedure_from_episode payload missing source-derived ids or goal_text"
-        )
-    if outcome != "success":
-        raise ValueError(
-            "extract_procedure_from_episode requires an explicit successful outcome"
-        )
-
-    from app.services.procedure_extraction import extract_procedure
     from app.services.procedure_extraction.evidence import AgentRunEvidenceSource
 
-    # EPISODE-WINDOWED, not session-wide. SessionEvidenceSource would be
-    # the obvious choice and it is the WRONG one here: it reads every
-    # observation and every tool call for the whole session_id and treats
-    # episode_id as a label only. Proved by running it -- three different
-    # gated episodes from one session produced three byte-identical
-    # procedures (178 steps each, same capability_statement), because all
-    # three extractions saw exactly the same session-wide evidence. A
-    # multi-hour session flattened into one tool histogram also has no
-    # semantic shape for grounded_hybrid_v1 to abstract, so even a
-    # working LLM call returned the goal text unchanged.
-    #
-    # AgentRunEvidenceSource takes the evidence in memory, which lets the
-    # window be applied HERE, in this lane, using the same public API
-    # mcp_server/server.py already calls -- rather than reaching into
-    # procedure_extraction/evidence.py, which this lane does not own.
     ep = await pool.fetchrow(
         "SELECT session_id, start_ts, end_ts, project_id, owner_id FROM episodes "
         "WHERE id = $1::uuid AND t_invalid IS NULL",
         str(episode_id),
     )
     if ep is None:
-        log.info("extract_procedure_from_episode: episode %s is gone; skipping",
-                 episode_id)
-        return
+        return None
 
     window = (
         'te.session_id = $1 AND te."timestamp" >= $2 '
@@ -854,12 +866,47 @@ async def handle_extract_procedure_from_episode(
     ]
     tool_sequence = [r["tool_name"] for r in tool_rows]
 
-    source = AgentRunEvidenceSource(
+    return AgentRunEvidenceSource(
         goal_text=goal_text.strip(), outcome=outcome, observations=observations,
         tool_sequence=tool_sequence, started_at=ep["start_ts"],
         project_id=ep["project_id"], episode_id=str(episode_id),
         session_id=ep["session_id"], steps_used=len(tool_sequence),
+    ), ep
+
+
+async def handle_extract_procedure_from_episode(
+    pool: asyncpg.Pool, payload: dict,
+) -> None:
+    """Run the real extract_procedure() over a gated episode.
+
+    The worker accepts only a source-derived `goal_text` and explicit
+    `outcome="success"` payload produced by _PENDING_EXTRACTION_SQL. It
+    never manufactures either value: old/manual jobs missing those facts
+    fail before an extraction call or a persisted candidate.
+    """
+    episode_id = payload.get("episode_id")
+    session_id = payload.get("session_id")
+    goal_text = payload.get("goal_text")
+    outcome = payload.get("outcome")
+    if not episode_id or not session_id or not isinstance(goal_text, str) or not goal_text.strip():
+        raise ValueError(
+            "extract_procedure_from_episode payload missing source-derived ids or goal_text"
+        )
+    if outcome != "success":
+        raise ValueError(
+            "extract_procedure_from_episode requires an explicit successful outcome"
+        )
+
+    from app.services.procedure_extraction import extract_procedure
+
+    built = await build_episode_evidence_source(
+        pool, str(episode_id), goal_text=goal_text, outcome=outcome,
     )
+    if built is None:
+        log.info("extract_procedure_from_episode: episode %s is gone; skipping",
+                 episode_id)
+        return
+    source, ep = built
     # B19: "Private execution remains: scope = USER_PRIVATE... Publishing
     # is explicit." This IS the execution-derived local-learning path
     # (A11) -- a candidate extracted from one real episode/session's own
@@ -874,6 +921,14 @@ async def handle_extract_procedure_from_episode(
     # a `None` owner_id (a legacy/system episode with no real owner) is
     # honestly left private-with-no-owner rather than silently promoted
     # to public for lack of one to attribute it to.
+    # ExtractionTransientFailure (an LLM-strategy infra failure -- see
+    # schema.py's own docstring) is deliberately NOT caught here: letting
+    # it propagate out of this handler is what makes process_pending_jobs
+    # (this module, further down) mark the job `status='failed'` with the
+    # real error captured in `last_error`, rather than this function
+    # silently absorbing the failure and the job reporting 'done' with
+    # nothing written. resume_failed_extraction_jobs() is the requeue
+    # path back to a real retry.
     result = await extract_procedure(
         pool, source, client=_extraction_client(),
         visibility="private", owner_id=ep["owner_id"],
@@ -887,31 +942,16 @@ async def handle_extract_procedure_from_episode(
             episode_id, result.validation_failures,
         )
         return
-    # ABSTENTION, caught after the fact on purpose. grounded_hybrid_v1
-    # degrades to deterministic behaviour on ABSTAIN / unparseable
-    # response, and deterministic_v1 sets capability_statement =
-    # goal_text verbatim -- so an abstained extraction is exactly the row
-    # whose capability_statement still equals the seed. V4 does not catch
-    # it here because the seed is deliberately generic (a goal naming a
-    # file WOULD be caught), so the check belongs to the caller that chose
-    # the seed. Observed 1 of 3 on the real corpus: a 42-Bash-call episode
-    # with no shape for the model to abstract.
-    #
-    # Closed rather than never-written because extract_procedure() persists
-    # before returning and this lane does not own that function. Closing
-    # the validity window is the substrate's own idiom anyway (nothing is
-    # deleted), and it leaves the abstention itself on the record.
-    if (result.extracted is not None
-            and result.extracted.capability_statement == goal_text):
-        await pool.execute(
-            "UPDATE procedures SET t_invalid = now(), verification_state = 'retired' "
-            "WHERE id = $1::uuid AND t_invalid IS NULL",
-            str(result.version_row_id),
-        )
+    if result.abstained:
+        # The selected strategy's own explicit, final answer that this
+        # episode has no real procedure in it -- extract_procedure()
+        # returns this WITHOUT writing a procedure row at all now (no
+        # more write-then-retire heuristic), so there is nothing left to
+        # do here but log it.
         log.info(
             "extract_procedure_from_episode: episode %s ABSTAINED "
-            "(capability_statement == goal seed); row %s retired immediately",
-            episode_id, result.version_row_id,
+            "(strategy %s found no real procedure); nothing written",
+            episode_id, result.extracted_by,
         )
         return
 
@@ -1215,15 +1255,14 @@ async def handle_consolidate_local_episode(pool: asyncpg.Pool, payload: dict) ->
                 "consolidate_local_episode: episode %s procedure candidate refused by validators: %s",
                 episode_id, result.validation_failures,
             )
-        elif result.extracted is not None and result.extracted.capability_statement == goal_text:
-            # Same abstention signature handle_extract_procedure_from_episode
-            # checks for: grounded_hybrid_v1 degraded to deterministic_v1
-            # and found no real shape to abstract. Retire immediately
-            # rather than leave a no-op candidate() row live.
-            await pool.execute(
-                "UPDATE procedures SET t_invalid = now(), verification_state = 'retired' "
-                "WHERE id = $1::uuid AND t_invalid IS NULL",
-                str(result.version_row_id),
+        elif result.abstained:
+            # The selected strategy's own explicit, final answer that no
+            # real procedure exists in this episode -- extract_procedure()
+            # writes nothing in this case, so there is no row to retire.
+            log.info(
+                "consolidate_local_episode: episode %s ABSTAINED "
+                "(strategy %s found no real procedure); nothing written",
+                episode_id, result.extracted_by,
             )
         elif result.procedure_id is not None:
             log.info(

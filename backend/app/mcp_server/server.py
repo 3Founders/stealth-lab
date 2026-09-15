@@ -55,7 +55,7 @@ from uuid import UUID
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from dotenv import load_dotenv
+from dotenv import dotenv_values, load_dotenv
 load_dotenv()
 
 from mcp.server import MCPServer
@@ -87,6 +87,7 @@ from app.services.knowledge_conflict import detect_and_create_conflict_trigger
 from app.services.local_retrieval import assemble_structural_context, retrieve_local_first
 from app.services.procedure_extraction import extract_procedure
 from app.services.procedure_extraction.evidence import AgentRunEvidenceSource
+from app.services.procedure_extraction.schema import ExtractionTransientFailure
 from app.services.retrieval import HybridRetriever
 from app.services.reuse_detection import ReusableNode, _vector_candidates
 from app import observability
@@ -237,13 +238,41 @@ class OidcAwareTokenVerifier(TokenVerifier):
 
 def _require_mcp_token() -> str:
     """Fail at import time, not on the first tool call -- same discipline
-    as lifespan's own DATABASE_URL check just above."""
+    as lifespan's own DATABASE_URL check just above.
+
+    Also catches the real footgun this project hit in production: a
+    persistent OS-level environment variable holding a stale
+    STEALTHLAB_MCP_TOKEN silently wins over backend/.env, because
+    load_dotenv() (above) never overrides a variable that's already set.
+    Every caller presenting the CURRENT backend/.env value then gets a
+    bare 401 with nothing pointing at the real cause -- we spent a real
+    debugging session chasing exactly this. dotenv_values() parses
+    backend/.env directly without touching os.environ, so the two can be
+    compared and a mismatch fails loudly at boot instead of silently
+    authenticating against the wrong secret.
+    """
     token = os.environ.get("STEALTHLAB_MCP_TOKEN")
     if not token:
         raise RuntimeError(
             "STEALTHLAB_MCP_TOKEN not set -- generate one with "
             "`python -c \"import secrets; print(secrets.token_urlsafe(32))\"` "
             "and add it to backend/.env")
+    env_file = Path(__file__).resolve().parents[2] / ".env"
+    if env_file.is_file():
+        declared = dotenv_values(env_file).get("STEALTHLAB_MCP_TOKEN")
+        if declared and declared != token:
+            raise RuntimeError(
+                "STEALTHLAB_MCP_TOKEN mismatch: backend/.env declares a "
+                "different value than the one actually in effect. A "
+                "persistent OS-level environment variable is shadowing "
+                "backend/.env (load_dotenv() never overrides a variable "
+                "that's already set) -- clients using the value from "
+                "backend/.env will get rejected with a bare 401 and no "
+                "clue why. Fix by either: "
+                "(1) clearing the OS-level override -- PowerShell: "
+                "`[Environment]::SetEnvironmentVariable('STEALTHLAB_MCP_TOKEN', "
+                "$null, 'User')`, then open a new shell; or "
+                "(2) setting the OS-level value to match backend/.env.")
     return token
 
 
@@ -1926,29 +1955,42 @@ async def find_best_way(task_description: str, ctx: Context,
             observations=observations, tool_sequence=all_tool_calls,
             session_id=session_id, steps_used=total_calls,
         )
-        extraction = await extract_procedure(
-            pool, evidence_source, client=client, repo_root=repo_path,
-            entry_seed_files=seed_files, extractor_scope=procedure_scope,
-            # B19 fix: same reasoning as the ad-hoc capture_procedure()
-            # call above -- a procedure LEARNED from this user's own
-            # execution starts private, never implicitly public. owner_id
-            # set alongside it for the same reason (visibility_predicate
-            # matches private rows via owner_id = viewer_id).
-            visibility="private", owner_id=_resolve_caller_identity(fallback="find_best_way_extract"),
-            # B18 fix: `matched_procedure` (when set) is the real
-            # procedure this run just reused -- never auto-duplicate it.
-            reused_procedure_goal=matched_procedure["goal"] if matched_procedure else None,
-        )
-        if extraction.procedure_id:
-            extraction_note = (
-                f"extracted_procedure: {extraction.procedure_id} "
-                f"(extracted_by={extraction.extracted_by}, unverified until real reuse "
-                f"accrues evidence -- see should_disable_procedure_retrieval)"
+        # ExtractionTransientFailure (schema.py) is a real LLM/infra
+        # failure -- no-silent-fallback means no procedure gets written
+        # under a misleading tag, but this is a live, user-facing tool
+        # call, not a background job: the failure must not crash the
+        # whole find_best_way response over a best-effort side effect.
+        # The real retry happens asynchronously via the background
+        # extraction job path (resume_failed_extraction_jobs), not here.
+        try:
+            extraction = await extract_procedure(
+                pool, evidence_source, client=client, repo_root=repo_path,
+                entry_seed_files=seed_files, extractor_scope=procedure_scope,
+                # B19 fix: same reasoning as the ad-hoc capture_procedure()
+                # call above -- a procedure LEARNED from this user's own
+                # execution starts private, never implicitly public. owner_id
+                # set alongside it for the same reason (visibility_predicate
+                # matches private rows via owner_id = viewer_id).
+                visibility="private", owner_id=_resolve_caller_identity(fallback="find_best_way_extract"),
+                # B18 fix: `matched_procedure` (when set) is the real
+                # procedure this run just reused -- never auto-duplicate it.
+                reused_procedure_goal=matched_procedure["goal"] if matched_procedure else None,
             )
-        elif extraction.validation_failures:
-            extraction_note = (
-                "extraction_skipped: " + "; ".join(extraction.validation_failures)
-            )
+        except ExtractionTransientFailure as exc:
+            extraction_note = f"extraction_failed: {exc} (no procedure written; not retried from this call)"
+        else:
+            if extraction.procedure_id:
+                extraction_note = (
+                    f"extracted_procedure: {extraction.procedure_id} "
+                    f"(extracted_by={extraction.extracted_by}, unverified until real reuse "
+                    f"accrues evidence -- see should_disable_procedure_retrieval)"
+                )
+            elif extraction.abstained:
+                extraction_note = "extraction_skipped: strategy abstained -- no real procedure in this run"
+            elif extraction.validation_failures:
+                extraction_note = (
+                    "extraction_skipped: " + "; ".join(extraction.validation_failures)
+                )
 
     errors = [r.error for r in node_runs.values() if r.error]
     lines = [
@@ -2905,21 +2947,32 @@ async def report_execution(procedure_id: str, success: bool, context_key: str, c
                 observations=observations, tool_sequence=tool_sequence,
                 session_id=session_id, steps_used=steps_used,
             )
-            extraction = await extract_procedure(
-                pool, evidence_source,
-                # B19: same private-by-default posture as find_best_way's
-                # own tier-2 extraction call -- learning from a host-
-                # executed run never implicitly goes public.
-                visibility="private", owner_id=owner,
-                # B18: `procedure` is ALWAYS the real, already-existing
-                # procedure this call is reporting an outcome for -- never
-                # auto-duplicate it just because this episode succeeded.
-                reused_procedure_goal=procedure["goal"],
-            )
-            response["extraction"] = (
-                {"procedure_id": str(extraction.procedure_id)} if extraction.procedure_id
-                else {"skipped": "; ".join(extraction.validation_failures) or "no candidate extracted"}
-            )
+            try:
+                extraction = await extract_procedure(
+                    pool, evidence_source,
+                    # B19: same private-by-default posture as find_best_way's
+                    # own tier-2 extraction call -- learning from a host-
+                    # executed run never implicitly goes public.
+                    visibility="private", owner_id=owner,
+                    # B18: `procedure` is ALWAYS the real, already-existing
+                    # procedure this call is reporting an outcome for -- never
+                    # auto-duplicate it just because this episode succeeded.
+                    reused_procedure_goal=procedure["goal"],
+                )
+            except ExtractionTransientFailure as exc:
+                # Same posture as find_best_way's own extraction call: a
+                # live tool response must not crash over a best-effort
+                # extraction attempt; no procedure is written.
+                response["extraction"] = {"failed": f"{exc} (no procedure written)"}
+            else:
+                if extraction.procedure_id:
+                    response["extraction"] = {"procedure_id": str(extraction.procedure_id)}
+                elif extraction.abstained:
+                    response["extraction"] = {"skipped": "strategy abstained -- no real procedure in this episode"}
+                else:
+                    response["extraction"] = {
+                        "skipped": "; ".join(extraction.validation_failures) or "no candidate extracted",
+                    }
 
     return json.dumps(response, default=str)
 

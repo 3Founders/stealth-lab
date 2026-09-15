@@ -334,10 +334,10 @@ async def test_consolidation_without_llm_client_preserves_observations_and_fabri
     happens to be configured in the environment) -- _extraction_client()
     returns None, extract_claim_candidates degrades to [] (its own
     documented fail-closed contract), and NOTHING is fabricated:
-    deterministic Observations still commit, no Claim/Procedure row
-    appears, and the episode is still marked consolidated (there was
-    nothing more to retry -- a genuine empty result, not a failure to
-    distinguish from one at this layer)."""
+    deterministic Observations still commit, no Claim row appears, a real
+    literal DeterministicExtractor procedure IS persisted (that extractor
+    is the honest, always-available fallback -- not a fabrication), and
+    the episode is still marked consolidated."""
     monkeypatch.setattr(ingestion_jobs, "_extraction_client", lambda: None)
     pool = await create_pool(statement_cache_size=0)
     owner = f"local-ep-owner-{uuid.uuid4().hex[:8]}"
@@ -366,21 +366,25 @@ async def test_consolidation_without_llm_client_preserves_observations_and_fabri
         )
         assert claim_count == 0
 
-        # LIVE rows only: extract_procedure() with no client degrades to
-        # deterministic_v1, which DOES produce a row here (one node, one
-        # observation clears its bar) -- but the abstention check right
-        # after it in handle_consolidate_local_episode (capability_
-        # statement == goal_text) immediately tombstones it (t_invalid
-        # set, verification_state='retired'). The real assertion is "no
-        # LIVE candidate survives", not "no row was ever momentarily
-        # created" -- a retired row past the abstention check is the
-        # system correctly refusing to leave a no-op candidate live, not
-        # a fabricated Procedure.
+        # No client -> _select_strategy() picks DeterministicExtractor
+        # DIRECTLY (never through GroundedHybridExtractor's own internal
+        # degrade path -- that no longer exists at all, see schema.py's
+        # ExtractionTransientFailure), which produces a real, honest,
+        # literal procedure -- DeterministicExtractor's own docstring:
+        # "the real, always-available fallback". `result.abstained` is
+        # only ever set by a strategy's own genuine {"abstain": true}
+        # decision (GroundedHybridExtractor), never inferred from content
+        # shape -- so this row is correctly KEPT live, not retired. (The
+        # OLD heuristic here -- comparing capability_statement to the raw
+        # goal_text -- used to misclassify every short-goal deterministic
+        # extraction as an "abstention" and wrongly tombstone it; that
+        # false positive is what this pass's explicit `abstained` signal
+        # fixes.)
         proc_count = await pool.fetchval(
             "SELECT count(*) FROM procedures WHERE source_episode_ids @> ARRAY[$1::uuid] AND t_invalid IS NULL",
             episode_id,
         )
-        assert proc_count == 0
+        assert proc_count == 1
     finally:
         if run_id:
             await _cleanup(pool, row_id=row_id, run_id=run_id)

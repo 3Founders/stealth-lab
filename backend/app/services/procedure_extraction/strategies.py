@@ -32,7 +32,11 @@ from app.services.procedure_extraction.derive import (
     literal_steps_from_skeleton,
 )
 from app.services.procedure_extraction.evidence import ProcedureEvidence
-from app.services.procedure_extraction.schema import ExtractedProcedure, ProcedureStep
+from app.services.procedure_extraction.schema import (
+    ExtractedProcedure,
+    ExtractionTransientFailure,
+    ProcedureStep,
+)
 
 
 class ExtractionStrategy(ABC):
@@ -40,7 +44,14 @@ class ExtractionStrategy(ABC):
     async def extract(
         self, pool: asyncpg.Pool, evidence: ProcedureEvidence, *,
         repo_root: Optional[str] = None, entry_seed_files: Optional[list[str]] = None,
-    ) -> ExtractedProcedure: ...
+    ) -> Optional[ExtractedProcedure]:
+        """None means a genuine abstain (no real procedure in this
+        episode). A strategy that cannot produce a trustworthy result for
+        an infrastructure reason (LLM call failed, response didn't parse)
+        must raise ExtractionTransientFailure instead of returning
+        anything -- never silently substitute a different strategy's
+        output."""
+        ...
 
 
 class DeterministicExtractor(ExtractionStrategy):
@@ -111,49 +122,44 @@ class GroundedHybridExtractor(ExtractionStrategy):
     catch an invented precondition; this class cannot produce one in
     the first place, because it never asks the model for one.
 
-    Degradation is explicit, not silent: no client, an API failure, a
-    response that doesn't parse into the CAPABILITY/STEPS shape, or an
-    explicit ABSTAIN all fall back to DeterministicExtractor's output --
-    marked via `used_fallback` on the caller side (__init__.py), never
-    silently presented as a successful abstraction.
+    No silent degradation: an LLM call that fails, a response that
+    doesn't parse, or a misconfigured client (no `self._client` -- should
+    never happen in practice, since `_select_strategy()` only ever
+    constructs this class with a real client, but treated as a real
+    failure rather than silently patched over if it somehow does) all
+    raise ExtractionTransientFailure. The caller (extract_procedure(),
+    then the ingestion job handler) must let it propagate -- no procedure
+    is written under this extractor's tag unless a real LLM abstraction
+    actually succeeded. An explicit `{"abstain": true}` response is
+    different: it is the model's genuine, final answer that this episode
+    has no real procedure in it, so `extract()` returns None rather than
+    raising.
     """
 
     def __init__(self, client: Any, model: str = "gemma-4-31B-it", temperature: float = 0.2):
         self._client = client
         self._model = model
         self._temperature = temperature
-        self._fallback = DeterministicExtractor()
-
-    async def _marked_fallback(
-        self, pool: asyncpg.Pool, evidence: ProcedureEvidence, *,
-        repo_root: Optional[str], entry_seed_files: Optional[list[str]],
-    ) -> ExtractedProcedure:
-        """Every internal degradation path routes through here so
-        `used_fallback` is ALWAYS set on the result -- the real fix for
-        the caller-visible bug this closes: extract_procedure() used to
-        trust the SELECTED extractor's registry tag even when this class
-        silently produced DeterministicExtractor's own output underneath
-        it, so `extracted_by='grounded_hybrid_v1@1'` could describe a row
-        that never actually saw a real LLM abstraction succeed."""
-        result = await self._fallback.extract(
-            pool, evidence, repo_root=repo_root, entry_seed_files=entry_seed_files,
-        )
-        return result.model_copy(update={"used_fallback": True})
 
     async def extract(
         self, pool: asyncpg.Pool, evidence: ProcedureEvidence, *,
         repo_root: Optional[str] = None, entry_seed_files: Optional[list[str]] = None,
-    ) -> ExtractedProcedure:
+    ) -> Optional[ExtractedProcedure]:
         skeleton = derive_step_skeleton(evidence)
         preconditions = await derive_preconditions(pool, evidence)
         scope = await derive_scope(pool, evidence)
         slots = derive_slots(evidence, repo_root=repo_root, entry_seed_files=entry_seed_files or [])
         failure_conditions = derive_failure_conditions(evidence)
 
-        if self._client is None or not skeleton:
-            return await self._marked_fallback(
-                pool, evidence, repo_root=repo_root, entry_seed_files=entry_seed_files,
+        if self._client is None:
+            raise ExtractionTransientFailure(
+                "GroundedHybridExtractor was selected with no LLM client configured",
             )
+        if not skeleton:
+            # Nothing to summarize -- a structural fact about this
+            # episode's evidence, not something a retry will change. This
+            # is a genuine abstain, not a failure.
+            return None
 
         summary = "; ".join(f"{g.tool_name}" + (f" x{g.count}" if g.count > 1 else "")
                              for g in skeleton)
@@ -170,17 +176,20 @@ class GroundedHybridExtractor(ExtractionStrategy):
                 max_tokens=300,
             )
             text = response.choices[0].message.content.strip()
-        except Exception:  # noqa: BLE001 -- an LLM call's own real failure
-            # must degrade to the honest fallback, never propagate and
-            # abort extraction outright.
-            return await self._marked_fallback(
-                pool, evidence, repo_root=repo_root, entry_seed_files=entry_seed_files,
-            )
+        except Exception as exc:  # noqa: BLE001 -- any client/transport
+            # failure (timeout, 429, auth, ...) is real and must be
+            # surfaced, never silently patched over with a different
+            # strategy's output.
+            raise ExtractionTransientFailure(
+                f"LLM call failed: {exc!r}", is_rate_limit=_looks_like_rate_limit(exc),
+            ) from exc
 
         parsed = _parse_abstraction_response(text, expected_step_count=len(skeleton))
+        if parsed is _ABSTAIN:
+            return None
         if parsed is None:
-            return await self._marked_fallback(
-                pool, evidence, repo_root=repo_root, entry_seed_files=entry_seed_files,
+            raise ExtractionTransientFailure(
+                f"LLM response did not parse into the expected shape: {text[:200]!r}",
             )
         capability_statement, step_phrases = parsed
 
@@ -218,8 +227,8 @@ class _AbstractionResponse(BaseModel):
     call -- Pydantic validates shape (non-empty capability_statement,
     non-empty step_phrases, every phrase itself non-empty), not just a
     manual isinstance check. `model_validate` raising ValidationError is
-    treated identically to malformed JSON: a parse failure, triggering
-    the caller's fallback."""
+    treated identically to malformed JSON: a parse failure, which the
+    caller turns into an ExtractionTransientFailure."""
 
     capability_statement: str = Field(min_length=1)
     step_phrases: list[str] = Field(min_length=1)
@@ -241,29 +250,48 @@ class _AbstractionResponse(BaseModel):
         return cleaned
 
 
+_ABSTAIN = object()  # sentinel: distinguishes a genuine {"abstain": true}
+                      # response from a parse failure (None) -- the caller
+                      # treats the former as a real answer, the latter as
+                      # an ExtractionTransientFailure.
+
+
+def _looks_like_rate_limit(exc: Exception) -> bool:
+    """Best-effort rate-limit detection across OpenAI-compatible clients,
+    which don't share a common exception hierarchy -- checked by
+    `status_code`/`code` attributes first (most client libraries set one
+    of these on the real exception object), falling back to the message
+    text. False negatives just mean a rate-limited job requeues
+    immediately instead of after a backoff -- not silently lost, so this
+    only needs to be good enough, not perfect."""
+    status = getattr(exc, "status_code", None) or getattr(exc, "code", None)
+    if status == 429 or status == "429":
+        return True
+    text = str(exc).lower()
+    return "429" in text or "rate limit" in text or "rate_limit" in text
+
+
 def _parse_abstraction_response(
     text: str, *, expected_step_count: int,
-) -> Optional[tuple[str, list[str]]]:
+) -> Optional[tuple[str, list[str]]]:  # or the `_ABSTAIN` sentinel; see docstring
     """
-    Pure, testable without a client at all -- strict parsing, not
-    forgiving: malformed JSON, a schema-invalid payload (Pydantic
-    `_AbstractionResponse`), an explicit `{"abstain": true}`, or a
-    `step_phrases` list whose length doesn't match the derived skeleton's
-    own step count is treated as a parse failure (returns None),
-    triggering the caller's fallback rather than silently accepting a
-    malformed result. The step-count check specifically catches an LLM
-    inventing or dropping steps relative to what actually happened.
+    Pure, testable without a client at all. Three distinguishable
+    outcomes: a valid `(capability_statement, step_phrases)` tuple; the
+    `_ABSTAIN` sentinel for an explicit `{"abstain": true}` response (a
+    real, final answer); or `None` for anything else that doesn't parse
+    cleanly -- malformed JSON, a schema-invalid payload (Pydantic
+    `_AbstractionResponse`), or a `step_phrases` list whose length
+    doesn't match the derived skeleton's own step count (an LLM inventing
+    or dropping steps relative to what actually happened). The caller
+    raises ExtractionTransientFailure on `None`, never silently
+    substitutes a different strategy's output.
 
     Real JSON parsing (matching claim_extraction.py's own
-    prompted-JSON-plus-schema-validation convention), replacing the prior
-    hand-rolled `CAPABILITY:`/`STEPS:` line-prefix format -- same two
-    fields, same schema, just a less fragile wire format, now with a real
-    Pydantic model doing the shape enforcement instead of manual
-    isinstance checks. A model that wraps its JSON in a code fence or
-    leading prose is still accepted (the fence/prose is stripped) since
-    that is a real, observed response shape from some OpenAI-compatible
-    providers, not a parse-success worth losing an otherwise-valid
-    extraction over.
+    prompted-JSON-plus-schema-validation convention). A model that wraps
+    its JSON in a code fence or leading prose is still accepted (the
+    fence/prose is stripped) since that is a real, observed response
+    shape from some OpenAI-compatible providers, not a parse-success
+    worth losing an otherwise-valid extraction over.
     """
     import json
 
@@ -281,7 +309,7 @@ def _parse_abstraction_response(
     if not isinstance(parsed, dict):
         return None
     if parsed.get("abstain"):
-        return None
+        return _ABSTAIN  # type: ignore[return-value]
 
     try:
         validated = _AbstractionResponse.model_validate(parsed)

@@ -361,16 +361,13 @@ async def test_evidence_is_windowed_to_the_episode(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_abstained_extraction_is_retired_immediately(monkeypatch):
-    """grounded_hybrid_v1 degrading to deterministic leaves
-    capability_statement == the goal seed. That row is noise and must not
-    stay live. Observed 1 of 3 on the real corpus."""
+async def test_abstained_result_writes_nothing_and_does_not_raise(monkeypatch):
+    """No more write-then-retire heuristic: extract_procedure() now
+    returns ExtractionResult(abstained=True) with NOTHING persisted
+    (schema.py, __init__.py) when the selected strategy genuinely finds
+    no real procedure -- the handler just logs it. There is no row to
+    retire because none was ever written."""
     from app.services.procedure_extraction.schema import ExtractionResult
-
-    from app.services.procedure_extraction.schema import ExtractedProcedure
-    stub = ExtractedProcedure(
-        name="x", goal="x",
-        capability_statement="Fix the failing login test")
 
     class P(FakePool):
         async def fetchrow(self, sql, *a):
@@ -378,32 +375,48 @@ async def test_abstained_extraction_is_retired_immediately(monkeypatch):
                     "project_id": None, "owner_id": "tester"}
 
     async def fake_extract(pool, source, **kw):
-        return ExtractionResult(
-            procedure_id="p-1",
-            version_row_id="22222222-2222-2222-2222-222222222222",
-            extracted_by="grounded_hybrid_v1@1", extracted=stub)
+        return ExtractionResult(extracted_by="grounded_hybrid_v1@1", abstained=True)
 
     monkeypatch.setattr(
         "app.services.procedure_extraction.extract_procedure", fake_extract)
     monkeypatch.setattr(ij, "_extraction_client", lambda: None)
 
     pool = P()
-    await ij.handle_extract_procedure_from_episode(
-        pool, _payload())
+    await ij.handle_extract_procedure_from_episode(pool, _payload())
 
     retires = [c for c in pool.executed
                if "UPDATE procedures" in c[0] and "t_invalid" in c[0]]
-    assert len(retires) == 1, "an abstained row must be retired"
-    assert "22222222-2222-2222-2222-222222222222" in retires[0][1]
+    assert not retires, "nothing was ever written, so there is nothing to retire"
 
 
 @pytest.mark.asyncio
-async def test_real_abstraction_is_kept(monkeypatch):
-    """The other half: a genuinely abstracted statement must NOT be
-    retired. Real example from the corpus."""
-    from app.services.procedure_extraction.schema import ExtractionResult
+async def test_transient_failure_propagates_out_of_the_handler(monkeypatch):
+    """ExtractionTransientFailure (an LLM/infra failure) must propagate
+    out of the handler uncaught -- that is what makes process_pending_jobs
+    mark the job 'failed' (real, existing behavior for any handler
+    exception) instead of silently reporting 'done' with nothing written."""
+    from app.services.procedure_extraction.schema import ExtractionTransientFailure
 
-    from app.services.procedure_extraction.schema import ExtractedProcedure
+    class P(FakePool):
+        async def fetchrow(self, sql, *a):
+            return {"session_id": "s1", "start_ts": "T0", "end_ts": "T1",
+                    "project_id": None, "owner_id": "tester"}
+
+    async def fake_extract(pool, source, **kw):
+        raise ExtractionTransientFailure("LLM call failed: RuntimeError('boom')")
+
+    monkeypatch.setattr(
+        "app.services.procedure_extraction.extract_procedure", fake_extract)
+    monkeypatch.setattr(ij, "_extraction_client", lambda: None)
+
+    with pytest.raises(ExtractionTransientFailure):
+        await ij.handle_extract_procedure_from_episode(P(), _payload())
+
+
+@pytest.mark.asyncio
+async def test_real_success_is_kept(monkeypatch):
+    """A genuine, persisted extraction is just logged -- no retire call."""
+    from app.services.procedure_extraction.schema import ExtractedProcedure, ExtractionResult
     stub = ExtractedProcedure(
         name="x", goal="x",
         capability_statement=(
@@ -425,16 +438,69 @@ async def test_real_abstraction_is_kept(monkeypatch):
     monkeypatch.setattr(ij, "_extraction_client", lambda: None)
 
     pool = P()
-    await ij.handle_extract_procedure_from_episode(
-        pool, _payload())
-    # A kept abstraction must not be RETIRED. The G1 provenance stamp
-    # (UPDATE procedures SET ingestion_context_id ...) is expected and fine.
+    await ij.handle_extract_procedure_from_episode(pool, _payload())
+    # The G1 provenance stamp (UPDATE procedures SET ingestion_context_id ...)
+    # is expected and fine; there must be no t_invalid retire call.
     retires = [c for c in pool.executed
                if "UPDATE procedures" in c[0] and "t_invalid" in c[0]]
-    assert not retires, "a kept abstraction must not be retired"
+    assert not retires, "a kept extraction must not be retired"
+
+
+# ------------------------------------------ resume_failed_extraction_jobs
+
+class ExecuteCapturingPool:
+    """Answers .execute() with a fake asyncpg command-tag string so
+    resume_failed_extraction_jobs' own int-parsing tail logic (matching
+    resume_failed_skill_jobs' real, already-established convention) has
+    something real to parse."""
+
+    def __init__(self, updated=3):
+        self.calls = []
+        self._updated = updated
+
+    async def execute(self, sql, *args):
+        self.calls.append((" ".join(sql.split()), args))
+        return f"UPDATE {self._updated}"
+
+
+@pytest.mark.asyncio
+async def test_resume_failed_extraction_jobs_targets_the_right_job_type_and_status():
+    pool = ExecuteCapturingPool(updated=3)
+    n = await ij.resume_failed_extraction_jobs(pool)
+    assert n == 3
+    sql, args = pool.calls[0]
+    assert "job_type='extract_procedure_from_episode'" in sql
+    assert "status='failed'" in sql
+    assert "SET status='pending', claimed_at=NULL, completed_at=NULL" in sql
+
+
+@pytest.mark.asyncio
+async def test_resume_failed_extraction_jobs_gates_rate_limited_rows_on_min_age():
+    """The real backoff: a rate-limited failure must only requeue once
+    completed_at is older than min_age_seconds, so calling this every
+    ingestion pass does not immediately re-hit the same exhausted quota."""
+    pool = ExecuteCapturingPool()
+    await ij.resume_failed_extraction_jobs(pool, min_age_seconds=900)
+    sql, args = pool.calls[0]
+    assert "rate_limit" in sql
+    assert "429" in sql
+    assert "completed_at < now() - ($1 || ' seconds')::interval" in sql
+    assert args == ("900",)
+
+
+@pytest.mark.asyncio
+async def test_resume_failed_extraction_jobs_requeues_non_rate_limit_failures_unconditionally():
+    pool = ExecuteCapturingPool()
+    await ij.resume_failed_extraction_jobs(pool)
+    sql, _ = pool.calls[0]
+    assert "last_error NOT ILIKE '%rate_limit%'" in sql
+    assert "last_error IS NULL" in sql
 
 
 def test_goal_seed_is_the_source_derived_payload_value():
+    """The literal .strip() call lives in build_episode_evidence_source()
+    now (factored out so admin.py's reextract endpoint can reuse it), not
+    inline in the handler -- same real source-derived value either way."""
     import inspect
-    src = inspect.getsource(ij.handle_extract_procedure_from_episode)
+    src = inspect.getsource(ij.build_episode_evidence_source)
     assert 'goal_text=goal_text.strip()' in src
