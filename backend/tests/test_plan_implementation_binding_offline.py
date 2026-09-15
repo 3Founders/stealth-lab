@@ -168,3 +168,86 @@ def test_resolved_implementation_produces_new_object_with_bound_id_and_consisten
     assert bound.plan.id == compiled.plan.id
     assert bound.graph.id == compiled.graph.id
     assert bound.plan.task_description == compiled.plan.task_description
+
+
+# ---------------------------------------------------------------------
+# (3) opt-in goal-based fallback (Sec 8-10 wiring) -- strictly additive
+# ---------------------------------------------------------------------
+
+
+def test_goal_fallback_defaults_off_and_is_never_called(monkeypatch):
+    """use_goal_fallback defaults False -- byte-identical to every
+    caller/test written before this parameter existed. Proven by
+    asserting select_implementation_for_goal is never even invoked when
+    task_node_id-based resolution finds nothing and the flag is omitted."""
+    from app.execution import implementation_executor
+
+    called = []
+
+    async def spy_select(pool, goal, *, scope, context=None, weights=None):
+        called.append(goal)
+        raise AssertionError("must not be called when use_goal_fallback=False")
+
+    monkeypatch.setattr(implementation_executor, "select_implementation_for_goal", spy_select)
+
+    compiled = _compile()
+    bound = _run(bind_plan_implementations(pool=None, compiled=compiled, scope=AccessScope.unrestricted()))
+    assert bound is compiled
+    assert called == []
+
+
+def test_goal_fallback_binds_when_task_node_id_resolves_nothing(monkeypatch):
+    """use_goal_fallback=True: when task_node_id-based resolution finds
+    nothing (the overwhelmingly common case today), select_implementation_
+    for_goal is tried with the node's own goal text, and a real chosen
+    implementation gets bound exactly like a task_node_id-based one would."""
+    from app.execution import implementation_executor
+    from app.execution.implementation_selection import SelectionResult
+
+    async def fake_resolve(pool, task_node_id, *, scope, hint_kinds=None):
+        return None  # nothing linked via task_node_id, the common case
+
+    goal_calls = []
+
+    async def fake_select(pool, goal, *, scope, context=None, weights=None):
+        goal_calls.append(goal)
+        return SelectionResult(
+            goal=goal, candidates_considered=[{"id": IMPL_ID}], ranked=[],
+            chosen={"id": IMPL_ID, "kind": "tool", "name": "graphify"},
+            rationale="test fixture",
+        )
+
+    monkeypatch.setattr(implementation_executor.implementation_registry, "resolve", fake_resolve)
+    monkeypatch.setattr(implementation_executor, "select_implementation_for_goal", fake_select)
+
+    compiled = _compile()
+    bound = _run(bind_plan_implementations(
+        pool=object(), compiled=compiled, scope=AccessScope.unrestricted(), use_goal_fallback=True,
+    ))
+
+    assert goal_calls == ["run migrations"]  # PROCEDURE_PAYLOAD's own step goal
+    assert bound.graph.nodes[0].implementation_id == IMPL_ID
+
+
+def test_task_node_id_resolution_wins_over_goal_fallback(monkeypatch):
+    """When BOTH would resolve, task_node_id-based resolution runs first
+    and wins -- goal-based fallback is never even attempted for that
+    node, so a node with real linkage is never second-guessed by a
+    goal-text coincidence."""
+    from app.execution import implementation_executor
+
+    async def fake_resolve(pool, task_node_id, *, scope, hint_kinds=None):
+        return {"id": IMPL_ID, "kind": "tool", "name": "graphify"}
+
+    async def fake_select(pool, goal, *, scope, context=None, weights=None):
+        raise AssertionError("must not be called when task_node_id resolution already succeeded")
+
+    monkeypatch.setattr(implementation_executor.implementation_registry, "resolve", fake_resolve)
+    monkeypatch.setattr(implementation_executor, "select_implementation_for_goal", fake_select)
+
+    compiled = _compile()
+    bound = _run(bind_plan_implementations(
+        pool=object(), compiled=compiled, scope=AccessScope.unrestricted(),
+        task_node_ids={0: "real-task-node-id"}, use_goal_fallback=True,
+    ))
+    assert bound.graph.nodes[0].implementation_id == IMPL_ID

@@ -912,19 +912,32 @@ def _render_step(step) -> str:
 
 
 async def _bind_plan_to_registry(pool, compiled_plan, procedure_payload: dict):
-    """Directive Sec 20's "resolve -> bind" stage, run for real, over the
-    ONE real task_node link a stored procedure already carries:
-    `procedures.migrated_from_task_node_id` (`db/18_procedures.sql`) --
-    populated when a procedure was migrated from a task_node's own
-    htn_method_library entry, `NULL` for an ad-hoc/directly captured
-    procedure. This never fabricates a task_node_id from a goal string
-    (see `implementation_executor.py`'s own module docstring on exactly
-    that refusal) -- every real node of a plan compiled from this
-    procedure's steps is treated as satisfying that SAME task (a
-    procedure-level, not step-level, link, which is the only real one
-    that exists today), and a `None` link is a true no-op: the plan comes
-    back byte-identical, matching the registry's own "nothing resolved"
-    behavior everywhere else.
+    """Directive Sec 20's "resolve -> bind" stage, run for real, over TWO
+    real linkage sources now (meta-harness Sec 8-10 wiring added a
+    second one this pass -- see the earlier, narrower docstring history
+    in git blame if only the first is relevant to your change):
+
+    (a) `procedures.migrated_from_task_node_id` (`db/18_procedures.sql`)
+        -- populated when a procedure was migrated from a task_node's own
+        htn_method_library entry, `NULL` for an ad-hoc/directly captured
+        procedure. Never fabricates a task_node_id from a goal string
+        (see `implementation_executor.py`'s own module docstring on
+        exactly that refusal) -- every real node of a plan compiled from
+        this procedure's steps is treated as satisfying that SAME task (a
+        procedure-level, not step-level, link).
+    (b) Goal-based selection (`bind_plan_implementations(...,
+        use_goal_fallback=True)`), keyed on each node's own `PlanNode.goal`
+        text -- tried per-node, only when (a) resolves nothing for that
+        node. This is what actually reaches the overwhelming majority of
+        real, ad-hoc-captured procedures, which have no
+        migrated_from_task_node_id at all.
+
+    Neither path fabricates anything: a node with no real task_node_id
+    link AND no exact `implementations.goal` match keeps
+    `implementation_id=None`, the plan comes back byte-identical (same
+    object, per `bind_plan_implementations`'s own "nothing bound -> no-op"
+    contract), matching the registry's honest "nothing resolved" behavior
+    everywhere else.
 
     Run AFTER `compile_plan()` and BEFORE `persist_compiled_plan()` at
     every real production call site, so a durable implementation bound
@@ -947,9 +960,19 @@ async def _bind_plan_to_registry(pool, compiled_plan, procedure_payload: dict):
     of that exact plan binds to. Only a genuinely first-time compile (no
     existing row for this pair) resolves and freezes a fresh binding.
     """
-    task_node_id = procedure_payload.get("migrated_from_task_node_id")
-    if not task_node_id:
-        return compiled_plan
+    # PLAN-PINNING GUARD moved to run UNCONDITIONALLY (real fix, this pass):
+    # previously this only ran inside the `task_node_id` branch below, so
+    # an ad-hoc/captured procedure (no migrated_from_task_node_id -- the
+    # overwhelming majority of real procedures) returned `compiled_plan`
+    # unchanged without ever checking for an already-pinned prior plan.
+    # That was harmless before, because nothing was ever bound for those
+    # procedures anyway (nothing to protect against re-binding drift). It
+    # stops being harmless now that goal-based binding (below) can freeze
+    # an implementation onto an ad-hoc procedure's nodes too -- directive
+    # Sec 31's guarantee ("a newly registered implementation must not
+    # silently replace an implementation already frozen into a persisted
+    # plan") must hold for a goal-bound node exactly as it does for a
+    # task_node_id-bound one.
     from app.execution.plan_persistence import find_plan_for_task
 
     existing = await find_plan_for_task(
@@ -961,12 +984,104 @@ async def _bind_plan_to_registry(pool, compiled_plan, procedure_payload: dict):
 
     from app.execution.implementation_executor import bind_plan_implementations
 
+    task_node_id = procedure_payload.get("migrated_from_task_node_id")
+    task_node_ids = {n.order: str(task_node_id) for n in compiled_plan.graph.nodes} if task_node_id else {}
+
     return await bind_plan_implementations(
         # B19: real caller scope -- a private implementation must not be
         # silently frozen into another caller's compiled plan.
         pool, compiled_plan, scope=_caller_access_scope(),
-        task_node_ids={n.order: str(task_node_id) for n in compiled_plan.graph.nodes},
+        task_node_ids=task_node_ids,
+        # Meta-harness Sec 8-10 wiring: when task_node_id-based resolution
+        # (task_node_ids above, real only for procedures migrated from the
+        # old task_node HTN library) resolves nothing for a node --
+        # exactly the overwhelming majority of real, ad-hoc-captured
+        # procedures today, see implementation_executor.py's own
+        # docstring -- also try goal-based selection keyed on the node's
+        # own PlanNode.goal text. Additive only (use_goal_fallback
+        # defaults False elsewhere; every OTHER caller of
+        # bind_plan_implementations is unaffected, and
+        # bind_plan_implementations itself hands back `compiled_plan`
+        # UNCHANGED -- same object -- when nothing resolves for any node,
+        # so a procedure with no real task_node_id AND no goal match
+        # today still costs one extra indexed find_plan_for_task lookup
+        # and a no-op resolve loop, never a behavior change).
+        # task_node_id resolution still always wins when both would
+        # resolve for the same node.
+        use_goal_fallback=True,
     )
+
+
+async def _try_registered_implementation(
+    pool, node, *, task_description: str, repo_path: str, model: str, max_steps: int,
+    node_notes: list[str],
+) -> Optional[tuple["NodeResult", "AgentRun"]]:
+    """Meta-harness Sec 19-21: if `node.implementation_id` (bound by
+    `_bind_plan_to_registry` above) resolves to a real, NON-frontier
+    implementation, dispatch through the real, tested, pluggable
+    adapter/provider system (`implementation_executor.execute_implementation`
+    -> deterministic/api/tool provider) instead of the frontier coding
+    agent. Returns `None` (never a fabricated attempt) when there is
+    nothing bound, the bound row is no longer visible/active, or it IS a
+    'frontier' kind -- the caller (`find_best_way`'s `run_node` closure)
+    falls through to its own existing frontier-agent code unchanged in
+    every one of those cases, so this function changes behavior ONLY for
+    a genuinely bound non-frontier node.
+
+    Standalone and unit-testable on purpose (monkeypatch `implementation_
+    registry.get`/`execute_implementation` directly) -- factored out of
+    `find_best_way`'s `run_node` closure precisely so this real branch
+    doesn't require driving the entire MCP tool (real LLM client, real
+    sandbox, real ancestor-chain checks) just to prove its own logic.
+
+    Returns `(NodeResult, AgentRun)` when it did dispatch -- the second
+    element is a duck-typed stand-in for the real `AgentRun` shape a
+    frontier node produces, built from `NodeResult.data`, so the
+    aggregation code after `run_graph_durably` (tool_calls/files_edited/
+    patch/usage/wall_seconds) stays correct and untouched for BOTH kinds
+    of node rather than special-casing every one of its call sites.
+    Fields a non-frontier provider's `NodeResult.data` doesn't carry (the
+    common case -- a deterministic script has no LLM usage) are honestly
+    0/empty, never estimated.
+    """
+    if not node.implementation_id:
+        return None
+    implementation = await implementation_registry.get(
+        pool, node.implementation_id, scope=_caller_access_scope(),
+    )
+    if implementation is None or implementation.get("kind") == "frontier":
+        return None
+
+    from app.execution.coding_agent import AgentRun, Usage
+    from app.execution.implementation_executor import execute_implementation
+
+    result = await execute_implementation(
+        pool, node,
+        {
+            "task_description": task_description, "repo_path": repo_path,
+            "model": model, "max_steps": max_steps, "node_notes": node_notes,
+        },
+        scope=_caller_access_scope(),
+    )
+    data = result.data or {}
+    agent_run_standin = AgentRun(
+        instance_id=f"mcp_find_best_way_{secrets.token_hex(6)}_step{node.order}",
+        arm="mcp_find_best_way", patch=data.get("patch", ""),
+        usage=Usage(
+            prompt_tokens=data.get("prompt_tokens", 0),
+            completion_tokens=data.get("completion_tokens", 0),
+            calls=data.get("llm_calls", 0),
+        ),
+        steps=0, tool_calls=data.get("tool_names", []),
+        files_edited=data.get("files_edited", []),
+        stop_reason="finished" if result.status == "success" else (result.notes or "failed"),
+        error=result.notes if result.status == "failure" else None,
+    )
+    node_notes.append(
+        f"step {node.order} ({node.goal}): implementation={implementation.get('name')!r} "
+        f"(kind={implementation['kind']!r}) status={result.status}"
+    )
+    return result, agent_run_standin
 
 
 async def _respond_tier1_hit(pool, task_description: str, matched_procedure: dict, route: Optional[str] = None) -> str:
@@ -1847,6 +1962,24 @@ async def find_best_way(task_description: str, ctx: Context,
     node_notes: list[str] = []
 
     async def run_node(node) -> NodeResult:
+        # Meta-harness Sec 19-21 wiring, this pass: a node whose
+        # implementation_id was bound (task_node_id link, or the new
+        # goal-based fallback in _bind_plan_to_registry) to a REAL,
+        # NON-frontier implementation now actually dispatches through
+        # execute_implementation -- see _try_registered_implementation's
+        # own docstring for the full reasoning. Deliberately narrow: a
+        # node with no bound implementation, or bound to kind='frontier'
+        # (today's overwhelming default), falls straight through to the
+        # EXISTING code below, byte-identical to before this change.
+        via_registry = await _try_registered_implementation(
+            pool, node, task_description=task_description, repo_path=repo_path,
+            model=model, max_steps=max_steps, node_notes=node_notes,
+        )
+        if via_registry is not None:
+            result, agent_run_standin = via_registry
+            node_runs[node.order] = agent_run_standin
+            return result
+
         prior_context = ("\n\nPrior steps completed:\n" + "\n".join(node_notes)) if node_notes else ""
         node_instance = {
             "instance_id": f"mcp_find_best_way_{secrets.token_hex(6)}_step{node.order}",

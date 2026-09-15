@@ -78,6 +78,7 @@ import asyncpg
 from app.execution import implementation_registry
 from app.execution import providers
 from app.execution.graph_executor import NodeResult
+from app.execution.implementation_selection import select_implementation_for_goal
 from app.execution.plans import CompiledPlan, _graph_content, _plan_content, canonical_json, sha256_hex
 from app.models.plan import PlanNode
 from app.services.access import AccessScope
@@ -163,6 +164,8 @@ async def bind_plan_implementations(
     *,
     scope: AccessScope,
     task_node_ids: Optional[Mapping[int, str]] = None,
+    use_goal_fallback: bool = False,
+    goal_selection_context: Optional[dict] = None,
 ) -> CompiledPlan:
     """
     The binding STAGE (directive Sec 20's "planning -> resolve -> bind ->
@@ -193,6 +196,25 @@ async def bind_plan_implementations(
     for "no task node link is known" and `bind_implementation`'s own
     honest "no id to freeze" no-op.
 
+    `use_goal_fallback` (default `False`, byte-identical to prior
+    behavior when omitted -- every existing caller/test keeps its exact
+    contract, including `pool=None` no-op calls): when a node's
+    task_node_id-based resolution finds nothing, additionally try
+    `implementation_selection.select_implementation_for_goal(pool,
+    node.goal, ...)` -- the real Sec 8-10 structured-lookup+hard-filter+
+    rank pipeline, keyed on `PlanNode.goal` (the SAME free-text field a
+    grounded ProcedureStep's normalized goal category, e.g.
+    "verification"/"code_generation", is meant to land in once a
+    grounding stage exists). Honest today: since no grounding stage
+    exists yet (see this module's own docstring on that gap), this only
+    actually matches when a step's stored `goal` string already equals a
+    real `implementations.goal` value verbatim -- exact-match lookup,
+    never fuzzy, per `list_implementations_by_goal`'s own contract. This
+    is real, additive coverage for that case, not a claim that grounding
+    is solved. task_node_id-based resolution is always tried FIRST and
+    wins if it resolves anything, so a node with real linkage is never
+    second-guessed by a goal-text coincidence.
+
     Nodes that resolve nothing keep `implementation_id=None` exactly as
     `compile_plan()` left them -- today's real, unchanged fallback
     (`execute_implementation` still dispatches those to the frontier
@@ -222,6 +244,11 @@ async def bind_plan_implementations(
     for node in compiled.graph.nodes:
         task_node_id = task_node_ids.get(node.order) or node.task_node_id
         resolved = await resolve_implementation_for_node(pool, node, task_node_id, scope=scope)
+        if resolved is None and use_goal_fallback and node.goal:
+            selection = await select_implementation_for_goal(
+                pool, node.goal, scope=scope, context=goal_selection_context,
+            )
+            resolved = selection.chosen
         bound = bind_implementation(node, resolved)
         if bound.implementation_id is not None:
             any_bound = True
