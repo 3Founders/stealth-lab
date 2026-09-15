@@ -24,6 +24,12 @@ class _Pool:
 
     async def fetchrow(self, sql, *a):
         f = " ".join(sql.split())
+        # capture_procedure() (migration 83) resolves a real Goal row
+        # first -- always a dedup miss here, then a fake insert result.
+        if "FROM goals" in f:
+            return None
+        if "INSERT INTO goals" in f:
+            return {"id": str(uuid4()), "canonical_name": a[1]}
         if "INSERT INTO procedures" in f:
             return {"id": str(uuid4()), "procedure_id": str(uuid4())}
         if "INSERT INTO audit_events" in f:
@@ -31,6 +37,9 @@ class _Pool:
                                 "object_type": a[3], "object_id": a[4], "details": a[6]})
             return {"id": len(self.audits)}
         raise AssertionError(f[:70])
+
+    async def execute(self, sql, *a):  # pragma: no cover - the achieves_goal_id UPDATE
+        return "OK"
 
 
 PRINCIPAL = AuthenticatedPrincipal(user_id="u1", subject="alice", email="a@x")

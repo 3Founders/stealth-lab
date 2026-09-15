@@ -213,19 +213,32 @@ def test_find_step_text_handles_json_string_and_empty_input():
 
 class _EnrichmentFakePool:
     """Real rows shaped exactly like the JOIN this function issues --
-    (locator, kind, skill_name, skill_purpose, steps) per implementation
-    id -- and captures every UPDATE so the real per-row outcome can be
-    asserted without a real DB."""
+    (locator, kind, scope_type, scope_entity_id, skill_name,
+    skill_purpose, steps) per implementation id -- and captures every
+    UPDATE so the real per-row outcome can be asserted without a real DB.
+
+    `fetchrow` fakes find_or_create_goal's own two-statement shape (a
+    dedup SELECT, always a miss here, then an INSERT ... RETURNING) --
+    good enough to prove the enrichment job WIRES goal resolution in,
+    without needing a real `goals` table. Real dedup behavior is covered
+    separately in tests/test_goals_offline.py."""
 
     def __init__(self, rows):
         self._rows = rows
         self.updates: list[tuple] = []
+        self.goal_inserts: list[tuple] = []
 
     async def fetch(self, sql, *params):
         return self._rows
 
     async def execute(self, sql, *params):
         self.updates.append(params)
+
+    async def fetchrow(self, sql, *params):
+        if sql.strip().upper().startswith("SELECT"):
+            return None  # find_or_create_goal's dedup check: always a miss here
+        self.goal_inserts.append(params)
+        return {"id": f"fake-goal-{len(self.goal_inserts)}", "canonical_name": params[1]}
 
 
 def test_enrich_pending_implementations_classifies_a_heuristic_match():
@@ -235,7 +248,7 @@ def test_enrich_pending_implementations_classifies_a_heuristic_match():
     rows = [{
         "id": "11111111-1111-1111-1111-111111111111",
         "locator": {"path": "skills/x/scripts/check_schema.py"},
-        "kind": "deterministic",
+        "kind": "deterministic", "scope_type": None, "scope_entity_id": None,
         "skill_name": "x", "skill_purpose": "purpose", "steps": None,
     }]
     pool = _EnrichmentFakePool(rows)
@@ -246,10 +259,14 @@ def test_enrich_pending_implementations_classifies_a_heuristic_match():
         "attempted": 1, "heuristic": 1, "llm_classified": 0,
         "unclassified": 0, "needs_enrichment": 0, "errors": 0,
     }
-    (row_id, goal, goal_spec, expected_outcome, verification_contract, classification) = pool.updates[0]
+    (row_id, goal, goal_spec, expected_outcome, verification_contract, classification, goal_id) = pool.updates[0]
     assert row_id == rows[0]["id"]
     assert goal == "verification"
     assert classification == "heuristic"
+    # migration 83 wiring: a real (fake-DB) Goal row was resolved and
+    # linked, not just the free-text `goal` column.
+    assert goal_id == "fake-goal-1"
+    assert pool.goal_inserts[0][1] == "verification"  # canonical_name passed through
 
 
 def test_enrich_pending_implementations_uses_real_procedure_context_for_the_llm_path():
@@ -259,7 +276,7 @@ def test_enrich_pending_implementations_uses_real_procedure_context_for_the_llm_
     rows = [{
         "id": "22222222-2222-2222-2222-222222222222",
         "locator": {"path": "skills/x/scripts/reconcile.py"},
-        "kind": "deterministic",
+        "kind": "deterministic", "scope_type": None, "scope_entity_id": None,
         "skill_name": "schema-guard", "skill_purpose": "Keep migrations consistent.",
         "steps": json.dumps([{"order": 0, "goal": "Run scripts/reconcile.py before committing."}]),
     }]
@@ -282,8 +299,10 @@ def test_enrich_pending_implementations_counts_errors_without_aborting_the_batch
     process_pending_jobs() already applies to ingestion jobs."""
     rows = [
         {"id": "a", "locator": {}, "kind": "deterministic",
+         "scope_type": None, "scope_entity_id": None,
          "skill_name": None, "skill_purpose": None, "steps": None},
         {"id": "b", "locator": {"path": "scripts/check_schema.py"}, "kind": "deterministic",
+         "scope_type": None, "scope_entity_id": None,
          "skill_name": None, "skill_purpose": None, "steps": None},
     ]
     pool = _EnrichmentFakePool(rows)

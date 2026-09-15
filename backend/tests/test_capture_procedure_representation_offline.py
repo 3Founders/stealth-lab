@@ -18,6 +18,14 @@ class _FakePool:
         self.insert_args = None
 
     async def fetchrow(self, sql, *args):
+        # capture_procedure() now resolves a real Goal row (migration 83)
+        # before its own INSERT -- route those calls separately so this
+        # fake's column-position introspection below still targets only
+        # the `procedures` INSERT it was written to inspect.
+        if "FROM goals" in sql:
+            return None  # find_or_create_goal's dedup SELECT: always a miss here
+        if "INSERT INTO goals" in sql:
+            return {"id": uuid4(), "canonical_name": args[1]}
         self.insert_sql = sql
         self.insert_args = args
         return {"id": uuid4(), "procedure_id": uuid4()}

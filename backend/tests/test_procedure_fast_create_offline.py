@@ -28,11 +28,21 @@ class _FakePool:
         self.insert_args = None
 
     async def fetchrow(self, sql, *args):
-        if "INSERT INTO audit_events" in " ".join(sql.split()):
+        s = " ".join(sql.split())
+        if "INSERT INTO audit_events" in s:
             return {"id": 1}          # Phase 7 private_object_created audit
+        # capture_procedure() (migration 83) resolves a real Goal row
+        # first -- always a dedup miss here, then a fake insert result.
+        if "FROM goals" in s:
+            return None
+        if "INSERT INTO goals" in s:
+            return {"id": uuid4(), "canonical_name": args[1]}
         self.insert_sql = sql
         self.insert_args = args
         return {"id": uuid4(), "procedure_id": uuid4()}
+
+    async def execute(self, sql, *args):  # pragma: no cover - the achieves_goal_id UPDATE
+        return "OK"
 
 
 def _col_value(pool, column: str):

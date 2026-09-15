@@ -198,6 +198,28 @@ async def capture_procedure(
         allow_global_entity_id=bool(scope_type == "global" and scope_entity_id),
     )
 
+    # --- Goal resolution (ingestion.md Sec 2-3, migration 83) -----------
+    # Every captured procedure achieves a real, stable-ID Goal now, not
+    # just a free-text `goal` column -- find_or_create_goal() dedups on
+    # normalized_name within the SAME scope this procedure itself just
+    # validated, so a Procedure and the Goal it achieves always agree on
+    # scope. `goal` (the TEXT column) is untouched -- this is additive,
+    # not a replacement (ingestion.md Sec 5: "use existing schema wherever
+    # possible... do not create a replacement architecture").
+    from app.services.goals import find_or_create_goal
+
+    resolved_goal = await find_or_create_goal(
+        pool,
+        canonical_name=goal,
+        scope_type=procedure_scope_type,
+        scope_entity_id=procedure_scope_entity_id,
+        provenance=provenance,
+        created_from="procedure_capture",
+        owner_id=owner_id,
+        visibility=visibility if visibility in ("public", "private") else "public",
+    )
+    achieves_goal_id = resolved_goal["id"]
+
     # --- retrieval-representation contract (plan Part 18) -------------------
     # A stored vector only means something relative to the text it was
     # built from, so every row is stamped with WHICH retrieval-document
@@ -319,6 +341,15 @@ async def capture_procedure(
         availability,
         str(procedure_id),
         is_engineering_fixture,
+    )
+    # Separate UPDATE rather than a 42nd positional placeholder on the
+    # INSERT above -- that statement is already a fragile, hand-numbered
+    # 41-argument positional query; appending here is safer than
+    # renumbering it. Not a transactional gap in practice: nothing reads
+    # `achieves_goal_id` before this line's own return.
+    await pool.execute(
+        "UPDATE procedures SET achieves_goal_id = $1 WHERE id = $2",
+        achieves_goal_id, row["id"],
     )
     return {"id": str(row["id"]), "procedure_id": str(row["procedure_id"])}
 

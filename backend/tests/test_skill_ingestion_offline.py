@@ -125,7 +125,15 @@ class FakePool:
         if "INSERT INTO procedures" in sql:
             self.captured.append(params)
             return {"id": "new-row-id", "procedure_id": "new-procedure-id"}
+        # capture_procedure() (migration 83) resolves a real Goal row first.
+        if "FROM goals" in sql:
+            return None
+        if "INSERT INTO goals" in sql:
+            return {"id": "new-goal-id", "canonical_name": params[1]}
         return None
+
+    async def execute(self, sql, *params):  # pragma: no cover - the achieves_goal_id UPDATE
+        return "OK"
 
 
 @pytest.mark.asyncio
@@ -415,6 +423,14 @@ class CompilerFakePool:
             return self.exact_artifact
         if "SELECT id, procedure_id, procedure_row_id, content_hash FROM ingested_artifacts" in s:
             return self.prior_artifact
+        # capture_procedure() (migration 83) resolves a real Goal row
+        # before its own INSERT -- always a dedup miss here, then a fake
+        # insert result, same shape as every other INSERT branch below.
+        if "FROM goals" in s:
+            return None
+        if "INSERT INTO goals" in s:
+            self._seq["goal"] = self._seq.get("goal", 0) + 1
+            return {"id": f"goal-{self._seq['goal']}", "canonical_name": params[1]}
         if "INSERT INTO procedures" in s:
             self._seq["proc"] += 1
             n = self._seq["proc"]

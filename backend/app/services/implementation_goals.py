@@ -318,7 +318,7 @@ async def enrich_pending_skill_package_implementations(
     """
     rows = await pool.fetch(
         """
-        SELECT i.id, i.locator, i.kind,
+        SELECT i.id, i.locator, i.kind, i.scope_type, i.scope_entity_id,
                p.name AS skill_name, p.goal AS skill_purpose, p.steps AS steps
         FROM implementations i
         LEFT JOIN procedure_implementations pi
@@ -353,12 +353,34 @@ async def enrich_pending_skill_package_implementations(
                 skill_name=row["skill_name"], skill_purpose=row["skill_purpose"],
                 step_text=step_text,
             )
+            goal_id = None
+            if fields.get("goal"):
+                # ingestion.md Sec 2-3 / migration 83: this is the one
+                # real writer of `implementations.goal` today (per the
+                # module's own docstring above) -- now also resolves a
+                # real Goal row, additive alongside the existing TEXT
+                # write. Falls back to scope_type='global' when the
+                # implementation row itself carries no scope (common for
+                # older rows, migration 33's scope_type is nullable) --
+                # "prefer generalized global Goals" (ingestion.md Sec 9).
+                from app.services.goals import find_or_create_goal
+
+                resolved_goal = await find_or_create_goal(
+                    pool,
+                    canonical_name=fields["goal"],
+                    scope_type=row["scope_type"] or "global",
+                    scope_entity_id=row["scope_entity_id"],
+                    provenance="prior_library",
+                    created_from="skill_package_enrichment",
+                )
+                goal_id = resolved_goal["id"]
             await pool.execute(
                 "UPDATE implementations SET goal=$2, goal_spec=$3::jsonb, "
-                "expected_outcome=$4, verification_contract=$5::jsonb, classification=$6 "
+                "expected_outcome=$4, verification_contract=$5::jsonb, classification=$6, "
+                "goal_id=$7::uuid "
                 "WHERE id=$1::uuid",
                 row["id"], fields["goal"], fields["goal_spec"], fields["expected_outcome"],
-                fields["verification_contract"], fields["classification"],
+                fields["verification_contract"], fields["classification"], goal_id,
             )
             counts[fields["classification"]] = counts.get(fields["classification"], 0) + 1
         except Exception:  # noqa: BLE001 -- one malformed row must never

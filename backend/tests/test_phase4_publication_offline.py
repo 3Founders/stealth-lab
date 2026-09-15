@@ -60,6 +60,12 @@ class FakePool:
             return self.src
         if f.startswith("SELECT * FROM publication_records WHERE id"):
             return self.pubrec
+        # capture_procedure() (migration 83) resolves a real Goal row
+        # first -- always a dedup miss here, then a fake insert result.
+        if "FROM goals" in f:
+            return None
+        if "INSERT INTO goals" in f:
+            return {"id": str(uuid4()), "canonical_name": a[1]}
         if "INSERT INTO procedures" in f:
             self.captured = (f, a)
             return {"id": str(uuid4()), "procedure_id": str(uuid4())}
