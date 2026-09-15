@@ -295,27 +295,28 @@ async def _success_rates(pool: asyncpg.Pool, implementation_ids: list[str]) -> d
     return rates
 
 
-async def select_implementation_for_goal(
-    pool: asyncpg.Pool,
-    goal: str,
-    *,
-    context: Optional[dict] = None,
-    scope: AccessScope,
+async def rank_candidates(
+    pool: asyncpg.Pool, candidates: list[dict], *, goal: str, context: Optional[dict] = None,
     weights: Optional[dict[str, float]] = None,
 ) -> SelectionResult:
-    """The real Sec 8-10 pipeline: structured lookup by goal -> deterministic
-    hard-constraint filter -> explainable rank over survivors. Returns the
-    FULL trace, not just a winner (directive Sec 10) -- `.stealth/run.md`'s
-    selection-rationale line and the MCP `explain_implementation_selection`
-    surface are both meant to read straight off this, not recompute it.
+    """The real Sec 8-10 ranking core: deterministic hard-constraint
+    filter -> explainable rank over survivors, given an ALREADY-fetched
+    candidate list. Factored out of `select_implementation_for_goal` so a
+    caller with its own lookup (e.g. the goal_id-based FK lookup
+    `select_implementation_for_goal_id` uses, or the recursive Goal
+    compiler resolving a specific candidate set) gets the identical
+    filter/rank/explain logic -- one ranking mechanism, not a second one
+    per lookup strategy (Rule 6).
 
-    `chosen` is `None` (never a fabricated pick) when either no candidate
-    exists for this goal, or every candidate was disqualified -- the
-    `rationale` string says which, honestly.
+    Returns the FULL trace, not just a winner (directive Sec 10) --
+    `.stealth/run.md`'s selection-rationale line and the MCP
+    `explain_implementation_selection` surface both read straight off
+    this, not recompute it. `chosen` is `None` (never a fabricated pick)
+    when either `candidates` is empty or every candidate was
+    disqualified -- the `rationale` string says which, honestly.
     """
     context = context or {}
     weights = weights or DEFAULT_WEIGHTS
-    candidates = await list_implementations_by_goal(pool, goal, scope=scope)
 
     if not candidates:
         return SelectionResult(
@@ -363,3 +364,44 @@ async def select_implementation_for_goal(
     return SelectionResult(
         goal=goal, candidates_considered=candidates, ranked=ranked, chosen=winner.implementation, rationale=rationale,
     )
+
+
+async def select_implementation_for_goal(
+    pool: asyncpg.Pool,
+    goal: str,
+    *,
+    context: Optional[dict] = None,
+    scope: AccessScope,
+    weights: Optional[dict[str, float]] = None,
+) -> SelectionResult:
+    """Structured lookup by free-text `implementations.goal` -> `rank_candidates`.
+    See that function's own docstring for the full filter/rank/explain
+    contract this preserves unchanged from before the refactor."""
+    candidates = await list_implementations_by_goal(pool, goal, scope=scope)
+    return await rank_candidates(pool, candidates, goal=goal, context=context, weights=weights)
+
+
+async def select_implementation_for_goal_id(
+    pool: asyncpg.Pool,
+    goal_id: str,
+    *,
+    context: Optional[dict] = None,
+    scope: AccessScope,
+    weights: Optional[dict[str, float]] = None,
+) -> SelectionResult:
+    """Structured lookup by the real `implementations.goal_id` FK
+    (backend/db/83_goals.sql, `ingestion` lane) -> `rank_candidates`. A
+    precise, id-based sibling of `select_implementation_for_goal`'s
+    free-text lookup -- prefer this one whenever a real Goal id is
+    already known (the recursive Goal compiler's own case), since it
+    cannot miss on a phrasing difference the way exact-string matching
+    can."""
+    from app.services.access import visibility_predicate
+
+    vis_sql, vis_params = visibility_predicate(scope, param_index=2)
+    rows = await pool.fetch(
+        f"SELECT * FROM implementations WHERE goal_id = $1::uuid AND status = 'active' AND {vis_sql}",
+        goal_id, *vis_params,
+    )
+    candidates = [dict(r) for r in rows]
+    return await rank_candidates(pool, candidates, goal=goal_id, context=context, weights=weights)
