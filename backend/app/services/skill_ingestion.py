@@ -31,7 +31,7 @@ import logging
 import json
 import re
 import posixpath
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from typing import Any, Optional
 
@@ -2222,6 +2222,31 @@ async def compile_skill_artifact(
     # artifact blocks (B16) and the derived document Claim (B1); a step /
     # block / claim is only ever as scoped as the procedure it belongs to.
     resolved_scope_type = "entity" if domain else "global"
+
+    # Semantic decomposition (founder directive §9): filter CONTEXT_ONLY/
+    # PROPOSITION entries out of parsed.steps BEFORE anything downstream
+    # (capability abstraction, the retrieval document, procedure capture)
+    # ever sees them -- see semantic_decomposition.py's own module
+    # docstring for the real corpus content this closes. Run only on
+    # content that already cleared screening/admission -- no reason to
+    # spend a classification call per step on something about to be
+    # rejected anyway. `parsed` is replaced wholesale so every consumer
+    # below (already written to just read `parsed.steps`) benefits with
+    # no further call-site changes.
+    from app.services.semantic_decomposition import decompose_steps
+
+    filtered_steps, decomposition_report = await decompose_steps(
+        parsed.steps, skill_purpose=parsed.description,
+        client=client, model=capability_llm_model,
+    )
+    if decomposition_report["filtered"]:
+        log.info(
+            "compile_skill_artifact: semantic decomposition filtered %d/%d step(s) "
+            "for %s (%s)",
+            decomposition_report["filtered"], decomposition_report["total"],
+            artifact.uri, decomposition_report["by_kind"],
+        )
+    parsed = replace(parsed, steps=filtered_steps)
 
     capability_statement = (
         None if (injection_signals or quarantined)
