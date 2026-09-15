@@ -11,7 +11,14 @@ import asyncio
 import asyncpg
 import pytest
 
-from app.services.goals import find_or_create_goal, normalize_goal_name
+from app.services.goals import (
+    AUTO_DEDUP_MAX_COSINE_DISTANCE,
+    create_goal_from_user,
+    find_or_create_goal,
+    get_goal,
+    normalize_goal_name,
+    search_goals,
+)
 from app.services.v0_gate import V0Violation
 
 
@@ -52,29 +59,40 @@ class _FakeGoalsPool:
         self.rows: list[dict] = []
         self._next_id = 1
 
+    @staticmethod
+    def _alias_hit(row, candidate_name: str) -> bool:
+        return any(
+            a.strip().lower() == candidate_name.strip().lower() for a in row.get("aliases") or []
+        )
+
     async def fetchrow(self, sql, *params):
         s = " ".join(sql.split())
         if s.startswith("SELECT"):
             normalized = params[0]
             if "scope_type = $2" in s:
-                scope_type, scope_entity_id = params[1], params[2]
+                scope_type, scope_entity_id, candidate_name = params[1], params[2], params[3]
                 for r in self.rows:
-                    if (r["normalized_name"] == normalized and r["scope_type"] == scope_type
-                            and r["scope_entity_id"] == scope_entity_id and r["status"] != "merged"):
+                    if (r["status"] != "merged" and r["scope_type"] == scope_type
+                            and r["scope_entity_id"] == scope_entity_id
+                            and (r["normalized_name"] == normalized or self._alias_hit(r, candidate_name))):
                         return r
             else:
+                candidate_name = params[1]
                 for r in self.rows:
-                    if (r["normalized_name"] == normalized
-                            and (r["scope_type"] is None or r["scope_type"] == "global")
-                            and r["status"] != "merged"):
+                    if (r["status"] != "merged" and (r["scope_type"] is None or r["scope_type"] == "global")
+                            and (r["normalized_name"] == normalized or self._alias_hit(r, candidate_name))):
                         return r
             return None
-        # INSERT ... RETURNING id, canonical_name
+        # INSERT ... RETURNING id, canonical_name (trailing 4 params are
+        # migration 84's embedding/embedding_model_id/embedding_provider/
+        # embedding_text_hash -- ignored here, not this fake's concern)
         (goal_id, canonical_name, normalized_name, description, expected_outcome,
          verification_requirement, status, provenance, created_from, owner_id,
-         visibility, aliases, created_by, scope_type, scope_entity_id) = params
+         visibility, aliases, created_by, scope_type, scope_entity_id,
+         *_embedding_fields) = params
         row = {
             "id": goal_id, "canonical_name": canonical_name, "normalized_name": normalized_name,
+            "aliases": aliases,
             "status": status, "scope_type": scope_type, "scope_entity_id": scope_entity_id,
         }
         self.rows.append(row)
@@ -202,3 +220,263 @@ def test_find_or_create_goal_treats_a_lost_insert_race_as_a_dedup_hit():
         provenance="system_pending_review",
     ))
     assert result == {"id": "winner-id", "canonical_name": "find references", "created": False}
+
+
+# --- tier 2: alias dedup -------------------------------------------------
+
+def test_find_or_create_goal_matches_on_alias():
+    """A candidate whose text matches an EXISTING row's stored alias is
+    the same goal -- ingestion.md Sec 8 tier 2."""
+    pool = _FakeGoalsPool()
+    original = _run(find_or_create_goal(
+        pool, canonical_name="find references", scope_type="global",
+        provenance="system_pending_review", aliases=["locate symbol usages"],
+    ))
+    matched = _run(find_or_create_goal(
+        pool, canonical_name="locate symbol usages", scope_type="global",
+        provenance="system_pending_review",
+    ))
+    assert matched["created"] is False
+    assert matched["id"] == original["id"]
+    assert len(pool.rows) == 1
+
+
+# --- tier 3/4: embedding similarity dedup (opt-in via `embedder`) -------
+
+class _FakeEmbedMeta:
+    def __init__(self, model_id="fake-model", provider="fake", text_sha256="deadbeef"):
+        self.model_id = model_id
+        self.provider = provider
+        self.text_sha256 = text_sha256
+
+
+class _FakeEmbedder:
+    """Returns a caller-controlled vector per call, in order."""
+
+    def __init__(self, vectors):
+        self._vectors = list(vectors)
+        self.calls: list[tuple[str, str]] = []
+
+    async def embed_one_with_metadata(self, text, input_type="document"):
+        self.calls.append((text, input_type))
+        return self._vectors.pop(0), _FakeEmbedMeta()
+
+
+class _FakeSemanticGoalsPool(_FakeGoalsPool):
+    """Extends the exact/alias fake with a fixed cosine-distance answer
+    for the embedding-similarity SELECT (ORDER BY embedding <=> ...) --
+    good enough to prove find_or_create_goal's OWN threshold logic
+    without a real pgvector column."""
+
+    def __init__(self, semantic_distance):
+        super().__init__()
+        self._semantic_distance = semantic_distance
+        self.embedding_insert_seen = False
+
+    async def fetchrow(self, sql, *params):
+        s = " ".join(sql.split())
+        if "embedding <=> $1::vector AS dist" in s:
+            if not self.rows:
+                return None
+            r = self.rows[0]
+            return {"id": r["id"], "canonical_name": r["canonical_name"], "dist": self._semantic_distance}
+        return await super().fetchrow(sql, *params)
+
+
+def test_find_or_create_goal_auto_merges_a_near_identical_embedding():
+    pool = _FakeSemanticGoalsPool(semantic_distance=AUTO_DEDUP_MAX_COSINE_DISTANCE - 0.01)
+    first = _run(find_or_create_goal(
+        pool, canonical_name="find all callers of a function", scope_type="global",
+        provenance="system_pending_review", embedder=_FakeEmbedder([[0.1] * 4]),
+    ))
+    second = _run(find_or_create_goal(
+        pool, canonical_name="locate every caller of a function", scope_type="global",
+        provenance="system_pending_review", embedder=_FakeEmbedder([[0.1] * 4]),
+    ))
+    assert second["created"] is False
+    assert second["id"] == first["id"]
+
+
+def test_find_or_create_goal_does_not_merge_a_merely_similar_embedding():
+    """ingestion.md Sec 8: never auto-merge on loose similarity -- only a
+    near-identical (distance <= AUTO_DEDUP_MAX_COSINE_DISTANCE) match."""
+    pool = _FakeSemanticGoalsPool(semantic_distance=AUTO_DEDUP_MAX_COSINE_DISTANCE + 0.2)
+    first = _run(find_or_create_goal(
+        pool, canonical_name="find all callers of a function", scope_type="global",
+        provenance="system_pending_review", embedder=_FakeEmbedder([[0.1] * 4]),
+    ))
+    second = _run(find_or_create_goal(
+        pool, canonical_name="deploy the service safely", scope_type="global",
+        provenance="system_pending_review", embedder=_FakeEmbedder([[0.9] * 4]),
+    ))
+    assert second["created"] is True
+    assert second["id"] != first["id"]
+
+
+def test_find_or_create_goal_without_embedder_never_calls_embedding_path():
+    """The default (no `embedder`) behavior is byte-identical to before
+    this feature existed -- no embedding cost added to an existing caller
+    that doesn't opt in."""
+    pool = _FakeGoalsPool()
+    result = _run(find_or_create_goal(
+        pool, canonical_name="find references", scope_type="global",
+        provenance="system_pending_review",
+    ))
+    assert result["created"] is True
+    assert "embedding" not in " ".join(str(r) for r in pool.rows)
+
+
+# --- search_goals ---------------------------------------------------------
+
+class _SearchFakePool:
+    """Answers search_goals' lexical leg, semantic leg, and hydration
+    query with fixed data -- proves the RRF fuse logic, not real
+    Postgres full-text/vector ranking."""
+
+    def __init__(self, lexical_ids, semantic_ids, rows_by_id):
+        self._lexical_ids = lexical_ids
+        self._semantic_ids = semantic_ids
+        self._rows_by_id = rows_by_id
+
+    async def fetch(self, sql, *params):
+        s = " ".join(sql.split())
+        if "ts_rank" in s:
+            return [{"id": i} for i in self._lexical_ids]
+        if "embedding <=>" in s:
+            return [{"id": i} for i in self._semantic_ids]
+        if "WHERE id = ANY" in s:
+            ids = params[0]
+            return [self._rows_by_id[i] for i in ids if i in self._rows_by_id]
+        raise AssertionError("unexpected fetch: " + s[:80])
+
+
+def _goal_row(goal_id, name):
+    return {
+        "id": goal_id, "canonical_name": name, "description": None, "status": "active",
+        "scope_type": "global", "scope_entity_id": None,
+        "expected_outcome": {}, "verification_requirement": {},
+    }
+
+
+def test_search_goals_requires_at_least_one_query_input():
+    pool = _SearchFakePool([], [], {})
+    with pytest.raises(ValueError):
+        _run(search_goals(pool))
+
+
+def test_search_goals_fuses_lexical_and_semantic_legs():
+    rows = {"g1": _goal_row("g1", "find references"), "g2": _goal_row("g2", "deploy safely")}
+    # g1 ranks well on both legs; g2 only appears in the semantic leg.
+    pool = _SearchFakePool(lexical_ids=["g1"], semantic_ids=["g1", "g2"], rows_by_id=rows)
+    results = _run(search_goals(pool, query_text="find refs", query_embedding=[0.1] * 4, limit=5))
+    ids = [r["id"] for r in results]
+    assert ids[0] == "g1"  # present in both legs -> highest fused score
+    assert "g2" in ids
+
+
+def test_search_goals_lexical_only_when_no_embedding_given():
+    rows = {"g1": _goal_row("g1", "find references")}
+    pool = _SearchFakePool(lexical_ids=["g1"], semantic_ids=["should-not-be-queried"], rows_by_id=rows)
+    results = _run(search_goals(pool, query_text="find refs"))
+    assert [r["id"] for r in results] == ["g1"]
+
+
+# --- get_goal ---------------------------------------------------------
+
+class _GetGoalFakePool:
+    def __init__(self, goal_row, procedures=(), implementations=()):
+        self._goal_row = goal_row
+        self._procedures = list(procedures)
+        self._implementations = list(implementations)
+
+    async def fetchrow(self, sql, *params):
+        if "FROM goals WHERE id" in sql:
+            return self._goal_row
+        raise AssertionError("unexpected fetchrow")
+
+    async def fetch(self, sql, *params):
+        if "FROM procedures WHERE achieves_goal_id" in sql:
+            return self._procedures
+        if "FROM implementations WHERE goal_id" in sql:
+            return self._implementations
+        raise AssertionError("unexpected fetch: " + sql[:80])
+
+
+def test_get_goal_returns_none_for_a_missing_row():
+    pool = _GetGoalFakePool(goal_row=None)
+    assert _run(get_goal(pool, "missing-id")) is None
+
+
+def test_get_goal_attaches_procedures_and_implementations_and_hides_embedding():
+    row = {"id": "g1", "canonical_name": "find references", "embedding": "[0.1,0.2]"}
+    pool = _GetGoalFakePool(
+        goal_row=row,
+        procedures=[{"id": "p1", "procedure_id": "pp1", "name": "grep-based search"}],
+        implementations=[{"id": "i1", "name": "ripgrep"}],
+    )
+    result = _run(get_goal(pool, "g1"))
+    assert result["procedures"] == [{"id": "p1", "procedure_id": "pp1", "name": "grep-based search"}]
+    assert result["implementations"] == [{"id": "i1", "name": "ripgrep"}]
+    assert "embedding" not in result
+
+
+# --- create_goal_from_user ---------------------------------------------
+
+def test_create_goal_from_user_creates_when_no_near_matches(monkeypatch):
+    async def _no_matches(pool, **kw):
+        return []
+
+    monkeypatch.setattr("app.services.goals.search_goals", _no_matches)
+    pool = _FakeGoalsPool()
+    result = _run(create_goal_from_user(
+        pool, canonical_name="reconcile schema drift", scope_type="global", owner_id="u1",
+    ))
+    assert result["outcome"] == "created"
+    assert result["goal"]["created"] is True
+
+
+def test_create_goal_from_user_surfaces_near_matches_without_writing(monkeypatch):
+    async def _some_matches(pool, **kw):
+        return [_goal_row("existing-1", "reconcile schema differences")]
+
+    monkeypatch.setattr("app.services.goals.search_goals", _some_matches)
+    pool = _FakeGoalsPool()
+    result = _run(create_goal_from_user(
+        pool, canonical_name="reconcile schema drift", scope_type="global", owner_id="u1",
+    ))
+    assert result["outcome"] == "near_matches"
+    assert result["candidates"][0]["id"] == "existing-1"
+    assert pool.rows == []  # nothing written
+
+
+def test_create_goal_from_user_allow_create_anyway_bypasses_near_match_check(monkeypatch):
+    async def _should_not_be_called(pool, **kw):
+        raise AssertionError("search_goals must not run when allow_create_anyway=True")
+
+    monkeypatch.setattr("app.services.goals.search_goals", _should_not_be_called)
+    pool = _FakeGoalsPool()
+    result = _run(create_goal_from_user(
+        pool, canonical_name="reconcile schema drift", scope_type="global", owner_id="u1",
+        allow_create_anyway=True,
+    ))
+    assert result["outcome"] == "created"
+
+
+def test_create_goal_from_user_does_not_surface_its_own_exact_match(monkeypatch):
+    """find_or_create_goal's own tier-1 exact match would resolve this
+    identically anyway -- must not be shown back as a 'near match'."""
+    async def _exact_match_only(pool, **kw):
+        return [_goal_row("existing-1", "Reconcile Schema Drift")]
+
+    monkeypatch.setattr("app.services.goals.search_goals", _exact_match_only)
+    pool = _FakeGoalsPool()
+    pool.rows.append({
+        "id": "existing-1", "canonical_name": "Reconcile Schema Drift",
+        "normalized_name": normalize_goal_name("Reconcile Schema Drift"),
+        "status": "active", "scope_type": "global", "scope_entity_id": None,
+    })
+    result = _run(create_goal_from_user(
+        pool, canonical_name="reconcile schema drift", scope_type="global", owner_id="u1",
+    ))
+    assert result["outcome"] == "matched"
+    assert result["goal"]["id"] == "existing-1"

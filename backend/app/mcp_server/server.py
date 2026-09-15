@@ -3721,6 +3721,138 @@ async def explain_implementation_selection(
 
 
 @server.tool()
+async def search_goals(
+    query: str, ctx: Context,
+    scope_type: Optional[str] = None, scope_entity_id: Optional[str] = None,
+    status: Optional[str] = None, semantic: bool = False, limit: int = 10,
+) -> str:
+    """
+    Founder directive ingestion.md Sec 18: Goal search as a primary
+    product capability. Lexical (full-text over canonical_name +
+    description) always runs; `semantic=True` additionally embeds
+    `query` (one real embedding API call -- opt-in, not the default,
+    since a search-as-you-type UI would otherwise pay for an embedding
+    on every keystroke) and RRF-fuses both legs
+    (app.services.goals.search_goals).
+
+    `scope_type`/`scope_entity_id`: restrict to one scope (e.g. a single
+    project's local goals); omit both to search only the caller's own
+    visible global goals (same `_caller_access_scope()` posture every
+    other read tool in this file uses -- retrieval is not authorization).
+    `status`: filter to one lifecycle state (e.g. 'active'); omit for all
+    non-merged states.
+    """
+    from app.services.goals import search_goals as _search_goals
+
+    query_embedding = None
+    if semantic:
+        from app.services.embeddings import Embedder
+        query_embedding, _meta = await Embedder().embed_one_with_metadata(query, input_type="query")
+
+    pool = ctx.request_context.lifespan_context["pool"]
+    results = await _search_goals(
+        pool, query_text=query, query_embedding=query_embedding,
+        scope=_caller_access_scope(), status=status, limit=limit,
+    )
+    # scope_type/scope_entity_id narrowing happens after the scope-checked
+    # fetch, not instead of it -- a caller cannot use these to see a Goal
+    # outside its own visibility.
+    if scope_type is not None:
+        results = [
+            r for r in results
+            if r.get("scope_type") == scope_type and r.get("scope_entity_id") == scope_entity_id
+        ]
+    return json.dumps(results, default=str)
+
+
+@server.tool()
+async def inspect_goal(goal_id: str, ctx: Context) -> str:
+    """
+    One Goal's full record plus its live Procedures/Implementations
+    (ingestion.md Sec 18). Returns "null" (never a fabricated row) for a
+    missing id OR one that exists but is not visible to the caller --
+    same anti-enumeration posture every other single-row-by-id tool in
+    this file uses.
+    """
+    from app.services.goals import get_goal
+
+    pool = ctx.request_context.lifespan_context["pool"]
+    result = await get_goal(pool, goal_id, scope=_caller_access_scope())
+    return json.dumps(result, default=str)
+
+
+@server.tool()
+async def list_goal_procedures(goal_id: str, ctx: Context) -> str:
+    """Every live Procedure that achieves this Goal (procedures.achieves_goal_id).
+    Thin wrapper -- `inspect_goal` already returns the same list; this
+    exists as a focused, single-purpose tool for a caller that only wants
+    that one relationship."""
+    pool = ctx.request_context.lifespan_context["pool"]
+    rows = await pool.fetch(
+        "SELECT id, procedure_id, name, verification_state, availability "
+        "FROM procedures WHERE achieves_goal_id = $1 AND t_invalid IS NULL "
+        "ORDER BY t_created DESC LIMIT 100",
+        goal_id,
+    )
+    return json.dumps([dict(r) for r in rows], default=str)
+
+
+@server.tool()
+async def list_goal_implementations(goal_id: str, ctx: Context) -> str:
+    """Every Implementation that satisfies this Goal (implementations.goal_id)
+    -- the ID-based counterpart to `list_implementations_for_goal`'s
+    exact-text lookup. Thin wrapper, same reasoning as `list_goal_procedures`."""
+    pool = ctx.request_context.lifespan_context["pool"]
+    rows = await pool.fetch(
+        "SELECT id, name, provider, kind, status FROM implementations "
+        "WHERE goal_id = $1 ORDER BY t_created DESC LIMIT 100",
+        goal_id,
+    )
+    return json.dumps([dict(r) for r in rows], default=str)
+
+
+@server.tool()
+async def create_goal(
+    canonical_name: str, ctx: Context,
+    description: Optional[str] = None,
+    scope_type: str = "global", scope_entity_id: Optional[str] = None,
+    allow_create_anyway: bool = False, use_embeddings: bool = True,
+) -> str:
+    """
+    Founder directive ingestion.md Sec 19: the user-facing create-Goal
+    flow. Searches near matches FIRST (lexical + semantic when
+    `use_embeddings=True`, one real embedding call); if any exist and
+    `allow_create_anyway` is False, returns them for review instead of
+    writing anything -- call again with `allow_create_anyway=True` (or
+    inspect/reuse one of the returned candidates via `inspect_goal`) to
+    proceed. New goals start `status='candidate'` -- never born
+    active/reviewed (ingestion.md Sec 19's own "candidate lifecycle").
+
+    Returns {"outcome": "near_matches", "candidates": [...]}
+         or {"outcome": "created" | "matched", "goal": {...}}.
+    """
+    from app.services.goals import create_goal_from_user
+    from app.services.v0_gate import V0Violation
+
+    embedder = None
+    if use_embeddings:
+        from app.services.embeddings import Embedder
+        embedder = Embedder()
+
+    pool = ctx.request_context.lifespan_context["pool"]
+    try:
+        result = await create_goal_from_user(
+            pool, canonical_name=canonical_name, description=description,
+            scope_type=scope_type, scope_entity_id=scope_entity_id,
+            owner_id=_resolve_caller_identity(fallback="mcp_create_goal"),
+            embedder=embedder, allow_create_anyway=allow_create_anyway,
+        )
+    except V0Violation as exc:
+        return f"REFUSED: {exc}"
+    return json.dumps(result, default=str)
+
+
+@server.tool()
 async def submit_implementation(
     procedure_id: str, role: str, ctx: Context,
     implementation_id: Optional[str] = None,
