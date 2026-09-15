@@ -57,14 +57,14 @@ def test_classify_step_deterministic_returns_none_for_ordinary_steps():
 
 def test_classify_step_semantics_heuristic_for_template_placeholder():
     result = _run(classify_step_semantics("Modify: `exact/path/to/existing.py:123-145`"))
-    assert result == {"kind": "CONTEXT_ONLY", "classification": "heuristic"}
+    assert result == {"kind": "CONTEXT_ONLY", "classification": "heuristic", "abstracted_goal": None}
 
 
 def test_classify_step_semantics_unclassified_default_with_no_client():
     """No deterministic signal, no client -- ABSTRACT_ACTION (keep the
     step), never a fabricated filter decision."""
     result = _run(classify_step_semantics("Design units with clear boundaries."))
-    assert result == {"kind": "ABSTRACT_ACTION", "classification": "unclassified"}
+    assert result == {"kind": "ABSTRACT_ACTION", "classification": "unclassified", "abstracted_goal": None}
 
 
 def test_classify_step_semantics_deterministic_match_skips_the_client_entirely():
@@ -80,7 +80,7 @@ def test_classify_step_semantics_llm_classified_on_success():
         "Run the tests and make sure they pass.", client=client,
         skill_purpose="Test-driven development.",
     ))
-    assert result == {"kind": "VERIFICATION", "classification": "llm_classified"}
+    assert result == {"kind": "VERIFICATION", "classification": "llm_classified", "abstracted_goal": None}
     assert "Test-driven development." in client.requests[0]["messages"][1]["content"]
 
 
@@ -97,7 +97,7 @@ def test_classify_step_semantics_context_only_via_llm():
 def test_classify_step_semantics_safe_default_on_genuine_abstain():
     client = FakeClient(['{"abstain": true}'])
     result = _run(classify_step_semantics("Some ambiguous step.", client=client))
-    assert result == {"kind": "ABSTRACT_ACTION", "classification": "unclassified"}
+    assert result == {"kind": "ABSTRACT_ACTION", "classification": "unclassified", "abstracted_goal": None}
 
 
 def test_classify_step_semantics_safe_default_on_transient_failure():
@@ -107,7 +107,7 @@ def test_classify_step_semantics_safe_default_on_transient_failure():
     implementation_goals.py already established."""
     client = FakeClient(raises=True)
     result = _run(classify_step_semantics("Some step.", client=client))
-    assert result == {"kind": "ABSTRACT_ACTION", "classification": "needs_enrichment"}
+    assert result == {"kind": "ABSTRACT_ACTION", "classification": "needs_enrichment", "abstracted_goal": None}
 
 
 def test_classify_step_semantics_safe_default_on_malformed_response():
@@ -147,6 +147,7 @@ def test_decompose_steps_filters_context_only_and_proposition():
             "VERIFICATION": 0, "CONTEXT_ONLY": 1,
         },
         "errors": 0,
+        "rewritten_indices": [],
     }
 
 
@@ -204,3 +205,88 @@ def test_classify_via_llm_raises_transient_failure_directly():
     client = FakeClient(raises=True)
     with pytest.raises(SemanticDecompositionTransientFailure):
         _run(_classify_step_via_llm(client, "a-model", step_text="x", skill_purpose=None))
+
+
+# --- CONCRETE_IMPLEMENTATION: the substitution-test rewrite, no Implementation row ---
+
+def test_classify_step_semantics_returns_the_abstracted_rewrite():
+    """The founder directive's own §3 example, almost verbatim."""
+    client = FakeClient([
+        '{"kind": "CONCRETE_IMPLEMENTATION", "abstracted_goal": "Locate all callers of the symbol"}',
+    ])
+    result = _run(classify_step_semantics("Use rg to find all callers.", client=client))
+    assert result["kind"] == "CONCRETE_IMPLEMENTATION"
+    assert result["abstracted_goal"] == "Locate all callers of the symbol"
+    assert result["classification"] == "llm_classified"
+
+
+def test_classify_step_semantics_abstracted_goal_none_for_other_kinds():
+    """A model that (incorrectly) includes abstracted_goal on a
+    non-CONCRETE_IMPLEMENTATION kind must not have it leak through --
+    that field only ever means something for this one category."""
+    client = FakeClient([
+        '{"kind": "ABSTRACT_ACTION", "abstracted_goal": "should be ignored"}',
+    ])
+    result = _run(classify_step_semantics("Design units with clear boundaries.", client=client))
+    assert result["kind"] == "ABSTRACT_ACTION"
+    assert result["abstracted_goal"] is None
+
+
+def test_classify_step_semantics_concrete_implementation_with_no_rewrite_offered():
+    """The model classifies correctly but leaves the rewrite null -- kept
+    as None, never fabricated."""
+    client = FakeClient(['{"kind": "CONCRETE_IMPLEMENTATION", "abstracted_goal": null}'])
+    result = _run(classify_step_semantics("Use Docker for isolation.", client=client))
+    assert result["kind"] == "CONCRETE_IMPLEMENTATION"
+    assert result["abstracted_goal"] is None
+
+
+def test_classify_step_semantics_blank_abstracted_goal_becomes_none():
+    client = FakeClient(['{"kind": "CONCRETE_IMPLEMENTATION", "abstracted_goal": "   "}'])
+    result = _run(classify_step_semantics("Use Docker for isolation.", client=client))
+    assert result["abstracted_goal"] is None
+
+
+def test_decompose_steps_stores_the_abstracted_rewrite_not_the_literal_mention():
+    client = FakeClient([
+        '{"kind": "CONCRETE_IMPLEMENTATION", "abstracted_goal": "Locate all callers of the symbol"}',
+    ])
+    kept, report = _run(decompose_steps(["Use rg to find all callers."], client=client))
+    assert kept == ["Locate all callers of the symbol"]
+    assert report["by_kind"]["CONCRETE_IMPLEMENTATION"] == 1
+    assert report["filtered"] == 0, "CONCRETE_IMPLEMENTATION is rewritten, never filtered out"
+
+
+def test_decompose_steps_keeps_original_text_when_no_rewrite_is_offered():
+    client = FakeClient(['{"kind": "CONCRETE_IMPLEMENTATION", "abstracted_goal": null}'])
+    kept, report = _run(decompose_steps(["Use Docker for isolation."], client=client))
+    assert kept == ["Use Docker for isolation."]
+
+
+def test_decompose_steps_reports_rewritten_indices_into_the_final_kept_list():
+    """Indices are into `kept` (post-filter), not the original `steps` --
+    this is what skill_ingestion.py's own G7 groundedness check needs to
+    skip the right positions in the STORED step list, not the source one."""
+    client = FakeClient([
+        # Only ONE real call happens: step 1 resolves deterministically
+        # (CONTEXT_ONLY, no client touched at all), so this single scripted
+        # response is for step 2.
+        '{"kind": "CONCRETE_IMPLEMENTATION", "abstracted_goal": "Locate all callers"}',
+    ])
+    steps = ["Create: `exact/path/to/x.py`", "Use rg to find callers."]
+    kept, report = _run(decompose_steps(steps, client=client))
+    assert len(client.requests) == 1, "step 1 must resolve deterministically, never touching the client"
+    assert kept == ["Locate all callers"]
+    assert report["rewritten_indices"] == [0], (
+        "the rewritten step is at index 0 of KEPT, even though it was index 1 of the original list"
+    )
+
+
+def test_no_implementation_row_creation_surface_exists_in_this_module():
+    """Structural guard for the actual design decision made: this module
+    must never import or reference anything implementation-registry-shaped
+    -- CONCRETE_IMPLEMENTATION is a text rewrite ONLY, never a DB write."""
+    import app.services.semantic_decomposition as sd
+
+    assert not hasattr(sd, "capture_procedure")
+    assert not hasattr(sd, "implementation_goals")

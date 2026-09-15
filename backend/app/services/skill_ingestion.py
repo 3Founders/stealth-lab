@@ -927,7 +927,10 @@ def _normalize_for_overlap(text: str) -> str:
     return _WS_RE.sub(" ", (text or "").lower()).strip()
 
 
-def _check_document_groundedness(parsed: ParsedSkill, artifact_content: str) -> dict:
+def _check_document_groundedness(
+    parsed: ParsedSkill, artifact_content: str,
+    *, skip_verbatim_indices: Optional[frozenset[int]] = None,
+) -> dict:
     """G7: a pure, deterministic sanity check that the captured Procedure
     is actually grounded in the source document rather than
     over-extrapolated. This is NOT a groundedness proof (no LLM call, no
@@ -937,17 +940,30 @@ def _check_document_groundedness(parsed: ParsedSkill, artifact_content: str) -> 
     the same posture G3's screening REJECT and G4's classifier already
     use in this file.
 
+    `skip_verbatim_indices`: step indices semantic_decomposition.py's own
+    `decompose_steps()` deliberately rewrote (the founder directive's §3
+    substitution-test rewrite -- "Use rg to find callers" ->
+    "Locate all callers of the symbol"). A rewritten step is NEVER
+    verbatim in the source by design; without this, every legitimate
+    rewrite would trip the same signal this check exists to catch a real
+    extraction bug with, and the two would be indistinguishable in the
+    audit log.
+
     Returns {"grounded": bool, "reasons": [str, ...]}. `reasons` is empty
     iff `grounded` is True.
     """
+    skip_verbatim_indices = skip_verbatim_indices or frozenset()
     reasons: list[str] = []
     norm_content = _normalize_for_overlap(artifact_content)
 
     # 1. every step's own words should appear, verbatim (after
     #    normalization), somewhere in the source -- steps are extracted
     #    FROM the content by parse_skill_md, so this should hold whenever
-    #    extraction behaved.
+    #    extraction behaved. Skipped for a known, deliberate rewrite (see
+    #    `skip_verbatim_indices` above).
     for i, step in enumerate(parsed.steps):
+        if i in skip_verbatim_indices:
+            continue
         norm_step = _normalize_for_overlap(step)
         if norm_step and norm_step not in norm_content:
             reasons.append(f"step {i} not found verbatim in source: {step[:80]!r}")
@@ -984,6 +1000,7 @@ async def _emit_document_observation(
     ingestion_context_id: str,
     owner_id: Optional[str],
     artifact_content: str = "",
+    groundedness_skip_indices: Optional[frozenset[int]] = None,
 ) -> str:
     """One observation capturing what the source asserts: a procedure named
     X with N steps. The document path has NO trace events, so ``event_ids``
@@ -1010,7 +1027,9 @@ async def _emit_document_observation(
         name=parsed.name,
         steps=parsed.steps,
     )
-    groundedness = _check_document_groundedness(parsed, artifact_content)
+    groundedness = _check_document_groundedness(
+        parsed, artifact_content, skip_verbatim_indices=groundedness_skip_indices,
+    )
     if not groundedness["grounded"]:
         log.warning(
             "skill_ingestion: document groundedness check failed for '%s': %s",
@@ -2247,6 +2266,10 @@ async def compile_skill_artifact(
             artifact.uri, decomposition_report["by_kind"],
         )
     parsed = replace(parsed, steps=filtered_steps)
+    # Threaded to _emit_document_observation below so G7's verbatim check
+    # never flags a rewrite THIS pass deliberately made as if it were an
+    # extraction bug -- see _check_document_groundedness's own docstring.
+    groundedness_skip_indices = frozenset(decomposition_report["rewritten_indices"])
 
     capability_statement = (
         None if (injection_signals or quarantined)
@@ -2387,6 +2410,7 @@ async def compile_skill_artifact(
             observation_id = await _emit_document_observation(
                 pool, parsed, ingestion_context_id=ingestion_context_id,
                 owner_id=owner_id, artifact_content=artifact.content,
+                groundedness_skip_indices=groundedness_skip_indices,
             )
 
             superseded_version = int(
@@ -2589,7 +2613,7 @@ async def compile_skill_artifact(
     )
     observation_id = await _emit_document_observation(
         pool, parsed, ingestion_context_id=ingestion_context_id, owner_id=owner_id,
-        artifact_content=artifact.content,
+        artifact_content=artifact.content, groundedness_skip_indices=groundedness_skip_indices,
     )
 
     # G3 (persisted screening audit) + real Claim extraction from the

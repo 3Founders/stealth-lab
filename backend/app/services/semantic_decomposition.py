@@ -26,12 +26,25 @@ PROPOSITION result changes behavior -- the same asymmetric-risk posture
 `_persist_package_relations`'s own `supported_steps` computation already
 uses ("[] never fabricated... a real, if narrow, signal").
 
-CONCRETE_IMPLEMENTATION and VERIFICATION are classified and reported but
-currently kept as steps unchanged: rewriting a step's own text into an
-abstracted goal (the founder directive's own substitution-test example,
-"Use rg to find callers" -> goal=reference_search + a separate
-Implementation=ripgrep) is a real text-transformation task, deliberately
-out of scope for this pass.
+CONCRETE_IMPLEMENTATION gets the founder directive's own substitution-test
+rewrite (§3): the model is asked for an abstracted phrasing with the
+specific tool/command name removed ("Use rg to find callers" ->
+"Locate all callers of the symbol"), which replaces the stored step text.
+Deliberately NO Implementation object is created for it: a bare tool
+MENTION carries no real locator/invocation (no URL, no path, no sha256 --
+nothing `execute_implementation()` could ever actually run), so there is
+nothing for a real Implementation row to usefully hold beyond the name
+already captured in the abstracted-away original text. Real Implementation
+rows stay reserved for mechanisms with real access semantics behind them
+(a bundled script, an MCP tool, an API) -- see
+implementation_goals.py/skill_ingestion.py's `_persist_package_relations`.
+When no rewrite is offered (abstain, failure, no client, or the model
+classifies CONCRETE_IMPLEMENTATION but leaves the rewrite null), the
+original step text is kept unchanged -- never blanked, never guessed at.
+
+VERIFICATION is classified and reported but currently kept as a step
+unchanged -- it is already a real, executable instruction as written; no
+rewrite is needed for this pass to be honest about it.
 """
 from __future__ import annotations
 
@@ -90,7 +103,13 @@ CONTEXT_ONLY: not an instruction to execute at all -- background information, an
 template placeholder, or documentation ABOUT how to write good instructions (e.g. a list of phrases \
 to avoid).
 
-Reply with ONLY a JSON object, no other text: {"kind": "<one of the five category names above>"}
+Reply with ONLY a JSON object, no other text: {"kind": "<one of the five category names above>", \
+"abstracted_goal": <see below>}
+
+`abstracted_goal`: ONLY when kind is CONCRETE_IMPLEMENTATION, give a rephrasing of the SAME step \
+with the specific tool/command/mechanism name removed, describing the underlying general action \
+instead (e.g. "Use rg to find all callers" -> "Locate all callers of the symbol"). For every other \
+kind, set this to null.
 
 If you cannot confidently classify this step, reply with exactly this JSON object instead: \
 {"abstain": true}
@@ -99,6 +118,7 @@ If you cannot confidently classify this step, reply with exactly this JSON objec
 
 class _StepClassificationResponse(BaseModel):
     kind: str
+    abstracted_goal: Optional[str] = None
 
     @field_validator("kind")
     @classmethod
@@ -107,6 +127,15 @@ class _StepClassificationResponse(BaseModel):
         if v not in STEP_SEMANTIC_KINDS:
             raise ValueError(f"kind must be one of {STEP_SEMANTIC_KINDS}, got {v!r}")
         return v
+
+    @field_validator("abstracted_goal")
+    @classmethod
+    def _blank_becomes_none(cls, v: Optional[str]) -> Optional[str]:
+        # A blank string is the same as "nothing offered" -- never treated
+        # as a real rewrite.
+        if v is not None and not v.strip():
+            return None
+        return v.strip() if v is not None else None
 
 
 _ABSTAIN = object()
@@ -176,27 +205,39 @@ async def classify_step_semantics(
     step_text: str, *, skill_purpose: Optional[str] = None,
     client: Any = None, model: str = "gemma-4-31B-it",
 ) -> dict:
-    """Returns {"kind", "classification"}. `classification` mirrors
-    implementation_goals.py's own vocabulary (`heuristic` /
-    `llm_classified` / `unclassified` / `needs_enrichment`) for the same
-    reason: a consistent, greppable signal for how confident/attempted
-    each real classification was, across both modules this session added."""
+    """Returns {"kind", "classification", "abstracted_goal"}.
+    `classification` mirrors implementation_goals.py's own vocabulary
+    (`heuristic` / `llm_classified` / `unclassified` / `needs_enrichment`)
+    for the same reason: a consistent, greppable signal for how
+    confident/attempted each real classification was, across both modules
+    this session added.
+
+    `abstracted_goal` is non-None only when kind == CONCRETE_IMPLEMENTATION
+    AND the model actually offered a rewrite -- never fabricated when
+    absent (the deterministic path, the no-client/abstain/failure safe
+    defaults, and a model that classified CONCRETE_IMPLEMENTATION but left
+    `abstracted_goal` null all leave it None). No separate Implementation
+    object is created for this kind -- see this module's own docstring: a
+    bare tool mention has no real locator/invocation, so the abstracted
+    step text IS the whole real output for this category, not a stub
+    pointing at something else."""
     det = classify_step_deterministic(step_text)
     if det:
-        return {"kind": det, "classification": "heuristic"}
+        return {"kind": det, "classification": "heuristic", "abstracted_goal": None}
 
     if client is None:
-        return {"kind": "ABSTRACT_ACTION", "classification": "unclassified"}
+        return {"kind": "ABSTRACT_ACTION", "classification": "unclassified", "abstracted_goal": None}
 
     try:
         result = await _classify_step_via_llm(
             client, model, step_text=step_text, skill_purpose=skill_purpose,
         )
     except SemanticDecompositionTransientFailure:
-        return {"kind": "ABSTRACT_ACTION", "classification": "needs_enrichment"}
+        return {"kind": "ABSTRACT_ACTION", "classification": "needs_enrichment", "abstracted_goal": None}
     if result is None:
-        return {"kind": "ABSTRACT_ACTION", "classification": "unclassified"}
-    return {"kind": result.kind, "classification": "llm_classified"}
+        return {"kind": "ABSTRACT_ACTION", "classification": "unclassified", "abstracted_goal": None}
+    abstracted_goal = result.abstracted_goal if result.kind == "CONCRETE_IMPLEMENTATION" else None
+    return {"kind": result.kind, "classification": "llm_classified", "abstracted_goal": abstracted_goal}
 
 
 async def decompose_steps(
@@ -223,6 +264,14 @@ async def decompose_steps(
     kept: list[str] = []
     by_kind: dict[str, int] = {k: 0 for k in STEP_SEMANTIC_KINDS}
     errors = 0
+    # Indices INTO `kept` (not into the original `steps`) of any step
+    # stored as an abstracted rewrite rather than the source's own words --
+    # threaded back to compile_skill_artifact so _check_document_
+    # groundedness's verbatim-substring check (G7) can skip exactly these
+    # positions. Without this, a deliberate, correct rewrite would trip a
+    # check designed to catch a genuine extraction bug, and the two would
+    # be indistinguishable in the audit log.
+    rewritten_indices: set[int] = set()
     for step_text in steps:
         try:
             result = await classify_step_semantics(
@@ -236,14 +285,29 @@ async def decompose_steps(
             continue
         kind = result["kind"]
         by_kind[kind] = by_kind.get(kind, 0) + 1
-        if kind not in _FILTERED_KINDS:
+        if kind in _FILTERED_KINDS:
+            continue
+        # CONCRETE_IMPLEMENTATION: store the abstracted phrasing when the
+        # model actually offered one (the substitution-test rewrite,
+        # founder directive §3) -- the literal tool/command mention is
+        # dropped from the stored step, never the step itself. No
+        # Implementation row is created here: a bare name with no real
+        # locator/invocation has nothing for one to usefully hold (see
+        # this function's own module docstring). Falls back to the
+        # original text, never blank, when no rewrite was offered.
+        if kind == "CONCRETE_IMPLEMENTATION" and result.get("abstracted_goal"):
+            kept.append(result["abstracted_goal"])
+            rewritten_indices.add(len(kept) - 1)
+        else:
             kept.append(step_text)
 
     if steps and not kept:
         kept = list(steps)
+        rewritten_indices = set()  # indices above no longer correspond to anything real
 
     report = {
         "total": len(steps), "kept": len(kept), "filtered": len(steps) - len(kept),
         "by_kind": by_kind, "errors": errors,
+        "rewritten_indices": sorted(rewritten_indices),
     }
     return kept, report
