@@ -303,6 +303,73 @@ def _build_implementations_page(
     return _finalize_page("implementations.md", blocks + list(extra_blocks))
 
 
+# READY/RUNNING/BLOCKED/DONE per meta-harness Sec 24's own RUN_STATE
+# vocabulary -- mapped from the real execution_run_nodes.status values
+# (durable_run.py's own lifecycle), not invented. A status this map
+# doesn't recognize is an honest bug signal, not silently dropped --
+# _build_index_md's caller sees a KeyError in that case rather than a
+# node quietly vanishing from every bucket.
+_RUN_STATE_BUCKET = {
+    "pending": "READY", "resumable": "READY",
+    "running": "RUNNING",
+    "blocked": "BLOCKED",
+    "succeeded": "DONE", "failed": "DONE", "cancelled": "DONE",
+}
+
+
+async def _gather_index_groups(
+    pool: asyncpg.Pool, *, context: dict[str, Any],
+    claims_rows: list[IdxRow], procedures_rows: list[IdxRow],
+    recommended_implementations: list[dict],
+):
+    """The real data-gathering half of `index.md` (meta-harness Sec 24),
+    kept separate from the final render call so the caller can supply
+    `revision` (the journal's own monotonic seq, only known once
+    `append_events` has actually run under the write lock -- see
+    `generate_projection`'s own call site) without this function needing
+    to know anything about journaling. `GOAL_GROUP` deliberately NOT
+    produced yet -- Goal has no canonical table in this codebase as of
+    this pass (confirmed live with the `ingestion` lane, who owns that
+    migration per ingestion.md Sec 2); emitting one ahead of real
+    goal_id values would mean fabricating them. CLAIM_GROUP/
+    PROCEDURE_GROUP reuse the SAME topic tags already computed for
+    claims.idx/procedures.idx (`.tags[0]`, claim_type/domain
+    respectively) -- one source of grouping truth, not two.
+    IMPLEMENTATION_GROUP groups by the real `implementations.goal` column
+    (migration 80) for exactly the ids this run's own
+    `recommended_implementations` names -- never the whole corpus (B30's
+    bounded-working-set rule, same as claims.md's own scoping).
+    """
+    from app.stealth.pipe_format import GroupLine, RunStateLine
+
+    def _group(rows: list[IdxRow]) -> list[GroupLine]:
+        by_topic: dict[str, list[str]] = {}
+        for r in rows:
+            topic = r.tags[0] if r.tags else "-"
+            by_topic.setdefault(topic, []).append(r.obj_id)
+        return [GroupLine(topic=t, ids=ids) for t, ids in sorted(by_topic.items())]
+
+    claim_groups = _group(claims_rows)
+    procedure_groups = _group(procedures_rows)
+
+    impl_ids = [str(i["implementation_id"]) for i in recommended_implementations if i.get("implementation_id")]
+    implementation_groups: list[GroupLine] = []
+    if impl_ids:
+        rows = await pool.fetch("SELECT id, goal FROM implementations WHERE id = ANY($1::uuid[])", impl_ids)
+        by_goal: dict[str, list[str]] = {}
+        for r in rows:
+            by_goal.setdefault(str(r["goal"] or "-"), []).append(str(r["id"]))
+        implementation_groups = [GroupLine(topic=t, ids=ids) for t, ids in sorted(by_goal.items())]
+
+    by_state: dict[str, list[str]] = {"READY": [], "RUNNING": [], "BLOCKED": [], "DONE": []}
+    for n in context.get("nodes", []):
+        bucket = _RUN_STATE_BUCKET[n["status"]]
+        by_state[bucket].append(f"N{n['node_order']}")
+    run_states = [RunStateLine(state=s, node_ids=by_state[s]) for s in ("READY", "RUNNING", "BLOCKED", "DONE")]
+
+    return claim_groups, procedure_groups, implementation_groups, run_states
+
+
 def _build_run_page(
     context: dict[str, Any], intents: dict[int, dict] | None = None,
 ) -> tuple[str, list[RunIdxRow]]:
@@ -481,6 +548,11 @@ async def generate_projection(
     run_md, run_rows = _build_run_page(context, intents)
     exploration_md, exploration_rows = render_exploration_page(workspace_root)
 
+    claim_groups, procedure_groups, implementation_groups, run_states = await _gather_index_groups(
+        pool, context=context, claims_rows=claims_rows, procedures_rows=procedures_rows,
+        recommended_implementations=context.get("recommended_implementations") or [],
+    )
+
     claims_idx = render_idx(claims_rows, header="claims.idx  id|version|scope|status|tags|file|start|end|summary")
     procedures_idx = render_idx(procedures_rows, header="procedures.idx  id|version|scope|status|tags|file|start|end|summary")
     implementations_idx = render_idx(impl_rows, header="implementations.idx  id|version|scope|status|tags|file|start|end|summary")
@@ -509,7 +581,7 @@ async def generate_projection(
     change_cursor = f"{run_row['id']}:{updated_at.isoformat() if updated_at else '0'}"
     faulted_counts = {k: len(v) for k, v in faulted.items() if v}
     file_list = [
-        "context.md", "run.json", "meta.json",
+        "context.md", "run.json", "meta.json", "index.md",
         "claims.md", "procedures.md", "implementations.md", "run.md", "events.jsonl",
         "index/root.idx", "index/claims.idx", "index/procedures.idx",
         "index/implementations.idx", "index/run.idx",
@@ -557,9 +629,19 @@ async def generate_projection(
         )[0]
         meta_json["projection_revision"] = seq
 
+        from app.stealth.pipe_format import render_index_md
+
+        index_md = render_index_md(
+            repo=os.path.basename(os.path.abspath(workspace_root)) or workspace_root,
+            revision=seq, active_run=str(run_row["id"]),
+            claim_groups=claim_groups, procedure_groups=procedure_groups,
+            implementation_groups=implementation_groups, run_states=run_states,
+        )
+
         plan: list[tuple[str, str]] = [
             (os.path.join(stealth_dir, "context.md"), context_md),
             (os.path.join(stealth_dir, "run.json"), json.dumps(run_json, indent=2, default=str)),
+            (os.path.join(stealth_dir, "index.md"), index_md),
             (os.path.join(stealth_dir, "claims.md"), claims_md),
             (os.path.join(stealth_dir, "procedures.md"), procedures_md),
             (os.path.join(stealth_dir, "implementations.md"), implementations_md),
@@ -582,6 +664,7 @@ async def generate_projection(
         "context_md": context_md,
         "run_json": run_json,
         "meta_json": meta_json,
+        "index_md": index_md,
         "claims_md": claims_md,
         "procedures_md": procedures_md,
         "implementations_md": implementations_md,

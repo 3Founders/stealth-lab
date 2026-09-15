@@ -35,6 +35,7 @@ from app.stealth.generator import (
     _build_implementations_page,
     _build_procedures_page,
     _build_run_page,
+    _gather_index_groups,
 )
 
 
@@ -256,3 +257,102 @@ def test_root_router_stays_bounded_even_with_a_large_working_set():
 
     root = render_root_idx([RootRow("claims", "claims.idx", "x"), RootRow("run", "run.idx", "y")])
     assert len(root.encode("utf-8")) <= ROOT_IDX_MAX_BYTES
+
+
+# ------------------------------------------------------------- index.md
+
+
+class _FakeImplGoalsPool:
+    """Answers `_gather_index_groups`'s one query:
+    SELECT id, goal FROM implementations WHERE id = ANY($1::uuid[])."""
+
+    def __init__(self, rows: list[dict]):
+        self._rows = rows
+
+    async def fetch(self, sql, *params):
+        ids = {str(i) for i in params[0]}
+        return [r for r in self._rows if str(r["id"]) in ids]
+
+
+def test_gather_index_groups_claim_and_procedure_groups_reuse_idx_tags():
+    claims_rows = [
+        IdxRow(obj_id="C-1", version="1", scope="repo", status="ACTIVE", tags=("fact",),
+               file="claims.md", start=1, end=1, summary="s"),
+        IdxRow(obj_id="C-2", version="1", scope="repo", status="ACTIVE", tags=("invariant",),
+               file="claims.md", start=2, end=2, summary="s"),
+    ]
+    procedures_rows = [
+        IdxRow(obj_id="P-1", version="1", scope="global", status="verified", tags=("testing",),
+               file="procedures.md", start=1, end=3, summary="s"),
+    ]
+    claim_groups, procedure_groups, implementation_groups, run_states = _run(_gather_index_groups(
+        _FakeImplGoalsPool([]), context={"nodes": []}, claims_rows=claims_rows,
+        procedures_rows=procedures_rows, recommended_implementations=[],
+    ))
+    assert {g.topic: g.ids for g in claim_groups} == {"fact": ["C-1"], "invariant": ["C-2"]}
+    assert {g.topic: g.ids for g in procedure_groups} == {"testing": ["P-1"]}
+    assert implementation_groups == []
+    assert {s.state: s.node_ids for s in run_states} == {"READY": [], "RUNNING": [], "BLOCKED": [], "DONE": []}
+
+
+def test_gather_index_groups_implementation_groups_by_real_goal_column():
+    pool = _FakeImplGoalsPool([
+        {"id": "I-1", "goal": "verification"},
+        {"id": "I-2", "goal": "verification"},
+        {"id": "I-3", "goal": None},
+    ])
+    _, _, implementation_groups, _ = _run(_gather_index_groups(
+        pool, context={"nodes": []}, claims_rows=[], procedures_rows=[],
+        recommended_implementations=[
+            {"implementation_id": "I-1"}, {"implementation_id": "I-2"}, {"implementation_id": "I-3"},
+        ],
+    ))
+    by_topic = {g.topic: sorted(g.ids) for g in implementation_groups}
+    assert by_topic == {"verification": ["I-1", "I-2"], "-": ["I-3"]}
+
+
+def test_gather_index_groups_buckets_nodes_by_real_status():
+    context = {"nodes": [
+        {"node_order": 0, "status": "succeeded"},
+        {"node_order": 1, "status": "running"},
+        {"node_order": 2, "status": "pending"},
+        {"node_order": 3, "status": "blocked"},
+        {"node_order": 4, "status": "resumable"},
+        {"node_order": 5, "status": "failed"},
+    ]}
+    _, _, _, run_states = _run(_gather_index_groups(
+        _FakeImplGoalsPool([]), context=context, claims_rows=[], procedures_rows=[],
+        recommended_implementations=[],
+    ))
+    by_state = {s.state: s.node_ids for s in run_states}
+    assert by_state["DONE"] == ["N0", "N5"]
+    assert by_state["RUNNING"] == ["N1"]
+    assert by_state["READY"] == ["N2", "N4"]
+    assert by_state["BLOCKED"] == ["N3"]
+
+
+def test_index_md_end_to_end_real_grammar():
+    from app.stealth.pipe_format import render_index_md
+
+    claim_groups, procedure_groups, implementation_groups, run_states = _run(_gather_index_groups(
+        _FakeImplGoalsPool([{"id": "I-1", "goal": "verification"}]),
+        context={"nodes": [{"node_order": 0, "status": "running"}]},
+        claims_rows=[IdxRow(obj_id="C-1", version="1", scope="repo", status="ACTIVE", tags=("fact",),
+                             file="claims.md", start=1, end=1, summary="s")],
+        procedures_rows=[],
+        recommended_implementations=[{"implementation_id": "I-1"}],
+    ))
+    md = render_index_md(
+        repo="StealthLab", revision=42, active_run="R-1",
+        claim_groups=claim_groups, procedure_groups=procedure_groups,
+        implementation_groups=implementation_groups, run_states=run_states,
+    )
+    lines = md.splitlines()
+    assert "REPO|StealthLab" in lines
+    assert "REVISION|42" in lines
+    assert "ACTIVE_RUN|R-1" in lines
+    assert "CLAIM_GROUP|fact|C-1" in lines
+    assert "IMPLEMENTATION_GROUP|verification|I-1" in lines
+    assert "RUN_STATE|RUNNING|N0" in lines
+    # GOAL_GROUP deliberately absent -- no canonical Goal table yet
+    assert not any(ln.startswith("GOAL_GROUP") for ln in lines)
