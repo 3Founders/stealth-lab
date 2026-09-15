@@ -73,12 +73,6 @@ def _short(value: object, n: int = 12) -> str:
     return s[:n]
 
 
-def _pc_id(pc: dict) -> str:
-    """Stable id for a precondition-derived local claim row."""
-    raw = f"{pc.get('subject')}|{pc.get('predicate')}|{pc.get('object')}"
-    return "pc-" + hashlib.sha1(raw.encode("utf-8")).hexdigest()[:10]
-
-
 _EMPTY_NOTE = {
     "claims.md": "(no structured preconditions and no page-faulted global claims in scope)",
     "procedures.md": "(no selected procedure)",
@@ -119,29 +113,72 @@ def _finalize_page(name: str, blocks: list[MdBlock]) -> tuple[str, list[IdxRow]]
     return rendered.text, rows
 
 
-def _build_claims_page(
-    context: dict[str, Any], extra_blocks: tuple[MdBlock, ...] = (),
+async def _build_claims_page(
+    pool: asyncpg.Pool, global_claims: tuple[MdBlock, ...] = (),
 ) -> tuple[str, list[IdxRow]]:
-    blocks: list[MdBlock] = []
-    for pc in context.get("required_preconditions") or []:
-        oid = _pc_id(pc)
-        subj, pred, obj = pc.get("subject", ""), pc.get("predicate", ""), pc.get("object", "")
-        status = pc.get("status", "UNKNOWN")
-        blocks.append(MdBlock(
-            obj_id=oid,
-            heading=f"CLAIM {oid} (local precondition)",
-            body=[
-                kv("statement", f"{subj} {pred} {obj}"),
-                kv("kind", "precondition"),
-                kv("status", status),
-                kv("subject", subj),
-                kv("predicate", pred),
-                kv("object", obj),
-            ],
-            scope="local", status=status, tags=("precondition",),
-            summary=f"{subj} {pred} {obj} -> {status}",
+    """Meta-harness Sec 25: `CLAIM|<id>|<status>|<topic>|<scope>|<statement>
+    |source=<source_ref>|version=<version>`, one line per real Claim
+    (`knowledge_nodes` node_type='claim').
+
+    Driven by `global_claims` -- the SAME page-faulted working set
+    `faults.py::resolve_blocks_by_kind` already resolves (real Claim rows
+    a caller has actually pulled into scope, via a precondition check or
+    an explicit `open_exploration` fault) -- never the whole corpus (B30's
+    bounded-working-set rule). Local precondition predicates (the OLD
+    `pc-<hash>` synthetic rows this function used to also emit) are NOT
+    real Claims -- they belong to run.md's own CONTEXT/ACCESS lines for
+    the node that checks them, not here; dropping them from claims.md is
+    a correction, not a regression (nothing downstream keyed off a
+    `pc-<hash>` id -- confirmed via grep before this change).
+
+    Queries `knowledge_nodes` directly for `source_id`/`claim_type`
+    (present on every real claim row, confirmed live) rather than
+    round-tripping through the faulted MdBlock's own rendered body text
+    -- `topic` is `claim_type` (fact/invariant/assumption/constraint/
+    causal/failure_mode/environment_fact/decision), a real stored
+    category, not an invented one; no claim in this corpus has a
+    separate free-text "topic" field to draw from honestly.
+    """
+    from app.stealth.pipe_format import ClaimLine, render_claims_md
+
+    if not global_claims:
+        return render_claims_md([]), []
+
+    ids = [b.obj_id for b in global_claims]
+    rows = await pool.fetch(
+        "SELECT id, properties, scope_type, t_invalid FROM knowledge_nodes "
+        "WHERE id = ANY($1::uuid[]) AND node_type = 'claim'", ids,
+    )
+    claim_lines: list[ClaimLine] = []
+    for row in rows:
+        props = row["properties"]
+        if isinstance(props, str):
+            props = json.loads(props)
+        props = props or {}
+        status = str(props.get("claim_status") or props.get("status") or "UNKNOWN")
+        if row["t_invalid"] is not None:
+            status = "SUPERSEDED"
+        claim_lines.append(ClaimLine(
+            claim_id=str(row["id"]),
+            status=status,
+            topic=str(props.get("claim_type") or "-"),
+            scope=str(row["scope_type"] or "global"),
+            statement=str(props.get("statement") or ""),
+            source=str(props.get("source_id") or "unknown"),
+            version=1,  # claims are id-addressed, not versioned (confirmed live -- no version column)
         ))
-    return _finalize_page("claims.md", blocks + list(extra_blocks))
+    claims_md = render_claims_md(claim_lines)
+
+    idx_rows: list[IdxRow] = []
+    for i, line in enumerate(claims_md.splitlines(), start=1):
+        if not line.startswith("CLAIM|"):
+            continue
+        cl = next(c for c in claim_lines if line.startswith(f"CLAIM|{c.claim_id}|"))
+        idx_rows.append(IdxRow(
+            obj_id=cl.claim_id, version=str(cl.version), scope=cl.scope, status=cl.status,
+            tags=(cl.topic,), file="claims.md", start=i, end=i, summary=cl.statement[:110],
+        ))
+    return claims_md, idx_rows
 
 
 def _build_procedures_page(
@@ -380,7 +417,7 @@ async def generate_projection(
     )
 
     # --- addressable per-type pages + indexes --------------------------
-    claims_md, claims_rows = _build_claims_page(context, global_claims)
+    claims_md, claims_rows = await _build_claims_page(pool, global_claims)
     procedures_md, procedures_rows = _build_procedures_page(
         context, procedure, verification, tuple(faulted.get("procedure", ())))
     implementations_md, impl_rows = _build_implementations_page(

@@ -58,7 +58,12 @@ def test_page_fault_merges_a_global_claim_without_clobbering_the_run_set():
             with tempfile.TemporaryDirectory() as ws:
                 base = await generate_projection(pool, workspace_root=ws, procedure_run_id=exec_run_id)
                 pc_rows_before = parse_idx(base["claims_idx"])
-                assert len(pc_rows_before) == 1  # the precondition-derived local claim
+                # meta-harness Sec 25 correction: claims.md now holds only
+                # real Claim rows (knowledge_nodes), never a local
+                # precondition predicate -- a precondition check is not a
+                # Claim (it belongs to run.md's own per-node state), so
+                # nothing is faulted in yet and this starts empty.
+                assert pc_rows_before == []
 
                 res = await project_knowledge(
                     pool, ws,
@@ -74,13 +79,14 @@ def test_page_fault_merges_a_global_claim_without_clobbering_the_run_set():
                 rows = parse_idx(claims_idx)
                 ids = {r[0] for r in rows}
                 assert claim_id in ids                       # global claim merged in
-                assert pc_rows_before[0][0] in ids           # run-scoped local claim preserved
 
-                # the merged block is line-addressable
+                # the merged record is line-addressable -- pipe format
+                # (Sec 25): one CLAIM|... line per record, so start == end.
                 target = next(r for r in rows if r[0] == claim_id)
+                assert target[6] == target[7]
                 md_lines = open(os.path.join(sdir, "claims.md"), encoding="utf-8").read().splitlines()
                 window = md_lines[int(target[6]) - 1:int(target[7])]
-                assert window[0].startswith(f"## CLAIM {claim_id}")
+                assert window[0].startswith(f"CLAIM|{claim_id}|")
                 assert any("parallel test execution" in ln for ln in window)
 
                 # root.idx still within budget; context.md now names the global claim

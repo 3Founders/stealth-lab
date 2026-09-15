@@ -14,6 +14,9 @@ Covers the T11 navigation contract at the format layer:
 """
 from __future__ import annotations
 
+import asyncio
+import json
+
 from app.stealth.format import (
     IDX_SEP,
     ROOT_IDX_MAX_BYTES,
@@ -32,8 +35,24 @@ from app.stealth.generator import (
     _build_implementations_page,
     _build_procedures_page,
     _build_run_page,
-    _pc_id,
 )
+
+
+def _run(coro):
+    return asyncio.run(coro)
+
+
+class _FakeClaimsPool:
+    """Answers exactly the one query `_build_claims_page` issues:
+    `SELECT id, properties, scope_type, t_invalid FROM knowledge_nodes
+    WHERE id = ANY($1::uuid[]) AND node_type = 'claim'`."""
+
+    def __init__(self, rows: list[dict]):
+        self._rows = rows
+
+    async def fetch(self, sql, *params):
+        ids = {str(i) for i in params[0]}
+        return [r for r in self._rows if str(r["id"]) in ids]
 
 _FAKE_CONTEXT = {
     "procedure_run_id": "run-1", "procedure_id": "proc-1", "procedure_version": 3,
@@ -122,22 +141,37 @@ def test_build_procedures_page_index_brackets_the_block():
     assert r.summary  # non-empty
 
 
-def test_build_claims_page_one_row_per_precondition_with_stable_ids():
-    md, rows = _build_claims_page(_FAKE_CONTEXT)
+def test_build_claims_page_one_pipe_row_per_faulted_global_claim():
+    global_claims = (
+        MdBlock(obj_id="c1111111-0000-4000-8000-000000000001", heading="CLAIM c1 (global)"),
+        MdBlock(obj_id="c2222222-0000-4000-8000-000000000002", heading="CLAIM c2 (global)"),
+    )
+    pool = _FakeClaimsPool([
+        {"id": "c1111111-0000-4000-8000-000000000001",
+         "properties": json.dumps({"statement": "auth lives in src/auth", "claim_status": "ACTIVE",
+                                    "claim_type": "fact", "source_id": "AGENTS.md"}),
+         "scope_type": "repo", "t_invalid": None},
+        {"id": "c2222222-0000-4000-8000-000000000002",
+         "properties": json.dumps({"statement": "generated code comes from schema/api.yaml", "claim_status": "ACTIVE",
+                                    "claim_type": "invariant", "source_id": "CLAUDE.md"}),
+         "scope_type": "repo", "t_invalid": None},
+    ])
+    md, rows = _run(_build_claims_page(pool, global_claims))
     assert len(rows) == 2
-    assert {r.obj_id for r in rows} == {
-        _pc_id(pc) for pc in _FAKE_CONTEXT["required_preconditions"]
-    }
+    assert {r.obj_id for r in rows} == {b.obj_id for b in global_claims}
+    lines = [ln for ln in md.splitlines() if ln.startswith("CLAIM|")]
+    assert len(lines) == 2
+    assert any("auth lives in src/auth" in ln and "source=AGENTS.md" in ln for ln in lines)
     for r in rows:
         head = md.splitlines()[r.start - 1]
         assert r.obj_id in head
+        assert r.start == r.end  # one pipe-delimited record is exactly one line
 
 
-def test_build_claims_page_no_preconditions_is_honest_not_fabricated():
-    ctx = dict(_FAKE_CONTEXT, required_preconditions=[])
-    md, rows = _build_claims_page(ctx)
+def test_build_claims_page_no_faulted_claims_is_honest_not_fabricated():
+    md, rows = _run(_build_claims_page(_FakeClaimsPool([]), ()))
     assert rows == []
-    assert "not canonical" in md and "no page-faulted global claims" in md
+    assert "not canonical" in md and "(no claims)" in md
 
 
 def test_build_implementations_page_missing_is_flagged():
@@ -156,23 +190,22 @@ def test_build_run_page_row_per_node_plus_dep_edges():
     assert window[0] == "## NODE N1"
 
 
-def test_pc_id_is_deterministic():
-    pc = {"subject": "s", "predicate": "p", "object": "o"}
-    assert _pc_id(pc) == _pc_id(dict(pc)) and _pc_id(pc).startswith("pc-")
-
-
 # ------------------------------------------------------------- T11 budget
 def test_root_router_stays_bounded_even_with_a_large_working_set():
-    # hundreds of preconditions -> claims.idx grows, but the ROOT router
-    # an agent greps first is still tiny and each object stays reachable
-    # by its own exact line range without reading the whole page.
-    big = dict(_FAKE_CONTEXT, required_preconditions=[
-        {"subject": f"svc:{i}", "predicate": "needs", "object": f"cap-{i}", "status": "UNKNOWN"}
-        for i in range(400)
+    # hundreds of faulted-in global claims -> claims.idx grows, but the
+    # ROOT router an agent greps first is still tiny and each object
+    # stays reachable by its own exact line (pipe format: one record per
+    # line, so start == end for every row) without reading the whole page.
+    ids = [f"c{i:08d}-0000-4000-8000-{i:012d}" for i in range(400)]
+    global_claims = tuple(MdBlock(obj_id=cid, heading=f"CLAIM {cid}") for cid in ids)
+    pool = _FakeClaimsPool([
+        {"id": cid, "properties": json.dumps({"statement": f"claim number {i}", "claim_status": "ACTIVE"}),
+         "scope_type": "repo", "t_invalid": None}
+        for i, cid in enumerate(ids)
     ])
-    md, rows = _build_claims_page(big)
+    md, rows = _run(_build_claims_page(pool, global_claims))
     assert len(rows) == 400
-    # distinct, non-overlapping ranges
+    # distinct, non-overlapping ranges (each is a single line: start == end)
     spans = sorted((r.start, r.end) for r in rows)
     for (s1, e1), (s2, e2) in zip(spans, spans[1:]):
         assert e1 < s2
