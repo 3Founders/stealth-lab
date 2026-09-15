@@ -9,7 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app import observability
 from app.api import admin, agent_store, agents, approval, chat, decompose, graph, ingest
-from app.api import claims, implementations, me, procedures, projects, repositories, search, solutions, tasks
+from app.api import claims, goals, implementations, me, procedures, projects, repositories, search, solutions, tasks
 from app.api import problems, runs
 from app.api import publications, workspaces
 from app.api import contributors as contributors_api
@@ -111,6 +111,7 @@ app.include_router(agent_store.router)
 # .scratch/backend_architecture_audit.md §4 for what each router composes.
 app.include_router(claims.router)
 app.include_router(procedures.router)
+app.include_router(goals.router)
 app.include_router(solutions.router)
 app.include_router(repositories.router)
 app.include_router(projects.router)
