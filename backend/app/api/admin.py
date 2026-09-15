@@ -328,8 +328,30 @@ class ReextractProcedureResponse(BaseModel):
 @router.post("/procedures/{procedure_row_id}/reextract", response_model=ReextractProcedureResponse)
 async def reextract_procedure(
     procedure_row_id: str, pool=Depends(get_pool),
+    scope_key: str = Depends(enforce_limits),
 ) -> ReextractProcedureResponse:
     """
+    REAL GAP FOUND AND PARTIALLY CLOSED (2026-09-15): this endpoint spends
+    a real LLM call (via extract_procedure() -> GroundedHybridExtractor)
+    but had no `Depends(enforce_limits)` at all -- a violation of this
+    codebase's own hard rule ("Endpoints that spend LLM money take
+    Depends(enforce_limits)"). Added the rate-limit + budget-check gate.
+
+    HONEST LIMITATION, not fixed here: `make_cost_recorder(...)` has
+    nothing to thread into -- extract_procedure()/GroundedHybridExtractor
+    accept no `on_call` hook at all (confirmed by grep: unlike DebateEngine/
+    Layer1Evaluator/ChatService, which all do). So `enforce_limits`'s own
+    CostGovernor.check_budget() will always see $0 recorded spend for
+    THIS call shape specifically -- the request-RATE limit is real and
+    enforced, but the dollar cap cannot see this endpoint's real cost yet.
+    This is not new to this endpoint: the SAME gap already existed for
+    every other real caller of extract_procedure() (find_best_way tier-2,
+    report_execution, the background extraction job) before this session
+    even started. Wiring a real on_call hook through GroundedHybridExtractor
+    is a genuine, separate, larger change (it touches the shared strategy
+    class every one of those callers uses) -- flagged, not silently
+    left unmentioned.
+
     The real fix for episodes permanently stuck with a procedure written
     under a silent-fallback tag before ExtractionTransientFailure existed
     (app.services.procedure_extraction.schema): `enqueue_pending_
