@@ -8,6 +8,7 @@ convention test_strategies_offline.py already established for
 GroundedHybridExtractor.
 """
 import asyncio
+import json
 import types
 
 import pytest
@@ -15,8 +16,10 @@ import pytest
 from app.services.implementation_goals import (
     VERIFICATION_CONTRACT_TYPES,
     ImplementationClassificationTransientFailure,
+    _find_step_text,
     classify_skill_package_script,
     default_verification_contract,
+    enrich_pending_skill_package_implementations,
     normalize_goal_from_path,
 )
 
@@ -182,3 +185,112 @@ def test_classify_via_llm_raises_transient_failure_directly():
             client, "a-model", resource_path="scripts/helper.py",
             skill_name=None, skill_purpose=None, step_text=None,
         ))
+
+
+# --- _find_step_text: real matching rule, mirrors _persist_package_relations ---
+
+def test_find_step_text_matches_full_path_or_basename():
+    steps = [
+        {"order": 0, "goal": "List the top-level directories."},
+        {"order": 1, "goal": "Run scripts/reconcile.py to compare schemas."},
+    ]
+    assert _find_step_text(steps, "skills/x/scripts/reconcile.py") == steps[1]["goal"]
+
+
+def test_find_step_text_returns_none_when_unmentioned():
+    steps = [{"order": 0, "goal": "Do something unrelated."}]
+    assert _find_step_text(steps, "scripts/reconcile.py") is None
+
+
+def test_find_step_text_handles_json_string_and_empty_input():
+    steps_json = json.dumps([{"order": 0, "goal": "Run scripts/x.py first."}])
+    assert _find_step_text(steps_json, "scripts/x.py") == "Run scripts/x.py first."
+    assert _find_step_text(None, "scripts/x.py") is None
+    assert _find_step_text([], "scripts/x.py") is None
+
+
+# --- enrich_pending_skill_package_implementations: real, resumable pass ---
+
+class _EnrichmentFakePool:
+    """Real rows shaped exactly like the JOIN this function issues --
+    (locator, kind, skill_name, skill_purpose, steps) per implementation
+    id -- and captures every UPDATE so the real per-row outcome can be
+    asserted without a real DB."""
+
+    def __init__(self, rows):
+        self._rows = rows
+        self.updates: list[tuple] = []
+
+    async def fetch(self, sql, *params):
+        return self._rows
+
+    async def execute(self, sql, *params):
+        self.updates.append(params)
+
+
+def test_enrich_pending_implementations_classifies_a_heuristic_match():
+    """A row nobody attempted the (now-existing) deterministic pass on
+    yet -- migration 80 backfilled it BEFORE this classifier existed --
+    gets a real, free, no-LLM classification on this very first pass."""
+    rows = [{
+        "id": "11111111-1111-1111-1111-111111111111",
+        "locator": {"path": "skills/x/scripts/check_schema.py"},
+        "kind": "deterministic",
+        "skill_name": "x", "skill_purpose": "purpose", "steps": None,
+    }]
+    pool = _EnrichmentFakePool(rows)
+
+    counts = _run(enrich_pending_skill_package_implementations(pool, limit=10, client=None))
+
+    assert counts == {
+        "attempted": 1, "heuristic": 1, "llm_classified": 0,
+        "unclassified": 0, "needs_enrichment": 0, "errors": 0,
+    }
+    (row_id, goal, goal_spec, expected_outcome, verification_contract, classification) = pool.updates[0]
+    assert row_id == rows[0]["id"]
+    assert goal == "verification"
+    assert classification == "heuristic"
+
+
+def test_enrich_pending_implementations_uses_real_procedure_context_for_the_llm_path():
+    """The skill_name/skill_purpose/step_text come from the REAL join
+    result (procedures, via procedure_implementations) -- never a
+    network refetch of the original SKILL.md."""
+    rows = [{
+        "id": "22222222-2222-2222-2222-222222222222",
+        "locator": {"path": "skills/x/scripts/reconcile.py"},
+        "kind": "deterministic",
+        "skill_name": "schema-guard", "skill_purpose": "Keep migrations consistent.",
+        "steps": json.dumps([{"order": 0, "goal": "Run scripts/reconcile.py before committing."}]),
+    }]
+    pool = _EnrichmentFakePool(rows)
+    client = FakeClient(['{"goal": "verification", "expected_outcome": "schema matches migrations"}'])
+
+    counts = _run(enrich_pending_skill_package_implementations(pool, limit=10, client=client))
+
+    assert counts["llm_classified"] == 1
+    assert len(client.requests) == 1
+    prompt = client.requests[0]["messages"][1]["content"]
+    assert "schema-guard" in prompt
+    assert "Keep migrations consistent." in prompt
+    assert "Run scripts/reconcile.py before committing." in prompt
+
+
+def test_enrich_pending_implementations_counts_errors_without_aborting_the_batch():
+    """A malformed row (no locator path) must not stop the rest of the
+    batch from being attempted -- real per-row isolation, same discipline
+    process_pending_jobs() already applies to ingestion jobs."""
+    rows = [
+        {"id": "a", "locator": {}, "kind": "deterministic",
+         "skill_name": None, "skill_purpose": None, "steps": None},
+        {"id": "b", "locator": {"path": "scripts/check_schema.py"}, "kind": "deterministic",
+         "skill_name": None, "skill_purpose": None, "steps": None},
+    ]
+    pool = _EnrichmentFakePool(rows)
+
+    counts = _run(enrich_pending_skill_package_implementations(pool, limit=10, client=None))
+
+    assert counts["errors"] == 1
+    assert counts["heuristic"] == 1
+    assert counts["attempted"] == 2
+    assert len(pool.updates) == 1

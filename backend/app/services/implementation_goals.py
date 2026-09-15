@@ -259,3 +259,102 @@ async def classify_skill_package_script(
         "verification_contract": verification_contract,
         "classification": "llm_classified",
     }
+
+
+def _find_step_text(steps: Any, resource_path: str) -> Optional[str]:
+    """SAME real matching rule `_persist_package_relations`
+    (skill_ingestion.py) already uses at ingestion time -- a plain text
+    match against the resource's full path or bare filename. `steps` is
+    `procedures.steps` as stored (a list of `{"order", "goal"}` dicts, the
+    real shape `_parsed_skill_procedure_shape` writes)."""
+    if not steps:
+        return None
+    if isinstance(steps, str):
+        steps = json.loads(steps)
+    basename = resource_path.rsplit("/", 1)[-1]
+    for step in steps:
+        text = step.get("goal") if isinstance(step, dict) else None
+        if text and (resource_path in text or basename in text):
+            return text
+    return None
+
+
+async def enrich_pending_skill_package_implementations(
+    pool: Any, *, limit: int = 50, client: Any = None, model: str = "gemma-4-31B-it",
+) -> dict:
+    """Real, resumable enrichment pass (backend/scripts/enrich_implementations.py's
+    own backing function -- same "service function does the work, script is
+    a thin CLI" convention `backfill_procedure_embeddings.py` already
+    established) over `implementations` rows THIS module's classifier can
+    meaningfully improve: `provider='skill-package'` (the only shape
+    `classify_skill_package_script` knows how to interpret -- a bare
+    resource path plus optional skill context) still sitting at
+    `classification IN ('needs_enrichment', 'unclassified')`.
+
+    Skill context (name/purpose/step text) is read from THIS DATABASE's
+    own `procedures` row via `procedure_implementations` -- never a
+    network refetch of the original SKILL.md (which would silently
+    reintroduce this session's own confirmed `raw.githubusercontent.com`
+    connectivity gap as a hidden dependency of a routine maintenance job).
+    A row with no resolvable procedure link (rare -- the relation itself
+    is bi-temporally versioned and could have been superseded) gets
+    `skill_name=None`/`skill_purpose=None`/`step_text=None`: the
+    classifier already handles that honestly (a likely abstain), never a
+    crash.
+
+    Returns real counts: {"attempted", "heuristic", "llm_classified",
+    "unclassified", "needs_enrichment", "errors"} -- `errors` counts a
+    per-row exception this function itself catches (e.g. a malformed
+    `locator`), never silently dropped from the report.
+    """
+    rows = await pool.fetch(
+        """
+        SELECT i.id, i.locator, i.kind,
+               p.name AS skill_name, p.goal AS skill_purpose, p.steps AS steps
+        FROM implementations i
+        LEFT JOIN procedure_implementations pi
+               ON pi.implementation_id = i.id AND pi.t_invalid IS NULL
+        LEFT JOIN procedures p
+               ON p.procedure_id = pi.procedure_id AND p.t_invalid IS NULL
+        WHERE i.provider = 'skill-package'
+          AND i.classification IN ('needs_enrichment', 'unclassified')
+        ORDER BY i.t_created
+        LIMIT $1
+        """,
+        limit,
+    )
+
+    counts = {
+        "attempted": 0, "heuristic": 0, "llm_classified": 0,
+        "unclassified": 0, "needs_enrichment": 0, "errors": 0,
+    }
+    for row in rows:
+        counts["attempted"] += 1
+        try:
+            locator = row["locator"]
+            if isinstance(locator, str):
+                locator = json.loads(locator)
+            resource_path = (locator or {}).get("path")
+            if not resource_path:
+                counts["errors"] += 1
+                continue
+            step_text = _find_step_text(row["steps"], resource_path)
+            fields = await classify_skill_package_script(
+                resource_path, kind=row["kind"], client=client, model=model,
+                skill_name=row["skill_name"], skill_purpose=row["skill_purpose"],
+                step_text=step_text,
+            )
+            await pool.execute(
+                "UPDATE implementations SET goal=$2, goal_spec=$3::jsonb, "
+                "expected_outcome=$4, verification_contract=$5::jsonb, classification=$6 "
+                "WHERE id=$1::uuid",
+                row["id"], fields["goal"], fields["goal_spec"], fields["expected_outcome"],
+                fields["verification_contract"], fields["classification"],
+            )
+            counts[fields["classification"]] = counts.get(fields["classification"], 0) + 1
+        except Exception:  # noqa: BLE001 -- one malformed row must never
+            # abort the whole enrichment pass; the real count is what
+            # makes this diagnosable, not a raised exception mid-batch.
+            counts["errors"] += 1
+
+    return counts
