@@ -99,6 +99,32 @@ def test_direct_implementation_resolves_as_a_leaf(monkeypatch):
     assert node.chosen == "implementation"
     assert node.implementation["name"] == "the-implementation"
     assert node.children == []
+    assert node.implementation_alternates == []
+
+
+def test_direct_implementation_keeps_real_eligible_runner_ups_as_alternates(monkeypatch):
+    from app.execution.implementation_selection import RankedImplementation
+
+    winner = {"id": "I-1", "name": "winner", "kind": "deterministic"}
+    runner_up = {"id": "I-2", "name": "runner-up", "kind": "deterministic"}
+    ineligible = {"id": "I-3", "name": "ineligible", "kind": "deterministic"}
+
+    async def fake_select(pool, goal_id, *, context=None, scope, weights=None):
+        ranked = [
+            RankedImplementation(implementation=winner, eligible=True, checks=[], score=0.9),
+            RankedImplementation(implementation=runner_up, eligible=True, checks=[], score=0.5),
+            RankedImplementation(implementation=ineligible, eligible=False, checks=[], score=None),
+        ]
+        return SelectionResult(
+            goal=goal_id, candidates_considered=[winner, runner_up, ineligible], ranked=ranked,
+            chosen=winner, rationale="chosen winner",
+        )
+
+    pool = _FakePool({"G-1": _goal("G-1", "find references")})
+    monkeypatch.setattr(gr, "select_implementation_for_goal_id", fake_select)
+    node = _run(gr.resolve_goal(pool, "G-1", scope=SCOPE))
+    assert node.implementation["id"] == "I-1"
+    assert [a["id"] for a in node.implementation_alternates] == ["I-2"]
 
 
 # ---------------------------------------------------------------------

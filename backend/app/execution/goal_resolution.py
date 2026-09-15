@@ -73,6 +73,15 @@ class ResolvedGoalNode:
     depth: int
     chosen: Literal["implementation", "procedure", "unresolved"]
     implementation: Optional[dict] = None
+    # Real eligible runner-up Implementations for this Goal, already
+    # ranked by `select_implementation_for_goal_id`'s own scorer
+    # (best-to-worst, `implementation` excluded) -- kept so a real
+    # executor (goal_execution.py) can fall back to the next real
+    # candidate on failure (Prompt 2 Sec 10) without a second query.
+    # Never fabricated: exactly `SelectionResult.ranked`'s own eligible
+    # entries, same data `explain_goal_route` already discloses via
+    # `implementation_candidates_considered`'s count, just not thrown away.
+    implementation_alternates: list[dict] = field(default_factory=list)
     procedure: Optional[dict] = None
     children: list["ResolvedGoalNode"] = field(default_factory=list)
     rationale: str = ""
@@ -217,9 +226,11 @@ async def resolve_goal(
     # and is feasible; Sec 8's own ordering).
     selection = await select_implementation_for_goal_id(pool, goal_id, context=context, scope=scope)
     if selection.chosen is not None:
+        eligible_ranked = [r.implementation for r in selection.ranked if r.eligible]
         return ResolvedGoalNode(
             goal_id=goal_id, goal_name=goal_name, depth=depth, chosen="implementation",
-            implementation=selection.chosen, rationale=selection.rationale,
+            implementation=selection.chosen, implementation_alternates=eligible_ranked[1:],
+            rationale=selection.rationale,
             implementation_candidates_considered=len(selection.candidates_considered),
         )
 

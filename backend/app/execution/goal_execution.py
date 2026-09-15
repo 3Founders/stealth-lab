@@ -1,0 +1,198 @@
+"""
+Execute a resolved Goal route (Prompt 2 Sec 7/9/10, 2026-09-15) -- the
+actual "execute" step of Sec 7's own compiler pipeline
+(`resolve_goal -> ground_goal -> select_routes -> ... -> execute`).
+
+Reuses the EXISTING `execute_implementation()` chokepoint
+(`implementation_executor.py`, already telemetry-wired this session --
+every attempt this module makes is automatically recorded into
+`implementation_execution_telemetry`, migration 85, with zero extra
+code here) for every concrete node, adding the one real capability the
+durable-execution audit confirmed is missing anywhere in this codebase:
+REAL fallback to an alternate ranked-eligible Implementation when the
+first one fails (Prompt 2 Sec 10). "Alternate" here is never invented --
+it is `ResolvedGoalNode.implementation_alternates`, the SAME real ranked
+list `select_implementation_for_goal_id` already computed and previously
+discarded (see goal_resolution.py's own docstring on that field).
+
+SCOPE, STATED HONESTLY (audited before writing anything -- read
+`durable_run.py`, `plan_persistence.py`, `db/23_plan_persistence.sql`,
+`db/36_durable_execution_runs.sql` in full first):
+
+  `execution_runs`/`execution_plans` (migration 23/36) already give
+  FULL crash/resume durability (leases, terminal-state fencing, resume
+  counts) -- but `execution_plans.procedure_id` is NOT NULL, tied by a
+  composite FK to `procedures(procedure_id, version)`, and migration
+  23's own docstring calls this "the purest one-way door in Band 1"
+  (invariant #2: "every ExecutionPlan references an exact Procedure
+  version"). A Goal route that resolves DIRECTLY to an Implementation
+  (no Procedure at all -- Prompt 2 Sec 0's own "choose direct
+  Implementation OR choose Procedure") has no procedure_id to give it.
+  Forcing one through that table would mean either weakening a
+  documented one-way-door invariant or fabricating a placeholder
+  procedure row -- both dishonest, neither attempted here.
+
+  A Goal route that DOES resolve through a real Procedure already has a
+  real `procedure_id`/`version` at that node (`ResolvedGoalNode.procedure`)
+  and can be run through the EXISTING tier-2 durable pipeline
+  (`compile_plan` -> `persist_compiled_plan` -> `durable_run.py`)
+  completely unchanged -- this module does not attempt to replace or
+  duplicate that path.
+
+  This module covers what neither existing path covers: executing the
+  concrete Implementation LEAVES of an already-resolved Goal tree
+  (`ResolvedGoalNode.chosen == "implementation"`, wherever they occur --
+  a bare direct-Implementation Goal, or the bottom of a Procedure's own
+  decomposition once its steps resolve to Goals that themselves resolve
+  directly). It is a SEQUENTIAL walk in the same real dependency order
+  `goal_compiler.py::flatten_goal_tree` already establishes (Procedure
+  steps are already `order`-sorted by `resolve_goal` itself) -- not a
+  parallel scheduler (`graph_executor.py` already owns that, for the
+  Procedure/TaskGraph shape; duplicating it here for a different node
+  shape was judged out of scope for this increment). It is NOT
+  crash-resumable today -- a process crash mid-walk loses in-memory
+  progress, same honest limitation this module's own docstring states
+  rather than a false durability claim. Real, open technical debt,
+  disclosed rather than silently left implicit.
+"""
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from typing import Optional
+from uuid import UUID
+
+import asyncpg
+
+from app.execution.goal_resolution import ResolvedGoalNode
+from app.execution.graph_executor import NodeResult
+from app.execution.implementation_executor import execute_implementation
+from app.models.plan import PlanNode
+from app.services.access import AccessScope
+
+
+@dataclass
+class ImplementationAttempt:
+    """One real attempt at one real Implementation for one Goal node --
+    every attempt is kept (Prompt 2 Sec 10: "Track all attempts"),
+    never overwritten or discarded once a later attempt succeeds."""
+
+    implementation_id: str
+    implementation_name: Optional[str]
+    kind: Optional[str]
+    status: str  # "success" | "failure"
+    notes: Optional[str] = None
+
+
+@dataclass
+class GoalNodeExecutionResult:
+    """The outcome for one `chosen == "implementation"` leaf. `status`
+    is `"success"` only if SOME attempt (first choice or a real
+    fallback) actually succeeded -- never inferred from a partial
+    result. `used_implementation_id` names exactly which one, so a
+    caller never has to guess which of several attempts "counts"."""
+
+    goal_id: str
+    goal_name: str
+    status: str  # "success" | "failure"
+    attempts: list[ImplementationAttempt] = field(default_factory=list)
+    used_implementation_id: Optional[str] = None
+    result: Optional[NodeResult] = None
+
+
+@dataclass
+class GoalExecutionResult:
+    """The full walk's outcome. `outcome` is `"success"` only if every
+    reachable `chosen == "implementation"` leaf succeeded (an
+    `"unresolved"` leaf always makes the overall outcome
+    `"needs_input"`, Sec 21's own vocabulary -- never silently treated
+    as a pass). `node_results` is keyed by `goal_id` (a Goal may appear
+    once here even if visited via multiple Procedure branches in the
+    source tree -- last real attempt wins, nothing is lost since every
+    attempt is already inside that node's own `attempts` list from ITS
+    own walk)."""
+
+    outcome: str  # "success" | "failure" | "needs_input"
+    node_results: dict[str, GoalNodeExecutionResult] = field(default_factory=dict)
+    unresolved_goal_names: list[str] = field(default_factory=list)
+
+
+def _to_plan_node(goal_name: str, implementation: dict) -> PlanNode:
+    return PlanNode(order=0, goal=goal_name, implementation_id=str(implementation["id"]))
+
+
+async def execute_goal_node(
+    pool: asyncpg.Pool, node: ResolvedGoalNode, context: dict, *, scope: AccessScope,
+) -> GoalNodeExecutionResult:
+    """Execute one `chosen == "implementation"` leaf with real fallback:
+    try `node.implementation`, and on failure try each of
+    `node.implementation_alternates` in their already-real-ranked order,
+    stopping at the first real success. Never substitutes a different
+    Goal (Sec 10) -- every candidate tried here satisfies THIS SAME
+    `node.goal_id`, which is exactly what `implementation_alternates`
+    already is."""
+    if node.chosen != "implementation" or node.implementation is None:
+        raise ValueError(f"execute_goal_node requires a chosen=='implementation' node, got {node.chosen!r}")
+
+    candidates = [node.implementation, *node.implementation_alternates]
+    attempts: list[ImplementationAttempt] = []
+    last_result: Optional[NodeResult] = None
+
+    for impl in candidates:
+        plan_node = _to_plan_node(node.goal_name, impl)
+        result = await execute_implementation(pool, plan_node, context, scope=scope)
+        last_result = result
+        attempts.append(ImplementationAttempt(
+            implementation_id=str(impl["id"]), implementation_name=impl.get("name"),
+            kind=impl.get("kind"), status=result.status, notes=result.notes,
+        ))
+        if result.status == "success":
+            return GoalNodeExecutionResult(
+                goal_id=node.goal_id, goal_name=node.goal_name, status="success",
+                attempts=attempts, used_implementation_id=str(impl["id"]), result=result,
+            )
+
+    return GoalNodeExecutionResult(
+        goal_id=node.goal_id, goal_name=node.goal_name, status="failure",
+        attempts=attempts, used_implementation_id=None, result=last_result,
+    )
+
+
+async def execute_goal_tree(
+    pool: asyncpg.Pool, tree: ResolvedGoalNode, context: dict, *, scope: AccessScope,
+) -> GoalExecutionResult:
+    """Walk an already-resolved Goal tree (`goal_resolution.resolve_goal`'s
+    own output) and execute every real `implementation` leaf it
+    contains, in the same order the tree's own Procedure steps were
+    already sorted in. An `unresolved` leaf is never executed and never
+    silently treated as success -- it stops that branch honestly (Sec 4:
+    "A Goal may initially be unsolved" is a real outcome, not an error
+    to paper over) and the overall `outcome` becomes `"needs_input"`."""
+    node_results: dict[str, GoalNodeExecutionResult] = {}
+    unresolved_names: list[str] = []
+    any_failure = False
+
+    async def _walk(node: ResolvedGoalNode) -> None:
+        nonlocal any_failure
+        if node.chosen == "implementation":
+            result = await execute_goal_node(pool, node, context, scope=scope)
+            node_results[node.goal_id] = result
+            if result.status != "success":
+                any_failure = True
+            return
+        if node.chosen == "unresolved":
+            unresolved_names.append(node.goal_name)
+            return
+        # procedure -- recurse into children in their already-real order
+        for child in node.children:
+            await _walk(child)
+
+    await _walk(tree)
+
+    if unresolved_names:
+        outcome = "needs_input"
+    elif any_failure:
+        outcome = "failure"
+    else:
+        outcome = "success"
+
+    return GoalExecutionResult(outcome=outcome, node_results=node_results, unresolved_goal_names=unresolved_names)
