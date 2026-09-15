@@ -24,7 +24,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
-from app.api.deps import enforce_limits, make_cost_recorder
+from app.api.deps import enforce_limits, make_cost_recorder, require_admin_api_key
 from app.debate.panel import default_judge, default_layer2_agent, default_panel
 from app.services.loop import LoopOrchestrator
 from app.services.procedure_extraction.failure_handlers import run_failure_handlers
@@ -32,7 +32,16 @@ from app.services.procedure_extraction.registry import approve_extractor, create
 from app.services.triggers import ThresholdRule, TriggerDetector
 
 log = logging.getLogger(__name__)
-router = APIRouter(prefix="/v1/admin", tags=["admin"])
+# require_admin_api_key gates the WHOLE router in one place -- every real
+# route in this file (scan, ingestion/process, extractors, reextract,
+# index-lag, failure-routes/process) was previously reachable by anyone
+# who could reach the server at all (app/api/deps.py's own get_scope
+# resolves anonymous by design). See require_admin_api_key's own
+# docstring for the fail-closed default and why a shared key, not a
+# real identity check, is the deliberate interim posture.
+router = APIRouter(
+    prefix="/v1/admin", tags=["admin"], dependencies=[Depends(require_admin_api_key)],
+)
 
 _DEMO_RULES = [
     ThresholdRule(name="high_error_rate", metric="error_rate", threshold=0.15, min_samples=5),

@@ -262,6 +262,24 @@ class Settings(BaseSettings):
     oidc_jwks_url: Optional[str] = None
     multi_user_exposure_enabled: bool = False
 
+    # --- Admin API access control (backend/app/api/admin.py) ---
+    # REAL GAP FOUND AND CLOSED (2026-09-15): /v1/admin/* had NO auth
+    # dependency at all -- app.api.deps.get_scope resolves anonymous by
+    # design ("the normal case on a public commons, not a failure"), so
+    # without this, anyone reaching the server could trigger real LLM
+    # spend (ingestion/process's extract_limit, reextract) or register
+    # arbitrary extractors. A shared API key is the coarse, interim gate
+    # this founder directive asked for -- no per-caller identity, no
+    # audit trail, one secret every real caller must hold, same posture
+    # STEALTHLAB_MCP_TOKEN already uses for the MCP server. Env var is
+    # ADMIN_API_KEY (this class has no env_prefix -- same plain
+    # uppercase-of-field-name convention as database_url/
+    # general_compute_api_key). Optional (None) so import/local dev
+    # without a .env still works; require_admin_api_key (app/api/deps.py)
+    # fails closed (401) on every /v1/admin/* request when this is unset,
+    # rather than silently leaving the surface open.
+    admin_api_key: Optional[str] = None
+
     # --- MCP server deployment-mode guard (backend/app/mcp_server/server.py) ---
     # OidcAwareTokenVerifier's shared-STEALTHLAB_MCP_TOKEN fallback (no
     # per-caller .subject) is fine for local/single-user dev -- it is

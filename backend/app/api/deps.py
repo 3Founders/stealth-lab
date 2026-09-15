@@ -270,6 +270,60 @@ async def enforce_limits(
     return key
 
 
+async def require_admin_api_key(
+    x_admin_api_key: Optional[str] = Header(default=None),
+) -> None:
+    """Coarse, interim access gate for `/v1/admin/*` (app/api/admin.py) --
+    a real, previously-confirmed gap: that whole router had no auth
+    dependency at all, and `get_scope`'s own anonymous-by-default posture
+    (this module's docstring) meant anyone reaching the server could
+    trigger real LLM spend (ingestion/process's extract_limit, reextract)
+    or register arbitrary extractors.
+
+    Fails CLOSED, same discipline `Settings.environment`'s own "unset ->
+    PRODUCTION, never a permissive guess" rule uses: `admin_api_key`
+    unset means EVERY /v1/admin/* request gets 401, never silently open.
+    Set `ADMIN_API_KEY` in `.env` (gitignored, same as every other secret
+    in this file) to enable the surface.
+
+    REAL BUG FOUND AND FIXED while verifying this end to end: this
+    deliberately does NOT use `Authorization: Bearer <key>`, even though
+    that is the MCP server's own convention. `actor_middleware` (this
+    module, added globally in app/main.py's lifespan) intercepts the
+    `authorization` header on EVERY request and -- whenever real OIDC/
+    Supabase config is present (a real, common case, not a corner case:
+    this checkout's own `.env` already has `SUPABASE_JWT_AUDIENCE` set)
+    -- tries to validate it as a real JWT, rejecting anything else with
+    its OWN 401 ("unparseable token header") BEFORE this dependency, or
+    even routing, ever runs. A plain shared secret is not a JWT, so
+    `Authorization: Bearer <admin key>` was silently unreachable the
+    instant OIDC config existed -- confirmed live: every request 401'd
+    with actor_middleware's error text, not this function's. `X-Admin-
+    Api-Key` is a dedicated header nothing else in this codebase reads,
+    so it can never collide with that (or any future) global
+    Authorization-header consumer.
+
+    `secrets.compare_digest` (not `==`) -- a plain string comparison here
+    would leak the key's length/prefix through a timing side-channel,
+    the same reasoning the MCP server's own token check already applies.
+
+    NOT per-caller identity, NOT an audit trail -- a single shared secret
+    every real caller must hold, same coarse posture STEALTHLAB_MCP_TOKEN
+    already accepts for the MCP server. A real identity-based scheme
+    (OIDC role check, mTLS) is a separate, larger change if/when this
+    surface needs per-caller attribution.
+    """
+    import secrets
+
+    configured = settings.admin_api_key
+    if not configured:
+        raise HTTPException(401, "admin API is not configured (ADMIN_API_KEY unset) -- refusing all requests")
+    if not x_admin_api_key:
+        raise HTTPException(401, "missing X-Admin-Api-Key header")
+    if not secrets.compare_digest(x_admin_api_key, configured):
+        raise HTTPException(401, "invalid admin API key")
+
+
 def make_cost_recorder(pool, scope_key: str, operation: str):
     """
     Build the `on_call` callback threaded through DebateEngine,
