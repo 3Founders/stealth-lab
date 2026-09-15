@@ -181,47 +181,102 @@ async def _build_claims_page(
     return claims_md, idx_rows
 
 
-def _build_procedures_page(
-    context: dict[str, Any], procedure: dict, verification: dict[str, Any],
-    extra_blocks: tuple[MdBlock, ...] = (),
+def _procedure_line_from_row(procedure: dict, *, procedure_id: str, version: int, scope_type: str | None) -> "ProcedureLine":  # noqa: F821
+    from app.stealth.pipe_format import ProcedureLine, StepLine, VerifyReqLine
+
+    steps_raw = procedure.get("steps") or []
+    steps: list[StepLine] = []
+    verify_reqs: list[VerifyReqLine] = []
+    prev_step_id: str | None = None
+    for s in steps_raw:
+        order = s.get("order")
+        if order is None:
+            continue
+        step_id = f"S{order}"
+        deps = s.get("deps")
+        if not deps:
+            deps = [prev_step_id] if prev_step_id else []
+        goal_type = s.get("goal") or s.get("action") or "-"
+        steps.append(StepLine(
+            step_id=step_id, order=order, goal_type=goal_type,
+            description=s.get("action") or s.get("goal") or "-", deps=list(deps),
+        ))
+        prev_step_id = step_id
+
+        raw_verify = s.get("verification")
+        if isinstance(raw_verify, str) and raw_verify.strip():
+            verify_reqs.append(VerifyReqLine(step_id=step_id, verification_goal=goal_type, description=raw_verify))
+        elif isinstance(raw_verify, dict) and raw_verify.get("statement"):
+            verify_reqs.append(VerifyReqLine(
+                step_id=step_id, verification_goal=goal_type, description=raw_verify["statement"],
+            ))
+
+    return ProcedureLine(
+        procedure_id=procedure_id, status=str(procedure.get("verification_state") or "-"),
+        topic=str(procedure.get("domain") or "-"), scope=str(procedure.get("scope_type") or scope_type or "-"),
+        name=procedure.get("name") or procedure.get("goal") or procedure_id, version=version,
+        steps=steps, verify_reqs=verify_reqs,
+    )
+
+
+async def _build_procedures_page(
+    pool: asyncpg.Pool, context: dict[str, Any], procedure: dict,
+    extra_ids: tuple[str, ...] = (),
 ) -> tuple[str, list[IdxRow]]:
+    """Meta-harness Sec 26: `PROCEDURE|<id>|<status>|<topic>|<scope>|<name>
+    |version=<version>`, `STEP|<procedure_id>|<step_id>|<order>|<goal_type>
+    |<description>|deps=<step_ids_csv>`, `VERIFY_REQ|<procedure_id>|<step_id>
+    |<verification_goal>|<description>`.
+
+    Run-independent by construction -- unlike the old MdBlock version,
+    this never reads `context["nodes"]` (that is run-specific execution
+    state, belongs to run.md, not to the abstract Procedure/Step
+    definition every run using this procedure shares). `status` is the
+    real `verification_state` column (candidate/verified/retired) --
+    honest, not an invented "ACTIVE" label this schema doesn't have.
+    `topic` is the real `domain` column when set, else `-` (never
+    fabricated). Steps are linear by construction (db/18_procedures.sql's
+    own DDL comment -- no branching field exists), so `deps` is the
+    immediately preceding step's id unless a step explicitly declares its
+    own (future-proofing for a real dependency field, unused today).
+
+    VERIFY_REQ lines come from each step's own `verification` field --
+    the SAME field `verification.py::derive_criteria`'s node-scoped path
+    reads (Sec 14) -- never from `postconditions` (those are procedure-
+    wide, not tied to one step, and stay in run.md's run-level VERIFY
+    lines instead, per that module's own scoping rule).
+    """
+    from app.stealth.pipe_format import render_procedures_md
+
     pid = str(context["procedure_id"])
     ver = context["procedure_version"]
-    by_id = {c["criterion_id"]: c for c in verification.get("criteria", [])}
-    body: list[str] = [
-        kv("goal", procedure.get("goal", "")),
-        kv("name", procedure.get("name", "")),
-        kv("procedure_id", pid),
-        kv("version", ver),
-        kv("run_status", context["status"]),
-    ]
-    preconds = procedure.get("preconditions") or []
-    if preconds:
-        body.append("preconditions:")
-        for pc in preconds:
-            body.append(f"  - {pc.get('subject','')} {pc.get('predicate','')} {pc.get('object','')}")
-    body.append("steps:")
-    for n in context.get("nodes", []):
-        body.append(f"  {n['node_order']}. [{n['status']}] {n.get('goal') or ''}")
-    postconds = procedure.get("postconditions") or []
-    if postconds:
-        body.append("verification:")
-        for i, statement in enumerate(postconds):
-            text = statement if isinstance(statement, str) else statement.get("statement", "")
-            state = by_id.get(f"postcondition:{i}", {}).get("state", "inconclusive")
-            body.append(f"  - {text} [{state}]")
+    scope_type = context.get("scope_type")
 
-    block = MdBlock(
-        obj_id=pid,
-        heading=f"PROCEDURE {pid} v{ver}",
-        body=body,
-        version=f"v{ver}",
-        scope=context.get("scope_type") or "-",
-        status=context["status"],
-        tags=tuple((procedure.get("tags") or [])[:6]),
-        summary=procedure.get("goal", "") or procedure.get("name", ""),
-    )
-    return _finalize_page("procedures.md", [block] + list(extra_blocks))
+    entries: list[tuple[str, int, dict]] = [(pid, ver, procedure)]
+    if extra_ids:
+        rows = await pool.fetch(
+            "SELECT * FROM procedures WHERE procedure_id = ANY($1::uuid[]) AND t_invalid IS NULL",
+            [i for i in extra_ids if i != pid],
+        )
+        entries += [(str(r["procedure_id"]), r["version"], dict(r)) for r in rows]
+
+    lines_objs = [_procedure_line_from_row(proc, procedure_id=oid, version=v, scope_type=scope_type) for oid, v, proc in entries]
+    procedures_md = render_procedures_md(lines_objs)
+
+    idx_rows: list[IdxRow] = []
+    lines = procedures_md.splitlines()
+    starts = [i for i, ln in enumerate(lines, start=1) if ln.startswith("PROCEDURE|")]
+    # `starts` and `lines_objs` are in the SAME order -- one PROCEDURE
+    # block per entry, rendered in the order given -- zipped by position,
+    # not re-matched by reconstructing the (cleaned) line text, which
+    # could drift from the real rendered line if a name needed cleaning.
+    for pos, (start, pl) in enumerate(zip(starts, lines_objs)):
+        end = (starts[pos + 1] - 2) if pos + 1 < len(starts) else len(lines)
+        idx_rows.append(IdxRow(
+            obj_id=pl.procedure_id, version=str(pl.version), scope=pl.scope, status=pl.status,
+            tags=(pl.topic,), file="procedures.md", start=start, end=end, summary=pl.name[:110],
+        ))
+    return procedures_md, idx_rows
 
 
 def _build_implementations_page(
@@ -418,8 +473,9 @@ async def generate_projection(
 
     # --- addressable per-type pages + indexes --------------------------
     claims_md, claims_rows = await _build_claims_page(pool, global_claims)
-    procedures_md, procedures_rows = _build_procedures_page(
-        context, procedure, verification, tuple(faulted.get("procedure", ())))
+    procedures_md, procedures_rows = await _build_procedures_page(
+        pool, context, procedure,
+        extra_ids=tuple(b.obj_id for b in faulted.get("procedure", ())))
     implementations_md, impl_rows = _build_implementations_page(
         context, tuple(faulted.get("implementation", ())))
     run_md, run_rows = _build_run_page(context, intents)

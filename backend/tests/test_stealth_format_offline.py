@@ -72,9 +72,17 @@ _FAKE_CONTEXT = {
     ],
     "parent_run_id": None, "root_run_id": "run-1",
 }
-_FAKE_PROC = {"name": "Do the thing", "goal": "do the thing",
-              "preconditions": _FAKE_CONTEXT["required_preconditions"],
-              "postconditions": ["the thing is done"]}
+_FAKE_PROC = {
+    "name": "Do the thing", "goal": "do the thing",
+    "verification_state": "verified", "domain": "testing", "scope_type": "global",
+    "preconditions": _FAKE_CONTEXT["required_preconditions"],
+    "postconditions": ["the thing is done"],
+    "steps": [
+        {"order": 0, "goal": "enumerate callers", "action": "run rg across the repo"},
+        {"order": 1, "goal": "classify deps", "action": "read each caller",
+         "verification": "every caller is classified"},
+    ],
+}
 _FAKE_VERIF = {"overall_state": "inconclusive",
                "criteria": [{"criterion_id": "postcondition:0", "state": "inconclusive"}]}
 
@@ -131,14 +139,46 @@ def test_render_md_page_ranges_point_at_the_named_block():
 
 
 # ---------------------------------------------------- run-scoped builders
-def test_build_procedures_page_index_brackets_the_block():
-    md, rows = _build_procedures_page(_FAKE_CONTEXT, _FAKE_PROC, _FAKE_VERIF)
+class _FakeProceduresPool:
+    """Answers `_build_procedures_page`'s extra-ids query: SELECT * FROM
+    procedures WHERE procedure_id = ANY($1::uuid[]) AND t_invalid IS NULL."""
+
+    def __init__(self, rows: list[dict]):
+        self._rows = rows
+
+    async def fetch(self, sql, *params):
+        ids = {str(i) for i in params[0]}
+        return [r for r in self._rows if str(r["procedure_id"]) in ids]
+
+
+def test_build_procedures_page_pipe_grammar_and_index_brackets_the_block():
+    md, rows = _run(_build_procedures_page(_FakeProceduresPool([]), _FAKE_CONTEXT, _FAKE_PROC))
     assert len(rows) == 1
     r = rows[0]
     window = md.splitlines()[r.start - 1:r.end]
-    assert window[0].startswith("## PROCEDURE proc-1 v3")
-    assert any("enumerate callers" in ln for ln in window)   # steps rendered in the block
+    assert window[0] == "PROCEDURE|proc-1|verified|testing|global|Do the thing|version=3"
+    assert any(ln.startswith("STEP|proc-1|S0|0|enumerate callers|") for ln in window)
+    assert any(ln.startswith("STEP|proc-1|S1|1|classify deps|") and "deps=S0" in ln for ln in window)
+    assert any(ln.startswith("VERIFY_REQ|proc-1|S1|") and "every caller is classified" in ln for ln in window)
     assert r.summary  # non-empty
+
+
+def test_build_procedures_page_merges_faulted_extra_procedures():
+    extra_pool = _FakeProceduresPool([
+        {"procedure_id": "proc-2", "version": 1, "name": "Other thing", "goal": "other",
+         "verification_state": "candidate", "domain": "-", "scope_type": "global", "steps": []},
+    ])
+    md, rows = _run(_build_procedures_page(extra_pool, _FAKE_CONTEXT, _FAKE_PROC, extra_ids=("proc-2",)))
+    ids = {r.obj_id for r in rows}
+    assert ids == {"proc-1", "proc-2"}
+    lines = [ln for ln in md.splitlines() if ln.startswith("PROCEDURE|")]
+    assert len(lines) == 2
+    # each row's range brackets only its own block
+    for r in rows:
+        window = md.splitlines()[r.start - 1:r.end]
+        assert window[0].startswith(f"PROCEDURE|{r.obj_id}|")
+        other = "proc-2" if r.obj_id == "proc-1" else "proc-1"
+        assert not any(f"PROCEDURE|{other}|" in ln for ln in window)
 
 
 def test_build_claims_page_one_pipe_row_per_faulted_global_claim():
