@@ -1974,8 +1974,18 @@ async def _write_artifact_row(
 async def _persist_package_relations(
     pool: asyncpg.Pool, artifact: Any, parsed: ParsedSkill, *,
     procedure_id: str, created_by: str,
+    client: Any = None, capability_llm_model: str = "gemma-4-31B-it",
 ) -> tuple[list[str], int]:
-    """Persist package implementations and explicit references idempotently."""
+    """Persist package implementations and explicit references idempotently.
+
+    `client`/`capability_llm_model`: the SAME client/model
+    compile_skill_artifact() already threads to its own capability-
+    statement abstraction call -- passed through so
+    classify_skill_package_script()'s LLM fallback (implementation_goals.py)
+    reuses it rather than opening a second, separately-configured client.
+    `client=None` (no LLM configured for this run) is a real, honest state:
+    every resource the deterministic pass can't classify stays
+    'unclassified', exactly as before that fallback existed."""
     if getattr(artifact, "source_type", None) != "skill_package":
         return [], 0
     package = normalize_skill_package(artifact)
@@ -1990,7 +2000,23 @@ async def _persist_package_relations(
         )
         from app.services.implementation_goals import classify_skill_package_script
 
-        goal_fields = classify_skill_package_script(resource.path, kind="deterministic")
+        # Computed here (moved up from below the INSERT) so the LLM
+        # fallback can be given the SAME real step-text signal
+        # `supported_steps` already derives -- never re-fabricated,
+        # just reused a few lines earlier than before.
+        basename = resource.path.rsplit("/", 1)[-1]
+        supported_steps = [
+            i for i, step in enumerate(parsed.steps)
+            if resource.path in step or basename in step
+        ]
+        step_text = parsed.steps[supported_steps[0]] if supported_steps else None
+
+        goal_fields = await classify_skill_package_script(
+            resource.path, kind="deterministic",
+            client=client, model=capability_llm_model,
+            skill_name=parsed.name, skill_purpose=parsed.description,
+            step_text=step_text,
+        )
         row = await pool.fetchrow(
             "INSERT INTO implementations (id, name, description, kind, provider, version, "
             "locator, invocation, requirements, source_ref, author, license, content_hash, "
@@ -2018,18 +2044,9 @@ async def _persist_package_relations(
             )
         implementation_id = str(row["id"])
         implementation_ids.append(implementation_id)
-        # Which of the procedure's own ordered steps actually name this
-        # resource -- a plain text match against the resource's full repo
-        # path or bare filename (a step almost always references a script
-        # by one of those two spellings, e.g. "run scripts/scan.py" or
-        # "run scan.py"). [] (never fabricated) when no step mentions it;
-        # this is a real, if narrow, DAG-position signal -- NOT a claim
-        # that the step ONLY runs this implementation.
-        basename = resource.path.rsplit("/", 1)[-1]
-        supported_steps = [
-            i for i, step in enumerate(parsed.steps)
-            if resource.path in step or basename in step
-        ]
+        # basename/supported_steps computed above, before the goal
+        # classification call, so the LLM fallback can reuse step_text --
+        # see the comment there for why this moved.
         await pool.execute(
             # Migration 52 dropped the old UNIQUE (procedure_id, implementation_id)
             # in favour of the partial identity index
@@ -2385,7 +2402,7 @@ async def compile_skill_artifact(
             task_node_ids: list[str] = []
             implementation_ids, dependency_count = await _persist_package_relations(
                 pool, artifact, parsed, procedure_id=str(superseded["procedure_id"]),
-                created_by=created_by,
+                created_by=created_by, client=client, capability_llm_model=capability_llm_model,
             )
             document_evidence_id = await _emit_document_evidence(
                 pool, procedure_row_id=str(superseded["id"]),
@@ -2481,7 +2498,7 @@ async def compile_skill_artifact(
         )
         implementation_ids, dependency_count = await _persist_package_relations(
             pool, artifact, parsed, procedure_id=str(existing["procedure_id"]),
-            created_by=created_by,
+            created_by=created_by, client=client, capability_llm_model=capability_llm_model,
         )
         return IngestOutcome(
             status="duplicate",
@@ -2583,7 +2600,7 @@ async def compile_skill_artifact(
     task_node_ids: list[str] = []
     implementation_ids, dependency_count = await _persist_package_relations(
         pool, artifact, parsed, procedure_id=str(result["procedure_id"]),
-        created_by=created_by,
+        created_by=created_by, client=client, capability_llm_model=capability_llm_model,
     )
     document_evidence_id = await _emit_document_evidence(
         pool, procedure_row_id=str(result["id"]),
