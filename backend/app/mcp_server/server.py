@@ -3970,6 +3970,71 @@ async def compile_goal(
 
 
 @server.tool()
+async def estimate_goal_cost(
+    goal_id: str, ctx: Context, current_scope_json: str = "{}", max_depth: int = 6,
+) -> str:
+    """
+    Meta-harness/execu.md Sec 13/14/27: real, empirical cost estimation
+    -- resolves the Goal (`resolve_goal`), then aggregates real recorded
+    execution telemetry (migration 85, `execution_telemetry.py`) up the
+    tree per Sec 13's own formula.
+
+    HONEST BY DESIGN, stated plainly rather than glossed over: this
+    tool's numbers are only as good as what has actually been recorded.
+    A Goal (or any step along its route) that has never been executed
+    returns `confidence="none"` and an explicit `basis` naming exactly
+    which part of the route lacks data -- never a fabricated number to
+    make the tool look more capable than it is. `monetary_cost_usd` is
+    ALWAYS `null` -- no pricing table exists anywhere in this codebase.
+    As real executions accumulate (`execute_implementation`'s own
+    automatic telemetry recording), the SAME goal_id will start
+    returning real, increasingly confident (`"low"` then `"empirical"`
+    at 5+ real samples) numbers on its own -- no code change needed,
+    per the founder's own instruction: "after some runs and
+    accumulation of evidence we will[, estimate]."
+
+    Returns `{"tree": <full resolution trace, same shape as
+    explain_goal_route>, "cost": {confidence, sample_count,
+    success_rate, expected_attempts, expected_wall_seconds,
+    expected_prompt_tokens, expected_completion_tokens,
+    monetary_cost_usd, basis, ...}}`.
+    """
+    from app.execution.goal_cost import estimate_goal_cost as _estimate_goal_cost
+    from app.execution.goal_resolution import GoalResolutionError, resolve_goal
+
+    pool = ctx.request_context.lifespan_context["pool"]
+    try:
+        current_scope = json.loads(current_scope_json)
+    except json.JSONDecodeError as exc:
+        return f"REFUSED: current_scope_json is not valid JSON -- {exc}"
+
+    try:
+        tree = await resolve_goal(
+            pool, goal_id, context={"current_scope": current_scope}, scope=_caller_access_scope(),
+            max_depth=max_depth,
+        )
+    except GoalResolutionError as exc:
+        return f"REFUSED: {exc}"
+
+    cost = await _estimate_goal_cost(pool, tree)
+    return json.dumps({
+        "tree": _resolved_goal_node_to_dict(tree),
+        "cost": {
+            "confidence": cost.confidence, "sample_count": cost.sample_count,
+            "success_rate": cost.success_rate, "expected_attempts": cost.expected_attempts,
+            "mean_wall_seconds": cost.mean_wall_seconds, "expected_wall_seconds": cost.expected_wall_seconds,
+            "mean_prompt_tokens": cost.mean_prompt_tokens, "expected_prompt_tokens": cost.expected_prompt_tokens,
+            "mean_completion_tokens": cost.mean_completion_tokens,
+            "expected_completion_tokens": cost.expected_completion_tokens,
+            "monetary_cost_usd": cost.monetary_cost_usd,
+            "verification_cost_seconds": cost.verification_cost_seconds,
+            "orchestration_overhead_seconds": cost.orchestration_overhead_seconds,
+            "basis": cost.basis,
+        },
+    }, default=str)
+
+
+@server.tool()
 async def submit_implementation(
     procedure_id: str, role: str, ctx: Context,
     implementation_id: Optional[str] = None,

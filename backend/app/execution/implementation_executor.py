@@ -70,10 +70,13 @@ both already establish for this exact seam):
 """
 from __future__ import annotations
 
+import logging
 from dataclasses import replace as _dataclasses_replace
 from typing import Any, Mapping, Optional
 
 import asyncpg
+
+logger = logging.getLogger(__name__)
 
 from app.execution import implementation_registry
 from app.execution import providers
@@ -393,7 +396,9 @@ async def execute_implementation(
 
     adapter = build_adapter(kind)
     if adapter is not None:
-        return await adapter.execute(node, {**context, "implementation": implementation})
+        result = await adapter.execute(node, {**context, "implementation": implementation})
+        await _record_telemetry(pool, implementation, kind, result, context)
+        return result
 
     provider = providers.get_provider(kind)
     if provider is None:
@@ -408,7 +413,46 @@ async def execute_implementation(
                 "silently substituting a different kind's provider"
             ),
         )
-    return await provider.execute(node, context)
+    result = await provider.execute(node, context)
+    await _record_telemetry(pool, implementation, kind, result, context)
+    return result
+
+
+async def _record_telemetry(
+    pool: asyncpg.Pool, implementation: dict, kind: str, result: NodeResult, context: dict,
+) -> None:
+    """The real Sec 13/14/32 chokepoint (migration 85, founder directive
+    2026-09-15: "bake this into the system"): every dispatch that
+    resolved to a REAL, bound implementation records one real telemetry
+    row automatically, regardless of caller -- a caller never has to
+    remember to record cost/latency data, and estimate_goal_cost never
+    has to trust a caller that forgot to.
+
+    Never blocks or fails the real execution result on a telemetry
+    write problem -- a broken cost ledger must not turn a genuine
+    success into a reported failure. Logged, not raised, on error.
+    `context.get("goal_id"/"execution_run_id"/"execution_run_node_id")`
+    are optional caller-supplied linkage (the recursive Goal compiler's
+    own future durable-run integration sets these); absent for
+    virtually every existing caller today, which is fine -- the row is
+    still real and still counts toward this implementation's own
+    empirical stats.
+    """
+    from app.execution.execution_telemetry import record_implementation_execution
+
+    try:
+        await record_implementation_execution(
+            pool, implementation_id=str(implementation["id"]), executor=kind,
+            outcome_status="success" if result.status == "success" else "failure",
+            node_result_data=result.data,
+            goal_id=context.get("goal_id"), execution_run_id=context.get("execution_run_id"),
+            execution_run_node_id=context.get("execution_run_node_id"),
+        )
+    except Exception:  # noqa: BLE001 -- telemetry must never break real execution
+        logger.exception(
+            "failed to record execution telemetry for implementation %s -- real "
+            "execution result is unaffected", implementation.get("id"),
+        )
 
 
 def check_requirements(implementation: dict, available: dict) -> bool:
