@@ -41,10 +41,18 @@ _PROCEDURES_HEADER = (
 )
 _RUN_HEADER = (
     "# run.md -- GENERATED, not canonical. Do not hand-edit.\n"
-    "# NODE|<node_id>|<status>|<name>|step=<procedure_id>:<step_id>|impl=<implementation_id>|executor=<executor>|deps=<node_ids_csv>\n"
-    "# VERIFY|<node_id>|<verification_id>|<state>|<verification_type>|<criterion>|source=<source_ref>|evidence=<evidence_ref_or_none>\n\n"
+    "# NODE|<node_id>|<status>|<name>|goal=<goal_id>|step=<procedure_id>:<step_id>|impl=<implementation_id>|executor=<executor>|deps=<node_ids_csv>\n"
+    "# GOAL|<node_id>|<goal_id>|<grounded_goal_summary>\n"
+    "# VERIFY|<node_id>|<verification_id>|<state>|<verification_type>|<criterion>|source=<source_ref>|evidence=<evidence_ref_or_none>\n"
+    "# COST_ESTIMATE not emitted yet -- no cost model exists in this codebase (honest, not silently skipped)\n\n"
 )
 _INDEX_HEADER = "# index.md -- GENERATED, not canonical. Do not hand-edit. This is a routing index, not prose.\n\n"
+_GOALS_HEADER = (
+    "# goals.md -- GENERATED, not canonical. Do not hand-edit.\n"
+    "# GOAL|<goal_id>|<status>|<scope>|<name>|version=<version>\n"
+    "# GOAL_DETAIL|<goal_id>|outcome=<expected_outcome>|verification=<verification_summary>\n"
+    "# ALIASES|<goal_id>|<alias_csv>\n\n"
+)
 
 
 def _row(*fields: object) -> str:
@@ -176,7 +184,17 @@ class NodeLine:
     implementation_id: Optional[str]
     executor: str
     deps: list[str] = field(default_factory=list)
-    goal_type: Optional[str] = None
+    # execu.md Sec 25 (meta-harness directive, 2026-09-15 revision):
+    # Goal identity is now first-class on the NODE line itself
+    # (goal=<goal_id>), not a separate goal_type field. `goal_id` is
+    # `None` when no real canonical Goal (backend/db/83_goals.sql) has
+    # been resolved for this node's step -- rendered as the literal `-`,
+    # never fabricated. `grounded_goal_summary` feeds the companion
+    # GOAL|<node_id>|<goal_id>|<summary> line (only emitted when goal_id
+    # is real -- a summary with no real goal_id to anchor it is not
+    # rendered, per the same no-fabrication rule).
+    goal_id: Optional[str] = None
+    grounded_goal_summary: Optional[str] = None
     inputs: dict[str, str] = field(default_factory=dict)
     context_claims: list[str] = field(default_factory=list)  # already "claim_id@version" strings
     access: list[tuple[str, str]] = field(default_factory=list)  # (access_type, access_spec)
@@ -184,6 +202,12 @@ class NodeLine:
     verify: list[VerifyLine] = field(default_factory=list)
     owner: Optional[str] = None
     lease_until: Optional[str] = None
+    # Sec 25's COST_ESTIMATE line is deliberately NOT emitted anywhere in
+    # this module -- no cost model exists yet in this codebase (confirmed
+    # honestly, not silently skipped) -- fabricating a number here would
+    # violate the whole ABI's own "never fabricate" contract. Add a
+    # cost_estimate field + COST_ESTIMATE render line together with the
+    # real cost model, not ahead of it.
 
 
 @dataclass
@@ -207,13 +231,14 @@ def render_run_md(run: RunLine, nodes: list[NodeLine]) -> str:
     for n in nodes:
         lines = [
             _row("NODE", n.node_id, n.status, n.name)
+            + _SEP + _kv_field("goal", n.goal_id or "-")
             + _SEP + _kv_field("step", f"{n.procedure_id}:{n.step_id}")
             + _SEP + _kv_field("impl", n.implementation_id or "-")
             + _SEP + _kv_field("executor", n.executor)
             + _SEP + _kv_field("deps", _csv(n.deps)),
         ]
-        if n.goal_type:
-            lines.append(_row("GOAL", n.node_id, n.goal_type))
+        if n.goal_id:
+            lines.append(_row("GOAL", n.node_id, n.goal_id, n.grounded_goal_summary or "-"))
         for key, value in n.inputs.items():
             lines.append(_row("INPUT", n.node_id) + _SEP + _kv_field(key, value))
         if n.context_claims:
@@ -254,10 +279,21 @@ def render_index_md(
     *, repo: str, revision: int, active_run: Optional[str],
     claim_groups: list[GroupLine], procedure_groups: list[GroupLine],
     implementation_groups: list[GroupLine], run_states: list[RunStateLine],
+    goal_groups: list[GroupLine] = (),  # type: ignore[assignment]
 ) -> str:
     """Directive Sec 24. The tiny router -- one-line-per-group records,
     no duplicated object bodies, bounded size. `active_run=None` renders
-    the literal `none` (never a fabricated run id)."""
+    the literal `none` (never a fabricated run id).
+
+    `goal_groups` defaults to `()` -- every pre-existing caller (this
+    module's own earlier callers, before Goal had a canonical table)
+    keeps working unchanged. Every *_GROUP line uses the SAME
+    space-separated id list execu.md's own CLAIM_GROUP/PROCEDURE_GROUP/
+    IMPLEMENTATION_GROUP examples already establish, deliberately not the
+    comma-separated form that directive's own GOAL_GROUP example shows in
+    isolation -- one separator convention across every group line in this
+    file is worth more than matching one inconsistent example verbatim.
+    """
     lines = [
         _row("REPO", repo),
         _row("REVISION", revision),
@@ -267,6 +303,10 @@ def render_index_md(
     for g in claim_groups:
         lines.append(_row("CLAIM_GROUP", g.topic, " ".join(g.ids)))
     if claim_groups:
+        lines.append("")
+    for g in goal_groups:
+        lines.append(_row("GOAL_GROUP", g.topic, " ".join(g.ids)))
+    if goal_groups:
         lines.append("")
     for g in procedure_groups:
         lines.append(_row("PROCEDURE_GROUP", g.topic, " ".join(g.ids)))
@@ -279,3 +319,43 @@ def render_index_md(
     for rs in run_states:
         lines.append(_row("RUN_STATE", rs.state, " ".join(rs.node_ids) if rs.node_ids else "-"))
     return _INDEX_HEADER + "\n".join(lines) + "\n"
+
+
+# ===========================================================================
+# goals.md
+# ===========================================================================
+
+
+@dataclass
+class GoalLine:
+    goal_id: str
+    status: str
+    scope: str
+    name: str
+    version: int
+    expected_outcome: Optional[str] = None
+    verification_summary: Optional[str] = None
+    aliases: list[str] = field(default_factory=list)
+
+
+def render_goals_md(goals: list[GoalLine]) -> str:
+    """execu.md Sec 23: `GOAL|<goal_id>|<status>|<scope>|<name>|
+    version=<version>`, `GOAL_DETAIL|<goal_id>|outcome=<expected_outcome>|
+    verification=<verification_summary>`, `ALIASES|<goal_id>|<alias_csv>`.
+    Empty is a real, honest state (a run with no resolved Goals), never a
+    fabricated placeholder row."""
+    if not goals:
+        return _GOALS_HEADER + "(no goals)\n"
+    blocks: list[str] = []
+    for g in goals:
+        lines = [_row("GOAL", g.goal_id, g.status, g.scope, g.name) + _SEP + _kv_field("version", g.version)]
+        if g.expected_outcome or g.verification_summary:
+            lines.append(
+                _row("GOAL_DETAIL", g.goal_id)
+                + _SEP + _kv_field("outcome", g.expected_outcome or "-")
+                + _SEP + _kv_field("verification", g.verification_summary or "-")
+            )
+        if g.aliases:
+            lines.append(_row("ALIASES", g.goal_id, ",".join(g.aliases)))
+        blocks.append("\n".join(lines))
+    return _GOALS_HEADER + "\n\n".join(blocks) + "\n"

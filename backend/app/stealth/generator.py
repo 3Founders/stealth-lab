@@ -322,23 +322,26 @@ async def _gather_index_groups(
     claims_rows: list[IdxRow], procedures_rows: list[IdxRow],
     recommended_implementations: list[dict],
 ):
-    """The real data-gathering half of `index.md` (meta-harness Sec 24),
-    kept separate from the final render call so the caller can supply
-    `revision` (the journal's own monotonic seq, only known once
+    """The real data-gathering half of `index.md` (meta-harness/execu.md
+    Sec 24), kept separate from the final render call so the caller can
+    supply `revision` (the journal's own monotonic seq, only known once
     `append_events` has actually run under the write lock -- see
     `generate_projection`'s own call site) without this function needing
-    to know anything about journaling. `GOAL_GROUP` deliberately NOT
-    produced yet -- Goal has no canonical table in this codebase as of
-    this pass (confirmed live with the `ingestion` lane, who owns that
-    migration per ingestion.md Sec 2); emitting one ahead of real
-    goal_id values would mean fabricating them. CLAIM_GROUP/
-    PROCEDURE_GROUP reuse the SAME topic tags already computed for
-    claims.idx/procedures.idx (`.tags[0]`, claim_type/domain
+    to know anything about journaling.
+
+    CLAIM_GROUP/PROCEDURE_GROUP reuse the SAME topic tags already
+    computed for claims.idx/procedures.idx (`.tags[0]`, claim_type/domain
     respectively) -- one source of grouping truth, not two.
     IMPLEMENTATION_GROUP groups by the real `implementations.goal` column
     (migration 80) for exactly the ids this run's own
-    `recommended_implementations` names -- never the whole corpus (B30's
-    bounded-working-set rule, same as claims.md's own scoping).
+    `recommended_implementations` names. GOAL_GROUP groups by the real
+    `goals.tags` column (migration 83, `ingestion` lane) for exactly the
+    Goals `_resolve_goals_by_normalized_name` resolves for this run's own
+    nodes -- the SAME resolution `_build_run_page`'s NODE/GOAL lines use,
+    not a second lookup with its own drift risk. Never the whole `goals`
+    corpus (B30's bounded-working-set rule, same as claims.md's own
+    scoping) -- 3272 real rows exist as of this writing; only ones this
+    run actually touches are ever grouped here.
     """
     from app.stealth.pipe_format import GroupLine, RunStateLine
 
@@ -361,75 +364,252 @@ async def _gather_index_groups(
             by_goal.setdefault(str(r["goal"] or "-"), []).append(str(r["id"]))
         implementation_groups = [GroupLine(topic=t, ids=ids) for t, ids in sorted(by_goal.items())]
 
+    node_goal_texts = [n.get("goal") for n in context.get("nodes", []) if n.get("goal")]
+    goal_rows = await _resolve_goals_by_normalized_name(
+        pool, node_goal_texts, scope_type=context.get("scope_type"), scope_entity_id=context.get("scope_entity_id"),
+    )
+    by_goal_topic: dict[str, list[str]] = {}
+    for r in goal_rows.values():
+        tags = r.get("tags") or []
+        topic = tags[0] if tags else "-"
+        by_goal_topic.setdefault(topic, []).append(str(r["id"]))
+    goal_groups = [GroupLine(topic=t, ids=sorted(set(ids))) for t, ids in sorted(by_goal_topic.items())]
+
     by_state: dict[str, list[str]] = {"READY": [], "RUNNING": [], "BLOCKED": [], "DONE": []}
     for n in context.get("nodes", []):
         bucket = _RUN_STATE_BUCKET[n["status"]]
         by_state[bucket].append(f"N{n['node_order']}")
     run_states = [RunStateLine(state=s, node_ids=by_state[s]) for s in ("READY", "RUNNING", "BLOCKED", "DONE")]
 
-    return claim_groups, procedure_groups, implementation_groups, run_states
+    return claim_groups, procedure_groups, implementation_groups, goal_groups, run_states, goal_rows
 
 
-def _build_run_page(
-    context: dict[str, Any], intents: dict[int, dict] | None = None,
+async def _resolve_goals_by_normalized_name(
+    pool: asyncpg.Pool, normalized_names_in: Any, *, scope_type: str | None, scope_entity_id: str | None,
+) -> dict[str, dict]:
+    """Shared by `_build_run_page` (NODE/GOAL lines) and
+    `_gather_index_groups` (GOAL_GROUP) -- ONE real lookup, not two
+    independently-drifting ones. Read-only against the real `goals`
+    table (backend/db/83_goals.sql), using the SAME normalization
+    function (`goals.py::normalize_goal_name`) the one real Goal writer
+    (`find_or_create_goal`) uses for its own dedup key, so a match here
+    is the identical key a write would have deduped against -- never a
+    looser or stricter rule invented here.
+
+    Prefers a non-global (more specific) match over a global one for the
+    same normalized name, if both exist -- real specificity preference,
+    not arbitrary "first row wins".
+    """
+    from app.services.goals import normalize_goal_name
+
+    normalized_names = sorted({normalize_goal_name(n) for n in normalized_names_in if n} - {""})
+    goal_by_normalized: dict[str, dict] = {}
+    if not normalized_names:
+        return goal_by_normalized
+
+    if scope_type and scope_type != "global":
+        rows = await pool.fetch(
+            "SELECT id, normalized_name, canonical_name, expected_outcome, scope_type, tags, status, version, aliases, verification_requirement, scope_entity_id FROM goals "
+            "WHERE normalized_name = ANY($1::text[]) AND t_invalid IS NULL "
+            "AND ((scope_type = $2 AND scope_entity_id IS NOT DISTINCT FROM $3) OR scope_type = 'global')",
+            normalized_names, scope_type, scope_entity_id,
+        )
+    else:
+        rows = await pool.fetch(
+            "SELECT id, normalized_name, canonical_name, expected_outcome, scope_type, tags, status, version, aliases, verification_requirement, scope_entity_id FROM goals "
+            "WHERE normalized_name = ANY($1::text[]) AND t_invalid IS NULL AND scope_type = 'global'",
+            normalized_names,
+        )
+    for r in rows:
+        key = r["normalized_name"]
+        existing = goal_by_normalized.get(key)
+        if existing is None or (existing["scope_type"] == "global" and r["scope_type"] != "global"):
+            goal_by_normalized[key] = dict(r)
+    return goal_by_normalized
+
+
+def _stringify_jsonb(value: Any) -> Optional[str]:
+    """A `goals.expected_outcome`/`verification_requirement` JSONB value
+    may already be a plain string (a real writer stored one) or a dict
+    (a real writer stored structure) -- render either honestly, never
+    guess a sub-field out of a dict that might not have one."""
+    if value is None:
+        return None
+    return value if isinstance(value, str) else json.dumps(value)
+
+
+async def _build_goals_page(goal_rows: dict[str, dict]) -> tuple[str, list[IdxRow]]:
+    """execu.md Sec 23: `goals.md`, the newest `.stealth/` file (Goal
+    now has a canonical table, backend/db/83_goals.sql, `ingestion`
+    lane). Takes the SAME resolved rows `_build_run_page`/
+    `_gather_index_groups` already fetched via
+    `_resolve_goals_by_normalized_name` -- one real lookup shared three
+    ways, not three independent queries that could drift.
+    """
+    from app.stealth.pipe_format import GoalLine, render_goals_md
+
+    goal_lines = [
+        GoalLine(
+            goal_id=str(r["id"]), status=str(r.get("status") or "-"), scope=str(r.get("scope_type") or "-"),
+            name=str(r.get("canonical_name") or r["id"]), version=int(r.get("version") or 1),
+            expected_outcome=_stringify_jsonb(r.get("expected_outcome")),
+            verification_summary=_stringify_jsonb(r.get("verification_requirement")),
+            aliases=list(r.get("aliases") or []),
+        )
+        for r in goal_rows.values()
+    ]
+    # Stable order -- real ids, not dict-iteration-order-dependent.
+    goal_lines.sort(key=lambda g: g.goal_id)
+    goals_md = render_goals_md(goal_lines)
+
+    idx_rows: list[IdxRow] = []
+    lines = goals_md.splitlines()
+    starts = [i for i, ln in enumerate(lines, start=1) if ln.startswith("GOAL|")]
+    for pos, (start, gl) in enumerate(zip(starts, goal_lines)):
+        end = (starts[pos + 1] - 2) if pos + 1 < len(starts) else len(lines)
+        idx_rows.append(IdxRow(
+            obj_id=gl.goal_id, version=str(gl.version), scope=gl.scope, status=gl.status,
+            tags=(), file="goals.md", start=start, end=end, summary=gl.name[:110],
+        ))
+    return goals_md, idx_rows
+
+
+async def _build_run_page(
+    pool: asyncpg.Pool, context: dict[str, Any], procedure: dict,
+    intents: dict[int, dict] | None = None,
 ) -> tuple[str, list[RunIdxRow]]:
-    """`intents` maps node_order -> a file-intent row from
+    """Meta-harness/execu.md Sec 25: `NODE|<id>|<status>|<name>|
+    goal=<goal_id>|step=<procedure:step>|impl=<id>|executor=<...>|
+    deps=<...>`, `GOAL|<node_id>|<goal_id>|<summary>`, `INPUT|...`,
+    `CONTEXT|...`, `ACCESS|...`, `OUTCOME|...`, `VERIFY|...`, `OWNER|...`.
+
+    `intents` maps node_order -> a file-intent row from
     `execution_run_nodes` (owner_agent_id / write_globs / ... ). Empty
-    when no coordination has been declared."""
+    when no coordination has been declared.
+
+    Goal resolution is READ-ONLY, real, and honest: no per-step goal_id
+    column exists yet (confirmed live with the `ingestion` lane, who
+    built the `goals` table -- ProcedureStep is a JSONB list item inside
+    `procedures.steps`, not a row, so a step-level goal_id would be a
+    NEW writer-populated JSONB key, a real, separate decision this
+    function does not make). Instead, each step's own raw goal text is
+    normalized via `goals.py::normalize_goal_name` (the SAME function
+    the one real Goal writer, `find_or_create_goal`, uses for its own
+    dedup key) and looked up against real `goals.normalized_name` rows,
+    scoped the same way find_or_create_goal scopes writes (global, or
+    this run's own scope_type+scope_entity_id). A step whose normalized
+    text matches no real Goal renders `goal=-` and no GOAL line --
+    unresolved stays unresolved, never fabricated.
+
+    `executor` is derived from the bound implementation's real `kind`
+    column when one is bound, else the documented "frontier" default
+    (execute_implementation's own honest fallback, confirmed this
+    session) -- never guessed independently of what would actually run.
+    """
+    from app.services.goals import normalize_goal_name
+    from app.stealth.pipe_format import NodeLine, RunLine, VerifyLine, render_run_md
+
     intents = intents or {}
-    blocks: list[MdBlock] = []
     nodes = context.get("nodes", [])
+    procedure_id = str(context["procedure_id"])
+    scope_type = context.get("scope_type")
+    scope_entity_id = context.get("scope_entity_id")
+    steps_by_order = {s.get("order"): s for s in (procedure.get("steps") or [])}
+
+    if not nodes:
+        return ("# run.md -- GENERATED, not canonical. Do not hand-edit.\n\n(no nodes)\n", [])
+
+    # --- batched real lookups, never one round trip per node -----------
+    impl_ids = [str(n["implementation_id"]) for n in nodes if n.get("implementation_id")]
+    impl_kind_by_id: dict[str, str] = {}
+    if impl_ids:
+        rows = await pool.fetch("SELECT id, kind FROM implementations WHERE id = ANY($1::uuid[])", impl_ids)
+        impl_kind_by_id = {str(r["id"]): r["kind"] for r in rows}
+
+    normalized_by_order = {
+        n["node_order"]: normalize_goal_name(n.get("goal") or "") for n in nodes if n.get("goal")
+    }
+    goal_by_normalized = await _resolve_goals_by_normalized_name(
+        pool, normalized_by_order.values(), scope_type=scope_type, scope_entity_id=scope_entity_id,
+    )
+
+    node_ids = [str(n["id"]) for n in nodes]
+    verify_by_node: dict[str, list[VerifyLine]] = {}
+    if node_ids:
+        vrows = await pool.fetch(
+            "SELECT execution_run_node_id, criterion_id, state, method, statement, evidence_refs "
+            "FROM verification_results WHERE execution_run_node_id = ANY($1::uuid[])",
+            node_ids,
+        )
+        for r in vrows:
+            nid_str = str(r["execution_run_node_id"])
+            evidence = r["evidence_refs"]
+            evidence_summary = ",".join(str(e) for e in evidence) if evidence else None
+            verify_by_node.setdefault(nid_str, []).append(VerifyLine(
+                node_id="", verification_id=r["criterion_id"], state=r["state"],
+                verification_type=r["method"], criterion=r["statement"], evidence=evidence_summary,
+            ))
+
+    node_lines: list[NodeLine] = []
     for n in nodes:
         order = n["node_order"]
         nid = f"N{order}"
         deps = [f"N{d}" for d in (n.get("deps") or [])]
         it = intents.get(order) or {}
-        owner = it.get("owner_agent_id") or "-"
+        owner = it.get("owner_agent_id")
         wglobs = it.get("write_globs") or []
         wexact = it.get("write_exact") or []
-        body = [
-            kv("objective", n.get("goal") or ""),
-            kv("status", n["status"]),
-            kv("owner", owner),
-            kv("depends_on", ", ".join(deps) or "-"),
-            kv("verification", n.get("verification_state") or "PENDING"),
+        access: list[tuple[str, str]] = [("filesystem", f"write:{g}") for g in wglobs]
+        access += [("filesystem", f"write:{g}") for g in wexact]
+
+        impl_id = str(n["implementation_id"]) if n.get("implementation_id") else None
+        executor = impl_kind_by_id.get(impl_id, "frontier") if impl_id else "frontier"
+
+        normalized = normalized_by_order.get(order)
+        goal_row = goal_by_normalized.get(normalized) if normalized else None
+        goal_id = str(goal_row["id"]) if goal_row else None
+        outcome = None
+        if goal_row and goal_row.get("expected_outcome"):
+            eo = goal_row["expected_outcome"]
+            outcome = eo if isinstance(eo, str) else json.dumps(eo)
+        elif steps_by_order.get(order, {}).get("expected_outputs"):
+            outcome = "; ".join(steps_by_order[order]["expected_outputs"])
+
+        node_verify = [
+            VerifyLine(node_id=nid, verification_id=v.verification_id, state=v.state,
+                       verification_type=v.verification_type, criterion=v.criterion, evidence=v.evidence)
+            for v in verify_by_node.get(str(n["id"]), [])
         ]
-        if wglobs_str := ", ".join(wglobs):
-            body.append(kv("write_globs", wglobs_str))
-        if wexact_str := ", ".join(wexact):
-            body.append(kv("write_exact", wexact_str))
-        if it.get("file_intent_lease_expires_at"):
-            body.append(kv("lease_expires_at", it["file_intent_lease_expires_at"]))
-        if n.get("implementation_id"):
-            body.append(kv("implementation", str(n["implementation_id"])))
-        blocks.append(MdBlock(
-            obj_id=nid, heading=f"NODE {nid}", body=body,
-            status=n["status"], summary=(n.get("goal") or "")[:100],
+
+        node_lines.append(NodeLine(
+            node_id=nid, status=n["status"], name=n.get("goal") or "-",
+            procedure_id=procedure_id, step_id=f"S{order}", implementation_id=impl_id, executor=executor,
+            deps=deps, goal_id=goal_id,
+            grounded_goal_summary=(goal_row["canonical_name"] if goal_row else None),
+            inputs={}, access=access, expected_outcome=outcome, verify=node_verify,
+            owner=owner, lease_until=it.get("file_intent_lease_expires_at"),
         ))
-    if context.get("waiting_child"):
-        wc = context["waiting_child"]
-        blocks.append(MdBlock(
-            obj_id="waiting_child",
-            heading="COORDINATION waiting_child",
-            body=[kv("child_run_id", wc["child_run_id"]), kv("child_status", wc["child_status"])],
-            status="BLOCKED", summary=f"waiting on child {wc['child_run_id']} ({wc['child_status']})",
-        ))
-    if not blocks:
-        return ("# run.md -- GENERATED, not canonical. Do not hand-edit.\n\n(no nodes)\n", [])
-    rendered = render_md_page("run.md", blocks)
+
+    run_line = RunLine(
+        run_id=str(context["procedure_run_id"]), status=context["status"],
+        objective=context.get("objective") or "-", procedure_id=procedure_id,
+        procedure_version=context["procedure_version"],
+    )
+    run_md = render_run_md(run_line, node_lines)
+
     rows: list[RunIdxRow] = []
-    for b in blocks:
-        s, e = rendered.ranges[b.obj_id]
-        node = next((x for x in nodes if f"N{x['node_order']}" == b.obj_id), None)
-        deps = tuple(f"N{d}" for d in (node.get("deps") or [])) if node else ()
-        it = intents.get(node["node_order"]) if node else None
-        owner = (it or {}).get("owner_agent_id") or "-"
-        wglobs = tuple((it or {}).get("write_globs") or ())
+    lines = run_md.splitlines()
+    node_starts = [(i, ln) for i, ln in enumerate(lines, start=1) if ln.startswith("NODE|")]
+    for pos, (start, _) in enumerate(node_starts):
+        nl = node_lines[pos]
+        # end = just before the next NODE| line, or EOF for the last one
+        end = (node_starts[pos + 1][0] - 2) if pos + 1 < len(node_starts) else len(lines)
         rows.append(RunIdxRow(
-            node_id=b.obj_id, status=b.status, owner=owner, deps=deps, write_globs=wglobs,
-            file="run.md", start=s, end=e, summary=b.summary,
+            node_id=nl.node_id, status=nl.status, owner=nl.owner or "-",
+            deps=tuple(nl.deps), write_globs=tuple(a[1] for a in nl.access),
+            file="run.md", start=start, end=end, summary=nl.name[:100],
         ))
-    return rendered.text, rows
+    return run_md, rows
 
 
 async def _fetch_file_intents(pool: asyncpg.Pool, run_id: str) -> dict[int, dict]:
@@ -509,6 +689,7 @@ async def generate_projection(
     if context is None:
         raise StealthProjectionError(f"procedure_run_id {procedure_run_id!r} has no run context")
     context.setdefault("scope_type", run_row.get("scope_type"))
+    context.setdefault("scope_entity_id", run_row.get("scope_entity_id"))
     procedure = await fetch_procedure_version(
         pool, run_row["procedure_id"], run_row["procedure_version"]
     ) or {}
@@ -545,23 +726,25 @@ async def generate_projection(
         extra_ids=tuple(b.obj_id for b in faulted.get("procedure", ())))
     implementations_md, impl_rows = _build_implementations_page(
         context, tuple(faulted.get("implementation", ())))
-    run_md, run_rows = _build_run_page(context, intents)
+    run_md, run_rows = await _build_run_page(pool, context, procedure, intents)
     exploration_md, exploration_rows = render_exploration_page(workspace_root)
 
-    claim_groups, procedure_groups, implementation_groups, run_states = await _gather_index_groups(
+    claim_groups, procedure_groups, implementation_groups, goal_groups, run_states, goal_rows = await _gather_index_groups(
         pool, context=context, claims_rows=claims_rows, procedures_rows=procedures_rows,
         recommended_implementations=context.get("recommended_implementations") or [],
     )
+    goals_md, goals_rows = await _build_goals_page(goal_rows)
 
     claims_idx = render_idx(claims_rows, header="claims.idx  id|version|scope|status|tags|file|start|end|summary")
     procedures_idx = render_idx(procedures_rows, header="procedures.idx  id|version|scope|status|tags|file|start|end|summary")
     implementations_idx = render_idx(impl_rows, header="implementations.idx  id|version|scope|status|tags|file|start|end|summary")
+    goals_idx = render_idx(goals_rows, header="goals.idx  id|version|scope|status|tags|file|start|end|summary")
     run_idx = render_idx(run_rows, header="run.idx  node|status|owner|deps|globs|file|start|end|summary")
     exploration_idx = render_idx(exploration_rows, header="exploration.idx  id|version|scope|status|tags|file|start|end|summary")
 
     for name, content in (("claims.idx", claims_idx), ("procedures.idx", procedures_idx),
-                          ("implementations.idx", implementations_idx), ("run.idx", run_idx),
-                          ("exploration.idx", exploration_idx)):
+                          ("implementations.idx", implementations_idx), ("goals.idx", goals_idx),
+                          ("run.idx", run_idx), ("exploration.idx", exploration_idx)):
         if len(content.encode("utf-8")) > TYPE_IDX_MAX_BYTES:
             raise StealthProjectionError(
                 f"{name} is {len(content)} bytes -- over the {TYPE_IDX_MAX_BYTES} working-set "
@@ -582,9 +765,9 @@ async def generate_projection(
     faulted_counts = {k: len(v) for k, v in faulted.items() if v}
     file_list = [
         "context.md", "run.json", "meta.json", "index.md",
-        "claims.md", "procedures.md", "implementations.md", "run.md", "events.jsonl",
+        "claims.md", "procedures.md", "implementations.md", "goals.md", "run.md", "events.jsonl",
         "index/root.idx", "index/claims.idx", "index/procedures.idx",
-        "index/implementations.idx", "index/run.idx",
+        "index/implementations.idx", "index/goals.idx", "index/run.idx",
     ]
     if has_expl:
         file_list += ["exploration.md", "index/exploration.idx"]
@@ -597,6 +780,7 @@ async def generate_projection(
             "claims": len(claims_rows),
             "procedures": len(procedures_rows),
             "implementations": len(impl_rows),
+            "goals": len(goals_rows),
             "run": len(run_rows),
             "exploration": len(exploration_rows),
         },
@@ -604,6 +788,7 @@ async def generate_projection(
             "claims": len(claims_rows),
             "procedures": len(procedures_rows),
             "implementations": len(impl_rows),
+            "goals": len(goals_rows),
             "run_nodes": len([r for r in run_rows if r.node_id.startswith("N")]),
             "explorations": len(exploration_rows),
         },
@@ -635,7 +820,7 @@ async def generate_projection(
             repo=os.path.basename(os.path.abspath(workspace_root)) or workspace_root,
             revision=seq, active_run=str(run_row["id"]),
             claim_groups=claim_groups, procedure_groups=procedure_groups,
-            implementation_groups=implementation_groups, run_states=run_states,
+            implementation_groups=implementation_groups, goal_groups=goal_groups, run_states=run_states,
         )
 
         plan: list[tuple[str, str]] = [
@@ -645,11 +830,13 @@ async def generate_projection(
             (os.path.join(stealth_dir, "claims.md"), claims_md),
             (os.path.join(stealth_dir, "procedures.md"), procedures_md),
             (os.path.join(stealth_dir, "implementations.md"), implementations_md),
+            (os.path.join(stealth_dir, "goals.md"), goals_md),
             (os.path.join(stealth_dir, "run.md"), run_md),
             (os.path.join(index_dir, "root.idx"), root_idx),
             (os.path.join(index_dir, "claims.idx"), claims_idx),
             (os.path.join(index_dir, "procedures.idx"), procedures_idx),
             (os.path.join(index_dir, "implementations.idx"), implementations_idx),
+            (os.path.join(index_dir, "goals.idx"), goals_idx),
             (os.path.join(index_dir, "run.idx"), run_idx),
         ]
         if has_expl:
@@ -668,12 +855,14 @@ async def generate_projection(
         "claims_md": claims_md,
         "procedures_md": procedures_md,
         "implementations_md": implementations_md,
+        "goals_md": goals_md,
         "run_md": run_md,
         "exploration_md": exploration_md,
         "root_idx": root_idx,
         "claims_idx": claims_idx,
         "procedures_idx": procedures_idx,
         "implementations_idx": implementations_idx,
+        "goals_idx": goals_idx,
         "run_idx": run_idx,
         "exploration_idx": exploration_idx,
         "journal_seq": seq,

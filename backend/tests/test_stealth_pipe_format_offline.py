@@ -10,6 +10,7 @@ import re
 
 from app.stealth.pipe_format import (
     ClaimLine,
+    GoalLine,
     GroupLine,
     NodeLine,
     ProcedureLine,
@@ -19,6 +20,7 @@ from app.stealth.pipe_format import (
     VerifyLine,
     VerifyReqLine,
     render_claims_md,
+    render_goals_md,
     render_index_md,
     render_procedures_md,
     render_run_md,
@@ -113,7 +115,8 @@ def _run_and_node(**node_overrides):
     node_kwargs = dict(
         node_id="N-003", status="RUNNING", name="Implement callback route",
         procedure_id="P-102", step_id="S3", implementation_id="I-19", executor="frontier",
-        deps=["N-002"], goal_type="code_edit", inputs={"file": "src/auth/callback.py"},
+        deps=["N-002"], goal_id="G-014", grounded_goal_summary="implement OAuth callback route",
+        inputs={"file": "src/auth/callback.py"},
         context_claims=["C-018@1"], access=[("filesystem", "write:src/auth/**")],
         expected_outcome="callback route handles OAuth redirect",
         verify=[VerifyLine("N-003", "V-001", "PASS", "deterministic_check", "code compiles", "E-91", "E-98")],
@@ -134,9 +137,27 @@ def test_node_line_exact_grammar():
     run, node = _run_and_node()
     md = render_run_md(run, [node])
     assert (
-        "NODE|N-003|RUNNING|Implement callback route|step=P-102:S3|impl=I-19|executor=frontier|deps=N-002"
+        "NODE|N-003|RUNNING|Implement callback route|goal=G-014|step=P-102:S3|impl=I-19|executor=frontier|deps=N-002"
         in md.splitlines()
     )
+
+
+def test_goal_line_exact_grammar():
+    run, node = _run_and_node()
+    md = render_run_md(run, [node])
+    assert "GOAL|N-003|G-014|implement OAuth callback route" in md.splitlines()
+
+
+def test_no_goal_id_renders_dash_and_omits_goal_line():
+    """Sec 25: goal_id is None when no real canonical Goal has been
+    resolved for this node -- the NODE line's goal= field is the literal
+    `-`, and no GOAL|... line is emitted at all (a summary with nothing
+    real to anchor it is not rendered)."""
+    run, node = _run_and_node(goal_id=None, grounded_goal_summary=None)
+    md = render_run_md(run, [node])
+    node_line = next(ln for ln in md.splitlines() if ln.startswith("NODE|"))
+    assert "goal=-" in node_line
+    assert not any(ln.startswith("GOAL|") for ln in md.splitlines())
 
 
 def test_every_node_specific_line_repeats_the_node_id():
@@ -238,3 +259,61 @@ def test_grep_claim_group_by_topic():
     )
     matches = [ln for ln in md.splitlines() if re.match(r"^CLAIM_GROUP\|generated-code\|", ln)]
     assert matches == ["CLAIM_GROUP|generated-code|C-022 C-037"]
+
+
+def test_index_md_goal_group_uses_space_separator_not_the_directives_own_comma_example():
+    """execu.md's own worked example shows `GOAL_GROUP|reference-search|
+    G-014,G-231` (comma-separated) -- deliberately NOT followed here, per
+    render_index_md's own docstring: one separator convention across
+    every *_GROUP line in this file beats matching one inconsistent
+    example verbatim."""
+    md = render_index_md(
+        repo="R", revision=1, active_run=None,
+        claim_groups=[], procedure_groups=[], implementation_groups=[], run_states=[],
+        goal_groups=[GroupLine("reference-search", ["G-014", "G-231"])],
+    )
+    assert "GOAL_GROUP|reference-search|G-014 G-231" in md.splitlines()
+    assert not any("G-014,G-231" in ln for ln in md.splitlines())
+
+
+# ===========================================================================
+# goals.md
+# ===========================================================================
+
+
+def test_goal_line_and_detail_and_aliases_exact_grammar():
+    md = render_goals_md([
+        GoalLine(
+            goal_id="G-014", status="active", scope="global", name="Find references", version=2,
+            expected_outcome="a complete list of callers", verification_summary="manual review",
+            aliases=["find callers", "find usages"],
+        ),
+    ])
+    lines = md.splitlines()
+    assert "GOAL|G-014|active|global|Find references|version=2" in lines
+    assert "GOAL_DETAIL|G-014|outcome=a complete list of callers|verification=manual review" in lines
+    assert "ALIASES|G-014|find callers,find usages" in lines
+
+
+def test_goals_md_empty_is_honest_not_fabricated():
+    md = render_goals_md([])
+    assert not any(ln.startswith("GOAL|") for ln in md.splitlines())
+    assert "(no goals)" in md
+
+
+def test_goal_with_no_detail_or_aliases_omits_those_lines():
+    md = render_goals_md([GoalLine(goal_id="G-1", status="candidate", scope="repo", name="x", version=1)])
+    lines = md.splitlines()
+    assert any(ln.startswith("GOAL|G-1|") for ln in lines)
+    assert not any(ln.startswith("GOAL_DETAIL|") for ln in lines)
+    assert not any(ln.startswith("ALIASES|") for ln in lines)
+
+
+def test_grep_goal_by_id_returns_exactly_one_complete_record():
+    md = render_goals_md([
+        GoalLine(goal_id="G-1", status="active", scope="global", name="first", version=1),
+        GoalLine(goal_id="G-2", status="active", scope="global", name="second", version=1),
+    ])
+    matches = [ln for ln in md.splitlines() if re.match(r"^GOAL\|G-2\|", ln)]
+    assert len(matches) == 1
+    assert "second" in matches[0]

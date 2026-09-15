@@ -32,6 +32,7 @@ from app.stealth.format import (
 )
 from app.stealth.generator import (
     _build_claims_page,
+    _build_goals_page,
     _build_implementations_page,
     _build_procedures_page,
     _build_run_page,
@@ -68,8 +69,10 @@ _FAKE_CONTEXT = {
     ],
     "blocking_unknowns": [], "waiting_child": None,
     "nodes": [
-        {"node_order": 0, "status": "succeeded", "goal": "enumerate callers", "deps": [], "verification_state": "passed"},
-        {"node_order": 1, "status": "running", "goal": "classify deps", "deps": [0], "verification_state": None},
+        {"id": "aaaaaaaa-0000-4000-8000-000000000000", "node_order": 0, "status": "succeeded",
+         "goal": "enumerate callers", "deps": [], "verification_state": "passed", "implementation_id": None},
+        {"id": "bbbbbbbb-0000-4000-8000-000000000000", "node_order": 1, "status": "running",
+         "goal": "classify deps", "deps": [0], "verification_state": None, "implementation_id": None},
     ],
     "parent_run_id": None, "root_run_id": "run-1",
 }
@@ -222,13 +225,62 @@ def test_build_implementations_page_missing_is_flagged():
     assert "MISSING_IMPLEMENTATION, not fabricated" in md
 
 
+class _FakeRunPagePool:
+    """Answers `_build_run_page`'s three batched queries: implementations
+    (kind by id), goals (by normalized_name), verification_results (by
+    execution_run_node_id)."""
+
+    def __init__(self, impl_rows=(), goal_rows=(), verify_rows=()):
+        self._impl_rows = list(impl_rows)
+        self._goal_rows = list(goal_rows)
+        self._verify_rows = list(verify_rows)
+
+    async def fetch(self, sql, *params):
+        n = " ".join(sql.split())
+        if "FROM implementations" in n:
+            ids = {str(i) for i in params[0]}
+            return [r for r in self._impl_rows if str(r["id"]) in ids]
+        if "FROM goals" in n:
+            names = set(params[0])
+            return [r for r in self._goal_rows if r["normalized_name"] in names]
+        if "FROM verification_results" in n:
+            ids = {str(i) for i in params[0]}
+            return [r for r in self._verify_rows if str(r["execution_run_node_id"]) in ids]
+        raise AssertionError(f"unexpected fetch: {n[:80]}")
+
+
 def test_build_run_page_row_per_node_plus_dep_edges():
-    md, rows = _build_run_page(_FAKE_CONTEXT)
+    md, rows = _run(_build_run_page(_FakeRunPagePool(), _FAKE_CONTEXT, _FAKE_PROC))
     node_rows = [r for r in rows if r.node_id.startswith("N")]
     assert [r.node_id for r in node_rows] == ["N0", "N1"]
     assert node_rows[1].deps == ("N0",)
     window = md.splitlines()[node_rows[1].start - 1:node_rows[1].end]
-    assert window[0] == "## NODE N1"
+    assert window[0].startswith("NODE|N1|running|classify deps|goal=-|step=proc-1:S1|impl=-|executor=frontier|deps=N0")
+
+
+def test_build_run_page_resolves_real_goal_and_executor(monkeypatch):
+    pool = _FakeRunPagePool(
+        impl_rows=[{"id": "iiiiiiii-0000-4000-8000-000000000000", "kind": "deterministic"}],
+        goal_rows=[{"id": "gggggggg-0000-4000-8000-000000000000", "normalized_name": "enumerate callers",
+                    "canonical_name": "Enumerate callers", "expected_outcome": "a full caller list", "scope_type": "global"}],
+        verify_rows=[{"execution_run_node_id": "aaaaaaaa-0000-4000-8000-000000000000",
+                      "criterion_id": "step:0:verification", "state": "verified",
+                      "method": "deterministic_check", "statement": "all callers found", "evidence_refs": ["E-1"]}],
+    )
+    ctx = dict(_FAKE_CONTEXT)
+    ctx["nodes"] = [
+        dict(_FAKE_CONTEXT["nodes"][0], implementation_id="iiiiiiii-0000-4000-8000-000000000000"),
+        _FAKE_CONTEXT["nodes"][1],
+    ]
+    md, rows = _run(_build_run_page(pool, ctx, _FAKE_PROC))
+    lines = md.splitlines()
+    node0 = next(ln for ln in lines if ln.startswith("NODE|N0|"))
+    assert "goal=gggggggg-0000-4000-8000-000000000000" in node0
+    assert "impl=iiiiiiii-0000-4000-8000-000000000000" in node0
+    assert "executor=deterministic" in node0
+    assert "GOAL|N0|gggggggg-0000-4000-8000-000000000000|Enumerate callers" in lines
+    assert any(ln.startswith("VERIFY|N0|step:0:verification|verified|deterministic_check|all callers found")
+               for ln in lines)
 
 
 # ------------------------------------------------------------- T11 budget
@@ -263,15 +315,23 @@ def test_root_router_stays_bounded_even_with_a_large_working_set():
 
 
 class _FakeImplGoalsPool:
-    """Answers `_gather_index_groups`'s one query:
-    SELECT id, goal FROM implementations WHERE id = ANY($1::uuid[])."""
+    """Answers `_gather_index_groups`'s two queries: implementations (by
+    id) and goals (by normalized_name, the real `goals.py::
+    normalize_goal_name` key)."""
 
-    def __init__(self, rows: list[dict]):
-        self._rows = rows
+    def __init__(self, impl_rows: list[dict] = (), goal_rows: list[dict] = ()):
+        self._impl_rows = list(impl_rows)
+        self._goal_rows = list(goal_rows)
 
     async def fetch(self, sql, *params):
-        ids = {str(i) for i in params[0]}
-        return [r for r in self._rows if str(r["id"]) in ids]
+        n = " ".join(sql.split())
+        if "FROM implementations" in n:
+            ids = {str(i) for i in params[0]}
+            return [r for r in self._impl_rows if str(r["id"]) in ids]
+        if "FROM goals" in n:
+            names = set(params[0])
+            return [r for r in self._goal_rows if r["normalized_name"] in names]
+        raise AssertionError(f"unexpected fetch: {n[:80]}")
 
 
 def test_gather_index_groups_claim_and_procedure_groups_reuse_idx_tags():
@@ -285,23 +345,24 @@ def test_gather_index_groups_claim_and_procedure_groups_reuse_idx_tags():
         IdxRow(obj_id="P-1", version="1", scope="global", status="verified", tags=("testing",),
                file="procedures.md", start=1, end=3, summary="s"),
     ]
-    claim_groups, procedure_groups, implementation_groups, run_states = _run(_gather_index_groups(
-        _FakeImplGoalsPool([]), context={"nodes": []}, claims_rows=claims_rows,
+    claim_groups, procedure_groups, implementation_groups, goal_groups, run_states, _ = _run(_gather_index_groups(
+        _FakeImplGoalsPool(), context={"nodes": []}, claims_rows=claims_rows,
         procedures_rows=procedures_rows, recommended_implementations=[],
     ))
     assert {g.topic: g.ids for g in claim_groups} == {"fact": ["C-1"], "invariant": ["C-2"]}
     assert {g.topic: g.ids for g in procedure_groups} == {"testing": ["P-1"]}
     assert implementation_groups == []
+    assert goal_groups == []
     assert {s.state: s.node_ids for s in run_states} == {"READY": [], "RUNNING": [], "BLOCKED": [], "DONE": []}
 
 
 def test_gather_index_groups_implementation_groups_by_real_goal_column():
-    pool = _FakeImplGoalsPool([
+    pool = _FakeImplGoalsPool(impl_rows=[
         {"id": "I-1", "goal": "verification"},
         {"id": "I-2", "goal": "verification"},
         {"id": "I-3", "goal": None},
     ])
-    _, _, implementation_groups, _ = _run(_gather_index_groups(
+    _, _, implementation_groups, _, _, _ = _run(_gather_index_groups(
         pool, context={"nodes": []}, claims_rows=[], procedures_rows=[],
         recommended_implementations=[
             {"implementation_id": "I-1"}, {"implementation_id": "I-2"}, {"implementation_id": "I-3"},
@@ -309,6 +370,18 @@ def test_gather_index_groups_implementation_groups_by_real_goal_column():
     ))
     by_topic = {g.topic: sorted(g.ids) for g in implementation_groups}
     assert by_topic == {"verification": ["I-1", "I-2"], "-": ["I-3"]}
+
+
+def test_gather_index_groups_goal_groups_by_real_tags_column():
+    pool = _FakeImplGoalsPool(goal_rows=[
+        {"id": "G-1", "normalized_name": "find references", "canonical_name": "Find references",
+         "expected_outcome": None, "scope_type": "global", "tags": ["reference-search"]},
+    ])
+    context = {"nodes": [{"node_order": 0, "status": "running", "goal": "find references"}]}
+    _, _, _, goal_groups, _, _ = _run(_gather_index_groups(
+        pool, context=context, claims_rows=[], procedures_rows=[], recommended_implementations=[],
+    ))
+    assert {g.topic: g.ids for g in goal_groups} == {"reference-search": ["G-1"]}
 
 
 def test_gather_index_groups_buckets_nodes_by_real_status():
@@ -320,8 +393,8 @@ def test_gather_index_groups_buckets_nodes_by_real_status():
         {"node_order": 4, "status": "resumable"},
         {"node_order": 5, "status": "failed"},
     ]}
-    _, _, _, run_states = _run(_gather_index_groups(
-        _FakeImplGoalsPool([]), context=context, claims_rows=[], procedures_rows=[],
+    _, _, _, _, run_states, _ = _run(_gather_index_groups(
+        _FakeImplGoalsPool(), context=context, claims_rows=[], procedures_rows=[],
         recommended_implementations=[],
     ))
     by_state = {s.state: s.node_ids for s in run_states}
@@ -334,9 +407,14 @@ def test_gather_index_groups_buckets_nodes_by_real_status():
 def test_index_md_end_to_end_real_grammar():
     from app.stealth.pipe_format import render_index_md
 
-    claim_groups, procedure_groups, implementation_groups, run_states = _run(_gather_index_groups(
-        _FakeImplGoalsPool([{"id": "I-1", "goal": "verification"}]),
-        context={"nodes": [{"node_order": 0, "status": "running"}]},
+    pool = _FakeImplGoalsPool(
+        impl_rows=[{"id": "I-1", "goal": "verification"}],
+        goal_rows=[{"id": "G-1", "normalized_name": "find references", "canonical_name": "Find references",
+                    "expected_outcome": None, "scope_type": "global", "tags": ["reference-search"]}],
+    )
+    claim_groups, procedure_groups, implementation_groups, goal_groups, run_states, _ = _run(_gather_index_groups(
+        pool,
+        context={"nodes": [{"node_order": 0, "status": "running", "goal": "find references"}]},
         claims_rows=[IdxRow(obj_id="C-1", version="1", scope="repo", status="ACTIVE", tags=("fact",),
                              file="claims.md", start=1, end=1, summary="s")],
         procedures_rows=[],
@@ -345,14 +423,41 @@ def test_index_md_end_to_end_real_grammar():
     md = render_index_md(
         repo="StealthLab", revision=42, active_run="R-1",
         claim_groups=claim_groups, procedure_groups=procedure_groups,
-        implementation_groups=implementation_groups, run_states=run_states,
+        implementation_groups=implementation_groups, goal_groups=goal_groups, run_states=run_states,
     )
     lines = md.splitlines()
     assert "REPO|StealthLab" in lines
     assert "REVISION|42" in lines
     assert "ACTIVE_RUN|R-1" in lines
     assert "CLAIM_GROUP|fact|C-1" in lines
+    assert "GOAL_GROUP|reference-search|G-1" in lines
     assert "IMPLEMENTATION_GROUP|verification|I-1" in lines
     assert "RUN_STATE|RUNNING|N0" in lines
-    # GOAL_GROUP deliberately absent -- no canonical Goal table yet
-    assert not any(ln.startswith("GOAL_GROUP") for ln in lines)
+
+
+# ------------------------------------------------------------- goals.md
+
+
+def test_build_goals_page_renders_and_indexes_resolved_goal_rows():
+    goal_rows = {
+        "find references": {
+            "id": "gggggggg-0000-4000-8000-000000000000", "status": "active", "scope_type": "global",
+            "canonical_name": "Find references", "version": 3, "expected_outcome": "a caller list",
+            "verification_requirement": "manual review", "aliases": ["find usages"],
+        },
+    }
+    md, rows = _run(_build_goals_page(goal_rows))
+    lines = md.splitlines()
+    assert "GOAL|gggggggg-0000-4000-8000-000000000000|active|global|Find references|version=3" in lines
+    assert any(ln.startswith("GOAL_DETAIL|gggggggg-0000-4000-8000-000000000000|") for ln in lines)
+    assert any(ln.startswith("ALIASES|gggggggg-0000-4000-8000-000000000000|") for ln in lines)
+    assert len(rows) == 1
+    r = rows[0]
+    window = md.splitlines()[r.start - 1:r.end]
+    assert window[0].startswith("GOAL|gggggggg-0000-4000-8000-000000000000|")
+
+
+def test_build_goals_page_empty_is_honest():
+    md, rows = _run(_build_goals_page({}))
+    assert rows == []
+    assert "(no goals)" in md
