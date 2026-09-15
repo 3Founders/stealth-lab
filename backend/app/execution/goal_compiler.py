@@ -1,0 +1,119 @@
+"""
+Deterministic DAG flattening over a resolved Goal tree (execu.md Sec
+16-18): the compiler half of the product loop, deliberately separate
+from `goal_resolution.py`'s own recursive SELECTION logic (Sec 10: "the
+ranker selects Implementations, the compiler owns graph structure" --
+the same separation `app/execution/plans.py::compile_plan` already
+holds for Procedure-based plans, applied here to Goal-based ones).
+
+Pure and pool-free (same discipline `compile_plan()` holds, for the same
+reason: its contracts must be provable offline). Takes an
+already-resolved `ResolvedGoalNode` tree (goal_resolution.resolve_goal's
+output) and flattens it into an ordered list of concrete nodes:
+
+  - one concrete node per `chosen == "implementation"` LEAF -- the real
+    work.
+  - one concrete HUMAN node per `chosen == "unresolved"` leaf (Sec 4/21:
+    "A Goal may initially be unsolved" is a real, durable state, not an
+    error to hide -- surfaced here as an explicit NEEDS_INPUT node a
+    human can act on, never silently dropped from the DAG).
+  - a `chosen == "procedure"` node itself emits NOTHING -- it is pure
+    decomposition (Sec 2: "Procedure: decomposition of one Goal into
+    child Goals"), not executable work. Its children's own nodes become
+    the real DAG, chained in the Procedure's own step order (steps are
+    linear by construction -- db/18_procedures.sql's own DDL comment,
+    the same fact `procedure_graph.py::steps_to_linear_nodes` already
+    relies on) -- one subtree's LAST concrete node becomes the next
+    subtree's dependency.
+
+Sec 17's cardinality rules fall out of this naturally, not as special
+cases: a Goal resolving straight to an Implementation is one Step -> one
+node; a Goal resolving through a Procedure whose every step itself
+resolves to an Implementation is one Step -> one node per step (many
+nodes for the whole Goal); a Goal resolving through a Procedure with an
+unresolved step is Step -> zero executable nodes (a human node instead).
+"""
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from typing import Literal, Optional
+
+from app.execution.goal_resolution import ResolvedGoalNode
+
+
+@dataclass
+class GoalPlanNode:
+    """One concrete, executable (or human-actionable) node of a
+    flattened Goal DAG. `kind='human'` nodes are real, durable NEEDS_INPUT
+    state (Sec 21), not a placeholder -- `rationale` always says exactly
+    what could not be resolved and why."""
+
+    node_id: str
+    goal_id: str
+    goal_name: str
+    kind: Literal["implementation", "human"]
+    implementation_id: Optional[str] = None
+    executor: str = "human"
+    deps: list[str] = field(default_factory=list)
+    rationale: str = ""
+    depth: int = 0
+
+
+def flatten_goal_tree(tree: ResolvedGoalNode) -> list[GoalPlanNode]:
+    """The real Sec 16 flattening: walks `tree` depth-first, in the exact
+    order `resolve_goal()` itself resolved children (a Procedure's own
+    step order), emitting one `GoalPlanNode` per leaf. Deterministic --
+    same tree in, same node list out, always; no ranking, no selection
+    happens here (that already happened inside `resolve_goal`, this
+    function only linearizes its result).
+    """
+    nodes: list[GoalPlanNode] = []
+    counter = [0]
+
+    def _next_id() -> str:
+        nid = f"N{counter[0]}"
+        counter[0] += 1
+        return nid
+
+    def walk(node: ResolvedGoalNode, prior_dep: Optional[str]) -> Optional[str]:
+        """Returns the node_id of the LAST concrete node emitted for this
+        subtree (the dependency the NEXT sibling subtree should chain
+        onto), or None if this subtree emitted nothing concrete (cannot
+        happen today -- every branch emits exactly one node or recurses
+        into children that do -- kept as a real return type rather than
+        assumed, so a future branch that legitimately emits nothing
+        doesn't silently break the chain)."""
+        if node.chosen == "implementation":
+            nid = _next_id()
+            nodes.append(GoalPlanNode(
+                node_id=nid, goal_id=node.goal_id, goal_name=node.goal_name,
+                kind="implementation", implementation_id=str(node.implementation["id"]),
+                executor=str(node.implementation.get("kind") or "frontier"),
+                deps=[prior_dep] if prior_dep else [],
+                rationale=node.rationale, depth=node.depth,
+            ))
+            return nid
+
+        if node.chosen == "unresolved":
+            nid = _next_id()
+            nodes.append(GoalPlanNode(
+                node_id=nid, goal_id=node.goal_id, goal_name=node.goal_name,
+                kind="human", executor="human",
+                deps=[prior_dep] if prior_dep else [],
+                rationale=node.unresolved_reason or "unresolved",
+                depth=node.depth,
+            ))
+            return nid
+
+        if node.chosen == "procedure":
+            last = prior_dep
+            for child in node.children:
+                emitted = walk(child, last)
+                if emitted is not None:
+                    last = emitted
+            return last
+
+        raise AssertionError(f"unknown ResolvedGoalNode.chosen value: {node.chosen!r}")
+
+    walk(tree, None)
+    return nodes

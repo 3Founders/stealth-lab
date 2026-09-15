@@ -3852,6 +3852,123 @@ async def create_goal(
     return json.dumps(result, default=str)
 
 
+def _resolved_goal_node_to_dict(node) -> dict:
+    """Full, honest recursive dump of a ResolvedGoalNode tree -- every
+    field, including every unresolved_reason and every child, never
+    trimmed. Both `explain_goal_route` and `compile_goal` build off this
+    same conversion so the tree a caller inspects and the tree the DAG
+    was flattened from are provably the same object, not two
+    independently-serialized views that could drift."""
+    return {
+        "goal_id": node.goal_id, "goal_name": node.goal_name, "depth": node.depth,
+        "chosen": node.chosen,
+        "implementation": node.implementation,
+        "procedure": node.procedure,
+        "rationale": node.rationale,
+        "unresolved_reason": node.unresolved_reason,
+        "implementation_candidates_considered": node.implementation_candidates_considered,
+        "procedures_linked": node.procedures_linked,
+        "procedures_feasible": node.procedures_feasible,
+        "children": [_resolved_goal_node_to_dict(c) for c in node.children],
+    }
+
+
+@server.tool()
+async def explain_goal_route(
+    goal_id: str, ctx: Context, current_scope_json: str = "{}", max_depth: int = 6,
+) -> str:
+    """
+    Meta-harness/execu.md Sec 15/27: the full, disclosed recursive
+    resolution trace for a Goal -- exactly what `resolve_goal()` itself
+    computed, never recomputed or summarized lossily. Pure, non-mutating
+    read (same posture as `explain_implementation_selection`) -- runs
+    the real recursive compiler but persists nothing.
+
+    `current_scope_json`: JSON object -- the real current task context
+    (e.g. `{"repo": [...], "files": [...]}`) threaded straight into every
+    Implementation eligibility check and Procedure feasibility check
+    this resolution performs, unchanged.
+
+    Every node in the returned tree carries its own `chosen` outcome and
+    `rationale`/`unresolved_reason` -- an `unresolved` leaf is a real,
+    honest answer (Sec 4: "A Goal may initially be unsolved"), not an
+    error.
+    """
+    from app.execution.goal_resolution import GoalResolutionError, resolve_goal
+
+    pool = ctx.request_context.lifespan_context["pool"]
+    try:
+        current_scope = json.loads(current_scope_json)
+    except json.JSONDecodeError as exc:
+        return f"REFUSED: current_scope_json is not valid JSON -- {exc}"
+
+    try:
+        tree = await resolve_goal(
+            pool, goal_id, context={"current_scope": current_scope}, scope=_caller_access_scope(),
+            max_depth=max_depth,
+        )
+    except GoalResolutionError as exc:
+        return f"REFUSED: {exc}"
+    return json.dumps(_resolved_goal_node_to_dict(tree), default=str)
+
+
+@server.tool()
+async def compile_goal(
+    goal_id: str, ctx: Context, current_scope_json: str = "{}", max_depth: int = 6,
+) -> str:
+    """
+    Meta-harness/execu.md Sec 16/27: resolve a Goal recursively
+    (`resolve_goal`) and flatten the result into a concrete, ordered DAG
+    (`flatten_goal_tree`) -- the real "compile" half of the product loop
+    (Sec 0). Pure compile, no persistence, no execution -- the same
+    "plan_only" posture `find_best_way(mode="plan_only")` already
+    established for Procedure-based plans, applied here to Goal-based
+    ones. A caller wanting a durable, resumable run compiles first via
+    this tool, inspects the result, then drives execution through the
+    existing durable-run machinery (out of this tool's own scope).
+
+    Every node is either `kind="implementation"` (real, concrete work --
+    `implementation_id`/`executor` are never fabricated, taken directly
+    from what `resolve_goal` actually selected) or `kind="human"` (a
+    real NEEDS_INPUT node, Sec 21 -- `rationale` says exactly what could
+    not be resolved). `deps` chains nodes in the exact order the
+    Procedure(s) along the way declared their own steps.
+
+    Returns `{"tree": <full resolution trace>, "nodes": [<flattened DAG,
+    in dependency order>]}` -- both the "why" and the "what to execute",
+    never just one.
+    """
+    from app.execution.goal_compiler import flatten_goal_tree
+    from app.execution.goal_resolution import GoalResolutionError, resolve_goal
+
+    pool = ctx.request_context.lifespan_context["pool"]
+    try:
+        current_scope = json.loads(current_scope_json)
+    except json.JSONDecodeError as exc:
+        return f"REFUSED: current_scope_json is not valid JSON -- {exc}"
+
+    try:
+        tree = await resolve_goal(
+            pool, goal_id, context={"current_scope": current_scope}, scope=_caller_access_scope(),
+            max_depth=max_depth,
+        )
+    except GoalResolutionError as exc:
+        return f"REFUSED: {exc}"
+
+    nodes = flatten_goal_tree(tree)
+    return json.dumps({
+        "tree": _resolved_goal_node_to_dict(tree),
+        "nodes": [
+            {
+                "node_id": n.node_id, "goal_id": n.goal_id, "goal_name": n.goal_name,
+                "kind": n.kind, "implementation_id": n.implementation_id, "executor": n.executor,
+                "deps": n.deps, "rationale": n.rationale, "depth": n.depth,
+            }
+            for n in nodes
+        ],
+    }, default=str)
+
+
 @server.tool()
 async def submit_implementation(
     procedure_id: str, role: str, ctx: Context,
