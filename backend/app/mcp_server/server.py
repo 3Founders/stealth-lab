@@ -3601,6 +3601,100 @@ async def list_task_implementations(task_node_id: str, ctx: Context, status: str
 
 
 @server.tool()
+async def list_implementations_for_goal(goal: str, ctx: Context, status: str = "active") -> str:
+    """
+    Meta-harness Sec 8/32: every implementation whose `goal` (migration
+    80's ProcedureStep.goal <-> Implementation.goal column) exactly
+    matches -- the real MCP surface for "search finds candidates" (thin
+    wrapper around `implementation_registry.list_implementations_by_goal()`,
+    the same structured, non-LLM lookup `find_best_way`'s own binding
+    stage uses internally). `status` defaults to 'active' (an ordinary
+    selection candidate); pass 'all' to see every lifecycle state,
+    matching `list_task_implementations`'s own sentinel convention.
+
+    Exact match only, deliberately -- `goal` is free text, not an enum
+    (see that column's own migration for why); this is a real lookup, not
+    a fuzzy/semantic one. Returns `[]` (never a fabricated candidate) when
+    nothing has ever been classified against this exact goal string.
+    """
+    pool = ctx.request_context.lifespan_context["pool"]
+    resolved_status = None if status == "all" else status
+    if resolved_status is not None and resolved_status not in implementation_registry.STATUS_VALUES:
+        return (
+            f"REFUSED: unknown status {resolved_status!r} "
+            f"(valid: {implementation_registry.STATUS_VALUES}, or 'all')."
+        )
+    from app.execution.implementation_registry import list_implementations_by_goal
+    rows = await list_implementations_by_goal(pool, goal, scope=_caller_access_scope(), status=resolved_status)
+    return json.dumps(rows, default=str)
+
+
+@server.tool()
+async def explain_implementation_selection(
+    goal: str, ctx: Context,
+    privacy_policy: Optional[str] = None,
+    required_scope_type: Optional[str] = None,
+    allowed_execution_locations_json: str = "[]",
+) -> str:
+    """
+    Meta-harness Sec 10/32: the full, disclosed selection trace for a
+    goal -- candidates considered, each candidate's hard-constraint
+    checks (HARD_FALSE/SOFT/SATISFIABLE/UNKNOWN, directive Sec 9), score
+    components, the chosen implementation, and a human-readable rationale.
+    Thin wrapper around `implementation_selection.select_implementation_
+    for_goal()` -- the SAME function `find_best_way`'s own
+    `_try_registered_implementation` dispatch path uses, exposed here so
+    a caller can ask "what would be chosen, and why" WITHOUT running a
+    plan (a pure, non-mutating read -- never executes anything).
+
+    Optional context knobs mirror `evaluate_requirements()`'s own
+    contract exactly (see that function's docstring for the full
+    HARD_FALSE/UNKNOWN semantics per field) -- every one is optional and
+    omitting all of them means "no constraint", not "no candidates".
+    `allowed_execution_locations_json`: JSON array of
+    "stealth_hosted"/"user_hosted"/"third_party_hosted" strings.
+    """
+    pool = ctx.request_context.lifespan_context["pool"]
+    try:
+        allowed_execution_locations = json.loads(allowed_execution_locations_json) or None
+    except json.JSONDecodeError as exc:
+        return f"REFUSED: allowed_execution_locations_json is not valid JSON -- {exc}"
+
+    context: dict[str, Any] = {}
+    if privacy_policy is not None:
+        context["privacy_policy"] = privacy_policy
+    if required_scope_type is not None:
+        context["required_scope_type"] = required_scope_type
+    if allowed_execution_locations is not None:
+        context["allowed_execution_locations"] = allowed_execution_locations
+
+    from app.execution.implementation_selection import select_implementation_for_goal
+    result = await select_implementation_for_goal(pool, goal, context=context, scope=_caller_access_scope())
+    return json.dumps({
+        "goal": result.goal,
+        "candidates_considered": len(result.candidates_considered),
+        "chosen": result.chosen,
+        "rationale": result.rationale,
+        "ranked": [
+            {
+                "implementation_id": r.implementation.get("id"),
+                "name": r.implementation.get("name"),
+                "kind": r.implementation.get("kind"),
+                "eligible": r.eligible,
+                "score": r.score,
+                "checks": [{"name": c.name, "state": c.state, "detail": c.detail} for c in r.checks],
+                "components": [
+                    {"name": c.name, "value": c.value, "weight": c.weight, "contribution": c.contribution}
+                    for c in r.components
+                ],
+                "rejection_reasons": r.rejection_reasons,
+            }
+            for r in result.ranked
+        ],
+    }, default=str)
+
+
+@server.tool()
 async def submit_implementation(
     procedure_id: str, role: str, ctx: Context,
     implementation_id: Optional[str] = None,
