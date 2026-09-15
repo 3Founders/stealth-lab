@@ -50,15 +50,43 @@ class Criterion:
     criterion_id: str
     statement: str
     required: bool = True
+    # Meta-harness Sec 14 node-scoping (migration 82): None means this
+    # criterion is run-scoped (the overwhelming case today -- every
+    # postcondition-derived criterion below), a real value ties it to one
+    # specific execution_run_node. Never fabricated -- only set when a
+    # caller-supplied step-order -> node-id mapping actually names one.
+    execution_run_node_id: Optional[str] = None
 
 
-def derive_criteria(procedure: dict) -> list[Criterion]:
-    """One Criterion per `postconditions` entry, in order. A postcondition
-    may be a plain string (every real one today) or a dict with a
-    `statement` key and an optional `required` flag (`required=False` is
-    the one thing an author can declare today; there is no `method`
-    field to read yet -- see this module's own docstring for why that is
-    a real, current limitation, not an oversight)."""
+def derive_criteria(
+    procedure: dict, *, node_id_by_step_order: Optional[dict[int, str]] = None,
+) -> list[Criterion]:
+    """One Criterion per `postconditions` entry (run-scoped, unchanged),
+    PLUS one Criterion per step whose own `verification` field is set
+    (node-scoped, meta-harness Sec 14 -- new this pass).
+
+    A postcondition may be a plain string (every real one today) or a
+    dict with a `statement` key and an optional `required` flag
+    (`required=False` is the one thing an author can declare today;
+    there is no `method` field to read yet -- see this module's own
+    docstring for why that is a real, current limitation, not an
+    oversight). Postcondition criteria never carry a node id -- a
+    postcondition names no particular step, so it stays run-scoped by
+    construction, not by omission.
+
+    `node_id_by_step_order`: `{step["order"]: execution_run_node_id}`,
+    supplied by a caller that has already compiled/persisted the plan
+    (this function itself stays pool-free and pure, same discipline
+    `compile_plan()` holds). A step whose `order` has no entry, or whose
+    own `verification` field is unset, contributes nothing here --
+    HONEST SCOPE (confirmed live, this pass): zero real procedures in
+    the corpus have step-level `verification` data today, so this path
+    is real, additive, and currently unexercised by real data, not a
+    guess about what would happen if it were.
+
+    `steps[i]["verification"]` shape mirrors postconditions: a plain
+    string, or a dict with `statement`/optional `required`.
+    """
     criteria: list[Criterion] = []
     for i, raw in enumerate(procedure.get("postconditions") or []):
         if isinstance(raw, str):
@@ -70,6 +98,25 @@ def derive_criteria(procedure: dict) -> list[Criterion]:
             ))
         # A malformed entry (empty dict, no statement) is skipped, not
         # fabricated into a criterion with empty text.
+
+    node_id_by_step_order = node_id_by_step_order or {}
+    for step in procedure.get("steps") or []:
+        order = step.get("order")
+        raw = step.get("verification")
+        if raw is None or order is None:
+            continue
+        node_id = node_id_by_step_order.get(order)
+        if isinstance(raw, str) and raw.strip():
+            criteria.append(Criterion(
+                criterion_id=f"step:{order}:verification", statement=raw,
+                execution_run_node_id=node_id,
+            ))
+        elif isinstance(raw, dict) and raw.get("statement"):
+            criteria.append(Criterion(
+                criterion_id=f"step:{order}:verification", statement=raw["statement"],
+                required=bool(raw.get("required", True)), execution_run_node_id=node_id,
+            ))
+        # A malformed entry is skipped, same discipline as postconditions above.
     return criteria
 
 
@@ -98,25 +145,27 @@ async def _upsert_result(
     method: str, required: bool, state: str, evidence_refs: list,
     reviewer: Optional[str] = None, reviewed_targets: Optional[list] = None,
     criterion_answers: Optional[dict] = None, detail: Optional[str] = None,
-    created_by: Optional[str] = None,
+    created_by: Optional[str] = None, execution_run_node_id: Optional[str] = None,
 ) -> dict:
     row = await pool.fetchrow(
         """
         INSERT INTO verification_results (
             execution_run_id, criterion_id, statement, method, required, state,
-            evidence_refs, reviewer, reviewed_targets, criterion_answers, detail, created_by
-        ) VALUES ($1::uuid, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+            evidence_refs, reviewer, reviewed_targets, criterion_answers, detail, created_by,
+            execution_run_node_id
+        ) VALUES ($1::uuid, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13::uuid)
         ON CONFLICT (execution_run_id, criterion_id) DO UPDATE SET
             statement = EXCLUDED.statement, method = EXCLUDED.method,
             required = EXCLUDED.required, state = EXCLUDED.state,
             evidence_refs = EXCLUDED.evidence_refs, reviewer = EXCLUDED.reviewer,
             reviewed_targets = EXCLUDED.reviewed_targets,
-            criterion_answers = EXCLUDED.criterion_answers, detail = EXCLUDED.detail
+            criterion_answers = EXCLUDED.criterion_answers, detail = EXCLUDED.detail,
+            execution_run_node_id = EXCLUDED.execution_run_node_id
         RETURNING *
         """,
         execution_run_id, criterion_id, statement, method, required, state,
         evidence_refs or [], reviewer, reviewed_targets or [], criterion_answers or {},
-        detail, created_by,
+        detail, created_by, execution_run_node_id,
     )
     from app.execution.recorder import record_verification_started
     await record_verification_started(pool, execution_run_id, criterion_id=criterion_id, method=method)
@@ -127,6 +176,7 @@ async def record_self_report(
     pool: asyncpg.Pool, *, execution_run_id: str, criterion_id: str, statement: str,
     claimed_success: bool, required: bool = True, detail: Optional[str] = None,
     created_by: Optional[str] = None,
+    execution_run_node_id: Optional[str] = None,
 ) -> dict:
     """SELF_REPORT can reach `claimed_done` on success or
     `failed_verification` on an admitted failure -- it can NEVER reach
@@ -138,7 +188,7 @@ async def record_self_report(
     return await _upsert_result(
         pool, execution_run_id=execution_run_id, criterion_id=criterion_id, statement=statement,
         method="self_report", required=required, state=state, evidence_refs=[],
-        detail=detail, created_by=created_by,
+        detail=detail, created_by=created_by, execution_run_node_id=execution_run_node_id,
     )
 
 
@@ -146,6 +196,7 @@ async def record_artifact_inspection(
     pool: asyncpg.Pool, *, execution_run_id: str, criterion_id: str, statement: str,
     passed: bool, evidence_refs: Optional[list] = None, required: bool = True,
     detail: Optional[str] = None, created_by: Optional[str] = None,
+    execution_run_node_id: Optional[str] = None,
 ) -> dict:
     """A real artifact was inspected (e.g. artifact_validation.py's own
     gate) -- reaches `checked` on success, one rung above a bare claim,
@@ -154,7 +205,7 @@ async def record_artifact_inspection(
     return await _upsert_result(
         pool, execution_run_id=execution_run_id, criterion_id=criterion_id, statement=statement,
         method="artifact_inspection", required=required, state=state,
-        evidence_refs=evidence_refs or [], detail=detail, created_by=created_by,
+        evidence_refs=evidence_refs or [], detail=detail, created_by=created_by, execution_run_node_id=execution_run_node_id,
     )
 
 
@@ -162,6 +213,7 @@ async def record_deterministic_check(
     pool: asyncpg.Pool, *, execution_run_id: str, criterion_id: str, statement: str,
     passed: bool, evidence_refs: Optional[list] = None, required: bool = True,
     detail: Optional[str] = None, created_by: Optional[str] = None,
+    execution_run_node_id: Optional[str] = None,
 ) -> dict:
     """A real, repeatable, machine-executed check (a command/probe) --
     reaches `verified` on success."""
@@ -169,7 +221,7 @@ async def record_deterministic_check(
     return await _upsert_result(
         pool, execution_run_id=execution_run_id, criterion_id=criterion_id, statement=statement,
         method="deterministic_check", required=required, state=state,
-        evidence_refs=evidence_refs or [], detail=detail, created_by=created_by,
+        evidence_refs=evidence_refs or [], detail=detail, created_by=created_by, execution_run_node_id=execution_run_node_id,
     )
 
 
@@ -177,6 +229,7 @@ async def record_independent_agent(
     pool: asyncpg.Pool, *, execution_run_id: str, criterion_id: str, statement: str,
     passed: bool, evidence_refs: Optional[list] = None, required: bool = True,
     detail: Optional[str] = None, created_by: Optional[str] = None,
+    execution_run_node_id: Optional[str] = None,
 ) -> dict:
     """A SEPARATE agent/model (not the one that performed the work)
     checked it -- reaches `independently_verified`, the strongest
@@ -185,7 +238,7 @@ async def record_independent_agent(
     return await _upsert_result(
         pool, execution_run_id=execution_run_id, criterion_id=criterion_id, statement=statement,
         method="independent_agent", required=required, state=state,
-        evidence_refs=evidence_refs or [], detail=detail, created_by=created_by,
+        evidence_refs=evidence_refs or [], detail=detail, created_by=created_by, execution_run_node_id=execution_run_node_id,
     )
 
 
@@ -194,6 +247,7 @@ async def record_human_review(
     reviewer: str, reviewed_targets: list, criterion_answers: dict, verdict: bool,
     evidence_refs: Optional[list] = None, required: bool = True,
     detail: Optional[str] = None, created_by: Optional[str] = None,
+    execution_run_node_id: Optional[str] = None,
 ) -> dict:
     """B34: "Do not accept approved=true without reviewer identity,
     reviewed targets, criterion answers, timestamp, and Evidence
@@ -211,7 +265,7 @@ async def record_human_review(
         pool, execution_run_id=execution_run_id, criterion_id=criterion_id, statement=statement,
         method="human_review", required=required, state=state, evidence_refs=evidence_refs or [],
         reviewer=reviewer, reviewed_targets=reviewed_targets, criterion_answers=criterion_answers,
-        detail=detail, created_by=created_by,
+        detail=detail, created_by=created_by, execution_run_node_id=execution_run_node_id,
     )
 
 
@@ -219,6 +273,7 @@ async def record_real_world_outcome(
     pool: asyncpg.Pool, *, execution_run_id: str, criterion_id: str, statement: str,
     passed: bool, evidence_refs: Optional[list] = None, required: bool = True,
     detail: Optional[str] = None, created_by: Optional[str] = None,
+    execution_run_node_id: Optional[str] = None,
 ) -> dict:
     """An observed real-world effect (e.g. a production metric moved,
     a downstream system behaved as expected) -- reaches `verified`, the
@@ -228,7 +283,7 @@ async def record_real_world_outcome(
     return await _upsert_result(
         pool, execution_run_id=execution_run_id, criterion_id=criterion_id, statement=statement,
         method="real_world_outcome", required=required, state=state,
-        evidence_refs=evidence_refs or [], detail=detail, created_by=created_by,
+        evidence_refs=evidence_refs or [], detail=detail, created_by=created_by, execution_run_node_id=execution_run_node_id,
     )
 
 

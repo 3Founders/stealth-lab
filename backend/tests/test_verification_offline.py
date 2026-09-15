@@ -40,3 +40,51 @@ def test_derive_criteria_skips_malformed_entries_without_fabricating():
 def test_derive_criteria_on_empty_or_missing_postconditions():
     assert derive_criteria({"postconditions": []}) == []
     assert derive_criteria({}) == []
+
+
+# ---------------------------------------------------------------------
+# Meta-harness Sec 14: node-scoped criteria from step["verification"]
+# ---------------------------------------------------------------------
+
+
+def test_derive_criteria_from_plain_string_step_verification():
+    procedure = {"steps": [{"order": 0, "goal": "regen", "verification": "generated-drift passes"}]}
+    criteria = derive_criteria(procedure)
+    assert criteria == [
+        Criterion(criterion_id="step:0:verification", statement="generated-drift passes", required=True),
+    ]
+    assert criteria[0].execution_run_node_id is None  # no mapping given
+
+
+def test_derive_criteria_tags_step_criterion_with_real_node_id_when_mapping_given():
+    procedure = {"steps": [
+        {"order": 0, "goal": "regen", "verification": "generated-drift passes"},
+        {"order": 1, "goal": "deploy", "verification": {"statement": "smoke test passes", "required": False}},
+    ]}
+    criteria = derive_criteria(procedure, node_id_by_step_order={0: "node-A", 1: "node-B"})
+    by_id = {c.criterion_id: c for c in criteria}
+    assert by_id["step:0:verification"].execution_run_node_id == "node-A"
+    assert by_id["step:1:verification"].execution_run_node_id == "node-B"
+    assert by_id["step:1:verification"].required is False
+
+
+def test_derive_criteria_step_with_no_mapping_entry_stays_unscoped():
+    procedure = {"steps": [{"order": 5, "goal": "x", "verification": "checked"}]}
+    criteria = derive_criteria(procedure, node_id_by_step_order={0: "node-A"})
+    assert criteria[0].execution_run_node_id is None
+
+
+def test_derive_criteria_step_with_no_verification_contributes_nothing():
+    procedure = {"steps": [{"order": 0, "goal": "just a goal, no verification"}]}
+    assert derive_criteria(procedure) == []
+
+
+def test_derive_criteria_combines_postconditions_and_step_verification():
+    procedure = {
+        "postconditions": ["overall thing works"],
+        "steps": [{"order": 0, "goal": "regen", "verification": "generated-drift passes"}],
+    }
+    criteria = derive_criteria(procedure, node_id_by_step_order={0: "node-A"})
+    assert [c.criterion_id for c in criteria] == ["postcondition:0", "step:0:verification"]
+    assert criteria[0].execution_run_node_id is None
+    assert criteria[1].execution_run_node_id == "node-A"
