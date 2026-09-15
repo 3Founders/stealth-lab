@@ -27,10 +27,11 @@ def _impl(id_, name="impl", kind="deterministic"):
     return {"id": id_, "name": name, "kind": kind}
 
 
-def _impl_node(goal_id, name, impl_id, alternates=None):
+def _impl_node(goal_id, name, impl_id, alternates=None, verification_requirement=None):
     return ResolvedGoalNode(
         goal_id=goal_id, goal_name=name, depth=0, chosen="implementation",
         implementation=_impl(impl_id), implementation_alternates=alternates or [],
+        verification_requirement=verification_requirement or {},
     )
 
 
@@ -94,6 +95,63 @@ def test_all_candidates_fail_is_an_honest_failure_never_a_different_goal(monkeyp
     assert [a.implementation_id for a in result.attempts] == ["I-1", "I-2"]
     # every attempt targeted THIS SAME goal's own candidates -- never substituted
     assert result.goal_id == "G-1"
+
+
+# ---------------------------------------------------------------------
+# execute_goal_node -- verification (Sec 9)
+# ---------------------------------------------------------------------
+
+
+def test_no_verification_contract_leaves_a_successful_execution_as_success(monkeypatch):
+    async def fake_execute(pool, plan_node, context, *, scope):
+        return NodeResult(status="success")
+
+    monkeypatch.setattr(ge, "execute_implementation", fake_execute)
+    node = _impl_node("G-1", "do it", "I-1")
+    result = _run(ge.execute_goal_node(None, node, {}, scope=SCOPE))
+    assert result.status == "success"
+    assert result.attempts[0].verification_state == "unverified"
+
+
+def test_failed_verification_on_first_choice_triggers_real_fallback(monkeypatch):
+    # Verification is a property of the GOAL (same contract applies to
+    # every candidate); what varies per attempt is the REAL execution
+    # result each implementation produces, which the verifier inspects.
+    async def fake_execute(pool, plan_node, context, *, scope):
+        data = {"output_files": {"out.txt": b"x"}} if plan_node.implementation_id == "I-2" else {"output_files": {}}
+        return NodeResult(status="success", data=data)
+
+    monkeypatch.setattr(ge, "execute_implementation", fake_execute)
+    node = ResolvedGoalNode(
+        goal_id="G-1", goal_name="do it", depth=0, chosen="implementation",
+        implementation=_impl("I-1"), implementation_alternates=[_impl("I-2")],
+        verification_requirement={"method": "artifact_inspection", "expected_files": ["out.txt"]},
+    )
+    result = _run(ge.execute_goal_node(None, node, {}, scope=SCOPE))
+    assert result.status == "success"
+    assert result.used_implementation_id == "I-2"
+    assert result.attempts[0].status == "failure"
+    assert result.attempts[0].verification_state == "failed_verification"
+    assert result.attempts[1].verification_state == "checked"
+
+
+def test_verification_never_runs_when_execution_itself_already_failed(monkeypatch):
+    calls = []
+
+    async def fake_execute(pool, plan_node, context, *, scope):
+        return NodeResult(status="failure")
+
+    async def fake_verify(contract, node_result=None, *, executor=None):
+        calls.append(contract)
+        raise AssertionError("verification must not run for a failed execution")
+
+    monkeypatch.setattr(ge, "execute_implementation", fake_execute)
+    monkeypatch.setattr(ge, "run_goal_verification", fake_verify)
+    node = _impl_node("G-1", "do it", "I-1", verification_requirement={"method": "human_review"})
+    result = _run(ge.execute_goal_node(None, node, {}, scope=SCOPE))
+    assert result.status == "failure"
+    assert calls == []
+    assert result.attempts[0].verification_state is None
 
 
 def test_no_alternates_means_a_single_real_attempt(monkeypatch):

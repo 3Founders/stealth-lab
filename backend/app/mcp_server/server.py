@@ -3955,6 +3955,7 @@ def _resolved_goal_node_to_dict(node) -> dict:
         "chosen": node.chosen,
         "implementation": node.implementation,
         "implementation_alternates": node.implementation_alternates,
+        "verification_requirement": node.verification_requirement,
         "procedure": node.procedure,
         "rationale": node.rationale,
         "unresolved_reason": node.unresolved_reason,
@@ -4141,12 +4142,25 @@ async def execute_goal(
     (migration 85) whether it succeeds or fails, so `estimate_goal_cost`
     gets real evidence from every call to this tool.
 
+    Real verification (Prompt 2 Sec 9, `goal_verification.py`): a node
+    that reports `status='success'` is NOT yet done -- this Goal's own
+    real `verification_requirement` (`goals.verification_requirement`,
+    migration 83) is checked against the real result
+    (`deterministic_check` actually runs a real sandboxed command;
+    `artifact_inspection` checks the real output files the
+    implementation produced; `human_review` is never auto-passed; no
+    contract at all is honestly `unverified`, which still counts as a
+    pass -- Sec 9 asks that a contract exist, not that every Goal
+    already has one today). A `failed_verification` result is treated
+    exactly like an execution failure below.
+
     Real fallback (Prompt 2 Sec 10, previously entirely missing from
     this codebase per audit): if a node's first-choice Implementation
-    fails, the next real eligible alternate `resolve_goal` already ranked
-    for that SAME Goal is tried next, in order, until one succeeds or all
-    are exhausted -- never substitutes a different Goal. Every attempt
-    (implementation id, status, notes) is kept, not just the last one.
+    fails EXECUTION or VERIFICATION, the next real eligible alternate
+    `resolve_goal` already ranked for that SAME Goal is tried next, in
+    order, until one succeeds or all are exhausted -- never substitutes
+    a different Goal. Every attempt (implementation id, status, notes,
+    verification_state/detail) is kept, not just the last one.
 
     HONEST SCOPE LIMIT, stated plainly rather than glossed over: this is
     a SEQUENTIAL walk of the resolved tree (`app.execution.goal_execution`),
@@ -4198,6 +4212,7 @@ async def execute_goal(
                     {
                         "implementation_id": a.implementation_id, "implementation_name": a.implementation_name,
                         "kind": a.kind, "status": a.status, "notes": a.notes,
+                        "verification_state": a.verification_state, "verification_detail": a.verification_detail,
                     }
                     for a in r.attempts
                 ],

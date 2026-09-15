@@ -132,6 +132,21 @@ def test_direct_implementation_keeps_real_eligible_runner_ups_as_alternates(monk
 # ---------------------------------------------------------------------
 
 
+def test_direct_implementation_threads_real_verification_requirement(monkeypatch):
+    goal = _goal("G-1", "find references", verification_requirement={"method": "deterministic_check", "command": "true"})
+    pool = _FakePool({"G-1": goal})
+    monkeypatch.setattr(gr, "select_implementation_for_goal_id", _has_direct_impl())
+    node = _run(gr.resolve_goal(pool, "G-1", scope=SCOPE))
+    assert node.verification_requirement == {"method": "deterministic_check", "command": "true"}
+
+
+def test_direct_implementation_with_no_verification_requirement_is_an_honest_empty_dict(monkeypatch):
+    pool = _FakePool({"G-1": _goal("G-1", "find references")})
+    monkeypatch.setattr(gr, "select_implementation_for_goal_id", _has_direct_impl())
+    node = _run(gr.resolve_goal(pool, "G-1", scope=SCOPE))
+    assert node.verification_requirement == {}
+
+
 def test_procedure_decomposes_into_child_goals(monkeypatch):
     pool = _FakePool({
         "G-parent": _goal("G-parent", "safely modify generated API"),

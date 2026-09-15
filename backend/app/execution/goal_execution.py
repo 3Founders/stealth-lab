@@ -64,6 +64,7 @@ from uuid import UUID
 import asyncpg
 
 from app.execution.goal_resolution import ResolvedGoalNode
+from app.execution.goal_verification import run_goal_verification
 from app.execution.graph_executor import NodeResult
 from app.execution.implementation_executor import execute_implementation
 from app.models.plan import PlanNode
@@ -74,13 +75,25 @@ from app.services.access import AccessScope
 class ImplementationAttempt:
     """One real attempt at one real Implementation for one Goal node --
     every attempt is kept (Prompt 2 Sec 10: "Track all attempts"),
-    never overwritten or discarded once a later attempt succeeds."""
+    never overwritten or discarded once a later attempt succeeds.
+
+    `verification_state`/`verification_detail` (Sec 9) are the REAL
+    outcome of `goal_verification.run_goal_verification` run against
+    THIS attempt's own execution result -- `None` only when the
+    implementation call itself never reached `status='success'` (nothing
+    to verify yet). A `status='failure'` attempt whose
+    `verification_state == 'failed_verification'` means the
+    implementation call reported success but Sec 9's own rule caught it
+    ("a successful model response is NOT equivalent to successful Goal
+    completion") -- exactly the case this wiring exists for."""
 
     implementation_id: str
     implementation_name: Optional[str]
     kind: Optional[str]
     status: str  # "success" | "failure"
     notes: Optional[str] = None
+    verification_state: Optional[str] = None
+    verification_detail: Optional[str] = None
 
 
 @dataclass
@@ -123,13 +136,21 @@ def _to_plan_node(goal_name: str, implementation: dict) -> PlanNode:
 async def execute_goal_node(
     pool: asyncpg.Pool, node: ResolvedGoalNode, context: dict, *, scope: AccessScope,
 ) -> GoalNodeExecutionResult:
-    """Execute one `chosen == "implementation"` leaf with real fallback:
-    try `node.implementation`, and on failure try each of
-    `node.implementation_alternates` in their already-real-ranked order,
-    stopping at the first real success. Never substitutes a different
-    Goal (Sec 10) -- every candidate tried here satisfies THIS SAME
-    `node.goal_id`, which is exactly what `implementation_alternates`
-    already is."""
+    """Execute one `chosen == "implementation"` leaf with real fallback,
+    now gated by real verification (Sec 9/10's own combined diagram:
+    "Implementation failure -> verification failure -> fallback
+    Implementation"): try `node.implementation`; if it reports
+    `status='success'`, run `node.verification_requirement` against the
+    real result via `run_goal_verification`. A candidate only counts as
+    an overall success if execution succeeded AND verification did not
+    come back `failed_verification` (`unverified`/`checked`/`verified`/
+    `needs_human_review` all count -- Sec 9 requires a contract to
+    exist, it does not require this executor to be ABLE to auto-check
+    every kind, and a pending human review is not a failure). Otherwise
+    falls back to the next of `node.implementation_alternates` in their
+    already-real-ranked order. Never substitutes a different Goal (Sec
+    10) -- every candidate tried here satisfies THIS SAME `node.goal_id`,
+    which is exactly what `implementation_alternates` already is."""
     if node.chosen != "implementation" or node.implementation is None:
         raise ValueError(f"execute_goal_node requires a chosen=='implementation' node, got {node.chosen!r}")
 
@@ -141,11 +162,22 @@ async def execute_goal_node(
         plan_node = _to_plan_node(node.goal_name, impl)
         result = await execute_implementation(pool, plan_node, context, scope=scope)
         last_result = result
+
+        verification_state: Optional[str] = None
+        verification_detail: Optional[str] = None
+        overall_status = result.status
+        if result.status == "success":
+            verification = await run_goal_verification(node.verification_requirement, result)
+            verification_state, verification_detail = verification.state, verification.detail
+            if verification.state == "failed_verification":
+                overall_status = "failure"
+
         attempts.append(ImplementationAttempt(
             implementation_id=str(impl["id"]), implementation_name=impl.get("name"),
-            kind=impl.get("kind"), status=result.status, notes=result.notes,
+            kind=impl.get("kind"), status=overall_status, notes=result.notes,
+            verification_state=verification_state, verification_detail=verification_detail,
         ))
-        if result.status == "success":
+        if overall_status == "success":
             return GoalNodeExecutionResult(
                 goal_id=node.goal_id, goal_name=node.goal_name, status="success",
                 attempts=attempts, used_implementation_id=str(impl["id"]), result=result,

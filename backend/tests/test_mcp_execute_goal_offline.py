@@ -86,6 +86,36 @@ def test_execute_goal_returns_success_outcome_and_attempts(monkeypatch):
     assert result["unresolved_goal_names"] == []
 
 
+def test_execute_goal_passes_through_verification_state_and_detail(monkeypatch):
+    async def fake_resolve(pool, goal_id, *, context, scope, max_depth=6):
+        return _fake_tree()
+
+    async def fake_execute_tree(pool, tree, context, *, scope):
+        return GoalExecutionResult(
+            outcome="success",
+            node_results={
+                "G-1": GoalNodeExecutionResult(
+                    goal_id="G-1", goal_name="do the thing", status="success",
+                    attempts=[ImplementationAttempt(
+                        implementation_id="I-1", implementation_name="impl", kind="deterministic",
+                        status="success", notes="ok", verification_state="checked",
+                        verification_detail="all expected output file(s) present",
+                    )],
+                    used_implementation_id="I-1",
+                ),
+            },
+        )
+
+    monkeypatch.setattr("app.execution.goal_resolution.resolve_goal", fake_resolve)
+    monkeypatch.setattr("app.execution.goal_execution.execute_goal_tree", fake_execute_tree)
+    ctx = FakeContext()
+    raw = _run(srv.execute_goal(goal_id="G-1", ctx=ctx))
+    result = json.loads(raw)
+    attempt = result["node_results"]["G-1"]["attempts"][0]
+    assert attempt["verification_state"] == "checked"
+    assert attempt["verification_detail"] == "all expected output file(s) present"
+
+
 def test_execute_goal_returns_needs_input_when_unresolved(monkeypatch):
     async def fake_resolve(pool, goal_id, *, context, scope, max_depth=6):
         return _fake_tree()

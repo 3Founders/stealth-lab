@@ -82,6 +82,12 @@ class ResolvedGoalNode:
     # entries, same data `explain_goal_route` already discloses via
     # `implementation_candidates_considered`'s count, just not thrown away.
     implementation_alternates: list[dict] = field(default_factory=list)
+    # This Goal's own real `goals.verification_requirement` (migration
+    # 83, JSONB, default '{}' -- a real column, unpopulated by anything
+    # until Prompt 2 Sec 9's goal_verification.py gave it a real
+    # consumer). Threaded through unchanged, never invented -- an empty
+    # dict is the honest, common default, not an error.
+    verification_requirement: dict = field(default_factory=dict)
     procedure: Optional[dict] = None
     children: list["ResolvedGoalNode"] = field(default_factory=list)
     rationale: str = ""
@@ -230,6 +236,7 @@ async def resolve_goal(
         return ResolvedGoalNode(
             goal_id=goal_id, goal_name=goal_name, depth=depth, chosen="implementation",
             implementation=selection.chosen, implementation_alternates=eligible_ranked[1:],
+            verification_requirement=goal.get("verification_requirement") or {},
             rationale=selection.rationale,
             implementation_candidates_considered=len(selection.candidates_considered),
         )
@@ -272,6 +279,7 @@ async def resolve_goal(
                 "id": str(proc["id"]), "procedure_id": str(proc["procedure_id"]),
                 "name": proc.get("name"), "version": proc.get("version"),
             },
+            verification_requirement=goal.get("verification_requirement") or {},
             children=children,
             rationale=(
                 f"selected procedure {proc.get('name')!r} ({proc['id']}) among "
