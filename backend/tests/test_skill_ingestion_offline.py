@@ -1715,6 +1715,34 @@ async def test_run_skill_ingestion_counts_zero_claim_documents_without_a_client(
 
 
 @pytest.mark.asyncio
+async def test_run_skill_ingestion_aggregates_semantic_decomposition_metrics(monkeypatch):
+    """§19's own ask made real: semantic decomposition counts are summed
+    across the whole run, not just logged per-artifact and thrown away."""
+    async def _none(pool, embedder, goal_text):
+        return None
+
+    monkeypatch.setattr("app.services.skill_ingestion.check_novelty", _none)
+    content = (
+        "---\nname: demo\ndescription: A demo skill.\n---\n\n"
+        "## Steps\n\n"
+        "1. Design units with clear boundaries.\n"
+        "2. Create: `exact/path/to/file.py`\n"
+    )
+    pool = CompilerFakePool()
+    result = await run_skill_ingestion(
+        pool, _FakeAdapter([_skill_artifact(content=content)]), embedder=FakeEmbedder(), client=None,
+    )
+    m = result["metrics"]
+    assert m["semantic_decomposition_steps_seen"] == 2
+    assert m["semantic_decomposition_filtered"] == 1, "the exact/path/to line is caught deterministically, even with client=None"
+    assert m["semantic_decomposition_rewritten"] == 0
+    assert m["semantic_decomposition_errors"] == 0
+    outcome = result["outcomes"][0]
+    assert outcome.semantic_decomposition_report is not None
+    assert outcome.semantic_decomposition_report["filtered"] == 1
+
+
+@pytest.mark.asyncio
 async def test_run_skill_ingestion_concurrency_default_is_sequential_and_unchanged(monkeypatch):
     """concurrency=1 (the default) must produce byte-identical results to
     never passing the parameter at all -- a strictly opt-in change."""

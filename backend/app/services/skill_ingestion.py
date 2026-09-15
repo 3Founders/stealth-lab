@@ -1569,6 +1569,12 @@ class IngestOutcome:
     # document_evidence_id but targeting the Claim (target_type='claim')
     # instead of the Procedure. Same length/order as document_claim_ids.
     document_claim_evidence_ids: list[str] = field(default_factory=list)
+    # semantic_decomposition.py's own report for this artifact -- {"total",
+    # "kept", "filtered", "by_kind", "errors", "rewritten_indices"}. None on
+    # any outcome where decomposition never ran (rejected before admission,
+    # or an unreachable-artifact "error" outcome) -- never a fabricated
+    # zero-report standing in for "we never actually looked."
+    semantic_decomposition_report: Optional[dict] = None
 
 
 def _slugify(text: str, *, maxlen: int = 80) -> str:
@@ -2304,6 +2310,7 @@ async def compile_skill_artifact(
             injection_screened=bool(injection_signals),
             admission_decision=admission.decision, quarantined=quarantined,
             admission_escalated=admission.escalated,
+            semantic_decomposition_report=decomposition_report,
         )
 
     prior_art = await pool.fetchrow(
@@ -2522,6 +2529,7 @@ async def compile_skill_artifact(
                 screening_decision=screening_decision,
                 screening_decision_ids=screening_decision_ids,
                 document_claim_ids=document_claim_ids,
+                semantic_decomposition_report=decomposition_report,
             )
         # prior row already gone (concurrent merge/supersede) -- fall
         # through and treat this as a fresh capture.
@@ -2560,6 +2568,7 @@ async def compile_skill_artifact(
             dependency_count=dependency_count,
             admission_decision=admission.decision, quarantined=quarantined,
             admission_escalated=admission.escalated,
+            semantic_decomposition_report=decomposition_report,
         )
 
     # --- fresh capture ---
@@ -2715,6 +2724,7 @@ async def compile_skill_artifact(
         observation_id=observation_id,
         document_evidence_id=document_evidence_id,
         document_claim_evidence_ids=document_claim_evidence_ids,
+        semantic_decomposition_report=decomposition_report,
     )
 
 
@@ -2831,6 +2841,15 @@ async def run_skill_ingestion(
         # citation), additive to `observation_id` (the single whole-
         # document Observation every accepted artifact already gets).
         "block_observations": 0,
+        # semantic_decomposition.py (founder directive §9/§19: "make
+        # semantic decomposition abstentions observable"). Summed across
+        # every artifact whose report is non-None (rejected-before-
+        # admission / fetch-error outcomes never ran it, so are correctly
+        # excluded rather than counted as zero).
+        "semantic_decomposition_steps_seen": 0,
+        "semantic_decomposition_filtered": 0,
+        "semantic_decomposition_rewritten": 0,
+        "semantic_decomposition_errors": 0,
     }
     refs = list(adapter.discover())
     if limit is not None:
@@ -2908,6 +2927,12 @@ async def run_skill_ingestion(
         metrics["document_claims"] += len(outcome.document_claim_ids)
         if outcome.status in _ACCEPTED_STATUSES and not outcome.document_claim_ids:
             metrics["zero_claim_documents"] += 1
+        if outcome.semantic_decomposition_report is not None:
+            r = outcome.semantic_decomposition_report
+            metrics["semantic_decomposition_steps_seen"] += r["total"]
+            metrics["semantic_decomposition_filtered"] += r["filtered"]
+            metrics["semantic_decomposition_rewritten"] += len(r["rewritten_indices"])
+            metrics["semantic_decomposition_errors"] += r["errors"]
 
     await resolve_procedure_dependencies(pool)
 
