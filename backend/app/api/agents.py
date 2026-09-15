@@ -41,8 +41,6 @@ from app.api.deps import enforce_limits, get_scope, make_cost_recorder, scope_ke
 from app.config import settings
 from app.debate.panel import default_chat_agent
 from app.services.execution import ExecutionHarness, SkillRegistry
-from app.skills.excel_generation import build_combined_excel
-from app.skills.pdf_extraction import make_pdf_field_extraction_skill
 
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/v1/agents", tags=["agents"])
@@ -128,6 +126,22 @@ async def run_medical_report_extraction(
 ) -> RunResponse:
     if not files:
         raise HTTPException(400, "no files uploaded")
+
+    # PRODUCTION BLOCKER FOUND AND FIXED (2026-09-15): these two imports
+    # used to be at module level, which meant `app.skills` -- deleted from
+    # this working tree before this session started, per the very first
+    # git status snapshot -- took down THIS WHOLE FILE's import, and
+    # therefore all of app.main (main.py:11 imports `agents` unconditionally,
+    # and every other router -- including every real ingestion admin
+    # endpoint this session built) with it. `python -c "import app.main"`
+    # raised ModuleNotFoundError before this fix. Moved local to the one
+    # endpoint that actually needs them: this endpoint now fails loudly
+    # and specifically (a real ImportError, not a silent 500) only if
+    # someone actually calls it, instead of the entire application
+    # refusing to start over a feature nothing else in this codebase
+    # depends on.
+    from app.skills.excel_generation import build_combined_excel
+    from app.skills.pdf_extraction import make_pdf_field_extraction_skill
 
     extract_task_id = await _lookup_task(pool, "extract_medical_pdf")
     excel_task_id = await _lookup_task(pool, "build_excel")
