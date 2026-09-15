@@ -1381,8 +1381,23 @@ async def find_best_way(task_description: str, ctx: Context,
                          workspace_id: Optional[str] = None,
                          parent_run_id: Optional[str] = None,
                          parent_node_order: Optional[int] = None,
-                         exclusions: Optional[str] = None) -> str:
+                         exclusions: Optional[str] = None,
+                         ground_steps: bool = False) -> str:
     """
+    `ground_steps`: meta-harness Sec 6-7 wiring -- default False, so
+    every existing caller/test keeps its exact byte-for-byte behavior and
+    cost. When True (tier-2 only; a tier-1 lookup-only or plan_only call
+    never compiles a real repo-grounded plan in the first place), each
+    step is passed through `step_grounding.ground_procedure_steps()`
+    BEFORE `expand_procedure_steps`/`compile_plan` see it -- one real
+    bounded LLM call per step, using this same call's own `client`/
+    `model` and ONE shared `get_relevant_claims` fetch for the whole
+    task (never per-step). A step whose grounding falls back (no client
+    configured, LLM error, malformed/abstain response) keeps its
+    original goal text unchanged -- opting in can only ever ADD a
+    normalized `goal`/`parameters` a step didn't have, never remove or
+    corrupt what compilation would have produced anyway.
+
     `exclusions`: B32's own literal `find_best_way` input field -- an
     optional JSON array of stable `procedure_id` family handles that
     must never be (re-)offered as a match for this call, even if they
@@ -1925,6 +1940,17 @@ async def find_best_way(task_description: str, ctx: Context,
     from app.execution.procedure_graph import ProcedureCompositionError, expand_procedure_steps
 
     steps = procedure_payload.get("steps") or [{"order": 0, "goal": task_description}]
+    if ground_steps:
+        from app.services.relevant_claims import get_relevant_claims as _get_relevant_claims
+        from app.services.step_grounding import ground_procedure_steps
+
+        relevant_claims = await _get_relevant_claims(
+            pool, goal=task_description, access_scope=_caller_access_scope(),
+        )
+        steps = await ground_procedure_steps(
+            steps, task_description=task_description, relevant_claims=relevant_claims,
+            client=client, model=model,
+        )
     # Phase 10: same real expansion as the tier-1 lookup path above --
     # a composed procedure's referenced sub-procedure steps are spliced
     # in before compile_plan sees them.

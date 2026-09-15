@@ -52,6 +52,15 @@ _GOAL_PATTERNS: tuple[tuple[re.Pattern, str], ...] = (
     (re.compile(r"\b(backfill|reindex)"), "data_backfill"),
 )
 
+# Public export of the same taxonomy -- reused (not redefined) by
+# step_grounding.py as the vocabulary hint in its own grounding prompt, so
+# a grounded ProcedureStep.goal and an Implementation.goal have a real
+# chance of landing on the same normalized string. Deliberately NOT a
+# closed enum enforced anywhere (goal stays free TEXT, migration 80's own
+# choice, "so the real vocabulary can grow without a migration per new
+# goal") -- this tuple is a hint/starting point, never a hard constraint.
+KNOWN_GOAL_CATEGORIES: tuple[str, ...] = tuple(goal for _, goal in _GOAL_PATTERNS)
+
 # The founder directive's own §7 vocabulary. `human`/`llm`/`external_system`
 # have no real deterministic writer in this codebase yet -- only
 # `deterministic` (an arbitrary script/CLI, the ONLY kind this module's
