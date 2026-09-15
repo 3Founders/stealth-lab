@@ -1175,6 +1175,42 @@ async def test_candidate_remains_unverified_regardless_of_admission_outcome(no_d
 
 
 @pytest.mark.asyncio
+async def test_unchanged_content_already_grounded_short_circuits_before_any_llm_call(no_dup):
+    """The real cost optimization: content already stored under
+    EXTRACTOR_VERSION_GROUNDED must skip capability abstraction AND
+    semantic decomposition entirely -- neither could possibly change an
+    already-best-version outcome. A client that counts (and would fail
+    the test if actually asked to produce a real completion) proves zero
+    calls happen, not just that the final status is right."""
+    from app.services.skill_ingestion import EXTRACTOR_VERSION_GROUNDED
+
+    class _CountingClient(FakeLLMClient):
+        def __init__(self):
+            super().__init__('{"kind": "ABSTRACT_ACTION"}')
+            self.calls = 0
+
+        def create(self, **kwargs):
+            self.calls += 1
+            return super().create(**kwargs)
+
+    client = _CountingClient()
+    pool = CompilerFakePool(
+        exact_artifact={"id": "art-grounded", "procedure_id": "proc-grounded"},
+    )
+    outcome = await compile_skill_artifact(
+        pool, _skill_artifact(), embedder=FakeEmbedder(), client=client,
+    )
+    assert outcome.status == "unchanged"
+    assert outcome.procedure_id == "proc-grounded"
+    assert client.calls == 0, "already-grounded content must never reach capability abstraction or decomposition"
+    # The pre-check's own query asked specifically for EXTRACTOR_VERSION_GROUNDED --
+    # a real, inspectable proof this isn't accidentally matching on the
+    # DETERMINISTIC tag too (which would silently skip a real upgrade opportunity).
+    fetchrow_calls = [c for c in pool.calls if c[0] == "fetchrow" and "ingested_artifacts" in c[1]]
+    assert any(EXTRACTOR_VERSION_GROUNDED in c[2] for c in fetchrow_calls)
+
+
+@pytest.mark.asyncio
 async def test_repeated_ingestion_of_identical_content_is_idempotent(no_dup):
     """Phase 7 #12: re-ingesting byte-identical content a second time must
     not create a second procedures row -- it lands 'unchanged' against the

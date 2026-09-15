@@ -2248,6 +2248,43 @@ async def compile_skill_artifact(
     # block / claim is only ever as scoped as the procedure it belongs to.
     resolved_scope_type = "entity" if domain else "global"
 
+    # REAL COST OPTIMIZATION (disclosed in e37a218, built here): the exact-
+    # match "unchanged" check further below cannot run until AFTER
+    # capability abstraction, because its own WHERE clause needs
+    # `extractor_version`, which depends on whether abstraction succeeds
+    # THIS run (deliberately, so content that stays byte-identical but
+    # whose extractor quality improves still gets reprocessed and
+    # upgraded -- see that check's own comment). But if this exact content
+    # is ALREADY stored under the BEST version (EXTRACTOR_VERSION_GROUNDED),
+    # no LLM call anywhere below could possibly improve on that -- capability
+    # abstraction would at best reproduce the same grounded result, and
+    # semantic decomposition would reclassify the identical step text. A
+    # content_hash match under the DETERMINISTIC tag is deliberately NOT
+    # short-circuited here: that is exactly the genuine "maybe this run
+    # upgrades it" case the later check exists to catch, and skipping it
+    # here would silently forgo a real upgrade opportunity.
+    _precheck_fingerprint = getattr(artifact, "bundle_hash", None) or artifact.content_hash
+    _already_grounded = await pool.fetchrow(
+        "SELECT id, procedure_id FROM ingested_artifacts "
+        "WHERE source_type = $1 AND uri = $2 AND content_hash = $3 "
+        "AND extractor_version = $4 AND t_invalid IS NULL ORDER BY first_seen DESC LIMIT 1",
+        artifact.source_type, artifact.uri, _precheck_fingerprint, EXTRACTOR_VERSION_GROUNDED,
+    )
+    if _already_grounded is not None:
+        await pool.execute(
+            "UPDATE ingested_artifacts SET last_seen = now() WHERE id = $1::uuid",
+            str(_already_grounded["id"]),
+        )
+        return IngestOutcome(
+            status="unchanged",
+            procedure_id=str(_already_grounded["procedure_id"]) if _already_grounded["procedure_id"] else None,
+            artifact_id=str(_already_grounded["id"]),
+            capability_abstained=False,
+            injection_screened=bool(injection_signals),
+            admission_decision=admission.decision, quarantined=quarantined,
+            admission_escalated=admission.escalated,
+        )
+
     # Semantic decomposition (founder directive §9): filter CONTEXT_ONLY/
     # PROPOSITION entries out of parsed.steps BEFORE anything downstream
     # (capability abstraction, the retrieval document, procedure capture)
