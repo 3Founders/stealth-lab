@@ -47,6 +47,7 @@ from typing import Literal, Optional
 
 import asyncpg
 
+from app.execution.cost_math import expected_attempts, expected_value
 from app.execution.execution_telemetry import implementation_execution_stats
 from app.execution.goal_resolution import ResolvedGoalNode
 
@@ -105,12 +106,7 @@ async def estimate_implementation_cost(pool: asyncpg.Pool, implementation_id: st
             basis=f"no recorded executions yet for implementation {implementation_id}",
         )
 
-    expected_attempts = (1.0 / stats.success_rate) if stats.success_rate else None
-
-    def _expected(mean: Optional[float]) -> Optional[float]:
-        if mean is None or expected_attempts is None:
-            return None
-        return mean * expected_attempts
+    attempts = expected_attempts(stats.success_rate)
 
     basis = (
         f"{stats.sample_count} real recorded execution(s) of this implementation, "
@@ -120,11 +116,13 @@ async def estimate_implementation_cost(pool: asyncpg.Pool, implementation_id: st
     )
     return CostEstimate(
         confidence=confidence, sample_count=stats.sample_count, success_rate=stats.success_rate,
-        expected_attempts=expected_attempts,
-        mean_wall_seconds=stats.mean_wall_seconds, expected_wall_seconds=_expected(stats.mean_wall_seconds),
-        mean_prompt_tokens=stats.mean_prompt_tokens, expected_prompt_tokens=_expected(stats.mean_prompt_tokens),
+        expected_attempts=attempts,
+        mean_wall_seconds=stats.mean_wall_seconds,
+        expected_wall_seconds=expected_value(stats.mean_wall_seconds, attempts),
+        mean_prompt_tokens=stats.mean_prompt_tokens,
+        expected_prompt_tokens=expected_value(stats.mean_prompt_tokens, attempts),
         mean_completion_tokens=stats.mean_completion_tokens,
-        expected_completion_tokens=_expected(stats.mean_completion_tokens),
+        expected_completion_tokens=expected_value(stats.mean_completion_tokens, attempts),
         basis=basis,
     )
 

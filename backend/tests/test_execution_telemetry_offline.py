@@ -13,6 +13,7 @@ import pytest
 from app.execution.execution_telemetry import (
     ImplementationExecutionStats,
     implementation_execution_stats,
+    implementation_execution_stats_batch,
     record_implementation_execution,
 )
 
@@ -25,9 +26,14 @@ class _FakeTelemetryPool:
     def __init__(self):
         self.inserted: list[dict] = []
         self._stats_row = None
+        self._batch_rows: list[dict] = []
+        self.fetch_calls: list[tuple] = []
 
     def set_stats_row(self, row: dict):
         self._stats_row = row
+
+    def set_batch_rows(self, rows: list[dict]):
+        self._batch_rows = rows
 
     async def fetchrow(self, sql, *params):
         n = " ".join(sql.split())
@@ -44,6 +50,13 @@ class _FakeTelemetryPool:
         if "FROM implementation_execution_telemetry" in n and "SELECT" in n:
             return self._stats_row
         raise AssertionError(f"unexpected fetchrow: {n[:80]}")
+
+    async def fetch(self, sql, *params):
+        n = " ".join(sql.split())
+        self.fetch_calls.append(params)
+        if "FROM implementation_execution_telemetry" in n and "GROUP BY" in n:
+            return self._batch_rows
+        raise AssertionError(f"unexpected fetch: {n[:80]}")
 
 
 # ---------------------------------------------------------------------
@@ -134,3 +147,51 @@ def test_stats_computes_real_success_rate_and_means():
     assert stats.success_rate == 0.75
     assert stats.mean_wall_seconds == 2.5
     assert stats.mean_prompt_tokens == 100.0
+
+
+# ---------------------------------------------------------------------
+# implementation_execution_stats_batch (Prompt 2 Sec 11)
+# ---------------------------------------------------------------------
+
+
+def test_batch_stats_empty_id_list_short_circuits_without_querying():
+    pool = _FakeTelemetryPool()
+    result = _run(implementation_execution_stats_batch(pool, []))
+    assert result == {}
+    assert pool.fetch_calls == []
+
+
+def test_batch_stats_groups_by_implementation_id():
+    pool = _FakeTelemetryPool()
+    pool.set_batch_rows([
+        {
+            "implementation_id": "I-1", "sample_count": 5, "success_count": 5,
+            "mean_wall_seconds": 2.0, "mean_prompt_tokens": None,
+            "mean_completion_tokens": None, "mean_llm_calls": None,
+        },
+        {
+            "implementation_id": "I-2", "sample_count": 3, "success_count": 1,
+            "mean_wall_seconds": 10.0, "mean_prompt_tokens": None,
+            "mean_completion_tokens": None, "mean_llm_calls": None,
+        },
+    ])
+    result = _run(implementation_execution_stats_batch(pool, ["I-1", "I-2"]))
+    assert result["I-1"].sample_count == 5
+    assert result["I-1"].success_rate == 1.0
+    assert result["I-2"].sample_count == 3
+    assert result["I-2"].success_rate == pytest.approx(1 / 3)
+
+
+def test_batch_stats_defaults_missing_id_to_honest_zero_not_omitted():
+    pool = _FakeTelemetryPool()
+    pool.set_batch_rows([
+        {
+            "implementation_id": "I-1", "sample_count": 5, "success_count": 5,
+            "mean_wall_seconds": 2.0, "mean_prompt_tokens": None,
+            "mean_completion_tokens": None, "mean_llm_calls": None,
+        },
+    ])
+    result = _run(implementation_execution_stats_batch(pool, ["I-1", "I-2"]))
+    assert "I-2" in result
+    assert result["I-2"].sample_count == 0
+    assert result["I-2"].success_rate is None

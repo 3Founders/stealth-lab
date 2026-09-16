@@ -4,8 +4,24 @@ pieces: evaluate_requirements' HARD_FALSE/SOFT/SATISFIABLE/UNKNOWN
 classification and is_eligible's short-circuit rule. Mirrors the
 established pattern (test_applicability_hard_constraints_offline.py) of
 proving cascade decision logic without touching Postgres.
+
+Also covers _score's new cost component (Prompt 2 Sec 11) and a
+rank_candidates()-level integration test via a fake pool.
 """
-from app.execution.implementation_selection import evaluate_requirements, is_eligible
+import asyncio
+
+import app.execution.implementation_selection as impl_sel
+from app.execution.execution_telemetry import ImplementationExecutionStats
+from app.execution.implementation_selection import (
+    DEFAULT_WEIGHTS,
+    evaluate_requirements,
+    is_eligible,
+    rank_candidates,
+)
+
+
+def _run(coro):
+    return asyncio.run(coro)
 
 
 def _impl(**overrides):
@@ -133,3 +149,87 @@ def test_no_declared_available_resources_is_unknown_not_false():
     assert is_eligible(checks)
     resources = next(c for c in checks if c.name == "resources")
     assert resources.state == "UNKNOWN"
+
+
+# ---------------------------------------------------------------------
+# _score's cost component (Prompt 2 Sec 11)
+# ---------------------------------------------------------------------
+
+
+def _stats(sample_count, success_count, mean_wall_seconds=None):
+    return ImplementationExecutionStats(
+        implementation_id="I-1", sample_count=sample_count, success_count=success_count,
+        success_rate=(success_count / sample_count) if sample_count else None,
+        mean_wall_seconds=mean_wall_seconds,
+    )
+
+
+def test_cost_component_omitted_below_sample_threshold():
+    stats = _stats(sample_count=4, success_count=4, mean_wall_seconds=10.0)
+    components = impl_sel._score(_impl(), {}, None, DEFAULT_WEIGHTS, stats)
+    assert "cost" not in [c.name for c in components]
+
+
+def test_cost_component_omitted_when_no_stats_at_all():
+    components = impl_sel._score(_impl(), {}, None, DEFAULT_WEIGHTS, None)
+    assert "cost" not in [c.name for c in components]
+
+
+def test_cost_component_present_and_decreasing_in_expected_wall_seconds():
+    cheap = _stats(sample_count=5, success_count=5, mean_wall_seconds=10.0)
+    expensive = _stats(sample_count=5, success_count=5, mean_wall_seconds=200.0)
+    cheap_score = next(c for c in impl_sel._score(_impl(), {}, None, DEFAULT_WEIGHTS, cheap) if c.name == "cost")
+    expensive_score = next(c for c in impl_sel._score(_impl(), {}, None, DEFAULT_WEIGHTS, expensive) if c.name == "cost")
+    assert 0 < expensive_score.value < cheap_score.value <= 1
+
+
+def test_cost_component_at_half_life_is_exactly_half():
+    stats = _stats(sample_count=5, success_count=5, mean_wall_seconds=impl_sel._COST_HALF_LIFE_SECONDS)
+    cost = next(c for c in impl_sel._score(_impl(), {}, None, DEFAULT_WEIGHTS, stats) if c.name == "cost")
+    assert cost.value == 0.5
+
+
+def test_cost_component_omitted_when_success_rate_zero_expected_attempts_undefined():
+    # success_rate=0 -> expected_attempts is None (never infinite) ->
+    # expected_wall_seconds is None -> cost stays neutral, not penalized
+    # to the max for "never succeeds".
+    stats = _stats(sample_count=5, success_count=0, mean_wall_seconds=1.0)
+    components = impl_sel._score(_impl(), {}, None, DEFAULT_WEIGHTS, stats)
+    assert "cost" not in [c.name for c in components]
+
+
+# ---------------------------------------------------------------------
+# rank_candidates() integration -- real batched cost stats wired in
+# ---------------------------------------------------------------------
+
+
+class _FakeRankingPool:
+    def __init__(self, cost_rows):
+        self._cost_rows = cost_rows
+
+    async def fetch(self, sql, *params):
+        n = " ".join(sql.split())
+        if "FROM evidence" in n:
+            return []
+        if "FROM implementation_execution_telemetry" in n and "GROUP BY" in n:
+            return self._cost_rows
+        raise AssertionError(f"unexpected fetch: {n[:80]}")
+
+
+def test_lower_cost_candidate_ranks_higher_all_else_equal():
+    cheap = _impl(id="I-cheap")
+    expensive = _impl(id="I-expensive")
+    pool = _FakeRankingPool([
+        {
+            "implementation_id": "I-cheap", "sample_count": 5, "success_count": 5,
+            "mean_wall_seconds": 5.0, "mean_prompt_tokens": None,
+            "mean_completion_tokens": None, "mean_llm_calls": None,
+        },
+        {
+            "implementation_id": "I-expensive", "sample_count": 5, "success_count": 5,
+            "mean_wall_seconds": 500.0, "mean_prompt_tokens": None,
+            "mean_completion_tokens": None, "mean_llm_calls": None,
+        },
+    ])
+    result = _run(rank_candidates(pool, [expensive, cheap], goal="do-a-thing"))
+    assert result.chosen["id"] == "I-cheap"

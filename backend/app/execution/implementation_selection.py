@@ -31,6 +31,8 @@ from typing import Any, Literal, Optional
 
 import asyncpg
 
+from app.execution.cost_math import expected_attempts, expected_value
+from app.execution.execution_telemetry import ImplementationExecutionStats, implementation_execution_stats_batch
 from app.execution.implementation_registry import list_implementations_by_goal
 from app.services.access import AccessScope
 from app.services.procedure_extraction.capability import compute_capability, CapabilityScope, OutcomeRecord
@@ -104,13 +106,37 @@ class SelectionResult:
 # Default weights -- a starting point, not a claimed-correct calibration
 # (directive Sec 10 explicitly defers a learned ranker; these are named,
 # inspectable constants a caller can override, never hidden inside the
-# scoring function).
+# scoring function). "cost" (Prompt 2 Sec 11, 2026-09-16) is the newest
+# and least-calibrated of these -- kept deliberately low (below
+# verified/success_rate) so a cheap-but-unproven implementation cannot
+# outrank a proven one; to be finetuned once real telemetry accumulates
+# across more implementations (founder direction: "we'll finetune these
+# later").
 DEFAULT_WEIGHTS: dict[str, float] = {
     "verified": 1.5,
     "success_rate": 2.0,
     "stealth_hosted_preference": 0.5,
     "scope_match": 1.0,
+    "cost": 0.5,
 }
+
+# Sec 11's cost component, both judgment calls disclosed rather than
+# presented as calibrated:
+#   - expected_wall_seconds at which the cost score is exactly halved.
+#     60.0 is a starting guess with no empirical basis yet -- revisit
+#     once real telemetry distributions exist across executor kinds
+#     (an LSP call and an LLM call differ by 1-2 orders of magnitude in
+#     wall time).
+_COST_HALF_LIFE_SECONDS = 60.0
+# Ranking makes an automatic, consequential DECISION from this number
+# (unlike a disclosed CostEstimate a human/agent can weigh against its
+# own confidence label) -- gated more conservatively than the (ungated)
+# success_rate component above, at goal_cost.py's own "empirical"
+# threshold, so one lucky/unlucky early run cannot swing a routing
+# decision. Below this many real samples, the cost component is omitted
+# entirely (neutral -- same treatment a zero-sample implementation
+# already gets), never penalized or rewarded on noise.
+_COST_MIN_SAMPLES_FOR_RANKING = 5
 
 
 def evaluate_requirements(implementation: dict, context: dict) -> list[RequirementCheck]:
@@ -222,7 +248,10 @@ def is_eligible(checks: list[RequirementCheck]) -> bool:
     return not any(c.state == "HARD_FALSE" for c in checks)
 
 
-def _score(implementation: dict, context: dict, success_rate: Optional[float], weights: dict[str, float]) -> list[ScoreComponent]:
+def _score(
+    implementation: dict, context: dict, success_rate: Optional[float], weights: dict[str, float],
+    cost_stats: Optional[ImplementationExecutionStats] = None,
+) -> list[ScoreComponent]:
     components: list[ScoreComponent] = []
     verified = 1.0 if implementation.get("verification_status") == "verified" else 0.0
     components.append(ScoreComponent("verified", verified, weights["verified"]))
@@ -236,6 +265,19 @@ def _score(implementation: dict, context: dict, success_rate: Optional[float], w
     preferred_scope = context.get("preferred_scope_type")
     scope_match = 1.0 if preferred_scope is not None and implementation.get("scope_type") == preferred_scope else 0.0
     components.append(ScoreComponent("scope_match", scope_match, weights["scope_match"]))
+
+    # Prompt 2 Sec 11: cost-informed ranking, sourced from the real
+    # execution-telemetry ledger (execution_telemetry.py) -- a DIFFERENT
+    # signal than `success_rate` above (that one comes from the older
+    # `evidence` table via compute_capability, never conflated with this
+    # one). Gated at `_COST_MIN_SAMPLES_FOR_RANKING` real samples --
+    # below that, omitted entirely (neutral, same as zero samples),
+    # never penalized on a noisy single data point.
+    if cost_stats is not None and cost_stats.sample_count >= _COST_MIN_SAMPLES_FOR_RANKING:
+        expected_wall = expected_value(cost_stats.mean_wall_seconds, expected_attempts(cost_stats.success_rate))
+        if expected_wall is not None:
+            cost_score = _COST_HALF_LIFE_SECONDS / (_COST_HALF_LIFE_SECONDS + expected_wall)
+            components.append(ScoreComponent("cost", cost_score, weights["cost"]))
 
     return components
 
@@ -325,13 +367,16 @@ async def rank_candidates(
         )
 
     success_rates = await _success_rates(pool, [str(c["id"]) for c in candidates])
+    cost_stats = await implementation_execution_stats_batch(pool, [str(c["id"]) for c in candidates])
 
     ranked: list[RankedImplementation] = []
     for impl in candidates:
         checks = evaluate_requirements(impl, context)
         eligible = is_eligible(checks)
         if eligible:
-            components = _score(impl, context, success_rates.get(str(impl["id"])), weights)
+            components = _score(
+                impl, context, success_rates.get(str(impl["id"])), weights, cost_stats.get(str(impl["id"])),
+            )
             score = sum(c.contribution for c in components)
         else:
             components = []

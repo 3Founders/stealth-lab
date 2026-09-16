@@ -196,6 +196,32 @@ def test_procedure_node_keeps_real_alternate_feasible_procedures(monkeypatch):
     assert [p["name"] for p in node.procedure_alternates] == ["strategy-b"]
 
 
+def test_procedure_cost_score_hook_is_called_but_inert(monkeypatch):
+    """Prompt 2 Sec 11 placeholder: the hook is real and exercised, but
+    its (always-None) result must not reorder or otherwise change which
+    procedure is chosen -- feasible[0] wins exactly as before."""
+    pool = _FakePool({"G-parent": _goal("G-parent", "safely modify generated API")})
+    monkeypatch.setattr(gr, "select_implementation_for_goal_id", _no_direct_impl)
+
+    proc_a = {"id": "P-1", "procedure_id": "P-1", "name": "strategy-a", "version": 1, "steps": []}
+    proc_b = {"id": "P-2", "procedure_id": "P-2", "name": "strategy-b", "version": 1, "steps": []}
+    calls = []
+
+    def spy_cost_score(proc):
+        calls.append(proc["name"])
+        return None
+
+    monkeypatch.setattr(gr, "_procedure_cost_score", spy_cost_score)
+
+    async def fake_feasible(pool, goal_id, *, current_scope, access_scope):
+        return [(proc_a, True), (proc_b, True)]
+    monkeypatch.setattr(gr, "_feasible_procedures_for_goal", fake_feasible)
+
+    node = _run(gr.resolve_goal(pool, "G-parent", scope=SCOPE))
+    assert sorted(calls) == ["strategy-a", "strategy-b"]
+    assert node.procedure["name"] == "strategy-a"  # unchanged: still feasible[0]
+
+
 def test_resolve_goal_via_procedure_resolves_a_specific_alternate(monkeypatch):
     pool = _FakePool({
         "G-parent": _goal("G-parent", "safely modify generated API"),

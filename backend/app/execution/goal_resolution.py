@@ -176,6 +176,26 @@ async def _feasible_procedures_for_goal(
     return results
 
 
+def _procedure_cost_score(proc: dict) -> Optional[float]:
+    """Real, named extension point for Prompt 2 Sec 11's Procedure-level
+    cost routing -- NOT implemented yet, by explicit founder direction
+    ("rank it by cost eventually, but for now don't estimate -- create a
+    placeholder we can plug a real scoring function into, don't add
+    anything for now"). Always returns `None` today, so `resolve_goal()`'s
+    existing verified-first/recency-second ordering (`feasible[0]`) is
+    completely unchanged -- this function is called but its result does
+    not yet affect selection.
+
+    A real implementation later will need to eagerly resolve+cost EVERY
+    feasible candidate's own subtree (via `_resolve_procedure_children` +
+    `goal_cost.estimate_goal_cost`), unlike Implementation-level cost
+    ranking (`implementation_selection.py`, already real and wired in),
+    which only needs one batched telemetry query per candidate -- a real
+    cost/complexity tradeoff, deliberately deferred rather than
+    attempted here."""
+    return None
+
+
 async def _resolve_procedure_children(
     pool: asyncpg.Pool, goal: dict, proc: dict, *, context: dict, scope: AccessScope,
     depth: int, max_depth: int, visited: frozenset,
@@ -342,6 +362,12 @@ async def resolve_goal(
     current_scope = context.get("current_scope") or {}
     candidates = await _feasible_procedures_for_goal(pool, goal_id, current_scope=current_scope, access_scope=scope)
     feasible = [p for p, ok in candidates if ok]
+    # Sec 11 cost-routing hook (real, inert -- see _procedure_cost_score's
+    # own docstring): called so it is exercised/discoverable, but its
+    # result does not affect selection today. `proc = feasible[0]` below
+    # stays exactly the existing verified-first/recency-second pick.
+    for _proc in feasible:
+        _proc["_cost_score"] = _procedure_cost_score(_proc)
     if feasible:
         proc = feasible[0]  # already ordered verified-first, recency-second by the query itself
         children = await _resolve_procedure_children(

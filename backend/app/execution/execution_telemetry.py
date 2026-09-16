@@ -114,3 +114,55 @@ async def implementation_execution_stats(pool: asyncpg.Pool, implementation_id: 
         mean_completion_tokens=row["mean_completion_tokens"],
         mean_llm_calls=row["mean_llm_calls"],
     )
+
+
+async def implementation_execution_stats_batch(
+    pool: asyncpg.Pool, implementation_ids: list[str],
+) -> dict[str, ImplementationExecutionStats]:
+    """Batched sibling of `implementation_execution_stats` -- one query
+    for however many candidate ids a ranking call has (Prompt 2 Sec 11's
+    cost-informed Implementation ranking), not N+1 single-id round-trips.
+    Same `_success_rates()` batching idiom `implementation_selection.py`
+    already uses elsewhere (`WHERE ... = ANY($1::uuid[])`), not a second
+    one. Every requested id gets a real entry in the result -- an id with
+    no telemetry rows gets `sample_count=0` (honest, never omitted or
+    fabricated as non-zero)."""
+    if not implementation_ids:
+        return {}
+    rows = await pool.fetch(
+        """
+        SELECT
+            implementation_id,
+            count(*) AS sample_count,
+            count(*) FILTER (WHERE outcome_status = 'success') AS success_count,
+            avg(wall_seconds) AS mean_wall_seconds,
+            avg(prompt_tokens) AS mean_prompt_tokens,
+            avg(completion_tokens) AS mean_completion_tokens,
+            avg(llm_calls) AS mean_llm_calls
+        FROM implementation_execution_telemetry
+        WHERE implementation_id = ANY($1::uuid[])
+        GROUP BY implementation_id
+        """,
+        implementation_ids,
+    )
+    by_id: dict[str, ImplementationExecutionStats] = {}
+    for row in rows:
+        impl_id = str(row["implementation_id"])
+        sample_count = int(row["sample_count"] or 0)
+        success_count = int(row["success_count"] or 0)
+        by_id[impl_id] = ImplementationExecutionStats(
+            implementation_id=impl_id,
+            sample_count=sample_count,
+            success_count=success_count,
+            success_rate=(success_count / sample_count) if sample_count > 0 else None,
+            mean_wall_seconds=row["mean_wall_seconds"],
+            mean_prompt_tokens=row["mean_prompt_tokens"],
+            mean_completion_tokens=row["mean_completion_tokens"],
+            mean_llm_calls=row["mean_llm_calls"],
+        )
+    return {
+        impl_id: by_id.get(impl_id) or ImplementationExecutionStats(
+            implementation_id=impl_id, sample_count=0, success_count=0,
+        )
+        for impl_id in implementation_ids
+    }
