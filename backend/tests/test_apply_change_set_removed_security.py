@@ -41,17 +41,25 @@ BACKEND_APP = pathlib.Path(srv.__file__).resolve().parents[1]
 EXPECTED_29 = sorted(
     [
         "check_applicability", "check_procedure", "compare_solutions",
-        "decide_decomposition", "decide_procedure", "decompose_task",
-        "detect_conflict_trigger", "find_best_solution", "find_best_way",
+        "decide_procedure",
+        "find_best_solution", "find_best_way",
         "find_problem", "get_claim_graph", "get_implementation_capability",
         "get_procedure", "inspect_evaluation", "inspect_implementation",
         "inspect_problem", "inspect_run", "list_problem_solutions",
-        "list_task_implementations", "propose_synthesis", "report_execution",
+        "list_task_implementations", "report_execution",
         "reproduce_procedure", "resolve_implementation", "resume_execution_run",
         "retrieve_precedent", "retry_run_node", "search_procedures",
-        "submit_approval", "submit_procedure",
+        "submit_procedure",
     ]
 )
+# 2026-09-16: decide_decomposition, decompose_task, detect_conflict_trigger,
+# propose_synthesis, submit_approval were REMOVED from this list -- the
+# debate/decomposition MCP surface was deleted (see app/mcp_server/
+# server.py's own top docstring), not a regression this test should catch.
+# The name EXPECTED_29 is now stale (24 entries) -- left as-is rather than
+# renamed, since the security property below is a subset check, not a
+# count, and renaming a well-known constant mid-file for a cosmetic reason
+# isn't worth the diff noise.
 
 
 def _registered_tool_names() -> list[str]:
@@ -99,11 +107,25 @@ def test_expected_authorized_tools_still_present():
     for expected in (
         "retrieve_precedent", "search_procedures", "get_procedure",
         "check_applicability", "check_procedure", "report_execution",
-        "submit_procedure", "decide_procedure", "propose_synthesis",
-        "submit_approval", "decide_decomposition", "decompose_task",
+        "submit_procedure", "decide_procedure",
         "find_best_way", "get_claim_graph",
     ):
         assert expected in names, expected
+
+
+def test_removed_debate_decomposition_tools_stay_gone():
+    """2026-09-16: propose_synthesis, detect_conflict_trigger,
+    decompose_task, decide_decomposition, submit_approval were removed
+    from the MCP surface (see app/mcp_server/server.py's own top
+    docstring). This is the inverse of the check above -- a regression
+    test that they don't silently come back, not a claim they were ever
+    required."""
+    names = set(_registered_tool_names())
+    for removed in (
+        "propose_synthesis", "detect_conflict_trigger",
+        "decompose_task", "decide_decomposition", "submit_approval",
+    ):
+        assert removed not in names, removed
 
 
 # ---------------------------------------------------------------------

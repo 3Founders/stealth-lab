@@ -21,10 +21,12 @@ names the spec requires (taskId, statusMessage, createdAt, ...).
 
 HONEST SCOPE CUT: tasks/update (the input_required / inputRequests /
 inputResponses mid-task-elicitation path) is deliberately NOT implemented.
-Not because it's hard -- because propose_synthesis and solve_task, the only
-two tools this extension task-ifies, never need to ask the calling client a
-mid-execution question. If a future tool does, this is the real gap to close
-first, not an oversight to paper over.
+Not because it's hard -- because the tools this extension task-ifies never
+need to ask the calling client a mid-execution question. If a future tool
+does, this is the real gap to close first, not an oversight to paper over.
+(propose_synthesis was one of the two tools this comment originally named
+-- removed from the MCP surface 2026-09-16, see app/mcp_server/server.py's
+own top docstring. find_best_way/reproduce_procedure remain.)
 
 HONEST LIMITATION: task state lives in an in-memory dict, not the DB. That
 means: task state does not survive a server restart, and does not work
@@ -100,7 +102,7 @@ INVALID_PARAMS = -32602
 # through to tier 2. Splitting task-augmentation per-tier would need two
 # separate tool names; not done here (see find_best_way's own docstring).
 TASK_AUGMENTABLE_TOOLS: frozenset[str] = frozenset({
-    "propose_synthesis", "find_best_way", "reproduce_procedure",
+    "find_best_way", "reproduce_procedure",
 })
 # reproduce_procedure has no lookup tier at all (unlike find_best_way) --
 # every call runs a real sandboxed agent loop, so it always needs the same
@@ -282,8 +284,10 @@ def _client_declared_tasks_capability(ctx: ServerRequestContext) -> bool:
 class TasksExtension(Extension):
     """
     Real, hand-built implementation of SEP-2663 for the tools this project
-    actually needs task-augmented (propose_synthesis, solve_task -- both
-    genuinely long-running: multi-round debate / agent loop).
+    actually needs task-augmented (find_best_way/reproduce_procedure --
+    genuinely long-running agent loops; propose_synthesis was the other
+    original tool this task-ified, removed from the MCP surface
+    2026-09-16, see app/mcp_server/server.py's own top docstring).
 
     Usage (mirrors the real Apps pattern already used elsewhere in this SDK):
 

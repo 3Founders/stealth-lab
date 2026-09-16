@@ -4,7 +4,9 @@ directly with a trivial prompt, with an explicit timeout, so a silent hang
 or bad key shows up in seconds instead of you waiting on a debate that may
 never come back.
 
-default_panel() (used by propose_synthesis) requires THREE separate real
+default_panel() (used by app/api/admin.py and app/services/human_
+participation.py's debate paths -- no longer by any MCP tool, propose_
+synthesis was removed from the MCP surface 2026-09-16) requires THREE separate real
 provider keys simultaneously by default: Anthropic, Fireworks, OpenAI. If
 any ONE of those is missing/invalid/unreachable, the whole debate can hang
 or fail -- and since nothing in the debate code currently logs progress to
@@ -63,11 +65,11 @@ async def main():
 
     print("\n=== Summary ===")
     for label, ok in results.items():
-        print(f"  {label}: {'OK' if ok else 'BROKEN -- fix this before testing propose_synthesis'}")
+        print(f"  {label}: {'OK' if ok else 'BROKEN -- fix this before running a real debate'}")
 
     if not all(results.values()):
         print(
-            "\nAt least one real provider is broken. propose_synthesis will hang or "
+            "\nAt least one real provider is broken. A real debate will hang or "
             "fail until every one of these passes (default_panel() needs all of "
             "them). If you don't want to fix all three providers right now, set "
             "USE_GENERAL_COMPUTE=true in .env instead -- that switches to a single, "

@@ -2,16 +2,6 @@
 StealthLab MCP server. Representative tools:
   - retrieve_precedent: thin read wrapper, zero new business logic, wraps
     an already-tested retrieval function.
-  - submit_approval / decide_decomposition: the ONLY paths that mutate the
-    knowledge graph. Each loads a persisted proposal (a debate scorecard
-    row / a decompositions row), enforces its gate (PENDING_APPROVAL /
-    status='proposed'), applies THAT row's stored change_set -- never a
-    caller-supplied one -- and writes an audit row. The former ungated
-    `apply_change_set` tool, which applied an arbitrary caller-supplied
-    change_set with no gate or audit row, was removed in the post-freeze
-    security hardening (v1-final-2026-09-03.1).
-  - propose_synthesis: thin wrapper around LoopOrchestrator.run(), the real
-    debate orchestration used throughout this project.
   - find_best_way (renamed from solve_task): NOT a pure wrapper -- see its
     own docstring's HONEST STATUS section. Reuses RepoSandbox/Agent
     verbatim for its tier-2 execution path, but adds real new orchestration
@@ -19,6 +9,19 @@ StealthLab MCP server. Representative tools:
     tier-1 fast-lookup path) on top.
   - check_procedure: demo.md C5's audit-mode ALLOW/WOULD_REFUSE tool; thin
     wrapper around app.services.applicability.check_procedure_reuse().
+
+REMOVED (2026-09-16, founder directive): the debate/conflict-resolution
+MCP surface -- propose_synthesis, detect_conflict_trigger, decompose_task,
+decide_decomposition, submit_approval -- and the now-dead app.debate/
+app.api.approval/app.api.decompose imports those tools alone used. The
+underlying app/debate/, app/api/approval.py, app/api/decompose.py modules
+and their own REST routes/tests are UNTOUCHED (still real, still working,
+still the current graph-mutation path for anything calling them directly
+or via HTTP) -- this pass removed ONLY their MCP tool exposure, per
+explicit scope decision, not the modules themselves. There is currently
+NO MCP tool that mutates the knowledge graph (`knowledge_nodes`/`edges`)
+as a result -- a real, disclosed gap, not an oversight, until/unless a
+replacement gated write path is designed for the Goal-centric model.
 
 ("Four tools" above is stale relative to the full @server.tool() list this
 file actually defines today -- a pre-existing doc-drift gap, not one this
@@ -31,12 +34,11 @@ remembered pre-2.0 API names. Confirmed real: MCPServer (not FastMCP,
 renamed in v2), the .tool() decorator, Context.lifespan for accessing the
 DB pool from within a tool call.
 
-propose_synthesis/find_best_way are genuinely long-running (multi-round
-debate / multi-step agent loop). Long-run semantics come from
-tasks_extension.py, a real, hand-built implementation of SEP-2663 -- see
-that module's own docstring for why (mcp==2.0.0 ships no Tasks runtime at
-all yet; confirmed via exhaustive grep of the installed package plus the
-SDK's own release notes, not assumed).
+find_best_way is genuinely long-running (multi-step agent loop). Long-run
+semantics come from tasks_extension.py, a real, hand-built implementation
+of SEP-2663 -- see that module's own docstring for why (mcp==2.0.0 ships
+no Tasks runtime at all yet; confirmed via exhaustive grep of the
+installed package plus the SDK's own release notes, not assumed).
 """
 from __future__ import annotations
 
@@ -69,8 +71,6 @@ from app.db.session import create_pool
 from app.execution import durable_resume as _dres
 from app.execution import durable_run as _dr
 from app.execution import implementation_registry
-from app.api.approval import decide, ApprovalRequest
-from app.api.decompose import decompose, decide as decide_decomposition_fn, DecomposeRequest, DecideRequest
 from app.services.access import AccessScope, visibility_predicate
 from app.services.applicability import verified_procedure_candidates
 from app.services.authn import (
@@ -81,9 +81,7 @@ from app.services.authn import (
     current_actor_id,
     validate_token_async,
 )
-from app.services.decomposition import DecompositionService
 from app.services.embeddings import Embedder
-from app.services.knowledge_conflict import detect_and_create_conflict_trigger
 from app.services.local_retrieval import assemble_structural_context, retrieve_local_first
 from app.services.procedure_extraction import extract_procedure
 from app.services.procedure_extraction.evidence import AgentRunEvidenceSource
@@ -92,15 +90,6 @@ from app.services.retrieval import HybridRetriever
 from app.services.reuse_detection import ReusableNode, _vector_candidates
 from app import observability
 from app.config import settings
-from fastapi import HTTPException
-
-# Real, existing debate orchestration -- LoopOrchestrator.run(trigger_id) is
-# the actual, already-tested entrypoint used by app/api/admin.py,
-# app/services/human_participation.py, and every experiment script in this
-# project. No new debate logic lives here.
-from app.debate.panel import default_panel, default_judge
-from app.debate.state_machine import DebateStateMachine
-from app.services.loop import LoopOrchestrator
 
 # RepoSandbox/Agent/TOOLS: moved into backend/ (app/execution/coding_agent.py)
 # from experiments/swebench_pro/agent.py so backend/ has zero runtime
@@ -208,8 +197,11 @@ class OidcAwareTokenVerifier(TokenVerifier):
     why hosting stays loopback-only by default (see the ASGI app /
     uvicorn invocation below), not exposed via tunnel. (The former
     ungated `apply_change_set` write tool was removed in the post-freeze
-    security hardening; graph mutation is now gated behind
-    submit_approval / decide_decomposition.)
+    security hardening; the debate/decomposition tools that later gated
+    graph mutation -- submit_approval / decide_decomposition -- were
+    themselves removed from this MCP surface 2026-09-16, see this
+    module's own top docstring. No MCP tool mutates the knowledge graph
+    today.)
     """
 
     def __init__(self, shared_token: str, oidc_config: Optional[OidcConfig], jwks_provider):
@@ -308,12 +300,12 @@ server = MCPServer(
     name="stealthlab",
     version="1.0.0",
     instructions=(
-        "Retrieval, debate, and knowledge-graph tools for StealthLab's "
-        "bi-temporal task/knowledge graph, plus a retrieval-grounded coding "
-        "agent. propose_synthesis and find_best_way are genuinely long-running "
-        "(multi-round debate / multi-step agent loop) -- clients that "
-        "declare the io.modelcontextprotocol/tasks extension capability get "
-        "a CreateTaskResult back immediately and poll tasks/get; clients "
+        "Retrieval, Goal/Procedure/Implementation, and knowledge-graph "
+        "tools for StealthLab's bi-temporal task/knowledge graph, plus a "
+        "retrieval-grounded coding agent. find_best_way is genuinely "
+        "long-running (multi-step agent loop) -- clients that declare the "
+        "io.modelcontextprotocol/tasks extension capability get a "
+        "CreateTaskResult back immediately and poll tasks/get; clients "
         "that don't get the plain synchronous result, same as before."
     ),
     lifespan=lifespan,
@@ -340,7 +332,7 @@ server = MCPServer(
 # --workers 1 is load-bearing, not incidental: TasksExtension's backing
 # store (tasks_extension.py) is in-memory, so a second worker process
 # would serve a tasks/get poll from a process that never saw the task
-# propose_synthesis/find_best_way created -- the call would appear to hang.
+# find_best_way created -- the call would appear to hang.
 # The SECOND ASGI app in this project -- instrumenting only main.py would
 # leave all 9 MCP tools dark, which is the surface external agents
 # actually call. No-op without SENTRY_DSN.
@@ -566,16 +558,15 @@ def _resolve_caller_identity(fallback: str) -> str:
         approved_by -- fallback=approver_id (the caller-supplied,
         self-asserted parameter), so a resolved real identity OVERRIDES
         it rather than being overridden by it.
-      - decide_decomposition: DecideRequest's approver_id (the real
-        decompositions.approver_id audit column) -- fallback=approver_id.
-        A real audit gap this same identity-hardening pass missed the
-        first time: found and closed during a later hardening audit
-        (this pass), same "no resolution attempt" bug, at a different
-        call site.
-      - submit_approval: ApprovalRequest's approver_id (the real
-        approvals.approver_id audit column) -- fallback=approver_id.
-        Same gap, same fix, found in the same pass as decide_decomposition
-        above.
+      - (historical) decide_decomposition / submit_approval: DecideRequest's/
+        ApprovalRequest's approver_id (decompositions.approver_id /
+        approvals.approver_id audit columns) -- fallback=approver_id. A
+        real audit gap this same identity-hardening pass missed the first
+        time, found and closed during a later hardening audit (this
+        pass), same "no resolution attempt" bug at both call sites. Both
+        tools were removed from this MCP surface 2026-09-16 (see this
+        module's own top docstring); kept here as the real historical
+        record of the bug this pass fixed, not as a current call site.
     """
     token = get_access_token()
     if token is not None and token.subject:
@@ -782,114 +773,15 @@ async def retrieve_precedent(query: str, ctx: Context) -> str:
 # security hardening (v1-final-2026-09-03.1). It accepted an arbitrary
 # caller-supplied change_set JSON and applied it to the real graph with no
 # approval gate, no persisted decision, and no audit row -- the only
-# ungated public write to the knowledge graph. Graph mutation now goes
-# ONLY through submit_approval (a PENDING_APPROVAL debate scorecard's
-# STORED change_set + an `approvals` audit row) and decide_decomposition
-# (a status='proposed' decompositions row's STORED change_set + a status/
-# approver/decided_at update). Both apply the persisted proposal's own
-# change_set, never one supplied by the caller of the decision.
-
-
-@server.tool()
-async def propose_synthesis(trigger_id: str, ctx: Context) -> str:
-    """
-    Run a real debate over an existing trigger and return every surviving
-    candidate's scorecard plus its change_set, ready to hand to
-    apply_change_set.
-
-    Thin wrapper around LoopOrchestrator.run(trigger_id) -- the exact real,
-    already-tested orchestration used by app/api/admin.py,
-    app/services/human_participation.py, and every real experiment script in
-    this project (default_panel()/default_judge() are the same real,
-    heterogeneous-model panel construction used everywhere else, not a
-    bespoke panel invented for this tool). No new debate logic lives here.
-
-    trigger_id: the id of an EXISTING row in the `triggers` table. This
-    tool does not create triggers -- a trigger must already exist (created
-    by whatever upstream monitoring/detection produced it). Passing an
-    unknown id is a real, reported failure, not silently ignored.
-
-    Genuinely long-running (multi-round debate across a real heterogeneous
-    panel + judge). If your client declares the io.modelcontextprotocol/tasks
-    extension capability, this returns a CreateTaskResult immediately and
-    you poll tasks/get for the eventual result; otherwise it blocks until
-    the debate finishes.
-
-    HONEST LIMIT, carried over from Experiment 3's real, measured result:
-    debate CLASSIFICATION (is there a real conflict, and in which direction)
-    is validated at 27/32 on real PEP pairs. Debate SYNTHESIS/MERGE (what
-    this tool actually produces) has been validated only once, after 3 real
-    failures, on one synthetic pair -- read every change_set by hand before
-    trusting it, exactly as apply_change_set's own docstring already warns.
-    """
-    pool = ctx.request_context.lifespan_context["pool"]
-
-    try:
-        trigger_uuid = UUID(trigger_id)
-    except ValueError:
-        return f"REFUSED: {trigger_id!r} is not a valid UUID."
-
-    orchestrator = LoopOrchestrator(pool, default_panel(), default_judge())
-    try:
-        scorecards = await orchestrator.run(trigger_uuid)
-    except LookupError as exc:
-        return f"REFUSED: {exc}"
-    except (asyncio.CancelledError, BaseException):
-        # REAL BUG FOUND VIA ACTUAL MCP INSPECTOR TESTING (not hypothetical):
-        # a client that disconnects/times out mid-debate leaves the debate
-        # stuck at IN_DEBATE forever -- IN_DEBATE's only legal predecessor is
-        # OPEN (app/debate/state_machine.py's own transition table), so a
-        # retry on the same trigger_id hits "cannot move debate from
-        # IN_DEBATE to IN_DEBATE" and the trigger is permanently unusable
-        # without manual intervention. REJECTED is a legal successor of
-        # IN_DEBATE (state machine explicitly allows this), so close it out
-        # cleanly here instead of leaving an orphan -- using the real
-        # DebateStateMachine.transition(), not a raw UPDATE, so
-        # debate_events keeps an honest record of what happened.
-        row = await pool.fetchrow(
-            "SELECT debate_id FROM triggers WHERE id = $1", trigger_uuid
-        )
-        if row and row["debate_id"] is not None:
-            machine = DebateStateMachine(pool)
-            try:
-                state = await machine.current_state(row["debate_id"])
-                if state not in ("APPROVED", "REJECTED"):
-                    await machine.transition(
-                        row["debate_id"], "REJECTED",
-                        reason="orphaned: tool call cancelled/failed mid-debate",
-                        actor="propose_synthesis_cleanup",
-                    )
-            except Exception:  # noqa: BLE001 -- best-effort cleanup; the
-                # original cancellation/error is what actually matters and
-                # must not be swallowed by a cleanup failure.
-                pass
-        raise
-
-    if not scorecards:
-        return (
-            "No scorecards produced -- the panel either reached no candidate, "
-            "no candidate reached the minimum supporter threshold, or every "
-            "candidate failed structural validation. Check the debates/"
-            "debate_events tables for the real reason (state machine "
-            "transition + reason string were persisted even though no "
-            "scorecard was)."
-        )
-
-    lines = [f"{len(scorecards)} real scorecard(s) produced:"]
-    for sc in scorecards:
-        row = await pool.fetchrow(
-            "SELECT change_set FROM candidates WHERE id = $1", sc.candidate_id
-        )
-        change_set_json = json.dumps(row["change_set"]) if row else "null"
-        lines.append(
-            f"\n--- candidate {sc.candidate_id} ---\n"
-            f"summary: {sc.summary}\n"
-            f"proposers: {sc.proposers}\n"
-            f"layer1.passed: {sc.layer1.passed}\n"
-            f"recommendation: {sc.recommendation}\n"
-            f"change_set: {change_set_json}"
-        )
-    return "\n".join(lines)
+# ungated public write to the knowledge graph. Graph mutation THEN went
+# only through submit_approval/decide_decomposition (each applying a
+# persisted proposal's own STORED change_set, never a caller-supplied
+# one) -- both of those were themselves removed from this MCP surface
+# 2026-09-16 (see this module's own top docstring). No MCP tool mutates
+# `knowledge_nodes`/`edges` today; the underlying app/debate/,
+# app/api/approval.py, app/api/decompose.py modules and their REST routes
+# are untouched and still the real path for anything calling them
+# directly or over HTTP.
 
 
 def _render_step(step) -> str:
@@ -1368,6 +1260,8 @@ async def _respond_plan_only(
         ),
     }
     return json.dumps(payload, indent=2, default=str)
+
+
 
 
 @server.tool()
@@ -2540,73 +2434,6 @@ async def reproduce_procedure(procedure_id: str, repo_path: str, ctx: Context,
 
 
 @server.tool()
-async def detect_conflict_trigger(new_node_id: str, ctx: Context) -> str:
-    """
-    Check whether an existing knowledge_node conflicts with something else
-    already in the graph, and if so, open a real trigger ready for
-    propose_synthesis.
-
-    Thin wrapper around detect_and_create_conflict_trigger -- the exact
-    real, already-tested function that closes the gap this project's own
-    handoff docs flagged: "No MCP tool creates a conflict trigger; clients
-    can only run debates on already-queued triggers." No new detection
-    logic lives here; this only formats the real function's output.
-
-    Under the hood (already real, already tested, not reimplemented here):
-    finds the single best-matching existing knowledge_node in the
-    PARTIAL_MATCH_THRESHOLD..FULL_MATCH_THRESHOLD band (0.70-0.90 --
-    "related enough to matter, not identical enough to be a simple
-    duplicate"; >=0.90 is dedup's job, not debate's), creates a proxy
-    task_node ("Reconcile: X vs Y") linked to both conflicting nodes via
-    CONFLICTS_WITH edges, computes any real date-overlap fact in actual
-    Python date math (not left for the panel to get wrong in prose), and
-    opens a trigger row.
-
-    new_node_id: id of an EXISTING knowledge_node -- typically one you
-    just created or updated (e.g. via apply_change_set or decompose_task)
-    and want checked against the rest of the graph.
-
-    Returns the new trigger_id (hand it straight to propose_synthesis), or
-    a plain "no conflict found" message -- which is a normal, common,
-    non-error outcome, not a failure.
-
-    HONEST SCOPE: this only checks the SINGLE best match, not every match
-    above threshold (deliberately, per the underlying function's own
-    docstring -- multiple simultaneous conflicts need a design decision,
-    one debate for all of them or one each, that isn't made here). This
-    also only covers knowledge-conflict-triggered debates -- it does NOT
-    create the OTHER real trigger kind (metric-threshold triggers off task
-    execution stats like error_rate/cost/cycle_time), which is a separate,
-    internal-monitoring-driven mechanism (TriggerDetector), not something
-    an external MCP client would naturally initiate.
-    """
-    pool = ctx.request_context.lifespan_context["pool"]
-
-    try:
-        node_uuid = UUID(new_node_id)
-    except ValueError:
-        return f"REFUSED: {new_node_id!r} is not a valid UUID."
-
-    row = await pool.fetchrow(
-        "SELECT id FROM knowledge_nodes WHERE id = $1 AND t_invalid IS NULL", node_uuid
-    )
-    if row is None:
-        return f"REFUSED: no live knowledge_node {new_node_id} (not found, or already superseded)."
-
-    trigger_id = await detect_and_create_conflict_trigger(pool, new_node_id)
-    if trigger_id is None:
-        return (
-            f"No conflict found for {new_node_id} in the "
-            f"PARTIAL_MATCH_THRESHOLD..FULL_MATCH_THRESHOLD band (0.70-0.90) -- "
-            f"a normal, common outcome. No trigger created."
-        )
-    return (
-        f"Conflict detected -- trigger created: {trigger_id}\n"
-        f"Hand this trigger_id to propose_synthesis to open the debate."
-    )
-
-
-@server.tool()
 async def check_procedure(procedure_id: str, query: str, ctx: Context) -> str:
     """
     demo.md C5: ALLOW or WOULD_REFUSE reuse of a NAMED procedure right now,
@@ -2615,7 +2442,7 @@ async def check_procedure(procedure_id: str, query: str, ctx: Context) -> str:
     calling agent, it never blocks a call; nothing here stops you from
     proceeding, the verdict is yours to act on.
 
-    Thin wrapper, same discipline as retrieve_precedent/apply_change_set:
+    Thin wrapper, same discipline as retrieve_precedent:
     ALL decision logic is app.services.applicability.check_procedure_reuse(),
     which reuses (does not reinvent) the SAME non-compensatory
     check_hard_constraints() cascade find_applicable_procedures() runs, plus
@@ -2881,8 +2708,8 @@ async def get_relevant_claims(goal: str, ctx: Context, context: Optional[str] = 
     MCP hardening B30: bounded, compact Claim references relevant to a
     goal/subproblem -- NEVER the whole Claim graph (for that, see
     `get_claim_graph`). Reuses the same hybrid vector+lexical retrieval
-    `retrieve_precedent`/`decompose_task` already use
-    (`HybridRetriever`), restricted to real Claims (`knowledge_nodes`
+    `retrieve_precedent` already uses (`HybridRetriever`), restricted to
+    real Claims (`knowledge_nodes`
     where `node_type='claim'` -- a claim_family hub or other non-Claim
     knowledge_node is never presented as one).
 
@@ -3245,8 +3072,8 @@ async def decide_procedure(procedure_id: str, approver_id: str, decision: str, c
     other.
 
     Same "approved"/"rejected" vocabulary and idempotency-adjacent shape
-    as decide_decomposition/submit_approval, for consistency across this
-    server's approval-shaped tools -- this one records a real ChangeSet
+    this server's other approval-shaped tools use, for consistency --
+    this one records a real ChangeSet
     (Band 1.9c, invariant #7: approval is a [V] status mutation and must
     be auditable), same as the underlying function already does.
 
@@ -3288,230 +3115,6 @@ async def decide_procedure(procedure_id: str, approver_id: str, decision: str, c
         "approved_by": updated["approved_by"],
         "verification_state": updated["verification_state"],
     }, default=str)
-
-
-@server.tool()
-async def decompose_task(problem: str, ctx: Context) -> str:
-    """
-    Turn an unstructured problem description into a real, structured graph
-    proposal -- new task_nodes/knowledge_nodes/edges -- persisted to the
-    real `decompositions` table, WITHOUT writing anything to the actual
-    graph yet.
-
-    REAL BUG FOUND AND FIXED after this tool's first version shipped: it
-    used to tell callers to apply the result via apply_change_set. That
-    was wrong, and a genuinely serious gap -- apply_change_set uses
-    KnowledgeUpdater.apply(), which never calls validate_generative(),
-    the capability-boundary check that's this project's own stated "only
-    real guarantee" against a prompt-injected/hijacked model (V2_STATUS.md:
-    generated content may only CREATE new nodes and connect them to each
-    other -- never modify, invalidate, or attach to anything that already
-    exists). Using apply_change_set on this tool's output would have
-    bypassed that guarantee entirely. Use decide_decomposition instead --
-    it calls the real, correct app.api.decompose.decide(), which re-runs
-    validate_generative() at apply time specifically so a proposal
-    tampered with in storage still can't escalate.
-
-    This version calls the real app.api.decompose.decompose() endpoint
-    function directly (not the bare DecompositionService -- that was the
-    root cause of the bug above: it skipped the real endpoint's
-    persistence step entirely, so there was never a real decomposition_id
-    for a proper decide step to reference). No new decomposition logic
-    lives here.
-
-    HONEST GAP, stated plainly: the real endpoint's rate-limiting and
-    cost-governance dependencies (enforce_limits, a real per-viewer
-    scope_key) aren't replicated here -- this tool uses a fixed
-    "mcp_decompose_task" scope_key, so real per-caller rate limits and
-    spend caps do NOT apply to calls made through this MCP tool the way
-    they would through the real HTTP endpoint. Fine for trusted/internal
-    use (this project's current, explicit posture), a real gap to close
-    before opening this specific tool to untrusted callers.
-
-    problem: plain-language description of the workflow/problem to
-    decompose -- ordinary phrasing, up to ~20,000 characters (the real
-    endpoint's own limit).
-
-    Returns: the real decomposition_id (hand this to decide_decomposition),
-    feasibility, reasoning, structural problems (block safe_to_propose),
-    objections (surfaced, not auto-blocking), suspected manipulation,
-    related existing content, and the change_set for your own review.
-    """
-    pool = ctx.request_context.lifespan_context["pool"]
-
-    if not problem.strip():
-        return "REFUSED: problem is empty."
-    if len(problem) > 20_000:
-        return f"REFUSED: problem is {len(problem)} chars, over the real 20,000-char limit."
-
-    result = await decompose(
-        DecomposeRequest(problem=problem),
-        pool=pool,
-        # B19: real caller scope -- novelty/reuse checks must not read or
-        # reveal another caller's private task/knowledge nodes.
-        scope=_caller_access_scope(),
-        scope_key="mcp_decompose_task",
-    )
-
-    lines = [
-        f"decomposition_id: {result.id}",
-        f"feasible: {result.feasible}",
-        f"safe_to_propose: {result.safe_to_propose}",
-        f"node_count: {result.node_count}",
-        f"is_novel: {result.is_novel}",
-        f"suspected_manipulation: {result.suspected_manipulation}",
-        f"reasoning: {result.reasoning}",
-    ]
-    if result.structural_problems:
-        lines.append(f"structural_problems (BLOCKS safe_to_propose): {result.structural_problems}")
-    if result.objections:
-        lines.append(f"objections (surfaced, not blocking -- your call): {result.objections}")
-    if result.related_existing:
-        lines.append(f"related_existing: {result.related_existing}")
-    if result.reused_nodes:
-        lines.append(f"reused_nodes (matched against existing graph): {result.reused_nodes}")
-    if result.suggested_agents:
-        lines.append(f"suggested_agents: {result.suggested_agents}")
-
-    lines.append(f"\nops (for your review): {json.dumps(result.ops)}")
-    lines.append(
-        f"\nOnce reviewed, call decide_decomposition({result.id!r}, approver_id, "
-        f"\"approved\" or \"rejected\") -- NOT apply_change_set."
-    )
-    return "\n".join(lines)
-
-
-@server.tool()
-async def decide_decomposition(decomposition_id: str, approver_id: str, decision: str,
-                                ctx: Context) -> str:
-    """
-    The REAL, capability-boundary-checked approve/reject step for a
-    decompose_task proposal -- calls the exact real, already-tested
-    app.api.decompose.decide() function directly (plain importable async
-    function, not called over HTTP).
-
-    THIS IS THE CORRECT PATH for decompose_task's output. On approval,
-    this calls KnowledgeUpdater.apply_generated(), which re-runs
-    validate_generative() at apply time -- the capability check ran once
-    at generation, and running it again here means a proposal tampered
-    with in storage between propose and decide still cannot escalate to
-    modifying or invalidating existing graph content. Every node/edge
-    written this way is tagged `public_generated`, so the graph never
-    loses track of which content came from an untrusted submission versus
-    a company's own documents. apply_change_set does NOT do any of this
-    -- do not use it for decompose_task's output.
-
-    decomposition_id: the real id from decompose_task's output.
-    approver_id: who is deciding -- stored in the real decompositions row.
-    SELF-ASSERTED, and only used as-is when no real identity is
-    resolvable (see `_resolve_caller_identity`'s own docstring's
-    invariant) -- a resolved real identity always overrides it, the same
-    spoofing-proof discipline every other write-path attribution site in
-    this file already follows. This is the one site the identity-
-    hardening pass this session missed: it wrote `approver_id` straight
-    into `DecideRequest` unconditionally, the exact "no resolution
-    attempt" gap that invariant exists to close.
-    decision: "approved" or "rejected".
-
-    Real idempotency guard (from the underlying decide()): re-deciding an
-    already-decided decomposition is refused, not silently re-applied --
-    every apply inserts new nodes, so approving twice would create a
-    duplicate subgraph.
-    """
-    pool = ctx.request_context.lifespan_context["pool"]
-
-    try:
-        decomposition_uuid = UUID(decomposition_id)
-    except ValueError:
-        return f"REFUSED: {decomposition_id!r} is not a valid UUID."
-
-    if decision not in ("approved", "rejected"):
-        return f"REFUSED: decision must be 'approved' or 'rejected', got {decision!r}."
-
-    resolved_approver = _resolve_caller_identity(fallback=approver_id)
-    body = DecideRequest(approver_id=resolved_approver, decision=decision)
-    try:
-        result = await decide_decomposition_fn(decomposition_uuid, body, pool)
-    except HTTPException as exc:
-        return f"REFUSED ({exc.status_code}): {exc.detail}"
-
-    lines = [
-        f"decomposition_id: {result.id}",
-        f"decision: {result.decision}",
-        f"created_nodes: {result.created_nodes if result.created_nodes else '(none -- rejected, nothing applied)'}",
-    ]
-    if result.refs:
-        lines.append(f"refs: {result.refs}")
-    return "\n".join(lines)
-
-
-@server.tool()
-async def submit_approval(scorecard_id: str, approver_id: str, decision: str, ctx: Context,
-                           note: str | None = None) -> str:
-    """
-    The REAL, gated approve/reject step for a debate-produced scorecard --
-    calls the exact real, already-tested app.api.approval.decide() function
-    directly (not reimplemented, not called over HTTP -- FastAPI route
-    functions are plain importable async functions, so this just calls it).
-
-    THIS IS THE FIX for a real gap found during this project's own MCP
-    testing: apply_change_set is a raw, UNGATED write primitive -- it does
-    not check debate state, does not require APPROVED, and does not write
-    an audit row. Used directly on a propose_synthesis scorecard's
-    change_set, apply_change_set completely bypasses human approval and
-    the approvals audit trail this system was explicitly built to
-    enforce (app/api/approval.py's own comment: "an approval recorded
-    against a change that did not apply would be a false audit trail,
-    which is worse than no audit trail"). submit_approval is the correct
-    path for anything that came from propose_synthesis. apply_change_set
-    remains the correct path for decompose_task's output, which never has
-    a debate/scorecard to begin with.
-
-    On approval, this does three things atomically (all real, all in the
-    underlying decide(), not duplicated here): applies the change_set via
-    the real KnowledgeUpdater, writes a row to the approvals table, and
-    transitions the debate to APPROVED. On rejection: records the
-    rejection and transitions to REJECTED -- nothing is applied.
-
-    scorecard_id: id of a scorecard from propose_synthesis's real output.
-    approver_id: who is deciding -- stored in the real audit row.
-    SELF-ASSERTED, and only used as-is when no real identity is
-    resolvable -- same spoofing-proof discipline as decide_procedure's
-    own approver_id handling (see `_resolve_caller_identity`'s
-    docstring). This was the other site the identity-hardening pass this
-    session missed: `approver_id` went straight into `ApprovalRequest`
-    unconditionally, letting a caller self-assert the identity written to
-    the real `approvals` audit row this system was explicitly built to
-    make trustworthy.
-    decision: "approved" or "rejected".
-    note: optional reason, stored in the real audit row and used as the
-    real state-machine transition's reason if given.
-    """
-    pool = ctx.request_context.lifespan_context["pool"]
-
-    try:
-        scorecard_uuid = UUID(scorecard_id)
-    except ValueError:
-        return f"REFUSED: {scorecard_id!r} is not a valid UUID."
-
-    if decision not in ("approved", "rejected"):
-        return f"REFUSED: decision must be 'approved' or 'rejected', got {decision!r}."
-
-    resolved_approver = _resolve_caller_identity(fallback=approver_id)
-    body = ApprovalRequest(approver_id=resolved_approver, decision=decision, note=note)
-    try:
-        result = await decide(scorecard_uuid, body, pool)
-    except HTTPException as exc:
-        return f"REFUSED ({exc.status_code}): {exc.detail}"
-
-    lines = [
-        f"approval_id: {result.approval_id}",
-        f"decision: {result.decision}",
-        f"applied_ops: {result.applied_ops if result.applied_ops else '(none -- rejected, nothing applied)'}",
-    ]
-    if result.export_markdown:
-        lines.append(f"\n--- export ---\n{result.export_markdown}")
-    return "\n".join(lines)
 
 
 @server.tool()
@@ -4021,7 +3624,7 @@ async def explain_goal_route(
 @server.tool()
 async def compile_goal(
     goal_id: str, ctx: Context, current_scope_json: str = "{}", max_depth: int = 6,
-    semantic: bool = False,
+    semantic: bool = False, workspace_root: Optional[str] = None,
 ) -> str:
     """
     Meta-harness/execu.md Sec 16/27: resolve a Goal recursively
@@ -4048,8 +3651,21 @@ async def compile_goal(
     `semantic=True` (Sec 11 follow-up, opt-in): same real semantic
     Goal->Implementation candidate widening `explain_goal_route`'s own
     `semantic` flag already documents.
+
+    `workspace_root` (Sec 13, opt-in): when given, ALSO writes a real
+    `.stealth/goal_run.md` reflecting the COMPILED-but-not-executed plan
+    -- `find_best_way(mode="plan_only")` already writes a real `run.md`
+    for a Procedure-based plan the same way (`RUN|...|pending|...`)
+    before anything runs; this closes the same gap for Goal-based plans.
+    Every node's `status` is `"planned"` (kind="implementation" -- a real
+    Implementation WOULD be dispatched here) or `"needs_input"`
+    (kind="human" -- a real, already-known gap), never `"success"`/
+    `"failure"`, since nothing has actually executed. Calling `execute_
+    goal` afterward on the SAME `workspace_root` overwrites this same
+    file with the real post-execution trace -- one real file, two
+    honest states depending on which tool last wrote it.
     """
-    from app.execution.goal_compiler import flatten_goal_tree
+    from app.execution.goal_compiler import compiled_goal_to_run_md, flatten_goal_tree
     from app.execution.goal_resolution import GoalResolutionError, resolve_goal
 
     pool = ctx.request_context.lifespan_context["pool"]
@@ -4072,6 +3688,9 @@ async def compile_goal(
         return f"REFUSED: {exc}"
 
     nodes = flatten_goal_tree(tree)
+    if workspace_root:
+        from app.execution.goal_execution import write_goal_run_md_file
+        write_goal_run_md_file(workspace_root, compiled_goal_to_run_md(nodes))
     return json.dumps({
         "tree": _resolved_goal_node_to_dict(tree),
         "nodes": [

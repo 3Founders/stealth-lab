@@ -2,7 +2,7 @@
 Real test of TasksExtension -- exercises the actual, installed
 mcp.server.extension.compose_tool_call_handler machinery (not a
 reimplementation), with a fake slow "tool" standing in for
-propose_synthesis/find_best_way's real long-running work.
+find_best_way's real long-running work.
 """
 import asyncio
 import sys
@@ -35,7 +35,7 @@ def make_ctx(*, declares_tasks: bool) -> ServerRequestContext:
 
 
 async def slow_tool_handler(ctx, params):
-    """Stands in for propose_synthesis/find_best_way's real, slow work."""
+    """Stands in for find_best_way's real, slow work."""
     await asyncio.sleep(0.3)
     from mcp_types import CallToolResult
     from mcp_types._types import TextContent
@@ -51,10 +51,10 @@ async def main():
     ext = TasksExtension()
 
     # === Case 1: client declares tasks capability, tool is augmentable ===
-    print("=== CASE 1: task-augmented propose_synthesis ===")
+    print("=== CASE 1: task-augmented find_best_way ===")
     handler = compose_tool_call_handler([ext], slow_tool_handler)
     ctx = make_ctx(declares_tasks=True)
-    params = CallToolRequestParams(name="propose_synthesis", arguments={})
+    params = CallToolRequestParams(name="find_best_way", arguments={})
     result = await handler(ctx, params)
     print("Immediate result type:", type(result).__name__)
     assert isinstance(result, CreateTaskResult), "FAIL: expected CreateTaskResult"

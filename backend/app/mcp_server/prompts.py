@@ -19,10 +19,10 @@ from __future__ import annotations
 _TOOLS_NOTE = (
     "Tools available: search_procedures, get_procedure, check_applicability, "
     "check_procedure, decide_procedure, find_best_way, reproduce_procedure, "
-    "report_execution, submit_procedure, retrieve_precedent, propose_synthesis, "
-    "decompose_task, decide_decomposition, submit_approval, resolve_implementation, "
-    "inspect_implementation, find_problem, inspect_problem, compare_solutions, "
-    "inspect_evaluation, find_best_solution, inspect_run, resume_execution_run, "
+    "report_execution, submit_procedure, retrieve_precedent, "
+    "resolve_implementation, inspect_implementation, find_problem, "
+    "inspect_problem, compare_solutions, inspect_evaluation, "
+    "find_best_solution, inspect_run, resume_execution_run, "
     "retry_run_node. Resources (read-only): stealth://procedures/{id}, "
     "stealth://problems/{id}, stealth://problems/{id}/solutions, "
     "stealth://claims/{id}, stealth://evaluations/{id}, "
@@ -55,8 +55,9 @@ Policy:
    not a low score -- do not "adapt around" it.
 6. If a usable procedure exists, ADAPT it to this task rather than
    rediscovering the method from scratch.
-7. If no procedure is sufficient, `decompose_task` and solve normally;
-   call `resolve_implementation` only for nodes that actually need a
+7. If no procedure is sufficient, solve it yourself using your own
+   reasoning and tools against the real task/repository; call
+   `resolve_implementation` only for nodes that actually need a
    concrete executable mechanism.
 8. Verify the stated postconditions after doing the work.
 9. When the outcome is known, `report_execution` (success or failure, with

@@ -1,19 +1,31 @@
 # StealthLab MCP Server — v1
 
-Exposes StealthLab's bi-temporal knowledge/task graph, debate-based conflict
-resolution, procedure lifecycle, Implementation Registry, the
-Problem/Benchmark/Solution/Evaluation product model, and a
-retrieval-grounded coding agent as **29 MCP tools**.
+Exposes StealthLab's bi-temporal knowledge/task graph, procedure lifecycle,
+Goal/Procedure/Implementation Registry, the Problem/Benchmark/Solution/
+Evaluation product model, and a retrieval-grounded coding agent as MCP
+tools.
+
+> **Debate/decomposition MCP surface removed (2026-09-16, founder
+> directive).** `propose_synthesis`, `detect_conflict_trigger`,
+> `decompose_task`, `decide_decomposition`, `submit_approval` are no
+> longer registered MCP tools. The underlying `app/debate/`,
+> `app/api/approval.py`, `app/api/decompose.py` modules and their own REST
+> routes are UNTOUCHED (still real, still working over HTTP) -- this
+> removed only their MCP exposure, per explicit scope decision. **No MCP
+> tool mutates the knowledge graph (`knowledge_nodes`/`edges`) today** --
+> a real, disclosed gap, not an oversight, pending a replacement gated
+> write path for the Goal-centric model. Every mention of these five
+> tools below this point describes REMOVED functionality, kept as
+> historical record of what v1 once exposed via MCP -- not current
+> behavior.
 
 > **Post-freeze security hardening (`v1-final-2026-09-03.1`).**
-> `apply_change_set` was **removed as a public MCP tool** (30 → 29 tools;
-> `tools/list` no longer exposes it). It was an ungated arbitrary
-> knowledge-graph write with no persisted approval and no audit row.
-> Graph mutation from MCP now goes **only** through the gated
+> `apply_change_set` was **removed as a public MCP tool**. It was an
+> ungated arbitrary knowledge-graph write with no persisted approval and
+> no audit row. Graph mutation from MCP THEN went only through the gated
 > `submit_approval` (debate scorecards) and `decide_decomposition`
-> (decomposition proposals) paths; the internal `KnowledgeUpdater` is
-> reachable from those two services alone. See
-> `docs/final-v1.md` § "POST-FREEZE SECURITY HARDENING" and
+> (decomposition proposals) paths -- both since removed per the notice
+> above. See `docs/final-v1.md` § "POST-FREEZE SECURITY HARDENING" and
 > `.scratch/final-v1-postfreeze-hardening.md`.
 
 > **Final-V1 update (2026-09-03).** Two changes to what is below:
@@ -48,32 +60,30 @@ retrieval-grounded coding agent as **29 MCP tools**.
    introduced by `find_best_way` -- make sure it's actually installed, not
    just listed.
 2. `backend/.env` needs real values for at minimum: `DATABASE_URL`,
-   `VOYAGE_API_KEY`. `propose_synthesis`/`decompose_task`/`submit_approval`
-   additionally need a working panel -- either all three of
-   `ANTHROPIC_API_KEY`/`FIREWORKS_API_KEY`/`OPENAI_API_KEY` (the default
-   3-provider panel), or set `USE_GENERAL_COMPUTE=true` and provide
-   `GENERAL_COMPUTE_API_KEY` for a single-provider panel (cheaper, easier
-   to get fully working). Run `diagnose_panel_connectivity.py` to confirm
-   your panel actually responds before relying on any debate tool.
+   `VOYAGE_API_KEY`. (The debate panel's own provider keys --
+   `ANTHROPIC_API_KEY`/`FIREWORKS_API_KEY`/`OPENAI_API_KEY`, or
+   `USE_GENERAL_COMPUTE=true` + `GENERAL_COMPUTE_API_KEY` -- only matter
+   for `app/api/admin.py`/`app/services/human_participation.py`'s debate
+   paths now; no MCP tool needs them since the debate MCP surface was
+   removed, see the notice above. `diagnose_panel_connectivity.py` still
+   confirms the panel responds if you're using those non-MCP paths.)
 3. `experiments/swebench_pro/` must exist as a real sibling directory of
    `backend/` -- `find_best_way` imports `Agent`/`RepoSandbox` from there.
 
 ## The tools
 
-_The table lists the 20-tool core surface (was 21; `apply_change_set` was
-removed post-freeze — see the hardening note above); the six product-model
-tools and `get_claim_graph` from the Final-V1 update above bring the live
-registry to 27. `docs/final-v1.md` §1 documents the product-model tools._
+_This table has never tracked the full live `@server.tool()` list 1:1 (a
+pre-existing doc-drift gap, not fixed here) -- see `app/mcp_server/
+server.py` for the authoritative list. The five debate/decomposition rows
+that used to appear here (`decompose_task`, `decide_decomposition`,
+`detect_conflict_trigger`, `propose_synthesis`, `submit_approval`) were
+removed 2026-09-16 along with the tools themselves -- see the notice at
+the top of this file._
 
 | Tool | What it does | Writes to the graph? |
 |---|---|---|
 | `retrieve_precedent` | Find prior solved patterns relevant to a query | No -- read-only |
 | `check_procedure` | Audit-mode ALLOW/WOULD_REFUSE verdict on reusing a named procedure right now, with evidence | No -- read-only, informs the caller, never blocks |
-| `decompose_task` | Turn an unstructured problem into a structured proposal (new nodes/edges), persisted but not yet applied | No -- returns a proposal only |
-| `decide_decomposition` | Approve/reject a `decompose_task` proposal: re-runs the capability-boundary check at apply time | **Yes, gated** -- the correct path for `decompose_task`'s output |
-| `detect_conflict_trigger` | Find a real conflict between knowledge_nodes, open a debate trigger | Yes -- creates a proxy task node + trigger, doesn't touch existing content |
-| `propose_synthesis` | Run a real multi-round debate on a trigger, produce scorecards | No -- drives debate state to `PENDING_APPROVAL`, doesn't write graph content |
-| `submit_approval` | Approve/reject a scorecard: applies + audits + finalizes debate state | **Yes, gated** -- the correct path for debate-originated changes |
 | `find_best_way` | Retrieval-grounded coding agent against a real repo on disk | Yes -- to the filesystem, not the graph |
 | `search_procedures` | Find procedures applicable to a task/state -- lookup only, nothing executes | No -- read-only |
 | `get_procedure` | Fetch one procedure's full current detail by its stable handle | No -- read-only |
@@ -97,7 +107,7 @@ over ~30 tools every turn.
 
 | Primitive | What it is here | Mutates? |
 |---|---|---|
-| **Tools** | actions, computation, and mutation. All 29 existing tools are **retained** (nothing removed). The mutating ones: `find_best_way`, `reproduce_procedure`, `report_execution`, `submit_procedure`, `propose_synthesis`, `decompose_task`, `decide_decomposition`, `decide_procedure`, `submit_approval`, `detect_conflict_trigger`, `resume_execution_run`, `retry_run_node`. The rest are read / discovery / computation. | some |
+| **Tools** | actions, computation, and mutation. The debate/decomposition tools (`propose_synthesis`, `decompose_task`, `decide_decomposition`, `submit_approval`, `detect_conflict_trigger`) were removed 2026-09-16 -- see the notice at the top of this file. Remaining mutating ones: `find_best_way`, `reproduce_procedure`, `report_execution`, `submit_procedure`, `decide_procedure`, `resume_execution_run`, `retry_run_node`. The rest are read / discovery / computation. | some |
 | **Resources** | canonical, id-addressable, read-only knowledge objects, rendered as Markdown. | never |
 | **Prompts** | reusable host workflows — orchestration policy text, not business logic and not autonomous execution. | never |
 
@@ -137,7 +147,7 @@ the execution path yet**.
 
 | Prompt | Arguments | Policy it teaches |
 |---|---|---|
-| `solve_with_stealth` | `task`, `repo_path?` | reuse a verified procedure when one applies (search → read `stealth://procedures/<id>` → `check_applicability` → adapt), else `decompose_task` and solve normally; `report_execution` when done |
+| `solve_with_stealth` | `task`, `repo_path?` | reuse a verified procedure when one applies (search → read `stealth://procedures/<id>` → `check_applicability` → adapt), else solve it yourself with your own reasoning/tools; `report_execution` when done |
 | `debug_with_stealth` | `symptom`, `repo_path?` | pull debugging precedents + failure evidence, form competing hypotheses, use minimum claim context, verify the fix, `report_execution` |
 | `research_with_stealth` | `question` | read Procedures / Claims / Problems / Evaluations; separate evidence-backed from hypothesis; surface contradictions and gaps; never present a candidate as fact |
 | `improve_with_stealth` | `problem_id?`, `goal?` | inspect the incumbent + its benchmark, name one measurable weakness, `submit_procedure` a challenger, `compare_solutions` under the same benchmark |
@@ -211,37 +221,21 @@ task(procedure_row_id, task_description)` before any resolve, so replaying
 an already-bound plan reuses it verbatim instead of re-resolving to a newer
 implementation registered since.
 
-### Important: which gated tool goes with which proposal
+### Graph mutation via MCP: currently none
 
-Two different tools produce proposals, and each has its own required
-apply step -- do not cross them. Since the post-freeze hardening these are
-the **only** two ways to mutate the knowledge graph from MCP; the raw
-`apply_change_set` primitive is no longer exposed as a public tool.
-
-- **`decompose_task` output → `decide_decomposition`.**
-  `decide_decomposition` calls the real `app.api.decompose.decide()`,
-  which re-runs `validate_generative()` at apply time -- the
-  capability-boundary check that is this project's stated only real
-  guarantee against a prompt-injected/hijacked model (generated content
-  may only *create* new nodes and connect them to each other, never
-  modify or invalidate anything that already exists). The proposal is a
-  persisted `decompositions` row behind a `status='proposed'` gate, so a
-  proposal tampered with in storage between propose and decide still
-  can't escalate. The change_set applied is the **stored** one, never
-  caller-supplied.
-- **`propose_synthesis` output → `submit_approval`.**
-  `submit_approval` is the real, gated path: it re-loads the persisted
-  `scorecards` row, applies its change_set, writes a row to the
-  `approvals` table, and transitions the debate to `APPROVED`/`REJECTED`
-  -- all atomically, so there's never a false audit trail (an approval
-  recorded against a change that didn't actually apply).
-
-Both paths run through the internal `KnowledgeUpdater`, which is now
-reachable only from `app/api/approval.py::decide` and
-`app/api/decompose.py::decide` -- each requiring a persisted proposal, a
-state gate, actor resolution, and an audit write. There is no public MCP
-entry point for a hand-constructed change_set; a manually built change_set
-for testing goes through the service layer directly, not the MCP surface.
+Historically two tool pairs mutated the knowledge graph from MCP --
+`decompose_task`→`decide_decomposition` and `propose_synthesis`→
+`submit_approval`, both via the internal `KnowledgeUpdater`, reachable
+only from `app/api/approval.py::decide` and `app/api/decompose.py::decide`
+(a persisted proposal, a state gate, actor resolution, an audit write).
+All five tools were removed from this MCP surface 2026-09-16 (see the
+notice at the top of this file). **No MCP tool mutates the knowledge
+graph today.** The underlying `app/api/approval.py`/`app/api/decompose.py`
+endpoints and `KnowledgeUpdater` are untouched and still real over HTTP --
+only their MCP exposure is gone. A manually built change_set for testing
+goes through the service layer directly, never the MCP surface (true
+before this change too -- `apply_change_set` was already removed in the
+post-freeze hardening above).
 
 ## Claim-graph viewer (`/claim-graph`)
 
@@ -285,10 +279,11 @@ just raise the timeout in the Inspector's own Configuration panel after
 it opens -- the Inspector's default is a real 10s/60s, far too short for
 a genuine multi-round debate.)
 
-Test order, cheapest/safest first: `retrieve_precedent` →
-`detect_conflict_trigger` → only then
-`propose_synthesis`/`submit_approval`/`decompose_task`/`find_best_way`, since
-those cost real API spend.
+Test order, cheapest/safest first: `retrieve_precedent` → only then
+`find_best_way`, since it costs real API spend. (The debate/decomposition
+tools formerly listed here -- `detect_conflict_trigger`, `propose_
+synthesis`, `submit_approval`, `decompose_task` -- were removed from the
+MCP surface 2026-09-16, see the notice at the top of this file.)
 
 ## Hosting -- Streamable HTTP, for real clients (Claude Code included)
 
@@ -316,8 +311,8 @@ another process/machine you already trust, not as a public deployment.
 **Default posture (no extra config): every caller looks the same.** The
 bearer token below gates *whether* a caller may reach the server at all; it
 does not by itself distinguish *which* caller is calling. Every write-path
-tool (`decide_procedure`, `submit_approval`, `decide_decomposition`, etc.)
-attributes to a caller-supplied, self-asserted parameter (`approver_id` and
+tool (`decide_procedure`, etc.) attributes to a caller-supplied,
+self-asserted parameter (`approver_id` and
 similar) unless a real identity resolves -- fine for local/single-user use,
 but in a real shared deployment any caller holding the one shared token can
 claim to be anyone via that parameter.
@@ -375,7 +370,7 @@ whichever `python` resolves to.
 `/mcp`. **`--workers 1` is load-bearing**, not a default left alone: the
 Tasks extension's backing store (`tasks_extension.py`) is in-memory, so a
 second worker would sometimes answer a `tasks/get` poll from a process that
-never saw the task `propose_synthesis`/`find_best_way` created, and that call
+never saw the task `find_best_way` created, and that call
 would appear to hang. Port 8765 avoids colliding with `app/main.py`'s
 FastAPI app, which already uses uvicorn's conventional 8000.
 
@@ -429,7 +424,7 @@ That is also where an existing local registration lives, and a local entry
 takes precedence over the committed one, so if `/mcp` shows a stale URL or
 token, check `~/.claude.json` first.
 
-`propose_synthesis` and `find_best_way` are genuinely long-running; raise the
+`find_best_way` is genuinely long-running; raise the
 per-server tool timeout past Claude Code's default by adding a `timeout`
 (milliseconds) field to the server's entry in `~/.claude.json`:
 
@@ -446,7 +441,14 @@ Then `claude mcp list` should show `stealthlab ✔ Connected`. `! Needs
 authentication` means the header did not land; `✘ Failed to connect` means
 either uvicorn or the database is not actually up.
 
-## Example workflow -- knowledge-conflict governance loop
+## Example workflow -- knowledge-conflict governance loop (HISTORICAL)
+
+This workflow described the debate/decomposition MCP tools removed
+2026-09-16 (see the notice at the top of this file) -- kept as a record
+of what v1 once did, not something callable via MCP today. The underlying
+mechanism (`app/api/decompose.py`, `app/api/approval.py`, `app/debate/`)
+still works exactly as described below, just over HTTP/direct import, not
+MCP:
 
 1. `decompose_task("we updated our vacation policy to 20 days")` → proposal
 2. `decide_decomposition(<decomposition_id>, approver_id, "approved")` →
@@ -483,13 +485,15 @@ engine-verified measurement).
 
 ## Known v1 limitations, stated plainly
 
-- **Layer 2 (empirical replay evaluation) is not wired.** `propose_synthesis`
-  only runs Layer 1 (groundedness/fallacy checks). This was a deliberate
-  scope cut, not an oversight.
-- **Only knowledge-vs-knowledge conflicts are covered.** The original
-  metric-threshold trigger detector (cost/error-rate/cycle-time bottlenecks
-  from task execution) isn't exposed as an MCP tool -- `detect_conflict_trigger`
-  only wraps the knowledge-conflict half.
+- **The debate/decomposition MCP tools no longer exist** (`propose_
+  synthesis`, `detect_conflict_trigger`, `decompose_task`, `decide_
+  decomposition`, `submit_approval` -- removed 2026-09-16, see the notice
+  at the top of this file). The historical limitations they carried
+  (Layer 2 empirical replay evaluation was never wired into `propose_
+  synthesis`; only knowledge-vs-knowledge conflicts were ever covered, not
+  the metric-threshold trigger detector) are now moot for MCP specifically
+  -- both remain real, disclosed limitations of the underlying `app/
+  debate/` module for anyone calling it directly/over HTTP.
 - **Bulk/bootstrap ingestion isn't exposed.** `Onboarder.seed()` (hand-authored
   workflow specs), `POST /v1/traces` (OTel-shaped agentic workflow trace
   ingestion), and `POST /v1/admin/failure-routes/process` (real production
@@ -510,8 +514,11 @@ engine-verified measurement).
 - **Closed post-freeze (`v1-final-2026-09-03.1`):** the raw ungated
   `apply_change_set` write primitive was **removed from the public MCP
   surface**. It is no longer in `tools/list` and is not callable by any
-  token holder. Graph mutation from MCP is gated through `submit_approval`
-  / `decide_decomposition` only.
+  token holder. Graph mutation from MCP was then gated through
+  `submit_approval`/`decide_decomposition` -- both since ALSO removed
+  (2026-09-16, see the top of this file). **No MCP tool mutates the
+  knowledge graph today** -- a real, disclosed gap pending a replacement
+  gated write path for the Goal-centric model, not an oversight.
 
 ## Test scripts included
 
@@ -521,12 +528,14 @@ reach -- Supabase, Voyage, and your LLM panel providers -- re-run them on
 real infra to close that gap):
 
 - `test_apply_change_set_live.py` (probe for the now-removed public tool;
-  retained only as a historical KnowledgeUpdater exercise)
+  retained only as a historical marker, does not run)
 - `test_tasks_extension_live.py`
-- `test_propose_synthesis_live.py`
 - `test_find_best_way_live.py`
-- `test_orphan_cleanup_live.py`
-- `test_detect_conflict_trigger_live.py`
-- `test_submit_approval_live.py`
-- `cleanup_orphaned_debate.py` -- utility, not a test
+- `cleanup_orphaned_debate.py` -- utility, not a test (for `app/debate/`
+  directly, e.g. via `app/api/admin.py`'s debate path -- not MCP-specific)
 - `diagnose_panel_connectivity.py` -- utility, not a test
+
+(`test_propose_synthesis_live.py`, `test_detect_conflict_trigger_live.py`,
+`test_decompose_decide_live.py`, `test_orphan_cleanup_live.py`, and
+`test_submit_approval_live.py` were DELETED 2026-09-16 along with the MCP
+tools they probed -- see the notice at the top of this file.)
