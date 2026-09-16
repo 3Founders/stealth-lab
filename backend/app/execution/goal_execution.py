@@ -49,11 +49,32 @@ SCOPE, STATED HONESTLY (audited before writing anything -- read
   steps are already `order`-sorted by `resolve_goal` itself) -- not a
   parallel scheduler (`graph_executor.py` already owns that, for the
   Procedure/TaskGraph shape; duplicating it here for a different node
-  shape was judged out of scope for this increment). It is NOT
-  crash-resumable today -- a process crash mid-walk loses in-memory
-  progress, same honest limitation this module's own docstring states
-  rather than a false durability claim. Real, open technical debt,
-  disclosed rather than silently left implicit.
+  shape was judged out of scope for this increment).
+
+  DURABILITY UPDATE (Prompt 2 Sec 12, this pass): passing `workspace_root`
+  (+ optionally `execution_id` to resume a SPECIFIC prior attempt) makes
+  this walk resumable after a real process crash -- NOT by using the
+  Postgres `execution_runs` machinery (still out of reach for the reason
+  above), but by reusing `app.stealth.journal` -- the SAME real,
+  already-tested, fsync'd, single-writer-locked local append-only
+  `.stealth/events.jsonl` mechanism `generator.py` already uses for
+  Procedure-run projections. Every node's real outcome is appended as a
+  `goal_node_result` event; on a fresh call with the SAME `execution_id`,
+  a node whose last recorded outcome was `status='success'` is never
+  re-executed -- its real, previously-recorded result is reused instead
+  (Sec 12's own rule: "a resumed run MUST continue from persisted
+  execution state rather than reconstructing an inconsistent DAG"). A
+  node with no prior record, or one whose last recorded outcome was
+  `'failure'`, is always (re-)attempted for real -- resuming never
+  silently treats an unfinished or failed node as done. This is
+  DELIBERATELY narrower than full crash-resume durability (there is no
+  lease/worker-ownership fencing here, so two concurrent resumes of the
+  same `execution_id` could both attempt the same not-yet-recorded node
+  -- a real, disclosed gap, not a false claim of the same
+  concurrent-safety `durable_run.py`'s Postgres leases actually give).
+  `workspace_root` is optional and defaults to `None`: omitting it keeps
+  today's exact prior behavior (a fresh, non-durable, in-memory-only
+  walk), so no existing caller is affected.
 """
 from __future__ import annotations
 
@@ -110,6 +131,12 @@ class GoalNodeExecutionResult:
     attempts: list[ImplementationAttempt] = field(default_factory=list)
     used_implementation_id: Optional[str] = None
     result: Optional[NodeResult] = None
+    # True when this result was NOT actually re-executed -- it was
+    # reused verbatim from a prior real `goal_node_result` journal event
+    # for the same `execution_id` (Sec 12 resume). `attempts` stays
+    # empty in that case -- the real attempts happened in a PRIOR
+    # process, this run never made them.
+    resumed_from_journal: bool = False
 
 
 @dataclass
@@ -142,6 +169,7 @@ class ProcedureExecutionResult:
     attempts: list[ProcedureAttempt] = field(default_factory=list)
     used_procedure_id: Optional[str] = None
     human_intervention_needed: bool = False
+    resumed_from_journal: bool = False
 
 
 @dataclass
@@ -161,10 +189,37 @@ class GoalExecutionResult:
     node_results: dict[str, GoalNodeExecutionResult] = field(default_factory=dict)
     procedure_results: dict[str, ProcedureExecutionResult] = field(default_factory=dict)
     unresolved_goal_names: list[str] = field(default_factory=list)
+    # Set only when `execute_goal_tree` was called with a real
+    # `workspace_root` (Sec 12 durability, opt-in) -- the real
+    # `execution_id` this run's `.stealth/events.jsonl` events were
+    # recorded under. Pass it back into a later call (same
+    # `workspace_root`) to resume THIS SAME attempt rather than start a
+    # fresh, unrelated one.
+    execution_id: Optional[str] = None
 
 
 def _to_plan_node(goal_name: str, implementation: dict) -> PlanNode:
     return PlanNode(order=0, goal=goal_name, implementation_id=str(implementation["id"]))
+
+
+def _journal_prior_result(workspace_root: str, execution_id: str, goal_id: str) -> Optional[dict]:
+    """The most recent real `goal_node_result` event this SAME
+    `execution_id` already recorded for `goal_id`, or `None` if it was
+    never attempted before -- read straight off the real, durable,
+    fsync'd local journal (`app.stealth.journal`, the same mechanism
+    `generator.py` already uses for Procedure-run projections), never
+    reconstructed from in-memory state that a crash would have lost."""
+    from app.stealth.journal import read_events
+    matches = [
+        e for e in read_events(workspace_root)
+        if e.get("type") == "goal_node_result" and e.get("execution_id") == execution_id and e.get("goal_id") == goal_id
+    ]
+    return matches[-1] if matches else None
+
+
+def _journal_record_result(workspace_root: str, execution_id: str, goal_id: str, **payload) -> None:
+    from app.stealth.journal import append_event
+    append_event(workspace_root, "goal_node_result", execution_id=execution_id, goal_id=goal_id, **payload)
 
 
 async def execute_goal_node(
@@ -241,11 +296,13 @@ async def _walk_children(
     leaf_results: dict[str, GoalNodeExecutionResult],
     procedure_results: dict[str, ProcedureExecutionResult],
     unresolved_names: list[str],
+    workspace_root: Optional[str] = None, execution_id: Optional[str] = None,
 ) -> str:
     statuses = [
         await _walk_node(
             pool, child, context, scope=scope, leaf_results=leaf_results,
             procedure_results=procedure_results, unresolved_names=unresolved_names,
+            workspace_root=workspace_root, execution_id=execution_id,
         )
         for child in children
     ]
@@ -257,6 +314,7 @@ async def _walk_procedure_with_fallback(
     leaf_results: dict[str, GoalNodeExecutionResult],
     procedure_results: dict[str, ProcedureExecutionResult],
     unresolved_names: list[str],
+    workspace_root: Optional[str] = None, execution_id: Optional[str] = None,
 ) -> str:
     """Prompt 2 Sec 10's "alternative Procedure" rung: walk `node`'s own
     children; if the result is a real FAILURE (not `needs_input` -- an
@@ -271,7 +329,11 @@ async def _walk_procedure_with_fallback(
     "counts". `human_intervention_needed` is set only when every real
     Procedure this Goal links was actually tried and every one failed --
     Sec 10's own terminal escalation rung, past which this executor has
-    no further automatic recourse."""
+    no further automatic recourse.
+
+    A resumed (`resumed_from_journal=True`) procedure node (Sec 12) never
+    reaches this function at all -- `_walk_node` short-circuits before
+    calling it, since a resumed procedure has no real children to walk."""
     procedures_to_try = [(node.procedure, node.children)] + [(alt, None) for alt in node.procedure_alternates]
     attempts: list[ProcedureAttempt] = []
     final_status = "failure"
@@ -291,6 +353,7 @@ async def _walk_procedure_with_fallback(
         status = await _walk_children(
             pool, children, context, scope=scope, leaf_results=attempt_leaf_results,
             procedure_results=attempt_procedure_results, unresolved_names=attempt_unresolved,
+            workspace_root=workspace_root, execution_id=execution_id,
         )
         attempts.append(ProcedureAttempt(procedure_id=str(proc.get("id")), procedure_name=proc.get("name"), status=status))
         leaf_results.update(attempt_leaf_results)
@@ -302,6 +365,11 @@ async def _walk_procedure_with_fallback(
 
     unresolved_names.extend(final_unresolved)
     human_intervention_needed = final_status == "failure" and all(a.status == "failure" for a in attempts)
+    if workspace_root and execution_id:
+        _journal_record_result(
+            workspace_root, execution_id, node.goal_id, kind="procedure", status=final_status,
+            used_procedure_id=winning_procedure_id, human_intervention_needed=human_intervention_needed,
+        )
     procedure_results[node.goal_id] = ProcedureExecutionResult(
         goal_id=node.goal_id, goal_name=node.goal_name, status=final_status,
         attempts=attempts, used_procedure_id=winning_procedure_id,
@@ -315,22 +383,48 @@ async def _walk_node(
     leaf_results: dict[str, GoalNodeExecutionResult],
     procedure_results: dict[str, ProcedureExecutionResult],
     unresolved_names: list[str],
+    workspace_root: Optional[str] = None, execution_id: Optional[str] = None,
 ) -> str:
     if node.chosen == "implementation":
+        if workspace_root and execution_id:
+            prior = _journal_prior_result(workspace_root, execution_id, node.goal_id)
+            if prior and prior.get("status") == "success":
+                result = GoalNodeExecutionResult(
+                    goal_id=node.goal_id, goal_name=node.goal_name, status="success",
+                    used_implementation_id=prior.get("used_implementation_id"), resumed_from_journal=True,
+                )
+                leaf_results[node.goal_id] = result
+                return "success"
         result = await execute_goal_node(pool, node, context, scope=scope)
         leaf_results[node.goal_id] = result
+        if workspace_root and execution_id:
+            _journal_record_result(
+                workspace_root, execution_id, node.goal_id, kind="implementation",
+                status=result.status, used_implementation_id=result.used_implementation_id,
+            )
         return result.status
     if node.chosen == "unresolved":
         unresolved_names.append(node.goal_name)
         return "needs_input"
+    if workspace_root and execution_id:
+        prior = _journal_prior_result(workspace_root, execution_id, node.goal_id)
+        if prior and prior.get("status") == "success":
+            result = ProcedureExecutionResult(
+                goal_id=node.goal_id, goal_name=node.goal_name, status="success",
+                used_procedure_id=prior.get("used_procedure_id"), resumed_from_journal=True,
+            )
+            procedure_results[node.goal_id] = result
+            return "success"
     return await _walk_procedure_with_fallback(
         pool, node, context, scope=scope, leaf_results=leaf_results,
         procedure_results=procedure_results, unresolved_names=unresolved_names,
+        workspace_root=workspace_root, execution_id=execution_id,
     )
 
 
 async def execute_goal_tree(
     pool: asyncpg.Pool, tree: ResolvedGoalNode, context: dict, *, scope: AccessScope,
+    workspace_root: Optional[str] = None, execution_id: Optional[str] = None,
 ) -> GoalExecutionResult:
     """Walk an already-resolved Goal tree (`goal_resolution.resolve_goal`'s
     own output) and execute every real `implementation` leaf it
@@ -343,17 +437,32 @@ async def execute_goal_tree(
     leaf is never executed and never silently treated as success -- it
     stops that branch honestly (Sec 4: "A Goal may initially be unsolved"
     is a real outcome, not an error to paper over) and the overall
-    `outcome` becomes `"needs_input"`."""
+    `outcome` becomes `"needs_input"`.
+
+    `workspace_root` (Sec 12, opt-in): when given, every node's real
+    outcome is durably recorded via `app.stealth.journal`, and a node
+    whose last recorded outcome under the SAME `execution_id` was already
+    `'success'` is reused rather than re-executed -- real resume after a
+    real crash, using the same local journal `generator.py` already
+    relies on. `execution_id` defaults to a fresh `uuid7` (returned on
+    the result) when `workspace_root` is given but no `execution_id` is;
+    pass the SAME pair back in on a later call to resume that exact
+    attempt."""
     leaf_results: dict[str, GoalNodeExecutionResult] = {}
     procedure_results: dict[str, ProcedureExecutionResult] = {}
     unresolved_names: list[str] = []
 
+    if workspace_root and not execution_id:
+        from app.utils.ids import uuid7_str
+        execution_id = uuid7_str()
+
     outcome = await _walk_node(
         pool, tree, context, scope=scope, leaf_results=leaf_results,
         procedure_results=procedure_results, unresolved_names=unresolved_names,
+        workspace_root=workspace_root, execution_id=execution_id,
     )
 
     return GoalExecutionResult(
         outcome=outcome, node_results=leaf_results, procedure_results=procedure_results,
-        unresolved_goal_names=unresolved_names,
+        unresolved_goal_names=unresolved_names, execution_id=execution_id if workspace_root else None,
     )

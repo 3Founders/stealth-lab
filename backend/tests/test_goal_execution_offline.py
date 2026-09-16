@@ -348,3 +348,92 @@ def test_nested_procedure_child_also_gets_real_alternate_fallback(monkeypatch):
     assert result.outcome == "success"
     assert result.procedure_results["G-inner"].used_procedure_id == "P-2"
     assert result.procedure_results["G-outer"].used_procedure_id == "P-outer"
+
+
+# ---------------------------------------------------------------------
+# execute_goal_tree -- durable resume via the real .stealth/ journal (Sec 12)
+# ---------------------------------------------------------------------
+
+
+def test_no_workspace_root_means_no_durability_and_no_execution_id(monkeypatch):
+    async def fake_execute(pool, plan_node, context, *, scope):
+        return NodeResult(status="success")
+
+    monkeypatch.setattr(ge, "execute_implementation", fake_execute)
+    result = _run(ge.execute_goal_tree(None, _impl_node("G-1", "do it", "I-1"), {}, scope=SCOPE))
+    assert result.execution_id is None
+
+
+def test_workspace_root_records_real_journal_events_and_returns_execution_id(monkeypatch, tmp_path):
+    async def fake_execute(pool, plan_node, context, *, scope):
+        return NodeResult(status="success")
+
+    monkeypatch.setattr(ge, "execute_implementation", fake_execute)
+    ws = str(tmp_path)
+    result = _run(ge.execute_goal_tree(None, _impl_node("G-1", "do it", "I-1"), {}, scope=SCOPE, workspace_root=ws))
+    assert result.execution_id is not None
+
+    from app.stealth.journal import read_events
+    events = read_events(ws)
+    assert any(e["type"] == "goal_node_result" and e["goal_id"] == "G-1" and e["status"] == "success" for e in events)
+
+
+def test_a_prior_success_in_the_journal_is_reused_never_re_executed(monkeypatch, tmp_path):
+    calls = []
+
+    async def fake_execute(pool, plan_node, context, *, scope):
+        calls.append(plan_node.implementation_id)
+        return NodeResult(status="success")
+
+    monkeypatch.setattr(ge, "execute_implementation", fake_execute)
+    ws = str(tmp_path)
+    tree = _impl_node("G-1", "do it", "I-1")
+
+    first = _run(ge.execute_goal_tree(None, tree, {}, scope=SCOPE, workspace_root=ws))
+    assert calls == ["I-1"]
+
+    # simulate a crash + resume: same execution_id, same goal -- must NOT re-execute
+    second = _run(ge.execute_goal_tree(
+        None, tree, {}, scope=SCOPE, workspace_root=ws, execution_id=first.execution_id,
+    ))
+    assert calls == ["I-1"]  # unchanged -- no second real call
+    assert second.node_results["G-1"].resumed_from_journal is True
+    assert second.node_results["G-1"].used_implementation_id == "I-1"
+    assert second.outcome == "success"
+
+
+def test_a_prior_failure_in_the_journal_is_retried_not_silently_resumed(monkeypatch, tmp_path):
+    calls = []
+
+    async def fake_execute(pool, plan_node, context, *, scope):
+        calls.append(plan_node.implementation_id)
+        return NodeResult(status="failure")
+
+    monkeypatch.setattr(ge, "execute_implementation", fake_execute)
+    ws = str(tmp_path)
+    tree = _impl_node("G-1", "do it", "I-1")
+
+    first = _run(ge.execute_goal_tree(None, tree, {}, scope=SCOPE, workspace_root=ws))
+    assert calls == ["I-1"]
+
+    second = _run(ge.execute_goal_tree(
+        None, tree, {}, scope=SCOPE, workspace_root=ws, execution_id=first.execution_id,
+    ))
+    assert calls == ["I-1", "I-1"]  # retried for real -- a failure is never silently treated as done
+    assert second.node_results["G-1"].resumed_from_journal is False
+
+
+def test_a_different_execution_id_never_resumes_an_unrelated_attempt(monkeypatch, tmp_path):
+    calls = []
+
+    async def fake_execute(pool, plan_node, context, *, scope):
+        calls.append(plan_node.implementation_id)
+        return NodeResult(status="success")
+
+    monkeypatch.setattr(ge, "execute_implementation", fake_execute)
+    ws = str(tmp_path)
+    tree = _impl_node("G-1", "do it", "I-1")
+
+    _run(ge.execute_goal_tree(None, tree, {}, scope=SCOPE, workspace_root=ws))
+    _run(ge.execute_goal_tree(None, tree, {}, scope=SCOPE, workspace_root=ws))  # a fresh, unrelated execution_id
+    assert calls == ["I-1", "I-1"]  # both real -- no accidental cross-attempt resume

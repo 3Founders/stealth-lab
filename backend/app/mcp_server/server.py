@@ -4130,6 +4130,7 @@ async def estimate_goal_cost(
 @server.tool()
 async def execute_goal(
     goal_id: str, ctx: Context, current_scope_json: str = "{}", max_depth: int = 6,
+    workspace_root: Optional[str] = None, execution_id: Optional[str] = None,
 ) -> str:
     """
     REAL, SIDE-EFFECTING EXECUTION -- Prompt 2 Sec 7/9/10: resolves the
@@ -4173,15 +4174,23 @@ async def execute_goal(
     (implementation id/procedure id, status, notes, verification
     state/detail) is kept, not just the last one.
 
-    HONEST SCOPE LIMIT, stated plainly rather than glossed over: this is
-    a SEQUENTIAL walk of the resolved tree (`app.execution.goal_execution`),
-    not the crash-resumable `execution_runs`/`durable_run.py` machinery
-    (that machinery is anchored to a real `procedure_id`, a documented
-    one-way-door invariant -- see `goal_execution.py`'s own module
-    docstring for why forcing a bare-Implementation Goal route through it
-    would be dishonest). A process crash mid-walk loses in-memory
-    progress; this is real, disclosed technical debt, not claimed
-    durability.
+    Real durability (Prompt 2 Sec 12), opt-in via `workspace_root`: pass
+    a real local checkout path and every node's real outcome is recorded
+    into that checkout's own `.stealth/events.jsonl` (the same durable,
+    fsync'd, single-writer-locked journal `generator.py` already uses --
+    not a new mechanism). Call again with the SAME `workspace_root` and
+    the `execution_id` this call returns to RESUME after a real crash: a
+    node whose last recorded outcome was `'success'` is reused, never
+    re-executed; anything else is retried for real. HONEST SCOPE LIMIT,
+    stated plainly: this is NOT the Postgres `execution_runs`/
+    `durable_run.py` machinery (anchored to a real `procedure_id`, a
+    documented one-way-door invariant -- see `goal_execution.py`'s own
+    module docstring for why forcing a bare-Implementation Goal route
+    through it would be dishonest) -- there is no lease/worker-ownership
+    fencing here, so two concurrent resumes of the same `execution_id`
+    are not safely serialized against each other. Omitting
+    `workspace_root` (the default) keeps the original, purely in-memory,
+    non-durable behavior exactly as before this capability existed.
 
     An `unresolved` leaf anywhere in the tree is never executed and never
     silently treated as a pass -- the overall `outcome` becomes
@@ -4189,11 +4198,13 @@ async def execute_goal(
     need a route before this can run to completion.
 
     Returns `{"tree": <full resolution trace>, "outcome": "success"|
-    "failure"|"needs_input", "node_results": {goal_id: {status, attempts:
-    [...], used_implementation_id}}, "procedure_results": {goal_id:
-    {status, attempts: [{procedure_id, procedure_name, status}, ...],
-    used_procedure_id, human_intervention_needed}}, "unresolved_goal_names":
-    [...]}`.
+    "failure"|"needs_input", "execution_id": <str, only when
+    workspace_root was given>, "node_results": {goal_id: {status,
+    attempts: [...], used_implementation_id, resumed_from_journal}},
+    "procedure_results": {goal_id: {status, attempts: [{procedure_id,
+    procedure_name, status}, ...], used_procedure_id,
+    human_intervention_needed, resumed_from_journal}},
+    "unresolved_goal_names": [...]}`.
     """
     from app.execution.goal_execution import execute_goal_tree
     from app.execution.goal_resolution import GoalResolutionError, resolve_goal
@@ -4214,14 +4225,17 @@ async def execute_goal(
 
     execution = await execute_goal_tree(
         pool, tree, {"current_scope": current_scope, "goal_id": goal_id}, scope=_caller_access_scope(),
+        workspace_root=workspace_root, execution_id=execution_id,
     )
     return json.dumps({
         "tree": _resolved_goal_node_to_dict(tree),
         "outcome": execution.outcome,
+        "execution_id": execution.execution_id,
         "node_results": {
             gid: {
                 "goal_name": r.goal_name, "status": r.status,
                 "used_implementation_id": r.used_implementation_id,
+                "resumed_from_journal": r.resumed_from_journal,
                 "attempts": [
                     {
                         "implementation_id": a.implementation_id, "implementation_name": a.implementation_name,
@@ -4238,6 +4252,7 @@ async def execute_goal(
                 "goal_name": r.goal_name, "status": r.status,
                 "used_procedure_id": r.used_procedure_id,
                 "human_intervention_needed": r.human_intervention_needed,
+                "resumed_from_journal": r.resumed_from_journal,
                 "attempts": [
                     {"procedure_id": a.procedure_id, "procedure_name": a.procedure_name, "status": a.status}
                     for a in r.attempts
