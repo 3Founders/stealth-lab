@@ -1827,6 +1827,7 @@ async def _write_artifact_row(
 async def _persist_package_relations(
     pool: asyncpg.Pool, artifact: Any, *,
     implementations: list[Any], procedure_id: str, created_by: str,
+    embedder: Optional[Any] = None, client: Optional[Any] = None,
 ) -> tuple[list[str], int]:
     """The new-schema analogue of the old `_persist_package_relations` --
     real change per founder directive #2 (2026-09-15): no more
@@ -1898,6 +1899,7 @@ async def _persist_package_relations(
             resolved_goal = await find_or_create_goal(
                 pool, canonical_name=impl.goal, scope_type="global",
                 provenance="prior_library", created_from="skill_extraction",
+                embedder=embedder, client=client,
             )
             await pool.execute(
                 "UPDATE implementations SET goal_id=$2::uuid WHERE id=$1::uuid",
@@ -2245,6 +2247,7 @@ async def compile_skill_artifact(
             display_metadata_version=disp_version,
             invariants=invariants, owner_id=owner_id,
             availability="quarantined" if quarantined else "active",
+            goal_embedder=embedder, goal_adjudication_client=client,
             **_structured_fields_from_extracted(proc),
         )
         procedure_row_id = str(result["id"])
@@ -2292,6 +2295,7 @@ async def compile_skill_artifact(
             these_impl_ids, _dep_count = await _persist_package_relations(
                 pool, artifact, implementations=extracted.implementations,
                 procedure_id=procedure_id, created_by=created_by,
+                embedder=embedder, client=client,
             )
             implementation_ids.extend(these_impl_ids)
 
@@ -2351,6 +2355,7 @@ async def compile_skill_artifact(
                 expected_outcome=g.expected_outcome,
                 verification_requirement=g.verification_requirement,
                 created_from="skill_extraction", created_by=created_by,
+                embedder=embedder, client=client,
             )
         except V0Violation:
             continue

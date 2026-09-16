@@ -41,6 +41,9 @@ class _Pool:
     async def execute(self, sql, *a):  # pragma: no cover - the achieves_goal_id UPDATE
         return "OK"
 
+    async def fetch(self, sql, *a):
+        return []  # find_or_create_goal's tier 2.5 SimHash shortlist -- none here
+
 
 PRINCIPAL = AuthenticatedPrincipal(user_id="u1", subject="alice", email="a@x")
 

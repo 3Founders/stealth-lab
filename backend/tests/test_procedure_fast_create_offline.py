@@ -44,6 +44,9 @@ class _FakePool:
     async def execute(self, sql, *args):  # pragma: no cover - the achieves_goal_id UPDATE
         return "OK"
 
+    async def fetch(self, sql, *args):
+        return []  # find_or_create_goal's tier 2.5 SimHash shortlist -- none here
+
 
 def _col_value(pool, column: str):
     head = pool.insert_sql.split("INSERT INTO procedures (", 1)[1]

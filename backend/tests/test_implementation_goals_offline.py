@@ -229,6 +229,8 @@ class _EnrichmentFakePool:
         self.goal_inserts: list[tuple] = []
 
     async def fetch(self, sql, *params):
+        if "simhash IS NOT NULL" in " ".join(sql.split()):
+            return []  # find_or_create_goal's tier 2.5 shortlist -- none here
         return self._rows
 
     async def execute(self, sql, *params):

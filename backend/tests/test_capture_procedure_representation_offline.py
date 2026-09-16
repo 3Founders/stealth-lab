@@ -33,6 +33,9 @@ class _FakePool:
     async def execute(self, *a, **k):  # pragma: no cover - unused here
         return "OK"
 
+    async def fetch(self, sql, *args):
+        return []  # find_or_create_goal's tier 2.5 SimHash shortlist -- none here
+
 
 def _col_value(pool, column: str):
     """Pull one column's bound value out of the captured INSERT by mapping

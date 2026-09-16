@@ -99,6 +99,8 @@ class FakePool:
             return self.sources
         if "FROM evidence" in f:
             return self.evidence
+        if "simhash IS NOT NULL" in f:
+            return []  # find_or_create_goal's tier 2.5 SimHash shortlist -- none here
         raise AssertionError("unexpected fetch: " + f[:80])
 
     async def fetchval(self, sql, *a):

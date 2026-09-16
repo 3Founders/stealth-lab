@@ -132,6 +132,8 @@ async def capture_procedure(
     display_metadata_version: Optional[str] = None,
     availability: str = "active",
     is_engineering_fixture: bool = False,
+    goal_embedder: Optional[Any] = None,
+    goal_adjudication_client: Optional[Any] = None,
 ) -> dict:
     """
     Inserts a new procedure, always starting `candidate` / `fresh` /
@@ -206,6 +208,13 @@ async def capture_procedure(
     # scope. `goal` (the TEXT column) is untouched -- this is additive,
     # not a replacement (ingestion.md Sec 5: "use existing schema wherever
     # possible... do not create a replacement architecture").
+    #
+    # `goal_embedder`/`goal_adjudication_client` (both optional, default
+    # None) pass straight through to find_or_create_goal's own tier 3/4
+    # (embedding similarity) and tier 5 (LLM adjudication) dedup passes.
+    # A caller that omits them still gets tier 1/2 (exact/alias) and tier
+    # 2.5 (SimHash, always on, zero cost) dedup -- but the Goal is never
+    # embedded/searchable without an embedder passed here.
     from app.services.goals import find_or_create_goal
 
     resolved_goal = await find_or_create_goal(
@@ -217,6 +226,8 @@ async def capture_procedure(
         created_from="procedure_capture",
         owner_id=owner_id,
         visibility=visibility if visibility in ("public", "private") else "public",
+        embedder=goal_embedder,
+        client=goal_adjudication_client,
     )
     achieves_goal_id = resolved_goal["id"]
 

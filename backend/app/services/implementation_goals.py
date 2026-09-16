@@ -290,6 +290,7 @@ def _find_step_text(steps: Any, resource_path: str) -> Optional[str]:
 
 async def enrich_pending_skill_package_implementations(
     pool: Any, *, limit: int = 50, client: Any = None, model: str = "gemma-4-31B-it",
+    goal_embedder: Any = None,
 ) -> dict:
     """Real, resumable enrichment pass (backend/scripts/enrich_implementations.py's
     own backing function -- same "service function does the work, script is
@@ -372,6 +373,7 @@ async def enrich_pending_skill_package_implementations(
                     scope_entity_id=row["scope_entity_id"],
                     provenance="prior_library",
                     created_from="skill_package_enrichment",
+                    embedder=goal_embedder, client=client, adjudication_model=model,
                 )
                 goal_id = resolved_goal["id"]
             await pool.execute(
