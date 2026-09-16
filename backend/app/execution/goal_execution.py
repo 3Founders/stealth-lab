@@ -63,7 +63,7 @@ from uuid import UUID
 
 import asyncpg
 
-from app.execution.goal_resolution import ResolvedGoalNode
+from app.execution.goal_resolution import ResolvedGoalNode, resolve_goal_via_procedure
 from app.execution.goal_verification import run_goal_verification
 from app.execution.graph_executor import NodeResult
 from app.execution.implementation_executor import execute_implementation
@@ -113,6 +113,38 @@ class GoalNodeExecutionResult:
 
 
 @dataclass
+class ProcedureAttempt:
+    """One real attempt at one real Procedure decomposition for one Goal
+    node -- the Procedure-level counterpart of `ImplementationAttempt`
+    (Sec 10: "Track all attempts"). `status` is the AGGREGATE outcome of
+    that procedure's own children walk (`"success"`/`"failure"`/
+    `"needs_input"`)."""
+
+    procedure_id: str
+    procedure_name: Optional[str]
+    status: str
+
+
+@dataclass
+class ProcedureExecutionResult:
+    """The outcome for one `chosen == "procedure"` node, including real
+    fallback to an alternate decomposition (Prompt 2 Sec 10:
+    "alternative Procedure"). `human_intervention_needed` is `True` only
+    when EVERY real Procedure this Goal links (the chosen one plus every
+    alternate) was actually tried and every one failed -- Sec 10's own
+    terminal escalation rung, surfaced honestly rather than silently
+    left as an ordinary failure indistinguishable from "only one route
+    existed and it failed"."""
+
+    goal_id: str
+    goal_name: str
+    status: str  # "success" | "failure" | "needs_input"
+    attempts: list[ProcedureAttempt] = field(default_factory=list)
+    used_procedure_id: Optional[str] = None
+    human_intervention_needed: bool = False
+
+
+@dataclass
 class GoalExecutionResult:
     """The full walk's outcome. `outcome` is `"success"` only if every
     reachable `chosen == "implementation"` leaf succeeded (an
@@ -122,10 +154,12 @@ class GoalExecutionResult:
     once here even if visited via multiple Procedure branches in the
     source tree -- last real attempt wins, nothing is lost since every
     attempt is already inside that node's own `attempts` list from ITS
-    own walk)."""
+    own walk). `procedure_results` is the same idea for every
+    `chosen == "procedure"` node actually walked, keyed by `goal_id`."""
 
     outcome: str  # "success" | "failure" | "needs_input"
     node_results: dict[str, GoalNodeExecutionResult] = field(default_factory=dict)
+    procedure_results: dict[str, ProcedureExecutionResult] = field(default_factory=dict)
     unresolved_goal_names: list[str] = field(default_factory=list)
 
 
@@ -189,42 +223,137 @@ async def execute_goal_node(
     )
 
 
+def _aggregate_statuses(statuses: list[str]) -> str:
+    """Same priority every layer of this walk uses: an unresolved branch
+    always wins (Sec 4's own honest-gap outcome), then a real failure,
+    then success -- one real rule, applied uniformly at every depth so a
+    procedure's own aggregate status means the same thing whether it is
+    the tree root or three levels deep."""
+    if any(s == "needs_input" for s in statuses):
+        return "needs_input"
+    if any(s == "failure" for s in statuses):
+        return "failure"
+    return "success"
+
+
+async def _walk_children(
+    pool: asyncpg.Pool, children: list[ResolvedGoalNode], context: dict, *, scope: AccessScope,
+    leaf_results: dict[str, GoalNodeExecutionResult],
+    procedure_results: dict[str, ProcedureExecutionResult],
+    unresolved_names: list[str],
+) -> str:
+    statuses = [
+        await _walk_node(
+            pool, child, context, scope=scope, leaf_results=leaf_results,
+            procedure_results=procedure_results, unresolved_names=unresolved_names,
+        )
+        for child in children
+    ]
+    return _aggregate_statuses(statuses) if statuses else "success"
+
+
+async def _walk_procedure_with_fallback(
+    pool: asyncpg.Pool, node: ResolvedGoalNode, context: dict, *, scope: AccessScope,
+    leaf_results: dict[str, GoalNodeExecutionResult],
+    procedure_results: dict[str, ProcedureExecutionResult],
+    unresolved_names: list[str],
+) -> str:
+    """Prompt 2 Sec 10's "alternative Procedure" rung: walk `node`'s own
+    children; if the result is a real FAILURE (not `needs_input` -- an
+    unresolved step is a structural gap a different decomposition is not
+    reliably any better at closing, so this ladder does not spend a real
+    fallback attempt on it), lazily resolve and try the next of
+    `node.procedure_alternates` in order (`resolve_goal_via_procedure`),
+    stopping at the first non-failure outcome. Every attempt's own real
+    sub-results are merged into `leaf_results`/`procedure_results`
+    regardless of outcome (Sec 10: "Track all attempts") -- a failed
+    attempt's real work is not thrown away, it is simply not the one that
+    "counts". `human_intervention_needed` is set only when every real
+    Procedure this Goal links was actually tried and every one failed --
+    Sec 10's own terminal escalation rung, past which this executor has
+    no further automatic recourse."""
+    procedures_to_try = [(node.procedure, node.children)] + [(alt, None) for alt in node.procedure_alternates]
+    attempts: list[ProcedureAttempt] = []
+    final_status = "failure"
+    winning_procedure_id: Optional[str] = None
+    final_unresolved: list[str] = []
+
+    for proc, children in procedures_to_try:
+        if children is None:
+            alt_tree = await resolve_goal_via_procedure(
+                pool, node.goal_id, proc, context=context, scope=scope, depth=node.depth,
+            )
+            children = alt_tree.children
+
+        attempt_leaf_results: dict[str, GoalNodeExecutionResult] = {}
+        attempt_procedure_results: dict[str, ProcedureExecutionResult] = {}
+        attempt_unresolved: list[str] = []
+        status = await _walk_children(
+            pool, children, context, scope=scope, leaf_results=attempt_leaf_results,
+            procedure_results=attempt_procedure_results, unresolved_names=attempt_unresolved,
+        )
+        attempts.append(ProcedureAttempt(procedure_id=str(proc.get("id")), procedure_name=proc.get("name"), status=status))
+        leaf_results.update(attempt_leaf_results)
+        procedure_results.update(attempt_procedure_results)
+        final_status, final_unresolved = status, attempt_unresolved
+        if status != "failure":
+            winning_procedure_id = str(proc.get("id"))
+            break
+
+    unresolved_names.extend(final_unresolved)
+    human_intervention_needed = final_status == "failure" and all(a.status == "failure" for a in attempts)
+    procedure_results[node.goal_id] = ProcedureExecutionResult(
+        goal_id=node.goal_id, goal_name=node.goal_name, status=final_status,
+        attempts=attempts, used_procedure_id=winning_procedure_id,
+        human_intervention_needed=human_intervention_needed,
+    )
+    return final_status
+
+
+async def _walk_node(
+    pool: asyncpg.Pool, node: ResolvedGoalNode, context: dict, *, scope: AccessScope,
+    leaf_results: dict[str, GoalNodeExecutionResult],
+    procedure_results: dict[str, ProcedureExecutionResult],
+    unresolved_names: list[str],
+) -> str:
+    if node.chosen == "implementation":
+        result = await execute_goal_node(pool, node, context, scope=scope)
+        leaf_results[node.goal_id] = result
+        return result.status
+    if node.chosen == "unresolved":
+        unresolved_names.append(node.goal_name)
+        return "needs_input"
+    return await _walk_procedure_with_fallback(
+        pool, node, context, scope=scope, leaf_results=leaf_results,
+        procedure_results=procedure_results, unresolved_names=unresolved_names,
+    )
+
+
 async def execute_goal_tree(
     pool: asyncpg.Pool, tree: ResolvedGoalNode, context: dict, *, scope: AccessScope,
 ) -> GoalExecutionResult:
     """Walk an already-resolved Goal tree (`goal_resolution.resolve_goal`'s
     own output) and execute every real `implementation` leaf it
     contains, in the same order the tree's own Procedure steps were
-    already sorted in. An `unresolved` leaf is never executed and never
-    silently treated as success -- it stops that branch honestly (Sec 4:
-    "A Goal may initially be unsolved" is a real outcome, not an error
-    to paper over) and the overall `outcome` becomes `"needs_input"`."""
-    node_results: dict[str, GoalNodeExecutionResult] = {}
+    already sorted in -- with real fallback at BOTH rungs Sec 10
+    describes: an Implementation's own alternates (`execute_goal_node`)
+    and, when a whole Procedure's execution fails, an alternate Procedure
+    (`_walk_procedure_with_fallback`, lazily resolving
+    `node.procedure_alternates` only if actually needed). An `unresolved`
+    leaf is never executed and never silently treated as success -- it
+    stops that branch honestly (Sec 4: "A Goal may initially be unsolved"
+    is a real outcome, not an error to paper over) and the overall
+    `outcome` becomes `"needs_input"`."""
+    leaf_results: dict[str, GoalNodeExecutionResult] = {}
+    procedure_results: dict[str, ProcedureExecutionResult] = {}
     unresolved_names: list[str] = []
-    any_failure = False
 
-    async def _walk(node: ResolvedGoalNode) -> None:
-        nonlocal any_failure
-        if node.chosen == "implementation":
-            result = await execute_goal_node(pool, node, context, scope=scope)
-            node_results[node.goal_id] = result
-            if result.status != "success":
-                any_failure = True
-            return
-        if node.chosen == "unresolved":
-            unresolved_names.append(node.goal_name)
-            return
-        # procedure -- recurse into children in their already-real order
-        for child in node.children:
-            await _walk(child)
+    outcome = await _walk_node(
+        pool, tree, context, scope=scope, leaf_results=leaf_results,
+        procedure_results=procedure_results, unresolved_names=unresolved_names,
+    )
 
-    await _walk(tree)
-
-    if unresolved_names:
-        outcome = "needs_input"
-    elif any_failure:
-        outcome = "failure"
-    else:
-        outcome = "success"
-
-    return GoalExecutionResult(outcome=outcome, node_results=node_results, unresolved_goal_names=unresolved_names)
+    return GoalExecutionResult(
+        outcome=outcome, node_results=leaf_results, procedure_results=procedure_results,
+        unresolved_goal_names=unresolved_names,
+    )

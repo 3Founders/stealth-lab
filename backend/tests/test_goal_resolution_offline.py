@@ -180,6 +180,49 @@ def test_procedure_decomposes_into_child_goals(monkeypatch):
     assert child.chosen == "unresolved"
 
 
+def test_procedure_node_keeps_real_alternate_feasible_procedures(monkeypatch):
+    pool = _FakePool({"G-parent": _goal("G-parent", "safely modify generated API")})
+    monkeypatch.setattr(gr, "select_implementation_for_goal_id", _no_direct_impl)
+
+    proc_a = {"id": "P-1", "procedure_id": "P-1", "name": "strategy-a", "version": 1, "steps": []}
+    proc_b = {"id": "P-2", "procedure_id": "P-2", "name": "strategy-b", "version": 1, "steps": []}
+
+    async def fake_feasible(pool, goal_id, *, current_scope, access_scope):
+        return [(proc_a, True), (proc_b, True)]
+    monkeypatch.setattr(gr, "_feasible_procedures_for_goal", fake_feasible)
+
+    node = _run(gr.resolve_goal(pool, "G-parent", scope=SCOPE))
+    assert node.procedure["name"] == "strategy-a"
+    assert [p["name"] for p in node.procedure_alternates] == ["strategy-b"]
+
+
+def test_resolve_goal_via_procedure_resolves_a_specific_alternate(monkeypatch):
+    pool = _FakePool({
+        "G-parent": _goal("G-parent", "safely modify generated API"),
+        "G-child": _goal("G-child", "regenerate bindings"),
+    })
+    proc_b = {
+        "id": "P-2", "procedure_id": "P-2", "name": "strategy-b", "version": 1,
+        "steps": [{"order": 0, "goal": "regenerate bindings"}],
+    }
+    monkeypatch.setattr(gr, "select_implementation_for_goal_id", _no_direct_impl)
+    monkeypatch.setattr(gr, "_feasible_procedures_for_goal", lambda *a, **k: _async_result([]))
+
+    async def fake_text_lookup(pool, text, *, scope_type, scope_entity_id):
+        return {"id": "G-child"} if text == "regenerate bindings" else None
+    monkeypatch.setattr(gr, "resolve_goal_id_for_text", fake_text_lookup)
+
+    node = _run(gr.resolve_goal_via_procedure(pool, "G-parent", proc_b, scope=SCOPE))
+    assert node.chosen == "procedure"
+    assert node.procedure["name"] == "strategy-b"
+    assert len(node.children) == 1
+    assert node.children[0].goal_id == "G-child"
+
+
+async def _async_result(value):
+    return value
+
+
 def test_step_with_no_matching_goal_text_is_an_honest_unresolved_child(monkeypatch):
     pool = _FakePool({"G-parent": _goal("G-parent", "do the thing")})
     monkeypatch.setattr(gr, "select_implementation_for_goal_id", _no_direct_impl)

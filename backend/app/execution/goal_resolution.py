@@ -89,6 +89,20 @@ class ResolvedGoalNode:
     # dict is the honest, common default, not an error.
     verification_requirement: dict = field(default_factory=dict)
     procedure: Optional[dict] = None
+    # Real other feasible Procedures linked to this same Goal, beyond the
+    # one chosen (already-ordered verified-first/recency-second, same
+    # order `_feasible_procedures_for_goal` returned) -- kept, not
+    # discarded, so a real executor (goal_execution.py) can fall back to
+    # an alternate decomposition strategy when the chosen one's own
+    # execution fails (Prompt 2 Sec 10: "alternative Procedure"), the
+    # same "keep the real runner-ups" discipline `implementation_alternates`
+    # already established. Each entry is the real procedure ROW (id,
+    # procedure_id, name, version, steps, ...), not a pre-resolved tree --
+    # resolving every alternate's own subgoals eagerly would be real,
+    # wasted recursive work for the overwhelmingly common case where the
+    # first procedure succeeds; `resolve_goal_via_procedure` below
+    # resolves one lazily, only if/when it is actually needed.
+    procedure_alternates: list[dict] = field(default_factory=list)
     children: list["ResolvedGoalNode"] = field(default_factory=list)
     rationale: str = ""
     unresolved_reason: Optional[str] = None
@@ -160,6 +174,89 @@ async def _feasible_procedures_for_goal(
         )
         results.append((proc, result.applicable))
     return results
+
+
+async def _resolve_procedure_children(
+    pool: asyncpg.Pool, goal: dict, proc: dict, *, context: dict, scope: AccessScope,
+    depth: int, max_depth: int, visited: frozenset,
+) -> list["ResolvedGoalNode"]:
+    """Resolve one Procedure's own steps into child `ResolvedGoalNode`s --
+    factored out of `resolve_goal`'s own procedure branch so
+    `resolve_goal_via_procedure` (a lazy, real ALTERNATE-procedure
+    resolution, Prompt 2 Sec 10) can build a child list for a candidate
+    procedure that was NOT the one `resolve_goal` originally chose,
+    using the identical step->Goal resolution logic -- one real
+    mechanism, not a second one."""
+    steps = sorted(proc.get("steps") or [], key=lambda s: s.get("order", 0))
+    children: list[ResolvedGoalNode] = []
+    for step in steps:
+        step_goal_row = None
+        step_goal_id = step.get("goal_id")  # future-proofing: a real per-step FK, once one exists (none does today)
+        if step_goal_id:
+            step_goal_row = await pool.fetchrow(
+                "SELECT id FROM goals WHERE id = $1::uuid AND t_invalid IS NULL", step_goal_id,
+            )
+        if step_goal_row is None:
+            step_goal_row = await resolve_goal_id_for_text(
+                pool, step.get("goal") or step.get("action") or "",
+                scope_type=goal.get("scope_type"), scope_entity_id=goal.get("scope_entity_id"),
+            )
+        if step_goal_row is None:
+            children.append(ResolvedGoalNode(
+                goal_id="-", goal_name=step.get("goal") or step.get("action") or "(unnamed step)",
+                depth=depth + 1, chosen="unresolved",
+                unresolved_reason="step's goal text does not match any canonical Goal",
+            ))
+            continue
+        child = await resolve_goal(
+            pool, str(step_goal_row["id"]), context=context, scope=scope,
+            depth=depth + 1, max_depth=max_depth, visited=visited,
+        )
+        children.append(child)
+    return children
+
+
+async def resolve_goal_via_procedure(
+    pool: asyncpg.Pool, goal_id: str, procedure: dict, *,
+    context: Optional[dict] = None, scope: AccessScope, depth: int = 0, max_depth: int = DEFAULT_MAX_DEPTH,
+) -> ResolvedGoalNode:
+    """Lazy, real resolution of ONE SPECIFIC alternate Procedure for a
+    Goal that already has a resolved tree via its FIRST-choice Procedure
+    -- Prompt 2 Sec 10's "alternative Procedure" fallback rung, called
+    by `goal_execution.py` ONLY if/when the first-choice Procedure's own
+    execution actually fails (resolving every alternate eagerly inside
+    `resolve_goal` itself would be real, wasted recursive work for the
+    overwhelmingly common case where the first choice succeeds).
+
+    `procedure` is a real row already in `ResolvedGoalNode.procedure_
+    alternates` -- this function does not search for one, it resolves
+    the ONE given. `visited` is reset to just this `goal_id` (this is a
+    fresh lazy resolution rooted here, not a continuation of the
+    original tree's own recursion path) -- an honest approximation
+    disclosed here rather than silently reusing stale state from a
+    resolution that already finished.
+    """
+    context = context or {}
+    goal_row = await pool.fetchrow("SELECT * FROM goals WHERE id = $1::uuid AND t_invalid IS NULL", goal_id)
+    if goal_row is None:
+        raise GoalResolutionError(f"goal_id {goal_id!r} does not exist or is not live")
+    goal = dict(goal_row)
+    goal_name = str(goal.get("canonical_name") or goal_id)
+
+    children = await _resolve_procedure_children(
+        pool, goal, procedure, context=context, scope=scope,
+        depth=depth, max_depth=max_depth, visited=frozenset({goal_id}),
+    )
+    return ResolvedGoalNode(
+        goal_id=goal_id, goal_name=goal_name, depth=depth, chosen="procedure",
+        procedure={
+            "id": str(procedure["id"]), "procedure_id": str(procedure["procedure_id"]),
+            "name": procedure.get("name"), "version": procedure.get("version"),
+        },
+        verification_requirement=goal.get("verification_requirement") or {},
+        children=children,
+        rationale=f"alternate procedure {procedure.get('name')!r} ({procedure['id']}) tried after the first choice failed",
+    )
 
 
 async def resolve_goal(
@@ -247,32 +344,9 @@ async def resolve_goal(
     feasible = [p for p, ok in candidates if ok]
     if feasible:
         proc = feasible[0]  # already ordered verified-first, recency-second by the query itself
-        steps = sorted(proc.get("steps") or [], key=lambda s: s.get("order", 0))
-        children: list[ResolvedGoalNode] = []
-        for step in steps:
-            step_goal_row = None
-            step_goal_id = step.get("goal_id")  # future-proofing: a real per-step FK, once one exists (none does today)
-            if step_goal_id:
-                step_goal_row = await pool.fetchrow(
-                    "SELECT id FROM goals WHERE id = $1::uuid AND t_invalid IS NULL", step_goal_id,
-                )
-            if step_goal_row is None:
-                step_goal_row = await resolve_goal_id_for_text(
-                    pool, step.get("goal") or step.get("action") or "",
-                    scope_type=goal.get("scope_type"), scope_entity_id=goal.get("scope_entity_id"),
-                )
-            if step_goal_row is None:
-                children.append(ResolvedGoalNode(
-                    goal_id="-", goal_name=step.get("goal") or step.get("action") or "(unnamed step)",
-                    depth=depth + 1, chosen="unresolved",
-                    unresolved_reason="step's goal text does not match any canonical Goal",
-                ))
-                continue
-            child = await resolve_goal(
-                pool, str(step_goal_row["id"]), context=context, scope=scope,
-                depth=depth + 1, max_depth=max_depth, visited=next_visited,
-            )
-            children.append(child)
+        children = await _resolve_procedure_children(
+            pool, goal, proc, context=context, scope=scope, depth=depth, max_depth=max_depth, visited=next_visited,
+        )
         return ResolvedGoalNode(
             goal_id=goal_id, goal_name=goal_name, depth=depth, chosen="procedure",
             procedure={
@@ -280,7 +354,7 @@ async def resolve_goal(
                 "name": proc.get("name"), "version": proc.get("version"),
             },
             verification_requirement=goal.get("verification_requirement") or {},
-            children=children,
+            children=children, procedure_alternates=feasible[1:],
             rationale=(
                 f"selected procedure {proc.get('name')!r} ({proc['id']}) among "
                 f"{len(feasible)} feasible / {len(candidates)} linked to this Goal"

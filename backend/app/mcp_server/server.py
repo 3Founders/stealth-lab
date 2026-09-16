@@ -4155,12 +4155,23 @@ async def execute_goal(
     exactly like an execution failure below.
 
     Real fallback (Prompt 2 Sec 10, previously entirely missing from
-    this codebase per audit): if a node's first-choice Implementation
-    fails EXECUTION or VERIFICATION, the next real eligible alternate
-    `resolve_goal` already ranked for that SAME Goal is tried next, in
-    order, until one succeeds or all are exhausted -- never substitutes
-    a different Goal. Every attempt (implementation id, status, notes,
-    verification_state/detail) is kept, not just the last one.
+    this codebase per audit), at BOTH rungs the spec names:
+      - Implementation-level: if a node's first-choice Implementation
+        fails EXECUTION or VERIFICATION, the next real eligible alternate
+        `resolve_goal` already ranked for that SAME Goal is tried next,
+        in order, until one succeeds or all are exhausted.
+      - Procedure-level ("alternative Procedure"): if a WHOLE Procedure's
+        own decomposition fails (not merely `needs_input` -- a
+        structural gap is not something a different decomposition is
+        reliably better at closing), the next real feasible alternate
+        Procedure linked to that same Goal is lazily resolved and tried.
+        If EVERY real Procedure this Goal links is tried and all fail,
+        that node's `human_intervention_needed` is set `true` -- Sec
+        10's own terminal escalation rung, past which this tool has no
+        further automatic recourse.
+    Never substitutes a different Goal at either rung. Every attempt
+    (implementation id/procedure id, status, notes, verification
+    state/detail) is kept, not just the last one.
 
     HONEST SCOPE LIMIT, stated plainly rather than glossed over: this is
     a SEQUENTIAL walk of the resolved tree (`app.execution.goal_execution`),
@@ -4179,7 +4190,10 @@ async def execute_goal(
 
     Returns `{"tree": <full resolution trace>, "outcome": "success"|
     "failure"|"needs_input", "node_results": {goal_id: {status, attempts:
-    [...], used_implementation_id}}, "unresolved_goal_names": [...]}`.
+    [...], used_implementation_id}}, "procedure_results": {goal_id:
+    {status, attempts: [{procedure_id, procedure_name, status}, ...],
+    used_procedure_id, human_intervention_needed}}, "unresolved_goal_names":
+    [...]}`.
     """
     from app.execution.goal_execution import execute_goal_tree
     from app.execution.goal_resolution import GoalResolutionError, resolve_goal
@@ -4218,6 +4232,18 @@ async def execute_goal(
                 ],
             }
             for gid, r in execution.node_results.items()
+        },
+        "procedure_results": {
+            gid: {
+                "goal_name": r.goal_name, "status": r.status,
+                "used_procedure_id": r.used_procedure_id,
+                "human_intervention_needed": r.human_intervention_needed,
+                "attempts": [
+                    {"procedure_id": a.procedure_id, "procedure_name": a.procedure_name, "status": a.status}
+                    for a in r.attempts
+                ],
+            }
+            for gid, r in execution.procedure_results.items()
         },
         "unresolved_goal_names": execution.unresolved_goal_names,
     }, default=str)

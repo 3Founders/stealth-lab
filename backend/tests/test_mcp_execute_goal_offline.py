@@ -13,7 +13,10 @@ import asyncio
 import json
 
 import app.mcp_server.server as srv
-from app.execution.goal_execution import GoalExecutionResult, GoalNodeExecutionResult, ImplementationAttempt
+from app.execution.goal_execution import (
+    GoalExecutionResult, GoalNodeExecutionResult, ImplementationAttempt,
+    ProcedureAttempt, ProcedureExecutionResult,
+)
 from app.execution.goal_resolution import GoalResolutionError, ResolvedGoalNode
 
 
@@ -114,6 +117,36 @@ def test_execute_goal_passes_through_verification_state_and_detail(monkeypatch):
     attempt = result["node_results"]["G-1"]["attempts"][0]
     assert attempt["verification_state"] == "checked"
     assert attempt["verification_detail"] == "all expected output file(s) present"
+
+
+def test_execute_goal_passes_through_procedure_results_and_human_intervention(monkeypatch):
+    async def fake_resolve(pool, goal_id, *, context, scope, max_depth=6):
+        return _fake_tree()
+
+    async def fake_execute_tree(pool, tree, context, *, scope):
+        return GoalExecutionResult(
+            outcome="failure",
+            procedure_results={
+                "G-parent": ProcedureExecutionResult(
+                    goal_id="G-parent", goal_name="p", status="failure",
+                    attempts=[
+                        ProcedureAttempt(procedure_id="P-1", procedure_name="strategy-a", status="failure"),
+                        ProcedureAttempt(procedure_id="P-2", procedure_name="strategy-b", status="failure"),
+                    ],
+                    used_procedure_id=None, human_intervention_needed=True,
+                ),
+            },
+        )
+
+    monkeypatch.setattr("app.execution.goal_resolution.resolve_goal", fake_resolve)
+    monkeypatch.setattr("app.execution.goal_execution.execute_goal_tree", fake_execute_tree)
+    ctx = FakeContext()
+    raw = _run(srv.execute_goal(goal_id="G-1", ctx=ctx))
+    result = json.loads(raw)
+    proc_result = result["procedure_results"]["G-parent"]
+    assert proc_result["human_intervention_needed"] is True
+    assert proc_result["used_procedure_id"] is None
+    assert len(proc_result["attempts"]) == 2
 
 
 def test_execute_goal_returns_needs_input_when_unresolved(monkeypatch):
