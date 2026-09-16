@@ -152,12 +152,25 @@ async def handle_ingest_skill_package(pool: asyncpg.Pool, payload: dict) -> None
         source_id=spec.id,
     ))
     client = _general_compute_client()
+    if client is None:
+        # Founder directive (2026-09-15): skill/document ingestion is now
+        # LLM-only -- parse_skill_md's deterministic fallback is gone from
+        # this call path. A missing client here means every artifact this
+        # job processes is refused (compile_skill_artifact's own
+        # status="rejected"), not silently degraded -- logged loudly since
+        # that is a real capacity/config problem for a production worker,
+        # not an expected steady state.
+        log.warning(
+            "handle_ingest_skill_package: no LLM client configured "
+            "(GENERAL_COMPUTE_API_KEY/GENERAL_COMPUTE_JUDGE_MODEL) -- "
+            "this artifact will be refused, not deterministically captured",
+        )
     await compile_skill_artifact(
         pool, artifact, embedder=Embedder(rate_limit_pool=pool),
         created_by="structured_skill_ingestion_worker",
         client=client,
         admission_llm_model=settings.general_compute_judge_model or "gemma-4-31B-it",
-        capability_llm_model=settings.general_compute_judge_model or "gemma-4-31B-it",
+        extraction_llm_model=settings.general_compute_judge_model or "gemma-4-31B-it",
         claim_extraction_llm_model=settings.general_compute_judge_model or "gemma-4-31B-it",
     )
 

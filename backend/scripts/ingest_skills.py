@@ -87,7 +87,7 @@ async def _cmd_skill_dir(args: argparse.Namespace) -> None:
         result = await run_skill_ingestion(
             pool, adapter, embedder=Embedder(), domain=args.domain,
             created_by="ingest_skills_cli", client=_extraction_client(),
-            admission_llm_model=judge_model, capability_llm_model=judge_model,
+            admission_llm_model=judge_model, extraction_llm_model=judge_model,
             claim_extraction_llm_model=judge_model,
         )
         print(json.dumps({"run_id": result["run_id"], "metrics": result["metrics"]}, indent=2))
@@ -104,7 +104,7 @@ async def _cmd_skill_repo(args: argparse.Namespace) -> None:
         result = await run_skill_ingestion(
             pool, adapter, embedder=Embedder(), domain=args.domain,
             created_by="ingest_skills_cli", client=_extraction_client(),
-            admission_llm_model=judge_model, capability_llm_model=judge_model,
+            admission_llm_model=judge_model, extraction_llm_model=judge_model,
             claim_extraction_llm_model=judge_model,
         )
         print(json.dumps({"run_id": result["run_id"], "metrics": result["metrics"]}, indent=2))
@@ -199,7 +199,7 @@ async def _cmd_ingest_manifest(args: argparse.Namespace) -> None:
                 domain=(spec.repo if spec.type == "github_subtree" else None),
                 created_by="structured_skill_ingestion_wave1", limit=args.limit,
                 concurrency=args.concurrency, client=_extraction_client(),
-                admission_llm_model=judge_model, capability_llm_model=judge_model,
+                admission_llm_model=judge_model, extraction_llm_model=judge_model,
                 claim_extraction_llm_model=judge_model,
             )
             results.append({
