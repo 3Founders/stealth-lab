@@ -26,6 +26,7 @@ from app.stealth.pipe_format import (
     render_index_md,
     render_procedures_md,
     render_run_md,
+    parse_goal_run_md,
 )
 
 
@@ -277,6 +278,73 @@ def test_goal_run_md_no_artifacts_emits_no_artifact_lines():
     nodes = [GoalRunLine(goal_id="G-1", kind="implementation", status="success")]
     md = render_goal_run_md("E-1", "success", nodes)
     assert not any(ln.startswith("ARTIFACT|") for ln in md.splitlines())
+
+
+# ---------------------------------------------------------------------
+# parse_goal_run_md -- the real inverse of render_goal_run_md
+# ---------------------------------------------------------------------
+
+
+def test_parse_goal_run_md_round_trips_every_field():
+    nodes = [
+        GoalRunLine(
+            goal_id="G-1", kind="implementation", status="success",
+            implementation_id="I-1", procedure_id="P-1", verification_state="checked",
+            human_intervention_needed=True, resumed_from_journal=True,
+        ),
+    ]
+    md = render_goal_run_md("E-1", "success", nodes)
+    parsed = parse_goal_run_md(md)
+    assert parsed["execution_id"] == "E-1"
+    assert parsed["outcome"] == "success"
+    assert len(parsed["nodes"]) == 1
+    n = parsed["nodes"][0]
+    assert n["goal_id"] == "G-1"
+    assert n["kind"] == "implementation"
+    assert n["status"] == "success"
+    assert n["implementation_id"] == "I-1"
+    assert n["procedure_id"] == "P-1"
+    assert n["verification_state"] == "checked"
+    assert n["human_intervention_needed"] is True
+    assert n["resumed_from_journal"] is True
+
+
+def test_parse_goal_run_md_never_fabricates_missing_fields():
+    nodes = [GoalRunLine(goal_id="G-1", kind="implementation", status="failure")]
+    md = render_goal_run_md("E-1", "failure", nodes)
+    n = parse_goal_run_md(md)["nodes"][0]
+    assert n["implementation_id"] is None
+    assert n["procedure_id"] is None
+    assert n["verification_state"] is None
+    assert n["human_intervention_needed"] is False
+    assert n["resumed_from_journal"] is False
+
+
+def test_parse_goal_run_md_recovers_real_artifacts_per_node():
+    nodes = [GoalRunLine(
+        goal_id="G-1", kind="implementation", status="success",
+        artifacts=[{"filename": "out.txt", "sha256": "abc123", "size_bytes": 11}],
+    )]
+    md = render_goal_run_md("E-1", "success", nodes)
+    n = parse_goal_run_md(md)["nodes"][0]
+    assert n["artifacts"] == [{"filename": "out.txt", "sha256": "abc123", "size_bytes": "11"}]
+
+
+def test_parse_goal_run_md_handles_multiple_nodes_in_order():
+    nodes = [
+        GoalRunLine(goal_id="G-1", kind="implementation", status="success", implementation_id="I-1"),
+        GoalRunLine(goal_id="G-2", kind="human", status="needs_input"),
+    ]
+    md = render_goal_run_md("E-1", "success", nodes)
+    parsed = parse_goal_run_md(md)
+    assert [n["goal_id"] for n in parsed["nodes"]] == ["G-1", "G-2"]
+
+
+def test_parse_goal_run_md_on_the_no_nodes_case_returns_empty_list():
+    md = render_goal_run_md("E-1", "success", [])
+    parsed = parse_goal_run_md(md)
+    assert parsed["execution_id"] == "E-1"
+    assert parsed["nodes"] == []
 
 
 # ===========================================================================

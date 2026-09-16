@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+from typing import Optional
 
 from app.stealth.atomic import atomic_write_bytes
 from app.stealth.journal import STEALTH_DIRNAME
@@ -74,3 +75,57 @@ def write_execution_artifacts(
             "sha256": hashlib.sha256(content).hexdigest(), "size_bytes": len(content),
         })
     return manifest
+
+
+def list_artifacts(workspace_root: str) -> list[dict]:
+    """The real read side of `write_execution_artifacts` -- Sec 14's
+    "artifacts" MCP-tool gap this closes. Walks `.stealth/artifacts/`
+    and returns one real entry per file actually on disk
+    (`{goal_id, execution_id, filename, sha256, size_bytes}`) -- never a
+    manifest cache that could drift from the real files. An empty list
+    is the honest common case (no Goal execution wrote a file artifact
+    here yet), not an error."""
+    base = os.path.join(workspace_root, STEALTH_DIRNAME, "artifacts")
+    if not os.path.isdir(base):
+        return []
+    out: list[dict] = []
+    for goal_id in sorted(os.listdir(base)):
+        goal_dir = os.path.join(base, goal_id)
+        if not os.path.isdir(goal_dir):
+            continue
+        for execution_id in sorted(os.listdir(goal_dir)):
+            exec_dir = os.path.join(goal_dir, execution_id)
+            if not os.path.isdir(exec_dir):
+                continue
+            for root, _dirs, files in os.walk(exec_dir):
+                for filename in sorted(files):
+                    path = os.path.join(root, filename)
+                    rel_filename = os.path.relpath(path, exec_dir).replace("\\", "/")
+                    with open(path, "rb") as f:
+                        content = f.read()
+                    out.append({
+                        "goal_id": goal_id, "execution_id": execution_id,
+                        "filename": rel_filename,
+                        "sha256": hashlib.sha256(content).hexdigest(),
+                        "size_bytes": len(content),
+                    })
+    return out
+
+
+def read_artifact(workspace_root: str, goal_id: str, execution_id: str, filename: str) -> Optional[bytes]:
+    """Reads back one real artifact `write_execution_artifacts` wrote.
+    Returns `None` (never raises) when the file doesn't exist OR when
+    `filename` would escape `.stealth/artifacts/<goal_id>/<execution_id>/`
+    -- the same defensive posture the write side already applies,
+    mirrored here on the read side."""
+    base = artifacts_dir(workspace_root, goal_id, execution_id)
+    safe_name = os.path.normpath(filename).replace("\\", "/").lstrip("/")
+    if safe_name == ".." or safe_name.startswith("../"):
+        return None
+    path = os.path.join(base, *safe_name.split("/"))
+    if os.path.commonpath([os.path.abspath(base), os.path.abspath(path)]) != os.path.abspath(base):
+        return None
+    if not os.path.isfile(path):
+        return None
+    with open(path, "rb") as f:
+        return f.read()

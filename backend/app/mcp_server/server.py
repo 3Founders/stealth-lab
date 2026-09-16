@@ -106,6 +106,7 @@ from starlette.responses import HTMLResponse, JSONResponse, Response
 
 from app.mcp_server.tasks_extension import TasksExtension
 from app.mcp_server.claim_graph_page import CLAIM_GRAPH_HTML, FORCE_GRAPH_JS
+from app.mcp_server.goal_run_page import GOAL_RUN_HTML
 from app.mcp_server.procedure_graph_page import PROCEDURE_GRAPH_HTML
 from app.services import claim_graph_api
 from app.services import procedure_task_graph_api
@@ -451,6 +452,57 @@ async def procedure_graph_data(request: Request) -> JSONResponse:
         link_mode=(qp.get("link_mode") or "all"),
     )
     return JSONResponse(json.loads(json.dumps(result, default=str)))
+
+
+# ---------------------------------------------------------------------------
+# Goal-run viewer -- the local-workspace counterpart of /claim-graph and
+# /procedure-graph. Deliberately NOT a force-graph: renders ONE real
+# `.stealth/goal_run.md` (compile-time or execute-time, `compile_goal`/
+# `execute_goal`'s own `workspace_root` write) as a left-to-right
+# sequence, plus its `.stealth/artifacts/` manifest -- both real local
+# filesystem reads, no DB at all (see goal_run_page.py's own module
+# docstring for why a sequence, not a general graph). Same read-only,
+# unauthenticated `@server.custom_route` posture as the two routes above.
+# ---------------------------------------------------------------------------
+
+
+@server.custom_route("/goal-run", methods=["GET"], include_in_schema=False)
+async def goal_run_page(request: Request) -> HTMLResponse:  # noqa: ARG001
+    return HTMLResponse(GOAL_RUN_HTML)
+
+
+@server.custom_route("/goal-run/data", methods=["GET"], include_in_schema=False)
+async def goal_run_data(request: Request) -> JSONResponse:
+    from app.execution.goal_execution import read_goal_run_status
+    from app.stealth.artifacts import list_artifacts
+
+    workspace_root = request.query_params.get("workspace_root")
+    if not workspace_root:
+        return JSONResponse({"error": "workspace_root query parameter is required"}, status_code=400)
+    status = read_goal_run_status(workspace_root)
+    artifacts = list_artifacts(workspace_root)
+    return JSONResponse(json.loads(json.dumps({"status": status, "artifacts": artifacts}, default=str)))
+
+
+@server.custom_route("/goal-run/artifact", methods=["GET"], include_in_schema=False)
+async def goal_run_artifact(request: Request) -> Response:
+    from app.stealth.artifacts import read_artifact
+
+    qp = request.query_params
+    workspace_root, goal_id, execution_id, filename = (
+        qp.get("workspace_root"), qp.get("goal_id"), qp.get("execution_id"), qp.get("filename"),
+    )
+    if not all([workspace_root, goal_id, execution_id, filename]):
+        return JSONResponse(
+            {"error": "workspace_root, goal_id, execution_id, and filename are all required"}, status_code=400,
+        )
+    content = read_artifact(workspace_root, goal_id, execution_id, filename)
+    if content is None:
+        return JSONResponse({"error": "artifact not found"}, status_code=404)
+    return Response(
+        content, media_type="application/octet-stream",
+        headers={"content-disposition": f'attachment; filename="{filename.rsplit("/", 1)[-1]}"'},
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -3945,6 +3997,84 @@ async def execute_goal(
         },
         "unresolved_goal_names": execution.unresolved_goal_names,
     }, default=str)
+
+
+@server.tool()
+async def get_goal_run_status(workspace_root: str, ctx: Context) -> str:  # noqa: ARG001
+    """
+    Meta-harness/execu.md Sec 14's "run status" gap, closed: the real
+    read side of `compile_goal`/`execute_goal`'s own `workspace_root`
+    write. Reads `.stealth/goal_run.md` at `workspace_root` (whichever
+    of the two tools wrote it last -- a compile-time `"planned"` trace
+    or a real post-execution one, same grammar either way) and returns
+    it as structured JSON via `parse_goal_run_md` -- no re-derivation,
+    no DB round-trip, just the real file on disk.
+
+    Returns `REFUSED: ...` when no `goal_run.md` exists at this
+    `workspace_root` yet (never compiled/executed there) -- a real,
+    common state, not a crash.
+
+    No `ctx`/pool use at all -- this is a pure local filesystem read,
+    same posture `compile_goal`'s own `workspace_root` write already
+    has. `ctx` stays in the signature only because every `@server.tool()`
+    here takes one.
+    """
+    from app.execution.goal_execution import read_goal_run_status
+
+    status = read_goal_run_status(workspace_root)
+    if status is None:
+        return f"REFUSED: no .stealth/goal_run.md found at workspace_root={workspace_root!r} -- compile_goal or execute_goal must be called with this workspace_root first"
+    return json.dumps(status, default=str)
+
+
+@server.tool()
+async def list_goal_artifacts(workspace_root: str, ctx: Context) -> str:  # noqa: ARG001
+    """
+    Meta-harness/execu.md Sec 14's "artifacts" gap, closed: lists every
+    real file `execute_goal_tree` wrote under
+    `.stealth/artifacts/<goal_id>/<execution_id>/` at `workspace_root`
+    (Sec 5's real local artifact store) -- one entry per real file
+    actually on disk, never a manifest cache that could drift. An empty
+    list is the honest common case (no Goal execution at this
+    `workspace_root` produced a file artifact), not an error.
+
+    Pair with `get_goal_artifact` to fetch one entry's real bytes.
+    """
+    from app.stealth.artifacts import list_artifacts
+
+    return json.dumps(list_artifacts(workspace_root), default=str)
+
+
+@server.tool()
+async def get_goal_artifact(
+    workspace_root: str, goal_id: str, execution_id: str, filename: str, ctx: Context,
+) -> str:  # noqa: ARG001
+    """
+    Fetches one real artifact `execute_goal_tree` wrote (Sec 5/14) --
+    the read counterpart of `list_goal_artifacts`. Returns
+    `{"filename", "size_bytes", "content_base64"}` -- base64 because
+    MCP tools return `str`, not raw bytes; content is never re-encoded
+    or transformed, the real file bytes round-trip exactly.
+
+    Returns `REFUSED: ...` (never raises) when the file doesn't exist OR
+    `filename` would escape `.stealth/artifacts/<goal_id>/<execution_id>/`
+    -- the same defensive posture `write_execution_artifacts` already
+    applies on the write side, mirrored here on the read side.
+    """
+    import base64
+
+    from app.stealth.artifacts import read_artifact
+
+    content = read_artifact(workspace_root, goal_id, execution_id, filename)
+    if content is None:
+        return (
+            f"REFUSED: no artifact found at workspace_root={workspace_root!r} "
+            f"goal_id={goal_id!r} execution_id={execution_id!r} filename={filename!r}"
+        )
+    return json.dumps({
+        "filename": filename, "size_bytes": len(content),
+        "content_base64": base64.b64encode(content).decode("ascii"),
+    })
 
 
 @server.tool()

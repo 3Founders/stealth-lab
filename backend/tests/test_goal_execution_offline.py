@@ -437,6 +437,16 @@ def test_workspace_root_writes_a_real_goal_run_md_page(monkeypatch, tmp_path):
     assert f"GOAL_RUN|{result.execution_id}|success" in content
     assert "GOAL_NODE|G-1|implementation|success|impl=I-1" in content
 
+    status = ge.read_goal_run_status(ws)
+    assert status["execution_id"] == result.execution_id
+    assert status["outcome"] == "success"
+    assert status["nodes"][0]["goal_id"] == "G-1"
+    assert status["nodes"][0]["implementation_id"] == "I-1"
+
+
+def test_read_goal_run_status_with_no_goal_run_md_is_honestly_none(tmp_path):
+    assert ge.read_goal_run_status(str(tmp_path)) is None
+
 
 def test_render_goal_run_md_reflects_procedure_fallback_and_human_intervention(monkeypatch):
     async def fake_execute(pool, plan_node, context, *, scope):

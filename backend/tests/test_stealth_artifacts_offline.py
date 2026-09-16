@@ -9,7 +9,7 @@ from __future__ import annotations
 import hashlib
 import os
 
-from app.stealth.artifacts import artifacts_dir, write_execution_artifacts
+from app.stealth.artifacts import artifacts_dir, list_artifacts, read_artifact, write_execution_artifacts
 
 
 def test_empty_output_files_writes_nothing(tmp_path):
@@ -67,3 +67,40 @@ def test_different_goals_and_executions_get_separate_directories(tmp_path):
         assert f.read() == b"one"
     with open(p2, "rb") as f:
         assert f.read() == b"two"
+
+
+# ---------------------------------------------------------------------
+# list_artifacts / read_artifact (Sec 14 read side)
+# ---------------------------------------------------------------------
+
+
+def test_list_artifacts_on_empty_workspace_is_an_honest_empty_list(tmp_path):
+    assert list_artifacts(str(tmp_path)) == []
+
+
+def test_list_artifacts_finds_every_real_written_file(tmp_path):
+    ws = str(tmp_path)
+    write_execution_artifacts(ws, "G-1", "E-1", {"out.txt": b"hello"})
+    write_execution_artifacts(ws, "G-2", "E-1", {"a.bin": b"\x00\x01"})
+    entries = list_artifacts(ws)
+    assert len(entries) == 2
+    by_goal = {(e["goal_id"], e["filename"]): e for e in entries}
+    assert by_goal[("G-1", "out.txt")]["execution_id"] == "E-1"
+    assert by_goal[("G-1", "out.txt")]["sha256"] == hashlib.sha256(b"hello").hexdigest()
+    assert by_goal[("G-2", "a.bin")]["size_bytes"] == 2
+
+
+def test_read_artifact_returns_real_bytes_back(tmp_path):
+    ws = str(tmp_path)
+    write_execution_artifacts(ws, "G-1", "E-1", {"out.txt": b"hello world"})
+    assert read_artifact(ws, "G-1", "E-1", "out.txt") == b"hello world"
+
+
+def test_read_artifact_missing_file_returns_none_not_an_error(tmp_path):
+    assert read_artifact(str(tmp_path), "G-1", "E-1", "nope.txt") is None
+
+
+def test_read_artifact_path_escape_attempt_returns_none(tmp_path):
+    ws = str(tmp_path)
+    write_execution_artifacts(ws, "G-1", "E-1", {"out.txt": b"x"})
+    assert read_artifact(ws, "G-1", "E-1", "../../../etc/passwd") is None

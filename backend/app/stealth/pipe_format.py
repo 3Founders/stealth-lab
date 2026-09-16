@@ -325,6 +325,54 @@ def render_goal_run_md(execution_id: str, outcome: str, nodes: list[GoalRunLine]
     return header + "\n".join(lines) + "\n"
 
 
+def _kv_map(fields: list[str]) -> dict[str, str]:
+    return dict(f.split("=", 1) for f in fields if "=" in f)
+
+
+def parse_goal_run_md(content: str) -> dict:
+    """The real inverse of `render_goal_run_md` -- reads a `goal_run.md`
+    body (compile-time OR execute-time, same grammar, see this module's
+    own header comment) back into structured data. Pure, no pool/IO;
+    the caller (the `get_goal_run_status` MCP tool, the visualization
+    frontend's `/goal-run/data` route) owns reading the file itself.
+
+    A comment line (`#...`) and a blank line are skipped, matching this
+    same module's own header format exactly -- not a separate mini
+    parser per caller. `execution_id`/`outcome` are `None` only when no
+    `GOAL_RUN|` line exists at all (a malformed/missing file), never a
+    fabricated default -- callers decide what that means.
+    """
+    execution_id: Optional[str] = None
+    outcome: Optional[str] = None
+    nodes: list[dict] = []
+    current: Optional[dict] = None
+    for line in content.splitlines():
+        if not line or line.startswith("#"):
+            continue
+        parts = line.split(_SEP)
+        tag = parts[0]
+        if tag == "GOAL_RUN" and len(parts) >= 3:
+            execution_id, outcome = parts[1], parts[2]
+        elif tag == "GOAL_NODE" and len(parts) >= 4:
+            kv = _kv_map(parts[4:])
+            current = {
+                "goal_id": parts[1], "kind": parts[2], "status": parts[3],
+                "implementation_id": kv.get("impl") if kv.get("impl", "-") != "-" else None,
+                "procedure_id": kv.get("proc") if kv.get("proc", "-") != "-" else None,
+                "verification_state": kv.get("verify") if kv.get("verify", "-") != "-" else None,
+                "human_intervention_needed": kv.get("human_intervention") == "True",
+                "resumed_from_journal": kv.get("resumed") == "True",
+                "artifacts": [],
+            }
+            nodes.append(current)
+        elif tag == "ARTIFACT" and len(parts) >= 3 and current is not None:
+            kv = _kv_map(parts[3:])
+            current["artifacts"].append({
+                "filename": parts[2], "sha256": kv.get("sha256"), "size_bytes": kv.get("size"),
+            })
+    return {"execution_id": execution_id, "outcome": outcome, "nodes": nodes}
+
+
 # ===========================================================================
 # index.md
 # ===========================================================================

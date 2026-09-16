@@ -535,3 +535,27 @@ def write_goal_run_md_file(workspace_root: str, content: str) -> None:
 
 def _write_goal_run_md(workspace_root: str, execution: GoalExecutionResult) -> None:
     write_goal_run_md_file(workspace_root, render_goal_run_md(execution))
+
+
+def read_goal_run_status(workspace_root: str) -> Optional[dict]:
+    """The real read side of `write_goal_run_md_file`/`compile_goal`'s
+    `workspace_root` write -- Sec 14's "run status" MCP-tool gap this
+    closes. Reads `.stealth/goal_run.md` (compile-time `"planned"` or
+    execute-time real outcome, same grammar -- `pipe_format.py`'s own
+    module header) and returns `parse_goal_run_md`'s structured result.
+
+    Returns `None` when no `goal_run.md` exists at this `workspace_root`
+    -- a real, common state (never compiled/executed yet here), not an
+    error to raise. No lock needed: a plain read of an atomically-
+    written file is always either the old or the new complete content,
+    never a partial one (`atomic_write_batch`'s own guarantee)."""
+    import os
+
+    from app.stealth.journal import STEALTH_DIRNAME
+    from app.stealth.pipe_format import parse_goal_run_md
+
+    path = os.path.join(workspace_root, STEALTH_DIRNAME, "goal_run.md")
+    if not os.path.exists(path):
+        return None
+    with open(path, encoding="utf-8") as f:
+        return parse_goal_run_md(f.read())
