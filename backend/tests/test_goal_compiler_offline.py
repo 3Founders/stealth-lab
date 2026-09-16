@@ -5,7 +5,7 @@ ResolvedGoalNode tree. No database, no I/O; every tree is hand-built.
 """
 from __future__ import annotations
 
-from app.execution.goal_compiler import flatten_goal_tree
+from app.execution.goal_compiler import compiled_goal_to_run_md, flatten_goal_tree
 from app.execution.goal_resolution import ResolvedGoalNode
 
 
@@ -134,3 +134,46 @@ def test_node_ids_are_unique_and_stable_across_a_large_tree():
     nodes = flatten_goal_tree(tree)
     ids = [n.node_id for n in nodes]
     assert len(ids) == len(set(ids)) == 20
+
+
+# ---------------------------------------------------------------------
+# compiled_goal_to_run_md (Sec 13: compile-time, not-yet-executed trace)
+# ---------------------------------------------------------------------
+
+
+def test_compiled_run_md_marks_implementation_nodes_as_planned_never_success():
+    tree = _impl_leaf("G-1", "find references", impl_id="I-42")
+    nodes = flatten_goal_tree(tree)
+    md = compiled_goal_to_run_md(nodes)
+    assert "GOAL_RUN|-|planned" in md
+    assert "GOAL_NODE|G-1|implementation|planned|impl=I-42" in md
+    assert "success" not in md and "failure" not in md
+
+
+def test_compiled_run_md_marks_human_nodes_as_needs_input():
+    tree = _unresolved_leaf("G-1", "no match", reason="nothing links")
+    nodes = flatten_goal_tree(tree)
+    md = compiled_goal_to_run_md(nodes)
+    assert "GOAL_NODE|G-1|human|needs_input|impl=-" in md
+
+
+def test_compiled_run_md_never_fabricates_an_execution_id():
+    tree = _impl_leaf("G-1", "find references")
+    nodes = flatten_goal_tree(tree)
+    md = compiled_goal_to_run_md(nodes)
+    assert "GOAL_RUN|-|" in md  # '-' is the honest "no real execution attempt" id
+
+
+def test_compiled_run_md_covers_a_multi_node_real_procedure_chain():
+    tree = _procedure_node("G-parent", "p", children=[
+        _impl_leaf("G-1", "first", impl_id="I-1", depth=1),
+        _unresolved_leaf("G-2", "unmatched", depth=1),
+        _impl_leaf("G-3", "third", impl_id="I-3", depth=1),
+    ])
+    nodes = flatten_goal_tree(tree)
+    md = compiled_goal_to_run_md(nodes)
+    data_lines = [ln for ln in md.splitlines() if ln.startswith("GOAL_NODE|")]
+    assert len(data_lines) == 3
+    assert "GOAL_NODE|G-1|implementation|planned|impl=I-1" in md
+    assert "GOAL_NODE|G-2|human|needs_input|impl=-" in md
+    assert "GOAL_NODE|G-3|implementation|planned|impl=I-3" in md

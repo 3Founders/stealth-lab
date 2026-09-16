@@ -513,17 +513,25 @@ def render_goal_run_md(execution: GoalExecutionResult) -> str:
     return _render(execution.execution_id or "-", execution.outcome, lines)
 
 
-def _write_goal_run_md(workspace_root: str, execution: GoalExecutionResult) -> None:
+def write_goal_run_md_file(workspace_root: str, content: str) -> None:
     """Writes `.stealth/goal_run.md` for real (Sec 13: "Keep run
     artifacts durable and inspectable") -- same atomic-write + single-
     writer-lock discipline `generator.py` already uses for every other
-    `.stealth/` page, reused here rather than a second write mechanism."""
+    `.stealth/` page, reused here rather than a second write mechanism.
+    Real, standalone, and content-agnostic -- any caller with a real
+    already-rendered `goal_run.md` body (execute-time, via `render_
+    goal_run_md` above, or compile-time, via `goal_compiler.py::
+    compiled_goal_to_run_md`) writes through this ONE function, so both
+    ever produce the file the identical, real way."""
     import os
 
     from app.stealth.atomic import atomic_write_batch
     from app.stealth.journal import STEALTH_DIRNAME, SingleWriterLock
 
-    content = render_goal_run_md(execution)
     path = os.path.join(workspace_root, STEALTH_DIRNAME, "goal_run.md")
     with SingleWriterLock(workspace_root):
         atomic_write_batch([(path, content)])
+
+
+def _write_goal_run_md(workspace_root: str, execution: GoalExecutionResult) -> None:
+    write_goal_run_md_file(workspace_root, render_goal_run_md(execution))

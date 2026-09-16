@@ -117,3 +117,34 @@ def flatten_goal_tree(tree: ResolvedGoalNode) -> list[GoalPlanNode]:
 
     walk(tree, None)
     return nodes
+
+
+def compiled_goal_to_run_md(nodes: list[GoalPlanNode]) -> str:
+    """Prompt 2 Sec 13, the COMPILE-time half: `find_best_way(mode=
+    "plan_only")` already writes a real `run.md` for a Procedure-based
+    plan before anything executes (`RUN|...|pending|...`) -- this is the
+    same honesty for a Goal-based plan, via `compile_goal` (pure, no
+    pool, no execution -- see this module's own docstring). Every node's
+    `status` is `"planned"` (a real Implementation WOULD be dispatched
+    here) or `"needs_input"` (a real, already-known gap -- Sec 4/21's
+    own `human` kind) -- never `"success"`/`"failure"`, since nothing
+    has actually run yet. `execution_id='-'` (pipe_format.py's own
+    documented convention for a non-durable, inspection-only render) --
+    a compile has no real execution attempt to name.
+
+    Reuses `pipe_format.py::GoalRunLine`/`render_goal_run_md` verbatim --
+    the SAME real grammar `goal_execution.py`'s own execute-time writer
+    produces, not a second one; a caller `rg`-ing `goal_run.md` sees one
+    consistent format whether a run was only planned or actually executed.
+    """
+    from app.stealth.pipe_format import GoalRunLine, render_goal_run_md
+
+    lines = [
+        GoalRunLine(
+            goal_id=n.goal_id, kind=n.kind,
+            status="planned" if n.kind == "implementation" else "needs_input",
+            implementation_id=n.implementation_id if n.kind == "implementation" else None,
+        )
+        for n in nodes
+    ]
+    return render_goal_run_md("-", "planned", lines)

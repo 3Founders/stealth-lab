@@ -118,3 +118,29 @@ def test_compile_goal_returns_tree_and_flattened_nodes(monkeypatch):
     assert node["implementation_id"] == "I-1"
     assert node["executor"] == "deterministic"
     assert node["deps"] == []
+
+
+def test_compile_goal_with_workspace_root_writes_a_real_planned_goal_run_md(monkeypatch, tmp_path):
+    async def fake_resolve(pool, goal_id, *, context, scope, max_depth=6, embedder=None):
+        return _fake_tree()
+
+    monkeypatch.setattr("app.execution.goal_resolution.resolve_goal", fake_resolve)
+    ctx = FakeContext()
+    ws = str(tmp_path)
+    _run(srv.compile_goal(goal_id="G-1", ctx=ctx, workspace_root=ws))
+
+    goal_run_path = tmp_path / ".stealth" / "goal_run.md"
+    assert goal_run_path.exists()
+    content = goal_run_path.read_text()
+    assert "GOAL_RUN|-|planned" in content
+    assert "GOAL_NODE|G-1|implementation|planned|impl=I-1" in content
+
+
+def test_compile_goal_without_workspace_root_writes_nothing(monkeypatch, tmp_path):
+    async def fake_resolve(pool, goal_id, *, context, scope, max_depth=6, embedder=None):
+        return _fake_tree()
+
+    monkeypatch.setattr("app.execution.goal_resolution.resolve_goal", fake_resolve)
+    ctx = FakeContext()
+    _run(srv.compile_goal(goal_id="G-1", ctx=ctx))
+    assert not (tmp_path / ".stealth").exists()
