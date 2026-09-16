@@ -33,7 +33,6 @@ import asyncpg
 
 from app.execution.cost_math import expected_attempts, expected_value
 from app.execution.execution_telemetry import ImplementationExecutionStats, implementation_execution_stats_batch
-from app.execution.implementation_registry import list_implementations_by_goal
 from app.services.access import AccessScope
 from app.services.procedure_extraction.capability import compute_capability, CapabilityScope, OutcomeRecord
 
@@ -418,11 +417,27 @@ async def select_implementation_for_goal(
     context: Optional[dict] = None,
     scope: AccessScope,
     weights: Optional[dict[str, float]] = None,
+    embedder: Optional[Any] = None,
 ) -> SelectionResult:
-    """Structured lookup by free-text `implementations.goal` -> `rank_candidates`.
-    See that function's own docstring for the full filter/rank/explain
-    contract this preserves unchanged from before the refactor."""
-    candidates = await list_implementations_by_goal(pool, goal, scope=scope)
+    """Candidate generation by free-text `implementations.goal` ->
+    `rank_candidates`. `embedder` (opt-in, `None` by default -- every
+    existing caller keeps its exact prior behavior) additionally embeds
+    `goal` (one real embedding call) and folds a real semantic leg into
+    candidate generation via `implementation_registry.search_
+    implementations_by_goal` (Sec 11 follow-up: hybrid semantic
+    Goal->Implementation retrieval) -- semantically-equivalent goal
+    phrasings can now surface a candidate that exact-text matching alone
+    would miss. Candidate generation only; `rank_candidates`'s own
+    hard-constraint filter + evidence/cost ranking is completely
+    unchanged and still owns final selection."""
+    from app.execution.implementation_registry import search_implementations_by_goal
+
+    query_embedding = None
+    if embedder is not None:
+        query_embedding, _meta = await embedder.embed_one_with_metadata(goal, input_type="query")
+    candidates = await search_implementations_by_goal(
+        pool, goal_text=goal, query_embedding=query_embedding, scope=scope,
+    )
     return await rank_candidates(pool, candidates, goal=goal, context=context, weights=weights)
 
 
@@ -433,20 +448,33 @@ async def select_implementation_for_goal_id(
     context: Optional[dict] = None,
     scope: AccessScope,
     weights: Optional[dict[str, float]] = None,
+    goal_text: Optional[str] = None,
+    embedder: Optional[Any] = None,
 ) -> SelectionResult:
-    """Structured lookup by the real `implementations.goal_id` FK
+    """Candidate generation by the real `implementations.goal_id` FK
     (backend/db/83_goals.sql, `ingestion` lane) -> `rank_candidates`. A
     precise, id-based sibling of `select_implementation_for_goal`'s
     free-text lookup -- prefer this one whenever a real Goal id is
-    already known (the recursive Goal compiler's own case), since it
-    cannot miss on a phrasing difference the way exact-string matching
-    can."""
-    from app.services.access import visibility_predicate
+    already known (the recursive Goal compiler's own case), since an
+    exact `goal_id` match cannot miss on a phrasing difference the way
+    exact-string matching can.
 
-    vis_sql, vis_params = visibility_predicate(scope, param_index=2)
-    rows = await pool.fetch(
-        f"SELECT * FROM implementations WHERE goal_id = $1::uuid AND status = 'active' AND {vis_sql}",
-        goal_id, *vis_params,
+    `goal_text`/`embedder` (both opt-in, `None` by default -- every
+    existing caller, including `goal_resolution.py::resolve_goal`, keeps
+    its exact prior behavior: an exact `goal_id` match only): when given,
+    real lexical (goal_text) and semantic (embedder, one real embedding
+    call) legs are folded in via `implementation_registry.search_
+    implementations_by_goal`, so an Implementation that satisfies the
+    SAME real meaning but was never linked via this exact `goal_id` can
+    still be discovered -- the exact `goal_id` match remains the
+    strongest signal (Sec 11: "strongly preferred, but not required"),
+    never removed."""
+    from app.execution.implementation_registry import search_implementations_by_goal
+
+    query_embedding = None
+    if embedder is not None and goal_text:
+        query_embedding, _meta = await embedder.embed_one_with_metadata(goal_text, input_type="query")
+    candidates = await search_implementations_by_goal(
+        pool, goal_id=goal_id, goal_text=goal_text, query_embedding=query_embedding, scope=scope,
     )
-    candidates = [dict(r) for r in rows]
     return await rank_candidates(pool, candidates, goal=goal_id, context=context, weights=weights)

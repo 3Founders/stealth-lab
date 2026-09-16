@@ -3969,6 +3969,7 @@ def _resolved_goal_node_to_dict(node) -> dict:
 @server.tool()
 async def explain_goal_route(
     goal_id: str, ctx: Context, current_scope_json: str = "{}", max_depth: int = 6,
+    semantic: bool = False,
 ) -> str:
     """
     Meta-harness/execu.md Sec 15/27: the full, disclosed recursive
@@ -3986,6 +3987,13 @@ async def explain_goal_route(
     `rationale`/`unresolved_reason` -- an `unresolved` leaf is a real,
     honest answer (Sec 4: "A Goal may initially be unsolved"), not an
     error.
+
+    `semantic=True` (Sec 11 follow-up, opt-in -- one real embedding call
+    per Goal node resolved, same posture `search_goals`'s own
+    `semantic=True` already established): additionally considers
+    Implementations whose real meaning matches a Goal's own text, even
+    without an exact `goal_id` link -- the exact link stays the
+    strongest real signal, never replaced.
     """
     from app.execution.goal_resolution import GoalResolutionError, resolve_goal
 
@@ -3995,10 +4003,15 @@ async def explain_goal_route(
     except json.JSONDecodeError as exc:
         return f"REFUSED: current_scope_json is not valid JSON -- {exc}"
 
+    embedder = None
+    if semantic:
+        from app.services.embeddings import Embedder
+        embedder = Embedder()
+
     try:
         tree = await resolve_goal(
             pool, goal_id, context={"current_scope": current_scope}, scope=_caller_access_scope(),
-            max_depth=max_depth,
+            max_depth=max_depth, embedder=embedder,
         )
     except GoalResolutionError as exc:
         return f"REFUSED: {exc}"
@@ -4008,6 +4021,7 @@ async def explain_goal_route(
 @server.tool()
 async def compile_goal(
     goal_id: str, ctx: Context, current_scope_json: str = "{}", max_depth: int = 6,
+    semantic: bool = False,
 ) -> str:
     """
     Meta-harness/execu.md Sec 16/27: resolve a Goal recursively
@@ -4030,6 +4044,10 @@ async def compile_goal(
     Returns `{"tree": <full resolution trace>, "nodes": [<flattened DAG,
     in dependency order>]}` -- both the "why" and the "what to execute",
     never just one.
+
+    `semantic=True` (Sec 11 follow-up, opt-in): same real semantic
+    Goal->Implementation candidate widening `explain_goal_route`'s own
+    `semantic` flag already documents.
     """
     from app.execution.goal_compiler import flatten_goal_tree
     from app.execution.goal_resolution import GoalResolutionError, resolve_goal
@@ -4040,10 +4058,15 @@ async def compile_goal(
     except json.JSONDecodeError as exc:
         return f"REFUSED: current_scope_json is not valid JSON -- {exc}"
 
+    embedder = None
+    if semantic:
+        from app.services.embeddings import Embedder
+        embedder = Embedder()
+
     try:
         tree = await resolve_goal(
             pool, goal_id, context={"current_scope": current_scope}, scope=_caller_access_scope(),
-            max_depth=max_depth,
+            max_depth=max_depth, embedder=embedder,
         )
     except GoalResolutionError as exc:
         return f"REFUSED: {exc}"
@@ -4065,6 +4088,7 @@ async def compile_goal(
 @server.tool()
 async def estimate_goal_cost(
     goal_id: str, ctx: Context, current_scope_json: str = "{}", max_depth: int = 6,
+    semantic: bool = False,
 ) -> str:
     """
     Meta-harness/execu.md Sec 13/14/27: real, empirical cost estimation
@@ -4091,6 +4115,11 @@ async def estimate_goal_cost(
     success_rate, expected_attempts, expected_wall_seconds,
     expected_prompt_tokens, expected_completion_tokens,
     monetary_cost_usd, basis, ...}}`.
+
+    `semantic=True` (Sec 11 follow-up, opt-in): same real semantic
+    Goal->Implementation candidate widening `explain_goal_route`'s own
+    `semantic` flag already documents -- a wider real candidate pool can
+    change which Implementation this estimate is actually costing.
     """
     from app.execution.goal_cost import estimate_goal_cost as _estimate_goal_cost
     from app.execution.goal_resolution import GoalResolutionError, resolve_goal
@@ -4101,10 +4130,15 @@ async def estimate_goal_cost(
     except json.JSONDecodeError as exc:
         return f"REFUSED: current_scope_json is not valid JSON -- {exc}"
 
+    embedder = None
+    if semantic:
+        from app.services.embeddings import Embedder
+        embedder = Embedder()
+
     try:
         tree = await resolve_goal(
             pool, goal_id, context={"current_scope": current_scope}, scope=_caller_access_scope(),
-            max_depth=max_depth,
+            max_depth=max_depth, embedder=embedder,
         )
     except GoalResolutionError as exc:
         return f"REFUSED: {exc}"
@@ -4131,6 +4165,7 @@ async def estimate_goal_cost(
 async def execute_goal(
     goal_id: str, ctx: Context, current_scope_json: str = "{}", max_depth: int = 6,
     workspace_root: Optional[str] = None, execution_id: Optional[str] = None,
+    semantic: bool = False,
 ) -> str:
     """
     REAL, SIDE-EFFECTING EXECUTION -- Prompt 2 Sec 7/9/10: resolves the
@@ -4142,6 +4177,12 @@ async def execute_goal(
     automatically recorded into the real execution-telemetry ledger
     (migration 85) whether it succeeds or fails, so `estimate_goal_cost`
     gets real evidence from every call to this tool.
+
+    `semantic=True` (Sec 11 follow-up, opt-in, one real embedding call
+    per Goal node resolved): widens Implementation candidate generation
+    to real semantic matches, not just an exact `goal_id` FK -- the
+    exact link stays the strongest real signal (never required for
+    discoverability), this only helps when nothing is exactly linked yet.
 
     Real verification (Prompt 2 Sec 9, `goal_verification.py`): a node
     that reports `status='success'` is NOT yet done -- this Goal's own
@@ -4232,10 +4273,15 @@ async def execute_goal(
     except json.JSONDecodeError as exc:
         return f"REFUSED: current_scope_json is not valid JSON -- {exc}"
 
+    embedder = None
+    if semantic:
+        from app.services.embeddings import Embedder
+        embedder = Embedder()
+
     try:
         tree = await resolve_goal(
             pool, goal_id, context={"current_scope": current_scope}, scope=_caller_access_scope(),
-            max_depth=max_depth,
+            max_depth=max_depth, embedder=embedder,
         )
     except GoalResolutionError as exc:
         return f"REFUSED: {exc}"

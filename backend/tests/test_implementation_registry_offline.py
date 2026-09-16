@@ -30,10 +30,13 @@ from app.execution.implementation_registry import (
     disable,
     get,
     get_for_task,
+    implementation_goal_embedding_text,
     list_implementations,
     quarantine,
     register,
     resolve,
+    search_implementations_by_goal,
+    set_implementation_goal_embedding,
     verify,
 )
 from app.services.access import AccessScope
@@ -387,3 +390,187 @@ def test_transitions_return_none_for_missing_row():
     assert _run(activate(pool, IMPL_ID)) is None
     assert _run(deprecate(pool, IMPL_ID)) is None
     assert _run(verify(pool, IMPL_ID)) is None
+
+
+# ---------------------------------------------------------------------
+# implementation_goal_embedding_text / set_implementation_goal_embedding
+# (Sec 11 follow-up: hybrid semantic Goal->Implementation retrieval)
+# ---------------------------------------------------------------------
+
+
+def test_implementation_goal_embedding_text_is_just_the_goal():
+    assert implementation_goal_embedding_text("find references") == "find references"
+
+
+class _FakeEmbedder:
+    def __init__(self, vector=None):
+        self.vector = vector or [0.1, 0.2, 0.3]
+        self.calls: list[tuple[str, str]] = []
+
+    async def embed_one_with_metadata(self, text, input_type="document"):
+        self.calls.append((text, input_type))
+        meta = type("Meta", (), {"model_id": "m1", "provider": "p1", "text_sha256": "h1"})()
+        return self.vector, meta
+
+
+class FakeGoalIdCheckPool:
+    """Answers the SELECT goal_id probe, then the UPDATE ... RETURNING *."""
+
+    def __init__(self, existing_goal_id, updated_row=None):
+        self._existing_goal_id = existing_goal_id
+        self._updated_row = updated_row
+        self.calls: list[tuple[str, tuple]] = []
+
+    async def fetchrow(self, sql, *params):
+        norm = _norm(sql)
+        self.calls.append((norm, params))
+        if norm.startswith("SELECT goal_id FROM implementations"):
+            return {"goal_id": self._existing_goal_id}
+        if norm.startswith("UPDATE implementations SET"):
+            return self._updated_row
+        raise AssertionError(f"unexpected fetchrow: {norm[:120]}")
+
+
+def test_set_implementation_goal_embedding_no_ops_when_goal_id_already_set():
+    pool = FakeGoalIdCheckPool(existing_goal_id="00000000-0000-4000-8000-0000000000g1")
+    embedder = _FakeEmbedder()
+    result = _run(set_implementation_goal_embedding(pool, IMPL_ID, goal="find references", embedder=embedder))
+    assert result is None
+    assert embedder.calls == []  # never even computed -- goal_id already covers this row
+
+
+def test_set_implementation_goal_embedding_raises_for_missing_row():
+    pool = FakeGoalIdCheckPool(existing_goal_id=None)
+
+    async def fetchrow_none(sql, *params):
+        return None
+    pool.fetchrow = fetchrow_none
+    with pytest.raises(ImplementationRegistryError, match="does not exist"):
+        _run(set_implementation_goal_embedding(pool, IMPL_ID, goal="x", embedder=_FakeEmbedder()))
+
+
+def test_set_implementation_goal_embedding_computes_and_stores_for_real_when_no_goal_id():
+    pool = FakeGoalIdCheckPool(
+        existing_goal_id=None,
+        updated_row=_Row({**_default_row(), "goal": "find references"}),
+    )
+    embedder = _FakeEmbedder(vector=[0.5, 0.5])
+    result = _run(set_implementation_goal_embedding(pool, IMPL_ID, goal="find references", embedder=embedder))
+    assert result is not None
+    assert embedder.calls == [("find references", "document")]
+    update_sql, update_params = pool.calls[-1]
+    assert "goal_embedding = $2::vector" in update_sql
+    assert update_params[2] == "m1" and update_params[3] == "p1" and update_params[4] == "h1"
+
+
+# ---------------------------------------------------------------------
+# search_implementations_by_goal (Sec 11 follow-up)
+# ---------------------------------------------------------------------
+
+
+def _max_placeholder(sql: str) -> int:
+    import re
+    matches = re.findall(r"\$(\d+)", sql)
+    return max((int(m) for m in matches), default=0)
+
+
+class FakeSemanticSearchPool:
+    """Dispatches each of search_implementations_by_goal's real distinct
+    query shapes by a real substring match on the normalized SQL -- same
+    idiom this session's own goal_cost/execution_telemetry fake pools
+    already established. ALSO validates that the highest `$N` placeholder
+    referenced in each query never exceeds the real number of params
+    bound to it -- this is the exact class of bug (an off-by-one in a
+    status_clause's own `$N` computation) a canned-rows-only fake would
+    never catch, confirmed live against the real DB this session."""
+
+    def __init__(self):
+        self.exact_rows: list[dict] = []
+        self.lexical_rows: list[dict] = []
+        self.via_goal_rows: list[dict] = []
+        self.via_own_rows: list[dict] = []
+        self.final_rows: list[dict] = []
+        self.calls: list[tuple[str, tuple]] = []
+
+    async def fetch(self, sql, *params):
+        norm = _norm(sql)
+        self.calls.append((norm, params))
+        highest = _max_placeholder(norm)
+        assert highest <= len(params), (
+            f"SQL references ${highest} but only {len(params)} param(s) were bound -- "
+            f"a real asyncpg.IndeterminateDatatypeError waiting to happen: {norm[:200]}"
+        )
+        if "WHERE goal_id = $1::uuid" in norm:
+            return self.exact_rows
+        if "ts_rank" in norm:
+            return self.lexical_rows
+        if "JOIN goals g ON i.goal_id = g.id" in norm:
+            return self.via_goal_rows
+        if "goal_embedding <=> $1::vector" in norm and "goal_id IS NULL" in norm:
+            return self.via_own_rows
+        if norm.startswith("SELECT * FROM implementations WHERE id = ANY"):
+            return self.final_rows
+        raise AssertionError(f"unexpected fetch: {norm[:150]}")
+
+
+def test_search_implementations_by_goal_requires_at_least_one_real_input():
+    pool = FakeSemanticSearchPool()
+    with pytest.raises(ImplementationRegistryError, match="requires"):
+        _run(search_implementations_by_goal(pool, scope=AccessScope.unrestricted()))
+
+
+def test_search_implementations_by_goal_empty_when_nothing_matches_any_leg():
+    pool = FakeSemanticSearchPool()
+    result = _run(search_implementations_by_goal(pool, goal_text="find refs", scope=AccessScope.unrestricted()))
+    assert result == []
+
+
+def test_search_implementations_by_goal_exact_goal_id_wins_over_weaker_lexical_matches():
+    pool = FakeSemanticSearchPool()
+    winner_id = "00000000-0000-4000-8000-0000000000e1"
+    other_id = "00000000-0000-4000-8000-0000000000e2"
+    pool.exact_rows = [{"id": winner_id}]
+    pool.lexical_rows = [{"id": other_id, "rank": 0.9}, {"id": winner_id, "rank": 0.1}]
+    pool.final_rows = [_Row({**_default_row(), "id": winner_id}), _Row({**_default_row(), "id": other_id})]
+    result = _run(search_implementations_by_goal(
+        pool, goal_text="find refs", goal_id="00000000-0000-4000-8000-0000000000g1",
+        scope=AccessScope.unrestricted(),
+    ))
+    assert result[0]["id"] == winner_id
+
+
+def test_search_implementations_by_goal_lexical_only_still_returns_real_candidates():
+    pool = FakeSemanticSearchPool()
+    impl_id = "00000000-0000-4000-8000-0000000000e3"
+    pool.lexical_rows = [{"id": impl_id, "rank": 0.5}]
+    pool.final_rows = [_Row({**_default_row(), "id": impl_id})]
+    result = _run(search_implementations_by_goal(pool, goal_text="find refs", scope=AccessScope.unrestricted()))
+    assert len(result) == 1
+    assert result[0]["id"] == impl_id
+
+
+def test_search_implementations_by_goal_merges_both_semantic_sources_by_real_distance():
+    pool = FakeSemanticSearchPool()
+    close_id = "00000000-0000-4000-8000-0000000000e4"
+    far_id = "00000000-0000-4000-8000-0000000000e5"
+    # via_goal (canonical Goal embedding) is CLOSER than via_own (the
+    # implementation's own fallback embedding) -- the merge must respect
+    # real distance ordering across both sources, not source order.
+    pool.via_goal_rows = [{"id": close_id, "dist": 0.05}]
+    pool.via_own_rows = [{"id": far_id, "dist": 0.9}]
+    pool.final_rows = [_Row({**_default_row(), "id": close_id}), _Row({**_default_row(), "id": far_id})]
+    result = _run(search_implementations_by_goal(
+        pool, query_embedding=[0.1, 0.2, 0.3], scope=AccessScope.unrestricted(),
+    ))
+    assert result[0]["id"] == close_id
+
+
+def test_search_implementations_by_goal_never_fabricates_missing_final_rows():
+    """If the id-fusion stage names an id the final SELECT doesn't
+    return (a real, if rare, race with a row being deleted between
+    queries), that id is silently dropped -- never a fabricated dict."""
+    pool = FakeSemanticSearchPool()
+    pool.lexical_rows = [{"id": "00000000-0000-4000-8000-0000000000e6", "rank": 0.5}]
+    pool.final_rows = []
+    result = _run(search_implementations_by_goal(pool, goal_text="find refs", scope=AccessScope.unrestricted()))
+    assert result == []

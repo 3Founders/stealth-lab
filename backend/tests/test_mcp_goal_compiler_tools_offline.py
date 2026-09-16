@@ -50,7 +50,7 @@ def test_explain_goal_route_rejects_malformed_json():
 
 
 def test_explain_goal_route_translates_resolution_error_to_refused(monkeypatch):
-    async def fake_resolve(pool, goal_id, *, context, scope, max_depth=6):
+    async def fake_resolve(pool, goal_id, *, context, scope, max_depth=6, embedder=None):
         raise GoalResolutionError(f"root goal_id {goal_id!r} does not exist or is not live")
 
     monkeypatch.setattr("app.execution.goal_resolution.resolve_goal", fake_resolve)
@@ -63,7 +63,7 @@ def test_explain_goal_route_translates_resolution_error_to_refused(monkeypatch):
 def test_explain_goal_route_returns_full_tree_and_threads_scope(monkeypatch):
     captured = {}
 
-    async def fake_resolve(pool, goal_id, *, context, scope, max_depth=6):
+    async def fake_resolve(pool, goal_id, *, context, scope, max_depth=6, embedder=None):
         captured["goal_id"] = goal_id
         captured["context"] = context
         captured["max_depth"] = max_depth
@@ -94,7 +94,7 @@ def test_compile_goal_rejects_malformed_json():
 
 
 def test_compile_goal_translates_resolution_error_to_refused(monkeypatch):
-    async def fake_resolve(pool, goal_id, *, context, scope, max_depth=6):
+    async def fake_resolve(pool, goal_id, *, context, scope, max_depth=6, embedder=None):
         raise GoalResolutionError("root goal_id not found")
 
     monkeypatch.setattr("app.execution.goal_resolution.resolve_goal", fake_resolve)
@@ -104,7 +104,7 @@ def test_compile_goal_translates_resolution_error_to_refused(monkeypatch):
 
 
 def test_compile_goal_returns_tree_and_flattened_nodes(monkeypatch):
-    async def fake_resolve(pool, goal_id, *, context, scope, max_depth=6):
+    async def fake_resolve(pool, goal_id, *, context, scope, max_depth=6, embedder=None):
         return _fake_tree()
 
     monkeypatch.setattr("app.execution.goal_resolution.resolve_goal", fake_resolve)

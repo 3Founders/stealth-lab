@@ -45,7 +45,7 @@ def test_estimate_goal_cost_rejects_malformed_json():
 
 
 def test_estimate_goal_cost_translates_resolution_error_to_refused(monkeypatch):
-    async def fake_resolve(pool, goal_id, *, context, scope, max_depth=6):
+    async def fake_resolve(pool, goal_id, *, context, scope, max_depth=6, embedder=None):
         raise GoalResolutionError(f"root goal_id {goal_id!r} does not exist or is not live")
 
     monkeypatch.setattr("app.execution.goal_resolution.resolve_goal", fake_resolve)
@@ -56,7 +56,7 @@ def test_estimate_goal_cost_translates_resolution_error_to_refused(monkeypatch):
 
 
 def test_estimate_goal_cost_returns_tree_and_honest_zero_data_cost(monkeypatch):
-    async def fake_resolve(pool, goal_id, *, context, scope, max_depth=6):
+    async def fake_resolve(pool, goal_id, *, context, scope, max_depth=6, embedder=None):
         return _fake_tree()
 
     async def fake_stats(pool, implementation_id):
@@ -81,7 +81,7 @@ def test_estimate_goal_cost_returns_tree_and_honest_zero_data_cost(monkeypatch):
 
 
 def test_estimate_goal_cost_passes_through_real_empirical_aggregation(monkeypatch):
-    async def fake_resolve(pool, goal_id, *, context, scope, max_depth=6):
+    async def fake_resolve(pool, goal_id, *, context, scope, max_depth=6, embedder=None):
         return _fake_tree()
 
     async def fake_stats(pool, implementation_id):

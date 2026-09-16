@@ -49,7 +49,7 @@ def test_execute_goal_rejects_malformed_json():
 
 
 def test_execute_goal_translates_resolution_error_to_refused(monkeypatch):
-    async def fake_resolve(pool, goal_id, *, context, scope, max_depth=6):
+    async def fake_resolve(pool, goal_id, *, context, scope, max_depth=6, embedder=None):
         raise GoalResolutionError(f"root goal_id {goal_id!r} does not exist or is not live")
 
     monkeypatch.setattr("app.execution.goal_resolution.resolve_goal", fake_resolve)
@@ -60,7 +60,7 @@ def test_execute_goal_translates_resolution_error_to_refused(monkeypatch):
 
 
 def test_execute_goal_returns_success_outcome_and_attempts(monkeypatch):
-    async def fake_resolve(pool, goal_id, *, context, scope, max_depth=6):
+    async def fake_resolve(pool, goal_id, *, context, scope, max_depth=6, embedder=None):
         return _fake_tree()
 
     async def fake_execute_tree(pool, tree, context, *, scope, workspace_root=None, execution_id=None):
@@ -90,7 +90,7 @@ def test_execute_goal_returns_success_outcome_and_attempts(monkeypatch):
 
 
 def test_execute_goal_passes_through_verification_state_and_detail(monkeypatch):
-    async def fake_resolve(pool, goal_id, *, context, scope, max_depth=6):
+    async def fake_resolve(pool, goal_id, *, context, scope, max_depth=6, embedder=None):
         return _fake_tree()
 
     async def fake_execute_tree(pool, tree, context, *, scope, workspace_root=None, execution_id=None):
@@ -120,7 +120,7 @@ def test_execute_goal_passes_through_verification_state_and_detail(monkeypatch):
 
 
 def test_execute_goal_passes_through_procedure_results_and_human_intervention(monkeypatch):
-    async def fake_resolve(pool, goal_id, *, context, scope, max_depth=6):
+    async def fake_resolve(pool, goal_id, *, context, scope, max_depth=6, embedder=None):
         return _fake_tree()
 
     async def fake_execute_tree(pool, tree, context, *, scope, workspace_root=None, execution_id=None):
@@ -150,7 +150,7 @@ def test_execute_goal_passes_through_procedure_results_and_human_intervention(mo
 
 
 def test_execute_goal_passes_through_real_artifacts(monkeypatch):
-    async def fake_resolve(pool, goal_id, *, context, scope, max_depth=6):
+    async def fake_resolve(pool, goal_id, *, context, scope, max_depth=6, embedder=None):
         return _fake_tree()
 
     async def fake_execute_tree(pool, tree, context, *, scope, workspace_root=None, execution_id=None):
@@ -175,7 +175,7 @@ def test_execute_goal_passes_through_real_artifacts(monkeypatch):
 
 
 def test_execute_goal_returns_needs_input_when_unresolved(monkeypatch):
-    async def fake_resolve(pool, goal_id, *, context, scope, max_depth=6):
+    async def fake_resolve(pool, goal_id, *, context, scope, max_depth=6, embedder=None):
         return _fake_tree()
 
     async def fake_execute_tree(pool, tree, context, *, scope, workspace_root=None, execution_id=None):
@@ -193,7 +193,7 @@ def test_execute_goal_returns_needs_input_when_unresolved(monkeypatch):
 def test_execute_goal_threads_workspace_root_and_execution_id_and_surfaces_result(monkeypatch):
     captured = {}
 
-    async def fake_resolve(pool, goal_id, *, context, scope, max_depth=6):
+    async def fake_resolve(pool, goal_id, *, context, scope, max_depth=6, embedder=None):
         return _fake_tree()
 
     async def fake_execute_tree(pool, tree, context, *, scope, workspace_root=None, execution_id=None):
@@ -223,7 +223,7 @@ def test_execute_goal_threads_workspace_root_and_execution_id_and_surfaces_resul
 def test_execute_goal_threads_scope_and_goal_id_into_context(monkeypatch):
     captured = {}
 
-    async def fake_resolve(pool, goal_id, *, context, scope, max_depth=6):
+    async def fake_resolve(pool, goal_id, *, context, scope, max_depth=6, embedder=None):
         return _fake_tree()
 
     async def fake_execute_tree(pool, tree, context, *, scope, workspace_root=None, execution_id=None):
@@ -236,3 +236,37 @@ def test_execute_goal_threads_scope_and_goal_id_into_context(monkeypatch):
     _run(srv.execute_goal(goal_id="G-1", ctx=ctx, current_scope_json='{"repo": ["r"]}'))
     assert captured["context"]["current_scope"] == {"repo": ["r"]}
     assert captured["context"]["goal_id"] == "G-1"
+
+
+def test_execute_goal_semantic_true_constructs_and_threads_a_real_embedder(monkeypatch):
+    captured = {}
+
+    async def fake_resolve(pool, goal_id, *, context, scope, max_depth=6, embedder=None):
+        captured["embedder"] = embedder
+        return _fake_tree()
+
+    async def fake_execute_tree(pool, tree, context, *, scope, workspace_root=None, execution_id=None):
+        return GoalExecutionResult(outcome="success")
+
+    monkeypatch.setattr("app.execution.goal_resolution.resolve_goal", fake_resolve)
+    monkeypatch.setattr("app.execution.goal_execution.execute_goal_tree", fake_execute_tree)
+    ctx = FakeContext()
+    _run(srv.execute_goal(goal_id="G-1", ctx=ctx, semantic=True))
+    assert captured["embedder"] is not None
+
+
+def test_execute_goal_semantic_false_by_default_passes_no_embedder(monkeypatch):
+    captured = {}
+
+    async def fake_resolve(pool, goal_id, *, context, scope, max_depth=6, embedder=None):
+        captured["embedder"] = embedder
+        return _fake_tree()
+
+    async def fake_execute_tree(pool, tree, context, *, scope, workspace_root=None, execution_id=None):
+        return GoalExecutionResult(outcome="success")
+
+    monkeypatch.setattr("app.execution.goal_resolution.resolve_goal", fake_resolve)
+    monkeypatch.setattr("app.execution.goal_execution.execute_goal_tree", fake_execute_tree)
+    ctx = FakeContext()
+    _run(srv.execute_goal(goal_id="G-1", ctx=ctx))
+    assert captured["embedder"] is None

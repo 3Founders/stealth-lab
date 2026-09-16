@@ -50,12 +50,12 @@ def _goal(goal_id: str, name: str, **overrides) -> dict:
     return row
 
 
-async def _no_direct_impl(pool, goal_id, *, context=None, scope=None, weights=None):
+async def _no_direct_impl(pool, goal_id, *, context=None, scope=None, weights=None, goal_text=None, embedder=None):
     return SelectionResult(goal=str(goal_id), candidates_considered=[], ranked=[], chosen=None, rationale="none")
 
 
 def _has_direct_impl(impl_id="I-1", impl_name="the-implementation"):
-    async def fn(pool, goal_id, *, context=None, scope, weights=None):
+    async def fn(pool, goal_id, *, context=None, scope, weights=None, goal_text=None, embedder=None):
         return SelectionResult(
             goal=goal_id, candidates_considered=[{"id": impl_id}], ranked=[],
             chosen={"id": impl_id, "name": impl_name, "kind": "deterministic"},
@@ -109,7 +109,7 @@ def test_direct_implementation_keeps_real_eligible_runner_ups_as_alternates(monk
     runner_up = {"id": "I-2", "name": "runner-up", "kind": "deterministic"}
     ineligible = {"id": "I-3", "name": "ineligible", "kind": "deterministic"}
 
-    async def fake_select(pool, goal_id, *, context=None, scope, weights=None):
+    async def fake_select(pool, goal_id, *, context=None, scope, weights=None, goal_text=None, embedder=None):
         ranked = [
             RankedImplementation(implementation=winner, eligible=True, checks=[], score=0.9),
             RankedImplementation(implementation=runner_up, eligible=True, checks=[], score=0.5),
@@ -145,6 +145,23 @@ def test_direct_implementation_with_no_verification_requirement_is_an_honest_emp
     monkeypatch.setattr(gr, "select_implementation_for_goal_id", _has_direct_impl())
     node = _run(gr.resolve_goal(pool, "G-1", scope=SCOPE))
     assert node.verification_requirement == {}
+
+
+def test_resolve_goal_threads_goal_text_and_embedder_to_selection(monkeypatch):
+    captured = {}
+
+    async def fake_select(pool, goal_id, *, context=None, scope, weights=None, goal_text=None, embedder=None):
+        captured["goal_text"] = goal_text
+        captured["embedder"] = embedder
+        return SelectionResult(goal=goal_id, candidates_considered=[], ranked=[], chosen=None, rationale="none")
+
+    pool = _FakePool({"G-1": _goal("G-1", "find references")})
+    monkeypatch.setattr(gr, "select_implementation_for_goal_id", fake_select)
+    monkeypatch.setattr(gr, "_feasible_procedures_for_goal", lambda *a, **k: _async_result([]))
+    sentinel_embedder = object()
+    _run(gr.resolve_goal(pool, "G-1", scope=SCOPE, embedder=sentinel_embedder))
+    assert captured["goal_text"] == "find references"
+    assert captured["embedder"] is sentinel_embedder
 
 
 def test_procedure_decomposes_into_child_goals(monkeypatch):

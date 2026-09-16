@@ -198,7 +198,7 @@ def _procedure_cost_score(proc: dict) -> Optional[float]:
 
 async def _resolve_procedure_children(
     pool: asyncpg.Pool, goal: dict, proc: dict, *, context: dict, scope: AccessScope,
-    depth: int, max_depth: int, visited: frozenset,
+    depth: int, max_depth: int, visited: frozenset, embedder: Optional[Any] = None,
 ) -> list["ResolvedGoalNode"]:
     """Resolve one Procedure's own steps into child `ResolvedGoalNode`s --
     factored out of `resolve_goal`'s own procedure branch so
@@ -230,7 +230,7 @@ async def _resolve_procedure_children(
             continue
         child = await resolve_goal(
             pool, str(step_goal_row["id"]), context=context, scope=scope,
-            depth=depth + 1, max_depth=max_depth, visited=visited,
+            depth=depth + 1, max_depth=max_depth, visited=visited, embedder=embedder,
         )
         children.append(child)
     return children
@@ -239,6 +239,7 @@ async def _resolve_procedure_children(
 async def resolve_goal_via_procedure(
     pool: asyncpg.Pool, goal_id: str, procedure: dict, *,
     context: Optional[dict] = None, scope: AccessScope, depth: int = 0, max_depth: int = DEFAULT_MAX_DEPTH,
+    embedder: Optional[Any] = None,
 ) -> ResolvedGoalNode:
     """Lazy, real resolution of ONE SPECIFIC alternate Procedure for a
     Goal that already has a resolved tree via its FIRST-choice Procedure
@@ -265,7 +266,7 @@ async def resolve_goal_via_procedure(
 
     children = await _resolve_procedure_children(
         pool, goal, procedure, context=context, scope=scope,
-        depth=depth, max_depth=max_depth, visited=frozenset({goal_id}),
+        depth=depth, max_depth=max_depth, visited=frozenset({goal_id}), embedder=embedder,
     )
     return ResolvedGoalNode(
         goal_id=goal_id, goal_name=goal_name, depth=depth, chosen="procedure",
@@ -288,6 +289,7 @@ async def resolve_goal(
     depth: int = 0,
     max_depth: int = DEFAULT_MAX_DEPTH,
     visited: Optional[frozenset] = None,
+    embedder: Optional[Any] = None,
 ) -> ResolvedGoalNode:
     """The real Sec 8 recursive compiler:
 
@@ -300,6 +302,14 @@ async def resolve_goal(
             if Procedure wins: instantiate, recurse into child Goals
 
     Deterministic end to end -- no LLM call anywhere in this function.
+    `embedder` (opt-in, `None` by default -- every existing caller keeps
+    its exact prior behavior) is the one real EXCEPTION to "no LLM call":
+    not an LLM completion, but a real embedding API call, threaded into
+    `select_implementation_for_goal_id` (Sec 11 follow-up: hybrid
+    semantic Goal->Implementation retrieval) so an Implementation whose
+    real meaning matches this Goal, but was never linked via an exact
+    `goal_id` FK, can still be discovered -- the exact `goal_id` match
+    stays the strongest real signal, never replaced.
 
     `context["current_scope"]`: the caller-supplied dict describing real
     current task context (repo/files/etc), threaded straight into both
@@ -347,7 +357,9 @@ async def resolve_goal(
     # A. direct Implementation path (tried first -- a real, concrete
     # leaf is always preferred over decomposing further when one exists
     # and is feasible; Sec 8's own ordering).
-    selection = await select_implementation_for_goal_id(pool, goal_id, context=context, scope=scope)
+    selection = await select_implementation_for_goal_id(
+        pool, goal_id, context=context, scope=scope, goal_text=goal_name, embedder=embedder,
+    )
     if selection.chosen is not None:
         eligible_ranked = [r.implementation for r in selection.ranked if r.eligible]
         return ResolvedGoalNode(
@@ -371,7 +383,8 @@ async def resolve_goal(
     if feasible:
         proc = feasible[0]  # already ordered verified-first, recency-second by the query itself
         children = await _resolve_procedure_children(
-            pool, goal, proc, context=context, scope=scope, depth=depth, max_depth=max_depth, visited=next_visited,
+            pool, goal, proc, context=context, scope=scope, depth=depth, max_depth=max_depth,
+            visited=next_visited, embedder=embedder,
         )
         return ResolvedGoalNode(
             goal_id=goal_id, goal_name=goal_name, depth=depth, chosen="procedure",

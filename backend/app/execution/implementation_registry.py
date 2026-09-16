@@ -63,6 +63,11 @@ from app.execution.implementations import IMPLEMENTATION_KINDS
 from app.services.access import AccessScope, visibility_predicate
 from app.utils.ids import uuid7
 
+# RRF's smoothing constant -- same value app.services.goals::search_goals
+# and app.services.retrieval use (the original RRF paper's value), kept
+# identical rather than a second unexplained constant.
+_RRF_K = 60
+
 # The DB CHECK's exact vocabulary (implementations_kind_chk,
 # db/33_implementation_registry.sql): IMPLEMENTATION_KINDS' five real
 # kinds plus the three directive-named future-compatible ones a row may
@@ -354,6 +359,189 @@ async def list_implementations_by_goal(
         *params,
     )
     return [_row_to_dict(r) for r in rows]
+
+
+def implementation_goal_embedding_text(goal: str) -> str:
+    """Canonical text an Implementation's OWN `goal_embedding` is built
+    from -- just the real `goal` text, nothing else (never the full
+    Implementation: not name/description/locator/invocation). Trivial
+    today, kept as a named function (mirrors `goals.py::
+    goal_embedding_text`) so a future real elaboration has one call site
+    to change, not every writer independently."""
+    return goal
+
+
+async def set_implementation_goal_embedding(
+    pool: asyncpg.Pool, implementation_id: str, *, goal: str, embedder: Any,
+) -> Optional[dict]:
+    """Computes and stores ONE Implementation's own `goal_embedding`
+    (migration 87) -- the real fallback half of Sec 11's hybrid
+    Goal->Implementation retrieval, for an Implementation with free-text
+    `goal` but NO `goal_id` link. Goal is the first-class embedded
+    object in this codebase (`goals.embedding`, migration 84): an
+    Implementation whose `goal_id` IS set must NEVER get its own
+    embedding here -- it rides the canonical Goal's real embedding via
+    that FK join instead, always current, never duplicated, never able
+    to drift from the Goal it's linked to.
+
+    Returns the updated row, or `None` (a real, honest no-op, not an
+    error) when the row already has a `goal_id` -- the caller asked for
+    something this function deliberately refuses to do, not something
+    that silently failed. Any caller (this module's own `register()`, a
+    future ingestion writer) may call this directly; it is not tied to
+    any one write path.
+    """
+    row = await pool.fetchrow("SELECT goal_id FROM implementations WHERE id = $1::uuid", implementation_id)
+    if row is None:
+        raise ImplementationRegistryError(f"implementation_id {implementation_id!r} does not exist")
+    if row["goal_id"] is not None:
+        return None
+
+    from app.services.embeddings import to_pgvector
+
+    vector, meta = await embedder.embed_one_with_metadata(
+        implementation_goal_embedding_text(goal), input_type="document",
+    )
+    updated = await pool.fetchrow(
+        """
+        UPDATE implementations SET
+            goal_embedding = $2::vector, goal_embedding_model_id = $3,
+            goal_embedding_provider = $4, goal_embedding_text_hash = $5
+        WHERE id = $1::uuid
+        RETURNING *
+        """,
+        implementation_id, to_pgvector(vector), meta.model_id, meta.provider, meta.text_sha256,
+    )
+    return _row_to_dict(updated)
+
+
+async def search_implementations_by_goal(
+    pool: asyncpg.Pool,
+    *,
+    goal_text: Optional[str] = None,
+    goal_id: Optional[str] = None,
+    query_embedding: Optional[list[float]] = None,
+    scope: AccessScope,
+    status: Optional[str] = "active",
+    limit: int = 10,
+) -> list[dict]:
+    """Hybrid semantic Goal->Implementation candidate GENERATION (Sec 11
+    follow-up) -- candidate generation only, never final selection
+    (`implementation_selection.rank_candidates` still owns hard-
+    constraint filtering + evidence/cost ranking over whatever this
+    returns, unchanged). At least one of `goal_text`/`goal_id`/
+    `query_embedding` is required.
+
+    Three real signals, RRF-fused (same `_RRF_K` idiom
+    `app.services.goals::search_goals` already established):
+
+      1. EXACT `goal_id` match -- a real, structural FK fact, given the
+         strongest positive signal (rank 0) when `goal_id` is supplied,
+         never REQUIRED for discoverability (Sec 11's own rule) --
+         merely fused alongside the other legs.
+      2. Lexical: `ts_rank` over `implementations.goal` free text.
+      3. Semantic: TWO real embedding sources compared against the SAME
+         `query_embedding` (both real VECTOR(1024) columns, the same
+         embedding space repo-wide) --
+         (a) `goals.embedding` via the real `goal_id` FK join, for
+             Implementations already linked to a canonical Goal (the
+             first-class embedded object -- never a duplicated
+             embedding for these rows);
+         (b) `implementations.goal_embedding` (migration 87), for
+             Implementations with their own free-text `goal` but no
+             `goal_id` link yet (the real fallback case
+             `set_implementation_goal_embedding` populates).
+         Merged into one real distance-ordered list before rank
+         positions are assigned -- both columns are the same real
+         embedding space, so their cosine distances to one query vector
+         are directly comparable, not two incompatible scales.
+
+    Never fabricates a candidate: an empty result is a real, honest
+    empty list, same as every other search function in this codebase.
+    """
+    if not goal_text and not goal_id and not query_embedding:
+        raise ImplementationRegistryError(
+            "search_implementations_by_goal requires goal_text and/or goal_id and/or query_embedding"
+        )
+    if status is not None and status not in STATUS_VALUES:
+        raise ImplementationRegistryError(f"unknown status {status!r} (valid: {STATUS_VALUES})")
+
+    # Every leg below binds exactly ONE positional value before the
+    # scope/status predicates ($1 = goal_id, goal_text, or the query
+    # vector, depending on the leg) -- so the visibility predicate always
+    # starts at $2 here, never $3. Fixed once, reused by every leg that
+    # queries the bare (unaliased) `implementations` table.
+    vis_sql, vis_params = visibility_predicate(scope, param_index=2)
+    status_params: list[Any] = [status] if status is not None else []
+    status_clause = f"AND status = ${2 + len(vis_params)}" if status is not None else ""
+
+    legs: dict[str, list[tuple[str, int]]] = {}
+
+    if goal_id:
+        rows = await pool.fetch(
+            f"SELECT id FROM implementations WHERE goal_id = $1::uuid AND {vis_sql} {status_clause}",
+            goal_id, *vis_params, *status_params,
+        )
+        for r in rows:
+            legs.setdefault(str(r["id"]), []).append(("exact_goal_id", 0))
+
+    if goal_text:
+        rows = await pool.fetch(
+            f"""
+            SELECT id, ts_rank(to_tsvector('english', goal), plainto_tsquery('english', $1)) AS rank
+            FROM implementations
+            WHERE goal IS NOT NULL AND {vis_sql} {status_clause}
+              AND to_tsvector('english', goal) @@ plainto_tsquery('english', $1)
+            ORDER BY rank DESC LIMIT {max(limit, 1) * 3}
+            """,
+            goal_text, *vis_params, *status_params,
+        )
+        for i, r in enumerate(rows):
+            legs.setdefault(str(r["id"]), []).append(("lexical", i))
+
+    if query_embedding:
+        from app.services.embeddings import to_pgvector
+        qv = to_pgvector(query_embedding)
+
+        vis_sql_i, vis_params_i = visibility_predicate(scope, alias="i", param_index=2)
+        status_clause_i = f"AND i.status = ${2 + len(vis_params_i)}" if status is not None else ""
+        via_goal = await pool.fetch(
+            f"""
+            SELECT i.id, (g.embedding <=> $1::vector) AS dist
+            FROM implementations i JOIN goals g ON i.goal_id = g.id
+            WHERE g.embedding IS NOT NULL AND {vis_sql_i} {status_clause_i}
+            ORDER BY dist ASC LIMIT {max(limit, 1) * 3}
+            """,
+            qv, *vis_params_i, *status_params,
+        )
+        via_own = await pool.fetch(
+            f"""
+            SELECT id, (goal_embedding <=> $1::vector) AS dist
+            FROM implementations
+            WHERE goal_id IS NULL AND goal_embedding IS NOT NULL AND {vis_sql} {status_clause}
+            ORDER BY dist ASC LIMIT {max(limit, 1) * 3}
+            """,
+            qv, *vis_params, *status_params,
+        )
+        combined = sorted(
+            [(str(r["id"]), r["dist"]) for r in via_goal] + [(str(r["id"]), r["dist"]) for r in via_own],
+            key=lambda t: t[1],
+        )[:max(limit, 1) * 3]
+        for i, (impl_id, _dist) in enumerate(combined):
+            legs.setdefault(impl_id, []).append(("semantic", i))
+
+    if not legs:
+        return []
+
+    fused = sorted(
+        legs.items(),
+        key=lambda kv: sum(1.0 / (_RRF_K + rank + 1) for _leg, rank in kv[1]),
+        reverse=True,
+    )
+    top_ids = [iid for iid, _ranks in fused[:limit]]
+    rows = await pool.fetch("SELECT * FROM implementations WHERE id = ANY($1::uuid[])", top_ids)
+    by_id = {str(r["id"]): _row_to_dict(r) for r in rows}
+    return [by_id[iid] for iid in top_ids if iid in by_id]
 
 
 async def resolve(
