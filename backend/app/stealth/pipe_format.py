@@ -275,7 +275,8 @@ _GOAL_RUN_HEADER = (
     "# goal_run.md -- GENERATED, not canonical. Do not hand-edit.\n"
     "# GOAL_RUN|<execution_id>|<outcome>\n"
     "# GOAL_NODE|<goal_id>|<kind>|<status>|impl=<implementation_id_or_->|proc=<procedure_id_or_->|"
-    "verify=<verification_state_or_->|human_intervention=<bool>|resumed=<bool>\n\n"
+    "verify=<verification_state_or_->|human_intervention=<bool>|resumed=<bool>\n"
+    "# ARTIFACT|<goal_id>|<filename>|sha256=<sha256>|size=<size_bytes>\n\n"
 )
 
 
@@ -289,6 +290,11 @@ class GoalRunLine:
     verification_state: Optional[str] = None
     human_intervention_needed: bool = False
     resumed_from_journal: bool = False
+    # Real output files this node's winning attempt produced (Sec 5's
+    # `.stealth/artifacts/` -- `app.stealth.artifacts.write_execution_
+    # artifacts`'s own real manifest), each `{filename, sha256, size_bytes}`
+    # -- empty for the common case of no file output at all.
+    artifacts: list[dict] = field(default_factory=list)
 
 
 def render_goal_run_md(execution_id: str, outcome: str, nodes: list[GoalRunLine]) -> str:
@@ -300,15 +306,22 @@ def render_goal_run_md(execution_id: str, outcome: str, nodes: list[GoalRunLine]
     header = _GOAL_RUN_HEADER + _row("GOAL_RUN", execution_id, outcome) + "\n\n"
     if not nodes:
         return header + "(no nodes)\n"
-    lines = [
-        _row("GOAL_NODE", n.goal_id, n.kind, n.status)
-        + _SEP + _kv_field("impl", n.implementation_id or "-")
-        + _SEP + _kv_field("proc", n.procedure_id or "-")
-        + _SEP + _kv_field("verify", n.verification_state or "-")
-        + _SEP + _kv_field("human_intervention", n.human_intervention_needed)
-        + _SEP + _kv_field("resumed", n.resumed_from_journal)
-        for n in nodes
-    ]
+    lines: list[str] = []
+    for n in nodes:
+        lines.append(
+            _row("GOAL_NODE", n.goal_id, n.kind, n.status)
+            + _SEP + _kv_field("impl", n.implementation_id or "-")
+            + _SEP + _kv_field("proc", n.procedure_id or "-")
+            + _SEP + _kv_field("verify", n.verification_state or "-")
+            + _SEP + _kv_field("human_intervention", n.human_intervention_needed)
+            + _SEP + _kv_field("resumed", n.resumed_from_journal)
+        )
+        for a in n.artifacts:
+            lines.append(
+                _row("ARTIFACT", n.goal_id, a.get("filename", "-"))
+                + _SEP + _kv_field("sha256", a.get("sha256", "-"))
+                + _SEP + _kv_field("size", a.get("size_bytes", "-"))
+            )
     return header + "\n".join(lines) + "\n"
 
 

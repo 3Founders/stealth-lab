@@ -4200,6 +4200,15 @@ async def execute_goal(
     comment on why), built straight from this call's own real result,
     never re-derived.
 
+    Real output files an Implementation actually produced (`NodeResult.
+    data["output_files"]`) are written to `.stealth/artifacts/<goal_id>/
+    <execution_id>/<filename>` (Sec 5, completing the `.stealth/` ABI
+    list) and listed both in `node_results[goal_id]["artifacts"]` and as
+    `ARTIFACT|...` lines in `goal_run.md` -- never a hash reference only
+    (that is the SEPARATE, Postgres-anchored `record_artifact()` a
+    Procedure-run uses); this stores the real content locally, addressable
+    without a DB round-trip.
+
     An `unresolved` leaf anywhere in the tree is never executed and never
     silently treated as a pass -- the overall `outcome` becomes
     `"needs_input"` (Sec 21's vocabulary), naming exactly which Goal(s)
@@ -4244,6 +4253,7 @@ async def execute_goal(
                 "goal_name": r.goal_name, "status": r.status,
                 "used_implementation_id": r.used_implementation_id,
                 "resumed_from_journal": r.resumed_from_journal,
+                "artifacts": r.artifacts,
                 "attempts": [
                     {
                         "implementation_id": a.implementation_id, "implementation_name": a.implementation_name,

@@ -457,6 +457,48 @@ def test_render_goal_run_md_reflects_procedure_fallback_and_human_intervention(m
     assert "human_intervention=True" in md
 
 
+def test_output_files_are_written_as_real_artifacts_during_durable_execution(monkeypatch, tmp_path):
+    async def fake_execute(pool, plan_node, context, *, scope):
+        return NodeResult(status="success", data={"output_files": {"out.txt": b"real content"}})
+
+    monkeypatch.setattr(ge, "execute_implementation", fake_execute)
+    ws = str(tmp_path)
+    result = _run(ge.execute_goal_tree(None, _impl_node("G-1", "do it", "I-1"), {}, scope=SCOPE, workspace_root=ws))
+
+    node_result = result.node_results["G-1"]
+    assert len(node_result.artifacts) == 1
+    entry = node_result.artifacts[0]
+    assert entry["filename"] == "out.txt"
+    with open(entry["path"], "rb") as f:
+        assert f.read() == b"real content"
+
+
+def test_no_output_files_means_no_artifacts_written(monkeypatch, tmp_path):
+    async def fake_execute(pool, plan_node, context, *, scope):
+        return NodeResult(status="success")
+
+    monkeypatch.setattr(ge, "execute_implementation", fake_execute)
+    ws = str(tmp_path)
+    result = _run(ge.execute_goal_tree(None, _impl_node("G-1", "do it", "I-1"), {}, scope=SCOPE, workspace_root=ws))
+    assert result.node_results["G-1"].artifacts == []
+
+
+def test_resumed_node_carries_forward_prior_artifacts_manifest(monkeypatch, tmp_path):
+    async def fake_execute(pool, plan_node, context, *, scope):
+        return NodeResult(status="success", data={"output_files": {"out.txt": b"real content"}})
+
+    monkeypatch.setattr(ge, "execute_implementation", fake_execute)
+    ws = str(tmp_path)
+    tree = _impl_node("G-1", "do it", "I-1")
+    first = _run(ge.execute_goal_tree(None, tree, {}, scope=SCOPE, workspace_root=ws))
+
+    second = _run(ge.execute_goal_tree(
+        None, tree, {}, scope=SCOPE, workspace_root=ws, execution_id=first.execution_id,
+    ))
+    assert second.node_results["G-1"].resumed_from_journal is True
+    assert second.node_results["G-1"].artifacts[0]["filename"] == "out.txt"
+
+
 def test_a_different_execution_id_never_resumes_an_unrelated_attempt(monkeypatch, tmp_path):
     calls = []
 

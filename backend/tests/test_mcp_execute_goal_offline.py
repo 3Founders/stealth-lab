@@ -149,6 +149,31 @@ def test_execute_goal_passes_through_procedure_results_and_human_intervention(mo
     assert len(proc_result["attempts"]) == 2
 
 
+def test_execute_goal_passes_through_real_artifacts(monkeypatch):
+    async def fake_resolve(pool, goal_id, *, context, scope, max_depth=6):
+        return _fake_tree()
+
+    async def fake_execute_tree(pool, tree, context, *, scope, workspace_root=None, execution_id=None):
+        return GoalExecutionResult(
+            outcome="success",
+            node_results={
+                "G-1": GoalNodeExecutionResult(
+                    goal_id="G-1", goal_name="do the thing", status="success",
+                    used_implementation_id="I-1",
+                    artifacts=[{"filename": "out.txt", "sha256": "abc123", "size_bytes": 11}],
+                ),
+            },
+        )
+
+    monkeypatch.setattr("app.execution.goal_resolution.resolve_goal", fake_resolve)
+    monkeypatch.setattr("app.execution.goal_execution.execute_goal_tree", fake_execute_tree)
+    ctx = FakeContext()
+    raw = _run(srv.execute_goal(goal_id="G-1", ctx=ctx))
+    result = json.loads(raw)
+    artifacts = result["node_results"]["G-1"]["artifacts"]
+    assert artifacts == [{"filename": "out.txt", "sha256": "abc123", "size_bytes": 11}]
+
+
 def test_execute_goal_returns_needs_input_when_unresolved(monkeypatch):
     async def fake_resolve(pool, goal_id, *, context, scope, max_depth=6):
         return _fake_tree()

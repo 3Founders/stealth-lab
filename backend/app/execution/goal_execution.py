@@ -137,6 +137,12 @@ class GoalNodeExecutionResult:
     # empty in that case -- the real attempts happened in a PRIOR
     # process, this run never made them.
     resumed_from_journal: bool = False
+    # Real output files this node's winning attempt produced, written to
+    # `.stealth/artifacts/` (Sec 5) -- `[{filename, path, sha256,
+    # size_bytes}, ...]`, empty for the common case of an Implementation
+    # that produces no file output at all. Only populated when durable
+    # execution (`workspace_root`) is in effect.
+    artifacts: list[dict] = field(default_factory=list)
 
 
 @dataclass
@@ -392,15 +398,22 @@ async def _walk_node(
                 result = GoalNodeExecutionResult(
                     goal_id=node.goal_id, goal_name=node.goal_name, status="success",
                     used_implementation_id=prior.get("used_implementation_id"), resumed_from_journal=True,
+                    artifacts=prior.get("artifacts") or [],
                 )
                 leaf_results[node.goal_id] = result
                 return "success"
         result = await execute_goal_node(pool, node, context, scope=scope)
+        if workspace_root and execution_id and result.result and result.result.data:
+            output_files = result.result.data.get("output_files")
+            if output_files:
+                from app.stealth.artifacts import write_execution_artifacts
+                result.artifacts = write_execution_artifacts(workspace_root, node.goal_id, execution_id, output_files)
         leaf_results[node.goal_id] = result
         if workspace_root and execution_id:
             _journal_record_result(
                 workspace_root, execution_id, node.goal_id, kind="implementation",
                 status=result.status, used_implementation_id=result.used_implementation_id,
+                artifacts=result.artifacts,
             )
         return result.status
     if node.chosen == "unresolved":
@@ -486,7 +499,7 @@ def render_goal_run_md(execution: GoalExecutionResult) -> str:
             implementation_id=r.used_implementation_id, verification_state=(
                 r.attempts[-1].verification_state if r.attempts else None
             ),
-            resumed_from_journal=r.resumed_from_journal,
+            resumed_from_journal=r.resumed_from_journal, artifacts=r.artifacts,
         )
         for gid, r in execution.node_results.items()
     ] + [

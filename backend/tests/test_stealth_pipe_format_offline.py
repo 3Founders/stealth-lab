@@ -264,6 +264,21 @@ def test_goal_run_md_marks_resumed_nodes_honestly():
     assert "resumed=True" in md
 
 
+def test_goal_run_md_renders_real_artifact_lines():
+    nodes = [GoalRunLine(
+        goal_id="G-1", kind="implementation", status="success",
+        artifacts=[{"filename": "out.txt", "sha256": "abc123", "size_bytes": 11}],
+    )]
+    md = render_goal_run_md("E-1", "success", nodes)
+    assert "ARTIFACT|G-1|out.txt|sha256=abc123|size=11" in md.splitlines()
+
+
+def test_goal_run_md_no_artifacts_emits_no_artifact_lines():
+    nodes = [GoalRunLine(goal_id="G-1", kind="implementation", status="success")]
+    md = render_goal_run_md("E-1", "success", nodes)
+    assert not any(ln.startswith("ARTIFACT|") for ln in md.splitlines())
+
+
 # ===========================================================================
 # index.md
 # ===========================================================================
