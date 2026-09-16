@@ -48,6 +48,16 @@ Sec 8):
     but nothing here flags "these two rows look related, review them" or
     performs a merge -- not implemented.
 
+find_or_create_goal also gates NEW rows on ingestion.md Sec 20's quality
+bar (`describe_goal_quality_issue`/`GoalQualityRejected`) -- a candidate
+matching a disclosed low-quality pattern (raw command echo, bare tool
+name, hyper-specific file path/repo mention, vague filler-word label)
+raises rather than gets written, right before the INSERT only (never
+retroactively blocking a dedup hit against an existing row, good or
+bad -- see that check's own comment). Heuristic, not full semantic
+judgment -- a real, disclosed scope limit, not every bad Goal Sec 20
+describes is mechanically detectable.
+
 Also provides the read/product surface this Goal object exists FOR
 (ingestion.md Sec 18-19): search_goals (lexical + optional semantic,
 RRF-fused), get_goal (with its live Procedures/Implementations), and
@@ -70,6 +80,76 @@ from app.utils.ids import uuid7
 
 _NON_ALNUM_RE = re.compile(r"[^a-z0-9 ]")
 _WHITESPACE_RE = re.compile(r"\s+")
+
+
+class GoalQualityRejected(ValueError):
+    """Raised by find_or_create_goal (ingestion.md Sec 20) when
+    `canonical_name` matches one of the disclosed low-quality patterns
+    below -- a real rejection, not a warning, so a caller that doesn't
+    explicitly catch it fails loudly rather than writing corpus-polluting
+    junk (same "refuse rather than fabricate" posture this module's own
+    tier 5 adjudication and the skill_extraction package's abstain
+    contract already use elsewhere)."""
+
+
+# ingestion.md Sec 20's own BAD examples ("use rg command", "fix stuff",
+# "run this exact command in repo X") are the calibration set for this
+# heuristic -- deliberately narrow and mechanical, NOT a claim of full
+# semantic quality judgment (that would need its own LLM call per new
+# Goal; a real, disclosed scope limit, not attempted here). Only catches
+# the clear/mechanical failure modes Sec 20 names; a subtly-bad-but-not-
+# mechanically-detectable Goal (e.g. an oddly-specific but grammatically
+# fine phrase) still gets through -- left to the explicit merge/review
+# workflow ingestion.md Sec 8 already describes as schema-supported-but-
+# unimplemented, not solved here.
+_VAGUE_FILLER_WORDS = frozenset({
+    "stuff", "things", "thing", "issue", "issues", "problem", "problems",
+    "bug", "bugs", "it", "this", "that", "fix", "handle", "do", "make",
+    "misc", "stuffs", "whatever", "something", "somehow",
+})
+_COMMAND_TOOL_NAMES = frozenset({
+    "rg", "grep", "git", "npm", "npx", "pnpm", "yarn", "pytest", "python",
+    "python3", "node", "curl", "wget", "make", "cargo", "go", "docker",
+    "kubectl", "ls", "cat", "sed", "awk", "bash", "sh", "pip",
+})
+# "use rg command" / "run the deploy script" -- a bare tool/command name
+# sandwiched between an imperative verb and a generic noun for "a command",
+# not a description of the outcome it produces.
+_COMMAND_ECHO_RE = re.compile(
+    r"^(use|run|call|execute|invoke) \w+ (command|script|tool|cli)$"
+)
+# "run this exact command in repo X" -- names the ACT of running something
+# specific, not a reusable outcome.
+_RUN_THIS_RE = re.compile(r"\brun (this|the) (exact |specific )?(command|script)\b")
+# "src/generated/api.yaml" -- a literal file path is a hyper-specific local
+# binding (ingestion.md Sec 9/20), not a generalizable outcome.
+_FILE_PATH_RE = re.compile(r"[\w.-]+/[\w.-]+\.\w{1,6}\b")
+_REPO_MENTION_RE = re.compile(r"\bin repo\b|\bin this repo(sitory)?\b|\brepo [a-z0-9_-]+\b")
+
+
+def describe_goal_quality_issue(canonical_name: str) -> Optional[str]:
+    """None if `canonical_name` passes ingestion.md Sec 20's quality bar;
+    otherwise a short human-readable reason it was rejected. Pure,
+    read-only -- callers decide what to do with a rejection (raise,
+    skip-and-log, etc.), this function only classifies."""
+    normalized = normalize_goal_name(canonical_name)
+    tokens = [t for t in normalized.split(" ") if t]
+    if not tokens:
+        return None  # the separate empty-name check in find_or_create_goal owns this case
+    lowered = canonical_name.strip().lower()
+    if "`" in canonical_name:
+        return "contains literal code/command syntax (backtick) -- not a described outcome"
+    if _COMMAND_ECHO_RE.match(normalized) or _RUN_THIS_RE.search(lowered):
+        return "reads as a raw command/tool invocation, not a reusable outcome"
+    if _FILE_PATH_RE.search(canonical_name):
+        return "names a hyper-specific literal file path, not a generalizable outcome"
+    if _REPO_MENTION_RE.search(lowered):
+        return "hyper-specific accidental local binding (names a specific repo)"
+    if len(tokens) == 1 and tokens[0] in _COMMAND_TOOL_NAMES:
+        return "is a bare tool/command name, not a described outcome"
+    if len(tokens) <= 3 and all(t in _VAGUE_FILLER_WORDS for t in tokens):
+        return "meaningless/vague label with no concrete outcome"
+    return None
 
 # Tier 3/4 auto-merge threshold (pgvector cosine DISTANCE -- smaller is
 # more similar; 0.12 ~= cosine similarity >= 0.88). Founder directive
@@ -426,6 +506,19 @@ async def find_or_create_goal(
                     "canonical_name": semantic_match["canonical_name"],
                     "created": False,
                 }
+
+    # ingestion.md Sec 20's quality gate runs ONLY here -- right before a
+    # genuinely NEW row would be created -- never earlier. Every dedup
+    # tier above (1/2/2.5/3/4/5) still matches an EXISTING row by this
+    # exact text regardless of its own quality, bad-or-good: this gate
+    # stops NEW corpus pollution, it does not retroactively re-judge
+    # legacy rows (CLAUDE.md hard rule 1: "no backfills... legacy rows
+    # stay quarantined") or break a caller's dedup hit against one.
+    quality_issue = describe_goal_quality_issue(canonical_name)
+    if quality_issue is not None:
+        raise GoalQualityRejected(
+            f"canonical_name {canonical_name!r} rejected: {quality_issue}"
+        )
 
     goal_id = uuid7()
     try:

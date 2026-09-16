@@ -364,18 +364,25 @@ async def enrich_pending_skill_package_implementations(
                 # implementation row itself carries no scope (common for
                 # older rows, migration 33's scope_type is nullable) --
                 # "prefer generalized global Goals" (ingestion.md Sec 9).
-                from app.services.goals import find_or_create_goal
+                from app.services.goals import GoalQualityRejected, find_or_create_goal
 
-                resolved_goal = await find_or_create_goal(
-                    pool,
-                    canonical_name=fields["goal"],
-                    scope_type=row["scope_type"] or "global",
-                    scope_entity_id=row["scope_entity_id"],
-                    provenance="prior_library",
-                    created_from="skill_package_enrichment",
-                    embedder=goal_embedder, client=client, adjudication_model=model,
-                )
-                goal_id = resolved_goal["id"]
+                # A low-quality fields["goal"] (ingestion.md Sec 20) only
+                # skips the real Goal linkage -- the free-text goal/
+                # expected_outcome/classification UPDATE below still
+                # happens, same as before this gate existed.
+                try:
+                    resolved_goal = await find_or_create_goal(
+                        pool,
+                        canonical_name=fields["goal"],
+                        scope_type=row["scope_type"] or "global",
+                        scope_entity_id=row["scope_entity_id"],
+                        provenance="prior_library",
+                        created_from="skill_package_enrichment",
+                        embedder=goal_embedder, client=client, adjudication_model=model,
+                    )
+                    goal_id = resolved_goal["id"]
+                except GoalQualityRejected:
+                    goal_id = None
             await pool.execute(
                 "UPDATE implementations SET goal=$2, goal_spec=$3::jsonb, "
                 "expected_outcome=$4, verification_contract=$5::jsonb, classification=$6, "

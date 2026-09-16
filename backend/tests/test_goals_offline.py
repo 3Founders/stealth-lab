@@ -13,8 +13,10 @@ import pytest
 
 from app.services.goals import (
     AUTO_DEDUP_MAX_COSINE_DISTANCE,
+    GoalQualityRejected,
     compute_simhash,
     create_goal_from_user,
+    describe_goal_quality_issue,
     find_or_create_goal,
     get_goal,
     hamming_distance,
@@ -209,6 +211,57 @@ def test_find_or_create_goal_rejects_empty_canonical_name():
             pool, canonical_name="   !!!   ", scope_type="global",
             provenance="system_pending_review",
         ))
+
+
+# --- Sec 20: goal quality gate -----------------------------------------
+
+@pytest.mark.parametrize("bad_name", [
+    "use rg command",
+    "fix stuff",
+    "run this exact command in repo X",
+    "rg",
+    "src/generated/api.yaml",
+    "in repo stealthlab",
+])
+def test_describe_goal_quality_issue_flags_ingestion_md_bad_examples(bad_name):
+    assert describe_goal_quality_issue(bad_name) is not None
+
+
+@pytest.mark.parametrize("good_name", [
+    "find references",
+    "verify generated consistency",
+    "safely deploy service",
+    "inspect semantic code delta",
+])
+def test_describe_goal_quality_issue_passes_ingestion_md_good_examples(good_name):
+    assert describe_goal_quality_issue(good_name) is None
+
+
+def test_find_or_create_goal_rejects_a_low_quality_new_goal():
+    pool = _FakeGoalsPool()
+    with pytest.raises(GoalQualityRejected):
+        _run(find_or_create_goal(
+            pool, canonical_name="use rg command", scope_type="global",
+            provenance="system_pending_review",
+        ))
+    assert pool.rows == []
+
+
+def test_find_or_create_goal_quality_gate_never_blocks_a_dedup_hit_on_existing_row():
+    """The gate only stops NEW rows -- an existing (even low-quality)
+    row must still be reachable via tier 1 exact match, never re-judged
+    retroactively (CLAUDE.md: no backfills, legacy rows stay quarantined)."""
+    pool = _FakeGoalsPool()
+    pool.rows.append({
+        "id": "legacy-bad-goal", "canonical_name": "use rg command",
+        "normalized_name": normalize_goal_name("use rg command"),
+        "aliases": [], "status": "active", "scope_type": "global", "scope_entity_id": None,
+    })
+    result = _run(find_or_create_goal(
+        pool, canonical_name="use rg command", scope_type="global",
+        provenance="system_pending_review",
+    ))
+    assert result == {"id": "legacy-bad-goal", "canonical_name": "use rg command", "created": False}
 
 
 def test_find_or_create_goal_local_scope_requires_entity_id():

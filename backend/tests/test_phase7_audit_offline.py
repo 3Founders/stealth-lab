@@ -64,7 +64,7 @@ def test_structured_create_emits_private_object_created():
 def test_from_text_create_emits_private_object_created():
     pool = _Pool()
     body = proc_api.ProcedureFromTextBody(
-        text="---\nname: p\n---\nUse when.\n\n## Steps\n1. do it\n", embed=False
+        text="---\nname: p\n---\nUse when.\n\n## Steps\n1. inspect the configuration file\n", embed=False
     )
     asyncio.run(proc_api.create_procedure_from_text(body, pool=pool, principal=PRINCIPAL))
     assert "private_object_created" in [a["action"] for a in pool.audits]

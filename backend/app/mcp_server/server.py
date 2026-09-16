@@ -3831,7 +3831,7 @@ async def create_goal(
     Returns {"outcome": "near_matches", "candidates": [...]}
          or {"outcome": "created" | "matched", "goal": {...}}.
     """
-    from app.services.goals import create_goal_from_user
+    from app.services.goals import GoalQualityRejected, create_goal_from_user
     from app.services.v0_gate import V0Violation
 
     embedder = None
@@ -3847,7 +3847,7 @@ async def create_goal(
             owner_id=_resolve_caller_identity(fallback="mcp_create_goal"),
             embedder=embedder, allow_create_anyway=allow_create_anyway,
         )
-    except V0Violation as exc:
+    except (V0Violation, GoalQualityRejected) as exc:
         return f"REFUSED: {exc}"
     return json.dumps(result, default=str)
 

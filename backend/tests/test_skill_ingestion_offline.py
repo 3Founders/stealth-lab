@@ -665,6 +665,51 @@ async def test_compile_with_grounded_response_captures_a_real_goal():
 
 
 @pytest.mark.asyncio
+async def test_compile_step_resolves_its_own_goal_id():
+    """ingestion.md Sec 3/11: 'Step S1 -> Goal G2' -- each step's own
+    free-text goal (its `action`) additionally resolves to a real Goal
+    row via find_or_create_goal, stored as a `goal_id` key alongside the
+    pre-existing free-text `goal` key -- additive, never a schema change
+    (migration 83's own comment: 'a writer-populated goal_id key inside
+    that JSONB')."""
+    client = FakeLLMClient(_grounded_response())
+    pool = CompilerFakePool()
+    outcome = await compile_skill_artifact(pool, _skill_artifact(), embedder=FakeEmbedder(), client=client)
+    assert outcome.status == "captured"
+    steps = pool.captured["procedures"][0][2]
+    assert len(steps) == 1
+    assert steps[0]["goal"] == "locate the failing DataFrame.append call"
+    assert "goal_id" in steps[0]
+    assert steps[0]["goal_id"] is not None
+    # a real Goal row was written for the step, distinct from the
+    # procedure's own achieves_goal write
+    assert any(
+        g[1] == "locate the failing DataFrame.append call" for g in pool.captured["goals"]
+    )
+
+
+@pytest.mark.asyncio
+async def test_compile_step_with_low_quality_goal_skips_goal_id_not_the_step():
+    """A step whose action reads as a vague/meaningless label (ingestion.md
+    Sec 20) just skips ITS OWN goal_id -- the step itself, and the whole
+    procedure, still capture normally."""
+    response = json.dumps({
+        "procedures": [{
+            "name": "p1", "goal": "find and fix a removed pandas DataFrame method call",
+            "steps": [{"order": 0, "action": "fix stuff", "source_quote": "DataFrame.append"}],
+        }],
+        "goals": [], "implementations": [],
+    })
+    client = FakeLLMClient(response)
+    pool = CompilerFakePool()
+    outcome = await compile_skill_artifact(pool, _skill_artifact(), embedder=FakeEmbedder(), client=client)
+    assert outcome.status == "captured"
+    steps = pool.captured["procedures"][0][2]
+    assert steps[0]["goal"] == "fix stuff"
+    assert "goal_id" not in steps[0]
+
+
+@pytest.mark.asyncio
 async def test_compile_extraction_abstain_is_rejected_not_fabricated():
     client = FakeLLMClient('{"abstain": true}')
     pool = CompilerFakePool()
@@ -731,11 +776,14 @@ async def test_compile_standalone_goals_are_persisted_via_find_or_create_goal():
     pool = CompilerFakePool()
     outcome = await compile_skill_artifact(pool, _skill_artifact(), embedder=FakeEmbedder(), client=client)
     assert outcome.status == "captured"
-    # one goal write for the procedure's own `goal`, one for the standalone Goal
-    assert len(pool.captured["goals"]) == 2
+    # one goal write for the procedure's own `goal`, one for its single
+    # step's own goal_id linkage (ingestion.md Sec 3/11), one for the
+    # standalone Goal
+    assert len(pool.captured["goals"]) == 3
     assert any(
         g[1] == "keep pandas usage compatible with current releases" for g in pool.captured["goals"]
     )
+    assert any(g[1] == "locate the failing call" for g in pool.captured["goals"])
 
 
 @pytest.mark.asyncio

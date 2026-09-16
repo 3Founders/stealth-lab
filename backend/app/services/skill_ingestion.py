@@ -1894,17 +1894,25 @@ async def _persist_package_relations(
         implementation_ids.append(implementation_id)
 
         if impl.goal:
-            from app.services.goals import find_or_create_goal
+            from app.services.goals import GoalQualityRejected, find_or_create_goal
 
-            resolved_goal = await find_or_create_goal(
-                pool, canonical_name=impl.goal, scope_type="global",
-                provenance="prior_library", created_from="skill_extraction",
-                embedder=embedder, client=client,
-            )
-            await pool.execute(
-                "UPDATE implementations SET goal_id=$2::uuid WHERE id=$1::uuid",
-                implementation_id, resolved_goal["id"],
-            )
+            # A low-quality impl.goal (ingestion.md Sec 20) only skips
+            # this ONE goal_id linkage -- the implementation row itself
+            # (already inserted above) is real and useful without it, so
+            # it is never rolled back over a quality-gate rejection.
+            try:
+                resolved_goal = await find_or_create_goal(
+                    pool, canonical_name=impl.goal, scope_type="global",
+                    provenance="prior_library", created_from="skill_extraction",
+                    embedder=embedder, client=client,
+                )
+            except GoalQualityRejected:
+                resolved_goal = None
+            if resolved_goal is not None:
+                await pool.execute(
+                    "UPDATE implementations SET goal_id=$2::uuid WHERE id=$1::uuid",
+                    implementation_id, resolved_goal["id"],
+                )
 
         await pool.execute(
             "INSERT INTO procedure_implementations (id, procedure_id, implementation_id, "
@@ -2022,7 +2030,7 @@ async def compile_skill_artifact(
     returns `status="rejected"` instead.
     """
     from app.services import screening
-    from app.services.goals import find_or_create_goal
+    from app.services.goals import GoalQualityRejected, find_or_create_goal
     from app.services.skill_extraction import grounded as _grounded_extractor
     from app.services.skill_extraction import ungrounded as _ungrounded_extractor
     from app.services.skill_extraction.schema import SkillExtractionTransientFailure
@@ -2210,7 +2218,38 @@ async def compile_skill_artifact(
 
     for i, proc in enumerate(extracted.procedures):
         view = _ExtractedProcedureView.from_extracted(proc)
-        steps_json = [{"order": s.order, "goal": s.action} for s in proc.steps]
+        # ingestion.md Sec 3/11: "Step S1 -> Goal G2" -- each step's own
+        # free-text `goal` (s.action, the pre-existing convention this
+        # steps JSONB shape already used) ALSO resolves to a real Goal
+        # row, additive via a `goal_id` key (migration 83's own comment
+        # names exactly this: "a writer-populated goal_id key inside that
+        # JSONB, not a schema change"). Optional 0..N (Sec 6) -- a low-
+        # quality/V0-invalid step description just skips its own goal_id,
+        # never blocks the procedure (only the procedure's OWN achieves_
+        # goal is load-bearing enough to propagate a rejection).
+        #
+        # Cost tradeoff, disclosed: `embedder` IS passed (so step-level
+        # Goals are searchable/dedupable, matching Sec 17's "Goals: embed
+        # globally" with no step-vs-procedure carve-out) but `client`
+        # (tier 5 LLM adjudication) is NOT -- an extra full LLM call per
+        # step, on top of one per NEW step-goal's embedding, would
+        # multiply this document's real API cost by its step count; tier
+        # 1/2/2.5/3/4 (exact/alias/simhash/embedding-similarity) still
+        # dedup step-goals without it.
+        step_goal_scope_type = "entity" if domain else "global"
+        steps_json = []
+        for s in proc.steps:
+            step_entry = {"order": s.order, "goal": s.action}
+            try:
+                step_goal = await find_or_create_goal(
+                    pool, canonical_name=s.action, scope_type=step_goal_scope_type,
+                    scope_entity_id=domain, provenance=provenance,
+                    created_from="skill_extraction_step", embedder=embedder,
+                )
+                step_entry["goal_id"] = step_goal["id"]
+            except (V0Violation, GoalQualityRejected):
+                pass
+            steps_json.append(step_entry)
         retrieval_doc = build_procedure_retrieval_document({
             "name": proc.name, "goal": proc.goal, "steps": steps_json,
             "preconditions": proc.preconditions, "invariants": [],
@@ -2344,8 +2383,12 @@ async def compile_skill_artifact(
     # procedure (ingestion.md's own "Step S1 -> Goal G2" model -- these
     # are real Goal rows via the SAME find_or_create_goal wiring
     # capture_procedure already uses, not a parallel mechanism). A
-    # malformed standalone goal (fails V0 scope/provenance validation) is
-    # dropped, never fabricated around. ---
+    # malformed standalone goal (fails V0 scope/provenance validation, or
+    # ingestion.md Sec 20's quality gate) is dropped, never fabricated
+    # around -- these are optional 0..N objects (Sec 6), unlike the
+    # primary procedure's own achieves_goal (capture_procedure lets a
+    # GoalQualityRejected there propagate and fail the whole procedure --
+    # "refuse rather than fabricate", not silently drop the main goal). ---
     for g in extracted.goals:
         try:
             await find_or_create_goal(
@@ -2357,7 +2400,7 @@ async def compile_skill_artifact(
                 created_from="skill_extraction", created_by=created_by,
                 embedder=embedder, client=client,
             )
-        except V0Violation:
+        except (V0Violation, GoalQualityRejected):
             continue
 
     await complete_ingestion_context(pool, ingestion_context_id, status="completed")
