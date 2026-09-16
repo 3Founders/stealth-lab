@@ -18,9 +18,13 @@ WHAT THIS IS -- AND IS NOT
     not reinvent injection or secret detection: it COMPOSES the regex
     detectors that already exist and are already tested elsewhere --
 
-      - `_META_DIRECTIVE_RE` / `_TRUST_ASSERTION_RE`
-        (app.services.skill_ingestion) -- prompt-injection and
-        trust-escalation, imported verbatim.
+      - `_META_DIRECTIVE_RE` (app.services.skill_ingestion) --
+        prompt-injection, imported verbatim. (The standalone
+        `_TRUST_ASSERTION_RE` bare-word check this once also composed was
+        REMOVED 2026-09-16 -- see the comment at its former call site
+        below for why: it rejected ordinary engineering prose at a real
+        false-positive rate, with no requirement the trust claim be
+        self-referential.)
       - `KNOWN_TOKEN_PATTERNS` (app.services.trace_redaction) -- the
         known-secret-token catalogue, imported verbatim.
       - a credential key/value regex copied from
@@ -55,7 +59,7 @@ from typing import Any, Optional
 import asyncpg
 
 from app.services.access import TenantScope, tenant_transaction
-from app.services.skill_ingestion import _META_DIRECTIVE_RE, _TRUST_ASSERTION_RE
+from app.services.skill_ingestion import _META_DIRECTIVE_RE
 from app.services.trace_redaction import KNOWN_TOKEN_PATTERNS
 from app.utils.ids import uuid7
 
@@ -251,9 +255,15 @@ def screen_document_text(
     match is replaced with `_redacted_marker(...)`. Severity is encoded
     here so `decide` stays a trivial fold:
 
-      block  -> prompt_injection, trust_escalation, secret_exposure
+      block  -> prompt_injection, secret_exposure
                 (incl. a private-key header), malicious_executable
       flag   -> unsafe_locator, pii, license
+
+    (`trust_escalation` is a defined CHECK_TYPES category with no current
+    producer -- its standalone bare-word detector was removed 2026-09-16,
+    see this function's own comment above. Kept in CHECK_TYPES since it
+    matches migration 68's DB CHECK constraint and a future, properly
+    self-referential-aware detector could legitimately reuse the name.)
 
     (`decide` maps any block -> REJECT, any flag -> QUARANTINE.)
     """
@@ -262,7 +272,7 @@ def screen_document_text(
     )
     findings: list[dict] = []
 
-    # 1a. prompt injection -- reused detector.
+    # 1. prompt injection -- reused detector.
     inj = [m for m in _META_DIRECTIVE_RE.finditer(haystack)]
     if inj:
         findings.append({
@@ -271,14 +281,20 @@ def screen_document_text(
             "severity": "block",
         })
 
-    # 1b. trust escalation -- reused detector.
-    trust = [m for m in _TRUST_ASSERTION_RE.finditer(haystack)]
-    if trust:
-        findings.append({
-            "check_type": "trust_escalation",
-            "signals": [f"trust_assertion@{m.start()}" for m in trust],
-            "severity": "block",
-        })
+    # (2026-09-16: the standalone trust-escalation bare-word check --
+    # `verified|trusted|approved|...` anywhere in the document -- was
+    # REMOVED here. Real-corpus rehearsal showed it rejecting ordinary
+    # engineering prose ("they approved it", "after all tasks... verified",
+    # "From your human partner - Trusted" as a source label) at a real,
+    # material false-positive rate: 7 of 14 real skill documents in one
+    # ingestion run, none of them actually malicious. The check had no
+    # requirement that the trust word be SELF-REFERENTIAL -- claiming the
+    # skill/document ITSELF is verified/trusted/safe-to-run -- so it could
+    # not distinguish a genuine injection attempt from a human writing
+    # about approval, verification, or trust in the ordinary sense.
+    # `_META_DIRECTIVE_RE` above already catches the actual attack shape
+    # (instructing the model to ignore/override/trust/treat-as-verified) --
+    # objective matters, mere assertive vocabulary does not.)
 
     # 2. secret / credential exposure -- reused KNOWN_TOKEN_PATTERNS +
     #    publication.py's credential-kv regex + a private-key header rule.

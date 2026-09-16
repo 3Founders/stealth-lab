@@ -32,35 +32,30 @@ _MAX_SHORT_TEXT = 500
 _MAX_PROSE_TEXT = 4000
 _MAX_LIST_ITEM = 1000
 
-# Same trust/verification/execution-authority + meta-directive defense
-# skill_ingestion.py's old _validate_capability_statement applied (§29
-# injection defense) -- moved here rather than imported from
-# skill_ingestion.py to avoid a circular import once that module imports
-# this package. Conservative by design: the prompt already instructs the
-# model not to produce this content, but a model output is never trusted
-# on its own -- any extracted text tripping either pattern is rejected,
-# never repaired.
-TRUST_ASSERTION_RE = re.compile(
-    r"\b(?:"
-    r"verified|trusted|trustworthy|pre-?approved|approved|authori[sz]ed|"
-    r"certified|sanctioned|whitelist(?:ed)?|allowlist(?:ed)?|vetted|"
-    r"safe to (?:execute|run)|may (?:execute|run)|execute arbitrary|"
-    r"run arbitrary|arbitrary (?:commands|code)|elevated privileges?|"
-    r"full (?:access|permission|permissions|control)|"
-    r"no (?:approval|review|confirmation|sandbox)(?:\s+\w+){0,3}\s+"
-    r"(?:required|needed)|bypass(?:es|ing)?|grants? (?:it |the agent )?"
-    r"(?:access|permission|authority|execution)"
-    r")\b",
-    re.IGNORECASE,
-)
-
+# Same meta-directive defense skill_ingestion.py's old
+# _validate_capability_statement applied (§29 injection defense) -- moved
+# here rather than imported from skill_ingestion.py to avoid a circular
+# import once that module imports this package. Conservative by design:
+# the prompt already instructs the model not to produce this content, but
+# a model output is never trusted on its own -- any extracted text
+# tripping this pattern is rejected, never repaired.
+#
+# 2026-09-16: the standalone TRUST_ASSERTION_RE bare-word check
+# (`verified|trusted|approved|...` anywhere in the text, no
+# self-referential requirement) was REMOVED -- see
+# app/services/skill_ingestion.py::_screen_untrusted_document_raw's own
+# comment for the real-corpus false-positive data that motivated this
+# (same regex, same bug, found on the input-side twin of this check).
+# META_DIRECTIVE_RE requires an actual injection-attempt SHAPE, not mere
+# assertive vocabulary a legitimate extracted Goal/action could plausibly
+# contain (e.g. "verify the deployment succeeded").
 META_DIRECTIVE_RE = re.compile(
     r"(?:"
     r"ignore (?:all |any |the )?(?:previous |prior |above |earlier |preceding )?"
     r"(?:instruction|prompt|context|rule|message)|"
     r"disregard (?:all |any |the )?(?:previous |prior |above )?(?:instruction|rule|prompt)|"
     r"override (?:the )?(?:system|previous|prior|above|these)|"
-    r"system prompt|"
+    r"(?:reveal|print|output|show|leak) (?:your |the )?system prompt|"
     r"you are (?:now |hereby |henceforth )?(?:an? |the |no longer )|"
     r"as an? (?:ai|assistant|language model)|"
     r"new instructions?\s*:|"
@@ -72,16 +67,20 @@ META_DIRECTIVE_RE = re.compile(
     r")",
     re.IGNORECASE,
 )
+# 2026-09-16: the bare `system prompt` clause was narrowed the same way
+# and for the same reason as app/services/skill_ingestion.py's own
+# _META_DIRECTIVE_RE -- see that module's comment for the real-corpus
+# false positive (a skill-writing guide's own meta-documentation, not an
+# attack) that motivated it.
 
 
 def is_safe_extracted_text(text: Optional[str]) -> bool:
-    """False if `text` trips the trust-assertion or meta-directive
-    pattern -- used to reject (never repair) an extracted goal/
-    canonical_name/action that tries to smuggle a false trust claim or an
-    instruction aimed at the ingestion system."""
+    """False if `text` trips the meta-directive pattern -- used to reject
+    (never repair) an extracted goal/canonical_name/action that tries to
+    smuggle an instruction aimed at the ingestion system."""
     if not text:
         return True
-    return not (TRUST_ASSERTION_RE.search(text) or META_DIRECTIVE_RE.search(text))
+    return not META_DIRECTIVE_RE.search(text)
 
 
 class SkillExtractionTransientFailure(Exception):
