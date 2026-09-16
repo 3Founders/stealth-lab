@@ -423,6 +423,40 @@ def test_a_prior_failure_in_the_journal_is_retried_not_silently_resumed(monkeypa
     assert second.node_results["G-1"].resumed_from_journal is False
 
 
+def test_workspace_root_writes_a_real_goal_run_md_page(monkeypatch, tmp_path):
+    async def fake_execute(pool, plan_node, context, *, scope):
+        return NodeResult(status="success")
+
+    monkeypatch.setattr(ge, "execute_implementation", fake_execute)
+    ws = str(tmp_path)
+    result = _run(ge.execute_goal_tree(None, _impl_node("G-1", "do it", "I-1"), {}, scope=SCOPE, workspace_root=ws))
+
+    goal_run_path = tmp_path / ".stealth" / "goal_run.md"
+    assert goal_run_path.exists()
+    content = goal_run_path.read_text()
+    assert f"GOAL_RUN|{result.execution_id}|success" in content
+    assert "GOAL_NODE|G-1|implementation|success|impl=I-1" in content
+
+
+def test_render_goal_run_md_reflects_procedure_fallback_and_human_intervention(monkeypatch):
+    async def fake_execute(pool, plan_node, context, *, scope):
+        return NodeResult(status="failure")
+
+    async def fake_resolve_via_procedure(pool, goal_id, procedure, *, context, scope, depth):
+        return ResolvedGoalNode(
+            goal_id=goal_id, goal_name="p", depth=depth, chosen="procedure",
+            procedure=procedure, children=[_impl_node("G-2", "alt", "I-2")],
+        )
+
+    monkeypatch.setattr(ge, "execute_implementation", fake_execute)
+    monkeypatch.setattr(ge, "resolve_goal_via_procedure", fake_resolve_via_procedure)
+    tree = _procedure_node("G-parent", "p", children=[_impl_node("G-1", "step one", "I-1")])
+    result = _run(ge.execute_goal_tree(None, tree, {}, scope=SCOPE))
+    md = ge.render_goal_run_md(result)
+    assert "GOAL_RUN|-|failure" in md
+    assert "human_intervention=True" in md
+
+
 def test_a_different_execution_id_never_resumes_an_unrelated_attempt(monkeypatch, tmp_path):
     calls = []
 

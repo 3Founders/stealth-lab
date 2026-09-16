@@ -11,6 +11,7 @@ import re
 from app.stealth.pipe_format import (
     ClaimLine,
     GoalLine,
+    GoalRunLine,
     GroupLine,
     NodeLine,
     ProcedureLine,
@@ -20,6 +21,7 @@ from app.stealth.pipe_format import (
     VerifyLine,
     VerifyReqLine,
     render_claims_md,
+    render_goal_run_md,
     render_goals_md,
     render_index_md,
     render_procedures_md,
@@ -217,6 +219,49 @@ def test_unbound_implementation_renders_literal_dash_not_fabricated():
     run, node = _run_and_node(implementation_id=None)
     md = render_run_md(run, [node])
     assert "impl=-" in [ln for ln in md.splitlines() if ln.startswith("NODE|")][0]
+
+
+# ===========================================================================
+# goal_run.md (Prompt 2 Sec 12/13)
+# ===========================================================================
+
+
+def test_goal_run_md_exact_grammar():
+    nodes = [
+        GoalRunLine(
+            goal_id="G-1", kind="implementation", status="success",
+            implementation_id="I-1", verification_state="checked",
+        ),
+        GoalRunLine(
+            goal_id="G-parent", kind="procedure", status="failure",
+            procedure_id=None, human_intervention_needed=True,
+        ),
+    ]
+    md = render_goal_run_md("E-1", "failure", nodes)
+    lines = md.splitlines()
+    assert "GOAL_RUN|E-1|failure" in lines
+    assert "GOAL_NODE|G-1|implementation|success|impl=I-1|proc=-|verify=checked|human_intervention=False|resumed=False" in lines
+    assert "GOAL_NODE|G-parent|procedure|failure|impl=-|proc=-|verify=-|human_intervention=True|resumed=False" in lines
+
+
+def test_goal_run_md_empty_nodes_is_honest():
+    md = render_goal_run_md("E-1", "success", [])
+    assert "(no nodes)" in md
+
+
+def test_goal_run_md_never_fabricates_a_missing_implementation_or_procedure():
+    nodes = [GoalRunLine(goal_id="G-1", kind="implementation", status="failure")]
+    md = render_goal_run_md("E-1", "failure", nodes)
+    node_line = [ln for ln in md.splitlines() if ln.startswith("GOAL_NODE|")][0]
+    assert "impl=-" in node_line
+    assert "proc=-" in node_line
+    assert "verify=-" in node_line
+
+
+def test_goal_run_md_marks_resumed_nodes_honestly():
+    nodes = [GoalRunLine(goal_id="G-1", kind="implementation", status="success", resumed_from_journal=True)]
+    md = render_goal_run_md("E-1", "success", nodes)
+    assert "resumed=True" in md
 
 
 # ===========================================================================

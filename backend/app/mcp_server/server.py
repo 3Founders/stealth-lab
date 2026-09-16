@@ -4192,6 +4192,14 @@ async def execute_goal(
     `workspace_root` (the default) keeps the original, purely in-memory,
     non-durable behavior exactly as before this capability existed.
 
+    Same `workspace_root` also writes a real, human/agent-readable
+    `.stealth/goal_run.md` (Sec 13) -- `GOAL_RUN|<execution_id>|<outcome>`
+    plus one `GOAL_NODE|...` line per real node, `rg`-able like every
+    other `.stealth/` page. A deliberately SEPARATE page/grammar from the
+    existing Procedure-anchored `run.md` (see `pipe_format.py`'s own
+    comment on why), built straight from this call's own real result,
+    never re-derived.
+
     An `unresolved` leaf anywhere in the tree is never executed and never
     silently treated as a pass -- the overall `outcome` becomes
     `"needs_input"` (Sec 21's vocabulary), naming exactly which Goal(s)

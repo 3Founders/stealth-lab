@@ -259,6 +259,60 @@ def render_run_md(run: RunLine, nodes: list[NodeLine]) -> str:
 
 
 # ===========================================================================
+# goal_run.md -- Prompt 2 Sec 12/13's Goal-DAG execution trace. Deliberately
+# a SEPARATE page/grammar from run.md above, not a shoehorned extension of
+# it: `RunLine`/`NodeLine` are shaped around a real `execution_runs` row
+# (Procedure-anchored -- run_id/procedure_id/procedure_version/step_id all
+# required), which a pure Goal-DAG execution (`goal_execution.py`, no
+# Postgres run row at all -- see that module's own docstring) never has.
+# Forcing Goal-execution data into those fields would mean fabricating a
+# procedure_id/step_id that doesn't exist. This page's own real source is
+# `GoalExecutionResult` (already fully computed by `execute_goal_tree`),
+# never re-derived or guessed.
+# ===========================================================================
+
+_GOAL_RUN_HEADER = (
+    "# goal_run.md -- GENERATED, not canonical. Do not hand-edit.\n"
+    "# GOAL_RUN|<execution_id>|<outcome>\n"
+    "# GOAL_NODE|<goal_id>|<kind>|<status>|impl=<implementation_id_or_->|proc=<procedure_id_or_->|"
+    "verify=<verification_state_or_->|human_intervention=<bool>|resumed=<bool>\n\n"
+)
+
+
+@dataclass
+class GoalRunLine:
+    goal_id: str
+    kind: str  # "implementation" | "procedure"
+    status: str
+    implementation_id: Optional[str] = None
+    procedure_id: Optional[str] = None
+    verification_state: Optional[str] = None
+    human_intervention_needed: bool = False
+    resumed_from_journal: bool = False
+
+
+def render_goal_run_md(execution_id: str, outcome: str, nodes: list[GoalRunLine]) -> str:
+    """Pure render, no pool/IO (same discipline every function in this
+    module holds) -- the caller (`goal_execution.py`) already has every
+    real field from its own `GoalExecutionResult`, this only formats it.
+    `execution_id='-'` (never a fabricated id) when a caller renders a
+    non-durable (no `workspace_root`) execution for inspection only."""
+    header = _GOAL_RUN_HEADER + _row("GOAL_RUN", execution_id, outcome) + "\n\n"
+    if not nodes:
+        return header + "(no nodes)\n"
+    lines = [
+        _row("GOAL_NODE", n.goal_id, n.kind, n.status)
+        + _SEP + _kv_field("impl", n.implementation_id or "-")
+        + _SEP + _kv_field("proc", n.procedure_id or "-")
+        + _SEP + _kv_field("verify", n.verification_state or "-")
+        + _SEP + _kv_field("human_intervention", n.human_intervention_needed)
+        + _SEP + _kv_field("resumed", n.resumed_from_journal)
+        for n in nodes
+    ]
+    return header + "\n".join(lines) + "\n"
+
+
+# ===========================================================================
 # index.md
 # ===========================================================================
 

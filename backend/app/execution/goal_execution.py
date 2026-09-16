@@ -462,7 +462,55 @@ async def execute_goal_tree(
         workspace_root=workspace_root, execution_id=execution_id,
     )
 
-    return GoalExecutionResult(
+    result = GoalExecutionResult(
         outcome=outcome, node_results=leaf_results, procedure_results=procedure_results,
         unresolved_goal_names=unresolved_names, execution_id=execution_id if workspace_root else None,
     )
+    if workspace_root:
+        _write_goal_run_md(workspace_root, result)
+    return result
+
+
+def render_goal_run_md(execution: GoalExecutionResult) -> str:
+    """Prompt 2 Sec 13: the human/agent-readable Goal-execution trace,
+    built directly from `execute_goal_tree`'s own already-computed
+    result -- never re-derived from the journal or re-executed. Real,
+    honest, `rg`-able per `GoalNode|<goal_id>|...` (see `pipe_format.py`'s
+    own module comment on why this is a SEPARATE page from `run.md`, not
+    a shoehorned extension of its Procedure-anchored grammar)."""
+    from app.stealth.pipe_format import GoalRunLine, render_goal_run_md as _render
+
+    lines = [
+        GoalRunLine(
+            goal_id=gid, kind="implementation", status=r.status,
+            implementation_id=r.used_implementation_id, verification_state=(
+                r.attempts[-1].verification_state if r.attempts else None
+            ),
+            resumed_from_journal=r.resumed_from_journal,
+        )
+        for gid, r in execution.node_results.items()
+    ] + [
+        GoalRunLine(
+            goal_id=gid, kind="procedure", status=r.status,
+            procedure_id=r.used_procedure_id, human_intervention_needed=r.human_intervention_needed,
+            resumed_from_journal=r.resumed_from_journal,
+        )
+        for gid, r in execution.procedure_results.items()
+    ]
+    return _render(execution.execution_id or "-", execution.outcome, lines)
+
+
+def _write_goal_run_md(workspace_root: str, execution: GoalExecutionResult) -> None:
+    """Writes `.stealth/goal_run.md` for real (Sec 13: "Keep run
+    artifacts durable and inspectable") -- same atomic-write + single-
+    writer-lock discipline `generator.py` already uses for every other
+    `.stealth/` page, reused here rather than a second write mechanism."""
+    import os
+
+    from app.stealth.atomic import atomic_write_batch
+    from app.stealth.journal import STEALTH_DIRNAME, SingleWriterLock
+
+    content = render_goal_run_md(execution)
+    path = os.path.join(workspace_root, STEALTH_DIRNAME, "goal_run.md")
+    with SingleWriterLock(workspace_root):
+        atomic_write_batch([(path, content)])
