@@ -82,7 +82,10 @@ Produce ONLY real content this document actually expresses -- never invent a pro
 implementation the document does not support.
 
 A document may express zero, one, or several distinct, independently-useful PROCEDURES. \
-Each procedure has a `goal` (what reusable outcome it achieves -- a real sentence describing \
+Each procedure has a `name` -- a short, human-readable TITLE (e.g. "Rotate Expired TLS \
+Certificate"), NEVER a copy of the document's own filename-style slug (e.g. never \
+"rotate-expired-tls-cert" with hyphens) even when the frontmatter gives one; rewrite it as a \
+real title. Each procedure also has a `goal` (what reusable outcome it achieves -- a real sentence describing \
 the outcome, e.g. "find every caller of a function across a codebase", NEVER a copy of the \
 document's own marketing/frontmatter description) and an ordered list of STEPS. Each step's \
 `action` must be paraphrased from the document, and `source_quote` must be an EXACT, VERBATIM \
