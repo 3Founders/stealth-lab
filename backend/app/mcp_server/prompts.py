@@ -17,17 +17,29 @@ call; register_prompts() binds them to the server.
 from __future__ import annotations
 
 _TOOLS_NOTE = (
-    "Tools available: search_procedures, get_procedure, check_applicability, "
+    "Tools available: init_workspace, search_procedures, get_procedure, check_applicability, "
     "check_procedure, decide_procedure, find_best_way, reproduce_procedure, "
     "report_execution, submit_procedure, retrieve_precedent, "
     "resolve_implementation, inspect_implementation, find_problem, "
     "inspect_problem, compare_solutions, inspect_evaluation, "
     "find_best_solution, inspect_run, resume_execution_run, "
-    "retry_run_node. Resources (read-only): stealth://procedures/{id}, "
+    "retry_run_node, record_run_update, preview_local_sync, commit_local_sync. "
+    "Resources (read-only): "
+    "stealth://procedures/{id}, "
     "stealth://problems/{id}, stealth://problems/{id}/solutions, "
     "stealth://claims/{id}, stealth://evaluations/{id}, "
     "stealth://implementations/{id}, stealth://tasks/{id}/implementations, "
     "stealth://runs/{id}."
+)
+
+_INIT_WORKSPACE_NOTE = (
+    "Session start / first tool use for a given repo_path? Call "
+    "`init_workspace(repo_path)` first, before anything else in this "
+    "list -- it bootstraps a new workspace (probes the environment, "
+    "checks for AGENTS.md/CLAUDE.md/README/CI config, never fabricates a "
+    "Claim) on a first connection, or surfaces an in-progress run's open "
+    "blockers/handoffs/questions to pick up on a later one. Idempotent --"
+    " safe to call again if unsure whether it already ran this session."
 )
 
 
@@ -40,6 +52,7 @@ Task: {task}
 {f"Repository: {repo_path}" if repo_path else ""}
 
 Policy:
+0. {f"{_INIT_WORKSPACE_NOTE}" if repo_path else "(no repo_path given -- init_workspace needs one; skip this step)"}
 1. Restate the objective and the hard constraints of the current environment
    (language, runtime, tools, versions, what must NOT change).
 2. Search for relevant procedures with `search_procedures` (and, for a
@@ -59,9 +72,15 @@ Policy:
    reasoning and tools against the real task/repository; call
    `resolve_implementation` only for nodes that actually need a
    concrete executable mechanism.
-8. Verify the stated postconditions after doing the work.
-9. When the outcome is known, `report_execution` (success or failure, with
-   the context key and real success criteria) so the evidence improves.
+8. Resuming or continuing an existing run (`resume_execution_run`,
+   `retry_run_node`)? Check `.stealth/run.md`'s COLLAB_SUMMARY and
+   COLLAB lines first -- an open BLOCKER, a pending HANDOFF, or an
+   unanswered QUESTION left by another agent working the same run.
+   Record your own notes/blockers/handoffs with `record_run_update` so
+   the next agent sees them too.
+9. Verify the stated postconditions after doing the work.
+10. When the outcome is known, `report_execution` (success or failure, with
+    the context key and real success criteria) so the evidence improves.
 
 {_TOOLS_NOTE}"""
 
@@ -75,6 +94,7 @@ Symptom: {symptom}
 {f"Repository: {repo_path}" if repo_path else ""}
 
 Policy:
+0. {f"{_INIT_WORKSPACE_NOTE}" if repo_path else "(no repo_path given -- init_workspace needs one; skip this step)"}
 1. `search_procedures` for debugging procedures relevant to this symptom;
    `retrieve_precedent` for prior occurrences of the same failure shape.
 2. Inspect observed failures and evidence: `stealth://runs/<id>` for a

@@ -506,8 +506,9 @@ async def _build_run_page(
     (execute_implementation's own honest fallback, confirmed this
     session) -- never guessed independently of what would actually run.
     """
+    from app.execution.run_collaboration import list_run_collaboration
     from app.services.goals import normalize_goal_name
-    from app.stealth.pipe_format import NodeLine, RunLine, VerifyLine, render_run_md
+    from app.stealth.pipe_format import CollabLine, NodeLine, RunLine, VerifyLine, render_run_md
 
     intents = intents or {}
     nodes = context.get("nodes", [])
@@ -516,8 +517,31 @@ async def _build_run_page(
     scope_entity_id = context.get("scope_entity_id")
     steps_by_order = {s.get("order"): s for s in (procedure.get("steps") or [])}
 
+    # Collaboration records (NOTE/BLOCKER/HANDOFF/QUESTION/ANSWER, migration
+    # 90) fetched once, here, for the whole run -- shared by the "no nodes
+    # yet" early-return below and the full render path, so a run's open
+    # blockers/handoffs are visible even before any node exists.
+    collab_rows = await list_run_collaboration(pool, str(context["procedure_run_id"]))
+    collab_lines = [
+        CollabLine(
+            record_id=str(r["id"]), kind=r["kind"], actor=r["actor_agent_id"], body=r["body"],
+            created_at=r["created_at"].isoformat() if r["created_at"] else "-",
+            node_id=(f"N{r['node_order']}" if r.get("node_order") is not None else None),
+            answers_id=str(r["answers_id"]) if r.get("answers_id") else None,
+            target_agent_id=r.get("target_agent_id"),
+        )
+        for r in collab_rows
+    ]
+
     if not nodes:
-        return ("# run.md -- GENERATED, not canonical. Do not hand-edit.\n\n(no nodes)\n", [])
+        if not collab_lines:
+            return ("# run.md -- GENERATED, not canonical. Do not hand-edit.\n\n(no nodes)\n", [])
+        run_line = RunLine(
+            run_id=str(context["procedure_run_id"]), status=context["status"],
+            objective=context.get("objective") or "-", procedure_id=procedure_id,
+            procedure_version=context["procedure_version"],
+        )
+        return render_run_md(run_line, [], collab_lines), []
 
     # --- batched real lookups, never one round trip per node -----------
     impl_ids = [str(n["implementation_id"]) for n in nodes if n.get("implementation_id")]
@@ -595,7 +619,7 @@ async def _build_run_page(
         objective=context.get("objective") or "-", procedure_id=procedure_id,
         procedure_version=context["procedure_version"],
     )
-    run_md = render_run_md(run_line, node_lines)
+    run_md = render_run_md(run_line, node_lines, collab_lines)
 
     rows: list[RunIdxRow] = []
     lines = run_md.splitlines()

@@ -4962,6 +4962,261 @@ async def close_exploration(
     return json.dumps({"exploration_id": exploration_id, "status": status, "claim_id": claim_id})
 
 
+@server.tool()
+async def preview_local_sync(repo_path: str, ctx: Context, object_types_json: str = "null") -> str:
+    """
+    Workflow C, step 1 of 2 -- READ-ONLY preview of syncing a caller's
+    hand-edited local `.stealth/claims.md` / `procedures.md` / `goals.md`
+    back into canonical Postgres. `.stealth/` stays a disposable, regenerated
+    projection (nothing else reads it back as trusted input); this is the
+    one explicit, human-or-agent-reviewed gate through which a local edit
+    CAN become a real Claim/Procedure/Goal row -- never automatically.
+
+    `object_types_json`: optional JSON array narrowing which of
+    `["claim", "procedure", "goal"]` to scan (default: all three).
+
+    Every locally-referenced object is classified against its real backend
+    counterpart (matched by the canonical id already embedded in the pipe
+    row -- `CLAIM|<id>|...`/`PROCEDURE|<id>|...`/`GOAL|<id>|...`):
+
+      NEW            -- no real backend id (hand-added locally, or noted
+                        via `close_exploration` but never faulted back in).
+      CHANGED        -- a real backend row exists and its content differs
+                        from the local text.
+      ALREADY_SYNCED -- identical to the backend row.
+      LOCAL_ONLY     -- explicitly scoped `local`/`private` in the local
+                        file -- not eligible for sync without
+                        `commit_local_sync(allow_local_only=true)`.
+      CONFLICTING    -- the backend row changed (or was superseded, or no
+                        longer exists) since this local projection was
+                        generated -- resolve by hand, never guessed at.
+
+    Writes NOTHING -- not even a cache. Each candidate's `candidate_id` is
+    a deterministic hash `commit_local_sync` recomputes itself from the
+    CURRENT local file, so a stale preview can never be blindly trusted at
+    commit time. Returns a JSON array of
+    `{candidate_id, object_type, classification, local_summary,
+      backend_id, scope, status, reason}`.
+    """
+    from app.stealth.local_sync import OBJECT_TYPES, preview_local_sync as _preview_local_sync
+
+    try:
+        object_types = json.loads(object_types_json) if object_types_json and object_types_json != "null" else None
+    except json.JSONDecodeError as exc:
+        return f"REFUSED: object_types_json must be a JSON array -- {exc}"
+    if object_types is not None:
+        if not isinstance(object_types, list) or any(t not in OBJECT_TYPES for t in object_types):
+            return f"REFUSED: object_types_json must be a JSON array drawn from {OBJECT_TYPES}"
+
+    pool = ctx.request_context.lifespan_context["pool"]
+    if not os.path.isdir(repo_path):
+        return f"REFUSED: repo_path {repo_path!r} is not a directory on this server."
+    candidates = await _preview_local_sync(pool, repo_path, object_types)
+    return json.dumps(candidates, default=str)
+
+
+@server.tool()
+async def commit_local_sync(
+    repo_path: str, selected_ids_json: str, ctx: Context, allow_local_only: bool = False,
+) -> str:
+    """
+    Workflow C, step 2 of 2 -- commit specific candidates from
+    `preview_local_sync`'s output. Takes the exact `candidate_id`s the
+    caller selected (`selected_ids_json`, a JSON array of strings) --
+    NEVER "sync everything"; an empty/omitted selection is refused rather
+    than defaulted to "all".
+
+    Re-derives/re-validates each selected item exactly as
+    `preview_local_sync` would, against the CURRENT local file and CURRENT
+    backend state -- a stale preview (backend changed since it was taken,
+    or the local file was edited again) is never trusted blindly. A
+    selection whose fresh classification is no longer eligible (e.g. it
+    became CONFLICTING, or was ALREADY_SYNCED all along) is reported
+    `skipped`, not force-committed.
+
+    For each valid selected item, writes through the SAME service-layer
+    functions every other submission tool uses -- `capture_claim`
+    (superseding the old claim via `relate_claims` when CHANGED),
+    `capture_procedure`, `find_or_create_goal` -- landing in the same
+    candidate/private lifecycle state those already default to. Never
+    auto-publishes; never promotes a LOCAL_ONLY item unless
+    `allow_local_only=True` is passed explicitly.
+
+    Returns a JSON array of `{candidate_id, object_type, outcome, reason?,
+    id?}` where `outcome` is one of "committed" / "skipped" / "refused".
+    """
+    from app.stealth.local_sync import commit_local_sync_items as _commit_local_sync_items
+
+    try:
+        selected_ids = json.loads(selected_ids_json)
+    except json.JSONDecodeError as exc:
+        return f"REFUSED: selected_ids_json must be a JSON array -- {exc}"
+    if not isinstance(selected_ids, list) or not all(isinstance(s, str) for s in selected_ids):
+        return "REFUSED: selected_ids_json must be a JSON array of candidate id strings"
+    if not selected_ids:
+        return "REFUSED: selected_ids_json must name at least one candidate -- commit_local_sync never syncs everything implicitly"
+
+    pool = ctx.request_context.lifespan_context["pool"]
+    if not os.path.isdir(repo_path):
+        return f"REFUSED: repo_path {repo_path!r} is not a directory on this server."
+    scope = _caller_access_scope()
+    owner = _resolve_caller_identity(fallback="stealth_local_sync")
+    results = await _commit_local_sync_items(
+        pool, repo_path, selected_ids, created_by=owner, owner_id=scope.viewer_id,
+        allow_local_only=allow_local_only,
+    )
+    return json.dumps(results, default=str)
+
+
+@server.tool()
+async def init_workspace(repo_path: str, ctx: Context) -> str:
+    """
+    Connect -> identify workspace -> bootstrap if needed -> return
+    continuation context. The onboarding entrypoint an agent should call
+    at the start of a session (or its first tool use) for a given
+    `repo_path`, before anything else -- see `solve_with_stealth` etc.'s
+    updated policy. Idempotent: safe on every connect, not just the first.
+
+    FIRST CONNECTION (no recognized `.stealth/` projection yet): probes
+    the environment (`probe_environment` -- framework/build tool/test
+    runner/dev server/package manager/language/package+python version,
+    unchanged, reused verbatim) AND checks for AGENTS.md, CLAUDE.md,
+    README(.md), a CI config marker (`.github/workflows/*.y*ml`), and a
+    migrations-shaped directory (`migrations/`, `alembic/`, or `db/`) --
+    five plain existence checks, not a general repo-understanding engine.
+    Every POSITIVE detection is persisted as a real, provenanced Claim
+    (idempotent per subject+predicate, same discipline
+    `assert_environment_claims` already uses); nothing is fabricated for
+    an absent file or an empty repo -- an empty repo returns cleanly with
+    `claims_written: []` and global retrieval (`search_procedures` etc.)
+    remains fully available regardless.
+
+    SUBSEQUENT CONNECTION: skips re-bootstrapping. Instead looks up the
+    run this workspace was last working (from its own local `run.json`)
+    and surfaces its live status plus open BLOCKERs / pending HANDOFFs /
+    unanswered QUESTIONs (via `list_run_collaboration`, the same source
+    `.stealth/run.md`'s COLLAB lines render from) under `continuation` --
+    enough for a fresh agent, no prior chat history, to pick the run back
+    up. `continuation.active_run` is `None` when no run is on record.
+
+    Refreshes (or, with no run yet, writes a minimal marker for) the
+    `.stealth/` projection as its last step, best-effort -- a write
+    failure is surfaced via `projection`, never raised.
+
+    REFUSED if `repo_path` is not a directory on this server. Returns
+    JSON: `{repo_path, project_id, first_connection, environment_facts,
+    workspace_facts, claims_written, continuation, projection}`.
+    """
+    from app.execution.workspace_init import init_workspace as _init_workspace
+
+    pool = ctx.request_context.lifespan_context["pool"]
+    created_by = _resolve_caller_identity(fallback="init_workspace")
+    try:
+        result = await _init_workspace(pool, repo_path, created_by=created_by)
+    except NotADirectoryError as exc:
+        return f"REFUSED: {exc}"
+    return json.dumps(result, default=str)
+
+
+@server.tool()
+async def record_run_update(
+    run_id: str, kind: str, body: str, ctx: Context,
+    node_order: Optional[int] = None, answers_id: Optional[str] = None,
+    target_agent_id: Optional[str] = None, repo_path: Optional[str] = None,
+) -> str:
+    """
+    Record a structured collaboration update against a durable execution
+    run, so a SECOND agent picking up the same run (a different
+    `repo_path`/workspace, the common case this exists for) sees it in
+    `.stealth/run.md` without needing a shared journal -- the gap a prior
+    audit found: `run.md` was a one-way projection of node/lease state
+    with no way for one agent to leave a note for another.
+
+    `kind` is one of NOTE, BLOCKER, HANDOFF, QUESTION, ANSWER,
+    BLOCKER_RESOLVED, HANDOFF_ACCEPTED.
+    `node_order`: optional -- attach the record to one node of the run
+    (rendered inline under that node's NODE block); omit for a run-level
+    record. `answers_id`: required for ANSWER/BLOCKER_RESOLVED/
+    HANDOFF_ACCEPTED -- the record id of the QUESTION/BLOCKER/HANDOFF
+    (respectively) this one resolves (REFUSED if it does not reference a
+    real record of that exact kind in this same run). A BLOCKER/HANDOFF
+    is never mutated or deleted to "close" it -- recording a
+    BLOCKER_RESOLVED/HANDOFF_ACCEPTED that references it is how
+    `.stealth/run.md`'s `COLLAB_SUMMARY` counts it as no longer open/
+    pending. `target_agent_id`: optional, only meaningful for
+    `kind="HANDOFF"` -- the agent id being handed off to, when known.
+
+    This does NOT grant, revoke, or imply ownership of the node or any
+    file -- ownership stays entirely on `declare_file_intent`'s own
+    lease mechanism (`execution_run_nodes.owner_agent_id`/
+    `file_intent_lease_expires_at`). A HANDOFF recorded here is a note
+    the handed-to agent should act on (e.g. by calling
+    `declare_file_intent` itself), never an automatic transfer.
+
+    `repo_path`: optional -- when given, also (a) refreshes this run's
+    `.stealth/run.md` projection under that workspace root (same
+    best-effort pattern as `find_best_way`/`continue_run`: a filesystem
+    write failure never turns this call into a REFUSED, but is surfaced
+    via `stealth_projection` in the response, never swallowed), and (b)
+    mirrors this record into that workspace's own local journal
+    (`.stealth/events.jsonl`, `app.stealth.journal` -- the SAME journal
+    `open_exploration`/`close_exploration` already append to), as a
+    lightweight local log line, not a second source of truth: the DB row
+    above is already durable and canonical the moment it is inserted, and
+    NOTHING reads this journal entry back to reconstruct or validate
+    collaboration state (same one-way, best-effort posture as the
+    `run.md` projection write -- surfaced via `journal` in the response,
+    never swallowed, and never rolling back the already-committed DB row).
+
+    REFUSED if `run_id` does not exist, `kind` is not one of the seven
+    above, `body` is empty, or `answers_id` does not reference a real
+    record of the exact expected kind in this same run.
+    """
+    from app.execution.run_collaboration import RunCollaborationError
+    from app.execution.run_collaboration import record_run_update as _record_run_update
+
+    pool = ctx.request_context.lifespan_context["pool"]
+    actor = _resolve_caller_identity(fallback="record_run_update")
+    try:
+        record = await _record_run_update(
+            pool, execution_run_id=run_id, kind=kind, body=body, actor_agent_id=actor,
+            node_order=node_order, answers_id=answers_id, target_agent_id=target_agent_id,
+        )
+    except RunCollaborationError as exc:
+        return f"REFUSED: {exc}"
+
+    result = dict(record)
+    if repo_path is not None:
+        from app.execution.stealth_projection import generate_projection
+        from app.stealth.journal import StealthLockError, append_event
+
+        try:
+            await generate_projection(pool, workspace_root=repo_path, procedure_run_id=run_id)
+            result["stealth_projection"] = "written"
+        except OSError as exc:
+            result["stealth_projection"] = f"write_failed: {exc}"
+
+        # Best-effort local mirror only -- the DB insert above already
+        # succeeded and IS the durable record; a journal write failure
+        # (or lock contention, StealthLockError) must never undo it or
+        # turn this call into a REFUSED. Broader than the projection
+        # write's own `except OSError` because a journal append can also
+        # fail with StealthLockError (another local writer holding the
+        # single-writer lock) -- still purely local/best-effort either way.
+        try:
+            append_event(
+                repo_path, "run_collaboration_recorded",
+                record_id=result["id"], execution_run_id=result["execution_run_id"],
+                kind=result["kind"], node_order=result["node_order"],
+                actor_agent_id=result["actor_agent_id"], answers_id=result["answers_id"],
+                target_agent_id=result["target_agent_id"],
+            )
+            result["journal"] = "written"
+        except (OSError, StealthLockError) as exc:
+            result["journal"] = f"write_failed: {exc}"
+    return json.dumps(result, default=str)
+
+
 # ---------------------------------------------------------------------------
 # Trajectory ingestion tools (trajectory-ingestion-hardening task, Sec 19).
 # Thin wrappers over the same service functions app/api/trajectories.py
