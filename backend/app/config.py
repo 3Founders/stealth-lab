@@ -144,6 +144,20 @@ class Settings(BaseSettings):
     )
     openrouter_judge_model: str = "google/gemini-2.5-flash"
 
+    # --- Trajectory semantic extraction (trajectory-ingestion-hardening
+    # task) cost-aware model routing (app/services/extraction_routing.py) ---
+    # Provider-neutral by construction: these two fields only name WHICH
+    # model within whichever provider is already configured above
+    # (General Compute / OpenRouter / local) counts as "cheap" vs
+    # "strong" for this one pipeline -- no new vendor/SDK/API key is
+    # introduced. Escalation thresholds are real, tunable numbers (not
+    # inlined literals) consulted at call time, same discipline as
+    # TRIVIAL_MERGE_MAX_EVENTS/OVERSIZE_SUBDIVIDE_EVENTS in trace_worker.py.
+    trajectory_extraction_cheap_model: str = "gemma-4-31B-it"
+    trajectory_extraction_strong_model: str = "claude-sonnet-4-6"
+    trajectory_extraction_escalation_min_confidence: float = 0.5
+    trajectory_extraction_escalation_max_events: int = 60
+
     # --- Agent execution: file upload/output handling ---
     agent_upload_dir: str = "/tmp/agent_uploads"
     agent_output_dir: str = "/tmp/agent_outputs"

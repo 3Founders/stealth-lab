@@ -127,7 +127,26 @@ class ClaimProperties(BaseModel):
     claim_type: Optional[str] = None
     confidence: Optional[float] = Field(default=None, ge=0.0, le=1.0)
     extraction_version: Optional[str] = None
-    epistemic_status: Optional[Literal["observed", "inferred"]] = None
+    epistemic_status: Optional[Literal["observed", "inferred", "generalized"]] = None
+    # Trajectory-semantic-extraction addition: how strong is the evidence
+    # behind this claim, independent of `epistemic_status` (which answers
+    # "was this directly observed or inferred", not "how much evidence
+    # backs it"). A claim minted from exactly one trajectory can never be
+    # stamped anything stronger than `single_trace_observation`/
+    # `single_trace_inference` -- the higher tiers are earned only by
+    # future cross-trace corroboration this migration does not yet build
+    # (see trajectory_semantics.py). Deliberately independent of
+    # `confidence` (an uncalibrated float) -- this is a discrete evidence
+    # class, not a probability.
+    generalization_level: Optional[
+        Literal[
+            "single_trace_observation",
+            "single_trace_inference",
+            "multi_trace_support",
+            "benchmark_support",
+            "external_source_support",
+        ]
+    ] = None
 
 
 NODE_TYPE_SCHEMAS: dict[str, type[BaseModel]] = {

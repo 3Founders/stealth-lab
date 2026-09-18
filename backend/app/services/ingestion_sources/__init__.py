@@ -33,6 +33,15 @@ from app.services.ingestion_sources.manifest import (
     SkillSourceManifest,
     load_source_manifest,
 )
+from app.services.ingestion_sources.normalized_trajectory import (
+    NormalizedEvent,
+    NormalizedTrajectory,
+)
+from app.services.ingestion_sources.openhands import (
+    OpenHandsMalformedTrajectory,
+    OpenHandsTrajectorySource,
+    normalize_openhands_trajectory,
+)
 from app.services.ingestion_sources.skill_md import (
     SOURCE_ADAPTERS,
     GitHubSkillSource,
@@ -52,4 +61,9 @@ __all__ = [
     "SOURCE_ADAPTERS",
     "GitHubSkillSource",
     "LocalDirSkillSource",
+    "NormalizedEvent",
+    "NormalizedTrajectory",
+    "OpenHandsMalformedTrajectory",
+    "OpenHandsTrajectorySource",
+    "normalize_openhands_trajectory",
 ]

@@ -85,8 +85,31 @@ def extract_deterministic_observations(trace_event: dict) -> list[dict]:
     """
     Pure function, no I/O, no LLM call: given one real trace_event row
     (as returned by asyncpg -- a dict-like Record), derive zero or more
-    deterministic observations. Covers exactly the categories ticket 04
-    names: "files touched, tests run, commands executed, commits made."
+    deterministic observations. This is the STRUCTURAL normalization
+    layer (trajectory-ingestion-hardening task's split of the old
+    "deterministic_v1 = the semantic layer" design into structural
+    normalization + LLM semantic extraction, see trajectory_semantics.py):
+    it covers exactly the objectively-observable categories -- files
+    touched, files read, tests run, commands executed, commits made --
+    and nothing requiring judgment.
+
+    Source-neutral: reads `trace_event["canonical_event_type"]`
+    (READ/WRITE/EXECUTE/TEST/COMMIT/...) first when a normalizer set it
+    (e.g. the OpenHands adapter), and falls back to the original
+    Claude-Code-specific `tool_name` matching when it's NULL -- so this
+    one function serves both harnesses without a second copy, and every
+    trace_event row ingested before this column existed keeps behaving
+    exactly as before (no backfill, no rewrite).
+
+    `raw_event` (present for sources whose native shape doesn't fit
+    `tool_input`, e.g. OpenHands) is consulted as a fallback field source
+    when `tool_input` doesn't carry what's needed.
+
+    Read events now produce a `file_read` observation instead of being
+    silently dropped -- "which file was read" is exactly as objectively
+    observable as "which file was written", and the previous silent-drop
+    behavior is the specific gap the trajectory-ingestion-hardening task
+    calls out ("Read -> nothing... destroys too much information").
 
     Returns plain dicts (observation_type, label, properties) -- not yet
     persisted; see persist_observation() for the write path. Kept as a
@@ -95,17 +118,44 @@ def extract_deterministic_observations(trace_event: dict) -> list[dict]:
     """
     observations: list[dict] = []
     tool_name = trace_event.get("tool_name")
+    canonical_type = trace_event.get("canonical_event_type")
     tool_input = _decode_json_field(trace_event.get("tool_input"))
+    raw_event = _decode_json_field(trace_event.get("raw_event"))
 
-    if tool_name in ("Edit", "Write", "MultiEdit") and tool_input.get("file_path"):
-        observations.append({
-            "observation_type": "file_touched",
-            "label": f"Modified {tool_input['file_path']}",
-            "properties": {"file_path": tool_input["file_path"], "tool_name": tool_name},
-        })
+    def _first_field(*keys: str) -> Optional[str]:
+        for source in (tool_input, raw_event):
+            for key in keys:
+                value = source.get(key)
+                if value:
+                    return value
+        return None
 
-    if tool_name == "Bash":
-        command = tool_input.get("command", "")
+    is_write = canonical_type == "WRITE" or (
+        canonical_type is None and tool_name in ("Edit", "Write", "MultiEdit")
+    )
+    is_read = canonical_type == "READ" or (canonical_type is None and tool_name == "Read")
+    is_execute = canonical_type == "EXECUTE" or (canonical_type is None and tool_name == "Bash")
+
+    if is_write:
+        file_path = _first_field("file_path", "path")
+        if file_path:
+            observations.append({
+                "observation_type": "file_touched",
+                "label": f"Modified {file_path}",
+                "properties": {"file_path": file_path, "tool_name": tool_name},
+            })
+
+    if is_read:
+        file_path = _first_field("file_path", "path")
+        if file_path:
+            observations.append({
+                "observation_type": "file_read",
+                "label": f"Read {file_path}",
+                "properties": {"file_path": file_path, "tool_name": tool_name},
+            })
+
+    if is_execute:
+        command = _first_field("command") or ""
         if not command:
             pass
         elif command.strip().startswith("git commit"):
@@ -135,6 +185,28 @@ def extract_deterministic_observations(trace_event: dict) -> list[dict]:
                 "label": f"Executed: {command.strip()}",
                 "properties": {"command": command},
             })
+
+    # Non-Bash-shaped structural signals -- only reachable via an explicit
+    # canonical_event_type from a normalizer (e.g. OpenHands' dedicated
+    # test-runner or finish/handoff actions), never inferred from
+    # tool_name alone, so this adds nothing for the Claude Code path.
+    if canonical_type == "TEST" and not is_execute:
+        properties: dict[str, Any] = {}
+        outcome = trace_event.get("success")
+        if isinstance(outcome, bool):
+            properties["passed"] = outcome
+        observations.append({
+            "observation_type": "test_run",
+            "label": f"Ran tests: {tool_name}" if tool_name else "Ran tests",
+            "properties": properties,
+        })
+
+    if canonical_type == "COMMIT" and not is_execute:
+        observations.append({
+            "observation_type": "commit_made",
+            "label": f"Committed: {tool_name}" if tool_name else "Committed",
+            "properties": {},
+        })
 
     return observations
 

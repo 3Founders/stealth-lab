@@ -1,0 +1,25 @@
+{
+  "instance_id": "astropy__astropy-6789",
+  "metadata": {
+    "llm_config": {"model": "claude-sonnet-4-6"}
+  },
+  "metrics": {
+    "accumulated_cost": 0.4567,
+    "accumulated_token_usage": {"prompt_tokens": 21000, "completion_tokens": 3100}
+  },
+  "report": {"resolved": false},
+  "history": [
+    {"action": "message", "args": {"content": "Fix the failing test in test_bar.py"}, "id": 1},
+    {"action": "run", "args": {"command": "pytest tests/test_bar.py"}, "id": 2},
+    {"observation": "run", "content": "1 failed in 0.20s", "extras": {"exit_code": 1}, "cause": 2},
+    {"action": "edit", "args": {"path": "src/bar.py", "content": "attempt 1"}, "id": 3},
+    {"observation": "edit", "content": "edited src/bar.py", "extras": {"path": "src/bar.py"}, "cause": 3},
+    {"action": "run", "args": {"command": "pytest tests/test_bar.py"}, "id": 4},
+    {"observation": "run", "content": "1 failed in 0.19s", "extras": {"exit_code": 1}, "cause": 4},
+    {"action": "edit", "args": {"path": "src/bar.py", "content": "attempt 2"}, "id": 5},
+    {"observation": "edit", "content": "edited src/bar.py", "extras": {"path": "src/bar.py"}, "cause": 5},
+    {"action": "run", "args": {"command": "pytest tests/test_bar.py"}, "id": 6},
+    {"observation": "run", "content": "1 failed in 0.21s", "extras": {"exit_code": 1}, "cause": 6},
+    {"action": "finish", "args": {"outcome": "failure"}, "id": 7}
+  ]
+}

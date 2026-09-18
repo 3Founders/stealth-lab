@@ -62,10 +62,25 @@ class TestDeterministicExtractor:
         obs = extract_deterministic_observations(event)
         assert obs[0]["observation_type"] == "command_executed"
 
-    def test_read_tool_produces_no_observation(self):
-        """A real, important negative case: not every tool call should
-        produce noise. Read has no side effect worth recording here."""
+    def test_read_tool_produces_a_file_read_observation(self):
+        """UPDATED (trajectory-ingestion-hardening task): a Read used to
+        silently produce nothing, which is the exact "Read events are
+        silently discarded" gap that task calls out -- which file was
+        read is exactly as objectively observable as which file was
+        written, so it now gets a `file_read` observation like every
+        other structural fact this deterministic layer records."""
         event = {"tool_name": "Read", "tool_input": {"file_path": "x.py"}}
+        obs = extract_deterministic_observations(event)
+        assert obs == [{
+            "observation_type": "file_read",
+            "label": "Read x.py",
+            "properties": {"file_path": "x.py", "tool_name": "Read"},
+        }]
+
+    def test_read_tool_without_file_path_produces_nothing(self):
+        """Still a real negative case: no path, nothing objectively
+        observable to record."""
+        event = {"tool_name": "Read", "tool_input": {}}
         obs = extract_deterministic_observations(event)
         assert obs == []
 

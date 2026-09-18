@@ -14,6 +14,7 @@ from app.api import problems, runs
 from app.api import publications, workspaces
 from app.api import contributors as contributors_api
 from app.api import profile as profile_api
+from app.api import trajectories
 from app.api.deps import require_trustworthy_identity
 from app.config import settings
 from app.db.session import close_pool, create_pool
@@ -100,6 +101,7 @@ install_actor_middleware(app, settings)
 app.include_router(ingest.router)
 app.include_router(approval.router)
 app.include_router(admin.router)
+app.include_router(trajectories.router)
 app.include_router(graph.router)
 app.include_router(chat.router)
 app.include_router(decompose.router)

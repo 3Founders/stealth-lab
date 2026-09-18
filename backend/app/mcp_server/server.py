@@ -4931,6 +4931,217 @@ async def close_exploration(
 
 
 # ---------------------------------------------------------------------------
+# Trajectory ingestion tools (trajectory-ingestion-hardening task, Sec 19).
+# Thin wrappers over the same service functions app/api/trajectories.py
+# calls -- no logic duplicated here, matching every tool above's own
+# pattern of delegating to app.services.*.
+# ---------------------------------------------------------------------------
+
+@server.tool()
+async def ingest_trajectory(
+    source_type: str, root: str, ctx: Context,
+    scope_type: str = "global", scope_entity_id: Optional[str] = None,
+) -> str:
+    """
+    Ingest exported agent trajectories from `root` into the SAME
+    trace_events/agent_traces/episodes pipeline every source (Stealth/MCP,
+    OpenHands, future adapters) writes through. Currently supports
+    `source_type="openhands_trajectory_dir"`. Malformed trajectory files
+    are quarantined, never silently dropped -- see `objects_quarantined`
+    in the result.
+    """
+    from app.services.ingestion_sources.dispatch import ingest_openhands_trajectories
+
+    if source_type != "openhands_trajectory_dir":
+        return f"REFUSED: unsupported source_type {source_type!r} (supported: openhands_trajectory_dir)"
+    pool = ctx.request_context.lifespan_context["pool"]
+    scope = _caller_access_scope()
+    result = await ingest_openhands_trajectories(
+        pool, root, owner_id=scope.viewer_id, visibility="private" if scope.viewer_id else "public",
+        scope_type=scope_type, scope_entity_id=scope_entity_id,
+    )
+    return json.dumps(result, default=str)
+
+
+@server.tool()
+async def inspect_trajectory(trace_id: str, ctx: Context) -> str:
+    """One ingested trajectory's header (provider, model, token/cost
+    accounting, outcome) -- returns "null" for an unknown trace_id."""
+    pool = ctx.request_context.lifespan_context["pool"]
+    row = await pool.fetchrow(
+        "SELECT trace_id, session_id, provider, provider_version, model, "
+        "       token_usage, cost_usd, outcome, started_at, ended_at, metadata "
+        "FROM agent_traces WHERE trace_id = $1",
+        trace_id,
+    )
+    return json.dumps(dict(row) if row else None, default=str)
+
+
+@server.tool()
+async def list_trajectory_events(trace_id: str, ctx: Context, limit: int = 200) -> str:
+    """Real normalized events for one trajectory, in sequence order --
+    the raw material the semantic extraction pass reads. Proves nothing
+    was silently discarded (e.g. Read events are present, not just
+    Write/Execute)."""
+    pool = ctx.request_context.lifespan_context["pool"]
+    rows = await pool.fetch(
+        "SELECT id, sequence, event_type, canonical_event_type, tool_name, "
+        "       tool_input, tool_output, success, \"timestamp\" "
+        "FROM trace_events WHERE trace_id = $1 ORDER BY sequence ASC LIMIT $2",
+        trace_id, limit,
+    )
+    return json.dumps([dict(r) for r in rows], default=str)
+
+
+@server.tool()
+async def run_semantic_extraction(episode_id: str, ctx: Context, force_strong_model: bool = False) -> str:
+    """
+    One structured LLM semantic-extraction pass over one episode
+    (app.services.trajectory_semantics) -- produces Goals, candidate
+    Procedures, Implementations, and Claims, each citing its exact source
+    events, tagged OBSERVED/INFERRED/GENERALIZED. Model tier is chosen by
+    `app.services.extraction_routing` unless `force_strong_model=True`.
+    Runs regardless of the trajectory's outcome -- a failed run still
+    produces useful knowledge.
+    """
+    from app.services.extraction_routing import choose_extraction_model
+    from app.services.ingestion_jobs import _extraction_client
+    from app.services.procedure_extraction.schema import ExtractionTransientFailure
+    from app.services.trajectory_semantics import extract_trajectory_semantics
+
+    client = _extraction_client()
+    if client is None:
+        return "REFUSED: no extraction LLM client configured (GENERAL_COMPUTE_API_KEY unset)"
+    pool = ctx.request_context.lifespan_context["pool"]
+    episode_row = await pool.fetchrow(
+        "SELECT session_id, start_ts, end_ts FROM episodes WHERE id = $1::uuid", episode_id,
+    )
+    if episode_row is None:
+        return "REFUSED: episode not found"
+    event_count = await pool.fetchval(
+        "SELECT count(*) FROM trace_events WHERE session_id = $1 "
+        "AND ($2::timestamptz IS NULL OR \"timestamp\" >= $2) "
+        "AND ($3::timestamptz IS NULL OR \"timestamp\" <= $3)",
+        episode_row["session_id"], episode_row["start_ts"], episode_row["end_ts"],
+    )
+    choice = choose_extraction_model(event_count=event_count or 0, malformed_prior_attempt=force_strong_model)
+    scope = _caller_access_scope()
+    try:
+        result = await extract_trajectory_semantics(
+            pool, episode_id, client=client, model=choice.model,
+            escalated=choice.escalated, escalation_reason=choice.escalation_reason,
+            owner_id=scope.viewer_id,
+        )
+    except ExtractionTransientFailure as exc:
+        return f"REFUSED: semantic extraction failed -- {exc}"
+    except ValueError as exc:
+        return f"REFUSED: {exc}"
+    return json.dumps({"model": choice.model, "escalated": choice.escalated, **result}, default=str)
+
+
+@server.tool()
+async def inspect_extraction(extraction_id: str, ctx: Context) -> str:
+    """One semantic-extraction run's full record -- extractor/model/
+    prompt/schema versions, status, confidence summary, escalation. This
+    is the replayable unit: a later re-extraction of the same episode
+    produces a NEW row, never overwriting this one."""
+    pool = ctx.request_context.lifespan_context["pool"]
+    row = await pool.fetchrow(
+        "SELECT id, episode_id, ingestion_context_id, extractor_id, model, model_version, "
+        "       prompt_version, schema_version, input_hash, output_hash, status, "
+        "       confidence_summary, escalated, escalation_reason, error, created_at, completed_at "
+        "FROM trajectory_extractions WHERE id = $1::uuid",
+        extraction_id,
+    )
+    return json.dumps(dict(row) if row else None, default=str)
+
+
+@server.tool()
+async def list_extraction_objects(extraction_id: str, ctx: Context, object_type: Optional[str] = None) -> str:
+    """Every Goal/Claim/Procedure/Implementation one extraction run
+    produced, each with its `event_refs` -- the citation proof that
+    nothing here was fabricated."""
+    pool = ctx.request_context.lifespan_context["pool"]
+    if object_type is not None:
+        rows = await pool.fetch(
+            "SELECT id, object_type, object_id, event_refs, epistemic_status, confidence, created_at "
+            "FROM trajectory_extraction_objects WHERE extraction_id = $1::uuid AND object_type = $2",
+            extraction_id, object_type,
+        )
+    else:
+        rows = await pool.fetch(
+            "SELECT id, object_type, object_id, event_refs, epistemic_status, confidence, created_at "
+            "FROM trajectory_extraction_objects WHERE extraction_id = $1::uuid",
+            extraction_id,
+        )
+    return json.dumps([dict(r) for r in rows], default=str)
+
+
+@server.tool()
+async def inspect_trajectory_provenance(object_type: str, object_id: str, ctx: Context) -> str:
+    """Walks trajectory_extraction_objects -> trajectory_extractions ->
+    ingestion_contexts -> trace_events for one Goal/Claim/Procedure/
+    Implementation -- "where did this come from, under what scope, from
+    which exact events" in one call."""
+    if object_type not in ("goal", "claim", "procedure", "implementation"):
+        return f"REFUSED: unknown object_type {object_type!r}"
+    pool = ctx.request_context.lifespan_context["pool"]
+    link_rows = await pool.fetch(
+        "SELECT teo.extraction_id, teo.event_refs, teo.epistemic_status, teo.confidence, "
+        "       te.extractor_id, te.model, te.prompt_version, te.schema_version, "
+        "       te.ingestion_context_id, te.created_at AS extracted_at "
+        "FROM trajectory_extraction_objects teo "
+        "JOIN trajectory_extractions te ON te.id = teo.extraction_id "
+        "WHERE teo.object_type = $1 AND teo.object_id = $2::uuid",
+        object_type, object_id,
+    )
+    if not link_rows:
+        return json.dumps(None)
+    lineage = []
+    for row in link_rows:
+        event_rows = await pool.fetch(
+            "SELECT id, sequence, event_type, canonical_event_type, tool_name, \"timestamp\" "
+            "FROM trace_events WHERE id = ANY($1::uuid[]) ORDER BY sequence ASC",
+            list(row["event_refs"]),
+        )
+        lineage.append({**dict(row), "source_events": [dict(r) for r in event_rows]})
+    return json.dumps({"object_type": object_type, "object_id": object_id, "lineage": lineage}, default=str)
+
+
+@server.tool()
+async def reextract_trajectory(extraction_id: str, ctx: Context) -> str:
+    """Re-runs semantic extraction for the same episode a prior
+    extraction covered, always on the strong model tier -- produces a NEW
+    trajectory_extractions row that coexists with every prior one;
+    nothing is overwritten."""
+    from app.services.extraction_routing import choose_extraction_model
+    from app.services.ingestion_jobs import _extraction_client
+    from app.services.procedure_extraction.schema import ExtractionTransientFailure
+    from app.services.trajectory_semantics import extract_trajectory_semantics
+
+    pool = ctx.request_context.lifespan_context["pool"]
+    prior = await pool.fetchrow(
+        "SELECT episode_id FROM trajectory_extractions WHERE id = $1::uuid", extraction_id,
+    )
+    if prior is None:
+        return "REFUSED: extraction not found"
+    client = _extraction_client()
+    if client is None:
+        return "REFUSED: no extraction LLM client configured"
+    strong_choice = choose_extraction_model(event_count=0, malformed_prior_attempt=True)
+    scope = _caller_access_scope()
+    try:
+        result = await extract_trajectory_semantics(
+            pool, str(prior["episode_id"]), client=client, model=strong_choice.model,
+            escalated=True, escalation_reason="explicit_reextraction_request",
+            owner_id=scope.viewer_id,
+        )
+    except ExtractionTransientFailure as exc:
+        return f"REFUSED: re-extraction failed -- {exc}"
+    return json.dumps({"model": strong_choice.model, "escalated": True, **result}, default=str)
+
+
+# ---------------------------------------------------------------------------
 # ADDITIVE read-only MCP Resources + Prompts surface. Registered here, after
 # every @server.tool() above, so resources.py can import the tool-layer
 # helpers (_caller_access_scope / _resolve_live_procedure / ...) it composes

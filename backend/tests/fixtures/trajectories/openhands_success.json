@@ -1,0 +1,23 @@
+{
+  "instance_id": "django__django-12345",
+  "metadata": {
+    "llm_config": {"model": "claude-sonnet-4-6"}
+  },
+  "metrics": {
+    "accumulated_cost": 0.1234,
+    "accumulated_token_usage": {"prompt_tokens": 8000, "completion_tokens": 1200}
+  },
+  "report": {"resolved": true},
+  "history": [
+    {"action": "message", "args": {"content": "Fix the bug where Foo raises on empty input"}, "id": 1},
+    {"action": "run", "args": {"command": "grep -rn Foo src/"}, "id": 2},
+    {"observation": "run", "content": "src/foo.py:12:def Foo(x):", "extras": {"exit_code": 0}, "cause": 2},
+    {"action": "read", "args": {"path": "src/foo.py"}, "id": 3},
+    {"observation": "read", "content": "def Foo(x):\n    return x.value\n", "extras": {"path": "src/foo.py"}, "cause": 3},
+    {"action": "edit", "args": {"path": "src/foo.py", "content": "def Foo(x):\n    if x is None:\n        return None\n    return x.value\n"}, "id": 4},
+    {"observation": "edit", "content": "edited src/foo.py", "extras": {"path": "src/foo.py"}, "cause": 4},
+    {"action": "run", "args": {"command": "pytest tests/test_foo.py"}, "id": 5},
+    {"observation": "run", "content": "1 passed in 0.12s", "extras": {"exit_code": 0}, "cause": 5},
+    {"action": "finish", "args": {"outcome": "success"}, "id": 6}
+  ]
+}

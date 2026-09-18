@@ -198,10 +198,10 @@ async def handle_normalize_trace_event(pool: asyncpg.Pool, payload: dict) -> Non
 
     Model-based extraction (extract_model_observation) is deliberately
     NOT called here -- that's an LLM call per event, a different cost/
-    latency class from this deterministic pass, and handoff item 1's own
-    concern. A future 'extract_model_observation' job_type can be queued
-    separately once that stub is filled in, without touching this
-    handler.
+    latency class from this deterministic pass; the per-episode semantic
+    extraction pass (trajectory_semantics.py) is the real replacement for
+    "promote raw structural observations straight into Claims" -- see the
+    note on the removed auto-enqueue below.
 
     No-op, not an error, if the trace_events row is gone (deleted, or a
     stale job re-run after a real cleanup) -- nothing to extract from is
@@ -213,6 +213,7 @@ async def handle_normalize_trace_event(pool: asyncpg.Pool, payload: dict) -> Non
 
     row = await pool.fetchrow(
         "SELECT id, session_id, event_type, tool_name, tool_input, tool_output, "
+        "       canonical_event_type, raw_event, "
         "       success, owner_id, visibility::text AS visibility "
         "FROM trace_events WHERE id = $1",
         trace_event_id,
@@ -257,32 +258,21 @@ async def handle_normalize_trace_event(pool: asyncpg.Pool, payload: dict) -> Non
                 "UPDATE observations SET ingestion_context_id = $1::uuid WHERE id = $2::uuid",
                 ingestion_context_id, observation_id,
             )
-        # The other half of the observation -> claim hop. Same enqueue
-        # idiom trace_worker.py:303-307 uses to create THIS job, kept
-        # deliberately identical so there is one pattern to learn.
-        #
-        # Option B: resolve the containing episode HERE, at enqueue time,
-        # so the job payload carries a real anchor. task_ids stays empty
-        # until an observation->task_node mapping exists; the episode is
-        # what makes the claim writable in the meantime. A None episode
-        # (assembly hasn't run for this session yet) is enqueued anyway so
-        # the queue reflects the real backlog -- the handler no-ops on it.
-        justification_episode_id = await resolve_justification_episode(
-            pool, observation_id,
-        )
-        await pool.execute(
-            "INSERT INTO ingestion_jobs (job_type, payload) VALUES ($1, $2)",
-            "promote_observation_to_claim",
-            json.dumps({
-                "observation_id": observation_id,
-                "trace_event_id": str(trace_event_id),
-                "task_ids": [],
-                "justification_episode_id": (
-                    str(justification_episode_id) if justification_episode_id else None
-                ),
-                "ingestion_context_id": ingestion_context_id,
-            }),
-        )
+        # REMOVED (trajectory-ingestion-hardening task, §9/§1 of the
+        # approved plan): this used to unconditionally enqueue
+        # 'promote_observation_to_claim' for every deterministic
+        # observation -- so raw structural telemetry ("Modified
+        # src/api.ts") became a durable Claim automatically. That is
+        # exactly the "telemetry label promoted into a reusable Claim"
+        # anti-pattern the task's Claims section forbids. Deterministic
+        # observations now stay observations: queryable structural
+        # telemetry, not auto-promoted. A Claim is now produced either by
+        # the per-episode semantic-extraction pass (trajectory_semantics.py
+        # -- real propositions with correct epistemic_status/
+        # generalization_level, cited to exact events) or by an explicit
+        # caller (report_execution, or the opt-in
+        # enqueue_pending_claim_promotions() recovery sweep below, both
+        # unchanged by this removal).
 
 
 async def resolve_justification_episode(pool: asyncpg.Pool, observation_id: str):

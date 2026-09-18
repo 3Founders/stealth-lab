@@ -2,9 +2,17 @@
 
 CONTEXT: promote_observation_to_claim() (observations.py) was real, tested,
 and had ZERO production callers. Registering it in JOB_HANDLERS alone would
-not have helped either -- nothing ever created work for it. Both halves are
-proved here: the handler is registered, AND handle_normalize_trace_event
-enqueues a job for every observation it persists.
+not have helped either -- nothing ever created work for it.
+
+UPDATED (trajectory-ingestion-hardening task): handle_normalize_trace_event
+used to enqueue a promotion job for EVERY observation it persisted --
+exactly the "raw telemetry auto-promoted into a Claim" anti-pattern the
+task's Claims section forbids. It no longer does; deterministic
+observations stay observations. `test_persisting_an_observation_does_not_
+auto_enqueue_promotion` below is the regression guard for that removal.
+The handler registration contract and the cost pre-check on
+handle_promote_observation_to_claim (still a real, callable handler --
+just no longer auto-invoked) are unchanged and still proved here.
 
 The pre-check matters for cost, not just correctness: claims.py:179-180
 computes an embedding (`embedder or Embedder()` -- a real Voyage call)
@@ -124,9 +132,12 @@ def test_normalize_handler_still_registered():
 # --------------------------------------------------------- the enqueue
 
 @pytest.mark.asyncio
-async def test_persisting_an_observation_enqueues_a_promotion_job(monkeypatch):
-    """The half that was missing: a registered handler is inert unless
-    something creates work for it."""
+async def test_persisting_an_observation_does_not_auto_enqueue_promotion(monkeypatch):
+    """REGRESSION GUARD (trajectory-ingestion-hardening task, §1/§9): a
+    deterministic observation must be persisted, and must NOT trigger an
+    automatic 'promote_observation_to_claim' job -- raw structural
+    telemetry ("Modified /repo/a.py") is not a reusable Claim just
+    because it was recorded."""
     persisted = []
 
     async def fake_persist(pool, **kwargs):
@@ -142,22 +153,14 @@ async def test_persisting_an_observation_enqueues_a_promotion_job(monkeypatch):
 
     assert len(persisted) == 1, "the observation itself must still be written"
     jobs = [c for c in pool.executed if "INSERT INTO ingestion_jobs" in c[0]]
-    assert len(jobs) == 1, "exactly one promotion job per persisted observation"
-    _, args = jobs[0]
-    assert args[0] == "promote_observation_to_claim"
-    payload = json.loads(args[1])
-    assert payload["observation_id"] == "obs-abc"
-    assert payload["task_ids"] == []
-    # Option B: the payload now carries an episode anchor. None here --
-    # this FakePool resolves no episode -- but the key must be present,
-    # because the handler distinguishes "absent" from "resolved to None".
-    assert "justification_episode_id" in payload
+    assert jobs == [], "deterministic observations must not auto-enqueue a promotion job"
 
 
 @pytest.mark.asyncio
-async def test_double_encoded_event_still_enqueues(monkeypatch):
-    """The two fixes compose: a double-encoded payload used to throw before
-    any observation was persisted, so no job was ever enqueued either."""
+async def test_double_encoded_event_is_still_persisted_without_enqueue(monkeypatch):
+    """The double-encode fix and the no-auto-promote fix compose: a
+    double-encoded payload used to throw before any observation was
+    persisted; now it must persist cleanly and still not auto-enqueue."""
     async def fake_persist(pool, **kwargs):
         return "obs-double"
 
@@ -168,7 +171,7 @@ async def test_double_encoded_event_still_enqueues(monkeypatch):
     await ij.handle_normalize_trace_event(
         pool, {"trace_event_id": "11111111-1111-1111-1111-111111111111"}
     )
-    assert any("INSERT INTO ingestion_jobs" in c[0] for c in pool.executed)
+    assert not any("INSERT INTO ingestion_jobs" in c[0] for c in pool.executed)
 
 
 # ------------------------------------------------- the cost pre-check

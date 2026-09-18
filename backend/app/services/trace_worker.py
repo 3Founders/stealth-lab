@@ -34,8 +34,12 @@ from typing import Any, Mapping, Optional, Sequence
 
 import asyncpg
 
+from app.services.ingestion_sources.normalized_trajectory import (
+    NormalizedEvent,
+    NormalizedTrajectory,
+)
 from app.services.trace_collector import mark_worker_seen, read_drop_count
-from app.services.trace_redaction import redact_event
+from app.services.trace_redaction import redact_event, redact_value
 
 SCHEMA_VERSION = "1"
 
@@ -192,7 +196,15 @@ def read_overflow_payload(raw_payload_ref: str) -> dict:
 async def _ensure_trace_header(conn: asyncpg.Connection, trace_id: str, session_id: str,
                                 started_at: datetime, owner_id: str | None = None,
                                 visibility: str = "public",
-                                project_id: str | None = None) -> None:
+                                project_id: str | None = None,
+                                *,
+                                provider: str | None = None,
+                                provider_version: str | None = None,
+                                model: str | None = None,
+                                token_usage: dict | None = None,
+                                cost_usd: float | None = None,
+                                outcome: str | None = None,
+                                metadata: dict | None = None) -> None:
     """
     project_id was a real column (migration 17) that nothing ever wrote --
     the collector computed it and discarded it, so 0 of 18 agent_traces
@@ -205,14 +217,36 @@ async def _ensure_trace_header(conn: asyncpg.Connection, trace_id: str, session_
     collector starts supplying one. COALESCE keeps it a one-way fill --
     an existing non-null value is never overwritten by a later, possibly
     different, cwd for the same trace.
+
+    `provider`/`provider_version`/`model`/`token_usage`/`cost_usd`/
+    `outcome`/`metadata` (trajectory-ingestion-hardening task): all
+    keyword-only, all optional, all default None -- the Claude Code path
+    (process_collector_file) never passes them, so its header rows are
+    byte-identical to before this change. write_normalized_trajectory()
+    (below) is the one real caller that supplies them, for OpenHands and
+    future non-Claude-Code sources. Same one-way COALESCE backfill
+    discipline as project_id for every field here.
     """
     await conn.execute(
         "INSERT INTO agent_traces (trace_id, session_id, started_at, schema_version, "
-        "owner_id, visibility, project_id) "
-        "VALUES ($1, $2, $3, $4, $5, $6::visibility_level, $7) "
-        "ON CONFLICT (trace_id) DO UPDATE "
-        "SET project_id = COALESCE(agent_traces.project_id, EXCLUDED.project_id)",
+        "owner_id, visibility, project_id, provider, provider_version, model, "
+        "token_usage, cost_usd, outcome, metadata) "
+        "VALUES ($1, $2, $3, $4, $5, $6::visibility_level, $7, $8, $9, $10, "
+        "$11::jsonb, $12, $13, COALESCE($14::jsonb, '{}'::jsonb)) "
+        "ON CONFLICT (trace_id) DO UPDATE SET "
+        "project_id = COALESCE(agent_traces.project_id, EXCLUDED.project_id), "
+        "provider = COALESCE(agent_traces.provider, EXCLUDED.provider), "
+        "provider_version = COALESCE(agent_traces.provider_version, EXCLUDED.provider_version), "
+        "model = COALESCE(agent_traces.model, EXCLUDED.model), "
+        "token_usage = COALESCE(agent_traces.token_usage, EXCLUDED.token_usage), "
+        "cost_usd = COALESCE(agent_traces.cost_usd, EXCLUDED.cost_usd), "
+        "outcome = COALESCE(agent_traces.outcome, EXCLUDED.outcome), "
+        "metadata = agent_traces.metadata || EXCLUDED.metadata",
         trace_id, session_id, started_at, SCHEMA_VERSION, owner_id, visibility, project_id,
+        provider, provider_version, model,
+        json.dumps(token_usage) if token_usage is not None else None,
+        cost_usd, outcome,
+        json.dumps(metadata) if metadata is not None else None,
     )
 
 
@@ -237,14 +271,31 @@ async def _insert_event(conn: asyncpg.Connection, record: dict, owner_id: str | 
         max_inline_bytes=max_inline_bytes, raw_payload_dir=raw_payload_dir,
     )
 
+    # trajectory-ingestion-hardening task: canonical_event_type/raw_event
+    # (migration 88). Absent for the Claude Code collector path (its
+    # `event` dict never carries either key), so this is a pure no-op
+    # addition for that path -- both columns land NULL exactly as they
+    # would with no code change at all. `raw_event` goes through the same
+    # secret-redaction pass as tool_input/tool_output (it can carry a raw
+    # OpenHands action/observation payload with command output or env
+    # values in it) rather than skipping redaction just because it's a
+    # new field.
+    canonical_event_type = event.get("canonical_event_type")
+    raw_event = event.get("raw_event")
+    raw_event_col = None
+    if raw_event is not None:
+        matched: list[str] = []
+        raw_event_col = json.dumps(redact_value(raw_event, matched))
+
     return await conn.fetchval(
         """
         INSERT INTO trace_events (
             trace_id, session_id, sequence, event_type, "timestamp",
             actor_id, tool_name, tool_call_id, tool_input, tool_output,
             success, dedup_key, schema_version, owner_id, visibility,
-            raw_payload_ref
-        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15::visibility_level,$16)
+            raw_payload_ref, canonical_event_type, raw_event
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15::visibility_level,
+                  $16,$17,$18::jsonb)
         ON CONFLICT (dedup_key) DO NOTHING
         RETURNING id
         """,
@@ -264,6 +315,8 @@ async def _insert_event(conn: asyncpg.Connection, record: dict, owner_id: str | 
         owner_id,
         visibility,
         raw_payload_ref,
+        canonical_event_type,
+        raw_event_col,
     )
 
 
@@ -353,6 +406,91 @@ async def process_collector_file(pool: asyncpg.Pool, file_path: Path, *,
         "inserted": inserted,
         "skipped_duplicate": skipped_duplicate,
         "quarantined": len(quarantined),
+    }
+
+
+async def write_normalized_trajectory(
+    pool: asyncpg.Pool,
+    trajectory: NormalizedTrajectory,
+    *,
+    owner_id: str | None = None,
+    visibility: str = "public",
+    max_inline_bytes: Optional[int] = None,
+    raw_payload_dir: Optional[Path] = None,
+) -> dict:
+    """
+    The SAME write path `process_collector_file()` uses (one header
+    upsert, per-event `ON CONFLICT (dedup_key) DO NOTHING`, one
+    `normalize_trace_event` job per real insert), for a source whose
+    whole trajectory is already available in memory rather than arriving
+    as an appended JSONL file (trajectory-ingestion-hardening task Sec 3/
+    5/17: "no second ingestion system" -- one adapter boundary, one
+    writer). `trajectory` is any `NormalizedTrajectory`
+    (`ingestion_sources/normalized_trajectory.py`) -- this function has
+    no OpenHands-specific (or any other source-specific) knowledge.
+
+    A `NormalizedTrajectory` has no start timestamp of its own (an
+    adapter may not know one); `started_at` falls back to "now" the same
+    way an empty/absent transcript timestamp already does elsewhere in
+    this module (`parse_transcript_timestamp` returning None is a
+    legitimate, pre-existing state, not new here).
+    """
+    inserted = 0
+    skipped_duplicate = 0
+
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            await _ensure_trace_header(
+                conn, trajectory.trace_id, trajectory.session_id,
+                datetime.now(timezone.utc),
+                owner_id=owner_id, visibility=visibility,
+                provider=trajectory.provider,
+                provider_version=trajectory.provider_version,
+                model=trajectory.model,
+                token_usage=trajectory.token_usage,
+                cost_usd=trajectory.cost_usd,
+                outcome=trajectory.outcome,
+                metadata=trajectory.metadata,
+            )
+            for event in trajectory.events:
+                record = {
+                    "trace_id": trajectory.trace_id,
+                    "session_id": trajectory.session_id,
+                    "sequence": event.sequence,
+                    "event_type": event.canonical_event_type or event.tool_name,
+                    "dedup_key": event.dedup_key,
+                    "event": {
+                        "timestamp": event.timestamp.isoformat() if event.timestamp else None,
+                        "actor_id": None,
+                        "tool_name": event.tool_name,
+                        "tool_call_id": None,
+                        "tool_input": event.tool_input,
+                        "tool_output": event.tool_output,
+                        "success": event.success,
+                        "canonical_event_type": event.canonical_event_type,
+                        "raw_event": event.raw_event,
+                    },
+                }
+                new_id = await _insert_event(
+                    conn, record, owner_id=owner_id, visibility=visibility,
+                    max_inline_bytes=max_inline_bytes, raw_payload_dir=raw_payload_dir,
+                )
+                if new_id is not None:
+                    inserted += 1
+                    await conn.execute(
+                        "INSERT INTO ingestion_jobs (job_type, payload) VALUES ($1, $2)",
+                        "normalize_trace_event",
+                        json.dumps({"trace_event_id": str(new_id), "dedup_key": event.dedup_key}),
+                    )
+                else:
+                    skipped_duplicate += 1
+
+    return {
+        "trace_id": trajectory.trace_id,
+        "records_seen": len(trajectory.events),
+        "inserted": inserted,
+        "skipped_duplicate": skipped_duplicate,
+        "skipped_malformed_events": trajectory.skipped_malformed_events,
     }
 
 
@@ -857,11 +995,22 @@ def load_transcript(path: Path) -> tuple:
     return records, bad
 
 
-def _episode_metadata(ep: Episode, session_id: str, fingerprint: str) -> dict:
+def _episode_metadata(
+    ep: Episode, session_id: str, fingerprint: str,
+    *, segmenter_name: str = "trace_worker/episode_assembly.v1",
+    rules: Optional[dict] = None,
+) -> dict:
+    """`segmenter_name`/`rules` are overridable (default: unchanged,
+    byte-identical to before these params existed) so a DIFFERENT real
+    segmentation algorithm -- e.g. segment_events_structurally() below,
+    used for OpenHands/non-Claude-Code trajectories -- can write metadata
+    that honestly describes what actually produced the boundary, instead
+    of every episode row claiming the Claude-Code-specific
+    rule_a_genuine_prompts rule regardless of its real origin."""
     return {
         "assembly_fingerprint": fingerprint,
-        "segmenter": "trace_worker/episode_assembly.v1",
-        "rules": {
+        "segmenter": segmenter_name,
+        "rules": rules if rules is not None else {
             "primary_boundary": "rule_a_genuine_prompts",
             "idle_gap_signal": "dropped_not_tuned",
             "trivial_merge_max_events": TRIVIAL_MERGE_MAX_EVENTS,
@@ -883,6 +1032,8 @@ async def write_session_episodes(
     visibility: str = "public",
     project_id: Optional[str] = None,
     content_ref_prefix: str = "transcript",
+    segmenter_name: str = "trace_worker/episode_assembly.v1",
+    segmenter_rules: Optional[dict] = None,
 ) -> dict:
     """Persist assembled episodes into the EXISTING episodes table
     (01_ontology.sql + migration 17's columns) -- no new migration, by lane
@@ -953,7 +1104,10 @@ async def write_session_episodes(
                 # skipped_existing was always 0, and every re-run duplicated
                 # every episode. Measured 2026-08-28: a second run over one
                 # unchanged transcript took episodes 50 -> 100.
-                _episode_metadata(ep, session_id, fingerprint),
+                _episode_metadata(
+                    ep, session_id, fingerprint,
+                    segmenter_name=segmenter_name, rules=segmenter_rules,
+                ),
                 session_id,
                 project_id,
                 ep.start_ts,
@@ -973,6 +1127,125 @@ async def write_session_episodes(
         "children_inserted": children_inserted,
         "skipped_existing": skipped,
     }
+
+
+# ---------------------------------------------------------------------------
+# Episode assembly for non-Claude-Code sources (trajectory-ingestion-
+# hardening task, Sec 4/15). `assemble_episodes()` above segments a Claude
+# Code TRANSCRIPT (human-prompt boundaries, sourceToolAssistantUUID subagent
+# joins) -- signals that only exist for that one source. A source like
+# OpenHands has no such transcript at all; its trajectory already IS the
+# `NormalizedEvent` stream a whole `write_normalized_trajectory()` call
+# just wrote as `trace_events` rows. `segment_events_structurally()` below
+# reuses the SAME validated thresholds (TRIVIAL_MERGE_MAX_EVENTS,
+# OVERSIZE_SUBDIVIDE_EVENTS) and the SAME philosophy (structural signals
+# only, no idle-gap heuristic -- that was measured and rejected, see the
+# big comment above assemble_episodes) against the canonical, harness-
+# neutral event vocabulary instead of Claude-Code-specific line
+# predicates: one algorithm's THRESHOLDS/PHILOSOPHY are shared, not a
+# byte-identical function, because the input shapes genuinely differ.
+# ---------------------------------------------------------------------------
+
+#: canonical_event_type values that count as an internal subdivision
+#: boundary for an oversized trajectory -- the same class of signal
+#: (test/commit completions) assemble_episodes()'s Claude-Code path
+#: already subdivides on, generalized to the cross-harness vocabulary.
+STRUCTURAL_SUBDIVISION_TYPES = frozenset({"TEST", "COMMIT", "HANDOFF"})
+
+
+def segment_events_structurally(
+    events: Sequence[NormalizedEvent],
+    *,
+    oversize_subdivide_events: Optional[int] = None,
+) -> list[Episode]:
+    """
+    Pure, offline-testable. A trajectory with no natural "new human
+    prompt" boundary (OpenHands: one export is one task attempt) starts
+    as ONE top-level episode. If it's oversized, it is split at INTERNAL
+    TEST/COMMIT/HANDOFF boundaries -- the boundary event ends the span it
+    concludes, the next event opens the following span -- exactly
+    mirroring assemble_episodes()'s own subdivision philosophy ("metadata
+    attached to an episode, or a sub-boundary within one, never an
+    invented arbitrary cut"). An oversized trajectory with NO internal
+    structural boundary at all stays whole and is flagged
+    'oversize_unsubdivided', matching the Claude Code path's own honest
+    behavior in the same situation -- no arbitrary cut is invented here
+    either.
+    """
+    n = len(events)
+    if n == 0:
+        return []
+
+    oversize_at = (
+        OVERSIZE_SUBDIVIDE_EVENTS if oversize_subdivide_events is None
+        else oversize_subdivide_events
+    )
+
+    def _episode_for(start: int, end: int, flags: frozenset) -> Episode:
+        span_events = events[start:end]
+        start_ts = next((e.timestamp for e in span_events if e.timestamp is not None), None)
+        end_ts = next((e.timestamp for e in reversed(span_events) if e.timestamp is not None), None)
+        return Episode(start=start, end=end, start_ts=start_ts, end_ts=end_ts, flags=flags, source="trajectory")
+
+    if n <= oversize_at:
+        return [_episode_for(0, n, frozenset())]
+
+    # Internal boundary = an event (strictly before the last one) whose
+    # canonical_event_type concludes a span. The next span starts right
+    # after it.
+    cuts = [
+        i + 1 for i, e in enumerate(events[:-1])
+        if e.canonical_event_type in STRUCTURAL_SUBDIVISION_TYPES
+    ]
+    if not cuts:
+        return [_episode_for(0, n, frozenset({"oversize_unsubdivided"}))]
+
+    spans = _spans(cuts, n)
+    return [_episode_for(start, end, frozenset({"subdivided"})) for start, end in spans]
+
+
+async def write_trajectory_episodes(
+    pool: asyncpg.Pool,
+    *,
+    session_id: str,
+    trajectory: NormalizedTrajectory,
+    owner_id: Optional[str] = None,
+    visibility: str = "public",
+    project_id: Optional[str] = None,
+) -> dict:
+    """The SAME persistence function (`write_session_episodes`) every
+    other episode-writing path uses, fed a structurally-segmented
+    assembly instead of a transcript-derived one -- one writer, two
+    segmentation algorithms selected by source shape. `content_ref_prefix`
+    is the trajectory's own provider name so a locator never collides
+    with a Claude Code transcript's `transcript#...` namespace."""
+    episodes = segment_events_structurally(trajectory.events)
+    assembly = EpisodeAssembly(
+        episodes=episodes,
+        main_lines=len(trajectory.events),
+        unparsed_main_lines=trajectory.skipped_malformed_events,
+        subagent_files_seen=0,
+        subagent_files_joined=0,
+        unjoined_subagent_lines=0,
+        trivial_folds=0,
+        subdivided_episodes=sum(1 for e in episodes if "subdivided" in e.flags),
+    )
+    return await write_session_episodes(
+        pool,
+        session_id=session_id,
+        assembly=assembly,
+        owner_id=owner_id,
+        visibility=visibility,
+        project_id=project_id,
+        content_ref_prefix=trajectory.provider,
+        segmenter_name=f"trace_worker/segment_events_structurally.v1[{trajectory.provider}]",
+        segmenter_rules={
+            "primary_boundary": "whole_trajectory_unless_oversize",
+            "subdivision_boundary": sorted(STRUCTURAL_SUBDIVISION_TYPES),
+            "idle_gap_signal": "not_used",
+            "oversize_subdivide_events": OVERSIZE_SUBDIVIDE_EVENTS,
+        },
+    )
 
 
 def discover_subagent_files(session_file: Path) -> dict:
