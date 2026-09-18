@@ -42,6 +42,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from fastapi import FastAPI, HTTPException, Request
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel
 
@@ -63,6 +64,17 @@ from app.stealth.legacy_context import STEALTH_DIRNAME
 EDITABLE_FILES: tuple[str, ...] = CONTENT_PAGE_FILES + OPTIONAL_CONTENT_PAGE_FILES
 
 app = FastAPI(title="StealthLab .stealth/ editor")
+
+# Local-only tool (loopback default, same posture as every other server
+# in this codebase) -- CORS is opened for the Vite dev server's own
+# localhost origins only, not "*", so this stays honest about being a
+# single-machine dev tool, not a public API.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+    allow_methods=["GET", "POST"],
+    allow_headers=["*"],
+)
 
 
 def _resolve_workspace(repo_path: str) -> str:

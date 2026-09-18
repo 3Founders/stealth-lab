@@ -1,0 +1,9 @@
+* {
+  margin: 0;
+  padding: 0;
+}
+
+html, body, #root {
+  height: 100%;
+  font: 14px/1.4 -apple-system, "Segoe UI", sans-serif;
+}
