@@ -29,6 +29,7 @@
  pydantic-settings
  pytest
  pytest-asyncio
+ python-docx
  python-dotenv
  PyJWT[crypto]
  PyYAML
@@ -51,3 +52,7 @@ z3-solver
 # apps and the headless worker. Optional at runtime: no SENTRY_DSN means
 # init() is a no-op and this is never imported.
 sentry-sdk[fastapi]
+
+# python-docx (DocxAdapter, app/services/ingestion_sources/document_adapters/
+# docx_adapter.py) - reads .docx paragraphs/tables for the document ingestion
+# SourceAdapter layer. pdfplumber above already covers PDF for the same layer.

@@ -25,6 +25,9 @@ dependencies = [
     # as "async def functions are not natively supported" in any
     # freshly-synced environment (confirmed live on a clean `uv sync`).
     "pytest-asyncio",
+    # DocxAdapter (app/services/ingestion_sources/document_adapters/docx_adapter.py)
+    # -- the document-ingestion SourceAdapter layer's DOCX reader.
+    "python-docx",
     "python-dotenv",
     # Required at import time: app/services/authn.py does `import jwt`
     # unconditionally, and app/main.py imports from app.services.authn at
