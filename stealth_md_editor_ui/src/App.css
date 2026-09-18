@@ -125,3 +125,94 @@ textarea {
   resize: none;
   white-space: pre;
 }
+
+.viewSwitch {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 8px;
+}
+.viewSwitch button {
+  flex: 1;
+  background: #2a2a2a;
+  font-size: 12px;
+  padding: 6px 0;
+}
+.viewSwitch button.active {
+  background: #3a6df0;
+}
+
+.versionHelp {
+  font-size: 12px;
+  color: #999;
+  line-height: 1.5;
+}
+.versionHelp code {
+  background: #111;
+  padding: 1px 4px;
+  border-radius: 3px;
+}
+
+.candidateList {
+  flex: 1;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.candidateRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  background: #111;
+  border: 1px solid #2a2a2a;
+  border-radius: 4px;
+  font-size: 13px;
+}
+
+.badge {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 10px;
+  color: white;
+  white-space: nowrap;
+}
+
+.objType {
+  color: #999;
+  font-size: 12px;
+  text-transform: uppercase;
+  width: 70px;
+  flex-shrink: 0;
+}
+
+.candSummary {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.candReason {
+  color: #888;
+  font-size: 12px;
+  font-style: italic;
+  flex-shrink: 0;
+}
+
+.commitResults {
+  margin-bottom: 10px;
+  font-size: 13px;
+}
+.commitRow {
+  padding: 6px 10px;
+  border-radius: 4px;
+  margin-bottom: 4px;
+  background: #111;
+  border: 1px solid #2a2a2a;
+}
+.commitRow.committed { border-color: #3a8f3a; }
+.commitRow.refused { border-color: #b33; }
+.commitRow.skipped { border-color: #555; }

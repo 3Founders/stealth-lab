@@ -172,6 +172,64 @@ async def get_ledger(repo_path: str, request: Request, file_path: str | None = N
     return JSONResponse([{k: str(v) for k, v in e.items()} for e in entries])
 
 
+# ---------------------------------------------------------------------------
+# Versioning: real diff-before-promote, not something new. `.stealth/` stays
+# a disposable projection; the "versioning system" is app.stealth.local_sync
+# -- it parses each CLAIM/PROCEDURE/GOAL pipe line's own `version=` field
+# (the object's real bi-temporal version) and classifies it against the
+# CURRENT canonical Postgres row: NEW / CHANGED / ALREADY_SYNCED /
+# CONFLICTING (backend moved on since this projection was generated) /
+# LOCAL_ONLY. This editor only exposes that existing preview/commit pair
+# over HTTP -- no new sync logic, no second classifier.
+# ---------------------------------------------------------------------------
+
+
+@app.get("/api/sync/preview")
+async def sync_preview(repo_path: str, request: Request) -> JSONResponse:
+    """Real, read-only: writes nothing. See `preview_local_sync`'s own
+    docstring -- recomputed fresh every call, never cached, since the
+    backend can change between two calls."""
+    from app.stealth.local_sync import preview_local_sync
+
+    repo_path = _resolve_workspace(repo_path)
+    pool = request.app.state.pool
+    try:
+        candidates = await preview_local_sync(pool, repo_path)
+    except Exception as exc:  # noqa: BLE001 -- surfaced verbatim, never swallowed
+        raise HTTPException(500, f"preview_local_sync failed: {exc}") from exc
+    return JSONResponse(candidates)
+
+
+class SyncCommitBody(BaseModel):
+    repo_path: str
+    selected_ids: list[str]
+    allow_local_only: bool = False
+    actor: str | None = None
+
+
+@app.post("/api/sync/commit")
+async def sync_commit(body: SyncCommitBody, request: Request) -> JSONResponse:
+    """Real write: only the explicitly `selected_ids` are acted on, and
+    only after re-deriving each one's classification fresh (never trusts
+    a stale classification the browser is holding) -- see
+    `commit_local_sync_items`'s own docstring. Each committed item lands
+    as a normal candidate/private Claim/Procedure/Goal row via the exact
+    same service-layer writers every other submission path uses."""
+    from app.stealth.local_sync import commit_local_sync_items
+
+    repo_path = _resolve_workspace(body.repo_path)
+    pool = request.app.state.pool
+    actor = body.actor or "stealth_md_editor"
+    try:
+        results = await commit_local_sync_items(
+            pool, repo_path, body.selected_ids,
+            created_by=actor, allow_local_only=body.allow_local_only,
+        )
+    except Exception as exc:  # noqa: BLE001 -- surfaced verbatim, never swallowed
+        raise HTTPException(500, f"commit_local_sync_items failed: {exc}") from exc
+    return JSONResponse([r for r in results])
+
+
 @app.on_event("startup")
 async def _startup() -> None:
     app.state.pool = await create_pool()
