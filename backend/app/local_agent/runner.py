@@ -595,7 +595,11 @@ class LocalAgentRunner:
                         "limit": 3, "invariant_bindings": json.dumps(invariant_bindings),
                     },
                 )
-                matches = json.loads(search_result.content[0].text)
+                # search_procedures now returns {results: [...],
+                # contextual_judgment_status} (Claim-conditioned second
+                # stage) instead of a bare array -- unwrap here, the one
+                # real (non-test) caller of this MCP tool's JSON shape.
+                matches = json.loads(search_result.content[0].text)["results"]
                 matched, source = (matches[0], "global") if matches else (None, None)
                 retrieval_log = [
                     _retrieval_entry(m, "global", i) for i, m in enumerate(matches)

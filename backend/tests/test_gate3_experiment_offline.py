@@ -89,14 +89,18 @@ def _fake_run_node_with_usage():
 
 def _matched_session():
     return FakeClientSession({
-        "search_procedures": json.dumps([dict(_CANDIDATE)]),
+        "search_procedures": json.dumps({
+            "results": [dict(_CANDIDATE)], "contextual_judgment_status": "ok",
+        }),
         "get_procedure": json.dumps(dict(_PROCEDURE)),
         "report_execution": "ok",
     })
 
 
 def _empty_session():
-    return FakeClientSession({"search_procedures": json.dumps([])})
+    return FakeClientSession({
+        "search_procedures": json.dumps({"results": [], "contextual_judgment_status": "ok"}),
+    })
 
 
 def _swap_seams(monkeypatch, session, run_node):

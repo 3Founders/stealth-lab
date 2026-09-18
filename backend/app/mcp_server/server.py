@@ -2642,12 +2642,21 @@ async def _resolve_live_procedure(
 @server.tool()
 async def search_procedures(task: str, ctx: Context, state: str = "{}", limit: int = 5,
                              require_verified: bool = False,
-                             invariant_bindings: str = "{}") -> str:
+                             invariant_bindings: str = "{}",
+                             use_claims: bool = True) -> str:
     """
     Find procedures applicable to a task/state -- lookup only, nothing
-    executes. Thin wrapper: all decision logic is
-    app.services.applicability.find_applicable_procedures(), the SAME
-    non-compensatory cascade find_best_way's own tier-1 calls internally.
+    executes. Broad candidate retrieval is still
+    app.services.applicability.find_applicable_procedures() (the SAME
+    non-compensatory cascade find_best_way's own tier-1 calls internally),
+    UNCHANGED. On top of that, this tool now runs the Claim-conditioned
+    NLI/JEV second stage (app.services.claim_conditioned_retrieval):
+    relevant local Claims are retrieved per candidate, each candidate is
+    judged TRUE/FALSE/UNKNOWN against them, a REQUIRED condition strongly
+    CONTRADICTED by a Claim is hard-filtered out, and survivors are
+    reranked with explicit component scores. This replaces this tool's
+    previous "similarity order only" behavior -- see `use_claims` below to
+    opt back out.
 
     task: plain-language description of what's being attempted, same
     phrasing style as retrieve_precedent's query.
@@ -2667,14 +2676,22 @@ async def search_procedures(task: str, ctx: Context, state: str = "{}", limit: i
     invariant_bindings_from_facts) computes these locally and sends the
     result here, exactly as find_best_way's own repo_path path does
     server-side when it has a repo to probe directly.
+    use_claims: default True -- run the Claim-conditioned second stage.
+    Honestly degrades, never errors, when no judge provider is configured
+    (APPLICABILITY_JUDGE_PROVIDER unset): behaves exactly like
+    use_claims=False, and `contextual_judgment_status` in the response
+    says so (Sec 19 -- a missing/unavailable judge never breaks retrieval).
 
-    Returns a JSON array of {id, procedure_id, version, name, goal,
-    verification_state, similarity}. `similarity` is null for a
-    hard-filter survivor that couldn't be ranked (no goal embedding
-    supplied, or the row has none) -- never fabricated.
+    Returns a JSON object: {results: [{id, procedure_id, version, name,
+    goal, verification_state, similarity, verdict, supporting_claim_ids,
+    blocking_claim_ids, unknown_requirements, scores}],
+    contextual_judgment_status: "ok"|"unavailable"}. `similarity` and the
+    claim-conditioned fields are null/omitted-equivalent when unavailable
+    -- never fabricated.
     """
     pool = ctx.request_context.lifespan_context["pool"]
-    from app.services.applicability import find_applicable_procedures
+    from app.services.applicability_judge import default_judge_from_env
+    from app.services.claim_conditioned_retrieval import find_applicable_candidates
     from app.services.embeddings import Embedder
 
     try:
@@ -2688,9 +2705,10 @@ async def search_procedures(task: str, ctx: Context, state: str = "{}", limit: i
 
     embedder = Embedder()
     goal_vec = await embedder.embed_one(task, input_type="query")
-    matches = await find_applicable_procedures(
-        pool, goal_embedding=goal_vec, current_scope=current_scope,
-        require_verified=require_verified, limit=limit,
+    judge = default_judge_from_env() if use_claims else None
+    result = await find_applicable_candidates(
+        pool, goal_text=task, goal_embedding=goal_vec, judge=judge,
+        current_scope=current_scope, require_verified=require_verified, limit=limit,
         # B19 residual fix -- see find_best_way's identical fix above; this
         # tool's own name says "search", the exact surface the founder
         # flagged. Real caller scope -- never surface a private procedure
@@ -2699,15 +2717,29 @@ async def search_procedures(task: str, ctx: Context, state: str = "{}", limit: i
         invariant_bindings=bindings,
         embedding_model_id=embedder.embedding_model_id(),
     )
-    return json.dumps([
-        {
-            "id": str(m["id"]), "procedure_id": str(m["procedure_id"]),
-            "version": m["version"], "name": m["name"], "goal": m["goal"],
-            "verification_state": m["verification_state"],
-            "similarity": m.get("_similarity_score"),
-        }
-        for m in matches
-    ])
+    return json.dumps({
+        "results": [
+            {
+                "id": str(c.procedure["id"]), "procedure_id": str(c.procedure["procedure_id"]),
+                "version": c.procedure["version"], "name": c.procedure["name"],
+                "goal": c.procedure["goal"],
+                "verification_state": c.procedure["verification_state"],
+                "similarity": c.procedure.get("_similarity_score"),
+                "verdict": c.judgment.verdict if c.judgment else None,
+                "supporting_claim_ids": c.judgment.supporting_claim_ids if c.judgment else [],
+                "blocking_claim_ids": c.judgment.blocking_claim_ids if c.judgment else [],
+                "unknown_requirements": c.judgment.unknown_requirements if c.judgment else [],
+                "scores": {
+                    "semantic_relevance": c.semantic_relevance, "claim_fit": c.claim_fit,
+                    "evidence_strength": c.evidence_strength, "verified_success": c.verified_success,
+                    "cost_estimate": c.cost_estimate, "latency_estimate": c.latency_estimate,
+                    "risk": c.risk, "final_policy_score": c.final_policy_score,
+                },
+            }
+            for c in result.candidates
+        ],
+        "contextual_judgment_status": result.contextual_judgment_status,
+    })
 
 
 @server.tool()

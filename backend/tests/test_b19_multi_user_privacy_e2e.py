@@ -185,7 +185,7 @@ def test_user_private_procedure_never_surfaces_in_find_best_way_or_search_for_a_
 
             with _as_actor(owner_b):
                 found = await srv.search_procedures(goal_text, ctx, require_verified=False)
-                ids = [m["procedure_id"] for m in json.loads(found)]
+                ids = [m["procedure_id"] for m in json.loads(found)["results"]]
                 assert str(procedure["procedure_id"]) not in ids, (
                     "search_procedures leaked another user's private procedure "
                     "as a semantic match"
@@ -196,7 +196,7 @@ def test_user_private_procedure_never_surfaces_in_find_best_way_or_search_for_a_
 
             with _as_actor(owner_a):
                 found_own = await srv.search_procedures(goal_text, ctx, require_verified=False)
-                ids_own = [m["procedure_id"] for m in json.loads(found_own)]
+                ids_own = [m["procedure_id"] for m in json.loads(found_own)["results"]]
                 assert str(procedure["procedure_id"]) in ids_own, (
                     "the owner's own search must still find their own private procedure"
                 )

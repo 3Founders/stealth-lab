@@ -276,7 +276,9 @@ async def test_runner_composes_behavioral_gate_end_to_end(
 
     procedure = _procedure_payload(_contract())
     session = _FakeSession({
-        "search_procedures": json.dumps([{"procedure_id": "p-lazy-1"}]),
+        "search_procedures": json.dumps({
+            "results": [{"procedure_id": "p-lazy-1"}], "contextual_judgment_status": "ok",
+        }),
         "get_procedure": json.dumps(procedure),
         "report_execution": json.dumps({"verification_state": "candidate"}),
     })

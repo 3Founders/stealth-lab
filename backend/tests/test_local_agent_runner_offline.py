@@ -83,10 +83,13 @@ async def test_runner_calls_search_then_execute_then_report(monkeypatch):
         "steps": [{"order": 0, "goal": "fix the bug in calc.py"}],
     }
     fake_session = FakeClientSession({
-        "search_procedures": json.dumps([
-            {"id": "row-1", "procedure_id": "proc-1", "version": 1,
-             "name": "fix-calc-bug", "verification_state": "candidate", "similarity": 0.9},
-        ]),
+        "search_procedures": json.dumps({
+            "results": [
+                {"id": "row-1", "procedure_id": "proc-1", "version": 1,
+                 "name": "fix-calc-bug", "verification_state": "candidate", "similarity": 0.9},
+            ],
+            "contextual_judgment_status": "ok",
+        }),
         "get_procedure": json.dumps(procedure),
         "report_execution": json.dumps({"procedure_id": "proc-1", "verification_state": "candidate"}),
     })
@@ -129,7 +132,7 @@ async def test_runner_probes_its_own_repo_and_sends_invariant_bindings(monkeypat
     (tmp_path / "requirements.txt").write_text("pandas==2.1.0\n")
 
     fake_session = FakeClientSession({
-        "search_procedures": json_mod.dumps([]),
+        "search_procedures": json_mod.dumps({"results": [], "contextual_judgment_status": "ok"}),
     })
 
     async def fake_run_node(node, **kwargs):
@@ -176,7 +179,7 @@ async def test_runner_does_not_capture_a_candidate_from_a_failed_adhoc_run(monke
     import json
 
     install_fake_embedder(monkeypatch)
-    fake_session = FakeClientSession({"search_procedures": json.dumps([])})
+    fake_session = FakeClientSession({"search_procedures": json.dumps({"results": [], "contextual_judgment_status": "ok"})})
 
     async def fake_run_node(node, **kwargs):
         return NodeResult(status="failure", notes="gave up", data={"files_edited": [], "patch": ""})
@@ -207,7 +210,10 @@ async def test_runner_refuses_a_node_naming_only_an_unimplemented_kind(monkeypat
     # P5: retrieval is global-only now -- the step naming an unimplemented
     # kind arrives via a GLOBAL match (search_procedures -> get_procedure).
     fake_session = FakeClientSession({
-        "search_procedures": json.dumps([{"procedure_id": "p-slm", "name": "fix-calc-bug"}]),
+        "search_procedures": json.dumps({
+            "results": [{"procedure_id": "p-slm", "name": "fix-calc-bug"}],
+            "contextual_judgment_status": "ok",
+        }),
         "get_procedure": json.dumps({
             "procedure_id": "p-slm", "steps": [
                 {"order": 0, "goal": "fix the bug in calc.py", "implementation_hint": "slm"},
@@ -248,7 +254,10 @@ async def test_runner_still_runs_a_hintless_node_through_the_real_mechanism(monk
     install_fake_embedder(monkeypatch)
     # P5: global-only retrieval -- a hintless step via a global match.
     fake_session = FakeClientSession({
-        "search_procedures": json.dumps([{"procedure_id": "p-hintless", "name": "fix-calc-bug-2"}]),
+        "search_procedures": json.dumps({
+            "results": [{"procedure_id": "p-hintless", "name": "fix-calc-bug-2"}],
+            "contextual_judgment_status": "ok",
+        }),
         "get_procedure": json.dumps({
             "procedure_id": "p-hintless", "steps": [{"order": 0, "goal": "fix the bug in calc.py"}],
         }),
@@ -277,7 +286,7 @@ async def test_runner_still_runs_a_hintless_node_through_the_real_mechanism(monk
 async def test_runner_reports_no_match_without_crashing(monkeypatch):
     import json
 
-    fake_session = FakeClientSession({"search_procedures": json.dumps([])})
+    fake_session = FakeClientSession({"search_procedures": json.dumps({"results": [], "contextual_judgment_status": "ok"})})
     monkeypatch.setattr(runner_module, "_open_client_session", lambda url, token: fake_session)
 
     result = await runner_module.LocalAgentRunner(
@@ -347,7 +356,7 @@ async def test_runner_does_not_capture_an_unimportable_adhoc_artifact_as_a_candi
     install_fake_embedder(monkeypatch)
     (tmp_path / "new_thing.py").write_text("from os import DefinitelyNotARealAttribute\n")
 
-    fake_session = FakeClientSession({"search_procedures": json.dumps([])})
+    fake_session = FakeClientSession({"search_procedures": json.dumps({"results": [], "contextual_judgment_status": "ok"})})
 
     async def fake_run_node(node, **kwargs):
         return NodeResult(status="success", notes=f"ran {node.goal}",

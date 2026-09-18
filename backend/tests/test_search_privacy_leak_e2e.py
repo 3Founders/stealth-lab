@@ -92,7 +92,7 @@ def test_private_procedure_invisible_to_search_by_a_different_caller():
             with _as(None):
                 result = json.loads(await srv.search_procedures(
                     task=goal_text, ctx=ctx, require_verified=False,
-                ))
+                ))["results"]
             assert all(name not in r.get("name", "") for r in result), \
                 "an anonymous caller must not find another user's private procedure"
 
@@ -100,7 +100,7 @@ def test_private_procedure_invisible_to_search_by_a_different_caller():
             with _as("owner-b"):
                 result = json.loads(await srv.search_procedures(
                     task=goal_text, ctx=ctx, require_verified=False,
-                ))
+                ))["results"]
             assert all(name not in r.get("name", "") for r in result), \
                 "a different user must not find another user's private procedure"
 
@@ -108,7 +108,7 @@ def test_private_procedure_invisible_to_search_by_a_different_caller():
             with _as("owner-a"):
                 result = json.loads(await srv.search_procedures(
                     task=goal_text, ctx=ctx, require_verified=False,
-                ))
+                ))["results"]
             assert any(name == r.get("name") for r in result), \
                 "the owner must still find their own private procedure"
         finally:

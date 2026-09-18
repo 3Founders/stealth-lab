@@ -86,14 +86,30 @@ async def test_search_procedures_returns_real_matches(monkeypatch):
 
     import app.services.embeddings as emb_mod
     monkeypatch.setattr(emb_mod.Embedder, "embed_one", fake_embed_one)
-    monkeypatch.setattr("app.services.applicability.find_applicable_procedures", fake_find)
+    # search_procedures now routes through claim_conditioned_retrieval,
+    # which imports find_applicable_procedures at module load -- patch the
+    # bound name there, not the (unrelated, now-stale) applicability module
+    # reference.
+    monkeypatch.setattr("app.services.claim_conditioned_retrieval.find_applicable_procedures", fake_find)
+    # No APPLICABILITY_JUDGE_PROVIDER configured -- use_claims=True default
+    # honestly degrades to "unavailable" (Sec 19), same order/fields as the
+    # pre-Claim-conditioned tool, plus the new (empty/null) claim fields.
+    monkeypatch.delenv("APPLICABILITY_JUDGE_PROVIDER", raising=False)
 
     ctx = FakeContext(FakePool())
     result = json.loads(await srv.search_procedures(task="fix a bug", ctx=ctx))
-    assert result == [{
+    assert result["contextual_judgment_status"] == "unavailable"
+    assert result["results"] == [{
         "id": ROW_ID, "procedure_id": PROC_ID, "version": 1,
         "name": "pandas-append-fix", "goal": "fix removed DataFrame.append",
         "verification_state": "candidate", "similarity": 0.9,
+        "verdict": None, "supporting_claim_ids": [], "blocking_claim_ids": [],
+        "unknown_requirements": [],
+        "scores": {
+            "semantic_relevance": 0.9, "claim_fit": None, "evidence_strength": None,
+            "verified_success": None, "cost_estimate": None, "latency_estimate": None,
+            "risk": None, "final_policy_score": 0.9,
+        },
     }]
     assert captured["require_verified"] is False
 
@@ -117,7 +133,7 @@ async def test_search_procedures_threads_invariant_bindings_through(monkeypatch)
 
     import app.services.embeddings as emb_mod
     monkeypatch.setattr(emb_mod.Embedder, "embed_one", fake_embed_one)
-    monkeypatch.setattr("app.services.applicability.find_applicable_procedures", fake_find)
+    monkeypatch.setattr("app.services.claim_conditioned_retrieval.find_applicable_procedures", fake_find)
 
     ctx = FakeContext(FakePool())
     await srv.search_procedures(
