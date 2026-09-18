@@ -226,14 +226,17 @@ def test_build_implementations_page_missing_is_flagged():
 
 
 class _FakeRunPagePool:
-    """Answers `_build_run_page`'s three batched queries: implementations
+    """Answers `_build_run_page`'s batched queries: implementations
     (kind by id), goals (by normalized_name), verification_results (by
-    execution_run_node_id)."""
+    execution_run_node_id), run_collaboration_records (by
+    execution_run_id -- empty by default, matching "no collaboration
+    records on this run yet" as the common offline case)."""
 
-    def __init__(self, impl_rows=(), goal_rows=(), verify_rows=()):
+    def __init__(self, impl_rows=(), goal_rows=(), verify_rows=(), collab_rows=()):
         self._impl_rows = list(impl_rows)
         self._goal_rows = list(goal_rows)
         self._verify_rows = list(verify_rows)
+        self._collab_rows = list(collab_rows)
 
     async def fetch(self, sql, *params):
         n = " ".join(sql.split())
@@ -246,6 +249,8 @@ class _FakeRunPagePool:
         if "FROM verification_results" in n:
             ids = {str(i) for i in params[0]}
             return [r for r in self._verify_rows if str(r["execution_run_node_id"]) in ids]
+        if "FROM run_collaboration_records" in n:
+            return list(self._collab_rows)
         raise AssertionError(f"unexpected fetch: {n[:80]}")
 
 

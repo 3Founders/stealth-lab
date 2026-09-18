@@ -10,6 +10,7 @@ import re
 
 from app.stealth.pipe_format import (
     ClaimLine,
+    CollabLine,
     GoalLine,
     GoalRunLine,
     GroupLine,
@@ -220,6 +221,72 @@ def test_unbound_implementation_renders_literal_dash_not_fabricated():
     run, node = _run_and_node(implementation_id=None)
     md = render_run_md(run, [node])
     assert "impl=-" in [ln for ln in md.splitlines() if ln.startswith("NODE|")][0]
+
+
+# ===========================================================================
+# run.md -- COLLAB / COLLAB_SUMMARY (migration 90/91)
+# ===========================================================================
+
+
+def test_collab_note_and_question_render_run_level_and_node_level():
+    run = RunLine("R-1", "PENDING", "obj", "P-1", 1)
+    n0 = NodeLine("N0", "pending", "step", "P-1", "S0", None, "frontier")
+    note = CollabLine("c-note", "NOTE", "agent-a", "run-level note", "2026-01-01T00:00:00+00:00")
+    question = CollabLine("c-q", "QUESTION", "agent-a", "is this safe?", "2026-01-01T00:00:01+00:00", node_id="N0")
+    md = render_run_md(run, [n0], [note, question])
+
+    lines = md.splitlines()
+    node_start = next(i for i, ln in enumerate(lines) if ln.startswith("NODE|N0|"))
+    # the run-level NOTE renders before the first NODE block ...
+    assert any(ln.startswith("COLLAB|c-note|NOTE|-|") for ln in lines[:node_start])
+    # ... and the node-scoped QUESTION renders inline under N0, not up top.
+    assert not any("c-q" in ln for ln in lines[:node_start])
+    assert any(ln.startswith("COLLAB|c-q|QUESTION|N0|") for ln in lines[node_start:])
+
+
+def test_collab_summary_counts_unanswered_question_and_open_records():
+    run = RunLine("R-1", "PENDING", "obj", "P-1", 1)
+    question = CollabLine("c-q", "QUESTION", "a", "q?", "t")
+    blocker = CollabLine("c-b", "BLOCKER", "a", "blocked", "t")
+    handoff = CollabLine("c-h", "HANDOFF", "a", "handing off", "t")
+    md = render_run_md(run, [], [question, blocker, handoff])
+    assert "COLLAB_SUMMARY|open_blockers=1|pending_handoffs=1|unanswered_questions=1" in md
+
+
+def test_collab_summary_decrements_once_a_question_is_answered():
+    run = RunLine("R-1", "PENDING", "obj", "P-1", 1)
+    question = CollabLine("c-q", "QUESTION", "a", "q?", "t0")
+    answer = CollabLine("c-a", "ANSWER", "b", "yes", "t1", answers_id="c-q")
+    md = render_run_md(run, [], [question, answer])
+    assert "unanswered_questions=0" in md
+    assert any(ln.startswith("COLLAB|c-a|ANSWER|") and "answers=c-q" in ln for ln in md.splitlines())
+
+
+def test_collab_summary_decrements_once_a_blocker_is_resolved():
+    run = RunLine("R-1", "PENDING", "obj", "P-1", 1)
+    blocker = CollabLine("c-b", "BLOCKER", "a", "blocked on creds", "t0")
+    resolved = CollabLine("c-r", "BLOCKER_RESOLVED", "a", "creds arrived", "t1", answers_id="c-b")
+    md = render_run_md(run, [], [blocker, resolved])
+    assert "open_blockers=0" in md
+    assert any(ln.startswith("COLLAB|c-r|BLOCKER_RESOLVED|") and "answers=c-b" in ln for ln in md.splitlines())
+
+
+def test_collab_summary_decrements_once_a_handoff_is_accepted():
+    run = RunLine("R-1", "PENDING", "obj", "P-1", 1)
+    handoff = CollabLine("c-h", "HANDOFF", "a", "please take node 1", "t0", target_agent_id="agent-b")
+    accepted = CollabLine("c-acc", "HANDOFF_ACCEPTED", "agent-b", "picked it up", "t1", answers_id="c-h")
+    md = render_run_md(run, [], [handoff, accepted])
+    assert "pending_handoffs=0" in md
+    assert any(ln.startswith("COLLAB|c-acc|HANDOFF_ACCEPTED|") and "answers=c-h" in ln for ln in md.splitlines())
+
+
+def test_collab_summary_a_resolved_blocker_does_not_affect_a_separate_open_one():
+    run = RunLine("R-1", "PENDING", "obj", "P-1", 1)
+    resolved_blocker = CollabLine("c-b1", "BLOCKER", "a", "first blocker", "t0")
+    resolution = CollabLine("c-r", "BLOCKER_RESOLVED", "a", "fixed", "t1", answers_id="c-b1")
+    other_blocker = CollabLine("c-b2", "BLOCKER", "a", "second, still open", "t2")
+    md = render_run_md(run, [], [resolved_blocker, resolution, other_blocker])
+    assert "open_blockers=1" in md
 
 
 # ===========================================================================

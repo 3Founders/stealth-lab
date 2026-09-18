@@ -44,7 +44,9 @@ _RUN_HEADER = (
     "# NODE|<node_id>|<status>|<name>|goal=<goal_id>|step=<procedure_id>:<step_id>|impl=<implementation_id>|executor=<executor>|deps=<node_ids_csv>\n"
     "# GOAL|<node_id>|<goal_id>|<grounded_goal_summary>\n"
     "# VERIFY|<node_id>|<verification_id>|<state>|<verification_type>|<criterion>|source=<source_ref>|evidence=<evidence_ref_or_none>\n"
-    "# COST_ESTIMATE not emitted yet -- no cost model exists in this codebase (honest, not silently skipped)\n\n"
+    "# COST_ESTIMATE not emitted yet -- no cost model exists in this codebase (honest, not silently skipped)\n"
+    "# COLLAB|<record_id>|<kind NOTE|BLOCKER|HANDOFF|QUESTION|ANSWER|BLOCKER_RESOLVED|HANDOFF_ACCEPTED>|<node_id_or_->|<actor>|<body>|created_at=<iso>|answers=<record_id_or_->|target_agent=<agent_id_or_->\n"
+    "# COLLAB_SUMMARY|open_blockers=<n>|pending_handoffs=<n>|unanswered_questions=<n>\n\n"
 )
 _INDEX_HEADER = "# index.md -- GENERATED, not canonical. Do not hand-edit. This is a routing index, not prose.\n\n"
 _GOALS_HEADER = (
@@ -219,12 +221,85 @@ class RunLine:
     procedure_version: int
 
 
-def render_run_md(run: RunLine, nodes: list[NodeLine]) -> str:
+@dataclass
+class CollabLine:
+    """One `run_collaboration_records` row (`app.execution.
+    run_collaboration`), already resolved -- this module stays pure
+    render, no pool/IO, same discipline as every other dataclass here.
+    `node_order=None` is a run-level record (not tied to one node),
+    rendered with `node_id="-"`, never fabricated onto a node it wasn't
+    actually attached to."""
+    record_id: str
+    kind: str  # NOTE | BLOCKER | HANDOFF | QUESTION | ANSWER | BLOCKER_RESOLVED | HANDOFF_ACCEPTED
+    actor: str
+    body: str
+    created_at: str
+    node_id: Optional[str] = None
+    answers_id: Optional[str] = None
+    target_agent_id: Optional[str] = None
+
+
+def _render_collab_line(c: CollabLine) -> str:
+    return (
+        _row("COLLAB", c.record_id, c.kind, c.node_id or "-", c.actor, c.body)
+        + _SEP + _kv_field("created_at", c.created_at)
+        + _SEP + _kv_field("answers", c.answers_id or "-")
+        + _SEP + _kv_field("target_agent", c.target_agent_id or "-")
+    )
+
+
+def _collab_summary(collab: list[CollabLine]) -> str:
+    """A newly-connecting agent's entry point into the collaboration
+    history: counts, not prose. Each count is real, derived from the same
+    `answers_id` cross-reference mechanism throughout (migration 91):
+    `open_blockers` is a BLOCKER whose id is not any BLOCKER_RESOLVED's
+    `answers_id`; `pending_handoffs` is a HANDOFF whose id is not any
+    HANDOFF_ACCEPTED's `answers_id`; `unanswered_questions` is a QUESTION
+    whose id is not any ANSWER's `answers_id` -- three instances of the
+    same "closed-by-reference" rule, not three separate mechanisms."""
+    answered_ids = {c.answers_id for c in collab if c.kind == "ANSWER" and c.answers_id}
+    resolved_blocker_ids = {c.answers_id for c in collab if c.kind == "BLOCKER_RESOLVED" and c.answers_id}
+    accepted_handoff_ids = {c.answers_id for c in collab if c.kind == "HANDOFF_ACCEPTED" and c.answers_id}
+    open_blockers = sum(1 for c in collab if c.kind == "BLOCKER" and c.record_id not in resolved_blocker_ids)
+    pending_handoffs = sum(1 for c in collab if c.kind == "HANDOFF" and c.record_id not in accepted_handoff_ids)
+    unanswered_questions = sum(1 for c in collab if c.kind == "QUESTION" and c.record_id not in answered_ids)
+    return (
+        _row("COLLAB_SUMMARY")
+        + _SEP + _kv_field("open_blockers", open_blockers)
+        + _SEP + _kv_field("pending_handoffs", pending_handoffs)
+        + _SEP + _kv_field("unanswered_questions", unanswered_questions)
+    )
+
+
+def render_run_md(run: RunLine, nodes: list[NodeLine], collab: list[CollabLine] = ()) -> str:  # type: ignore[assignment]
     """Directive Sec 27. Every node-specific line repeats `node_id` so
     `rg N-003 run.md` surfaces the node's complete operational state in
-    one grep -- proven by test_run_md_node_lines_all_repeat_node_id."""
+    one grep -- proven by test_run_md_node_lines_all_repeat_node_id.
+
+    `collab` (default `()`, so every pre-existing caller keeps working
+    unchanged) is the run's structured collaboration record set
+    (`app.execution.run_collaboration.list_run_collaboration`, already
+    resolved by the caller -- this function stays pure render, no pool/
+    IO). Rendered as one `COLLAB_SUMMARY` line (a newly-connecting agent's
+    at-a-glance entry point -- open blockers / pending handoffs /
+    unanswered questions) followed by every `COLLAB` record, oldest
+    first, so an ANSWER's `answers=<id>` always appears after the
+    QUESTION it answers. This NEVER reads `run.md` back -- it is a
+    one-way render of already-fetched DB rows, same as every other
+    section of this file (see `app.stealth.generator`'s own module
+    docstring: `.stealth/` is a projection, never a source of truth)."""
     header = _RUN_HEADER + _row("RUN", run.run_id, run.status, run.objective) + _SEP + \
         _kv_field("procedure", f"{run.procedure_id}@{run.procedure_version}") + "\n\n"
+    if collab:
+        # Summary covers EVERY record (run-level and node-level); the
+        # lines right below it are only the run-level ones (node_id is
+        # unset) -- a node-level record is rendered exactly once, inline
+        # under its own NODE block below, never duplicated up here.
+        header += _collab_summary(collab) + "\n"
+        run_level = [c for c in collab if not c.node_id]
+        if run_level:
+            header += "\n".join(_render_collab_line(c) for c in run_level) + "\n"
+        header += "\n"
     if not nodes:
         return header + "(no nodes)\n"
     blocks: list[str] = []
@@ -254,6 +329,9 @@ def render_run_md(run: RunLine, nodes: list[NodeLine]) -> str:
             )
         if n.owner:
             lines.append(_row("OWNER", n.node_id, n.owner) + _SEP + _kv_field("lease_until", n.lease_until or "none"))
+        for c in collab:
+            if c.node_id == n.node_id:
+                lines.append(_render_collab_line(c))
         blocks.append("\n".join(lines))
     return header + "\n\n".join(blocks) + "\n"
 
