@@ -65,7 +65,23 @@ from app.stealth.legacy_context import (
     _render_run_json,
 )
 
-__all__ = ["generate_projection", "StealthProjectionError", "STEALTH_DIRNAME", "CONTEXT_MD_MAX_BYTES"]
+__all__ = [
+    "generate_projection", "StealthProjectionError", "STEALTH_DIRNAME", "CONTEXT_MD_MAX_BYTES",
+    "CONTENT_PAGE_FILES", "OPTIONAL_CONTENT_PAGE_FILES",
+]
+
+# The real, addressable `.stealth/*.md` "content pages" this generator
+# writes -- as opposed to the router/compact files (context.md, run.json,
+# meta.json, index.md) or index/*.idx line-range indexes. The single
+# source of truth for "which .stealth/*.md files are real projection
+# pages a caller might legitimately hand-edit" -- `app.stealth.edit_ledger`
+# imports this rather than hardcoding a second list (see that module's
+# own docstring). `ledger.md` itself is deliberately excluded: it is
+# ITSELF generated from the edit ledger, not a page a caller edits.
+CONTENT_PAGE_FILES: tuple[str, ...] = ("claims.md", "procedures.md", "implementations.md", "goals.md", "run.md")
+# Written only when the corresponding working set is non-empty (see
+# `has_expl` below) -- still a real, editable content page when present.
+OPTIONAL_CONTENT_PAGE_FILES: tuple[str, ...] = ("exploration.md",)
 
 
 def _short(value: object, n: int = 12) -> str:
@@ -789,12 +805,12 @@ async def generate_projection(
     faulted_counts = {k: len(v) for k, v in faulted.items() if v}
     file_list = [
         "context.md", "run.json", "meta.json", "index.md",
-        "claims.md", "procedures.md", "implementations.md", "goals.md", "run.md", "events.jsonl",
+        *CONTENT_PAGE_FILES, "events.jsonl",
         "index/root.idx", "index/claims.idx", "index/procedures.idx",
         "index/implementations.idx", "index/goals.idx", "index/run.idx",
     ]
     if has_expl:
-        file_list += ["exploration.md", "index/exploration.idx"]
+        file_list += [*OPTIONAL_CONTENT_PAGE_FILES, "index/exploration.idx"]
     meta_json.update({
         "schema": "stealth-projection/2",
         "workspace_id": str(run_row.get("scope_entity_id") or _short(hashlib.sha1(

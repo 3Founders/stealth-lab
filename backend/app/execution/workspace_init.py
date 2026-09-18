@@ -284,7 +284,7 @@ async def init_workspace(pool: asyncpg.Pool, repo_path: str, *, created_by: str 
 
     Returns `{repo_path, first_connection: bool, environment_facts: [...],
     workspace_facts: {...}, claims_written: [...], continuation: {...}|None,
-    projection: "written"|"write_failed: ..."}`.
+    recent_stealth_edits: [...], projection: "written"|"write_failed: ..."}`.
     """
     if not os.path.isdir(repo_path):
         raise NotADirectoryError(f"repo_path {repo_path!r} is not a directory on this server.")
@@ -310,6 +310,16 @@ async def init_workspace(pool: asyncpg.Pool, repo_path: str, *, created_by: str 
         claims_written = env_claim_ids + file_claim_ids
 
     continuation = None if first_connection else await _continuation_context(pool, repo_path)
+
+    # Recent stealth-edit-ledger entries (migration 92) -- surfaced the
+    # same lightweight way `continuation`'s open blockers/handoffs are: a
+    # fresh agent, no prior chat history, should see recent hand-edits to
+    # `.stealth/*.md` without a separate call. Unlike `continuation` this
+    # is NOT run-scoped (an edit can be logged with no run in progress),
+    # so it is fetched unconditionally, keyed on the SAME `project_id`
+    # this function already derived above -- no second identity lookup.
+    from app.stealth.edit_ledger import list_stealth_edits as _list_stealth_edits
+    recent_stealth_edits = await _list_stealth_edits(pool, project_id=project_id, limit=5)
 
     # --- best-effort projection refresh, last step (same convention as
     # find_best_way/continue_run/record_run_update: never turn a write
@@ -346,5 +356,6 @@ async def init_workspace(pool: asyncpg.Pool, repo_path: str, *, created_by: str 
         "workspace_facts": workspace_facts,
         "claims_written": claims_written,
         "continuation": continuation,
+        "recent_stealth_edits": recent_stealth_edits,
         "projection": projection,
     }

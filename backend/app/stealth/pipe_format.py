@@ -55,6 +55,14 @@ _GOALS_HEADER = (
     "# GOAL_DETAIL|<goal_id>|outcome=<expected_outcome>|verification=<verification_summary>\n"
     "# ALIASES|<goal_id>|<alias_csv>\n\n"
 )
+_LEDGER_HEADER = (
+    "# ledger.md -- GENERATED, not canonical. Do not hand-edit.\n"
+    "# A log-only audit trail of hand-edits made to other .stealth/*.md\n"
+    "# files (via the record_stealth_edit MCP tool), newest first. This is\n"
+    "# NOT source control -- no diffs/content are stored, and nothing here\n"
+    "# feeds back into canonical Claim/Procedure/Goal state.\n"
+    "# EDIT|<id>|<actor>|<file>|<created_at>|<summary>\n\n"
+)
 
 
 def _row(*fields: object) -> str:
@@ -552,3 +560,30 @@ def render_goals_md(goals: list[GoalLine]) -> str:
             lines.append(_row("ALIASES", g.goal_id, ",".join(g.aliases)))
         blocks.append("\n".join(lines))
     return _GOALS_HEADER + "\n\n".join(blocks) + "\n"
+
+
+# ===========================================================================
+# ledger.md
+# ===========================================================================
+
+
+@dataclass
+class EditLine:
+    edit_id: str
+    actor: str
+    file: str
+    created_at: str
+    summary: str
+
+
+def render_ledger_md(edits: list[EditLine]) -> str:
+    """`stealth_edit_ledger` (migration 92) rendered as a flat, one-line-
+    per-record, newest-first log -- `EDIT|<id>|<actor>|<file>|<created_at>|
+    <summary>`. Caller (`app.stealth.edit_ledger`) is responsible for the
+    newest-first ordering; this function renders whatever order it is
+    given, unchanged. Empty is a real, honest state (no edits recorded
+    yet), never a fabricated placeholder row."""
+    if not edits:
+        return _LEDGER_HEADER + "(no edits recorded)\n"
+    lines = [_row("EDIT", e.edit_id, e.actor, e.file, e.created_at, e.summary) for e in edits]
+    return _LEDGER_HEADER + "\n".join(lines) + "\n"

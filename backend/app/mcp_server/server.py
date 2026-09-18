@@ -5103,9 +5103,15 @@ async def init_workspace(repo_path: str, ctx: Context) -> str:
     `.stealth/` projection as its last step, best-effort -- a write
     failure is surfaced via `projection`, never raised.
 
+    Also surfaces `recent_stealth_edits` -- the 5 most recent
+    `stealth_edit_ledger` (migration 92) entries for this workspace's
+    `project_id`, if any -- regardless of whether a run is in progress
+    (unlike `continuation`, edit-ledger entries are not run-scoped).
+
     REFUSED if `repo_path` is not a directory on this server. Returns
     JSON: `{repo_path, project_id, first_connection, environment_facts,
-    workspace_facts, claims_written, continuation, projection}`.
+    workspace_facts, claims_written, continuation, recent_stealth_edits,
+    projection}`.
     """
     from app.execution.workspace_init import init_workspace as _init_workspace
 
@@ -5215,6 +5221,106 @@ async def record_run_update(
         except (OSError, StealthLockError) as exc:
             result["journal"] = f"write_failed: {exc}"
     return json.dumps(result, default=str)
+
+
+@server.tool()
+async def record_stealth_edit(
+    repo_path: str, file_path: str, summary: str, ctx: Context, actor: Optional[str] = None,
+) -> str:
+    """
+    Log one hand-edit of a `.stealth/*.md` projection file -- a simple,
+    GitHub-style "who changed what file, and when" evidence/audit trail
+    for the separate, simpler MCP frontend that lets a caller edit
+    `claims.md` / `procedures.md` / `goals.md` / `run.md` / `exploration.md`
+    directly. Called explicitly, right after that frontend SAVES an edit --
+    this tool logs the edit, it does not detect it automatically.
+
+    `.stealth/` stays exactly as disposable and regenerated as it always
+    was -- nothing here changes that. This is log-only: the recorded entry
+    does NOT feed into any canonical Claim/Procedure/Goal creation and is
+    fully decoupled from `preview_local_sync`/`commit_local_sync` (the
+    separate, existing mechanism for actually promoting a local edit into
+    backend truth). No diffs, before/after content, or revert mechanism
+    are stored here -- this is a log, not source control.
+
+    `file_path` must be one of the real known `.stealth/*.md` content
+    pages (`claims.md`, `procedures.md`, `implementations.md`, `goals.md`,
+    `run.md`, `exploration.md`) -- REFUSED for anything else, including
+    `ledger.md` itself (that file is generated FROM this ledger, not a
+    page a caller edits). `actor`: who made the edit (a human user name/id
+    or agent id) -- caller-supplied since the frontend, not this server,
+    knows who the human editor is; falls back to the usual resolved
+    caller identity when omitted. `summary`: a short, required, human-
+    written message, like a commit message.
+
+    The workspace is identified the SAME way `init_workspace` already
+    identifies one -- a `project_id` deterministically derived from
+    `repo_path` -- so an edit logged from one checkout of a repo is
+    visible from any other checkout of the SAME repo, not just this one.
+
+    Best-effort refreshes the local `.stealth/ledger.md` projection after
+    the DB write (same "DB write always succeeds even if the local file
+    write fails" convention as `record_run_update`'s own `stealth_
+    projection` field -- surfaced via `ledger_projection`, never raised,
+    never rolling back the already-committed DB row).
+
+    REFUSED if `repo_path` is not a directory on this server, `file_path`
+    is not a recognized content page, or `summary` is empty. Returns JSON:
+    `{id, project_id, file_path, actor, summary, content_hash,
+    created_at, ledger_projection}`.
+    """
+    from app.services.procedure_extraction import _project_id_from_repo_root
+    from app.stealth.edit_ledger import EditLedgerError
+    from app.stealth.edit_ledger import record_stealth_edit as _record_stealth_edit
+    from app.stealth.edit_ledger import write_ledger_projection
+
+    if not os.path.isdir(repo_path):
+        return f"REFUSED: repo_path {repo_path!r} is not a directory on this server."
+
+    pool = ctx.request_context.lifespan_context["pool"]
+    resolved_actor = actor or _resolve_caller_identity(fallback="record_stealth_edit")
+    project_id = _project_id_from_repo_root(repo_path)
+    try:
+        entry = await _record_stealth_edit(
+            pool, project_id=project_id, file_path=file_path, actor=resolved_actor, summary=summary,
+            repo_path=repo_path,
+        )
+    except EditLedgerError as exc:
+        return f"REFUSED: {exc}"
+
+    result = dict(entry)
+    try:
+        await write_ledger_projection(pool, workspace_root=repo_path, project_id=project_id)
+        result["ledger_projection"] = "written"
+    except OSError as exc:
+        result["ledger_projection"] = f"write_failed: {exc}"
+    return json.dumps(result, default=str)
+
+
+@server.tool()
+async def list_stealth_edits(
+    repo_path: str, ctx: Context, file_path: Optional[str] = None, limit: int = 50,
+) -> str:
+    """
+    Read `stealth_edit_ledger` entries for the workspace at `repo_path`
+    (identified the same `project_id` way `record_stealth_edit`/
+    `init_workspace` already do), newest first. `file_path`, when given,
+    narrows to edits of that one `.stealth/*.md` file. Pure read.
+
+    REFUSED if `repo_path` is not a directory on this server. Returns a
+    JSON array of `{id, project_id, file_path, actor, summary,
+    content_hash, created_at}`.
+    """
+    from app.services.procedure_extraction import _project_id_from_repo_root
+    from app.stealth.edit_ledger import list_stealth_edits as _list_stealth_edits
+
+    if not os.path.isdir(repo_path):
+        return f"REFUSED: repo_path {repo_path!r} is not a directory on this server."
+
+    pool = ctx.request_context.lifespan_context["pool"]
+    project_id = _project_id_from_repo_root(repo_path)
+    entries = await _list_stealth_edits(pool, project_id=project_id, file_path=file_path, limit=limit)
+    return json.dumps(entries, default=str)
 
 
 # ---------------------------------------------------------------------------
