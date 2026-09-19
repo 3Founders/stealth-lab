@@ -55,6 +55,13 @@ ALTER TABLE goals
 ALTER TABLE procedures
     ADD COLUMN IF NOT EXISTS home_shard_id TEXT NOT NULL DEFAULT 'K000' REFERENCES knowledge_shards(shard_id);
 
+-- Exact source identity for retry/duplicate-delivery safety: a worker that
+-- ingests the same source twice (or two workers racing) can create AT MOST one
+-- live Procedure for it. NULL for legacy rows and adapters that dedup elsewhere.
+ALTER TABLE procedures ADD COLUMN IF NOT EXISTS source_key TEXT;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_procedures_live_source_key
+    ON procedures(source_key) WHERE source_key IS NOT NULL AND t_invalid IS NULL;
+
 -- ------------------------------------------------------- goal hierarchy
 -- Separate from `goals` on purpose: optional, multi-parent, async, never used
 -- for sharding, never required by retrieval.

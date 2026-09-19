@@ -138,6 +138,7 @@ async def capture_procedure(
     goal_on_unavailable: Optional[str] = None,
     identity_job_id: Optional[int] = None,
     identity_idempotency_key: Optional[str] = None,
+    source_key: Optional[str] = None,
 ) -> dict:
     """
     Inserts a new procedure, always starting `candidate` / `fresh` /
@@ -308,7 +309,7 @@ async def capture_procedure(
             embedding_provider, embedding_input_type, embedding_text_hash,
             retrieval_document, retrieval_document_version, retrieval_document_sha256,
             display_name, display_description, display_metadata_version, tenant_id,
-            availability, is_engineering_fixture, achieves_goal_id, home_shard_id
+            availability, is_engineering_fixture, achieves_goal_id, home_shard_id, source_key
         ) VALUES (
             $24::uuid, $40::uuid, $1, $2, $3::jsonb, $4::jsonb, $5::jsonb, $6::jsonb,
             $7::jsonb, $8::jsonb, $9::jsonb, $10::jsonb,
@@ -317,8 +318,9 @@ async def capture_procedure(
             $20, $21, $22::visibility_level, $23::vector,
             $25, $26, $27, $28, $29, $30, $31,
             $32, $33, $34, $35, $36, $37, $38::uuid,
-            $39::procedure_availability, $41, $42::uuid, $43
+            $39::procedure_availability, $41, $42::uuid, $43, $44
         )
+        ON CONFLICT (source_key) WHERE source_key IS NOT NULL AND t_invalid IS NULL DO NOTHING
         RETURNING id, procedure_id
         """,
         name, goal,
@@ -370,7 +372,15 @@ async def capture_procedure(
         # if the process dies right after the INSERT.
         achieves_goal_id,
         home_shard_id,
+        source_key,
     )
+    if row is None:
+        # Same source already ingested (retry, duplicate delivery, or a racing
+        # worker won): return the existing live Procedure instead of creating a
+        # second one. The unique index on source_key makes this race-proof.
+        existing = await pool.fetchrow(
+            "SELECT id, procedure_id FROM procedures WHERE source_key = $1 AND t_invalid IS NULL", source_key)
+        return {"id": str(existing["id"]), "procedure_id": str(existing["procedure_id"]), "duplicate": True}
     return {"id": str(row["id"]), "procedure_id": str(row["procedure_id"])}
 
 
