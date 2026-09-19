@@ -51,3 +51,12 @@ Live-DB tests ran against a throwaway PostgreSQL 18.4 + pgvector on localhost.
 | Recorded/frozen semantic fixtures | CLOSED | `tests/identity_fakes.py` |
 
 **Verdict:** PRODUCTION INGESTION + RETRIEVAL NOT READY — rows 8, 11, 18, 24 (and 1, 20, 23, 25 partially) are unresolved; see the final report.
+
+## Regression results recorded at the end of the pass
+
+* Offline suite (`-k offline`, minus the pre-existing uncollectable `test_document_skills.py`): **2333 passed, 2 failed** — the 2 are `test_document_adapters_offline` docx tests that also failed at baseline (missing `docx` module).
+* New live-DB suites, all green on PostgreSQL 18.4 + pgvector: projection (5), goal identity (11), retrieval golden (18), distributed ingestion (14), migration 95 (2), end-to-end (25/25 repeated runs).
+* Curated pre-existing live-DB regression (18 files, 100 tests): **89 passed, 11 failed** — NOT triaged to closure:
+  * `test_domain_search_e2e` (4) and `test_search_privacy_leak_e2e` (2) pinned the *old* direct-procedure recommendation. Under the new goal-first service they receive no judge (or a configured-but-unreachable one), so they report `candidates_only`/no goal. They need to be rewritten with injected judge fixtures; two also failed inside setup because `capture_procedure` now fails closed (`SemanticJudgmentUnavailable`) when a provider is configured but unreachable and a goal candidate exists.
+  * `test_retrieval_quality_e2e` (5) exercise `find_applicable_procedures` against a seeded real corpus that is absent from the scratch DB; not shown to be caused by this pass, but no baseline run was done to prove it.
+* Not run: the rest of the ~150 `*_e2e.py` files (MCP/execution/verification suites), live-provider tests, any Cloud Run / GitHub Actions / Oracle execution.
