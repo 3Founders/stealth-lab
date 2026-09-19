@@ -129,6 +129,7 @@ CREATE TABLE IF NOT EXISTS goal_search_index (
     owner_id          TEXT,
     scope_type        TEXT,
     scope_entity_id   TEXT,
+    tenant_id         UUID,          -- always NULL today (goals have no tenant); keeps visibility_predicate() uniform
     updated_at        TIMESTAMPTZ NOT NULL,
     projected_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
     CONSTRAINT goal_search_index_embed_chk CHECK (embedding IS NULL OR (embedding_model IS NOT NULL AND embedding_dim IS NOT NULL))
@@ -199,6 +200,25 @@ CREATE INDEX IF NOT EXISTS idx_claim_search_tsv ON claim_search_index USING gin 
 CREATE INDEX IF NOT EXISTS idx_claim_search_embedding ON claim_search_index
     USING hnsw (embedding vector_cosine_ops) WHERE embedding IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_claim_search_goal ON claim_search_index(primary_goal_id);
+
+-- Durable record of retrieval decisions (independent of any observability
+-- vendor): which query hash, which local Claim ids, which Goal(s), which
+-- Procedure was selected, in which semantic mode (jev / model_fallback /
+-- candidates_only) and whether the result was degraded.
+CREATE TABLE IF NOT EXISTS retrieval_decisions (
+    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    query_sha256    TEXT NOT NULL,
+    viewer_id       TEXT,
+    goal_ids        UUID[] NOT NULL DEFAULT '{}',
+    procedure_ids   UUID[] NOT NULL DEFAULT '{}',
+    selected_procedure_id UUID,
+    local_claim_ids TEXT[] NOT NULL DEFAULT '{}',
+    mode            TEXT NOT NULL,
+    degraded        BOOLEAN NOT NULL DEFAULT false,
+    detail          JSONB NOT NULL DEFAULT '{}',
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_retrieval_decisions_created ON retrieval_decisions(created_at);
 
 -- Durable projection outbox: canonical write commits the row + one outbox
 -- entry; a drainer applies it idempotently. A crash between canonical write

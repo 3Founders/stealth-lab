@@ -120,3 +120,24 @@ def make_judge(*providers: SemanticProvider, attempts: int = 1) -> SemanticJudge
     return SemanticJudge(list(providers), RetryPolicy(per_provider_attempts=attempts, backoff_base_s=0.0,
                                                       backoff_max_s=0.0, timeout_s=5.0),
                          SemanticMetrics(), sleep=no_sleep, rng=lambda: 0.5)
+
+
+class CallbackProvider(SemanticProvider):
+    """Frozen-fixture judge driven by a pure function ``fn(kind, a, b) ->
+    (relation, confidence)``; records every call. ``name='jev'`` makes the
+    chain report JEV as the selected provider (mode == 'jev')."""
+
+    def __init__(self, fn, *, name: str = "jev", fail=None):
+        self.name, self.model = name, f"{name}-frozen"
+        self.capabilities = frozenset(ALL_CAPS)
+        self.fn, self.fail = fn, fail
+        self.calls: list[tuple[str, str, str]] = []
+
+    async def identity(self, kind: str, a: str, b: str) -> dict:
+        self.calls.append((kind, a, b))
+        if self.fail:
+            exc = self.fail(kind)
+            if exc:
+                raise exc
+        rel, conf = self.fn(kind, a, b)
+        return {"relation": rel, "confidence": conf}

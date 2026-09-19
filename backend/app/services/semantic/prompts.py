@@ -147,6 +147,9 @@ IDENTITY_RELATIONS = {
     "goal": ("same", "specializes", "generalizes", "related", "distinct"),
     "claim": ("same", "specializes", "generalizes", "related", "contradicts", "distinct"),
     "procedure": ("same", "refinement", "distinct"),
+    # Retrieval-time relevance (A = the user's task + compact local-claim context)
+    "task_goal": ("matches", "partial", "unrelated"),
+    "task_procedure": ("applies", "partial", "not_applicable"),
 }
 
 IDENTITY_SYSTEM_PROMPTS = {
@@ -170,6 +173,21 @@ IDENTITY_SYSTEM_PROMPTS = {
         'object: {"relation":"same|refinement|distinct","confidence":<0-1>}. '
         "same: equivalent method. refinement: A is a newer/improved version of the same method B. "
         "distinct: a genuinely different method, even if it reaches the same goal."
+    ),
+    "task_goal": (
+        "A is a user's TASK plus a few facts already known in their environment (local claims). "
+        "B is a GOAL from a shared library. Decide whether achieving B accomplishes the task. "
+        'Reply with EXACTLY one JSON object: {"relation":"matches|partial|unrelated","confidence":<0-1>}. '
+        "matches: achieving B accomplishes the task. partial: B is a broader/narrower or overlapping "
+        "outcome. unrelated: different outcome, even if it shares words. Use the local claims: a fact "
+        "that changes what the task actually is can change the answer."
+    ),
+    "task_procedure": (
+        "A is a user's TASK plus facts known in their environment (local claims). B is a PROCEDURE "
+        "(a method) from a shared library. Decide whether B can be applied to this task in this "
+        'environment. Reply with EXACTLY one JSON object: {"relation":"applies|partial|not_applicable",'
+        '"confidence":<0-1>}. not_applicable if a local claim contradicts a precondition or the '
+        "method targets a different situation. Do not guess: if the claims do not settle it, partial."
     ),
 }
 
