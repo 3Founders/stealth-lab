@@ -2677,17 +2677,22 @@ async def search_procedures(task: str, ctx: Context, state: str = "{}", limit: i
     result here, exactly as find_best_way's own repo_path path does
     server-side when it has a repo to probe directly.
     use_claims: default True -- run the Claim-conditioned second stage.
-    Honestly degrades, never errors, when no judge provider is configured
-    (APPLICABILITY_JUDGE_PROVIDER unset): behaves exactly like
-    use_claims=False, and `contextual_judgment_status` in the response
-    says so (Sec 19 -- a missing/unavailable judge never breaks retrieval).
+    False is the caller's EXPLICIT opt-out: plain similarity-ordered results,
+    status "not_requested".
+
+    The semantic judge is the shared chain JEV -> Gemini -> Gemma. If every
+    provider fails, this tool does NOT fall back to similarity or keyword
+    scoring: `results` is empty, `contextual_judgment_status` is
+    "PENDING_SEMANTIC_JUDGMENT" (requeued; `pending_job_id` set; re-call
+    later, judged candidates are cached) or, once retries are exhausted,
+    "SEMANTIC_JUDGMENT_UNAVAILABLE". The call never blocks indefinitely.
 
     Returns a JSON object: {results: [{id, procedure_id, version, name,
     goal, verification_state, similarity, verdict, supporting_claim_ids,
     blocking_claim_ids, unknown_requirements, scores}],
-    contextual_judgment_status: "ok"|"unavailable"}. `similarity` and the
-    claim-conditioned fields are null/omitted-equivalent when unavailable
-    -- never fabricated.
+    contextual_judgment_status: "ok"|"not_requested"|
+    "PENDING_SEMANTIC_JUDGMENT"|"SEMANTIC_JUDGMENT_UNAVAILABLE",
+    pending_job_id, detail}.
     """
     pool = ctx.request_context.lifespan_context["pool"]
     from app.services.applicability_judge import default_judge_from_env
@@ -2708,6 +2713,7 @@ async def search_procedures(task: str, ctx: Context, state: str = "{}", limit: i
     judge = default_judge_from_env() if use_claims else None
     result = await find_applicable_candidates(
         pool, goal_text=task, goal_embedding=goal_vec, judge=judge,
+        claim_conditioned=use_claims,
         current_scope=current_scope, require_verified=require_verified, limit=limit,
         # B19 residual fix -- see find_best_way's identical fix above; this
         # tool's own name says "search", the exact surface the founder
@@ -2739,6 +2745,8 @@ async def search_procedures(task: str, ctx: Context, state: str = "{}", limit: i
             for c in result.candidates
         ],
         "contextual_judgment_status": result.contextual_judgment_status,
+        "pending_job_id": result.pending_job_id,
+        "detail": result.detail,
     })
 
 

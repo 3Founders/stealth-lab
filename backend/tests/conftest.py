@@ -145,3 +145,27 @@ def pytest_configure(config):
             "Override with STEALTH_ALLOW_PROD_E2E=1 only if you really mean it.",
             returncode=2,
         )
+
+
+import pytest  # noqa: E402
+
+
+@pytest.fixture(autouse=True)
+def _no_live_semantic_providers(monkeypatch):
+    """No test may reach a live semantic provider (JEV / Gemini / Gemma).
+
+    `SemanticJudge.from_settings()` builds its provider chain from the process
+    environment, and a developer's backend/.env carries real keys (Gemini,
+    JEV). Ingestion and retrieval code paths construct that judge internally,
+    so without this guard an unrelated offline test could silently spend real
+    quota with fake data. Here it returns an EMPTY chain (=> "no provider
+    available", the safe path). Tests that exercise the chain inject their own
+    mocked providers (tests/semantic_fakes.py) and are unaffected.
+    """
+    from app.services.semantic.chain import SemanticJudge
+    from app.services.semantic.policy import RetryPolicy
+
+    def offline(cls, settings=None, **kw):
+        return cls([], kw.get("policy") or RetryPolicy())
+
+    monkeypatch.setattr(SemanticJudge, "from_settings", classmethod(offline))

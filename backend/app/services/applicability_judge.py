@@ -1,4 +1,4 @@
-"""
+﻿"""
 Claim-conditioned NLI/JEV applicability judge -- the provider-neutral second-
 stage contextual-reasoning layer this module's own docstring in
 `applicability.py` and `precondition_gate.py:29-31` name as a placeholder
@@ -18,17 +18,19 @@ WHAT THIS ANSWERS, AND WHAT IT DOES NOT
     confidence is a hard rejection. See claim_conditioned_retrieval.py for
     where that hard-filter line is actually drawn.
 
-HONEST SCOPE
-    No real NLI/transformers model is wired up in this pass (matches
-    claim_equivalence.py's own disclosed state). Three providers exist:
-    MockJudge (deterministic, string-overlap; the default for tests and
-    CI -- no paid/live calls), LLMJudge (same OpenAI-compatible `client`
-    convention as claim_equivalence.py, honest abstention on any failure),
-    and RemoteHTTPJudge (calls an operator-configured POST /judge-
-    applicability endpoint -- the real "hosting assumption" the product
-    spec calls for, so deployment can move to Modal/HF Endpoints/etc
-    without this module or its callers changing). None of the three is
-    exercised against a live paid endpoint by this repo's own test suite.
+PROVIDERS AND THE FALLBACK CONTRACT
+    RemoteHTTPJudge is the "JEV" transport (operator-hosted POST
+    /judge-applicability). LLMJudge is a single OpenAI-compatible client.
+    Production wiring is the shared chain JEV -> Gemini -> Gemma in
+    app/services/semantic (see default_judge_from_env). MockJudge is a
+    deterministic string-overlap scorer for tests/local demos ONLY.
+
+    STRICT RULE: a provider failure RAISES (ProviderError /
+    SemanticJudgmentUnavailable). It is never converted into a fabricated
+    UNKNOWN verdict and there is no deterministic fallback -- UNKNOWN means
+    only "a model judged: no supporting Claim". Callers
+    (claim_conditioned_retrieval.py) turn an exhausted chain into
+    PENDING_SEMANTIC_JUDGMENT + requeue, then SEMANTIC_JUDGMENT_UNAVAILABLE.
 """
 from __future__ import annotations
 
@@ -39,6 +41,13 @@ import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Optional, Protocol
+
+from app.services.semantic.errors import (
+    ErrorKind,
+    ProviderError,
+    SemanticJudgmentUnavailable,
+    classify_exception,
+)
 
 log = logging.getLogger(__name__)
 
@@ -165,19 +174,44 @@ class ApplicabilityJudge(Protocol):
         ...
 
 
-def _unknown_judgment(
-    goal: str, candidate: JudgeCandidateInput, *, model: str, reason: str,
+def parse_judgment_dict(
+    goal: str, candidate: JudgeCandidateInput, parsed: Any, *, model: str,
 ) -> ApplicabilityJudgment:
-    """The shared honest-abstention fallback every provider below returns on
-    a real failure -- UNKNOWN, never a fabricated APPLICABLE/INAPPLICABLE
-    verdict (Sec 3: "never treat missing evidence as false")."""
+    """Strict contract parse shared by every LLM/remote provider. Raises
+    ValueError on ANY violation -- a malformed reply is a provider failure
+    (retry / next provider), NEVER converted into a verdict. UNKNOWN is a
+    legitimate model verdict only; it is not an error sentinel."""
+    if not isinstance(parsed, dict):
+        raise ValueError("judge reply is not a JSON object")
+    verdict = parsed.get("verdict")
+    if verdict not in VERDICTS:
+        raise ValueError(f"invalid verdict {verdict!r}")
+    known_claims = {str(c.get("claim_id") or c.get("id")) for c in candidate.claims}
+    supporting = [str(x) for x in parsed.get("supporting_claim_ids", [])]
+    blocking = [str(x) for x in parsed.get("blocking_claim_ids", [])]
+    invented = [x for x in supporting + blocking if x not in known_claims]
+    if invented:
+        raise ValueError(f"judge cited claim ids not in the input: {invented[:3]}")
     return ApplicabilityJudgment(
         candidate_id=candidate.candidate_id, goal_or_query=goal,
-        applicability_probability=0.5, contradiction_probability=0.0,
-        preconditions_met_probability=0.5, verdict="UNKNOWN",
-        unknown_requirements=[c.text for c in candidate.conditions],
-        reason=reason, model=model,
+        applicability_probability=float(parsed.get("applicability_probability", 0.5)),
+        contradiction_probability=float(parsed.get("contradiction_probability", 0.0)),
+        preconditions_met_probability=float(parsed.get("preconditions_met_probability", 0.5)),
+        verdict=verdict, supporting_claim_ids=supporting, blocking_claim_ids=blocking,
+        unknown_requirements=[str(x) for x in parsed.get("unknown_requirements", [])],
+        reason=str(parsed.get("reason", "")), model=model,
     )
+
+
+def judge_user_payload(goal: str, candidate: JudgeCandidateInput) -> dict:
+    return {
+        "goal": goal, "candidate_purpose": candidate.candidate_purpose,
+        "conditions": [{"text": c.text, "kind": c.kind} for c in candidate.conditions],
+        "claims": [
+            {"claim_id": str(cl.get("claim_id") or cl.get("id")), "statement": cl.get("statement")}
+            for cl in candidate.claims
+        ],
+    }
 
 
 class MockJudge:
@@ -279,12 +313,12 @@ _JUDGE_SYSTEM_PROMPT = (
 
 
 class LLMJudge:
-    """LLM-as-judge provider, same honest-abstention posture as
-    claim_equivalence.py::classify_claim_relation: no `client`, or any call/
-    parse failure, degrades to UNKNOWN -- never a fabricated verdict. Uses
-    the same OpenAI-compatible `client.chat.completions.create` convention
-    already established at that call site and in skill_ingestion.py, so
-    this adds no new external dependency."""
+    """Single-provider LLM-as-judge over the OpenAI-compatible
+    `client.chat.completions.create` convention. A missing client or ANY
+    call/parse failure RAISES SemanticJudgmentUnavailable -- it no longer
+    degrades to a fabricated UNKNOWN (UNKNOWN now only ever means "the model
+    judged: no supporting Claim"). The provider chain (app.services.semantic)
+    is the production path; this stays for callers that hold one client."""
 
     def __init__(self, client: Any = None, model: str = "gemma-4-31B-it", temperature: float = 0.0):
         self.client = client
@@ -298,68 +332,70 @@ class LLMJudge:
 
     def _judge_one(self, goal: str, candidate: JudgeCandidateInput) -> ApplicabilityJudgment:
         if self.client is None:
-            return _unknown_judgment(goal, candidate, model=self.model, reason="no judge client configured")
+            raise SemanticJudgmentUnavailable("no judge client configured")
         try:
-            user_content = json.dumps({
-                "goal": goal, "candidate_purpose": candidate.candidate_purpose,
-                "conditions": [{"text": c.text, "kind": c.kind} for c in candidate.conditions],
-                "claims": [
-                    {"claim_id": str(cl.get("claim_id") or cl.get("id")), "statement": cl.get("statement")}
-                    for cl in candidate.claims
-                ],
-            }, default=str)
             response = self.client.chat.completions.create(
                 model=self.model,
                 messages=[
                     {"role": "system", "content": _JUDGE_SYSTEM_PROMPT},
-                    {"role": "user", "content": user_content},
+                    {"role": "user", "content": json.dumps(judge_user_payload(goal, candidate), default=str)},
                 ],
                 temperature=self.temperature, max_tokens=500,
             )
             text = (response.choices[0].message.content or "").strip()
-            parsed = json.loads(text)
-            verdict = parsed.get("verdict")
-            if verdict not in VERDICTS:
-                return _unknown_judgment(goal, candidate, model=self.model, reason="model returned an invalid verdict")
-            return ApplicabilityJudgment(
-                candidate_id=candidate.candidate_id, goal_or_query=goal,
-                applicability_probability=float(parsed.get("applicability_probability", 0.5)),
-                contradiction_probability=float(parsed.get("contradiction_probability", 0.0)),
-                preconditions_met_probability=float(parsed.get("preconditions_met_probability", 0.5)),
-                verdict=verdict,
-                supporting_claim_ids=[str(x) for x in parsed.get("supporting_claim_ids", [])],
-                blocking_claim_ids=[str(x) for x in parsed.get("blocking_claim_ids", [])],
-                unknown_requirements=[str(x) for x in parsed.get("unknown_requirements", [])],
-                reason=str(parsed.get("reason", "")), model=self.model,
-            )
-        except Exception:  # noqa: BLE001 -- a judge call's own failure degrades to abstention, never a fabricated verdict
-            log.warning("applicability_judge: LLMJudge call failed, abstaining", exc_info=True)
-            return _unknown_judgment(goal, candidate, model=self.model, reason="judge call failed")
+            return parse_judgment_dict(goal, candidate, json.loads(text), model=self.model)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("applicability_judge: LLMJudge call failed", exc_info=True)
+            raise SemanticJudgmentUnavailable(f"LLMJudge call failed: {exc!r}") from exc
 
 
 class RemoteHTTPJudge:
-    """Remote inference service provider (Sec 11): POSTs to
-    `{base_url}/judge-applicability`, one candidate per request body
-    exactly matching the documented contract. Batches via bounded
-    concurrent requests (Sec 12) rather than one-at-a-time sequential
-    calls, tracks latency. On ANY connection failure/timeout (Sec 19: "DO
-    NOT break retrieval"), returns UNKNOWN judgments for the whole batch --
-    the caller (claim_conditioned_retrieval.py) is expected to also set
-    contextual_judgment_status='unavailable' at that point, this class only
-    guarantees it never raises out of judge_batch()."""
+    """Operator-hosted judge service (this is the "JEV" transport): POSTs to
+    `{base_url}/judge-applicability`, one candidate per request, bounded
+    concurrency. ANY transport/HTTP/contract failure RAISES ProviderError
+    (classified TRANSIENT/PERMANENT) -- it never returns fabricated UNKNOWN
+    judgments. The provider chain owns retry and fallback."""
 
     def __init__(
         self, base_url: str, *, http_client: Any = None,
-        model: str = "remote-judge", timeout_seconds: float = 10.0,
-        max_concurrency: int = 8,
+        model: str = "jev", timeout_seconds: float = 10.0,
+        max_concurrency: int = 8, api_key: Optional[str] = None,
     ):
         self.base_url = base_url.rstrip("/")
         self._http_client = http_client  # injected httpx.AsyncClient-like object; tests supply a fake
         self.model = model
         self.timeout_seconds = timeout_seconds
         self.max_concurrency = max_concurrency
+        self.api_key = api_key
         self.last_batch_latency_ms: Optional[float] = None
-        self.last_batch_unavailable = False
+
+    def _headers(self) -> dict:
+        return {"Authorization": f"Bearer {self.api_key}"} if self.api_key else {}
+
+    async def post_json(self, path: str, payload: dict) -> dict:
+        """One POST with the shared error classification; raises ProviderError."""
+        client = self._http_client
+        owned = False
+        if client is None:
+            import httpx
+            client = httpx.AsyncClient(timeout=self.timeout_seconds)
+            owned = True
+        try:
+            response = await client.post(f"{self.base_url}{path}", json=payload, headers=self._headers())
+            response.raise_for_status()
+            body = response.json()
+            if not isinstance(body, dict):
+                raise ValueError("remote judge reply is not a JSON object")
+            return body
+        except ProviderError:
+            raise
+        except ValueError as exc:  # bad JSON / contract violation -> retryable
+            raise ProviderError(ErrorKind.TRANSIENT, f"invalid reply: {exc}", provider=self.model) from exc
+        except Exception as exc:  # noqa: BLE001
+            raise ProviderError(classify_exception(exc), repr(exc), provider=self.model) from exc
+        finally:
+            if owned:
+                await client.aclose()
 
     async def judge_batch(
         self, goal: str, candidates: list[JudgeCandidateInput],
@@ -368,91 +404,57 @@ class RemoteHTTPJudge:
 
         if not candidates:
             return []
-        client = self._http_client
-        if client is None:
-            try:
-                import httpx
-                client = httpx.AsyncClient(timeout=self.timeout_seconds)
-            except ImportError:
-                self.last_batch_unavailable = True
-                return [
-                    _unknown_judgment(goal, c, model=self.model, reason="no HTTP client available")
-                    for c in candidates
-                ]
-
         semaphore = asyncio.Semaphore(self.max_concurrency)
         start = time.monotonic()
 
         async def _call_one(candidate: JudgeCandidateInput) -> ApplicabilityJudgment:
             async with semaphore:
+                body = await self.post_json("/judge-applicability", {
+                    "goal": goal, "candidate": {
+                        "candidate_id": candidate.candidate_id,
+                        "candidate_version": candidate.candidate_version,
+                        "purpose": candidate.candidate_purpose,
+                    },
+                    "claims": candidate.claims,
+                    "preconditions": [{"text": c.text, "kind": c.kind} for c in candidate.conditions],
+                })
                 try:
-                    payload = {
-                        "goal": goal, "candidate": {
-                            "candidate_id": candidate.candidate_id,
-                            "candidate_version": candidate.candidate_version,
-                            "purpose": candidate.candidate_purpose,
-                        },
-                        "claims": candidate.claims,
-                        "preconditions": [
-                            {"text": c.text, "kind": c.kind} for c in candidate.conditions
-                        ],
-                    }
-                    response = await client.post(f"{self.base_url}/judge-applicability", json=payload)
-                    response.raise_for_status()
-                    body = response.json()
-                    verdict = body.get("verdict")
-                    if verdict not in VERDICTS:
-                        return _unknown_judgment(goal, candidate, model=self.model, reason="remote judge returned invalid verdict")
-                    return ApplicabilityJudgment(
-                        candidate_id=candidate.candidate_id, goal_or_query=goal,
-                        applicability_probability=float(body.get("applicability_probability", 0.5)),
-                        contradiction_probability=float(body.get("contradiction_probability", 0.0)),
-                        preconditions_met_probability=float(body.get("preconditions_met_probability", 0.5)),
-                        verdict=verdict,
-                        supporting_claim_ids=[str(x) for x in body.get("supporting_claim_ids", [])],
-                        blocking_claim_ids=[str(x) for x in body.get("blocking_claim_ids", [])],
-                        unknown_requirements=[str(x) for x in body.get("unknown_requirements", [])],
-                        reason=str(body.get("reason", "")), model=self.model,
-                    )
-                except Exception:  # noqa: BLE001 -- Sec 19: a remote failure must never break retrieval
-                    log.warning("applicability_judge: RemoteHTTPJudge call failed, abstaining", exc_info=True)
-                    self.last_batch_unavailable = True
-                    return _unknown_judgment(goal, candidate, model=self.model, reason="remote judge call failed")
+                    return parse_judgment_dict(goal, candidate, body, model=self.model)
+                except ValueError as exc:
+                    raise ProviderError(ErrorKind.TRANSIENT, f"invalid judgment: {exc}", provider=self.model) from exc
 
         try:
-            results = await asyncio.gather(*[_call_one(c) for c in candidates])
+            return list(await asyncio.gather(*[_call_one(c) for c in candidates]))
         finally:
             self.last_batch_latency_ms = (time.monotonic() - start) * 1000
-        return list(results)
 
 
-def default_judge_from_env() -> Optional["ApplicabilityJudge"]:
-    """Provider selection via config (Sec 10). `APPLICABILITY_JUDGE_PROVIDER`
-    defaults to unset -- meaning None (no judge), the safe production
-    default until an operator explicitly opts in, matching Sec 19's own
-    fallback contract (no judge configured is treated exactly like a judge
-    that is unavailable, never like "judge everything TRUE"). Values:
-    "mock" (MockJudge, deterministic -- safe for demos/tests, NOT a real
-    NLI claim), "llm" (LLMJudge -- requires APPLICABILITY_JUDGE_CLIENT to
-    be wired by the caller; this factory cannot construct a real client
-    itself), "remote_http" (RemoteHTTPJudge against
-    APPLICABILITY_JUDGE_REMOTE_URL)."""
+def default_judge_from_env() -> "ApplicabilityJudge":
+    """The production applicability judge: the shared JEV -> Gemini -> Gemma
+    provider chain (app.services.semantic). Always returns a judge -- an
+    unconfigured/unreachable chain surfaces as SemanticJudgmentUnavailable at
+    judge time (=> PENDING_SEMANTIC_JUDGMENT + requeue), never as "no judge,
+    rank by similarity".
+
+    `APPLICABILITY_JUDGE_PROVIDER=mock` returns the deterministic MockJudge
+    for local demos ONLY and is refused when settings.environment is
+    PRODUCTION: a keyword scorer must never stand in for semantic NLI."""
     import os
 
-    provider = os.environ.get("APPLICABILITY_JUDGE_PROVIDER", "").strip().lower()
-    if not provider or provider == "none":
-        return None
-    if provider == "mock":
-        return MockJudge()
-    if provider == "remote_http":
-        base_url = os.environ.get("APPLICABILITY_JUDGE_REMOTE_URL")
-        if not base_url:
-            log.warning("APPLICABILITY_JUDGE_PROVIDER=remote_http but APPLICABILITY_JUDGE_REMOTE_URL is unset; no judge")
-            return None
-        return RemoteHTTPJudge(base_url)
-    log.warning("APPLICABILITY_JUDGE_PROVIDER=%r not recognized (mock|remote_http|none); no judge", provider)
-    return None
+    from app.config import settings
 
+    if os.environ.get("APPLICABILITY_JUDGE_PROVIDER", "").strip().lower() == "mock":
+        if settings.environment == "PRODUCTION":
+            log.error("APPLICABILITY_JUDGE_PROVIDER=mock refused in PRODUCTION; using the semantic chain")
+        else:
+            log.warning("applicability_judge: MockJudge active (non-production demo only, not semantic NLI)")
+            return MockJudge()
+    from app.services.semantic.applicability import ChainedApplicabilityJudge
+    from app.services.semantic.policy import policy_from_settings
+
+    # Interactive callers (MCP tools) get a wall-clock deadline: bounded short
+    # retries, then PENDING + requeue rather than blocking the tool call.
+    return ChainedApplicabilityJudge.from_settings(policy=policy_from_settings().interactive())
 
 def stable_claim_ids_hash(claims: list[dict]) -> str:
     """Sec 13's cache key ingredient: a stable hash of the (claim_id,
@@ -495,7 +497,11 @@ async def get_cached_judgment(
 async def put_cached_judgment(
     pool: Any, *, goal_hash: str, candidate_id: str, candidate_version: Any,
     claim_ids_hash: str, judgment: ApplicabilityJudgment,
+    cache_model: Optional[str] = None, cache_model_version: Optional[str] = None,
 ) -> None:
+    """`cache_model[_version]` override the key components when the judge is a
+    provider CHAIN: lookups use the chain identity, while `judgment.model`
+    records which provider actually produced the verdict."""
     await pool.execute(
         "INSERT INTO applicability_judgment_cache "
         "(goal_hash, candidate_id, candidate_version, claim_ids_hash, "
@@ -504,6 +510,6 @@ async def put_cached_judgment(
         "ON CONFLICT (goal_hash, candidate_id, candidate_version, claim_ids_hash, "
         "  judge_model, judge_model_version, prompt_version) DO NOTHING",
         goal_hash, candidate_id, str(candidate_version), claim_ids_hash,
-        judgment.model, judgment.model_version, judgment.prompt_version,
-        json.dumps(judgment.to_dict(), default=str),
+        cache_model or judgment.model, cache_model_version or judgment.model_version,
+        judgment.prompt_version, json.dumps(judgment.to_dict(), default=str),
     )

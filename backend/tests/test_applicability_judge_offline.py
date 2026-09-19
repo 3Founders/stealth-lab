@@ -1,4 +1,4 @@
-"""
+﻿"""
 DB-free coverage for applicability_judge.py: MockJudge's three-valued
 verdicts, LLMJudge's honest-abstention posture (same convention as
 claim_equivalence.py::classify_claim_relation), RemoteHTTPJudge's
@@ -8,6 +8,8 @@ stability/sensitivity properties (Sec 13's invalidation mechanism).
 import asyncio
 
 import pytest
+
+from app.services.semantic.errors import ErrorKind, ProviderError, SemanticJudgmentUnavailable
 
 from app.services.applicability_judge import (
     JudgeCandidateInput,
@@ -82,14 +84,13 @@ def test_mock_judge_batches_multiple_candidates_in_one_call():
 # --------------------------------------------------------------- LLMJudge
 
 
-def test_llm_judge_abstains_with_no_client_configured():
+def test_llm_judge_raises_with_no_client_configured():
     candidate = JudgeCandidateInput(
         candidate_id="c1", candidate_version=1, candidate_purpose="p",
         conditions=[RequirementCondition(text="x", kind="REQUIRED")], claims=[],
     )
-    [judgment] = _run(LLMJudge(client=None).judge_batch("goal", [candidate]))
-    assert judgment.verdict == "UNKNOWN"
-    assert judgment.applicability_probability == 0.5
+    with pytest.raises(SemanticJudgmentUnavailable):
+        _run(LLMJudge(client=None).judge_batch("goal", [candidate]))
 
 
 class _RaisingClient:
@@ -100,13 +101,14 @@ class _RaisingClient:
                 raise RuntimeError("simulated provider outage")
 
 
-def test_llm_judge_abstains_never_raises_on_call_failure():
+def test_llm_judge_raises_on_call_failure_never_fabricates_unknown():
     candidate = JudgeCandidateInput(
         candidate_id="c1", candidate_version=1, candidate_purpose="p",
         conditions=[RequirementCondition(text="x", kind="REQUIRED")], claims=[],
     )
-    [judgment] = _run(LLMJudge(client=_RaisingClient()).judge_batch("goal", [candidate]))
-    assert judgment.verdict == "UNKNOWN"
+    # A provider outage RAISES; it is never converted into a fabricated UNKNOWN.
+    with pytest.raises(SemanticJudgmentUnavailable):
+        _run(LLMJudge(client=_RaisingClient()).judge_batch("goal", [candidate]))
 
 
 class _FakeResponse:
@@ -144,12 +146,12 @@ def test_llm_judge_parses_a_real_structured_response():
     assert judgment.blocking_claim_ids == ["claim-9"]
 
 
-def test_llm_judge_abstains_on_malformed_json():
+def test_llm_judge_raises_on_malformed_json():
     candidate = JudgeCandidateInput(
         candidate_id="c1", candidate_version=1, candidate_purpose="p", conditions=[], claims=[],
     )
-    [judgment] = _run(LLMJudge(client=_FakeClient("not json")).judge_batch("goal", [candidate]))
-    assert judgment.verdict == "UNKNOWN"
+    with pytest.raises(SemanticJudgmentUnavailable):
+        _run(LLMJudge(client=_FakeClient("not json")).judge_batch("goal", [candidate]))
 
 
 # --------------------------------------------------------------- RemoteHTTPJudge
@@ -172,7 +174,7 @@ class _FakeHTTPClient:
     def __init__(self, responder):
         self._responder = responder
 
-    async def post(self, url, json):
+    async def post(self, url, json, headers=None):
         return self._responder(url, json)
 
 
@@ -187,7 +189,8 @@ def test_remote_http_judge_parses_the_documented_contract():
         })
 
     candidate = JudgeCandidateInput(
-        candidate_id="cand-1", candidate_version=1, candidate_purpose="p", conditions=[], claims=[],
+        candidate_id="cand-1", candidate_version=1, candidate_purpose="p", conditions=[],
+        claims=[{"claim_id": "c1", "version": 1, "statement": "s"}],
     )
     judge = RemoteHTTPJudge("http://judge.internal", http_client=_FakeHTTPClient(responder))
     [judgment] = _run(judge.judge_batch("goal", [candidate]))
@@ -195,11 +198,11 @@ def test_remote_http_judge_parses_the_documented_contract():
     assert judgment.supporting_claim_ids == ["c1"]
 
 
-def test_remote_http_judge_falls_back_to_unknown_on_connection_failure():
-    """Sec 19: a remote judge outage must never break retrieval -- every
-    candidate in the batch degrades to UNKNOWN, judge_batch never raises."""
+def test_remote_http_judge_raises_transient_on_connection_failure():
+    """A JEV outage raises a TRANSIENT ProviderError (the chain then retries /
+    falls back to Gemini -> Gemma). It never fabricates UNKNOWN judgments."""
     class _FailingClient:
-        async def post(self, url, json):
+        async def post(self, url, json, headers=None):
             raise ConnectionError("simulated network failure")
 
     candidates = [
@@ -207,15 +210,15 @@ def test_remote_http_judge_falls_back_to_unknown_on_connection_failure():
         for i in range(3)
     ]
     judge = RemoteHTTPJudge("http://judge.internal", http_client=_FailingClient())
-    judgments = _run(judge.judge_batch("goal", candidates))
-    assert all(j.verdict == "UNKNOWN" for j in judgments)
-    assert judge.last_batch_unavailable is True
+    with pytest.raises(ProviderError) as exc:
+        _run(judge.judge_batch("goal", candidates))
+    assert exc.value.kind is ErrorKind.TRANSIENT
 
 
 def test_remote_http_judge_batches_concurrently_not_one_call_at_a_time():
     calls = []
 
-    async def _slow_post(url, json):
+    async def _slow_post(url, json, headers=None):
         calls.append(json["candidate"]["candidate_id"])
         return _FakeHTTPResponse({
             "verdict": "UNKNOWN", "applicability_probability": 0.5,

@@ -91,14 +91,14 @@ async def test_search_procedures_returns_real_matches(monkeypatch):
     # bound name there, not the (unrelated, now-stale) applicability module
     # reference.
     monkeypatch.setattr("app.services.claim_conditioned_retrieval.find_applicable_procedures", fake_find)
-    # No APPLICABILITY_JUDGE_PROVIDER configured -- use_claims=True default
-    # honestly degrades to "unavailable" (Sec 19), same order/fields as the
-    # pre-Claim-conditioned tool, plus the new (empty/null) claim fields.
     monkeypatch.delenv("APPLICABILITY_JUDGE_PROVIDER", raising=False)
 
     ctx = FakeContext(FakePool())
-    result = json.loads(await srv.search_procedures(task="fix a bug", ctx=ctx))
-    assert result["contextual_judgment_status"] == "unavailable"
+    # use_claims=False is the caller's explicit similarity-only opt-out; with
+    # the default (True) and no provider, results are EMPTY + PENDING (see
+    # test_semantic_fallback_policy_offline.py) -- never a silent fallback.
+    result = json.loads(await srv.search_procedures(task="fix a bug", ctx=ctx, use_claims=False))
+    assert result["contextual_judgment_status"] == "not_requested"
     assert result["results"] == [{
         "id": ROW_ID, "procedure_id": PROC_ID, "version": 1,
         "name": "pandas-append-fix", "goal": "fix removed DataFrame.append",
@@ -137,7 +137,7 @@ async def test_search_procedures_threads_invariant_bindings_through(monkeypatch)
 
     ctx = FakeContext(FakePool())
     await srv.search_procedures(
-        task="migrate pandas append", ctx=ctx,
+        task="migrate pandas append", ctx=ctx, use_claims=False,
         invariant_bindings=json.dumps({"pandas_version": 2.1}),
     )
     assert captured["invariant_bindings"] == {"pandas_version": 2.1}

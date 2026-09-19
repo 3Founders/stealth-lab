@@ -832,11 +832,17 @@ def backoff_seconds(exc: Exception, attempt: int) -> float:
 
 
 class Agent:
-    def __init__(self, client, model: str, max_steps: int = 25, temperature: float = 0.0):
+    def __init__(self, client, model: str, max_steps: int = 25, temperature: float = 0.0,
+                 compactor=None):
         self._client = client
         self._model = model
         self._max_steps = max_steps
         self._temperature = temperature
+        # Optional app.services.context_compaction.harness.MessageCompactor.
+        # None (the default) leaves the loop byte-for-byte unchanged, which
+        # matters: benchmark arms must stay comparable unless compaction is
+        # deliberately switched on for one of them.
+        self._compactor = compactor
 
     def run(self, instance: dict, sandbox: RepoSandbox, arm: str,
             memory_block: str = "", retrieved: Optional[list[str]] = None) -> AgentRun:
@@ -857,6 +863,10 @@ class Agent:
         recoveries = 0
         final_message = ""
         for step in range(self._max_steps):
+            if self._compactor is not None:
+                # Returns the SAME list contents when compaction is skipped or
+                # fails (full history retained); never raises.
+                messages[:] = self._compactor.compact(messages)
             try:
                 resp = self._complete(messages)
             except Exception as exc:  # noqa: BLE001

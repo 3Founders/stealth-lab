@@ -22,12 +22,16 @@ already disqualified never reaches this module at all.
 """
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
 import time
 from dataclasses import dataclass, field
 from typing import Optional
 
 import asyncpg
+
+from app.services.semantic.errors import SemanticJudgmentUnavailable
 
 from app.services.access import AccessScope
 from app.services.applicability import _capability_ranked_hits, find_applicable_procedures
@@ -106,13 +110,34 @@ class ObservabilityCounters:
     verdict_counts: dict = field(default_factory=dict)
     provider: str = ""
     prompt_version: str = ""
+    # Semantic-judge chain telemetry (filled when the judge is a provider chain).
+    judgment_provider: Optional[str] = None
+    provider_fallback_used: bool = False
+    pending_judgments: int = 0
+    retry_exhausted: int = 0
+    semantic_unavailable: int = 0
+
+
+# contextual_judgment_status values.
+STATUS_OK = "ok"
+# A semantic judgment was required and NO provider could serve it right now.
+# The request was (when a queue exists) requeued; `candidates` is EMPTY --
+# similarity-ordered survivors are never presented as a validated ranking.
+STATUS_PENDING = "PENDING_SEMANTIC_JUDGMENT"
+# Retry rounds exhausted, or no judge at all. Still no fabricated ranking.
+STATUS_UNAVAILABLE = "SEMANTIC_JUDGMENT_UNAVAILABLE"
+# The CALLER explicitly asked for plain similarity retrieval (use_claims=False).
+STATUS_NOT_REQUESTED = "not_requested"
 
 
 @dataclass
 class ClaimConditionedResult:
     candidates: list[RankedCandidate]
-    contextual_judgment_status: str  # "ok" | "unavailable"
+    contextual_judgment_status: str  # STATUS_* above
     observability: ObservabilityCounters
+    pending_job_id: Optional[int] = None
+    unjudged_candidate_ids: list[str] = field(default_factory=list)
+    detail: str = ""
 
 
 def compute_policy_score(candidate: RankedCandidate, *, weights: Optional[dict] = None) -> float:
@@ -161,6 +186,39 @@ def _is_hard_rejected(
     return has_required and judgment.contradiction_probability >= threshold
 
 
+async def _enqueue_pending(
+    pool, goal_text: str, goal_hash: str, to_judge: list[JudgeCandidateInput], unjudged_ids: list[str],
+) -> tuple[Optional[int], bool]:
+    """Requeue the uncached candidates on the existing ingestion_jobs queue.
+    Returns (job_id | None, exhausted). job_id is None when there is no queue
+    (FakePool / no DB). exhausted=True when an identical request already burned
+    all its retry rounds recently -- then we do NOT start a fresh round loop."""
+    if not hasattr(pool, "fetchval") or not to_judge:
+        return None, False
+    wanted = set(unjudged_ids)
+    todo = [c for c in to_judge if c.candidate_id in wanted]
+    if not todo:
+        return None, False
+    try:
+        from app.services.semantic.jobs import (
+            SEMANTIC_JUDGMENT_JOB, candidate_to_payload, enqueue_semantic_job, recently_exhausted,
+        )
+        key = "applicability:" + hashlib.sha256(json.dumps(
+            [goal_hash] + sorted(f"{c.candidate_id}:{stable_claim_ids_hash(c.claims)}" for c in todo)
+        ).encode()).hexdigest()
+        if await recently_exhausted(pool, SEMANTIC_JUDGMENT_JOB, key):
+            return None, True
+        job_id = await enqueue_semantic_job(
+            pool, SEMANTIC_JUDGMENT_JOB,
+            {"kind": "applicability", "goal": goal_text,
+             "candidates": [candidate_to_payload(c) for c in todo]},
+            dedup_key=key, delay_s=0.0)
+        return job_id, False
+    except Exception:  # noqa: BLE001 -- a queue failure must not hide the pending state
+        log.warning("claim_conditioned_retrieval: could not requeue pending judgment", exc_info=True)
+        return None, False
+
+
 async def find_applicable_candidates(
     pool: asyncpg.Pool,
     *,
@@ -181,14 +239,23 @@ async def find_applicable_candidates(
     embedding_model_id: Optional[str] = None,
     excluded_procedure_ids: Optional[list[str]] = None,
     use_cache: bool = True,
+    claim_conditioned: bool = True,
 ) -> ClaimConditionedResult:
     """The full pipeline described in this module's docstring.
 
-    `judge=None` is a legitimate, first-class input -- not an error -- and
-    is treated identically to a judge that raised on every call (Sec 19):
-    hard-cascade survivors are returned unranked-by-claims, in their
-    existing find_applicable_procedures() order, with
-    contextual_judgment_status='unavailable'. Retrieval never breaks.
+    FAILURE CONTRACT (strict -- never a deterministic stand-in for NLI):
+      * judge raises / returns too few judgments (every provider in the
+        JEV -> Gemini -> Gemma chain failed): status PENDING_SEMANTIC_JUDGMENT,
+        the uncached candidates are requeued on the ingestion_jobs queue
+        (results land in the judgment cache), `candidates` is EMPTY.
+      * `judge=None` (nothing configured): SEMANTIC_JUDGMENT_UNAVAILABLE,
+        `candidates` EMPTY.
+      * UNKNOWN is only ever a model verdict; it is never used as a
+        placeholder for "could not judge".
+      * `claim_conditioned=False` is the CALLER's explicit opt-out: plain
+        similarity survivors with status 'not_requested'.
+    Retrieval never raises; it reports an explicit state instead. The caller
+    decides whether to wait, ask the user, or continue in another mode.
     """
     counters = ObservabilityCounters(provider=judge.__class__.__name__ if judge else "none")
 
@@ -202,9 +269,10 @@ async def find_applicable_candidates(
     counters.candidates_before_filter = len(survivors)
 
     if not survivors:
-        return ClaimConditionedResult([], "ok" if judge is not None else "unavailable", counters)
+        return ClaimConditionedResult(
+            [], STATUS_OK if (judge is not None or not claim_conditioned) else STATUS_UNAVAILABLE, counters)
 
-    if judge is None:
+    if not claim_conditioned:
         ranked = [
             RankedCandidate(
                 procedure=p, judgment=None,
@@ -216,7 +284,14 @@ async def find_applicable_candidates(
             for p in survivors[:limit]
         ]
         counters.candidates_after_filter = len(ranked)
-        return ClaimConditionedResult(ranked, "unavailable", counters)
+        return ClaimConditionedResult(ranked, STATUS_NOT_REQUESTED, counters)
+
+    if judge is None:
+        counters.semantic_unavailable += 1
+        return ClaimConditionedResult(
+            [], STATUS_UNAVAILABLE, counters,
+            unjudged_candidate_ids=[str(p["id"]) for p in survivors],
+            detail="no semantic judge configured")
 
     # Per-candidate bounded Claim retrieval (Sec 4) -- reuses
     # relevant_claims.py::get_relevant_claims verbatim, narrowed by this
@@ -261,13 +336,14 @@ async def find_applicable_candidates(
             counters.cache_misses += 1
             to_judge.append(_survivor_to_judge_candidate(procedure, claims))
 
-    contextual_judgment_status = "ok"
     if to_judge:
         start = time.monotonic()
         try:
             for i in range(0, len(to_judge), judge_batch_size):
                 batch = to_judge[i : i + judge_batch_size]
                 batch_judgments = await judge.judge_batch(goal_text, batch)
+                if len(batch_judgments) != len(batch):
+                    raise SemanticJudgmentUnavailable("judge returned a partial batch")
                 for jc, jg in zip(batch, batch_judgments):
                     judgments[jc.candidate_id] = jg
                     if use_cache and hasattr(pool, "execute"):
@@ -277,31 +353,38 @@ async def find_applicable_candidates(
                                 pool, goal_hash=goal_hash, candidate_id=jc.candidate_id,
                                 candidate_version=jc.candidate_version,
                                 claim_ids_hash=stable_claim_ids_hash(claims), judgment=jg,
+                                cache_model=judge_model, cache_model_version=judge_model_version,
                             )
                         except Exception:  # noqa: BLE001 -- caching is best-effort, never fatal
                             log.warning("claim_conditioned_retrieval: cache write failed", exc_info=True)
-        except Exception:  # noqa: BLE001 -- Sec 19: a judge failure must never break retrieval
-            log.warning("claim_conditioned_retrieval: judge unavailable, falling back", exc_info=True)
-            contextual_judgment_status = "unavailable"
+        except Exception:  # noqa: BLE001 -- ANY judge failure => explicit pending state, never a guess
+            log.warning("claim_conditioned_retrieval: semantic judgment unavailable", exc_info=True)
         finally:
             counters.judge_latency_ms += (time.monotonic() - start) * 1000
+        last = getattr(judge, "last_result", None)
+        if last is not None:
+            counters.judgment_provider = last.provider
+            counters.provider_fallback_used = bool(last.fallback_used)
 
-    survivor_ids = {str(p["id"]) for p in survivors}
-    unjudged = survivor_ids - set(judgments.keys())
-    if unjudged:
-        contextual_judgment_status = "unavailable"
-        for procedure in survivors:
-            pid = str(procedure["id"])
-            if pid in unjudged:
-                conditions = extract_requirement_conditions(procedure)
-                judgments[pid] = ApplicabilityJudgment(
-                    candidate_id=pid, goal_or_query=goal_text,
-                    applicability_probability=0.5, contradiction_probability=0.0,
-                    preconditions_met_probability=0.5, verdict="UNKNOWN",
-                    unknown_requirements=[c.text for c in conditions],
-                    reason="judge unavailable for this candidate",
-                    model=judge_model, model_version=judge_model_version,
-                )
+    unjudged_ids = [str(p["id"]) for p in survivors if str(p["id"]) not in judgments]
+    if unjudged_ids:
+        # NO deterministic stand-in: every JEV -> Gemini -> Gemma attempt
+        # failed. Report PENDING, requeue the uncached work, return nothing
+        # ranked. Cached judgments already made stay cached for the retry.
+        counters.pending_judgments = len(unjudged_ids)
+        pending_job_id, exhausted = await _enqueue_pending(pool, goal_text, goal_hash, to_judge, unjudged_ids)
+        if exhausted:
+            counters.retry_exhausted += 1
+            counters.semantic_unavailable += 1
+            return ClaimConditionedResult(
+                [], STATUS_UNAVAILABLE, counters, unjudged_candidate_ids=unjudged_ids,
+                detail="semantic judgment retries exhausted; every provider stayed unavailable")
+        return ClaimConditionedResult(
+            [], STATUS_PENDING, counters, pending_job_id=pending_job_id,
+            unjudged_candidate_ids=unjudged_ids,
+            detail=("semantic judgment requeued" if pending_job_id is not None
+                    else "semantic providers unavailable; no queue available to requeue on"))
+    contextual_judgment_status = STATUS_OK
 
     # Hard filter -- REQUIRED-condition strong contradictions only (Sec 8).
     survived_filter = []

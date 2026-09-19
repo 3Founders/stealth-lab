@@ -1,4 +1,4 @@
-"""
+﻿"""
 LLM semantic extraction over one episode's trajectory (trajectory-
 ingestion-hardening task, Sec 6). This is the layer the task's spec
 insists on: `deterministic_v1` (observations.py) stays the STRUCTURAL
@@ -184,23 +184,26 @@ def _truncate(value: Any) -> str:
     return text
 
 
+def _event_line(i: int, event: dict) -> str:
+    kind = event.get("canonical_event_type") or event.get("event_type") or "?"
+    tool = event.get("tool_name") or ""
+    tool_input = _truncate(event.get("tool_input") or {})
+    tool_output = _truncate(event.get("tool_output") or {})
+    success = event.get("success")
+    success_str = "" if success is None else (" ok" if success else " FAILED")
+    return f"{i}. [{kind}]{success_str} {tool} input={tool_input} output={tool_output}"
+
+
 def _numbered_event_lines(events: list[dict]) -> list[str]:
-    lines = []
-    for i, event in enumerate(events, start=1):
-        kind = event.get("canonical_event_type") or event.get("event_type") or "?"
-        tool = event.get("tool_name") or ""
-        tool_input = _truncate(event.get("tool_input") or {})
-        tool_output = _truncate(event.get("tool_output") or {})
-        success = event.get("success")
-        success_str = "" if success is None else (" ok" if success else " FAILED")
-        lines.append(f"{i}. [{kind}]{success_str} {tool} input={tool_input} output={tool_output}")
-    return lines
+    return [_event_line(i, event) for i, event in enumerate(events, start=1)]
 
 
-def _build_user_prompt(goal_text: Optional[str], events: list[dict]) -> str:
+def _build_user_prompt(goal_text: Optional[str], events: list[dict], lines: Optional[list[str]] = None) -> str:
+    """`lines` (from trace_compaction) replaces the default one-line-per-event
+    rendering when the trajectory was semantically compacted."""
     header = f"Declared/prior goal text (may be absent or wrong): {goal_text or '(none)'}\n"
-    body = "\n".join(_numbered_event_lines(events))
-    return f"{header}Events (1-{len(events)}):\n{body}"
+    body_lines = lines if lines is not None else _numbered_event_lines(events)
+    return f"{header}Events (1-{len(body_lines)}):\n" + "\n".join(body_lines)
 
 
 def _input_hash(prompt: str) -> str:
@@ -369,6 +372,7 @@ async def extract_trajectory_semantics(
     scope_type: Optional[str] = None,
     scope_entity_id: Optional[str] = None,
     created_by: str = EXTRACTOR_ID,
+    compaction_judge: Any = None,
 ) -> dict:
     """
     One structured semantic-extraction pass over one episode. Writes a
@@ -410,7 +414,10 @@ async def extract_trajectory_semantics(
     # episode into child episodes before calling this function once per
     # child. This cap is a last-resort safety net, not the segmentation
     # mechanism itself.
-    events = events[:_MAX_EVENTS_IN_PROMPT]
+    # Raw events -> (size-gated) semantic compaction -> prompt lines. Small
+    # trajectories pass through exactly as before (first _MAX_EVENTS_IN_PROMPT
+    # events, one line each). Every prompt index keeps a citation back to the
+    # real trace_event id(s) it came from (prepared.index_refs).
     decoded_events = [
         {
             **e,
@@ -419,6 +426,12 @@ async def extract_trajectory_semantics(
         }
         for e in events
     ]
+    from app.services.trace_compaction import prepare_events_for_extraction
+
+    prepared = await prepare_events_for_extraction(
+        pool, episode, _resolve_goal_text(episode), decoded_events,
+        line_fn=_event_line, max_events=_MAX_EVENTS_IN_PROMPT, judge=compaction_judge,
+    )
 
     resolved_scope_type = (
         scope_type or episode.get("scope_type")
@@ -433,7 +446,7 @@ async def extract_trajectory_semantics(
     )
 
     goal_text = _resolve_goal_text(episode)
-    prompt = _build_user_prompt(goal_text, decoded_events)
+    prompt = _build_user_prompt(goal_text, decoded_events, lines=prepared.lines)
     input_hash = _input_hash(prompt)
 
     extraction_row = await pool.fetchrow(
@@ -469,7 +482,7 @@ async def extract_trajectory_semantics(
         raise ExtractionTransientFailure(f"semantic extraction LLM call failed: {exc!r}") from exc
 
     try:
-        extraction = parse_extraction_response(raw_text, max_index=len(decoded_events))
+        extraction = parse_extraction_response(raw_text, max_index=len(prepared.lines))
     except ExtractionTransientFailure as exc:
         await pool.execute(
             "UPDATE trajectory_extractions SET status='failed', error=$2, completed_at=now() "
@@ -478,12 +491,13 @@ async def extract_trajectory_semantics(
         )
         raise
 
-    event_id_by_index = {i: str(e["id"]) for i, e in enumerate(decoded_events, start=1)}
+    # index -> [trace_event ids]; a compacted line can stand for several events.
+    event_ids_by_index = prepared.index_refs
     counts = {"goals": 0, "claims": 0, "procedures": 0, "implementations": 0}
 
     async def _link(object_type: str, object_id: str, indices: list[int],
                      epistemic_status: str, confidence: Optional[float] = None) -> None:
-        event_refs = [event_id_by_index[i] for i in indices if i in event_id_by_index]
+        event_refs = list(dict.fromkeys(r for i in indices for r in event_ids_by_index.get(i, [])))
         if not event_refs:
             return
         await pool.execute(
@@ -576,7 +590,7 @@ async def extract_trajectory_semantics(
             steps.append({
                 "description": step.description,
                 "goal_id": step_goal_id,
-                "event_refs": [event_id_by_index[i] for i in step.event_indices if i in event_id_by_index],
+                "event_refs": list(dict.fromkeys(r for i in step.event_indices for r in event_ids_by_index.get(i, []))),
             })
         procedure_row = await capture_procedure(
             pool,
@@ -628,4 +642,5 @@ async def extract_trajectory_semantics(
         "outcome": extraction.outcome,
         **counts,
         "uncertainties": extraction.uncertainties,
+        "compaction": prepared.compaction,
     }

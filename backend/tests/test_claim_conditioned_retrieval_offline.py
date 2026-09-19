@@ -78,16 +78,25 @@ def _patch_capability(monkeypatch):
 # --------------------------------------------------------------- fallback behavior
 
 
-def test_no_judge_returns_survivors_unranked_by_claims_and_marks_unavailable(monkeypatch):
+def test_no_judge_is_unavailable_and_never_returns_a_similarity_ranking(monkeypatch):
     survivors = [_procedure("p1"), _procedure("p2")]
     _patch_find(monkeypatch, survivors)
 
     result = _run(find_applicable_candidates(
         FakePool(), goal_text="fix the bug", judge=None, limit=10,
     ))
-    assert result.contextual_judgment_status == "unavailable"
+    assert result.contextual_judgment_status == "SEMANTIC_JUDGMENT_UNAVAILABLE"
+    assert result.candidates == []  # embedding-only ranking is NOT passed off as validated
+    assert result.unjudged_candidate_ids == ["p1", "p2"]
+
+
+def test_explicit_caller_opt_out_returns_similarity_order_labelled_not_requested(monkeypatch):
+    _patch_find(monkeypatch, [_procedure("p1"), _procedure("p2")])
+    result = _run(find_applicable_candidates(
+        FakePool(), goal_text="fix the bug", judge=None, claim_conditioned=False, limit=10,
+    ))
+    assert result.contextual_judgment_status == "not_requested"
     assert [c.procedure["id"] for c in result.candidates] == ["p1", "p2"]
-    assert all(c.judgment is None for c in result.candidates)
 
 
 def test_no_survivors_short_circuits_cleanly(monkeypatch):
@@ -173,7 +182,7 @@ def test_preferred_contradiction_demotes_but_does_not_reject(monkeypatch):
 # --------------------------------------------------------------- judge failure fallback
 
 
-def test_judge_raising_falls_back_without_breaking_retrieval(monkeypatch):
+def test_judge_raising_yields_pending_not_a_fabricated_ranking(monkeypatch):
     survivors = [_procedure("p1")]
     _patch_find(monkeypatch, survivors)
     _patch_relevant_claims(monkeypatch, {})
@@ -189,9 +198,9 @@ def test_judge_raising_falls_back_without_breaking_retrieval(monkeypatch):
     result = _run(find_applicable_candidates(
         FakePool(), goal_text="fix the bug", judge=_BrokenJudge(), limit=10,
     ))
-    assert result.contextual_judgment_status == "unavailable"
-    # Retrieval itself must not break -- the candidate is still returned.
-    assert len(result.candidates) == 1
+    assert result.contextual_judgment_status == "PENDING_SEMANTIC_JUDGMENT"
+    assert result.candidates == []
+    assert result.observability.pending_judgments == 1
 
 
 # --------------------------------------------------------------- ranking

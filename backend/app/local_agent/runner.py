@@ -599,7 +599,17 @@ class LocalAgentRunner:
                 # contextual_judgment_status} (Claim-conditioned second
                 # stage) instead of a bare array -- unwrap here, the one
                 # real (non-test) caller of this MCP tool's JSON shape.
-                matches = json.loads(search_result.content[0].text)["results"]
+                search_body = json.loads(search_result.content[0].text)
+                matches = search_body["results"]
+                # Pending/unavailable semantic judgment returns NO results by
+                # design (never a similarity-only guess). This caller chooses
+                # to continue ad-hoc, and says so in the run notes.
+                judgment_status = search_body.get("contextual_judgment_status")
+                if judgment_status in ("PENDING_SEMANTIC_JUDGMENT", "SEMANTIC_JUDGMENT_UNAVAILABLE"):
+                    no_retrieval_note = (
+                        f"Claim-conditioned retrieval {judgment_status} "
+                        f"(job {search_body.get('pending_job_id')}); continuing ad-hoc "
+                        "without a validated procedure match.")
                 matched, source = (matches[0], "global") if matches else (None, None)
                 retrieval_log = [
                     _retrieval_entry(m, "global", i) for i, m in enumerate(matches)

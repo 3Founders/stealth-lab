@@ -1403,6 +1403,12 @@ def _extraction_client():
 # below that dict, beside the sweep that feeds it.
 JOB_HANDLERS["extract_procedure_from_episode"] = handle_extract_procedure_from_episode
 
+# Semantic-judgment requeue + compaction retry (app/services/semantic/jobs.py).
+# Imported lazily-safe: that module never imports this one at import time.
+from app.services.semantic import jobs as _semantic_jobs  # noqa: E402
+
+JOB_HANDLERS.update(_semantic_jobs.HANDLERS)
+
 
 async def claim_jobs(
     pool: asyncpg.Pool, *, limit: int, job_types: Optional[list[str]] = None,
@@ -1419,6 +1425,7 @@ async def claim_jobs(
             rows = await conn.fetch(
                 "SELECT id, job_type, payload, attempts FROM ingestion_jobs "
                 "WHERE status = 'pending' "
+                "AND (run_after IS NULL OR run_after <= now()) "
                 "AND ($1::text[] IS NULL OR job_type = ANY($1::text[])) "
                 "ORDER BY id "
                 "LIMIT $2 "

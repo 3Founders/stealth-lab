@@ -138,6 +138,18 @@ def classify_claim_relation(
         return abstain
 
 
+async def classify_claim_relation_via_chain(judge, statement_a: str, statement_b: str) -> dict:
+    """Same question as classify_claim_relation, answered by the shared
+    semantic chain (JEV -> Gemini -> Gemma) instead of one client. When every
+    provider is down the result carries status="unavailable" -- callers must
+    NOT record a relation candidate from it (unknown here means "not judged",
+    and no heuristic stands in)."""
+    res = await judge.judge_claim_relation(statement_a, statement_b)
+    if res.ok:
+        return {**res.value, "status": "ok", "provider": res.provider}
+    return {"relation": "unknown", "confidence": 0.0, "status": "unavailable", "provider": None}
+
+
 async def record_claim_relation_candidate(
     pool: asyncpg.Pool, *, claim_a_id: str, claim_b_id: str, relation: str,
     confidence: Optional[float] = None, detector: str = DETECTOR,

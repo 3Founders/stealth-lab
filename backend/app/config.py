@@ -158,6 +158,41 @@ class Settings(BaseSettings):
     trajectory_extraction_escalation_min_confidence: float = 0.5
     trajectory_extraction_escalation_max_events: int = 60
 
+    # --- Semantic judge provider chain (app/services/semantic) ---
+    # ONE provider order for every JEV-style semantic judgment (claim-
+    # conditioned applicability/NLI, context retention, summarization,
+    # claim-relation). JEV is the preferred fast judge; it is never the only
+    # path. Secrets stay in env -- nothing here is ever written to .stealth.
+    semantic_provider_primary: str = "jev"
+    semantic_provider_fallbacks: str = "gemini,gemma"
+    # JEV = the operator-hosted judge service (POST {url}/judge-applicability,
+    # same contract RemoteHTTPJudge already speaks). Comma-separated ops it
+    # really exposes; anything else skips JEV and goes to the next provider.
+    jev_base_url: Optional[str] = None
+    jev_api_key: Optional[str] = None
+    jev_capabilities: str = "applicability"
+    # Gemini over its OpenAI-compatible endpoint; keys reuse gemini_api_key(s)
+    # above. Default is a free-tier-eligible flash model.
+    semantic_gemini_model: str = "gemini-2.5-flash"
+    semantic_gemini_base_url: str = "https://generativelanguage.googleapis.com/v1beta/openai/"
+    # Gemma via the existing local OpenAI-compatible server (local_base_url).
+    # LOCAL_MODEL_NAME falls back to local_judge_model when unset.
+    local_model_provider: str = "ollama"
+    local_model_name: Optional[str] = None
+    semantic_provider_timeout_ms: int = 15000
+    semantic_provider_retries: int = 2      # attempts per provider
+    semantic_job_max_retries: int = 3       # requeue rounds
+    semantic_backoff_base_ms: int = 500
+    semantic_backoff_max_ms: int = 8000
+    semantic_requeue_delay_seconds: int = 60
+    # Compaction triggers (don't compact after every tiny event).
+    context_compaction_token_threshold: int = 60000
+    context_compaction_large_result_tokens: int = 4000
+    # Trace ingestion: raw trace_events -> compactor -> extraction prompt.
+    # Runs on EVERY episode (no size gate -- short episodes carry junk too);
+    # this flag is only a kill switch.
+    trace_ingestion_compaction_enabled: bool = True
+
     # --- Agent execution: file upload/output handling ---
     agent_upload_dir: str = "/tmp/agent_uploads"
     agent_output_dir: str = "/tmp/agent_outputs"
