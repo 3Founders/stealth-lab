@@ -1,0 +1,67 @@
+"use client";
+import Link from "next/link";
+import Image from "next/image";
+import { usePathname } from "next/navigation";
+import { useState } from "react";
+
+const links = [
+  { href: "/problems", label: "Problems" },
+  { href: "/search", label: "Search" },
+  { href: "/docs", label: "Docs" },
+  { href: "/#about", label: "About" },
+];
+
+const Arrow = () => (
+  <span className="sq" aria-hidden="true">
+    <svg width="11" height="11" viewBox="0 0 11 11" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M2 9 9 2M3.5 2H9v5.5" /></svg>
+  </span>
+);
+
+export default function Header() {
+  const pathname = usePathname();
+  const [open, setOpen] = useState(false);
+
+  // On the homepage, About glides in place; elsewhere the default navigation to /#about runs and SmoothScroll resolves it.
+  const onAbout = (e: React.MouseEvent) => {
+    setOpen(false);
+    if (pathname === "/" && window.__kelScrollTo) {
+      e.preventDefault();
+      window.history.pushState(null, "", "/#about");
+      window.__kelScrollTo("#about");
+    }
+  };
+
+  const item = (l: (typeof links)[number]) => (
+    <Link
+      key={l.href}
+      href={l.href}
+      aria-current={pathname === l.href ? "page" : undefined}
+      onClick={l.label === "About" ? onAbout : () => setOpen(false)}
+    >
+      {l.label}
+    </Link>
+  );
+
+  return (
+    <div className="nav-wrap">
+      <div className="frame">
+        <header className="nav">
+          <Link href="/" className="logo" aria-label="keळ — home" onClick={() => setOpen(false)}>
+            <Image src="/kel-wordmark.png" alt="keळ" width={800} height={440} priority style={{ height: 54, width: "auto" }} />
+          </Link>
+          <nav aria-label="Primary" className="nav-links">{links.map(item)}</nav>
+          <Link href="/sign-in" className="btn-ink desk">Sign in <Arrow /></Link>
+          <button className="btn-ink menu-btn" aria-expanded={open} aria-controls="nav-panel" onClick={() => setOpen(!open)}>
+            {open ? "Close" : "Menu"}
+          </button>
+          {open && (
+            <nav id="nav-panel" aria-label="Mobile" className="nav-panel">
+              {links.map(item)}
+              <Link href="/sign-in" onClick={() => setOpen(false)}>Sign in</Link>
+            </nav>
+          )}
+        </header>
+      </div>
+    </div>
+  );
+}
