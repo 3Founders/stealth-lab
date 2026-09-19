@@ -25,6 +25,7 @@ Failure policy (fail closed where correctness matters):
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import re
@@ -144,6 +145,7 @@ async def generate_goal_candidates(
     pool: asyncpg.Pool, text: str, *, scope_type: str, scope_entity_id: Optional[str],
     embedding: Optional[list[float]] = None, embedding_model: Optional[str] = None,
     fts_k: int = DEFAULT_FTS_K, vector_k: int = DEFAULT_VECTOR_K, top_n: int = DEFAULT_JUDGE_TOP_N,
+    exclude_id: Optional[str] = None, created_within: Optional[tuple[Any, float]] = None,
 ) -> tuple[list[Candidate], int, int]:
     """FTS + ANN candidates over CANONICAL ``goals`` (never the projection: a
     goal committed a millisecond ago by a concurrent worker must be visible),
@@ -157,6 +159,13 @@ async def generate_goal_candidates(
     if scope_type != "global":
         params.append(scope_entity_id)
     base = f"t_invalid IS NULL AND status <> 'merged' AND {scope_sql}"
+    if exclude_id:
+        params.append(exclude_id)
+        base += f" AND id <> ${len(params)}::uuid"
+    if created_within:  # (anchor timestamp, +/- minutes): only goals created near the anchor
+        params.extend([created_within[0], float(created_within[1])])
+        base += (f" AND t_created BETWEEN ${len(params) - 1}::timestamptz - make_interval(mins => ${len(params)}) "
+                 f"AND ${len(params) - 1}::timestamptz + make_interval(mins => ${len(params)})")
 
     by_id: dict[str, Candidate] = {}
     fts_ids: list[str] = []
@@ -332,3 +341,119 @@ async def propose_goal_relations(
         except Exception:  # noqa: BLE001 -- hierarchy is optional; never blocks ingestion
             log.warning("goal_relation %s -> %s not stored", specific, abstract, exc_info=True)
     return n
+
+
+# ---------------------------------------------------------- reconciliation
+
+RECONCILE_LOCK = "reconcile_goals"
+
+
+async def relink_procedures_of_merged_goals(pool: asyncpg.Pool) -> int:
+    """Repair Procedures that a concurrent writer linked to a goal just before it was
+    merged (the write-time trigger cannot see an uncommitted merge). Idempotent."""
+    res = await pool.execute(
+        "UPDATE procedures p SET achieves_goal_id = g.merged_into_id FROM goals g "
+        "WHERE p.achieves_goal_id = g.id AND g.status = 'merged' AND g.merged_into_id IS NOT NULL")
+    return int(res.split()[-1])
+
+
+async def merge_goal(pool: asyncpg.Pool, loser_id: str, survivor_id: str, *, decision_id: Optional[str] = None) -> dict[str, int]:
+    """Merge ``loser`` into ``survivor`` atomically: every Procedure/Implementation
+    that pointed at the loser now points at the survivor, hierarchy edges move,
+    the loser's names become aliases, and the loser row becomes status='merged'
+    (kept for audit; never deleted). Idempotent."""
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            await conn.execute("SELECT pg_advisory_xact_lock(hashtext($1))", f"goal-merge:{loser_id}")
+            state = await conn.fetchval("SELECT status FROM goals WHERE id = $1::uuid FOR UPDATE", loser_id)
+            if state is None or state == "merged":
+                return {"procedures": 0, "already_merged": 1}
+            procs = int((await conn.execute(
+                "UPDATE procedures SET achieves_goal_id = $2::uuid WHERE achieves_goal_id = $1::uuid", loser_id, survivor_id)).split()[-1])
+            await conn.execute("UPDATE implementations SET goal_id = $2::uuid WHERE goal_id = $1::uuid", loser_id, survivor_id)
+            await conn.execute(
+                "INSERT INTO goal_relations (specific_goal_id, abstract_goal_id, relation_type, status, confidence, provenance) "
+                "SELECT CASE WHEN specific_goal_id = $1::uuid THEN $2::uuid ELSE specific_goal_id END, "
+                "       CASE WHEN abstract_goal_id = $1::uuid THEN $2::uuid ELSE abstract_goal_id END, relation_type, status, confidence, provenance "
+                "FROM goal_relations WHERE (specific_goal_id = $1::uuid OR abstract_goal_id = $1::uuid) "
+                "AND NOT (specific_goal_id = $1::uuid AND abstract_goal_id = $2::uuid) "
+                "AND NOT (abstract_goal_id = $1::uuid AND specific_goal_id = $2::uuid) "
+                "ON CONFLICT DO NOTHING", loser_id, survivor_id)
+            await conn.execute("DELETE FROM goal_relations WHERE specific_goal_id = $1::uuid OR abstract_goal_id = $1::uuid", loser_id)
+            await conn.execute(
+                "UPDATE goals g SET aliases = (SELECT ARRAY(SELECT DISTINCT a FROM unnest(g.aliases || l.aliases || ARRAY[l.canonical_name]) a "
+                "WHERE a <> g.canonical_name)) FROM goals l WHERE g.id = $2::uuid AND l.id = $1::uuid", loser_id, survivor_id)
+            await conn.execute(
+                "UPDATE goals SET status = 'merged', merged_into_id = $2::uuid, reconciled_at = now() WHERE id = $1::uuid",
+                loser_id, survivor_id)
+            return {"procedures": procs, "already_merged": 0}
+
+
+async def reconcile_goals(
+    pool: asyncpg.Pool, *, embedder: Any = None, judge: Optional[SemanticJudge] = None, window_minutes: Optional[float] = 30.0,
+    batch: int = 100, same_min_confidence: float = SAME_MIN_CONFIDENCE, lock_timeout_s: float = 120.0,
+) -> dict[str, Any]:
+    """Second identity pass for goals created concurrently (see migration 95).
+
+    For every unreconciled goal G: judge G against goals created within
+    ``window_minutes`` of G (``None`` = the whole corpus, for a legacy sweep).
+    If the model says *same*, the goal with the LARGER id (newer uuid7) is merged
+    into the smaller one -- a deterministic tie-break, so concurrent sweeps and
+    both directions of a race converge on the same survivor. A judge outage
+    leaves G unreconciled (retried next sweep); nothing is guessed. Single-flight
+    across workers via a session advisory lock."""
+    judge = judge if judge is not None else default_judge()
+    out = {"checked": 0, "merged": 0, "deferred": 0, "skipped": False, "relinked": 0}
+    async with pool.acquire() as lock:
+        # BLOCK (bounded) instead of skipping: a sweep that started earlier works from an
+        # older snapshot, so goals created after it must be picked up by the next sweep,
+        # not silently left unreconciled because two workers finished at the same moment.
+        try:
+            await asyncio.wait_for(lock.execute("SELECT pg_advisory_lock(hashtext($1))", RECONCILE_LOCK), timeout=lock_timeout_s)
+        except asyncio.TimeoutError:
+            out["skipped"] = True
+            return out
+        try:
+            rows = await pool.fetch(
+                "SELECT id::text AS id, canonical_name, description, scope_type, scope_entity_id, t_created, "
+                "embedding::text AS emb, embedding_model_id FROM goals "
+                "WHERE reconciled_at IS NULL AND status <> 'merged' AND t_invalid IS NULL ORDER BY id LIMIT $1", batch)
+            for g in rows:
+                out["checked"] += 1
+                if await pool.fetchval("SELECT status FROM goals WHERE id = $1::uuid", g["id"]) == "merged":
+                    continue
+                emb = [float(x) for x in g["emb"].strip("[]").split(",")] if g["emb"] else None
+                text = _goal_text({"canonical_name": g["canonical_name"], "description": g["description"]})
+                cands, n_fts, n_vec = await generate_goal_candidates(
+                    pool, text, scope_type=g["scope_type"] or "global", scope_entity_id=g["scope_entity_id"], embedding=emb,
+                    embedding_model=g["embedding_model_id"], exclude_id=g["id"],
+                    created_within=(g["t_created"], window_minutes) if window_minutes else None)
+                unavailable = False
+                for cand in cands:
+                    res = await judge.judge_identity("goal", text, cand.text)
+                    if not res.ok:
+                        unavailable = True
+                        break
+                    cand.relation, cand.confidence = res.value["relation"], res.value["confidence"]
+                    if cand.relation == "same" and cand.confidence >= same_min_confidence:
+                        survivor, loser = (cand.id, g["id"]) if cand.id < g["id"] else (g["id"], cand.id)
+                        did = await record_decision(
+                            pool, object_type="goal", candidate_text=text, scope_type=g["scope_type"],
+                            scope_entity_id=g["scope_entity_id"], decision="same", resolved_id=survivor, candidates=cands,
+                            judge=judge, provider=res.provider, model=res.model, fts_n=n_fts, vec_n=n_vec, job_id=None,
+                            idempotency_key=f"reconcile:{loser}:{survivor}", detail={"reconcile": True, "merged_loser": loser})
+                        await merge_goal(pool, loser, survivor, decision_id=did)
+                        out["merged"] += 1
+                        break
+                    if cand.relation in ("specializes", "generalizes"):
+                        # hierarchy is added asynchronously: an edge whose other end did not exist at creation time
+                        out["relations"] = out.get("relations", 0) + await propose_goal_relations(
+                            pool, g["id"], [cand], decision_id=None, provenance="goal_reconciliation")
+                if unavailable:
+                    out["deferred"] += 1
+                    continue
+                await pool.execute("UPDATE goals SET reconciled_at = now() WHERE id = $1::uuid AND reconciled_at IS NULL", g["id"])
+        finally:
+            await lock.execute("SELECT pg_advisory_unlock(hashtext($1))", RECONCILE_LOCK)
+    out["relinked"] = await relink_procedures_of_merged_goals(pool)
+    return out

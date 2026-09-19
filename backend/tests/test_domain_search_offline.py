@@ -273,123 +273,78 @@ def _verdict(procedure="p", verdict="ALLOW"):
     )
 
 
-def test_find_best_way_honest_empty_when_no_survivors(monkeypatch):
-    async def fake_find_applicable_procedures(pool, **kwargs):
-        return []
-
-    monkeypatch.setattr(ds, "find_applicable_procedures", fake_find_applicable_procedures)
-
-    result = _run(ds.find_best_way(
-        pool=object(), goal="deploy safely",
-        scope=AccessScope.unrestricted(), embedder=FakeEmbedder(),
-    ))
-    assert result["recommendation"] is None
-    assert result["alternatives"] == []
-    assert result["confidence"] == "none"
-    assert "honest empty result" in result["reason"]
+def _canonical_result(rec=None, alts=(), procedures=(), reason="", confidence="none"):
+    return {"goal": "g", "goal_resolution": {"status": "matches", "goals": [], "candidates": []},
+            "recommendation": rec, "alternatives": list(alts), "frontier": [], "procedures": list(procedures),
+            "confidence": confidence, "reason": reason, "retrieval": {"mode": "jev", "degraded": False},
+            "query_context": {"local_claim_ids": [], "dropped_local_claims": 0}}
 
 
-def test_find_best_way_never_fabricates_a_recommendation_require_verified_default(monkeypatch):
-    seen = {}
-
-    async def fake_find_applicable_procedures(pool, **kwargs):
-        seen["require_verified"] = kwargs["require_verified"]
-        return []
-
-    monkeypatch.setattr(ds, "find_applicable_procedures", fake_find_applicable_procedures)
-    _run(ds.find_best_way(pool=object(), goal="g", scope=AccessScope.unrestricted(), embedder=FakeEmbedder()))
-    assert seen["require_verified"] is True  # recommend defaults to requiring real verification
+def _item(pid, state="verified"):
+    return {"procedure_id": pid, "id": f"row-{pid}", "name": pid, "verification_state": state}
 
 
-def test_find_best_way_composes_check_procedure_reuse_for_each_candidate(monkeypatch):
-    survivors = [
-        _procedure_row("00000000-0000-4000-8000-000000000001", name="A"),
-        _procedure_row("00000000-0000-4000-8000-000000000002", name="B"),
-    ]
+@pytest.fixture
+def canonical(monkeypatch):
+    """domain_search.find_best_way is an ADAPTER over retrieval_service.find_best_way."""
+    import app.services.retrieval_service as rs
 
-    async def fake_find_applicable_procedures(pool, **kwargs):
-        return survivors
+    calls = {}
 
-    calls = []
+    async def fake(pool, goal, **kw):
+        calls["goal"], calls["kw"] = goal, kw
+        return calls["result"]
 
-    async def fake_check_procedure_reuse(pool, *, procedure_id, current_scope, access_scope):
-        calls.append(procedure_id)
-        return _verdict(procedure=procedure_id)
+    async def boom(*a, **k):  # the old direct-procedure cascade must no longer be reachable from here
+        raise AssertionError("domain_search must not call find_applicable_procedures directly")
 
-    monkeypatch.setattr(ds, "find_applicable_procedures", fake_find_applicable_procedures)
-    monkeypatch.setattr(ds, "check_procedure_reuse", fake_check_procedure_reuse)
-
-    result = _run(ds.find_best_way(
-        pool=object(), goal="deploy", scope=AccessScope.unrestricted(), embedder=FakeEmbedder(),
-    ))
-
-    assert calls == ["00000000-0000-4000-8000-000000000001", "00000000-0000-4000-8000-000000000002"]
-    assert result["recommendation"]["id"] == "00000000-0000-4000-8000-000000000001"
-    assert result["recommendation"]["verdict"] == "ALLOW"
-    assert result["recommendation"]["capability_note"] == "5 successes / 5 attempts"
-    assert len(result["alternatives"]) == 1
-    assert result["confidence"] == "high"
+    monkeypatch.setattr(rs, "find_best_way", fake)
+    monkeypatch.setattr(ds, "find_applicable_procedures", boom)
+    return calls
 
 
-def test_find_best_way_applies_scope_constraint_postfilter(monkeypatch):
-    survivors = [
-        _procedure_row("00000000-0000-4000-8000-000000000001", scope_type="repository", scope_entity_id="repo-A"),
-        _procedure_row("00000000-0000-4000-8000-000000000002", scope_type="repository", scope_entity_id="repo-B"),
-    ]
-
-    async def fake_find_applicable_procedures(pool, **kwargs):
-        return survivors
-
-    async def fake_check_procedure_reuse(pool, *, procedure_id, current_scope, access_scope):
-        return _verdict(procedure=procedure_id)
-
-    monkeypatch.setattr(ds, "find_applicable_procedures", fake_find_applicable_procedures)
-    monkeypatch.setattr(ds, "check_procedure_reuse", fake_check_procedure_reuse)
-
-    result = _run(ds.find_best_way(
-        pool=object(), goal="deploy", scope=AccessScope.unrestricted(), embedder=FakeEmbedder(),
-        scope_constraint={"repository_id": "repo-B"},
-    ))
-    assert result["recommendation"]["id"] == "00000000-0000-4000-8000-000000000002"
-    assert result["alternatives"] == []
+def test_find_best_way_delegates_to_the_canonical_service_and_defaults_to_require_verified(canonical):
+    canonical["result"] = _canonical_result(reason="no applicable procedure")
+    result = _run(ds.find_best_way(pool=object(), goal="deploy safely", scope=AccessScope.unrestricted(),
+                                   embedder=FakeEmbedder(), context={"repo": ["backend"]}))
+    assert canonical["goal"] == "deploy safely"
+    assert canonical["kw"]["require_verified"] is True and canonical["kw"]["current_scope"] == {"repo": ["backend"]}
+    assert result["recommendation"] is None and result["confidence"] == "none" and result["alternatives"] == []
+    assert "goal_resolution" in result and "retrieval" in result           # new metadata is surfaced, not dropped
 
 
-def test_find_best_way_skips_a_procedure_not_found_race(monkeypatch):
-    survivors = [
-        _procedure_row("00000000-0000-4000-8000-000000000001"),
-        _procedure_row("00000000-0000-4000-8000-000000000002"),
-    ]
-
-    async def fake_find_applicable_procedures(pool, **kwargs):
-        return survivors
-
-    async def fake_check_procedure_reuse(pool, *, procedure_id, current_scope, access_scope):
-        if procedure_id == "00000000-0000-4000-8000-000000000001":
-            raise ProcedureNotFound("gone")
-        return _verdict(procedure=procedure_id)
-
-    monkeypatch.setattr(ds, "find_applicable_procedures", fake_find_applicable_procedures)
-    monkeypatch.setattr(ds, "check_procedure_reuse", fake_check_procedure_reuse)
-
-    result = _run(ds.find_best_way(
-        pool=object(), goal="deploy", scope=AccessScope.unrestricted(), embedder=FakeEmbedder(),
-    ))
-    assert result["recommendation"]["id"] == "00000000-0000-4000-8000-000000000002"
+def test_find_best_way_allow_unverified_and_local_claims_are_forwarded(canonical):
+    canonical["result"] = _canonical_result()
+    _run(ds.find_best_way(pool=object(), goal="g", scope=AccessScope.unrestricted(), embedder=FakeEmbedder(),
+                          constraints={"allow_unverified": True, "local_claims": [{"id": "c1", "statement": "uses gradle"}]}))
+    assert canonical["kw"]["require_verified"] is False
+    assert canonical["kw"]["local_claims"] == [{"id": "c1", "statement": "uses gradle"}]
 
 
-def test_find_best_way_allow_unverified_opts_out_of_require_verified(monkeypatch):
-    seen = {}
+def test_find_best_way_attaches_the_reuse_verdict_and_skips_a_procedure_not_found_race(canonical, monkeypatch):
+    canonical["result"] = _canonical_result(rec=_item("a"), alts=[_item("gone")], confidence="medium")
 
-    async def fake_find_applicable_procedures(pool, **kwargs):
-        seen["require_verified"] = kwargs["require_verified"]
-        return []
+    async def fake_check(pool, *, procedure_id, current_scope, access_scope):
+        if procedure_id == "gone":
+            raise ProcedureNotFound(procedure_id)
+        return _verdict(procedure="a")
 
-    monkeypatch.setattr(ds, "find_applicable_procedures", fake_find_applicable_procedures)
-    _run(ds.find_best_way(
-        pool=object(), goal="g", scope=AccessScope.unrestricted(), embedder=FakeEmbedder(),
-        constraints={"allow_unverified": True},
-    ))
-    assert seen["require_verified"] is False
+    monkeypatch.setattr(ds, "check_procedure_reuse", fake_check)
+    result = _run(ds.find_best_way(pool=object(), goal="g", scope=AccessScope.unrestricted(), embedder=FakeEmbedder()))
+    assert result["recommendation"]["verdict"] == "ALLOW" and result["confidence"] == "high"
+    assert "verdict" not in result["alternatives"][0]                    # raced away: skipped, not fatal
+
+
+def test_find_best_way_unverified_recommendation_is_low_confidence(canonical, monkeypatch):
+    canonical["result"] = _canonical_result(rec=_item("a", state="candidate"), confidence="high")
+
+    async def fake_check(pool, **k):
+        return _verdict(procedure="a")
+
+    monkeypatch.setattr(ds, "check_procedure_reuse", fake_check)
+    result = _run(ds.find_best_way(pool=object(), goal="g", scope=AccessScope.unrestricted(), embedder=FakeEmbedder(),
+                                   constraints={"allow_unverified": True}))
+    assert result["confidence"] == "low"
 
 
 # ---------------------------------------------------------------------------

@@ -62,6 +62,24 @@ ALTER TABLE procedures ADD COLUMN IF NOT EXISTS source_key TEXT;
 CREATE UNIQUE INDEX IF NOT EXISTS idx_procedures_live_source_key
     ON procedures(source_key) WHERE source_key IS NOT NULL AND t_invalid IS NULL;
 
+-- Goal reconciliation: two workers that ingest PARAPHRASES of one goal at the same
+-- moment cannot see each other (neither is committed when the other's identity
+-- check runs; only exact-name races are stopped by a unique index). New goals
+-- start unreconciled; app/services/identity_resolution.py::reconcile_goals judges
+-- them against temporally adjacent goals and merges the newer into the older.
+-- Rows that exist when this migration runs were resolved under the previous
+-- policy and are marked reconciled (a legacy sweep is `admin reconcile-goals --all`).
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                   WHERE table_schema = current_schema() AND table_name = 'goals' AND column_name = 'reconciled_at') THEN
+        ALTER TABLE goals ADD COLUMN reconciled_at TIMESTAMPTZ;
+        -- only on the run that adds the column: a re-run must never mark fresh goals reconciled
+        UPDATE goals SET reconciled_at = now();
+    END IF;
+END $$;
+CREATE INDEX IF NOT EXISTS idx_goals_unreconciled ON goals(id) WHERE reconciled_at IS NULL AND status <> 'merged';
+
 -- ------------------------------------------------------- goal hierarchy
 -- Separate from `goals` on purpose: optional, multi-parent, async, never used
 -- for sharding, never required by retrieval.
@@ -285,6 +303,29 @@ DROP TRIGGER IF EXISTS tg_claims_canonical_touch ON knowledge_nodes;
 CREATE TRIGGER tg_claims_canonical_touch AFTER INSERT OR UPDATE ON knowledge_nodes
     FOR EACH ROW WHEN (NEW.node_type = 'claim')
     EXECUTE FUNCTION sl_canonical_touch();
+
+-- A Procedure must never be linked to a MERGED goal (a writer that resolved the
+-- goal a moment before a reconciliation merged it): follow merged_into_id at write time.
+-- Writers already in flight during a merge are repaired by reconcile_goals' relink sweep.
+CREATE OR REPLACE FUNCTION sl_procedure_follow_merged_goal() RETURNS trigger AS $$
+DECLARE
+    g   UUID := NEW.achieves_goal_id;
+    nxt UUID;
+    hops INT := 0;
+BEGIN
+    WHILE g IS NOT NULL AND hops < 8 LOOP
+        SELECT merged_into_id INTO nxt FROM goals WHERE id = g AND status = 'merged';
+        EXIT WHEN nxt IS NULL;
+        g := nxt;
+        hops := hops + 1;
+    END LOOP;
+    NEW.achieves_goal_id := g;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+DROP TRIGGER IF EXISTS tg_procedures_follow_merged_goal ON procedures;
+CREATE TRIGGER tg_procedures_follow_merged_goal BEFORE INSERT OR UPDATE OF achieves_goal_id ON procedures
+    FOR EACH ROW EXECUTE FUNCTION sl_procedure_follow_merged_goal();
 
 -- ---------------------------------------------- ingestion job lease/retry
 -- Reuses `ingestion_jobs` (no second queue). Legacy statuses keep their

@@ -9,6 +9,7 @@
     python -m app.ingestion.admin reindex [goal|claim|procedure|all] [--shard K002]
     python -m app.ingestion.admin drain-projections
     python -m app.ingestion.admin verify-projections          # exit 1 if projections disagree with canonical rows
+    python -m app.ingestion.admin reconcile-goals [--all]     # judge unreconciled goals; merge same-goal paraphrases
     python -m app.ingestion.admin verify-dedup                # duplicate goal names / procedures without a goal link
 """
 from __future__ import annotations
@@ -46,6 +47,9 @@ def _parse(argv=None) -> argparse.Namespace:
     sub.add_parser("drain-projections")
     sub.add_parser("verify-projections")
     sub.add_parser("verify-dedup")
+    rg = sub.add_parser("reconcile-goals")
+    rg.add_argument("--all", action="store_true", help="ignore the time window (legacy corpus sweep)")
+    rg.add_argument("--batch", type=int, default=500)
     return p.parse_args(argv)
 
 
@@ -87,17 +91,25 @@ async def _amain(a: argparse.Namespace) -> int:
             rep = await sp.verify_projection(pool)
             print(json.dumps(rep, default=str, indent=2))
             return 0 if rep["ok"] else 1
+        elif a.cmd == "reconcile-goals":
+            from app.ingestion.handlers import Dependencies
+            from app.services.identity_resolution import reconcile_goals
+            print(json.dumps(await reconcile_goals(
+                pool, judge=Dependencies.get_judge(),
+                window_minutes=None if a.all else 30.0, batch=a.batch)))
         elif a.cmd == "verify-dedup":
             dup = await pool.fetch(
                 "SELECT normalized_name, scope_type, count(*) AS n FROM goals WHERE t_invalid IS NULL AND status <> 'merged' "
                 "GROUP BY 1, 2 HAVING count(*) > 1")
             unlinked = await pool.fetchval(
                 "SELECT count(*) FROM procedures WHERE t_invalid IS NULL AND achieves_goal_id IS NULL AND is_engineering_fixture = false")
+            dangling = await pool.fetchval(
+                "SELECT count(*) FROM procedures p JOIN goals g ON g.id = p.achieves_goal_id WHERE p.t_invalid IS NULL AND g.status = 'merged'")
             unjudged = await pool.fetchval("SELECT count(*) FROM identity_decisions WHERE decision = 'judge_unavailable' AND resolved_id IS NULL")
             rep = {"duplicate_goal_names": [dict(r) for r in dup], "live_procedures_without_goal_link": unlinked,
-                   "goals_created_while_judge_unavailable": unjudged}
+                   "live_procedures_linked_to_merged_goals": dangling, "goals_created_while_judge_unavailable": unjudged}
             print(json.dumps(rep, default=str, indent=2))
-            return 0 if not dup and not unlinked else 1
+            return 0 if not dup and not unlinked and not dangling else 1
         return 0
     finally:
         await pool.close()

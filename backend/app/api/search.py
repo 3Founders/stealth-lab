@@ -81,6 +81,7 @@ class RecommendRequest(BaseModel):
     goal: str = Field(min_length=1)
     context: Optional[dict[str, Any]] = None
     scope_constraint: Optional[dict[str, Any]] = None
+    # e.g. {"allow_unverified": false, "limit": 3, "local_claims": [{"id": "...", "statement": "..."}]}
     constraints: Optional[dict[str, Any]] = None
 
 
@@ -90,6 +91,13 @@ class RecommendResponse(BaseModel):
     alternatives: list[dict[str, Any]]
     confidence: str
     reason: str
+    # Canonical retrieval metadata (app.services.retrieval_service): which Goal(s)
+    # were resolved, semantic mode (jev / model / candidates_only), degraded flag
+    # + reasons, shards touched, local claim ids used. Never dropped by REST.
+    goal_resolution: Optional[dict[str, Any]] = None
+    retrieval: Optional[dict[str, Any]] = None
+    frontier: list[str] = Field(default_factory=list)
+    query_context: Optional[dict[str, Any]] = None
 
 
 @router.post("/recommend", response_model=RecommendResponse)

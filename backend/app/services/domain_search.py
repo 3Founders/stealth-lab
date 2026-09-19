@@ -667,103 +667,53 @@ async def find_best_way(
     surfaced in the response". Composed, not reimplemented: this module
     writes no cascade logic and no capability arithmetic of its own.
     """
+    # CONVERGED (docs/retrieval_architecture.md): the recommendation is produced
+    # by the ONE canonical retrieval service -- Goal resolution -> goal-constrained
+    # Procedure retrieval -> hard constraints -> JEV/NLI -> evidence -> selection.
+    # This function only adapts request/response shapes for the REST/MCP callers.
+    from app.services import retrieval_service as rs
+
     constraints = constraints or {}
     scope_constraint = scope_constraint or {}
     embedder = embedder or Embedder()
-
-    try:
-        goal_vec = await embedder.embed_one(goal, input_type="query")
-    except Exception:  # noqa: BLE001 -- honest degrade, matches search_global
-        goal_vec = None
-
     allow_unverified = bool(constraints.get("allow_unverified", False))
     alt_limit = int(constraints.get("limit", 3))
+    cfg = rs.RetrievalConfig(procedure_alternatives=max(alt_limit, 1))
 
-    survivors = await find_applicable_procedures(
-        pool,
-        goal_embedding=goal_vec,
-        goal_text=goal,
-        current_scope=context or {},
-        access_scope=scope,
-        require_verified=not allow_unverified,
-        invariant_bindings=constraints.get("invariant_bindings"),
-        embedding_model_id=embedder.embedding_model_id() if goal_vec is not None else None,
-        limit=max(alt_limit + 1, 1),
-    )
+    result = await rs.find_best_way(
+        pool, goal, local_claims=constraints.get("local_claims") or [], scope=scope, embedder=embedder,
+        cfg=cfg, current_scope=context or {}, require_verified=not allow_unverified)
 
-    filtered = [
-        proc for proc in survivors
-        if _scope_filter_matches(
-            proc.get("scope_type"), proc.get("scope_entity_id"),
-            scope_type=scope_constraint.get("scope_type"),
-            repository_id=scope_constraint.get("repository_id"),
-            project_id=scope_constraint.get("project_id"),
-        )
-    ]
+    if scope_constraint and result["procedures"]:
+        keep = []
+        for item in result["procedures"]:
+            row = await pool.fetchrow(
+                "SELECT scope_type, scope_entity_id FROM procedures WHERE id = $1::uuid", item["id"])
+            if row is not None and _scope_filter_matches(
+                row["scope_type"], row["scope_entity_id"], scope_type=scope_constraint.get("scope_type"),
+                repository_id=scope_constraint.get("repository_id"), project_id=scope_constraint.get("project_id")):
+                keep.append(item["procedure_id"])
+        result["procedures"] = [i for i in result["procedures"] if i["procedure_id"] in keep]
+        result["alternatives"] = [i for i in result["alternatives"] if i["procedure_id"] in keep]
+        if result["recommendation"] and result["recommendation"]["procedure_id"] not in keep:
+            result["recommendation"] = None
+            result["confidence"] = "none"
+            result["reason"] = "the selected procedure is outside the requested scope_constraint"
 
-    if not filtered:
-        reason = (
-            "no applicable procedure satisfies the hard-constraint cascade for "
-            f"this goal/context (require_verified={not allow_unverified}) -- "
-            "honest empty result, not a fabricated recommendation"
-        )
-        return {
-            "goal": goal,
-            "recommendation": None,
-            "alternatives": [],
-            "confidence": "none",
-            "reason": reason,
-        }
-
-    candidates: list[dict[str, Any]] = []
-    for proc in filtered:
+    # refusal-with-receipts verdict (existing ALLOW / WOULD_REFUSE decision) for what we surface
+    for item in ([result["recommendation"]] if result["recommendation"] else []) + result["alternatives"]:
         try:
             verdict = await check_procedure_reuse(
-                pool, procedure_id=str(proc["procedure_id"]),
-                current_scope=context or {}, access_scope=scope,
-            )
+                pool, procedure_id=str(item["procedure_id"]), current_scope=context or {}, access_scope=scope)
         except ProcedureNotFound:
-            # Real, benign race: the row could have gone stale/superseded
-            # between find_applicable_procedures' fetch and this call.
-            # Skip it rather than fail the whole recommendation.
             continue
-        candidates.append({
-            "id": str(proc["id"]),
-            "procedure_id": str(proc["procedure_id"]),
-            "name": proc["name"],
-            "display_name": proc.get("display_name") or proc["name"],
-            "display_description": proc.get("display_description") or proc["goal"],
-            "applicability_summary": build_applicability_summary(proc),
-            "relevance_label": relevance_label(proc.get("_similarity_score")),
-            "relevance_reason": relevance_reason(goal, proc),
-            "goal": proc["goal"],
-            "verification_state": proc["verification_state"],
-            "staleness": proc["staleness"],
-            "availability": proc.get("availability"),
-            "similarity_score": proc.get("_similarity_score"),
-            **_verdict_to_dict(verdict),
-        })
+        item.update(_verdict_to_dict(verdict))
 
-    if not candidates:
-        return {
-            "goal": goal,
-            "recommendation": None,
-            "alternatives": [],
-            "confidence": "none",
-            "reason": (
-                "every candidate procedure from the cascade disappeared "
-                "(stale/superseded) before it could be verified a second time -- "
-                "honest empty result"
-            ),
-        }
-
-    top, rest = candidates[0], candidates[1:alt_limit + 1]
-    confidence = "high" if top["verification_state"] == "verified" and top["verdict"] == "ALLOW" \
-        else "low"
-    return {
-        "goal": goal,
-        "recommendation": top,
-        "alternatives": rest,
-        "confidence": confidence,
-        "reason": top["reason"],
-    }
+    if result["recommendation"] is None and not result["reason"]:
+        result["reason"] = "no applicable procedure: honest empty result, not a fabricated recommendation"
+    rec = result["recommendation"]
+    if rec is None:
+        result["confidence"] = "none"
+    else:
+        result["confidence"] = "high" if rec.get("verification_state") == "verified" and rec.get("verdict") == "ALLOW" else "low"
+    return result

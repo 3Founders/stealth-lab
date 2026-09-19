@@ -29,6 +29,8 @@ class WorkerConfig:
     max_jobs: int = 0                 # INGEST_MAX_JOBS            (>0: exit after N jobs; batch runners)
     projection_batch: int = 200       # PROJECTION_BATCH
     drain_projections: bool = True    # INGEST_DRAIN_PROJECTIONS
+    reconcile_goals: bool = True      # INGEST_RECONCILE_GOALS   (judge concurrently created paraphrase goals)
+    reconcile_window_minutes: float = 30.0  # INGEST_RECONCILE_WINDOW_MINUTES (> the longest job)
 
     @classmethod
     def from_env(cls) -> "WorkerConfig":
@@ -44,6 +46,8 @@ class WorkerConfig:
             max_jobs=_int("INGEST_MAX_JOBS", 0),
             projection_batch=max(1, _int("PROJECTION_BATCH", 200)),
             drain_projections=os.environ.get("INGEST_DRAIN_PROJECTIONS", "1") not in ("0", "false", "False"),
+            reconcile_goals=os.environ.get("INGEST_RECONCILE_GOALS", "1") not in ("0", "false", "False"),
+            reconcile_window_minutes=_float("INGEST_RECONCILE_WINDOW_MINUTES", 30.0),
         )
 
 

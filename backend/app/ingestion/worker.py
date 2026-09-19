@@ -174,6 +174,16 @@ class Worker:
         await q.reap_exhausted(self.pool)
         await asyncio.gather(*[self._lane(i, budget) for i in range(self.cfg.concurrency)])
         await q.reap_exhausted(self.pool)
+        if self.cfg.reconcile_goals:
+            from app.ingestion.handlers import Dependencies
+            from app.services.identity_resolution import reconcile_goals
+
+            try:
+                self.counts['reconcile'] = await reconcile_goals(
+                    self.pool, judge=Dependencies.get_judge(),
+                    window_minutes=self.cfg.reconcile_window_minutes)
+            except Exception:  # noqa: BLE001 -- retried next run; never fails the batch
+                log.warning('goal reconciliation failed; will retry next run', exc_info=True)
         if self.cfg.drain_projections:
             from app.services.search_projection import drain_outbox
 
