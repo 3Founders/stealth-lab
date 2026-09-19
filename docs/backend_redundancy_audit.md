@@ -80,3 +80,32 @@ code disagree, the code column is what is written here.
 * `implementations` ontology — 60 modules. Migrate callers first.
 * `dedup.py` / `claim_family` — offline-only sweep tooling; deprecate with
   comments, no removal until the claim-relation path has run on real data.
+
+## 7. Outcome of the hardening pass (what was kept, changed, removed, quarantined)
+
+### Additional findings made while implementing
+
+| Finding | Where | Action |
+|---|---|---|
+| `supersede_procedure` did **not** carry `achieves_goal_id`: every re-ingested version lost its Goal link | `services/procedures.py::_SUPERSEDE_CARRY_COLUMNS` | **Fixed** (link + `home_shard_id` carried); test in `test_goal_identity_e2e.py` |
+| Procedure→Goal link was a *second* statement after the INSERT (crash in between ⇒ NULL link) | `capture_procedure` | **Fixed**: written by the INSERT itself |
+| `enqueue_skill_package_jobs` deduped with a racy SELECT-then-INSERT over the payload | `ingestion_jobs.py` | **Quarantined**: new enqueue uses a unique `(job_type, idempotency_key)`; the old function is untouched (user WIP in that file) and remains for the legacy Wave-1 flow |
+| Hierarchy builder inserts synthetic "group" rows into `procedures` (`provenance='company_debate'`, fixture=true) | `services/hierarchy.py` | Excluded from projections and retrieval (same rule as `_CANDIDATE_BASE_WHERE`); the builder itself is legacy hierarchy code, not on the Goal/Procedure path |
+| `applicability.py` has a stale comment saying `is_engineering_fixture` filtering was "REJECTED" while `_CANDIDATE_BASE_WHERE` applies it | `services/applicability.py` | Doc-vs-code mismatch noted; the code (filter applied) is what the projection mirrors |
+| `product_model.find_best_way` (REST `/problems`, MCP `find_best_solution`) is a **Problem/benchmark leaderboard**, a different concept from Procedure recommendation | `services/product_model.py` | Not a duplicate; left alone (naming collision only) |
+| A second production ingestion entry exists: `.github/workflows/ingest.yml` ("Wave 1", pinned commit, `scripts/ingest_after_skills.py`) | CI | Legacy campaign workflow; **not** removed. New batch workflow `ingest-worker-batch.yml` uses the canonical worker |
+| Concurrent *paraphrase* goals cannot see each other (only exact-name races hit a unique index) | identity | New: `reconciled_at` + `reconcile_goals` + merge protocol |
+| Worker DB pool needs ≥ 2×lanes+4 (advisory-lock connection + write connection) | worker | Sized in code; documented |
+
+### Kept / changed / removed
+
+| Area | Kept (canonical) | Changed | Removed / deprecated |
+|---|---|---|---|
+| Goal identity | `goals.find_or_create_goal` (exact + alias) | semantic tier now `identity_resolution` (FTS+ANN → judge) with durable `identity_decisions` | **Removed**: SimHash tier, cosine auto-merge tiers, raw-client `_adjudicate_same_goal`, constants; `client`/`adjudication_model` params are deprecated no-ops; `goals.simhash` column now unused (drop in a later migration) |
+| Procedure write | `capture_procedure` | atomic goal link + shard + `source_key` idempotency | — |
+| Procedure identity | — | new `procedure_identity.ingest_procedure` (opt-in) | — |
+| Job queue | `ingestion_jobs` | + lease, idempotency, retry state, scope (mig 95); new lease worker/CLIs | legacy `claim_jobs/process_pending_jobs/requeue_stuck_jobs` retained for the in-process scheduler |
+| Recommendation | `retrieval_service.find_best_way` | `domain_search.find_best_way` is now an adapter; REST `/v1/search/recommend` exposes goal resolution + retrieval metadata | **Removed**: the direct-procedure cascade composition inside `domain_search.find_best_way` (6 tests that pinned it were replaced by adapter tests) |
+| Retrieval (other callers) | — | — | **Quarantined, not yet converged**: MCP `find_best_way` tier-1 lookup, MCP `search_procedures`, `/v1/procedures/search`, `/v1/solutions/search`, `search_global` procedure leg, `goals.search_goals`, `intent_resolution` hand-weighted re-rank. They still use `find_applicable_procedures` / `claim_conditioned_retrieval` / `solution_search`. Rationale: 40+ test files and the durable-execution routing (`route_decision`) consume their result shape; rewiring without a compatibility layer risked the execution semantics the brief says to preserve |
+| Global `implementations` ontology | table + registry (runtime binding) | none | **Not deleted** (60 modules). Marked deprecated as *knowledge*; migration of `implementations.goal`/`implementation_goals` enrichment to execution metadata is **open** |
+| Claim dedup | `claim_equivalence` | exact-statement identity at ingestion | `dedup.merge_cluster` / `claim_family` marked legacy (not wired into the new path); semantic claim identity at write time is **open** |

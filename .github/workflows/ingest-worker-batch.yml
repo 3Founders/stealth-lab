@@ -1,0 +1,129 @@
+name: Ingestion worker batch
+
+# One or more GitHub-hosted runners each run the SAME provider-neutral worker
+# (python -m app.ingestion.worker) against the control database. GitHub Actions is
+# ONLY compute here: the queue, leases, retries and idempotency all live in
+# Postgres (ingestion_jobs). Re-running / cancelling / duplicating this workflow is
+# safe: an interrupted runner's leases expire and any other worker retries the jobs.
+#
+# docs/distributed_ingestion.md, "GitHub Actions".
+
+on:
+  workflow_dispatch:
+    inputs:
+      workers:
+        description: "Parallel runners (each is an independent worker)"
+        required: true
+        default: "4"
+      concurrency:
+        description: "Lanes per runner (INGEST_WORKER_CONCURRENCY)"
+        required: true
+        default: "4"
+      max_jobs:
+        description: "Jobs per runner before it exits (INGEST_MAX_JOBS; 0 = until the queue is empty)"
+        required: true
+        default: "500"
+      job_types:
+        description: "Optional comma-separated job_type filter (e.g. ingest_skill_package)"
+        required: false
+        default: ""
+      enqueue_manifest:
+        description: "Optional path (in this repo) of a JSON-lines package manifest to enqueue first"
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ingest-worker-batch
+  cancel-in-progress: false
+
+env:
+  PYTHONUNBUFFERED: "1"
+  STEALTHLAB_ENV: PRODUCTION
+  CONTROL_DATABASE_URL: ${{ secrets.CONTROL_DATABASE_URL }}
+  GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+  GEMINI_API_KEYS: ${{ secrets.GEMINI_API_KEYS }}
+  VOYAGE_API_KEY: ${{ secrets.VOYAGE_API_KEY }}
+  JEV_BASE_URL: ${{ secrets.JEV_BASE_URL }}
+  JEV_API_KEY: ${{ secrets.JEV_API_KEY }}
+  GITHUB_TOKEN: ${{ github.token }}
+  INGEST_LEASE_SECONDS: "300"
+  INGEST_IDLE_EXIT_SECONDS: "20"
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.m.outputs.matrix }}
+    steps:
+      - id: m
+        run: |
+          python3 - <<'PY' >> "$GITHUB_OUTPUT"
+          import json
+          n = int("${{ inputs.workers }}")
+          print("matrix=" + json.dumps({"worker": list(range(1, n + 1))}))
+          PY
+
+  enqueue:
+    if: ${{ inputs.enqueue_manifest != '' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12", cache: pip, cache-dependency-path: backend/requirements.txt }
+      - run: pip install -r backend/requirements.txt
+      - name: Enqueue (idempotent: re-running is a no-op for packages already queued)
+        working-directory: backend
+        run: python -m app.ingestion.enqueue skill-package --manifest "../${{ inputs.enqueue_manifest }}"
+
+  work:
+    needs: [plan, enqueue]
+    if: ${{ always() && needs.plan.result == 'success' && (needs.enqueue.result == 'success' || needs.enqueue.result == 'skipped') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 350           # GitHub's job limit is 360 min; leases make an early stop harmless
+    strategy:
+      fail-fast: false             # one runner failing must not stop the others
+      matrix: ${{ fromJson(needs.plan.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12", cache: pip, cache-dependency-path: backend/requirements.txt }
+      - run: pip install -r backend/requirements.txt
+      - name: Validate configuration (fails fast on a missing provider / database)
+        working-directory: backend
+        run: python -m app.ingestion.worker --validate-config
+      - name: Run worker
+        working-directory: backend
+        env:
+          INGEST_WORKER_ID: gha-${{ github.run_id }}-${{ matrix.worker }}
+          INGEST_WORKER_CONCURRENCY: ${{ inputs.concurrency }}
+          INGEST_MAX_JOBS: ${{ inputs.max_jobs }}
+        run: |
+          ARGS="--once"
+          if [ -n "${{ inputs.job_types }}" ]; then ARGS="$ARGS --job-types ${{ inputs.job_types }}"; fi
+          python -m app.ingestion.worker $ARGS | tee "worker-${{ matrix.worker }}.json"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: worker-summary-${{ matrix.worker }}
+          path: backend/worker-*.json
+          retention-days: 14
+
+  report:
+    needs: work
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12", cache: pip, cache-dependency-path: backend/requirements.txt }
+      - run: pip install -r backend/requirements.txt
+      - name: Queue status, failures, projection consistency
+        working-directory: backend
+        run: |
+          python -m app.ingestion.admin status
+          python -m app.ingestion.admin failures --limit 20 || true
+          python -m app.ingestion.admin verify-projections || echo "::warning::projections differ from canonical rows; run 'admin reindex'"

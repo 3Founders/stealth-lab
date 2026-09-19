@@ -1,0 +1,21 @@
+# Ingestion worker image -- the SAME code on Cloud Run, Oracle, or any container host.
+#
+#   docker build -f deploy/ingestion/Dockerfile.worker -t stealth-ingest-worker .     # context = repo root
+#
+# Entry point is the provider-neutral worker; the provider only decides HOW OFTEN it is
+# started (Cloud Run job / service, docker restart policy, cron). No provider SDK is in here.
+FROM python:3.12-slim
+
+WORKDIR /repo
+RUN apt-get update && apt-get install -y --no-install-recommends git && rm -rf /var/lib/apt/lists/*
+COPY backend/requirements.txt backend/requirements.txt
+RUN pip install --no-cache-dir -r backend/requirements.txt
+COPY backend/ backend/
+WORKDIR /repo/backend
+
+ENV PYTHONUNBUFFERED=1 STEALTHLAB_ENV=PRODUCTION
+
+# Default: drain the queue once, then exit (Cloud Run Job / cron friendly). Override with
+# `--loop` for a long-running service. Config is env only (docs/distributed_ingestion.md).
+ENTRYPOINT ["python", "-m", "app.ingestion.worker"]
+CMD ["--once"]

@@ -220,7 +220,8 @@ async def _amain(args: argparse.Namespace) -> int:
         return 0
     from app.db.session import create_pool
 
-    pool = await create_pool(control_database_url(), max_size=cfg.concurrency + 3)
+    # each in-flight bundle holds the advisory-lock connection AND needs a second one for its writes
+    pool = await create_pool(control_database_url(), max_size=2 * cfg.concurrency + 4)
     from app.services.shards import ShardPools
 
     worker = Worker(pool, cfg, worker_id=args.worker_id, pools=ShardPools(pool),

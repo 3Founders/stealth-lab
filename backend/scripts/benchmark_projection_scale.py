@@ -38,6 +38,10 @@ WORDS = ("deploy service database migrate schema callers function test flaky bui
          "python rust kubernetes docker secret rotate backup restore monitor alert latency throughput queue worker").split()
 
 
+def log(msg: str) -> None:
+    print(f"[bench {time.strftime('%H:%M:%S')}] {msg}", file=sys.stderr, flush=True)
+
+
 def pct(xs, p):
     xs = sorted(xs)
     return round(xs[min(len(xs) - 1, int(len(xs) * p))], 2)
@@ -58,14 +62,14 @@ async def main(a) -> dict:
     from app.services.retrieval_service import RetrievalConfig, _legs
     from app.services.shards import ShardInfo, choose_shard
 
-    pool = await create_pool(max_size=4)
+    pool = await create_pool(max_size=24)
     out: dict = {"goals": a.goals, "procedures": a.procedures}
-    await pool.execute("SET maintenance_work_mem = '1GB'") if False else None
     try:
         await pool.execute(f"DELETE FROM goal_search_index WHERE canonical_name LIKE '{TAG}%'")
         await pool.execute(f"DELETE FROM procedure_search_index WHERE name LIKE '{TAG}%'")
         async with pool.acquire() as c:
             await c.execute("SET maintenance_work_mem = '1GB'")
+            log(f"loading {a.goals} synthetic goal projections")
             t0 = time.perf_counter()
             await c.execute("DROP INDEX IF EXISTS idx_goal_search_embedding")
             await c.execute(f"""
@@ -81,6 +85,7 @@ async def main(a) -> dict:
             """)
             load_s = time.perf_counter() - t0
             out["goal_bulk_load"] = {"seconds": round(load_s, 1), "rows_per_s": round(a.goals / load_s)}
+            log("building HNSW index")
             t0 = time.perf_counter()
             await c.execute("CREATE INDEX idx_goal_search_embedding ON goal_search_index USING hnsw (embedding vector_cosine_ops) WHERE embedding IS NOT NULL")
             out["goal_hnsw_build_seconds"] = round(time.perf_counter() - t0, 1)
@@ -108,6 +113,7 @@ async def main(a) -> dict:
                         extra_cols="", ctx_text=q, embedding=qvec, embedding_model="bench-1", scope=scope,
                         where_extra="status IN ('active', 'candidate')", extra_params=[], cfg=cfg)
 
+        log("querying")
         out["lexical_fts"] = await timed(lexical, a.queries)
         out["vector_ann"] = await timed(ann, a.queries)
         out["fused_retrieval"] = await timed(fused, a.queries)
@@ -116,6 +122,7 @@ async def main(a) -> dict:
                                 "ORDER BY embedding <=> $1::vector LIMIT 20", to_pgvector(qvec))
         out["ann_uses_hnsw"] = any("idx_goal_search_embedding" in r[0] for r in plan)
 
+        log("shard routing")
         shards = [ShardInfo(f"K{i:03d}", "active", 100) for i in range(8)]
         t0 = time.perf_counter()
         for i in range(200_000):
@@ -132,6 +139,7 @@ async def main(a) -> dict:
                        'K000', 'active', 1, 'public', now() FROM generate_series(1, {a.procedures}) i""")
             out["procedure_bulk_load"] = {"rows_per_s": round(a.procedures / (time.perf_counter() - t0))}
 
+        log("projection upsert throughput")
         # projection upsert throughput on REAL canonical rows
         n_up = min(a.upserts, 2000)
         ids = []
@@ -148,6 +156,9 @@ async def main(a) -> dict:
         await pool.execute(f"DELETE FROM goals WHERE canonical_name LIKE '{TAG}canon %'")
         await sp.drain_outbox(pool)
 
+        log("FTS on a natural-shaped vocabulary")
+        out["fts_zipf_natural_vocabulary"] = await fts_zipf_benchmark(pool, a.goals, a.queries)
+        log("ingestion worker throughput")
         out["ingestion_worker"] = await worker_throughput(pool, a.bundles)
     finally:
         if not a.keep:
@@ -155,6 +166,34 @@ async def main(a) -> dict:
             await pool.execute(f"DELETE FROM procedure_search_index WHERE name LIKE '{TAG}%'")
         await pool.close()
     return out
+
+
+async def fts_zipf_benchmark(pool, n_rows: int, queries: int) -> dict:
+    """FTS latency on a NATURAL-shaped corpus: 20k-word vocabulary with a Zipf-like skew (a few very
+    common words, a long tail), 8 words per goal, queries of 3 words drawn from the same skew (so they
+    sometimes hit common words -- the realistic worst case for an OR query). Text only (no vectors)."""
+    await pool.execute("DROP TABLE IF EXISTS zbench_fts")
+    await pool.execute("CREATE UNLOGGED TABLE zbench_fts (id serial PRIMARY KEY, t text NOT NULL, tsv tsvector NOT NULL)")
+    t0 = time.perf_counter()
+    await pool.execute(f"""
+        INSERT INTO zbench_fts (t, tsv)
+        SELECT x.t, to_tsvector('simple', x.t) FROM (
+            SELECT (SELECT string_agg('w' || floor(20000 * power(random(), 3))::int, ' ') FROM generate_series(1, 8) WHERE g.i > 0) AS t
+            FROM generate_series(1, {n_rows}) g(i)) x""")
+    load_s = time.perf_counter() - t0
+    await pool.execute("CREATE INDEX ON zbench_fts USING gin (tsv)")
+    await pool.execute("ANALYZE zbench_fts")
+
+    async def q3():
+        words = [f"w{int(20000 * (uuid.uuid4().int % 10**6 / 10**6) ** 3)}" for _ in range(3)]
+        tq = " | ".join(words)
+        await pool.fetch("SELECT id FROM zbench_fts WHERE tsv @@ to_tsquery('simple', $1) "
+                         "ORDER BY ts_rank_cd(tsv, to_tsquery('simple', $1)) DESC LIMIT 20", tq)
+
+    res = await timed(q3, queries)
+    res.update({"rows": n_rows, "load_seconds": round(load_s, 1), "vocabulary": 20000})
+    await pool.execute("DROP TABLE zbench_fts")
+    return res
 
 
 async def worker_throughput(pool, n_bundles: int) -> dict:
@@ -197,4 +236,15 @@ if __name__ == "__main__":
     ap.add_argument("--upserts", type=int, default=1000)
     ap.add_argument("--bundles", type=int, default=200)
     ap.add_argument("--keep", action="store_true")
-    print(json.dumps(asyncio.run(main(ap.parse_args())), indent=2))
+    ap.add_argument("--only-fts-zipf", action="store_true", help="just the natural-vocabulary FTS latency benchmark")
+    args = ap.parse_args()
+
+    async def _only_fts():
+        from app.db.session import create_pool
+        pool = await create_pool(max_size=2)
+        try:
+            return {"fts_zipf_natural_vocabulary": await fts_zipf_benchmark(pool, args.goals, args.queries)}
+        finally:
+            await pool.close()
+
+    print(json.dumps(asyncio.run(_only_fts() if args.only_fts_zipf else main(args)), indent=2))

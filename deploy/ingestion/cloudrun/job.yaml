@@ -1,0 +1,46 @@
+# Cloud Run JOB running the ingestion worker (one-shot; parallelism = tasks).
+#
+#   gcloud run jobs replace deploy/ingestion/cloudrun/job.yaml --region REGION
+#   gcloud run jobs execute stealth-ingest-worker --region REGION --tasks 8   # 8 independent workers
+#
+# Secrets come from Secret Manager (never from this file). Tasks are independent workers:
+# a task that times out or is preempted simply stops; its leases expire and other tasks
+# (or the next execution) retry the jobs. Duplicate delivery is safe (idempotent handlers).
+apiVersion: run.googleapis.com/v1
+kind: Job
+metadata:
+  name: stealth-ingest-worker
+spec:
+  template:
+    spec:
+      parallelism: 8              # tasks running at once (each = one worker process)
+      taskCount: 8
+      template:
+        spec:
+          maxRetries: 1           # infra-level retry only; job-level retry/backoff is the queue's
+          timeoutSeconds: 3600    # must exceed INGEST_JOB_TIMEOUT_SECONDS; leases cover the rest
+          containers:
+            - image: REGION-docker.pkg.dev/PROJECT/stealth/ingest-worker:latest
+              args: ["--once", "--max-jobs", "500"]
+              resources:
+                limits: { cpu: "1", memory: 1Gi }
+              env:
+                - { name: STEALTHLAB_ENV, value: PRODUCTION }
+                - { name: INGEST_WORKER_CONCURRENCY, value: "4" }   # lanes per task; DB pool = 2*lanes+4
+                - { name: INGEST_LEASE_SECONDS, value: "300" }
+                - { name: INGEST_JOB_TIMEOUT_SECONDS, value: "1200" }
+                - { name: INGEST_IDLE_EXIT_SECONDS, value: "20" }
+                - { name: CONTROL_DATABASE_URL, valueFrom: { secretKeyRef: { name: stealth-control-db-url, key: latest } } }
+                - { name: GEMINI_API_KEY,       valueFrom: { secretKeyRef: { name: stealth-gemini-key,    key: latest } } }
+                - { name: VOYAGE_API_KEY,       valueFrom: { secretKeyRef: { name: stealth-voyage-key,    key: latest } } }
+                - { name: JEV_BASE_URL,         valueFrom: { secretKeyRef: { name: stealth-jev-url,       key: latest } } }
+                - { name: JEV_API_KEY,          valueFrom: { secretKeyRef: { name: stealth-jev-key,       key: latest } } }
+                # one env var per registered knowledge shard (the registry stores only the NAME):
+                # - { name: K002_DATABASE_URL, valueFrom: { secretKeyRef: { name: stealth-k002-db-url, key: latest } } }
+---
+# Cloud Scheduler drives a steady drain without keeping anything running:
+#   gcloud scheduler jobs create http stealth-ingest-tick --schedule="*/10 * * * *" \
+#     --uri="https://REGION-run.googleapis.com/apis/run.googleapis.com/v1/namespaces/PROJECT/jobs/stealth-ingest-worker:run" \
+#     --http-method=POST --oauth-service-account-email=SCHEDULER_SA
+# Service mode (long-running poller) is also supported: run the same image with args ["--loop"]
+# and min-instances=1, concurrency=1 (the worker is not an HTTP server; use a Job unless you need --loop).
