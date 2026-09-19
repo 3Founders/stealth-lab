@@ -37,9 +37,10 @@ HONEST SCOPE for this pass:
 from __future__ import annotations
 
 import asyncio
+import json
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Any, Optional
 from uuid import UUID
 
 import asyncpg
@@ -199,6 +200,82 @@ async def _claim_matches_precondition(
     return properties.get("predicate") == predicate and properties.get("object") == expected_object
 
 
+# Precondition-reasoning fallback (2026-09-17, founder directive): exact
+# subject/predicate/object equality (the check above/below this) is
+# RELIABLE but not ACCURATE -- it produces real false negatives whenever
+# a live Claim expresses the identical fact in different words, or was
+# never authored into matching predicate/object vocabulary in the first
+# place (the overwhelmingly common case: extracted Claims today carry
+# free-text `statement`, not populated predicate/object at all). A false
+# negative here is a real cost too -- a procedure that DOES apply gets
+# wrongly disqualified, forcing redundant re-solving.
+#
+# Deliberately NOT a semantic-similarity/embedding check (this module's
+# own opening docstring: spec v4 is emphatic applicability is not
+# similarity). This is REASONING over the actual claim text, fail-closed:
+# it can only ever turn an exact-match "not satisfied" into "satisfied"
+# when a real, confident entailment exists -- it never overrides an
+# actual hard-constraint violation, and any error/ambiguity/malformed
+# response falls through to the existing exact-match disqualification.
+# Opt-in via `client` (default None): zero cost/behavior change for
+# every existing caller of check_hard_constraints, same "zero-cost-
+# unless-asked" posture app.services.goals.py's own dedup tiers use.
+_PRECONDITION_REASONING_SYSTEM_PROMPT = """You decide whether a set of TRUE, LIVE claims about \
+a system logically ESTABLISHES one specific required fact (a precondition), or not.
+
+Answer "satisfied": true ONLY if the claims, taken together, make the precondition true beyond \
+reasonable doubt -- paraphrase, different wording, or an equivalent fact stated differently all \
+count. Answer "satisfied": false if the claims are silent, irrelevant, ambiguous, or only \
+partially support the precondition. When genuinely uncertain, answer false -- this is a safety \
+gate, not a best-guess: a wrong "true" could let something proceed that should not.
+
+Reply with ONLY a JSON object, no other text: {"satisfied": true} or {"satisfied": false}
+"""
+
+
+async def _claims_satisfy_precondition_via_reasoning(
+    client: Any, model: str, *,
+    subject: str, predicate: Optional[str], expected_object: Optional[str],
+    candidate_claim_statements: list[str],
+) -> bool:
+    """The one reasoning call this fallback tier makes. Fails closed
+    (returns False) on a missing client, no candidate claims, any
+    API/transport error, or a malformed/ambiguous response -- a real
+    answer is never fabricated, and failure here always means "fall
+    through to the exact-match result", never "block something that was
+    otherwise fine"."""
+    if client is None or not candidate_claim_statements:
+        return False
+    precondition_text = f"subject={subject!r}, predicate={predicate!r}, object={expected_object!r}"
+    claims_text = "\n".join(f"- {s}" for s in candidate_claim_statements)
+    try:
+        response = client.chat.completions.create(
+            model=model,
+            messages=[
+                {"role": "system", "content": _PRECONDITION_REASONING_SYSTEM_PROMPT},
+                {"role": "user", "content": (
+                    f"Precondition to establish: {precondition_text}\n\n"
+                    f"Live claims about the current system:\n{claims_text}"
+                )},
+            ],
+            temperature=0.0,
+            max_tokens=20,
+        )
+        text = (response.choices[0].message.content or "").strip()
+    except Exception:  # noqa: BLE001 -- any client/transport failure fails closed
+        return False
+    if text.startswith("```"):
+        text = text.strip("`")
+        if text.lower().startswith("json"):
+            text = text[4:]
+        text = text.strip()
+    try:
+        parsed = json.loads(text)
+    except json.JSONDecodeError:
+        return False
+    return isinstance(parsed, dict) and parsed.get("satisfied") is True
+
+
 def _scope_matches(procedure_scope: dict, current_scope: dict) -> bool:
     """
     A procedure's `scope` narrows where it applies (ticket 12: "scope
@@ -249,6 +326,8 @@ async def check_hard_constraints(
     as_of: Optional[datetime] = None,
     invariant_bindings: Optional[dict[str, float]] = None,
     state_cache: Optional[dict] = None,
+    client: Optional[Any] = None,
+    reasoning_model: str = "gemma-4-31B-it",
 ) -> ApplicabilityResult:
     """
     The non-compensatory filter cascade itself. Short-circuits on the
@@ -258,6 +337,17 @@ async def check_hard_constraints(
     also the "fail fast" mitigation ticket 15 names for match-cost
     (don't evaluate every precondition once one has already
     disqualified the procedure).
+
+    `client` (opt-in, default None -- zero cost/behavior change without
+    it): when an exact predicate/object match finds no satisfying claim,
+    fall back to one real reasoning call over the live claims sharing
+    that precondition's subject, asking whether they collectively
+    establish it (see `_claims_satisfy_precondition_via_reasoning`'s own
+    docstring for the fail-closed contract). Fixes exact-match's real
+    false-negative blind spot -- a claim stating the identical fact in
+    different words -- without weakening the hard-constraint guarantee:
+    this can only ever turn a would-be disqualification into a pass on a
+    genuine, confident entailment, never the reverse.
 
     `require_verified`: ticket 13's exact wording -- "verified gates
     automatic retrieval; a candidate procedure remains explicitly
@@ -340,11 +430,19 @@ async def check_hard_constraints(
         # overwhelmingly common case today -- nothing populates it yet),
         # this falls through to the exact pre-existing subject-based
         # check, unchanged.
+        candidate_claims: list[dict] = []
         if claim_id:
             satisfied = await _claim_matches_precondition(
                 pool, claim_id, predicate=predicate, expected_object=expected_object,
                 as_of=as_of, scope=access_scope,
             )
+            if not satisfied and client is not None:
+                row = await pool.fetchrow(
+                    "SELECT properties FROM knowledge_nodes WHERE id = $1::uuid "
+                    "AND node_type = 'claim'", claim_id,
+                )
+                if row is not None:
+                    candidate_claims = [dict(row["properties"])]
         else:
             claims = await _project_state_cached(
                 pool, state_cache, subject=subject, as_of=as_of, scope=access_scope,
@@ -353,6 +451,22 @@ async def check_hard_constraints(
                 c["properties"].get("predicate") == predicate
                 and c["properties"].get("object") == expected_object
                 for c in claims
+            )
+            if not satisfied and client is not None:
+                candidate_claims = [c["properties"] for c in claims]
+
+        # Reasoning fallback (opt-in via `client`): exact match found
+        # nothing, but maybe a live claim states the identical fact in
+        # different words. See _claims_satisfy_precondition_via_reasoning's
+        # own fail-closed contract -- this can only turn a disqualification
+        # into a pass, never the reverse.
+        if not satisfied and client is not None and candidate_claims:
+            statements = [
+                c.get("statement") for c in candidate_claims if c.get("statement")
+            ]
+            satisfied = await _claims_satisfy_precondition_via_reasoning(
+                client, reasoning_model, subject=subject, predicate=predicate,
+                expected_object=expected_object, candidate_claim_statements=statements,
             )
         if not satisfied:
             return ApplicabilityResult(

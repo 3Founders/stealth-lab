@@ -4727,3 +4727,10 @@ Grounded findings from  3_access.sql/ 4_governance.sql/deps.py review. Sequence:
   `backend/scripts/ingest_skills.py`, new additive `backend/db/38_*`, focused tests and
   fixtures, and `.scratch/skill_*_report.md`. Existing dirty Gate 3/local-runner files are
   explicitly excluded and remain user-owned.
+- `[~]` 2026-09-16 INTEGRATOR follow-up (Union Alpha): claim raw-host TLS recovery
+  for the founder-reported `ingest_skills.py skill-repo` failures. Scope:
+  `backend/app/services/ingestion_sources/skill_md.py` and
+  `backend/tests/test_ingestion_sources_offline.py`; preserve all pre-existing
+  dirty changes. Reproduced raw-host TLS failure while GitHub API succeeds.
+  Use commit-pinned API recovery after bounded transport retries, not IP pinning
+  or disabled TLS verification. No schema, deduplication, or admission changes.

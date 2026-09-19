@@ -10,16 +10,25 @@ __init__ docstring).
 """
 from __future__ import annotations
 
+import base64
 import json
 import re
+import ssl
+import time
 from pathlib import Path
-from typing import Callable, Iterator
+from typing import Any, Callable, Iterator
+from urllib.parse import quote, urlencode
 
 from app.services.ingestion_sources.base import (
     SourceArtifact,
     SourceRef,
     compute_content_hash,
 )
+
+# Three attempts with 2s/4s backoffs for transient transport failures.
+# Exhaustion preserves the exception; retries cannot fix a persistent outage.
+_MAX_HTTP_ATTEMPTS = 3
+_HTTP_RETRY_BASE_SECONDS = 2.0
 
 # A SKILL.md is either literally named `SKILL.md` or `<something>.skill.md`.
 _SKILL_FILENAME_RE = re.compile(r"(^SKILL\.md$)|(\.skill\.md$)", re.IGNORECASE)
@@ -29,6 +38,34 @@ _SKILL_FILENAME_RE = re.compile(r"(^SKILL\.md$)|(\.skill\.md$)", re.IGNORECASE)
 # app/debate/panel.py uses for it) so a missing install surfaces only when
 # a real network fetch is actually attempted, never at import time.
 HttpGet = Callable[[str], "tuple[int, str]"]
+
+
+def _is_retryable_transport_error(exc: BaseException) -> bool:
+    """True for transient transport failures worth retrying: httpx
+    transport errors (connect/read/timeout family), TLS-layer errors, and
+    raw OS-level connection errors. Deliberately NOT `httpx.HTTPError` --
+    that base also covers `HTTPStatusError`, and a 4xx/5xx must surface
+    as-is, not after a backoff storm. httpx is lazily imported, matching
+    the discipline documented on HttpGet below."""
+    import httpx
+
+    return isinstance(exc, (httpx.TransportError, ssl.SSLError, ConnectionError, OSError))
+
+
+def _http_get_with_retries(http_get: Callable[[], Any]) -> Any:
+    """Retry transport failures, preserving the final exception on exhaustion."""
+    last_exc: BaseException | None = None
+    for attempt in range(_MAX_HTTP_ATTEMPTS):
+        try:
+            return http_get()
+        except Exception as exc:  # noqa: BLE001 -- classified below
+            if not _is_retryable_transport_error(exc):
+                raise
+            last_exc = exc
+            if attempt < _MAX_HTTP_ATTEMPTS - 1:
+                time.sleep(_HTTP_RETRY_BASE_SECONDS * (2 ** attempt))
+    assert last_exc is not None  # for type-checkers; loop always sets it
+    raise last_exc
 
 
 def _default_http_get(url: str) -> tuple[int, str]:
@@ -42,11 +79,16 @@ def _default_http_get(url: str) -> tuple[int, str]:
     # internal host.
     assert_safe_locator(url)
     current = url
+    resp = _http_get_with_retries(
+        lambda u=current: httpx.get(u, timeout=30, follow_redirects=False)
+    )
     for _ in range(4):
-        resp = httpx.get(current, timeout=30, follow_redirects=False)
         if resp.status_code in (301, 302, 303, 307, 308) and "location" in resp.headers:
             current = str(httpx.URL(resp.url).join(resp.headers["location"]))
             assert_safe_locator(current)
+            resp = _http_get_with_retries(
+                lambda u=current: httpx.get(u, timeout=30, follow_redirects=False)
+            )
             continue
         return resp.status_code, resp.text
     return resp.status_code, resp.text
@@ -198,7 +240,29 @@ class GitHubSkillSource:
             f"https://raw.githubusercontent.com/{self._owner}/{self._repo}"
             f"/{commit}/{ref.path}"
         )
-        status, content = self._http_get(raw_url)
+        try:
+            status, content = self._http_get(raw_url)
+        except Exception as exc:
+            if not _is_retryable_transport_error(exc):
+                raise
+            api_url = (
+                f"https://api.github.com/repos/{quote(self._owner, safe='')}/"
+                f"{quote(self._repo, safe='')}/contents/{quote(ref.path or '', safe='/')}"
+                f"?{urlencode({'ref': commit})}"
+            )
+            status, body = self._http_get(api_url)
+            if status != 200:
+                raise RuntimeError(f"GitHub contents API {api_url} returned {status}") from exc
+            payload = json.loads(body)
+            if (
+                not isinstance(payload, dict)
+                or payload.get("type") != "file"
+                or payload.get("encoding") != "base64"
+                or not isinstance(payload.get("content"), str)
+            ):
+                raise ValueError("GitHub contents API did not return a base64 file") from exc
+            encoded = "".join(payload["content"].split())
+            content = base64.b64decode(encoded, validate=True).decode("utf-8")
         if status != 200:
             raise RuntimeError(f"raw fetch {raw_url} returned {status}")
         return SourceArtifact(

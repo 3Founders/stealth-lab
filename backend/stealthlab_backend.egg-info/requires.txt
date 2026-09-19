@@ -10,10 +10,15 @@ pdfplumber
 pydantic
 pydantic-settings
 pytest
+pytest-asyncio
+python-docx
 python-dotenv
+PyJWT[crypto]
 PyYAML
 reportlab
 scipy
 tree-sitter-language-pack
 uvicorn
 voyageai
+google-genai
+z3-solver

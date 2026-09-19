@@ -26,7 +26,7 @@ from app.services.ingestion_sources.base import (
     compute_content_hash,
 )
 from app.services.ingestion_sources.manifest import CorpusSourceSpec
-from app.services.ingestion_sources.skill_md import _parse_repo_url
+from app.services.ingestion_sources.skill_md import _http_get_with_retries, _parse_repo_url
 
 
 HttpGetBytes = Callable[[str], tuple[int, bytes]]
@@ -65,11 +65,19 @@ def _default_http_get(url: str) -> tuple[int, bytes]:
     # SSRF guard (G3 tail): screen every locator + redirect hop.
     assert_safe_locator(url)
     current = url
+    # Same bounded retry-on-transient-transport-error policy as skill_md
+    # (raw.githubusercontent.com / api.github.com flake here hit the exact
+    # same `errors: N` run outcome -- run 71e572d0).
+    response = _http_get_with_retries(
+        lambda u=current: httpx.get(u, timeout=60, follow_redirects=False, headers=headers)
+    )
     for _ in range(4):
-        response = httpx.get(current, timeout=60, follow_redirects=False, headers=headers)
         if response.status_code in (301, 302, 303, 307, 308) and "location" in response.headers:
             current = str(httpx.URL(response.url).join(response.headers["location"]))
             assert_safe_locator(current)
+            response = _http_get_with_retries(
+                lambda u=current: httpx.get(u, timeout=60, follow_redirects=False, headers=headers)
+            )
             continue
         return response.status_code, response.content
     return response.status_code, response.content

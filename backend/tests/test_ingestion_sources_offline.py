@@ -5,7 +5,10 @@ stable content hash). No network, no DB.
 """
 from __future__ import annotations
 
+import base64
 import json
+
+import httpx
 
 import pytest
 
@@ -169,6 +172,95 @@ def test_github_fetch_hits_raw_url_and_sets_repository():
     assert art.commit == "abc123def"
     assert art.content == SKILL_A
     assert art.content_hash == compute_content_hash(SKILL_A)
+
+
+def test_github_fetch_recovers_from_raw_tls_failure(monkeypatch):
+    from app.services.ingestion_sources import skill_md
+
+    calls = []
+    checked = []
+    sleeps = []
+    api_url = "https://api.github.com/repos/acme/skills/contents/skills/explore/SKILL.md?ref=abc123def"
+
+    def get(url, **kwargs):
+        calls.append(url)
+        assert kwargs.get("verify", True) is True
+        assert kwargs["follow_redirects"] is False
+        if "git/trees" in url:
+            return httpx.Response(200, json=FakeHttp().tree)
+        if "raw.githubusercontent.com" in url:
+            raise httpx.ConnectError("[SSL: WRONG_VERSION_NUMBER]")
+        assert url == api_url
+        return httpx.Response(200, json={
+            "type": "file", "encoding": "base64",
+            "content": base64.encodebytes(SKILL_A.encode()).decode(),
+        })
+
+    monkeypatch.setattr(httpx, "get", get)
+    monkeypatch.setattr(skill_md.time, "sleep", sleeps.append)
+    monkeypatch.setattr("app.services.screening.assert_safe_locator", checked.append)
+    src = GitHubSkillSource("https://github.com/acme/skills")
+    ref = next(src.discover())
+    artifact = src.fetch(ref)
+    assert artifact.content == SKILL_A
+    assert artifact.content_hash == compute_content_hash(SKILL_A)
+    assert artifact.commit == ref.commit == "abc123def"
+    assert artifact.uri == ref.uri
+    assert len([url for url in calls if "raw.githubusercontent.com" in url]) == 3
+    assert sleeps == [2.0, 4.0]
+    assert api_url in checked
+
+
+@pytest.mark.parametrize("failure", [ValueError("unsafe locator"), None])
+def test_github_fetch_does_not_mask_non_transport_failure(failure):
+    http = FakeHttp()
+
+    def get(url):
+        if "api.github.com" in url:
+            return http(url)
+        if failure is not None:
+            raise failure
+        return 404, "not found"
+
+    src = GitHubSkillSource("https://github.com/acme/skills", http_get=get)
+    ref = next(src.discover())
+    with pytest.raises((ValueError, RuntimeError)):
+        src.fetch(ref)
+    assert len(http.calls) == 1
+
+
+@pytest.mark.parametrize("payload", [
+    {"type": "dir", "encoding": "base64", "content": "YQ=="},
+    {"type": "file", "encoding": "none", "content": ""},
+    {"type": "file", "encoding": "base64", "content": "***"},
+    {"type": "file", "encoding": "base64", "content": "/w=="},
+    [],
+])
+def test_github_api_recovery_rejects_invalid_content(payload):
+    def get(url):
+        if "git/trees" in url:
+            return 200, json.dumps(FakeHttp().tree)
+        if "raw.githubusercontent.com" in url:
+            raise httpx.ConnectError("raw unavailable")
+        return 200, json.dumps(payload)
+
+    src = GitHubSkillSource("https://github.com/acme/skills", http_get=get)
+    with pytest.raises((ValueError, RuntimeError)):
+        src.fetch(next(src.discover()))
+
+
+@pytest.mark.parametrize("status", [403, 404, 429, 503])
+def test_github_api_recovery_surfaces_http_failure(status):
+    def get(url):
+        if "git/trees" in url:
+            return 200, json.dumps(FakeHttp().tree)
+        if "raw.githubusercontent.com" in url:
+            raise httpx.ConnectError("raw unavailable")
+        return status, "not a skill"
+
+    src = GitHubSkillSource("https://github.com/acme/skills", http_get=get)
+    with pytest.raises(RuntimeError, match=str(status)):
+        src.fetch(next(src.discover()))
 
 
 def test_github_ctor_does_no_network():

@@ -18,6 +18,7 @@ import asyncio
 
 from app.services.access import AccessScope
 from app.services.applicability import (
+    _claims_satisfy_precondition_via_reasoning,
     _excluded,
     _scope_matches,
     check_hard_constraints,
@@ -274,6 +275,123 @@ def test_precondition_with_claim_id_disqualifies_on_a_predicate_object_mismatch(
     ])
     result = _run(check_hard_constraints(pool, procedure))
     assert not result.applicable
+
+
+# --- precondition-reasoning fallback (opt-in via `client`) -------------
+
+class _FakeReasoningClient:
+    """Minimal OpenAI-compatible chat.completions.create() stand-in,
+    same shape as goals.py's own _FakeAdjudicationClient -- returns a
+    caller-controlled verdict, records the call for assertion."""
+
+    class _Choice:
+        def __init__(self, content):
+            self.message = type("_Msg", (), {"content": content})()
+
+    class _Response:
+        def __init__(self, content):
+            self.choices = [_FakeReasoningClient._Choice(content)]
+
+    class _Completions:
+        def __init__(self, outer):
+            self._outer = outer
+
+        def create(self, **kwargs):
+            self._outer.calls.append(kwargs)
+            return _FakeReasoningClient._Response(self._outer._content)
+
+    class _Chat:
+        def __init__(self, outer):
+            self.completions = _FakeReasoningClient._Completions(outer)
+
+    def __init__(self, content):
+        self._content = content
+        self.calls: list[dict] = []
+        self.chat = _FakeReasoningClient._Chat(self)
+
+
+def test_reasoning_fallback_never_called_without_client():
+    """Default posture (no client): behavior is byte-identical to before
+    this feature existed -- exact-match disqualifies, no reasoning call,
+    zero added cost for every existing caller."""
+    pool = FakePool(claims=[
+        {"id": "c1", "t_valid": None, "t_invalid": None,
+         "properties": {"predicate": "wrong", "object": "wrong",
+                         "statement": "The service already has a test runner configured."}},
+    ])
+    procedure = _procedure(preconditions=[
+        {"subject": SUBJECT, "predicate": "has_test_runner", "object": "pytest"},
+    ])
+    result = _run(check_hard_constraints(pool, procedure))
+    assert not result.applicable
+
+
+def test_reasoning_fallback_turns_a_disqualification_into_a_pass():
+    """Exact match finds nothing (predicate/object never populated on the
+    live claim -- the overwhelmingly common shape for LLM-extracted
+    claims today), but the claim's free-text statement entails the
+    precondition -- the LLM confirms it, client opted in."""
+    pool = FakePool(claims=[
+        {"id": "c1", "t_valid": None, "t_invalid": None,
+         "properties": {"predicate": None, "object": None,
+                         "statement": "pytest is already configured as the test runner for this project."}},
+    ])
+    procedure = _procedure(preconditions=[
+        {"subject": SUBJECT, "predicate": "has_test_runner", "object": "pytest"},
+    ])
+    client = _FakeReasoningClient('{"satisfied": true}')
+    result = _run(check_hard_constraints(pool, procedure, client=client))
+    assert result.applicable
+    assert len(client.calls) == 1
+
+
+def test_reasoning_fallback_still_disqualifies_when_llm_says_not_satisfied():
+    pool = FakePool(claims=[
+        {"id": "c1", "t_valid": None, "t_invalid": None,
+         "properties": {"predicate": None, "object": None,
+                         "statement": "The project uses jest for unit tests."}},
+    ])
+    procedure = _procedure(preconditions=[
+        {"subject": SUBJECT, "predicate": "has_test_runner", "object": "pytest"},
+    ])
+    client = _FakeReasoningClient('{"satisfied": false}')
+    result = _run(check_hard_constraints(pool, procedure, client=client))
+    assert not result.applicable
+
+
+def test_reasoning_fallback_fails_closed_on_malformed_response():
+    pool = FakePool(claims=[
+        {"id": "c1", "t_valid": None, "t_invalid": None,
+         "properties": {"predicate": None, "object": None,
+                         "statement": "pytest is already configured as the test runner."}},
+    ])
+    procedure = _procedure(preconditions=[
+        {"subject": SUBJECT, "predicate": "has_test_runner", "object": "pytest"},
+    ])
+    client = _FakeReasoningClient("not json at all")
+    result = _run(check_hard_constraints(pool, procedure, client=client))
+    assert not result.applicable
+
+
+def test_reasoning_fallback_never_called_with_no_candidate_claims():
+    """No live claims at all for this subject -- nothing to reason over,
+    the LLM must not be called just to say 'I have nothing to go on'."""
+    pool = FakePool(claims=[])
+    procedure = _procedure(preconditions=[
+        {"subject": SUBJECT, "predicate": "has_test_runner", "object": "pytest"},
+    ])
+    client = _FakeReasoningClient('{"satisfied": true}')
+    result = _run(check_hard_constraints(pool, procedure, client=client))
+    assert not result.applicable
+    assert client.calls == []
+
+
+def test_claims_satisfy_precondition_via_reasoning_fails_closed_without_client():
+    result = _run(_claims_satisfy_precondition_via_reasoning(
+        None, "model", subject=SUBJECT, predicate="p", expected_object="o",
+        candidate_claim_statements=["some statement"],
+    ))
+    assert result is False
 
 
 def test_invariant_violation_disqualifies_with_no_preconditions_involved():

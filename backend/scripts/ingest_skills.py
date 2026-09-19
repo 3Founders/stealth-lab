@@ -43,6 +43,11 @@ from app.services.skill_ingestion import persist_source_snapshot, run_skill_inge
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_MANIFEST = REPO_ROOT / "config" / "skill_sources.yaml"
 
+# Fallback judge/extraction model when settings.general_compute_judge_model
+# is unset. One constant so the skill-dir/skill-repo/ingest call sites below
+# cannot drift apart.
+DEFAULT_JUDGE_MODEL = "gemma-4-31B-it"
+
 
 def _extraction_client():
     """Same OpenAI-compatible client app/services/ingestion_jobs.py's own
@@ -70,6 +75,18 @@ def _extraction_client():
         return None
 
 
+def _print_ingestion_result(result: dict) -> None:
+    """Report compiler outcomes without another filesystem or network scan."""
+    print(json.dumps({
+        "run_id": result["run_id"],
+        "metrics": result["metrics"],
+        "outcomes": [
+            {"status": outcome.status, "reason": outcome.reason}
+            for outcome in result["outcomes"]
+        ],
+    }, indent=2, default=str))
+
+
 async def _cmd_skill_dir(args: argparse.Namespace) -> None:
     pool = await create_pool(os.environ["DATABASE_URL"])
     try:
@@ -83,14 +100,14 @@ async def _cmd_skill_dir(args: argparse.Namespace) -> None:
             ))
             return
         from app.config import settings as _settings
-        judge_model = _settings.general_compute_judge_model or "gemma-4-31B-it"
+        judge_model = _settings.general_compute_judge_model or DEFAULT_JUDGE_MODEL
         result = await run_skill_ingestion(
             pool, adapter, embedder=Embedder(), domain=args.domain,
             created_by="ingest_skills_cli", client=_extraction_client(),
             admission_llm_model=judge_model, extraction_llm_model=judge_model,
             claim_extraction_llm_model=judge_model,
         )
-        print(json.dumps({"run_id": result["run_id"], "metrics": result["metrics"]}, indent=2))
+        _print_ingestion_result(result)
     finally:
         await pool.close()
 
@@ -100,14 +117,14 @@ async def _cmd_skill_repo(args: argparse.Namespace) -> None:
     try:
         adapter = GitHubSkillSource(args.repo_url, ref=args.ref)
         from app.config import settings as _settings
-        judge_model = _settings.general_compute_judge_model or "gemma-4-31B-it"
+        judge_model = _settings.general_compute_judge_model or DEFAULT_JUDGE_MODEL
         result = await run_skill_ingestion(
             pool, adapter, embedder=Embedder(), domain=args.domain,
             created_by="ingest_skills_cli", client=_extraction_client(),
             admission_llm_model=judge_model, extraction_llm_model=judge_model,
             claim_extraction_llm_model=judge_model,
         )
-        print(json.dumps({"run_id": result["run_id"], "metrics": result["metrics"]}, indent=2))
+        _print_ingestion_result(result)
     finally:
         await pool.close()
 
@@ -121,10 +138,20 @@ async def _cmd_search(args: argparse.Namespace) -> None:
         query_vec = await embedder.embed_one(args.query, input_type="query")
         matches = await find_applicable_procedures(
             pool, goal_embedding=query_vec, require_verified=False, limit=args.k,
+            # Same model-provenance guard retrieval-qa below already uses:
+            # only compare vectors from this embedder's own space.
+            embedding_model_id=embedder.embedding_model_id(),
+            # Thread the raw query text so the lexical full-text leg of the
+            # candidate pre-filter runs, same as every other real caller.
+            goal_text=args.query,
         )
         for m in matches:
+            # find_applicable_procedures stores the score as
+            # _similarity_score (applicability.py); 'similarity' is not a
+            # key on its rows, so read the real one with a legacy fallback.
+            score = m.get("_similarity_score") or m.get("similarity")
             print(f"{m.get('name')!r:50} v{m.get('version')} "
-                  f"state={m.get('verification_state')} similarity={m.get('similarity')}")
+                  f"state={m.get('verification_state')} similarity={score}")
         if not matches:
             print("(no matches)")
     finally:
@@ -193,7 +220,7 @@ async def _cmd_ingest_manifest(args: argparse.Namespace) -> None:
             )
             snapshot = await persist_source_snapshot(pool, adapter)
             from app.config import settings as _settings
-            judge_model = _settings.general_compute_judge_model or "gemma-4-31B-it"
+            judge_model = _settings.general_compute_judge_model or DEFAULT_JUDGE_MODEL
             result = await run_skill_ingestion(
                 pool, adapter, embedder=Embedder(),
                 domain=(spec.repo if spec.type == "github_subtree" else None),
