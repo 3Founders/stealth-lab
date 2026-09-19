@@ -12,14 +12,11 @@ import asyncpg
 import pytest
 
 from app.services.goals import (
-    AUTO_DEDUP_MAX_COSINE_DISTANCE,
     GoalQualityRejected,
-    compute_simhash,
     create_goal_from_user,
     describe_goal_quality_issue,
     find_or_create_goal,
     get_goal,
-    hamming_distance,
     normalize_goal_name,
     search_goals,
 )
@@ -87,17 +84,17 @@ class _FakeGoalsPool:
                             and (r["normalized_name"] == normalized or self._alias_hit(r, candidate_name))):
                         return r
             return None
-        # INSERT ... RETURNING id, canonical_name (trailing params are
-        # migration 84's embedding/embedding_model_id/embedding_provider/
-        # embedding_text_hash and migration 86's simhash -- the fake only
-        # cares about simhash, for the tier 2.5 fetch() query below)
+        if s.startswith("INSERT INTO identity_decisions"):
+            return {"id": "00000000-0000-0000-0000-00000000dec1"}
+        # INSERT INTO goals ... RETURNING id, canonical_name, home_shard_id
+        # (trailing params: embedding, embedding_model_id, provider, text hash, home_shard_id)
         (goal_id, canonical_name, normalized_name, description, expected_outcome,
          verification_requirement, status, provenance, created_from, owner_id,
          visibility, aliases, created_by, scope_type, scope_entity_id,
-         *_embedding_fields, simhash) = params
+         *_embedding_fields, home_shard_id) = params
         row = {
             "id": goal_id, "canonical_name": canonical_name, "normalized_name": normalized_name,
-            "aliases": aliases, "simhash": simhash,
+            "aliases": aliases, "home_shard_id": home_shard_id,
             "status": status, "scope_type": scope_type, "scope_entity_id": scope_entity_id,
         }
         self.rows.append(row)
@@ -105,19 +102,12 @@ class _FakeGoalsPool:
 
     async def fetch(self, sql, *params):
         s = " ".join(sql.split())
-        assert "simhash IS NOT NULL" in s, f"unexpected fetch() query in fake pool: {s}"
-        if "scope_type = $1" in s:
-            scope_type, scope_entity_id = params
-            return [
-                r for r in self.rows
-                if r["status"] != "merged" and r.get("simhash") is not None
-                and r["scope_type"] == scope_type and r["scope_entity_id"] == scope_entity_id
-            ]
-        return [
-            r for r in self.rows
-            if r["status"] != "merged" and r.get("simhash") is not None
-            and (r["scope_type"] is None or r["scope_type"] == "global")
-        ]
+        if "FROM knowledge_shards" in s:
+            return [{"shard_id": "K000", "status": "active", "weight": 100, "dsn_env": None, "capacity_rows": None}]
+        # FTS/vector candidate generation: this fake holds no semantically
+        # similar rows (semantic identity is covered by test_goal_identity_e2e.py)
+        assert "FROM goals" in s, f"unexpected fetch() query in fake pool: {s}"
+        return []
 
     async def execute(self, sql, *params):
         s = " ".join(sql.split())
@@ -289,11 +279,15 @@ class _RacingPool:
         s = " ".join(sql.split())
         if s.startswith("SELECT"):
             return self._winner if self._insert_attempted else None
+        if s.startswith("INSERT INTO identity_decisions"):
+            return {"id": "dec"}
         self._insert_attempted = True
         raise asyncpg.UniqueViolationError("duplicate key value violates unique constraint")
 
     async def fetch(self, sql, *params):
-        return []  # tier 2.5 SimHash shortlist -- no candidates in this fake
+        if "FROM knowledge_shards" in " ".join(sql.split()):
+            return [{"shard_id": "K000", "status": "active", "weight": 100, "dsn_env": None, "capacity_rows": None}]
+        return []  # no semantic candidates in this fake
 
 
 def test_find_or_create_goal_treats_a_lost_insert_race_as_a_dedup_hit():
@@ -303,7 +297,7 @@ def test_find_or_create_goal_treats_a_lost_insert_race_as_a_dedup_hit():
         pool, canonical_name="find references", scope_type="global",
         provenance="system_pending_review",
     ))
-    assert result == {"id": "winner-id", "canonical_name": "find references", "created": False}
+    assert result["id"] == "winner-id" and result["created"] is False
 
 
 # --- tier 2: alias dedup -------------------------------------------------
@@ -325,295 +319,9 @@ def test_find_or_create_goal_matches_on_alias():
     assert len(pool.rows) == 1
 
 
-# --- tier 2.5: text SimHash near-duplicate dedup (always on) -----------
+# (SimHash / cosine-threshold / raw-LLM-adjudication tiers were removed: see
+# tests/test_goal_identity_e2e.py for the judge-decided identity tests.)
 
-def test_compute_simhash_is_stable_across_calls():
-    assert compute_simhash("find all callers of a function") == compute_simhash(
-        "find all callers of a function"
-    )
-
-
-def test_compute_simhash_ignores_case_and_word_order_via_normalization():
-    """Uses the same normalize_goal_name() tier 1 does, but SimHash's
-    bag-of-tokens voting also makes it order-insensitive -- unlike tier
-    1's exact string match."""
-    assert compute_simhash("Find All Callers") == compute_simhash("callers all find")
-
-
-def test_hamming_distance_zero_for_identical_hashes():
-    h = compute_simhash("deploy the service safely")
-    assert hamming_distance(h, h) == 0
-
-
-def test_hamming_distance_positive_for_different_texts():
-    a = compute_simhash("deploy the service safely")
-    b = compute_simhash("delete all user records permanently")
-    assert hamming_distance(a, b) > 0
-
-
-def test_simhash_to_int64_stays_in_postgres_bigint_range():
-    """Real live-DB rehearsal bug: compute_simhash's unsigned 0..2**64-1
-    output overflows Postgres BIGINT (signed, -2**63..2**63-1) whenever
-    the top bit is set. Migration 86's `simhash` column is exactly that
-    type -- this conversion is required at every INSERT, not optional."""
-    from app.services.goals import _simhash_to_int64
-
-    unsigned_with_top_bit_set = (1 << 63) + 42
-    signed = _simhash_to_int64(unsigned_with_top_bit_set)
-    assert -(1 << 63) <= signed < (1 << 63)
-    assert signed < 0
-
-
-def test_hamming_distance_correct_after_a_signed_round_trip():
-    """hamming_distance must give the same answer whether its inputs are
-    fresh compute_simhash() output or a value that went through the
-    signed-BIGINT round trip -- a real DB row's simhash comes back as a
-    (possibly negative) Python int, not the original unsigned value."""
-    from app.services.goals import _simhash_to_int64
-
-    h = compute_simhash("find all callers of a function")
-    assert hamming_distance(h, _simhash_to_int64(h)) == 0
-
-
-def test_find_or_create_goal_auto_merges_a_near_duplicate_by_simhash_alone():
-    """No embedder, no client -- tier 2.5 is zero-cost and always on, so a
-    trivial near-duplicate (one word dropped) merges without either opt-in
-    dependency."""
-    pool = _FakeGoalsPool()
-    first = _run(find_or_create_goal(
-        pool, canonical_name="find all callers of the function", scope_type="global",
-        provenance="system_pending_review",
-    ))
-    second = _run(find_or_create_goal(
-        pool, canonical_name="find all callers of function", scope_type="global",
-        provenance="system_pending_review",
-    ))
-    assert second["created"] is False
-    assert second["id"] == first["id"]
-    assert len(pool.rows) == 1
-
-
-def test_find_or_create_goal_simhash_tier_does_not_merge_unrelated_goals():
-    pool = _FakeGoalsPool()
-    first = _run(find_or_create_goal(
-        pool, canonical_name="find all callers of a function", scope_type="global",
-        provenance="system_pending_review",
-    ))
-    second = _run(find_or_create_goal(
-        pool, canonical_name="deploy the service safely", scope_type="global",
-        provenance="system_pending_review",
-    ))
-    assert second["created"] is True
-    assert second["id"] != first["id"]
-
-
-# --- tier 5: LLM adjudication on an ambiguous near-match (opt-in via `client`) --
-
-class _FakeAdjudicationClient:
-    """Minimal OpenAI-compatible chat.completions.create() stand-in --
-    returns a caller-controlled verdict, records the call for assertion."""
-
-    class _Choice:
-        def __init__(self, content):
-            self.message = type("_Msg", (), {"content": content})()
-
-    class _Response:
-        def __init__(self, content):
-            self.choices = [_FakeAdjudicationClient._Choice(content)]
-
-    class _Completions:
-        def __init__(self, outer):
-            self._outer = outer
-
-        def create(self, **kwargs):
-            self._outer.calls.append(kwargs)
-            return _FakeAdjudicationClient._Response(self._outer._content)
-
-    class _Chat:
-        def __init__(self, outer):
-            self.completions = _FakeAdjudicationClient._Completions(outer)
-
-    def __init__(self, content):
-        self._content = content
-        self.calls: list[dict] = []
-        self.chat = _FakeAdjudicationClient._Chat(self)
-
-
-def test_find_or_create_goal_tier5_merges_and_adds_alias_on_same_verdict():
-    pool = _FakeSemanticGoalsPool(
-        semantic_distance=AUTO_DEDUP_MAX_COSINE_DISTANCE + 0.05,  # ambiguous band
-    )
-    first = _run(find_or_create_goal(
-        pool, canonical_name="find all callers of a function", scope_type="global",
-        provenance="system_pending_review", embedder=_FakeEmbedder([[0.1] * 4]),
-    ))
-    client = _FakeAdjudicationClient('{"same": true}')
-    second = _run(find_or_create_goal(
-        pool, canonical_name="locate every invocation site", scope_type="global",
-        provenance="system_pending_review", embedder=_FakeEmbedder([[0.1] * 4]), client=client,
-    ))
-    assert second["created"] is False
-    assert second["id"] == first["id"]
-    assert len(client.calls) == 1
-    assert "locate every invocation site" in pool.rows[0]["aliases"]
-
-
-def test_find_or_create_goal_tier5_creates_new_row_on_different_verdict():
-    pool = _FakeSemanticGoalsPool(
-        semantic_distance=AUTO_DEDUP_MAX_COSINE_DISTANCE + 0.05,
-    )
-    first = _run(find_or_create_goal(
-        pool, canonical_name="find all callers of a function", scope_type="global",
-        provenance="system_pending_review", embedder=_FakeEmbedder([[0.1] * 4]),
-    ))
-    client = _FakeAdjudicationClient('{"same": false}')
-    second = _run(find_or_create_goal(
-        pool, canonical_name="deploy the service safely", scope_type="global",
-        provenance="system_pending_review", embedder=_FakeEmbedder([[0.9] * 4]), client=client,
-    ))
-    assert second["created"] is True
-    assert second["id"] != first["id"]
-    assert len(client.calls) == 1
-
-
-def test_find_or_create_goal_tier5_skipped_without_client_falls_through_to_create():
-    pool = _FakeSemanticGoalsPool(
-        semantic_distance=AUTO_DEDUP_MAX_COSINE_DISTANCE + 0.05,
-    )
-    _run(find_or_create_goal(
-        pool, canonical_name="find all callers of a function", scope_type="global",
-        provenance="system_pending_review", embedder=_FakeEmbedder([[0.1] * 4]),
-    ))
-    second = _run(find_or_create_goal(
-        pool, canonical_name="locate every invocation site", scope_type="global",
-        provenance="system_pending_review", embedder=_FakeEmbedder([[0.1] * 4]),
-    ))
-    assert second["created"] is True
-
-
-def test_find_or_create_goal_tier5_fails_closed_on_malformed_response():
-    pool = _FakeSemanticGoalsPool(
-        semantic_distance=AUTO_DEDUP_MAX_COSINE_DISTANCE + 0.05,
-    )
-    _run(find_or_create_goal(
-        pool, canonical_name="find all callers of a function", scope_type="global",
-        provenance="system_pending_review", embedder=_FakeEmbedder([[0.1] * 4]),
-    ))
-    client = _FakeAdjudicationClient("not json at all")
-    second = _run(find_or_create_goal(
-        pool, canonical_name="locate every invocation site", scope_type="global",
-        provenance="system_pending_review", embedder=_FakeEmbedder([[0.1] * 4]), client=client,
-    ))
-    assert second["created"] is True
-
-
-def test_find_or_create_goal_tier5_not_reached_beyond_ambiguous_band():
-    """A distance past AMBIGUOUS_DEDUP_MAX_COSINE_DISTANCE never even asks
-    the model -- tier 5 is for the close-but-uncertain band only."""
-    from app.services.goals import AMBIGUOUS_DEDUP_MAX_COSINE_DISTANCE
-
-    pool = _FakeSemanticGoalsPool(
-        semantic_distance=AMBIGUOUS_DEDUP_MAX_COSINE_DISTANCE + 0.1,
-    )
-    _run(find_or_create_goal(
-        pool, canonical_name="find all callers of a function", scope_type="global",
-        provenance="system_pending_review", embedder=_FakeEmbedder([[0.1] * 4]),
-    ))
-    client = _FakeAdjudicationClient('{"same": true}')
-    second = _run(find_or_create_goal(
-        pool, canonical_name="deploy the service safely", scope_type="global",
-        provenance="system_pending_review", embedder=_FakeEmbedder([[0.9] * 4]), client=client,
-    ))
-    assert second["created"] is True
-    assert len(client.calls) == 0
-
-
-# --- tier 3/4: embedding similarity dedup (opt-in via `embedder`) -------
-
-class _FakeEmbedMeta:
-    def __init__(self, model_id="fake-model", provider="fake", text_sha256="deadbeef"):
-        self.model_id = model_id
-        self.provider = provider
-        self.text_sha256 = text_sha256
-
-
-class _FakeEmbedder:
-    """Returns a caller-controlled vector per call, in order."""
-
-    def __init__(self, vectors):
-        self._vectors = list(vectors)
-        self.calls: list[tuple[str, str]] = []
-
-    async def embed_one_with_metadata(self, text, input_type="document"):
-        self.calls.append((text, input_type))
-        return self._vectors.pop(0), _FakeEmbedMeta()
-
-
-class _FakeSemanticGoalsPool(_FakeGoalsPool):
-    """Extends the exact/alias fake with a fixed cosine-distance answer
-    for the embedding-similarity SELECT (ORDER BY embedding <=> ...) --
-    good enough to prove find_or_create_goal's OWN threshold logic
-    without a real pgvector column."""
-
-    def __init__(self, semantic_distance):
-        super().__init__()
-        self._semantic_distance = semantic_distance
-        self.embedding_insert_seen = False
-
-    async def fetchrow(self, sql, *params):
-        s = " ".join(sql.split())
-        if "embedding <=> $1::vector AS dist" in s:
-            if not self.rows:
-                return None
-            r = self.rows[0]
-            return {"id": r["id"], "canonical_name": r["canonical_name"], "dist": self._semantic_distance}
-        return await super().fetchrow(sql, *params)
-
-
-def test_find_or_create_goal_auto_merges_a_near_identical_embedding():
-    pool = _FakeSemanticGoalsPool(semantic_distance=AUTO_DEDUP_MAX_COSINE_DISTANCE - 0.01)
-    first = _run(find_or_create_goal(
-        pool, canonical_name="find all callers of a function", scope_type="global",
-        provenance="system_pending_review", embedder=_FakeEmbedder([[0.1] * 4]),
-    ))
-    second = _run(find_or_create_goal(
-        pool, canonical_name="locate every caller of a function", scope_type="global",
-        provenance="system_pending_review", embedder=_FakeEmbedder([[0.1] * 4]),
-    ))
-    assert second["created"] is False
-    assert second["id"] == first["id"]
-
-
-def test_find_or_create_goal_does_not_merge_a_merely_similar_embedding():
-    """ingestion.md Sec 8: never auto-merge on loose similarity -- only a
-    near-identical (distance <= AUTO_DEDUP_MAX_COSINE_DISTANCE) match."""
-    pool = _FakeSemanticGoalsPool(semantic_distance=AUTO_DEDUP_MAX_COSINE_DISTANCE + 0.2)
-    first = _run(find_or_create_goal(
-        pool, canonical_name="find all callers of a function", scope_type="global",
-        provenance="system_pending_review", embedder=_FakeEmbedder([[0.1] * 4]),
-    ))
-    second = _run(find_or_create_goal(
-        pool, canonical_name="deploy the service safely", scope_type="global",
-        provenance="system_pending_review", embedder=_FakeEmbedder([[0.9] * 4]),
-    ))
-    assert second["created"] is True
-    assert second["id"] != first["id"]
-
-
-def test_find_or_create_goal_without_embedder_never_calls_embedding_path():
-    """The default (no `embedder`) behavior is byte-identical to before
-    this feature existed -- no embedding cost added to an existing caller
-    that doesn't opt in."""
-    pool = _FakeGoalsPool()
-    result = _run(find_or_create_goal(
-        pool, canonical_name="find references", scope_type="global",
-        provenance="system_pending_review",
-    ))
-    assert result["created"] is True
-    assert "embedding" not in " ".join(str(r) for r in pool.rows)
-
-
-# --- search_goals ---------------------------------------------------------
 
 class _SearchFakePool:
     """Answers search_goals' lexical leg, semantic leg, and hydration

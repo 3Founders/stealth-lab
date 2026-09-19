@@ -15,34 +15,13 @@ Sec 8):
     concurrent-write backstop).
   tier 2 -- alias match (always on): a candidate whose normalized text
     matches an EXISTING goal's stored `aliases` entry is the same goal.
-  tier 2.5 -- text SimHash near-duplicate match (always on, zero cost --
-    pure Python, no embedder/LLM call): catches word-order changes, a
-    word inserted/removed/swapped -- phrasings tier 1/2's EXACT match
-    misses but that are not yet the "real paraphrase" job tier 3/4's
-    embedding similarity is for. Founder decision (2026-09-16): explicitly
-    text-only -- hashing the EMBEDDING vector (LSH) was considered and
-    rejected as redundant with the exact HNSW+cosine-distance search tier
-    3/4 already does at this table's scale (migration 84). See
-    migration 86 and `compute_simhash`/`SIMHASH_MAX_HAMMING_DISTANCE`
-    below.
-  tier 3/4 -- embedding cosine-similarity match: OPT-IN via the
-    `embedder` parameter (default None -- no behavior or cost change for
-    a caller that doesn't pass one). Founder directive (2026-09-16):
-    dedup should be AGGRESSIVE -- AUTO_DEDUP_MAX_COSINE_DISTANCE is set
-    to auto-merge real paraphrases ("find callers" vs "find all callers
-    of a function"), not just near-exact restatements.
-  tier 5 -- LLM adjudication for the ambiguous middle band (embedding
-    similarity present but between AUTO_DEDUP_MAX_COSINE_DISTANCE and
-    AMBIGUOUS_DEDUP_MAX_COSINE_DISTANCE): OPT-IN via the `client`
-    parameter (default None -- same zero-cost-unless-asked posture as
-    `embedder`). One small, fail-closed LLM call decides "same goal or
-    not"; a "same" verdict merges AND appends the candidate's own
-    phrasing as a new alias on the surviving row (so the next caller with
-    the SAME phrasing hits tier 2 for free, never needing another
-    embedding call or LLM adjudication for it again). Any failure,
-    malformed response, or explicit "different" verdict falls through to
-    creating a new, distinct row -- conservative on uncertainty, only
-    aggressive when the model is actually confident.
+  semantic -- FTS + vector candidates (RRF-fused) judged by the semantic
+    chain (JEV -> Gemini -> Gemma): same / narrower / broader / related /
+    distinct (app/services/identity_resolution.py). Persisted to
+    `identity_decisions`. The former SimHash and cosine-threshold auto-merge
+    tiers and the raw-client adjudication were REMOVED: a similarity number
+    never decides identity, a model does. Migration 86's `simhash` column is
+    now unused (kept; dropping it is a later cleanup migration).
   Explicit merge/review workflow (ingestion.md Sec 8's last paragraph):
     `goals.status='merged'` + `merged_into_id` exist as schema support,
     but nothing here flags "these two rows look related, review them" or
@@ -151,70 +130,6 @@ def describe_goal_quality_issue(canonical_name: str) -> Optional[str]:
         return "meaningless/vague label with no concrete outcome"
     return None
 
-# Tier 3/4 auto-merge threshold (pgvector cosine DISTANCE -- smaller is
-# more similar; 0.12 ~= cosine similarity >= 0.88). Founder directive
-# (2026-09-16, "aggressive dedup for goals"): loosened from an earlier,
-# more conservative 0.05 (~0.95 similarity, near-exact restatements only)
-# -- this band now catches real paraphrases ("find callers" vs "find all
-# callers of a function"), not just near-identical text. Configuration,
-# not tuned against real production data yet -- a real, stated limitation.
-AUTO_DEDUP_MAX_COSINE_DISTANCE = 0.12
-
-# Tier 5's band: a candidate this close-but-not-auto-mergeable gets one
-# LLM adjudication call (only if the caller passed `client`) before
-# falling through to a new row. Wider than the auto-merge band on
-# purpose -- this is exactly the "maybe the same, ask" zone the auto tier
-# deliberately doesn't touch on similarity alone.
-AMBIGUOUS_DEDUP_MAX_COSINE_DISTANCE = 0.30
-
-_ADJUDICATION_SYSTEM_PROMPT = """You decide whether two short goal descriptions refer to \
-the SAME reusable outcome, phrased differently, or two genuinely DIFFERENT outcomes.
-
-Same goal, different phrasing (answer same=true): "find callers" / "find all callers of a \
-function" / "locate every call site of a function". These describe the identical outcome.
-
-Different goals (answer same=false): "find callers" vs "find callers and remove them" (the \
-second has an extra, distinct outcome). "deploy a service" vs "deploy a service safely with \
-a canary rollout" (materially different scope/rigor) -- when genuinely uncertain, answer false.
-
-Reply with ONLY a JSON object, no other text: {"same": true} or {"same": false}
-"""
-
-
-async def _adjudicate_same_goal(
-    client: Any, model: str, candidate_name: str, existing_name: str,
-) -> bool:
-    """Tier 5's one LLM call. Fail-closed to False on ANY problem (no
-    client, API error, malformed/ambiguous response) -- adjudication only
-    ever makes dedup MORE aggressive when the model is genuinely
-    confident, never blocks a legitimate creation on an infrastructure
-    hiccup."""
-    if client is None:
-        return False
-    try:
-        response = client.chat.completions.create(
-            model=model,
-            messages=[
-                {"role": "system", "content": _ADJUDICATION_SYSTEM_PROMPT},
-                {"role": "user", "content": f'Goal A: "{candidate_name}"\nGoal B: "{existing_name}"'},
-            ],
-            temperature=0.0,
-            max_tokens=20,
-        )
-        text = (response.choices[0].message.content or "").strip()
-    except Exception:  # noqa: BLE001 -- any client/transport failure fails closed
-        return False
-    if text.startswith("```"):
-        text = text.strip("`")
-        if text.lower().startswith("json"):
-            text = text[4:]
-        text = text.strip()
-    try:
-        parsed = json.loads(text)
-    except json.JSONDecodeError:
-        return False
-    return isinstance(parsed, dict) and parsed.get("same") is True
-
 # RRF's smoothing constant -- same value retrieval.py's own RRF_K uses
 # (the original RRF paper's value), kept identical rather than a second
 # unexplained constant.
@@ -240,85 +155,6 @@ def normalize_goal_name(text: str) -> str:
     lowered = text.strip().lower()
     stripped = _NON_ALNUM_RE.sub(" ", lowered)
     return _WHITESPACE_RE.sub(" ", stripped).strip()
-
-
-# Tier 2.5's auto-merge radius: two 64-bit SimHashes this close (out of 64
-# possible differing bits) are treated as the same goal, text-only,
-# no embedder/LLM call. Empirically calibrated (not just guessed) against
-# short goal-name-length text: a single word inserted/dropped/pluralized
-# lands around Hamming distance 10-13 (few tokens means each one carries
-# a lot of the bit-vote weight -- SimHash on short bags-of-words is
-# inherently coarser than on long documents), while a genuine
-# different-wording paraphrase ("find all callers of a function" vs
-# "locate every caller of a function") lands >= 22. 12 sits in the gap:
-# catches the former, leaves the latter to tier 3/4's real semantic
-# comparison. Still a real, stated limitation -- not tuned against real
-# production data yet (same honesty as AUTO_DEDUP_MAX_COSINE_DISTANCE's
-# own docstring), and a stemmed variant right at the boundary
-# ("reconcile schema drift" vs "...drifts", distance ~17) will miss this
-# tier and fall through to tier 3/4 (if opted in) instead -- not a bug,
-# just this tier's coarseness.
-SIMHASH_BITS = 64
-SIMHASH_MAX_HAMMING_DISTANCE = 12
-
-
-def compute_simhash(text: str, *, bits: int = SIMHASH_BITS) -> int:
-    """64-bit SimHash of `text`'s normalized token set (Charikar's
-    algorithm). Deliberately hashes the SAME `normalize_goal_name(text)`
-    tier 1 already computes -- one normalization step feeds both an exact
-    key and a fuzzy one, rather than two independently-drifting text
-    transforms.
-
-    Uses `hashlib.sha1` (or higher) per token, NEVER Python's built-in
-    `hash()` -- that is salted per-process (`PYTHONHASHSEED`) and would
-    make a stored SimHash uncomparable across two different process runs,
-    silently breaking every future lookup against it.
-
-    No token weighting (each distinct token votes once, via a `set`, not
-    a multiset) -- goal names are short (a few words), so raw term
-    frequency carries little extra signal here; this stays a coarse,
-    honest bag-of-tokens fingerprint, not a claim of real semantic
-    similarity (that is tier 3/4's job).
-    """
-    tokens = normalize_goal_name(text).split(" ")
-    tokens = [t for t in tokens if t]
-    if not tokens:
-        return 0
-    bit_votes = [0] * bits
-    for token in set(tokens):
-        digest = hashlib.sha256(token.encode("utf-8")).digest()
-        token_hash = int.from_bytes(digest[:8], "big")
-        for i in range(bits):
-            bit_votes[i] += 1 if (token_hash >> i) & 1 else -1
-    fingerprint = 0
-    for i, vote in enumerate(bit_votes):
-        if vote > 0:
-            fingerprint |= 1 << i
-    return fingerprint
-
-
-def hamming_distance(a: int, b: int) -> int:
-    """Number of differing bits between two SimHash fingerprints.
-
-    Masked to 64 bits before counting: `goals.simhash` is a signed
-    BIGINT (Postgres has no unsigned integer type), so a fingerprint with
-    its top bit set round-trips through the DB as a NEGATIVE Python int
-    (two's complement) -- masking recovers the correct unsigned bit
-    pattern either way, so this is safe whether `a`/`b` came straight
-    from `compute_simhash` (always non-negative) or back from a DB row
-    (real, live-tested bug: an un-masked XOR of a negative value produces
-    an infinite-precision Python int whose bit count is meaningless)."""
-    return bin((a ^ b) & 0xFFFFFFFFFFFFFFFF).count("1")
-
-
-def _simhash_to_int64(value: int) -> int:
-    """Two's-complement fold into asyncpg/Postgres BIGINT's signed range
-    -- `compute_simhash` produces an unsigned 0..2**64-1 value, but
-    Postgres has no unsigned 64-bit type. Confirmed necessary by a real
-    live-DB rehearsal failure (`asyncpg.exceptions.DataError: invalid
-    input for query argument: value out of int64 range`) before this
-    existed."""
-    return value - (1 << 64) if value >= (1 << 63) else value
 
 
 def goal_embedding_text(canonical_name: str, description: Optional[str] = None) -> str:
@@ -348,12 +184,16 @@ async def find_or_create_goal(
     aliases: Optional[list[str]] = None,
     created_by: Optional[str] = None,
     embedder: Optional[Any] = None,
-    client: Optional[Any] = None,
-    adjudication_model: str = "gemma-4-31B-it",
+    client: Optional[Any] = None,           # DEPRECATED: ignored (identity uses `judge`)
+    adjudication_model: str = "",           # DEPRECATED: ignored
+    judge: Optional[Any] = None,
+    on_unavailable: Optional[str] = None,
+    job_id: Optional[int] = None,
+    idempotency_key: Optional[str] = None,
 ) -> dict[str, Any]:
-    """Tier 1 (exact name) + tier 2 (alias) dedup, then tier 3/4
-    (embedding similarity) and tier 5 (LLM adjudication on an ambiguous
-    near-match) before inserting. Returns {"id": str, "canonical_name":
+    """Exact-name/alias identity, then semantic identity resolution
+    (identity_resolution.resolve_goal_identity: FTS+vector candidates ->
+    JEV/NLI judge) before inserting. Returns {"id": str, "canonical_name":
     str, "created": bool}.
 
     `scope_type`/`provenance` are REQUIRED and V0-gated (Band 1.3
@@ -363,18 +203,17 @@ async def find_or_create_goal(
     codebase.
 
     `embedder`: an app.services.embeddings.Embedder (or anything with an
-    async `embed_one_with_metadata(text, input_type=...)` matching its
-    signature). Passing one makes this function ALSO compute and store
-    the new/matched goal's embedding, and adds the tier-3/4/5 semantic
-    dedup passes -- a real latency/cost addition (one embedding API
-    call), so it is opt-in, never silently applied to an existing caller.
+    async `embed_one_with_metadata(text, input_type=...)`). Passing one
+    stores the goal's embedding and enables the vector leg of candidate
+    generation (FTS always runs) -- one embedding call, opt-in.
 
-    `client`: an OpenAI-compatible chat-completions client. Only used
-    (one more real LLM call) when `embedder` found a near-match whose
-    distance falls in the tier-5 ambiguous band -- see
-    AMBIGUOUS_DEDUP_MAX_COSINE_DISTANCE. Also opt-in; omitting it just
-    means an ambiguous near-match falls through to a new row, same as
-    today's behavior without adjudication.
+    `judge`: an app.services.semantic.chain.SemanticJudge (default: built
+    from settings). `on_unavailable`: "raise" (default when providers are
+    configured -- retryable, no silent duplicate) or "create" (default when
+    none are configured; recorded as decision `judge_unavailable`).
+    `job_id`/`idempotency_key` tie the identity decision to one ingestion
+    job so a replay reuses it. `client`/`adjudication_model` are DEPRECATED
+    no-ops kept so existing call sites keep working.
     """
     resolved_scope_type, resolved_scope_entity_id = validate_scope(
         scope_type, scope_entity_id,
@@ -411,47 +250,14 @@ async def find_or_create_goal(
             "created": False,
         }
 
-    # Tier 2.5: always-on, zero-cost text SimHash near-duplicate match --
-    # no embedder/client needed, so this runs for every caller, not just
-    # ones that opted into tier 3/4/5. A candidate list, not a single
-    # nearest-neighbor SQL query -- BIGINT has no native Hamming-distance
-    # operator in stock Postgres (migration 86), so the shortlist is
-    # fetched by scope and compared in Python. Fine at this table's
-    # current size (thousands of rows); a real, stated limitation if the
-    # corpus grows large enough to matter -- not optimized preemptively.
-    candidate_simhash = compute_simhash(canonical_name)
-    if resolved_scope_type == "global":
-        simhash_rows = await pool.fetch(
-            "SELECT id, canonical_name, simhash FROM goals "
-            "WHERE t_invalid IS NULL AND status <> 'merged' AND simhash IS NOT NULL "
-            "AND (scope_type IS NULL OR scope_type = 'global')",
-        )
-    else:
-        simhash_rows = await pool.fetch(
-            "SELECT id, canonical_name, simhash FROM goals "
-            "WHERE t_invalid IS NULL AND status <> 'merged' AND simhash IS NOT NULL "
-            "AND scope_type = $1 AND scope_entity_id = $2",
-            resolved_scope_type, resolved_scope_entity_id,
-        )
-    simhash_match = min(
-        simhash_rows,
-        key=lambda r: hamming_distance(candidate_simhash, r["simhash"]),
-        default=None,
-    )
-    if (
-        simhash_match is not None
-        and hamming_distance(candidate_simhash, simhash_match["simhash"]) <= SIMHASH_MAX_HAMMING_DISTANCE
-    ):
-        await pool.execute(
-            "UPDATE goals SET aliases = array_append(aliases, $2) "
-            "WHERE id = $1::uuid AND NOT ($2 = ANY(aliases))",
-            simhash_match["id"], canonical_name,
-        )
-        return {
-            "id": str(simhash_match["id"]),
-            "canonical_name": simhash_match["canonical_name"],
-            "created": False,
-        }
+    # Semantic identity (docs/dedup_and_identity.md): FTS + vector candidates
+    # over canonical goals, RRF-fused, then a MODEL (JEV -> Gemini -> Gemma via
+    # app.services.semantic) decides same / narrower / broader / related /
+    # distinct. No SimHash or cosine-threshold merge exists any more. The
+    # decision is persisted to identity_decisions. If the judge chain is down
+    # while candidates exist this raises SemanticJudgmentUnavailable (a worker
+    # retries the job) unless `on_unavailable="create"`.
+    from app.services.identity_resolution import propose_goal_relations, resolve_goal_identity
 
     embedding_vec: Optional[list[float]] = None
     embedding_meta = None
@@ -459,53 +265,20 @@ async def find_or_create_goal(
         embedding_vec, embedding_meta = await embedder.embed_one_with_metadata(
             goal_embedding_text(canonical_name, description), input_type="document",
         )
-        # Tier 3/4: a near-identical existing goal, found only by meaning,
-        # not text. Conservative on purpose -- see AUTO_DEDUP_MAX_COSINE_DISTANCE.
-        if resolved_scope_type == "global":
-            semantic_match = await pool.fetchrow(
-                "SELECT id, canonical_name, embedding <=> $1::vector AS dist FROM goals "
-                "WHERE t_invalid IS NULL AND status <> 'merged' AND embedding IS NOT NULL "
-                "AND (scope_type IS NULL OR scope_type = 'global') "
-                "ORDER BY dist ASC LIMIT 1",
-                to_pgvector(embedding_vec),
-            )
-        else:
-            semantic_match = await pool.fetchrow(
-                "SELECT id, canonical_name, embedding <=> $1::vector AS dist FROM goals "
-                "WHERE t_invalid IS NULL AND status <> 'merged' AND embedding IS NOT NULL "
-                "AND scope_type = $2 AND scope_entity_id = $3 "
-                "ORDER BY dist ASC LIMIT 1",
-                to_pgvector(embedding_vec), resolved_scope_type, resolved_scope_entity_id,
-            )
-        if semantic_match and semantic_match["dist"] <= AUTO_DEDUP_MAX_COSINE_DISTANCE:
-            return {
-                "id": str(semantic_match["id"]),
-                "canonical_name": semantic_match["canonical_name"],
-                "created": False,
-            }
-        # Tier 5: close but not auto-merge-close -- ask, don't guess, and
-        # only if the caller opted into it via `client`. A "same" verdict
-        # merges AND records the candidate's own phrasing as a new alias
-        # on the surviving row, so this exact phrasing hits tier 2 (free,
-        # no embedding/LLM call) on every future call.
-        if (
-            semantic_match and client is not None
-            and semantic_match["dist"] <= AMBIGUOUS_DEDUP_MAX_COSINE_DISTANCE
-        ):
-            same = await _adjudicate_same_goal(
-                client, adjudication_model, canonical_name, semantic_match["canonical_name"],
-            )
-            if same:
-                await pool.execute(
-                    "UPDATE goals SET aliases = array_append(aliases, $2) "
-                    "WHERE id = $1::uuid AND NOT ($2 = ANY(aliases))",
-                    semantic_match["id"], canonical_name,
-                )
-                return {
-                    "id": str(semantic_match["id"]),
-                    "canonical_name": semantic_match["canonical_name"],
-                    "created": False,
-                }
+    outcome = await resolve_goal_identity(
+        pool, name=canonical_name, description=description, scope_type=resolved_scope_type,
+        scope_entity_id=resolved_scope_entity_id, embedding=embedding_vec,
+        embedding_model=embedding_meta.model_id if embedding_meta is not None else None,
+        judge=judge, on_unavailable=on_unavailable, job_id=job_id, idempotency_key=idempotency_key,
+    )
+    if outcome.action == "reuse":
+        matched = await pool.fetchrow(
+            "UPDATE goals SET aliases = CASE WHEN $2 = ANY(aliases) OR normalized_name = $3 "
+            "THEN aliases ELSE array_append(aliases, $2) END WHERE id = $1::uuid "
+            "RETURNING id, canonical_name, home_shard_id", outcome.resolved_id, canonical_name, normalized)
+        if matched is not None:
+            return {"id": str(matched["id"]), "canonical_name": matched["canonical_name"], "created": False,
+                    "home_shard_id": matched.get("home_shard_id", "K000"), "decision": outcome.decision}
 
     # ingestion.md Sec 20's quality gate runs ONLY here -- right before a
     # genuinely NEW row would be created -- never earlier. Every dedup
@@ -521,6 +294,9 @@ async def find_or_create_goal(
         )
 
     goal_id = uuid7()
+    from app.services.shards import cached_shards, choose_shard, writable_shards
+
+    home_shard = choose_shard(str(goal_id), writable_shards(await cached_shards(pool)))
     try:
         row = await pool.fetchrow(
             """
@@ -529,13 +305,13 @@ async def find_or_create_goal(
                 verification_requirement, status, provenance, created_from, owner_id,
                 visibility, aliases, created_by, scope_type, scope_entity_id,
                 embedding, embedding_model_id, embedding_provider, embedding_text_hash,
-                simhash
+                home_shard_id
             ) VALUES (
                 $1, $2, $3, $4, $5::jsonb, $6::jsonb, $7, $8, $9, $10,
                 $11::visibility_level, $12, $13, $14, $15,
                 $16::vector, $17, $18, $19, $20
             )
-            RETURNING id, canonical_name
+            RETURNING id, canonical_name, home_shard_id
             """,
             str(goal_id), canonical_name, normalized, description,
             expected_outcome if expected_outcome is not None else {},
@@ -546,20 +322,22 @@ async def find_or_create_goal(
             embedding_meta.model_id if embedding_meta is not None else None,
             embedding_meta.provider if embedding_meta is not None else None,
             embedding_meta.text_sha256 if embedding_meta is not None else None,
-            _simhash_to_int64(candidate_simhash),
+            home_shard,
         )
     except asyncpg.UniqueViolationError:
         # Lost a race against a concurrent insert of the identical
-        # (normalized_name, scope) pair -- migration 83's own partial
-        # unique index caught it. Re-select the winner rather than
-        # raising a spurious error for what is, semantically, a
-        # successful dedup.
+        # (normalized_name, scope) pair -- migration 83's partial unique index
+        # caught it. Re-select the winner: semantically a successful dedup.
         return await find_or_create_goal(
             pool, canonical_name=canonical_name, scope_type=scope_type,
             scope_entity_id=scope_entity_id, provenance=provenance,
-            embedder=embedder, client=client, adjudication_model=adjudication_model,
+            embedder=embedder, judge=judge, on_unavailable=on_unavailable,
+            job_id=job_id, idempotency_key=idempotency_key,
         )
-    return {"id": str(row["id"]), "canonical_name": row["canonical_name"], "created": True}
+    if outcome.relations:
+        await propose_goal_relations(pool, str(row["id"]), outcome.relations, decision_id=outcome.decision_id)
+    return {"id": str(row["id"]), "canonical_name": row["canonical_name"], "created": True,
+            "home_shard_id": row.get("home_shard_id", home_shard), "decision": outcome.decision}
 
 
 async def get_goal(

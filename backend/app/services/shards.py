@@ -36,6 +36,22 @@ READABLE_STATUSES = frozenset({"active", "full", "readonly"})
 OBJECT_TYPES = ("goal", "claim", "procedure")
 
 
+# Canonical WRITES to a non-home shard are not supported yet: `procedures`
+# is referenced by FKs from control-database tables (execution_plans,
+# procedure_implementations, ...), and `goals` by `procedures.achieves_goal_id`.
+# Placing a canonical row on a remote database would silently break those
+# constraints, so placement is restricted to the home shard until those edges
+# become application-validated references (docs/sharding.md "Known blocker").
+# Reads, routing, projection and hydration of remote shards ARE implemented.
+REMOTE_WRITES_SUPPORTED = False
+
+
+def writable_shards(shards: Sequence["ShardInfo"]) -> list["ShardInfo"]:
+    if REMOTE_WRITES_SUPPORTED:
+        return list(shards)
+    return [s for s in shards if s.shard_id == HOME_SHARD]
+
+
 class ShardUnavailable(Exception):
     def __init__(self, shard_id: str, reason: str):
         super().__init__(f"shard {shard_id} unavailable: {reason}")
@@ -114,7 +130,7 @@ async def cached_shards(pool: asyncpg.Pool, *, ttl_s: float = SHARD_CACHE_TTL_S)
     now = time.monotonic()
     if hit and now - hit[0] < ttl_s:
         return hit[1]
-    shards = await list_shards(pool)
+    shards = await list_shards(pool) or [ShardInfo(HOME_SHARD, "active", 100)]  # empty registry == home shard only
     _SHARD_CACHE[key] = (now, shards)
     return shards
 

@@ -229,8 +229,9 @@ class _EnrichmentFakePool:
         self.goal_inserts: list[tuple] = []
 
     async def fetch(self, sql, *params):
-        if "simhash IS NOT NULL" in " ".join(sql.split()):
-            return []  # find_or_create_goal's tier 2.5 shortlist -- none here
+        flat = " ".join(sql.split())
+        if "FROM knowledge_shards" in flat or "FROM goals" in flat:
+            return []  # find_or_create_goal: empty shard registry + no FTS/vector candidates
         return self._rows
 
     async def execute(self, sql, *params):

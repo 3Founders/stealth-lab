@@ -16,6 +16,7 @@ from typing import Any
 RETENTION_PROMPT_VERSION = "context_retention@v2"
 SUMMARY_PROMPT_VERSION = "context_summary@v1"
 RELATION_PROMPT_VERSION = "claim_relation@v1"
+IDENTITY_PROMPT_VERSION = "identity@v1"
 
 ACTIONS = ("KEEP_VERBATIM", "KEEP_COMPACT", "KEEP_REFERENCE_ONLY", "DROP")
 
@@ -136,3 +137,49 @@ def _unit_float(value: Any, default: float) -> float:
         return max(0.0, min(1.0, float(value)))
     except (TypeError, ValueError):
         return default
+
+
+# ---- identity resolution (Goal / Claim / Procedure) ------------------------
+# Relation of A (the NEW candidate) to B (an EXISTING object). One vocabulary
+# per object kind; a reply outside it is a contract violation (retried, never
+# repaired or guessed).
+IDENTITY_RELATIONS = {
+    "goal": ("same", "specializes", "generalizes", "related", "distinct"),
+    "claim": ("same", "specializes", "generalizes", "related", "contradicts", "distinct"),
+    "procedure": ("same", "refinement", "distinct"),
+}
+
+IDENTITY_SYSTEM_PROMPTS = {
+    "goal": (
+        "You decide whether two GOALS (desired outcomes for an AI agent) are the SAME goal. "
+        "Two goals are the same only if achieving one necessarily means achieving the other in "
+        "the same context, ignoring wording. A goal that merely shares words, a domain or a tool "
+        "is NOT the same. Reply with EXACTLY one JSON object: "
+        '{"relation":"same|specializes|generalizes|related|distinct","confidence":<0-1>}. '
+        "specializes: A is a narrower case of B. generalizes: A is broader than B. "
+        "related: overlapping but neither. distinct: unrelated or different outcome."
+    ),
+    "claim": (
+        "You compare two CLAIMS (propositions). Reply with EXACTLY one JSON object: "
+        '{"relation":"same|specializes|generalizes|related|contradicts|distinct","confidence":<0-1>}. '
+        "same: identical proposition, any wording. contradicts: they cannot both be true. "
+        "Never call two claims the same unless the proposition is identical."
+    ),
+    "procedure": (
+        "You compare two PROCEDURES that achieve the same goal. Reply with EXACTLY one JSON "
+        'object: {"relation":"same|refinement|distinct","confidence":<0-1>}. '
+        "same: equivalent method. refinement: A is a newer/improved version of the same method B. "
+        "distinct: a genuinely different method, even if it reaches the same goal."
+    ),
+}
+
+
+def build_identity_user(kind: str, a: str, b: str) -> str:
+    return "A (new): " + a + "\nB (existing): " + b
+
+
+def parse_identity(kind: str, body: dict) -> dict:
+    relation = body.get("relation")
+    if relation not in IDENTITY_RELATIONS[kind]:
+        raise ValueError(f"invalid {kind} relation {relation!r}")
+    return {"relation": relation, "confidence": _unit_float(body.get("confidence"), 0.0)}

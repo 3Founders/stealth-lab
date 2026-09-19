@@ -133,7 +133,11 @@ async def capture_procedure(
     availability: str = "active",
     is_engineering_fixture: bool = False,
     goal_embedder: Optional[Any] = None,
-    goal_adjudication_client: Optional[Any] = None,
+    goal_adjudication_client: Optional[Any] = None,   # DEPRECATED no-op (identity uses goal_judge)
+    goal_judge: Optional[Any] = None,
+    goal_on_unavailable: Optional[str] = None,
+    identity_job_id: Optional[int] = None,
+    identity_idempotency_key: Optional[str] = None,
 ) -> dict:
     """
     Inserts a new procedure, always starting `candidate` / `fresh` /
@@ -227,9 +231,18 @@ async def capture_procedure(
         owner_id=owner_id,
         visibility=visibility if visibility in ("public", "private") else "public",
         embedder=goal_embedder,
-        client=goal_adjudication_client,
+        judge=goal_judge,
+        on_unavailable=goal_on_unavailable,
+        job_id=identity_job_id,
+        idempotency_key=identity_idempotency_key,
     )
     achieves_goal_id = resolved_goal["id"]
+    # Locality rule: a Procedure is homed with its Goal (roll over only if that
+    # shard can no longer take writes). Same value goes into the INSERT below.
+    from app.services.shards import cached_shards, choose_child_shard, writable_shards
+
+    home_shard_id = choose_child_shard(
+        resolved_goal.get("home_shard_id"), str(procedure_id), writable_shards(await cached_shards(pool)))
 
     # --- retrieval-representation contract (plan Part 18) -------------------
     # A stored vector only means something relative to the text it was
@@ -295,7 +308,7 @@ async def capture_procedure(
             embedding_provider, embedding_input_type, embedding_text_hash,
             retrieval_document, retrieval_document_version, retrieval_document_sha256,
             display_name, display_description, display_metadata_version, tenant_id,
-            availability, is_engineering_fixture
+            availability, is_engineering_fixture, achieves_goal_id, home_shard_id
         ) VALUES (
             $24::uuid, $40::uuid, $1, $2, $3::jsonb, $4::jsonb, $5::jsonb, $6::jsonb,
             $7::jsonb, $8::jsonb, $9::jsonb, $10::jsonb,
@@ -304,7 +317,7 @@ async def capture_procedure(
             $20, $21, $22::visibility_level, $23::vector,
             $25, $26, $27, $28, $29, $30, $31,
             $32, $33, $34, $35, $36, $37, $38::uuid,
-            $39::procedure_availability, $41
+            $39::procedure_availability, $41, $42::uuid, $43
         )
         RETURNING id, procedure_id
         """,
@@ -352,15 +365,11 @@ async def capture_procedure(
         availability,
         str(procedure_id),
         is_engineering_fixture,
-    )
-    # Separate UPDATE rather than a 42nd positional placeholder on the
-    # INSERT above -- that statement is already a fragile, hand-numbered
-    # 41-argument positional query; appending here is safer than
-    # renumbering it. Not a transactional gap in practice: nothing reads
-    # `achieves_goal_id` before this line's own return.
-    await pool.execute(
-        "UPDATE procedures SET achieves_goal_id = $1 WHERE id = $2",
-        achieves_goal_id, row["id"],
+        # Written by the INSERT itself (was a separate UPDATE): the
+        # Procedure -> Goal link and shard can never be observed unset, even
+        # if the process dies right after the INSERT.
+        achieves_goal_id,
+        home_shard_id,
     )
     return {"id": str(row["id"]), "procedure_id": str(row["procedure_id"])}
 
@@ -396,6 +405,10 @@ _SUPERSEDE_CARRY_COLUMNS: tuple[str, ...] = (
     # unless the caller explicitly rebuilds and overrides them.
     "retrieval_document", "retrieval_document_version", "retrieval_document_sha256",
     "display_name", "display_description", "display_metadata_version",
+    # Procedure -> Goal link + placement: a new VERSION achieves the same Goal
+    # and lives on the same shard. (Before this, supersede silently dropped
+    # the link, leaving every re-ingested version un-linked.)
+    "achieves_goal_id", "home_shard_id",
 )
 
 # Per-column SQL cast for the carry-forward INSERT. asyncpg infers scalar
@@ -415,6 +428,7 @@ _SUPERSEDE_COLUMN_CASTS: dict[str, str] = {
     "availability": "procedure_availability",
     "visibility": "visibility_level",
     "embedding": "vector",
+    "achieves_goal_id": "uuid",
 }
 
 

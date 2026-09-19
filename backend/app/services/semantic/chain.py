@@ -27,6 +27,7 @@ from app.services.semantic.errors import (
 from app.services.semantic.policy import METRICS, RetryPolicy, SemanticMetrics
 from app.services.semantic.providers import (
     CAP_APPLICABILITY,
+    CAP_IDENTITY,
     CAP_RELATION,
     CAP_RETENTION,
     CAP_SUMMARY,
@@ -106,6 +107,12 @@ class SemanticJudge:
 
     async def judge_claim_relation(self, statement_a: str, statement_b: str) -> ChainResult:
         return await self._run("claim_relation", CAP_RELATION, lambda p: p.claim_relation(statement_a, statement_b))
+
+    async def judge_identity(self, kind: str, a: str, b: str) -> ChainResult:
+        """Relation of the NEW object A to the EXISTING object B (see
+        prompts.IDENTITY_RELATIONS). Never heuristic: on total failure the
+        result is ok=False and the caller must fail closed / retry."""
+        return await self._run("identity", CAP_IDENTITY, lambda p: p.identity(kind, a, b))
 
     # ---- core -------------------------------------------------------
 

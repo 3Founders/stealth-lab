@@ -27,7 +27,8 @@ CAP_APPLICABILITY = "applicability"
 CAP_RETENTION = "retention"
 CAP_SUMMARY = "summary"
 CAP_RELATION = "claim_relation"
-ALL_CAPS = frozenset({CAP_APPLICABILITY, CAP_RETENTION, CAP_SUMMARY, CAP_RELATION})
+CAP_IDENTITY = "identity"
+ALL_CAPS = frozenset({CAP_APPLICABILITY, CAP_RETENTION, CAP_SUMMARY, CAP_RELATION, CAP_IDENTITY})
 
 
 class SemanticProvider:
@@ -53,6 +54,9 @@ class SemanticProvider:
 
     async def claim_relation(self, statement_a: str, statement_b: str) -> dict:
         self._unsupported("claim_relation")
+
+    async def identity(self, kind: str, a: str, b: str) -> dict:
+        self._unsupported("identity")
 
 
 # ------------------------------------------------------------------ JEV
@@ -81,6 +85,13 @@ class JEVProvider(SemanticProvider):
         body = await self._remote.post_json(
             "/judge-claim-relation", {"claim_a": statement_a, "claim_b": statement_b})
         return _validated_relation(body, self.name)
+
+    async def identity(self, kind, a, b):
+        body = await self._remote.post_json("/judge-identity", {"kind": kind, "a": a, "b": b})
+        try:
+            return prompts.parse_identity(kind, body)
+        except ValueError as exc:
+            raise ProviderError(ErrorKind.TRANSIENT, f"invalid identity reply: {exc}", provider=self.name) from exc
 
 
 # --------------------------------------------------------- OpenAI-compat
@@ -161,6 +172,15 @@ class OpenAICompatProvider(SemanticProvider):
             return _validated_relation(prompts._loads_object(text), self.name)
         except ValueError as exc:
             raise ProviderError(ErrorKind.TRANSIENT, f"invalid relation reply: {exc}", provider=self.name) from exc
+
+
+    async def identity(self, kind, a, b):
+        text = await self._complete(
+            prompts.IDENTITY_SYSTEM_PROMPTS[kind], prompts.build_identity_user(kind, a, b), 80)
+        try:
+            return prompts.parse_identity(kind, prompts._loads_object(text))
+        except ValueError as exc:
+            raise ProviderError(ErrorKind.TRANSIENT, f"invalid identity reply: {exc}", provider=self.name) from exc
 
 
 def _validated_relation(body: dict, provider: str) -> dict:

@@ -84,6 +84,8 @@ def _prior_row(**over):
         "display_name": "Fix Pandas Append Removal",
         "display_description": "Migrate a removed DataFrame API to its supported replacement.",
         "display_metadata_version": "disp_v1",
+        "achieves_goal_id": "00000000-0000-0000-0000-0000000000a1",
+        "home_shard_id": "K000",
     }
     row.update(over)
     return row

@@ -59,6 +59,7 @@ _PROC_SQL = (
     "verification_stats, availability::text AS availability, version, visibility, owner_id, scope_type, "
     "scope_entity_id, tenant_id, home_shard_id, embedding::text AS embedding, embedding_model_id, "
     "embedding_provider FROM procedures WHERE procedure_id = $1::uuid AND t_invalid IS NULL "
+    "AND is_engineering_fixture = false "
     "ORDER BY version DESC LIMIT 1"
 )
 _CLAIM_SQL = (
@@ -307,7 +308,7 @@ async def retry_failed(pool: asyncpg.Pool) -> int:
 
 _CANONICAL_IDS = {
     "goal": "SELECT id::text FROM goals WHERE t_invalid IS NULL AND status <> 'merged'",
-    "procedure": "SELECT DISTINCT procedure_id::text FROM procedures WHERE t_invalid IS NULL",
+    "procedure": "SELECT DISTINCT procedure_id::text FROM procedures WHERE t_invalid IS NULL AND is_engineering_fixture = false",
     "claim": "SELECT id::text FROM knowledge_nodes WHERE node_type = 'claim' AND t_invalid IS NULL",
 }
 
