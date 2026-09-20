@@ -78,4 +78,10 @@ def validate_startup(*, strict: bool | None = None) -> list[str]:
                 "production identity resolution and retrieval must not run without a JEV/NLI judge")
         if not (settings.gemini_api_key or settings.gemini_api_keys or settings.voyage_api_key or settings.use_local_models):
             problems.append("no embedding provider configured (GEMINI_API_KEY / VOYAGE_API_KEY / USE_LOCAL_MODELS)")
+    url = os.environ.get("OBJECT_STORAGE_URL", "")
+    if strict and url.startswith("memory://"):
+        problems.append("OBJECT_STORAGE_URL=memory:// is not allowed in PRODUCTION (in-memory storage loses data)")
+    if strict and not url:
+        problems.append("OBJECT_STORAGE_URL is not set: large raw payloads would be refused above RAW_PAYLOAD_HARD_MAX_BYTES "
+                        "(set s3://bucket/prefix or file:///shared/path)")
     return problems

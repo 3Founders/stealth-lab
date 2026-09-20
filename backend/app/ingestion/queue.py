@@ -67,7 +67,7 @@ def validate_scope(job_type: str, scope_type: Optional[str], visibility: Optiona
 async def enqueue(
     pool: asyncpg.Pool, job_type: str, payload: dict, *, idempotency_key: str, source_id: Optional[str] = None,
     scope_type: str, scope_entity_id: Optional[str] = None, owner_id: Optional[str] = None, visibility: str = "public",
-    config_version: Optional[str] = None, max_attempts: int = 5,
+    config_version: Optional[str] = None, max_attempts: int = 5, offload: bool = True,
 ) -> tuple[int, bool]:
     """Insert a job unless (job_type, idempotency_key) already exists. Returns
     (job_id, created). Explicit scope is REQUIRED: a queued job can never be
@@ -75,6 +75,9 @@ async def enqueue(
     if not idempotency_key:
         raise ValueError("idempotency_key is required")
     validate_scope(job_type, scope_type, visibility, owner_id)
+    if offload:      # large raw strings go to object storage; the queue row keeps a locator + sha256
+        from app.services.object_storage import offload_payload
+        payload = await offload_payload(pool, payload)
     row = await pool.fetchrow(
         "INSERT INTO ingestion_jobs (job_type, payload, idempotency_key, source_id, scope_type, scope_entity_id, "
         "owner_id, visibility, config_version, max_attempts) VALUES ($1, $2::jsonb, $3, $4, $5, $6, $7, $8, $9, $10) "

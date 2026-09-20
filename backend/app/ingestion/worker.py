@@ -42,9 +42,12 @@ def is_retryable(exc: BaseException) -> bool:
     are retryable until ``max_attempts`` is exhausted."""
     from app.services.embeddings import EmbeddingError
     from app.services.semantic.errors import SemanticJudgmentUnavailable
+    from app.services.object_storage import ObjectStoreCorrupt, ObjectStoreUnavailable, PayloadTooLarge
     from app.services.shards import NoWritableShard, ShardUnavailable
 
-    if isinstance(exc, (q.ScopeError, KeyError, NoWritableShard)):
+    if isinstance(exc, ObjectStoreUnavailable):
+        return True
+    if isinstance(exc, (ObjectStoreCorrupt, PayloadTooLarge, q.ScopeError, KeyError, NoWritableShard)):
         return False  # bad payload / refused scope / nowhere to write: retrying cannot help
     try:
         from app.services.goals import GoalQualityRejected
@@ -100,7 +103,12 @@ class Worker:
 
         lease_lost = asyncio.Event()
         hb = asyncio.create_task(self._heartbeat(job, lease_lost))
-        run = asyncio.create_task(handler(self.pool, payload))
+
+        async def _run():
+            from app.services.object_storage import hydrate_payload
+            return await handler(self.pool, await hydrate_payload(payload))   # blob refs -> content (sha256 verified)
+
+        run = asyncio.create_task(_run())
         lost = asyncio.create_task(lease_lost.wait())
         try:
             done, _ = await asyncio.wait({run, lost}, timeout=self.cfg.job_timeout_seconds, return_when=asyncio.FIRST_COMPLETED)
