@@ -17,13 +17,11 @@ Layout produced by `app.stealth.generator.generate_projection`:
       meta.json               -- revisions + cursors + staleness signal
       claims.md               -- addressable Claim blocks (working set only)
       procedures.md           -- addressable Procedure blocks
-      implementations.md      -- addressable Implementation blocks
       run.md                  -- richer per-node execution state
       index/
         root.idx              -- the tiny router: name|target|hint
         claims.idx            -- id|version|scope|status|tags|file|start|end|summary
         procedures.idx
-        implementations.idx
         run.idx               -- node_id|status|owner|deps|globs|file|start|end|summary
 
 Navigation model (a "knowledge page fault" when local misses -- P3):

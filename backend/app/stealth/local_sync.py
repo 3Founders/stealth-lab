@@ -280,7 +280,8 @@ async def _superseded_after(pool: asyncpg.Pool, claim_id: str, since: datetime) 
 
 
 async def _fetch_procedure(pool: asyncpg.Pool, procedure_id: str) -> Optional[dict]:
-    row = await pool.fetchrow(
+    from app.services.shards import home_pool
+    row = await (await home_pool(pool, "procedure", str(procedure_id))).fetchrow(
         "SELECT * FROM procedures WHERE procedure_id = $1::uuid AND t_invalid IS NULL "
         "ORDER BY version DESC LIMIT 1", procedure_id,
     )

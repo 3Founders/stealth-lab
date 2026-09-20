@@ -30,6 +30,7 @@ import json
 import logging
 from typing import Any, Optional
 
+from app import telemetry as _tel
 import asyncpg
 
 from app.services.claim_evidence import record_claim_evidence
@@ -147,10 +148,12 @@ async def handle_ingest_skill_package(pool: asyncpg.Pool, payload: dict) -> None
 
     adapter = GitHubSkillCorpusSource(spec)
     uri = str(payload.get("uri") or f"https://github.com/{adapter.slug}/blob/{commit}/{path}")
-    artifact = adapter.fetch(SourceRef(
-        uri=uri, repository=adapter.slug, path=path, commit=commit,
-        source_id=spec.id,
-    ))
+    with _tel.span("ingestion.fetch", kind="TOOL", on_error=_tel.FailureCode.INGESTION_ERROR,
+                   source_type=spec.type):
+        artifact = adapter.fetch(SourceRef(
+            uri=uri, repository=adapter.slug, path=path, commit=commit,
+            source_id=spec.id,
+        ))
     client = _general_compute_client()
     if client is None:
         # Founder directive (2026-09-15): skill/document ingestion is now
@@ -165,14 +168,33 @@ async def handle_ingest_skill_package(pool: asyncpg.Pool, payload: dict) -> None
             "(GENERAL_COMPUTE_API_KEY/GENERAL_COMPUTE_JUDGE_MODEL) -- "
             "this artifact will be refused, not deterministically captured",
         )
-    await compile_skill_artifact(
-        pool, artifact, embedder=Embedder(rate_limit_pool=pool),
-        created_by="structured_skill_ingestion_worker",
-        client=client,
-        admission_llm_model=settings.general_compute_judge_model or "gemma-4-31B-it",
-        extraction_llm_model=settings.general_compute_judge_model or "gemma-4-31B-it",
-        claim_extraction_llm_model=settings.general_compute_judge_model or "gemma-4-31B-it",
-    )
+    # normalize -> dedup -> semantic extraction -> canonical persistence ->
+    # embedding all happen inside compile_skill_artifact; the embedding call
+    # has its own span (Embedder), the rest is one coarse `ingestion.compile`.
+    with _tel.span("ingestion.compile", kind="CHAIN", on_error=_tel.FailureCode.INGESTION_ERROR,
+                   items_attempted=1, source_type=spec.type) as sp:
+        outcome = await compile_skill_artifact(
+            pool, artifact, embedder=Embedder(rate_limit_pool=pool),
+            created_by="structured_skill_ingestion_worker",
+            client=client,
+            admission_llm_model=settings.general_compute_judge_model or "gemma-4-31B-it",
+            extraction_llm_model=settings.general_compute_judge_model or "gemma-4-31B-it",
+            claim_extraction_llm_model=settings.general_compute_judge_model or "gemma-4-31B-it",
+        )
+        status = getattr(outcome, "status", None)
+        _tel.set_attrs(
+            sp, ingest_status=status,
+            items_accepted=int(status in ("captured", "new_version")),
+            items_duplicate=int(status in ("duplicate", "unchanged")),
+            items_rejected=int(status == "rejected"),
+            items_failed=int(status == "error"),
+            procedure_id=getattr(outcome, "procedure_id", None))
+        if status == "error":
+            _tel.fail(sp, _tel.FailureCode.INGESTION_ERROR)
+        elif status == "rejected":
+            _tel.fail(sp, _tel.FailureCode.INGESTION_PARSE_ERROR, force_keep=False)
+        elif status in ("duplicate", "unchanged"):
+            _tel.set_attrs(sp, failure_code=_tel.FailureCode.DUPLICATE_OBJECT)
 
 log = logging.getLogger(__name__)
 
@@ -789,6 +811,18 @@ async def enqueue_pending_procedure_extractions(
         _PENDING_EXTRACTION_SQL, limit,
         MIN_OBSERVATIONS_TO_EXTRACT, MIN_OBSERVATION_TYPES_TO_EXTRACT,
     )
+    from app.services.shards import all_pools, multi_shard
+    if rows and await multi_shard(pool):
+        # the NOT EXISTS above only sees procedures on this database; an episode may already have produced one on a shard
+        done: set[str] = set()
+        eps = [r["episode_id"] for r in rows]
+        for _sid, spool in await all_pools(pool, strict=True):
+            if spool is pool:
+                continue
+            for x in await spool.fetch(
+                "SELECT unnest(source_episode_ids) AS e FROM procedures WHERE t_invalid IS NULL AND source_episode_ids && $1::uuid[]", eps):
+                done.add(str(x["e"]))
+        rows = [r for r in rows if str(r["episode_id"]) not in done]
     for r in rows:
         await pool.execute(
             "INSERT INTO ingestion_jobs (job_type, payload) VALUES ($1, $2)",
@@ -966,7 +1000,8 @@ async def handle_extract_procedure_from_episode(
         pool, str(ep["session_id"]),
     )
     if ingestion_context_id is not None and result.version_row_id is not None:
-        await pool.execute(
+        from app.services.shards import home_pool
+        await (await home_pool(pool, "procedure", str(result.version_row_id), by_row_id=True)).execute(
             "UPDATE procedures SET ingestion_context_id = $1::uuid "
             "WHERE id = $2::uuid AND ingestion_context_id IS NULL",
             ingestion_context_id, str(result.version_row_id),
@@ -1143,7 +1178,8 @@ async def handle_consolidate_local_episode(pool: asyncpg.Pool, payload: dict) ->
     # nothing (or worse, a coincidentally-existing unrelated row).
     goal_text = None
     if run["procedure_id"] is not None:
-        goal_text = await pool.fetchval(
+        from app.services.shards import home_pool
+        goal_text = await (await home_pool(pool, "procedure", str(run["procedure_id"]))).fetchval(
             "SELECT goal FROM procedures WHERE procedure_id = $1::uuid AND version = $2",
             run["procedure_id"], run["procedure_version"],
         )
@@ -1316,14 +1352,17 @@ async def _discover_synthesis_candidates(
     pool: asyncpg.Pool, *, episode_id: str, scope_type: str,
     scope_entity_id: Optional[str], limit: int = MAX_SYNTHESIS_CANDIDATES,
 ) -> list[str]:
-    rows = await pool.fetch(
-        "SELECT source_episode_ids[1] AS episode_id FROM procedures "
+    from app.services.shards import fanout_fetch
+    rows = await fanout_fetch(
+        pool,
+        "SELECT source_episode_ids[1] AS episode_id, t_created FROM procedures "
         "WHERE t_invalid IS NULL AND array_length(source_episode_ids, 1) = 1 "
         "AND source_episode_ids[1] != $1::uuid "
         "AND scope_type = $2 AND scope_entity_id IS NOT DISTINCT FROM $3 "
         "ORDER BY t_created DESC LIMIT $4",
         episode_id, scope_type, scope_entity_id, limit,
     )
+    rows = sorted(rows, key=lambda r: r["t_created"], reverse=True)[:limit]
     return [str(r["episode_id"]) for r in rows]
 
 
@@ -1457,6 +1496,20 @@ async def process_pending_jobs(
     Returns real counts, not estimates, same discipline as
     process_collector_file()'s own return value.
     """
+    with _tel.span("ingestion.batch", kind="CHAIN", on_error=_tel.FailureCode.INGESTION_ERROR,
+                   worker=worker_id) as sp:
+        totals = await _process_pending_jobs(
+            pool, limit=limit, job_types=job_types, worker_id=worker_id)
+        _tel.set_attrs(sp, items_attempted=totals["claimed"], items_accepted=totals["done"],
+                       items_failed=totals["failed"], items_rejected=totals["unknown_type"])
+        if totals["failed"]:
+            _tel.fail(sp, _tel.FailureCode.INGESTION_ERROR)
+        return totals
+
+
+async def _process_pending_jobs(
+    pool: asyncpg.Pool, *, limit: int, job_types: Optional[list[str]], worker_id: Optional[str],
+) -> dict:
     jobs = await claim_jobs(pool, limit=limit, job_types=job_types, worker_id=worker_id)
     done = 0
     failed = 0
@@ -1481,7 +1534,9 @@ async def process_pending_jobs(
             continue
 
         try:
-            await handler(pool, payload)
+            with _tel.span("ingestion.job", kind="CHAIN", on_error=_tel.FailureCode.INGESTION_ERROR,
+                           job_type=job_type, attempt=job.get("attempts")):
+                await handler(pool, payload)
         except Exception as exc:  # noqa: BLE001 -- deliberately broad: one
             # job's handler raising must not crash the batch loop; the
             # real error is preserved in last_error for later inspection.

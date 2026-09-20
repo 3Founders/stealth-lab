@@ -391,7 +391,8 @@ async def reextract_procedure(
     from app.services.procedure_extraction.schema import ExtractionTransientFailure
     from app.services.procedures import supersede_procedure
 
-    prior = await pool.fetchrow(
+    from app.services.shards import home_pool
+    prior = await (await home_pool(pool, "procedure", procedure_row_id, by_row_id=True)).fetchrow(
         "SELECT id, procedure_id, goal, source_episode_ids, owner_id, visibility "
         "FROM procedures WHERE id = $1::uuid AND t_invalid IS NULL",
         procedure_row_id,
@@ -441,7 +442,8 @@ async def reextract_procedure(
     # back from that fresh row and superseded into place under the
     # ORIGINAL procedure_id/family, then the fresh standalone row is
     # retired (tombstoned, never deleted, this table's own idiom).
-    fresh = await pool.fetchrow(
+    fresh_pool = await home_pool(pool, "procedure", str(result.version_row_id), by_row_id=True)
+    fresh = await fresh_pool.fetchrow(
         "SELECT steps, goal, capability_statement, extracted_by, preconditions, "
         "scope, failure_conditions, invariants FROM procedures WHERE id = $1::uuid",
         result.version_row_id,
@@ -459,7 +461,7 @@ async def reextract_procedure(
         },
         superseded_by="admin_reextract", reason="re-extraction with the currently-selected extractor",
     )
-    await pool.execute(
+    await fresh_pool.execute(
         "UPDATE procedures SET t_invalid = now(), verification_state = 'retired' "
         "WHERE id = $1::uuid AND t_invalid IS NULL",
         result.version_row_id,

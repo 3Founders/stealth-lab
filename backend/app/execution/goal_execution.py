@@ -3,53 +3,15 @@ Execute a resolved Goal route (Prompt 2 Sec 7/9/10, 2026-09-15) -- the
 actual "execute" step of Sec 7's own compiler pipeline
 (`resolve_goal -> ground_goal -> select_routes -> ... -> execute`).
 
-Reuses the EXISTING `execute_implementation()` chokepoint
-(`implementation_executor.py`, already telemetry-wired this session --
-every attempt this module makes is automatically recorded into
-`implementation_execution_telemetry`, migration 85, with zero extra
-code here) for every concrete node, adding the one real capability the
-durable-execution audit confirmed is missing anywhere in this codebase:
-REAL fallback to an alternate ranked-eligible Implementation when the
-first one fails (Prompt 2 Sec 10). "Alternate" here is never invented --
-it is `ResolvedGoalNode.implementation_alternates`, the SAME real ranked
-list `select_implementation_for_goal_id` already computed and previously
-discarded (see goal_resolution.py's own docstring on that field).
+Executes the concrete STEP leaves of an already-resolved Goal tree. A step is executable when it carries a
+`binding` (see `step_binding.py`); there is no separate Implementation object -- "an implementation" is a
+one-step procedure or a step of a multi-step one. Fallback is at Procedure level: when a whole Procedure's
+walk fails, the next feasible alternate Procedure is resolved lazily and tried (Prompt 2 Sec 10).
 
-SCOPE, STATED HONESTLY (audited before writing anything -- read
-`durable_run.py`, `plan_persistence.py`, `db/23_plan_persistence.sql`,
-`db/36_durable_execution_runs.sql` in full first):
-
-  `execution_runs`/`execution_plans` (migration 23/36) already give
-  FULL crash/resume durability (leases, terminal-state fencing, resume
-  counts) -- but `execution_plans.procedure_id` is NOT NULL, tied by a
-  composite FK to `procedures(procedure_id, version)`, and migration
-  23's own docstring calls this "the purest one-way door in Band 1"
-  (invariant #2: "every ExecutionPlan references an exact Procedure
-  version"). A Goal route that resolves DIRECTLY to an Implementation
-  (no Procedure at all -- Prompt 2 Sec 0's own "choose direct
-  Implementation OR choose Procedure") has no procedure_id to give it.
-  Forcing one through that table would mean either weakening a
-  documented one-way-door invariant or fabricating a placeholder
-  procedure row -- both dishonest, neither attempted here.
-
-  A Goal route that DOES resolve through a real Procedure already has a
-  real `procedure_id`/`version` at that node (`ResolvedGoalNode.procedure`)
-  and can be run through the EXISTING tier-2 durable pipeline
-  (`compile_plan` -> `persist_compiled_plan` -> `durable_run.py`)
-  completely unchanged -- this module does not attempt to replace or
-  duplicate that path.
-
-  This module covers what neither existing path covers: executing the
-  concrete Implementation LEAVES of an already-resolved Goal tree
-  (`ResolvedGoalNode.chosen == "implementation"`, wherever they occur --
-  a bare direct-Implementation Goal, or the bottom of a Procedure's own
-  decomposition once its steps resolve to Goals that themselves resolve
-  directly). It is a SEQUENTIAL walk in the same real dependency order
-  `goal_compiler.py::flatten_goal_tree` already establishes (Procedure
-  steps are already `order`-sorted by `resolve_goal` itself) -- not a
-  parallel scheduler (`graph_executor.py` already owns that, for the
-  Procedure/TaskGraph shape; duplicating it here for a different node
-  shape was judged out of scope for this increment).
+SCOPE, STATED HONESTLY: `execution_runs`/`execution_plans` (migration 23/36) give full crash/resume durability
+for the tier-2 Procedure pipeline (`compile_plan` -> `persist_compiled_plan` -> `durable_run.py`), which this
+module does not replace. This module is a SEQUENTIAL walk over a Goal tree's step leaves, in the order
+`resolve_goal` already sorted them (`graph_executor.py` owns parallel scheduling for the TaskGraph shape).
 
   DURABILITY UPDATE (Prompt 2 Sec 12, this pass): passing `workspace_root`
   (+ optionally `execution_id` to resume a SPECIFIC prior attempt) makes
@@ -87,30 +49,22 @@ import asyncpg
 from app.execution.goal_resolution import ResolvedGoalNode, resolve_goal_via_procedure
 from app.execution.goal_verification import run_goal_verification
 from app.execution.graph_executor import NodeResult
-from app.execution.implementation_executor import execute_implementation
+from app.execution.step_binding import execute_node
 from app.models.plan import PlanNode
 from app.services.access import AccessScope
 
 
 @dataclass
-class ImplementationAttempt:
-    """One real attempt at one real Implementation for one Goal node --
-    every attempt is kept (Prompt 2 Sec 10: "Track all attempts"),
-    never overwritten or discarded once a later attempt succeeds.
+class StepAttempt:
+    """One real attempt at one bound procedure step (Sec 10: "Track all attempts").
 
-    `verification_state`/`verification_detail` (Sec 9) are the REAL
-    outcome of `goal_verification.run_goal_verification` run against
-    THIS attempt's own execution result -- `None` only when the
-    implementation call itself never reached `status='success'` (nothing
-    to verify yet). A `status='failure'` attempt whose
-    `verification_state == 'failed_verification'` means the
-    implementation call reported success but Sec 9's own rule caught it
-    ("a successful model response is NOT equivalent to successful Goal
-    completion") -- exactly the case this wiring exists for."""
+    `verification_state`/`verification_detail` (Sec 9) are the outcome of
+    `goal_verification.run_goal_verification` against THIS attempt's result -- `None` only when the step never
+    reached `status='success'`. A `status='failure'` attempt whose `verification_state == 'failed_verification'`
+    means the step reported success but the Goal's verification requirement caught it."""
 
-    implementation_id: str
-    implementation_name: Optional[str]
-    kind: Optional[str]
+    step_order: Optional[int]
+    binding_kind: Optional[str]
     status: str  # "success" | "failure"
     notes: Optional[str] = None
     verification_state: Optional[str] = None
@@ -119,17 +73,14 @@ class ImplementationAttempt:
 
 @dataclass
 class GoalNodeExecutionResult:
-    """The outcome for one `chosen == "implementation"` leaf. `status`
-    is `"success"` only if SOME attempt (first choice or a real
-    fallback) actually succeeded -- never inferred from a partial
-    result. `used_implementation_id` names exactly which one, so a
-    caller never has to guess which of several attempts "counts"."""
+    """The outcome for one `chosen == "step"` leaf. `status` is `"success"` only if the step actually
+    succeeded (and passed verification) -- never inferred from a partial result."""
 
     goal_id: str
     goal_name: str
     status: str  # "success" | "failure"
-    attempts: list[ImplementationAttempt] = field(default_factory=list)
-    used_implementation_id: Optional[str] = None
+    attempts: list[StepAttempt] = field(default_factory=list)
+    used_binding_kind: Optional[str] = None
     result: Optional[NodeResult] = None
     # True when this result was NOT actually re-executed -- it was
     # reused verbatim from a prior real `goal_node_result` journal event
@@ -148,7 +99,7 @@ class GoalNodeExecutionResult:
 @dataclass
 class ProcedureAttempt:
     """One real attempt at one real Procedure decomposition for one Goal
-    node -- the Procedure-level counterpart of `ImplementationAttempt`
+    node -- the Procedure-level counterpart of `StepAttempt`
     (Sec 10: "Track all attempts"). `status` is the AGGREGATE outcome of
     that procedure's own children walk (`"success"`/`"failure"`/
     `"needs_input"`)."""
@@ -181,7 +132,7 @@ class ProcedureExecutionResult:
 @dataclass
 class GoalExecutionResult:
     """The full walk's outcome. `outcome` is `"success"` only if every
-    reachable `chosen == "implementation"` leaf succeeded (an
+    reachable `chosen == "step"` leaf succeeded (an
     `"unresolved"` leaf always makes the overall outcome
     `"needs_input"`, Sec 21's own vocabulary -- never silently treated
     as a pass). `node_results` is keyed by `goal_id` (a Goal may appear
@@ -204,8 +155,8 @@ class GoalExecutionResult:
     execution_id: Optional[str] = None
 
 
-def _to_plan_node(goal_name: str, implementation: dict) -> PlanNode:
-    return PlanNode(order=0, goal=goal_name, implementation_id=str(implementation["id"]))
+def _to_plan_node(goal_name: str, step: dict) -> PlanNode:
+    return PlanNode(order=int(step.get("order") or 0), goal=goal_name, binding=step.get("binding"))
 
 
 def _journal_prior_result(workspace_root: str, execution_id: str, goal_id: str) -> Optional[dict]:
@@ -231,56 +182,37 @@ def _journal_record_result(workspace_root: str, execution_id: str, goal_id: str,
 async def execute_goal_node(
     pool: asyncpg.Pool, node: ResolvedGoalNode, context: dict, *, scope: AccessScope,
 ) -> GoalNodeExecutionResult:
-    """Execute one `chosen == "implementation"` leaf with real fallback,
-    now gated by real verification (Sec 9/10's own combined diagram:
-    "Implementation failure -> verification failure -> fallback
-    Implementation"): try `node.implementation`; if it reports
-    `status='success'`, run `node.verification_requirement` against the
-    real result via `run_goal_verification`. A candidate only counts as
-    an overall success if execution succeeded AND verification did not
-    come back `failed_verification` (`unverified`/`checked`/`verified`/
-    `needs_human_review` all count -- Sec 9 requires a contract to
-    exist, it does not require this executor to be ABLE to auto-check
-    every kind, and a pending human review is not a failure). Otherwise
-    falls back to the next of `node.implementation_alternates` in their
-    already-real-ranked order. Never substitutes a different Goal (Sec
-    10) -- every candidate tried here satisfies THIS SAME `node.goal_id`,
-    which is exactly what `implementation_alternates` already is."""
-    if node.chosen != "implementation" or node.implementation is None:
-        raise ValueError(f"execute_goal_node requires a chosen=='implementation' node, got {node.chosen!r}")
+    """Execute one `chosen == "step"` leaf through its binding, gated by real verification (Sec 9/10):
+    if the step reports `status='success'`, run `node.verification_requirement` against the real result via
+    `run_goal_verification`. It only counts as a success if execution succeeded AND verification did not come
+    back `failed_verification` (`unverified`/`checked`/`verified`/`needs_human_review` all count). Fallback is
+    at Procedure level (an alternate Procedure), never inside a step."""
+    if node.chosen != "step" or node.step is None:
+        raise ValueError(f"execute_goal_node requires a chosen=='step' node, got {node.chosen!r}")
 
-    candidates = [node.implementation, *node.implementation_alternates]
-    attempts: list[ImplementationAttempt] = []
-    last_result: Optional[NodeResult] = None
+    step = node.step
+    plan_node = _to_plan_node(node.goal_name, step)
+    result = await execute_node(
+        pool, plan_node, {**context, "procedure_id": step.get("procedure_id")}, scope=scope,
+    )
 
-    for impl in candidates:
-        plan_node = _to_plan_node(node.goal_name, impl)
-        result = await execute_implementation(pool, plan_node, context, scope=scope)
-        last_result = result
+    verification_state: Optional[str] = None
+    verification_detail: Optional[str] = None
+    overall_status = result.status
+    if result.status == "success":
+        verification = await run_goal_verification(node.verification_requirement, result)
+        verification_state, verification_detail = verification.state, verification.detail
+        if verification.state == "failed_verification":
+            overall_status = "failure"
 
-        verification_state: Optional[str] = None
-        verification_detail: Optional[str] = None
-        overall_status = result.status
-        if result.status == "success":
-            verification = await run_goal_verification(node.verification_requirement, result)
-            verification_state, verification_detail = verification.state, verification.detail
-            if verification.state == "failed_verification":
-                overall_status = "failure"
-
-        attempts.append(ImplementationAttempt(
-            implementation_id=str(impl["id"]), implementation_name=impl.get("name"),
-            kind=impl.get("kind"), status=overall_status, notes=result.notes,
-            verification_state=verification_state, verification_detail=verification_detail,
-        ))
-        if overall_status == "success":
-            return GoalNodeExecutionResult(
-                goal_id=node.goal_id, goal_name=node.goal_name, status="success",
-                attempts=attempts, used_implementation_id=str(impl["id"]), result=result,
-            )
-
+    kind = (step.get("binding") or {}).get("kind")
+    attempt = StepAttempt(
+        step_order=step.get("order"), binding_kind=kind, status=overall_status, notes=result.notes,
+        verification_state=verification_state, verification_detail=verification_detail,
+    )
     return GoalNodeExecutionResult(
-        goal_id=node.goal_id, goal_name=node.goal_name, status="failure",
-        attempts=attempts, used_implementation_id=None, result=last_result,
+        goal_id=node.goal_id, goal_name=node.goal_name, status=overall_status, attempts=[attempt],
+        used_binding_kind=kind if overall_status == "success" else None, result=result,
     )
 
 
@@ -391,13 +323,13 @@ async def _walk_node(
     unresolved_names: list[str],
     workspace_root: Optional[str] = None, execution_id: Optional[str] = None,
 ) -> str:
-    if node.chosen == "implementation":
+    if node.chosen == "step":
         if workspace_root and execution_id:
             prior = _journal_prior_result(workspace_root, execution_id, node.goal_id)
             if prior and prior.get("status") == "success":
                 result = GoalNodeExecutionResult(
                     goal_id=node.goal_id, goal_name=node.goal_name, status="success",
-                    used_implementation_id=prior.get("used_implementation_id"), resumed_from_journal=True,
+                    used_binding_kind=prior.get("used_binding_kind"), resumed_from_journal=True,
                     artifacts=prior.get("artifacts") or [],
                 )
                 leaf_results[node.goal_id] = result
@@ -411,8 +343,8 @@ async def _walk_node(
         leaf_results[node.goal_id] = result
         if workspace_root and execution_id:
             _journal_record_result(
-                workspace_root, execution_id, node.goal_id, kind="implementation",
-                status=result.status, used_implementation_id=result.used_implementation_id,
+                workspace_root, execution_id, node.goal_id, kind="step",
+                status=result.status, used_binding_kind=result.used_binding_kind,
                 artifacts=result.artifacts,
             )
         return result.status
@@ -440,11 +372,10 @@ async def execute_goal_tree(
     workspace_root: Optional[str] = None, execution_id: Optional[str] = None,
 ) -> GoalExecutionResult:
     """Walk an already-resolved Goal tree (`goal_resolution.resolve_goal`'s
-    own output) and execute every real `implementation` leaf it
+    own output) and execute every real `step` leaf it
     contains, in the same order the tree's own Procedure steps were
-    already sorted in -- with real fallback at BOTH rungs Sec 10
-    describes: an Implementation's own alternates (`execute_goal_node`)
-    and, when a whole Procedure's execution fails, an alternate Procedure
+    already sorted in -- with real fallback when a whole
+    Procedure's execution fails: an alternate Procedure
     (`_walk_procedure_with_fallback`, lazily resolving
     `node.procedure_alternates` only if actually needed). An `unresolved`
     leaf is never executed and never silently treated as success -- it
@@ -495,8 +426,8 @@ def render_goal_run_md(execution: GoalExecutionResult) -> str:
 
     lines = [
         GoalRunLine(
-            goal_id=gid, kind="implementation", status=r.status,
-            implementation_id=r.used_implementation_id, verification_state=(
+            goal_id=gid, kind="step", status=r.status,
+            binding=r.used_binding_kind, verification_state=(
                 r.attempts[-1].verification_state if r.attempts else None
             ),
             resumed_from_journal=r.resumed_from_journal, artifacts=r.artifacts,

@@ -8,7 +8,8 @@ in the retrieval path reads `goal_relations` (hierarchy is optional and never re
 ```
 query + local Claims
   │  build_query_context()      select ≤ 12 relevant local Claims (budget; never "all")
-  ▼                             compact text = query + top claim statements; claim ids logged
+  ▼                             query kept clean for candidate generation; query + claim statements is used
+                                ONLY by the judge (goal + procedure): claims disambiguate but never steer FTS/ANN, so generic claims cannot drift retrieval
 TIER 1 — Goal      search_goals()
   │  goal_search_index (global projection, scope-filtered by visibility_predicate)
   │    FTS (to_tsquery OR-terms, ts_rank_cd)  ┐

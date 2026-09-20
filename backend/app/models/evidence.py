@@ -39,7 +39,7 @@ EvidenceType = Literal[
     "reproduction",
 ]
 
-TargetType = Literal["claim", "procedure", "implementation"]
+TargetType = Literal["claim", "procedure"]
 Direction = Literal["supports", "contradicts"]
 
 # executions.outcome's exact closed vocabulary -- reused, not re-spelled

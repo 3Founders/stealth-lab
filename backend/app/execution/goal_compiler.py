@@ -11,8 +11,8 @@ reason: its contracts must be provable offline). Takes an
 already-resolved `ResolvedGoalNode` tree (goal_resolution.resolve_goal's
 output) and flattens it into an ordered list of concrete nodes:
 
-  - one concrete node per `chosen == "implementation"` LEAF -- the real
-    work.
+  - one concrete node per `chosen == "step"` LEAF (a procedure step carrying a
+    `binding`) -- the real work.
   - one concrete HUMAN node per `chosen == "unresolved"` leaf (Sec 4/21:
     "A Goal may initially be unsolved" is a real, durable state, not an
     error to hide -- surfaced here as an explicit NEEDS_INPUT node a
@@ -26,12 +26,9 @@ output) and flattens it into an ordered list of concrete nodes:
     relies on) -- one subtree's LAST concrete node becomes the next
     subtree's dependency.
 
-Sec 17's cardinality rules fall out of this naturally, not as special
-cases: a Goal resolving straight to an Implementation is one Step -> one
-node; a Goal resolving through a Procedure whose every step itself
-resolves to an Implementation is one Step -> one node per step (many
-nodes for the whole Goal); a Goal resolving through a Procedure with an
-unresolved step is Step -> zero executable nodes (a human node instead).
+Cardinality falls out naturally: a one-step procedure is one node; a
+procedure whose every step is bound is one node per step; a procedure with an
+unresolved step yields a human node for that step.
 """
 from __future__ import annotations
 
@@ -51,8 +48,9 @@ class GoalPlanNode:
     node_id: str
     goal_id: str
     goal_name: str
-    kind: Literal["implementation", "human"]
-    implementation_id: Optional[str] = None
+    kind: Literal["step", "human"]
+    step_order: Optional[int] = None
+    procedure_id: Optional[str] = None
     executor: str = "human"
     deps: list[str] = field(default_factory=list)
     rationale: str = ""
@@ -83,12 +81,13 @@ def flatten_goal_tree(tree: ResolvedGoalNode) -> list[GoalPlanNode]:
         into children that do -- kept as a real return type rather than
         assumed, so a future branch that legitimately emits nothing
         doesn't silently break the chain)."""
-        if node.chosen == "implementation":
+        if node.chosen == "step":
+            from app.execution.step_binding import executor_kind
             nid = _next_id()
             nodes.append(GoalPlanNode(
                 node_id=nid, goal_id=node.goal_id, goal_name=node.goal_name,
-                kind="implementation", implementation_id=str(node.implementation["id"]),
-                executor=str(node.implementation.get("kind") or "frontier"),
+                kind="step", step_order=(node.step or {}).get("order"), procedure_id=(node.step or {}).get("procedure_id"),
+                executor=executor_kind((node.step or {}).get("binding")),
                 deps=[prior_dep] if prior_dep else [],
                 rationale=node.rationale, depth=node.depth,
             ))
@@ -125,7 +124,7 @@ def compiled_goal_to_run_md(nodes: list[GoalPlanNode]) -> str:
     plan before anything executes (`RUN|...|pending|...`) -- this is the
     same honesty for a Goal-based plan, via `compile_goal` (pure, no
     pool, no execution -- see this module's own docstring). Every node's
-    `status` is `"planned"` (a real Implementation WOULD be dispatched
+    `status` is `"planned"` (a real bound step WOULD be dispatched
     here) or `"needs_input"` (a real, already-known gap -- Sec 4/21's
     own `human` kind) -- never `"success"`/`"failure"`, since nothing
     has actually run yet. `execution_id='-'` (pipe_format.py's own
@@ -142,8 +141,7 @@ def compiled_goal_to_run_md(nodes: list[GoalPlanNode]) -> str:
     lines = [
         GoalRunLine(
             goal_id=n.goal_id, kind=n.kind,
-            status="planned" if n.kind == "implementation" else "needs_input",
-            implementation_id=n.implementation_id if n.kind == "implementation" else None,
+            status="planned" if n.kind == "step" else "needs_input",
         )
         for n in nodes
     ]

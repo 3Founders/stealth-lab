@@ -1,7 +1,7 @@
 """Concrete behavior verifiers, imported here for their registration side
 effect (`app.execution.behavior_verification.register_behavior_verifier`).
 
-Mirrors `app.execution.implementations`' closed-registry shape: this
+Mirrors `app.execution.executor_kinds`' closed-registry shape: this
 package is the one place that must import every concrete verifier module
 so its registration actually runs. A caller that needs a specific
 verifier looked up by name goes through

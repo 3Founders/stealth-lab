@@ -51,12 +51,9 @@ Procedure→Goal link and shard/projection bookkeeping automatically; see
 | `identity_decisions`, `retrieval_decisions` (95) | durable audit |
 | `ingestion_jobs` (12/42/95) | `id, job_type, payload, status, attempts, max_attempts, claimed_by, lease_until, run_after, idempotency_key, source_id, scope_*, owner_id, visibility, config_version, started_at, completed_at, last_error, usage` |
 
-Global Implementation concept: `implementations` is a **runtime binding**, not knowledge
-(60 modules depend on it; migration 59 already removed one redundant binding table). It was **not
-deleted**. New code must not treat it as ontology; `implementation_goals` enrichment and
-goal-scoped implementation search are marked deprecated in the audit. Execution bindings
-(tool/model/MCP tool/adapter/sandbox/command/locator/verifier) belong on `PlanNode`/execution
-metadata (`app/execution/implementations.py`); migrating the remaining ontology callers is open.
+Global Implementation concept: **removed** (migration 98). An implementation is a one-step procedure or a step of a
+multi-step one; execution bindings live on `procedures.steps[].binding`, provenance on `procedure.source_locator` /
+`steps[].source_locator`, preserved source bytes on `ingested_artifacts`. See `docs/step_bindings_and_artifacts.md`.
 
 ## Migration and upgrade safety
 

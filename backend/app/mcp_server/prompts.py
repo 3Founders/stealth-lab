@@ -20,7 +20,7 @@ _TOOLS_NOTE = (
     "Tools available: init_workspace, search_procedures, get_procedure, check_applicability, "
     "check_procedure, decide_procedure, find_best_way, reproduce_procedure, "
     "report_execution, submit_procedure, retrieve_precedent, "
-    "resolve_implementation, inspect_implementation, find_problem, "
+    "find_problem, "
     "inspect_problem, compare_solutions, inspect_evaluation, "
     "find_best_solution, inspect_run, resume_execution_run, "
     "retry_run_node, record_run_update, preview_local_sync, commit_local_sync, "
@@ -29,7 +29,7 @@ _TOOLS_NOTE = (
     "stealth://procedures/{id}, "
     "stealth://problems/{id}, stealth://problems/{id}/solutions, "
     "stealth://claims/{id}, stealth://evaluations/{id}, "
-    "stealth://implementations/{id}, stealth://tasks/{id}/implementations, "
+    ""
     "stealth://runs/{id}."
 )
 
@@ -70,8 +70,8 @@ Policy:
 6. If a usable procedure exists, ADAPT it to this task rather than
    rediscovering the method from scratch.
 7. If no procedure is sufficient, solve it yourself using your own
-   reasoning and tools against the real task/repository; call
-   `resolve_implementation` only for nodes that actually need a
+   reasoning and tools against the real task/repository; use a step's
+   `binding` (see the procedure's steps) only for nodes that actually need a
    concrete executable mechanism.
 8. Resuming or continuing an existing run (`resume_execution_run`,
    `retry_run_node`)? Check `.stealth/run.md`'s COLLAB_SUMMARY and

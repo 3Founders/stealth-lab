@@ -14,7 +14,7 @@ import asyncio
 import pytest
 
 from app.execution.graph_executor import NodeResult
-from app.execution.implementations import IMPLEMENTATION_KINDS
+from app.execution.executor_kinds import EXECUTOR_KINDS
 from app.execution.providers import (
     DeterministicProvider,
     FrontierProvider,
@@ -37,7 +37,7 @@ def _node(order: int = 0, goal: str = "do the thing") -> PlanNode:
 def test_discover_providers_covers_every_implementation_kind():
     entries = asyncio.run(discover_providers())
     kinds_seen = {e.kind for e in entries}
-    assert kinds_seen == set(IMPLEMENTATION_KINDS)
+    assert kinds_seen == set(EXECUTOR_KINDS)
 
 
 def test_unavailable_kinds_report_available_false_with_honest_reason():

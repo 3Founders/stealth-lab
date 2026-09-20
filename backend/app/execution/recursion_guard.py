@@ -297,14 +297,7 @@ async def decide_child_failure_strategy(
       1. `retry`             -- the child's own failed node has a
                                  RETRYABLE error_class (durable_run.py's
                                  own real classifier) and attempts remain.
-      2. `search_alternative` -- not retryable (or exhausted), but a REAL
-                                 alternative exists: another ACTIVE
-                                 Procedure<->Implementation binding for the
-                                 SAME child procedure (B23/B24) -- a
-                                 different TOOL/mechanism for the exact
-                                 same approach.
-      3. `branch`             -- no alternative Implementation for the
-                                 same Procedure, but a genuinely DIFFERENT
+      2. `branch`             -- a genuinely DIFFERENT
                                  applicable Procedure exists for the same
                                  goal (`diagnose_candidates`, the failed
                                  one's `procedure_id` excluded via
@@ -356,16 +349,6 @@ async def decide_child_failure_strategy(
         budget_reason = str(exc)
 
     if budget_allows_more and child_procedure_id is not None:
-        from app.services.procedure_implementation_bindings import get_bindings_for_procedure
-
-        bindings = await get_bindings_for_procedure(pool, procedure_id=child_procedure_id, status="active")
-        if len(bindings) > 1:
-            return {
-                "strategy": "search_alternative",
-                "reason": f"{len(bindings)} active implementation bindings exist for the failed "
-                f"procedure -- a different one may succeed",
-            }
-
         plan_row = await pool.fetchrow(
             "SELECT ep.task_description FROM execution_runs er "
             "JOIN execution_plans ep ON ep.id = er.execution_plan_id WHERE er.id = $1",
@@ -388,7 +371,7 @@ async def decide_child_failure_strategy(
                     "strategy": "branch",
                     "reason": f"a genuinely different applicable procedure "
                     f"{(alternative.procedure or {}).get('procedure_id')!r} exists for the same goal "
-                    "-- a different path, not merely a different implementation of the failed one",
+                    "-- a different path, not merely another attempt at the failed one",
                 }
 
     if budget_allows_more:

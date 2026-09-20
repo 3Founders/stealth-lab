@@ -9,7 +9,7 @@ directive's whole design point is that each line here is already
 self-contained and independently `rg`-able (`CLAIM|C-022|...` is a
 complete record on one line), so there is no line-range index to
 maintain for these four files the way `claims.idx`/`procedures.idx`/
-`run.idx` exist for the OLDER `## HEADING` pages (`implementations.md`,
+`run.idx` exist for the OLDER `## HEADING` pages (
 `exploration.md`) that still use that mechanism, unchanged, alongside
 this one. Reuses `app.stealth.format._clean` for the same pipe/newline
 safety guarantee the existing `.idx` rows already have -- one sanitizer,
@@ -41,7 +41,7 @@ _PROCEDURES_HEADER = (
 )
 _RUN_HEADER = (
     "# run.md -- GENERATED, not canonical. Do not hand-edit.\n"
-    "# NODE|<node_id>|<status>|<name>|goal=<goal_id>|step=<procedure_id>:<step_id>|impl=<implementation_id>|executor=<executor>|deps=<node_ids_csv>\n"
+    "# NODE|<node_id>|<status>|<name>|goal=<goal_id>|step=<procedure_id>:<step_id>|binding=<binding_kind_or_->|executor=<executor>|deps=<node_ids_csv>\n"
     "# GOAL|<node_id>|<goal_id>|<grounded_goal_summary>\n"
     "# VERIFY|<node_id>|<verification_id>|<state>|<verification_type>|<criterion>|source=<source_ref>|evidence=<evidence_ref_or_none>\n"
     "# COST_ESTIMATE not emitted yet -- no cost model exists in this codebase (honest, not silently skipped)\n"
@@ -148,7 +148,7 @@ class ProcedureLine:
 
 
 def render_procedures_md(procedures: list[ProcedureLine]) -> str:
-    """Directive Sec 26. Run-specific bindings (implementation_id,
+    """Directive Sec 26. Run-specific bindings (step binding,
     executor, concrete inputs) never appear here -- those belong to
     run.md's NODE lines; this file stays the abstract, run-independent
     Procedure/Step definition, unchanged across every run that uses it."""
@@ -191,7 +191,7 @@ class NodeLine:
     name: str
     procedure_id: str
     step_id: str
-    implementation_id: Optional[str]
+    binding: Optional[str]  # step binding kind, None = default frontier
     executor: str
     deps: list[str] = field(default_factory=list)
     # execu.md Sec 25 (meta-harness directive, 2026-09-15 revision):
@@ -316,7 +316,7 @@ def render_run_md(run: RunLine, nodes: list[NodeLine], collab: list[CollabLine] 
             _row("NODE", n.node_id, n.status, n.name)
             + _SEP + _kv_field("goal", n.goal_id or "-")
             + _SEP + _kv_field("step", f"{n.procedure_id}:{n.step_id}")
-            + _SEP + _kv_field("impl", n.implementation_id or "-")
+            + _SEP + _kv_field("binding", n.binding or "-")
             + _SEP + _kv_field("executor", n.executor)
             + _SEP + _kv_field("deps", _csv(n.deps)),
         ]
@@ -360,7 +360,7 @@ def render_run_md(run: RunLine, nodes: list[NodeLine], collab: list[CollabLine] 
 _GOAL_RUN_HEADER = (
     "# goal_run.md -- GENERATED, not canonical. Do not hand-edit.\n"
     "# GOAL_RUN|<execution_id>|<outcome>\n"
-    "# GOAL_NODE|<goal_id>|<kind>|<status>|impl=<implementation_id_or_->|proc=<procedure_id_or_->|"
+    "# GOAL_NODE|<goal_id>|<kind>|<status>|binding=<binding_kind_or_->|proc=<procedure_id_or_->|"
     "verify=<verification_state_or_->|human_intervention=<bool>|resumed=<bool>\n"
     "# ARTIFACT|<goal_id>|<filename>|sha256=<sha256>|size=<size_bytes>\n\n"
 )
@@ -369,9 +369,9 @@ _GOAL_RUN_HEADER = (
 @dataclass
 class GoalRunLine:
     goal_id: str
-    kind: str  # "implementation" | "procedure"
+    kind: str  # "step" | "procedure"
     status: str
-    implementation_id: Optional[str] = None
+    binding: Optional[str] = None
     procedure_id: Optional[str] = None
     verification_state: Optional[str] = None
     human_intervention_needed: bool = False
@@ -396,7 +396,7 @@ def render_goal_run_md(execution_id: str, outcome: str, nodes: list[GoalRunLine]
     for n in nodes:
         lines.append(
             _row("GOAL_NODE", n.goal_id, n.kind, n.status)
-            + _SEP + _kv_field("impl", n.implementation_id or "-")
+            + _SEP + _kv_field("binding", n.binding or "-")
             + _SEP + _kv_field("proc", n.procedure_id or "-")
             + _SEP + _kv_field("verify", n.verification_state or "-")
             + _SEP + _kv_field("human_intervention", n.human_intervention_needed)
@@ -443,7 +443,7 @@ def parse_goal_run_md(content: str) -> dict:
             kv = _kv_map(parts[4:])
             current = {
                 "goal_id": parts[1], "kind": parts[2], "status": parts[3],
-                "implementation_id": kv.get("impl") if kv.get("impl", "-") != "-" else None,
+                "binding": kv.get("binding") if kv.get("binding", "-") != "-" else None,
                 "procedure_id": kv.get("proc") if kv.get("proc", "-") != "-" else None,
                 "verification_state": kv.get("verify") if kv.get("verify", "-") != "-" else None,
                 "human_intervention_needed": kv.get("human_intervention") == "True",
@@ -479,7 +479,7 @@ class RunStateLine:
 def render_index_md(
     *, repo: str, revision: int, active_run: Optional[str],
     claim_groups: list[GroupLine], procedure_groups: list[GroupLine],
-    implementation_groups: list[GroupLine], run_states: list[RunStateLine],
+    run_states: list[RunStateLine],
     goal_groups: list[GroupLine] = (),  # type: ignore[assignment]
 ) -> str:
     """Directive Sec 24. The tiny router -- one-line-per-group records,
@@ -489,8 +489,8 @@ def render_index_md(
     `goal_groups` defaults to `()` -- every pre-existing caller (this
     module's own earlier callers, before Goal had a canonical table)
     keeps working unchanged. Every *_GROUP line uses the SAME
-    space-separated id list execu.md's own CLAIM_GROUP/PROCEDURE_GROUP/
-    IMPLEMENTATION_GROUP examples already establish, deliberately not the
+    space-separated id list execu.md's own CLAIM_GROUP/PROCEDURE_GROUP
+    examples already establish, deliberately not the
     comma-separated form that directive's own GOAL_GROUP example shows in
     isolation -- one separator convention across every group line in this
     file is worth more than matching one inconsistent example verbatim.
@@ -512,10 +512,6 @@ def render_index_md(
     for g in procedure_groups:
         lines.append(_row("PROCEDURE_GROUP", g.topic, " ".join(g.ids)))
     if procedure_groups:
-        lines.append("")
-    for g in implementation_groups:
-        lines.append(_row("IMPLEMENTATION_GROUP", g.topic, " ".join(g.ids)))
-    if implementation_groups:
         lines.append("")
     for rs in run_states:
         lines.append(_row("RUN_STATE", rs.state, " ".join(rs.node_ids) if rs.node_ids else "-"))

@@ -76,7 +76,7 @@ def _row(r: asyncpg.Record | None) -> Optional[dict[str, Any]]:
         if hasattr(v, "isoformat"):
             d[k] = v.isoformat()
         if k in ("id", "problem_id", "benchmark_id", "solution_id", "target_id",
-                 "procedure_id", "implementation_id") and v is not None:
+                 "procedure_id") and v is not None:
             d[k] = str(v)
     return d
 
@@ -309,7 +309,6 @@ async def list_problem_solutions(
 async def request_evaluation(
     pool: asyncpg.Pool, *, problem_id: str, benchmark_id: str, solution_id: str,
     procedure_id: Optional[str] = None, procedure_version: Optional[int] = None,
-    implementation_id: Optional[str] = None, implementation_version: Optional[int] = None,
     environment: Optional[dict] = None, methodology: Optional[dict] = None,
     provenance: Optional[str] = None, tenant_scope: Optional[TenantScope] = None,
 ) -> dict[str, Any]:
@@ -317,11 +316,11 @@ async def request_evaluation(
     async with tenant_transaction(pool, tenant_scope or _commons()) as conn:
         r = await conn.fetchrow(
             "INSERT INTO evaluations (id, problem_id, benchmark_id, solution_id, procedure_id, "
-            " procedure_version, implementation_id, implementation_version, environment, "
+            " procedure_version, environment, "
             " methodology, status, provenance) "
-            "VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10::jsonb,'requested',$11) RETURNING *",
+            "VALUES ($1,$2,$3,$4,$5,$6,$7::jsonb,$8::jsonb,'requested',$9) RETURNING *",
             eid, problem_id, benchmark_id, solution_id, procedure_id, procedure_version,
-            implementation_id, implementation_version, json.dumps(environment or {}),
+            json.dumps(environment or {}),
             json.dumps(methodology or {}), provenance,
         )
     return _row(r)
@@ -558,7 +557,9 @@ async def _ineligible_solution_reasons(
 
     proc_targets = by_type.get("procedure", {})
     if proc_targets:
-        rows = await pool.fetch(
+        from app.services.shards import fanout_fetch
+        rows = await fanout_fetch(
+            pool,
             "SELECT procedure_id::text AS pid, staleness::text AS st FROM procedures "
             "WHERE procedure_id = ANY($1::uuid[]) AND t_invalid IS NULL",
             list(proc_targets),

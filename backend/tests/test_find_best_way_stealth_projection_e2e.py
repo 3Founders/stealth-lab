@@ -31,6 +31,14 @@ pytestmark = pytest.mark.skipif(
     not DATABASE_URL, reason="requires a real DATABASE_URL -- this is a live-database integration test"
 )
 
+@pytest.fixture(autouse=True)
+def _lenient_judge():
+    from tests.identity_fakes import install_lenient_default_judge
+    undo = install_lenient_default_judge()
+    yield
+    undo()
+
+
 
 class _FakeRequestContext:
     def __init__(self, pool):

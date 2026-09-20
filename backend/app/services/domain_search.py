@@ -660,7 +660,8 @@ async def find_best_way(
     if scope_constraint and result["procedures"]:
         keep = []
         for item in result["procedures"]:
-            row = await pool.fetchrow(
+            from app.services.shards import home_pool
+            row = await (await home_pool(pool, "procedure", str(item["id"]), by_row_id=True)).fetchrow(
                 "SELECT scope_type, scope_entity_id FROM procedures WHERE id = $1::uuid", item["id"])
             if row is not None and _scope_filter_matches(
                 row["scope_type"], row["scope_entity_id"], scope_type=scope_constraint.get("scope_type"),

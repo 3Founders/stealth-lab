@@ -233,7 +233,6 @@ from app.services.skill_ingestion import (  # noqa: E402
     compile_skill_artifact,
     run_skill_ingestion,
 )
-from app.services.skill_ingestion import _persist_package_relations  # noqa: E402
 
 # procedures INSERT: positional param order is fixed by capture_procedure()'s
 # own INSERT statement. index 8 == invariants (pinned by an existing test
@@ -385,7 +384,6 @@ class CompilerFakePool:
             "evidence": [],
             "artifact_blocks": [], "screening_decisions": [],
             "claims": [], "claim_sources": [], "procedure_claim_refs": [],
-            "implementations": [], "procedure_implementations": [],
             "goals": [],
         }
         self._seq = {"proc": 0, "task": 0, "art": 0, "src": 0, "ctx": 0,
@@ -473,13 +471,6 @@ class CompilerFakePool:
             self._seq["task"] += 1
             self.captured["task_nodes"].append(params)
             return {"id": f"task-{self._seq['task']}"}
-        if "INSERT INTO implementations" in s:
-            self._seq["impl"] += 1
-            n = self._seq["impl"]
-            self.captured["implementations"].append(params)
-            return {"id": f"impl-{n}"}
-        if "SELECT id FROM implementations WHERE name" in s:
-            return {"id": "impl-existing"}
         if "INSERT INTO ingested_artifacts" in s:
             self._seq["art"] += 1
             self.captured["ingested_artifacts"].append(params)
@@ -516,10 +507,6 @@ class CompilerFakePool:
             self.captured["updates"].append(("ingestion_runs.finish", params))
         elif "UPDATE ingestion_contexts SET status" in s:
             self.captured["updates"].append(("ingestion_contexts.complete", params))
-        elif "UPDATE implementations SET goal_id" in s:
-            self.captured["updates"].append(("implementations.goal_id", params))
-        elif "INSERT INTO procedure_implementations" in s:
-            self.captured["procedure_implementations"].append(params)
         elif "INSERT INTO change_sets" in s or "INSERT INTO change_set" in s:
             pass  # record_change_set's own audit write -- not asserted on here
         return "OK"
@@ -957,7 +944,7 @@ async def test_compile_zero_claims_is_a_normal_outcome():
 
 
 @pytest.mark.asyncio
-async def test_compile_implementations_from_skill_package_are_persisted():
+async def test_compile_bundled_scripts_become_candidate_one_step_procedures_with_preserved_artifacts():
     resources = (
         SourceResource(path="scripts/fix.py", kind="script", sha256="a" * 64, size=100),
     )
@@ -977,17 +964,18 @@ async def test_compile_implementations_from_skill_package_are_persisted():
     pool = CompilerFakePool()
     outcome = await compile_skill_artifact(pool, artifact, embedder=FakeEmbedder(), client=client)
     assert outcome.status == "captured"
-    assert len(outcome.implementation_ids) == 1
-    assert len(pool.captured["implementations"]) == 1
-    assert len(pool.captured["procedure_implementations"]) == 1
-    # the implementation's own goal resolved through find_or_create_goal too
+    assert len(outcome.script_procedure_ids) == 1
+    # the script's bytes/hash/path are preserved as an unscreened artifact (role executable_source, execution not allowed)
+    script_artifacts = [p for p in pool.captured["ingested_artifacts"] if "scripts/fix.py" in [str(x) for x in p]]
+    assert len(script_artifacts) == 1
+    # the script's own goal resolved through find_or_create_goal too
     assert any(
         g[1] == "apply the pandas.concat replacement automatically" for g in pool.captured["goals"]
     )
 
 
 @pytest.mark.asyncio
-async def test_compile_implementation_with_hallucinated_path_is_dropped():
+async def test_compile_script_with_hallucinated_path_is_dropped():
     resources = (
         SourceResource(path="scripts/real.py", kind="script", sha256="a" * 64, size=100),
     )
@@ -1006,7 +994,7 @@ async def test_compile_implementation_with_hallucinated_path_is_dropped():
     pool = CompilerFakePool()
     outcome = await compile_skill_artifact(pool, artifact, embedder=FakeEmbedder(), client=client)
     assert outcome.status == "captured"
-    assert outcome.implementation_ids == []
+    assert outcome.script_procedure_ids == []
 
 
 # ===========================================================================

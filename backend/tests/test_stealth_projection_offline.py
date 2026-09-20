@@ -19,9 +19,7 @@ _FAKE_CONTEXT = {
     "required_preconditions": [
         {"subject": "project:1", "predicate": "lang", "object": "python", "status": "UNKNOWN"},
     ],
-    "recommended_implementations": [
-        {"implementation_id": "impl-1", "role": "primary", "source": "procedure_implementation_binding"},
-    ],
+    "recommended_bindings": [{"binding": {"kind": "command", "command": "make"}, "source": "compiled_plan"}],
     "blocking_unknowns": [{"subject": "project:1", "predicate": "lang", "object": "python"}],
     "waiting_child": None,
     "nodes": [{"node_order": 0, "status": "pending", "goal": "do the thing", "deps": []}],
@@ -57,7 +55,7 @@ def test_atomic_write_leaves_no_temp_file_behind_on_success():
 def test_render_context_md_contains_all_required_sections():
     md = _render_context_md(context=_FAKE_CONTEXT, procedure=_FAKE_PROCEDURE, verification=_FAKE_VERIFICATION)
     for section in ("[ROUTER]", "[LOCAL CLAIMS]", "[RELEVANT GLOBAL CLAIMS]",
-                    "[SELECTED PROCEDURES]", "[RELEVANT IMPLEMENTATIONS]", "[COORDINATION]"):
+                    "[SELECTED PROCEDURES]", "[STEP BINDING]", "[COORDINATION]"):
         assert section in md
 
 
@@ -85,10 +83,10 @@ def test_render_context_md_never_fabricates_relevant_global_claims():
     assert "the service uses postgres" in section_with_claims
 
 
-def test_render_context_md_honest_when_no_implementation_recommended():
-    context = dict(_FAKE_CONTEXT, recommended_implementations=[])
+def test_render_context_md_honest_when_step_is_unbound():
+    context = dict(_FAKE_CONTEXT, recommended_bindings=[])
     md = _render_context_md(context=context, procedure=_FAKE_PROCEDURE, verification=_FAKE_VERIFICATION)
-    assert "MISSING_IMPLEMENTATION, not fabricated" in md
+    assert "runs on the frontier default" in md
 
 
 def test_render_context_md_reports_waiting_child_in_coordination():

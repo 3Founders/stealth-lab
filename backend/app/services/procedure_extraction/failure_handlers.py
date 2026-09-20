@@ -185,7 +185,7 @@ def capability_for_stream(
     target_id: str,
     outcome_rows: list[Mapping[str, Any]],
 ) -> CapabilityRecord:
-    """Recompute the capability record over an implementation's cumulative
+    """Recompute the capability record over a target's cumulative
     outcome stream -- the demotion half of capability_trajectory()'s
     replay: appended failures lower the Wilson lower bound, later
     successes raise it again, and the LEVEL follows P through the D1
@@ -212,7 +212,7 @@ def capability_for_stream(
 async def handle_capability_demotion(
     pool: asyncpg.Pool, route_row: Mapping[str, Any],
 ) -> bool:
-    """implementation_wrong's mandate. Reads the target implementation's
+    """implementation_wrong's mandate. Reads the target's
     outcome-bearing evidence stream, recomputes capability from scratch
     (demotion is recomputation, never a decrement), and records the new
     verdict durably. Returns True iff THIS call performed the update."""
@@ -300,7 +300,9 @@ async def handle_applicability_narrowing(
         return False
 
     proc_id = str(route_row["target_id"])
-    row = await pool.fetchrow(
+    from app.services.shards import home_pool
+    proc_pool = await home_pool(pool, "procedure", proc_id, by_row_id=True)
+    row = await proc_pool.fetchrow(
         "SELECT exclusions FROM procedures "
         "WHERE id = $1::uuid AND t_invalid IS NULL",
         proc_id,
@@ -316,7 +318,7 @@ async def handle_applicability_narrowing(
         "_source_route_id": fr_id,
         "_failure_class": route_row.get("failure_class"),
     })
-    await pool.execute(
+    await proc_pool.execute(
         "UPDATE procedures SET exclusions = $2::jsonb, updated_at = now() "
         "WHERE id = $1::uuid AND t_invalid IS NULL",
         proc_id, json.dumps(entries),

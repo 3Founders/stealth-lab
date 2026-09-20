@@ -32,8 +32,8 @@ class FakeContext:
 
 def _fake_tree():
     return ResolvedGoalNode(
-        goal_id="G-1", goal_name="do the thing", depth=0, chosen="implementation",
-        implementation={"id": "I-1", "name": "impl", "kind": "deterministic"},
+        goal_id="G-1", goal_name="do the thing", depth=0, chosen="step",
+        step={"order": 0, "procedure_id": "P-1", "binding": {"kind": "command", "command": "make"}},
         rationale="chosen impl",
     )
 
@@ -59,20 +59,20 @@ def test_estimate_goal_cost_returns_tree_and_honest_zero_data_cost(monkeypatch):
     async def fake_resolve(pool, goal_id, *, context, scope, max_depth=6, embedder=None):
         return _fake_tree()
 
-    async def fake_stats(pool, implementation_id):
-        from app.execution.execution_telemetry import ImplementationExecutionStats
-        return ImplementationExecutionStats(
-            implementation_id=implementation_id, sample_count=0, success_count=0,
+    async def fake_stats(pool, procedure_id, step_order):
+        from app.execution.execution_telemetry import StepExecutionStats
+        return StepExecutionStats(
+            procedure_id=procedure_id, step_order=step_order, sample_count=0, success_count=0,
             success_rate=None, mean_wall_seconds=None, mean_prompt_tokens=None,
             mean_completion_tokens=None,
         )
 
     monkeypatch.setattr("app.execution.goal_resolution.resolve_goal", fake_resolve)
-    monkeypatch.setattr("app.execution.goal_cost.implementation_execution_stats", fake_stats)
+    monkeypatch.setattr("app.execution.goal_cost.step_execution_stats", fake_stats)
     ctx = FakeContext()
     raw = _run(srv.estimate_goal_cost(goal_id="G-1", ctx=ctx))
     result = json.loads(raw)
-    assert result["tree"]["chosen"] == "implementation"
+    assert result["tree"]["chosen"] == "step"
     cost = result["cost"]
     assert cost["confidence"] == "none"
     assert cost["sample_count"] == 0
@@ -84,16 +84,16 @@ def test_estimate_goal_cost_passes_through_real_empirical_aggregation(monkeypatc
     async def fake_resolve(pool, goal_id, *, context, scope, max_depth=6, embedder=None):
         return _fake_tree()
 
-    async def fake_stats(pool, implementation_id):
-        from app.execution.execution_telemetry import ImplementationExecutionStats
-        return ImplementationExecutionStats(
-            implementation_id=implementation_id, sample_count=5, success_count=5,
+    async def fake_stats(pool, procedure_id, step_order):
+        from app.execution.execution_telemetry import StepExecutionStats
+        return StepExecutionStats(
+            procedure_id=procedure_id, step_order=step_order, sample_count=5, success_count=5,
             success_rate=1.0, mean_wall_seconds=2.0, mean_prompt_tokens=None,
             mean_completion_tokens=None,
         )
 
     monkeypatch.setattr("app.execution.goal_resolution.resolve_goal", fake_resolve)
-    monkeypatch.setattr("app.execution.goal_cost.implementation_execution_stats", fake_stats)
+    monkeypatch.setattr("app.execution.goal_cost.step_execution_stats", fake_stats)
     ctx = FakeContext()
     raw = _run(srv.estimate_goal_cost(goal_id="G-1", ctx=ctx, current_scope_json='{"repo": ["r"]}', max_depth=3))
     result = json.loads(raw)

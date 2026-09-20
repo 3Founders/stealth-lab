@@ -394,10 +394,9 @@ def test_search_goals_text_only_does_not_look_up_an_embedding_model(monkeypatch)
 # --- get_goal ---------------------------------------------------------
 
 class _GetGoalFakePool:
-    def __init__(self, goal_row, procedures=(), implementations=()):
+    def __init__(self, goal_row, procedures=()):
         self._goal_row = goal_row
         self._procedures = list(procedures)
-        self._implementations = list(implementations)
 
     async def fetchrow(self, sql, *params):
         if "FROM goals WHERE id" in sql:
@@ -407,8 +406,6 @@ class _GetGoalFakePool:
     async def fetch(self, sql, *params):
         if "FROM procedures WHERE achieves_goal_id" in sql:
             return self._procedures
-        if "FROM implementations WHERE goal_id" in sql:
-            return self._implementations
         raise AssertionError("unexpected fetch: " + sql[:80])
 
 
@@ -417,16 +414,15 @@ def test_get_goal_returns_none_for_a_missing_row():
     assert _run(get_goal(pool, "missing-id")) is None
 
 
-def test_get_goal_attaches_procedures_and_implementations_and_hides_embedding():
+def test_get_goal_attaches_procedures_and_hides_embedding():
     row = {"id": "g1", "canonical_name": "find references", "embedding": "[0.1,0.2]"}
     pool = _GetGoalFakePool(
         goal_row=row,
         procedures=[{"id": "p1", "procedure_id": "pp1", "name": "grep-based search"}],
-        implementations=[{"id": "i1", "name": "ripgrep"}],
     )
     result = _run(get_goal(pool, "g1"))
     assert result["procedures"] == [{"id": "p1", "procedure_id": "pp1", "name": "grep-based search"}]
-    assert result["implementations"] == [{"id": "i1", "name": "ripgrep"}]
+    assert "implementations" not in result
     assert "embedding" not in result
 
 

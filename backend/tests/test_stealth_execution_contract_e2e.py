@@ -1,7 +1,7 @@
 """
 MCP hardening B4: the Stealth Execution Contract
 (RUN_CREATED -> DISCOVERY -> PROCEDURE_EVALUATED -> APPLICABILITY_CHECKED
--> PROCEDURE_VERSION_PINNED -> IMPLEMENTATION_PINNED -> EXECUTION_STARTED
+-> PROCEDURE_VERSION_PINNED -> BINDING_PINNED -> EXECUTION_STARTED
 -> EXECUTION_EVENTS -> VERIFICATION -> OUTCOME -> EVIDENCE -> FINALIZED),
 derived (not separately mutated) from real facts already persisted across
 route_decisions / execution_run_nodes / execution_run_events /
@@ -33,7 +33,6 @@ pytestmark = pytest.mark.skipif(not os.environ.get("DATABASE_URL"), reason="e2e:
 
 import app.mcp_server.server as srv  # noqa: E402
 from app.db.session import create_pool  # noqa: E402
-from app.execution import implementation_registry  # noqa: E402
 from app.execution.durable_run import execute_run, start_run  # noqa: E402
 from app.execution.stealth_execution_contract import CHAIN, compute_execution_contract_state  # noqa: E402
 from app.services.procedures import capture_procedure  # noqa: E402
@@ -78,14 +77,6 @@ def test_execution_contract_progresses_through_every_state_to_finalized():
                 embedding=[0.01] * 1024,
             )
             proc_id, row_id = res["procedure_id"], res["id"]
-
-            # Real Implementation, real binding -- IMPLEMENTATION_PINNED
-            # must reflect an actual pinned implementation_id on the node,
-            # not a placeholder.
-            impl = await implementation_registry.register(
-                pool, name=f"se-contract-impl-{run_id_suffix}", kind="tool",
-                provider="se-contract-e2e-provider", created_by="se_contract_e2e",
-            )
 
             async with pool.acquire() as c:
                 pv = await c.fetchval("SELECT version FROM procedures WHERE id=$1", row_id)
@@ -134,16 +125,16 @@ def test_execution_contract_progresses_through_every_state_to_finalized():
                 "EXECUTION_EVENTS",
             ]
             assert pre["current_state"] == "EXECUTION_EVENTS"
-            assert "IMPLEMENTATION_PINNED" in pre["skipped_optional"]
+            assert "BINDING_PINNED" in pre["skipped_optional"]
             assert "EXECUTION_STARTED" in pre["skipped_optional"]
 
             # Pin the real implementation on the node directly (this test
             # exercises the CONTRACT derivation, not implementation
             # resolution/binding -- that's a separate B23/B24 concern).
             await pool.execute(
-                "UPDATE execution_run_nodes SET implementation_id=$2 "
+                "UPDATE execution_run_nodes SET binding=$2::jsonb "
                 "WHERE execution_run_id=$1 AND node_order=0",
-                exec_run_id, impl["id"],
+                exec_run_id, json.dumps({"kind": "command", "command": "make"}),
             )
 
             async def run_node(order: int, attempt: int) -> dict:
@@ -161,7 +152,7 @@ def test_execution_contract_progresses_through_every_state_to_finalized():
 
             mid = await compute_execution_contract_state(pool, exec_run_id)
             for expected in (
-                "IMPLEMENTATION_PINNED", "EXECUTION_STARTED", "EXECUTION_EVENTS",
+                "BINDING_PINNED", "EXECUTION_STARTED", "EXECUTION_EVENTS",
             ):
                 assert expected in mid["reached"], f"expected {expected} in {mid['reached']}"
             # OUTCOME/EVIDENCE/FINALIZED correctly stay unreached: the run
@@ -221,7 +212,6 @@ def test_execution_contract_progresses_through_every_state_to_finalized():
                 await pool.execute("DELETE FROM execution_runs WHERE id=$1", exec_run_id)
             if row_id is not None:
                 await _cleanup_procedure(pool, row_id)
-            await pool.execute("DELETE FROM implementations WHERE name LIKE $1", f"se-contract-impl-{run_id_suffix}%")
             await pool.close()
 
     import asyncio

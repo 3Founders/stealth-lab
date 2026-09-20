@@ -245,7 +245,7 @@ def test_get_solution_view_computes_real_capability_from_recorded_outcomes():
             await _cleanup(pool)
             result = await capture_procedure(
                 pool, name=f"{PREFIX}-proc6", goal="do a thing",
-                steps=[{"order": 0, "goal": "run it", "implementation_hint": "deterministic"}],
+                steps=[{"order": 0, "goal": "run it", "binding": {"kind": "command", "command": "make"}}],
                 provenance="system_pending_review", scope_type="global",
             )
             row_id = result["id"]
@@ -263,8 +263,8 @@ def test_get_solution_view_computes_real_capability_from_recorded_outcomes():
             assert solution["capability"]["evidence_count"] == 2
             assert solution["capability"]["success_count"] == 2
             assert 0.0 < solution["capability"]["p_estimate"] <= 1.0
-            assert "deterministic" in solution["implementations"]
-            assert solution["implementations"]["deterministic"]["supported"] is False
+            assert "deterministic" in solution["executors"]
+            assert solution["executors"]["deterministic"]["supported"] is False
             assert "license" not in solution
         finally:
             await _cleanup(pool)

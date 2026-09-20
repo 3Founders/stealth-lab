@@ -32,6 +32,7 @@ from typing import Any, Awaitable, Callable, Optional
 
 import asyncpg
 
+from app import telemetry as _tel
 from app.execution import episode as _episode
 from app.execution import recorder as _rec
 from app.execution.plan_persistence import record_plan_execution
@@ -392,7 +393,6 @@ async def _node_finish(pool: asyncpg.Pool, node_id: str, worker_id: str, *,
                         requested_method=evidence.get("requested_method"),
                         requested_server_url=evidence.get("requested_server_url"),
                         requested_tool_name=evidence.get("requested_tool_name"),
-                        implementation_version=evidence.get("implementation_version"),
                     )
                     await _rec.record_tool_result(
                         conn, execution_run_id, node_order=node_order,
@@ -491,7 +491,9 @@ async def _run_one_node(pool: asyncpg.Pool, order: int, node: dict, *,
         async with pool.acquire() as conn:
             await _rec.record_node_started(conn, node["execution_run_id"], node_order=order, attempt=attempt)
         try:
-            result = await run_node(order, attempt)
+            with _tel.span("execution", kind="TOOL", on_error=_tel.FailureCode.EXECUTION_ERROR,
+                           run_id=node["execution_run_id"], node_id=order, attempt=attempt):
+                result = await run_node(order, attempt)
         except WorkerLost:
             async with pool.acquire() as conn:
                 await conn.execute(
@@ -587,9 +589,16 @@ async def _fetch_verification_satisfaction(pool: asyncpg.Pool, run: dict, run_id
     ) or {}
     if not procedure:
         return {"per_criterion": [], "overall": "inconclusive", "required_unmet": []}
-    return await compute_verification_satisfaction(
-        pool, execution_run_id=run_id, procedure=procedure,
-    )
+    with _tel.span("verification", kind="EVALUATOR", on_error=_tel.FailureCode.VERIFICATION_FAILED,
+                   run_id=run_id) as sp:
+        result = await compute_verification_satisfaction(
+            pool, execution_run_id=run_id, procedure=procedure,
+        )
+        _tel.set_attrs(sp, verification_result=result.get("overall"),
+                       criteria_count=len(result.get("per_criterion") or []))
+        if result.get("required_unmet"):
+            _tel.fail(sp, _tel.FailureCode.VERIFICATION_FAILED)
+        return result
 
 
 async def _record_child_run_completed_on_parent(conn: asyncpg.Connection, run: dict, *, status: str) -> None:
@@ -643,18 +652,11 @@ async def _persist_success_transition(
     WAS held at 'awaiting_verification' once real evidence satisfied
     every required criterion. One real write path, not duplicated."""
     async with pool.acquire() as conn, conn.transaction():
-        impl_id = None
         exec_id = None
         if compiled is not None:
-            try:
-                from app.execution.implementation_executor import plan_implementation_id
-                impl_id = plan_implementation_id(compiled)
-            except Exception:  # noqa: BLE001 -- an unbound plan is fine, record None
-                impl_id = None
             exec_id = str(await record_plan_execution(
                 conn, compiled=compiled, outcome="success", created_by=run.get("created_by"),
                 scope_type=run.get("scope_type"), scope_entity_id=run.get("scope_entity_id"),
-                implementation_id=impl_id,
             ))
         placeholders = ",".join(f"${i + 2}" for i in range(len(from_statuses)))
         exec_id_param = len(from_statuses) + 2
@@ -671,6 +673,11 @@ async def _persist_success_transition(
 
 
 async def _finalize(pool: asyncpg.Pool, run_id: str, *, compiled=None) -> dict[str, Any]:
+    with _tel.span("persistence", run_id=run_id):
+        return await _finalize_inner(pool, run_id, compiled=compiled)
+
+
+async def _finalize_inner(pool: asyncpg.Pool, run_id: str, *, compiled=None) -> dict[str, Any]:
     run, nodes = await _load(pool, run_id)
     statuses = {n["status"] for n in nodes.values()}
     if statuses and statuses <= {"succeeded"}:
@@ -723,16 +730,9 @@ async def _finalize(pool: asyncpg.Pool, run_id: str, *, compiled=None) -> dict[s
     exec_id = None
     async with pool.acquire() as conn, conn.transaction():
         if compiled is not None:
-            impl_id = None
-            try:
-                from app.execution.implementation_executor import plan_implementation_id
-                impl_id = plan_implementation_id(compiled)
-            except Exception:  # noqa: BLE001 -- an unbound plan is fine, record None
-                impl_id = None
             exec_id = str(await record_plan_execution(
                 conn, compiled=compiled, outcome=outcome, created_by=run.get("created_by"),
                 scope_type=run.get("scope_type"), scope_entity_id=run.get("scope_entity_id"),
-                implementation_id=impl_id,
             ))
         tag = await conn.execute(
             "UPDATE execution_runs SET status=$2, final_outcome=$3, final_execution_id=$4, "
@@ -837,6 +837,20 @@ def _node_summary(nodes: dict[int, dict]) -> list[dict[str, Any]]:
 
 
 # ---------------------------------------------------------------------------
+async def _traced_drive(pool: asyncpg.Pool, run_id: str, *, resumed: bool, worker_id: str, **kw: Any) -> dict[str, Any]:
+    """One `stealth.run` trace per drive segment. A run interrupted and
+    resumed later gets a second trace; both share `stealth.run_id` and the
+    canonical execution_run_events, which are what reconstruct the run."""
+    with _tel.span("stealth.run", kind="AGENT", on_error=_tel.FailureCode.EXECUTION_ERROR,
+                   run_id=run_id, execution_id=run_id, worker=worker_id, resumed=resumed) as sp:
+        result = await _drive(pool, run_id, worker_id=worker_id, **kw)
+        status = result.get("status")
+        _tel.set_attrs(sp, run_status=status)
+        if status == "failed":
+            _tel.fail(sp, _tel.FailureCode.EXECUTION_ERROR)
+        return result
+
+
 async def execute_run(
     pool: asyncpg.Pool, run_id: str, *, deps: dict[int, list[int]],
     run_node: RunNodeCB, worker_id: str = "worker-1", compiled=None,
@@ -847,8 +861,8 @@ async def execute_run(
         return {"run_id": run_id, "status": run["status"], "note": "already terminal",
                 "nodes": _node_summary(nodes)}
     try:
-        return await _drive(pool, run_id, deps=deps, run_node=run_node,
-                            worker_id=worker_id, compiled=compiled)
+        return await _traced_drive(pool, run_id, deps=deps, run_node=run_node,
+                                   worker_id=worker_id, compiled=compiled, resumed=False)
     finally:
         # Always free the run's driver lease -- on a normal return AND on a
         # WorkerLost crash (nobody is driving after a crash; the node's own
@@ -880,8 +894,8 @@ async def resume_run(
         if n["status"] == "failed" and _is_retryable(n["error_class"]) and n["attempt_count"] < n["max_attempts"]:
             await _mark(pool, n["id"], "resumable")
     try:
-        return await _drive(pool, run_id, deps=deps, run_node=run_node,
-                            worker_id=worker_id, compiled=compiled)
+        return await _traced_drive(pool, run_id, deps=deps, run_node=run_node,
+                                   worker_id=worker_id, compiled=compiled, resumed=True)
     finally:
         # Always free the run's driver lease -- on a normal return AND on a
         # WorkerLost crash (nobody is driving after a crash; the node's own

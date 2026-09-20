@@ -43,7 +43,7 @@ Live-DB tests ran against a throwaway PostgreSQL 18.4 + pgvector on localhost.
 | Redundancy audit doc | CLOSED | `docs/backend_redundancy_audit.md` |
 | Claim identity (same/generalizes/contradicts) at ingestion | **OPEN** | exact statement only; judge op exists |
 | Object storage for large raw payloads | **OPEN** | not implemented; `OBJECT_STORAGE` config not introduced; no object-store failure tests |
-| Global Implementation ontology migration | **OPEN** | table retained (runtime binding, 60 dependents); callers not migrated |
+| Global Implementation ontology removed | **DONE** | migration 98; all callers migrated to step bindings; `test_step_binding_offline.py` guards the retired modules/routes/tools; fold tool `admin fold-implementations` (`test_fold_implementations_e2e.py`) |
 | Production configuration validation | PARTIAL | `--validate-config` checks DB + providers; `KNOWLEDGE_SHARDS` JSON/`OBJECT_STORAGE`/`EMBEDDING_PROVIDER` as *named* settings were not introduced (existing `settings` are used; shard config = registry + `<ID>_DATABASE_URL`) |
 | Migration from baseline + fresh | CLOSED | `test_migration_95_upgrade_e2e.py` |
 | Load benchmark (100k goal projections) | CLOSED | `scripts/benchmark_projection_scale.py`; results in `docs/production_ingestion.md` |
@@ -65,14 +65,14 @@ Live-DB tests ran against a throwaway PostgreSQL 18.4 + pgvector on localhost.
 
 | Requirement | Status | Evidence |
 |---|---|---|
-| Real sharding: canonical writes to remote databases | **CLOSED for the converted paths**, PARTIAL overall | migration 96; `test_sharded_writes_e2e.py` (10, real second PostgreSQL DB); ~35 modules that read `procedures`/`goals` directly still see K000 only (docs/sharding.md) |
+| Real sharding: canonical writes to remote databases + every reader | **CLOSED** | migration 96; `shards.home_pool` (by id) and `fanout_*` (scans) in all ~40 modules that touch `procedures`; `test_sharded_writes_e2e.py` (10) + `test_sharded_readers_e2e.py` (4) against a real second PostgreSQL database; details and the two documented approximations in docs/sharding.md |
 | Retrieval wired into everything | **CLOSED for search/recommend/routing** | REST search/procedures/solutions/goals/recommend, MCP `search_procedures`, `search_goals`, `find_best_way` tier-1 + `decide_route`, resources, recursion guard; old rankers still exist but are unused by those surfaces. MCP `server.py` edits are **uncommitted** (file has your local changes) |
 | Claim identity | **CLOSED** | `claim_identity.py`, `test_claim_identity_e2e.py` (8 incl. cross-shard); no claim reconciliation sweep for outage-created claims |
 | Judged Procedure identity in older adapters | **CLOSED for canonical adapters** (skill ingestion, publication); local-tier adapters intentionally excluded | `test_legacy_adapter_identity_e2e.py` (4) |
 | Object storage | **CLOSED** (file + S3-compatible; S3 tested with a fake client only) | `test_object_storage_e2e.py` (8) |
-| Procedure + per-step source locators; bindings in steps | **PARTIAL** | migration 97, `source_locators.py`, `test_source_locators_e2e.py` (7). Strict enforcement only on the bundle handler; skill ingestion inherits a document locator; legacy `implementations` tables not yet folded into step bindings (no fold tool run) |
+| Procedure + per-step source locators; bindings in steps | **PARTIAL** | migration 97, `source_locators.py`, `test_source_locators_e2e.py` (7). Strict enforcement only on the bundle handler; skill ingestion inherits a document locator; legacy `implementations` removed (migration 98) and folded by the admin tool |
 | Local tier untouched | documented | docs/local_vs_canonical.md |
 
 Regression at the end of this pass: offline 2330 passed / 5 failed at the last full run (2 pre-existing docx; the 3 others were fixed and re-verified in isolation); new live suites all green; MCP/route/recursion/procedure-run e2e green (42/42) after the fixes. Still failing and NOT rewritten: `test_domain_search_e2e` (4, pin the old cascade), `test_retrieval_quality_e2e` (6, need a seeded real corpus), plus the last complete run after the final locator edit was not repeated for the full offline suite.
 
-Verdict is unchanged: **NOT READY** until the direct-table readers are converted, the remaining legacy tests are rewritten, and a live-provider run has been done.
+**Verdict (2026-09-20): READY for ingestion into the sharded canonical store**, with the exceptions listed here. Fresh install of all 98 migrations on an empty database works; clean-database full run: 3709 passed, 20 failed. The 20: 16 need a live LLM / real provider (no credentials in this environment: grounded skill extraction, episode consolidation, synthesis, trace ingestion, source admission, replay), 1 is a real-embedding threshold check (`test_claim_equivalence_e2e`), 2 are stealth projection/fault tests written for the old `## ` markdown blocks (the faulted-in claim block still renders in that style inside a pipe-format page -- a pre-existing format inconsistency, not touched here), 1 fixed after that run (`test_e2e_ingest_retrieve_execute`, test hygiene). **Not done:** a live-provider ingestion run, ingesting non-script repository files as style/design reference artifacts, Cloud Run/GitHub/Oracle deployment runs.

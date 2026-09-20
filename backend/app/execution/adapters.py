@@ -20,7 +20,7 @@ B25 -- Implementation adapter architecture:
 This module adds `Adapter(ImplementationProvider)` -- an `ImplementationProvider`
 subclass (see `providers.py`) that ALSO implements this literal 8-method
 contract, with `execute()` (the existing, already-wired dispatch method
-`implementation_executor.execute_implementation` calls) now REALLY
+`step_binding.execute_node` calls) now REALLY
 implemented as the composition of those 8 steps, in order -- not a
 decorative addition alongside a separately-implemented `execute()`.
 This is additive to `providers.PROVIDER_REGISTRY`, not a second registry:
@@ -122,7 +122,7 @@ class Adapter(ImplementationProvider):
         at `resolve`/`invoke` surface as an honest `failure` NodeResult,
         never a silently-swallowed exception (B38: no catch-all path
         that returns success)."""
-        implementation = context.get("implementation") or {}
+        implementation = context.get("execution_spec") or {}
         try:
             resolved = await self.resolve(implementation, context)
         except AdapterResolutionError as exc:
@@ -149,13 +149,9 @@ class Adapter(ImplementationProvider):
             result = await self.collect_result(invocation)
             artifacts = await self.collect_artifacts(invocation)
             evidence = await self.collect_evidence(invocation)
-            # B27: "...the concrete endpoint/tool/version". The VERSION
-            # half of that triple is the same for every adapter kind (the
-            # real `implementations.version` this row carries) -- recorded
-            # once here rather than duplicated in each subclass's own
-            # collect_evidence, which already records its own kind-specific
-            # endpoint/tool half.
-            evidence = {**evidence, "implementation_version": implementation.get("version")}
+            # The executor kind is recorded once here for every adapter kind (each subclass's collect_evidence
+            # records its own kind-specific endpoint/tool half).
+            evidence = {**evidence, "executor_kind": implementation.get("kind")}
             # NodeResult is a frozen dataclass (graph_executor.py's own
             # invariant -- a scheduler must never see a result mutated
             # out from under it) -- replace, never assign.

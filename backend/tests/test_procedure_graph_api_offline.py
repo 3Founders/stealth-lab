@@ -146,14 +146,6 @@ class FakePool:
                 if str(row["procedure_id"]) == pid and row["version"] == version:
                     return dict(row)
             return None
-        if "FROM executions" in norm:
-            impl_id, proc_id, version = str(params[0]), str(params[1]), params[2]
-            for row in self._executions:
-                if (str(row["implementation_id"]) == impl_id
-                        and str(row["procedure_id"]) == proc_id
-                        and row["procedure_version"] == version):
-                    return dict(row)
-            return None
         raise AssertionError(f"unexpected fetchrow: {norm}")
 
     async def fetch(self, sql, *params):
@@ -200,7 +192,7 @@ def test_get_procedure_detail_composes_claims_and_evidence_summary():
     assert len(detail["claims"]) == 1
     assert detail["claims"][0]["id"] == CLAIM_ID
     assert detail["evidence_summary"] == {"total": 2, "success_count": 1, "failure_count": 1}
-    assert detail["implementation_kinds"] == []
+    assert detail["executor_kinds"] == []
 
 
 def test_get_procedure_detail_returns_none_for_missing_row():
@@ -219,15 +211,16 @@ def test_get_procedure_detail_returns_none_for_invisible_private_row():
     assert detail is None
 
 
-def test_get_procedure_detail_lists_advertised_implementation_kinds():
+def test_get_procedure_detail_lists_executor_kinds_named_by_step_bindings():
     proc = _procedure(steps=[
-        {"order": 0, "goal": "lint", "implementation_hint": "deterministic"},
-        {"order": 1, "goal": "call the model", "implementation_hint": ["frontier", "slm"]},
+        {"order": 0, "goal": "lint", "binding": {"kind": "command", "command": "make lint"}},
+        {"order": 1, "goal": "call the model", "binding": {"kind": "model", "model": "gemma"}},
+        {"order": 2, "goal": "small model", "binding": {"kind": "slm_artifact", "slm_artifact": "tiny"}},
     ])
     pool = FakePool(procedures=[proc])
 
     detail = _run(get_procedure_detail(pool, PROC_ROW_ID, scope=UNRESTRICTED))
-    assert detail["implementation_kinds"] == ["deterministic", "frontier", "slm"]
+    assert detail["executor_kinds"] == ["deterministic", "frontier", "slm"]
 
 
 # --- get_procedure_claims ----------------------------------------------
@@ -349,8 +342,8 @@ def test_get_procedure_graph_raises_on_unresolved_subprocedure_ref():
 # --- get_solution_view ----------------------------------------------------
 
 
-def test_get_solution_view_composes_capability_cost_and_implementation():
-    proc = _procedure(steps=[{"order": 0, "goal": "lint", "implementation_hint": "deterministic"}])
+def test_get_solution_view_composes_capability_cost_and_executors():
+    proc = _procedure(steps=[{"order": 0, "goal": "lint", "binding": {"kind": "command", "command": "make lint"}}])
     pool = FakePool(
         procedures=[proc],
         claims=[_claim(CLAIM_ID)],
@@ -363,7 +356,7 @@ def test_get_solution_view_composes_capability_cost_and_implementation():
     solution = _run(get_solution_view(pool, PROC_ROW_ID, scope=UNRESTRICTED))
 
     assert solution["procedure_row_id"] == PROC_ROW_ID
-    assert solution["implementations"]["deterministic"]["supported"] is False
+    assert solution["executors"]["deterministic"]["supported"] is False
     assert solution["capability"]["evidence_count"] == 3
     assert solution["capability"]["success_count"] == 2
     assert solution["capability"]["independent_groups"] == 2
@@ -373,40 +366,17 @@ def test_get_solution_view_composes_capability_cost_and_implementation():
     assert "license" not in solution
 
 
-def test_get_solution_view_defaults_to_frontier_when_no_hint_advertised():
+def test_get_solution_view_defaults_to_frontier_when_no_binding_advertised():
     pool = FakePool(procedures=[_procedure()])
     solution = _run(get_solution_view(pool, PROC_ROW_ID, scope=UNRESTRICTED))
-    assert "frontier" in solution["implementations"]
-    assert solution["implementations"]["frontier"]["supported"] is True
+    assert "frontier" in solution["executors"]
+    assert solution["executors"]["frontier"]["supported"] is True
 
 
 def test_get_solution_view_returns_none_for_missing_procedure():
     pool = FakePool()
     solution = _run(get_solution_view(pool, str(uuid4()), scope=UNRESTRICTED))
     assert solution is None
-
-
-def test_get_solution_view_looks_up_matching_execution_when_implementation_id_given():
-    impl_id = str(uuid4())
-    execution_row = {
-        "id": str(uuid4()), "implementation_id": impl_id,
-        "procedure_id": PROC_ID, "procedure_version": 1,
-        "outcome": "success",
-    }
-    pool = FakePool(procedures=[_procedure()], executions=[execution_row])
-
-    solution = _run(get_solution_view(
-        pool, PROC_ROW_ID, implementation_id=impl_id, scope=UNRESTRICTED,
-    ))
-    assert solution["runtime_execution"]["id"] == execution_row["id"]
-
-
-def test_get_solution_view_honestly_null_runtime_when_no_execution_matches():
-    pool = FakePool(procedures=[_procedure()])
-    solution = _run(get_solution_view(
-        pool, PROC_ROW_ID, implementation_id=str(uuid4()), scope=UNRESTRICTED,
-    ))
-    assert solution["runtime_execution"] is None
 
 
 # --- routers (TestClient) -------------------------------------------------

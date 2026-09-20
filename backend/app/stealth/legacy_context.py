@@ -80,13 +80,13 @@ def _render_context_md(
             lines.append(f"    - {text} [{state}]")
     lines.append("")
 
-    lines.append("[RELEVANT IMPLEMENTATIONS]")
-    if context["recommended_implementations"]:
-        for impl in context["recommended_implementations"]:
-            role = impl.get("role") or impl.get("kind") or ""
-            lines.append(f"  {impl['implementation_id']} role={role} source={impl['source']}")
+    lines.append("[STEP BINDING]")
+    if context["recommended_bindings"]:
+        for rb in context["recommended_bindings"]:
+            b = rb.get("binding") or {}
+            lines.append(f"  kind={b.get('kind')} source={rb.get('source')}")
     else:
-        lines.append("  (none resolved for the current node -- MISSING_IMPLEMENTATION, not fabricated)")
+        lines.append("  (current step is unbound -- runs on the frontier default)")
     lines.append("")
 
     lines.append("[COORDINATION]")
@@ -144,7 +144,7 @@ def _render_run_json(
             }
             for fi in file_intents
         ],
-        "implementation_bindings": context["recommended_implementations"],
+        "step_bindings": context["recommended_bindings"],
         "verification_state": verification["overall_state"],
         "change_cursor": run_row["updated_at"].isoformat() if run_row.get("updated_at") else None,
     }

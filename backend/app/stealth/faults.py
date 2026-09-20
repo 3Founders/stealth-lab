@@ -41,12 +41,11 @@ from app.stealth.legacy_context import STEALTH_DIRNAME
 
 FAULTED_SIDECAR = os.path.join("index", "faulted.json")
 
-_PAGE_FILE = {"claim": "claims.md", "procedure": "procedures.md", "implementation": "implementations.md"}
-_IDX_FILE = {"claim": "claims.idx", "procedure": "procedures.idx", "implementation": "implementations.idx"}
+_PAGE_FILE = {"claim": "claims.md", "procedure": "procedures.md"}
+_IDX_FILE = {"claim": "claims.idx", "procedure": "procedures.idx"}
 _IDX_HEADER = {
     "claim": "claims.idx  id|version|scope|status|tags|file|start|end|summary",
     "procedure": "procedures.idx  id|version|scope|status|tags|file|start|end|summary",
-    "implementation": "implementations.idx  id|version|scope|status|tags|file|start|end|summary",
 }
 
 
@@ -102,7 +101,9 @@ async def _resolve_claim(pool: asyncpg.Pool, cid: str) -> Optional[MdBlock]:
 
 
 async def _resolve_procedure(pool: asyncpg.Pool, pid: str) -> Optional[MdBlock]:
-    row = await pool.fetchrow(
+    from app.services.shards import fanout_fetchrow
+    row = await fanout_fetchrow(       # the id may be a row id or a family id: route unknown
+        pool,
         "SELECT id, procedure_id, version, name, goal, steps, preconditions, postconditions "
         "FROM procedures WHERE id = $1::uuid OR procedure_id = $1::uuid "
         "ORDER BY version DESC LIMIT 1", pid,
@@ -127,23 +128,7 @@ async def _resolve_procedure(pool: asyncpg.Pool, pid: str) -> Optional[MdBlock]:
     )
 
 
-async def _resolve_implementation(pool: asyncpg.Pool, iid: str) -> Optional[MdBlock]:
-    row = await pool.fetchrow(
-        "SELECT id, name, kind, provider, version FROM implementations WHERE id = $1::uuid", iid,
-    )
-    if row is None:
-        return None
-    return MdBlock(
-        obj_id=str(row["id"]),
-        heading=f"IMPLEMENTATION {row['id']} (global)",
-        body=[kv("name", row["name"] or ""), kv("kind", row["kind"] or ""),
-              kv("provider", row["provider"] or ""), kv("version", row["version"])],
-        version=str(row["version"] or "-"), scope="global", status="AVAILABLE",
-        tags=("global", "faulted"), summary=f"{row['name']} ({row['provider']})"[:110],
-    )
-
-
-_RESOLVERS = {"claim": _resolve_claim, "procedure": _resolve_procedure, "implementation": _resolve_implementation}
+_RESOLVERS = {"claim": _resolve_claim, "procedure": _resolve_procedure}
 
 
 async def _resolve_one(pool: asyncpg.Pool, kind: str, oid: str) -> Optional[MdBlock]:
@@ -159,7 +144,7 @@ async def _resolve_one(pool: asyncpg.Pool, kind: str, oid: str) -> Optional[MdBl
 async def resolve_blocks_by_kind(pool: asyncpg.Pool, entries: list[dict]) -> dict[str, list[MdBlock]]:
     """For `generate_projection` -- resolve every sidecar entry to a block,
     grouped by page kind. Silently drops entries that no longer resolve."""
-    out: dict[str, list[MdBlock]] = {"claim": [], "procedure": [], "implementation": []}
+    out: dict[str, list[MdBlock]] = {"claim": [], "procedure": []}
     seen: set[tuple[str, str]] = set()
     for e in entries:
         kind, oid = e.get("kind"), str(e.get("id"))
@@ -182,7 +167,7 @@ async def project_knowledge(
     """
     Merge global objects into an existing `.stealth/` projection.
 
-    `object_ids`: list of `{"kind": "claim|procedure|implementation", "id": "<uuid>"}`.
+    `object_ids`: list of `{"kind": "claim|procedure", "id": "<uuid>"}`.
     `query`: free text -> relevant global claims via `get_relevant_claims`.
 
     Requires a projection to already exist under `workspace_root`
@@ -223,7 +208,7 @@ async def project_knowledge(
     resolved: list[dict] = []
     not_found: list[dict] = []
     already_present: list[dict] = []
-    new_blocks: dict[str, list[MdBlock]] = {"claim": [], "procedure": [], "implementation": []}
+    new_blocks: dict[str, list[MdBlock]] = {"claim": [], "procedure": []}
 
     for kind, oid in requested:
         if (kind, oid) in existing_ids:

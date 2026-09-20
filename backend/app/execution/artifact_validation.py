@@ -18,7 +18,7 @@ evidence that what it produced works.
 DESIGN, why a registry and not a single hardcoded Python check: this
 codebase already has exactly one precedent for "a closed, extensible
 vocabulary of kinds, with an honestly-partial registry of real validators
-behind it" -- `app.execution.implementations.IMPLEMENTATION_KINDS` /
+behind it" -- `app.execution.executor_kinds.EXECUTOR_KINDS` /
 `_REGISTERED_STRATEGIES` (only `"frontier"` has a real executor; every
 other kind is valid and storable but explicitly reported unsupported,
 never silently skipped or silently run anyway). This module mirrors that

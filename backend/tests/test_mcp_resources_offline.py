@@ -82,15 +82,13 @@ def _templates():
     return set(tmpl.keys())
 
 
-def test_all_eight_resource_uris_registered():
+def test_all_six_resource_uris_registered():
     assert _templates() == {
         "stealth://procedures/{procedure_id}",
         "stealth://problems/{problem_id}",
         "stealth://problems/{problem_id}/solutions",
         "stealth://claims/{claim_id}",
         "stealth://evaluations/{evaluation_id}",
-        "stealth://implementations/{implementation_id}",
-        "stealth://tasks/{task_node_id}/implementations",
         "stealth://runs/{run_id}",
     }
 
@@ -128,7 +126,7 @@ def test_procedure_resource_dispatches_with_scope_and_renders_candidate(monkeypa
             "verification_state": "candidate", "approval_status": None,
             "staleness": "fresh", "availability": "active",
             "evidence_summary": {"total": 0, "success_count": 0, "failure_count": 0},
-            "claims": [], "implementation_kinds": [], "provenance": "prior_library",
+            "claims": [], "executor_kinds": [], "provenance": "prior_library",
         }
 
     monkeypatch.setattr(srv, "_resolve_live_procedure", fake_resolve)
@@ -274,35 +272,6 @@ def test_evaluation_resource_dispatches_and_not_found(monkeypatch, _anon_scope):
     assert md.startswith("# Not found")
 
 
-def test_implementation_resource_uses_secret_free_descriptor(monkeypatch, _anon_scope):
-    seen = {}
-
-    async def fake_desc(pool, iid, *, scope):
-        seen["scope"] = scope
-        return {"implementation_id": iid, "kind": "mcp_tool", "provider": "acme",
-                "version": 2, "status": "active", "verification_status": "unverified",
-                "protocol": "mcp"}
-
-    monkeypatch.setattr(res._impl, "get_descriptor", fake_desc)
-    md = _run(res.implementation_resource("impl-1", FakeContext("pool")))
-    assert isinstance(seen["scope"], AccessScope)
-    assert "sanitised to references only" in md
-    assert "unverified" in md
-
-
-def test_task_implementations_resource_empty(monkeypatch, _anon_scope):
-    seen = {}
-
-    async def fake_for_task(pool, tid, *, scope, **kw):
-        seen["scope"] = scope
-        return []
-
-    monkeypatch.setattr(res._impl, "get_for_task", fake_for_task)
-    md = _run(res.task_implementations_resource("node-1", FakeContext("pool")))
-    assert isinstance(seen["scope"], AccessScope)
-    assert "no active implementations linked" in md
-
-
 def test_run_resource_not_found_and_render(monkeypatch, _anon_scope):
     async def fake_status_none(pool, rid):
         return None
@@ -333,11 +302,10 @@ def test_resolve_node_resources_is_best_effort(monkeypatch):
         raise RuntimeError("leg down")
 
     monkeypatch.setattr("app.services.applicability.find_applicable_procedures", boom, raising=False)
-    monkeypatch.setattr(res._impl, "get_for_task", boom)
     out = _run(res.resolve_node_resources(
         "pool", {"id": "n1", "goal": "do X"}, {}, scope=AccessScope.anonymous(),
     ))
-    assert out == {"procedures": [], "implementations": [], "claims": []}
+    assert out == {"procedures": [], "claims": []}
 
 
 # --------------------------------------------------------------------------
@@ -366,7 +334,7 @@ def test_read_resource_dispatches_template_and_injects_context(monkeypatch, _ano
             "verification_state": "candidate", "approval_status": None,
             "staleness": "fresh", "availability": "active",
             "evidence_summary": {"total": 0}, "claims": [],
-            "implementation_kinds": [], "provenance": "prior_library",
+            "executor_kinds": [], "provenance": "prior_library",
         }
 
     monkeypatch.setattr(srv, "_resolve_live_procedure", fake_resolve)
@@ -404,9 +372,6 @@ def test_resolve_node_resources_aggregates_uris(monkeypatch):
     async def fake_search(pool, query_text, **kw):
         return SimpleNamespace(procedures=SimpleNamespace(ranked=[{"_row": {"procedure_id": "p-1", "display_name": "Do X well"}}]))
 
-    async def fake_for_task(pool, tid, *, scope, **kw):
-        return [{"id": "i-1", "kind": "mcp_tool", "provider": "acme", "version": 1}]
-
     async def fake_resolve(pool, pid):
         return {"id": "row-1"}
 
@@ -414,7 +379,6 @@ def test_resolve_node_resources_aggregates_uris(monkeypatch):
         return [{"id": "c-1", "statement": "X holds"}]
 
     monkeypatch.setattr("app.services.retrieval_service.search_procedures", fake_search)
-    monkeypatch.setattr(res._impl, "get_for_task", fake_for_task)
     monkeypatch.setattr(srv, "_resolve_live_procedure", fake_resolve)
     monkeypatch.setattr(res._pg, "get_procedure_claims", fake_claims)
 
@@ -422,7 +386,4 @@ def test_resolve_node_resources_aggregates_uris(monkeypatch):
         "pool", {"id": "n1", "goal": "do X"}, {}, scope=AccessScope.anonymous(),
     ))
     assert out["procedures"] == [{"uri": "stealth://procedures/p-1", "label": "Do X well"}]
-    assert out["implementations"] == [
-        {"uri": "stealth://implementations/i-1", "label": "mcp_tool/acme v1"}
-    ]
     assert out["claims"] == [{"uri": "stealth://claims/c-1", "label": "X holds"}]

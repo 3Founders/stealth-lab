@@ -94,6 +94,8 @@ def test_each_migration_file_re_runs_cleanly():
         pool = await create_pool(DATABASE_URL, min_size=1, max_size=2)
         try:
             for n in FILES:
+                if n == 67:
+                    continue  # relaxes procedure_implementations, which migration 98 drops; the ledger never re-runs it
                 body = _sql(n)
                 # migration files may contain multiple statements; asyncpg
                 # executes a script fine. A guarded/idempotent file must be
@@ -207,45 +209,6 @@ def test_procedure_claim_refs_role_vocab_and_identity():
                 )
         finally:
             await pool.execute("DELETE FROM procedure_claim_refs WHERE procedure_id = $1", pid)
-            await pool.close()
-
-    asyncio.run(_run())
-
-
-def test_procedure_implementations_generalized_columns_and_role_check():
-    async def _run():
-        pool = await create_pool(DATABASE_URL, min_size=1, max_size=2)
-        # implementations has a real FK target; make a throwaway impl row.
-        impl_id = uuid.uuid4()
-        pid = uuid.uuid4()
-        try:
-            await pool.execute(
-                "INSERT INTO implementations (id, name, kind, provider, version, created_by, "
-                "visibility) VALUES ($1, $2, 'tool', 't2', 1, 't2', 'public')",
-                impl_id, f"t2-impl-{impl_id}",
-            )
-            await pool.execute(
-                "INSERT INTO procedure_implementations (id, procedure_id, implementation_id, "
-                "role, status, created_by) "
-                "VALUES (gen_random_uuid(), $1, $2, 'supporting', 'active', 't2')",
-                pid, impl_id,
-            )
-            # migration 67 columns exist and take JSON
-            await pool.execute(
-                "UPDATE procedure_implementations SET applicability = $2::jsonb, "
-                "evidence_refs = $3::jsonb WHERE procedure_id = $1",
-                pid, '{"os": "linux"}', '["ev-1"]',
-            )
-            # bad role -> the role CHECK
-            with pytest.raises(Exception):
-                await pool.execute(
-                    "INSERT INTO procedure_implementations (id, procedure_id, implementation_id, "
-                    "role, created_by) VALUES (gen_random_uuid(), $1, $2, 'sidekick', 't2')",
-                    uuid.uuid4(), impl_id,
-                )
-        finally:
-            await pool.execute("DELETE FROM procedure_implementations WHERE procedure_id = $1", pid)
-            await pool.execute("DELETE FROM implementations WHERE id = $1", impl_id)
             await pool.close()
 
     asyncio.run(_run())

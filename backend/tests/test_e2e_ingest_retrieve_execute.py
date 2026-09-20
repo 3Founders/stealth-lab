@@ -109,6 +109,8 @@ async def pool():
 
 @pytest.mark.asyncio
 async def test_full_pipeline_from_enqueue_to_plan(pool):
+    # hygiene: jobs other suites left pending would be consumed by these workers and break the exact counts below
+    await pool.execute("UPDATE ingestion_jobs SET status = 'cancelled' WHERE status IN ('pending', 'retryable_failed') AND job_type <> $1", JOB_TYPE)
     # 1. enqueue sources (one delivered twice)
     sources = [
         bundle("grep", GOAL, "grep callers", ["callers are found by name", "grep is available"]),

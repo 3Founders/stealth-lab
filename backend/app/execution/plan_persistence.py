@@ -33,7 +33,7 @@ _PLAN_COLUMNS = (
     "id", "procedure_id", "procedure_version", "procedure_row_id",
     "scope_type", "scope_entity_id", "task_description",
     "parameters", "starting_state_id", "resolved_claims", "selected_branches",
-    "implementations", "safety_check", "verification_plan",
+    "safety_check", "verification_plan",
     "extractor_version", "procedure_content_hash", "content_hash",
     "created_by", "visibility", "owner_id",
 )
@@ -45,7 +45,7 @@ _GRAPH_COLUMNS = (
 
 _EXECUTION_COLUMNS = (
     "id", "execution_plan_id", "task_graph_id", "procedure_id",
-    "procedure_version", "state_id", "implementation_id", "parameters",
+    "procedure_version", "state_id", "parameters",
     "trace_id", "started_at", "ended_at", "outcome", "actor_id",
     "created_by", "visibility", "owner_id", "scope_type", "scope_entity_id",
 )
@@ -82,16 +82,6 @@ async def find_existing_plan(pool: asyncpg.Pool, content_hash: str) -> Optional[
     what fetches those rows for real, scoped to the one hash that matters
     (content_hash is globally unique in intent: identical inputs, identical
     hash), so this is a point lookup, not a scan.
-
-    NOT the right lookup for the plan-pinning check ahead of
-    `implementation_executor.bind_plan_implementations` (directive Sec
-    31) -- binding deliberately changes `content_hash` (see that
-    module's own docstring: two compiles of the same procedure/task,
-    bound against a registry that has since changed, produce correctly
-    DIFFERENT plan content), so a freshly recompiled, not-yet-bound
-    plan's content_hash can never equal an already-bound stored plan's.
-    `find_plan_for_task`, below, is the stable-identity lookup that
-    exists for exactly that check.
     """
     plan_row = await pool.fetchrow(
         "SELECT * FROM execution_plans WHERE content_hash = $1", content_hash,
@@ -104,16 +94,8 @@ async def find_existing_plan(pool: asyncpg.Pool, content_hash: str) -> Optional[
 async def find_plan_for_task(
     pool: asyncpg.Pool, *, procedure_row_id: UUID, task_description: str,
 ) -> Optional[CompiledPlan]:
-    """The plan-pinning lookup (directive Sec 31 -- "a newly registered
-    implementation must not silently replace an implementation already
-    frozen into a plan"): "has THIS exact (procedure_row_id,
-    task_description) pair already been compiled, bound, and persisted?",
-    keyed on two real, stable, stored columns that binding never touches
-    -- unlike `find_existing_plan`'s `content_hash`, which
-    `bind_plan_implementations` deliberately changes on every bind (see
-    its own docstring), making a content_hash lookup on a freshly
-    recompiled, not-yet-bound plan structurally unable to find an
-    already-bound one.
+    """The plan-pinning lookup: "has THIS exact (procedure_row_id, task_description) pair already been
+    compiled and persisted?", keyed on two stable stored columns.
 
     Returns the OLDEST matching plan (`ORDER BY created_at ASC`), so a
     replay always finds the ORIGINAL run's plan, never a later one, even
@@ -181,7 +163,6 @@ async def record_plan_execution(
     created_by: Optional[str] = None,
     scope_type: Optional[str] = None,
     scope_entity_id: Optional[str] = None,
-    implementation_id: Optional[str] = None,
 ) -> UUID:
     """Write the one `executions` row for a finished run.
 
@@ -189,13 +170,6 @@ async def record_plan_execution(
     AFTER the skill settles") -- `executions` rejects UPDATE by trigger, so
     there is no "insert running, update on completion" path here. Call this
     only once the outcome is already known.
-
-    `implementation_id`: the durable implementation identity that actually
-    ran, when the caller knows one (e.g.
-    `implementation_executor.plan_implementation_id(compiled)` over a plan
-    already bound by `bind_plan_implementations` before persist). Defaults
-    to `None`, the honest value for a run whose plan never resolved a
-    durable implementation -- never fabricated here.
     """
     validate_execution_binding(
         execution_plan_id=compiled.plan.id,
@@ -209,7 +183,6 @@ async def record_plan_execution(
         execution_plan_id=compiled.plan.id,
         task_graph_id=compiled.graph.id,
         procedure=compiled.plan.procedure,
-        implementation_id=implementation_id,  # type: ignore[arg-type]
         parameters=parameters or {},
         trace_id=trace_id,
         started_at=started_at or now,

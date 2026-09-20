@@ -74,7 +74,8 @@ async def _compat_precondition_hits(pool: asyncpg.Pool, claim_id: str) -> list[d
     `preconditions` JSONB array contains an element with this
     `claim_id`. Each hit is a strong PRECONDITION-role dependency."""
     probe = [{"claim_id": claim_id}]
-    rows = await pool.fetch(_COMPAT_PRECONDITION_SQL, probe)
+    from app.services.shards import fanout_fetch
+    rows = await fanout_fetch(pool, _COMPAT_PRECONDITION_SQL, probe)
     return [
         {
             "id": str(row["id"]),

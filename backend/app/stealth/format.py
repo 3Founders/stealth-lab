@@ -56,7 +56,7 @@ def _tags(tags: Iterable[object] | None) -> str:
 
 
 # --------------------------------------------------------------------------
-# object index rows  (claims.idx / procedures.idx / implementations.idx)
+# object index rows  (claims.idx / procedures.idx)
 # --------------------------------------------------------------------------
 @dataclass(frozen=True)
 class IdxRow:
@@ -158,7 +158,6 @@ def standard_root_rows(*, has_exploration: bool = False) -> list[RootRow]:
     rows = [
         RootRow("claims", "claims.idx", "facts, preconditions, assumptions in scope"),
         RootRow("procedures", "procedures.idx", "the selected procedure + steps"),
-        RootRow("implementations", "implementations.idx", "resolved executors/tools"),
         RootRow("run", "run.idx", "current nodes, status, owners, blockers"),
     ]
     if has_exploration:
@@ -167,7 +166,7 @@ def standard_root_rows(*, has_exploration: bool = False) -> list[RootRow]:
 
 
 # --------------------------------------------------------------------------
-# markdown pages  (claims.md / procedures.md / implementations.md / run.md)
+# markdown pages  (claims.md / procedures.md / run.md)
 # --------------------------------------------------------------------------
 @dataclass
 class MdBlock:

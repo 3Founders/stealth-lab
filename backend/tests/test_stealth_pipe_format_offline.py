@@ -118,7 +118,7 @@ def test_grep_steps_for_one_procedure_id():
 def _run_and_node(**node_overrides):
     node_kwargs = dict(
         node_id="N-003", status="RUNNING", name="Implement callback route",
-        procedure_id="P-102", step_id="S3", implementation_id="I-19", executor="frontier",
+        procedure_id="P-102", step_id="S3", binding="command", executor="frontier",
         deps=["N-002"], goal_id="G-014", grounded_goal_summary="implement OAuth callback route",
         inputs={"file": "src/auth/callback.py"},
         context_claims=["C-018@1"], access=[("filesystem", "write:src/auth/**")],
@@ -141,7 +141,7 @@ def test_node_line_exact_grammar():
     run, node = _run_and_node()
     md = render_run_md(run, [node])
     assert (
-        "NODE|N-003|RUNNING|Implement callback route|goal=G-014|step=P-102:S3|impl=I-19|executor=frontier|deps=N-002"
+        "NODE|N-003|RUNNING|Implement callback route|goal=G-014|step=P-102:S3|binding=command|executor=frontier|deps=N-002"
         in md.splitlines()
     )
 
@@ -217,10 +217,10 @@ def test_run_md_empty_nodes_is_honest():
     assert "(no nodes)" in md
 
 
-def test_unbound_implementation_renders_literal_dash_not_fabricated():
-    run, node = _run_and_node(implementation_id=None)
+def test_unbound_step_renders_literal_dash_not_fabricated():
+    run, node = _run_and_node(binding=None)
     md = render_run_md(run, [node])
-    assert "impl=-" in [ln for ln in md.splitlines() if ln.startswith("NODE|")][0]
+    assert "binding=-" in [ln for ln in md.splitlines() if ln.startswith("NODE|")][0]
 
 
 # ===========================================================================
@@ -297,8 +297,8 @@ def test_collab_summary_a_resolved_blocker_does_not_affect_a_separate_open_one()
 def test_goal_run_md_exact_grammar():
     nodes = [
         GoalRunLine(
-            goal_id="G-1", kind="implementation", status="success",
-            implementation_id="I-1", verification_state="checked",
+            goal_id="G-1", kind="step", status="success",
+            binding="command", verification_state="checked",
         ),
         GoalRunLine(
             goal_id="G-parent", kind="procedure", status="failure",
@@ -308,8 +308,8 @@ def test_goal_run_md_exact_grammar():
     md = render_goal_run_md("E-1", "failure", nodes)
     lines = md.splitlines()
     assert "GOAL_RUN|E-1|failure" in lines
-    assert "GOAL_NODE|G-1|implementation|success|impl=I-1|proc=-|verify=checked|human_intervention=False|resumed=False" in lines
-    assert "GOAL_NODE|G-parent|procedure|failure|impl=-|proc=-|verify=-|human_intervention=True|resumed=False" in lines
+    assert "GOAL_NODE|G-1|step|success|binding=command|proc=-|verify=checked|human_intervention=False|resumed=False" in lines
+    assert "GOAL_NODE|G-parent|procedure|failure|binding=-|proc=-|verify=-|human_intervention=True|resumed=False" in lines
 
 
 def test_goal_run_md_empty_nodes_is_honest():
@@ -317,24 +317,24 @@ def test_goal_run_md_empty_nodes_is_honest():
     assert "(no nodes)" in md
 
 
-def test_goal_run_md_never_fabricates_a_missing_implementation_or_procedure():
-    nodes = [GoalRunLine(goal_id="G-1", kind="implementation", status="failure")]
+def test_goal_run_md_never_fabricates_a_missing_binding_or_procedure():
+    nodes = [GoalRunLine(goal_id="G-1", kind="step", status="failure")]
     md = render_goal_run_md("E-1", "failure", nodes)
     node_line = [ln for ln in md.splitlines() if ln.startswith("GOAL_NODE|")][0]
-    assert "impl=-" in node_line
+    assert "binding=-" in node_line
     assert "proc=-" in node_line
     assert "verify=-" in node_line
 
 
 def test_goal_run_md_marks_resumed_nodes_honestly():
-    nodes = [GoalRunLine(goal_id="G-1", kind="implementation", status="success", resumed_from_journal=True)]
+    nodes = [GoalRunLine(goal_id="G-1", kind="step", status="success", resumed_from_journal=True)]
     md = render_goal_run_md("E-1", "success", nodes)
     assert "resumed=True" in md
 
 
 def test_goal_run_md_renders_real_artifact_lines():
     nodes = [GoalRunLine(
-        goal_id="G-1", kind="implementation", status="success",
+        goal_id="G-1", kind="step", status="success",
         artifacts=[{"filename": "out.txt", "sha256": "abc123", "size_bytes": 11}],
     )]
     md = render_goal_run_md("E-1", "success", nodes)
@@ -342,7 +342,7 @@ def test_goal_run_md_renders_real_artifact_lines():
 
 
 def test_goal_run_md_no_artifacts_emits_no_artifact_lines():
-    nodes = [GoalRunLine(goal_id="G-1", kind="implementation", status="success")]
+    nodes = [GoalRunLine(goal_id="G-1", kind="step", status="success")]
     md = render_goal_run_md("E-1", "success", nodes)
     assert not any(ln.startswith("ARTIFACT|") for ln in md.splitlines())
 
@@ -355,8 +355,8 @@ def test_goal_run_md_no_artifacts_emits_no_artifact_lines():
 def test_parse_goal_run_md_round_trips_every_field():
     nodes = [
         GoalRunLine(
-            goal_id="G-1", kind="implementation", status="success",
-            implementation_id="I-1", procedure_id="P-1", verification_state="checked",
+            goal_id="G-1", kind="step", status="success",
+            binding="command", procedure_id="P-1", verification_state="checked",
             human_intervention_needed=True, resumed_from_journal=True,
         ),
     ]
@@ -367,9 +367,9 @@ def test_parse_goal_run_md_round_trips_every_field():
     assert len(parsed["nodes"]) == 1
     n = parsed["nodes"][0]
     assert n["goal_id"] == "G-1"
-    assert n["kind"] == "implementation"
+    assert n["kind"] == "step"
     assert n["status"] == "success"
-    assert n["implementation_id"] == "I-1"
+    assert n["binding"] == "command"
     assert n["procedure_id"] == "P-1"
     assert n["verification_state"] == "checked"
     assert n["human_intervention_needed"] is True
@@ -377,10 +377,10 @@ def test_parse_goal_run_md_round_trips_every_field():
 
 
 def test_parse_goal_run_md_never_fabricates_missing_fields():
-    nodes = [GoalRunLine(goal_id="G-1", kind="implementation", status="failure")]
+    nodes = [GoalRunLine(goal_id="G-1", kind="step", status="failure")]
     md = render_goal_run_md("E-1", "failure", nodes)
     n = parse_goal_run_md(md)["nodes"][0]
-    assert n["implementation_id"] is None
+    assert n["binding"] is None
     assert n["procedure_id"] is None
     assert n["verification_state"] is None
     assert n["human_intervention_needed"] is False
@@ -389,7 +389,7 @@ def test_parse_goal_run_md_never_fabricates_missing_fields():
 
 def test_parse_goal_run_md_recovers_real_artifacts_per_node():
     nodes = [GoalRunLine(
-        goal_id="G-1", kind="implementation", status="success",
+        goal_id="G-1", kind="step", status="success",
         artifacts=[{"filename": "out.txt", "sha256": "abc123", "size_bytes": 11}],
     )]
     md = render_goal_run_md("E-1", "success", nodes)
@@ -399,7 +399,7 @@ def test_parse_goal_run_md_recovers_real_artifacts_per_node():
 
 def test_parse_goal_run_md_handles_multiple_nodes_in_order():
     nodes = [
-        GoalRunLine(goal_id="G-1", kind="implementation", status="success", implementation_id="I-1"),
+        GoalRunLine(goal_id="G-1", kind="step", status="success", binding="command"),
         GoalRunLine(goal_id="G-2", kind="human", status="needs_input"),
     ]
     md = render_goal_run_md("E-1", "success", nodes)
@@ -424,8 +424,7 @@ def test_index_md_exact_grammar():
         repo="StealthLab", revision=184, active_run="R-82",
         claim_groups=[GroupLine("generated-code", ["C-022", "C-037"])],
         procedure_groups=[GroupLine("generated-code", ["P-031"])],
-        implementation_groups=[GroupLine("verification", ["I-19"])],
-        run_states=[RunStateLine("RUNNING", ["N-003"]), RunStateLine("BLOCKED", [])],
+                run_states=[RunStateLine("RUNNING", ["N-003"]), RunStateLine("BLOCKED", [])],
     )
     lines = md.splitlines()
     assert "REPO|StealthLab" in lines
@@ -433,7 +432,6 @@ def test_index_md_exact_grammar():
     assert "ACTIVE_RUN|R-82" in lines
     assert "CLAIM_GROUP|generated-code|C-022 C-037" in lines
     assert "PROCEDURE_GROUP|generated-code|P-031" in lines
-    assert "IMPLEMENTATION_GROUP|verification|I-19" in lines
     assert "RUN_STATE|RUNNING|N-003" in lines
     assert "RUN_STATE|BLOCKED|-" in lines
 
@@ -441,7 +439,7 @@ def test_index_md_exact_grammar():
 def test_index_md_no_active_run_renders_literal_none_not_fabricated():
     md = render_index_md(
         repo="R", revision=1, active_run=None,
-        claim_groups=[], procedure_groups=[], implementation_groups=[], run_states=[],
+        claim_groups=[], procedure_groups=[], run_states=[],
     )
     assert "ACTIVE_RUN|none" in md.splitlines()
 
@@ -450,7 +448,7 @@ def test_grep_claim_group_by_topic():
     md = render_index_md(
         repo="R", revision=1, active_run=None,
         claim_groups=[GroupLine("auth", ["C-018"]), GroupLine("generated-code", ["C-022", "C-037"])],
-        procedure_groups=[], implementation_groups=[], run_states=[],
+        procedure_groups=[], run_states=[],
     )
     matches = [ln for ln in md.splitlines() if re.match(r"^CLAIM_GROUP\|generated-code\|", ln)]
     assert matches == ["CLAIM_GROUP|generated-code|C-022 C-037"]
@@ -464,7 +462,7 @@ def test_index_md_goal_group_uses_space_separator_not_the_directives_own_comma_e
     example verbatim."""
     md = render_index_md(
         repo="R", revision=1, active_run=None,
-        claim_groups=[], procedure_groups=[], implementation_groups=[], run_states=[],
+        claim_groups=[], procedure_groups=[], run_states=[],
         goal_groups=[GroupLine("reference-search", ["G-014", "G-231"])],
     )
     assert "GOAL_GROUP|reference-search|G-014 G-231" in md.splitlines()

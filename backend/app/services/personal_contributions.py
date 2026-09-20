@@ -67,7 +67,9 @@ async def _submitted_procedures(
     pool: asyncpg.Pool, actor_subject: str, *, scope: AccessScope, tenant: TenantScope,
 ) -> list[dict]:
     scope_sql, scope_params, _ = scope_predicates(scope, tenant, param_index=2)
-    rows = await pool.fetch(
+    from app.services.shards import fanout_fetch
+    rows = await fanout_fetch(
+        pool,
         f"""
         SELECT {', '.join(_PROCEDURE_FIELDS)} FROM procedures
         WHERE created_by = $1 AND t_invalid IS NULL AND {scope_sql}

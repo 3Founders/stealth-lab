@@ -154,14 +154,14 @@ def test_http_api_adapter_full_lifecycle_against_a_real_server():
             await adapter.cleanup(prepared)
 
             # The full execute() composition, end to end.
-            full_result = await adapter.execute(_node(), {"implementation": implementation, "request_body": {"a": 1}})
+            full_result = await adapter.execute(_node(), {"execution_spec": implementation, "request_body": {"a": 1}})
             assert full_result.status == "success"
             assert full_result.data["artifacts"]
             assert full_result.data["evidence"]["outcome_status"] == "success"
             assert full_result.data["evidence"]["requested_endpoint"] == f"{base_url}/echo"
             # B27: "...the concrete endpoint/tool/version" -- the real
             # implementation version actually used must be recorded too.
-            assert full_result.data["evidence"]["implementation_version"] == 3
+            assert full_result.data["evidence"]["executor_kind"] == "api"
 
     asyncio.run(_run())
 
@@ -174,7 +174,7 @@ def test_http_api_adapter_reports_real_upstream_failure():
                 "id": str(uuid.uuid4()), "kind": "api",
                 "locator": {"endpoint": f"{base_url}/fail"}, "invocation": {},
             }
-            result = await adapter.execute(_node(), {"implementation": implementation})
+            result = await adapter.execute(_node(), {"execution_spec": implementation})
             assert result.status == "failure"
             assert result.data["evidence"]["outcome_status"] == "failure"
             assert result.data["evidence"]["failure_class"] == "external_failure"
@@ -207,7 +207,7 @@ def test_mcp_tool_adapter_full_lifecycle_against_a_real_server():
             assert resolved["tool_name"] == "echo"
 
             result = await adapter.execute(
-                _node(), {"implementation": implementation, "tool_arguments": {"text": "hi"}},
+                _node(), {"execution_spec": implementation, "tool_arguments": {"text": "hi"}},
             )
             assert result.status == "success", result.notes
             assert "echo: hi" in result.data["content_text"]
@@ -218,7 +218,7 @@ def test_mcp_tool_adapter_full_lifecycle_against_a_real_server():
             # actually invoked must be recorded alongside the outcome.
             assert result.data["evidence"]["requested_server_url"] == server_url
             assert result.data["evidence"]["requested_tool_name"] == "echo"
-            assert result.data["evidence"]["implementation_version"] == 2
+            assert result.data["evidence"]["executor_kind"] == "tool"
 
     asyncio.run(_run())
 
@@ -232,7 +232,7 @@ def test_mcp_tool_adapter_reports_a_real_tool_error():
                 "locator": {"server_url": server_url},
                 "invocation": {"tool_name": "fail_tool"},
             }
-            result = await adapter.execute(_node(), {"implementation": implementation})
+            result = await adapter.execute(_node(), {"execution_spec": implementation})
             assert result.status == "failure"
             assert result.data["evidence"]["outcome_status"] == "failure"
 
@@ -263,7 +263,7 @@ def test_local_adapter_full_lifecycle_with_real_digest_verification():
         assert validation["valid"] is True
         assert validation["digest"] == digest
 
-        result = await adapter.execute(_node(), {"implementation": implementation})
+        result = await adapter.execute(_node(), {"execution_spec": implementation})
         assert result.status == "success"
         assert result.data["output_files"] == {"output.txt": b"hello from local adapter"}
         assert result.data["artifacts"][0]["sha256"] == hashlib.sha256(b"hello from local adapter").hexdigest()
@@ -284,7 +284,7 @@ def test_local_adapter_validate_rejects_a_tampered_digest():
         assert validation["valid"] is False
         assert "digest mismatch" in validation["reason"]
 
-        result = await adapter.execute(_node(), {"implementation": implementation})
+        result = await adapter.execute(_node(), {"execution_spec": implementation})
         assert result.status == "failure"
         assert "digest mismatch" in result.notes
 
@@ -321,27 +321,20 @@ pytestmark_db = pytest.mark.skipif(not DATABASE_URL, reason="requires a real DAT
 def test_execute_implementation_dispatches_api_kind_through_the_adapter_resolver():
     async def _run():
         from app.db.session import create_pool
-        from app.execution import implementation_registry
-        from app.execution.implementation_executor import execute_implementation
+        from app.execution.step_binding import execute_node
         from app.services.access import AccessScope
 
         pool = await create_pool(DATABASE_URL, min_size=1, max_size=2)
         impl_id = None
         try:
             with _real_http_server() as base_url:
-                impl = await implementation_registry.register(
-                    pool, name=f"adapter-dispatch-{uuid.uuid4().hex[:8]}", kind="api",
-                    provider="adapter-e2e", created_by="adapter_e2e",
-                    locator={"endpoint": f"{base_url}/echo"},
-                )
-                impl_id = impl["id"]
-                node = PlanNode(order=0, goal="dispatch test", implementation_id=impl_id)
-                result = await execute_implementation(pool, node, {"request_body": {"k": "v"}}, scope=AccessScope.unrestricted())
+                binding = {"kind": "http_api", "http_api": "echo", "endpoint": f"{base_url}/echo"}
+                impl_id = "binding"
+                node = PlanNode(order=0, goal="dispatch test", binding=binding)
+                result = await execute_node(pool, node, {"request_body": {"k": "v"}}, scope=AccessScope.unrestricted())
                 assert result.status == "success", result.notes
                 assert result.data["artifacts"]
         finally:
-            if impl_id is not None:
-                await pool.execute("DELETE FROM implementations WHERE id=$1", impl_id)
             await pool.close()
 
     asyncio.run(_run())
@@ -357,9 +350,8 @@ def test_record_artifact_fires_through_the_real_durable_run_path():
     proven end to end, not just at the adapter layer."""
     async def _run():
         from app.db.session import create_pool
-        from app.execution import implementation_registry
         from app.execution.durable_run import execute_run, start_run
-        from app.execution.implementation_executor import execute_implementation
+        from app.execution.step_binding import execute_node
         from app.execution.recorder import get_run_events
         from app.services.access import AccessScope
         from app.services.procedures import capture_procedure
@@ -371,12 +363,8 @@ def test_record_artifact_fires_through_the_real_durable_run_path():
         exec_run_id = None
         try:
             with _real_http_server() as base_url:
-                impl = await implementation_registry.register(
-                    pool, name=f"artifact-dispatch-{uuid.uuid4().hex[:8]}", kind="api",
-                    provider="adapter-e2e", created_by="adapter_e2e",
-                    locator={"endpoint": f"{base_url}/echo"},
-                )
-                impl_id = impl["id"]
+                binding = {"kind": "http_api", "http_api": "echo", "endpoint": f"{base_url}/echo"}
+                impl_id = "binding"
 
                 res = await capture_procedure(
                     pool, name=f"proc-test-artifact-dispatch-{uuid.uuid4().hex[:8]}",
@@ -407,14 +395,14 @@ def test_record_artifact_fires_through_the_real_durable_run_path():
                     node_orders=[0], deps={0: []}, created_by="adapter_e2e",
                 )
                 await pool.execute(
-                    "UPDATE execution_run_nodes SET implementation_id=$2 "
+                    "UPDATE execution_run_nodes SET binding=$2::jsonb "
                     "WHERE execution_run_id=$1 AND node_order=0",
-                    exec_run_id, impl_id,
+                    exec_run_id, json.dumps(binding),
                 )
 
                 async def run_node(order: int, attempt: int) -> dict:
-                    node = PlanNode(order=order, goal="call the api", implementation_id=impl_id)
-                    result = await execute_implementation(pool, node, {"request_body": {"probe": True}}, scope=AccessScope.unrestricted())
+                    node = PlanNode(order=order, goal="call the api", binding=binding)
+                    result = await execute_node(pool, node, {"request_body": {"probe": True}}, scope=AccessScope.unrestricted())
                     if result.status != "success":
                         raise RuntimeError(result.notes)
                     # The SAME wrapping durable_resume.py::_make_runner
@@ -440,8 +428,6 @@ def test_record_artifact_fires_through_the_real_durable_run_path():
                 )
                 if deleted == "DELETE 0":
                     await pool.execute("UPDATE procedures SET is_engineering_fixture = true WHERE id=$1", row_id)
-            if impl_id is not None:
-                await pool.execute("DELETE FROM implementations WHERE id=$1", impl_id)
             await pool.close()
 
     asyncio.run(_run())
@@ -469,9 +455,8 @@ def test_externally_hosted_node_records_tool_called_and_result_and_stays_unverif
     """
     async def _run():
         from app.db.session import create_pool
-        from app.execution import implementation_registry
         from app.execution.durable_run import execute_run, start_run
-        from app.execution.implementation_executor import execute_implementation
+        from app.execution.step_binding import execute_node
         from app.execution.recorder import get_run_events
         from app.services.access import AccessScope
         from app.services.procedures import capture_procedure
@@ -483,12 +468,8 @@ def test_externally_hosted_node_records_tool_called_and_result_and_stays_unverif
         exec_run_id = None
         try:
             with _real_http_server() as base_url:
-                impl = await implementation_registry.register(
-                    pool, name=f"tool-called-dispatch-{uuid.uuid4().hex[:8]}", kind="api",
-                    provider="adapter-e2e", created_by="adapter_e2e", version=3,
-                    locator={"endpoint": f"{base_url}/echo"},
-                )
-                impl_id = impl["id"]
+                binding = {"kind": "http_api", "http_api": "echo", "endpoint": f"{base_url}/echo"}
+                impl_id = "binding"
 
                 res = await capture_procedure(
                     pool, name=f"proc-test-tool-called-dispatch-{uuid.uuid4().hex[:8]}",
@@ -519,14 +500,14 @@ def test_externally_hosted_node_records_tool_called_and_result_and_stays_unverif
                     node_orders=[0], deps={0: []}, created_by="adapter_e2e",
                 )
                 await pool.execute(
-                    "UPDATE execution_run_nodes SET implementation_id=$2 "
+                    "UPDATE execution_run_nodes SET binding=$2::jsonb "
                     "WHERE execution_run_id=$1 AND node_order=0",
-                    exec_run_id, impl_id,
+                    exec_run_id, json.dumps(binding),
                 )
 
                 async def run_node(order: int, attempt: int) -> dict:
-                    node = PlanNode(order=order, goal="call the api", implementation_id=impl_id)
-                    result = await execute_implementation(pool, node, {"request_body": {"probe": True}}, scope=AccessScope.unrestricted())
+                    node = PlanNode(order=order, goal="call the api", binding=binding)
+                    result = await execute_node(pool, node, {"request_body": {"probe": True}}, scope=AccessScope.unrestricted())
                     if result.status != "success":
                         raise RuntimeError(result.notes)
                     return {"notes": result.notes, "data": dict(result.data or {}), "attempt": attempt}
@@ -541,7 +522,6 @@ def test_externally_hosted_node_records_tool_called_and_result_and_stays_unverif
                 assert called[0]["node_order"] == 0
                 assert called[0]["payload"]["requested_endpoint"] == f"{base_url}/echo"
                 assert called[0]["payload"]["requested_method"] == "POST"
-                assert called[0]["payload"]["implementation_version"] == 3
                 assert len(resulted) == 1
                 assert resulted[0]["payload"]["outcome_status"] == "success"
 
@@ -561,8 +541,6 @@ def test_externally_hosted_node_records_tool_called_and_result_and_stays_unverif
                 )
                 if deleted == "DELETE 0":
                     await pool.execute("UPDATE procedures SET is_engineering_fixture = true WHERE id=$1", row_id)
-            if impl_id is not None:
-                await pool.execute("DELETE FROM implementations WHERE id=$1", impl_id)
             await pool.close()
 
     asyncio.run(_run())
@@ -579,9 +557,8 @@ def test_locally_executed_node_still_verifies_since_stealth_observes_it_directly
     downgrade every successful node."""
     async def _run():
         from app.db.session import create_pool
-        from app.execution import implementation_registry
         from app.execution.durable_run import execute_run, start_run
-        from app.execution.implementation_executor import execute_implementation
+        from app.execution.step_binding import execute_node
         from app.services.access import AccessScope
         from app.services.procedures import capture_procedure
         from app.utils.ids import uuid7
@@ -591,12 +568,8 @@ def test_locally_executed_node_still_verifies_since_stealth_observes_it_directly
         row_id = None
         exec_run_id = None
         try:
-            impl = await implementation_registry.register(
-                pool, name=f"local-verified-dispatch-{uuid.uuid4().hex[:8]}", kind="deterministic",
-                provider="adapter-e2e", created_by="adapter_e2e",
-                invocation={"code": "print('ok')"},
-            )
-            impl_id = impl["id"]
+            binding = {"kind": "command", "command": "print('ok')"}
+            impl_id = "binding"
 
             res = await capture_procedure(
                 pool, name=f"proc-test-local-verified-dispatch-{uuid.uuid4().hex[:8]}",
@@ -627,14 +600,14 @@ def test_locally_executed_node_still_verifies_since_stealth_observes_it_directly
                 node_orders=[0], deps={0: []}, created_by="adapter_e2e",
             )
             await pool.execute(
-                "UPDATE execution_run_nodes SET implementation_id=$2 "
+                "UPDATE execution_run_nodes SET binding=$2::jsonb "
                 "WHERE execution_run_id=$1 AND node_order=0",
-                exec_run_id, impl_id,
+                exec_run_id, json.dumps(binding),
             )
 
             async def run_node(order: int, attempt: int) -> dict:
-                node = PlanNode(order=order, goal="run the script", implementation_id=impl_id)
-                result = await execute_implementation(pool, node, {}, scope=AccessScope.unrestricted())
+                node = PlanNode(order=order, goal="run the script", binding=binding)
+                result = await execute_node(pool, node, {}, scope=AccessScope.unrestricted())
                 if result.status != "success":
                     raise RuntimeError(result.notes)
                 return {"notes": result.notes, "data": dict(result.data or {}), "attempt": attempt}
@@ -658,15 +631,13 @@ def test_locally_executed_node_still_verifies_since_stealth_observes_it_directly
                 )
                 if deleted == "DELETE 0":
                     await pool.execute("UPDATE procedures SET is_engineering_fixture = true WHERE id=$1", row_id)
-            if impl_id is not None:
-                await pool.execute("DELETE FROM implementations WHERE id=$1", impl_id)
             await pool.close()
 
     asyncio.run(_run())
 
 
 @pytestmark_db
-def test_implementation_bound_event_fires_through_the_real_resume_run_by_id_path():
+def test_step_bound_event_fires_through_the_real_resume_run_by_id_path():
     """MCP hardening B8 STRICT CLOSURE: `implementation_bound` was
     declared in EVENT_TYPES but had zero real emission call sites --
     `execution_run_nodes.implementation_id` is never written by any
@@ -681,7 +652,6 @@ def test_implementation_bound_event_fires_through_the_real_resume_run_by_id_path
     private runner directly."""
     async def _run():
         from app.db.session import create_pool
-        from app.execution import implementation_registry
         from app.execution.durable_resume import resume_run_by_id
         from app.execution.durable_run import start_run
         from app.execution.plan_persistence import persist_compiled_plan
@@ -694,12 +664,8 @@ def test_implementation_bound_event_fires_through_the_real_resume_run_by_id_path
         row_id = None
         exec_run_id = None
         try:
-            impl = await implementation_registry.register(
-                pool, name=f"implbound-dispatch-{uuid.uuid4().hex[:8]}", kind="deterministic",
-                provider="adapter-e2e", created_by="adapter_e2e",
-                invocation={"code": "print('ok')"},
-            )
-            impl_id = impl["id"]
+            binding = {"kind": "command", "command": "print('ok')"}
+            impl_id = "binding"
 
             res = await capture_procedure(
                 pool, name=f"proc-test-implbound-dispatch-{uuid.uuid4().hex[:8]}",
@@ -713,7 +679,7 @@ def test_implementation_bound_event_fires_through_the_real_resume_run_by_id_path
             compiled = compile_plan(
                 procedure_id=proc_id, procedure_version=pv, procedure_row_id=row_id,
                 procedure_payload=res, task_description="implbound-dispatch-e2e",
-                nodes=[PlanNode(order=0, goal="run it", implementation_id=impl_id)],
+                nodes=[PlanNode(order=0, goal="run it", binding=binding)],
                 extractor_version="test_adapters_e2e@1", created_by="adapter_e2e",
             )
             compiled, _ = await persist_compiled_plan(pool, compiled)
@@ -730,10 +696,10 @@ def test_implementation_bound_event_fires_through_the_real_resume_run_by_id_path
             assert outcome["status"] == "succeeded", outcome
 
             events = await get_run_events(pool, exec_run_id)
-            bound = [e for e in events if e["event_type"] == "implementation_bound"]
+            bound = [e for e in events if e["event_type"] == "step_bound"]
             assert len(bound) == 1
             assert bound[0]["node_order"] == 0
-            assert bound[0]["payload"]["implementation_id"] == str(impl_id)
+            assert bound[0]["payload"]["binding"]["kind"] == "command"
         finally:
             if exec_run_id is not None:
                 await pool.execute("DELETE FROM execution_runs WHERE id=$1", exec_run_id)
@@ -744,8 +710,6 @@ def test_implementation_bound_event_fires_through_the_real_resume_run_by_id_path
                 )
                 if deleted == "DELETE 0":
                     await pool.execute("UPDATE procedures SET is_engineering_fixture = true WHERE id=$1", row_id)
-            if impl_id is not None:
-                await pool.execute("DELETE FROM implementations WHERE id=$1", impl_id)
             await pool.close()
 
     asyncio.run(_run())

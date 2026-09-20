@@ -446,55 +446,6 @@ def test_decide_child_failure_strategy_retries_a_real_retryable_failure():
     asyncio.run(_run())
 
 
-def test_decide_child_failure_strategy_finds_a_real_alternative_implementation():
-    async def _run():
-        pool = await create_pool(DATABASE_URL, min_size=1, max_size=2)
-        run_id = uuid4().hex[:8]
-        name = f"proc-test-recfailalt-{run_id}"
-        impl_ids: list[str] = []
-        try:
-            from app.execution import implementation_registry
-            from app.services.procedure_implementation_bindings import activate_binding, link_implementation
-
-            procedure = await _capture(pool, name, steps=[{"order": 0, "goal": "step"}])
-            compiled = await _compiled_plan(pool, procedure, name)
-            root_id = await _start_run(pool, procedure, compiled)
-            node_row_id = await pool.fetchval(
-                "SELECT id FROM execution_run_nodes WHERE execution_run_id = $1 AND node_order = 0", root_id,
-            )
-            child_id = await _start_run(
-                pool, procedure, compiled, parent_run_id=root_id, parent_node_id=str(node_row_id),
-            )
-            await _fail_a_child_node(pool, child_id, exc=ValueError("non-retryable"), max_attempts=1)
-
-            # TWO real active implementation bindings for the child's procedure.
-            for i in range(2):
-                impl = await implementation_registry.register(
-                    pool, name=f"recfailalt-impl-{run_id}-{i}", kind="tool",
-                    provider="recfailalt-e2e", created_by="test",
-                )
-                impl_ids.append(impl["id"])
-                binding = await link_implementation(
-                    pool, procedure_id=procedure["procedure_id"], implementation_id=impl["id"],
-                    role="primary", created_by="test",
-                )
-                await activate_binding(pool, binding["id"])
-
-            decision = await decide_child_failure_strategy(
-                pool, parent_run_id=root_id, parent_node_id=str(node_row_id), child_run_id=child_id,
-            )
-            assert decision["strategy"] == "search_alternative"
-            assert "implementation bindings" in decision["reason"]
-        finally:
-            for iid in impl_ids:
-                await pool.execute("DELETE FROM procedure_implementations WHERE implementation_id=$1", iid)
-                await pool.execute("DELETE FROM implementations WHERE id=$1", iid)
-            await _cleanup(pool, name)
-            await pool.close()
-
-    asyncio.run(_run())
-
-
 def test_decide_child_failure_strategy_branches_to_a_real_different_procedure():
     """B11 STRICT CLOSURE: `branch` (distinct from `search_alternative`)
     -- no alternative Implementation for the failed procedure, but a

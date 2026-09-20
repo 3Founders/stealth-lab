@@ -49,10 +49,6 @@ from pydantic import BaseModel, Field, ValidationError
 
 from app.services.claims import capture_claim
 from app.services.goals import find_or_create_goal
-from app.services.implementation_identification import (
-    find_or_create_implementation_identity,
-    identify_implementation,
-)
 from app.services.observations import _decode_json_field
 from app.services.procedure_extraction.schema import ExtractionTransientFailure
 from app.services.procedures import capture_procedure
@@ -94,6 +90,8 @@ class CandidateProcedureStep(BaseModel):
 
     description: str = Field(min_length=1)
     subgoal_text: Optional[str] = None
+    # The concrete tool/mechanism the step used (e.g. "pytest"); stored as the step's `binding`.
+    tool_name: Optional[str] = None
     event_indices: list[int] = Field(default_factory=list)
 
 
@@ -105,15 +103,6 @@ class CandidateProcedure(BaseModel):
     event_indices: list[int] = Field(min_length=1)
     epistemic_status: EpistemicStatus = "inferred"
     confidence: float = Field(ge=0.0, le=1.0, default=0.5)
-
-
-class CandidateImplementation(BaseModel):
-    model_config = {"extra": "forbid"}
-
-    tool_name: str = Field(min_length=1)
-    role: str = Field(min_length=1)
-    event_indices: list[int] = Field(min_length=1)
-    applicability_notes: Optional[str] = None
 
 
 Outcome = Literal["success", "failure", "partial_success", "abandoned", "blocked", "unknown"]
@@ -131,7 +120,6 @@ class TrajectorySemanticExtraction(BaseModel):
     primary_goal: Optional[SemanticElement] = None
     subgoals: list[SemanticElement] = Field(default_factory=list)
     candidate_procedures: list[CandidateProcedure] = Field(default_factory=list)
-    implementations: list[CandidateImplementation] = Field(default_factory=list)
     claims: list[SemanticElement] = Field(default_factory=list)
     preconditions: list[SemanticElement] = Field(default_factory=list)
     failure_modes: list[SemanticElement] = Field(default_factory=list)
@@ -164,9 +152,8 @@ the trajectory -- never invent one from a single ambiguous action. If the trajec
 reusable procedure, leave candidate_procedures empty; do not force one.
 - Each procedure step's `subgoal_text` should name the STEP'S GOAL (e.g. "locate the failing test"), \
 not the literal tool call (e.g. NOT "run pytest tests/test_foo.py") -- concrete tools belong in \
-`implementations`, not in the procedure step text.
-- `implementations[]` identifies CONCRETE tools/mechanisms actually used (e.g. "pytest", "ripgrep") \
-and their role; never invent a tool that wasn't actually called.
+`tool_name`, not in the procedure step text. `tool_name` names the CONCRETE tool/mechanism the step \
+actually used (e.g. "pytest", "ripgrep"); never invent a tool that wasn't actually called.
 - `claims[]` are semantic propositions ("the test failure disappeared after regenerating the client \
 from the schema"), never a restatement of raw telemetry ("a file was modified").
 - Extract real value from a FAILED trajectory too: attempted goal, failure point, failed \
@@ -290,15 +277,6 @@ def parse_extraction_response(text: str, *, max_index: int) -> TrajectorySemanti
             step.event_indices = _validate_indices(step.event_indices, max_index)
         kept_procedures.append(proc.model_copy(update={"event_indices": proc_indices, "steps": valid_steps}))
     parsed.candidate_procedures = kept_procedures
-
-    kept_impls = []
-    for impl in parsed.implementations:
-        impl_indices = _validate_indices(impl.event_indices, max_index)
-        if impl_indices:
-            kept_impls.append(impl.model_copy(update={"event_indices": impl_indices}))
-        else:
-            dropped.append(f"dropped implementation (no valid event_indices): {impl.tool_name!r}")
-    parsed.implementations = kept_impls
 
     parsed.uncertainties = dropped
     return parsed
@@ -493,7 +471,7 @@ async def extract_trajectory_semantics(
 
     # index -> [trace_event ids]; a compacted line can stand for several events.
     event_ids_by_index = prepared.index_refs
-    counts = {"goals": 0, "claims": 0, "procedures": 0, "implementations": 0}
+    counts = {"goals": 0, "claims": 0, "procedures": 0}
 
     async def _link(object_type: str, object_id: str, indices: list[int],
                      epistemic_status: str, confidence: Optional[float] = None) -> None:
@@ -557,17 +535,6 @@ async def extract_trajectory_semantics(
             await _link("claim", claim_id, claim_el.event_indices, claim_el.epistemic_status, claim_el.confidence)
             counts["claims"] += 1
 
-    for impl_el in extraction.implementations:
-        identity = identify_implementation(impl_el.tool_name) or (impl_el.tool_name, "unknown", "tool")
-        name, provider, kind = identity
-        impl_row = await find_or_create_implementation_identity(
-            pool, name=name, provider=provider, kind=kind, created_by=created_by,
-            description=impl_el.role, owner_id=resolved_owner_id, visibility=resolved_visibility,
-            scope_type=resolved_scope_type, scope_entity_id=resolved_scope_entity_id,
-        )
-        await _link("implementation", impl_row["id"], impl_el.event_indices, "observed", None)
-        counts["implementations"] += 1
-
     for proc in extraction.candidate_procedures:
         steps: list[dict[str, Any]] = []
         for step in proc.steps:
@@ -587,16 +554,21 @@ async def extract_trajectory_semantics(
                     step.event_indices or proc.event_indices,
                     proc.epistemic_status, proc.confidence,
                 )
-            steps.append({
+            step_doc: dict[str, Any] = {
                 "description": step.description,
                 "goal_id": step_goal_id,
                 "event_refs": list(dict.fromkeys(r for i in step.event_indices for r in event_ids_by_index.get(i, []))),
-            })
+                "source_locator": {"source_id": f"trajectory-extraction:{extraction_id}", "granularity": "span"},
+            }
+            if step.tool_name:
+                step_doc["binding"] = {"kind": "tool", "tool": step.tool_name.strip()}
+            steps.append(step_doc)
         procedure_row = await capture_procedure(
             pool,
             name=proc.capability_statement[:120],
             goal=proc.capability_statement,
             steps=steps,
+            source_locator={"source_id": f"trajectory-extraction:{extraction_id}", "granularity": "document"},
             source_episode_ids=[episode_id],
             provenance="system_pending_review",
             created_by=created_by,

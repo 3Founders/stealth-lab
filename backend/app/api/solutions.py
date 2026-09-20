@@ -21,7 +21,6 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from app.api.deps import get_scope
 from app.services.access import AccessScope
 from app.services.procedure_graph_api import get_solution_view
-from app.services.solution_implementations import get_solution_implementation_detail
 from app.services.solution_search import search_solutions
 
 router = APIRouter(prefix="/v1/solutions", tags=["solutions"])
@@ -65,34 +64,13 @@ async def read_solutions_search(
 @router.get("/{procedure_row_id}")
 async def read_solution(
     procedure_row_id: UUID,
-    implementation_id: Optional[UUID] = Query(default=None),
     pool=Depends(get_pool),
     scope: AccessScope = Depends(get_scope),
 ) -> dict:
     solution = await get_solution_view(
         pool, str(procedure_row_id),
-        implementation_id=str(implementation_id) if implementation_id else None,
         scope=scope,
     )
     if solution is None:
         raise HTTPException(404, "solution not found")
     return solution
-
-
-@router.get("/{procedure_row_id}/implementations")
-async def read_solution_implementation_detail(
-    procedure_row_id: UUID,
-    pool=Depends(get_pool),
-    scope: AccessScope = Depends(get_scope),
-) -> list[dict]:
-    """
-    Directive Sec 53: detailed, durable implementation descriptors for
-    this Solution, ADDITIVE to `GET /{procedure_row_id}`'s existing
-    KIND-level `implementations` field -- see
-    `app.services.solution_implementations` for why this is a separate
-    endpoint rather than an edit to `get_solution_view`'s own payload.
-    """
-    detail = await get_solution_implementation_detail(pool, str(procedure_row_id), scope=scope)
-    if detail is None:
-        raise HTTPException(404, "solution not found")
-    return detail

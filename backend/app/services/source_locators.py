@@ -17,9 +17,11 @@ A step with no span of its own inherits the procedure locator and is MARKED (`gr
 
 A binding is a closed vocabulary; unknown keys are rejected so it cannot become a junk drawer::
 
-    {"kind": "tool|model|mcp_tool|adapter|sandbox|command|runtime|slm_artifact",
-     "tool": ..., "model": ..., "mcp_tool": ..., "adapter": ..., "sandbox": ..., "command": ..., "runtime": ...,
-     "slm_artifact": ..., "locator": ..., "parameters": {...}, "verifier": {...}, "resources": {...}}
+    {"kind": "tool|model|mcp_tool|adapter|sandbox|command|runtime|slm_artifact|http_api|binary|wasm|container",
+     "<kind>": "<primary value, e.g. the MCP tool name>",
+     "endpoint": "https://...", "server_url": "https://mcp...", "path": "bin/tool or module.wasm", "image": "registry/img:tag",
+     "args": [...], "env_refs": ["NAME_OF_ENV_VAR"],          # credentials are referenced by NAME, never stored
+     "locator": ..., "parameters": {...}, "verifier": {...}, "resources": {...}}
 """
 from __future__ import annotations
 
@@ -31,8 +33,17 @@ LOCATOR_KEYS = frozenset({
     "object_locator", "granularity", "inherited", "step_index", "captured_at",
 })
 GRANULARITIES = ("span", "section", "document")
-BINDING_KINDS = ("tool", "model", "mcp_tool", "adapter", "sandbox", "command", "runtime", "slm_artifact")
-BINDING_KEYS = frozenset({"kind", *BINDING_KINDS, "locator", "parameters", "verifier", "resources"})
+# What a step is executed BY. Each kind's own key holds its primary value (`kind: "http_api"` -> `http_api: "<name>"`);
+# the concrete address lives in `endpoint` / `server_url` / `path` / `image` so nothing is a junk drawer.
+BINDING_KINDS = (
+    "tool", "model", "mcp_tool", "adapter", "sandbox", "command", "runtime", "slm_artifact",
+    "http_api", "binary", "wasm", "container",
+    "source_artifact",   # run an immutable ingested artifact (by id) -- only if that artifact is screened + execution_allowed
+)
+BINDING_ADDRESS_KEYS = frozenset({"endpoint", "server_url", "path", "image", "args", "env_refs", "entrypoint", "sandbox_policy"})
+ARTIFACT_ROLES = ("executable_source", "style_reference", "design_reference", "documentation", "dependency_manifest", "test_fixture")
+SANDBOX_POLICIES = ("isolated", "isolated_network")
+BINDING_KEYS = frozenset({"kind", *BINDING_KINDS, *BINDING_ADDRESS_KEYS, "locator", "parameters", "verifier", "resources"})
 
 
 class SourceLocatorError(ValueError):
@@ -75,7 +86,58 @@ def validate_binding(binding: Any, *, where: str = "binding") -> dict:
     for k in ("parameters", "verifier", "resources"):
         if k in binding and not isinstance(binding[k], Mapping):
             raise SourceLocatorError(f"{where}: {k} must be an object")
+    for k in ("endpoint", "server_url", "path", "image"):
+        if k in binding and not isinstance(binding[k], str):
+            raise SourceLocatorError(f"{where}: {k} must be a string")
+    for k in ("endpoint", "server_url"):
+        if binding.get(k) and not str(binding[k]).startswith(("http://", "https://", "ws://", "wss://", "grpc://")):
+            raise SourceLocatorError(f"{where}: {k} must be an http(s)/ws(s)/grpc URL")
+    if "args" in binding and not (isinstance(binding["args"], (list, tuple)) and all(isinstance(a, str) for a in binding["args"])):
+        raise SourceLocatorError(f"{where}: args must be a list of strings")
+    if "env_refs" in binding and not (isinstance(binding["env_refs"], (list, tuple)) and all(isinstance(a, str) for a in binding["env_refs"])):
+        raise SourceLocatorError(f"{where}: env_refs must be a list of variable NAMES (never values)")
+    if binding.get("sandbox_policy") is not None and binding["sandbox_policy"] not in SANDBOX_POLICIES:
+        raise SourceLocatorError(f"{where}: sandbox_policy must be one of {SANDBOX_POLICIES}")
+    if kind == "source_artifact":
+        if not binding.get("entrypoint"):
+            raise SourceLocatorError(f"{where}: kind='source_artifact' needs an entrypoint (repository-relative path)")
+        if not binding.get("runtime"):
+            raise SourceLocatorError(f"{where}: kind='source_artifact' needs a runtime (e.g. 'python')")
+        if not binding.get("sandbox_policy"):
+            raise SourceLocatorError(f"{where}: kind='source_artifact' needs a sandbox_policy")
+    # kind-specific required addresses
+    need = {"mcp_tool": ("server_url", "locator"), "http_api": ("endpoint", "locator"), "binary": ("path", "locator"),
+            "wasm": ("path", "locator"), "container": ("image", "locator")}.get(kind or "")
+    if need and not any(binding.get(k) for k in need):
+        raise SourceLocatorError(f"{where}: kind={kind!r} needs one of {need} (where it lives)")
     return dict(binding)
+
+
+def validate_source_artifacts(refs: Any, *, where: str = "source_artifacts") -> list:
+    """`procedures.source_artifacts`: preserved source material a procedure draws on. Each ref names an
+    ingested artifact (`artifact_id`), the path inside its source, and a ROLE. Only `executable_source` refs may
+    ever be executed, and even then only when the artifact itself is screened and `execution_allowed`; style/design
+    references are retrievable context and are never executable."""
+    if refs is None:
+        return []
+    if not isinstance(refs, (list, tuple)):
+        raise SourceLocatorError(f"{where} must be a list")
+    out = []
+    for i, r in enumerate(refs):
+        if not isinstance(r, Mapping):
+            raise SourceLocatorError(f"{where}[{i}] must be an object")
+        unknown = set(r) - {"artifact_id", "path", "role", "execution_allowed", "note"}
+        if unknown:
+            raise SourceLocatorError(f"{where}[{i}]: unknown keys {sorted(unknown)}")
+        if not r.get("artifact_id"):
+            raise SourceLocatorError(f"{where}[{i}]: artifact_id is required")
+        role = r.get("role")
+        if role not in ARTIFACT_ROLES:
+            raise SourceLocatorError(f"{where}[{i}]: role must be one of {ARTIFACT_ROLES}")
+        if role != "executable_source" and r.get("execution_allowed"):
+            raise SourceLocatorError(f"{where}[{i}]: only role='executable_source' may set execution_allowed")
+        out.append(dict(r))
+    return out
 
 
 def normalize_steps(
@@ -115,7 +177,7 @@ def procedure_locator_from_source(*, source_key: Optional[str] = None, uri: Opti
 def binding_from_implementation(impl: Mapping) -> dict:
     """Fold a legacy `implementations` row into a step binding (used by the fold-implementations migration tool)."""
     kind_map = {"deterministic": "command", "mcp_tool": "mcp_tool", "model": "model", "frontier": "model", "slm": "slm_artifact",
-                "tool": "tool", "adapter": "adapter", "sandbox": "sandbox", "runtime": "runtime"}
+                "tool": "tool", "adapter": "adapter", "sandbox": "sandbox", "runtime": "runtime", "api": "http_api", "wasm": "wasm"}
     raw_kind = str(impl.get("kind") or "")
     kind = kind_map.get(raw_kind, "tool")
     locator = impl.get("locator") if isinstance(impl.get("locator"), Mapping) else {}

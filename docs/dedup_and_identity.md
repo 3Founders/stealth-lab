@@ -21,7 +21,7 @@ code generates candidates; a model decides identity; the decision is durable.
   provider, model, prompt version, FTS/vector candidate counts, job id). With an
   `idempotency_key` a replayed job **reuses** its earlier decision instead of re-judging.
 * Merged goals are kept (`status='merged'`, `merged_into_id`), never deleted; their
-  Procedures/Implementations/hierarchy edges are moved to the survivor; a DB trigger
+  Procedures/hierarchy edges are moved to the survivor; a DB trigger
   (`sl_procedure_follow_merged_goal`) stops a late writer from linking to a merged goal.
 
 ## Concurrent paraphrases (why reconciliation exists)
@@ -62,3 +62,22 @@ gate used by `ingest_skill_md`) is the last similarity-threshold dedup left; it 
 
 * Claim reconciliation for claims created while the judge was down (they carry `judge_unavailable`; a sweep like
   `reconcile_goals` for claims is not written).
+
+## Claims created during a judge outage (`reconcile_claims`)
+
+A public claim never gets past an outage (the job fails and retries). A **private** claim is created anyway so a user's local
+sync never blocks, and its `identity_decisions` row is `judge_unavailable` with `detail.created_claim_id`. `reconcile_claims`
+(`services/claim_identity.py`; runs after each worker batch, or `python -m app.ingestion.admin reconcile-claims`;
+`INGEST_RECONCILE_CLAIMS=0` disables it) judges those claims later against the same candidates ingestion would have used:
+
+| judge says | result |
+|---|---|
+| same (>= 0.85) | the **older** claim survives and gains the newer one's provenance; the newer is retired (`t_invalid`, `merged_into`) only if no procedure claim-ref or evidence depends on it, otherwise both stay and a pending `equivalent` review candidate is recorded |
+| contradicts | both kept, pending `contradicts` candidate |
+| specializes / generalizes / related / low-confidence same | both kept, pending `related` candidate |
+| distinct | nothing |
+| judge still down | left for the next sweep, nothing guessed |
+
+Each decision is stamped `detail.reconciled`, so a claim is judged once. Claims created by an outage *before* this feature exist
+have no `created_claim_id` and are not swept. Tests: `test_claim_identity_e2e.py` (outage -> later merge, contradiction and
+low-confidence never merged, dependents flag instead of retire).

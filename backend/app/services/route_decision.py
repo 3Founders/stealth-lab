@@ -175,16 +175,15 @@ class RouteDecision:
     scope_type: Optional[str] = None
     scope_entity_id: Optional[str] = None
     # B1's own pipeline: "retrieve Procedures -> retrieve relevant Claims
-    # -> evaluate applicability -> resolve candidate Implementations ->
-    # determine missing decision-critical facts -> choose route". Both
-    # steps below now genuinely run inside decide_route() (real calls,
+    # -> evaluate applicability ->
+    # determine missing decision-critical facts -> choose route". The
+    # step below now genuinely runs inside decide_route() (real calls,
     # bounded, never fabricated) -- not persisted to route_decisions
     # (B2's own field list doesn't include them; they belong on
     # find_best_way's OUTPUT per B32), but present on every returned
     # RouteDecision so find_best_way's response builder never has to
     # re-run the same retrieval a second time.
     relevant_claim_refs: list[dict] = field(default_factory=list)
-    implementation_candidates: list[dict] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         if self.route not in ROUTE_STATES:
@@ -221,22 +220,15 @@ async def decide_route(
     The B1 algorithm, now genuinely running every pipeline step the spec
     names (not just the applicability-adjacent ones): normalize ->
     classify intent -> retrieve candidates -> retrieve relevant Claims ->
-    evaluate applicability -> resolve candidate Implementations ->
+    evaluate applicability ->
     identify decision-critical unknowns -> choose route.
 
     This is a thin wrapper around `_decide_route_core` (the pre-existing
-    applicability/intent logic, unchanged) that additionally runs the two
-    real retrieval steps B1 names but this module never called before --
-    `get_relevant_claims` (B30/B32) and `get_bindings_for_procedure`
-    (B23/B24) -- and attaches their REAL results onto the returned
-    decision. Wrapped rather than threaded through every one of
-    `_decide_route_core`'s six return points because claims retrieval
-    does not depend on which branch was taken (it only depends on the
-    goal), and implementation-candidate resolution only needs the
-    decision's own `procedure_id` once chosen -- both are genuinely
-    independent of the routing logic itself, matching the spec's own
-    framing of them as pipeline STEPS that inform (not replace) routing,
-    not new gating rules layered into the cascade.
+    applicability/intent logic, unchanged) that additionally runs the real
+    claims retrieval step (`get_relevant_claims`, B30/B32) and attaches the
+    result onto the returned decision. Claims retrieval does not depend on
+    which branch was taken (only on the goal), so it is not threaded through
+    every one of `_decide_route_core`'s return points.
     """
     relevant_claim_refs: list[dict] = []
     try:
@@ -261,15 +253,6 @@ async def decide_route(
         candidates=candidates,
     )
     decision.relevant_claim_refs = relevant_claim_refs
-
-    if decision.procedure_id is not None:
-        try:
-            from app.services.procedure_implementation_bindings import get_bindings_for_procedure
-            decision.implementation_candidates = await get_bindings_for_procedure(
-                pool, procedure_id=decision.procedure_id, access_scope=access_scope,
-            )
-        except Exception:  # noqa: BLE001 -- same informational-only discipline as claims above.
-            decision.implementation_candidates = []
 
     return decision
 

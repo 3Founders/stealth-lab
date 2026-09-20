@@ -9,10 +9,10 @@ from app.execution.goal_compiler import compiled_goal_to_run_md, flatten_goal_tr
 from app.execution.goal_resolution import ResolvedGoalNode
 
 
-def _impl_leaf(goal_id, name, impl_id="I-1", kind="deterministic", depth=0):
+def _impl_leaf(goal_id, name, impl_id="I-1", kind="command", depth=0):
     return ResolvedGoalNode(
-        goal_id=goal_id, goal_name=name, depth=depth, chosen="implementation",
-        implementation={"id": impl_id, "name": f"impl-for-{name}", "kind": kind},
+        goal_id=goal_id, goal_name=name, depth=depth, chosen="step",
+        step={"order": 0, "procedure_id": impl_id, "binding": {"kind": kind, kind: name}},
         rationale=f"chosen impl for {name}",
     )
 
@@ -37,22 +37,22 @@ def _procedure_node(goal_id, name, children, depth=0):
 
 
 def test_goal_resolving_straight_to_implementation_is_one_node():
-    tree = _impl_leaf("G-1", "find references", impl_id="I-42", kind="tool")
+    tree = _impl_leaf("G-1", "find references", impl_id="I-42", kind="command")
     nodes = flatten_goal_tree(tree)
     assert len(nodes) == 1
-    assert nodes[0].kind == "implementation"
-    assert nodes[0].implementation_id == "I-42"
-    assert nodes[0].executor == "tool"
+    assert nodes[0].kind == "step"
+    assert nodes[0].procedure_id == "I-42"
+    assert nodes[0].executor == "deterministic"
     assert nodes[0].deps == []
 
 
 def test_unresolved_goal_becomes_one_human_node():
-    tree = _unresolved_leaf("G-1", "impossible goal", reason="no direct implementation and no procedure linked")
+    tree = _unresolved_leaf("G-1", "impossible goal", reason="no procedure linked")
     nodes = flatten_goal_tree(tree)
     assert len(nodes) == 1
     assert nodes[0].kind == "human"
     assert nodes[0].executor == "human"
-    assert nodes[0].rationale == "no direct implementation and no procedure linked"
+    assert nodes[0].rationale == "no procedure linked"
 
 
 def test_procedure_with_all_implementation_children_emits_one_node_per_step():
@@ -63,7 +63,7 @@ def test_procedure_with_all_implementation_children_emits_one_node_per_step():
     ])
     nodes = flatten_goal_tree(tree)
     assert len(nodes) == 3
-    assert [n.implementation_id for n in nodes] == ["I-1", "I-2", "I-3"]
+    assert [n.procedure_id for n in nodes] == ["I-1", "I-2", "I-3"]
 
 
 def test_procedure_node_itself_emits_nothing_only_its_children_do():
@@ -106,7 +106,7 @@ def test_nested_procedures_chain_across_the_whole_flattened_sequence():
         _impl_leaf("G-2", "outer step two", impl_id="I-2", depth=1),
     ])
     nodes = flatten_goal_tree(tree)
-    assert [n.implementation_id for n in nodes] == ["I-1a", "I-1b", "I-2"]
+    assert [n.procedure_id for n in nodes] == ["I-1a", "I-1b", "I-2"]
     assert nodes[0].deps == []
     assert nodes[1].deps == [nodes[0].node_id]
     assert nodes[2].deps == [nodes[1].node_id]  # outer step two depends on the LAST inner leaf
@@ -146,7 +146,7 @@ def test_compiled_run_md_marks_implementation_nodes_as_planned_never_success():
     nodes = flatten_goal_tree(tree)
     md = compiled_goal_to_run_md(nodes)
     assert "GOAL_RUN|-|planned" in md
-    assert "GOAL_NODE|G-1|implementation|planned|impl=I-42" in md
+    assert "GOAL_NODE|G-1|step|planned|binding=-" in md
     assert "success" not in md and "failure" not in md
 
 
@@ -154,7 +154,7 @@ def test_compiled_run_md_marks_human_nodes_as_needs_input():
     tree = _unresolved_leaf("G-1", "no match", reason="nothing links")
     nodes = flatten_goal_tree(tree)
     md = compiled_goal_to_run_md(nodes)
-    assert "GOAL_NODE|G-1|human|needs_input|impl=-" in md
+    assert "GOAL_NODE|G-1|human|needs_input|binding=-" in md
 
 
 def test_compiled_run_md_never_fabricates_an_execution_id():
@@ -174,6 +174,6 @@ def test_compiled_run_md_covers_a_multi_node_real_procedure_chain():
     md = compiled_goal_to_run_md(nodes)
     data_lines = [ln for ln in md.splitlines() if ln.startswith("GOAL_NODE|")]
     assert len(data_lines) == 3
-    assert "GOAL_NODE|G-1|implementation|planned|impl=I-1" in md
-    assert "GOAL_NODE|G-2|human|needs_input|impl=-" in md
-    assert "GOAL_NODE|G-3|implementation|planned|impl=I-3" in md
+    assert "GOAL_NODE|G-1|step|planned|binding=-" in md
+    assert "GOAL_NODE|G-2|human|needs_input|binding=-" in md
+    assert "GOAL_NODE|G-3|step|planned|binding=-" in md

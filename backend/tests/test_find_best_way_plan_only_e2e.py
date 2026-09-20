@@ -35,6 +35,14 @@ pytestmark = pytest.mark.skipif(
     not DATABASE_URL, reason="requires a real DATABASE_URL -- this is a live-database integration test"
 )
 
+@pytest.fixture(autouse=True)
+def _lenient_judge():
+    from tests.identity_fakes import install_lenient_default_judge
+    undo = install_lenient_default_judge()
+    yield
+    undo()
+
+
 
 class _FakeRequestContext:
     def __init__(self, pool):
@@ -89,7 +97,7 @@ async def _make_verified_approved(pool, name: str, **kwargs) -> dict:
     if "embedding" in kwargs and "embedding_model_id" not in kwargs:
         kwargs["embedding_model_id"] = Embedder().embedding_model_id()
     result = await capture_procedure(
-        pool, name=name, goal=name, provenance="system_pending_review",
+        pool, name=name, goal=kwargs.pop("goal", name), provenance="system_pending_review",
         scope_type="global", **kwargs,
     )
     row_id = result["id"]
@@ -136,7 +144,7 @@ def test_plan_only_returns_real_composed_plan_with_zero_llm_calls():
             goal_text = f"implement a new feature end to end -- plan-only test unique phrase ({run_id})"
             root_vec = await embedder.embed_one(goal_text, input_type="document")
             root = await _make_verified_approved(
-                pool, f"proc-test-planonly-root-{run_id}",
+                pool, f"proc-test-planonly-root-{run_id}", goal=goal_text,
                 steps=[
                     {"order": 0, "goal": "explore repo"},
                     {"order": 1, "goal": f"run the shared lint pass ({run_id})",

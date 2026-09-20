@@ -72,14 +72,26 @@ async def get_pending_global_verifications(pool: asyncpg.Pool, *, limit: int = 1
                p.name AS procedure_name, p.goal AS procedure_goal,
                p.verification_state
         FROM pending_global_verifications v
-        JOIN procedures p ON p.id = v.procedure_row_id
+        LEFT JOIN procedures p ON p.id = v.procedure_row_id
         WHERE v.status = 'pending'
         ORDER BY v.t_created ASC
         LIMIT $1
         """,
         limit,
     )
-    return [dict(r) for r in rows]
+    out = [dict(r) for r in rows]
+    missing = [r for r in out if r.get("procedure_name") is None and r.get("procedure_row_id")]
+    if missing:
+        # the candidate procedure lives on another shard: hydrate name/goal/state from its home shard
+        from app.services.shards import home_pool
+        for r in missing:
+            hp = await home_pool(pool, "procedure", str(r["procedure_row_id"]), by_row_id=True)
+            if hp is pool:
+                continue
+            p = await hp.fetchrow("SELECT name, goal, verification_state FROM procedures WHERE id = $1::uuid", r["procedure_row_id"])
+            if p is not None:
+                r.update(procedure_name=p["name"], procedure_goal=p["goal"], verification_state=p["verification_state"])
+    return out
 
 
 async def resolve_pending_global_verification(

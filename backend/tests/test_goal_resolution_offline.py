@@ -1,18 +1,15 @@
 """
 DB-free coverage for app.execution.goal_resolution -- the recursive
-Goal->Implementation/Procedure compiler (execu.md Sec 8). Every real
-dependency (goals table reads, select_implementation_for_goal_id,
-check_hard_constraints) is monkeypatched at the module level, proving
+Goal->Procedure compiler (bound steps are the executable leaves) (execu.md Sec 8). Every real
+dependency (goals table reads, check_hard_constraints) is monkeypatched at the module level, proving
 this module's own recursion/cycle/depth/decision logic in isolation --
-the same reasoning test_find_best_way_registered_implementation_offline.py
-already established for a similarly-shaped compiler function.
+
 """
 from __future__ import annotations
 
 import asyncio
 
 import app.execution.goal_resolution as gr
-from app.execution.implementation_selection import SelectionResult
 from app.services.access import AccessScope
 from app.services.applicability import ApplicabilityResult
 
@@ -50,20 +47,6 @@ def _goal(goal_id: str, name: str, **overrides) -> dict:
     return row
 
 
-async def _no_direct_impl(pool, goal_id, *, context=None, scope=None, weights=None, goal_text=None, embedder=None):
-    return SelectionResult(goal=str(goal_id), candidates_considered=[], ranked=[], chosen=None, rationale="none")
-
-
-def _has_direct_impl(impl_id="I-1", impl_name="the-implementation"):
-    async def fn(pool, goal_id, *, context=None, scope, weights=None, goal_text=None, embedder=None):
-        return SelectionResult(
-            goal=goal_id, candidates_considered=[{"id": impl_id}], ranked=[],
-            chosen={"id": impl_id, "name": impl_name, "kind": "deterministic"},
-            rationale=f"chosen {impl_name!r}",
-        )
-    return fn
-
-
 # ---------------------------------------------------------------------
 # A. root not found
 # ---------------------------------------------------------------------
@@ -88,43 +71,46 @@ def test_non_root_goal_not_found_is_an_honest_unresolved_leaf(monkeypatch):
 
 
 # ---------------------------------------------------------------------
-# B. direct implementation wins
+# B. a step carrying a binding is an executable leaf
 # ---------------------------------------------------------------------
 
 
-def test_direct_implementation_resolves_as_a_leaf(monkeypatch):
-    pool = _FakePool({"G-1": _goal("G-1", "find references")})
-    monkeypatch.setattr(gr, "select_implementation_for_goal_id", _has_direct_impl())
+def _bound_proc(pid="P-1"):
+    return {"id": pid, "procedure_id": pid, "name": "one-step", "version": 1,
+            "steps": [{"order": 0, "goal": "run the check", "binding": {"kind": "command", "command": "make check"}}]}
+
+
+def test_one_step_procedure_resolves_to_a_bound_step_leaf(monkeypatch):
+    pool = _FakePool({"G-1": _goal("G-1", "find references", verification_requirement={"method": "deterministic_check", "command": "true"})})
+
+    async def fake_feasible(pool, goal_id, *, current_scope, access_scope):
+        return [(_bound_proc(), True)]
+    monkeypatch.setattr(gr, "_feasible_procedures_for_goal", fake_feasible)
     node = _run(gr.resolve_goal(pool, "G-1", scope=SCOPE))
-    assert node.chosen == "implementation"
-    assert node.implementation["name"] == "the-implementation"
-    assert node.children == []
-    assert node.implementation_alternates == []
+    assert node.chosen == "procedure" and len(node.children) == 1
+    leaf = node.children[0]
+    assert leaf.chosen == "step" and leaf.step["binding"]["command"] == "make check"
+    assert leaf.step["procedure_id"] == "P-1" and leaf.goal_id == "G-1#s0"
+    assert node.verification_requirement == {"method": "deterministic_check", "command": "true"}
 
 
-def test_direct_implementation_keeps_real_eligible_runner_ups_as_alternates(monkeypatch):
-    from app.execution.implementation_selection import RankedImplementation
+def test_bound_step_wins_over_a_goal_text_match(monkeypatch):
+    pool = _FakePool({"G-1": _goal("G-1", "x")})
 
-    winner = {"id": "I-1", "name": "winner", "kind": "deterministic"}
-    runner_up = {"id": "I-2", "name": "runner-up", "kind": "deterministic"}
-    ineligible = {"id": "I-3", "name": "ineligible", "kind": "deterministic"}
+    async def fake_feasible(pool, goal_id, *, current_scope, access_scope):
+        return [(_bound_proc(), True)]
 
-    async def fake_select(pool, goal_id, *, context=None, scope, weights=None, goal_text=None, embedder=None):
-        ranked = [
-            RankedImplementation(implementation=winner, eligible=True, checks=[], score=0.9),
-            RankedImplementation(implementation=runner_up, eligible=True, checks=[], score=0.5),
-            RankedImplementation(implementation=ineligible, eligible=False, checks=[], score=None),
-        ]
-        return SelectionResult(
-            goal=goal_id, candidates_considered=[winner, runner_up, ineligible], ranked=ranked,
-            chosen=winner, rationale="chosen winner",
-        )
+    async def boom(*a, **k):
+        raise AssertionError("a bound step must not be re-resolved as a goal")
+    monkeypatch.setattr(gr, "_feasible_procedures_for_goal", fake_feasible)
+    monkeypatch.setattr(gr, "resolve_goal_id_for_text", boom)
+    assert _run(gr.resolve_goal(pool, "G-1", scope=SCOPE)).children[0].chosen == "step"
 
+
+def test_goal_with_no_verification_requirement_has_an_honest_empty_dict(monkeypatch):
     pool = _FakePool({"G-1": _goal("G-1", "find references")})
-    monkeypatch.setattr(gr, "select_implementation_for_goal_id", fake_select)
-    node = _run(gr.resolve_goal(pool, "G-1", scope=SCOPE))
-    assert node.implementation["id"] == "I-1"
-    assert [a["id"] for a in node.implementation_alternates] == ["I-2"]
+    monkeypatch.setattr(gr, "_feasible_procedures_for_goal", lambda *a, **k: _async_result([]))
+    assert _run(gr.resolve_goal(pool, "G-1", scope=SCOPE)).verification_requirement == {}
 
 
 # ---------------------------------------------------------------------
@@ -132,44 +118,11 @@ def test_direct_implementation_keeps_real_eligible_runner_ups_as_alternates(monk
 # ---------------------------------------------------------------------
 
 
-def test_direct_implementation_threads_real_verification_requirement(monkeypatch):
-    goal = _goal("G-1", "find references", verification_requirement={"method": "deterministic_check", "command": "true"})
-    pool = _FakePool({"G-1": goal})
-    monkeypatch.setattr(gr, "select_implementation_for_goal_id", _has_direct_impl())
-    node = _run(gr.resolve_goal(pool, "G-1", scope=SCOPE))
-    assert node.verification_requirement == {"method": "deterministic_check", "command": "true"}
-
-
-def test_direct_implementation_with_no_verification_requirement_is_an_honest_empty_dict(monkeypatch):
-    pool = _FakePool({"G-1": _goal("G-1", "find references")})
-    monkeypatch.setattr(gr, "select_implementation_for_goal_id", _has_direct_impl())
-    node = _run(gr.resolve_goal(pool, "G-1", scope=SCOPE))
-    assert node.verification_requirement == {}
-
-
-def test_resolve_goal_threads_goal_text_and_embedder_to_selection(monkeypatch):
-    captured = {}
-
-    async def fake_select(pool, goal_id, *, context=None, scope, weights=None, goal_text=None, embedder=None):
-        captured["goal_text"] = goal_text
-        captured["embedder"] = embedder
-        return SelectionResult(goal=goal_id, candidates_considered=[], ranked=[], chosen=None, rationale="none")
-
-    pool = _FakePool({"G-1": _goal("G-1", "find references")})
-    monkeypatch.setattr(gr, "select_implementation_for_goal_id", fake_select)
-    monkeypatch.setattr(gr, "_feasible_procedures_for_goal", lambda *a, **k: _async_result([]))
-    sentinel_embedder = object()
-    _run(gr.resolve_goal(pool, "G-1", scope=SCOPE, embedder=sentinel_embedder))
-    assert captured["goal_text"] == "find references"
-    assert captured["embedder"] is sentinel_embedder
-
-
 def test_procedure_decomposes_into_child_goals(monkeypatch):
     pool = _FakePool({
         "G-parent": _goal("G-parent", "safely modify generated API"),
         "G-child": _goal("G-child", "regenerate bindings"),
     })
-    monkeypatch.setattr(gr, "select_implementation_for_goal_id", _no_direct_impl)
 
     async def fake_feasible(pool, goal_id, *, current_scope, access_scope):
         if goal_id == "G-parent":
@@ -199,7 +152,6 @@ def test_procedure_decomposes_into_child_goals(monkeypatch):
 
 def test_procedure_node_keeps_real_alternate_feasible_procedures(monkeypatch):
     pool = _FakePool({"G-parent": _goal("G-parent", "safely modify generated API")})
-    monkeypatch.setattr(gr, "select_implementation_for_goal_id", _no_direct_impl)
 
     proc_a = {"id": "P-1", "procedure_id": "P-1", "name": "strategy-a", "version": 1, "steps": []}
     proc_b = {"id": "P-2", "procedure_id": "P-2", "name": "strategy-b", "version": 1, "steps": []}
@@ -218,7 +170,6 @@ def test_procedure_cost_score_hook_is_called_but_inert(monkeypatch):
     its (always-None) result must not reorder or otherwise change which
     procedure is chosen -- feasible[0] wins exactly as before."""
     pool = _FakePool({"G-parent": _goal("G-parent", "safely modify generated API")})
-    monkeypatch.setattr(gr, "select_implementation_for_goal_id", _no_direct_impl)
 
     proc_a = {"id": "P-1", "procedure_id": "P-1", "name": "strategy-a", "version": 1, "steps": []}
     proc_b = {"id": "P-2", "procedure_id": "P-2", "name": "strategy-b", "version": 1, "steps": []}
@@ -248,7 +199,6 @@ def test_resolve_goal_via_procedure_resolves_a_specific_alternate(monkeypatch):
         "id": "P-2", "procedure_id": "P-2", "name": "strategy-b", "version": 1,
         "steps": [{"order": 0, "goal": "regenerate bindings"}],
     }
-    monkeypatch.setattr(gr, "select_implementation_for_goal_id", _no_direct_impl)
     monkeypatch.setattr(gr, "_feasible_procedures_for_goal", lambda *a, **k: _async_result([]))
 
     async def fake_text_lookup(pool, text, *, scope_type, scope_entity_id):
@@ -268,7 +218,6 @@ async def _async_result(value):
 
 def test_step_with_no_matching_goal_text_is_an_honest_unresolved_child(monkeypatch):
     pool = _FakePool({"G-parent": _goal("G-parent", "do the thing")})
-    monkeypatch.setattr(gr, "select_implementation_for_goal_id", _no_direct_impl)
 
     async def fake_feasible(pool, goal_id, *, current_scope, access_scope):
         return [({
@@ -299,7 +248,6 @@ def test_cycle_is_detected_not_infinite_looped(monkeypatch):
         "G-A": _goal("G-A", "a"),
         "G-B": _goal("G-B", "b"),
     })
-    monkeypatch.setattr(gr, "select_implementation_for_goal_id", _no_direct_impl)
 
     async def fake_feasible(pool, goal_id, *, current_scope, access_scope):
         other = "G-B" if goal_id == "G-A" else "G-A"
@@ -325,7 +273,6 @@ def test_cycle_is_detected_not_infinite_looped(monkeypatch):
 
 def test_recursion_limit_is_honored(monkeypatch):
     pool = _FakePool({f"G-{i}": _goal(f"G-{i}", f"goal {i}") for i in range(10)})
-    monkeypatch.setattr(gr, "select_implementation_for_goal_id", _no_direct_impl)
 
     async def fake_feasible(pool, goal_id, *, current_scope, access_scope):
         n = int(goal_id.split("-")[1])
@@ -355,9 +302,8 @@ def test_recursion_limit_is_honored(monkeypatch):
 # ---------------------------------------------------------------------
 
 
-def test_no_implementation_and_no_feasible_procedure_is_honest_unresolved(monkeypatch):
+def test_no_feasible_procedure_is_honest_unresolved(monkeypatch):
     pool = _FakePool({"G-1": _goal("G-1", "impossible goal")})
-    monkeypatch.setattr(gr, "select_implementation_for_goal_id", _no_direct_impl)
 
     async def fake_feasible(pool, goal_id, *, current_scope, access_scope):
         return []
@@ -365,4 +311,4 @@ def test_no_implementation_and_no_feasible_procedure_is_honest_unresolved(monkey
 
     node = _run(gr.resolve_goal(pool, "G-1", scope=SCOPE))
     assert node.chosen == "unresolved"
-    assert "no direct implementation and no procedure linked" in node.unresolved_reason
+    assert "no procedure linked" in node.unresolved_reason

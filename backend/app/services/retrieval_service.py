@@ -78,7 +78,7 @@ class LocalClaim:
 class QueryContext:
     query: str
     claims: list[LocalClaim]
-    text: str                       # compact text used for candidate generation + judging
+    text: str                       # query + local claims: used ONLY by the judge (never for candidate generation)
     dropped_claims: int = 0
 
     @property
@@ -295,7 +295,7 @@ async def search_goals(
     if embedder is not None:
         t0 = time.monotonic()
         try:
-            emb = await embedder.embed_one(ctx.text, input_type="query")
+            emb = await embedder.embed_one(ctx.query, input_type="query")
             model = embedder.embedding_model_id()
             meta.embedding_model = model
         except Exception:  # noqa: BLE001 -- FTS-only, flagged
@@ -306,7 +306,7 @@ async def search_goals(
         cands, n_fts, n_vec = await _legs(
             pool, table="goal_search_index", id_col="goal_id", name_col="canonical_name",
             text_expr="canonical_name || COALESCE(': ' || short_description, '')", extra_cols="",
-            ctx_text=ctx.text, embedding=emb, embedding_model=model, scope=scope,
+            ctx_text=ctx.query, embedding=emb, embedding_model=model, scope=scope,
             where_extra="status IN ('active', 'candidate')", extra_params=[], cfg=cfg)
         meta.latency_ms["goal_search"] = (time.monotonic() - t0) * 1000
         meta.counts.update(goal_fts_candidates=n_fts, goal_vector_candidates=n_vec, goal_fused=len(cands))
@@ -360,7 +360,7 @@ def pareto_front(items: list[dict], keys: Sequence[str]) -> list[dict]:
 
 def _hydrate_cols() -> str:
     from app.services.applicability import PROCEDURE_COLS_NO_HEAVY
-    return PROCEDURE_COLS_NO_HEAVY + ", achieves_goal_id, source_locator"
+    return PROCEDURE_COLS_NO_HEAVY + ", achieves_goal_id, source_locator, source_artifacts"
 
 
 async def _fetch_procedures(pool: Any, ids: list[str]):
@@ -393,7 +393,7 @@ async def retrieve_procedures(
     model = meta.embedding_model
     if embedder is not None:
         try:
-            emb = await embedder.embed_one(ctx.text, input_type="query")
+            emb = await embedder.embed_one(ctx.query, input_type="query")
             model = embedder.embedding_model_id()
         except Exception:  # noqa: BLE001
             meta.degrade("embedding provider unavailable: lexical procedure candidates only")
@@ -403,7 +403,7 @@ async def retrieve_procedures(
             pool, table="procedure_search_index", id_col="procedure_id", name_col="name",
             text_expr="name || COALESCE(': ' || summary, '') || COALESCE(' preconditions: ' || preconditions_summary, '')",
             extra_cols=", procedure_row_id::text AS procedure_row_id, goal_id::text AS goal_id",
-            ctx_text=ctx.text, embedding=emb, embedding_model=model, scope=scope,
+            ctx_text=ctx.query, embedding=emb, embedding_model=model, scope=scope,
             where_extra="goal_id = ANY($1::uuid[]) AND status = 'active'", extra_params=[goal_ids], cfg=cfg)
         _tel.set_attrs(sp, fts=n_fts, vector=n_vec, fused=len(cands))
     meta.latency_ms["procedure_search"] = (time.monotonic() - t0) * 1000

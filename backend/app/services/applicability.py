@@ -43,9 +43,13 @@ from datetime import datetime, timezone
 from typing import Any, Optional
 from uuid import UUID
 
+import functools
+
 import asyncpg
 
+from app import telemetry as _tel
 from app.services.access import AccessScope, next_param_index, visibility_predicate
+from app.services.shards import fanout_best_row, fanout_fetch, fanout_fetchrow, fanout_fetchval_sum, home_pool, multi_shard  # noqa: E402  (sharding)
 from app.services.embeddings import to_pgvector
 from app.services.invariants import check_invariants_async
 from app.services.relevance_gate import passes_relevance_gate
@@ -104,7 +108,8 @@ async def should_disable_procedure_retrieval(
     """
     scope = access_scope or AccessScope.unrestricted()
     vis_sql, vis_params = visibility_predicate(scope, param_index=1)
-    count = await pool.fetchval(
+    count = await fanout_fetchval_sum(
+        pool,
         "SELECT count(*) FROM procedures WHERE verification_state = 'verified' "
         "AND availability = 'active' AND t_invalid IS NULL "
         f"AND {vis_sql}",
@@ -186,7 +191,8 @@ async def _claim_matches_precondition(
 
     scope = scope or AccessScope.unrestricted()
     vis_sql, vis_params = visibility_predicate(scope, param_index=3)
-    rows = await pool.fetch(
+    rows = await fanout_fetch(     # a claim may live on any shard
+        pool,
         f"SELECT properties, t_valid, t_invalid FROM knowledge_nodes "
         f"WHERE id = $1::uuid AND node_type = 'claim' "
         f"AND properties->>'truth_state' = 'IN' "
@@ -437,7 +443,8 @@ async def check_hard_constraints(
                 as_of=as_of, scope=access_scope,
             )
             if not satisfied and client is not None:
-                row = await pool.fetchrow(
+                row = await fanout_fetchrow(
+                    pool,
                     "SELECT properties FROM knowledge_nodes WHERE id = $1::uuid "
                     "AND node_type = 'claim'", claim_id,
                 )
@@ -573,6 +580,16 @@ _PROC_LEXICAL_SQL = (
 )
 
 
+async def _leg(stage: str, awaitable):
+    """One retrieval leg as a span: stage, hit count, latency (span duration),
+    shard. Ids are never recorded here -- candidate rows live in Postgres."""
+    with _tel.span(f"retrieval.{stage}", kind="RETRIEVER", on_error=_tel.FailureCode.RETRIEVAL_ERROR,
+                   retrieval_stage=stage, shard_id=_tel.shard_id()) as sp:
+        rows = await awaitable
+        _tel.set_attrs(sp, candidate_count=len(rows))
+        return rows
+
+
 async def _fetch_candidate_pool(
     pool: asyncpg.Pool, goal_embedding: Optional[list[float]], candidate_pool_size: int,
     embedding_model_id: Optional[str] = None, goal_text: Optional[str] = None,
@@ -595,46 +612,49 @@ async def _fetch_candidate_pool(
     fuse_rrf primitive, no new scoring formula; this only widens WHAT gets
     offered to the hard-constraint cascade, never what passes it."""
     if goal_embedding is None:
-        return await pool.fetch(
+        _rows = await fanout_fetch(pool,
             f"SELECT {PROCEDURE_COLS_NO_HEAVY} FROM procedures WHERE {_CANDIDATE_BASE_WHERE} "
             "ORDER BY jsonb_array_length(preconditions) ASC LIMIT $1",
             candidate_pool_size,
         )
+        if await multi_shard(pool):     # merge the per-shard cost orderings
+            _rows = sorted(_rows, key=lambda r: len(r["preconditions"] or []))[:candidate_pool_size]
+        return _rows
 
     # These four legs are all independent reads (no shared mutable state,
     # each its own connection off the pool) -- fired concurrently rather
     # than as four sequential round trips, which otherwise dominates cost
     # on exactly the case with the least real work to do (few/no real
     # candidates -- test_empty_result_path_has_no_outsized_fixed_floor_cost).
-    cost_task = pool.fetch(
+    cost_task = _leg("cost", fanout_fetch(pool, 
         f"SELECT id FROM procedures WHERE {_CANDIDATE_BASE_WHERE} "
         "ORDER BY jsonb_array_length(preconditions) ASC LIMIT $1",
         candidate_pool_size,
-    )
+    ))
     if embedding_model_id is None:
-        similarity_task = pool.fetch(
+        similarity_task = _leg("embedding", fanout_fetch(pool, 
             f"SELECT id FROM procedures WHERE {_CANDIDATE_BASE_WHERE} "
             "AND embedding IS NOT NULL "
             "ORDER BY embedding <=> $1::vector ASC LIMIT $2",
             to_pgvector(goal_embedding), candidate_pool_size,
-        )
+        ))
     else:
         # pgvector has no awareness of model provenance: vectors from two
         # embedding models may have the same dimension but no shared
         # semantic geometry. Only compare vectors from the query's space.
-        similarity_task = pool.fetch(
+        similarity_task = _leg("embedding", fanout_fetch(pool, 
             f"SELECT id FROM procedures WHERE {_CANDIDATE_BASE_WHERE} "
             "AND embedding IS NOT NULL AND embedding_model_id = $2 "
             "ORDER BY embedding <=> $1::vector ASC LIMIT $3",
             to_pgvector(goal_embedding), embedding_model_id, candidate_pool_size,
-        )
+        ))
 
     async def _empty() -> list:
         return []
 
     has_goal_text = bool(goal_text and goal_text.strip())
     lexical_task = (
-        pool.fetch(_PROC_LEXICAL_SQL, goal_text, candidate_pool_size)
+        _leg("lexical", fanout_fetch(pool, _PROC_LEXICAL_SQL, goal_text, candidate_pool_size))
         if has_goal_text else _empty()
     )
 
@@ -689,7 +709,7 @@ async def _fetch_candidate_pool(
     vis_sql, vis_params = visibility_predicate(
         access_scope or AccessScope.unrestricted(), param_index=2
     )
-    rows = await pool.fetch(
+    rows = await fanout_fetch(pool, 
         f"SELECT {PROCEDURE_COLS_NO_HEAVY} FROM procedures WHERE id = ANY($1::uuid[]) "
         f"AND {_CANDIDATE_BASE_WHERE} AND {vis_sql}",
         ids, *vis_params,
@@ -751,7 +771,8 @@ async def _capability_ranked_hits(
 
     ids = [s["id"] for s in survivors]
     types_sql = ", ".join(f"'{t}'" for t in DEMOTION_EVIDENCE_TYPES)
-    rows = await pool.fetch(
+    rows = await fanout_fetch(
+        pool,
         f"""
         SELECT target_id, target_version, outcome_status, context_key, independence_group
         FROM evidence
@@ -787,7 +808,23 @@ async def _capability_ranked_hits(
     return [(UUID(pid), "procedures", i) for i, (pid, _) in enumerate(scored)]
 
 
-async def find_applicable_procedures(
+def _emit_rank_changes(sp, before: list[dict], after: list[dict]) -> None:
+    """Rank before (hard-filter/pool order) vs after (fused + gated), as
+    bounded span events. Ids and integers only -- no candidate payloads."""
+    if not _tel.is_enabled():
+        return
+    before_rank = {str(p["id"]): i for i, p in enumerate(before)}
+    moved = 0
+    for i, p in enumerate(after):
+        pid = str(p["id"])
+        rb = before_rank.get(pid)
+        moved += rb != i
+        _tel.add_event("candidate.ranked", candidate_id=pid, candidate_rank_before=rb,
+                       candidate_rank_after=i, similarity=p.get("_similarity_score"))
+    _tel.set_attrs(sp, result_count=len(after), rank_changed_count=moved)
+
+
+async def _find_applicable_procedures(
     pool: asyncpg.Pool,
     *,
     goal_embedding: Optional[list[float]] = None,
@@ -943,7 +980,7 @@ async def find_applicable_procedures(
 
     survivor_ids = [s["id"] for s in survivors]
     if embedding_model_id is None:
-        ranked = await pool.fetch(
+        ranked = await fanout_fetch(pool, 
             "SELECT id, 1 - (embedding <=> $1::vector) AS similarity FROM procedures "
             "WHERE id = ANY($2::uuid[]) AND embedding IS NOT NULL "
             "ORDER BY embedding <=> $1::vector ASC "
@@ -951,7 +988,7 @@ async def find_applicable_procedures(
             to_pgvector(goal_embedding), survivor_ids, limit,
         )
     else:
-        ranked = await pool.fetch(
+        ranked = await fanout_fetch(pool, 
             "SELECT id, 1 - (embedding <=> $1::vector) AS similarity FROM procedures "
             "WHERE id = ANY($2::uuid[]) AND embedding IS NOT NULL "
             "AND embedding_model_id = $3 "
@@ -959,6 +996,8 @@ async def find_applicable_procedures(
             "LIMIT $4",
             to_pgvector(goal_embedding), survivor_ids, embedding_model_id, limit,
         )
+    if await multi_shard(pool):
+        ranked = sorted(ranked, key=lambda r: r["similarity"], reverse=True)[:limit]     # merged across shards
     ranked_ids = {str(r["id"]): r["similarity"] for r in ranked}
 
     # Phase 3 -- fuse similarity with the real capability signal via the
@@ -970,44 +1009,62 @@ async def find_applicable_procedures(
     # p_estimate=0.0 on an empty stream), so a survivor with no stored
     # embedding at all is no longer silently unranked -- it now ranks on
     # capability alone instead of being appended last unconditionally.
-    similarity_order = sorted(ranked_ids.items(), key=lambda kv: kv[1], reverse=True)
-    similarity_hits: list[tuple[UUID, str, int]] = [
-        (UUID(rid), "procedures", i) for i, (rid, _sim) in enumerate(similarity_order)
-    ]
-    capability_hits = await _capability_ranked_hits(pool, survivors)
-    fused_scores, _matched = fuse_rrf(
-        [(similarity_hits, "relevance"), (capability_hits, "capability")]
-    )
-    fused_order = sorted(fused_scores.items(), key=lambda kv: kv[1], reverse=True)
+    with _tel.span("retrieval.rerank", kind="RERANKER", on_error=_tel.FailureCode.RERANKER_ERROR,
+                   retrieval_stage="rerank", shard_id=_tel.shard_id(), candidate_count=len(survivors)) as _rr:
+        similarity_order = sorted(ranked_ids.items(), key=lambda kv: kv[1], reverse=True)
+        similarity_hits: list[tuple[UUID, str, int]] = [
+            (UUID(rid), "procedures", i) for i, (rid, _sim) in enumerate(similarity_order)
+        ]
+        capability_hits = await _capability_ranked_hits(pool, survivors)
+        fused_scores, _matched = fuse_rrf(
+            [(similarity_hits, "relevance"), (capability_hits, "capability")]
+        )
+        fused_order = sorted(fused_scores.items(), key=lambda kv: kv[1], reverse=True)
 
-    survivors_by_id = {str(s["id"]): s for s in survivors}
-    result_list = []
-    for (pid, _table), _score in fused_order:
-        rid = str(pid)
-        if rid not in survivors_by_id:
-            continue
-        # Retrieval relevance gate (services/relevance_gate.py -- the ONE
-        # measured cutoff, RELEVANCE_GATE_MIN_SIMILARITY): a candidate whose
-        # real embedding similarity is below it never SURFACES as a result,
-        # even though it still legitimately took part in the RRF
-        # fusion/ranking math above (Rule 6's "rank survivors, don't
-        # re-filter" contract stays intact). A candidate with NO stored
-        # embedding (capability-only ranking, the "honest degradation" path
-        # a few lines up) is NOT dropped -- passes_relevance_gate(None) is
-        # True, because there is no real similarity value to judge it
-        # against. This is the same gate domain_search applies to search
-        # results; applying it here too means every retrieval entrypoint
-        # (search_global AND a direct find_applicable_procedures / MCP
-        # caller) gets one consistent relevance floor, not two.
-        if not passes_relevance_gate(ranked_ids.get(rid)):
-            continue
-        proc = dict(survivors_by_id[rid])
-        if rid in ranked_ids:
-            proc["_similarity_score"] = ranked_ids[rid]
-        result_list.append(proc)
-        if len(result_list) >= limit:
-            break
+        survivors_by_id = {str(s["id"]): s for s in survivors}
+        result_list = []
+        for (pid, _table), _score in fused_order:
+            rid = str(pid)
+            if rid not in survivors_by_id:
+                continue
+            # Retrieval relevance gate (services/relevance_gate.py -- the ONE
+            # measured cutoff, RELEVANCE_GATE_MIN_SIMILARITY): a candidate whose
+            # real embedding similarity is below it never SURFACES as a result,
+            # even though it still legitimately took part in the RRF
+            # fusion/ranking math above (Rule 6's "rank survivors, don't
+            # re-filter" contract stays intact). A candidate with NO stored
+            # embedding (capability-only ranking, the "honest degradation" path
+            # a few lines up) is NOT dropped -- passes_relevance_gate(None) is
+            # True, because there is no real similarity value to judge it
+            # against. This is the same gate domain_search applies to search
+            # results; applying it here too means every retrieval entrypoint
+            # (search_global AND a direct find_applicable_procedures / MCP
+            # caller) gets one consistent relevance floor, not two.
+            if not passes_relevance_gate(ranked_ids.get(rid)):
+                continue
+            proc = dict(survivors_by_id[rid])
+            if rid in ranked_ids:
+                proc["_similarity_score"] = ranked_ids[rid]
+            result_list.append(proc)
+            if len(result_list) >= limit:
+                break
+        _emit_rank_changes(_rr, survivors, result_list)
     return result_list
+
+
+@functools.wraps(_find_applicable_procedures)
+async def find_applicable_procedures(pool: asyncpg.Pool, **kwargs) -> list[dict]:
+    """Traced entry point; see `_find_applicable_procedures` for the contract.
+    Parent `retrieval` span over the lexical / embedding / cost legs and the
+    rerank stage."""
+    with _tel.span("retrieval", kind="RETRIEVER", on_error=_tel.FailureCode.RETRIEVAL_ERROR,
+                   retrieval_stage="hybrid", shard_id=_tel.shard_id(),
+                   embedding_model=kwargs.get("embedding_model_id"),
+                   top_k=kwargs.get("limit", 10),
+                   has_embedding=kwargs.get("goal_embedding") is not None) as sp:
+        result = await _find_applicable_procedures(pool, **kwargs)
+        _tel.set_attrs(sp, candidate_count=len(result))
+        return result
 
 
 async def diagnose_candidates(
@@ -1065,14 +1122,14 @@ async def diagnose_candidates(
             param_index=4 if embedding_model_id is not None else 3,
         )
         if embedding_model_id is None:
-            rows = await pool.fetch(
+            rows = await fanout_fetch(pool, 
                 f"SELECT {PROCEDURE_COLS_NO_HEAVY} FROM procedures "
                 f"WHERE {_CANDIDATE_BASE_WHERE} AND embedding IS NOT NULL AND {vis_sql} "
                 "ORDER BY embedding <=> $1::vector ASC LIMIT $2",
                 to_pgvector(goal_embedding), limit, *vis_params,
             )
         else:
-            rows = await pool.fetch(
+            rows = await fanout_fetch(pool, 
                 f"SELECT {PROCEDURE_COLS_NO_HEAVY} FROM procedures "
                 f"WHERE {_CANDIDATE_BASE_WHERE} AND embedding IS NOT NULL "
                 f"AND embedding_model_id = $2 AND {vis_sql} "
@@ -1180,7 +1237,7 @@ async def verified_procedure_candidates(
     scope = access_scope or AccessScope.unrestricted()
     vis_sql, vis_params = visibility_predicate(scope, param_index=2)
     limit_index = next_param_index(scope, 2)
-    rows = await pool.fetch(
+    rows = await fanout_fetch(pool, 
         f"SELECT id, name, goal, 1 - (embedding <=> $1::vector) AS similarity "
         f"FROM procedures "
         f"WHERE verification_state = 'verified' AND approval_status = 'approved' "
@@ -1190,7 +1247,8 @@ async def verified_procedure_candidates(
         f"ORDER BY similarity DESC LIMIT ${limit_index}",
         to_pgvector(query_vec), *vis_params, limit,
     )
-    return [dict(r) for r in rows]
+    out = [dict(r) for r in rows]
+    return sorted(out, key=lambda r: r["similarity"], reverse=True)[:limit] if await multi_shard(pool) else out
 
 
 # ===========================================================================
@@ -1294,12 +1352,13 @@ async def _precondition_narrative(
     parts = _parse_precondition_constraint(constraint)
     subject, predicate, expected = parts.get("subject"), parts.get("predicate"), parts.get("object")
 
-    claim_row = await pool.fetchrow(
-        "SELECT id, properties FROM knowledge_nodes "
+    claim_row = await fanout_best_row(
+        pool,
+        "SELECT id, properties, t_valid FROM knowledge_nodes "
         "WHERE node_type = 'claim' AND properties->>'subject' = $1 "
         "AND properties->>'predicate' = $2 AND t_invalid IS NULL "
         "ORDER BY t_valid DESC LIMIT 1",
-        subject, predicate,
+        subject, predicate, key=lambda r: (r["t_valid"] if "t_valid" in r.keys() else 0),
     )
     if claim_row is None:
         return (
@@ -1321,7 +1380,8 @@ async def _precondition_narrative(
             [f"claim:{claim_id}"],
         )
 
-    superseder = await pool.fetchrow(
+    superseder = await fanout_fetchrow(
+        pool,
         "SELECT source_id FROM edges WHERE edge_type = 'SUPERSEDES' "
         "AND target_id = $1::uuid AND target_table = 'knowledge_nodes' "
         "ORDER BY id DESC LIMIT 1",
@@ -1432,7 +1492,7 @@ async def check_procedure_reuse(
     vis_sql, vis_params = visibility_predicate(
         access_scope or AccessScope.unrestricted(), param_index=2,
     )
-    row = await pool.fetchrow(
+    row = await (await home_pool(pool, "procedure", str(proc_uuid))).fetchrow(
         f"SELECT {PROCEDURE_COLS_NO_HEAVY} FROM procedures "
         f"WHERE procedure_id = $1::uuid AND t_invalid IS NULL AND {vis_sql}",
         proc_uuid, *vis_params,
@@ -1451,7 +1511,8 @@ async def check_procedure_reuse(
     # handle_capability_demotion already use: target_type='procedure',
     # joined on THIS version row's own (id, version) pair.
     types_sql = ", ".join(f"'{t}'" for t in DEMOTION_EVIDENCE_TYPES)
-    stream_rows = await pool.fetch(
+    stream_rows = await fanout_fetch(
+        pool,
         f"""
         SELECT outcome_status, context_key, independence_group
         FROM evidence

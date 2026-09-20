@@ -216,7 +216,7 @@ async def test_runner_refuses_a_node_naming_only_an_unimplemented_kind(monkeypat
         }),
         "get_procedure": json.dumps({
             "procedure_id": "p-slm", "steps": [
-                {"order": 0, "goal": "fix the bug in calc.py", "implementation_hint": "slm"},
+                {"order": 0, "goal": "fix the bug in calc.py", "binding": {"kind": "slm_artifact", "slm_artifact": "tiny-fixer"}},
             ],
         }),
         "report_execution": json.dumps({"ok": True}),
@@ -246,7 +246,7 @@ async def test_runner_refuses_a_node_naming_only_an_unimplemented_kind(monkeypat
 @pytest.mark.asyncio
 async def test_runner_still_runs_a_hintless_node_through_the_real_mechanism(monkeypatch, tmp_path):
     """The registry must not change behavior for the overwhelming common
-    case (a step naming no implementation_hint at all) -- it resolves to
+    case (a step with no binding at all) -- it resolves to
     'frontier', the one real supported kind, and `_run_local_node` runs
     exactly as it always has."""
     import json

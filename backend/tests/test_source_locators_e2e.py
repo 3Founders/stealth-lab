@@ -37,7 +37,7 @@ def test_steps_inherit_the_procedure_locator_but_are_marked_and_strict_refuses_o
 
 
 def test_binding_vocabulary_is_closed():
-    b = validate_binding({"kind": "mcp_tool", "mcp_tool": "github.search", "parameters": {"q": "x"}, "verifier": {"type": "exit_code"},
+    b = validate_binding({"kind": "mcp_tool", "mcp_tool": "github.search", "server_url": "https://mcp.example/mcp", "parameters": {"q": "x"}, "verifier": {"type": "exit_code"},
                           "resources": {"cpu": 1}})
     assert b["kind"] == "mcp_tool"
     for bad in ({"kind": "teleport", "teleport": "x"}, {"kind": "tool"}, {"tool": "t", "weird": 1}, {"parameters": "nope"}):

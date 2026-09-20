@@ -33,8 +33,7 @@ pytestmark = pytest.mark.skipif(
 from app.db.session import create_pool  # noqa: E402
 from app.execution import durable_resume as dres  # noqa: E402
 from app.execution.durable_run import execute_run, run_status, start_run  # noqa: E402
-from app.execution.implementation_registry import register  # noqa: E402
-from app.execution.implementation_executor import execute_implementation  # noqa: E402
+from app.execution.step_binding import execute_node  # noqa: E402
 from app.models.plan import PlanNode  # noqa: E402
 from app.services.access import AccessScope  # noqa: E402
 from app.services.procedures import capture_procedure  # noqa: E402
@@ -62,11 +61,7 @@ async def _procedure(pool):
 
 
 async def _det_impl(pool) -> str:
-    row = await register(
-        pool, name=f"dres-e2e-det-{uuid.uuid4().hex[:8]}", kind="deterministic",
-        provider="local", created_by="dres_e2e",
-    )
-    return str(row["id"])
+    return "inline"      # a `command` binding; the real code is supplied per call via context["code"]
 
 
 async def _persist_plan(pool, proc_id, pv, row_id, *, extractor_version, nodes):
@@ -88,7 +83,7 @@ async def _persist_plan(pool, proc_id, pv, row_id, *, extractor_version, nodes):
 
 def _node(order, goal, deps, code, impl_id):
     return {"order": order, "goal": goal, "deps": deps,
-            "parameters": {"code": code}, "implementation_id": impl_id}
+            "parameters": {"code": code}, "binding": {"kind": "command", "command": impl_id}}
 
 
 async def _solo_client(pool):
@@ -139,7 +134,7 @@ async def test_deterministic_run_recovers_through_the_retry_surface_and_status_i
 
         async def _cb(node_order: int, attempt: int) -> dict:
             node = by_order[node_order]
-            res = await execute_implementation(
+            res = await execute_node(
                 pool, node, {"code": node.parameters["code"]}, scope=AccessScope.unrestricted(),
             )
             if getattr(res, "status", None) == "success":
@@ -190,10 +185,8 @@ async def test_deterministic_run_recovers_through_the_retry_surface_and_status_i
 
         hist = await dres.node_history_by_id(pool, run_id)
         hby = {n["node_order"]: n for n in hist["nodes"]}
-        # the plan's implementation binding is surfaced (run-node column is
-        # NULL until durable_run pins one; the plan node carries it)
-        assert (hby[1]["implementation_id"] == uuid.UUID(impl_id)
-                or hby[1].get("plan_implementation_id") == impl_id)
+        # the plan's step binding is surfaced (run-node column is NULL until durable_run pins one; the plan node carries it)
+        assert hby[1]["binding"] or hby[1].get("plan_binding", {}).get("kind") == "command"
 
         # --- terminal run: resume is a no-op; retry of a succeeded node is refused ---
         noop = await dres.resume_run_by_id(pool, run_id, worker_id="w-x", actor_id="dres_e2e")

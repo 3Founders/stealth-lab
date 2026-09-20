@@ -292,6 +292,19 @@ async def traverse_publication_dependencies(
     )
     budget.account(len(proc_rows))
     for d in proc_rows:
+        if _rget(d, "target_procedure_id") and _rget(d, "target_visibility") is None:
+            # the LEFT JOIN only sees targets on this database; a public dependency may live on another shard
+            try:
+                from app.services.shards import home_pool
+                tp = await home_pool(pool, "procedure", str(_rget(d, "target_procedure_id")), by_row_id=True)
+                if tp is not pool:
+                    trow = await tp.fetchrow(
+                        "SELECT visibility, scope_type, name FROM procedures WHERE id = $1::uuid", _rget(d, "target_procedure_id"))
+                    if trow is not None:
+                        d = {**dict(d), "target_visibility": trow["visibility"], "target_scope_type": trow["scope_type"],
+                             "target_name": trow["name"]}
+            except Exception:  # noqa: BLE001 -- best effort: stays UNKNOWN, never silently public
+                pass
         ref = _rget(d, "dependency_ref")
         key = str(_rget(d, "target_procedure_id") or ref)
         if key in seen_proc:

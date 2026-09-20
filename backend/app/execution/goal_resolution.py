@@ -1,42 +1,23 @@
 """
-Recursive Goal -> Implementation/Procedure compiler (execu.md Sec 0/2/8,
-2026-09-15) -- the actual core deliverable of the runtime directive:
+Recursive Goal -> Procedure compiler (execu.md Sec 0/2/8).
 
     Goal
         |
-    choose direct Implementation
-    OR
-    choose Procedure
+    choose feasible Procedure
         |
-    subgoals
+    each step is either a concrete executable STEP (it carries a `binding`) or a subgoal
         |
-    recursively resolve
-        |
-    concrete execution DAG (a tree here; DAG flattening is compile_goal's
-    own job in the MCP layer, not this module's)
+    recursively resolve subgoals
 
-Deliberately deterministic (Sec 10's own split: "graph construction:
-deterministic rules"). No LLM call anywhere in this file -- semantic
-Goal/Procedure grounding is a separate, EARLIER stage
-(step_grounding.py); this module starts FROM an already-real `goal_id`,
-it never interprets free text into meaning itself. It only:
-  - looks up direct Implementations for a Goal (structured lookup,
-    implementation_selection.py's real ranker, already built/tested),
-  - looks up Procedures that `achieves_goal_id` this Goal (structured
-    lookup) and checks each one's real feasibility via
-    applicability.py's own non-compensatory hard-constraint cascade --
-    the SAME mechanism find_best_way already uses, not a second
-    applicability system,
-  - recurses into each chosen Procedure's own steps' child Goals.
+There is no Implementation object: "an implementation" is one step (or a whole one-step procedure) whose
+step carries a `binding` and a `source_locator`.
 
-Reuses, does not reinvent:
-  - implementation_selection.select_implementation_for_goal_id (the
-    real FK-based lookup + filter + rank, Sec 8-10, already tested)
-  - applicability.check_hard_constraints (the real non-compensatory
-    cascade, already tested)
-  - goals.py::normalize_goal_name (the SAME dedup key
-    find_or_create_goal uses, so a step-text match here is the
-    identical key a write would have deduped against)
+Deliberately deterministic -- no LLM call anywhere in this file. It starts FROM an already-real `goal_id`.
+  - looks up Procedures that `achieves_goal_id` this Goal and checks each one's real feasibility via
+    applicability.check_hard_constraints (the same mechanism find_best_way uses),
+  - recurses into each chosen Procedure's steps: bound steps become executable leaves, others resolve as goals.
+
+Reuses goals.py::normalize_goal_name (the same dedup key find_or_create_goal uses).
 """
 from __future__ import annotations
 
@@ -45,7 +26,6 @@ from typing import Any, Literal, Optional
 
 import asyncpg
 
-from app.execution.implementation_selection import select_implementation_for_goal_id
 from app.services.access import AccessScope
 from app.services.applicability import _CANDIDATE_BASE_WHERE, PROCEDURE_COLS_NO_HEAVY, check_hard_constraints
 from app.services.goals import normalize_goal_name
@@ -71,17 +51,10 @@ class ResolvedGoalNode:
     goal_id: str
     goal_name: str
     depth: int
-    chosen: Literal["implementation", "procedure", "unresolved"]
-    implementation: Optional[dict] = None
-    # Real eligible runner-up Implementations for this Goal, already
-    # ranked by `select_implementation_for_goal_id`'s own scorer
-    # (best-to-worst, `implementation` excluded) -- kept so a real
-    # executor (goal_execution.py) can fall back to the next real
-    # candidate on failure (Prompt 2 Sec 10) without a second query.
-    # Never fabricated: exactly `SelectionResult.ranked`'s own eligible
-    # entries, same data `explain_goal_route` already discloses via
-    # `implementation_candidates_considered`'s count, just not thrown away.
-    implementation_alternates: list[dict] = field(default_factory=list)
+    chosen: Literal["step", "procedure", "unresolved"]
+    # chosen == "step": one concrete, executable procedure step (it carries a `binding`). A one-step procedure
+    # is just a procedure node with a single step child; there is no separate Implementation object.
+    step: Optional[dict] = None
     # This Goal's own real `goals.verification_requirement` (migration
     # 83, JSONB, default '{}' -- a real column, unpopulated by anything
     # until Prompt 2 Sec 9's goal_verification.py gave it a real
@@ -95,8 +68,7 @@ class ResolvedGoalNode:
     # discarded, so a real executor (goal_execution.py) can fall back to
     # an alternate decomposition strategy when the chosen one's own
     # execution fails (Prompt 2 Sec 10: "alternative Procedure"), the
-    # same "keep the real runner-ups" discipline `implementation_alternates`
-    # already established. Each entry is the real procedure ROW (id,
+    # same "keep the real runner-ups" discipline. Each entry is the real procedure ROW (id,
     # procedure_id, name, version, steps, ...), not a pre-resolved tree --
     # resolving every alternate's own subgoals eagerly would be real,
     # wasted recursive work for the overwhelmingly common case where the
@@ -109,7 +81,6 @@ class ResolvedGoalNode:
     # Every candidate considered at this node, kept for real
     # explainability (Sec 15's "route selection is explainable" -- an
     # MCP explain_goal_route caller reads this, never recomputes it).
-    implementation_candidates_considered: int = 0
     procedures_linked: int = 0
     procedures_feasible: int = 0
 
@@ -161,11 +132,14 @@ async def _feasible_procedures_for_goal(
     exactly which Procedures claim to achieve this Goal; it is not
     fishing through the whole corpus by similarity).
     """
-    rows = await pool.fetch(
+    from app.services.shards import fanout_fetch
+    rows = await fanout_fetch(     # a goal's procedures usually share its shard but are not guaranteed to
+        pool,
         f"SELECT {PROCEDURE_COLS_NO_HEAVY} FROM procedures WHERE achieves_goal_id = $1::uuid AND {_CANDIDATE_BASE_WHERE} "
         "ORDER BY (verification_state = 'verified') DESC, t_created DESC LIMIT 20",
         goal_id,
     )
+    rows = sorted(rows, key=lambda r: (r["verification_state"] != "verified", -r["t_created"].timestamp()))[:20]
     results: list[tuple[dict, bool]] = []
     for row in rows:
         proc = dict(row)
@@ -186,13 +160,9 @@ def _procedure_cost_score(proc: dict) -> Optional[float]:
     completely unchanged -- this function is called but its result does
     not yet affect selection.
 
-    A real implementation later will need to eagerly resolve+cost EVERY
-    feasible candidate's own subtree (via `_resolve_procedure_children` +
-    `goal_cost.estimate_goal_cost`), unlike Implementation-level cost
-    ranking (`implementation_selection.py`, already real and wired in),
-    which only needs one batched telemetry query per candidate -- a real
-    cost/complexity tradeoff, deliberately deferred rather than
-    attempted here."""
+    A real version later will need to eagerly resolve+cost EVERY feasible
+    candidate's own subtree -- a real cost/complexity tradeoff, deliberately
+    deferred rather than attempted here."""
     return None
 
 
@@ -210,6 +180,14 @@ async def _resolve_procedure_children(
     steps = sorted(proc.get("steps") or [], key=lambda s: s.get("order", 0))
     children: list[ResolvedGoalNode] = []
     for step in steps:
+        if isinstance(step, dict) and step.get("binding"):
+            children.append(ResolvedGoalNode(
+                goal_id=f"{goal['id']}#s{step.get('order')}", goal_name=str(step.get("goal") or step.get("description") or step.get("action") or "(unnamed step)"),
+                depth=depth + 1, chosen="step", step={**step, "procedure_id": str(proc.get("procedure_id") or proc.get("id"))},
+                verification_requirement=step.get("verifier") or (step["binding"].get("verifier") or {}),
+                rationale=f"step {step.get('order')} carries a binding ({step['binding'].get('kind')})",
+            ))
+            continue
         step_goal_row = None
         step_goal_id = step.get("goal_id")  # future-proofing: a real per-step FK, once one exists (none does today)
         if step_goal_id:
@@ -294,27 +272,14 @@ async def resolve_goal(
     """The real Sec 8 recursive compiler:
 
         resolve_goal(G, context):
-            retrieve direct Implementations
             retrieve Procedures
-            evaluate feasible direct paths
             evaluate feasible Procedure paths
-            if direct Implementation wins: emit concrete execution node
-            if Procedure wins: instantiate, recurse into child Goals
+            instantiate the winner: bound steps -> executable leaves, other steps -> child Goals
 
-    Deterministic end to end -- no LLM call anywhere in this function.
-    `embedder` (opt-in, `None` by default -- every existing caller keeps
-    its exact prior behavior) is the one real EXCEPTION to "no LLM call":
-    not an LLM completion, but a real embedding API call, threaded into
-    `select_implementation_for_goal_id` (Sec 11 follow-up: hybrid
-    semantic Goal->Implementation retrieval) so an Implementation whose
-    real meaning matches this Goal, but was never linked via an exact
-    `goal_id` FK, can still be discovered -- the exact `goal_id` match
-    stays the strongest real signal, never replaced.
+    Deterministic end to end. `embedder` is accepted for backward compatibility and unused.
 
-    `context["current_scope"]`: the caller-supplied dict describing real
-    current task context (repo/files/etc), threaded straight into both
-    `select_implementation_for_goal_id` and `check_hard_constraints`
-    unchanged -- this function invents no context of its own.
+    `context["current_scope"]`: the caller-supplied dict describing real current task context, passed to
+    `check_hard_constraints` unchanged.
 
     Cycle prevention: `visited` carries every goal_id already being
     resolved higher in THIS recursion path (not the whole tree) -- the
@@ -354,23 +319,7 @@ async def resolve_goal(
 
     next_visited = visited | {goal_id}
 
-    # A. direct Implementation path (tried first -- a real, concrete
-    # leaf is always preferred over decomposing further when one exists
-    # and is feasible; Sec 8's own ordering).
-    selection = await select_implementation_for_goal_id(
-        pool, goal_id, context=context, scope=scope, goal_text=goal_name, embedder=embedder,
-    )
-    if selection.chosen is not None:
-        eligible_ranked = [r.implementation for r in selection.ranked if r.eligible]
-        return ResolvedGoalNode(
-            goal_id=goal_id, goal_name=goal_name, depth=depth, chosen="implementation",
-            implementation=selection.chosen, implementation_alternates=eligible_ranked[1:],
-            verification_requirement=goal.get("verification_requirement") or {},
-            rationale=selection.rationale,
-            implementation_candidates_considered=len(selection.candidates_considered),
-        )
-
-    # B. Procedure decomposition path
+    # Procedure decomposition path
     current_scope = context.get("current_scope") or {}
     candidates = await _feasible_procedures_for_goal(pool, goal_id, current_scope=current_scope, access_scope=scope)
     feasible = [p for p, ok in candidates if ok]
@@ -398,21 +347,17 @@ async def resolve_goal(
                 f"selected procedure {proc.get('name')!r} ({proc['id']}) among "
                 f"{len(feasible)} feasible / {len(candidates)} linked to this Goal"
             ),
-            implementation_candidates_considered=len(selection.candidates_considered),
             procedures_linked=len(candidates), procedures_feasible=len(feasible),
         )
 
-    # C. nothing feasible -- honest, explained unresolved
+    # nothing feasible -- honest, explained unresolved
     reasons = []
-    if selection.candidates_considered:
-        reasons.append(f"{len(selection.candidates_considered)} direct implementation(s) considered, none eligible")
     if candidates:
         reasons.append(f"{len(candidates)} procedure(s) linked, none feasible")
     if not reasons:
-        reasons.append("no direct implementation and no procedure linked to this goal")
+        reasons.append("no procedure linked to this goal")
     return ResolvedGoalNode(
         goal_id=goal_id, goal_name=goal_name, depth=depth, chosen="unresolved",
         unresolved_reason="; ".join(reasons),
-        implementation_candidates_considered=len(selection.candidates_considered),
         procedures_linked=len(candidates), procedures_feasible=0,
     )

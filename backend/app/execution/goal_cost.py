@@ -30,7 +30,7 @@ own docstring already says "cost_usd stays 0 here -- an honest 'not
 tracked'"). This module holds that same line rather than inventing one.
 
 Confidence is graded by real sample count, not asserted:
-  - "none": zero recorded executions for this Implementation (or the
+  - "none": zero recorded executions for this step (or the
     Goal is unresolved -- nothing to execute, nothing to cost).
   - "low": 1-4 real recorded executions -- a real number, but too few
     to trust as a stable estimate.
@@ -48,7 +48,7 @@ from typing import Literal, Optional
 import asyncpg
 
 from app.execution.cost_math import expected_attempts, expected_value
-from app.execution.execution_telemetry import implementation_execution_stats
+from app.execution.execution_telemetry import step_execution_stats
 from app.execution.goal_resolution import ResolvedGoalNode
 
 Confidence = Literal["none", "low", "empirical"]
@@ -73,7 +73,7 @@ class CostEstimate:
     # distribution expectation) -- the "expected retry/failure cost"
     # multiplier Sec 13 asks for, applied to every per-attempt quantity
     # below. None when success_rate is unknown or exactly 0 (an
-    # implementation with a 0% observed success rate has an undefined,
+    # step with a 0% observed success rate has an undefined,
     # not infinite-but-real, expected-attempts figure -- reported
     # honestly as None, never a fabricated huge number).
     expected_attempts: Optional[float] = None
@@ -93,23 +93,23 @@ class CostEstimate:
     basis: str = ""
 
 
-async def estimate_implementation_cost(pool: asyncpg.Pool, implementation_id: str) -> CostEstimate:
+async def estimate_step_cost(pool: asyncpg.Pool, procedure_id: str, step_order: int) -> CostEstimate:
     """`ExpectedCost(G, I, context)` for a single, already-chosen
-    Implementation leaf -- real per-attempt means from
+    step leaf -- real per-attempt means from
     `execution_telemetry.py`'s real ledger, scaled by the real expected-
     attempts-to-success factor."""
-    stats = await implementation_execution_stats(pool, implementation_id)
+    stats = await step_execution_stats(pool, procedure_id, step_order)
     confidence = _confidence(stats.sample_count)
     if stats.sample_count == 0:
         return CostEstimate(
             confidence="none", sample_count=0,
-            basis=f"no recorded executions yet for implementation {implementation_id}",
+            basis=f"no recorded executions yet for step {procedure_id}#{step_order}",
         )
 
     attempts = expected_attempts(stats.success_rate)
 
     basis = (
-        f"{stats.sample_count} real recorded execution(s) of this implementation, "
+        f"{stats.sample_count} real recorded execution(s) of this step, "
         f"{stats.success_count} succeeded (success_rate={stats.success_rate:.2f})"
         if stats.success_rate is not None else
         f"{stats.sample_count} real recorded execution(s), success rate unknown"
@@ -139,16 +139,19 @@ def _sum_optional(values: list[Optional[float]]) -> Optional[float]:
 async def estimate_goal_cost(pool: asyncpg.Pool, node: ResolvedGoalNode) -> CostEstimate:
     """`ExpectedCost(G via P)` -- the real recursive aggregation over an
     already-resolved Goal tree (`goal_resolution.resolve_goal`'s own
-    output). A Goal resolving straight to an Implementation delegates to
-    `estimate_implementation_cost`; an unresolved Goal has no route to
+    output). A Goal resolving straight to an step delegates to
+    `estimate_step_cost`; an unresolved Goal has no route to
     execute and therefore no cost (`confidence="none"`, explicit, not
     silently 0); a Procedure's cost is the real sum of its real children's
     costs -- if ANY child has zero samples, the aggregate is honestly
     "none" too (a total is not trustworthy when one real segment of the
     route has never actually run), with `basis` naming which.
     """
-    if node.chosen == "implementation":
-        return await estimate_implementation_cost(pool, str(node.implementation["id"]))
+    if node.chosen == "step":
+        step = node.step or {}
+        if not step.get("procedure_id"):
+            return CostEstimate(confidence="none", sample_count=0, basis="step has no procedure id -- no telemetry key")
+        return await estimate_step_cost(pool, str(step["procedure_id"]), int(step.get("order") or 0))
 
     if node.chosen == "unresolved":
         return CostEstimate(

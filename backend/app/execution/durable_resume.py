@@ -12,8 +12,7 @@ WHAT THIS ADDS, and nothing more:
     `CompiledPlan` + `deps` from the persisted `execution_plans` /
     `task_graphs` rows (via `plan_persistence._row_to_compiled_plan`),
     build a context-free `run_node` that dispatches each node through the
-    REAL `implementation_executor.execute_implementation` (resolve the
-    node's pinned implementation -> `providers.get_provider(kind).execute`),
+    REAL `step_binding.execute_node` (the node's step binding -> adapter/provider),
     and hand that to `durable_run.resume_run` / `retry_node`.
 
   NO retry / resume / scheduling logic lives here: every state
@@ -26,7 +25,7 @@ WHAT IT REFUSES TO DO (honest, never a fabricated success):
   A run whose plan was compiled by the coding-agent plan compilers
   (`execution_plans.extractor_version` like
   `find_best_way_plan_compiler@1` / `reproduce_procedure_plan_compiler@1`),
-  or whose still-pending nodes carry no durable implementation binding /
+  or whose still-pending nodes carry no step binding /
   a `kind` with no real provider (`providers.PROVIDER_REGISTRY` today
   only realises `frontier` and `deterministic`), needs the live
   coding-agent sandbox to execute. This module does NOT fake that. It
@@ -53,7 +52,8 @@ import asyncpg
 from app.execution import durable_run as _dr
 from app.execution import providers
 from app.execution import recorder as _rec
-from app.execution.implementation_executor import execute_implementation
+from app.execution.adapters import build_adapter
+from app.execution.step_binding import execute_node
 from app.execution.plan_persistence import _row_to_compiled_plan
 from app.services.access import AccessScope
 
@@ -151,7 +151,7 @@ async def run_status_by_id(pool: asyncpg.Pool, run_id: str) -> Optional[dict[str
 async def node_history_by_id(pool: asyncpg.Pool, run_id: str) -> Optional[dict[str, Any]]:
     """Per-node attempt history: the full `execution_run_nodes` rows
     (status, attempt_count/max_attempts, error_class + error_ref, the
-    pinned implementation binding, worker/lease, first-pass vs final).
+    step binding, worker/lease, first-pass vs final).
     `None` when the run does not exist."""
     row = await _run_row(pool, run_id)
     if row is None:
@@ -159,15 +159,14 @@ async def node_history_by_id(pool: asyncpg.Pool, run_id: str) -> Optional[dict[s
     async with pool.acquire() as conn:
         nodes = await conn.fetch(
             "SELECT node_order, status, attempt_count, max_attempts, "
-            " implementation_id, implementation_version, side_effecting, "
+            " binding, side_effecting, "
             " error_class, error_ref, result_ref, verification_state, "
             " worker_id, lease_expires_at, started_at, ended_at "
             "FROM execution_run_nodes WHERE execution_run_id = $1 ORDER BY node_order",
             run_id,
         )
-        # Best-effort: the durable implementation each node's PLAN binds
-        # (execution_run_nodes only carries a binding once durable_run pins
-        # one; the compiled plan node is the other place it lives).
+        # Best-effort: the step binding each node's PLAN carries (execution_run_nodes only carries a
+        # binding once durable_run pins one; the compiled plan node is the other place it lives).
         graph_row = await conn.fetchrow(
             "SELECT tg.nodes FROM task_graphs tg "
             "JOIN execution_plans ep ON ep.id = tg.execution_plan_id "
@@ -178,13 +177,13 @@ async def node_history_by_id(pool: asyncpg.Pool, run_id: str) -> Optional[dict[s
         raw = graph_row["nodes"]
         gnodes = json.loads(raw) if isinstance(raw, str) else (raw or [])
         for gn in gnodes:
-            if gn.get("implementation_id") is not None:
-                plan_binding[gn.get("order")] = gn["implementation_id"]
+            if gn.get("binding"):
+                plan_binding[gn.get("order")] = gn["binding"]
     out = []
     for n in nodes:
         d = dict(n)
-        if d["implementation_id"] is None and d["node_order"] in plan_binding:
-            d["plan_implementation_id"] = plan_binding[d["node_order"]]
+        if d["binding"] is None and d["node_order"] in plan_binding:
+            d["plan_binding"] = plan_binding[d["node_order"]]
         d["first_pass_success"] = (d["status"] == "succeeded" and d["attempt_count"] <= 1)
         out.append(d)
     return {"run_id": str(run_id), "status": row["status"], "nodes": out}
@@ -248,7 +247,7 @@ async def get_run_context(pool: asyncpg.Pool, run_id: str) -> Optional[dict[str,
         )
         node_rows = await conn.fetch(
             "SELECT id, node_order, status, attempt_count, max_attempts, error_class, "
-            " implementation_id, implementation_version, verification_state "
+            " binding, verification_state "
             "FROM execution_run_nodes WHERE execution_run_id = $1 ORDER BY node_order",
             run_id,
         )
@@ -298,92 +297,20 @@ async def get_run_context(pool: asyncpg.Pool, run_id: str) -> Optional[dict[str,
         if truth == "UNKNOWN":
             blocking_unknowns.append(entry)
 
-    # Implementation options for the CURRENT node only (bounded, not the
-    # whole registry): per-node binding first (execution_run_nodes /
-    # compiled-plan hint), else the registry's own task-linked candidates
-    # when this procedure has a real migrated_from_task_node_id -- never
-    # an invented Implementation when neither exists (B23).
-    recommended_implementations: list[dict] = []
+    # The binding for the CURRENT node only: the one pinned on the run node, else the compiled plan node's own
+    # (copied from the procedure step). A step with no binding runs on the frontier default -- reported as
+    # `binding_resolution_state = "UNBOUND"`, never an invented binding.
+    recommended_bindings: list[dict] = []
+    binding_resolution_state = None
     if current is not None:
-        if current.get("implementation_id"):
-            recommended_implementations.append({
-                "implementation_id": str(current["implementation_id"]),
-                "implementation_version": current.get("implementation_version"),
-                "source": "pinned_on_node",
-            })
+        if current.get("binding"):
+            recommended_bindings.append({"binding": current["binding"], "source": "pinned_on_node"})
         else:
-            plan_impl = plan_nodes.get(current["node_order"], {}).get("implementation_id")
-            if plan_impl:
-                recommended_implementations.append(
-                    {"implementation_id": str(plan_impl), "source": "compiled_plan_hint"}
-                )
-            elif procedure is not None:
-                # B23/B24: the real Procedure<->Implementation relation
-                # (migration 53) is the preferred resolution source now
-                # that it exists -- checked before the legacy task-node
-                # registry path, never instead of it (a procedure minted
-                # before this relation existed still resolves via its old
-                # migrated_from_task_node_id link, per CLAUDE.md rule 6:
-                # preserve compatibility paths until replacements are
-                # proven, don't rip out the old path on day one).
-                from app.services.procedure_implementation_bindings import (
-                    _UNAVAILABLE_IMPLEMENTATION_STATUSES,
-                    get_bindings_for_procedure,
-                )
-                bindings = await get_bindings_for_procedure(
-                    pool, procedure_id=procedure["procedure_id"],
-                    status="active", access_scope=access_scope,
-                )
-                step_bindings = [
-                    b for b in bindings
-                    if (not b["supported_steps"] or current["node_order"] in b["supported_steps"])
-                    # B38: an ACTIVE binding to a DISABLED/QUARANTINED/
-                    # DEPRECATED implementation is not a real recommendation
-                    # -- the same real availability check
-                    # `resolve_binding_for_step_with_reason` already
-                    # applies, never duplicated as a second definition.
-                    and b["implementation_status"] not in _UNAVAILABLE_IMPLEMENTATION_STATUSES
-                ]
-                if step_bindings:
-                    recommended_implementations = [
-                        {
-                            "implementation_id": str(b["implementation_id"]),
-                            "role": b["role"], "source": "procedure_implementation_binding",
-                        }
-                        for b in step_bindings
-                    ]
-                elif procedure.get("migrated_from_task_node_id"):
-                    from app.execution import implementation_registry as _impl_registry
-                    registry_hits = await _impl_registry.get_for_task(
-                        pool, str(procedure["migrated_from_task_node_id"]),
-                        scope=access_scope, status="active",
-                    )
-                    recommended_implementations = [
-                        {"implementation_id": str(h["id"]), "kind": h.get("kind"), "source": "registry"}
-                        for h in registry_hits
-                    ]
-
-    # B38 STRICT CLOSURE: `resolve_binding_for_step_with_reason` computes
-    # the real, literal MISSING_IMPLEMENTATION ("no candidate names this
-    # role/step at all") vs IMPLEMENTATION_UNAVAILABLE ("candidates exist
-    # but are all disabled/quarantined/deprecated, or fail a real
-    # requirement") distinction, but had zero real callers -- decorative,
-    # not load-bearing. Surfaced here as an honest, typed signal ONLY
-    # when nothing above found a real recommendation (never overrides a
-    # real hit, never fabricated when one exists).
-    implementation_resolution_state = None
-    if current is not None and procedure is not None and not recommended_implementations:
-        from app.services.procedure_implementation_bindings import (
-            resolve_binding_for_step_with_reason,
-        )
-        _, reason = await resolve_binding_for_step_with_reason(
-            pool, procedure_id=procedure["procedure_id"], step_order=current["node_order"],
-            access_scope=access_scope,
-        )
-        if reason == "missing":
-            implementation_resolution_state = "MISSING_IMPLEMENTATION"
-        elif reason == "unavailable":
-            implementation_resolution_state = "IMPLEMENTATION_UNAVAILABLE"
+            plan_bind = plan_nodes.get(current["node_order"], {}).get("binding")
+            if plan_bind:
+                recommended_bindings.append({"binding": plan_bind, "source": "compiled_plan"})
+            else:
+                binding_resolution_state = "UNBOUND"
 
     # B9-B13: is the current node actively waiting on a live child run
     # right now? Derived, not stored (migration 52's own rationale) --
@@ -485,18 +412,10 @@ async def get_run_context(pool: asyncpg.Pool, run_id: str) -> Optional[dict[str,
         except Exception:  # noqa: BLE001 -- informational; must never break continue_run itself.
             relevant_claim_refs = []
 
-    # B3's literal `implementation_bindings` StealthExecutionContext field
-    # -- every node's REAL pinned binding (not just the current node's
-    # `recommended_implementations` candidates above), read straight off
-    # `nodes` (already loaded, already the canonical source --
-    # execution_run_nodes.implementation_id/implementation_version --
-    # never a second copy of it).
-    implementation_bindings = [
-        {
-            "node_order": n["node_order"],
-            "implementation_id": str(n["implementation_id"]) if n.get("implementation_id") else None,
-            "implementation_version": n.get("implementation_version"),
-        }
+    # Every node's REAL pinned binding (not just the current node's), read straight off `nodes`
+    # (execution_run_nodes.binding -- never a second copy of it).
+    step_bindings = [
+        {"node_order": n["node_order"], "binding": n.get("binding")}
         for n in nodes
     ]
 
@@ -508,7 +427,7 @@ async def get_run_context(pool: asyncpg.Pool, run_id: str) -> Optional[dict[str,
         "parent_run_id": str(run["parent_run_id"]) if run.get("parent_run_id") else None,
         "root_run_id": str(run["root_run_id"]) if run.get("root_run_id") else None,
         "verification_plan_id": run.get("verification_plan_id"),
-        "implementation_bindings": implementation_bindings,
+        "step_bindings": step_bindings,
         "status": run["status"],
         "current_phase_or_node": phase,
         "objective": objective,
@@ -516,8 +435,8 @@ async def get_run_context(pool: asyncpg.Pool, run_id: str) -> Optional[dict[str,
         "child_failure_strategy": child_failure_strategy,
         "required_preconditions": required_preconditions,
         "relevant_claim_refs": relevant_claim_refs,
-        "recommended_implementations": recommended_implementations,
-        "implementation_resolution_state": implementation_resolution_state,
+        "recommended_bindings": recommended_bindings,
+        "binding_resolution_state": binding_resolution_state,
         "required_checks": (procedure or {}).get("postconditions") or [],
         "allowed_branches": [],  # honest: stored procedures have no branching field (db/18)
         "blocking_unknowns": blocking_unknowns,
@@ -574,20 +493,13 @@ async def _blocking_reason(
         if rn["status"] in ("succeeded", "cancelled"):
             continue
         node = by_order.get(order)
-        impl_id = rn.get("implementation_id") or (
-            node.implementation_id if node is not None else None
-        )
-        if impl_id is None:
-            return f"node {order} has no durable implementation binding"
-        from app.execution import implementation_registry
-
-        impl = await implementation_registry.get(
-            pool, str(impl_id), scope=AccessScope.unrestricted(),
-        )
-        if impl is None:
-            return f"node {order} implementation {impl_id} does not resolve"
-        if providers.get_provider(impl["kind"]) is None:
-            return f"node {order} implementation kind {impl['kind']!r} has no provider"
+        binding = rn.get("binding") or (node.binding if node is not None else None)
+        if not binding:
+            return f"node {order} has no step binding (it would run on the frontier default, which needs product context)"
+        from app.execution.step_binding import executor_kind
+        kind = executor_kind(binding)
+        if binding.get("kind") != "source_artifact" and build_adapter(kind) is None and providers.get_provider(kind) is None:
+            return f"node {order} binding kind {binding.get('kind')!r} (executor {kind!r}) has no provider"
     return None
 
 
@@ -607,19 +519,15 @@ def _make_runner(
             )
         context = dict(run_params)
         context.update(getattr(node, "parameters", {}) or {})
-        # B8: implementation_bound -- the real, durable binding already
-        # made at compile time (bind_plan_implementations) is about to
-        # actually drive an execution attempt; recorded here (the one
-        # real dispatch point every context-free-resumed node goes
-        # through) rather than at bind time, since no execution_run
-        # exists yet when a plan is first compiled.
-        if getattr(node, "implementation_id", None):
+        # B8: step_bound -- the step's binding is about to actually drive an execution attempt; recorded at the
+        # one real dispatch point every context-free-resumed node goes through.
+        if getattr(node, "binding", None):
             async with pool.acquire() as conn:
-                await _rec.record_implementation_bound(
-                    conn, str(run_row["id"]), node_order=node_order,
-                    implementation_id=str(node.implementation_id),
+                await _rec.record_step_bound(
+                    conn, str(run_row["id"]), node_order=node_order, binding=dict(node.binding),
                 )
-        result = await execute_implementation(
+        context["procedure_id"] = str(run_row["procedure_id"])
+        result = await execute_node(
             pool, node, context, scope=AccessScope.unrestricted(),
         )
         if getattr(result, "status", None) == "success":

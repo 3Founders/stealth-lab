@@ -389,7 +389,7 @@ async def relink_procedures_of_merged_goals(pool: asyncpg.Pool) -> int:
 
 
 async def merge_goal(pool: asyncpg.Pool, loser_id: str, survivor_id: str, *, decision_id: Optional[str] = None) -> dict[str, int]:
-    """Merge ``loser`` into ``survivor`` atomically: every Procedure/Implementation
+    """Merge ``loser`` into ``survivor`` atomically: every Procedure
     that pointed at the loser now points at the survivor, hierarchy edges move,
     the loser's names become aliases, and the loser row becomes status='merged'
     (kept for audit; never deleted). Idempotent."""
@@ -405,7 +405,6 @@ async def merge_goal(pool: asyncpg.Pool, loser_id: str, survivor_id: str, *, dec
                 return {"procedures": 0, "already_merged": 1}
             procs = int((await conn.execute(
                 "UPDATE procedures SET achieves_goal_id = $2::uuid WHERE achieves_goal_id = $1::uuid", loser_id, survivor_id)).split()[-1])
-            await conn.execute("UPDATE implementations SET goal_id = $2::uuid WHERE goal_id = $1::uuid", loser_id, survivor_id)
             await conn.execute(
                 "INSERT INTO goal_relations (specific_goal_id, abstract_goal_id, relation_type, status, confidence, provenance) "
                 "SELECT CASE WHEN specific_goal_id = $1::uuid THEN $2::uuid ELSE specific_goal_id END, "
@@ -525,7 +524,6 @@ async def _merge_goal_sharded(pool: asyncpg.Pool, loser_id: str, survivor_id: st
             continue
         moved += int((await spool.execute(
             "UPDATE procedures SET achieves_goal_id = $2::uuid WHERE achieves_goal_id = $1::uuid", loser_id, survivor_id)).split()[-1])
-        await spool.execute("UPDATE implementations SET goal_id = $2::uuid WHERE goal_id = $1::uuid", loser_id, survivor_id)
     await pool.execute(
         "INSERT INTO goal_relations (specific_goal_id, abstract_goal_id, relation_type, status, confidence, provenance) "
         "SELECT CASE WHEN specific_goal_id = $1::uuid THEN $2::uuid ELSE specific_goal_id END, "

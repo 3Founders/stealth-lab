@@ -30,6 +30,8 @@ import json
 
 import pytest
 
+pytest.importorskip("docx", reason="python-docx is not installed in this environment")
+
 from app.services.artifact_blocks import normalize_markdown
 from app.services.ingestion_sources.canonical import CanonicalDocument
 from app.services.ingestion_sources.document_adapter import DocumentLocator

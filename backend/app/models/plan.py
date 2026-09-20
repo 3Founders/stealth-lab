@@ -28,8 +28,8 @@ from pydantic import BaseModel, Field
 ScopeType = str
 
 # Implementation-kind strings are validated at the boundary
-# (app.execution.implementations.IMPLEMENTATION_KINDS /
-# validate_implementation_hint), same discipline as ScopeType above --
+# (app.execution.executor_kinds.EXECUTOR_KINDS /
+# validate_executor_hint), same discipline as ScopeType above --
 # typed here only as documentation. A tuple, not a single str: a step may
 # advertise several acceptable kinds in preference order.
 ImplementationHint = tuple[str, ...]
@@ -74,31 +74,23 @@ class PlanNode(BaseModel):
     step_ref: Optional[ProcedureRef] = None
     parameters: dict[str, Any] = Field(default_factory=dict)
     node_class: NodeClass = "predictable"
-    implementation_id: Optional[str] = None
-    # The real, durable `task_nodes.id` this node satisfies, when the
-    # source step names one (`{"task_node_id": "<uuid>"}` in the stored
-    # procedure's `steps` JSONB -- see procedure_graph.py::_step_task_node_id).
-    # None is the honest default: most steps today name only a goal
-    # string, and this field is never fabricated FROM that string (see
-    # implementation_executor.py's module docstring on exactly that
-    # refusal). Threading a real value through here is what lets
-    # `implementation_executor.resolve_implementation_for_node` look up
-    # `implementation_registry.resolve()` for THIS node automatically,
-    # without a caller having to pass an out-of-band task_node_ids map.
-    task_node_id: Optional[str] = None
-    # Advisory sibling of `step_ref` (composition): which real
-    # implementation kind(s) could satisfy this node's own work, once it
-    # is an ordinary (non-composed) node. None means the step named no
-    # preference -- app.execution.implementations.resolve_implementation
-    # treats that as "frontier", matching every real caller's current
-    # unconditional behavior. Never embeds an executor CHOICE -- only a
-    # preference a registry/executor may honor, ignore, or reinterpret.
-    implementation_hint: Optional[ImplementationHint] = None
+    # How THIS step is executed (copied from procedures.steps[i].binding at compile time; see
+    # app/execution/step_binding.py). None = the default frontier executor. There is no separate
+    # Implementation object: a binding is part of the step.
+    binding: Optional[dict[str, Any]] = None
     cost_budget: dict[str, Any] = Field(default_factory=dict)
     verification_gate: dict[str, Any] = Field(default_factory=dict)
     deps: list[int] = Field(default_factory=list)
     scope_type: Optional[ScopeType] = None
     scope_entity_id: Optional[str] = None
+
+    @property
+    def executor_hint(self) -> Optional[tuple[str, ...]]:
+        """Executor kind this node's binding asks for (None = no preference)."""
+        if not self.binding:
+            return None
+        from app.execution.step_binding import executor_kind
+        return (executor_kind(self.binding),)
 
     @classmethod
     def from_row(cls, row: Mapping[str, Any]) -> "PlanNode":
@@ -158,7 +150,6 @@ class ExecutionPlan(BaseModel):
 
     resolved_claims: list[ResolvedClaimRef] = Field(default_factory=list)
     selected_branches: list[str] = Field(default_factory=list)
-    implementations: dict[str, str] = Field(default_factory=dict)
 
     safety_check: Optional[SafetyCheck] = None
     verification_plan: dict[str, Any] = Field(default_factory=dict)
@@ -190,7 +181,6 @@ class ExecutionPlan(BaseModel):
                 ResolvedClaimRef(**c) for c in (row.get("resolved_claims") or [])
             ],
             selected_branches=list(row.get("selected_branches") or []),
-            implementations=row.get("implementations") or {},
             safety_check=row.get("safety_check"),
             verification_plan=row.get("verification_plan") or {},
             extractor_version=row["extractor_version"],
@@ -216,7 +206,6 @@ class ExecutionPlan(BaseModel):
             "starting_state_id": self.starting_state_id,
             "resolved_claims": [c.model_dump(mode="json") for c in self.resolved_claims],
             "selected_branches": list(self.selected_branches),
-            "implementations": self.implementations,
             "safety_check": self.safety_check,
             "verification_plan": self.verification_plan,
             "extractor_version": self.extractor_version,
@@ -239,7 +228,6 @@ class Execution(BaseModel):
     procedure: ProcedureRef  # denormalized exact-version snapshot (spec 22)
 
     state_id: Optional[UUID] = None
-    implementation_id: Optional[UUID] = None
     parameters: dict[str, Any] = Field(default_factory=dict)
 
     trace_id: Optional[str] = None
@@ -265,7 +253,6 @@ class Execution(BaseModel):
                 procedure_id=row["procedure_id"], version=row["procedure_version"]
             ),
             state_id=row.get("state_id"),
-            implementation_id=row.get("implementation_id"),
             parameters=row.get("parameters") or {},
             trace_id=row.get("trace_id"),
             started_at=row.get("started_at") or _now(),
@@ -288,7 +275,6 @@ class Execution(BaseModel):
             "procedure_id": self.procedure.procedure_id,
             "procedure_version": self.procedure.version,
             "state_id": self.state_id,
-            "implementation_id": self.implementation_id,
             "parameters": self.parameters,
             "trace_id": self.trace_id,
             "started_at": self.started_at,

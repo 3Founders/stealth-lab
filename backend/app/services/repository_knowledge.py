@@ -153,7 +153,9 @@ async def _fetch_scoped_procedures(
         focus_clause = f"AND (p.name ILIKE ${len(params)} OR p.goal ILIKE ${len(params)})"
     params.append(limit)
 
-    rows = await pool.fetch(
+    from app.services.shards import fanout_fetch
+    rows = await fanout_fetch(
+        pool,
         f"SELECT p.id, p.procedure_id, p.name, p.goal, p.verification_state, "
         f"p.staleness, p.availability, p.approval_status, p.version, p.t_valid "
         f"FROM procedures p "
@@ -165,6 +167,7 @@ async def _fetch_scoped_procedures(
         f"LIMIT ${len(params)}",
         *params,
     )
+    rows = sorted(rows, key=lambda r: r["t_valid"], reverse=True)[: params[-1]]
     return [dict(r) for r in rows]
 
 

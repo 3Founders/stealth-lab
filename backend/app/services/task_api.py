@@ -14,7 +14,7 @@ HONEST SCOPE, confirmed by direct inspection before writing a line here:
   - `task_nodes` (db/01_ontology.sql, extended by migrations 03/11/21) has
     no `verification_stats`/evidence of its own, and
     `app/models/evidence.py::TargetType` is a CLOSED
-    `Literal["claim", "procedure", "implementation"]` -- "task" is not a
+    `Literal["claim", "procedure"]` -- "task" is not a
     member. There is no first-class task-level evidence anywhere in the
     schema. So "capability statistics" and "known failure modes" for a
     task are aggregated over the task's DEPENDENT PROCEDURES' real
@@ -105,7 +105,9 @@ async def _dependent_procedures(
     """Live (t_invalid IS NULL) procedure version rows naming this
     task_node via either of the two real joins documented above."""
     scope_sql, scope_params, _next_idx = scope_predicates(scope, tenant, alias="p", param_index=2)
-    rows = await pool.fetch(
+    from app.services.shards import fanout_fetch
+    rows = await fanout_fetch(
+        pool,
         f"""
         SELECT p.* FROM procedures p
         WHERE p.t_invalid IS NULL
@@ -127,6 +129,7 @@ async def _dependent_procedures(
         """,
         task_node_id, *scope_params,
     )
+    rows = sorted(rows, key=lambda r: r["t_created"], reverse=True)
     return [dict(r) for r in rows]
 
 

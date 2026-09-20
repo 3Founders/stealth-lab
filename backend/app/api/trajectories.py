@@ -129,7 +129,6 @@ async def trajectory_ingestion_stats(pool=Depends(get_pool)) -> dict:
         "goals_extracted": objects_by_type.get("goal", 0),
         "claims_extracted": objects_by_type.get("claim", 0),
         "procedures_extracted": objects_by_type.get("procedure", 0),
-        "implementations_extracted": objects_by_type.get("implementation", 0),
         "objects_quarantined": objects_quarantined or 0,
         "avg_extraction_cost_usd": float(avg_extraction_cost) if avg_extraction_cost else None,
     }
@@ -194,7 +193,6 @@ class ExtractionResponse(BaseModel):
     goals: int
     claims: int
     procedures: int
-    implementations: int
     uncertainties: list[str]
     model: str
     escalated: bool
@@ -293,7 +291,7 @@ async def inspect_provenance(object_type: str, object_id: str, pool=Depends(get_
     """Walks trajectory_extraction_objects -> trajectory_extractions ->
     ingestion_contexts -> trace_events, the full lineage chain task
     Sec 12 requires every derived object be able to answer."""
-    if object_type not in ("goal", "claim", "procedure", "implementation"):
+    if object_type not in ("goal", "claim", "procedure"):
         raise HTTPException(status_code=400, detail=f"unknown object_type {object_type!r}")
     link_rows = await pool.fetch(
         "SELECT teo.id AS link_id, teo.extraction_id, teo.event_refs, teo.epistemic_status, "

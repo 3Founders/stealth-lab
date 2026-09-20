@@ -134,7 +134,7 @@ def queue_row(
     route,
     *,
     failure_class="implementation_wrong",
-    target_type="implementation",
+    target_type="claim",
     target_id=IMPL_ID,
     payload=None,
     fr_id=FR_ID,
@@ -231,7 +231,7 @@ def test_demotion_handler_performs_exactly_its_mandated_update():
         assert f"'{evidence_type}'" in sql
     assert "outcome_status IN ('success', 'failure')" in sql
     assert "ORDER BY t_created ASC" in sql
-    assert args == ("implementation", IMPL_ID)
+    assert args == ("claim", IMPL_ID)
 
     # -- exactly ONE durable verdict record, correctly attributed -------
     inserts = changeset_inserts(pool)
@@ -248,12 +248,12 @@ def test_demotion_handler_performs_exactly_its_mandated_update():
     assert target_table == "evidence"          # no implementations table exists
     assert str(target_id) == EVIDENCE_ID       # ...so the verdict rides the trigger row
     detail = json.loads(detail_json)
-    expected = capability_for_stream("implementation", IMPL_ID, stream)
+    expected = capability_for_stream("claim", IMPL_ID, stream)
     verdict = detail["capability_verdict"]
     assert verdict["p_lower"] == expected.p_lower
     assert verdict["level"] == expected.level
     assert verdict["routing"] == expected.routing.value
-    assert verdict["subject"] == {"target_type": "implementation", "target_id": IMPL_ID}
+    assert verdict["subject"] == {"target_type": "claim", "target_id": IMPL_ID}
     assert detail["trigger"]["failure_class"] == "implementation_wrong"
 
 
@@ -337,7 +337,7 @@ def test_narrowing_edits_rule_detail_for_input_abnormal():
 def test_narrowing_skips_non_procedure_targets_and_contextless_payloads():
     pool = _narrowing_pool()
     done = asyncio.run(handle_applicability_narrowing(
-        pool, queue_row("applicability_narrowing", target_type="implementation"),
+        pool, queue_row("applicability_narrowing", target_type="claim"),
     ))
     assert done is False
     done = asyncio.run(handle_applicability_narrowing(
@@ -363,7 +363,7 @@ def test_dependency_queue_flags_derived_claims_for_environment_changed():
     row = queue_row(
         "dependency_queue",
         failure_class="environment_changed",
-        target_type="implementation",
+        target_type="claim",
         payload={"failed_context_key": "ctx-drift"},
     )
     done = asyncio.run(handle_dependency_queue(pool, row))
@@ -461,7 +461,7 @@ def test_requires_review_skips_non_claim_targets_and_missing_claims():
     pool.rule("WHERE reason = $1", False)
     done = asyncio.run(handle_requires_review(
         pool, queue_row("requires_review", failure_class=None,
-                        target_type="implementation"),
+                        target_type="claim"),
     ))
     assert done is False
     assert pool.writes == []
@@ -542,7 +542,7 @@ def test_unrouted_failures_are_visible_but_never_trigger_handlers():
         sweep_hits.append(1)
         return [{
             "id": EVIDENCE_ID, "evidence_type": "execution_result",
-            "target_type": "implementation", "target_id": IMPL_ID,
+            "target_type": "claim", "target_id": IMPL_ID,
             "target_version": None, "outcome_status": "failure",
             "failure_class": None, "context_key": None,
             "independence_group": None,

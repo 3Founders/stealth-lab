@@ -638,12 +638,15 @@ async def _find_family_id(pool: asyncpg.Pool, episode_ids: list[str]) -> Optiona
     live procedure whose own source_episode_ids overlaps this batch, if
     one exists. Never fabricates a family relationship where none is
     demonstrated by shared real evidence."""
-    row = await pool.fetchrow(
-        "SELECT id FROM procedures WHERE t_invalid IS NULL "
+    from app.services.shards import fanout_fetch
+    rows = await fanout_fetch(
+        pool,
+        "SELECT id, t_created FROM procedures WHERE t_invalid IS NULL "
         "AND source_episode_ids && $1::uuid[] "
         "ORDER BY t_created ASC LIMIT 1",
         episode_ids,
     )
+    row = min(rows, key=lambda r: r["t_created"]) if rows else None
     return str(row["id"]) if row else None
 
 
@@ -858,7 +861,8 @@ async def synthesize_procedure(
     # migration-20 columns capture_procedure() does not carry (approval_
     # status/capability_statement/extracted_by) -- kept identical rather
     # than widening that function's signature for this caller alone.
-    await pool.execute(
+    from app.services.shards import home_pool
+    await (await home_pool(pool, "procedure", str(result["id"]), by_row_id=True)).execute(
         "UPDATE procedures SET approval_status = 'proposed', "
         "capability_statement = $2, extracted_by = $3 WHERE id = $1::uuid",
         result["id"], capability_statement, SYNTHESIS_TAG,

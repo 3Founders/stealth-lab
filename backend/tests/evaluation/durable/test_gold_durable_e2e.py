@@ -53,8 +53,7 @@ from app.execution.durable_run import (  # noqa: E402
     start_run,
 )
 from app.execution.graph_executor import NodeResult  # noqa: E402
-from app.execution.implementation_executor import execute_implementation  # noqa: E402
-from app.execution.implementation_registry import register  # noqa: E402
+from app.execution.step_binding import execute_node  # noqa: E402
 from app.execution.plan_persistence import persist_compiled_plan  # noqa: E402
 from app.execution.plans import compile_plan  # noqa: E402
 from app.models.plan import PlanNode  # noqa: E402
@@ -469,62 +468,6 @@ async def test_duplicate_resume_produces_no_duplicate_evidence():
 # Implementation binding is pinned at compile time and is NEVER silently
 # re-resolved to a newer Implementation across a resume.
 # ---------------------------------------------------------------------------
-@pytest.mark.asyncio
-async def test_implementation_binding_survives_resume_unchanged_despite_a_newer_registration():
-    pool = await create_pool(statement_cache_size=0)
-    tag = _tag()
-    try:
-        proc_id, row_id, pv = await _procedure(pool, tag)
-        impl_v1 = await register(
-            pool, name=f"gold-durable-impl-{tag}", kind="deterministic",
-            provider="local", created_by="gold_durable", version=1,
-        )
-        payload = {
-            "id": uuid.UUID(row_id), "procedure_id": uuid.UUID(proc_id),
-            "version": pv, "name": f"gold-durable-impl-{tag}", "goal": "pin check",
-            "steps": [{"order": 0, "goal": "a"}],
-        }
-        nodes = [PlanNode(order=0, goal="a", deps=[], implementation_id=str(impl_v1["id"]))]
-        compiled = compile_plan(
-            procedure_id=payload["procedure_id"], procedure_version=pv,
-            procedure_row_id=payload["id"], procedure_payload=payload,
-            task_description=f"gold-durable-impl-{tag}", nodes=nodes,
-            extractor_version="durable_resume_e2e@1", created_by="gold_durable",
-        )
-        compiled, _ = await persist_compiled_plan(pool, compiled)
-
-        run_id = await start_run(
-            pool, execution_plan_id=str(compiled.plan.id), task_graph_id=str(compiled.graph.id),
-            procedure_id=proc_id, procedure_version=pv,
-            node_orders=[0], deps={0: []}, created_by="gold_durable",
-        )
-
-        # Simulate the world moving on: a NEWER implementation registered
-        # AFTER this plan was already frozen.
-        impl_v2 = await register(
-            pool, name=f"gold-durable-impl-{tag}", kind="deterministic",
-            provider="local", created_by="gold_durable", version=2,
-        )
-        assert str(impl_v2["id"]) != str(impl_v1["id"])
-
-        async def run_node(order, attempt):
-            raise WorkerLost("crash before we can observe the binding")
-
-        with pytest.raises(WorkerLost):
-            await execute_run(pool, run_id, deps={0: []}, run_node=run_node, worker_id="w1")
-
-        # Resume through the context-free surface, which REBUILDS the
-        # CompiledPlan from the persisted (frozen, trigger-immutable)
-        # execution_plans/task_graphs rows -- never from "whatever the
-        # registry's current best implementation is now".
-        run_row, rebuilt, deps, node_rows = await dres._rebuild(pool, run_id)
-        bound_order0 = {n.order: n.implementation_id for n in rebuilt.graph.nodes}[0]
-        assert bound_order0 == str(impl_v1["id"])
-        assert bound_order0 != str(impl_v2["id"])
-    finally:
-        await pool.close()
-
-
 # ---------------------------------------------------------------------------
 # REST + MCP: one shared service, real authz/cross-user refusal, terminal
 # idempotency, retry policy can't be bypassed via the surface either.
@@ -562,10 +505,7 @@ async def test_rest_and_mcp_are_two_skins_over_the_same_durable_resume_service()
     tag = _tag()
     try:
         proc_id, row_id, pv = await _procedure(pool, tag)
-        impl = await register(
-            pool, name=f"gold-durable-surface-{tag}", kind="deterministic",
-            provider="local", created_by="gold_durable",
-        )
+        impl = {"id": "gold"}
         # NOTE: passed as a plain Python list, not json.dumps()'d text --
         # create_pool() registers a JSONB codec that serializes Python
         # objects itself; handing it already-encoded JSON text double-encodes
@@ -576,9 +516,9 @@ async def test_rest_and_mcp_are_two_skins_over_the_same_durable_resume_service()
         # reason).
         nodes_list = [
             {"order": 0, "goal": "a", "deps": [], "parameters": {"code": "print('ok')"},
-             "implementation_id": str(impl["id"])},
+             "binding": {"kind": "command", "command": "gold"}},
             {"order": 1, "goal": "b", "deps": [0], "parameters": {"code": "print('ok')"},
-             "implementation_id": str(impl["id"])},
+             "binding": {"kind": "command", "command": "gold"}},
         ]
         async with pool.acquire() as c:
             plan_id = await c.fetchval(
@@ -602,7 +542,7 @@ async def test_rest_and_mcp_are_two_skins_over_the_same_durable_resume_service()
 
         async def _cb(node_order, attempt):
             node = by_order[node_order]
-            result = await execute_implementation(
+            result = await execute_node(
                 pool, node, {"code": node.parameters["code"]}, scope=AccessScope.unrestricted(),
             )
             if getattr(result, "status", None) == "success":

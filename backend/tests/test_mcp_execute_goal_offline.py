@@ -14,7 +14,7 @@ import json
 
 import app.mcp_server.server as srv
 from app.execution.goal_execution import (
-    GoalExecutionResult, GoalNodeExecutionResult, ImplementationAttempt,
+    GoalExecutionResult, GoalNodeExecutionResult, StepAttempt,
     ProcedureAttempt, ProcedureExecutionResult,
 )
 from app.execution.goal_resolution import GoalResolutionError, ResolvedGoalNode
@@ -36,8 +36,8 @@ class FakeContext:
 
 def _fake_tree():
     return ResolvedGoalNode(
-        goal_id="G-1", goal_name="do the thing", depth=0, chosen="implementation",
-        implementation={"id": "I-1", "name": "impl", "kind": "deterministic"},
+        goal_id="G-1", goal_name="do the thing", depth=0, chosen="step",
+        step={"order": 0, "procedure_id": "P-1", "binding": {"kind": "command", "command": "make"}},
         rationale="chosen impl",
     )
 
@@ -69,11 +69,11 @@ def test_execute_goal_returns_success_outcome_and_attempts(monkeypatch):
             node_results={
                 "G-1": GoalNodeExecutionResult(
                     goal_id="G-1", goal_name="do the thing", status="success",
-                    attempts=[ImplementationAttempt(
-                        implementation_id="I-1", implementation_name="impl", kind="deterministic",
+                    attempts=[StepAttempt(
+                        step_order=0, binding_kind="command",
                         status="success", notes="ok",
                     )],
-                    used_implementation_id="I-1",
+                    used_binding_kind="command",
                 ),
             },
         )
@@ -84,7 +84,7 @@ def test_execute_goal_returns_success_outcome_and_attempts(monkeypatch):
     raw = _run(srv.execute_goal(goal_id="G-1", ctx=ctx))
     result = json.loads(raw)
     assert result["outcome"] == "success"
-    assert result["node_results"]["G-1"]["used_implementation_id"] == "I-1"
+    assert result["node_results"]["G-1"]["used_binding_kind"] == "command"
     assert len(result["node_results"]["G-1"]["attempts"]) == 1
     assert result["unresolved_goal_names"] == []
 
@@ -99,12 +99,12 @@ def test_execute_goal_passes_through_verification_state_and_detail(monkeypatch):
             node_results={
                 "G-1": GoalNodeExecutionResult(
                     goal_id="G-1", goal_name="do the thing", status="success",
-                    attempts=[ImplementationAttempt(
-                        implementation_id="I-1", implementation_name="impl", kind="deterministic",
+                    attempts=[StepAttempt(
+                        step_order=0, binding_kind="command",
                         status="success", notes="ok", verification_state="checked",
                         verification_detail="all expected output file(s) present",
                     )],
-                    used_implementation_id="I-1",
+                    used_binding_kind="command",
                 ),
             },
         )
@@ -159,7 +159,7 @@ def test_execute_goal_passes_through_real_artifacts(monkeypatch):
             node_results={
                 "G-1": GoalNodeExecutionResult(
                     goal_id="G-1", goal_name="do the thing", status="success",
-                    used_implementation_id="I-1",
+                    used_binding_kind="command",
                     artifacts=[{"filename": "out.txt", "sha256": "abc123", "size_bytes": 11}],
                 ),
             },
@@ -204,7 +204,7 @@ def test_execute_goal_threads_workspace_root_and_execution_id_and_surfaces_resul
             node_results={
                 "G-1": GoalNodeExecutionResult(
                     goal_id="G-1", goal_name="do the thing", status="success",
-                    used_implementation_id="I-1", resumed_from_journal=True,
+                    used_binding_kind="command", resumed_from_journal=True,
                 ),
             },
         )

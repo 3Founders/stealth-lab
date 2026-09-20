@@ -166,7 +166,10 @@ async def extractor_stats(pool: asyncpg.Pool, *, extractor_id: str, name: str) -
          outcome recorded.
     """
     tag = f"{name}@{extractor_id}"
-    counts = await pool.fetchrow(
+    from app.services.shards import fanout_fetch
+    from app.services.shards import fanout_sum_row
+    counts = await fanout_sum_row(
+        pool,
         "SELECT count(*) AS total, "
         "count(*) FILTER (WHERE approval_status = 'approved') AS approved, "
         "count(*) FILTER (WHERE approval_status = 'rejected') AS rejected "
@@ -175,12 +178,14 @@ async def extractor_stats(pool: asyncpg.Pool, *, extractor_id: str, name: str) -
     )
     total = counts["total"] or 0
     approved = counts["approved"] or 0
-    outcomes = await pool.fetchrow(
+    outcomes = await fanout_sum_row(
+        pool,
         "SELECT COALESCE(SUM((verification_stats->>'successes')::int), 0) AS successes, "
         "COALESCE(SUM((verification_stats->>'attempts')::int), 0) AS attempts "
         "FROM procedures WHERE extracted_by = $1",
         tag,
     )
+    outcomes = {k: int(outcomes.get(k) or 0) for k in ("successes", "attempts")}
     return {
         "extracted_by": tag,
         "procedures_produced": total,

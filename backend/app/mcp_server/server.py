@@ -70,7 +70,6 @@ from pydantic import AnyHttpUrl
 from app.db.session import create_pool
 from app.execution import durable_resume as _dres
 from app.execution import durable_run as _dr
-from app.execution import implementation_registry
 from app.services.access import AccessScope, visibility_predicate
 from app.services.applicability import verified_procedure_candidates
 from app.services.authn import (
@@ -88,7 +87,7 @@ from app.services.procedure_extraction.evidence import AgentRunEvidenceSource
 from app.services.procedure_extraction.schema import ExtractionTransientFailure
 from app.services.retrieval import HybridRetriever
 from app.services.reuse_detection import ReusableNode, _vector_candidates
-from app import observability
+from app import observability, telemetry
 from app.config import settings
 
 # RepoSandbox/Agent/TOOLS: moved into backend/ (app/execution/coding_agent.py)
@@ -152,9 +151,13 @@ async def lifespan(server: MCPServer) -> AsyncIterator[dict]:
         raise RuntimeError("DATABASE_URL not set -- see backend/.env")
     pool = await create_pool(os.environ["DATABASE_URL"])
     _LIFESPAN_STATE["pool"] = pool
+    from app.services import search_projection as _sp
+    _drain_task = _sp.start_background_drain(pool)      # keeps the global search projections fresh for retrieval
     try:
         yield {"pool": pool}
     finally:
+        if _drain_task is not None:
+            _drain_task.cancel()
         _LIFESPAN_STATE.pop("pool", None)
         await pool.close()
 
@@ -301,7 +304,7 @@ server = MCPServer(
     name="stealthlab",
     version="1.0.0",
     instructions=(
-        "Retrieval, Goal/Procedure/Implementation, and knowledge-graph "
+        "Retrieval, Goal/Procedure, and knowledge-graph "
         "tools for StealthLab's bi-temporal task/knowledge graph, plus a "
         "retrieval-grounded coding agent. find_best_way is genuinely "
         "long-running (multi-step agent loop) -- clients that declare the "
@@ -321,6 +324,30 @@ server = MCPServer(
         required_scopes=["stealthlab:tools"],
     ),
 )
+
+# One root span per MCP tool call (`mcp.tool.<name>`), applied at the single
+# registration point so all tools are covered and retrieval / model / DB spans
+# nest under it. A no-op wrapper unless OBSERVABILITY_ENABLED; the tool's own
+# signature, return value and exceptions are untouched.
+_register_tool = server.tool
+
+
+def _traced_tool(*targs, **tkwargs):
+    register = _register_tool(*targs, **tkwargs)
+
+    def deco(fn):
+        import functools as _ft
+
+        @_ft.wraps(fn)
+        async def traced_fn(*a, **k):
+            with telemetry.span(f"mcp.tool.{fn.__name__}", kind="TOOL",
+                                on_error=telemetry.FailureCode.UNKNOWN, tool=fn.__name__):
+                return await fn(*a, **k)
+        return register(traced_fn)
+    return deco
+
+
+server.tool = _traced_tool  # type: ignore[method-assign]
 
 # ASGI app for hosted Streamable HTTP -- serves POST/GET on /mcp. The stdio
 # entrypoint at the bottom of this file (`if __name__ == "__main__"`) is
@@ -852,158 +879,56 @@ def _render_step(step) -> str:
         impl.get("name") for impl in (step.get("allowed_implementations") or [])
         if isinstance(impl, dict) and impl.get("name")
     ]
+    binding = step.get("binding")
+    if isinstance(binding, dict) and binding.get("kind"):
+        tools.append(str(binding.get(binding["kind"]) or binding.get("entrypoint") or binding["kind"]))
     return f"{text}  [tool: {', '.join(tools)}]" if tools else text
 
 
 async def _bind_plan_to_registry(pool, compiled_plan, procedure_payload: dict):
-    """Directive Sec 20's "resolve -> bind" stage, run for real, over TWO
-    real linkage sources now (meta-harness Sec 8-10 wiring added a
-    second one this pass -- see the earlier, narrower docstring history
-    in git blame if only the first is relevant to your change):
+    """Plan-pinning guard (name kept for its call sites). Step bindings are already on the compiled nodes -- the
+    compiler copied each `procedures.steps[i].binding` onto `PlanNode.binding` -- so nothing is resolved here.
 
-    (a) `procedures.migrated_from_task_node_id` (`db/18_procedures.sql`)
-        -- populated when a procedure was migrated from a task_node's own
-        htn_method_library entry, `NULL` for an ad-hoc/directly captured
-        procedure. Never fabricates a task_node_id from a goal string
-        (see `implementation_executor.py`'s own module docstring on
-        exactly that refusal) -- every real node of a plan compiled from
-        this procedure's steps is treated as satisfying that SAME task (a
-        procedure-level, not step-level, link).
-    (b) Goal-based selection (`bind_plan_implementations(...,
-        use_goal_fallback=True)`), keyed on each node's own `PlanNode.goal`
-        text -- tried per-node, only when (a) resolves nothing for that
-        node. This is what actually reaches the overwhelming majority of
-        real, ad-hoc-captured procedures, which have no
-        migrated_from_task_node_id at all.
-
-    Neither path fabricates anything: a node with no real task_node_id
-    link AND no exact `implementations.goal` match keeps
-    `implementation_id=None`, the plan comes back byte-identical (same
-    object, per `bind_plan_implementations`'s own "nothing bound -> no-op"
-    contract), matching the registry's honest "nothing resolved" behavior
-    everywhere else.
-
-    Run AFTER `compile_plan()` and BEFORE `persist_compiled_plan()` at
-    every real production call site, so a durable implementation bound
-    here is frozen into the persisted `task_graphs.nodes` row itself, not
-    merely resolved in memory and discarded.
-
-    PLAN-PINNING GUARD (directive Sec 31 -- "a newly registered
-    implementation must not silently replace an implementation already
-    frozen into a plan"): checks `find_plan_for_task` -- keyed on the
-    real, stable (`procedure_row_id`, `task_description`) pair, NOT
-    `content_hash` -- first. `bind_plan_implementations` deliberately
-    changes `content_hash` when it freezes an implementation (see its own
-    docstring), so a content_hash lookup on this fresh, not-yet-bound
-    compile could never find an already-bound stored plan; the
-    (procedure_row_id, task_description) pair is stable across binding
-    and is exactly "the same task, replayed." When a plan for that pair
-    is already persisted, its already-frozen nodes are returned
-    UNCHANGED -- never re-resolved -- so a newer implementation activated
-    after the original run cannot change which implementation a replay
-    of that exact plan binds to. Only a genuinely first-time compile (no
-    existing row for this pair) resolves and freezes a fresh binding.
-    """
-    # PLAN-PINNING GUARD moved to run UNCONDITIONALLY (real fix, this pass):
-    # previously this only ran inside the `task_node_id` branch below, so
-    # an ad-hoc/captured procedure (no migrated_from_task_node_id -- the
-    # overwhelming majority of real procedures) returned `compiled_plan`
-    # unchanged without ever checking for an already-pinned prior plan.
-    # That was harmless before, because nothing was ever bound for those
-    # procedures anyway (nothing to protect against re-binding drift). It
-    # stops being harmless now that goal-based binding (below) can freeze
-    # an implementation onto an ad-hoc procedure's nodes too -- directive
-    # Sec 31's guarantee ("a newly registered implementation must not
-    # silently replace an implementation already frozen into a persisted
-    # plan") must hold for a goal-bound node exactly as it does for a
-    # task_node_id-bound one.
+    What remains is the replay guarantee: when a plan for the same (`procedure_row_id`, `task_description`) pair
+    is already persisted, its frozen nodes are returned UNCHANGED, so editing a procedure's step bindings later
+    can never change what a replay of that exact plan executes. Only a first-time compile keeps its fresh nodes."""
     from app.execution.plan_persistence import find_plan_for_task
 
     existing = await find_plan_for_task(
         pool, procedure_row_id=compiled_plan.plan.procedure_row_id,
         task_description=compiled_plan.plan.task_description,
     )
-    if existing is not None:
-        return existing
-
-    from app.execution.implementation_executor import bind_plan_implementations
-
-    task_node_id = procedure_payload.get("migrated_from_task_node_id")
-    task_node_ids = {n.order: str(task_node_id) for n in compiled_plan.graph.nodes} if task_node_id else {}
-
-    return await bind_plan_implementations(
-        # B19: real caller scope -- a private implementation must not be
-        # silently frozen into another caller's compiled plan.
-        pool, compiled_plan, scope=_caller_access_scope(),
-        task_node_ids=task_node_ids,
-        # Meta-harness Sec 8-10 wiring: when task_node_id-based resolution
-        # (task_node_ids above, real only for procedures migrated from the
-        # old task_node HTN library) resolves nothing for a node --
-        # exactly the overwhelming majority of real, ad-hoc-captured
-        # procedures today, see implementation_executor.py's own
-        # docstring -- also try goal-based selection keyed on the node's
-        # own PlanNode.goal text. Additive only (use_goal_fallback
-        # defaults False elsewhere; every OTHER caller of
-        # bind_plan_implementations is unaffected, and
-        # bind_plan_implementations itself hands back `compiled_plan`
-        # UNCHANGED -- same object -- when nothing resolves for any node,
-        # so a procedure with no real task_node_id AND no goal match
-        # today still costs one extra indexed find_plan_for_task lookup
-        # and a no-op resolve loop, never a behavior change).
-        # task_node_id resolution still always wins when both would
-        # resolve for the same node.
-        use_goal_fallback=True,
-    )
+    return existing if existing is not None else compiled_plan
 
 
-async def _try_registered_implementation(
+async def _try_bound_step(
     pool, node, *, task_description: str, repo_path: str, model: str, max_steps: int,
-    node_notes: list[str],
+    node_notes: list[str], procedure_id: Optional[str] = None,
 ) -> Optional[tuple["NodeResult", "AgentRun"]]:
-    """Meta-harness Sec 19-21: if `node.implementation_id` (bound by
-    `_bind_plan_to_registry` above) resolves to a real, NON-frontier
-    implementation, dispatch through the real, tested, pluggable
-    adapter/provider system (`implementation_executor.execute_implementation`
-    -> deterministic/api/tool provider) instead of the frontier coding
-    agent. Returns `None` (never a fabricated attempt) when there is
-    nothing bound, the bound row is no longer visible/active, or it IS a
-    'frontier' kind -- the caller (`find_best_way`'s `run_node` closure)
-    falls through to its own existing frontier-agent code unchanged in
-    every one of those cases, so this function changes behavior ONLY for
-    a genuinely bound non-frontier node.
+    """If `node.binding` (copied from the procedure step) names a NON-frontier executor, dispatch through the
+    adapter/provider system (`step_binding.execute_node`) instead of the frontier coding agent. Returns `None`
+    (never a fabricated attempt) when the node has no binding or it is a `model` binding -- the caller's
+    `run_node` closure then falls through to its existing frontier-agent code unchanged.
 
-    Standalone and unit-testable on purpose (monkeypatch `implementation_
-    registry.get`/`execute_implementation` directly) -- factored out of
-    `find_best_way`'s `run_node` closure precisely so this real branch
-    doesn't require driving the entire MCP tool (real LLM client, real
-    sandbox, real ancestor-chain checks) just to prove its own logic.
+    Returns `(NodeResult, AgentRun)` when it did dispatch -- the second element is a duck-typed stand-in for the
+    real `AgentRun` shape a frontier node produces, built from `NodeResult.data`, so the aggregation code after
+    `run_graph_durably` (tool_calls/files_edited/patch/usage/wall_seconds) stays correct for BOTH kinds of node.
+    Fields a non-frontier provider's `NodeResult.data` doesn't carry are honestly 0/empty, never estimated."""
+    from app.execution.step_binding import executor_kind
 
-    Returns `(NodeResult, AgentRun)` when it did dispatch -- the second
-    element is a duck-typed stand-in for the real `AgentRun` shape a
-    frontier node produces, built from `NodeResult.data`, so the
-    aggregation code after `run_graph_durably` (tool_calls/files_edited/
-    patch/usage/wall_seconds) stays correct and untouched for BOTH kinds
-    of node rather than special-casing every one of its call sites.
-    Fields a non-frontier provider's `NodeResult.data` doesn't carry (the
-    common case -- a deterministic script has no LLM usage) are honestly
-    0/empty, never estimated.
-    """
-    if not node.implementation_id:
-        return None
-    implementation = await implementation_registry.get(
-        pool, node.implementation_id, scope=_caller_access_scope(),
-    )
-    if implementation is None or implementation.get("kind") == "frontier":
+    binding = getattr(node, "binding", None)
+    if not binding or executor_kind(binding) == "frontier":
         return None
 
     from app.execution.coding_agent import AgentRun, Usage
-    from app.execution.implementation_executor import execute_implementation
+    from app.execution.step_binding import execute_node
 
-    result = await execute_implementation(
+    result = await execute_node(
         pool, node,
         {
             "task_description": task_description, "repo_path": repo_path,
             "model": model, "max_steps": max_steps, "node_notes": node_notes,
+            **({"procedure_id": procedure_id} if procedure_id else {}),
         },
         scope=_caller_access_scope(),
     )
@@ -1022,8 +947,7 @@ async def _try_registered_implementation(
         error=result.notes if result.status == "failure" else None,
     )
     node_notes.append(
-        f"step {node.order} ({node.goal}): implementation={implementation.get('name')!r} "
-        f"(kind={implementation['kind']!r}) status={result.status}"
+        f"step {node.order} ({node.goal}): binding={binding.get('kind')!r} status={result.status}"
     )
     return result, agent_run_standin
 
@@ -1123,13 +1047,11 @@ async def _respond_tier1_hit(pool, task_description: str, matched_procedure: dic
         return NodeResult(status="success" if text else "failure", notes=text)
 
     result = await execute_task_graph(compiled_plan.graph, run_node=run_node)
-    from app.execution.implementation_executor import plan_implementation_id
 
     await record_plan_execution(
         pool, compiled=compiled_plan,
         outcome=result.outcome,
         created_by=_resolve_caller_identity(fallback="find_best_way"),
-        implementation_id=plan_implementation_id(compiled_plan),
     )
 
     steps_text = "\n".join(
@@ -1162,7 +1084,6 @@ async def _respond_plan_only(
     parent_run_id: Optional[str] = None, parent_node_id: Optional[str] = None,
     ancestor_chain=None, repo_path: Optional[str] = None,
     relevant_claim_refs: Optional[list[dict]] = None,
-    implementation_candidates: Optional[list[dict]] = None,
 ) -> str:
     """`mode='plan_only'`: compile and persist the real execution graph
     (same expand_procedure_steps -> compile_plan -> persist_compiled_plan
@@ -1280,13 +1201,9 @@ async def _respond_plan_only(
         "verification_state": matched_procedure.get("verification_state"),
         "invariants": matched_procedure.get("invariants") or [],
         "preconditions": matched_procedure.get("preconditions") or [],
-        # B1/B32: real results of this call's own relevant-Claims-retrieval
-        # and candidate-Implementation-resolution pipeline steps (route_
-        # decision.py::decide_route) -- never fabricated, and empty exactly
-        # when nothing real was found (never padded to look complete).
+        # B1/B32: real result of this call's own relevant-Claims-retrieval step (route_decision.py::decide_route)
+        # -- never fabricated, and empty exactly when nothing real was found.
         "relevant_claim_refs": relevant_claim_refs or [],
-        "implementation_candidates": implementation_candidates or [],
-        "missing_required_implementations": not bool(implementation_candidates),
         "steps": [
             {
                 "order": node.order, "goal": node.goal,
@@ -1612,14 +1529,22 @@ async def find_best_way(task_description: str, ctx: Context,
     # as it already does on search_procedures below -- resolved once and
     # reused for decide_route() below too, so both calls see the same scope.
     _caller_scope = _caller_access_scope()
-    matched_procedures = await find_applicable_procedures(
-        pool, goal_embedding=query_vec, current_scope=procedure_scope, limit=1,
-        require_verified=not allow_unverified_procedures,
-        invariant_bindings=invariant_bindings,
-        embedding_model_id=embedder.embedding_model_id(),
-        access_scope=_caller_scope,
-        excluded_procedure_ids=excluded_procedure_ids,
-    )
+    # CONVERGED: the tier-1 lookup is the canonical goal-first retrieval. Its hard-constraint verdicts (including
+    # UNKNOWN preconditions) feed decide_route below, so needs_clarification / plan_ready semantics are unchanged.
+    from app.services import retrieval_service as _rs
+    from app.services.relevant_claims import get_relevant_claims as _get_relevant_claims
+
+    _local_claims: list = []
+    try:
+        _refs = await _get_relevant_claims(pool, goal=task_description, top_k=12, access_scope=_caller_scope)
+        _local_claims = [{"id": r["claim_id"], "statement": r["statement"]} for r in _refs if r.get("statement")]
+    except Exception:  # noqa: BLE001 -- claims only enrich the query
+        _local_claims = []
+    _diag, _retrieval = await _rs.diagnose_procedures(
+        pool, task_description, scope=_caller_scope, local_claims=_local_claims, embedder=embedder,
+        current_scope=procedure_scope, require_verified=not allow_unverified_procedures,
+        invariant_bindings=invariant_bindings, excluded_procedure_ids=excluded_procedure_ids)
+    matched_procedures = [d.procedure for d in _diag if d.applicable][:1]
     matched_procedure = matched_procedures[0] if matched_procedures else None
 
     # B1/B2: the formal RouteDecision, computed and persisted regardless
@@ -1635,6 +1560,7 @@ async def find_best_way(task_description: str, ctx: Context,
         embedding_model_id=embedder.embedding_model_id(),
         access_scope=_caller_scope, excluded_procedure_ids=excluded_procedure_ids,
         goal_text=task_description, session_id=session_id, workspace_id=workspace_id,
+        candidates=_diag,
     )
     route_decision_id = await persist_route_decision(pool, route_decision)
 
@@ -1683,7 +1609,6 @@ async def find_best_way(task_description: str, ctx: Context,
                 parent_run_id=parent_run_id, parent_node_id=parent_node_row_id,
                 ancestor_chain=ancestor_chain, repo_path=repo_path,
                 relevant_claim_refs=route_decision.relevant_claim_refs,
-                implementation_candidates=route_decision.implementation_candidates,
             )
         except RecursionCycleDetected as exc:
             return await _refuse(str(exc))
@@ -1934,21 +1859,16 @@ async def find_best_way(task_description: str, ctx: Context,
     node_notes: list[str] = []
 
     async def run_node(node) -> NodeResult:
-        # Meta-harness Sec 19-21 wiring, this pass: a node whose
-        # implementation_id was bound (task_node_id link, or the new
-        # goal-based fallback in _bind_plan_to_registry) to a REAL,
-        # NON-frontier implementation now actually dispatches through
-        # execute_implementation -- see _try_registered_implementation's
-        # own docstring for the full reasoning. Deliberately narrow: a
-        # node with no bound implementation, or bound to kind='frontier'
-        # (today's overwhelming default), falls straight through to the
-        # EXISTING code below, byte-identical to before this change.
-        via_registry = await _try_registered_implementation(
+        # A node whose step carries a NON-frontier `binding` dispatches through `step_binding.execute_node`
+        # (see _try_bound_step). A node with no binding, or a `model` binding (today's overwhelming default),
+        # falls straight through to the existing frontier code below.
+        via_binding = await _try_bound_step(
             pool, node, task_description=task_description, repo_path=repo_path,
             model=model, max_steps=max_steps, node_notes=node_notes,
+            procedure_id=str(procedure_payload["procedure_id"]),
         )
-        if via_registry is not None:
-            result, agent_run_standin = via_registry
+        if via_binding is not None:
+            result, agent_run_standin = via_binding
             node_runs[node.order] = agent_run_standin
             return result
 
@@ -2039,7 +1959,7 @@ async def find_best_way(task_description: str, ctx: Context,
         )
 
     # NOTE: the immutable `executions` row is appended by durable_run's
-    # _finalize (implementation_id pinned via plan_implementation_id) --
+    # _finalize --
     # do NOT call record_plan_execution here or the run gets two.
 
     # Procedure extraction (memory-substrate blocker #1: extract_procedure()
@@ -2588,7 +2508,9 @@ async def _canonical_procedure_id(
     vis_sql, vis_params = visibility_predicate(
         access_scope or AccessScope.unrestricted(), param_index=2,
     )
-    row = await pool.fetchrow(
+    from app.services.shards import fanout_fetchrow
+    row = await fanout_fetchrow(          # `given` may be a family id or a row id: the route is unknown, ask each shard
+        pool,
         f"SELECT procedure_id::text AS pid FROM procedures "
         f"WHERE (procedure_id = $1::uuid OR id = $1::uuid) AND t_invalid IS NULL "
         f"AND {vis_sql} "
@@ -2629,7 +2551,8 @@ async def _resolve_live_procedure(
     vis_sql, vis_params = visibility_predicate(
         access_scope or AccessScope.unrestricted(), param_index=2,
     )
-    row = await pool.fetchrow(
+    from app.services.shards import home_pool
+    row = await (await home_pool(pool, "procedure", canonical)).fetchrow(
         f"SELECT * FROM procedures WHERE procedure_id = $1::uuid AND t_invalid IS NULL "
         f"AND {vis_sql}",
         UUID(canonical), *vis_params,
@@ -2695,9 +2618,9 @@ async def search_procedures(task: str, ctx: Context, state: str = "{}", limit: i
     pending_job_id, detail}.
     """
     pool = ctx.request_context.lifespan_context["pool"]
-    from app.services.applicability_judge import default_judge_from_env
-    from app.services.claim_conditioned_retrieval import find_applicable_candidates
+    from app.services import retrieval_service as rs
     from app.services.embeddings import Embedder
+    from app.services.relevant_claims import get_relevant_claims
 
     try:
         current_scope = json.loads(state) if state else {}
@@ -2708,46 +2631,53 @@ async def search_procedures(task: str, ctx: Context, state: str = "{}", limit: i
     except json.JSONDecodeError as exc:
         return f"REFUSED: invariant_bindings must be a JSON object ({exc})"
 
+    # CONVERGED onto the canonical retrieval service (Goal resolution -> goal-constrained procedures -> hard
+    # constraints -> JEV/NLI with the relevant local Claims in context). This tool no longer has a ranker of its own.
     embedder = Embedder()
-    goal_vec = await embedder.embed_one(task, input_type="query")
-    judge = default_judge_from_env() if use_claims else None
-    result = await find_applicable_candidates(
-        pool, goal_text=task, goal_embedding=goal_vec, judge=judge,
-        claim_conditioned=use_claims,
-        current_scope=current_scope, require_verified=require_verified, limit=limit,
-        # B19 residual fix -- see find_best_way's identical fix above; this
-        # tool's own name says "search", the exact surface the founder
-        # flagged. Real caller scope -- never surface a private procedure
-        # another caller cannot see.
-        access_scope=_caller_access_scope(),
-        invariant_bindings=bindings,
-        embedding_model_id=embedder.embedding_model_id(),
-    )
+    caller_scope = _caller_access_scope()
+    local_claims = []
+    if use_claims:
+        try:
+            refs = await get_relevant_claims(pool, goal=task, top_k=12, access_scope=caller_scope)
+            local_claims = [{"id": r["claim_id"], "statement": r["statement"]} for r in refs if r.get("statement")]
+        except Exception:  # noqa: BLE001 -- claims only enrich the query; retrieval still runs without them
+            local_claims = []
+    res = await rs.search_procedures(
+        pool, task, scope=caller_scope, local_claims=local_claims, embedder=embedder,
+        current_scope=current_scope, require_verified=require_verified, invariant_bindings=bindings)
+    meta = res.meta
+    verdict_of = {"applies": "TRUE", "partial": "UNKNOWN", "not_applicable": "FALSE"}
+    results = []
+    for item in res.procedures.ranked[:limit]:
+        row = item["_row"]
+        results.append({
+            "id": str(row["id"]), "procedure_id": str(row["procedure_id"]), "version": row["version"], "name": row["name"],
+            "goal": row["goal"], "verification_state": row["verification_state"], "similarity": item["rrf"],
+            "verdict": verdict_of.get(item.get("relation")) if item.get("judged") else None,
+            "supporting_claim_ids": res.ctx.claim_ids if item.get("relation") == "applies" else [],
+            "blocking_claim_ids": [], "unknown_requirements": [],
+            "goal_id": item.get("goal_id"),
+            "scores": {"semantic_relevance": item["applicability_score"], "claim_fit": item.get("confidence"),
+                       "evidence_strength": item["evidence_lcb"], "verified_success": item["evidence"]["lcb"],
+                       "cost_estimate": None, "latency_estimate": None, "risk": None,
+                       "final_policy_score": item["applicability_score"]},
+        })
+    if not use_claims:
+        status = "not_requested"
+    elif meta.mode == rs.MODE_CANDIDATES and res.goals.resolution == "unjudged":
+        status = "SEMANTIC_JUDGMENT_UNAVAILABLE"      # explicit: candidates below are UNRANKED and unjudged
+    else:
+        status = "ok"
     return json.dumps({
-        "results": [
-            {
-                "id": str(c.procedure["id"]), "procedure_id": str(c.procedure["procedure_id"]),
-                "version": c.procedure["version"], "name": c.procedure["name"],
-                "goal": c.procedure["goal"],
-                "verification_state": c.procedure["verification_state"],
-                "similarity": c.procedure.get("_similarity_score"),
-                "verdict": c.judgment.verdict if c.judgment else None,
-                "supporting_claim_ids": c.judgment.supporting_claim_ids if c.judgment else [],
-                "blocking_claim_ids": c.judgment.blocking_claim_ids if c.judgment else [],
-                "unknown_requirements": c.judgment.unknown_requirements if c.judgment else [],
-                "scores": {
-                    "semantic_relevance": c.semantic_relevance, "claim_fit": c.claim_fit,
-                    "evidence_strength": c.evidence_strength, "verified_success": c.verified_success,
-                    "cost_estimate": c.cost_estimate, "latency_estimate": c.latency_estimate,
-                    "risk": c.risk, "final_policy_score": c.final_policy_score,
-                },
-            }
-            for c in result.candidates
-        ],
-        "contextual_judgment_status": result.contextual_judgment_status,
-        "pending_job_id": result.pending_job_id,
-        "detail": result.detail,
-    })
+        "results": results,
+        "contextual_judgment_status": status,
+        "pending_job_id": None,
+        "detail": "; ".join(meta.degraded_reasons) or None,
+        "goal_resolution": {"status": res.goals.resolution, "goals": [h.brief() for h in res.goals.resolved]},
+        "retrieval": {k: v for k, v in meta.as_dict().items() if k in (
+            "mode", "degraded", "degraded_reasons", "providers", "local_claim_ids", "shards_touched", "unavailable_shards")},
+        "selected_procedure_id": res.procedures.selected["procedure_id"] if res.procedures.selected else None,
+    }, default=str)
 
 
 @server.tool()
@@ -3210,212 +3140,6 @@ async def decide_procedure(procedure_id: str, approver_id: str, decision: str, c
 
 
 @server.tool()
-async def resolve_implementation(task_node_id: str, ctx: Context,
-                                  hint_kinds_json: str | None = None) -> str:
-    """
-    Directive Sec 44/76: "which concrete, durable implementation should
-    satisfy this task node?" Thin wrapper around
-    `app.execution.implementation_registry.resolve()` -- no new business
-    logic. B19: resolves against the REAL caller's own access scope
-    (`_caller_access_scope()`), never `AccessScope.unrestricted()` -- a
-    private implementation another caller registered must not resolve
-    here just because this caller happens to know the task_node_id.
-
-    task_node_id: the task_nodes row id to resolve against.
-    hint_kinds_json: optional JSON array of kind strings, an ordered
-    preference (same shape `PlanNode.implementation_hint` uses). Omit
-    for no preference -- the most recently registered active
-    implementation wins.
-
-    Returns the same honest shape the REST endpoint
-    (POST /v1/tasks/{id}/resolve-implementation) returns: implementation_id
-    is null with a real reason when nothing resolves -- never a
-    fabricated pick, never a 404-shaped refusal for a genuine "nothing is
-    linked" answer. Never echoes a credential value -- none is ever
-    stored (see implementation_registry.py's own docstring).
-    """
-    pool = ctx.request_context.lifespan_context["pool"]
-
-    hint_kinds = None
-    if hint_kinds_json:
-        try:
-            parsed = json.loads(hint_kinds_json)
-        except json.JSONDecodeError as exc:
-            return f"REFUSED: hint_kinds_json must be a JSON array of strings ({exc})"
-        if not isinstance(parsed, list):
-            return "REFUSED: hint_kinds_json must be a JSON array of strings."
-        hint_kinds = tuple(parsed)
-
-    resolved = await implementation_registry.resolve(
-        pool, task_node_id, scope=_caller_access_scope(), hint_kinds=hint_kinds,
-    )
-    if resolved is None:
-        reason = (
-            "no active implementation is linked to this task"
-            if hint_kinds is None else
-            f"no active implementation matching hint kinds {list(hint_kinds)} is linked to this task"
-        )
-        return json.dumps({
-            "implementation_id": None, "provider": None, "kind": None,
-            "requirements": None, "invocation": None, "reason": reason,
-        })
-
-    reason = (
-        "resolved to most recent active implementation, no hint given"
-        if hint_kinds is None else "resolved via hint preference order"
-    )
-    return json.dumps({
-        "descriptor": implementation_registry.descriptor(resolved),  # canonical execution ABI (§1/§27)
-        "reason": reason,
-    }, default=str)
-
-
-@server.tool()
-async def inspect_implementation(implementation_id: str, ctx: Context) -> str:
-    """
-    Directive Sec 76: fetch one durable implementation row by id. Thin
-    wrapper around `implementation_registry.get()` -- public/read-only,
-    same anti-enumeration posture as the REST endpoint (a missing or
-    invisible row REFUSES the same way, never distinguishing the two).
-
-    Also includes the B29 Implementation lifecycle position (REGISTERED
-    -> RESOLVABLE -> AVAILABLE -> VERIFIED_IN_CONTEXT -> REUSED, plus
-    UNAVAILABLE/RETIRED flags and any real recorded failure classes),
-    derived from this row's own status/verification_status plus real
-    evidence/binding facts -- see
-    app/execution/implementation_lifecycle.py.
-    """
-    pool = ctx.request_context.lifespan_context["pool"]
-    # B19: real caller scope -- a private implementation must resolve
-    # exactly like a missing one for a caller who cannot see it.
-    row = await implementation_registry.get(pool, implementation_id, scope=_caller_access_scope())
-    if row is None:
-        return f"REFUSED: no implementation found for id {implementation_id!r}."
-    from app.execution.implementation_lifecycle import compute_implementation_lifecycle_state
-    lifecycle = await compute_implementation_lifecycle_state(pool, implementation_id)
-    # Full row for humans + the canonical, deterministic, secret-free
-    # execution descriptor (§1/§22/§27) a harness consumer binds against.
-    return json.dumps(
-        {**row, "descriptor": implementation_registry.descriptor(row), "lifecycle": lifecycle}, default=str,
-    )
-
-
-@server.tool()
-async def list_task_implementations(task_node_id: str, ctx: Context, status: str = "active") -> str:
-    """
-    Directive Sec 76: every implementation linked to a task_node. Thin
-    wrapper around `implementation_registry.get_for_task()`. `status`
-    defaults to 'active'; pass 'all' to see every lifecycle state (an
-    inspection view, same sentinel the REST endpoint uses).
-    """
-    pool = ctx.request_context.lifespan_context["pool"]
-    resolved_status = None if status == "all" else status
-    if resolved_status is not None and resolved_status not in implementation_registry.STATUS_VALUES:
-        return (
-            f"REFUSED: unknown status {resolved_status!r} "
-            f"(valid: {implementation_registry.STATUS_VALUES}, or 'all')."
-        )
-    rows = await implementation_registry.get_for_task(
-        pool, task_node_id, scope=_caller_access_scope(), status=resolved_status,
-    )
-    return json.dumps(rows, default=str)
-
-
-@server.tool()
-async def list_implementations_for_goal(goal: str, ctx: Context, status: str = "active") -> str:
-    """
-    Meta-harness Sec 8/32: every implementation whose `goal` (migration
-    80's ProcedureStep.goal <-> Implementation.goal column) exactly
-    matches -- the real MCP surface for "search finds candidates" (thin
-    wrapper around `implementation_registry.list_implementations_by_goal()`,
-    the same structured, non-LLM lookup `find_best_way`'s own binding
-    stage uses internally). `status` defaults to 'active' (an ordinary
-    selection candidate); pass 'all' to see every lifecycle state,
-    matching `list_task_implementations`'s own sentinel convention.
-
-    Exact match only, deliberately -- `goal` is free text, not an enum
-    (see that column's own migration for why); this is a real lookup, not
-    a fuzzy/semantic one. Returns `[]` (never a fabricated candidate) when
-    nothing has ever been classified against this exact goal string.
-    """
-    pool = ctx.request_context.lifespan_context["pool"]
-    resolved_status = None if status == "all" else status
-    if resolved_status is not None and resolved_status not in implementation_registry.STATUS_VALUES:
-        return (
-            f"REFUSED: unknown status {resolved_status!r} "
-            f"(valid: {implementation_registry.STATUS_VALUES}, or 'all')."
-        )
-    from app.execution.implementation_registry import list_implementations_by_goal
-    rows = await list_implementations_by_goal(pool, goal, scope=_caller_access_scope(), status=resolved_status)
-    return json.dumps(rows, default=str)
-
-
-@server.tool()
-async def explain_implementation_selection(
-    goal: str, ctx: Context,
-    privacy_policy: Optional[str] = None,
-    required_scope_type: Optional[str] = None,
-    allowed_execution_locations_json: str = "[]",
-) -> str:
-    """
-    Meta-harness Sec 10/32: the full, disclosed selection trace for a
-    goal -- candidates considered, each candidate's hard-constraint
-    checks (HARD_FALSE/SOFT/SATISFIABLE/UNKNOWN, directive Sec 9), score
-    components, the chosen implementation, and a human-readable rationale.
-    Thin wrapper around `implementation_selection.select_implementation_
-    for_goal()` -- the SAME function `find_best_way`'s own
-    `_try_registered_implementation` dispatch path uses, exposed here so
-    a caller can ask "what would be chosen, and why" WITHOUT running a
-    plan (a pure, non-mutating read -- never executes anything).
-
-    Optional context knobs mirror `evaluate_requirements()`'s own
-    contract exactly (see that function's docstring for the full
-    HARD_FALSE/UNKNOWN semantics per field) -- every one is optional and
-    omitting all of them means "no constraint", not "no candidates".
-    `allowed_execution_locations_json`: JSON array of
-    "stealth_hosted"/"user_hosted"/"third_party_hosted" strings.
-    """
-    pool = ctx.request_context.lifespan_context["pool"]
-    try:
-        allowed_execution_locations = json.loads(allowed_execution_locations_json) or None
-    except json.JSONDecodeError as exc:
-        return f"REFUSED: allowed_execution_locations_json is not valid JSON -- {exc}"
-
-    context: dict[str, Any] = {}
-    if privacy_policy is not None:
-        context["privacy_policy"] = privacy_policy
-    if required_scope_type is not None:
-        context["required_scope_type"] = required_scope_type
-    if allowed_execution_locations is not None:
-        context["allowed_execution_locations"] = allowed_execution_locations
-
-    from app.execution.implementation_selection import select_implementation_for_goal
-    result = await select_implementation_for_goal(pool, goal, context=context, scope=_caller_access_scope())
-    return json.dumps({
-        "goal": result.goal,
-        "candidates_considered": len(result.candidates_considered),
-        "chosen": result.chosen,
-        "rationale": result.rationale,
-        "ranked": [
-            {
-                "implementation_id": r.implementation.get("id"),
-                "name": r.implementation.get("name"),
-                "kind": r.implementation.get("kind"),
-                "eligible": r.eligible,
-                "score": r.score,
-                "checks": [{"name": c.name, "state": c.state, "detail": c.detail} for c in r.checks],
-                "components": [
-                    {"name": c.name, "value": c.value, "weight": c.weight, "contribution": c.contribution}
-                    for c in r.components
-                ],
-                "rejection_reasons": r.rejection_reasons,
-            }
-            for r in result.ranked
-        ],
-    }, default=str)
-
-
-@server.tool()
 async def search_goals(
     query: str, ctx: Context,
     scope_type: Optional[str] = None, scope_entity_id: Optional[str] = None,
@@ -3463,7 +3187,7 @@ async def search_goals(
 @server.tool()
 async def inspect_goal(goal_id: str, ctx: Context) -> str:
     """
-    One Goal's full record plus its live Procedures/Implementations
+    One Goal's full record plus its live Procedures
     (ingestion.md Sec 18). Returns "null" (never a fabricated row) for a
     missing id OR one that exists but is not visible to the caller --
     same anti-enumeration posture every other single-row-by-id tool in
@@ -3483,27 +3207,15 @@ async def list_goal_procedures(goal_id: str, ctx: Context) -> str:
     exists as a focused, single-purpose tool for a caller that only wants
     that one relationship."""
     pool = ctx.request_context.lifespan_context["pool"]
-    rows = await pool.fetch(
-        "SELECT id, procedure_id, name, verification_state, availability "
-        "FROM procedures WHERE achieves_goal_id = $1 AND t_invalid IS NULL "
+    from app.services.shards import fanout_fetch
+    rows = await fanout_fetch(
+        pool, "SELECT id, procedure_id, name, verification_state, availability, t_created "
+        "FROM procedures WHERE achieves_goal_id = $1::uuid AND t_invalid IS NULL "
         "ORDER BY t_created DESC LIMIT 100",
         goal_id,
     )
-    return json.dumps([dict(r) for r in rows], default=str)
-
-
-@server.tool()
-async def list_goal_implementations(goal_id: str, ctx: Context) -> str:
-    """Every Implementation that satisfies this Goal (implementations.goal_id)
-    -- the ID-based counterpart to `list_implementations_for_goal`'s
-    exact-text lookup. Thin wrapper, same reasoning as `list_goal_procedures`."""
-    pool = ctx.request_context.lifespan_context["pool"]
-    rows = await pool.fetch(
-        "SELECT id, name, provider, kind, status FROM implementations "
-        "WHERE goal_id = $1 ORDER BY t_created DESC LIMIT 100",
-        goal_id,
-    )
-    return json.dumps([dict(r) for r in rows], default=str)
+    rows = sorted(rows, key=lambda r: r.get("t_created") or 0, reverse=True)[:100] if len(rows) > 1 else rows
+    return json.dumps([{k: v for k, v in dict(r).items() if k != "t_created"} for r in rows], default=str)
 
 
 @server.tool()
@@ -3648,13 +3360,11 @@ def _resolved_goal_node_to_dict(node) -> dict:
     return {
         "goal_id": node.goal_id, "goal_name": node.goal_name, "depth": node.depth,
         "chosen": node.chosen,
-        "implementation": node.implementation,
-        "implementation_alternates": node.implementation_alternates,
+        "step": node.step,
         "verification_requirement": node.verification_requirement,
         "procedure": node.procedure,
         "rationale": node.rationale,
         "unresolved_reason": node.unresolved_reason,
-        "implementation_candidates_considered": node.implementation_candidates_considered,
         "procedures_linked": node.procedures_linked,
         "procedures_feasible": node.procedures_feasible,
         "children": [_resolved_goal_node_to_dict(c) for c in node.children],
@@ -3670,25 +3380,19 @@ async def explain_goal_route(
     Meta-harness/execu.md Sec 15/27: the full, disclosed recursive
     resolution trace for a Goal -- exactly what `resolve_goal()` itself
     computed, never recomputed or summarized lossily. Pure, non-mutating
-    read (same posture as `explain_implementation_selection`) -- runs
+    read -- runs
     the real recursive compiler but persists nothing.
 
     `current_scope_json`: JSON object -- the real current task context
     (e.g. `{"repo": [...], "files": [...]}`) threaded straight into every
-    Implementation eligibility check and Procedure feasibility check
-    this resolution performs, unchanged.
+    Procedure feasibility check this resolution performs, unchanged.
 
     Every node in the returned tree carries its own `chosen` outcome and
     `rationale`/`unresolved_reason` -- an `unresolved` leaf is a real,
     honest answer (Sec 4: "A Goal may initially be unsolved"), not an
     error.
 
-    `semantic=True` (Sec 11 follow-up, opt-in -- one real embedding call
-    per Goal node resolved, same posture `search_goals`'s own
-    `semantic=True` already established): additionally considers
-    Implementations whose real meaning matches a Goal's own text, even
-    without an exact `goal_id` link -- the exact link stays the
-    strongest real signal, never replaced.
+    `semantic` is accepted for backward compatibility and has no effect.
     """
     from app.execution.goal_resolution import GoalResolutionError, resolve_goal
 
@@ -3729,9 +3433,8 @@ async def compile_goal(
     this tool, inspects the result, then drives execution through the
     existing durable-run machinery (out of this tool's own scope).
 
-    Every node is either `kind="implementation"` (real, concrete work --
-    `implementation_id`/`executor` are never fabricated, taken directly
-    from what `resolve_goal` actually selected) or `kind="human"` (a
+    Every node is either `kind="step"` (real, concrete work: a procedure step carrying a `binding`;
+    `executor` is derived from that binding, never fabricated) or `kind="human"` (a
     real NEEDS_INPUT node, Sec 21 -- `rationale` says exactly what could
     not be resolved). `deps` chains nodes in the exact order the
     Procedure(s) along the way declared their own steps.
@@ -3740,17 +3443,15 @@ async def compile_goal(
     in dependency order>]}` -- both the "why" and the "what to execute",
     never just one.
 
-    `semantic=True` (Sec 11 follow-up, opt-in): same real semantic
-    Goal->Implementation candidate widening `explain_goal_route`'s own
-    `semantic` flag already documents.
+    `semantic` is accepted for backward compatibility and has no effect.
 
     `workspace_root` (Sec 13, opt-in): when given, ALSO writes a real
     `.stealth/goal_run.md` reflecting the COMPILED-but-not-executed plan
     -- `find_best_way(mode="plan_only")` already writes a real `run.md`
     for a Procedure-based plan the same way (`RUN|...|pending|...`)
     before anything runs; this closes the same gap for Goal-based plans.
-    Every node's `status` is `"planned"` (kind="implementation" -- a real
-    Implementation WOULD be dispatched here) or `"needs_input"`
+    Every node's `status` is `"planned"` (kind="step" -- a real bound
+    step WOULD be dispatched here) or `"needs_input"`
     (kind="human" -- a real, already-known gap), never `"success"`/
     `"failure"`, since nothing has actually executed. Calling `execute_
     goal` afterward on the SAME `workspace_root` overwrites this same
@@ -3788,7 +3489,7 @@ async def compile_goal(
         "nodes": [
             {
                 "node_id": n.node_id, "goal_id": n.goal_id, "goal_name": n.goal_name,
-                "kind": n.kind, "implementation_id": n.implementation_id, "executor": n.executor,
+                "kind": n.kind, "step_order": n.step_order, "executor": n.executor,
                 "deps": n.deps, "rationale": n.rationale, "depth": n.depth,
             }
             for n in nodes
@@ -3804,7 +3505,7 @@ async def estimate_goal_cost(
     """
     Meta-harness/execu.md Sec 13/14/27: real, empirical cost estimation
     -- resolves the Goal (`resolve_goal`), then aggregates real recorded
-    execution telemetry (migration 85, `execution_telemetry.py`) up the
+    step execution telemetry (`step_execution_telemetry`, migration 98) up the
     tree per Sec 13's own formula.
 
     HONEST BY DESIGN, stated plainly rather than glossed over: this
@@ -3814,7 +3515,7 @@ async def estimate_goal_cost(
     which part of the route lacks data -- never a fabricated number to
     make the tool look more capable than it is. `monetary_cost_usd` is
     ALWAYS `null` -- no pricing table exists anywhere in this codebase.
-    As real executions accumulate (`execute_implementation`'s own
+    As real executions accumulate (`step_binding.execute_node`'s own
     automatic telemetry recording), the SAME goal_id will start
     returning real, increasingly confident (`"low"` then `"empirical"`
     at 5+ real samples) numbers on its own -- no code change needed,
@@ -3827,10 +3528,7 @@ async def estimate_goal_cost(
     expected_prompt_tokens, expected_completion_tokens,
     monetary_cost_usd, basis, ...}}`.
 
-    `semantic=True` (Sec 11 follow-up, opt-in): same real semantic
-    Goal->Implementation candidate widening `explain_goal_route`'s own
-    `semantic` flag already documents -- a wider real candidate pool can
-    change which Implementation this estimate is actually costing.
+    `semantic` is accepted for backward compatibility and has no effect.
     """
     from app.execution.goal_cost import estimate_goal_cost as _estimate_goal_cost
     from app.execution.goal_resolution import GoalResolutionError, resolve_goal
@@ -3881,19 +3579,14 @@ async def execute_goal(
     """
     REAL, SIDE-EFFECTING EXECUTION -- Prompt 2 Sec 7/9/10: resolves the
     Goal (`resolve_goal`, same as `compile_goal`/`explain_goal_route`)
-    then actually RUNS every concrete Implementation leaf in the
-    resolved tree via the real `execute_implementation()` chokepoint --
-    the same dispatch `find_best_way`'s tier-1/2 paths use, sandboxed
-    where the implementation's own kind is sandboxed. Every attempt is
-    automatically recorded into the real execution-telemetry ledger
-    (migration 85) whether it succeeds or fails, so `estimate_goal_cost`
+    then actually RUNS every bound step leaf in the resolved tree via the
+    real `step_binding.execute_node()` chokepoint -- the same dispatch
+    `find_best_way`'s tier-1/2 paths use, sandboxed where the binding's
+    own kind is sandboxed. Every attempt is automatically recorded into
+    the real step-telemetry ledger (`step_execution_telemetry`) whether it succeeds or fails, so `estimate_goal_cost`
     gets real evidence from every call to this tool.
 
-    `semantic=True` (Sec 11 follow-up, opt-in, one real embedding call
-    per Goal node resolved): widens Implementation candidate generation
-    to real semantic matches, not just an exact `goal_id` FK -- the
-    exact link stays the strongest real signal (never required for
-    discoverability), this only helps when nothing is exactly linked yet.
+    `semantic` is accepted for backward compatibility and has no effect.
 
     Real verification (Prompt 2 Sec 9, `goal_verification.py`): a node
     that reports `status='success'` is NOT yet done -- this Goal's own
@@ -3901,19 +3594,14 @@ async def execute_goal(
     migration 83) is checked against the real result
     (`deterministic_check` actually runs a real sandboxed command;
     `artifact_inspection` checks the real output files the
-    implementation produced; `human_review` is never auto-passed; no
+    step produced; `human_review` is never auto-passed; no
     contract at all is honestly `unverified`, which still counts as a
     pass -- Sec 9 asks that a contract exist, not that every Goal
     already has one today). A `failed_verification` result is treated
     exactly like an execution failure below.
 
-    Real fallback (Prompt 2 Sec 10, previously entirely missing from
-    this codebase per audit), at BOTH rungs the spec names:
-      - Implementation-level: if a node's first-choice Implementation
-        fails EXECUTION or VERIFICATION, the next real eligible alternate
-        `resolve_goal` already ranked for that SAME Goal is tried next,
-        in order, until one succeeds or all are exhausted.
-      - Procedure-level ("alternative Procedure"): if a WHOLE Procedure's
+    Real fallback (Prompt 2 Sec 10): at Procedure level ("alternative Procedure"):
+if a WHOLE Procedure's
         own decomposition fails (not merely `needs_input` -- a
         structural gap is not something a different decomposition is
         reliably better at closing), the next real feasible alternate
@@ -3923,7 +3611,7 @@ async def execute_goal(
         10's own terminal escalation rung, past which this tool has no
         further automatic recourse.
     Never substitutes a different Goal at either rung. Every attempt
-    (implementation id/procedure id, status, notes, verification
+    (step order/binding kind/procedure id, status, notes, verification
     state/detail) is kept, not just the last one.
 
     Real durability (Prompt 2 Sec 12), opt-in via `workspace_root`: pass
@@ -3937,7 +3625,7 @@ async def execute_goal(
     stated plainly: this is NOT the Postgres `execution_runs`/
     `durable_run.py` machinery (anchored to a real `procedure_id`, a
     documented one-way-door invariant -- see `goal_execution.py`'s own
-    module docstring for why forcing a bare-Implementation Goal route
+    module docstring for why forcing a bare-step Goal route
     through it would be dishonest) -- there is no lease/worker-ownership
     fencing here, so two concurrent resumes of the same `execution_id`
     are not safely serialized against each other. Omitting
@@ -3952,7 +3640,7 @@ async def execute_goal(
     comment on why), built straight from this call's own real result,
     never re-derived.
 
-    Real output files an Implementation actually produced (`NodeResult.
+    Real output files a step actually produced (`NodeResult.
     data["output_files"]`) are written to `.stealth/artifacts/<goal_id>/
     <execution_id>/<filename>` (Sec 5, completing the `.stealth/` ABI
     list) and listed both in `node_results[goal_id]["artifacts"]` and as
@@ -3969,7 +3657,7 @@ async def execute_goal(
     Returns `{"tree": <full resolution trace>, "outcome": "success"|
     "failure"|"needs_input", "execution_id": <str, only when
     workspace_root was given>, "node_results": {goal_id: {status,
-    attempts: [...], used_implementation_id, resumed_from_journal}},
+    attempts: [...], used_binding_kind, resumed_from_journal}},
     "procedure_results": {goal_id: {status, attempts: [{procedure_id,
     procedure_name, status}, ...], used_procedure_id,
     human_intervention_needed, resumed_from_journal}},
@@ -4008,13 +3696,13 @@ async def execute_goal(
         "node_results": {
             gid: {
                 "goal_name": r.goal_name, "status": r.status,
-                "used_implementation_id": r.used_implementation_id,
+                "used_binding_kind": r.used_binding_kind,
                 "resumed_from_journal": r.resumed_from_journal,
                 "artifacts": r.artifacts,
                 "attempts": [
                     {
-                        "implementation_id": a.implementation_id, "implementation_name": a.implementation_name,
-                        "kind": a.kind, "status": a.status, "notes": a.notes,
+                        "step_order": a.step_order, "binding_kind": a.binding_kind,
+                        "status": a.status, "notes": a.notes,
                         "verification_state": a.verification_state, "verification_detail": a.verification_detail,
                     }
                     for a in r.attempts
@@ -4117,185 +3805,6 @@ async def get_goal_artifact(
     })
 
 
-@server.tool()
-async def submit_implementation(
-    procedure_id: str, role: str, ctx: Context,
-    implementation_id: Optional[str] = None,
-    name: Optional[str] = None, kind: Optional[str] = None, provider: Optional[str] = None,
-    version: int = 1, description: Optional[str] = None,
-    supported_steps_json: str = "[]", locator_json: str = "{}",
-    invocation_json: str = "{}", input_schema_json: str = "{}", output_schema_json: str = "{}",
-    requirements_json: str = "{}", source_ref: Optional[str] = None,
-    author: Optional[str] = None, license: Optional[str] = None,
-) -> str:
-    """
-    MCP hardening B23: "a tool builder MUST be able to submit/register an
-    Implementation against one or more existing Procedures without
-    creating a reusable TaskNode." Two modes, both ending in a real
-    `procedure_implementations` row (the pre-existing, real, bi-temporal
-    relation table `app/services/skill_ingestion.py` already writes and
-    `publication.py` already reads -- migration 58 gave it the migration
-    file it never had; this tool is a second, independent writer of the
-    SAME table, not a parallel one):
-
-    1. `implementation_id` given -- links that ALREADY-registered,
-       durable Implementation (`inspect_implementation`/
-       `resolve_implementation`'s own identity) to `procedure_id`.
-    2. `implementation_id` omitted -- registers a brand-new Implementation
-       first (via `implementation_registry.register()`, same "nothing is
-       born trusted" candidate/unverified posture every other capture
-       path here uses), THEN links it. Requires `name`/`kind`/`provider`.
-
-    The relation itself is always born `status='candidate'` via THIS
-    call path -- calling this does not make the binding `active`; that
-    is a separate, evidence-driven promotion (not automated here,
-    matching B23's own "Do not invent numeric coverage/quality scores
-    unless they come from recorded evaluation"). Note: `skill_ingestion.
-    py`'s OWN, separate, unrelated call path relies on this table's
-    column default (`'active'`) for its bundled-script implementations,
-    whose trust comes from package admission elsewhere -- this tool
-    never relies on that default, it always states `candidate` itself.
-
-    `procedure_id` is the STABLE Procedure family id (not a specific
-    version's row id) -- same identity `execution_runs.procedure_id`
-    already uses. HONEST LIMITATION inherited from the real table: there
-    is no per-Procedure-version pinning -- a relation applies to the
-    whole family, every version, always (the real table has no
-    `procedure_version` column at all).
-
-    `role`: primary | supporting | partial | verification (B23's own
-    vocabulary). `supported_steps_json`: JSON array of step orders this
-    Implementation actually covers -- `"[]"` (the default) means
-    unrestricted (applies to every step), NOT "covers zero steps".
-    """
-    from app.services.procedure_implementation_bindings import (
-        ROLES, ProcedureImplementationBindingError, link_implementation,
-    )
-
-    if role not in ROLES:
-        return f"REFUSED: role must be one of {ROLES}, got {role!r}."
-    try:
-        supported_steps = json.loads(supported_steps_json)
-        locator = json.loads(locator_json)
-        invocation = json.loads(invocation_json)
-        input_schema = json.loads(input_schema_json)
-        output_schema = json.loads(output_schema_json)
-        requirements = json.loads(requirements_json)
-    except json.JSONDecodeError as exc:
-        return f"REFUSED: malformed JSON parameter -- {exc}"
-
-    pool = ctx.request_context.lifespan_context["pool"]
-    created_by = _resolve_caller_identity(fallback="submit_implementation")
-
-    if implementation_id is None:
-        if not (name and kind and provider):
-            return (
-                "REFUSED: implementation_id was omitted, so name, kind, and "
-                "provider are all required to register a new Implementation."
-            )
-        try:
-            new_impl = await implementation_registry.register(
-                pool, name=name, kind=kind, provider=provider, created_by=created_by,
-                description=description, version=version, locator=locator,
-                invocation=invocation, input_schema=input_schema, output_schema=output_schema,
-                requirements=requirements, source_ref=source_ref, author=author, license=license,
-            )
-        except implementation_registry.ImplementationRegistryError as exc:
-            return f"REFUSED: {exc}"
-        except asyncpg.UniqueViolationError:
-            return (
-                f"REFUSED: an implementation named {name!r} from provider {provider!r} "
-                f"version {version} already exists -- resolve/inspect it and pass its "
-                "implementation_id instead of re-registering."
-            )
-        implementation_id = new_impl["id"]
-
-    try:
-        binding = await link_implementation(
-            pool, procedure_id=procedure_id, implementation_id=implementation_id, role=role,
-            supported_steps=supported_steps,
-            created_by=created_by,
-        )
-    except ProcedureImplementationBindingError as exc:
-        return f"REFUSED: {exc}"
-    return json.dumps({"implementation_id": implementation_id, "binding": binding}, default=str)
-
-
-@server.tool()
-async def get_implementation_capability(implementation_id: str, ctx: Context) -> str:
-    """
-    Directive Sec 76: capability estimate for one durable implementation.
-    Prefers the sibling `app.services.capabilities.get_implementation_
-    capability` when it exists (parallel workstream this same wave);
-    falls back to the same honest, clearly-labeled provisional Wilson-
-    interval computation `app/api/implementations.py::
-    _inline_capability_fallback` uses, duplicated here rather than
-    imported across the api/mcp_server boundary (this file imports no
-    app.api.* modules today -- keeping that boundary intact rather than
-    introducing the first such cross-import). Public/read-only, no
-    credential exposure -- same posture as every read tool in this file.
-    """
-    pool = ctx.request_context.lifespan_context["pool"]
-    # B19: real caller scope -- never estimate/expose capability for a
-    # private implementation this caller cannot see.
-    scope = _caller_access_scope()
-
-    parent = await implementation_registry.get(pool, implementation_id, scope=scope)
-    if parent is None:
-        return f"REFUSED: no implementation found for id {implementation_id!r}."
-
-    try:
-        from app.services.capabilities import (  # type: ignore[import-not-found]
-            get_implementation_capability as _sibling_get_capability,
-        )
-    except ImportError:
-        from app.services.access import visibility_predicate
-        from app.services.procedure_extraction.capability import (
-            band_for_p, route_for_p, wilson_interval,
-        )
-
-        vis_sql, vis_params = visibility_predicate(scope, param_index=2)
-        rows = await pool.fetch(
-            f"""
-            SELECT * FROM evidence
-            WHERE target_type = 'implementation' AND target_id = $1::uuid
-              AND t_invalid IS NULL AND {vis_sql}
-            ORDER BY t_valid ASC
-            """,
-            implementation_id, *vis_params,
-        )
-        evidence = [dict(row) for row in rows]
-
-        outcome_bearing = [
-            e for e in evidence
-            if e.get("direction") == "supports"
-            and e.get("evidence_type") in ("execution_result", "reproduction")
-            and e.get("outcome_status") in ("success", "failure")
-        ]
-        total = len(outcome_bearing)
-        successes = sum(1 for e in outcome_bearing if e["outcome_status"] == "success")
-        p_lower, p_upper = wilson_interval(successes, total)
-        independent_groups = len({
-            e["independence_group"] for e in outcome_bearing if e.get("independence_group")
-        })
-        band = band_for_p(p_lower) if (total > 0 and successes > 0) else 0
-        result = {
-            "p_estimate": p_lower, "p_lower": p_lower, "p_upper": p_upper,
-            "evidence_count": total, "success_count": successes,
-            "independent_groups": independent_groups, "band": band,
-            "routing": route_for_p(p_lower).value, "level_gated": None,
-            "provisional": True,
-        }
-        return json.dumps(result, default=str)
-
-    # The sibling module's own signature takes no `scope` -- it reads
-    # evidence unfiltered by visibility (its own design choice, not
-    # altered here). We've already confirmed the parent row itself is
-    # visible above.
-    result = await _sibling_get_capability(pool, implementation_id)
-    return json.dumps(result, default=str)
-
-
 # ---------------------------------------------------------------------------
 # Product-model tools (directive §37) -- Problem / Benchmark / Solution /
 # Evaluation. Every one is a thin read wrapper over
@@ -4375,7 +3884,7 @@ async def compare_solutions(problem_id: str, solution_ids_json: str, ctx: Contex
 @server.tool()
 async def inspect_evaluation(evaluation_id: str, ctx: Context) -> str:
     """
-    One Evaluation: its version-pinned procedure/implementation, recomputed
+    One Evaluation: its version-pinned procedure, recomputed
     metrics, verification summary, status, and the linked execution ids
     (the lineage a completed result must have). JSON: the evaluation row +
     {executions:[...]}.
@@ -4425,19 +3934,15 @@ async def continue_run(procedure_run_id: str, ctx: Context, repo_path: Optional[
     re-searching. Loads the EXACT pinned Procedure version this run was
     created against, the current node/run state, each precondition's
     live TRUE/FALSE/UNKNOWN status (never collapsed -- B27), and
-    (bounded, current-node-only) recommended Implementations, then
+    (bounded, current-node-only) step binding, then
     returns the smallest useful next-action packet: current_phase_or_node,
     objective, required_preconditions, relevant_claim_refs,
-    recommended_implementations, required_checks, allowed_branches,
+    recommended_bindings, required_checks, allowed_branches,
     blocking_unknowns, next_when_satisfied.
 
-    `implementation_resolution_state`: B38's literal typed vocabulary --
-    "MISSING_IMPLEMENTATION" (no candidate Implementation names this
-    role/step at all) or "IMPLEMENTATION_UNAVAILABLE" (candidates exist
-    but are all disabled/quarantined/deprecated, or fail a real
-    requirement) -- set ONLY when `recommended_implementations` came
-    back empty; `null` whenever a real recommendation was found (or
-    there is no current node to resolve one for at all).
+    `binding_resolution_state`: "UNBOUND" when the current node's step carries no `binding` (it runs on the
+    frontier default -- informational, never an invented binding); `null` when a binding was found (or there is
+    no current node).
 
     Read-only -- this tool does not advance the run. Report real progress
     via `report_execution`; retry a specific failed/blocked node via
@@ -4705,7 +4210,7 @@ async def declare_file_intent(
 async def inspect_run(run_id: str, ctx: Context) -> str:
     """
     Inspect a durable execution run: overall status, per-node status /
-    attempt_count / max_attempts / error_class, the pinned implementation
+    attempt_count / max_attempts / error_class, the step
     binding, worker/lease, first-pass vs final, the full per-node attempt
     history, the run's position in the B4 Stealth Execution Contract
     (RUN_CREATED -> ... -> FINALIZED, derived from real transactionally-
@@ -4713,7 +4218,7 @@ async def inspect_run(run_id: str, ctx: Context) -> str:
     execution_run_events/verification_results/evidence -- see
     app/execution/stealth_execution_contract.py), and the B17/B33
     planned-vs-actual deviation report (per-node: did it fail, get
-    blocked, need a retry, or run under a DIFFERENT implementation than
+    blocked, need a retry, or run under a DIFFERENT step binding than
     the compiled plan named -- see app/execution/plan_deviation.py).
     Read-only. JSON: {status, nodes:[...], history:[...],
     execution_contract:{reached, current_state, skipped_optional},
@@ -4874,7 +4379,7 @@ async def project_knowledge(
       (run `find_best_way(mode='plan_only', repo_path=...)` or
       `continue_run(repo_path=...)` first).
     `object_ids_json`: JSON array of
-      `{"kind": "claim"|"procedure"|"implementation", "id": "<uuid>"}`.
+      `{"kind": "claim"|"procedure", "id": "<uuid>"}`.
     `query`: free text -> relevant global claims via `get_relevant_claims`.
 
     Resolves from global Postgres ONLY (an id that resolves to nothing is
@@ -5252,7 +4757,7 @@ async def record_stealth_edit(
     are stored here -- this is a log, not source control.
 
     `file_path` must be one of the real known `.stealth/*.md` content
-    pages (`claims.md`, `procedures.md`, `implementations.md`, `goals.md`,
+    pages (`claims.md`, `procedures.md`, `goals.md`,
     `run.md`, `exploration.md`) -- REFUSED for anything else, including
     `ledger.md` itself (that file is generated FROM this ledger, not a
     page a caller edits). `actor`: who made the edit (a human user name/id
@@ -5399,7 +4904,7 @@ async def run_semantic_extraction(episode_id: str, ctx: Context, force_strong_mo
     """
     One structured LLM semantic-extraction pass over one episode
     (app.services.trajectory_semantics) -- produces Goals, candidate
-    Procedures, Implementations, and Claims, each citing its exact source
+    Procedures, and Claims, each citing its exact source
     events, tagged OBSERVED/INFERRED/GENERALIZED. Model tier is chosen by
     `app.services.extraction_routing` unless `force_strong_model=True`.
     Runs regardless of the trajectory's outcome -- a failed run still
@@ -5459,7 +4964,7 @@ async def inspect_extraction(extraction_id: str, ctx: Context) -> str:
 
 @server.tool()
 async def list_extraction_objects(extraction_id: str, ctx: Context, object_type: Optional[str] = None) -> str:
-    """Every Goal/Claim/Procedure/Implementation one extraction run
+    """Every Goal/Claim/Procedure one extraction run
     produced, each with its `event_refs` -- the citation proof that
     nothing here was fabricated."""
     pool = ctx.request_context.lifespan_context["pool"]
@@ -5481,10 +4986,10 @@ async def list_extraction_objects(extraction_id: str, ctx: Context, object_type:
 @server.tool()
 async def inspect_trajectory_provenance(object_type: str, object_id: str, ctx: Context) -> str:
     """Walks trajectory_extraction_objects -> trajectory_extractions ->
-    ingestion_contexts -> trace_events for one Goal/Claim/Procedure/
-    Implementation -- "where did this come from, under what scope, from
+    ingestion_contexts -> trace_events for one Goal/Claim/Procedure --
+    "where did this come from, under what scope, from
     which exact events" in one call."""
-    if object_type not in ("goal", "claim", "procedure", "implementation"):
+    if object_type not in ("goal", "claim", "procedure"):
         return f"REFUSED: unknown object_type {object_type!r}"
     pool = ctx.request_context.lifespan_context["pool"]
     link_rows = await pool.fetch(

@@ -50,7 +50,7 @@ Canonical rows really live in the shard databases. The control database used to 
 `procedures`/`goals`/`knowledge_nodes`; migration 96 **replaced** those FKs (it did not just drop them):
 
 * `sl_check_ref` triggers: a reference (`procedures.achieves_goal_id`, `execution_plans.procedure_row_id`,
-  `goal_relations.*`, `implementations.goal_id`, `claim_sources.claim_id`, `goals.merged_into_id`, ...) is valid iff
+  `goal_relations.*`, `claim_sources.claim_id`, `goals.merged_into_id`, ...) is valid iff
   the object exists in this database **or** the global routing table homes it on another shard
   (`object_routes`, and `procedure_row_routes` for versioned procedure rows). Same-shard integrity is kept.
 * `goal_names` is the **global unique index for exact goal identity** (a per-database unique index cannot see other shards).
@@ -69,9 +69,22 @@ Provisioning a shard: `python scripts/migrate.py --dsn <shard dsn>` (same migrat
 `python -m app.ingestion.admin register-shard K001 --dsn-env K001_DATABASE_URL` (checks the schema first).
 Operators can stop remote placement instantly with `STEALTH_REMOTE_SHARD_WRITES=0`.
 
-**Rules:** private/org rows always stay on K000. Reading a procedure/goal by id from code that still queries the
-control-database table directly (`admin`, `data_rights`, `hierarchy`, `publication_deps`, ... ~35 modules) only sees
-K000; the converted paths are `get/supersede/record_execution_outcome/approve/reject/...` in `services/procedures.py`,
-goal identity/search, retrieval, claims, execution plans (via route validation), MCP/REST search. Until those readers are
-converted, keep the shard weights such that new public knowledge lands on shards only when you are ready for that
-(default deployment = single shard K000, nothing changes).
+**Rules:** private/org rows always stay on K000 (so `data_rights`, personal sync and other private-only paths are complete on
+the control database). Everything else that touches `procedures`/evidence/claims uses one of two mechanisms
+(`services/shards.py`):
+
+* **by id -> `home_pool(pool, "procedure", id[, by_row_id=True])`**: the row's home shard (one extra indexed lookup only when a
+  remote shard is registered). Used by `get/supersede/record_execution_outcome/approve/reject`, `procedure_graph_api`
+  (detail/versions/evidence), `fetch_procedure_version`, MCP `_resolve_live_procedure`, `local_sync`, admin reextract, publication
+  withdraw/dependency targets, failure handlers, synthesis/extraction follow-up UPDATEs, `index_freshness.mark_procedure_indexed`.
+* **scans -> `fanout_fetch / fanout_fetchrow / fanout_fetchval_sum / fanout_sum_row / fanout_best_row / all_pools`**: the same SQL on
+  the control DB and every readable shard, then merged in Python. Lenient by default (an unreachable shard is skipped and logged);
+  `strict=True` for writers and verifiers (`admin verify-dedup`, claim-ref backfill, episode idempotency) so a shard outage is never
+  read as "nothing there". Used by goal resolution, `list_goal_procedures`, `get_goal`, `applicability` (legacy candidate legs, claim
+  and evidence reads), `contributors`, `index_freshness`, extraction registry, replay, task/repository/product views, stealth
+  projection, `claim_impact`, `procedure_claim_refs`.
+
+Known approximations (documented, not silent): the legacy `applicability` ranker's id-only lexical/embedding legs are concatenated
+per shard (each leg keeps its own order; cost/similarity legs that return the sort key are merged exactly). The canonical retrieval
+path does not use them - it works from the global projections. Sharding is proven by `tests/test_sharded_readers_e2e.py` and
+`tests/test_sharded_writes_e2e.py` against a second real PostgreSQL database.

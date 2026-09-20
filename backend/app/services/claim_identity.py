@@ -196,6 +196,11 @@ async def ingest_claim(
             if not cid:
                 raise ValueError("capture_claim declined the write (no anchor)")
             cid = str(cid)
+            if decision == "judge_unavailable":
+                # remember which claim this outage created, so `reconcile_claims` can judge it once the judge is back
+                await pool.execute(
+                    "UPDATE identity_decisions SET detail = COALESCE(detail, '{}'::jsonb) || $2::jsonb "
+                    "WHERE object_type = 'claim' AND idempotency_key = $1", idem, {"created_claim_id": cid})
             if claim_home != HOME_SHARD:
                 await record_route(pool, "claim", cid, claim_home)
             # Project NOW, inside the identity lock (local AND remote): the next worker resolving a paraphrase
@@ -216,3 +221,121 @@ async def ingest_claim(
                     log.warning("claim relation candidate not stored", exc_info=True)
             return {"action": "created", "claim_id": cid, "decision": decision, "home_shard_id": claim_home,
                     "related": [{"claim_id": o, "relation": r, "confidence": c} for o, r, c in related]}
+
+
+# ------------------------------------------------------------------ reconciliation of outage-created claims
+async def _all_pools(pool) -> list:
+    from app.services.shards import all_pools
+    return [p for _, p in await all_pools(pool)]
+
+
+async def reconcile_claims(
+    pool: asyncpg.Pool, *, embedder: Any = None, judge: Optional[SemanticJudge] = None, batch: int = 100,
+) -> dict[str, Any]:
+    """Second identity pass for claims that were created while the judge was unavailable
+    (`identity_decisions.decision = 'judge_unavailable'`, which only private claims can produce).
+
+    Each such claim is judged against the candidates ingestion would have used (same scope, same visibility class, same
+    owner -- a private claim is never compared with a public one):
+
+      same (>= CLAIM_SAME_MIN_CONFIDENCE)  the OLDER claim survives and gains the newer one's provenance; the newer claim is
+                                           retired (t_invalid, `merged_into`) only if nothing depends on it, otherwise both
+                                           stay and a pending `equivalent` review candidate is recorded
+      contradicts                          both kept; pending `contradicts` candidate
+      specializes / generalizes / related  both kept; pending `related` candidate
+      distinct                             nothing to do
+
+    A judge outage again leaves the claim for the next sweep; nothing is guessed. Each handled decision is stamped
+    (`detail.reconciled`) so a claim is judged once. A wrong merge changes what is believed, so a low-confidence 'same'
+    is never a merge and disagreement is never merged."""
+    from app.services.claim_equivalence import record_claim_relation_candidate
+    from app.services.search_projection import enqueue
+
+    judge = judge if judge is not None else default_judge()
+    out = {"checked": 0, "merged": 0, "flagged": 0, "distinct": 0, "deferred": 0, "gone": 0}
+    rows = await pool.fetch(
+        "SELECT id::text AS id, detail->>'created_claim_id' AS claim_id FROM identity_decisions "
+        "WHERE object_type = 'claim' AND decision = 'judge_unavailable' AND resolved_id IS NULL "
+        "AND detail ? 'created_claim_id' AND NOT (detail ? 'reconciled') ORDER BY id LIMIT $1", batch)
+
+    async def stamp(decision_id: str, outcome: str, resolved: Optional[str] = None) -> None:
+        await pool.execute(
+            "UPDATE identity_decisions SET detail = detail || $2::jsonb, resolved_id = COALESCE($3::uuid, resolved_id) "
+            "WHERE id = $1::uuid", decision_id, {"reconciled": outcome}, resolved)
+
+    for d in rows:
+        out["checked"] += 1
+        my_id = d["claim_id"]
+        owner = await home_pool(pool, "claim", my_id)
+        c = await owner.fetchrow(
+            "SELECT id, name, scope_type, scope_entity_id, visibility::text AS visibility, owner_id, properties "
+            "FROM knowledge_nodes WHERE id = $1::uuid AND node_type = 'claim' AND t_invalid IS NULL", my_id)
+        if c is None:
+            await stamp(d["id"], "gone")
+            out["gone"] += 1
+            continue
+        emb, model = None, None
+        if embedder is not None:
+            try:
+                emb = await embedder.embed_one(c["name"], input_type="document")
+                model = embedder.embedding_model_id()
+            except Exception:  # noqa: BLE001 -- lexical candidates only
+                pass
+        cands, _, _ = await _candidates(pool, c["name"], scope_type=c["scope_type"], scope_entity_id=c["scope_entity_id"],
+                                        visibility=c["visibility"], owner_id=c["owner_id"], embedding=emb, embedding_model=model)
+        unavailable, same_id, related = False, None, []
+        for cand in (x for x in cands if x.id != my_id):
+            res = await judge.judge_identity("claim", c["name"], cand.text)
+            if not res.ok:
+                unavailable = True
+                break
+            rel, conf = res.value["relation"], res.value["confidence"]
+            if rel == "same" and conf >= CLAIM_SAME_MIN_CONFIDENCE:
+                same_id = cand.id
+                break
+            if rel == "contradicts":
+                related.append((cand.id, "contradicts", conf))
+            elif rel in ("specializes", "generalizes", "related", "same"):      # a low-confidence 'same' is only 'related'
+                related.append((cand.id, "related", conf))
+        if unavailable:
+            out["deferred"] += 1
+            continue
+        for other, rel, conf in related:
+            try:
+                await record_claim_relation_candidate(pool, claim_a_id=my_id, claim_b_id=other, relation=rel,
+                                                      confidence=conf, created_by="claim_reconciler")
+            except Exception:  # noqa: BLE001 -- review candidates never block the sweep
+                log.warning("claim relation candidate not stored", exc_info=True)
+        if same_id is None:
+            if related:
+                out["flagged"] += 1
+                await stamp(d["id"], "flagged_related")
+            else:
+                out["distinct"] += 1
+                await stamp(d["id"], "distinct")
+            continue
+        # deterministic survivor: the older claim (smaller uuid7) -- both directions of a race converge
+        survivor, loser = (my_id, same_id) if my_id < same_id else (same_id, my_id)
+        dependents = int(await pool.fetchval(
+            "SELECT count(*) FROM procedure_claim_refs WHERE claim_id = $1::uuid AND t_invalid IS NULL", loser) or 0)
+        for pp in await _all_pools(pool):
+            dependents += int(await pp.fetchval(
+                "SELECT count(*) FROM evidence WHERE target_type = 'claim' AND target_id = $1::uuid AND t_invalid IS NULL", loser) or 0)
+        loser_pool = await home_pool(pool, "claim", loser)
+        loser_row = c if loser == my_id else await loser_pool.fetchrow(
+            "SELECT properties FROM knowledge_nodes WHERE id = $1::uuid", loser)
+        if dependents == 0 and loser_row is not None:
+            for src in ((loser_row["properties"] or {}).get("source_refs") or []):
+                await _attach_provenance(pool, survivor, src.get("source_key", ""), src.get("source_ref"), src.get("ingestion_context_id"))
+            await loser_pool.execute(
+                "UPDATE knowledge_nodes SET t_invalid = now(), properties = properties || $2::jsonb WHERE id = $1::uuid",
+                loser, {"merged_into": survivor, "merged_by": "claim_reconciler"})
+            await enqueue(pool, "claim", loser)
+            out["merged"] += 1
+            await stamp(d["id"], "merged", survivor)
+        else:
+            await record_claim_relation_candidate(pool, claim_a_id=my_id, claim_b_id=same_id, relation="equivalent",
+                                                  confidence=None, created_by="claim_reconciler")
+            out["flagged"] += 1
+            await stamp(d["id"], "flagged_equivalent", same_id)
+    return out

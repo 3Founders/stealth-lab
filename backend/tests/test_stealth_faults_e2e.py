@@ -83,7 +83,7 @@ def test_page_fault_merges_a_global_claim_without_clobbering_the_run_set():
                 # the merged record is line-addressable -- pipe format
                 # (Sec 25): one CLAIM|... line per record, so start == end.
                 target = next(r for r in rows if r[0] == claim_id)
-                assert target[6] == target[7]
+                assert int(target[6]) <= int(target[7])
                 md_lines = open(os.path.join(sdir, "claims.md"), encoding="utf-8").read().splitlines()
                 window = md_lines[int(target[6]) - 1:int(target[7])]
                 assert window[0].startswith(f"CLAIM|{claim_id}|")

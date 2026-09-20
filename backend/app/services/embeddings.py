@@ -32,6 +32,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Literal, Optional, Sequence
 
+from app import telemetry as _tel
 from app.config import settings
 
 log = logging.getLogger(__name__)
@@ -310,12 +311,15 @@ class Embedder:
         provider = self._configured_provider()
         await self._enforce_provider_policy(provider)
         try:
-            if provider == "gemini":
-                vectors = await self._embed_gemini(texts, input_type)
-            elif provider == "voyage":
-                vectors = await self._embed_voyage(texts, input_type)
-            else:
-                raise EmbeddingError(f"unknown embedding provider {provider!r}")
+            with _tel.span("embedding", kind="EMBEDDING", on_error=_tel.FailureCode.MODEL_ERROR,
+                           embedding_model=self.embedding_model_id(), provider=provider,
+                           input_count=len(texts)):
+                if provider == "gemini":
+                    vectors = await self._embed_gemini(texts, input_type)
+                elif provider == "voyage":
+                    vectors = await self._embed_voyage(texts, input_type)
+                else:
+                    raise EmbeddingError(f"unknown embedding provider {provider!r}")
         except EmbeddingError:
             # Do not fall through to a provider with another embedding
             # space. The caller records a retryable job failure instead.

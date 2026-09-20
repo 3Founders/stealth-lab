@@ -134,7 +134,9 @@ async def contribution_counts(
     }
 
     if subject is not None:
-        prow = await executor.fetchrow(
+        from app.services.shards import fanout_sum_row
+        prow = await fanout_sum_row(       # a contributor's public procedures may live on any shard
+            executor,
             """
             SELECT
               count(*)                                                 AS authored,
@@ -144,9 +146,8 @@ async def contribution_counts(
             """,
             subject,
         )
-        if prow is not None:
-            counts["procedures_authored"] = int(prow["authored"] or 0)
-            counts["verified_procedures"] = int(prow["verified"] or 0)
+        counts["procedures_authored"] = int(prow.get("authored") or 0)
+        counts["verified_procedures"] = int(prow.get("verified") or 0)
 
         crow = await executor.fetchrow(
             """

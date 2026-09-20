@@ -23,9 +23,9 @@ already tested elsewhere -- this module invents no new storage shape:
     cycle-safe, depth-capped composition walk. Reused verbatim for
     `get_procedure_graph`; this module does not reimplement graph
     traversal.
-  - `app.execution.implementations.resolve_implementation` -- the real
+  - `app.execution.executor_kinds.resolve_executor` -- the real
     (kind -> executor) registry. Reused verbatim for the Solution view's
-    `implementation` field; never a second guess at what's executable.
+    `executors` field; never a second guess at what's executable.
   - `app.services.procedure_extraction.capability.wilson_interval` /
     `band_for_p` / `route_for_p` -- the real, pure P-estimation math.
     Reused for the Solution view's capability estimate WITHOUT routing
@@ -53,11 +53,8 @@ from uuid import UUID
 
 import asyncpg
 
-from app.execution.implementations import (
-    ImplementationResolution,
-    resolve_implementation,
-    validate_implementation_hint,
-)
+from app.execution.executor_kinds import ExecutorResolution, resolve_executor
+from app.execution.step_binding import executor_kind
 from app.execution.procedure_graph import (
     ProcedureCompositionError,
     expand_procedure_steps,
@@ -101,7 +98,8 @@ async def _fetch_visible_procedure(
     # Explicit projection, not SELECT * -- the ~15 KB/row `embedding` vector
     # and multi-KB `retrieval_document` are never read on any detail path and
     # were the bulk of this endpoint's network egress.
-    row = await pool.fetchrow(
+    from app.services.shards import home_pool
+    row = await (await home_pool(pool, "procedure", procedure_row_id, by_row_id=True)).fetchrow(
         f"SELECT {PROCEDURE_COLS_NO_HEAVY} FROM procedures "
         f"WHERE id = $1::uuid AND {vis_sql}",
         procedure_row_id, *vis_params,
@@ -151,7 +149,9 @@ async def get_procedure_claims(
     scope_sql, scope_params, _ = scope_predicates(
         scope, TenantScope.unrestricted(), param_index=2,
     )
-    rows = await pool.fetch(
+    from app.services.shards import fanout_fetch
+    rows = await fanout_fetch(      # a claim may live on any shard
+        pool,
         f"""
         SELECT * FROM knowledge_nodes
         WHERE id = ANY($1::uuid[]) AND node_type = 'claim'
@@ -184,7 +184,8 @@ async def get_procedure_evidence(
     scope_sql, scope_params, _ = scope_predicates(
         scope, TenantScope.unrestricted(), param_index=2,
     )
-    rows = await pool.fetch(
+    from app.services.shards import home_pool
+    rows = await (await home_pool(pool, "procedure", procedure_row_id, by_row_id=True)).fetch(   # evidence lives with its procedure
         f"""
         SELECT * FROM evidence
         WHERE target_type = 'procedure' AND target_id = $1::uuid
@@ -216,7 +217,8 @@ async def get_procedure_versions(
     silently hid history would defeat the point of asking for it; each
     row's own `t_valid`/`t_invalid` says whether it is the live head."""
     vis_sql, vis_params = visibility_predicate(scope, param_index=2)
-    rows = await pool.fetch(
+    from app.services.shards import home_pool
+    rows = await (await home_pool(pool, "procedure", str(procedure_id))).fetch(
         f"""
         SELECT {PROCEDURE_COLS_NO_HEAVY} FROM procedures
         WHERE procedure_id = $1::uuid AND {vis_sql}
@@ -274,7 +276,7 @@ async def get_procedure_detail(
 ) -> Optional[dict]:
     """Composed procedure detail: the procedure row itself + its
     precondition-referenced claims + an evidence summary + the
-    implementation kind(s) its steps advertise. Honest `None` for a
+    executor kind(s) its step bindings name. Honest `None` for a
     missing or invisible row -- never a placeholder object."""
     procedure = await _fetch_visible_procedure(pool, procedure_row_id, scope=scope)
     if procedure is None:
@@ -286,7 +288,7 @@ async def get_procedure_detail(
     success_count = sum(1 for e in evidence if e.get("outcome_status") == "success")
     failure_count = sum(1 for e in evidence if e.get("outcome_status") == "failure")
 
-    implementation_kinds = _advertised_implementation_kinds(procedure)
+    executor_kinds = _advertised_executor_kinds(procedure)
 
     return {
         "id": str(procedure["id"]),
@@ -324,25 +326,21 @@ async def get_procedure_detail(
             "success_count": success_count,
             "failure_count": failure_count,
         },
-        "implementation_kinds": implementation_kinds,
+        "executor_kinds": executor_kinds,
     }
 
 
-def _advertised_implementation_kinds(procedure: dict) -> list[str]:
-    """Distinct implementation kinds this procedure's own steps advertise
-    via `implementation_hint`, in first-seen order. A procedure with no
-    hinted steps returns `[]` -- honest, not defaulted to `["frontier"]`;
-    `resolve_implementation(None)`'s own DEFAULT_KIND fallback is a
-    per-node runtime behavior, not a fact about what this procedure
-    itself declared."""
+def _advertised_executor_kinds(procedure: dict) -> list[str]:
+    """Distinct executor kinds this procedure's own step BINDINGS name, in first-seen order. A procedure with no
+    bound steps returns `[]` -- honest, not defaulted to `["frontier"]`; the frontier default is a per-node runtime
+    behavior, not a fact about what this procedure itself declared."""
     seen: list[str] = []
     for step in (procedure.get("steps") or []):
-        hint = validate_implementation_hint(step.get("implementation_hint"))
-        if hint is None:
+        if not isinstance(step, dict) or not step.get("binding"):
             continue
-        for kind in hint:
-            if kind not in seen:
-                seen.append(kind)
+        kind = executor_kind(step["binding"])
+        if kind not in seen:
+            seen.append(kind)
     return seen
 
 
@@ -454,28 +452,19 @@ async def get_solution_view(
     pool: asyncpg.Pool,
     procedure_row_id: str,
     *,
-    implementation_id: Optional[str] = None,
     scope: AccessScope,
 ) -> Optional[dict]:
     """Directive §32.5: a "Solution" is modeled as a read composition over
-    existing `procedures` + `execution/implementations.py` + `evidence`
+    existing `procedures` + `execution/executor_kinds.py` + `evidence`
     rows -- there is no `solutions` table, and this function creates none.
-    In this v1, one Solution == one procedure+implementation pairing,
+    In this v1, one Solution == one procedure (its steps carry their own bindings),
     ADDRESSED BY THE PROCEDURE'S OWN ROW ID (`procedure_row_id`) -- there
     being no independent Solution identity to address it by. Honest
     `None` for a missing/invisible procedure.
 
-    `implementation_id` names a specific `executions.implementation_id`
-    to look up runtime/provider detail for. That column is real
-    (`db/23_plan_persistence.sql`) but is a "forward-compatible handle"
-    with NO real writer anywhere in this codebase today (confirmed by
-    grep) -- so a lookup against it honestly returns no rows right now;
-    the field stays in the response, `None`, rather than silently
-    omitted, so a future writer's data appears here with no API change.
-
     Every field below traces to a real column or a real, already-tested
     computation (see `_capability_estimate`/`_cost_estimate`/
-    `_advertised_implementation_kinds` for exactly which). Fields the
+    `_advertised_executor_kinds` for exactly which). Fields the
     directive's own prose mentions that have NO real source anywhere in
     this schema (e.g. "license") are omitted from the payload entirely --
     commented here, not silently absent: **no `license` field exists
@@ -488,38 +477,14 @@ async def get_solution_view(
     claims = await get_procedure_claims(pool, procedure_row_id, scope=scope)
     evidence = await get_procedure_evidence(pool, procedure_row_id, scope=scope)
 
-    implementation_kinds = _advertised_implementation_kinds(procedure)
-    implementation_resolutions: dict[str, dict] = {}
-    for kind in implementation_kinds:
-        resolution: ImplementationResolution = resolve_implementation((kind,))
-        implementation_resolutions[kind] = {
-            "kind": resolution.kind,
-            "supported": resolution.supported,
-            "strategy": resolution.strategy,
-            "reason": resolution.reason,
+    executor_kinds = _advertised_executor_kinds(procedure)
+    executor_resolutions: dict[str, dict] = {}
+    for kind in (executor_kinds or [None]):
+        resolution: ExecutorResolution = resolve_executor((kind,) if kind else None)
+        executor_resolutions[resolution.kind] = {
+            "kind": resolution.kind, "supported": resolution.supported,
+            "strategy": resolution.strategy, "reason": resolution.reason,
         }
-    if not implementation_kinds:
-        # No step advertised a preference -- resolve_implementation(None)'s
-        # own real DEFAULT_KIND fallback ("frontier"), reported honestly as
-        # what WOULD run today, not asserted as something the procedure
-        # itself declared (see _advertised_implementation_kinds docstring).
-        default_resolution = resolve_implementation(None)
-        implementation_resolutions[default_resolution.kind] = {
-            "kind": default_resolution.kind,
-            "supported": default_resolution.supported,
-            "strategy": default_resolution.strategy,
-            "reason": default_resolution.reason,
-        }
-
-    runtime_execution = None
-    if implementation_id:
-        row = await pool.fetchrow(
-            "SELECT * FROM executions WHERE implementation_id = $1::uuid "
-            "AND procedure_id = $2::uuid AND procedure_version = $3 "
-            "ORDER BY started_at DESC LIMIT 1",
-            implementation_id, procedure["procedure_id"], procedure["version"],
-        )
-        runtime_execution = dict(row) if row else None
 
     return {
         "procedure_row_id": str(procedure["id"]),
@@ -533,9 +498,7 @@ async def get_solution_view(
         "display_description": procedure.get("display_description") or procedure["goal"],
         "applicability_summary": build_applicability_summary(dict(procedure)),
         "failure_modes": build_failure_modes(dict(procedure)),
-        "implementation_id": implementation_id,
-        "implementations": implementation_resolutions,
-        "runtime_execution": runtime_execution,
+        "executors": executor_resolutions,
         "verification_state": procedure["verification_state"],
         "staleness": procedure["staleness"],
         "availability": procedure["availability"],

@@ -295,7 +295,9 @@ async def replay_session(
         from app.services.procedure_extraction.evidence import AgentRunEvidenceSource
         from app.services.procedure_extraction.strategies import DeterministicExtractor
 
-        proc_rows = await pool.fetch(
+        from app.services.shards import fanout_fetch
+        proc_rows = await fanout_fetch(
+            pool,
             "SELECT id, name, goal, capability_statement, steps, parameter_schema, "
             "preconditions, scope, failure_conditions, extracted_by "
             "FROM procedures WHERE source_episode_ids && $1::uuid[] "

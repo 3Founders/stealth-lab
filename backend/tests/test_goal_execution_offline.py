@@ -1,11 +1,8 @@
 """
 DB-free coverage for app.execution.goal_execution -- the real
 fallback-on-failure Goal-DAG executor (Prompt 2 Sec 7/9/10).
-`execute_implementation` (implementation_executor.py's own real,
-already-tested chokepoint) is monkeypatched per test so these tests
-prove goal_execution's own fallback/walk logic in isolation, not
-execute_implementation's own dispatch (covered by
-test_implementation_executor_offline.py).
+`execute_node` (step_binding.py's chokepoint) is monkeypatched per test so these tests
+prove goal_execution's own walk/fallback logic in isolation.
 """
 from __future__ import annotations
 
@@ -23,14 +20,11 @@ def _run(coro):
     return asyncio.run(coro)
 
 
-def _impl(id_, name="impl", kind="deterministic"):
-    return {"id": id_, "name": name, "kind": kind}
-
-
 def _impl_node(goal_id, name, impl_id, alternates=None, verification_requirement=None):
+    """A bound step leaf; `impl_id` becomes the command so fakes can tell steps apart."""
     return ResolvedGoalNode(
-        goal_id=goal_id, goal_name=name, depth=0, chosen="implementation",
-        implementation=_impl(impl_id), implementation_alternates=alternates or [],
+        goal_id=goal_id, goal_name=name, depth=0, chosen="step",
+        step={"order": 0, "procedure_id": "P-x", "binding": {"kind": "command", "command": impl_id}},
         verification_requirement=verification_requirement or {},
     )
 
@@ -52,50 +46,39 @@ def _procedure_node(goal_id, name, children, procedure_alternates=None, procedur
 # ---------------------------------------------------------------------
 
 
-def test_first_implementation_succeeds_no_fallback_needed(monkeypatch):
+def test_bound_step_success_is_a_single_attempt(monkeypatch):
     calls = []
 
     async def fake_execute(pool, plan_node, context, *, scope):
-        calls.append(plan_node.implementation_id)
+        calls.append(plan_node.binding["command"])
         return NodeResult(status="success", notes="ok")
 
-    monkeypatch.setattr(ge, "execute_implementation", fake_execute)
-    node = _impl_node("G-1", "do it", "I-1", alternates=[_impl("I-2")])
-    result = _run(ge.execute_goal_node(None, node, {}, scope=SCOPE))
-    assert result.status == "success"
-    assert result.used_implementation_id == "I-1"
-    assert len(result.attempts) == 1
-    assert calls == ["I-1"]
+    monkeypatch.setattr(ge, "execute_node", fake_execute)
+    result = _run(ge.execute_goal_node(None, _impl_node("G-1", "do it", "I-1"), {}, scope=SCOPE))
+    assert result.status == "success" and result.used_binding_kind == "command"
+    assert len(result.attempts) == 1 and calls == ["I-1"]
 
 
-def test_first_implementation_fails_falls_back_to_real_alternate(monkeypatch):
+def test_bound_step_failure_is_an_honest_failure_fallback_is_at_procedure_level(monkeypatch):
     async def fake_execute(pool, plan_node, context, *, scope):
-        if plan_node.implementation_id == "I-1":
-            return NodeResult(status="failure", notes="broke")
-        return NodeResult(status="success", notes="ok")
+        return NodeResult(status="failure", notes="broke")
 
-    monkeypatch.setattr(ge, "execute_implementation", fake_execute)
-    node = _impl_node("G-1", "do it", "I-1", alternates=[_impl("I-2"), _impl("I-3")])
-    result = _run(ge.execute_goal_node(None, node, {}, scope=SCOPE))
-    assert result.status == "success"
-    assert result.used_implementation_id == "I-2"
-    assert [a.implementation_id for a in result.attempts] == ["I-1", "I-2"]
-    assert result.attempts[0].status == "failure"
-    assert result.attempts[1].status == "success"
+    monkeypatch.setattr(ge, "execute_node", fake_execute)
+    result = _run(ge.execute_goal_node(None, _impl_node("G-1", "do it", "I-1"), {}, scope=SCOPE))
+    assert result.status == "failure" and result.used_binding_kind is None
+    assert len(result.attempts) == 1 and result.goal_id == "G-1"
 
 
-def test_all_candidates_fail_is_an_honest_failure_never_a_different_goal(monkeypatch):
+def test_the_procedure_id_is_passed_to_execution_for_telemetry(monkeypatch):
+    seen = {}
+
     async def fake_execute(pool, plan_node, context, *, scope):
-        return NodeResult(status="failure", notes=f"{plan_node.implementation_id} broke")
+        seen.update(context)
+        return NodeResult(status="success")
 
-    monkeypatch.setattr(ge, "execute_implementation", fake_execute)
-    node = _impl_node("G-1", "do it", "I-1", alternates=[_impl("I-2")])
-    result = _run(ge.execute_goal_node(None, node, {}, scope=SCOPE))
-    assert result.status == "failure"
-    assert result.used_implementation_id is None
-    assert [a.implementation_id for a in result.attempts] == ["I-1", "I-2"]
-    # every attempt targeted THIS SAME goal's own candidates -- never substituted
-    assert result.goal_id == "G-1"
+    monkeypatch.setattr(ge, "execute_node", fake_execute)
+    _run(ge.execute_goal_node(None, _impl_node("G-1", "do it", "I-1"), {"goal_id": "G-1"}, scope=SCOPE))
+    assert seen["procedure_id"] == "P-x" and seen["goal_id"] == "G-1"
 
 
 # ---------------------------------------------------------------------
@@ -107,33 +90,21 @@ def test_no_verification_contract_leaves_a_successful_execution_as_success(monke
     async def fake_execute(pool, plan_node, context, *, scope):
         return NodeResult(status="success")
 
-    monkeypatch.setattr(ge, "execute_implementation", fake_execute)
+    monkeypatch.setattr(ge, "execute_node", fake_execute)
     node = _impl_node("G-1", "do it", "I-1")
     result = _run(ge.execute_goal_node(None, node, {}, scope=SCOPE))
     assert result.status == "success"
     assert result.attempts[0].verification_state == "unverified"
 
 
-def test_failed_verification_on_first_choice_triggers_real_fallback(monkeypatch):
-    # Verification is a property of the GOAL (same contract applies to
-    # every candidate); what varies per attempt is the REAL execution
-    # result each implementation produces, which the verifier inspects.
+def test_failed_verification_turns_a_reported_success_into_a_failure(monkeypatch):
     async def fake_execute(pool, plan_node, context, *, scope):
-        data = {"output_files": {"out.txt": b"x"}} if plan_node.implementation_id == "I-2" else {"output_files": {}}
-        return NodeResult(status="success", data=data)
+        return NodeResult(status="success", data={"output_files": {}})
 
-    monkeypatch.setattr(ge, "execute_implementation", fake_execute)
-    node = ResolvedGoalNode(
-        goal_id="G-1", goal_name="do it", depth=0, chosen="implementation",
-        implementation=_impl("I-1"), implementation_alternates=[_impl("I-2")],
-        verification_requirement={"method": "artifact_inspection", "expected_files": ["out.txt"]},
-    )
+    monkeypatch.setattr(ge, "execute_node", fake_execute)
+    node = _impl_node("G-1", "do it", "I-1", verification_requirement={"method": "artifact_inspection", "expected_files": ["out.txt"]})
     result = _run(ge.execute_goal_node(None, node, {}, scope=SCOPE))
-    assert result.status == "success"
-    assert result.used_implementation_id == "I-2"
-    assert result.attempts[0].status == "failure"
-    assert result.attempts[0].verification_state == "failed_verification"
-    assert result.attempts[1].verification_state == "checked"
+    assert result.status == "failure" and result.attempts[0].verification_state == "failed_verification"
 
 
 def test_verification_never_runs_when_execution_itself_already_failed(monkeypatch):
@@ -146,7 +117,7 @@ def test_verification_never_runs_when_execution_itself_already_failed(monkeypatc
         calls.append(contract)
         raise AssertionError("verification must not run for a failed execution")
 
-    monkeypatch.setattr(ge, "execute_implementation", fake_execute)
+    monkeypatch.setattr(ge, "execute_node", fake_execute)
     monkeypatch.setattr(ge, "run_goal_verification", fake_verify)
     node = _impl_node("G-1", "do it", "I-1", verification_requirement={"method": "human_review"})
     result = _run(ge.execute_goal_node(None, node, {}, scope=SCOPE))
@@ -159,10 +130,10 @@ def test_no_alternates_means_a_single_real_attempt(monkeypatch):
     calls = []
 
     async def fake_execute(pool, plan_node, context, *, scope):
-        calls.append(plan_node.implementation_id)
+        calls.append(plan_node.binding["command"])
         return NodeResult(status="failure")
 
-    monkeypatch.setattr(ge, "execute_implementation", fake_execute)
+    monkeypatch.setattr(ge, "execute_node", fake_execute)
     node = _impl_node("G-1", "do it", "I-1")
     result = _run(ge.execute_goal_node(None, node, {}, scope=SCOPE))
     assert result.status == "failure"
@@ -178,7 +149,7 @@ def test_tree_of_all_successes_is_overall_success(monkeypatch):
     async def fake_execute(pool, plan_node, context, *, scope):
         return NodeResult(status="success")
 
-    monkeypatch.setattr(ge, "execute_implementation", fake_execute)
+    monkeypatch.setattr(ge, "execute_node", fake_execute)
     tree = _procedure_node("G-parent", "p", children=[
         _impl_node("G-1", "step one", "I-1"),
         _impl_node("G-2", "step two", "I-2"),
@@ -192,7 +163,7 @@ def test_unresolved_leaf_makes_overall_outcome_needs_input(monkeypatch):
     async def fake_execute(pool, plan_node, context, *, scope):
         return NodeResult(status="success")
 
-    monkeypatch.setattr(ge, "execute_implementation", fake_execute)
+    monkeypatch.setattr(ge, "execute_node", fake_execute)
     tree = _procedure_node("G-parent", "p", children=[
         _impl_node("G-1", "step one", "I-1"),
         _unresolved_node("G-2", "step two (no match)"),
@@ -207,9 +178,9 @@ def test_unresolved_leaf_makes_overall_outcome_needs_input(monkeypatch):
 
 def test_a_real_node_failure_after_exhausting_fallbacks_makes_overall_outcome_failure(monkeypatch):
     async def fake_execute(pool, plan_node, context, *, scope):
-        return NodeResult(status="failure" if plan_node.implementation_id == "I-2" else "success")
+        return NodeResult(status="failure" if plan_node.binding["command"] == "I-2" else "success")
 
-    monkeypatch.setattr(ge, "execute_implementation", fake_execute)
+    monkeypatch.setattr(ge, "execute_node", fake_execute)
     tree = _procedure_node("G-parent", "p", children=[
         _impl_node("G-1", "step one", "I-1"),
         _impl_node("G-2", "step two", "I-2"),
@@ -224,11 +195,11 @@ def test_bare_direct_implementation_root_executes_without_a_procedure(monkeypatc
     async def fake_execute(pool, plan_node, context, *, scope):
         return NodeResult(status="success")
 
-    monkeypatch.setattr(ge, "execute_implementation", fake_execute)
+    monkeypatch.setattr(ge, "execute_node", fake_execute)
     tree = _impl_node("G-1", "do it directly", "I-1")
     result = _run(ge.execute_goal_tree(None, tree, {}, scope=SCOPE))
     assert result.outcome == "success"
-    assert result.node_results["G-1"].used_implementation_id == "I-1"
+    assert result.node_results["G-1"].used_binding_kind == "command"
 
 
 # ---------------------------------------------------------------------
@@ -246,7 +217,7 @@ def test_first_procedure_succeeds_no_alternate_procedure_resolved(monkeypatch):
         calls.append(procedure["id"])
         raise AssertionError("must not resolve an alternate when the first procedure already succeeded")
 
-    monkeypatch.setattr(ge, "execute_implementation", fake_execute)
+    monkeypatch.setattr(ge, "execute_node", fake_execute)
     monkeypatch.setattr(ge, "resolve_goal_via_procedure", fake_resolve_via_procedure)
     tree = _procedure_node(
         "G-parent", "p", children=[_impl_node("G-1", "step one", "I-1")],
@@ -261,7 +232,7 @@ def test_first_procedure_succeeds_no_alternate_procedure_resolved(monkeypatch):
 
 def test_first_procedure_fails_falls_back_to_real_alternate_procedure(monkeypatch):
     async def fake_execute(pool, plan_node, context, *, scope):
-        return NodeResult(status="success" if plan_node.implementation_id == "I-2" else "failure")
+        return NodeResult(status="success" if plan_node.binding["command"] == "I-2" else "failure")
 
     async def fake_resolve_via_procedure(pool, goal_id, procedure, *, context, scope, depth):
         assert procedure["id"] == "P-2"
@@ -270,7 +241,7 @@ def test_first_procedure_fails_falls_back_to_real_alternate_procedure(monkeypatc
             procedure=procedure, children=[_impl_node("G-2", "alt step", "I-2")],
         )
 
-    monkeypatch.setattr(ge, "execute_implementation", fake_execute)
+    monkeypatch.setattr(ge, "execute_node", fake_execute)
     monkeypatch.setattr(ge, "resolve_goal_via_procedure", fake_resolve_via_procedure)
     tree = _procedure_node(
         "G-parent", "p", children=[_impl_node("G-1", "step one", "I-1")],
@@ -297,7 +268,7 @@ def test_every_procedure_failing_sets_human_intervention_needed(monkeypatch):
             procedure=procedure, children=[_impl_node("G-2", "alt step", "I-2")],
         )
 
-    monkeypatch.setattr(ge, "execute_implementation", fake_execute)
+    monkeypatch.setattr(ge, "execute_node", fake_execute)
     monkeypatch.setattr(ge, "resolve_goal_via_procedure", fake_resolve_via_procedure)
     tree = _procedure_node(
         "G-parent", "p", children=[_impl_node("G-1", "step one", "I-1")],
@@ -329,7 +300,7 @@ def test_unresolved_step_does_not_spend_a_procedure_fallback_attempt(monkeypatch
 
 def test_nested_procedure_child_also_gets_real_alternate_fallback(monkeypatch):
     async def fake_execute(pool, plan_node, context, *, scope):
-        return NodeResult(status="success" if plan_node.implementation_id == "I-2" else "failure")
+        return NodeResult(status="success" if plan_node.binding["command"] == "I-2" else "failure")
 
     async def fake_resolve_via_procedure(pool, goal_id, procedure, *, context, scope, depth):
         return ResolvedGoalNode(
@@ -337,7 +308,7 @@ def test_nested_procedure_child_also_gets_real_alternate_fallback(monkeypatch):
             procedure=procedure, children=[_impl_node("G-2", "alt step", "I-2")],
         )
 
-    monkeypatch.setattr(ge, "execute_implementation", fake_execute)
+    monkeypatch.setattr(ge, "execute_node", fake_execute)
     monkeypatch.setattr(ge, "resolve_goal_via_procedure", fake_resolve_via_procedure)
     inner = _procedure_node(
         "G-inner", "inner", children=[_impl_node("G-1", "step one", "I-1")],
@@ -359,7 +330,7 @@ def test_no_workspace_root_means_no_durability_and_no_execution_id(monkeypatch):
     async def fake_execute(pool, plan_node, context, *, scope):
         return NodeResult(status="success")
 
-    monkeypatch.setattr(ge, "execute_implementation", fake_execute)
+    monkeypatch.setattr(ge, "execute_node", fake_execute)
     result = _run(ge.execute_goal_tree(None, _impl_node("G-1", "do it", "I-1"), {}, scope=SCOPE))
     assert result.execution_id is None
 
@@ -368,7 +339,7 @@ def test_workspace_root_records_real_journal_events_and_returns_execution_id(mon
     async def fake_execute(pool, plan_node, context, *, scope):
         return NodeResult(status="success")
 
-    monkeypatch.setattr(ge, "execute_implementation", fake_execute)
+    monkeypatch.setattr(ge, "execute_node", fake_execute)
     ws = str(tmp_path)
     result = _run(ge.execute_goal_tree(None, _impl_node("G-1", "do it", "I-1"), {}, scope=SCOPE, workspace_root=ws))
     assert result.execution_id is not None
@@ -382,10 +353,10 @@ def test_a_prior_success_in_the_journal_is_reused_never_re_executed(monkeypatch,
     calls = []
 
     async def fake_execute(pool, plan_node, context, *, scope):
-        calls.append(plan_node.implementation_id)
+        calls.append(plan_node.binding["command"])
         return NodeResult(status="success")
 
-    monkeypatch.setattr(ge, "execute_implementation", fake_execute)
+    monkeypatch.setattr(ge, "execute_node", fake_execute)
     ws = str(tmp_path)
     tree = _impl_node("G-1", "do it", "I-1")
 
@@ -398,7 +369,7 @@ def test_a_prior_success_in_the_journal_is_reused_never_re_executed(monkeypatch,
     ))
     assert calls == ["I-1"]  # unchanged -- no second real call
     assert second.node_results["G-1"].resumed_from_journal is True
-    assert second.node_results["G-1"].used_implementation_id == "I-1"
+    assert second.node_results["G-1"].used_binding_kind == "command"
     assert second.outcome == "success"
 
 
@@ -406,10 +377,10 @@ def test_a_prior_failure_in_the_journal_is_retried_not_silently_resumed(monkeypa
     calls = []
 
     async def fake_execute(pool, plan_node, context, *, scope):
-        calls.append(plan_node.implementation_id)
+        calls.append(plan_node.binding["command"])
         return NodeResult(status="failure")
 
-    monkeypatch.setattr(ge, "execute_implementation", fake_execute)
+    monkeypatch.setattr(ge, "execute_node", fake_execute)
     ws = str(tmp_path)
     tree = _impl_node("G-1", "do it", "I-1")
 
@@ -427,7 +398,7 @@ def test_workspace_root_writes_a_real_goal_run_md_page(monkeypatch, tmp_path):
     async def fake_execute(pool, plan_node, context, *, scope):
         return NodeResult(status="success")
 
-    monkeypatch.setattr(ge, "execute_implementation", fake_execute)
+    monkeypatch.setattr(ge, "execute_node", fake_execute)
     ws = str(tmp_path)
     result = _run(ge.execute_goal_tree(None, _impl_node("G-1", "do it", "I-1"), {}, scope=SCOPE, workspace_root=ws))
 
@@ -435,13 +406,13 @@ def test_workspace_root_writes_a_real_goal_run_md_page(monkeypatch, tmp_path):
     assert goal_run_path.exists()
     content = goal_run_path.read_text()
     assert f"GOAL_RUN|{result.execution_id}|success" in content
-    assert "GOAL_NODE|G-1|implementation|success|impl=I-1" in content
+    assert "GOAL_NODE|G-1|step|success|binding=command" in content
 
     status = ge.read_goal_run_status(ws)
     assert status["execution_id"] == result.execution_id
     assert status["outcome"] == "success"
     assert status["nodes"][0]["goal_id"] == "G-1"
-    assert status["nodes"][0]["implementation_id"] == "I-1"
+    assert status["nodes"][0]["binding"] == "command"
 
 
 def test_read_goal_run_status_with_no_goal_run_md_is_honestly_none(tmp_path):
@@ -458,7 +429,7 @@ def test_render_goal_run_md_reflects_procedure_fallback_and_human_intervention(m
             procedure=procedure, children=[_impl_node("G-2", "alt", "I-2")],
         )
 
-    monkeypatch.setattr(ge, "execute_implementation", fake_execute)
+    monkeypatch.setattr(ge, "execute_node", fake_execute)
     monkeypatch.setattr(ge, "resolve_goal_via_procedure", fake_resolve_via_procedure)
     tree = _procedure_node("G-parent", "p", children=[_impl_node("G-1", "step one", "I-1")])
     result = _run(ge.execute_goal_tree(None, tree, {}, scope=SCOPE))
@@ -471,7 +442,7 @@ def test_output_files_are_written_as_real_artifacts_during_durable_execution(mon
     async def fake_execute(pool, plan_node, context, *, scope):
         return NodeResult(status="success", data={"output_files": {"out.txt": b"real content"}})
 
-    monkeypatch.setattr(ge, "execute_implementation", fake_execute)
+    monkeypatch.setattr(ge, "execute_node", fake_execute)
     ws = str(tmp_path)
     result = _run(ge.execute_goal_tree(None, _impl_node("G-1", "do it", "I-1"), {}, scope=SCOPE, workspace_root=ws))
 
@@ -487,7 +458,7 @@ def test_no_output_files_means_no_artifacts_written(monkeypatch, tmp_path):
     async def fake_execute(pool, plan_node, context, *, scope):
         return NodeResult(status="success")
 
-    monkeypatch.setattr(ge, "execute_implementation", fake_execute)
+    monkeypatch.setattr(ge, "execute_node", fake_execute)
     ws = str(tmp_path)
     result = _run(ge.execute_goal_tree(None, _impl_node("G-1", "do it", "I-1"), {}, scope=SCOPE, workspace_root=ws))
     assert result.node_results["G-1"].artifacts == []
@@ -497,7 +468,7 @@ def test_resumed_node_carries_forward_prior_artifacts_manifest(monkeypatch, tmp_
     async def fake_execute(pool, plan_node, context, *, scope):
         return NodeResult(status="success", data={"output_files": {"out.txt": b"real content"}})
 
-    monkeypatch.setattr(ge, "execute_implementation", fake_execute)
+    monkeypatch.setattr(ge, "execute_node", fake_execute)
     ws = str(tmp_path)
     tree = _impl_node("G-1", "do it", "I-1")
     first = _run(ge.execute_goal_tree(None, tree, {}, scope=SCOPE, workspace_root=ws))
@@ -513,10 +484,10 @@ def test_a_different_execution_id_never_resumes_an_unrelated_attempt(monkeypatch
     calls = []
 
     async def fake_execute(pool, plan_node, context, *, scope):
-        calls.append(plan_node.implementation_id)
+        calls.append(plan_node.binding["command"])
         return NodeResult(status="success")
 
-    monkeypatch.setattr(ge, "execute_implementation", fake_execute)
+    monkeypatch.setattr(ge, "execute_node", fake_execute)
     ws = str(tmp_path)
     tree = _impl_node("G-1", "do it", "I-1")
 

@@ -46,6 +46,7 @@ from __future__ import annotations
 
 import asyncio
 import importlib.util
+import json
 import os
 import re
 import shutil
@@ -500,11 +501,20 @@ async def _snapshot(pool, rec: dict) -> dict:
             "FROM knowledge_nodes WHERE id=$1",
             uuid.UUID(rec["claim_id"]),
         ))
-        snap["implementation"] = dict(await conn.fetchrow(
-            "SELECT name, provider, version, status, verification_status "
-            "FROM implementations WHERE id=$1",
-            uuid.UUID(rec["impl_id"]),
-        ))
+        # Migration 98 removes `implementations`; the row must survive in the fold archive with the same identity.
+        if await conn.fetchval("SELECT to_regclass('public.implementations')") is not None:
+            snap["implementation"] = dict(await conn.fetchrow(
+                "SELECT name, provider, version, status, verification_status "
+                "FROM implementations WHERE id=$1",
+                uuid.UUID(rec["impl_id"]),
+            ))
+        else:
+            arch = await conn.fetchval(
+                "SELECT implementation::text FROM legacy_implementation_fold WHERE implementation_id=$1",
+                uuid.UUID(rec["impl_id"]),
+            )
+            row = json.loads(arch)
+            snap["implementation"] = {k: row[k] for k in ("name", "provider", "version", "status", "verification_status")}
         snap["execution_plan"] = dict(await conn.fetchrow(
             "SELECT procedure_id, procedure_version, content_hash, "
             " procedure_content_hash, task_description, scope_type "

@@ -1420,7 +1420,7 @@ class IngestOutcome:
     # provenance='system_pending_review' and with NO capability statement,
     # and the model was never run on the document.
     injection_screened: bool = False
-    implementation_ids: list[str] = field(default_factory=list)
+    script_procedure_ids: list[str] = field(default_factory=list)
     dependency_count: int = 0
     # Global internet/public-source admission gate (app.services.
     # ingestion_admission). `admission_decision` is one of "admit" /
@@ -1848,105 +1848,90 @@ async def _write_artifact_row(
     return str(row["id"])
 
 
-async def _persist_package_relations(
-    pool: asyncpg.Pool, artifact: Any, *,
-    implementations: list[Any], procedure_id: str, created_by: str,
-    embedder: Optional[Any] = None, client: Optional[Any] = None,
-) -> tuple[list[str], int]:
-    """The new-schema analogue of the old `_persist_package_relations` --
-    real change per founder directive #2 (2026-09-15): no more
-    `classify_skill_package_script` regex-first/LLM-fallback call per
-    resource. `implementations` is `ExtractedDocument.implementations`
-    (already resource-path-validated against the real discovered-file
-    list by the extractor itself, app.services.skill_extraction) -- one
-    consolidated LLM call already classified every bundled resource for
-    this document at once, instead of N separate per-resource calls.
+_SCRIPT_RUNTIMES = {".py": "python", ".sh": "shell", ".bash": "shell", ".js": "node", ".mjs": "node", ".ts": "node", ".rb": "ruby", ".ps1": "powershell"}
 
-    Dependency resolution (the old `package.dependencies` loop writing
-    `procedure_dependencies` rows) is DROPPED in this pass -- a real,
-    disclosed simplification (ingestion.md's four canonical object types
-    are Claims/Procedures/Goals/Implementations; skill-to-skill
-    dependency linking was never one of them). Always returns
-    `dependency_count=0`; `resolve_procedure_dependencies()` remains
-    correct for any pre-existing rows, it just gets no new ones from this
-    path going forward."""
+
+async def _preserve_script_artifact(pool: asyncpg.Pool, artifact: Any, resource: Any, raw_url: str, *, created_by: str) -> str:
+    """Preserve the script's exact bytes as an immutable `ingested_artifacts` row (role `executable_source`),
+    keyed by content hash. Found source is NOT trusted: `execution_allowed` starts false and `admission_decision`
+    stays NULL (unscreened) until the screening step admits it. Bytes go to object storage when one is configured
+    (`content_ref`); otherwise only the hash/locator are kept (`extraction_status='metadata_only'`)."""
+    import os as _os
+
+    from app.services.object_storage import get_store, store_blob
+
+    ext = _os.path.splitext(resource.path)[1].lower()
+    content_ref = None
+    status = "metadata_only"
+    store = get_store()
+    if store is not None and getattr(resource, "content", b""):
+        content_ref = await store_blob(pool, store, resource.content, content_type="text/plain")
+        status = "stored"
+    row = await pool.fetchrow(
+        "INSERT INTO ingested_artifacts (id, source_type, uri, repository, path, \"commit\", content_hash, "
+        " role, mime_type, language, byte_size, content_ref, extraction_status, execution_allowed, visibility) "
+        "VALUES (gen_random_uuid(), 'skill_package_resource', $1, $2, $3, $4, $5, 'executable_source', $6, $7, $8, $9::jsonb, $10, false, 'public') "
+        "ON CONFLICT (source_type, uri, content_hash) DO UPDATE SET last_seen = now() RETURNING id",
+        raw_url, getattr(artifact, "repository", None), resource.path, getattr(artifact, "commit", None), resource.sha256,
+        "text/x-script", _SCRIPT_RUNTIMES.get(ext), int(getattr(resource, "size", 0) or 0), content_ref, status,
+    )
+    return str(row["id"])
+
+
+async def _persist_script_procedures(
+    pool: asyncpg.Pool, artifact: Any, *,
+    scripts: list[Any], created_by: str, provenance: str = "prior_library",
+    embedder: Optional[Any] = None, client: Optional[Any] = None,
+) -> list[str]:
+    """Each bundled executable resource the extractor found is (1) PRESERVED as an immutable artifact (bytes by
+    hash, commit, path, size, language; unscreened, execution not allowed) and (2) proposed as a ONE-STEP candidate
+    Procedure whose step binding is `source_artifact` -> that artifact. There is no separate Implementation
+    object, and finding a script never makes it an executable/verified Procedure: running it requires the artifact
+    to be screened + `execution_allowed` (see step_binding._execute_source_artifact).
+
+    `scripts` is `ExtractedDocument.implementations` (paths already validated against the discovered file list).
+    Identity goes through `capture_procedure(procedure_dedup=True)` with a stable `source_key`. Returns stable
+    procedure ids."""
     if getattr(artifact, "source_type", None) != "skill_package":
-        return [], 0
-    from app.services.implementation_goals import default_verification_contract
+        return []
+    from app.services.goal_categories import normalize_goal_from_path
+    from app.services.goals import GoalQualityRejected
+    from app.services.procedures import capture_procedure
+    import os as _os
 
     resources_by_path = {r.path: r for r in getattr(artifact, "resources", ())}
-    implementation_ids: list[str] = []
-    for impl in implementations:
-        resource = resources_by_path.get(impl.resource_path)
+    out: list[str] = []
+    for script in scripts:
+        resource = resources_by_path.get(script.resource_path)
         if resource is None:
-            # The extractor already filtered non-real paths; this is a
-            # defense-in-depth check, not the primary guard.
-            continue
-        name = f"{artifact.source_id}:{impl.resource_path}"
-        raw_url = (
-            f"https://raw.githubusercontent.com/{artifact.repository}/"
-            f"{artifact.commit}/{impl.resource_path}"
-        )
-        verification_contract = default_verification_contract("deterministic")
-        classification = "llm_classified" if impl.goal else "unclassified"
-        row = await pool.fetchrow(
-            "INSERT INTO implementations (id, name, description, kind, provider, version, "
-            "locator, invocation, requirements, source_ref, author, license, content_hash, "
-            "created_by, visibility, scope_type, goal, goal_spec, expected_outcome, "
-            "verification_contract, classification) VALUES (gen_random_uuid(), $1, $2, "
-            "'deterministic', 'skill-package', 1, $3::jsonb, $4::jsonb, $5::jsonb, "
-            "$6, $7, $8, $9, $10, 'public', 'global', $11, $12::jsonb, $13, "
-            "$14::jsonb, $15) "
-            "ON CONFLICT (name, provider, version) DO NOTHING RETURNING id",
-            name, f"Bundled executable resource for {impl.name}",
-            {"type": "immutable_github_raw", "url": raw_url,
-             "commit": artifact.commit, "path": impl.resource_path},
-            {"entrypoint": impl.resource_path, "executable": False},
-            {}, artifact.uri,
-            (artifact.repository or "").split("/", 1)[0] or None,
-            (getattr(artifact, "license_metadata", {}) or {}).get("spdx_id"),
-            resource.sha256, created_by,
-            impl.goal, None, impl.expected_outcome,
-            verification_contract, classification,
-        )
-        if row is None:
-            row = await pool.fetchrow(
-                "SELECT id FROM implementations WHERE name=$1 AND provider='skill-package' "
-                "AND version=1", name,
+            continue  # the extractor already filtered non-real paths; defense in depth
+        raw_url = f"https://raw.githubusercontent.com/{artifact.repository}/{artifact.commit}/{script.resource_path}"
+        artifact_id = await _preserve_script_artifact(pool, artifact, resource, raw_url, created_by=created_by)
+        goal = script.goal or normalize_goal_from_path(script.resource_path) or f"run {script.resource_path}"
+        locator = {k: v for k, v in {
+            "source_id": getattr(artifact, "source_id", None) or artifact.uri, "uri": raw_url,
+            "path": script.resource_path, "commit": getattr(artifact, "commit", None),
+            "content_hash": resource.sha256, "granularity": "document"}.items() if v}
+        runtime = _SCRIPT_RUNTIMES.get(_os.path.splitext(script.resource_path)[1].lower(), "unknown")
+        step = {
+            "order": 0, "description": f"Run {script.resource_path}", "goal": goal,
+            "expected_outcome": script.expected_outcome, "source_locator": locator,
+            "binding": {"kind": "source_artifact", "source_artifact": artifact_id, "entrypoint": script.resource_path,
+                        "runtime": runtime, "args": [], "sandbox_policy": "isolated"},
+        }
+        try:
+            result = await capture_procedure(
+                pool, name=f"{artifact.source_id}:{script.resource_path}",
+                goal=goal, steps=[step], provenance=provenance, scope_type="global", created_by=created_by,
+                goal_embedder=embedder, goal_adjudication_client=client,
+                procedure_dedup=True, source_key=f"skill-script:{artifact.content_hash}:{script.resource_path}",
+                source_locator=locator, require_source_locators=True,
+                source_artifacts=[{"artifact_id": artifact_id, "path": script.resource_path, "role": "executable_source", "execution_allowed": False}],
             )
-        implementation_id = str(row["id"])
-        implementation_ids.append(implementation_id)
-
-        if impl.goal:
-            from app.services.goals import GoalQualityRejected, find_or_create_goal
-
-            # A low-quality impl.goal (ingestion.md Sec 20) only skips
-            # this ONE goal_id linkage -- the implementation row itself
-            # (already inserted above) is real and useful without it, so
-            # it is never rolled back over a quality-gate rejection.
-            try:
-                resolved_goal = await find_or_create_goal(
-                    pool, canonical_name=impl.goal, scope_type="global",
-                    provenance="prior_library", created_from="skill_extraction",
-                    embedder=embedder, client=client,
-                )
-            except GoalQualityRejected:
-                resolved_goal = None
-            if resolved_goal is not None:
-                await pool.execute(
-                    "UPDATE implementations SET goal_id=$2::uuid WHERE id=$1::uuid",
-                    implementation_id, resolved_goal["id"],
-                )
-
-        await pool.execute(
-            "INSERT INTO procedure_implementations (id, procedure_id, implementation_id, "
-            "resource_path, supported_steps, created_by) VALUES "
-            "(gen_random_uuid(), $1::uuid, $2::uuid, $3, $4::jsonb, $5) "
-            "ON CONFLICT (procedure_id, implementation_id, role) WHERE t_invalid IS NULL "
-            "DO NOTHING",
-            procedure_id, implementation_id, impl.resource_path, [], created_by,
-        )
-    return implementation_ids, 0
+        except GoalQualityRejected:
+            continue  # a low-quality goal rejects only this script's procedure (ingestion.md Sec 20)
+        out.append(str(result["procedure_id"]))
+    return out
 
 
 async def resolve_procedure_dependencies(pool: asyncpg.Pool) -> int:
@@ -2229,7 +2214,7 @@ async def compile_skill_artifact(
 
     procedure_ids: list[str] = []
     version_row_ids: list[str] = []
-    implementation_ids: list[str] = []
+    script_procedure_ids: list[str] = []
     artifact_ids: list[str] = []
     all_document_claim_ids: list[str] = []
     all_document_claim_evidence_ids: list[str] = []
@@ -2264,6 +2249,13 @@ async def compile_skill_artifact(
         steps_json = []
         for s in proc.steps:
             step_entry = {"order": s.order, "goal": s.action}
+            for script in extracted.implementations:
+                res = next((r for r in getattr(artifact, "resources", ()) if r.path == script.resource_path), None)
+                if res is not None and script.resource_path and script.resource_path in (s.action or ""):
+                    step_entry["source_locator"] = {
+                        "source_id": getattr(artifact, "source_id", None) or artifact.uri, "uri": artifact.uri,
+                        "path": script.resource_path, "content_hash": res.sha256, "granularity": "document"}
+                    break
             try:
                 step_goal = await find_or_create_goal(
                     pool, canonical_name=s.action, scope_type=step_goal_scope_type,
@@ -2355,18 +2347,12 @@ async def compile_skill_artifact(
         screening_decision_ids = decision_ids
         all_document_claim_ids.extend(claim_ids)
 
-        # Implementations link to the document's FIRST extracted procedure
-        # only -- ExtractedImplementation carries no per-procedure
-        # association (a document expressing multiple independent
-        # procedures with per-procedure implementation associations is a
-        # real, disclosed future enhancement, not attempted here).
+        # Bundled scripts become one-step procedures (once per document, on its first procedure's turn).
         if i == 0:
-            these_impl_ids, _dep_count = await _persist_package_relations(
-                pool, artifact, implementations=extracted.implementations,
-                procedure_id=procedure_id, created_by=created_by,
-                embedder=embedder, client=client,
-            )
-            implementation_ids.extend(these_impl_ids)
+            script_procedure_ids.extend(await _persist_script_procedures(
+                pool, artifact, scripts=extracted.implementations, created_by=created_by,
+                provenance=provenance, embedder=embedder, client=client,
+            ))
 
         document_evidence_id = await _emit_document_evidence(
             pool, procedure_row_id=procedure_row_id, target_version=_FRESH_PROCEDURE_VERSION,
@@ -2443,7 +2429,7 @@ async def compile_skill_artifact(
         capability_abstained=False,
         injection_screened=bool(injection_signals),
         reason=screen_reason or (admission.reason if quarantined else None),
-        implementation_ids=implementation_ids,
+        script_procedure_ids=script_procedure_ids,
         dependency_count=0,
         artifact_block_ids=first_artifact_block_ids,
         block_observation_ids=first_block_observation_ids,
@@ -2534,7 +2520,7 @@ async def run_skill_ingestion(
         # with no capability statement. Orthogonal to accepted/duplicate/
         # etc. (a screened doc is normally also `accepted`).
         "screened": 0,
-        "implementation_candidates": 0,
+        "script_procedures": 0,
         "procedure_dependencies": 0,
         # Admission gate (this pass). `admission_rejected` overlaps
         # `rejected` (every admission-gate reject IS a rejected outcome,
@@ -2616,7 +2602,7 @@ async def run_skill_ingestion(
         if outcome.status == "error":
             metrics["errors"] += 1
             continue
-        metrics["implementation_candidates"] += len(outcome.implementation_ids)
+        metrics["script_procedures"] += len(outcome.script_procedure_ids)
         metrics["procedure_dependencies"] += outcome.dependency_count
         # `candidates` counts every artifact that reached the compiler,
         # rejected ones included (brief section 14: candidates == accepted +

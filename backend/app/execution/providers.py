@@ -3,19 +3,19 @@ task can express "I need capability X" without hardcoding which specific
 provider/tool satisfies it.
 
 WHERE THIS SITS, relative to what already exists: `implementations.py`
-owns a closed KIND vocabulary (`IMPLEMENTATION_KINDS`:
+owns a closed KIND vocabulary (`EXECUTOR_KINDS`:
 deterministic/tool/slm/frontier/human) plus a registry mapping the
 subset of kinds this codebase can actually run today to a real executor
-strategy name (`resolve_implementation`). That module deliberately never
+strategy name (`resolve_executor`). That module deliberately never
 asks "run WHICH concrete thing" -- only "is this KIND runnable at all,
 by anything, right now". A PROVIDER, here, is one concrete way of
 REALIZING a given kind -- e.g. "frontier" could in principle be realized
 by more than one provider (a hosted API, a local model server); today it
 is realized by exactly one. This module is additive and sits BEHIND
 `implementations.py`: it does not touch, replace, or widen
-`IMPLEMENTATION_KINDS`, `resolve_implementation`, or
-`validate_implementation_hint`. A provider's `kind` attribute is always
-one of `implementations.IMPLEMENTATION_KINDS`.
+`EXECUTOR_KINDS`, `resolve_executor`, or
+`validate_executor_hint`. A provider's `kind` attribute is always
+one of `implementations.EXECUTOR_KINDS`.
 
 HOUSE RULE this module obeys throughout (directive's own words, and this
 repo's established discipline -- see `implementations.py`'s own
@@ -48,7 +48,7 @@ it is represented in a type vocabulary." Concretely:
   - Every OTHER kind (`slm`, `tool`, `human`) has NO provider class
     registered here at all. `discover_providers()` still reports them,
     honestly, as `available=False` with a stated reason -- exactly
-    matching `resolve_implementation()`'s own `supported=False` posture
+    matching `resolve_executor()`'s own `supported=False` posture
     for an unregistered kind. No `execute()` body exists anywhere in
     this module that pretends to call an MCP server, Composio, a human
     approval surface, or an SLM -- there is no class to hold one.
@@ -61,7 +61,7 @@ from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable, Optional
 
 from app.execution.graph_executor import NodeResult
-from app.execution.implementations import IMPLEMENTATION_KINDS
+from app.execution.executor_kinds import EXECUTOR_KINDS
 from app.models.plan import PlanNode
 from app.services.sandbox_executor import SandboxExecutor, SubprocessSandboxExecutor
 
@@ -114,7 +114,7 @@ class ImplementationProvider(ABC):
     existing, real result shape this codebase's own schedulers already
     consume."""
 
-    kind: str  # one of implementations.IMPLEMENTATION_KINDS
+    kind: str  # one of implementations.EXECUTOR_KINDS
 
     @abstractmethod
     async def discover(self, requirements: dict) -> ProviderAvailability:
@@ -318,7 +318,7 @@ class DeterministicProvider(ImplementationProvider):
 
 # Kinds with NO real executor and deliberately NO provider class -- see
 # module docstring. `discover_providers()` reports these honestly rather
-# than omitting them, exactly matching `resolve_implementation()`'s own
+# than omitting them, exactly matching `resolve_executor()`'s own
 # `supported=False` posture in implementations.py for an unregistered
 # kind. Never a stand-in for a class whose execute() would fabricate a
 # call to something this environment cannot verify (MCP, Composio, a
@@ -326,7 +326,7 @@ class DeterministicProvider(ImplementationProvider):
 _UNAVAILABLE_KIND_REASONS: dict[str, str] = {
     "slm": (
         "no real executor wired up yet -- 'slm' is a validated, storable "
-        "kind (implementations.py's IMPLEMENTATION_KINDS) but no small/local "
+        "kind (implementations.py's EXECUTOR_KINDS) but no small/local "
         "model call path exists anywhere in this codebase today"
     ),
     "tool": (
@@ -362,18 +362,18 @@ async def discover_providers(
     kind: Optional[str] = None, requirements: Optional[dict] = None,
 ) -> list[ProviderDiscoveryEntry]:
     """What providers exist for `kind` (or every member of
-    `IMPLEMENTATION_KINDS` when `kind` is None), and which are actually
+    `EXECUTOR_KINDS` when `kind` is None), and which are actually
     available to run right now. Never fabricates availability: a kind
     with no registered provider class reports `available=False` with an
     honest, specific reason rather than being silently omitted."""
     requirements = requirements or {}
     kinds: tuple[str, ...]
     if kind is None:
-        kinds = IMPLEMENTATION_KINDS
+        kinds = EXECUTOR_KINDS
     else:
-        if kind not in IMPLEMENTATION_KINDS:
+        if kind not in EXECUTOR_KINDS:
             raise ValueError(
-                f"unknown implementation kind {kind!r} (valid: {IMPLEMENTATION_KINDS})"
+                f"unknown implementation kind {kind!r} (valid: {EXECUTOR_KINDS})"
             )
         kinds = (kind,)
 

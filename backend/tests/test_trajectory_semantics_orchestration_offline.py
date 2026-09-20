@@ -1,7 +1,7 @@
 """Offline proving tests for extract_trajectory_semantics()'s wiring
 (trajectory-ingestion-hardening task, Sec 6/20). The knowledge-object
 writers it calls (find_or_create_goal, capture_claim, capture_procedure,
-find_or_create_implementation_identity) are real, already-tested
+tool bindings on steps) are real, already-tested
 functions elsewhere against a real database -- here they're monkeypatched
 so this test proves the ORCHESTRATION (what gets called, with what
 event citations, in what order, and how status transitions) without a
@@ -116,17 +116,10 @@ def _patch_writers(monkeypatch, *, goal_ids=None, claim_id="claim-1",
         procedure_calls.append(kwargs)
         return procedure or {"id": "procver-1", "procedure_id": "proc-1"}
 
-    impl_calls = []
-
-    async def fake_find_or_create_implementation_identity(pool, *, name, provider, kind, **kwargs):
-        impl_calls.append((name, provider, kind))
-        return {"id": impl_id, "name": name, "provider": provider}
-
     monkeypatch.setattr(ts, "find_or_create_goal", fake_find_or_create_goal)
     monkeypatch.setattr(ts, "capture_claim", fake_capture_claim)
     monkeypatch.setattr(ts, "capture_procedure", fake_capture_procedure)
-    monkeypatch.setattr(ts, "find_or_create_implementation_identity", fake_find_or_create_implementation_identity)
-    return {"goals": goal_calls, "claims": claim_calls, "procedures": procedure_calls, "implementations": impl_calls}
+    return {"goals": goal_calls, "claims": claim_calls, "procedures": procedure_calls}
 
 
 def _success_payload():
@@ -140,13 +133,9 @@ def _success_payload():
             "capability_statement": "reproduce then fix a failing test",
             "steps": [
                 {"description": "reproduce the failure", "subgoal_text": "reproduce failure", "event_indices": [1]},
-                {"description": "verify the fix", "subgoal_text": "verify fix", "event_indices": [2]},
+                {"description": "verify the fix", "subgoal_text": "verify fix", "tool_name": "Bash", "event_indices": [2]},
             ],
             "event_indices": [1, 2], "epistemic_status": "inferred", "confidence": 0.6,
-        }],
-        "implementations": [{
-            "tool_name": "Bash", "role": "ran the test suite",
-            "event_indices": [2], "applicability_notes": None,
         }],
         "claims": [{
             "text": "the fix was verified by a passing test run",
@@ -171,7 +160,8 @@ async def test_raw_event_count_and_success_path_wires_every_writer(monkeypatch):
     assert result["goals"] >= 1  # primary_goal + 2 step subgoals
     assert result["claims"] == 1
     assert result["procedures"] == 1
-    assert result["implementations"] == 1
+    step_bindings = [st.get("binding") for st in calls["procedures"][0]["steps"]]
+    assert {"kind": "tool", "tool": "Bash"} in step_bindings
     assert calls["claims"][0][0] == "the fix was verified by a passing test run"
     assert client.calls == 1
 
@@ -191,8 +181,8 @@ async def test_every_extracted_object_links_to_real_source_events(monkeypatch):
         (sql, args) for sql, args in pool.executed
         if "INSERT INTO trajectory_extraction_objects" in sql
     ]
-    # goal (primary), 2x step-goal, claim, implementation, procedure = 6 links
-    assert len(link_inserts) == 6
+    # goal (primary), 2x step-goal, claim, procedure = 5 links
+    assert len(link_inserts) == 5
     for sql, args in link_inserts:
         object_type, object_id, event_refs = args[1], args[2], args[3]
         assert event_refs, f"{object_type} {object_id} must cite at least one real event id"
@@ -220,7 +210,6 @@ async def test_failed_trajectory_still_produces_extraction(monkeypatch):
     payload = _success_payload()
     payload["outcome"] = "failure"
     payload["candidate_procedures"] = []
-    payload["implementations"] = []
     payload["claims"] = [{
         "text": "repeated edits without additional diagnosis between test runs",
         "event_indices": [1], "epistemic_status": "inferred", "confidence": 0.5,

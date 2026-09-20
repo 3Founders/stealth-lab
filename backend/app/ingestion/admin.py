@@ -9,9 +9,11 @@
     python -m app.ingestion.admin reindex [goal|claim|procedure|all] [--shard K002]
     python -m app.ingestion.admin drain-projections
     python -m app.ingestion.admin verify-projections          # exit 1 if projections disagree with canonical rows
+    python -m app.ingestion.admin reconcile-claims             # judge claims created while the judge was down; merge/flag
     python -m app.ingestion.admin reconcile-goals [--all]     # judge unreconciled goals; merge same-goal paraphrases
     python -m app.ingestion.admin verify-refs                 # remote references resolve on their shards (no cross-DB FK)
     python -m app.ingestion.admin verify-dedup                # duplicate goal names / procedures without a goal link
+    python -m app.ingestion.admin fold-implementations        # convert archived legacy implementations into step bindings / one-step procedures
 """
 from __future__ import annotations
 
@@ -49,6 +51,9 @@ def _parse(argv=None) -> argparse.Namespace:
     sub.add_parser("verify-projections")
     sub.add_parser("verify-dedup")
     sub.add_parser("verify-refs")
+    fi = sub.add_parser("fold-implementations")
+    fi.add_argument("--limit", type=int)
+    sub.add_parser("reconcile-claims")
     rg = sub.add_parser("reconcile-goals")
     rg.add_argument("--all", action="store_true", help="ignore the time window (legacy corpus sweep)")
     rg.add_argument("--batch", type=int, default=500)
@@ -102,26 +107,41 @@ async def _amain(a: argparse.Namespace) -> int:
             rep = await sp.verify_projection(pool)
             print(json.dumps(rep, default=str, indent=2))
             return 0 if rep["ok"] else 1
+        elif a.cmd == "reconcile-claims":
+            from app.ingestion.handlers import Dependencies
+            from app.services.claim_identity import reconcile_claims
+            print(json.dumps(await reconcile_claims(pool, embedder=Dependencies.get_embedder(pool), judge=Dependencies.get_judge())))
         elif a.cmd == "reconcile-goals":
             from app.ingestion.handlers import Dependencies
             from app.services.identity_resolution import reconcile_goals
             print(json.dumps(await reconcile_goals(
                 pool, judge=Dependencies.get_judge(),
                 window_minutes=None if a.all else 30.0, batch=a.batch)))
+        elif a.cmd == "fold-implementations":
+            from app.ingestion.handlers import Dependencies
+            from app.services.fold_implementations import fold_all
+            rep = await fold_all(pool, embedder=Dependencies.get_embedder(pool), judge=Dependencies.get_judge(), limit=a.limit)
+            print(json.dumps(rep, default=str, indent=2))
+            return 0 if not rep["failed"] else 1
         elif a.cmd == "verify-refs":
             rep = await sh.verify_routes(pool)
             print(json.dumps(rep, default=str, indent=2))
             return 0 if rep["ok"] else 1
         elif a.cmd == "verify-dedup":
-            dup = await pool.fetch(
-                "SELECT normalized_name, scope_type, count(*) AS n FROM goals WHERE t_invalid IS NULL AND status <> 'merged' "
-                "GROUP BY 1, 2 HAVING count(*) > 1")
-            unlinked = await pool.fetchval(
-                "SELECT count(*) FROM procedures WHERE t_invalid IS NULL AND achieves_goal_id IS NULL AND is_engineering_fixture = false")
-            dangling = await pool.fetchval(
-                "SELECT count(*) FROM procedures p JOIN goals g ON g.id = p.achieves_goal_id WHERE p.t_invalid IS NULL AND g.status = 'merged'")
+            names = await sh.fanout_fetch(
+                pool, "SELECT normalized_name, scope_type, scope_entity_id FROM goals WHERE t_invalid IS NULL AND status <> 'merged'", strict=True)
+            counts: dict[tuple, int] = {}
+            for r in names:
+                k = (r["normalized_name"], r["scope_type"], r["scope_entity_id"])
+                counts[k] = counts.get(k, 0) + 1
+            dup = [{"normalized_name": k[0], "scope_type": k[1], "n": n} for k, n in counts.items() if n > 1]
+            unlinked = await sh.fanout_fetchval_sum(
+                pool, "SELECT count(*) FROM procedures WHERE t_invalid IS NULL AND achieves_goal_id IS NULL AND is_engineering_fixture = false", strict=True)
+            merged_ids = [str(r["id"]) for r in await sh.fanout_fetch(pool, "SELECT id FROM goals WHERE status = 'merged'", strict=True)]
+            dangling = await sh.fanout_fetchval_sum(
+                pool, "SELECT count(*) FROM procedures WHERE t_invalid IS NULL AND achieves_goal_id = ANY($1::uuid[])", merged_ids, strict=True) if merged_ids else 0
             unjudged = await pool.fetchval("SELECT count(*) FROM identity_decisions WHERE decision = 'judge_unavailable' AND resolved_id IS NULL")
-            rep = {"duplicate_goal_names": [dict(r) for r in dup], "live_procedures_without_goal_link": unlinked,
+            rep = {"duplicate_goal_names": dup, "live_procedures_without_goal_link": unlinked,
                    "live_procedures_linked_to_merged_goals": dangling, "goals_created_while_judge_unavailable": unjudged}
             print(json.dumps(rep, default=str, indent=2))
             return 0 if not dup and not unlinked and not dangling else 1

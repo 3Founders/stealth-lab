@@ -32,8 +32,8 @@ class FakeContext:
 
 def _fake_tree():
     return ResolvedGoalNode(
-        goal_id="G-1", goal_name="do the thing", depth=0, chosen="implementation",
-        implementation={"id": "I-1", "name": "impl", "kind": "deterministic"},
+        goal_id="G-1", goal_name="do the thing", depth=0, chosen="step",
+        step={"order": 0, "procedure_id": "P-1", "binding": {"kind": "command", "command": "make"}},
         rationale="chosen impl",
     )
 
@@ -75,8 +75,8 @@ def test_explain_goal_route_returns_full_tree_and_threads_scope(monkeypatch):
         goal_id="G-1", ctx=ctx, current_scope_json='{"repo": ["r"]}', max_depth=3,
     ))
     result = json.loads(raw)
-    assert result["chosen"] == "implementation"
-    assert result["implementation"]["name"] == "impl"
+    assert result["chosen"] == "step"
+    assert result["step"]["binding"]["kind"] == "command"
     assert captured["goal_id"] == "G-1"
     assert captured["context"] == {"current_scope": {"repo": ["r"]}}
     assert captured["max_depth"] == 3
@@ -111,11 +111,11 @@ def test_compile_goal_returns_tree_and_flattened_nodes(monkeypatch):
     ctx = FakeContext()
     raw = _run(srv.compile_goal(goal_id="G-1", ctx=ctx))
     result = json.loads(raw)
-    assert result["tree"]["chosen"] == "implementation"
+    assert result["tree"]["chosen"] == "step"
     assert len(result["nodes"]) == 1
     node = result["nodes"][0]
-    assert node["kind"] == "implementation"
-    assert node["implementation_id"] == "I-1"
+    assert node["kind"] == "step"
+    assert node["step_order"] == 0
     assert node["executor"] == "deterministic"
     assert node["deps"] == []
 
@@ -133,7 +133,7 @@ def test_compile_goal_with_workspace_root_writes_a_real_planned_goal_run_md(monk
     assert goal_run_path.exists()
     content = goal_run_path.read_text()
     assert "GOAL_RUN|-|planned" in content
-    assert "GOAL_NODE|G-1|implementation|planned|impl=I-1" in content
+    assert "GOAL_NODE|G-1|step|planned|binding=-" in content
 
 
 def test_compile_goal_without_workspace_root_writes_nothing(monkeypatch, tmp_path):

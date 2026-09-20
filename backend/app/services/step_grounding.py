@@ -47,7 +47,7 @@ from typing import Any, Optional
 
 from pydantic import BaseModel, Field, ValidationError, field_validator
 
-from app.services.implementation_goals import KNOWN_GOAL_CATEGORIES
+from app.services.goal_categories import KNOWN_GOAL_CATEGORIES
 
 _GROUNDING_SYSTEM_PROMPT = f"""You ground one abstract step of a procedure into the concrete repo/task it is being run against.
 

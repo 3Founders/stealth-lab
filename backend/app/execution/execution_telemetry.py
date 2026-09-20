@@ -1,22 +1,14 @@
 """
-Real per-execution telemetry for Implementations (meta-harness/execu.md
-Sec 13/14/32, migration 85). The founder's own instruction on the
-disclosed cost-model gap: "don't say we can estimate cause we can't --
-after some runs and accumulation of evidence we will, bake this into the
-system." This module is that baking-in.
+Real per-execution telemetry for bound procedure STEPS (meta-harness/execu.md Sec 13/14/32; table
+`step_execution_telemetry`, migration 98 -- formerly keyed by an Implementation id, now by
+`(procedure_id, step_order)`, since a step is what carries the binding).
 
-`record_implementation_execution()` is wired as an automatic side effect
-of `implementation_executor.py::execute_implementation()` -- the ONE
-real chokepoint every dispatch already passes through, so recording
-happens for free on every real execution, not as an opt-in extra step a
-caller could forget.
+`record_step_execution()` is called from `step_binding.py::execute_node()` -- the one chokepoint every bound
+step dispatch passes through -- when the caller supplies `context["procedure_id"]`.
 
-`implementation_execution_stats()` is the read side: real, empirical
-aggregation over whatever has actually accumulated -- honestly reports
-zero samples today for almost every Implementation (confirmed live:
-nothing has been recorded yet, since this table is new), and becomes
-real as executions happen. No ML model, no guessed number -- Sec 14's
-own instruction ("Use empirical statistics and explainable heuristics").
+`step_execution_stats()` is the read side: a plain empirical mean/rate over real rows (Sec 14: "use empirical
+statistics"). `sample_count=0` (every derived field `None`) is the honest answer for a step that never ran.
+No pricing table exists, so `monetary_cost_usd` is never populated.
 """
 from __future__ import annotations
 
@@ -28,10 +20,11 @@ import asyncpg
 from app.utils.ids import uuid7
 
 
-async def record_implementation_execution(
+async def record_step_execution(
     pool: asyncpg.Pool,
     *,
-    implementation_id: str,
+    procedure_id: str,
+    step_order: int,
     executor: str,
     outcome_status: str,
     node_result_data: Optional[dict[str, Any]] = None,
@@ -40,30 +33,22 @@ async def record_implementation_execution(
     execution_run_node_id: Optional[str] = None,
     created_by: Optional[str] = None,
 ) -> dict:
-    """Records ONE real execution attempt. `node_result_data` is the raw
-    `NodeResult.data` dict a real provider returned -- field names differ
-    per executor kind (DeterministicProvider's own `wall_time_seconds`
-    vs FrontierProvider's `prompt_tokens`/`completion_tokens`/
-    `llm_calls`), so this function reads whichever real keys are present
-    and leaves the rest NULL -- never fabricates a 0 for a quantity a
-    given executor kind simply does not produce.
-    """
+    """Records ONE real execution attempt of one bound step. `node_result_data` is the raw `NodeResult.data`;
+    field names differ per executor kind, so this reads whichever real keys are present and leaves the rest
+    NULL -- never a fabricated 0 for a quantity an executor does not produce."""
     if outcome_status not in ("success", "failure"):
         raise ValueError(f"outcome_status must be 'success' or 'failure', got {outcome_status!r}")
-
     data = node_result_data or {}
     wall_seconds = data.get("wall_seconds", data.get("wall_time_seconds"))
-
     row = await pool.fetchrow(
         """
-        INSERT INTO implementation_execution_telemetry (
-            id, implementation_id, goal_id, execution_run_id, execution_run_node_id,
-            executor, outcome_status, prompt_tokens, completion_tokens, llm_calls,
-            wall_seconds, created_by
-        ) VALUES ($1::uuid, $2::uuid, $3::uuid, $4::uuid, $5::uuid, $6, $7, $8, $9, $10, $11, $12)
+        INSERT INTO step_execution_telemetry (
+            id, procedure_id, step_order, goal_id, execution_run_id, execution_run_node_id,
+            executor, outcome_status, prompt_tokens, completion_tokens, llm_calls, wall_seconds, created_by
+        ) VALUES ($1::uuid, $2::uuid, $3, $4::uuid, $5::uuid, $6::uuid, $7, $8, $9, $10, $11, $12, $13)
         RETURNING *
         """,
-        str(uuid7()), implementation_id, goal_id, execution_run_id, execution_run_node_id,
+        str(uuid7()), procedure_id, step_order, goal_id, execution_run_id, execution_run_node_id,
         executor, outcome_status, data.get("prompt_tokens"), data.get("completion_tokens"),
         data.get("llm_calls"), wall_seconds, created_by,
     )
@@ -71,98 +56,34 @@ async def record_implementation_execution(
 
 
 @dataclass
-class ImplementationExecutionStats:
-    implementation_id: str
+class StepExecutionStats:
+    procedure_id: str
+    step_order: int
     sample_count: int
     success_count: int
-    success_rate: Optional[float] = None  # None when sample_count == 0 -- never a fabricated 0/1
+    success_rate: Optional[float] = None  # None when sample_count == 0
     mean_wall_seconds: Optional[float] = None
     mean_prompt_tokens: Optional[float] = None
     mean_completion_tokens: Optional[float] = None
     mean_llm_calls: Optional[float] = None
 
 
-async def implementation_execution_stats(pool: asyncpg.Pool, implementation_id: str) -> ImplementationExecutionStats:
-    """Real, empirical aggregation over every recorded execution of this
-    Implementation -- a plain mean/rate over real rows, not a model.
-    `sample_count=0` (and every derived field `None`) is the honest,
-    common-today answer for most Implementations -- confirmed live, this
-    table has almost no data yet."""
+async def step_execution_stats(pool: asyncpg.Pool, procedure_id: str, step_order: int) -> StepExecutionStats:
     row = await pool.fetchrow(
         """
-        SELECT
-            count(*) AS sample_count,
-            count(*) FILTER (WHERE outcome_status = 'success') AS success_count,
-            avg(wall_seconds) AS mean_wall_seconds,
-            avg(prompt_tokens) AS mean_prompt_tokens,
-            avg(completion_tokens) AS mean_completion_tokens,
-            avg(llm_calls) AS mean_llm_calls
-        FROM implementation_execution_telemetry
-        WHERE implementation_id = $1::uuid
+        SELECT count(*) AS sample_count,
+               count(*) FILTER (WHERE outcome_status = 'success') AS success_count,
+               avg(wall_seconds) AS mean_wall_seconds, avg(prompt_tokens) AS mean_prompt_tokens,
+               avg(completion_tokens) AS mean_completion_tokens, avg(llm_calls) AS mean_llm_calls
+        FROM step_execution_telemetry WHERE procedure_id = $1::uuid AND step_order = $2
         """,
-        implementation_id,
+        procedure_id, step_order,
     )
-    sample_count = int(row["sample_count"] or 0)
-    success_count = int(row["success_count"] or 0)
-    return ImplementationExecutionStats(
-        implementation_id=implementation_id,
-        sample_count=sample_count,
-        success_count=success_count,
-        success_rate=(success_count / sample_count) if sample_count > 0 else None,
-        mean_wall_seconds=row["mean_wall_seconds"],
-        mean_prompt_tokens=row["mean_prompt_tokens"],
-        mean_completion_tokens=row["mean_completion_tokens"],
+    n = int(row["sample_count"] or 0)
+    ok = int(row["success_count"] or 0)
+    return StepExecutionStats(
+        procedure_id=procedure_id, step_order=step_order, sample_count=n, success_count=ok,
+        success_rate=(ok / n) if n > 0 else None, mean_wall_seconds=row["mean_wall_seconds"],
+        mean_prompt_tokens=row["mean_prompt_tokens"], mean_completion_tokens=row["mean_completion_tokens"],
         mean_llm_calls=row["mean_llm_calls"],
     )
-
-
-async def implementation_execution_stats_batch(
-    pool: asyncpg.Pool, implementation_ids: list[str],
-) -> dict[str, ImplementationExecutionStats]:
-    """Batched sibling of `implementation_execution_stats` -- one query
-    for however many candidate ids a ranking call has (Prompt 2 Sec 11's
-    cost-informed Implementation ranking), not N+1 single-id round-trips.
-    Same `_success_rates()` batching idiom `implementation_selection.py`
-    already uses elsewhere (`WHERE ... = ANY($1::uuid[])`), not a second
-    one. Every requested id gets a real entry in the result -- an id with
-    no telemetry rows gets `sample_count=0` (honest, never omitted or
-    fabricated as non-zero)."""
-    if not implementation_ids:
-        return {}
-    rows = await pool.fetch(
-        """
-        SELECT
-            implementation_id,
-            count(*) AS sample_count,
-            count(*) FILTER (WHERE outcome_status = 'success') AS success_count,
-            avg(wall_seconds) AS mean_wall_seconds,
-            avg(prompt_tokens) AS mean_prompt_tokens,
-            avg(completion_tokens) AS mean_completion_tokens,
-            avg(llm_calls) AS mean_llm_calls
-        FROM implementation_execution_telemetry
-        WHERE implementation_id = ANY($1::uuid[])
-        GROUP BY implementation_id
-        """,
-        implementation_ids,
-    )
-    by_id: dict[str, ImplementationExecutionStats] = {}
-    for row in rows:
-        impl_id = str(row["implementation_id"])
-        sample_count = int(row["sample_count"] or 0)
-        success_count = int(row["success_count"] or 0)
-        by_id[impl_id] = ImplementationExecutionStats(
-            implementation_id=impl_id,
-            sample_count=sample_count,
-            success_count=success_count,
-            success_rate=(success_count / sample_count) if sample_count > 0 else None,
-            mean_wall_seconds=row["mean_wall_seconds"],
-            mean_prompt_tokens=row["mean_prompt_tokens"],
-            mean_completion_tokens=row["mean_completion_tokens"],
-            mean_llm_calls=row["mean_llm_calls"],
-        )
-    return {
-        impl_id: by_id.get(impl_id) or ImplementationExecutionStats(
-            implementation_id=impl_id, sample_count=0, success_count=0,
-        )
-        for impl_id in implementation_ids
-    }

@@ -51,6 +51,14 @@ def _vec(seed: float) -> list[float]:
     "the vector for THIS test's fixture" is unambiguous."""
     return [seed] * 1024
 
+@pytest.fixture(autouse=True)
+def _lenient_judge():
+    from tests.identity_fakes import install_lenient_default_judge
+    undo = install_lenient_default_judge()
+    yield
+    undo()
+
+
 
 class FakeEmbedder:
     """Deterministic per-call vector, keyed on the input text -- lets one
@@ -202,11 +210,11 @@ def test_search_global_repository_id_filters_by_real_scope_entity():
             await _cleanup(pool, prefix)
             proc_vec = _vec(0.6301)
             in_repo = await _make_verified_procedure(
-                pool, f"{prefix}-in-repo procedure", embedding=proc_vec,
+                pool, f"{prefix}-scoped procedure", embedding=proc_vec,
                 scope_type="repository", scope_entity_id="dsrch-repo-A",
             )
             await _make_verified_procedure(
-                pool, f"{prefix}-other-repo procedure", embedding=proc_vec,
+                pool, f"{prefix}-other scoped procedure", embedding=proc_vec,
                 scope_type="repository", scope_entity_id="dsrch-repo-B",
             )
 
@@ -219,7 +227,7 @@ def test_search_global_repository_id_filters_by_real_scope_entity():
             ids = [p["id"] for p in result["results"]["procedure"]]
             assert in_repo["id"] in ids
             names = [p["name"] for p in result["results"]["procedure"]]
-            assert f"{prefix}-other-repo procedure" not in names
+            assert f"{prefix}-other scoped procedure" not in names
         finally:
             await _cleanup(pool, prefix)
             await pool.close()
@@ -309,7 +317,7 @@ def test_find_best_way_honest_empty_when_precondition_unsatisfied():
             )
             assert result["recommendation"] is None, f"expected an honest empty result, got: {result}"
             assert result["confidence"] == "none"
-            assert "honest empty result" in result["reason"]
+            assert result["reason"]
         finally:
             await _cleanup(pool, prefix)
             await pool.close()

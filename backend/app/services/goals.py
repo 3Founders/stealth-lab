@@ -1,14 +1,13 @@
 """
 Canonical Goal object (backend/db/83_goals.sql, backend/db/84_goals_
 embeddings.sql) -- founder directive "ingestion.md" Sec 2: Goal is the
-stable-ID linking primitive between Procedure and Implementation,
-deliberately lighter-weight than either (no steps, no invariants, no
-verification statistics -- those stay on `procedures`/`implementations`).
+stable-ID linking primitive for Procedures, deliberately lighter-weight
+(no steps, no invariants, no verification statistics -- those stay on
+`procedures`).
 
 This module owns the ONE write path (find_or_create_goal) so every
-caller -- app/services/procedures.py::capture_procedure and
-app/services/implementation_goals.py's enrichment job today, any future
-ingestion source tomorrow -- gets the same dedup discipline (ingestion.md
+caller -- app/services/procedures.py::capture_procedure and any
+ingestion source -- gets the same dedup discipline (ingestion.md
 Sec 8):
   tier 1 -- exact normalized-name match (always on, DB-enforced twice:
     the SELECT below, and migration 83's own partial unique indexes as a
@@ -39,7 +38,7 @@ describes is mechanically detectable.
 
 Also provides the read/product surface this Goal object exists FOR
 (ingestion.md Sec 18-19): search_goals (lexical + optional semantic,
-RRF-fused), get_goal (with its live Procedures/Implementations), and
+RRF-fused), get_goal (with its live Procedures), and
 create_goal_from_user (the "search near matches, allow create anyway"
 flow a frontend/MCP caller drives).
 """
@@ -426,11 +425,9 @@ async def get_goal(
     scope: Optional[AccessScope] = None,
     tenant_scope: Optional[TenantScope] = None,
 ) -> Optional[dict[str, Any]]:
-    """One Goal plus its live Procedures/Implementations (ingestion.md
-    Sec 18: "Return... available Procedures, available Implementations").
-    Summaries only (id/name/status) -- never the full procedure/
-    implementation row, keeping this a lightweight Goal-centric view, not
-    a second copy of `get_procedure`/`inspect_implementation`.
+    """One Goal plus its live Procedures (ingestion.md Sec 18). Summaries only
+    (id/name/status) -- never the full procedure row, keeping this a
+    lightweight Goal-centric view, not a second copy of `get_procedure`.
 
     Scope-checked the same way every other single-row-by-id reader in
     this codebase is (CLAUDE.md: retrieval is not authorization) --
@@ -456,20 +453,13 @@ async def get_goal(
     # `find_or_create_goal`'s). Kept consistent everywhere in this module.
     goal["procedures"] = [
         {**dict(r), "id": str(r["id"]), "procedure_id": str(r["procedure_id"])}
-        for r in await pool.fetch(
+        for r in (await __import__("app.services.shards", fromlist=["fanout_fetch"]).fanout_fetch(
+            pool,
             "SELECT id, procedure_id, name, verification_state, availability "
             "FROM procedures WHERE achieves_goal_id = $1 AND t_invalid IS NULL "
             "ORDER BY t_created DESC LIMIT 50",
             goal_id,
-        )
-    ]
-    goal["implementations"] = [
-        {**dict(r), "id": str(r["id"])}
-        for r in await pool.fetch(
-            "SELECT id, name, provider, kind, status FROM implementations "
-            "WHERE goal_id = $1 ORDER BY t_created DESC LIMIT 50",
-            goal_id,
-        )
+        ))[:50]
     ]
     return goal
 

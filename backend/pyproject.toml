@@ -48,6 +48,9 @@ dependencies = [
     "uvicorn",
     "voyageai",
     "google-genai",
+    # app/telemetry.py -- vendor-neutral tracing; no-op unless enabled.
+    "opentelemetry-sdk",
+    "opentelemetry-exporter-otlp-proto-http",
     # app/services/invariants.py -- numeric procedure invariants
     # (procedures.invariants) are decided with a real solver rather than
     # eval(); see that module's docstring for why the applicability

@@ -64,7 +64,7 @@ class PromptClient:
 
 
 def empty_extraction(**over):
-    base = {"primary_goal": None, "subgoals": [], "candidate_procedures": [], "implementations": [], "claims": [],
+    base = {"primary_goal": None, "subgoals": [], "candidate_procedures": [], "claims": [],
             "preconditions": [], "failure_modes": [], "recovery_patterns": [], "verification_actions": [],
             "outcome": "failure", "reusable_elements": [], "uncertainties": []}
     base.update(over)

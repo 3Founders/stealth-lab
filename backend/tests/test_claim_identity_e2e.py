@@ -154,3 +154,67 @@ async def test_claims_dedup_across_shards(pool):
         await pool.execute("DELETE FROM knowledge_shards WHERE shard_id='K001'")
         sh.invalidate_shard_cache()
         await shard.close()
+
+
+# ------------------------------------------------------------------ reconciliation of outage-created claims
+async def _private(pool, text, src, **kw):
+    r = await ingest_claim(pool, statement=s_(text), scope_type="global", visibility="private", owner_id=f"{T}-owner",
+                           source_key=f"{T}-{src}", source_ref=f"{T}-{src}", embedder=EMB, judge=kw.pop("judge", judge()), **kw)
+    await sp.drain_outbox(pool)
+    return r
+
+
+@pytest.mark.asyncio
+async def test_claims_created_during_an_outage_are_judged_later_and_merged_into_the_older_one(pool):
+    from app.services.claim_identity import reconcile_claims
+    a = await _private(pool, "the cache is enabled by default", "s1")                        # judged normally: created
+    b = await _private(pool, "caches are on unless you opt out", "s2", judge=judge(fail=True))   # judge down: created anyway
+    assert b["action"] == "created" and b["decision"] == "judge_unavailable" and b["claim_id"] != a["claim_id"]
+    assert (await pool.fetchval("SELECT detail->>'created_claim_id' FROM identity_decisions WHERE object_type='claim' "
+                                "AND candidate_text LIKE $1 AND decision='judge_unavailable'", f"{T}%")) == b["claim_id"]
+    # the judge is still down: nothing is guessed, the claim waits
+    assert (await reconcile_claims(pool, embedder=EMB, judge=judge(fail=True)))["deferred"] >= 1
+    assert await pool.fetchval("SELECT t_invalid IS NULL FROM knowledge_nodes WHERE id=$1::uuid", b["claim_id"])
+    # the judge is back
+    out = await reconcile_claims(pool, embedder=EMB, judge=judge())
+    assert out["merged"] >= 1
+    survivor, loser = sorted((a["claim_id"], b["claim_id"]))
+    assert await pool.fetchval("SELECT t_invalid IS NULL FROM knowledge_nodes WHERE id=$1::uuid", survivor)
+    assert not await pool.fetchval("SELECT t_invalid IS NULL FROM knowledge_nodes WHERE id=$1::uuid", loser)
+    refs = await pool.fetchval("SELECT properties->'source_refs' FROM knowledge_nodes WHERE id=$1::uuid", survivor)
+    assert {r["source_key"] for r in refs} == {f"{T}-s1", f"{T}-s2"}                          # provenance was carried over
+    # idempotent: a second sweep has nothing to do for these
+    assert (await reconcile_claims(pool, embedder=EMB, judge=judge()))["checked"] == 0
+
+
+@pytest.mark.asyncio
+async def test_reconciliation_never_merges_a_contradiction_or_a_low_confidence_same(pool):
+    from app.services.claim_identity import reconcile_claims
+    a = await _private(pool, "the cache is enabled by default", "s1")
+    b = await _private(pool, "the cache does not run by default", "s2", judge=judge(fail=True))
+    c = await _private(pool, "maybe the cache is on", "s3", judge=judge(fail=True))
+    out = await reconcile_claims(pool, embedder=EMB, judge=judge())
+    assert out["merged"] == 0 and out["flagged"] >= 2
+    for cid in (a["claim_id"], b["claim_id"], c["claim_id"]):
+        assert await pool.fetchval("SELECT t_invalid IS NULL FROM knowledge_nodes WHERE id=$1::uuid", cid)
+    rels = await pool.fetch("SELECT relation FROM claim_relation_candidates WHERE claim_a_id = ANY($1::uuid[]) OR claim_b_id = ANY($1::uuid[])",
+                            [a["claim_id"], b["claim_id"], c["claim_id"]])
+    assert "contradicts" in {r["relation"] for r in rels}
+
+
+@pytest.mark.asyncio
+async def test_a_claim_with_dependents_is_flagged_for_review_not_retired(pool):
+    from app.services.claim_identity import reconcile_claims
+    a = await _private(pool, "the cache is enabled by default", "s1")
+    b = await _private(pool, "caches are on unless you opt out", "s2", judge=judge(fail=True))
+    survivor, loser = sorted((a["claim_id"], b["claim_id"]))
+    await pool.execute("INSERT INTO procedure_claim_refs (id, procedure_id, procedure_version, claim_id, role, ref_origin, created_by) "
+                       "VALUES (gen_random_uuid(), gen_random_uuid(), 1, $1::uuid, 'PRECONDITION', 'derived', 'test')", loser)
+    try:
+        out = await reconcile_claims(pool, embedder=EMB, judge=judge())
+        assert out["merged"] == 0 and out["flagged"] >= 1
+        assert await pool.fetchval("SELECT t_invalid IS NULL FROM knowledge_nodes WHERE id=$1::uuid", loser)
+        assert await pool.fetchval("SELECT relation FROM claim_relation_candidates WHERE claim_a_id = ANY($1::uuid[]) AND claim_b_id = ANY($1::uuid[])",
+                                   [a["claim_id"], b["claim_id"]]) == "equivalent"
+    finally:
+        await pool.execute("DELETE FROM procedure_claim_refs WHERE claim_id=$1::uuid", loser)

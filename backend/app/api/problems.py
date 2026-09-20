@@ -68,8 +68,6 @@ class EvaluationIn(BaseModel):
     solution_id: str
     procedure_id: Optional[str] = None
     procedure_version: Optional[int] = None
-    implementation_id: Optional[str] = None
-    implementation_version: Optional[int] = None
     environment: dict[str, Any] = Field(default_factory=dict)
     methodology: dict[str, Any] = Field(default_factory=dict)
     provenance: Optional[str] = None

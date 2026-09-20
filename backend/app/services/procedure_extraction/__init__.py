@@ -243,7 +243,8 @@ async def extract_procedure(
     # left as an intentional follow-up UPDATE rather than widening that
     # function's own signature, so every existing caller/test of
     # capture_procedure() is untouched by this pass.
-    await pool.execute(
+    from app.services.shards import home_pool
+    await (await home_pool(pool, "procedure", str(result["id"]), by_row_id=True)).execute(
         "UPDATE procedures SET approval_status = 'proposed', "
         "capability_statement = $2, extracted_by = $3 WHERE id = $1::uuid",
         result["id"], extracted.capability_statement, extracted_by,

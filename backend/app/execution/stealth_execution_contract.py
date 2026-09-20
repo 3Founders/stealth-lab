@@ -3,7 +3,7 @@ MCP hardening B4: the Stealth Execution Contract -- the spec's own named
 chain:
 
     RUN_CREATED -> DISCOVERY -> PROCEDURE_EVALUATED -> APPLICABILITY_CHECKED
-    -> PROCEDURE_VERSION_PINNED -> IMPLEMENTATION_PINNED -> EXECUTION_STARTED
+    -> PROCEDURE_VERSION_PINNED -> BINDING_PINNED -> EXECUTION_STARTED
     -> EXECUTION_EVENTS -> VERIFICATION -> OUTCOME -> EVIDENCE -> FINALIZED
 
 "A run cannot claim Stealth procedural provenance without this chain.
@@ -24,8 +24,8 @@ existing table, guarded by its own existing constraint:
                             (diagnose_candidates always sets it either way)
   PROCEDURE_VERSION_PINNED execution_runs.procedure_version (NOT NULL,
                             set once at INSERT, migration 36's own schema)
-  IMPLEMENTATION_PINNED    >=1 execution_run_nodes row has a real
-                            implementation_id (host-executed nodes may
+  BINDING_PINNED           >=1 execution_run_nodes row has a real
+                            step binding (host-executed nodes may
                             legitimately never pin one -- optional, not
                             skipped-in-error)
   EXECUTION_STARTED        execution_runs.status has left 'pending'
@@ -59,7 +59,7 @@ becomes observable and testable" is B2's own phrase, extended here to
 the whole run lifecycle.
 
 Some states are legitimately OPTIONAL for a given run (a `plan_only`
-run never reaches IMPLEMENTATION_PINNED; a procedure with no
+run never reaches BINDING_PINNED; a procedure with no
 postconditions never reaches VERIFICATION) -- `reached` lists exactly
 which states this run's real facts satisfy, in chain order, with
 `current_state` naming the FURTHEST one reached. `skipped` names states
@@ -79,7 +79,7 @@ CHAIN: tuple[str, ...] = (
     "PROCEDURE_EVALUATED",
     "APPLICABILITY_CHECKED",
     "PROCEDURE_VERSION_PINNED",
-    "IMPLEMENTATION_PINNED",
+    "BINDING_PINNED",
     "EXECUTION_STARTED",
     "EXECUTION_EVENTS",
     "VERIFICATION",
@@ -121,13 +121,13 @@ async def compute_execution_contract_state(
     if run["procedure_version"] is not None:
         reached.append("PROCEDURE_VERSION_PINNED")
 
-    has_implementation = await pool.fetchval(
+    has_binding = await pool.fetchval(
         "SELECT EXISTS(SELECT 1 FROM execution_run_nodes "
-        "WHERE execution_run_id = $1 AND implementation_id IS NOT NULL)",
+        "WHERE execution_run_id = $1 AND binding IS NOT NULL)",
         execution_run_id,
     )
-    if has_implementation:
-        reached.append("IMPLEMENTATION_PINNED")
+    if has_binding:
+        reached.append("BINDING_PINNED")
 
     if run["status"] != "pending":
         reached.append("EXECUTION_STARTED")

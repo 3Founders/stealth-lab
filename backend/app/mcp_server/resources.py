@@ -42,7 +42,6 @@ from typing import Any, Optional
 from mcp.server.mcpserver import Context
 
 from app.execution import durable_resume as _dres
-from app.execution import implementation_registry as _impl
 from app.services import claim_graph_api as _claims
 from app.services import procedure_graph_api as _pg
 from app.services import product_model as _pm
@@ -160,8 +159,8 @@ async def procedure_resource(procedure_id: str, ctx: Context) -> str:
         )
     if detail.get("claims"):
         md += _section("Precondition-referenced claims", _bullets(detail["claims"]))
-    if detail.get("implementation_kinds"):
-        md += _section("Advertised implementation kinds", ", ".join(detail["implementation_kinds"]))
+    if detail.get("executor_kinds"):
+        md += _section("Executor kinds named by step bindings", ", ".join(detail["executor_kinds"]))
     prov = "".join(filter(None, [
         _kv("source", detail.get("provenance")),
         _kv("created_by", detail.get("created_by")),
@@ -258,7 +257,6 @@ async def evaluation_resource(evaluation_id: str, ctx: Context) -> str:
     md += _kv("Benchmark", e.get("benchmark_id"))
     md += _kv("Solution", e.get("solution_id"))
     md += _kv("Procedure version", e.get("procedure_version_id") or e.get("procedure_id"))
-    md += _kv("Implementation", e.get("implementation_id"))
     if e.get("metrics"):
         md += _section("Metrics", _fence(e.get("metrics")))
     if e.get("verification"):
@@ -267,40 +265,6 @@ async def evaluation_resource(evaluation_id: str, ctx: Context) -> str:
         [{"description": str(x)} for x in (e.get("executions") or [])]
     ) or "_none_")
     return md.rstrip() + "\n"
-
-
-async def implementation_resource(implementation_id: str, ctx: Context) -> str:
-    """stealth://implementations/{implementation_id} -- secret-free descriptor."""
-    scope = _scope()
-    pool = _pool(ctx)
-    desc = await _impl.get_descriptor(pool, implementation_id, scope=scope)
-    if desc is None:
-        return _NOT_FOUND
-    md = f"# Implementation `{implementation_id}`\n\n"
-    md += _kv("Kind", desc.get("kind"))
-    md += _kv("Provider", desc.get("provider"))
-    md += _kv("Version", desc.get("version"))
-    md += _kv("Status", desc.get("status"))
-    md += _kv("Verification status", desc.get("verification_status"))
-    md += _kv("Protocol", desc.get("protocol"))
-    md += _section("Descriptor", _fence(desc))
-    md += "\n_Secret material (auth) is sanitised to references only by the registry._\n"
-    return md.rstrip() + "\n"
-
-
-async def task_implementations_resource(task_node_id: str, ctx: Context) -> str:
-    """stealth://tasks/{task_node_id}/implementations -- active links only."""
-    scope = _scope()
-    pool = _pool(ctx)
-    rows = await _impl.get_for_task(pool, task_node_id, scope=scope)
-    md = f"# Implementations for task node `{task_node_id}`\n\n"
-    if not rows:
-        return md + "_no active implementations linked_\n"
-    for r in rows:
-        md += (f"- `{r.get('id')}` -- {r.get('kind')}/{r.get('provider')} "
-               f"v{r.get('version')} ({r.get('status')}, "
-               f"{r.get('verification_status', 'unverified')})\n")
-    return md
 
 
 async def run_resource(run_id: str, ctx: Context) -> str:
@@ -335,19 +299,11 @@ _RESOURCES = [
      "One structured epistemic claim: subject/predicate/object, truth state, "
      "epistemic status, and its live evidence.", claim_resource),
     ("stealth://evaluations/{evaluation_id}", "evaluation", "Evaluation",
-     "One Evaluation: version-pinned procedure/implementation, recomputed metrics, "
+     "One Evaluation: version-pinned procedure, recomputed metrics, "
      "verification summary, status, linked execution ids.", evaluation_resource),
-    ("stealth://implementations/{implementation_id}", "implementation", "Implementation",
-     "One durable implementation's secret-free execution descriptor: kind, provider, "
-     "protocol, locator, I/O schema, requirements, lifecycle state.",
-     implementation_resource),
-    ("stealth://tasks/{task_node_id}/implementations", "task-implementations",
-     "Task node implementations",
-     "Every active implementation linked to a TaskNode (candidate/deprecated/"
-     "disabled/quarantined ones are excluded).", task_implementations_resource),
     ("stealth://runs/{run_id}", "run", "Execution run",
      "A durable execution run: overall status, per-node status / attempt counts / "
-     "error class, pinned implementation bindings, and the full per-node attempt "
+     "error class, step bindings, and the full per-node attempt "
      "history. Read-only.", run_resource),
 ]
 
@@ -372,27 +328,26 @@ async def resolve_node_resources(
     *,
     scope,
 ) -> dict[str, list[dict[str, str]]]:
-    """Return ONLY the Procedures / Claims / Implementations relevant to one
+    """Return ONLY the Procedures / Claims relevant to one
     TaskNode + environment, as resource references -- instead of dumping
     global context.
 
     This is the documented seam for a future
     ``resolve_node_resources(node, environment)`` in the execution path. It
-    is NOT wired into execution yet: it is a thin aggregator over three
+    is NOT wired into execution yet: it is a thin aggregator over two
     already-real reads so a future caller has one entrypoint. Each leg is
     best-effort -- a failing leg yields ``[]``, never an exception.
 
       * relevant procedures      -> applicability.find_applicable_procedures
                                     (goal_text = the node's goal, scoped)
-      * relevant implementations -> implementation_registry.get_for_task
       * relevant claims          -> the precondition-referenced claims on the
                                     top procedure candidate
 
-    Returns {"procedures": [...], "implementations": [...], "claims": [...]}
+    Returns {"procedures": [...], "claims": [...]}
     where each item is {"uri": "stealth://...", "label": "..."}.
     """
     out: dict[str, list[dict[str, str]]] = {
-        "procedures": [], "implementations": [], "claims": [],
+        "procedures": [], "claims": [],
     }
     goal_text = (node or {}).get("goal") or (node or {}).get("description") or ""
 
@@ -408,18 +363,6 @@ async def resolve_node_resources(
             })
     except Exception:  # noqa: BLE001 -- best-effort seam
         pass
-
-    node_id = (node or {}).get("id") or (node or {}).get("task_node_id")
-    if node_id:
-        try:
-            impls = await _impl.get_for_task(pool, str(node_id), scope=scope)
-            for i in impls or []:
-                out["implementations"].append({
-                    "uri": f"stealth://implementations/{i['id']}",
-                    "label": f"{i.get('kind')}/{i.get('provider')} v{i.get('version')}",
-                })
-        except Exception:  # noqa: BLE001
-            pass
 
     if out["procedures"]:
         try:

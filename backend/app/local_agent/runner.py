@@ -64,7 +64,7 @@ from app.execution.behavioral_validation import (
     gate_execution_success_with_behavior,
 )
 from app.execution.graph_executor import NodeResult, execute_task_graph
-from app.execution.implementations import resolve_implementation
+from app.execution.executor_kinds import resolve_executor
 from app.execution.procedure_graph import steps_to_linear_nodes
 # P5 decouple: the per-workspace SQLite local store (LocalProcedureStore),
 # its automatic private-learning capture (maybe_capture_local_candidate),
@@ -482,7 +482,7 @@ class LocalAgentRunner:
             # P1 (product spec: "Complete implementation abstraction"):
             # before spending a real Agent+RepoSandbox run on this node,
             # ask the real registry whether the node's own declared
-            # implementation_hint is one this process can actually
+            # binding kind is one this process can actually
             # satisfy. A hint-less node (every stored procedure today)
             # resolves to "frontier", which IS what _run_local_node does
             # -- so this changes nothing for any node writing this pass
@@ -490,7 +490,7 @@ class LocalAgentRunner:
             # unimplemented kind (e.g. "slm") gets an honest, explicit
             # failure -- never a silent no-op, and never a silent
             # frontier run pretending to be something else.
-            resolution = resolve_implementation(node.implementation_hint)
+            resolution = resolve_executor(node.executor_hint)
             if not resolution.supported:
                 note = (
                     f"step {node.order} ({node.goal}): implementation kind "

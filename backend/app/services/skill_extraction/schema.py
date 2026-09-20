@@ -203,7 +203,7 @@ class ExtractedGoal(BaseModel):
 # every possible resource kind, but real, checked, and growable without
 # a migration (it's a Python-side CHECK, not a DB enum, same split
 # scope_type/kind already use elsewhere in this codebase).
-IMPLEMENTATION_KINDS = frozenset({
+EXECUTOR_KINDS = frozenset({
     "script", "config", "workflow", "doc", "other",
 })
 
@@ -232,8 +232,8 @@ class ExtractedImplementation(BaseModel):
     @field_validator("kind")
     @classmethod
     def _kind_known(cls, v: str) -> str:
-        if v not in IMPLEMENTATION_KINDS:
-            raise ValueError(f"unknown implementation kind {v!r} (valid: {sorted(IMPLEMENTATION_KINDS)})")
+        if v not in EXECUTOR_KINDS:
+            raise ValueError(f"unknown implementation kind {v!r} (valid: {sorted(EXECUTOR_KINDS)})")
         return v
 
     @field_validator("name", "resource_path")

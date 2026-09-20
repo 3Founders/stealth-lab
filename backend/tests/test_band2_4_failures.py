@@ -59,7 +59,7 @@ def _row(**overrides):
         "id": str(uuid.uuid4()),
         "outcome_status": "failure",
         "failure_class": None,
-        "target_type": "implementation",
+        "target_type": "claim",
         "target_id": str(uuid.uuid4()),
         "target_version": None,
         "context_key": None,
@@ -123,7 +123,7 @@ def test_classification_carries_target_and_aggregation_inputs():
         failure_class="input_abnormal",
         target_id=tid, context_key=ctx, independence_group=grp,
     ))
-    assert (got.target_type, got.target_id) == ("implementation", tid)
+    assert (got.target_type, got.target_id) == ("claim", tid)
     assert got.context_key == ctx
     assert got.independence_group == grp
 
@@ -267,7 +267,7 @@ async def _seed(pool, *, failure_class, status, context_key=None):
 
     kwargs = dict(
         evidence_type="execution_result",
-        target={"target_type": "implementation", "target_id": str(uuid.uuid4())},
+        target={"target_type": "claim", "target_id": str(uuid.uuid4())},
         direction="supports" if status == "success" else "contradicts",
         strength_score=1.0,
         strength_method="recorded_outcome",

@@ -204,7 +204,9 @@ async def list_procedures_for_claim(
         params.append(list(roles))
         role_clause = f"AND r.role = ANY(${len(params)}::text[])"
     try:
-        rows = await pool.fetch(
+        from app.services.shards import fanout_fetch
+        rows = await fanout_fetch(
+            pool,
             "SELECT p.id AS id, p.name AS name, "
             "       r.procedure_id AS procedure_id, r.procedure_version AS procedure_version, "
             "       r.role AS role, r.claim_version AS claim_version "
@@ -297,7 +299,19 @@ async def backfill_refs_from_preconditions(
     safe if you prefer to page.
 
     Returns `{"procedures_scanned", "refs_created", "already_present"}`.
+
+    SHARDING: refs live on the same database as their procedure, so with remote shards registered each shard is
+    backfilled through its own pool and the counters are summed.
     """
+    from app.services.shards import all_pools
+    _pools = await all_pools(pool, strict=True)
+    if len(_pools) > 1:
+        total = {"procedures_scanned": 0, "refs_created": 0, "already_present": 0}
+        for _sid, spool in _pools:
+            part = await backfill_refs_from_preconditions(spool, limit=limit)
+            for k in total:
+                total[k] += part.get(k, 0)
+        return total
     rows = await pool.fetch(
         "SELECT id, procedure_id, version, preconditions FROM procedures "
         "WHERE t_invalid IS NULL "

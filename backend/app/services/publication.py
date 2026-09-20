@@ -79,9 +79,6 @@ _DEPS_SELECT = (
     "LEFT JOIN procedures p ON p.id = d.target_procedure_id "
     "WHERE d.procedure_id = $1::uuid"
 )
-_IMPL_SELECT = (
-    "SELECT resource_path FROM procedure_implementations WHERE procedure_id = $1::uuid"
-)
 _PUBREC_INSERT = """
     INSERT INTO publication_records
       (source_object_type, source_object_id, published_object_type,
@@ -100,6 +97,14 @@ async def _traverse_dependencies(pool: Any, source_row_id: str) -> DependencyRep
     rep = DependencyReport()
     for d in await pool.fetch(_DEPS_SELECT, source_row_id):
         rep.total += 1
+        if d["target_procedure_id"] and d["target_visibility"] is None:
+            # the LEFT JOIN above only sees targets on this database; a public target may live on another shard
+            from app.services.shards import home_pool
+            tp = await home_pool(pool, "procedure", str(d["target_procedure_id"]), by_row_id=True)
+            if tp is not pool:
+                trow = await tp.fetchrow("SELECT visibility, name FROM procedures WHERE id = $1::uuid", d["target_procedure_id"])
+                if trow is not None:
+                    d = {**dict(d), "target_visibility": trow["visibility"], "target_name": trow["name"]}
         vis = (d["target_visibility"] or "").lower()
         if d["resolution_status"] not in ("resolved", "resolved_verified", None) and not d["target_procedure_id"]:
             rep.unknown += 1
@@ -428,7 +433,8 @@ async def withdraw_publication(
     # either way; 'disabled' is the semantically correct one -- distinct
     # from 'quarantined', which means "pending review", not "withdrawn").
     if outcome == "WITHDRAWN_FROM_RETRIEVAL" and published_row:
-        await pool.execute(
+        from app.services.shards import home_pool
+        await (await home_pool(pool, "procedure", str(published_row), by_row_id=True)).execute(
             "UPDATE procedures SET availability = 'disabled' WHERE id = $1::uuid",
             published_row,
         )

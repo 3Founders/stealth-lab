@@ -52,7 +52,7 @@ code disagree, the code column is what is written here.
 | Evidence/provenance | `evidence`, `sources`, `ingestion_contexts`, `ingested_artifacts`, `claim_sources`, `procedure_claim_refs` | as-is | no change |
 | Hierarchy | `knowledge_nodes` internal nodes (`hierarchy.py`), `edges`, `decompositions` — **no** Goal relation table | new `goal_relations` | add table; retrieval does not read it |
 | Embeddings | inline `vector(1024)` columns on `goals`, `procedures`, `knowledge_nodes`, `agents` | inline stays canonical for single-DB; **projections** carry search copy | projection tables (rebuildable) |
-| Implementation | `implementations` (+ mig 33/58/71/80/81/85/87), `procedure_implementations`, `implementation_registry`, `implementation_execution_telemetry`, REST `/implementations`, `/solutions/{id}/implementations`, MCP tools; 60 files reference it; migration 59 already dropped one redundant binding table | **Runtime binding, not knowledge** | Do **not** drop. Mark ontology use (`implementations.goal`, `implementation_goals` enrichment, goal-scoped implementation search) deprecated; execution-binding fields already live in `execution/implementations.py` + `PlanNode`. Blind removal would break 60 modules; migration plan in §6 |
+| Implementation | *(removed, migration 98)* — was `implementations` (+ mig 33/58/71/80/81/85/87), `procedure_implementations`, registry, telemetry, REST, MCP tools | **Redundant**: a one-step procedure / a step | Removed. Bindings → `steps[].binding`; provenance → `source_locator`; telemetry → `step_execution_telemetry`; history archived in `legacy_implementation_fold` and folded by `admin fold-implementations`. See `docs/step_bindings_and_artifacts.md` |
 | Execution | `execution_runs`, `execution_run_nodes/events`, `execution_plans`, durable_* | untouched | — |
 
 ## 4. Docs vs runtime mismatches
@@ -77,7 +77,7 @@ code disagree, the code column is what is written here.
 
 * `find_applicable_procedures` — imported by `skill_ingestion`, `resources`,
   MCP tools, `product_model`; 20+ tests. Kept as the hard-constraint gate.
-* `implementations` ontology — 60 modules. Migrate callers first.
+* `implementations` ontology — **removed** (migration 98); callers migrated to step bindings.
 * `dedup.py` / `claim_family` — offline-only sweep tooling; deprecate with
   comments, no removal until the claim-relation path has run on real data.
 
@@ -107,5 +107,5 @@ code disagree, the code column is what is written here.
 | Job queue | `ingestion_jobs` | + lease, idempotency, retry state, scope (mig 95); new lease worker/CLIs | legacy `claim_jobs/process_pending_jobs/requeue_stuck_jobs` retained for the in-process scheduler |
 | Recommendation | `retrieval_service.find_best_way` | `domain_search.find_best_way` is now an adapter; REST `/v1/search/recommend` exposes goal resolution + retrieval metadata | **Removed**: the direct-procedure cascade composition inside `domain_search.find_best_way` (6 tests that pinned it were replaced by adapter tests) |
 | Retrieval (other callers) | — | — | **Quarantined, not yet converged**: MCP `find_best_way` tier-1 lookup, MCP `search_procedures`, `/v1/procedures/search`, `/v1/solutions/search`, `search_global` procedure leg, `goals.search_goals`, `intent_resolution` hand-weighted re-rank. They still use `find_applicable_procedures` / `claim_conditioned_retrieval` / `solution_search`. Rationale: 40+ test files and the durable-execution routing (`route_decision`) consume their result shape; rewiring without a compatibility layer risked the execution semantics the brief says to preserve |
-| Global `implementations` ontology | table + registry (runtime binding) | none | **Not deleted** (60 modules). Marked deprecated as *knowledge*; migration of `implementations.goal`/`implementation_goals` enrichment to execution metadata is **open** |
+| Global `implementations` ontology | table + registry | step bindings + source locators + preserved artifacts | **Removed** (migration 98); history archived in `legacy_implementation_fold`, folded by `admin fold-implementations` |
 | Claim dedup | `claim_equivalence` | exact-statement identity at ingestion | `dedup.merge_cluster` / `claim_family` marked legacy (not wired into the new path); semantic claim identity at write time is **open** |

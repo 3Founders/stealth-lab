@@ -21,7 +21,6 @@ def _valid_payload(**overrides) -> dict:
         },
         "subgoals": [],
         "candidate_procedures": [],
-        "implementations": [],
         "claims": [],
         "preconditions": [],
         "failure_modes": [],

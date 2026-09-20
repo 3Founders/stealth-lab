@@ -20,6 +20,11 @@ from typing import Any, Optional, Union
 
 import asyncpg
 
+from app import telemetry
+
+#: Bump when an event's payload shape changes incompatibly.
+EVENT_VERSION = 1
+
 EVENT_TYPES: tuple[str, ...] = (
     # pre-existing (this session's earlier B7/B8 pass)
     "run_created", "run_claimed", "run_paused", "run_finalized",
@@ -27,7 +32,7 @@ EVENT_TYPES: tuple[str, ...] = (
     "node_claimed", "node_succeeded", "node_failed",
     # B8's own named vocabulary ("at minimum") -- additive, migration 70
     "run_started", "procedure_retrieved", "applicability_checked",
-    "plan_created", "implementation_bound", "node_started",
+    "plan_created", "implementation_bound", "step_bound", "node_started",
     "tool_called", "tool_result", "knowledge_requested",
     "child_run_created", "node_waiting", "child_run_completed",
     "node_resumed", "verification_started", "verification_completed",
@@ -35,6 +40,8 @@ EVENT_TYPES: tuple[str, ...] = (
     # B7's record_artifact() -- not in B8's 18 named types, but B8's own
     # text is "at minimum" -- additive, migration 72.
     "artifact_recorded",
+    # Retrieval decisions (migration 94). Payloads carry ids/ranks/scores only.
+    "claims_retrieved", "candidates_reranked", "candidate_rejected",
 )
 
 _Executor = Union[asyncpg.Connection, asyncpg.Pool]
@@ -46,11 +53,16 @@ async def record_event(
 ) -> None:
     if event_type not in EVENT_TYPES:
         raise ValueError(f"unknown execution_run_events.event_type: {event_type!r}")
+    # Correlation only: the active span's ids ride beside the canonical row
+    # (NULL when tracing is off). Sampling never gates this INSERT.
+    trace_id, span_id = telemetry.current_ids()
     await conn.execute(
-        "INSERT INTO execution_run_events (execution_run_id, node_order, event_type, payload) "
-        "VALUES ($1,$2,$3,$4::jsonb)",
-        execution_run_id, node_order, event_type, payload or {},
+        "INSERT INTO execution_run_events "
+        "(execution_run_id, node_order, event_type, payload, event_version, trace_id, span_id) "
+        "VALUES ($1,$2,$3,$4::jsonb,$5,$6,$7)",
+        execution_run_id, node_order, event_type, payload or {}, EVENT_VERSION, trace_id, span_id,
     )
+    telemetry.add_event(event_type, run_id=execution_run_id, node_order=node_order)
 
 
 async def record_run_created(conn: _Executor, execution_run_id: str, **fields: Any) -> None:
@@ -129,6 +141,9 @@ async def record_artifact(
     "Large data is stored as artifact references/hashes"), never the
     artifact's own inline content -- the payload here carries a pointer,
     not a copy."""
+    telemetry.add_event(
+        "artifact_recorded", **telemetry.artifact_attrs(
+            uri=ref, content_hash=sha256, size=size_bytes, content_type=kind))
     await record_event(
         conn, execution_run_id=execution_run_id, event_type="artifact_recorded",
         node_order=node_order, payload={"kind": kind, "ref": ref, "sha256": sha256, "size_bytes": size_bytes},
@@ -169,12 +184,14 @@ async def record_plan_created(
     )
 
 
-async def record_implementation_bound(
-    conn: _Executor, execution_run_id: str, *, node_order: int, implementation_id: str,
+async def record_step_bound(
+    conn: _Executor, execution_run_id: str, *, node_order: int, binding: dict,
 ) -> None:
+    """A step's execution binding is about to drive an attempt (the successor of `implementation_bound`, which
+    stays a legal event type only so historical rows remain valid)."""
     await record_event(
-        conn, execution_run_id=execution_run_id, event_type="implementation_bound",
-        node_order=node_order, payload={"implementation_id": implementation_id},
+        conn, execution_run_id=execution_run_id, event_type="step_bound",
+        node_order=node_order, payload={"binding": binding},
     )
 
 
@@ -232,7 +249,6 @@ async def record_tool_called(
     conn: _Executor, execution_run_id: str, *, node_order: Optional[int],
     requested_endpoint: Optional[str] = None, requested_method: Optional[str] = None,
     requested_server_url: Optional[str] = None, requested_tool_name: Optional[str] = None,
-    implementation_version: Optional[str] = None,
 ) -> None:
     """B27: "record what Stealth requested, the concrete endpoint/
     tool/version" -- an externally-hosted Adapter.execute() (adapters.py)
@@ -247,7 +263,6 @@ async def record_tool_called(
         payload={
             "requested_endpoint": requested_endpoint, "requested_method": requested_method,
             "requested_server_url": requested_server_url, "requested_tool_name": requested_tool_name,
-            "implementation_version": implementation_version,
         },
     )
 
@@ -297,9 +312,41 @@ async def record_node_failed(conn: _Executor, execution_run_id: str, *, node_ord
     )
 
 
+async def record_claims_retrieved(
+    conn: _Executor, execution_run_id: str, *, candidate_claim_counts: dict[str, int],
+) -> None:
+    """CLAIM ids/counts only -- Claim text stays in the claims tables."""
+    await record_event(
+        conn, execution_run_id=execution_run_id, event_type="claims_retrieved",
+        payload={"claim_count": sum(candidate_claim_counts.values()),
+                 "claims_per_candidate": candidate_claim_counts},
+    )
+
+
+async def record_candidates_reranked(
+    conn: _Executor, execution_run_id: str, *, stage: str, ranking: list[dict[str, Any]],
+) -> None:
+    """`ranking` rows: {candidate_id, rank_before, rank_after, score}."""
+    await record_event(
+        conn, execution_run_id=execution_run_id, event_type="candidates_reranked",
+        payload={"stage": stage, "candidate_count": len(ranking), "ranking": ranking},
+    )
+
+
+async def record_candidate_rejected(
+    conn: _Executor, execution_run_id: str, *, candidate_id: str, stage: str,
+    verdict: Optional[str] = None, contradiction_probability: Optional[float] = None,
+) -> None:
+    await record_event(
+        conn, execution_run_id=execution_run_id, event_type="candidate_rejected",
+        payload={"candidate_id": candidate_id, "stage": stage, "verdict": verdict,
+                 "contradiction_probability": contradiction_probability},
+    )
+
+
 async def get_run_events(pool: asyncpg.Pool, execution_run_id: str) -> list[dict]:
     rows = await pool.fetch(
-        "SELECT id, execution_run_id, node_order, event_type, payload, created_at "
+        "SELECT id, execution_run_id, node_order, event_type, event_version, payload, created_at, trace_id, span_id "
         "FROM execution_run_events WHERE execution_run_id = $1 ORDER BY seq",
         execution_run_id,
     )

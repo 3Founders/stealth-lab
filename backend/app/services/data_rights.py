@@ -19,6 +19,8 @@ from typing import Any, Optional
 
 # ---- what "owned by this subject" means across the substrate ----------
 _USER_ROW = "SELECT id::text, issuer, external_subject, display_name, email, is_active, t_created FROM users WHERE external_subject = $1"
+# SHARDING: private/org rows are pinned to the home shard K000 by placement policy (services/shards.py), so every query
+# in this module is complete on the control database -- deleting a subject's private data never needs a shard fan-out.
 _PRIV_PROCS = (
     "SELECT id::text, name, display_name, visibility, availability, t_created "
     "FROM procedures WHERE owner_id = $1 AND visibility <> 'public' AND t_invalid IS NULL"

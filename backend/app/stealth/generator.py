@@ -9,7 +9,6 @@ addition to the compact `context.md` / `run.json` / `meta.json`:
 
     claims.md + index/claims.idx           -- the precondition-derived local Claim working set
     procedures.md + index/procedures.idx   -- the selected Procedure, in full
-    implementations.md + index/implementations.idx  -- resolved implementation candidates
     run.md + index/run.idx                 -- per-node execution state
     index/root.idx                         -- the router over the above
 
@@ -78,7 +77,7 @@ __all__ = [
 # imports this rather than hardcoding a second list (see that module's
 # own docstring). `ledger.md` itself is deliberately excluded: it is
 # ITSELF generated from the edit ledger, not a page a caller edits.
-CONTENT_PAGE_FILES: tuple[str, ...] = ("claims.md", "procedures.md", "implementations.md", "goals.md", "run.md")
+CONTENT_PAGE_FILES: tuple[str, ...] = ("claims.md", "procedures.md", "goals.md", "run.md")
 # Written only when the corresponding working set is non-empty (see
 # `has_expl` below) -- still a real, editable content page when present.
 OPTIONAL_CONTENT_PAGE_FILES: tuple[str, ...] = ("exploration.md",)
@@ -92,13 +91,11 @@ def _short(value: object, n: int = 12) -> str:
 _EMPTY_NOTE = {
     "claims.md": "(no structured preconditions and no page-faulted global claims in scope)",
     "procedures.md": "(no selected procedure)",
-    "implementations.md": "(no implementation resolved for the current node -- MISSING_IMPLEMENTATION, not fabricated)",
     "run.md": "(no nodes)",
 }
 _IDX_HEADER = {
     "claims.md": "claims.idx  id|version|scope|status|tags|file|start|end|summary",
     "procedures.md": "procedures.idx  id|version|scope|status|tags|file|start|end|summary",
-    "implementations.md": "implementations.idx  id|version|scope|status|tags|file|start|end|summary",
 }
 
 
@@ -270,7 +267,9 @@ async def _build_procedures_page(
 
     entries: list[tuple[str, int, dict]] = [(pid, ver, procedure)]
     if extra_ids:
-        rows = await pool.fetch(
+        from app.services.shards import fanout_fetch
+        rows = await fanout_fetch(
+            pool,
             "SELECT * FROM procedures WHERE procedure_id = ANY($1::uuid[]) AND t_invalid IS NULL",
             [i for i in extra_ids if i != pid],
         )
@@ -295,30 +294,6 @@ async def _build_procedures_page(
     return procedures_md, idx_rows
 
 
-def _build_implementations_page(
-    context: dict[str, Any], extra_blocks: tuple[MdBlock, ...] = (),
-) -> tuple[str, list[IdxRow]]:
-    blocks: list[MdBlock] = []
-    for impl in context.get("recommended_implementations") or []:
-        iid = str(impl["implementation_id"])
-        role = impl.get("role") or impl.get("kind") or "-"
-        source = impl.get("source", "-")
-        blocks.append(MdBlock(
-            obj_id=iid,
-            heading=f"IMPLEMENTATION {iid}",
-            body=[
-                kv("role", role),
-                kv("source", source),
-                kv("implementation_version", impl.get("implementation_version") or "-"),
-            ],
-            version=str(impl.get("implementation_version") or "-"),
-            status="AVAILABLE",
-            tags=(source,),
-            summary=f"role={role} source={source}",
-        ))
-    return _finalize_page("implementations.md", blocks + list(extra_blocks))
-
-
 # READY/RUNNING/BLOCKED/DONE per meta-harness Sec 24's own RUN_STATE
 # vocabulary -- mapped from the real execution_run_nodes.status values
 # (durable_run.py's own lifecycle), not invented. A status this map
@@ -336,7 +311,6 @@ _RUN_STATE_BUCKET = {
 async def _gather_index_groups(
     pool: asyncpg.Pool, *, context: dict[str, Any],
     claims_rows: list[IdxRow], procedures_rows: list[IdxRow],
-    recommended_implementations: list[dict],
 ):
     """The real data-gathering half of `index.md` (meta-harness/execu.md
     Sec 24), kept separate from the final render call so the caller can
@@ -348,9 +322,7 @@ async def _gather_index_groups(
     CLAIM_GROUP/PROCEDURE_GROUP reuse the SAME topic tags already
     computed for claims.idx/procedures.idx (`.tags[0]`, claim_type/domain
     respectively) -- one source of grouping truth, not two.
-    IMPLEMENTATION_GROUP groups by the real `implementations.goal` column
-    (migration 80) for exactly the ids this run's own
-    `recommended_implementations` names. GOAL_GROUP groups by the real
+    GOAL_GROUP groups by the real
     `goals.tags` column (migration 83, `ingestion` lane) for exactly the
     Goals `_resolve_goals_by_normalized_name` resolves for this run's own
     nodes -- the SAME resolution `_build_run_page`'s NODE/GOAL lines use,
@@ -371,15 +343,6 @@ async def _gather_index_groups(
     claim_groups = _group(claims_rows)
     procedure_groups = _group(procedures_rows)
 
-    impl_ids = [str(i["implementation_id"]) for i in recommended_implementations if i.get("implementation_id")]
-    implementation_groups: list[GroupLine] = []
-    if impl_ids:
-        rows = await pool.fetch("SELECT id, goal FROM implementations WHERE id = ANY($1::uuid[])", impl_ids)
-        by_goal: dict[str, list[str]] = {}
-        for r in rows:
-            by_goal.setdefault(str(r["goal"] or "-"), []).append(str(r["id"]))
-        implementation_groups = [GroupLine(topic=t, ids=ids) for t, ids in sorted(by_goal.items())]
-
     node_goal_texts = [n.get("goal") for n in context.get("nodes", []) if n.get("goal")]
     goal_rows = await _resolve_goals_by_normalized_name(
         pool, node_goal_texts, scope_type=context.get("scope_type"), scope_entity_id=context.get("scope_entity_id"),
@@ -397,7 +360,7 @@ async def _gather_index_groups(
         by_state[bucket].append(f"N{n['node_order']}")
     run_states = [RunStateLine(state=s, node_ids=by_state[s]) for s in ("READY", "RUNNING", "BLOCKED", "DONE")]
 
-    return claim_groups, procedure_groups, implementation_groups, goal_groups, run_states, goal_rows
+    return claim_groups, procedure_groups, goal_groups, run_states, goal_rows
 
 
 async def _resolve_goals_by_normalized_name(
@@ -517,10 +480,8 @@ async def _build_run_page(
     text matches no real Goal renders `goal=-` and no GOAL line --
     unresolved stays unresolved, never fabricated.
 
-    `executor` is derived from the bound implementation's real `kind`
-    column when one is bound, else the documented "frontier" default
-    (execute_implementation's own honest fallback, confirmed this
-    session) -- never guessed independently of what would actually run.
+    `executor` is derived from the node's step binding when one is bound, else the documented "frontier"
+    default (step_binding.execute_node's own fallback) -- never guessed independently of what would actually run.
     """
     from app.execution.run_collaboration import list_run_collaboration
     from app.services.goals import normalize_goal_name
@@ -560,12 +521,6 @@ async def _build_run_page(
         return render_run_md(run_line, [], collab_lines), []
 
     # --- batched real lookups, never one round trip per node -----------
-    impl_ids = [str(n["implementation_id"]) for n in nodes if n.get("implementation_id")]
-    impl_kind_by_id: dict[str, str] = {}
-    if impl_ids:
-        rows = await pool.fetch("SELECT id, kind FROM implementations WHERE id = ANY($1::uuid[])", impl_ids)
-        impl_kind_by_id = {str(r["id"]): r["kind"] for r in rows}
-
     normalized_by_order = {
         n["node_order"]: normalize_goal_name(n.get("goal") or "") for n in nodes if n.get("goal")
     }
@@ -602,8 +557,12 @@ async def _build_run_page(
         access: list[tuple[str, str]] = [("filesystem", f"write:{g}") for g in wglobs]
         access += [("filesystem", f"write:{g}") for g in wexact]
 
-        impl_id = str(n["implementation_id"]) if n.get("implementation_id") else None
-        executor = impl_kind_by_id.get(impl_id, "frontier") if impl_id else "frontier"
+        from app.execution.step_binding import executor_kind
+        binding = n.get("binding")
+        if isinstance(binding, str):
+            binding = json.loads(binding)
+        binding_kind = binding.get("kind") if binding else None
+        executor = executor_kind(binding)
 
         normalized = normalized_by_order.get(order)
         goal_row = goal_by_normalized.get(normalized) if normalized else None
@@ -623,7 +582,7 @@ async def _build_run_page(
 
         node_lines.append(NodeLine(
             node_id=nid, status=n["status"], name=n.get("goal") or "-",
-            procedure_id=procedure_id, step_id=f"S{order}", implementation_id=impl_id, executor=executor,
+            procedure_id=procedure_id, step_id=f"S{order}", binding=binding_kind, executor=executor,
             deps=deps, goal_id=goal_id,
             grounded_goal_summary=(goal_row["canonical_name"] if goal_row else None),
             inputs={}, access=access, expected_outcome=outcome, verify=node_verify,
@@ -764,26 +723,22 @@ async def generate_projection(
     procedures_md, procedures_rows = await _build_procedures_page(
         pool, context, procedure,
         extra_ids=tuple(b.obj_id for b in faulted.get("procedure", ())))
-    implementations_md, impl_rows = _build_implementations_page(
-        context, tuple(faulted.get("implementation", ())))
     run_md, run_rows = await _build_run_page(pool, context, procedure, intents)
     exploration_md, exploration_rows = render_exploration_page(workspace_root)
 
-    claim_groups, procedure_groups, implementation_groups, goal_groups, run_states, goal_rows = await _gather_index_groups(
+    claim_groups, procedure_groups, goal_groups, run_states, goal_rows = await _gather_index_groups(
         pool, context=context, claims_rows=claims_rows, procedures_rows=procedures_rows,
-        recommended_implementations=context.get("recommended_implementations") or [],
     )
     goals_md, goals_rows = await _build_goals_page(goal_rows)
 
     claims_idx = render_idx(claims_rows, header="claims.idx  id|version|scope|status|tags|file|start|end|summary")
     procedures_idx = render_idx(procedures_rows, header="procedures.idx  id|version|scope|status|tags|file|start|end|summary")
-    implementations_idx = render_idx(impl_rows, header="implementations.idx  id|version|scope|status|tags|file|start|end|summary")
     goals_idx = render_idx(goals_rows, header="goals.idx  id|version|scope|status|tags|file|start|end|summary")
     run_idx = render_idx(run_rows, header="run.idx  node|status|owner|deps|globs|file|start|end|summary")
     exploration_idx = render_idx(exploration_rows, header="exploration.idx  id|version|scope|status|tags|file|start|end|summary")
 
     for name, content in (("claims.idx", claims_idx), ("procedures.idx", procedures_idx),
-                          ("implementations.idx", implementations_idx), ("goals.idx", goals_idx),
+                          ("goals.idx", goals_idx),
                           ("run.idx", run_idx), ("exploration.idx", exploration_idx)):
         if len(content.encode("utf-8")) > TYPE_IDX_MAX_BYTES:
             raise StealthProjectionError(
@@ -807,7 +762,7 @@ async def generate_projection(
         "context.md", "run.json", "meta.json", "index.md",
         *CONTENT_PAGE_FILES, "events.jsonl",
         "index/root.idx", "index/claims.idx", "index/procedures.idx",
-        "index/implementations.idx", "index/goals.idx", "index/run.idx",
+        "index/goals.idx", "index/run.idx",
     ]
     if has_expl:
         file_list += [*OPTIONAL_CONTENT_PAGE_FILES, "index/exploration.idx"]
@@ -819,7 +774,6 @@ async def generate_projection(
         "revisions": {
             "claims": len(claims_rows),
             "procedures": len(procedures_rows),
-            "implementations": len(impl_rows),
             "goals": len(goals_rows),
             "run": len(run_rows),
             "exploration": len(exploration_rows),
@@ -827,7 +781,6 @@ async def generate_projection(
         "counts": {
             "claims": len(claims_rows),
             "procedures": len(procedures_rows),
-            "implementations": len(impl_rows),
             "goals": len(goals_rows),
             "run_nodes": len([r for r in run_rows if r.node_id.startswith("N")]),
             "explorations": len(exploration_rows),
@@ -860,7 +813,7 @@ async def generate_projection(
             repo=os.path.basename(os.path.abspath(workspace_root)) or workspace_root,
             revision=seq, active_run=str(run_row["id"]),
             claim_groups=claim_groups, procedure_groups=procedure_groups,
-            implementation_groups=implementation_groups, goal_groups=goal_groups, run_states=run_states,
+            goal_groups=goal_groups, run_states=run_states,
         )
 
         plan: list[tuple[str, str]] = [
@@ -869,13 +822,11 @@ async def generate_projection(
             (os.path.join(stealth_dir, "index.md"), index_md),
             (os.path.join(stealth_dir, "claims.md"), claims_md),
             (os.path.join(stealth_dir, "procedures.md"), procedures_md),
-            (os.path.join(stealth_dir, "implementations.md"), implementations_md),
             (os.path.join(stealth_dir, "goals.md"), goals_md),
             (os.path.join(stealth_dir, "run.md"), run_md),
             (os.path.join(index_dir, "root.idx"), root_idx),
             (os.path.join(index_dir, "claims.idx"), claims_idx),
             (os.path.join(index_dir, "procedures.idx"), procedures_idx),
-            (os.path.join(index_dir, "implementations.idx"), implementations_idx),
             (os.path.join(index_dir, "goals.idx"), goals_idx),
             (os.path.join(index_dir, "run.idx"), run_idx),
         ]
@@ -894,14 +845,12 @@ async def generate_projection(
         "index_md": index_md,
         "claims_md": claims_md,
         "procedures_md": procedures_md,
-        "implementations_md": implementations_md,
         "goals_md": goals_md,
         "run_md": run_md,
         "exploration_md": exploration_md,
         "root_idx": root_idx,
         "claims_idx": claims_idx,
         "procedures_idx": procedures_idx,
-        "implementations_idx": implementations_idx,
         "goals_idx": goals_idx,
         "run_idx": run_idx,
         "exploration_idx": exploration_idx,

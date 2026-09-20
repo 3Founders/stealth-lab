@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from app.execution.implementations import ImplementationViolation
+from app.execution.executor_kinds import ExecutorKindViolation
 from app.execution.procedure_graph import (
     ProcedureCompositionCycle,
     UnresolvedSubprocedureRef,
@@ -79,27 +79,27 @@ def test_extra_step_fields_are_ignored():
     assert nodes[0].goal == "step one"
 
 
-def test_implementation_hint_single_kind_is_validated_and_carried_onto_the_node():
-    steps = [{"order": 0, "goal": "run the linter", "implementation_hint": "deterministic"}]
+def test_step_binding_is_validated_and_carried_onto_the_node():
+    steps = [{"order": 0, "goal": "run the linter", "binding": {"kind": "command", "command": "make lint"}}]
     nodes = steps_to_linear_nodes(steps)
-    assert nodes[0].implementation_hint == ("deterministic",)
+    assert nodes[0].binding == {"kind": "command", "command": "make lint"}
+    assert nodes[0].executor_hint == ("deterministic",)
 
 
-def test_implementation_hint_preference_list_is_validated_and_carried_onto_the_node():
-    steps = [{"order": 0, "goal": "review the diff", "implementation_hint": ["slm", "frontier"]}]
-    nodes = steps_to_linear_nodes(steps)
-    assert nodes[0].implementation_hint == ("slm", "frontier")
+def test_step_with_no_binding_yields_none_not_a_default():
+    nodes = steps_to_linear_nodes([{"order": 0, "goal": "no binding here"}])
+    assert nodes[0].binding is None and nodes[0].executor_hint is None
 
 
-def test_step_with_no_implementation_hint_yields_none_not_a_default_string():
-    nodes = steps_to_linear_nodes([{"order": 0, "goal": "no hint here"}])
-    assert nodes[0].implementation_hint is None
+def test_invalid_binding_is_rejected_at_the_gate_not_silently_accepted():
+    from app.services.source_locators import SourceLocatorError
+    with pytest.raises(SourceLocatorError):
+        steps_to_linear_nodes([{"order": 0, "goal": "do the work", "binding": {"kind": "quantum_hivemind", "quantum_hivemind": "x"}}])
 
 
-def test_invalid_implementation_hint_is_rejected_at_the_gate_not_silently_accepted():
-    steps = [{"order": 0, "goal": "do the work", "implementation_hint": "quantum_hivemind"}]
-    with pytest.raises(ImplementationViolation):
-        steps_to_linear_nodes(steps)
+def test_legacy_implementation_hint_key_is_ignored():
+    nodes = steps_to_linear_nodes([{"order": 0, "goal": "old row", "implementation_hint": "slm"}])
+    assert nodes[0].binding is None
 
 
 def test_canonical_definition_rejects_an_unresolved_pinned_child_before_execution():

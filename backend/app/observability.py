@@ -103,6 +103,11 @@ def init(component: str) -> bool:
     """
     global _enabled
 
+    # OpenTelemetry tracing shares this one entry-point hook (api / mcp /
+    # worker). Independent of Sentry: each is off unless configured.
+    from app import telemetry
+    telemetry.init(component)
+
     settings = get_settings()
     dsn = settings.sentry_dsn
     if not dsn:

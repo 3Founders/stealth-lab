@@ -53,6 +53,11 @@ z3-solver
 # init() is a no-op and this is never imported.
 sentry-sdk[fastapi]
 
+# OpenTelemetry tracing (app/telemetry.py). Optional at runtime: with
+# OBSERVABILITY_ENABLED unset every span is a no-op.
+opentelemetry-sdk
+opentelemetry-exporter-otlp-proto-http
+
 # python-docx (DocxAdapter, app/services/ingestion_sources/document_adapters/
 # docx_adapter.py) - reads .docx paragraphs/tables for the document ingestion
 # SourceAdapter layer. pdfplumber above already covers PDF for the same layer.

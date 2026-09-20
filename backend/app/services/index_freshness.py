@@ -32,7 +32,10 @@ async def mark_procedure_indexed(
 ) -> None:
     """Stamp `retrieval_indexed_at = now()` for one procedure row -- call
     it in the same place the embedding + retrieval_document are written."""
-    target = conn or pool_or_conn
+    target = conn
+    if target is None:
+        from app.services.shards import home_pool
+        target = await home_pool(pool_or_conn, "procedure", str(procedure_row_id), by_row_id=True)
     await target.execute(
         "UPDATE procedures SET retrieval_indexed_at = now() WHERE id = $1::uuid",
         procedure_row_id,
@@ -54,31 +57,35 @@ async def get_index_lag(pool: asyncpg.Pool, *, limit: int = 100) -> dict[str, An
         "sample": [ {id, procedure_id, version, name, reason}, ... ]  # up to `limit`
       }
     """
-    async with pool.acquire() as conn:
-        lag_rows = await conn.fetch(
-            f"SELECT id::text, procedure_id::text, version, name, reason, "
-            f"retrieval_document_version "
-            f"FROM {INDEX_LAG_VIEW} ORDER BY updated_at DESC LIMIT $1",
-            limit,
-        )
-        lag_count = await conn.fetchval(f"SELECT count(*) FROM {INDEX_LAG_VIEW}")
-        recipe_drift_count = await conn.fetchval(
-            "SELECT count(*) FROM procedures "
-            "WHERE t_invalid IS NULL "
-            "  AND (retrieval_document_version IS NULL "
-            "       OR retrieval_document_version <> $1)",
-            RETRIEVAL_DOCUMENT_VERSION,
-        )
-        total_stale = await conn.fetchval(
-            "SELECT count(*) FROM procedures p "
-            "WHERE p.t_invalid IS NULL AND ("
-            "     p.embedding IS NULL"
-            "  OR p.retrieval_indexed_at IS NULL"
-            "  OR p.retrieval_indexed_at < p.updated_at"
-            "  OR p.retrieval_document_version IS NULL"
-            "  OR p.retrieval_document_version <> $1)",
-            RETRIEVAL_DOCUMENT_VERSION,
-        )
+    from app.services.shards import all_pools
+    lag_rows, lag_count, recipe_drift_count, total_stale = [], 0, 0, 0
+    for _sid, spool in await all_pools(pool):       # every shard holds part of the index
+        async with spool.acquire() as conn:
+            lag_rows += await conn.fetch(
+                f"SELECT id::text, procedure_id::text, version, name, reason, "
+                f"retrieval_document_version "
+                f"FROM {INDEX_LAG_VIEW} ORDER BY updated_at DESC LIMIT $1",
+                limit,
+            )
+            lag_count += await conn.fetchval(f"SELECT count(*) FROM {INDEX_LAG_VIEW}") or 0
+            recipe_drift_count += await conn.fetchval(
+                "SELECT count(*) FROM procedures "
+                "WHERE t_invalid IS NULL "
+                "  AND (retrieval_document_version IS NULL "
+                "       OR retrieval_document_version <> $1)",
+                RETRIEVAL_DOCUMENT_VERSION,
+            ) or 0
+            total_stale += await conn.fetchval(
+                "SELECT count(*) FROM procedures p "
+                "WHERE p.t_invalid IS NULL AND ("
+                "     p.embedding IS NULL"
+                "  OR p.retrieval_indexed_at IS NULL"
+                "  OR p.retrieval_indexed_at < p.updated_at"
+                "  OR p.retrieval_document_version IS NULL"
+                "  OR p.retrieval_document_version <> $1)",
+                RETRIEVAL_DOCUMENT_VERSION,
+            ) or 0
+    lag_rows = lag_rows[:limit]
 
     sample = []
     for r in lag_rows:

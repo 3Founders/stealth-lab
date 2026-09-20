@@ -29,6 +29,9 @@ import time
 from dataclasses import dataclass, field
 from typing import Optional
 
+import functools
+
+from app import telemetry as _tel
 import asyncpg
 
 from app.services.semantic.errors import SemanticJudgmentUnavailable
@@ -219,7 +222,7 @@ async def _enqueue_pending(
         return None, False
 
 
-async def find_applicable_candidates(
+async def _find_applicable_candidates(
     pool: asyncpg.Pool,
     *,
     goal_text: str,
@@ -240,6 +243,7 @@ async def find_applicable_candidates(
     excluded_procedure_ids: Optional[list[str]] = None,
     use_cache: bool = True,
     claim_conditioned: bool = True,
+    execution_run_id: Optional[str] = None,
 ) -> ClaimConditionedResult:
     """The full pipeline described in this module's docstring.
 
@@ -297,15 +301,19 @@ async def find_applicable_candidates(
     # relevant_claims.py::get_relevant_claims verbatim, narrowed by this
     # candidate's own goal + requirement text, never the whole Claim graph.
     per_candidate_claims: dict[str, list[dict]] = {}
-    for procedure in survivors:
-        conditions = extract_requirement_conditions(procedure)
-        condition_text = " ".join(c.text for c in conditions)
-        query = f"{goal_text}\n{procedure.get('goal') or ''}\n{condition_text}".strip()
-        claims = await get_relevant_claims(
-            pool, goal=query, top_k=claims_per_candidate_max, access_scope=access_scope,
-        )
-        per_candidate_claims[str(procedure["id"])] = claims
-        counters.claims_retrieved_total += len(claims)
+    with _tel.span("retrieval.claim_retrieval", kind="RETRIEVER",
+                   on_error=_tel.FailureCode.CLAIM_LOOKUP_ERROR, retrieval_stage="claim_retrieval",
+                   shard_id=_tel.shard_id(), candidate_count=len(survivors)) as _cs:
+        for procedure in survivors:
+            conditions = extract_requirement_conditions(procedure)
+            condition_text = " ".join(c.text for c in conditions)
+            query = f"{goal_text}\n{procedure.get('goal') or ''}\n{condition_text}".strip()
+            claims = await get_relevant_claims(
+                pool, goal=query, top_k=claims_per_candidate_max, access_scope=access_scope,
+            )
+            per_candidate_claims[str(procedure["id"])] = claims
+            counters.claims_retrieved_total += len(claims)
+        _tel.set_attrs(_cs, claim_count=counters.claims_retrieved_total)
 
     goal_hash = stable_goal_hash(goal_text)
     judge_model = getattr(judge, "model", judge.__class__.__name__)
@@ -341,7 +349,7 @@ async def find_applicable_candidates(
         try:
             for i in range(0, len(to_judge), judge_batch_size):
                 batch = to_judge[i : i + judge_batch_size]
-                batch_judgments = await judge.judge_batch(goal_text, batch)
+                batch_judgments = await _judge_batch_traced(judge, goal_text, batch, judge_model)
                 if len(batch_judgments) != len(batch):
                     raise SemanticJudgmentUnavailable("judge returned a partial batch")
                 for jc, jg in zip(batch, batch_judgments):
@@ -386,45 +394,117 @@ async def find_applicable_candidates(
                     else "semantic providers unavailable; no queue available to requeue on"))
     contextual_judgment_status = STATUS_OK
 
-    # Hard filter -- REQUIRED-condition strong contradictions only (Sec 8).
-    survived_filter = []
-    for procedure in survivors:
-        pid = str(procedure["id"])
-        judgment = judgments[pid]
-        conditions = extract_requirement_conditions(procedure)
-        counters.verdict_counts[judgment.verdict] = counters.verdict_counts.get(judgment.verdict, 0) + 1
-        if _is_hard_rejected(judgment, conditions, threshold=hard_reject_contradiction_threshold):
-            continue
-        survived_filter.append(procedure)
+    rejected: list[dict] = []
+    before_rank = {str(p["id"]): i for i, p in enumerate(survivors)}
+    with _tel.span("retrieval.rerank", kind="RERANKER", on_error=_tel.FailureCode.RERANKER_ERROR,
+                   retrieval_stage="nli_jev_rerank", shard_id=_tel.shard_id(),
+                   candidate_count=len(survivors), judge_model=judge_model) as _rr:
+        # Hard filter -- REQUIRED-condition strong contradictions only (Sec 8).
+        survived_filter = []
+        for procedure in survivors:
+            pid = str(procedure["id"])
+            judgment = judgments[pid]
+            conditions = extract_requirement_conditions(procedure)
+            counters.verdict_counts[judgment.verdict] = counters.verdict_counts.get(judgment.verdict, 0) + 1
+            if _is_hard_rejected(judgment, conditions, threshold=hard_reject_contradiction_threshold):
+                rejected.append({"candidate_id": pid, "verdict": judgment.verdict,
+                                 "contradiction_probability": judgment.contradiction_probability})
+                _tel.add_event("candidate.rejected", candidate_id=pid, nli_jev_verdict=judgment.verdict)
+                continue
+            survived_filter.append(procedure)
 
-    # Rerank: component scores, reusing the SAME capability signal
-    # applicability.py's own _capability_ranked_hits computes (Sec 9:
-    # "historical verified success" -- not a second capability computation).
-    capability_hits = await _capability_ranked_hits(pool, survived_filter)
-    capability_rank = {str(pid): i for pid, _table, i in capability_hits}
-    capability_score_by_id = {
-        pid: (1.0 - (rank / max(1, len(capability_hits) - 1))) if len(capability_hits) > 1 else 1.0
-        for pid, rank in capability_rank.items()
-    }
+        # Rerank: component scores, reusing the SAME capability signal
+        # applicability.py's own _capability_ranked_hits computes (Sec 9:
+        # "historical verified success" -- not a second capability computation).
+        capability_hits = await _capability_ranked_hits(pool, survived_filter)
+        capability_rank = {str(pid): i for pid, _table, i in capability_hits}
+        capability_score_by_id = {
+            pid: (1.0 - (rank / max(1, len(capability_hits) - 1))) if len(capability_hits) > 1 else 1.0
+            for pid, rank in capability_rank.items()
+        }
 
-    ranked: list[RankedCandidate] = []
-    for procedure in survived_filter:
-        pid = str(procedure["id"])
-        judgment = judgments[pid]
-        candidate = RankedCandidate(
-            procedure=procedure, judgment=judgment,
-            semantic_relevance=procedure.get("_similarity_score"),
-            claim_fit=judgment.applicability_probability,
-            evidence_strength=capability_score_by_id.get(pid),
-            verified_success=capability_score_by_id.get(pid),
-            cost_estimate=None, latency_estimate=None,
-            risk=judgment.contradiction_probability,
-            final_policy_score=0.0,
-        )
-        candidate.final_policy_score = compute_policy_score(candidate)
-        ranked.append(candidate)
+        ranked: list[RankedCandidate] = []
+        for procedure in survived_filter:
+            pid = str(procedure["id"])
+            judgment = judgments[pid]
+            candidate = RankedCandidate(
+                procedure=procedure, judgment=judgment,
+                semantic_relevance=procedure.get("_similarity_score"),
+                claim_fit=judgment.applicability_probability,
+                evidence_strength=capability_score_by_id.get(pid),
+                verified_success=capability_score_by_id.get(pid),
+                cost_estimate=None, latency_estimate=None,
+                risk=judgment.contradiction_probability,
+                final_policy_score=0.0,
+            )
+            candidate.final_policy_score = compute_policy_score(candidate)
+            ranked.append(candidate)
 
-    ranked.sort(key=lambda c: c.final_policy_score, reverse=True)
-    ranked = ranked[:limit]
-    counters.candidates_after_filter = len(ranked)
+        ranked.sort(key=lambda c: c.final_policy_score, reverse=True)
+        ranked = ranked[:limit]
+        counters.candidates_after_filter = len(ranked)
+        for i, c in enumerate(ranked):
+            _tel.add_event("candidate.ranked", candidate_id=str(c.procedure["id"]),
+                           candidate_rank_before=before_rank.get(str(c.procedure["id"])),
+                           candidate_rank_after=i, score=c.final_policy_score)
+        _tel.set_attrs(_rr, result_count=len(ranked), rejected_count=len(rejected))
+    await _record_canonical_events(pool, execution_run_id, per_candidate_claims, rejected, ranked, before_rank)
     return ClaimConditionedResult(ranked, contextual_judgment_status, counters)
+
+
+async def _judge_batch_traced(judge, goal_text: str, batch: list, judge_model: str):
+    """NLI/JEV call as an EVALUATOR span: model, batch size, verdict per candidate."""
+    with _tel.span("verification.nli_jev", kind="EVALUATOR", on_error=_tel.FailureCode.RERANKER_ERROR,
+                   judge_model=judge_model, candidate_count=len(batch)) as sp:
+        judgments = await judge.judge_batch(goal_text, batch)
+        last = getattr(judge, "last_result", None)
+        _tel.set_attrs(sp, provider=getattr(last, "provider", None),
+                       provider_fallback_used=bool(getattr(last, "fallback_used", False)))
+        for jc, jg in zip(batch, judgments):
+            _tel.add_event("candidate.judged", candidate_id=jc.candidate_id, nli_jev_verdict=jg.verdict)
+        return judgments
+
+
+async def _record_canonical_events(pool, execution_run_id, claims, rejected, ranked, before_rank) -> None:
+    """Durable retrieval decisions in the EXISTING event log (ids/scores only).
+    Best-effort: retrieval's never-raises contract wins over event delivery."""
+    if not execution_run_id or not hasattr(pool, "acquire"):
+        return
+    from app.execution import recorder as _rec
+    try:
+        async with pool.acquire() as conn, conn.transaction():
+            await _rec.record_claims_retrieved(
+                conn, execution_run_id,
+                candidate_claim_counts={pid: len(c) for pid, c in claims.items()})
+            for r in rejected:
+                await _rec.record_candidate_rejected(
+                    conn, execution_run_id, candidate_id=r["candidate_id"], stage="nli_jev",
+                    verdict=r["verdict"], contradiction_probability=r["contradiction_probability"])
+            await _rec.record_candidates_reranked(
+                conn, execution_run_id, stage="nli_jev_rerank",
+                ranking=[{"candidate_id": str(c.procedure["id"]),
+                          "rank_before": before_rank.get(str(c.procedure["id"])),
+                          "rank_after": i, "score": c.final_policy_score}
+                         for i, c in enumerate(ranked)])
+    except Exception:  # noqa: BLE001
+        log.warning("claim_conditioned_retrieval: canonical event write failed", exc_info=True)
+
+
+@functools.wraps(_find_applicable_candidates)
+async def find_applicable_candidates(pool, **kwargs) -> ClaimConditionedResult:
+    """Traced entry point; see `_find_applicable_candidates` for the contract."""
+    with _tel.span("retrieval", kind="RETRIEVER", on_error=_tel.FailureCode.RETRIEVAL_ERROR,
+                   retrieval_stage="claim_conditioned", shard_id=_tel.shard_id(),
+                   embedding_model=kwargs.get("embedding_model_id"), top_k=kwargs.get("limit", 10),
+                   run_id=kwargs.get("execution_run_id")) as sp:
+        result = await _find_applicable_candidates(pool, **kwargs)
+        o = result.observability
+        _tel.set_attrs(
+            sp, candidate_count=o.candidates_before_filter, candidates_after_filter=o.candidates_after_filter,
+            claim_count=o.claims_retrieved_total, judge_latency_ms=round(o.judge_latency_ms, 2),
+            cache_hits=o.cache_hits, cache_misses=o.cache_misses, judgment_status=result.contextual_judgment_status,
+            judge_model=o.provider,
+            nli_jev_verdict=",".join(f"{k}:{v}" for k, v in o.verdict_counts.items()))
+        if result.contextual_judgment_status in (STATUS_PENDING, STATUS_UNAVAILABLE):
+            _tel.fail(sp, _tel.FailureCode.RERANKER_ERROR, force_keep=True)
+        return result

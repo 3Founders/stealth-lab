@@ -141,3 +141,21 @@ class CallbackProvider(SemanticProvider):
                 raise exc
         rel, conf = self.fn(kind, a, b)
         return {"relation": rel, "confidence": conf}
+
+
+class LenientProvider(SemanticProvider):
+    """Test-only judge for suites that exercise durable execution/plan features, not judgment quality: every goal
+    'matches' and every procedure 'applies'. (Judgment behaviour itself is covered by test_retrieval_golden_e2e.)"""
+
+    def __init__(self):
+        self.name, self.model = "lenient", "lenient-model"
+        self.capabilities = frozenset(ALL_CAPS)
+
+    async def identity(self, kind: str, a: str, b: str) -> dict:
+        return {"relation": "applies" if kind == "task_procedure" else "matches", "confidence": 0.95}
+
+
+def install_lenient_default_judge():
+    import app.services.identity_resolution as ir
+    ir._DEFAULT_JUDGE = make_judge(LenientProvider())
+    return lambda: ir.reset_default_judge()

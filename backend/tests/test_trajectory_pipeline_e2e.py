@@ -78,14 +78,10 @@ def _semantic_response(event_count: int) -> str:
         "candidate_procedures": [{
             "capability_statement": f"{TAG}: reproduce then fix a failing test",
             "steps": [
-                {"description": "reproduce the failure", "subgoal_text": f"{TAG}: reproduce failure",
+                {"description": "reproduce the failure", "subgoal_text": f"{TAG}: reproduce failure", "tool_name": "run",
                  "event_indices": [1]},
             ],
             "event_indices": [1], "epistemic_status": "inferred", "confidence": 0.6,
-        }],
-        "implementations": [{
-            "tool_name": "run", "role": "ran the test suite",
-            "event_indices": [min(2, event_count)], "applicability_notes": None,
         }],
         "claims": [{
             "text": f"{TAG}: the fix was verified by a passing test run",
@@ -179,7 +175,6 @@ def test_openhands_trajectory_full_pipeline_produces_cited_knowledge(tmp_path):
             assert extraction["goals"] >= 1
             assert extraction["claims"] == 1
             assert extraction["procedures"] == 1
-            assert extraction["implementations"] == 1
 
             # -- 5. every produced object cites real source events (Sec 6/12).
             link_rows = await pool.fetch(

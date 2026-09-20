@@ -130,7 +130,7 @@ async function load() {
           el("span", {style: "color:var(--muted)", textContent: n.kind}));
         const kv = el("dl", {className: "kv"});
         const add = (k, v) => { if (v) { kv.append(el("dt", {textContent: k}), el("dd", {textContent: v})); } };
-        add("implementation", n.implementation_id);
+        add("binding", n.binding);
         add("procedure", n.procedure_id);
         add("verify", n.verification_state);
         if (n.human_intervention_needed) add("human_intervention", "true");

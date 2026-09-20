@@ -105,7 +105,7 @@ def test_inspect_goal_returns_null_for_a_missing_or_invisible_row(monkeypatch):
 
 def test_inspect_goal_passes_through_the_full_record(monkeypatch):
     async def fake_get(pool, goal_id, *, scope):
-        return {"id": goal_id, "canonical_name": "x", "procedures": [], "implementations": []}
+        return {"id": goal_id, "canonical_name": "x", "procedures": []}
 
     monkeypatch.setattr("app.services.goals.get_goal", fake_get)
     ctx = FakeContext()
@@ -113,20 +113,13 @@ def test_inspect_goal_passes_through_the_full_record(monkeypatch):
     assert json.loads(raw)["id"] == "g1"
 
 
-# --- list_goal_procedures / list_goal_implementations -----------------------
+# --- list_goal_procedures -----------------------
 
 def test_list_goal_procedures_passes_through_real_rows():
     pool = _FakePool([{"id": "p1", "name": "grep-based search"}])
     ctx = FakeContext(pool)
     raw = asyncio.run(srv.list_goal_procedures(goal_id="g1", ctx=ctx))
     assert json.loads(raw) == [{"id": "p1", "name": "grep-based search"}]
-
-
-def test_list_goal_implementations_passes_through_real_rows():
-    pool = _FakePool([{"id": "i1", "name": "ripgrep"}])
-    ctx = FakeContext(pool)
-    raw = asyncio.run(srv.list_goal_implementations(goal_id="g1", ctx=ctx))
-    assert json.loads(raw) == [{"id": "i1", "name": "ripgrep"}]
 
 
 # --- create_goal -----------------------------------------------------------

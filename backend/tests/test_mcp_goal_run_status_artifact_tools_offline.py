@@ -44,7 +44,7 @@ def test_get_goal_run_status_refuses_when_no_file_exists(tmp_path):
 
 
 def test_get_goal_run_status_returns_the_real_parsed_file(tmp_path):
-    nodes = [GoalRunLine(goal_id="G-1", kind="implementation", status="success", implementation_id="I-1")]
+    nodes = [GoalRunLine(goal_id="G-1", kind="step", status="success", binding="command")]
     write_goal_run_md_file(str(tmp_path), render_goal_run_md("E-1", "success", nodes))
     ctx = FakeContext()
     raw = _run(srv.get_goal_run_status(workspace_root=str(tmp_path), ctx=ctx))
@@ -52,7 +52,7 @@ def test_get_goal_run_status_returns_the_real_parsed_file(tmp_path):
     assert result["execution_id"] == "E-1"
     assert result["outcome"] == "success"
     assert result["nodes"][0]["goal_id"] == "G-1"
-    assert result["nodes"][0]["implementation_id"] == "I-1"
+    assert result["nodes"][0]["binding"] == "command"
 
 
 # ---------------------------------------------------------------------

@@ -53,7 +53,6 @@ REQUIRED_OPERATIONS: dict[str, str] = {
     "verify_completion": "verify_completion",
     "report_execution": "report_execution",
     "submit_procedure": "submit_procedure",
-    "submit_implementation": "submit_implementation",
 }
 
 

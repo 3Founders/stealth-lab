@@ -94,9 +94,9 @@ def test_generate_projection_writes_real_files_with_valid_content():
                 # also writes the addressable pages + index/ (app.stealth).
                 entries = set(os.listdir(stealth_dir))
                 assert {"context.md", "run.json", "meta.json"} <= entries
-                assert {"claims.md", "procedures.md", "implementations.md", "run.md", "index"} <= entries
+                assert {"claims.md", "procedures.md", "run.md", "index"} <= entries
                 assert set(os.listdir(os.path.join(stealth_dir, "index"))) == {
-                    "root.idx", "claims.idx", "procedures.idx", "implementations.idx", "run.idx",
+                    "root.idx", "claims.idx", "procedures.idx", "goals.idx", "run.idx",
                 }
                 assert not [n for n in entries if n.startswith(".tmp-stealth-")]
 
@@ -159,7 +159,7 @@ def test_generate_projection_regeneration_is_idempotent_and_overwrites():
                 stealth_dir = os.path.join(workspace, ".stealth")
                 entries = set(os.listdir(stealth_dir))
                 assert {"context.md", "run.json", "meta.json", "claims.md", "procedures.md",
-                        "implementations.md", "run.md", "index"} <= entries
+                        "run.md", "index"} <= entries
                 assert not [n for n in entries if n.startswith(".tmp-stealth-")]
         finally:
             await _cleanup(pool, name)
@@ -222,27 +222,28 @@ def test_every_index_row_resolves_to_exactly_its_block_and_regen_is_stable():
                 assert len(root.encode("utf-8")) <= ROOT_IDX_MAX_BYTES
 
                 checked = 0
-                for idx_name in ("claims.idx", "procedures.idx", "implementations.idx"):
+                for idx_name in ("claims.idx", "procedures.idx"):
                     text = open(os.path.join(sdir, "index", idx_name), encoding="utf-8").read()
                     for fields in parse_idx(text):
                         obj_id, _, _, _, _, mdfile, start, end, _ = fields
                         md_lines = open(os.path.join(sdir, mdfile), encoding="utf-8").read().splitlines()
                         window = md_lines[int(start) - 1:int(end)]
-                        assert window and window[0].startswith("## ")
+                        # pipe format: a block starts with its own CLAIM|/PROCEDURE| record line
+                        assert window and window[0].split("|")[0] in ("CLAIM", "PROCEDURE")
                         assert obj_id in window[0], (obj_id, window[0])
-                        assert not any(ln.startswith("## ") for ln in window[1:]), "block bled into next"
+                        assert not any(ln.split("|")[0] == window[0].split("|")[0] and obj_id not in ln for ln in window[1:]), "block bled into next"
                         checked += 1
                 assert checked >= 3
 
                 second = await sp.generate_projection(
                     pool, workspace_root=workspace, procedure_run_id=exec_run_id,
                 )
-                for k in ("root_idx", "claims_idx", "procedures_idx", "implementations_idx", "run_idx"):
+                for k in ("root_idx", "claims_idx", "procedures_idx", "run_idx"):
                     assert first[k] == second[k]
 
                 meta = json.loads(open(os.path.join(sdir, "meta.json"), encoding="utf-8").read())
                 assert meta["change_cursor"].startswith(exec_run_id)
-                assert {"claims", "procedures", "implementations", "run"} <= set(meta["revisions"])
+                assert {"claims", "procedures", "run"} <= set(meta["revisions"])
                 assert meta["counts"]["run_nodes"] == 2
                 assert isinstance(meta["projection_revision"], int) and meta["projection_revision"] >= 1
         finally:

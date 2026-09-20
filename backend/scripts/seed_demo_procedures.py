@@ -1,13 +1,6 @@
-"""Seed a small REAL demo set of procedures + Implementation Registry rows
-so the registry MCP tools (resolve_implementation / list_task_implementations
-/ inspect_implementation / get_implementation_capability) and the
-"reuse a verified procedure" paths have real data to return.
+"""Seed a small REAL demo set of procedures so the "reuse a verified procedure" paths have real data to return.
 
-problems.md finding D: the `implementations` table was empty and the
-verified-procedure corpus was entirely test fixtures.
-
-Everything goes through the REAL product write paths -- no ad-hoc INSERTs
-into `procedures` / `implementations` / `evidence`:
+Everything goes through the REAL product write paths -- no ad-hoc INSERTs into `procedures` / `evidence`:
 
   - `procedures.capture_procedure`        -> the procedure rows
   - `procedures.record_execution_outcome` -> real ticket-13 lifecycle: 10
@@ -16,14 +9,9 @@ into `procedures` / `implementations` / `evidence`:
         one real `execution_result` evidence row; the promotion trigger
         in db/30 fires in-transaction on the 10th). NOT a raw UPDATE.
   - `procedures.approve_procedure`        -> approval_status -> approved
-  - `implementation_registry.register`    -> the implementation rows
-        (+ `implementation_tasks` link via task_node_ids)
-  - `implementation_registry.activate` / `.verify` -> real status /
-        verification_status transitions (directive Sec 33/61 -- a caller
-        decides WHEN, these functions only perform the transition)
 
 The one direct INSERT is the anchor `task_nodes` row -- the same thing
-`tests/test_implementation_registry_e2e.py` does (`INSERT INTO task_nodes
+an e2e test does (`INSERT INTO task_nodes
 (name, skill_ref) ...`); there is no higher-level capture for a bare task
 node, and the "no ad-hoc INSERT" rule is about the capture-gated tables
 above, not the task anchor.
@@ -50,7 +38,6 @@ from dotenv import load_dotenv
 load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"))
 
 from app.db.session import create_pool  # noqa: E402
-from app.execution import implementation_registry  # noqa: E402
 from app.services.procedures import (  # noqa: E402
     MIN_DISTINCT_CONTEXTS_FOR_VERIFIED,
     MIN_SUCCESSES_FOR_VERIFIED,
@@ -97,25 +84,6 @@ _PROCEDURES: list[tuple[str, str, str, list[str], bool]] = [
       "If it is new, bisect between known-good and the current head to find the causing change"],
      False),
 ]
-
-# (name, kind, provider, description, locator, invocation, verify?, activate?)
-_IMPLEMENTATIONS: list[tuple] = [
-    ("pg-migrate-runner", "deterministic", "stealthlab.demo",
-     "Deterministic runner that applies a single guarded SQL migration file inside a "
-     "lock-timeout'd transaction and reports row-count + column-checksum deltas.",
-     {"scheme": "local", "path": "scripts/migrate.py"},
-     {"entrypoint": "migrate", "args_schema": {"migration_file": "string", "lock_timeout_ms": "integer"}},
-     True, True),
-
-    ("release-cutter", "tool", "stealthlab.demo",
-     "Tool implementation that rebases a fix branch onto the release head, runs the offline + "
-     "targeted e2e suites, bumps the patch version, tags, and pushes branch-then-tag.",
-     {"scheme": "mcp", "tool": "cut_patch_release"},
-     {"entrypoint": "cut_patch_release",
-      "args_schema": {"fix_branch": "string", "release_branch": "string"}},
-     False, True),
-]
-
 
 # ---------------------------------------------------------------------------
 # seed
@@ -184,30 +152,9 @@ async def seed(pool) -> None:
         print(f"    -> verified + approved via {MIN_SUCCESSES_FOR_VERIFIED} real outcomes / "
               f"{MIN_DISTINCT_CONTEXTS_FOR_VERIFIED} contexts")
 
-    impl_ids: list[str] = []
-    for (name, kind, provider, description, locator, invocation, do_verify, do_activate) in _IMPLEMENTATIONS:
-        impl = await implementation_registry.register(
-            pool,
-            name=name, kind=kind, provider=provider, created_by=_AUTHOR,
-            description=description, locator=locator, invocation=invocation,
-            input_schema={"type": "object"}, output_schema={"type": "object"},
-            license="MIT", author=_AUTHOR,
-            scope_type="project", scope_entity_id=_SCOPE_ENTITY,
-            task_node_ids=[task_id],
-        )
-        impl_ids.append(impl["id"])
-        line = f"  implementation {name:18s} {impl['id']}  kind={kind}"
-        if do_activate:
-            await implementation_registry.activate(pool, impl["id"])
-            line += "  status=active"
-        if do_verify:
-            await implementation_registry.verify(pool, impl["id"])
-            line += "  verification_status=verified"
-        print(line)
-
     n_verified = sum(1 for v in proc_ids.values() if v["verified"])
     print(f"\nseeded {len(proc_ids)} procedures ({n_verified} verified+approved), "
-          f"{len(impl_ids)} implementations (linked to task {task_id}), 1 task_node. "
+          f"1 task_node ({task_id}). "
           f"scope_entity_id={_SCOPE_ENTITY!r}")
 
 
@@ -235,29 +182,11 @@ async def clear(pool) -> None:
         _AUTHOR, _SCOPE_ENTITY,
     )
 
-    impl_rows = await pool.fetch(
-        "SELECT id::text FROM implementations WHERE created_by = $1 AND scope_entity_id = $2",
-        _AUTHOR, _SCOPE_ENTITY,
-    )
-    impl_ids = [r["id"] for r in impl_rows]
-    links = 0
-    if impl_ids:
-        links = await pool.fetchval(
-            "WITH d AS (DELETE FROM implementation_tasks WHERE implementation_id::text = ANY($1::text[]) "
-            " RETURNING 1) SELECT count(*) FROM d",
-            impl_ids,
-        )
-    impls = await pool.execute(
-        "DELETE FROM implementations WHERE created_by = $1 AND scope_entity_id = $2",
-        _AUTHOR, _SCOPE_ENTITY,
-    )
-
     tn = await pool.execute(
         "UPDATE task_nodes SET t_invalid = now(), t_expired = now() "
         "WHERE skill_ref = $1 AND t_invalid IS NULL", _TASK_SKILL,
     )
-    print(f"cleared: procedures {procs} ({ev} evidence rows), implementations {impls} "
-          f"({links} task links), task_nodes {tn}")
+    print(f"cleared: procedures {procs} ({ev} evidence rows), task_nodes {tn}")
 
 
 async def main(*, do_clear: bool, dry_run: bool) -> None:
@@ -265,8 +194,6 @@ async def main(*, do_clear: bool, dry_run: bool) -> None:
         for key, name, goal, steps, do_verify in _PROCEDURES:
             print(f"[dry-run] procedure {key}: {name} ({len(steps)} steps)"
                   f"{' -> verify+approve' if do_verify else ''}")
-        for name, kind, *_ in _IMPLEMENTATIONS:
-            print(f"[dry-run] implementation {name} (kind={kind})")
         print("[dry-run] nothing written")
         return
     pool = await create_pool(os.environ["DATABASE_URL"])

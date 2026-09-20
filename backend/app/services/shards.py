@@ -427,3 +427,85 @@ async def verify_routes(pool: Any, *, limit_per_shard: int = 100000) -> dict[str
                 report["ok"] = False
         report["shards"][shard.shard_id] = entry
     return report
+
+
+# ------------------------------------------------------------------ fan-out helpers for readers/writers that scan
+# Use ``home_pool`` for anything addressed by id. Use these ONLY for queries that are not addressed by an id (scans,
+# counts, "which procedures use X"): they run the same SQL on the control database and on every readable remote shard.
+# With no remote shard registered (or a non-database test double) they are a plain call on ``pool`` -- zero overhead.
+
+async def all_pools(pool: Any, *, strict: bool = False) -> list[tuple[str, Any]]:
+    """[(shard_id, pool)] for the control database and every readable remote shard. An unreachable shard is skipped
+    (logged) unless ``strict``, in which case ShardUnavailable propagates -- writers and verifiers that must not
+    silently miss data pass strict=True."""
+    out: list[tuple[str, Any]] = [(HOME_SHARD, pool)]
+    if not await multi_shard(pool):
+        return out
+    sp = pools_for(pool)
+    for info in await cached_shards(pool):
+        if info.shard_id == HOME_SHARD or info.status not in READABLE_STATUSES:
+            continue
+        try:
+            out.append((info.shard_id, await sp.get(info.shard_id)))
+        except ShardUnavailable:
+            if strict:
+                raise
+            log.warning("shard %s unavailable: skipped in fan-out read", info.shard_id)
+    return out
+
+
+async def fanout_fetch(pool: Any, sql: str, *args: Any, strict: bool = False) -> list:
+    pools = await all_pools(pool, strict=strict)
+    if len(pools) == 1:
+        return list(await pools[0][1].fetch(sql, *args))
+    parts = await asyncio.gather(*[p.fetch(sql, *args) for _, p in pools])
+    return [r for part in parts for r in part]
+
+
+async def fanout_fetchrow(pool: Any, sql: str, *args: Any) -> Any:
+    """First non-null row over the shards (for an id whose route is unknown)."""
+    for _, p in await all_pools(pool):
+        row = await p.fetchrow(sql, *args)
+        if row is not None:
+            return row
+    return None
+
+
+async def fanout_fetchval_sum(pool: Any, sql: str, *args: Any, strict: bool = False) -> int:
+    pools = await all_pools(pool, strict=strict)
+    vals = await asyncio.gather(*[p.fetchval(sql, *args) for _, p in pools])
+    return int(sum(v or 0 for v in vals))
+
+
+async def fanout_execute(pool: Any, sql: str, *args: Any, strict: bool = True) -> int:
+    """Run a write on every shard; returns the total affected-row count. Strict by default: a write that could not
+    reach a shard must be seen, not skipped."""
+    pools = await all_pools(pool, strict=strict)
+    tags = await asyncio.gather(*[p.execute(sql, *args) for _, p in pools])
+    total = 0
+    for t in tags:
+        try:
+            total += int(str(t).split()[-1])
+        except (ValueError, IndexError):
+            pass
+    return total
+
+
+async def fanout_sum_row(pool: Any, sql: str, *args: Any, strict: bool = False) -> dict:
+    """For a single-row aggregate query (``SELECT count(*) AS a, sum(..) AS b``): run it on every shard via ``fetchrow``
+    and add the columns up. Non-numeric/NULL values count as 0."""
+    pools = await all_pools(pool, strict=strict)
+    rows = await asyncio.gather(*[p.fetchrow(sql, *args) for _, p in pools])
+    out: dict[str, Any] = {}
+    for row in rows:
+        if row is None:
+            continue
+        for k, v in dict(row).items():
+            out[k] = out.get(k, 0) + (v if isinstance(v, (int, float)) else 0)
+    return out
+
+
+async def fanout_best_row(pool: Any, sql: str, *args: Any, key: Callable[[Any], Any]) -> Any:
+    """``fetchrow`` on every shard (the SQL already has ORDER BY .. LIMIT 1), then keep the row with the greatest ``key``."""
+    rows = [r for r in await asyncio.gather(*[p.fetchrow(sql, *args) for _, p in await all_pools(pool)]) if r is not None]
+    return max(rows, key=key) if rows else None

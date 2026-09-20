@@ -114,7 +114,10 @@ async def get_procedure_task_overview(
     call_args.extend(p_params)
     if q:
         call_args.append(q_like)
-    proc_rows = await pool.fetch(proc_sql, *call_args)
+    from app.services.shards import fanout_fetch
+    proc_rows = await fanout_fetch(pool, proc_sql, *call_args)
+    if len(proc_rows) > 1:
+        proc_rows = sorted(proc_rows, key=lambda r: (r["t_valid"] is None, -(r["t_valid"].timestamp() if r["t_valid"] else 0)))[: limit + 1]
     truncated = len(proc_rows) > limit
     proc_rows = proc_rows[:limit]
 

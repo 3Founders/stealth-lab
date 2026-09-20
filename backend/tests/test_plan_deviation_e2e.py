@@ -54,15 +54,15 @@ async def _cleanup_procedure(pool, row_id) -> None:
         await pool.execute("UPDATE procedures SET is_engineering_fixture = true WHERE id=$1", row_id)
 
 
-def test_plan_deviation_detects_implementation_drift_and_retries():
+def test_plan_deviation_detects_binding_drift_and_retries():
     async def _run():
         pool = await create_pool(os.environ["DATABASE_URL"], min_size=1, max_size=2)
         suffix = uuid.uuid4().hex[:8]
         name = f"proc-test-plandeviation-{suffix}"
         row_id = None
         exec_run_id = None
-        planned_impl_id = str(uuid.uuid4())
-        actual_impl_id = str(uuid.uuid4())
+        planned_bind = {"kind": "command", "command": "planned"}
+        actual_bind = {"kind": "command", "command": "actual"}
         try:
             res = await capture_procedure(
                 pool, name=name, goal="plan deviation probe",
@@ -87,7 +87,7 @@ def test_plan_deviation_detects_implementation_drift_and_retries():
                 # node 1 carries no hint at all (no deviation possible on
                 # that axis).
                 nodes_json = json.dumps([
-                    {"order": 0, "goal": "step zero", "deps": [], "implementation_id": planned_impl_id},
+                    {"order": 0, "goal": "step zero", "deps": [], "binding": planned_bind},
                     {"order": 1, "goal": "step one", "deps": []},
                 ])
                 graph_id = await c.fetchval(
@@ -103,9 +103,9 @@ def test_plan_deviation_detects_implementation_drift_and_retries():
             )
             # Pin a DIFFERENT real implementation on node 0 than the plan named.
             await pool.execute(
-                "UPDATE execution_run_nodes SET implementation_id=$2 "
+                "UPDATE execution_run_nodes SET binding=$2::jsonb "
                 "WHERE execution_run_id=$1 AND node_order=0",
-                exec_run_id, actual_impl_id,
+                exec_run_id, json.dumps(actual_bind),
             )
 
             attempt_counts: dict[int, int] = {0: 0, 1: 0}
@@ -123,9 +123,9 @@ def test_plan_deviation_detects_implementation_drift_and_retries():
             assert deviation["material_deviation"] is True
             by_order = {n["node_order"]: n for n in deviation["per_node"]}
 
-            assert "implementation_diverged_from_plan" in by_order[0]["deviations"]
-            assert by_order[0]["planned_implementation_id"] == planned_impl_id
-            assert by_order[0]["actual_implementation_id"] == actual_impl_id
+            assert "binding_diverged_from_plan" in by_order[0]["deviations"]
+            assert by_order[0]["planned_binding"] == "command:planned"
+            assert by_order[0]["actual_binding"] == "command:actual"
 
             # node 1's real fate depends on whether ValueError -> 'validation'
             # was retryable; either way it must show SOME real, honest
@@ -248,8 +248,7 @@ def test_plan_deviation_surfaces_the_real_tools_called_and_artifacts_per_node():
             thread.join(timeout=5)
 
     async def _run():
-        from app.execution import implementation_registry
-        from app.execution.implementation_executor import execute_implementation
+        from app.execution.step_binding import execute_node
         from app.services.access import AccessScope
         from app.models.plan import PlanNode
 
@@ -261,12 +260,8 @@ def test_plan_deviation_surfaces_the_real_tools_called_and_artifacts_per_node():
         impl_id = None
         try:
             with _real_http_server() as base_url:
-                impl = await implementation_registry.register(
-                    pool, name=f"plandev-tools-impl-{suffix}", kind="api",
-                    provider="plandev-e2e", created_by="plandev_e2e",
-                    locator={"endpoint": f"{base_url}/echo"},
-                )
-                impl_id = impl["id"]
+                binding = {"kind": "http_api", "http_api": "echo", "endpoint": f"{base_url}/echo"}
+                impl_id = "binding"
 
                 res = await capture_procedure(
                     pool, name=name, goal="tools plan deviation probe",
@@ -299,8 +294,8 @@ def test_plan_deviation_surfaces_the_real_tools_called_and_artifacts_per_node():
                 )
 
                 async def run_node(order: int, attempt: int) -> dict:
-                    node = PlanNode(order=order, goal="call the api", implementation_id=impl_id)
-                    result = await execute_implementation(
+                    node = PlanNode(order=order, goal="call the api", binding=binding)
+                    result = await execute_node(
                         pool, node, {"request_body": {"probe": True}}, scope=AccessScope.unrestricted(),
                     )
                     if result.status != "success":
@@ -323,8 +318,6 @@ def test_plan_deviation_surfaces_the_real_tools_called_and_artifacts_per_node():
                 await pool.execute("DELETE FROM execution_runs WHERE id=$1", exec_run_id)
             if row_id is not None:
                 await _cleanup_procedure(pool, row_id)
-            if impl_id is not None:
-                await pool.execute("DELETE FROM implementations WHERE id=$1", impl_id)
             await pool.close()
 
     asyncio.run(_run())

@@ -462,6 +462,27 @@ class Settings(BaseSettings):
     # former literal "local".
     release: Optional[str] = None
 
+    # --- OpenTelemetry tracing (app/telemetry.py) ---
+    # Off by default and vendor-neutral: spans only leave the process when an
+    # OTLP endpoint (or the console backend) is configured. Canonical state
+    # stays in Postgres either way; traces only reference its ids.
+    observability_enabled: bool = False
+    # "none" | "console" | "otlp" | "phoenix" (phoenix = otlp with Phoenix's
+    # default local endpoint http://localhost:6006).
+    observability_backend: str = "none"
+    otel_exporter_otlp_endpoint: Optional[str] = None
+    otel_service_name: str = "stealthlab"
+    # Fraction of routine SUCCESSFUL traces exported in full. Failed runs,
+    # failed verification and benchmark runs are always exported in full.
+    # Canonical execution_run_events are never sampled.
+    stealth_trace_sample_rate: float = 0.1
+    stealth_benchmark: bool = False
+    # Label for the DB / vector index a retrieval hit (stealth.shard_id).
+    stealth_shard_id: str = "primary"
+    # JSON {"model-prefix": [usd_per_1M_input, usd_per_1M_output]}. Empty by
+    # default: cost is omitted, never guessed.
+    stealth_model_prices: Optional[str] = None
+
     # --- Explicit runtime environment (V4-hardening T1 / K->T1) ----------
     # Tri-state: TEST | STAGING | PRODUCTION. Deliberately a COMPUTED
     # PROPERTY, not a stored pydantic field:

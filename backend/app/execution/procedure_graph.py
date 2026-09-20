@@ -37,12 +37,8 @@ unmodified today by mcp_server/server.py and local_agent/runner.py for
 non-composed procedures) and now also lifts `subprocedure_ref` into
 `PlanNode.step_ref` when present, so a caller who does NOT expand still
 gets an honest, typed signal that a step is a reference rather than real
-work. Same lossless-JSONB treatment applies to a step's own
-`task_node_id` (the real, durable `task_nodes.id` a step satisfies, when
-known) -- lifted verbatim into `PlanNode.task_node_id` by
-`_step_task_node_id()`, never guessed from `goal`/`action` text. See
-`app/execution/implementation_executor.py`'s module docstring for how
-that field feeds the resolve->bind stage.
+work. A step's own `binding` (how it is executed) is lifted verbatim into
+`PlanNode.binding` by `_step_binding()` (see app/execution/step_binding.py).
 
 `expand_procedure_steps()` is the real compile-time expansion: given a
 root procedure's steps, it calls `steps_to_linear_nodes()` for the
@@ -78,7 +74,6 @@ from __future__ import annotations
 from typing import Any, Awaitable, Callable, Mapping, Optional
 from uuid import UUID
 
-from app.execution.implementations import validate_implementation_hint
 from app.models.plan import PlanNode, ProcedureRef
 
 DEFAULT_MAX_COMPOSITION_DEPTH = 8
@@ -129,34 +124,19 @@ def _step_ref(step: dict) -> Optional[ProcedureRef]:
     return ProcedureRef(**raw)
 
 
-def _step_implementation_hint(step: dict) -> Optional[tuple[str, ...]]:
-    """Lift a step's `implementation_hint` (if present) into a real,
-    validated tuple -- a single kind string or a preference-ordered list
-    are both accepted (see app.execution.implementations module
-    docstring); a hint naming a kind outside the closed vocabulary raises
-    here (ImplementationViolation), before any storage boundary is
-    reached, rather than being silently accepted or silently dropped."""
-    return validate_implementation_hint(step.get("implementation_hint"))
-
-
-def _step_task_node_id(step: dict) -> Optional[str]:
-    """Lift a step's `task_node_id` (if present) into `PlanNode.task_node_id`
-    -- the real, durable `task_nodes.id` this step satisfies, when the
-    step actually names one. Same discipline as `_step_ref`/
-    `_step_implementation_hint`: a real, stored fact is threaded through
-    verbatim (coerced to `str` since `PlanNode.task_node_id` is typed as
-    `str`, matching every other id field on this model); nothing here
-    ever GUESSES a task_node_id from `goal`/`action` text -- a step that
-    names none gets `None`, the same honest default
-    `implementation_executor.py`'s whole module refuses to paper over."""
-    raw = step.get("task_node_id")
-    return str(raw) if raw else None
+def _step_binding(step: dict) -> Optional[dict]:
+    """Lift a step's ``binding`` (how the step is executed) verbatim; a malformed binding raises rather than
+    being silently dropped. Legacy step keys (implementation_hint, task_node_id) are ignored."""
+    raw = step.get("binding")
+    if raw is None:
+        return None
+    from app.services.source_locators import validate_binding
+    return validate_binding(raw, where="step.binding")
 
 
 def steps_to_linear_nodes(steps: list[dict]) -> list[PlanNode]:
     """`steps`: a procedure's stored steps, each `{"order": int, "goal": str, ...}`
-    (extra keys ignored, except `subprocedure_ref`, `implementation_hint`,
-    and `task_node_id` -- see module docstring). Returns PlanNodes in
+    (extra keys ignored, except `subprocedure_ref` and `binding` -- see module docstring). Returns PlanNodes in
     order, each depending on the PREVIOUS element in sorted sequence -- a
     straight chain, matching exactly what a linear procedure already is.
 
@@ -176,8 +156,7 @@ def steps_to_linear_nodes(steps: list[dict]) -> list[PlanNode]:
     return [
         PlanNode(
             order=s["order"], goal=_step_goal(s), step_ref=_step_ref(s),
-            implementation_hint=_step_implementation_hint(s),
-            task_node_id=_step_task_node_id(s),
+            binding=_step_binding(s),
             deps=[ordered[i - 1]["order"]] if i > 0 else [],
         )
         for i, s in enumerate(ordered)
@@ -197,7 +176,8 @@ async def fetch_procedure_version(pool: Any, procedure_id: UUID, version: int) -
     `procedures_procedure_id_version_key` UNIQUE constraint guarantees at
     most one row can ever match this query, so there is no ambiguity to
     resolve and no "pick the latest" fallback to accidentally take."""
-    row = await pool.fetchrow(
+    from app.services.shards import home_pool
+    row = await (await home_pool(pool, "procedure", str(procedure_id))).fetchrow(
         "SELECT * FROM procedures WHERE procedure_id = $1 AND version = $2",
         procedure_id, version,
     )
