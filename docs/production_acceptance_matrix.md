@@ -60,3 +60,19 @@ Live-DB tests ran against a throwaway PostgreSQL 18.4 + pgvector on localhost.
   * `test_domain_search_e2e` (4) and `test_search_privacy_leak_e2e` (2) pinned the *old* direct-procedure recommendation. Under the new goal-first service they receive no judge (or a configured-but-unreachable one), so they report `candidates_only`/no goal. They need to be rewritten with injected judge fixtures; two also failed inside setup because `capture_procedure` now fails closed (`SemanticJudgmentUnavailable`) when a provider is configured but unreachable and a goal candidate exists.
   * `test_retrieval_quality_e2e` (5) exercise `find_applicable_procedures` against a seeded real corpus that is absent from the scratch DB; not shown to be caused by this pass, but no baseline run was done to prove it.
 * Not run: the rest of the ~150 `*_e2e.py` files (MCP/execution/verification suites), live-provider tests, any Cloud Run / GitHub Actions / Oracle execution.
+
+## Update: second pass (sharding, retrieval convergence, claims, old adapters, object storage, locators)
+
+| Requirement | Status | Evidence |
+|---|---|---|
+| Real sharding: canonical writes to remote databases | **CLOSED for the converted paths**, PARTIAL overall | migration 96; `test_sharded_writes_e2e.py` (10, real second PostgreSQL DB); ~35 modules that read `procedures`/`goals` directly still see K000 only (docs/sharding.md) |
+| Retrieval wired into everything | **CLOSED for search/recommend/routing** | REST search/procedures/solutions/goals/recommend, MCP `search_procedures`, `search_goals`, `find_best_way` tier-1 + `decide_route`, resources, recursion guard; old rankers still exist but are unused by those surfaces. MCP `server.py` edits are **uncommitted** (file has your local changes) |
+| Claim identity | **CLOSED** | `claim_identity.py`, `test_claim_identity_e2e.py` (8 incl. cross-shard); no claim reconciliation sweep for outage-created claims |
+| Judged Procedure identity in older adapters | **CLOSED for canonical adapters** (skill ingestion, publication); local-tier adapters intentionally excluded | `test_legacy_adapter_identity_e2e.py` (4) |
+| Object storage | **CLOSED** (file + S3-compatible; S3 tested with a fake client only) | `test_object_storage_e2e.py` (8) |
+| Procedure + per-step source locators; bindings in steps | **PARTIAL** | migration 97, `source_locators.py`, `test_source_locators_e2e.py` (7). Strict enforcement only on the bundle handler; skill ingestion inherits a document locator; legacy `implementations` tables not yet folded into step bindings (no fold tool run) |
+| Local tier untouched | documented | docs/local_vs_canonical.md |
+
+Regression at the end of this pass: offline 2330 passed / 5 failed at the last full run (2 pre-existing docx; the 3 others were fixed and re-verified in isolation); new live suites all green; MCP/route/recursion/procedure-run e2e green (42/42) after the fixes. Still failing and NOT rewritten: `test_domain_search_e2e` (4, pin the old cascade), `test_retrieval_quality_e2e` (6, need a seeded real corpus), plus the last complete run after the final locator edit was not repeated for the full offline suite.
+
+Verdict is unchanged: **NOT READY** until the direct-table readers are converted, the remaining legacy tests are rewritten, and a live-provider run has been done.
