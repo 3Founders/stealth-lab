@@ -7,7 +7,7 @@ bundle into canonical objects, always through the same steps:
     source registration + exact source dedup   (procedures.source_key, ingestion_contexts)
     Goal identity        (exact | FTS+vector -> JEV/NLI judge, durable decision)
     Procedure identity   (goal-constrained candidates -> judge: same / refinement / distinct)
-    Claims               (exact-statement identity in scope; provenance = ingestion context + source_key)
+    Claims               (claim_identity.ingest_claim: exact | FTS+ANN -> judge same/contradicts/…; provenance kept)
     shard routing        (goal home shard; Procedure co-located)
     canonical persistence
     projection           (DB trigger -> outbox; the worker drains it)
@@ -109,26 +109,20 @@ async def handle_ingest_candidate_bundle(pool: asyncpg.Pool, payload: dict) -> d
                 visibility=visibility, embedder=embedder, judge=judge, job_id=job.get("id"))
             result["procedure"] = r
 
-            from app.services.claims import capture_claim
+            from app.services.claim_identity import ingest_claim
 
+            goal_shard = await pool.fetchval(
+                "SELECT home_shard_id FROM object_routes WHERE object_type = 'goal' AND object_id = $1::uuid", r["goal_id"])
             claim_ids = []
+            claim_results = []
             for c in payload.get("claims") or []:
-                stmt = c["statement"].strip()
-                existing = await pool.fetchval(
-                    "SELECT id FROM knowledge_nodes WHERE node_type = 'claim' AND t_invalid IS NULL "
-                    "AND lower(regexp_replace(name, '\\s+', ' ', 'g')) = $1 AND scope_type IS NOT DISTINCT FROM $2 "
-                    "AND scope_entity_id IS NOT DISTINCT FROM $3", _norm(stmt), scope_type, scope_entity_id)
-                if existing:
-                    claim_ids.append(str(existing))
-                    continue
-                cid = await capture_claim(
-                    pool, statement=stmt, task_ids=[], created_by="ingestion_worker", owner_id=owner_id,
-                    visibility=visibility if visibility in ("public", "private") else "public",
-                    scope_type=scope_type, scope_entity_id=scope_entity_id, source_ref=source_key,
-                    ingestion_context_id=str(ctx_id), embedder=embedder,
-                    properties={"goal_id": r["goal_id"]})
-                if cid:
-                    claim_ids.append(str(cid))
+                cr = await ingest_claim(
+                    pool, statement=c["statement"], scope_type=scope_type, scope_entity_id=scope_entity_id, visibility=visibility,
+                    owner_id=owner_id, source_key=source_key, source_ref=source_key, ingestion_context_id=str(ctx_id),
+                    goal_id=r["goal_id"], goal_home_shard=goal_shard, embedder=embedder, judge=judge, job_id=job.get("id"))
+                claim_ids.append(cr["claim_id"])
+                claim_results.append(cr)
+            result["claim_results"] = claim_results
             result["claims"] = claim_ids
     return result
 

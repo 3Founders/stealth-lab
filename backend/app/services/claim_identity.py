@@ -198,14 +198,16 @@ async def ingest_claim(
             cid = str(cid)
             if claim_home != HOME_SHARD:
                 await record_route(pool, "claim", cid, claim_home)
-                from app.services.search_projection import enqueue, project_object
-                await enqueue(pool, "claim", cid)
-                try:
-                    async with pool.acquire() as conn:
-                        async with conn.transaction():
-                            await project_object(conn, "claim", cid, pools=pools_for(pool))
-                except Exception:  # noqa: BLE001 -- outbox repairs
-                    pass
+            # Project NOW, inside the identity lock (local AND remote): the next worker resolving a paraphrase
+            # of this proposition must find it as a candidate; the outbox entry repairs a failed attempt.
+            from app.services.search_projection import enqueue, project_object
+            await enqueue(pool, "claim", cid)
+            try:
+                async with pool.acquire() as conn:
+                    async with conn.transaction():
+                        await project_object(conn, "claim", cid, pools=pools_for(pool))
+            except Exception:  # noqa: BLE001
+                log.warning("claim projection deferred to the outbox", exc_info=True)
             for other_id, rel, conf in related:
                 try:
                     await record_claim_relation_candidate(pool, claim_a_id=cid, claim_b_id=other_id, relation=rel,
