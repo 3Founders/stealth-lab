@@ -1,0 +1,55 @@
+name: Ops alerts
+
+# Evaluates the ingestion/retrieval alert thresholds every 10 minutes against the control DB and every shard, and
+# notifies OPS_ALERT_WEBHOOK_URL (Slack/Discord). De-duplication lives in the database (ops_alert_state, migration 100):
+# warnings need consecutive failing checks, re-notify only after a cool-down, and send one RESOLVED. This job never
+# fails the workflow because an alert is firing (that is what the webhook is for); it fails only if it cannot evaluate.
+# Optional: needs the same CONTROL_DATABASE_URL / SHARD_ENV secrets as the worker batch.
+
+on:
+  schedule:
+    - cron: "*/10 * * * *"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ops-alerts
+  cancel-in-progress: true
+
+jobs:
+  alerts:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      STEALTHLAB_ENV: PRODUCTION
+      CONTROL_DATABASE_URL: ${{ secrets.CONTROL_DATABASE_URL }}
+      SHARD_ENV: ${{ secrets.SHARD_ENV }}
+      DAILY_LLM_BUDGET_USD: ${{ secrets.DAILY_LLM_BUDGET_USD }}
+      OPS_ALERT_WEBHOOK_URL: ${{ secrets.OPS_ALERT_WEBHOOK_URL }}
+      OPS_SHARD_WARN_BYTES: ${{ vars.OPS_SHARD_WARN_BYTES }}
+      OPS_SHARD_ROLLOVER_BYTES: ${{ vars.OPS_SHARD_ROLLOVER_BYTES }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12", cache: pip, cache-dependency-path: backend/requirements.txt }
+      - run: pip install -r backend/requirements.txt
+      - name: Export shard database URLs
+        run: |
+          echo "$SHARD_ENV" | while IFS= read -r line; do
+            [ -n "$line" ] || continue
+            echo "::add-mask::${line#*=}"
+            echo "$line" >> "$GITHUB_ENV"
+          done
+      - name: Evaluate alerts
+        working-directory: backend
+        run: python -m app.ingestion.admin alerts
+      - name: Integrity checks (records results so a failed verify keeps alerting until it passes)
+        working-directory: backend
+        run: |
+          # heavy scans: once an hour (first run of each hour) or on manual dispatch
+          if [ "${{ github.event_name }}" != "workflow_dispatch" ] && [ "$(date -u +%M)" -ge 10 ]; then exit 0; fi
+          python -m app.ingestion.admin verify-projections || true
+          python -m app.ingestion.admin verify-dedup || true
+          python -m app.ingestion.admin verify-refs || true

@@ -6,7 +6,8 @@ SemanticJudge: ordered provider fallback with bounded, classified retries.
 * Per provider: up to `per_provider_attempts` tries on TRANSIENT errors with
   exponential backoff + jitter. PERMANENT/UNSUPPORTED move to the next
   provider immediately.
-* Never raises for provider failure: returns ChainResult(ok=False). Whether
+* Never raises for provider failure: returns ChainResult(ok=False). (The one exception is
+  ingest_budget.BudgetExceeded in an ingestion worker: that is a cost stop, not a provider failure.) Whether
   that means "requeue" (NLI) or "retain context" (compaction) is the CALLER's
   policy -- and neither ever substitutes a heuristic judgment.
 * There is deliberately no deterministic provider in this module.
@@ -19,6 +20,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable, Optional
 
+from app.services import ingest_budget
 from app.services.semantic.errors import (
     ErrorKind,
     SemanticJudgmentUnavailable,
@@ -130,6 +132,7 @@ class SemanticJudge:
                 if pol.deadline_s is not None and self._mono() - start >= pol.deadline_s:
                     deadline_hit = True
                     break
+                await ingest_budget.guard(op)   # ingestion workers only: BudgetExceeded propagates (never a chain failure)
                 t0 = self._mono()
                 try:
                     value = await asyncio.wait_for(call(p), timeout=pol.timeout_s)
@@ -153,6 +156,7 @@ class SemanticJudge:
                     continue
                 dt = (self._mono() - t0) * 1000
                 attempts.append(Attempt(p.name, n, True, latency_ms=dt))
+                await ingest_budget.record_judge(p.name, p.model, op)
                 fallback = p is not eligible[0]
                 m.inc(f"semantic.provider_selected.{p.name}")
                 if fallback:

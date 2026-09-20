@@ -1,0 +1,10 @@
+# Builds the ingestion worker image from the repo root (context = repo root):
+#   gcloud builds submit --config deploy/ingestion/cloudbuild.yaml \
+#     --substitutions=_IMAGE=REGION-docker.pkg.dev/PROJECT/stealth/ingest-worker:SHA,_RELEASE=SHA .
+# `stealth-ops deploy-workers` runs exactly this.
+steps:
+  - name: gcr.io/cloud-builders/docker
+    args: ["build", "-f", "deploy/ingestion/Dockerfile.worker", "--build-arg", "RELEASE=${_RELEASE}", "-t", "${_IMAGE}", "."]
+images: ["${_IMAGE}"]
+substitutions:
+  _RELEASE: dev

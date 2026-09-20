@@ -1,5 +1,7 @@
 # StealthLab: from the current state to the first real ingestion
 
+> **Automated path:** most of this document is now scripted by `stealth-ops` — see [OPERATIONS_AUTOMATION.md](OPERATIONS_AUTOMATION.md). This file remains the manual reference for what each step does.
+
 This is the whole path, in order: accounts → Neon databases → keys → environment → migrations → shards → smoke test →
 workers → bulk ingestion → monitoring. Every StealthLab command below exists in this repo (run from `backend/` unless noted).
 The Neon, Cloudflare, Google Cloud and GitHub click-paths are written from general knowledge of those products; their

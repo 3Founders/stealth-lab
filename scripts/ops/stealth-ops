@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+# stealth-ops wrapper. Uses $STEALTH_OPS_PYTHON, else backend/.venv, else python3.
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+py="${STEALTH_OPS_PYTHON:-}"
+[ -z "$py" ] && [ -x "$here/../../backend/.venv/bin/python" ] && py="$here/../../backend/.venv/bin/python"
+[ -z "$py" ] && [ -x "$here/../../backend/.venv/Scripts/python.exe" ] && py="$here/../../backend/.venv/Scripts/python.exe"
+exec "${py:-python3}" "$here/ops.py" "$@"

@@ -9,11 +9,13 @@ FROM python:3.12-slim
 WORKDIR /repo
 RUN apt-get update && apt-get install -y --no-install-recommends git && rm -rf /var/lib/apt/lists/*
 COPY backend/requirements.txt backend/requirements.txt
-RUN pip install --no-cache-dir -r backend/requirements.txt
+COPY backend/requirements-objectstore.txt backend/requirements-objectstore.txt
+RUN pip install --no-cache-dir -r backend/requirements.txt -r backend/requirements-objectstore.txt
 COPY backend/ backend/
 WORKDIR /repo/backend
 
-ENV PYTHONUNBUFFERED=1 STEALTHLAB_ENV=PRODUCTION
+ARG RELEASE=dev
+ENV PYTHONUNBUFFERED=1 STEALTHLAB_ENV=PRODUCTION RELEASE=${RELEASE}
 
 # Default: drain the queue once, then exit (Cloud Run Job / cron friendly). Override with
 # `--loop` for a long-running service. Config is env only (docs/distributed_ingestion.md).

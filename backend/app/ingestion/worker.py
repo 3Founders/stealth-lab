@@ -30,6 +30,7 @@ from app.ingestion import queue as q
 from app.ingestion.config import WorkerConfig, control_database_url, validate_startup
 
 log = logging.getLogger("ingestion.worker")
+EXIT_BUDGET = 3   # stopped by the daily model budget (work remains queued); distinct from 1 = job failed, 2 = config
 
 
 def default_worker_id() -> str:
@@ -82,6 +83,8 @@ class Worker:
         self.handlers = handlers
         self.pools = pools
         self.stop = asyncio.Event()
+        self.budget = None            # ingest_budget.IngestBudget once run() installs it
+        self.budget_stopped = False   # True once the daily model budget stopped this worker leasing
         self.counts = {"done": 0, "retryable_failed": 0, "failed": 0, "lost": 0, "leased": 0}
 
     # -------------------------------------------------------------- one job
@@ -132,6 +135,14 @@ class Worker:
                     if not ok:
                         log.warning("job %s finished but its lease was lost; result is idempotent, discarding state write", job.id)
                     return "done" if ok else "lost"
+                from app.services.governance import BudgetExceeded
+
+                if isinstance(exc, BudgetExceeded):   # cost stop, not a job failure: hand it back, keep the attempt
+                    log.warning("job %s handed back: %s", job.id, exc)
+                    await q.release(self.pool, job)
+                    self.counts["budget_released"] = self.counts.get("budget_released", 0) + 1
+                    self.budget_stopped = True
+                    return "released"
                 log.warning("job %s (%s) attempt %d failed: %r", job.id, job.job_type, job.attempt, exc)
                 return await self._fail(job, repr(exc), retryable=is_retryable(exc))
             run.cancel()
@@ -173,6 +184,20 @@ class Worker:
         while not self.stop.is_set():
             if self.cfg.max_jobs and budget["taken"] >= self.cfg.max_jobs:
                 return
+            if self.budget is not None:
+                st = await self.budget.status()
+                if st.state in ("exceeded", "unavailable"):   # never lease expensive work we cannot pay for
+                    if not self.budget_stopped:
+                        log.error("model budget %s ($%.2f of $%.2f): not leasing new jobs", st.state, st.spent_usd, st.cap_usd)
+                    self.budget_stopped = True
+                    if not budget["loop"]:
+                        return
+                    try:
+                        await asyncio.wait_for(self.stop.wait(), timeout=max(self.cfg.poll_seconds, 30.0))
+                    except asyncio.TimeoutError:
+                        pass
+                    continue
+                self.budget_stopped = False
             jobs = await q.lease(self.pool, self.worker_id, limit=1, lease_seconds=self.cfg.lease_seconds, job_types=self.job_types)
             if not jobs:
                 if not budget["loop"]:
@@ -191,6 +216,10 @@ class Worker:
 
     async def run(self, *, loop: bool) -> dict:
         budget = {"taken": 0, "loop": loop}
+        if self.budget is None and os.environ.get("INGEST_BUDGET_ENFORCE", "1") not in ("0", "false", "False"):
+            from app.services import ingest_budget
+
+            self.budget = ingest_budget.install(self.pool)   # same ledger + cap as the API's CostGovernor
         await q.reap_exhausted(self.pool)
         await asyncio.gather(*[self._lane(i, budget) for i in range(self.cfg.concurrency)])
         await q.reap_exhausted(self.pool)
@@ -217,13 +246,13 @@ class Worker:
             from app.services.search_projection import drain_outbox
 
             self.counts["projection"] = await drain_outbox(self.pool, batch=self.cfg.projection_batch, pools=self.pools)
-        return dict(self.counts, worker_id=self.worker_id)
+        return dict(self.counts, worker_id=self.worker_id, budget_stopped=self.budget_stopped)
 
 
 def _parse(argv: Optional[list[str]] = None) -> argparse.Namespace:
     p = argparse.ArgumentParser(prog="python -m app.ingestion.worker", description=__doc__.split("\n\n")[0])
     m = p.add_mutually_exclusive_group(required=True)
-    m.add_argument("--once", action="store_true", help="process runnable jobs, then exit (0 = ok, 1 = a job failed permanently)")
+    m.add_argument("--once", action="store_true", help="process runnable jobs, then exit (0 = ok, 1 = a job failed permanently, 3 = daily model budget reached)")
     m.add_argument("--loop", action="store_true", help="poll forever (SIGTERM/SIGINT stop gracefully)")
     m.add_argument("--validate-config", action="store_true", help="check environment and exit")
     p.add_argument("--concurrency", type=int)
@@ -274,6 +303,9 @@ async def _amain(args: argparse.Namespace) -> int:
     if args.validate_config:
         print("config ok")
         return 0
+    from app import observability
+
+    observability.init("worker")   # OTel + Sentry when configured; never raises, never blocks ingestion
     from app.db.session import create_pool
 
     # each in-flight bundle holds the advisory-lock connection AND needs a second one for its writes
@@ -297,7 +329,15 @@ async def _amain(args: argparse.Namespace) -> int:
     logging.getLogger().info("worker finished: %s", result)
     print(result)
     await pool.close()
-    return 1 if result.get("failed") else 0
+    try:
+        from app import telemetry
+
+        telemetry.shutdown()   # flush spans before a short-lived (Cloud Run / Actions) process exits
+    except Exception:  # noqa: BLE001
+        pass
+    if result.get("failed"):
+        return 1
+    return EXIT_BUDGET if result.get("budget_stopped") else 0
 
 
 def main(argv: Optional[list[str]] = None) -> None:

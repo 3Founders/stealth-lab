@@ -5,7 +5,10 @@
     python -m app.ingestion.admin retry [--job-types T] [--ids 1,2]   # permanent_failed/retryable -> pending
     python -m app.ingestion.admin register-shard K002 --dsn-env K002_DATABASE_URL [--weight 100]
     python -m app.ingestion.admin shard-status K002 full|readonly|active|unhealthy
-    python -m app.ingestion.admin shards
+    python -m app.ingestion.admin shards [--json]
+    python -m app.ingestion.admin shard-weight K000 0        # placement weight only (0 = no NEW public placement); nothing moves
+    python -m app.ingestion.admin count-source --source-key K [--goal-name "..."]   # idempotency assertions (shard-aware)
+    python -m app.ingestion.admin probe-providers             # live 1-call embedding + judge probe (exit 1 = embedding down / judge down)
     python -m app.ingestion.admin reindex [goal|claim|procedure|all] [--shard K002]
     python -m app.ingestion.admin drain-projections
     python -m app.ingestion.admin verify-projections          # exit 1 if projections disagree with canonical rows
@@ -13,6 +16,8 @@
     python -m app.ingestion.admin reconcile-goals [--all]     # judge unreconciled goals; merge same-goal paraphrases
     python -m app.ingestion.admin verify-refs                 # remote references resolve on their shards (no cross-DB FK)
     python -m app.ingestion.admin verify-dedup                # duplicate goal names / procedures without a goal link
+    python -m app.ingestion.admin metrics                     # one JSON snapshot: queue, providers, retrieval, shards, projection, cost
+    python -m app.ingestion.admin alerts [--no-notify] [--fail-on critical]   # evaluate thresholds, de-dupe, notify (ops_alerts.py)
     python -m app.ingestion.admin fold-implementations        # convert archived legacy implementations into step bindings / one-step procedures
 """
 from __future__ import annotations
@@ -43,7 +48,15 @@ def _parse(argv=None) -> argparse.Namespace:
     ss = sub.add_parser("shard-status")
     ss.add_argument("shard_id")
     ss.add_argument("status", choices=["active", "full", "readonly", "unhealthy", "retired"])
-    sub.add_parser("shards")
+    sh_ = sub.add_parser("shards")
+    sh_.add_argument("--json", action="store_true")
+    sw = sub.add_parser("shard-weight")
+    sw.add_argument("shard_id")
+    sw.add_argument("weight", type=int)
+    cs = sub.add_parser("count-source")
+    cs.add_argument("--source-key", required=True)
+    cs.add_argument("--goal-name")
+    sub.add_parser("probe-providers")
     ri = sub.add_parser("reindex")
     ri.add_argument("object_type", nargs="?", default="all", choices=["goal", "claim", "procedure", "all"])
     ri.add_argument("--shard")
@@ -53,11 +66,25 @@ def _parse(argv=None) -> argparse.Namespace:
     sub.add_parser("verify-refs")
     fi = sub.add_parser("fold-implementations")
     fi.add_argument("--limit", type=int)
+    sub.add_parser("metrics")
+    al = sub.add_parser("alerts")
+    al.add_argument("--no-notify", action="store_true")
+    al.add_argument("--fail-on", choices=["critical", "any", "never"], default="never")
     sub.add_parser("reconcile-claims")
     rg = sub.add_parser("reconcile-goals")
     rg.add_argument("--all", action="store_true", help="ignore the time window (legacy corpus sweep)")
     rg.add_argument("--batch", type=int, default=500)
     return p.parse_args(argv)
+
+
+async def _record_verify(pool, name: str, ok: bool) -> None:
+    """Remember the last result so ``alerts`` keeps firing until the check passes (best effort: pre-migration-100 DBs skip it)."""
+    try:
+        from app.ingestion.ops_alerts import record_verify
+
+        await record_verify(pool, name, ok)
+    except Exception:  # noqa: BLE001 -- bookkeeping never changes a verify command's exit code
+        pass
 
 
 async def _amain(a: argparse.Namespace) -> int:
@@ -94,8 +121,51 @@ async def _amain(a: argparse.Namespace) -> int:
             await sh.set_shard_status(pool, a.shard_id, a.status)
             print(f"{a.shard_id} -> {a.status} (existing objects keep their shard; only NEW placements change)")
         elif a.cmd == "shards":
-            for s in await sh.list_shards(pool):
-                print(s)
+            rows = await sh.list_shards(pool)
+            if a.json:
+                print(json.dumps([{"shard_id": s.shard_id, "status": s.status, "weight": s.weight, "dsn_env": s.dsn_env,
+                                   "capacity_rows": s.capacity_rows} for s in rows]))
+            else:
+                for s in rows:
+                    print(s)
+        elif a.cmd == "shard-weight":
+            n = await pool.execute("UPDATE knowledge_shards SET weight = $2, updated_at = now() WHERE shard_id = $1", a.shard_id, max(0, a.weight))
+            if n.endswith(" 0"):
+                print(f"ERROR: unknown shard {a.shard_id}", file=sys.stderr)
+                return 2
+            sh.invalidate_shard_cache()
+            print(f"{a.shard_id} weight -> {max(0, a.weight)} (only NEW public placement changes)")
+        elif a.cmd == "count-source":
+            procs = await sh.fanout_fetchval_sum(
+                pool, "SELECT count(*) FROM procedures WHERE source_key = $1 AND t_invalid IS NULL", a.source_key, strict=True)
+            goals = None
+            if a.goal_name:
+                from app.services.goals import normalize_goal_name
+                goals = await sh.fanout_fetchval_sum(
+                    pool, "SELECT count(*) FROM goals WHERE normalized_name = $1 AND t_invalid IS NULL AND status <> 'merged'",
+                    normalize_goal_name(a.goal_name), strict=True)
+            jobs = await pool.fetchval("SELECT count(*) FROM ingestion_jobs WHERE idempotency_key = $1", a.source_key)
+            print(json.dumps({"live_procedures": procs, "live_goals": goals, "jobs_with_key": jobs}))
+        elif a.cmd == "probe-providers":
+            from app.ingestion.handlers import Dependencies
+            import time as _t
+            out: dict = {}
+            t0 = _t.perf_counter()
+            try:
+                vec = await Dependencies.get_embedder(pool).embed_one("stealthlab provider probe", "query")
+                out["embedding"] = {"ok": True, "dim": len(vec), "ms": round((_t.perf_counter() - t0) * 1000)}
+            except Exception as exc:  # noqa: BLE001 -- a probe reports, it does not raise
+                out["embedding"] = {"ok": False, "error": f"{type(exc).__name__}: {str(exc)[:160]}"}
+            t0 = _t.perf_counter()
+            try:
+                from app.services.semantic.chain import SemanticJudge
+                res = await SemanticJudge.from_settings().judge_identity("goal", "find callers of a function", "locate every call site of a function")
+                out["judge"] = {"ok": bool(res.ok), "provider": res.provider, "model": res.model, "fallback": bool(res.fallback_used),
+                                "ms": round((_t.perf_counter() - t0) * 1000), "reason": res.reason}
+            except Exception as exc:  # noqa: BLE001
+                out["judge"] = {"ok": False, "error": f"{type(exc).__name__}: {str(exc)[:160]}"}
+            print(json.dumps(out))
+            return 0 if out["embedding"]["ok"] and out["judge"]["ok"] else 1
         elif a.cmd in ("reindex", "drain-projections"):
             pools = sh.ShardPools(pool)
             if a.cmd == "reindex":
@@ -106,7 +176,19 @@ async def _amain(a: argparse.Namespace) -> int:
         elif a.cmd == "verify-projections":
             rep = await sp.verify_projection(pool)
             print(json.dumps(rep, default=str, indent=2))
+            await _record_verify(pool, "verify-projections", bool(rep["ok"]))
             return 0 if rep["ok"] else 1
+        elif a.cmd == "metrics":
+            from app.ingestion.ops_metrics import collect
+            print(json.dumps(await collect(pool), default=str, indent=2))
+        elif a.cmd == "alerts":
+            from app.ingestion import ops_alerts
+            from app.ingestion.ops_metrics import collect
+            rep = await ops_alerts.run(pool, await collect(pool), notify=not a.no_notify)
+            print(json.dumps(rep, default=str, indent=2))
+            if a.fail_on == "critical" and rep["critical"]:
+                return 1
+            return 1 if a.fail_on == "any" and rep["firing"] else 0
         elif a.cmd == "reconcile-claims":
             from app.ingestion.handlers import Dependencies
             from app.services.claim_identity import reconcile_claims
@@ -126,6 +208,7 @@ async def _amain(a: argparse.Namespace) -> int:
         elif a.cmd == "verify-refs":
             rep = await sh.verify_routes(pool)
             print(json.dumps(rep, default=str, indent=2))
+            await _record_verify(pool, "verify-refs", bool(rep["ok"]))
             return 0 if rep["ok"] else 1
         elif a.cmd == "verify-dedup":
             names = await sh.fanout_fetch(
@@ -144,6 +227,7 @@ async def _amain(a: argparse.Namespace) -> int:
             rep = {"duplicate_goal_names": dup, "live_procedures_without_goal_link": unlinked,
                    "live_procedures_linked_to_merged_goals": dangling, "goals_created_while_judge_unavailable": unjudged}
             print(json.dumps(rep, default=str, indent=2))
+            await _record_verify(pool, "verify-dedup", not dup and not unlinked and not dangling)
             return 0 if not dup and not unlinked and not dangling else 1
         return 0
     finally:

@@ -49,6 +49,24 @@ env:
   JEV_BASE_URL: ${{ secrets.JEV_BASE_URL }}
   JEV_API_KEY: ${{ secrets.JEV_API_KEY }}
   GITHUB_TOKEN: ${{ github.token }}
+  OBJECT_STORAGE_URL: ${{ secrets.OBJECT_STORAGE_URL }}
+  OBJECT_STORAGE_ENDPOINT_URL: ${{ secrets.OBJECT_STORAGE_ENDPOINT_URL }}
+  AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+  AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+  AWS_DEFAULT_REGION: auto
+  INGEST_SERVICE_TOKEN: ${{ secrets.INGEST_SERVICE_TOKEN }}
+  SERVICE_TOKEN_ISSUER: ${{ secrets.SERVICE_TOKEN_ISSUER }}
+  SERVICE_TOKEN_AUDIENCE: ${{ secrets.SERVICE_TOKEN_AUDIENCE }}
+  SERVICE_TOKEN_KEYS: ${{ secrets.SERVICE_TOKEN_KEYS }}
+  SERVICE_TOKEN_MAX_TTL_SECONDS: ${{ secrets.SERVICE_TOKEN_MAX_TTL_SECONDS }}
+  DAILY_LLM_BUDGET_USD: ${{ secrets.DAILY_LLM_BUDGET_USD }}
+  OBSERVABILITY_ENABLED: ${{ secrets.OBSERVABILITY_ENABLED }}
+  OBSERVABILITY_BACKEND: ${{ secrets.OBSERVABILITY_BACKEND }}
+  OTEL_EXPORTER_OTLP_ENDPOINT: ${{ secrets.OTEL_EXPORTER_OTLP_ENDPOINT }}
+  OTEL_EXPORTER_OTLP_HEADERS: ${{ secrets.OTEL_EXPORTER_OTLP_HEADERS }}
+  SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
+  RELEASE: ${{ github.sha }}
+  SHARD_ENV: ${{ secrets.SHARD_ENV }}    # newline-separated K00N_DATABASE_URL=... lines, written by `stealth-ops configure-secrets`
   INGEST_LEASE_SECONDS: "300"
   INGEST_IDLE_EXIT_SECONDS: "20"
 
@@ -75,7 +93,7 @@ jobs:
       - uses: actions/setup-python@v5
         with: { python-version: "3.12", cache: pip, cache-dependency-path: backend/requirements.txt }
       - run: pip install -r backend/requirements.txt
-      - name: Enqueue (idempotent: re-running is a no-op for packages already queued)
+      - name: "Enqueue (idempotent: re-running is a no-op for packages already queued)"
         working-directory: backend
         run: python -m app.ingestion.enqueue skill-package --manifest "../${{ inputs.enqueue_manifest }}"
 
@@ -91,7 +109,15 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with: { python-version: "3.12", cache: pip, cache-dependency-path: backend/requirements.txt }
-      - run: pip install -r backend/requirements.txt
+      - run: pip install -r backend/requirements.txt -r backend/requirements-objectstore.txt
+      - name: Export shard database URLs
+        run: |
+          # one masked line per registered shard; the registry stores only the variable NAMES
+          echo "$SHARD_ENV" | while IFS= read -r line; do
+            [ -n "$line" ] || continue
+            echo "::add-mask::${line#*=}"
+            echo "$line" >> "$GITHUB_ENV"
+          done
       - name: Validate configuration (fails fast on a missing provider / database)
         working-directory: backend
         run: python -m app.ingestion.worker --validate-config
@@ -121,6 +147,14 @@ jobs:
       - uses: actions/setup-python@v5
         with: { python-version: "3.12", cache: pip, cache-dependency-path: backend/requirements.txt }
       - run: pip install -r backend/requirements.txt
+      - name: Export shard database URLs
+        run: |
+          # one masked line per registered shard; the registry stores only the variable NAMES
+          echo "$SHARD_ENV" | while IFS= read -r line; do
+            [ -n "$line" ] || continue
+            echo "::add-mask::${line#*=}"
+            echo "$line" >> "$GITHUB_ENV"
+          done
       - name: Queue status, failures, projection consistency
         working-directory: backend
         run: |

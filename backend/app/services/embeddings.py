@@ -310,6 +310,8 @@ class Embedder:
     ) -> list[list[float]]:
         provider = self._configured_provider()
         await self._enforce_provider_policy(provider)
+        from app.services import ingest_budget
+        await ingest_budget.guard("embedding")   # ingestion workers only; BudgetExceeded is not an EmbeddingError
         try:
             with _tel.span("embedding", kind="EMBEDDING", on_error=_tel.FailureCode.MODEL_ERROR,
                            embedding_model=self.embedding_model_id(), provider=provider,
@@ -325,6 +327,7 @@ class Embedder:
             # space. The caller records a retryable job failure instead.
             raise
         self._check_dimension(vectors, self.embedding_model_id())
+        await ingest_budget.record_embedding(provider, self.embedding_model_id(), list(texts))
         return vectors
 
     async def _embed_gemini(
