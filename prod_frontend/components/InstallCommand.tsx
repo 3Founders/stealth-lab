@@ -1,5 +1,6 @@
 "use client";
 import { useRef, useState } from "react";
+import { track } from "@/lib/analytics";
 
 // The real setup path today (README "Quick install" / packaging/README.md). There is no hosted installer or PyPI release yet.
 const LINES = [
@@ -21,6 +22,7 @@ export default function InstallCommand() {
       try { document.execCommand("copy"); } finally { ta.remove(); }
     }
     setDone(true);
+    track("install_copy");
     window.clearTimeout(t.current);
     t.current = window.setTimeout(() => setDone(false), 1800);
   }

@@ -3,6 +3,7 @@ import Link from "next/link";
 import Image from "next/image";
 import { usePathname } from "next/navigation";
 import { useState } from "react";
+import { track } from "@/lib/analytics";
 
 const links = [
   { href: "/problems", label: "Problems" },
@@ -50,14 +51,14 @@ export default function Header() {
             <Image src="/kel-wordmark.png" alt="keळ" width={800} height={440} priority style={{ height: 54, width: "auto" }} />
           </Link>
           <nav aria-label="Primary" className="nav-links">{links.map(item)}</nav>
-          <Link href="/sign-in" className="btn-ink desk">Sign in <Arrow /></Link>
+          <Link href="/sign-in" className="btn-ink desk" onClick={() => track("sign_in_click", { where: "header" })}>Sign in <Arrow /></Link>
           <button className="btn-ink menu-btn" aria-expanded={open} aria-controls="nav-panel" onClick={() => setOpen(!open)}>
             {open ? "Close" : "Menu"}
           </button>
           {open && (
             <nav id="nav-panel" aria-label="Mobile" className="nav-panel">
               {links.map(item)}
-              <Link href="/sign-in" onClick={() => setOpen(false)}>Sign in</Link>
+              <Link href="/sign-in" onClick={() => { setOpen(false); track("sign_in_click", { where: "menu" }); }}>Sign in</Link>
             </nav>
           )}
         </header>

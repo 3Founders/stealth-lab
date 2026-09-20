@@ -6,6 +6,7 @@ import "./globals.css";
 import Header from "@/components/Header";
 import Footer from "@/components/Footer";
 import SmoothScroll from "@/components/SmoothScroll";
+import Telemetry from "@/components/Telemetry";
 
 export const metadata: Metadata = {
   title: { default: "keळ — Remember how things actually get done", template: "%s — keळ" },
@@ -29,6 +30,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           <div className="frame"><i /><i /><i /><i /><i /></div>
         </div>
         <SmoothScroll />
+        <Telemetry />
         <Header />
         <main id="main">{children}</main>
         <Footer />

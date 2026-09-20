@@ -23,6 +23,8 @@ unless a founder/counsel confirms that separately** — the codebase cannot prov
 | Provider | Purpose | Evidence | Notes |
 |---|---|---|---|
 | **Sentry** | Error/trace observability for the backend ASGI apps and worker | `backend/requirements.txt` (`sentry-sdk[fastapi]`), `backend/app/observability.py` | No-op unless `SENTRY_DSN` is set — "optional at runtime" per the requirements-file comment |
+| **Plausible** (cloud, or self-hosted with no third party) | Cookieless website analytics for the public site | `prod_frontend/lib/analytics.ts` | No-op unless `NEXT_PUBLIC_PLAUSIBLE_DOMAIN` is set; skipped when the visitor sends Do Not Track / Global Privacy Control |
+| **Sentry** (browser project) | Website error reporting (no tracing, replay or PII) | `prod_frontend/lib/monitoring.ts` | No-op unless `NEXT_PUBLIC_SENTRY_DSN` is set; skipped on Do Not Track / GPC |
 | **General Compute** | Hosted open-weight model access (alternative to the closed-frontier panel above) | `backend/.env.example` (`USE_GENERAL_COMPUTE`, `GENERAL_COMPUTE_*`) | Off by default (`USE_GENERAL_COMPUTE=false`) |
 | **Ollama (self-hosted/local)** | Local model serving for development, no external network call | `backend/.env.example` (`USE_LOCAL_MODELS`, `LOCAL_BASE_URL`) | Off by default; when on, routes to a local endpoint you run yourself — not a third-party subprocessor in the usual sense |
 

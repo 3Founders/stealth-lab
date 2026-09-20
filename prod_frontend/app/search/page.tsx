@@ -2,6 +2,7 @@
 import { useRef, useState } from "react";
 import { apiGet, labelOf, type ApiState } from "@/lib/api";
 import StateNotice from "@/components/NotConnected";
+import { bucket, track } from "@/lib/analytics";
 
 type Row = Record<string, unknown>;
 type Groups = { name: string; rows: Row[] }[];
@@ -22,6 +23,7 @@ export default function SearchPage() {
     ac.current?.abort();
     ac.current = new AbortController();
     setAsked(term); setState({ kind: "loading" });
+    track("search_submit");                                   // never the query text
     const enc = encodeURIComponent(term);
     const [s, p] = await Promise.all([
       apiGet<{ results: Record<string, Row[]> }>(`/v1/search?q=${enc}&limit=10`, ac.current.signal),
@@ -33,6 +35,7 @@ export default function SearchPage() {
     if (p.kind === "ok") groups.push({ name: "problems", rows: p.data.problems ?? [] });
     if (s.kind === "ok") for (const [name, rows] of Object.entries(s.data.results ?? {})) groups.push({ name, rows });
     setState({ kind: "ok", data: groups });
+    track("search_result", { results: bucket(groups.reduce((n, g) => n + g.rows.length, 0)) });
   }
 
   const total = state.kind === "ok" ? state.data.reduce((n, g) => n + g.rows.length, 0) : 0;

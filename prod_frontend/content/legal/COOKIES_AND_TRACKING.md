@@ -26,6 +26,24 @@ audit (2026-09-09) — it does not describe an aspirational or planned tracking 
   tracking cookie or client-side analytics pixel, and it was not found wired into `frontendv1` at
   all.
 
+## The keळ website (`prod_frontend`) — optional analytics and error reporting
+
+The public website in `prod_frontend/` can run two privacy-first tools. **Both are off unless the operator configures them at
+build time, and both are skipped entirely when the visitor's browser sends Do Not Track or Global Privacy Control.**
+
+- **Website analytics — Plausible (cloud or self-hosted), only if `NEXT_PUBLIC_PLAUSIBLE_DOMAIN` is set.** Cookieless: it sets no
+  cookies and stores nothing on your device, keeps no personal profile and does not follow you across sites. It records page
+  views and a handful of coarse events: *install command copied*, *Sign in clicked*, *a search was run* (never what you typed),
+  *number of results (bucketed)*, and Core Web Vitals timings (LCP, CLS, INP, TTFB). Code: `prod_frontend/lib/analytics.ts`.
+- **Browser error reporting — Sentry, only if `NEXT_PUBLIC_SENTRY_DSN` is set.** Sends the error and its stack trace, browser and
+  operating system, and the page path *without* its query string or fragment. No user identity, no IP-derived profile
+  (`sendDefaultPii` is off), no cookies, no request bodies, no console output, no session replay, no performance tracing.
+  Code: `prod_frontend/lib/monitoring.ts`.
+
+Because neither tool sets cookies or non-essential storage, no consent banner is shown for them. **[FOUNDER / COUNSEL: confirm
+this position for the jurisdictions you serve before enabling either in production; if a jurisdiction requires consent for
+analytics or error reporting, add a consent mechanism first.]**
+
 ## What this means
 
 As shipped today, StealthLab's frontend does not run any third-party advertising or analytics
