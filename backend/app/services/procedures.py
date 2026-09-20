@@ -139,6 +139,7 @@ async def capture_procedure(
     identity_job_id: Optional[int] = None,
     identity_idempotency_key: Optional[str] = None,
     source_key: Optional[str] = None,
+    procedure_dedup: bool = False,
 ) -> dict:
     """
     Inserts a new procedure, always starting `candidate` / `fresh` /
@@ -238,6 +239,30 @@ async def capture_procedure(
         idempotency_key=identity_idempotency_key,
     )
     achieves_goal_id = resolved_goal["id"]
+
+    # --- judged Procedure identity (opt-in per adapter; docs/dedup_and_identity.md) ---------------
+    # Same method from another source -> reuse + attach provenance; refinement -> new VERSION; else a
+    # new Procedure on this Goal. Callers that opt in get {"reused": True} when nothing new was
+    # created and MUST NOT re-stamp extractor metadata onto the existing row. Local-tier callers
+    # (private/project scope: local_sync, trace/episode extraction) do not opt in.
+    if procedure_dedup:
+        from app.services.identity_resolution import default_judge
+        _judge = goal_judge if goal_judge is not None else default_judge()
+        if _judge.providers:
+            from app.services.procedure_identity import attach_procedure_source, resolve_procedure_identity
+            decision, resolved = await resolve_procedure_identity(
+                pool, goal_id=achieves_goal_id, name=name, goal_text=goal, steps=steps or [], source_key=source_key,
+                scope_type=procedure_scope_type, scope_entity_id=procedure_scope_entity_id, embedder=goal_embedder,
+                judge=_judge, on_unavailable=goal_on_unavailable or ("create" if visibility != "public" else "raise"),
+                job_id=identity_job_id)
+            if decision == "same":
+                row = await attach_procedure_source(pool, resolved, source_key=source_key, provenance=provenance)
+                return {"id": row["id"], "procedure_id": row["procedure_id"], "reused": True, "decision": "same"}
+            if decision == "new_version":
+                v = await supersede_procedure(pool, prior_row_id=resolved, changed_fields={"steps": steps or [], "name": name},
+                                              reason=f"refined by source {source_key or provenance}")
+                if v is not None:
+                    return {"id": v["id"], "procedure_id": v["procedure_id"], "reused": False, "new_version": True, "decision": "new_version"}
     # Locality rule: a Procedure is homed with its Goal (roll over only if that
     # shard can no longer take writes). Same value goes into the INSERT below.
     from app.services.shards import cached_shards, choose_child_shard, writable_shards

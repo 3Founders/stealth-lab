@@ -275,6 +275,8 @@ async def publish_procedure(
         visibility="public",
         scope_type="global",
         scope_entity_id=None,
+        procedure_dedup=True,
+        source_key=f"publication:{source_row_id}",
     )
 
     # Independent-verification determination (B11/G24, spec A14). A

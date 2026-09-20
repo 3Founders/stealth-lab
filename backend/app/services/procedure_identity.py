@@ -63,6 +63,14 @@ async def _candidates(pool: asyncpg.Pool, goal_id: str, text: str, embedding: Op
             c = by.setdefault(r["id"], Candidate(r["id"], r["name"], procedure_text(r["name"], r["goal"], r["steps"])))
             c.vec_rank, c.vec_distance = rank, float(r["dist"])
             vec_ids.append(r["id"])
+    # procedures of this goal that live on OTHER shards (global projection; their canonical rows stay there)
+    from app.services.shards import HOME_SHARD, multi_shard
+
+    if await multi_shard(pool):
+        for r in await pool.fetch(
+                "SELECT procedure_row_id::text AS id, name, search_text FROM procedure_search_index "
+                "WHERE goal_id = $1::uuid AND home_shard_id <> $2 AND status = 'active' ORDER BY procedure_id LIMIT $3", goal_id, HOME_SHARD, k):
+            by.setdefault(r["id"], Candidate(r["id"], r["name"], (r["search_text"] or r["name"])[:1500]))
     # goals with few procedures: the goal constraint alone is a fine candidate set
     if not by:
         for r in await pool.fetch(f"SELECT id::text AS id, name, goal, steps FROM procedures WHERE {base} ORDER BY id LIMIT {k}", goal_id):
@@ -70,6 +78,54 @@ async def _candidates(pool: asyncpg.Pool, goal_id: str, text: str, embedding: Op
     for oid, sc in rrf_fuse(fts_ids, vec_ids).items():
         by[oid].rrf = sc
     return sorted(by.values(), key=lambda c: (-c.rrf, c.id))[:5]
+
+
+async def resolve_procedure_identity(
+    pool: asyncpg.Pool, *, goal_id: str, name: str, goal_text: str, steps: list, source_key: Optional[str], scope_type: str,
+    scope_entity_id: Optional[str], embedder: Any, judge: SemanticJudge, on_unavailable: str, job_id: Optional[int] = None,
+) -> tuple[str, Optional[str]]:
+    """Procedure identity WITHIN one Goal: returns (decision, resolved_row_id) with decision in
+    no_candidates | same | new_version | distinct | judge_unavailable. Shared by ingest_procedure and by
+    capture_procedure(procedure_dedup=True), so every adapter that opts in gets the identical behaviour."""
+    text = procedure_text(name, goal_text, steps)
+    emb, model = None, None
+    if embedder is not None:
+        emb = await embedder.embed_one(text, input_type="document")
+        model = embedder.embedding_model_id()
+    cands = await _candidates(pool, goal_id, text, emb, model)
+    decision, resolved, provider, mdl = "no_candidates", None, None, None
+    if cands:
+        for cand in cands:
+            res = await judge.judge_identity("procedure", text, cand.text)
+            if not res.ok:
+                if on_unavailable == "raise":
+                    raise SemanticJudgmentUnavailable(f"procedure identity unavailable ({res.reason})", attempts=res.attempts)
+                decision = "judge_unavailable"
+                break
+            cand.relation, cand.confidence = res.value["relation"], res.value["confidence"]
+            provider, mdl = res.provider, res.model
+            if cand.relation in ("same", "refinement") and cand.confidence >= SAME_MIN_CONFIDENCE:
+                decision, resolved = ("same" if cand.relation == "same" else "new_version"), cand.id
+                break
+        else:
+            decision = "distinct"
+        await record_decision(
+            pool, object_type="procedure", candidate_text=text, scope_type=scope_type, scope_entity_id=scope_entity_id,
+            decision=decision, resolved_id=resolved, candidates=cands, judge=judge, provider=provider, model=mdl,
+            fts_n=sum(1 for c in cands if c.fts_rank), vec_n=sum(1 for c in cands if c.vec_rank), job_id=job_id,
+            idempotency_key=f"proc:{source_key}" if source_key else None, detail={"goal_id": goal_id})
+    return decision, resolved
+
+
+async def attach_procedure_source(pool: asyncpg.Pool, row_id: str, *, source_key: Optional[str], provenance: str) -> dict:
+    """Same method from another source: keep ONE procedure, record the source as provenance."""
+    from app.services.shards import home_pool
+    owner = await home_pool(pool, "procedure", row_id, by_row_id=True)
+    row = await owner.fetchrow(
+        "UPDATE procedures SET evidence_refs = CASE WHEN evidence_refs @> $2::jsonb THEN evidence_refs "
+        "ELSE evidence_refs || $2::jsonb END WHERE id = $1::uuid RETURNING id::text AS id, procedure_id::text AS procedure_id",
+        row_id, [{"type": "source", "source_key": source_key, "provenance": provenance}])
+    return dict(row)
 
 
 async def ingest_procedure(
@@ -101,42 +157,12 @@ async def ingest_procedure(
         embedder=embedder, judge=judge, on_unavailable=on_unavailable, job_id=job_id, idempotency_key=f"goal:{source_key}")
 
     # 2) Procedure identity within that Goal
-    text = procedure_text(name, goal, steps)
-    emb, model = None, None
-    if embedder is not None:
-        emb = await embedder.embed_one(text, input_type="document")
-        model = embedder.embedding_model_id()
-    cands = await _candidates(pool, g["id"], text, emb, model)
-    decision, resolved, provider, mdl = "no_candidates", None, None, None
-    if cands:
-        verdicts = []
-        for cand in cands:
-            res = await judge.judge_identity("procedure", text, cand.text)
-            if not res.ok:
-                if on_unavailable == "raise":
-                    raise SemanticJudgmentUnavailable(f"procedure identity unavailable ({res.reason})", attempts=res.attempts)
-                decision = "judge_unavailable"
-                break
-            cand.relation, cand.confidence = res.value["relation"], res.value["confidence"]
-            provider, mdl = res.provider, res.model
-            verdicts.append(cand)
-            if cand.relation in ("same", "refinement") and cand.confidence >= SAME_MIN_CONFIDENCE:
-                decision, resolved = ("same" if cand.relation == "same" else "new_version"), cand.id
-                break
-        else:
-            decision = "distinct"
-        await record_decision(
-            pool, object_type="procedure", candidate_text=text, scope_type=scope_type, scope_entity_id=scope_entity_id,
-            decision=decision, resolved_id=resolved, candidates=cands, judge=judge, provider=provider, model=mdl,
-            fts_n=sum(1 for c in cands if c.fts_rank), vec_n=sum(1 for c in cands if c.vec_rank), job_id=job_id,
-            idempotency_key=f"proc:{source_key}", detail={"goal_id": g["id"]})
+    decision, resolved = await resolve_procedure_identity(
+        pool, goal_id=g["id"], name=name, goal_text=goal, steps=steps, source_key=source_key, scope_type=scope_type,
+        scope_entity_id=scope_entity_id, embedder=embedder, judge=judge, on_unavailable=on_unavailable, job_id=job_id)
 
     if decision == "same":
-        # same method, different source: keep ONE canonical procedure, attach this source as provenance
-        row = await pool.fetchrow(
-            "UPDATE procedures SET evidence_refs = CASE WHEN evidence_refs @> $2::jsonb THEN evidence_refs "
-            "ELSE evidence_refs || $2::jsonb END WHERE id = $1::uuid RETURNING id::text AS id, procedure_id::text AS procedure_id",
-            resolved, [{"type": "source", "source_key": source_key, "provenance": provenance}])
+        row = await attach_procedure_source(pool, resolved, source_key=source_key, provenance=provenance)
         return {"action": "same_procedure", "id": row["id"], "procedure_id": row["procedure_id"], "goal_id": g["id"], "decision": decision}
     if decision == "new_version":
         v = await supersede_procedure(pool, prior_row_id=resolved, changed_fields={"steps": steps, "name": name},

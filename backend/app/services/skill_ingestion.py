@@ -2311,6 +2311,7 @@ async def compile_skill_artifact(
             invariants=invariants, owner_id=owner_id,
             availability="quarantined" if quarantined else "active",
             goal_embedder=embedder, goal_adjudication_client=client,
+            procedure_dedup=True, source_key=f"skill:{artifact.content_hash}:{proc.name}",
             **_structured_fields_from_extracted(proc),
         )
         procedure_row_id = str(result["id"])
@@ -2322,11 +2323,12 @@ async def compile_skill_artifact(
         # real, grounded, LLM-produced sentence (the whole point of this
         # rearchitecture) -- stamped here too so existing readers of this
         # column (retrieval ranking text, replay diffing) keep working.
-        await pool.execute(
-            "UPDATE procedures SET capability_statement = $2, ingestion_context_id = $3::uuid "
-            "WHERE id = $1::uuid",
-            procedure_row_id, proc.goal, ingestion_context_id,
-        )
+        if not result.get("reused"):     # a reused (same-method) procedure keeps its own context/capability; this source is attached as provenance
+            await pool.execute(
+                "UPDATE procedures SET capability_statement = $2, ingestion_context_id = $3::uuid "
+                "WHERE id = $1::uuid",
+                procedure_row_id, proc.goal, ingestion_context_id,
+            )
 
         observation_id = await _emit_document_observation(
             pool, view, ingestion_context_id=ingestion_context_id, owner_id=owner_id,
