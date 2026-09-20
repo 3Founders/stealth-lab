@@ -104,6 +104,18 @@ unit included in the script's footer. More VMs = more workers.
 | bad payload / no handler / private scope on a public-only job | permanent, not retried |
 | shard unreachable | classified retryable (`ShardUnavailable`); retrieval reports partial |
 
-**Not covered:** object-storage errors — raw-payload offload to object storage is not implemented
-(payloads are stored in `ingestion_jobs.payload`; large raw documents should be referenced by
-locator in the payload). See the acceptance matrix.
+## Object storage for large raw payloads (`services/object_storage.py`)
+
+Strings above `RAW_PAYLOAD_INLINE_MAX_BYTES` (64 KiB) in a job payload are stored in object storage at enqueue time
+(content-addressed by sha256, so duplicates cost nothing); the queue row keeps `{"$blob": {sha256, locator, size}}` and
+`raw_objects` records the locator. The worker fetches and **verifies the sha256** before the handler runs.
+
+| Variable | Meaning |
+|---|---|
+| `OBJECT_STORAGE_URL` | `s3://bucket/prefix` (AWS S3, R2, MinIO, OCI/GCS interop; needs `pip install -r requirements-objectstore.txt`), `file:///shared/path`, `memory://` (tests only) |
+| `OBJECT_STORAGE_ENDPOINT_URL` | custom S3 endpoint; standard `AWS_*` variables carry credentials |
+| `RAW_PAYLOAD_INLINE_MAX_BYTES` / `RAW_PAYLOAD_HARD_MAX_BYTES` | offload threshold / refuse-without-a-store limit (1 MiB) |
+
+Failures: store outage/throttle -> retryable with backoff; object missing or hash mismatch -> permanent (`failed`);
+no store configured and payload above the hard limit -> refused at enqueue. PRODUCTION start-up refuses `memory://`
+and requires `OBJECT_STORAGE_URL`. The local `.stealth` cache never uses it.

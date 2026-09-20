@@ -97,7 +97,7 @@ async def test_duplicate_enqueue_is_idempotent(pool):
 async def test_two_workers_never_lease_the_same_job(pool):
     for i in range(20):
         await enq(pool, bundle(f"lease{i}", goal=n(f"goal number {i}")))
-    a, b = await asyncio.gather(q.lease(pool, "A", limit=20), q.lease(pool, "B", limit=20))
+    a, b = await asyncio.gather(q.lease(pool, "A", limit=20, job_types=[JOB_TYPE]), q.lease(pool, "B", limit=20, job_types=[JOB_TYPE]))
     ids = [j.id for j in a] + [j.id for j in b]
     assert len(ids) == len(set(ids)) == 20
 

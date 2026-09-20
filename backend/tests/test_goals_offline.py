@@ -359,21 +359,36 @@ def test_search_goals_requires_at_least_one_query_input():
         _run(search_goals(pool))
 
 
-def test_search_goals_fuses_lexical_and_semantic_legs():
-    rows = {"g1": _goal_row("g1", "find references"), "g2": _goal_row("g2", "deploy safely")}
-    # g1 ranks well on both legs; g2 only appears in the semantic leg.
-    pool = _SearchFakePool(lexical_ids=["g1"], semantic_ids=["g1", "g2"], rows_by_id=rows)
-    results = _run(search_goals(pool, query_text="find refs", query_embedding=[0.1] * 4, limit=5))
-    ids = [r["id"] for r in results]
-    assert ids[0] == "g1"  # present in both legs -> highest fused score
-    assert "g2" in ids
+def test_search_goals_delegates_to_the_canonical_candidate_search(monkeypatch):
+    """goals.search_goals has no ranking of its own: it is the judge-free face of Tier-1 candidate generation."""
+    import app.services.retrieval_service as rs
+    seen = {}
+
+    async def fake(pool, **kw):
+        seen.update(kw)
+        return [{"id": "g1", "canonical_name": "find references"}]
+
+    class _Pool:
+        async def fetchval(self, *a):
+            return "model-x"
+
+    monkeypatch.setattr(rs, "search_goal_candidates", fake)
+    out = _run(search_goals(_Pool(), query_text="find refs", query_embedding=[0.1] * 4, limit=5, status="active"))
+    assert out == [{"id": "g1", "canonical_name": "find references"}]
+    assert seen["query_text"] == "find refs" and seen["embedding_model"] == "model-x" and seen["status"] == "active" and seen["limit"] == 5
 
 
-def test_search_goals_lexical_only_when_no_embedding_given():
-    rows = {"g1": _goal_row("g1", "find references")}
-    pool = _SearchFakePool(lexical_ids=["g1"], semantic_ids=["should-not-be-queried"], rows_by_id=rows)
-    results = _run(search_goals(pool, query_text="find refs"))
-    assert [r["id"] for r in results] == ["g1"]
+def test_search_goals_text_only_does_not_look_up_an_embedding_model(monkeypatch):
+    import app.services.retrieval_service as rs
+    seen = {}
+
+    async def fake(pool, **kw):
+        seen.update(kw)
+        return []
+
+    monkeypatch.setattr(rs, "search_goal_candidates", fake)
+    assert _run(search_goals(object(), query_text="find refs")) == []
+    assert seen["embedding_model"] is None
 
 
 # --- get_goal ---------------------------------------------------------

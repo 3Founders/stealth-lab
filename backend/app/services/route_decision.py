@@ -215,6 +215,7 @@ async def decide_route(
     scope_type: Optional[str] = None,
     scope_entity_id: Optional[str] = None,
     excluded_procedure_ids: Optional[list[str]] = None,
+    candidates: Optional[list[ApplicabilityResult]] = None,
 ) -> RouteDecision:
     """
     The B1 algorithm, now genuinely running every pipeline step the spec
@@ -257,6 +258,7 @@ async def decide_route(
         goal_text=goal_text, environment=environment, session_id=session_id,
         workspace_id=workspace_id, created_by=created_by, scope_type=scope_type,
         scope_entity_id=scope_entity_id, excluded_procedure_ids=excluded_procedure_ids,
+        candidates=candidates,
     )
     decision.relevant_claim_refs = relevant_claim_refs
 
@@ -294,6 +296,7 @@ async def _decide_route_core(
     scope_type: Optional[str] = None,
     scope_entity_id: Optional[str] = None,
     excluded_procedure_ids: Optional[list[str]] = None,
+    candidates: Optional[list[ApplicabilityResult]] = None,
 ) -> RouteDecision:
     """
     The applicability/intent core: normalize -> classify intent ->
@@ -320,7 +323,10 @@ async def _decide_route_core(
             created_by=created_by, scope_type=scope_type, scope_entity_id=scope_entity_id,
         )
 
-    matched = await diagnose_candidates(
+    # `candidates`: hard-constraint verdicts already produced by the canonical goal-first retrieval
+    # (retrieval_service.diagnose_procedures). When absent (legacy callers/tests) the old similarity-only
+    # diagnostic query is used.
+    matched = candidates if candidates is not None else await diagnose_candidates(
         pool, goal_embedding=goal_embedding, current_scope=current_scope,
         access_scope=access_scope, require_verified=require_verified,
         invariant_bindings=invariant_bindings, embedding_model_id=embedding_model_id,

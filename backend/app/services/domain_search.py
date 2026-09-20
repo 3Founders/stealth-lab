@@ -239,72 +239,49 @@ async def _search_procedures(
     scope_type: Optional[str],
     repository_id: Optional[str],
     project_id: Optional[str],
+    embedder: Optional[Embedder] = None,
+    local_claims: Optional[list] = None,
+    meta_out: Optional[dict] = None,
 ) -> list[dict]:
-    """
-    The procedure leg: `find_applicable_procedures` verbatim -- its own
-    hard-constraint cascade (disqualification) and its own similarity+
-    capability RRF fusion of survivors, both reused unmodified. Search is
-    a browse, not an auto-invocation decision, so `require_verified`
-    defaults to False upstream (`search_global`'s own default) --
-    ticket 13's own named exception (verification/approval gate applies
-    to AUTOMATIC selection, not to a caller-directed browse) extended
-    consistently here; every OTHER hard constraint (temporal validity,
-    staleness, availability, scope/exclusions, preconditions, invariants)
-    still fully applies regardless.
+    """The procedure leg of global search -- CONVERGED onto the canonical retrieval service
+    (app.services.retrieval_service): Goal resolution first, then goal-constrained Procedure
+    retrieval, hard constraints, JEV/NLI judgment. This function only shapes the service's
+    result into the row format REST/frontends already consume. It has no ranking logic of its
+    own (the previous find_applicable_procedures cascade + relevance gate composition was removed).
 
-    Over-fetches (`candidate_pool_size` is find_applicable_procedures'
-    OWN default unless the caller supplies scope filters, in which case
-    a larger pool is requested) because the V0 scope_type/scope_entity_id
-    filter below runs AFTER the cascade, as a Python post-filter --
-    `find_applicable_procedures` has no such column in its own signature
-    to push the filter into (and this module must not edit it). A real,
-    disclosed limitation: a heavily scope-filtered search can legitimately
-    return fewer than `limit` hits even when more exist, if they fell
-    outside the candidate pool the cascade was ever offered.
+    `meta_out`, when given, receives the service's retrieval metadata (mode, degraded, reasons,
+    goal resolution) so callers can surface it.
     """
-    has_scope_filter = scope_type is not None or repository_id is not None or project_id is not None
-    kwargs: dict[str, Any] = dict(
-        goal_embedding=query_vec,
-        goal_text=query_text,
-        current_scope=current_scope or {},
-        access_scope=scope,
-        require_verified=require_verified,
-        invariant_bindings=invariant_bindings,
-        embedding_model_id=embedding_model_id,
-        limit=limit * 4 if has_scope_filter else limit,
-    )
-    survivors = await find_applicable_procedures(pool, **kwargs)
+    from app.services import retrieval_service as rs
 
+    res = await rs.search_procedures(
+        pool, query_text or "", scope=scope, local_claims=local_claims or [], embedder=embedder,
+        current_scope=current_scope or {}, require_verified=require_verified, invariant_bindings=invariant_bindings)
+    if meta_out is not None:
+        meta_out.update(res.meta.as_dict())
+        meta_out["goal_resolution"] = {"status": res.goals.resolution, "goals": [h.brief() for h in res.goals.resolved]}
     out: list[dict] = []
-    dropped_by_gate = 0
-    for proc in survivors:
+    for item in res.procedures.ranked:
+        proc = item["_row"]
         if not _scope_filter_matches(
             proc.get("scope_type"), proc.get("scope_entity_id"),
             scope_type=scope_type, repository_id=repository_id, project_id=project_id,
         ):
             continue
-        similarity = proc.get("_similarity_score")
-        # RELEVANCE GATE (plan Part 6): drop a survivor whose best relevance
-        # signal is below the MEASURED cutoff. Runs AFTER the applicability
-        # cascade, BEFORE presentation. Never re-ranks; returning fewer --
-        # or zero -- results is correct, not a failure to pad.
-        if not passes_relevance_gate(similarity):
-            dropped_by_gate += 1
-            continue
         stats = proc.get("verification_stats") or {}
+        rel = item.get("relation")
         out.append({
             "id": str(proc["id"]),
             "procedure_id": str(proc["procedure_id"]),
             "name": proc["name"],
             "goal": proc["goal"],
-            # --- human-facing (plan Part 7) ---
+            # --- human-facing ---
             "display_name": proc.get("display_name") or proc["name"],
             "display_description": proc.get("display_description") or proc["goal"],
             "applicability_summary": build_applicability_summary(proc),
-            "relevance_label": relevance_label(similarity),
-            "relevance_reason": (
-                relevance_reason(query_text, proc) if query_text else None
-            ),
+            # label from the MODEL's verdict (no similarity cutoff exists any more); None when unjudged (degraded)
+            "relevance_label": {"applies": "strong", "partial": "relevant"}.get(rel) if item.get("judged") else None,
+            "relevance_reason": relevance_reason(query_text, proc) if query_text else None,
             "verification_state": proc["verification_state"],
             "evidence_summary": {
                 "successes": stats.get("successes", 0),
@@ -320,22 +297,15 @@ async def _search_procedures(
             "approval_status": proc.get("approval_status"),
             "scope_type": proc.get("scope_type"),
             "scope_entity_id": proc.get("scope_entity_id"),
-            "similarity_score": similarity,
+            "similarity_score": item.get("rrf"),
             "version": proc.get("version"),
+            "goal_id": item.get("goal_id"),
+            "semantic": {"judged": item.get("judged"), "relation": rel, "confidence": item.get("confidence")},
         })
         if len(out) >= limit:
             break
-
-    # Observability (plan Part 19): representation/gate version, how many
-    # applicable survivors the relevance gate removed, and whether this was
-    # a zero-result search. Query text and procedure content are never
-    # logged -- only a non-reversible tag and counts.
-    log.info(
-        "procedure_search %s cascade_survivors=%d dropped_by_relevance_gate=%d "
-        "returned=%d zero_result=%s gate=%s cutoff=%s",
-        _q_tag(query_text or ""), len(survivors), dropped_by_gate, len(out),
-        len(out) == 0, RELEVANCE_GATE_VERSION, RELEVANCE_GATE_MIN_SIMILARITY,
-    )
+    log.info("procedure_search %s goal_status=%s mode=%s degraded=%s returned=%d zero_result=%s",
+             _q_tag(query_text or ""), res.goals.resolution, res.meta.mode, res.meta.degraded, len(out), len(out) == 0)
     return out
 
 
@@ -566,9 +536,11 @@ async def search_global(
 
     results: dict[str, list[dict]] = {}
 
+    retrieval_meta: dict = {}
     if "procedure" in resolved_types:
         results["procedure"] = await _search_procedures(
             pool, query_vec,
+            embedder=embedder, local_claims=filters.get("local_claims"), meta_out=retrieval_meta,
             query_text=query,
             embedding_model_id=embedder.embedding_model_id() if query_vec is not None else None,
             scope=scope,
@@ -598,6 +570,7 @@ async def search_global(
         "object_types": resolved_types,
         "results": results,
         "counts": {k: len(v) for k, v in results.items()},
+        "retrieval": retrieval_meta or None,
     }
 
 

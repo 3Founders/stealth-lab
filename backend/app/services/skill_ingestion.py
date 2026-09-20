@@ -2312,6 +2312,10 @@ async def compile_skill_artifact(
             availability="quarantined" if quarantined else "active",
             goal_embedder=embedder, goal_adjudication_client=client,
             procedure_dedup=True, source_key=f"skill:{artifact.content_hash}:{proc.name}",
+            source_locator={k: v for k, v in {
+                "source_id": getattr(artifact, "source_id", None) or artifact.uri, "uri": artifact.uri,
+                "content_hash": artifact.content_hash, "commit": getattr(artifact, "commit", None),
+                "path": getattr(artifact, "path", None), "granularity": "document"}.items() if v},
             **_structured_fields_from_extracted(proc),
         )
         procedure_row_id = str(result["id"])

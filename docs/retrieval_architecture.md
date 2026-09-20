@@ -77,9 +77,21 @@ every ANN query filters `embedding_model` so vector spaces are never mixed. Meas
 see `docs/production_ingestion.md`, "Measured scale" (command:
 `python scripts/benchmark_projection_scale.py --goals 100000`).
 
-## Known gaps
+## Every entry point uses this service
 
-* MCP `find_best_way`'s internal tier-1 lookup, MCP `search_procedures`, REST
-  `/v1/procedures/search`, `/v1/solutions/search` and `/v1/goals/search` still use their
-  previous rankers (`find_applicable_procedures`, `solution_search`, `goals.search_goals`).
-  They are not yet delegated to this service (audit table, "Retrieval").
+| Surface | How |
+|---|---|
+| REST `POST /v1/search/recommend` | `domain_search.find_best_way` -> `retrieval_service.find_best_way` |
+| REST `GET /v1/search`, `/v1/procedures/search`, `/v1/solutions/search` | `domain_search._search_procedures` -> `retrieval_service.search_procedures` |
+| REST `GET /v1/goals/search`, MCP `search_goals`, `execution/intent_resolution` | `goals.search_goals` -> `retrieval_service.search_goal_candidates` (judge-free, same candidate machinery) |
+| MCP `search_procedures` | `retrieval_service.search_procedures` (+ relevant local Claims); contract keeps `contextual_judgment_status`, adds `goal_resolution`/`retrieval` |
+| MCP `find_best_way` tier-1 + routing | `retrieval_service.diagnose_procedures` -> `route_decision.decide_route(candidates=...)`: hard-constraint verdicts incl. UNKNOWN preconditions still drive `needs_clarification`/`plan_ready`; plan_only and the durable execution path are unchanged |
+| MCP resource `relevant procedures`, `execution/recursion_guard` alternative lookup | `retrieval_service.search_procedures` / `diagnose_procedures` |
+
+Read-your-writes: `search_goals` applies a small projection backlog inline (`_catch_up_projection`); API and MCP processes
+also run a background drainer (`PROJECTION_DRAIN_ENABLED`, `PROJECTION_DRAIN_INTERVAL_SECONDS`).
+
+Not on this path (different concepts, left alone): `find_best_solution`/`product_model.find_best_way` (Problem leaderboards),
+`retrieve_precedent`/`get_relevant_claims` (claim/node retrieval that *supplies* local claims). Still present and now unused by
+any converted surface: `applicability.find_applicable_procedures`/`diagnose_candidates`, `claim_conditioned_retrieval`,
+`relevance_gate`, `solution_search` ranking; `skill_ingestion.check_novelty` still calls `find_applicable_procedures`.

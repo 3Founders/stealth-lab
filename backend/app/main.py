@@ -68,9 +68,13 @@ async def lifespan(app: FastAPI):
     # starting the task but still sets app.state.ingestion_scheduler so
     # the status endpoint always has something to report.
     ingestion_scheduler.start(app)
+    from app.services import search_projection as _sp
+    _drain_task = _sp.start_background_drain(app.state.pool)   # keeps the global search projections fresh
     try:
         yield
     finally:
+        if _drain_task is not None:
+            _drain_task.cancel()
         await ingestion_scheduler.stop(app)
         await close_pool()
 

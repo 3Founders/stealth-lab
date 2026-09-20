@@ -497,66 +497,17 @@ async def search_goals(
     """
     if not query_text and not query_embedding:
         raise ValueError("search_goals requires query_text and/or query_embedding")
-    scope = scope or AccessScope.unrestricted()
-    tenant_scope = tenant_scope or TenantScope.unrestricted()
+    # CONVERGED: the same candidate machinery as Tier-1 retrieval (global goal projection: FTS + ANN + RRF,
+    # visibility-filtered, canonical rows hydrated from each goal's home shard). No second goal ranker.
+    from app.services import retrieval_service as rs
 
-    legs: dict[str, list[tuple[str, int]]] = {}  # goal_id -> [(leg_name, rank), ...]
-
-    if query_text:
-        # Fixed params: $1=query_text, $2=limit*3. Scope params start at
-        # $3; the optional status param lands wherever scope_predicates
-        # says the next free index is -- never a hardcoded guess, since
-        # scope_predicates may consume a variable number of placeholders
-        # depending on `scope`/`tenant_scope`.
-        scope_sql, scope_params, next_idx = scope_predicates(scope, tenant_scope, alias="goals", param_index=3)
-        status_sql = f"status = ${next_idx}" if status else "TRUE"
-        rows = await pool.fetch(
-            f"""
-            SELECT id, ts_rank(
-                to_tsvector('english', canonical_name || ' ' || COALESCE(description, '')),
-                plainto_tsquery('english', $1)
-            ) AS rank
-            FROM goals
-            WHERE t_invalid IS NULL AND {scope_sql} AND {status_sql}
-              AND to_tsvector('english', canonical_name || ' ' || COALESCE(description, ''))
-                  @@ plainto_tsquery('english', $1)
-            ORDER BY rank DESC LIMIT $2
-            """,
-            query_text, limit * 3, *scope_params, *([status] if status else []),
-        )
-        for i, r in enumerate(rows):
-            legs.setdefault(str(r["id"]), []).append(("lexical", i))
-
+    model = None
     if query_embedding:
-        scope_sql, scope_params, next_idx = scope_predicates(scope, tenant_scope, alias="goals", param_index=3)
-        status_sql = f"status = ${next_idx}" if status else "TRUE"
-        rows = await pool.fetch(
-            f"""
-            SELECT id FROM goals
-            WHERE t_invalid IS NULL AND embedding IS NOT NULL AND {scope_sql} AND {status_sql}
-            ORDER BY embedding <=> $1::vector ASC LIMIT $2
-            """,
-            to_pgvector(query_embedding), limit * 3, *scope_params, *([status] if status else []),
-        )
-        for i, r in enumerate(rows):
-            legs.setdefault(str(r["id"]), []).append(("semantic", i))
-
-    if not legs:
-        return []
-
-    fused = sorted(
-        legs.items(),
-        key=lambda kv: sum(1.0 / (_RRF_K + rank + 1) for _leg, rank in kv[1]),
-        reverse=True,
-    )
-    top_ids = [gid for gid, _ranks in fused[:limit]]
-    rows = await pool.fetch(
-        "SELECT id, canonical_name, description, status, scope_type, scope_entity_id, "
-        "expected_outcome, verification_requirement FROM goals WHERE id = ANY($1::uuid[])",
-        top_ids,
-    )
-    by_id = {str(r["id"]): {**dict(r), "id": str(r["id"])} for r in rows}
-    return [by_id[gid] for gid in top_ids if gid in by_id]
+        model = await pool.fetchval(
+            "SELECT embedding_model FROM goal_search_index WHERE embedding IS NOT NULL GROUP BY 1 ORDER BY count(*) DESC LIMIT 1")
+    return await rs.search_goal_candidates(
+        pool, query_text=query_text, query_embedding=query_embedding, embedding_model=model,
+        scope=scope or AccessScope.unrestricted(), status=status, limit=limit)
 
 
 async def create_goal_from_user(

@@ -141,44 +141,63 @@ def test_scope_filter_combines_all_supplied_conditions_with_and():
 # verbatim, then applies the V0 scope post-filter + limit.
 # ---------------------------------------------------------------------------
 
-def test_search_global_procedure_leg_shapes_and_postfilters(monkeypatch):
-    survivors = [
+class _RS:
+    """Stand-in for retrieval_service.search_procedures' result."""
+
+    class _Meta:
+        mode, degraded = "jev", False
+
+        def as_dict(self):
+            return {"mode": "jev", "degraded": False}
+
+    def __init__(self, rows):
+        from types import SimpleNamespace
+        items = [{"_row": r, "rrf": r.get("_similarity_score"), "judged": True, "relation": "applies", "confidence": 0.9,
+                  "goal_id": "g1"} for r in rows]
+        self.procedures = SimpleNamespace(ranked=items)
+        self.goals = SimpleNamespace(resolution="matches", resolved=[])
+        self.meta = self._Meta()
+
+
+@pytest.fixture
+def canonical_search(monkeypatch):
+    import app.services.retrieval_service as rs
+    calls = {}
+
+    async def fake(pool, query_text, **kw):
+        calls["query"], calls["kw"] = query_text, kw
+        return _RS(calls["rows"])
+
+    async def boom(*a, **k):
+        raise AssertionError("the procedure leg must not call find_applicable_procedures")
+
+    monkeypatch.setattr(rs, "search_procedures", fake)
+    monkeypatch.setattr(ds, "find_applicable_procedures", boom)
+    return calls
+
+
+def test_search_global_procedure_leg_delegates_shapes_and_postfilters(canonical_search):
+    canonical_search["rows"] = [
         _procedure_row("00000000-0000-4000-8000-000000000001", scope_type="repository", scope_entity_id="repo-1"),
         _procedure_row("00000000-0000-4000-8000-000000000002", scope_type="repository", scope_entity_id="repo-2"),
     ]
-
-    async def fake_find_applicable_procedures(pool, **kwargs):
-        assert kwargs["require_verified"] is False  # search's own browse-mode default
-        return survivors
-
-    monkeypatch.setattr(ds, "find_applicable_procedures", fake_find_applicable_procedures)
-
     result = _run(ds.search_global(
         pool=object(), query="deploy", object_types=["procedure"],
         repository_id="repo-1", scope=AccessScope.unrestricted(), embedder=FakeEmbedder(),
     ))
-
-    assert result["object_types"] == ["procedure"]
-    assert result["counts"] == {"procedure": 1}
-    assert len(result["results"]["procedure"]) == 1
+    assert canonical_search["kw"]["require_verified"] is False          # search's own browse-mode default
+    assert result["object_types"] == ["procedure"] and result["counts"] == {"procedure": 1}
     hit = result["results"]["procedure"][0]
-    assert hit["scope_entity_id"] == "repo-1"
-    assert hit["id"] == "00000000-0000-4000-8000-000000000001"
-    assert hit["similarity_score"] == 0.9
+    assert hit["scope_entity_id"] == "repo-1" and hit["id"] == "00000000-0000-4000-8000-000000000001"
+    assert hit["similarity_score"] == 0.9 and hit["relevance_label"] == "strong"      # label comes from the MODEL verdict
+    assert result["retrieval"]["mode"] == "jev" and result["retrieval"]["goal_resolution"]["status"] == "matches"
 
 
-def test_search_global_procedure_leg_honest_empty_when_no_survivors(monkeypatch):
-    async def fake_find_applicable_procedures(pool, **kwargs):
-        return []
-
-    monkeypatch.setattr(ds, "find_applicable_procedures", fake_find_applicable_procedures)
-
-    result = _run(ds.search_global(
-        pool=object(), query="deploy", object_types=["procedure"],
-        scope=AccessScope.unrestricted(), embedder=FakeEmbedder(),
-    ))
-    assert result["results"]["procedure"] == []
-    assert result["counts"]["procedure"] == 0
+def test_search_global_procedure_leg_honest_empty_when_nothing_resolves(canonical_search):
+    canonical_search["rows"] = []
+    result = _run(ds.search_global(pool=object(), query="deploy", object_types=["procedure"],
+                                   scope=AccessScope.unrestricted(), embedder=FakeEmbedder()))
+    assert result["results"]["procedure"] == [] and result["counts"]["procedure"] == 0
 
 
 # ---------------------------------------------------------------------------
@@ -245,13 +264,10 @@ def test_search_global_claim_leg_postfilters_non_claim_hits(monkeypatch):
     assert hits[0]["subject"] == "s"
 
 
-def test_search_global_never_merges_result_types(monkeypatch):
+def test_search_global_never_merges_result_types(monkeypatch, canonical_search):
     """The hard, deliberate design constraint (module docstring): results
     stay grouped by object_type, no cross-type ranked list is produced."""
-    async def fake_find_applicable_procedures(pool, **kwargs):
-        return [_procedure_row()]
-
-    monkeypatch.setattr(ds, "find_applicable_procedures", fake_find_applicable_procedures)
+    canonical_search["rows"] = [_procedure_row()]
     monkeypatch.setattr(ds, "HybridRetriever", _FakeHybridRetriever())
 
     result = _run(ds.search_global(

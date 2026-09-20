@@ -379,3 +379,31 @@ async def verify_projection(pool: asyncpg.Pool) -> dict[str, Any]:
             report["ok"] = False
     report["lag"] = await projection_lag(pool)
     return report
+
+
+# ------------------------------------------------ in-process drainer (API / MCP server processes)
+import asyncio as _asyncio
+import os as _os
+
+
+def start_background_drain(pool: asyncpg.Pool, *, interval_s: Optional[float] = None) -> Optional["_asyncio.Task"]:
+    """Keep the global projections fresh in processes that serve reads (REST/MCP) even when no ingestion worker
+    is running. Idempotent work (`drain_outbox` is safe to run from any number of processes). Disabled with
+    PROJECTION_DRAIN_ENABLED=0. Never raises into the host process."""
+    if _os.environ.get("PROJECTION_DRAIN_ENABLED", "1") in ("0", "false", "False"):
+        return None
+    every = interval_s if interval_s is not None else float(_os.environ.get("PROJECTION_DRAIN_INTERVAL_SECONDS", "5"))
+
+    async def loop() -> None:
+        from app.services.shards import pools_for
+
+        while True:
+            try:
+                await drain_outbox(pool, batch=200, pools=pools_for(pool), max_batches=20)
+            except _asyncio.CancelledError:
+                raise
+            except Exception:  # noqa: BLE001
+                log.warning("projection drain failed; retrying", exc_info=True)
+            await _asyncio.sleep(every)
+
+    return _asyncio.get_running_loop().create_task(loop(), name="projection-drain")

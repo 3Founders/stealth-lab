@@ -140,6 +140,8 @@ async def capture_procedure(
     identity_idempotency_key: Optional[str] = None,
     source_key: Optional[str] = None,
     procedure_dedup: bool = False,
+    source_locator: Optional[dict] = None,
+    require_source_locators: Optional[bool] = None,
 ) -> dict:
     """
     Inserts a new procedure, always starting `candidate` / `fresh` /
@@ -186,6 +188,16 @@ async def capture_procedure(
     # best-effort execution hint.  Allocate the stable identity before the
     # insert so the validator can also reject a self-reference, then refuse
     # dangling/cyclic exact-version edges before this writer creates a row.
+    # Provenance: the procedure carries its source locator and EVERY step carries its own (a step without a
+    # span inherits the procedure's, marked `inherited`). Canonical callers pass require_source_locators=True
+    # (or set STEALTH_REQUIRE_SOURCE_LOCATORS=1): a step with no locator at all is then refused.
+    from app.services.source_locators import normalize_steps, require_locators_default, validate_locator
+
+    if source_locator is not None:
+        source_locator = validate_locator(source_locator)
+    steps = normalize_steps(
+        steps, source_locator,
+        strict=require_source_locators if require_source_locators is not None else require_locators_default())
     procedure_id = uuid7()
     canonical_steps = steps if steps is not None else []
     if any(isinstance(step, Mapping) and "subprocedure_ref" in step for step in canonical_steps):
@@ -346,7 +358,7 @@ async def capture_procedure(
             embedding_provider, embedding_input_type, embedding_text_hash,
             retrieval_document, retrieval_document_version, retrieval_document_sha256,
             display_name, display_description, display_metadata_version, tenant_id,
-            availability, is_engineering_fixture, achieves_goal_id, home_shard_id, source_key
+            availability, is_engineering_fixture, achieves_goal_id, home_shard_id, source_key, source_locator
         ) VALUES (
             $24::uuid, $40::uuid, $1, $2, $3::jsonb, $4::jsonb, $5::jsonb, $6::jsonb,
             $7::jsonb, $8::jsonb, $9::jsonb, $10::jsonb,
@@ -355,7 +367,7 @@ async def capture_procedure(
             $20, $21, $22::visibility_level, $23::vector,
             $25, $26, $27, $28, $29, $30, $31,
             $32, $33, $34, $35, $36, $37, $38::uuid,
-            $39::procedure_availability, $41, $42::uuid, $43, $44
+            $39::procedure_availability, $41, $42::uuid, $43, $44, $45::jsonb
         )
         ON CONFLICT (source_key) WHERE source_key IS NOT NULL AND t_invalid IS NULL DO NOTHING
         RETURNING id, procedure_id
@@ -410,6 +422,7 @@ async def capture_procedure(
         achieves_goal_id,
         home_shard_id,
         source_key,
+        source_locator,
     )
     if row is None:
         if home_shard_id != "K000":
@@ -471,7 +484,7 @@ _SUPERSEDE_CARRY_COLUMNS: tuple[str, ...] = (
     # Procedure -> Goal link + placement: a new VERSION achieves the same Goal
     # and lives on the same shard. (Before this, supersede silently dropped
     # the link, leaving every re-ingested version un-linked.)
-    "achieves_goal_id", "home_shard_id",
+    "achieves_goal_id", "home_shard_id", "source_locator",
 )
 
 # Per-column SQL cast for the carry-forward INSERT. asyncpg infers scalar
@@ -492,6 +505,7 @@ _SUPERSEDE_COLUMN_CASTS: dict[str, str] = {
     "visibility": "visibility_level",
     "embedding": "vector",
     "achieves_goal_id": "uuid",
+    "source_locator": "jsonb",
 }
 
 

@@ -47,7 +47,9 @@ def frozen(kind, a, b):
     al, bl = a.lower(), b.lower()
     if T not in bl:                                               # rows left by earlier runs are never related to this run
         return {"goal": ("distinct", 0.9), "procedure": ("distinct", 0.9), "task_goal": ("unrelated", 0.9),
-                "task_procedure": ("not_applicable", 0.9)}[kind]
+                "task_procedure": ("not_applicable", 0.9), "claim": ("distinct", 0.9)}[kind]
+    if kind == "claim":
+        return ("distinct", 0.9)
     if kind == "goal":                                            # ingestion-time identity
         if "call site" in al and "find callers of a function" in bl and "python" not in bl:
             return ("same", 0.95)
@@ -97,6 +99,11 @@ async def pool():
     ir.reset_default_judge()
     Dependencies.configure()
     await p.execute("DELETE FROM ingestion_jobs WHERE job_type = $1", JOB_TYPE)
+    # leave nothing live behind (plans are append-only so rows cannot be deleted): other suites must not see this run's goals
+    await p.execute("UPDATE procedures SET t_invalid = now() WHERE name LIKE 'e2e%' AND t_invalid IS NULL")
+    await p.execute("UPDATE goals SET t_invalid = now() WHERE canonical_name LIKE 'e2e%' AND t_invalid IS NULL")
+    await p.execute("DELETE FROM goal_search_index WHERE canonical_name LIKE 'e2e%'")
+    await p.execute("DELETE FROM procedure_search_index WHERE name LIKE 'e2e%'")
     await p.close()
 
 

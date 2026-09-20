@@ -44,13 +44,34 @@ replay, duplicate drainers and out-of-order entries converge. Lag is observable
 read through `ShardPools`; a shard-side writer must call `search_projection.enqueue` after commit
 (`reindex --shard` repairs a lost call).
 
-## Known blocker (honest)
+## Remote canonical writes (migration 96)
 
-`REMOTE_WRITES_SUPPORTED = False`. Reads, routing, projection and hydration of remote shards are
-implemented and tested against a real second pool, but **canonical writes are restricted to the
-home shard** because control-database tables foreign-key into `procedures`
-(`execution_plans`, `procedure_implementations`, …) and `procedures` into `goals`
-(`achieves_goal_id`). Putting a canonical row in another database would silently break those
-constraints. Enabling remote writes requires turning those edges into application-validated
-references (a migration + call-site changes), then flipping the flag. Until then every registered
-shard other than K000 can serve reads/hydration but is never chosen for new objects.
+Canonical rows really live in the shard databases. The control database used to foreign-key into
+`procedures`/`goals`/`knowledge_nodes`; migration 96 **replaced** those FKs (it did not just drop them):
+
+* `sl_check_ref` triggers: a reference (`procedures.achieves_goal_id`, `execution_plans.procedure_row_id`,
+  `goal_relations.*`, `implementations.goal_id`, `claim_sources.claim_id`, `goals.merged_into_id`, ...) is valid iff
+  the object exists in this database **or** the global routing table homes it on another shard
+  (`object_routes`, and `procedure_row_routes` for versioned procedure rows). Same-shard integrity is kept.
+* `goal_names` is the **global unique index for exact goal identity** (a per-database unique index cannot see other shards).
+* hard `DELETE` of a goal/procedure that is still referenced is refused (tombstone instead), replacing `ON DELETE`.
+* `goals.home_shard_id` / `procedures.home_shard_id` are no longer local FKs on shard databases.
+* `admin verify-refs` checks every routed object exists on its shard and every remote procedure's goal resolves.
+
+Write path (public data): `find_or_create_goal` claims the name in `goal_names`, records the route, writes the goal on its
+shard, projects it immediately (outbox repairs a failure). `capture_procedure` writes on the goal's shard (rolling over
+if it is full/readonly), registers `object_routes` + `procedure_row_routes`. Versions (`supersede_procedure`) and
+execution evidence (`record_execution_outcome`) run **on the procedure's home shard** (evidence, edges and change sets are
+colocated with it, so the existing engine triggers and transactions still work). Claims (`claim_identity.ingest_claim`)
+are placed with their goal. `merge_goal` repoints procedures on every shard. Retrieval hydrates only involved shards.
+
+Provisioning a shard: `python scripts/migrate.py --dsn <shard dsn>` (same migrations), then
+`python -m app.ingestion.admin register-shard K001 --dsn-env K001_DATABASE_URL` (checks the schema first).
+Operators can stop remote placement instantly with `STEALTH_REMOTE_SHARD_WRITES=0`.
+
+**Rules:** private/org rows always stay on K000. Reading a procedure/goal by id from code that still queries the
+control-database table directly (`admin`, `data_rights`, `hierarchy`, `publication_deps`, ... ~35 modules) only sees
+K000; the converted paths are `get/supersede/record_execution_outcome/approve/reject/...` in `services/procedures.py`,
+goal identity/search, retrieval, claims, execution plans (via route validation), MCP/REST search. Until those readers are
+converted, keep the shard weights such that new public knowledge lands on shards only when you are ready for that
+(default deployment = single shard K000, nothing changes).

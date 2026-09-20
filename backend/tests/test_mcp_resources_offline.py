@@ -399,8 +399,10 @@ def test_read_resource_not_found_body_is_clean(monkeypatch, _anon_scope):
 
 
 def test_resolve_node_resources_aggregates_uris(monkeypatch):
-    async def fake_find(pool, *, goal_text, require_verified, limit, access_scope):
-        return [{"procedure_id": "p-1", "display_name": "Do X well"}]
+    from types import SimpleNamespace
+
+    async def fake_search(pool, query_text, **kw):
+        return SimpleNamespace(procedures=SimpleNamespace(ranked=[{"_row": {"procedure_id": "p-1", "display_name": "Do X well"}}]))
 
     async def fake_for_task(pool, tid, *, scope, **kw):
         return [{"id": "i-1", "kind": "mcp_tool", "provider": "acme", "version": 1}]
@@ -411,7 +413,7 @@ def test_resolve_node_resources_aggregates_uris(monkeypatch):
     async def fake_claims(pool, row_id, *, scope):
         return [{"id": "c-1", "statement": "X holds"}]
 
-    monkeypatch.setattr("app.services.applicability.find_applicable_procedures", fake_find, raising=False)
+    monkeypatch.setattr("app.services.retrieval_service.search_procedures", fake_search)
     monkeypatch.setattr(res._impl, "get_for_task", fake_for_task)
     monkeypatch.setattr(srv, "_resolve_live_procedure", fake_resolve)
     monkeypatch.setattr(res._pg, "get_procedure_claims", fake_claims)

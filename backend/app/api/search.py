@@ -37,6 +37,7 @@ class SearchResponse(BaseModel):
     object_types: list[str]
     results: dict[str, list[dict[str, Any]]]
     counts: dict[str, int]
+    retrieval: Optional[dict[str, Any]] = None   # canonical retrieval metadata (mode / degraded / goal resolution)
 
 
 @router.get("", response_model=SearchResponse)

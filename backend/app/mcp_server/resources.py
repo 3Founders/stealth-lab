@@ -397,12 +397,10 @@ async def resolve_node_resources(
     goal_text = (node or {}).get("goal") or (node or {}).get("description") or ""
 
     try:
-        from app.services.applicability import find_applicable_procedures
+        from app.services import retrieval_service as _rs
 
-        procs = await find_applicable_procedures(
-            pool, goal_text=goal_text, require_verified=False, limit=5,
-            access_scope=scope,
-        )
+        found = await _rs.search_procedures(pool, goal_text, scope=scope, require_verified=False)
+        procs = [i["_row"] for i in found.procedures.ranked[:5]]
         for p in procs or []:
             out["procedures"].append({
                 "uri": f"stealth://procedures/{p['procedure_id']}",

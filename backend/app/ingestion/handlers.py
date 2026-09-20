@@ -103,10 +103,18 @@ async def handle_ingest_candidate_bundle(pool: asyncpg.Pool, payload: dict) -> d
                     classification="PUBLIC_DOCUMENT" if visibility == "public" else "PRIVATE_DOCUMENT",
                     visibility=visibility, owner_id=owner_id)
 
+            from app.services.source_locators import procedure_locator_from_source
+
+            # provenance pointer for the procedure (adapter-supplied, else derived from the source itself);
+            # steps must each carry a locator (their own, or the procedure's marked as inherited)
+            proc_locator = proc.get("source_locator") or procedure_locator_from_source(
+                source_key=source_key, uri=payload.get("source_uri"), content_hash=payload.get("content_hash"),
+                object_locator=(payload.get("raw_object") or {}).get("locator") if isinstance(payload.get("raw_object"), dict) else None)
             r = await ingest_procedure(
                 pool, source_key=source_key, name=proc["name"], goal=payload["goal"], steps=proc.get("steps") or [],
                 provenance=provenance, scope_type=scope_type, scope_entity_id=scope_entity_id, owner_id=owner_id,
-                visibility=visibility, embedder=embedder, judge=judge, job_id=job.get("id"))
+                visibility=visibility, embedder=embedder, judge=judge, job_id=job.get("id"),
+                source_locator=proc_locator, require_source_locators=True)
             result["procedure"] = r
 
             from app.services.claim_identity import ingest_claim

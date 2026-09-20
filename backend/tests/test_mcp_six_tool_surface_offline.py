@@ -72,72 +72,74 @@ async def test_search_procedures_refuses_bad_state_json():
     assert result.startswith("REFUSED:")
 
 
-@pytest.mark.asyncio
-async def test_search_procedures_returns_real_matches(monkeypatch):
-    captured = {}
+def _fake_goal_first(monkeypatch, captured, *, mode="jev", relation="applies", judged=True):
+    """search_procedures is an adapter over retrieval_service.search_procedures (goal-first). Patch that seam."""
+    from types import SimpleNamespace
+
+    import app.services.retrieval_service as rs
+    import app.services.embeddings as emb_mod
 
     async def fake_embed_one(self, text, input_type="query"):
         return [0.1] * 1024
 
-    async def fake_find(pool, *, goal_embedding, current_scope, require_verified, limit,
-                         invariant_bindings=None, **_ignored_kwargs):
-        captured["require_verified"] = require_verified
-        return [dict(PROCEDURE_ROW, _similarity_score=0.9)]
+    async def fake_search(pool, query_text, **kw):
+        captured.update(kw)
+        captured["query"] = query_text
+        item = {"_row": dict(PROCEDURE_ROW), "rrf": 0.9, "judged": judged, "relation": relation, "confidence": 0.9,
+                "applicability_score": 0.81, "evidence_lcb": None, "evidence": {"lcb": None}, "goal_id": "g-1",
+                "procedure_id": PROC_ID}
 
-    import app.services.embeddings as emb_mod
+        class Meta:
+            degraded_reasons = []
+            def as_dict(self_inner):
+                return {"mode": mode, "degraded": mode == rs.MODE_CANDIDATES, "degraded_reasons": [], "providers": ["jev"]}
+        Meta.mode = mode
+        return SimpleNamespace(
+            procedures=SimpleNamespace(ranked=[item], selected=None), goals=SimpleNamespace(resolution="matches" if judged else "unjudged", resolved=[]),
+            meta=Meta(), ctx=SimpleNamespace(claim_ids=["c-1"]))
+
+    async def no_claims(pool, **kw):
+        return []
+
     monkeypatch.setattr(emb_mod.Embedder, "embed_one", fake_embed_one)
-    # search_procedures now routes through claim_conditioned_retrieval,
-    # which imports find_applicable_procedures at module load -- patch the
-    # bound name there, not the (unrelated, now-stale) applicability module
-    # reference.
-    monkeypatch.setattr("app.services.claim_conditioned_retrieval.find_applicable_procedures", fake_find)
-    monkeypatch.delenv("APPLICABILITY_JUDGE_PROVIDER", raising=False)
+    monkeypatch.setattr(rs, "search_procedures", fake_search)
+    import app.services.relevant_claims as rc
+    monkeypatch.setattr(rc, "get_relevant_claims", no_claims)
 
+
+@pytest.mark.asyncio
+async def test_search_procedures_returns_real_matches(monkeypatch):
+    captured = {}
+    _fake_goal_first(monkeypatch, captured)
     ctx = FakeContext(FakePool())
-    # use_claims=False is the caller's explicit similarity-only opt-out; with
-    # the default (True) and no provider, results are EMPTY + PENDING (see
-    # test_semantic_fallback_policy_offline.py) -- never a silent fallback.
     result = json.loads(await srv.search_procedures(task="fix a bug", ctx=ctx, use_claims=False))
     assert result["contextual_judgment_status"] == "not_requested"
-    assert result["results"] == [{
-        "id": ROW_ID, "procedure_id": PROC_ID, "version": 1,
-        "name": "pandas-append-fix", "goal": "fix removed DataFrame.append",
-        "verification_state": "candidate", "similarity": 0.9,
-        "verdict": None, "supporting_claim_ids": [], "blocking_claim_ids": [],
-        "unknown_requirements": [],
-        "scores": {
-            "semantic_relevance": 0.9, "claim_fit": None, "evidence_strength": None,
-            "verified_success": None, "cost_estimate": None, "latency_estimate": None,
-            "risk": None, "final_policy_score": 0.9,
-        },
-    }]
-    assert captured["require_verified"] is False
+    assert result["goal_resolution"]["status"] == "matches" and result["retrieval"]["mode"] == "jev"
+    (r,) = result["results"]
+    assert (r["id"], r["procedure_id"], r["name"], r["goal_id"]) == (ROW_ID, PROC_ID, "pandas-append-fix", "g-1")
+    assert r["verdict"] == "TRUE" and r["similarity"] == 0.9 and r["scores"]["semantic_relevance"] == 0.81
+    assert captured["require_verified"] is False and captured["query"] == "fix a bug"
+
+
+@pytest.mark.asyncio
+async def test_search_procedures_reports_unavailable_judgment_explicitly(monkeypatch):
+    import app.services.retrieval_service as rs
+
+    captured = {}
+    _fake_goal_first(monkeypatch, captured, mode=rs.MODE_CANDIDATES, relation=None, judged=False)
+    result = json.loads(await srv.search_procedures(task="fix a bug", ctx=FakeContext(FakePool())))
+    assert result["contextual_judgment_status"] == "SEMANTIC_JUDGMENT_UNAVAILABLE"      # candidates are unranked/unjudged, said so
+    assert result["results"][0]["verdict"] is None and result["retrieval"]["degraded"] is True
 
 
 @pytest.mark.asyncio
 async def test_search_procedures_threads_invariant_bindings_through(monkeypatch):
-    """Phase 3's remaining real gap: LocalAgentRunner (the actual local
-    MCP client) calls search_procedures, not find_best_way -- so the
-    invariant_bindings a local probe computes must reach
-    find_applicable_procedures from THIS tool too, not just find_best_way's
-    server-side repo_path path."""
-    async def fake_embed_one(self, text, input_type="query"):
-        return [0.1] * 1024
-
+    """LocalAgentRunner calls search_procedures: the invariant_bindings a local probe computes must reach the
+    canonical retrieval (hard-constraint stage) from THIS tool too."""
     captured = {}
-
-    async def fake_find(pool, *, goal_embedding, current_scope, require_verified, limit,
-                         invariant_bindings=None, **_ignored_kwargs):
-        captured["invariant_bindings"] = invariant_bindings
-        return [dict(PROCEDURE_ROW, _similarity_score=0.9)]
-
-    import app.services.embeddings as emb_mod
-    monkeypatch.setattr(emb_mod.Embedder, "embed_one", fake_embed_one)
-    monkeypatch.setattr("app.services.claim_conditioned_retrieval.find_applicable_procedures", fake_find)
-
-    ctx = FakeContext(FakePool())
+    _fake_goal_first(monkeypatch, captured)
     await srv.search_procedures(
-        task="migrate pandas append", ctx=ctx, use_claims=False,
+        task="migrate pandas append", ctx=FakeContext(FakePool()), use_claims=False,
         invariant_bindings=json.dumps({"pandas_version": 2.1}),
     )
     assert captured["invariant_bindings"] == {"pandas_version": 2.1}

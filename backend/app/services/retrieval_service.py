@@ -48,7 +48,7 @@ from app.services.access import AccessScope, visibility_predicate
 from app.services.embeddings import to_pgvector
 from app.services.identity_resolution import default_judge, fts_or_query, rrf_fuse
 from app.services.semantic.chain import SemanticJudge
-from app.services.shards import ShardPools, hydrate_rows
+from app.services.shards import ShardPools, hydrate_rows, pools_for
 
 log = logging.getLogger(__name__)
 
@@ -257,6 +257,23 @@ async def _judge_all(
         meta.degrade(f"{stage}: {len(hits) - ok} of {len(hits)} candidates could not be judged")
 
 
+async def _catch_up_projection(pool: asyncpg.Pool, meta: RetrievalMeta, *, max_pending: int = 500) -> None:
+    """Read-your-writes: knowledge written a moment ago must be retrievable even if no drainer has run yet.
+    If the outbox has a small backlog, apply it inline before searching; a large backlog is only reported
+    (`projection_lag`), never blocking a request."""
+    try:
+        n = await pool.fetchval("SELECT count(*) FROM (SELECT 1 FROM projection_outbox WHERE status = 'pending' LIMIT $1) x", max_pending + 1)
+        if not n:
+            return
+        if n > max_pending:
+            meta.degrade(f"projection backlog > {max_pending}: very recent writes may not be searchable yet")
+            return
+        from app.services.search_projection import drain_outbox
+        await drain_outbox(pool, batch=max_pending, pools=pools_for(pool), max_batches=1)
+    except Exception:  # noqa: BLE001 -- freshness is best-effort; retrieval proceeds on what is projected
+        log.info("projection catch-up skipped", exc_info=True)
+
+
 # ------------------------------------------------------------------- tier 1
 
 
@@ -273,6 +290,7 @@ async def search_goals(
 ) -> GoalSearchResult:
     meta = meta if meta is not None else RetrievalMeta()
     judge = judge if judge is not None else default_judge()
+    await _catch_up_projection(pool, meta)
     emb, model = None, None
     if embedder is not None:
         t0 = time.monotonic()
@@ -340,16 +358,13 @@ def pareto_front(items: list[dict], keys: Sequence[str]) -> list[dict]:
     return front
 
 
-_HYDRATE_COLS = (
-    "id, procedure_id, name, goal, achieves_goal_id, steps, preconditions, postconditions, invariants, scope, exclusions, "
-    "verification_state, staleness, availability, verification_stats, approval_status, version, scope_type, scope_entity_id, "
-    "display_name, display_description, capability_statement, provenance, visibility, owner_id, tenant_id, t_invalid, "
-    "t_valid, evidence_refs"
-)
+def _hydrate_cols() -> str:
+    from app.services.applicability import PROCEDURE_COLS_NO_HEAVY
+    return PROCEDURE_COLS_NO_HEAVY + ", achieves_goal_id, source_locator"
 
 
 async def _fetch_procedures(pool: Any, ids: list[str]):
-    return await pool.fetch(f"SELECT {_HYDRATE_COLS} FROM procedures WHERE id = ANY($1::uuid[]) AND t_invalid IS NULL", ids)
+    return await pool.fetch(f"SELECT {_hydrate_cols()} FROM procedures WHERE id = ANY($1::uuid[]) AND t_invalid IS NULL", ids)
 
 
 @dataclass
@@ -359,16 +374,18 @@ class ProcedureSearchResult:
     alternatives: list[dict]
     frontier: list[dict]
     selection_reason: str
+    diagnostics: list = field(default_factory=list)      # ApplicabilityResult for EVERY hydrated candidate (hard-constraint verdicts)
 
 
 async def retrieve_procedures(
     pool: asyncpg.Pool, ctx: QueryContext, goals: Sequence[Hit], *, scope: AccessScope, pools: Optional[ShardPools] = None,
     embedder: Any = None, judge: Optional[SemanticJudge] = None, cfg: RetrievalConfig = RetrievalConfig(),
     meta: Optional[RetrievalMeta] = None, current_scope: Optional[dict] = None, require_verified: bool = False,
+    invariant_bindings: Optional[dict] = None, excluded_procedure_ids: Optional[Sequence[str]] = None,
 ) -> ProcedureSearchResult:
     meta = meta if meta is not None else RetrievalMeta()
     judge = judge if judge is not None else default_judge()
-    pools = pools or ShardPools(pool)
+    pools = pools or pools_for(pool)
     goal_ids = [g.id for g in goals]
     if not goal_ids:
         return ProcedureSearchResult([], None, [], [], "no goal resolved: procedures are never searched globally")
@@ -410,12 +427,19 @@ async def retrieve_procedures(
 
     state_cache: dict = {}
     live: list[tuple[Hit, dict]] = []
+    diagnostics: list = []
+    excluded = {str(x) for x in (excluded_procedure_ids or [])}
     for c in cands:
         row = hyd.rows.get(c.extra["procedure_row_id"])
-        if row is None:
+        if row is None or str(row["procedure_id"]) in excluded:
             continue
+        row["_similarity_score"] = c.rrf
         res = await check_hard_constraints(pool, row, current_scope=current_scope, access_scope=scope,
-                                           require_verified=require_verified, state_cache=state_cache)
+                                           require_verified=require_verified, state_cache=state_cache,
+                                           invariant_bindings=invariant_bindings)
+        res.procedure = row
+        res.similarity_score = c.rrf
+        diagnostics.append(res)
         if res.applicable:
             live.append((c, row))
         else:
@@ -446,6 +470,7 @@ async def retrieve_procedures(
             "confidence": c.confidence, "applicability_score": app_score,
             "evidence": {"attempts": att, "successes": suc, "lcb": wilson_lcb(suc, att)},
             "evidence_lcb": wilson_lcb(suc, att),
+            "_row": row,
         })
 
     # -- supporting / contradicting claims linked to the candidates (one query)
@@ -462,7 +487,13 @@ async def retrieve_procedures(
         except Exception:  # noqa: BLE001 -- evidence enrichment is best-effort
             meta.degrade("linked-claim lookup failed")
 
-    return _select(items, meta, cfg)
+    result = _select(items, meta, cfg)
+    # ApplicabilityResult order: applicable candidates in selection order first, then the rest by fused rank
+    order = {i["procedure_id"]: k for k, i in enumerate(result.ranked)}
+    diagnostics.sort(key=lambda d: (0 if d.applicable and str(d.procedure["procedure_id"]) in order else 1,
+                                    order.get(str(d.procedure["procedure_id"]), 10_000), -(d.similarity_score or 0.0)))
+    result.diagnostics = diagnostics
+    return result
 
 
 def _select(items: list[dict], meta: RetrievalMeta, cfg: RetrievalConfig) -> ProcedureSearchResult:
@@ -503,14 +534,17 @@ async def find_best_way(
     p = await retrieve_procedures(pool, ctx, g.resolved, scope=scope, pools=pools, embedder=embedder, judge=judge, cfg=cfg,
                                   meta=meta, current_scope=current_scope, require_verified=require_verified)
     meta.latency_ms["total"] = (time.monotonic() - t0) * 1000
+    def _public(item):
+        return None if item is None else {k: v for k, v in item.items() if k != "_row"}
+
     out = {
         "goal": goal_text,
         "goal_resolution": {"status": g.resolution, "goals": [h.brief() for h in g.resolved],
                             "candidates": [h.brief() for h in g.candidates[: cfg.rerank_top_k]]},
-        "recommendation": p.selected,
-        "alternatives": p.alternatives,
+        "recommendation": _public(p.selected),
+        "alternatives": [_public(i) for i in p.alternatives],
         "frontier": [i["procedure_id"] for i in p.frontier],
-        "procedures": p.ranked,
+        "procedures": [_public(i) for i in p.ranked],
         "confidence": ("none" if p.selected is None else "high" if (p.selected["confidence"] or 0) >= 0.85 else "medium"),
         "reason": p.selection_reason,
         "retrieval": meta.as_dict(),
@@ -534,3 +568,78 @@ async def _record(pool, query, scope, g: GoalSearchResult, p: ProcedureSearchRes
              "counts": meta.counts, "selection": p.selection_reason})
     except Exception:  # noqa: BLE001 -- the decision log never fails a retrieval
         log.warning("retrieval decision not recorded", exc_info=True)
+
+
+# ------------------------------------------------------------------- adapters for other entry points
+# Every REST/MCP surface that needs procedures goes through one of these three functions; there is no other ranker.
+
+
+@dataclass
+class GoalFirstResult:
+    goals: GoalSearchResult
+    procedures: ProcedureSearchResult
+    meta: RetrievalMeta
+    ctx: QueryContext
+
+
+async def search_procedures(
+    pool: asyncpg.Pool, query_text: str, *, scope: AccessScope, local_claims: Sequence[LocalClaim | dict] = (),
+    embedder: Any = None, judge: Optional[SemanticJudge] = None, pools: Optional[ShardPools] = None,
+    cfg: RetrievalConfig = RetrievalConfig(), current_scope: Optional[dict] = None, require_verified: bool = False,
+    invariant_bindings: Optional[dict] = None, excluded_procedure_ids: Optional[Sequence[str]] = None,
+) -> GoalFirstResult:
+    """Tier 1 -> Tier 2 without the recommendation envelope: the full ranked/diagnosed procedure set."""
+    meta = RetrievalMeta()
+    t0 = time.monotonic()
+    ctx = await build_query_context(query_text, local_claims, embedder=embedder, cfg=cfg)
+    meta.local_claim_ids = ctx.claim_ids
+    g = await search_goals(pool, ctx, scope=scope, embedder=embedder, judge=judge, cfg=cfg, meta=meta)
+    p = await retrieve_procedures(pool, ctx, g.resolved, scope=scope, pools=pools, embedder=embedder, judge=judge, cfg=cfg,
+                                  meta=meta, current_scope=current_scope, require_verified=require_verified,
+                                  invariant_bindings=invariant_bindings, excluded_procedure_ids=excluded_procedure_ids)
+    meta.latency_ms["total"] = (time.monotonic() - t0) * 1000
+    return GoalFirstResult(g, p, meta, ctx)
+
+
+async def diagnose_procedures(pool: asyncpg.Pool, query_text: str, **kw) -> tuple[list, GoalFirstResult]:
+    """Hard-constraint verdicts (ApplicabilityResult, with failed_constraints / UNKNOWN preconditions preserved) for
+    goal-first candidates, applicable ones first. Used by MCP routing, which must tell "inapplicable" from "blocked
+    on an unknown precondition". Returns (diagnostics, full result)."""
+    res = await search_procedures(pool, query_text, **kw)
+    return res.procedures.diagnostics, res
+
+
+async def search_goal_candidates(
+    pool: asyncpg.Pool, *, query_text: Optional[str], query_embedding: Optional[list[float]] = None,
+    embedding_model: Optional[str] = None, scope: AccessScope, status: Optional[str] = None, limit: int = 10,
+    cfg: RetrievalConfig = RetrievalConfig(),
+) -> list[dict]:
+    """Judge-free Goal search (search-as-you-type / browse): FTS + ANN over the global goal projection, RRF-fused,
+    canonical rows hydrated by shard. Same candidate machinery as Tier 1, without the semantic rerank."""
+    if not query_text and not query_embedding:
+        raise ValueError("search_goal_candidates requires query_text and/or query_embedding")
+    where = f"status IN ('active', 'candidate')" if status is None else "status = $1"
+    params = [] if status is None else [status]
+    cfg2 = replace_cfg(cfg, search_top_k=max(limit * 3, 10))
+    cands, _n, _m = await _legs(
+        pool, table="goal_search_index", id_col="goal_id", name_col="canonical_name",
+        text_expr="canonical_name || COALESCE(': ' || short_description, '')", extra_cols="",
+        ctx_text=query_text or "", embedding=query_embedding, embedding_model=embedding_model, scope=scope,
+        where_extra=where, extra_params=params, cfg=cfg2)
+    top = cands[:limit]
+    if not top:
+        return []
+    pools = pools_for(pool)
+
+    async def fetch(p, ids):
+        return await p.fetch(
+            "SELECT id, canonical_name, description, status, scope_type, scope_entity_id, expected_outcome, "
+            "verification_requirement, home_shard_id FROM goals WHERE id = ANY($1::uuid[])", ids)
+
+    hyd = await hydrate_rows(pools, {h.id: h.home_shard_id for h in top}, fetch)
+    return [{**hyd.rows[h.id], "id": h.id} for h in top if h.id in hyd.rows]
+
+
+def replace_cfg(cfg: RetrievalConfig, **kw) -> RetrievalConfig:
+    from dataclasses import replace
+    return replace(cfg, **kw)

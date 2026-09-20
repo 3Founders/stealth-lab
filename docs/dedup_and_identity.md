@@ -38,14 +38,27 @@ unreconciled (retried next sweep). Single-flight via a blocking advisory lock.
 Check: `admin verify-dedup` (duplicate live goal names, live procedures without a goal link,
 procedures linked to merged goals, goals created while the judge was unavailable).
 
-## Not done in this pass
+## Claim identity (`services/claim_identity.py`)
 
-* **Claim** semantic identity (same proposition / contradicts / generalizes) is not wired into
-  ingestion: claims dedup only on exact normalized statement per scope. The judge op exists
-  (`judge_identity("claim")`, relation vocabulary incl. `contradicts`) and the existing
-  `claim_equivalence` module already classifies claim pairs; connecting them at write time is open.
-* Adapters other than the candidate-bundle handler (`skill_ingestion`, `trace_worker`,
-  `trajectory_semantics`, `local_sync`, …) still call `capture_procedure` directly: they get judged
-  **Goal** identity and the atomic Procedure→Goal link automatically, but not judged **Procedure**
-  identity (that is opt-in via `procedure_identity.ingest_procedure`). Auto-enabling it inside
-  `capture_procedure` would change what those callers' follow-up UPDATEs touch, so it was not done blind.
+Exact normalized statement (same scope, same visibility/owner class) -> candidates from `claim_search_index` (all shards;
+FTS+ANN+RRF) -> `judge_identity("claim")`: `same` (>= 0.85) reuses the claim and **attaches the source as provenance**
+(`properties.source_refs`, on the claim's own shard); `contradicts` keeps **both** and queues a pending `contradicts` row in
+`claim_relation_candidates` (the existing review table - nothing is auto-resolved, no truth-state flip); specializes /
+generalizes / related create a new claim + a pending `related` candidate; a low-confidence "same" is "related".
+Private claims are only compared with the same owner's private claims; public only with public. Same-goal claim
+resolution is serialised by an advisory lock and projected inside it, so concurrent paraphrases cannot race.
+Judge outage: public fails closed (retryable); private creates + records `judge_unavailable`.
+
+## Procedure identity for the older adapters
+
+`capture_procedure(procedure_dedup=True, source_key=...)` runs the same goal-constrained judge as `ingest_procedure`:
+same method -> reuse + provenance (`{"reused": True}`; callers must not re-stamp extractor metadata), refinement -> new
+version, distinct -> new procedure on the same goal. Enabled in `skill_ingestion` and `publication`; deliberately NOT
+in `local_sync`, `trajectory_semantics`, `procedure_extraction` (see docs/local_vs_canonical.md). With no semantic
+provider configured the flag is a no-op (nothing can judge). `skill_ingestion.check_novelty` (a cosine >= 0.90 refuse-only
+gate used by `ingest_skill_md`) is the last similarity-threshold dedup left; it is legacy and not on the worker path.
+
+## Not done
+
+* Claim reconciliation for claims created while the judge was down (they carry `judge_unavailable`; a sweep like
+  `reconcile_goals` for claims is not written).

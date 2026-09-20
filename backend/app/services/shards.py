@@ -57,6 +57,8 @@ def writable_shards(shards: Sequence["ShardInfo"], *, visibility: str = "public"
 
 async def multi_shard(pool: Any) -> bool:
     """True iff a shard other than the home shard is registered (cheap: cached registry)."""
+    if not isinstance(pool, asyncpg.Pool):   # test doubles / non-database stand-ins are single-shard by definition
+        return False
     try:
         return any(s.shard_id != HOME_SHARD for s in await cached_shards(pool))
     except Exception:  # noqa: BLE001 -- a pool without the registry (offline fakes, pre-95 DB) is single-shard

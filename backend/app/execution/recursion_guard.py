@@ -372,14 +372,14 @@ async def decide_child_failure_strategy(
             child_run_id,
         )
         if plan_row is not None and plan_row["task_description"]:
-            from app.services.applicability import diagnose_candidates
+            from app.services import retrieval_service as _rs
+            from app.services.access import AccessScope
             from app.services.embeddings import Embedder
 
             embedder = Embedder()
-            goal_vec = await embedder.embed_one(plan_row["task_description"], input_type="query")
-            candidates = await diagnose_candidates(
-                pool, goal_embedding=goal_vec, embedding_model_id=embedder.embedding_model_id(),
-                goal_text=plan_row["task_description"], limit=3,
+            # canonical goal-first retrieval (no second ranker); hard-constraint verdicts decide "applicable"
+            candidates, _res = await _rs.diagnose_procedures(
+                pool, plan_row["task_description"], scope=AccessScope.unrestricted(), embedder=embedder,
                 excluded_procedure_ids=[child_procedure_id],
             )
             alternative = next((c for c in candidates if c.applicable), None)
