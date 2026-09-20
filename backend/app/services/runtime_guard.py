@@ -161,6 +161,71 @@ def _auth_is_permissive(settings: Any) -> str | None:
     return None
 
 
+_WEAK_SECRETS = frozenset({
+    "admin", "secret", "password", "changeme", "change-me", "change_me", "test", "dev", "default",
+    "admin-key", "admin_api_key", "stealthlab", "12345678", "your-admin-key-here",
+})
+_TLS_OK = ("require", "verify-ca", "verify-full")
+
+
+def _db_host_needs_tls(url: str) -> bool:
+    from urllib.parse import urlparse
+
+    try:
+        host = (urlparse(url).hostname or "").lower()
+    except ValueError:
+        return True
+    if host in ("", "localhost", "127.0.0.1", "::1") or host.endswith(".internal") or host.endswith(".local"):
+        return False
+    return "." in host        # bare compose/service names carry no public route
+
+
+def _auth_posture_problems(settings: Any, env: str) -> list[str]:
+    """Identity/secret/environment-separation checks that only apply outside
+    TEST. Each string names one refusal; see docs/auth_architecture.md."""
+    out: list[str] = []
+    try:
+        from app.services.authn import OidcConfig
+
+        cfg = OidcConfig.from_settings(settings)
+    except RuntimeError as exc:
+        return [str(exc)]
+    if cfg is None:
+        out.append(
+            "no identity provider is configured (set SUPABASE_PROJECT_URL + SUPABASE_JWT_AUDIENCE, or "
+            "OIDC_ISSUER + OIDC_AUDIENCE): outside TEST every request would be anonymous"
+        )
+    elif not cfg.issuer.lower().startswith("https://") or not cfg.jwks_url.lower().startswith("https://"):
+        out.append("identity issuer / JWKS URL must be https:// outside TEST")
+
+    key = getattr(settings, "admin_api_key", None)
+    explicit = getattr(settings, "admin_api_key_legacy_enabled", None)
+    if key and (True if explicit is None else bool(explicit)):
+        if len(key) < 32 or key.strip().lower() in _WEAK_SECRETS:
+            out.append("ADMIN_API_KEY is a default/weak secret (>= 32 random chars required, or set ADMIN_API_KEY_LEGACY_ENABLED=false)")
+
+    try:
+        from app.services.service_identity import ServiceTokenConfig
+
+        svc = ServiceTokenConfig.from_settings(settings)
+    except RuntimeError as exc:
+        out.append(str(exc))
+        svc = None
+    if svc is not None and cfg is not None and (svc.issuer == cfg.issuer or svc.audience == cfg.audience):
+        out.append("SERVICE_TOKEN_ISSUER/AUDIENCE must differ from the human identity issuer/audience (credential crossover)")
+
+    declared = (getattr(settings, "auth_environment", None) or "").strip().lower()
+    if declared and declared != env.lower():
+        out.append(f"AUTH_ENVIRONMENT={declared!r} does not match the runtime environment {env.lower()!r}")
+
+    url = _database_url(settings)
+    if url and _db_host_needs_tls(url):
+        low = url.lower()
+        if not any(f"sslmode={m}" in low for m in _TLS_OK) and "ssl=true" not in low:
+            out.append("DATABASE_URL points at a remote host without TLS (add ?sslmode=require)")
+    return out
+
+
 def _database_url(settings: Any) -> str:
     return str(getattr(settings, "database_url", None) or "").strip()
 
@@ -197,6 +262,8 @@ def is_production_safe(settings: Any) -> tuple[bool, list[str]]:
     auth_problem = _auth_is_permissive(settings)
     if auth_problem:
         reasons.append(f"{auth_problem} (env={env})")
+    for problem in _auth_posture_problems(settings, env):
+        reasons.append(f"{problem} (env={env})")
 
     # --- durable storage + its credential -------------------------------
     db_url = _database_url(settings)

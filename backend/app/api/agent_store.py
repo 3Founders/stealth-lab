@@ -11,10 +11,11 @@ from __future__ import annotations
 from typing import Optional
 from uuid import UUID
 
+from app.services import auth_context as _ac
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 
-from app.api.deps import get_scope
+from app.api.deps import get_scope, require_scopes
 from app.debate.panel import default_judge, default_panel
 from app.services.authn import current_actor_id
 from app.services.access import AccessScope, visibility_predicate
@@ -91,7 +92,7 @@ async def browse_or_search(
     ])
 
 
-@router.get("/pending")
+@router.get("/pending", dependencies=[Depends(require_scopes(_ac.KNOWLEDGE_READ))])
 async def list_pending(pool=Depends(get_pool)):
     """Agents awaiting a human decision, newest first."""
     rows = await pool.fetch(
@@ -123,7 +124,7 @@ class SubmitAgentResponse(BaseModel):
     reviewer_notes: str
 
 
-@router.post("/submit", response_model=SubmitAgentResponse)
+@router.post("/submit", response_model=SubmitAgentResponse, dependencies=[Depends(require_scopes(_ac.KNOWLEDGE_WRITE))])
 async def submit_agent(body: SubmitAgentRequest, pool=Depends(get_pool)) -> SubmitAgentResponse:
     """
     Registers a new code-sourced agent and immediately runs it through
@@ -172,7 +173,7 @@ async def submit_agent(body: SubmitAgentRequest, pool=Depends(get_pool)) -> Subm
 
 
 
-@router.post("/promote", response_model=PromoteResponse)
+@router.post("/promote", response_model=PromoteResponse, dependencies=[Depends(require_scopes(_ac.KNOWLEDGE_PUBLISH))])
 async def promote(body: PromoteRequest, pool=Depends(get_pool)) -> PromoteResponse:
     # A validated OIDC actor always overrides the request body's
     # self-asserted `actor` -- see submit_agent's docstring for the rule.
@@ -194,7 +195,7 @@ async def promote(body: PromoteRequest, pool=Depends(get_pool)) -> PromoteRespon
     )
 
 
-@router.post("/{agent_id}/decide", response_model=DecideResponse)
+@router.post("/{agent_id}/decide", response_model=DecideResponse, dependencies=[Depends(require_scopes(_ac.KNOWLEDGE_PUBLISH))])
 async def decide(agent_id: UUID, body: DecideRequest, pool=Depends(get_pool)) -> DecideResponse:
     # A validated OIDC actor always overrides the request body's
     # self-asserted `actor` -- see submit_agent's docstring for the rule.

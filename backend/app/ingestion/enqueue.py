@@ -23,6 +23,7 @@ import sys
 from typing import Optional
 
 from app.ingestion import queue as q
+from app.services.auth_context import JobAuthority
 from app.ingestion.config import control_database_url
 
 SKILL_JOB = "ingest_skill_package"
@@ -33,7 +34,8 @@ def skill_package_key(source_id: str, commit: str, path: str) -> str:
     return "skill:" + hashlib.sha256(f"{source_id}\x00{commit}\x00{path}".encode()).hexdigest()[:32]
 
 
-async def enqueue_skill_packages(pool, packages: list[dict], *, config_version: Optional[str] = None) -> dict:
+async def enqueue_skill_packages(pool, packages: list[dict], *, config_version: Optional[str] = None,
+                                 submitted_by: Optional[str] = None) -> dict:
     created = duplicate = 0
     for pkg in packages:
         payload = {k: v for k, v in pkg.items()}
@@ -42,7 +44,8 @@ async def enqueue_skill_packages(pool, packages: list[dict], *, config_version: 
                 raise ValueError(f"package missing {req!r}: {pkg}")
         _, made = await q.enqueue(
             pool, SKILL_JOB, payload, idempotency_key=skill_package_key(payload["source_id"], payload["commit"], payload["path"]),
-            source_id=payload["source_id"], scope_type="global", visibility="public", config_version=config_version)
+            source_id=payload["source_id"], scope_type="global", visibility="public", config_version=config_version,
+            authority=JobAuthority(submitted_by_service_id=submitted_by, scope="global_public", visibility="public"))
         created += made
         duplicate += not made
     return {"created": created, "duplicate": duplicate}

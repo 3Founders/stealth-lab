@@ -18,6 +18,8 @@ from datetime import datetime, timezone
 from typing import Optional
 from uuid import UUID
 
+from app.services import auth_context as _ac
+from app.api.deps import require_scopes
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
@@ -50,7 +52,7 @@ async def get_pool(request: Request):
     return request.app.state.pool
 
 
-@router.post("/{debate_id}/human-turn", response_model=HumanTurnResponse)
+@router.post("/{debate_id}/human-turn", response_model=HumanTurnResponse, dependencies=[Depends(require_scopes(_ac.KNOWLEDGE_WRITE))])
 async def submit_human_turn(
     debate_id: UUID, body: HumanTurnRequest, request: Request,
 ) -> HumanTurnResponse:
@@ -81,7 +83,7 @@ class ApprovalResponse(BaseModel):
     export_markdown: Optional[str] = None
 
 
-@router.post("/{scorecard_id}", response_model=ApprovalResponse)
+@router.post("/{scorecard_id}", response_model=ApprovalResponse, dependencies=[Depends(require_scopes(_ac.KNOWLEDGE_PUBLISH))])
 async def decide(
     scorecard_id: UUID, body: ApprovalRequest, pool=Depends(get_pool)
 ) -> ApprovalResponse:
@@ -205,7 +207,7 @@ async def decide(
     )
 
 
-@router.get("/pending")
+@router.get("/pending", dependencies=[Depends(require_scopes(_ac.KNOWLEDGE_READ))])
 async def list_pending(pool=Depends(get_pool)):
     """Scorecards awaiting a decision, newest first. Summary view only —
     use GET /{scorecard_id} for the full detail a real approval screen needs."""
@@ -221,7 +223,7 @@ async def list_pending(pool=Depends(get_pool)):
     return [dict(r) for r in rows]
 
 
-@router.get("/{scorecard_id}")
+@router.get("/{scorecard_id}", dependencies=[Depends(require_scopes(_ac.KNOWLEDGE_READ))])
 async def get_detail(scorecard_id: UUID, pool=Depends(get_pool)):
     """
     Full scorecard detail: Layer 1 reasoning, the proposed change set, and

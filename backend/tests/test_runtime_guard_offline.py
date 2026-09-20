@@ -41,8 +41,10 @@ def _production_settings(**overrides) -> SimpleNamespace:
         gemini_api_keys=None,
         voyage_api_key="real-voyage-key",
         # real durable storage
-        database_url="postgresql://user:pw@db.example.com:5432/stealth",
-        # auth: not intended on -> single-tenant public commons, allowed
+        database_url="postgresql://user:pw@db.example.com:5432/stealth?sslmode=require",
+        # identity: Supabase Auth preset is mandatory outside TEST (auth hardening pass)
+        supabase_project_url="https://proj.supabase.co",
+        supabase_jwt_audience="authenticated",
         real_auth_enabled=False,
         multi_user_exposure_enabled=False,
         private_visibility_enabled=False,

@@ -93,7 +93,10 @@ app = FastAPI(title="Workflow Debate Platform", version="0.1.0", lifespan=lifesp
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.frontend_origins,
-    allow_methods=["GET", "POST"],
+    # PUT: /v1/me/profile; DELETE/OPTIONS: browser preflight for the same. No
+    # allow_credentials -- auth is a bearer token, never a cookie, so there is
+    # no CSRF surface and the origin allow-list is the only browser gate.
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["*"],
 )
 

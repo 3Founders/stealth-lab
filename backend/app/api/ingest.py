@@ -12,10 +12,11 @@ import logging
 from typing import Any
 from uuid import UUID
 
+from app.services import auth_context as _ac
 from fastapi import APIRouter, Depends, Request
 from pydantic import ValidationError
 
-from app.api.deps import enforce_limits
+from app.api.deps import enforce_limits, require_scopes
 from app.config import settings
 from app.models.trace import IngestResult, RejectedRecord, TraceBatch, TraceRecord
 from app.services.authn import current_actor_id
@@ -28,7 +29,7 @@ async def get_pool(request: Request):
     return request.app.state.pool
 
 
-@router.post("", response_model=IngestResult)
+@router.post("", response_model=IngestResult, dependencies=[Depends(require_scopes(_ac.INGESTION_SUBMIT))])
 async def ingest_traces(
     payload: dict[str, Any],
     pool=Depends(get_pool),

@@ -274,6 +274,21 @@ class _LimiterState:
         return self.flush_failed
 
 
+# Per-caller-class scaling of every limit. The class comes from the VERIFIED
+# identity's scope key (deps.scope_key_for), never from a header:
+#   ip:      anonymous            half   (unauthenticated traffic is the cheapest to abuse)
+#   viewer:  authenticated user   1x
+#   service: verified worker      5x     (bulk ingestion is its job; still bounded)
+_CLASS_FACTORS = (("ip:", 0.5), ("service:", 5.0))
+
+
+def scale_limit_for_class(limit: "RateLimit", scope_key: str) -> "RateLimit":
+    for prefix, factor in _CLASS_FACTORS:
+        if scope_key.startswith(prefix):
+            return RateLimit(max_requests=max(1, int(limit.max_requests * factor)), window=limit.window)
+    return limit
+
+
 class RateLimiter:
     def __init__(
         self,
@@ -334,6 +349,7 @@ class RateLimiter:
         limit = self._limits.get(endpoint)
         if limit is None:
             return
+        limit = scale_limit_for_class(limit, scope_key)
 
         now = self._clock()
         st = self._state

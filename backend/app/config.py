@@ -329,6 +329,31 @@ class Settings(BaseSettings):
     # rather than silently leaving the surface open.
     admin_api_key: Optional[str] = None
 
+    # --- Auth hardening (docs/auth_architecture.md) ---
+    # AUTH_ENVIRONMENT names the environment every credential this process
+    # accepts was minted for (test|staging|production). When set it MUST equal
+    # the runtime environment (runtime_guard) and it is bound into service
+    # tokens (`env` claim), so a staging credential can never authenticate to
+    # production even with a shared signing key.
+    auth_environment: Optional[str] = None
+    # Upper bound on how stale cached authorization state (service registry,
+    # revocation set) may be. Human identity state (users.is_active,
+    # memberships) is NOT cached: it is re-read on every request.
+    auth_cache_ttl: float = 30.0
+    # Service (worker) credentials: short-lived signed JWTs, separate issuer
+    # and audience from Supabase. SERVICE_TOKEN_KEYS is "kid:secret[,kid:secret]"
+    # so a rotation can overlap two keys; the alg is pinned (HS256 default).
+    service_token_issuer: Optional[str] = None
+    service_token_audience: Optional[str] = None
+    service_token_keys: Optional[str] = None
+    service_token_alg: str = "HS256"
+    service_token_max_ttl_seconds: int = 3600
+    # The legacy static X-Admin-Api-Key. Kept for compatibility; every use is
+    # audit-logged and it can be switched off once operators hold scoped
+    # identities (admin:ops).
+    # None = "not decided": enabled only outside PRODUCTION (see legacy_admin_key_enabled).
+    admin_api_key_legacy_enabled: Optional[bool] = None
+
     # --- MCP server deployment-mode guard (backend/app/mcp_server/server.py) ---
     # OidcAwareTokenVerifier's shared-STEALTHLAB_MCP_TOKEN fallback (no
     # per-caller .subject) is fine for local/single-user dev -- it is
@@ -529,6 +554,14 @@ class Settings(BaseSettings):
     def is_production(self) -> bool:
         return self.environment == "PRODUCTION"
 
+    @property
+    def legacy_admin_key_enabled(self) -> bool:
+        """The static admin key is opt-IN in production: an explicit
+        ADMIN_API_KEY_LEGACY_ENABLED wins, otherwise it works only outside PRODUCTION."""
+        if self.admin_api_key_legacy_enabled is not None:
+            return bool(self.admin_api_key_legacy_enabled)
+        return not self.is_production
+
     def require(self, field: str) -> str:
         value = getattr(self, field, None)
         if not value:
@@ -553,7 +586,9 @@ class Settings(BaseSettings):
         for this to run at all, so no existing local/dev/CI setup is
         affected by adding this check.
         """
-        if self.environment != "production":
+        # `environment` is upper-case (TEST|STAGING|PRODUCTION); the original
+        # comparison against lower-case "production" made this whole check dead code.
+        if self.environment != "PRODUCTION":
             return
         bad_origins = [
             origin

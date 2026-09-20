@@ -22,6 +22,9 @@ from fastapi import Depends, Header, HTTPException, Request
 
 from app.config import settings
 from app.services.access import AccessScope
+from app.services.auth_context import AnonymousContext, AuthContext, Principal, resolve_auth_context
+from app.services.authorization import AuthorizationDenied
+from app.services.authorization import require_scopes as _check_scopes
 from app.services.governance import (
     BudgetExceeded,
     CostGovernor,
@@ -30,51 +33,100 @@ from app.services.governance import (
 )
 
 
+def auth_enforced() -> bool:
+    """True whenever credentials are actually required: any non-TEST process,
+    or a TEST process with real identity (OIDC / service tokens) configured.
+    The only unenforced posture is TEST + no identity provider -- the offline
+    suite's public-commons mode -- and runtime_guard refuses to boot it anywhere
+    else."""
+    from app.services.authn import oidc_configured
+
+    if not settings.is_test:
+        return True
+    return oidc_configured(settings) or bool(getattr(settings, "service_token_keys", None))
+
+
+async def _human_context(request: Request, actor: Any, *, strict_tenant: bool = False) -> AuthContext:
+    """Actor -> AuthContext, resolved at most once per request (cached on
+    request.state when the request object supports it)."""
+    state = getattr(request, "state", None)
+    cached = getattr(state, "auth_context", None) if state is not None else None
+    if cached is not None and cached.subject == actor.subject and not (strict_tenant and len(cached.org_ids) > 1):
+        return cached
+    ctx = await resolve_auth_context(request.app.state.pool, actor, strict_tenant=strict_tenant)
+    if state is not None and not strict_tenant:
+        try:
+            state.auth_context = ctx
+        except Exception:  # noqa: BLE001 - caching is an optimisation only
+            pass
+    return ctx
+
+
+async def get_auth_context(request: Request) -> Principal:
+    """THE per-request identity resolver. Returns a ServiceAuthContext (verified
+    worker credential), an AuthContext (verified human; memberships and roles
+    resolved from the database now, not cached across requests) or an
+    AnonymousContext. Deactivated accounts are 403, never a degraded scope."""
+    import logging
+
+    from app.services.authn import IdentityInactive, current_actor, current_service
+
+    svc = current_service()
+    if svc is not None:
+        return svc
+    actor = current_actor()
+    if actor is None:
+        return AnonymousContext()
+    try:
+        ctx = await _human_context(request, actor)
+        if ctx.break_glass and not getattr(request.state, "_bg_audited", False):
+            from app.services.audit import record_security_event
+
+            request.state._bg_audited = True
+            await record_security_event(request.app.state.pool, actor_subject=ctx.subject, action="break_glass.used",
+                                        object_type="endpoint", object_id=f"{request.method} {request.url.path}"[:200])
+        return ctx
+    except IdentityInactive as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001
+        logging.getLogger(__name__).error("identity resolution failed: %s", type(exc).__name__)
+        raise HTTPException(status_code=503, detail="identity resolution unavailable") from exc
+
+
 async def get_scope(request: Request, x_viewer_id: Optional[str] = Header(default=None)) -> AccessScope:
     """
-    The scope for this request. Anonymous by default — the normal case on
-    a public commons, not a failure.
+    The visibility scope for this request (read path). Anonymous by default --
+    the normal case on a public commons, not a failure.
 
-    Band 2.9: a VALIDATED OIDC/Supabase actor (published by authn's
-    middleware on the contextvar) always wins — its subject is real
-    identity.
-
-    Phase 2 hardening: the X-Viewer-Id header is a dev convenience for the
-    FULLY-PUBLIC posture only. The moment real identity is configured
-    (Supabase Auth preset or generic OIDC), an unauthenticated request is
-    anonymous — a plain header can no longer name a user, so a private row
-    written by an authenticated user cannot be read by anyone spoofing
-    `X-Viewer-Id: <their subject>`.
-
-    Phase 2 completion: a validated actor's scope resolves their active
-    organization memberships, so `visibility='org'` rows of THEIR orgs are
-    visible and other orgs' are not. Resolution failure degrades to the
-    owner-only scope rather than 500 — a transient DB hiccup must not lock
-    a user out of their own private content.
+    * a verified SERVICE credential -> public rows only (private data is
+      reachable by a worker only through its job authority, authorization.py);
+    * a verified human -> AuthContext.access_scope(): public + own + their
+      organizations' org rows;
+    * a deactivated account -> 403 (a valid JWT proves who, not that they may
+      still act -- this used to degrade to an owner scope; it no longer does);
+    * a TRANSIENT resolution failure -> owner-only scope (strictly narrower than
+      the real one, logged), so a DB hiccup neither locks users out of their
+      own rows nor widens anything;
+    * X-Viewer-Id is honoured only in the fully-public TEST posture where no
+      identity provider is configured.
     """
-    from app.services.authn import (
-        current_actor,
-        ensure_user,
-        oidc_configured,
-        resolve_memberships,
-    )
+    import logging
 
+    from app.services.authn import IdentityInactive, current_actor, current_service, oidc_configured
+
+    svc = current_service()
+    if svc is not None:
+        return svc.access_scope()
     actor = current_actor()
     if actor is not None:
         try:
-            pool = request.app.state.pool
-            uid = await ensure_user(pool, actor)
-            org_ids = sorted(
-                {m.organization_id for m in await resolve_memberships(pool, uid)}
-            )
-            return (
-                AccessScope.for_org_member(actor.subject, org_ids)
-                if org_ids
-                else AccessScope.for_user(actor.subject)
-            )
-        except Exception:  # noqa: BLE001 — never fail a request on membership resolution
+            return (await _human_context(request, actor)).access_scope()
+        except IdentityInactive as exc:
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
+        except Exception as exc:  # noqa: BLE001
+            logging.getLogger(__name__).warning("membership resolution failed (%s); owner-only scope", type(exc).__name__)
             return AccessScope.for_user(actor.subject)
-    if x_viewer_id and not oidc_configured(settings):
+    if x_viewer_id and not oidc_configured(settings) and settings.is_test:
         return AccessScope.for_user(x_viewer_id)
     return AccessScope.anonymous()
 
@@ -118,52 +170,23 @@ def require_trustworthy_identity() -> None:
 # ---------------------------------------------------------------------------
 
 
-@dataclass(frozen=True)
-class AuthenticatedPrincipal:
-    """A request-scoped, server-derived identity. `user_id` is the
-    canonical StealthLab `users.id` (provisioned on first login from the
-    verified token); `subject` is the raw verified token subject (the
-    Supabase `auth.users` uid). `org_ids` are the caller's active
-    organization memberships — the ORG_PRIVATE visibility boundary."""
-
-    user_id: str
-    subject: str
-    issuer: Optional[str] = None
-    email: Optional[str] = None
-    name: Optional[str] = None
-    org_ids: tuple[str, ...] = ()
-    roles: tuple[str, ...] = ()          # role names across the caller's active memberships
-    claims: Mapping[str, Any] = field(default_factory=dict)
-
-    def has_role(self, *names: str) -> bool:
-        return any(r in self.roles for r in names)
-
-    def access_scope(self) -> AccessScope:
-        """The read/write scope for this principal: public rows, own rows,
-        and — when the caller holds memberships — their organizations'
-        'org'-visibility rows. Access is resolved from this, BEFORE any
-        relevance ranking (data-flow spec INV-02)."""
-        if self.org_ids:
-            return AccessScope.for_org_member(self.subject, list(self.org_ids))
-        return AccessScope.for_user(self.subject)
+# Converged: the principal IS the canonical AuthContext (services/auth_context.py).
+AuthenticatedPrincipal = AuthContext
 
 
 async def require_authenticated_user(request: Request) -> AuthenticatedPrincipal:
-    """FastAPI dependency: require a validated end-user identity.
+    """FastAPI dependency: require a validated END-USER identity.
 
-    Raises 401 when no credentials are presented (a present-but-invalid
-    token is already rejected with 401 by the ASGI middleware before this
-    runs). Raises 403 when the token is valid but the account is
-    deactivated. Never consults request-body identity fields.
+    401 when no credentials are presented (a present-but-invalid token is
+    already a 401 from the ASGI middleware). 403 when the token is valid but
+    the account is deactivated, or when the caller is a service (workers are
+    not users). 409 for ambiguous multi-organization membership on write
+    paths. Never consults request-body identity fields.
     """
-    from app.services.authn import (
-        AmbiguousTenant,
-        IdentityInactive,
-        current_actor,
-        ensure_user,
-        resolve_memberships,
-    )
+    from app.services.authn import AmbiguousTenant, IdentityInactive, current_actor, current_service
 
+    if current_service() is not None:
+        raise HTTPException(status_code=403, detail="a user identity is required; service credentials are not accepted here")
     actor = current_actor()
     if actor is None:
         raise HTTPException(
@@ -171,11 +194,8 @@ async def require_authenticated_user(request: Request) -> AuthenticatedPrincipal
             detail="authentication required",
             headers={"WWW-Authenticate": "Bearer"},
         )
-
-    pool = request.app.state.pool
     try:
-        user_id = await ensure_user(pool, actor)
-        memberships = await resolve_memberships(pool, user_id)
+        return await _human_context(request, actor, strict_tenant=True)
     except IdentityInactive as exc:
         raise HTTPException(status_code=403, detail=str(exc)) from exc
     except AmbiguousTenant as exc:
@@ -186,18 +206,36 @@ async def require_authenticated_user(request: Request) -> AuthenticatedPrincipal
             detail=f"ambiguous organization membership: {exc}",
         ) from exc
 
-    org_ids = tuple(sorted({m.organization_id for m in memberships}))
-    roles = tuple(sorted({m.role_name for m in memberships}))
-    return AuthenticatedPrincipal(
-        user_id=user_id,
-        subject=actor.subject,
-        issuer=actor.issuer,
-        email=actor.email,
-        name=actor.name,
-        org_ids=org_ids,
-        roles=roles,
-        claims=dict(actor.claims),
-    )
+
+def require_scopes(*scopes: str):
+    """Dependency factory: the caller (human OR service) must hold every named
+    scope. 401 anonymous / expired, 403 authenticated-but-missing-scope
+    (audited best-effort). Unenforced only in the TEST posture with no identity
+    provider configured (see auth_enforced)."""
+
+    async def _dep(request: Request) -> Principal:
+        ctx = await get_auth_context(request)
+        if isinstance(ctx, AnonymousContext) and not auth_enforced():
+            return ctx
+        try:
+            _check_scopes(ctx, *scopes)
+        except AuthorizationDenied as exc:
+            if exc.status == 403:
+                from app.services.audit import record_security_event
+
+                await record_security_event(
+                    getattr(getattr(request, "app", None), "state", None) and getattr(request.app.state, "pool", None),
+                    actor_subject=getattr(ctx, "actor_id", None), action="access.denied",
+                    object_type="endpoint", object_id=f"{request.method} {request.url.path}"[:200],
+                    details={"required_scopes": sorted(scopes), "principal": ctx.kind},
+                )
+            raise HTTPException(
+                status_code=exc.status, detail=str(exc),
+                headers={"WWW-Authenticate": "Bearer"} if exc.status == 401 else None,
+            ) from exc
+        return ctx
+
+    return _dep
 
 
 async def optional_authenticated_user(
@@ -213,6 +251,12 @@ async def optional_authenticated_user(
     return await require_authenticated_user(request)
 
 
+def _current_service_for_key():
+    from app.services.authn import current_service
+
+    return current_service()
+
+
 def scope_key_for(scope: AccessScope, request: Request) -> str:
     """
     The key rate limits and budgets are counted against.
@@ -225,6 +269,9 @@ def scope_key_for(scope: AccessScope, request: Request) -> str:
     X-Forwarded-For chain, which is deliberately not trusted here because
     an untrusted one is trivially spoofed to bypass limits entirely.
     """
+    svc = _current_service_for_key()
+    if svc is not None:
+        return svc.rate_key          # verified service id, not the socket address
     if scope.viewer_id:
         return f"viewer:{scope.viewer_id}"
     client = request.client.host if request.client else "unknown"
@@ -271,57 +318,56 @@ async def enforce_limits(
 
 
 async def require_admin_api_key(
+    request: Request = None,  # type: ignore[assignment]  -- injected by FastAPI; optional for direct calls
     x_admin_api_key: Optional[str] = Header(default=None),
 ) -> None:
-    """Coarse, interim access gate for `/v1/admin/*` (app/api/admin.py) --
-    a real, previously-confirmed gap: that whole router had no auth
-    dependency at all, and `get_scope`'s own anonymous-by-default posture
-    (this module's docstring) meant anyone reaching the server could
-    trigger real LLM spend (ingestion/process's extract_limit, reextract)
-    or register arbitrary extractors.
+    """Gate for `/v1/admin/*` and `/v1/trajectories/*` (name kept: routers and
+    tests import it).
 
-    Fails CLOSED, same discipline `Settings.environment`'s own "unset ->
-    PRODUCTION, never a permissive guess" rule uses: `admin_api_key`
-    unset means EVERY /v1/admin/* request gets 401, never silently open.
-    Set `ADMIN_API_KEY` in `.env` (gitignored, same as every other secret
-    in this file) to enable the surface.
+    Accepts, in order:
+      1. a verified HUMAN holding `admin:ops` (platform_admin grant) or a
+         verified SERVICE holding `maintenance:run` -- scoped, attributable,
+         revocable identities (the intended path);
+      2. the LEGACY static `X-Admin-Api-Key`, only while
+         ADMIN_API_KEY_LEGACY_ENABLED (default true, for compatibility). It is
+         a permanent universal secret with no identity, so: constant-time
+         compare, >=32 chars outside TEST (boot guard), and every use writes a
+         best-effort `admin.legacy_key_used` audit event. Set the flag false to
+         retire it.
 
-    REAL BUG FOUND AND FIXED while verifying this end to end: this
-    deliberately does NOT use `Authorization: Bearer <key>`, even though
-    that is the MCP server's own convention. `actor_middleware` (this
-    module, added globally in app/main.py's lifespan) intercepts the
-    `authorization` header on EVERY request and -- whenever real OIDC/
-    Supabase config is present (a real, common case, not a corner case:
-    this checkout's own `.env` already has `SUPABASE_JWT_AUDIENCE` set)
-    -- tries to validate it as a real JWT, rejecting anything else with
-    its OWN 401 ("unparseable token header") BEFORE this dependency, or
-    even routing, ever runs. A plain shared secret is not a JWT, so
-    `Authorization: Bearer <admin key>` was silently unreachable the
-    instant OIDC config existed -- confirmed live: every request 401'd
-    with actor_middleware's error text, not this function's. `X-Admin-
-    Api-Key` is a dedicated header nothing else in this codebase reads,
-    so it can never collide with that (or any future) global
-    Authorization-header consumer.
-
-    `secrets.compare_digest` (not `==`) -- a plain string comparison here
-    would leak the key's length/prefix through a timing side-channel,
-    the same reasoning the MCP server's own token check already applies.
-
-    NOT per-caller identity, NOT an audit trail -- a single shared secret
-    every real caller must hold, same coarse posture STEALTHLAB_MCP_TOKEN
-    already accepts for the MCP server. A real identity-based scheme
-    (OIDC role check, mTLS) is a separate, larger change if/when this
-    surface needs per-caller attribution.
+    Fails CLOSED: with nothing valid presented (or the legacy key unset or
+    disabled) the answer is 401/403, never open. The legacy key deliberately
+    does not use `Authorization: Bearer` (the ASGI middleware owns that header
+    for JWTs).
     """
     import secrets
 
+    from app.services import auth_context as _ac
+    from app.services.audit import record_security_event
+    from app.services.authn import current_actor, current_service
+
+    if request is not None and (current_actor() is not None or current_service() is not None):
+        ctx = await get_auth_context(request)
+        if isinstance(ctx, AuthContext) and ctx.has_scope(_ac.ADMIN_OPS):
+            return
+        if not isinstance(ctx, AuthContext) and ctx.has_scope(_ac.MAINTENANCE_RUN):
+            return
+        if not x_admin_api_key:
+            raise HTTPException(403, "admin scope required (admin:ops / maintenance:run)")
+
     configured = settings.admin_api_key
-    if not configured:
-        raise HTTPException(401, "admin API is not configured (ADMIN_API_KEY unset) -- refusing all requests")
+    if not configured or not settings.legacy_admin_key_enabled:
+        raise HTTPException(401, "admin API is not configured (ADMIN_API_KEY unset or legacy key disabled) -- refusing all requests")
     if not x_admin_api_key:
         raise HTTPException(401, "missing X-Admin-Api-Key header")
     if not secrets.compare_digest(x_admin_api_key, configured):
         raise HTTPException(401, "invalid admin API key")
+    if request is not None:
+        await record_security_event(
+            getattr(getattr(request, "app", None), "state", None) and getattr(request.app.state, "pool", None),
+            actor_subject="legacy-admin-key", action="admin.legacy_key_used", object_type="endpoint",
+            object_id=f"{request.method} {request.url.path}"[:200], details={},
+        )
 
 
 def make_cost_recorder(pool, scope_key: str, operation: str):

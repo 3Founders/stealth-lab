@@ -68,27 +68,72 @@ async def enqueue(
     pool: asyncpg.Pool, job_type: str, payload: dict, *, idempotency_key: str, source_id: Optional[str] = None,
     scope_type: str, scope_entity_id: Optional[str] = None, owner_id: Optional[str] = None, visibility: str = "public",
     config_version: Optional[str] = None, max_attempts: int = 5, offload: bool = True,
+    authority: Optional[Any] = None,
 ) -> tuple[int, bool]:
     """Insert a job unless (job_type, idempotency_key) already exists. Returns
     (job_id, created). Explicit scope is REQUIRED: a queued job can never be
-    ambiguous about who may see what it produces."""
+    ambiguous about who may see what it produces.
+
+    `authority` (auth_context.JobAuthority) is the SERVER-created, immutable
+    record of who submitted the job and what it may do (migration 99 columns).
+    API code builds it from the verified AuthContext, never from a request
+    body; workers only read it (job_authority_from_row)."""
     if not idempotency_key:
         raise ValueError("idempotency_key is required")
     validate_scope(job_type, scope_type, visibility, owner_id)
     if offload:      # large raw strings go to object storage; the queue row keeps a locator + sha256
         from app.services.object_storage import offload_payload
         payload = await offload_payload(pool, payload)
+    if authority is None:
+        # Conservative default so EVERY job carries authority: derived from the explicit
+        # scope the caller already had to declare; publication is never implied.
+        from app.services.auth_context import JobAuthority
+
+        authority = JobAuthority(
+            submitted_by_user_id=owner_id if visibility == "private" else None,
+            tenant_id=scope_entity_id if visibility == "org" else None,
+            scope={"public": "global_public", "private": "user_private", "org": "tenant_private"}.get(visibility, "system_internal"),
+            visibility=visibility, publication_allowed=False,
+        )
+    a = authority
     row = await pool.fetchrow(
         "INSERT INTO ingestion_jobs (job_type, payload, idempotency_key, source_id, scope_type, scope_entity_id, "
-        "owner_id, visibility, config_version, max_attempts) VALUES ($1, $2::jsonb, $3, $4, $5, $6, $7, $8, $9, $10) "
+        "owner_id, visibility, config_version, max_attempts, submitted_by_user_id, submitted_by_service_id, "
+        "auth_tenant_id, auth_scope, auth_visibility, source_access_scope, publication_allowed) "
+        "VALUES ($1, $2::jsonb, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13::uuid, $14, $15, $16, $17) "
         "ON CONFLICT (job_type, idempotency_key) WHERE idempotency_key IS NOT NULL DO NOTHING RETURNING id",
         job_type, payload, idempotency_key, source_id, scope_type, scope_entity_id, owner_id, visibility, config_version,
-        max_attempts)
+        max_attempts,
+        getattr(a, "submitted_by_user_id", None), getattr(a, "submitted_by_service_id", None),
+        getattr(a, "tenant_id", None), getattr(a, "scope", None), getattr(a, "visibility", None),
+        getattr(a, "source_access_scope", None), bool(getattr(a, "publication_allowed", False)))
     if row:
         return row["id"], True
     existing = await pool.fetchval(
         "SELECT id FROM ingestion_jobs WHERE job_type = $1 AND idempotency_key = $2", job_type, idempotency_key)
     return existing, False
+
+
+def job_authority_from_row(row: Any) -> Any:
+    """The immutable authority a job was submitted with, for a worker that has
+    leased `row` (needs the migration-99 columns plus owner_id/visibility, which
+    long predate them). Jobs written before migration 99 have NULL authority
+    columns; their authority is derived conservatively from visibility/owner:
+    public -> global, private -> that owner only, org -> unknown tenant (=> no
+    tenant coverage). publication_allowed is never inferred: it is False unless
+    the submitting API set it."""
+    from app.services.auth_context import JobAuthority
+
+    g = (lambda k: row[k] if k in row.keys() else None)
+    vis = g("auth_visibility") or g("visibility") or "private"
+    scope = g("auth_scope") or {"public": "global_public", "private": "user_private", "org": "tenant_private"}.get(vis, "system_internal")
+    return JobAuthority(
+        submitted_by_user_id=g("submitted_by_user_id") or (g("owner_id") if scope == "user_private" else None),
+        submitted_by_service_id=g("submitted_by_service_id"),
+        tenant_id=str(g("auth_tenant_id")) if g("auth_tenant_id") else None,
+        scope=scope, visibility=vis, source_access_scope=g("source_access_scope"),
+        publication_allowed=bool(g("publication_allowed")),
+    )
 
 
 _LEASE_SQL = """

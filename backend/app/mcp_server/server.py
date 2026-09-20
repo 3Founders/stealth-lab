@@ -208,10 +208,57 @@ class OidcAwareTokenVerifier(TokenVerifier):
     today.)
     """
 
-    def __init__(self, shared_token: str, oidc_config: Optional[OidcConfig], jwks_provider):
+    def __init__(self, shared_token: str, oidc_config: Optional[OidcConfig], jwks_provider,
+                 service_config=None, service_registry_factory=None, allow_shared_token: bool = True):
         self._shared_token = shared_token
         self._oidc_config = oidc_config
         self._jwks_provider = jwks_provider
+        self._service_config = service_config
+        self._service_registry_factory = service_registry_factory
+        self._service_registry = None
+        self._allow_shared_token = allow_shared_token
+
+    async def _human_token(self, token: str, actor) -> AccessToken | None:
+        """Resolve the verified actor through the SAME resolver REST uses
+        (auth_context.resolve_auth_context), so a caller gets identical scopes
+        and organization memberships over MCP and REST. Deactivated -> None
+        (401). Org memberships ride as `org:<uuid>` token scopes (server-side,
+        never client-supplied) so tools can build the same AccessScope."""
+        from app.services import auth_context as _ac
+        from app.services.authn import IdentityInactive
+
+        scopes = {"stealthlab:tools", *_ac.USER_BASELINE_SCOPES}
+        pool = _LIFESPAN_STATE.get("pool")
+        if pool is not None:
+            try:
+                ctx = await _ac.resolve_auth_context(pool, actor)
+            except IdentityInactive:
+                return None
+            except Exception:  # noqa: BLE001 - cannot establish identity state -> no access
+                return None
+            scopes = {"stealthlab:tools", *ctx.scopes, *(f"org:{o}" for o in ctx.org_ids)}
+        return AccessToken(token=token, client_id=actor.subject, scopes=sorted(scopes), subject=actor.subject)
+
+    async def _service_token(self, token: str) -> AccessToken | None:
+        if self._service_config is None:
+            return None
+        from app.services.service_identity import ServiceTokenRejected, verify_service_token
+
+        if self._service_registry is None:
+            if self._service_registry_factory is None:
+                return None
+            self._service_registry = self._service_registry_factory()
+            if self._service_registry is None:
+                return None
+        try:
+            ctx = await verify_service_token(token, config=self._service_config, registry=self._service_registry)
+        except ServiceTokenRejected:
+            return None
+        # No `subject`: a service is never attributed as a user.
+        return AccessToken(
+            token=token, client_id=f"service:{ctx.service_id}",
+            scopes=sorted({"stealthlab:tools", f"svc:{ctx.service_id}", *ctx.scopes}),
+        )
 
     async def verify_token(self, token: str) -> AccessToken | None:
         if self._oidc_config is not None:
@@ -221,15 +268,23 @@ class OidcAwareTokenVerifier(TokenVerifier):
                     token, config=self._oidc_config, jwks_provider=self._jwks_provider,
                 )
             except TokenRejected:
-                pass  # not a valid OIDC token for this issuer/audience -- try the shared-secret fallback below
+                pass  # not a valid OIDC token for this issuer/audience -- try service / shared-secret below
             if actor is not None:
-                return AccessToken(
-                    token=token, client_id=actor.subject,
-                    scopes=["stealthlab:tools"], subject=actor.subject,
-                )
+                return await self._human_token(token, actor)
+        svc = await self._service_token(token)
+        if svc is not None:
+            return svc
+        if not self._allow_shared_token:
+            return None  # deployment_mode="shared": a static shared secret never authenticates
         if not secrets.compare_digest(token, self._shared_token):
             return None
-        return AccessToken(token=token, client_id="stealthlab-local", scopes=["stealthlab:tools"])
+        # The local operator: single-user loopback posture only.
+        from app.services import auth_context as _ac
+
+        return AccessToken(
+            token=token, client_id="stealthlab-local",
+            scopes=sorted({"stealthlab:tools", "local:operator", *_ac.USER_BASELINE_SCOPES, _ac.KNOWLEDGE_PUBLISH}),
+        )
 
 
 def _require_mcp_token() -> str:
@@ -295,10 +350,23 @@ def _build_token_verifier(shared_token: str) -> OidcAwareTokenVerifier:
     )
     oidc_config = OidcConfig.from_settings(settings)
     jwks_provider = FetchingJwks(oidc_config.jwks_url) if oidc_config is not None else None
-    return OidcAwareTokenVerifier(shared_token, oidc_config, jwks_provider)
+    from app.services.service_identity import PgServiceRegistry, ServiceTokenConfig
+
+    def _registry():
+        pool = _LIFESPAN_STATE.get("pool")
+        return None if pool is None else PgServiceRegistry(pool, ttl=float(settings.auth_cache_ttl))
+
+    return OidcAwareTokenVerifier(
+        shared_token, oidc_config, jwks_provider,
+        service_config=ServiceTokenConfig.from_settings(settings),
+        service_registry_factory=_registry,
+        allow_shared_token=(settings.deployment_mode != "shared"),
+    )
 
 
 _MCP_PORT = 8765  # not the SDK's default 8000, which app/main.py's FastAPI app already uses
+
+_TOKEN_VERIFIER = _build_token_verifier(_require_mcp_token())
 
 server = MCPServer(
     name="stealthlab",
@@ -317,7 +385,7 @@ server = MCPServer(
     # Authorization applies to HTTP transports only -- stdio (the `mcp dev`
     # Inspector quickstart in README_MCP_SERVER.md) bypasses it entirely,
     # by protocol design, not by an oversight here.
-    token_verifier=_build_token_verifier(_require_mcp_token()),
+    token_verifier=_TOKEN_VERIFIER,
     auth=AuthSettings(
         issuer_url=AnyHttpUrl(f"http://127.0.0.1:{_MCP_PORT}"),
         resource_server_url=AnyHttpUrl(f"http://127.0.0.1:{_MCP_PORT}/mcp"),
@@ -332,6 +400,49 @@ server = MCPServer(
 _register_tool = server.tool
 
 
+# Per-tool required scope. ONE table so MCP enforces the same scope vocabulary
+# as REST (services/auth_context.py). Unlisted tools default to knowledge:write:
+# a new tool is denied to read-only/service callers until it is classified.
+from app.services import auth_context as _acx
+
+_READ = _acx.RETRIEVAL_READ
+_WRITE = _acx.KNOWLEDGE_WRITE
+_EXEC = _acx.EXECUTION_RUN
+_TOOL_SCOPES: dict[str, str] = {
+    **{n: _READ for n in (
+        "retrieve_precedent", "search_procedures", "get_claim_graph", "get_relevant_claims", "get_procedure",
+        "check_applicability", "check_procedure", "search_goals", "inspect_goal", "list_goal_procedures",
+        "resolve_intent", "explain_goal_route", "estimate_goal_cost", "compile_goal", "find_problem",
+        "inspect_problem", "list_problem_solutions", "compare_solutions", "inspect_evaluation",
+        "find_best_solution", "get_route_decision", "project_knowledge", "inspect_trajectory",
+        "list_trajectory_events", "inspect_extraction", "list_extraction_objects",
+        "inspect_trajectory_provenance", "get_goal_run_status", "list_goal_artifacts", "get_goal_artifact",
+        "inspect_run", "list_stealth_edits", "generate_review_packet", "preview_local_sync")},
+    **{n: _WRITE for n in (
+        "submit_procedure", "create_goal", "report_execution", "record_run_update", "record_stealth_edit",
+        "declare_file_intent", "report_node_progress", "commit_local_sync", "init_workspace",
+        "open_exploration", "close_exploration", "verify_completion")},
+    **{n: _acx.INGESTION_SUBMIT for n in ("ingest_trajectory", "run_semantic_extraction", "reextract_trajectory")},
+    **{n: _EXEC for n in (
+        "find_best_way", "reproduce_procedure", "execute_goal", "continue_run", "resume_execution_run",
+        "retry_run_node")},
+    "decide_procedure": _acx.KNOWLEDGE_PUBLISH,
+}
+
+
+def _enforce_tool_scope(tool_name: str) -> None:
+    """Deny a call whose verified token lacks the tool's scope. No access token
+    at all means stdio / in-process invocation (no network principal exists to
+    check); every HTTP request is authenticated by the SDK's bearer middleware
+    before a tool runs, so this cannot be reached anonymously over HTTP."""
+    token = get_access_token()
+    if token is None:
+        return
+    needed = _TOOL_SCOPES.get(tool_name, _WRITE)
+    if needed not in (token.scopes or []):
+        raise PermissionError(f"forbidden: tool {tool_name!r} requires scope {needed!r}")
+
+
 def _traced_tool(*targs, **tkwargs):
     register = _register_tool(*targs, **tkwargs)
 
@@ -340,6 +451,7 @@ def _traced_tool(*targs, **tkwargs):
 
         @_ft.wraps(fn)
         async def traced_fn(*a, **k):
+            _enforce_tool_scope(fn.__name__)
             with telemetry.span(f"mcp.tool.{fn.__name__}", kind="TOOL",
                                 on_error=telemetry.FailureCode.UNKNOWN, tool=fn.__name__):
                 return await fn(*a, **k)
@@ -388,6 +500,46 @@ def _graph_pool():
     return pool
 
 
+def _is_local_request(request: Request) -> bool:
+    """Loopback caller with no proxy hop, in single-user mode. The browser pages
+    below cannot attach a bearer header, so this is what keeps the documented
+    local viewer working; it is never true in DEPLOYMENT_MODE=shared or behind a
+    proxy (X-Forwarded-*/Forwarded present)."""
+    if settings.deployment_mode == "shared":
+        return False
+    if any(h in request.headers for h in ("x-forwarded-for", "x-forwarded-host", "forwarded")):
+        return False
+    host = request.client.host if request.client else ""
+    return host in ("127.0.0.1", "::1", "localhost")
+
+
+async def _route_token(request: Request) -> Optional[AccessToken]:
+    from app.services.authn import extract_bearer
+
+    tok = extract_bearer(request.headers.get("authorization"))
+    return await _TOKEN_VERIFIER.verify_token(tok) if tok else None
+
+
+async def _route_scope(request: Request) -> AccessScope:
+    """Visibility scope for the data routes: the verified caller's scope, else
+    PUBLIC rows only. Never AccessScope.unrestricted() (that returned private
+    claims/procedures to any caller)."""
+    at = await _route_token(request)
+    if at is not None and at.subject:
+        return _scope_from_token(at)
+    return AccessScope.anonymous()
+
+
+async def _route_gate(request: Request) -> Optional[JSONResponse]:
+    """None when allowed; a 401 response otherwise. For routes that read the
+    filesystem at a caller-supplied workspace path: a verified bearer, or the
+    local-loopback viewer posture."""
+    if await _route_token(request) is not None or _is_local_request(request):
+        return None
+    return JSONResponse({"error": "authentication required"}, status_code=401,
+                        headers={"WWW-Authenticate": "Bearer"})
+
+
 @server.custom_route("/claim-graph", methods=["GET"], include_in_schema=False)
 async def claim_graph_page(request: Request) -> HTMLResponse:  # noqa: ARG001
     return HTMLResponse(CLAIM_GRAPH_HTML)
@@ -420,7 +572,7 @@ async def claim_graph_data(request: Request) -> JSONResponse:
 
     result = await claim_graph_api.get_claim_graph_overview(
         _graph_pool(),
-        scope=AccessScope.unrestricted(),
+        scope=await _route_scope(request),
         limit=_int("limit", 200),
         include_retired=_bool("include_retired"),
         q=(qp.get("q") or None),
@@ -471,7 +623,7 @@ async def procedure_graph_data(request: Request) -> JSONResponse:
 
     result = await procedure_task_graph_api.get_procedure_task_overview(
         _graph_pool(),
-        scope=AccessScope.unrestricted(),
+        scope=await _route_scope(request),
         limit=_int("limit", 150),
         q=(qp.get("q") or None),
         include_stale=_bool("include_stale", False),
@@ -503,6 +655,9 @@ async def goal_run_data(request: Request) -> JSONResponse:
     from app.execution.goal_execution import read_goal_run_status
     from app.stealth.artifacts import list_artifacts
 
+    denied = await _route_gate(request)
+    if denied is not None:
+        return denied
     workspace_root = request.query_params.get("workspace_root")
     if not workspace_root:
         return JSONResponse({"error": "workspace_root query parameter is required"}, status_code=400)
@@ -515,6 +670,9 @@ async def goal_run_data(request: Request) -> JSONResponse:
 async def goal_run_artifact(request: Request) -> Response:
     from app.stealth.artifacts import read_artifact
 
+    denied = await _route_gate(request)
+    if denied is not None:
+        return denied
     qp = request.query_params
     workspace_root, goal_id, execution_id, filename = (
         qp.get("workspace_root"), qp.get("goal_id"), qp.get("execution_id"), qp.get("filename"),
@@ -707,11 +865,20 @@ def _caller_access_scope() -> AccessScope:
     """
     token = get_access_token()
     if token is not None and token.subject:
-        return AccessScope.for_user(token.subject)
+        return _scope_from_token(token)
     actor_id = current_actor_id()
     if actor_id:
         return AccessScope.for_user(actor_id)
     return AccessScope.anonymous()
+
+
+def _scope_from_token(token: AccessToken) -> AccessScope:
+    """AccessScope for a verified human token, INCLUDING organization
+    memberships (`org:<uuid>` scopes stamped by OidcAwareTokenVerifier) so MCP
+    reads see exactly what REST reads see for the same caller. Service tokens
+    carry no subject and never reach here (they get anonymous/public)."""
+    orgs = [sc[4:] for sc in (token.scopes or []) if sc.startswith("org:")]
+    return AccessScope.for_org_member(token.subject, orgs) if orgs else AccessScope.for_user(token.subject)
 
 
 class _RepoExecutionRefused(Exception):

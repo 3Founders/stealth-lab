@@ -68,8 +68,10 @@ def is_retryable(exc: BaseException) -> bool:
 
 class Worker:
     def __init__(self, pool: asyncpg.Pool, cfg: WorkerConfig, *, worker_id: Optional[str] = None,
-                 job_types: Optional[list[str]] = None, handlers: Optional[dict[str, Any]] = None, pools: Any = None):
+                 job_types: Optional[list[str]] = None, handlers: Optional[dict[str, Any]] = None, pools: Any = None,
+                 service: Any = None):
         self.pool, self.cfg = pool, cfg
+        self.service = service   # verified ServiceAuthContext (None only in TEST)
         self.worker_id = worker_id or default_worker_id()
         self.job_types = job_types
         if handlers is None:
@@ -105,8 +107,18 @@ class Worker:
         hb = asyncio.create_task(self._heartbeat(job, lease_lost))
 
         async def _run():
-            from app.services.object_storage import hydrate_payload
-            return await handler(self.pool, await hydrate_payload(payload))   # blob refs -> content (sha256 verified)
+            from app.services.object_storage import authorized_hydrate, hydrate_payload
+            if self.service is None:
+                return await handler(self.pool, await hydrate_payload(payload))
+            from app.ingestion.queue import job_authority_from_row
+            from app.services.authorization import ObjectRef
+
+            ctx = self.service.bind_job(job_authority_from_row({
+                "owner_id": job.owner_id, "visibility": job.visibility,
+                "auth_tenant_id": job.scope_entity_id if job.visibility == "org" else None}))
+            obj = ObjectRef(job.visibility, owner_id=job.owner_id,
+                            tenant_id=job.scope_entity_id if job.visibility == "org" else None)
+            return await handler(self.pool, await authorized_hydrate(payload, ctx, obj))   # blob refs -> content (sha256 verified)
 
         run = asyncio.create_task(_run())
         lost = asyncio.create_task(lease_lost.wait())
@@ -221,6 +233,33 @@ def _parse(argv: Optional[list[str]] = None) -> argparse.Namespace:
     return p.parse_args(argv)
 
 
+async def authenticate_worker(pool: asyncpg.Pool) -> Optional[Any]:
+    """Verify this worker's service credential (INGEST_SERVICE_TOKEN) and return
+    its ServiceAuthContext, or None when authentication is not required (TEST
+    with no service-token config). Outside TEST the worker REFUSES to start
+    without a valid credential holding ingestion:process: a worker is a
+    registered, revocable, least-privilege service, not "whoever holds the
+    database URL". Credentials expire (see SERVICE_TOKEN_MAX_TTL_SECONDS), so
+    long-running workers re-verify on a timer (Worker.reauth)."""
+    from app.config import settings
+    from app.services import auth_context as ac
+    from app.services.service_identity import PgServiceRegistry, ServiceTokenConfig, ServiceTokenRejected, verify_service_token
+
+    cfg = ServiceTokenConfig.from_settings(settings)
+    token = os.environ.get("INGEST_SERVICE_TOKEN")
+    if cfg is None or not token:
+        if settings.is_test:
+            return None
+        raise SystemExit("CONFIG ERROR: INGEST_SERVICE_TOKEN and SERVICE_TOKEN_* are required outside TEST")
+    try:
+        ctx = await verify_service_token(token, config=cfg, registry=PgServiceRegistry(pool, ttl=0.0))
+    except ServiceTokenRejected as exc:
+        raise SystemExit(f"CONFIG ERROR: worker credential rejected ({exc.reason})") from None
+    if not ctx.has_scope(ac.INGESTION_PROCESS):
+        raise SystemExit("CONFIG ERROR: worker credential lacks scope ingestion:process")
+    return ctx
+
+
 async def _amain(args: argparse.Namespace) -> int:
     cfg = WorkerConfig.from_env()
     over = {k: v for k, v in (("concurrency", args.concurrency), ("max_jobs", args.max_jobs)) if v}
@@ -241,7 +280,12 @@ async def _amain(args: argparse.Namespace) -> int:
     pool = await create_pool(control_database_url(), max_size=2 * cfg.concurrency + 4)
     from app.services.shards import ShardPools
 
-    worker = Worker(pool, cfg, worker_id=args.worker_id, pools=ShardPools(pool),
+    service = await authenticate_worker(pool)
+    worker_id = args.worker_id
+    if service is not None:
+        worker_id = f"{service.service_id}:{args.worker_id or default_worker_id()}"
+        logging.getLogger().info("worker authenticated as service %s (credential %s)", service.service_id, service.credential_id)
+    worker = Worker(pool, cfg, worker_id=worker_id, pools=ShardPools(pool), service=service,
                     job_types=[t.strip() for t in args.job_types.split(",")] if args.job_types else None)
     loop = asyncio.get_running_loop()
     for sig in (signal.SIGINT, signal.SIGTERM):

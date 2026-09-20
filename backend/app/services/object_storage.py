@@ -267,3 +267,15 @@ async def hydrate_payload(payload: dict, *, store: Optional[ObjectStore] = None)
                 raise ObjectStoreCorrupt(f"sha256 mismatch for {ref['locator']}")
             out[k] = data.decode()
     return out
+
+
+async def authorized_hydrate(payload: dict, ctx, obj, *, store: Optional[ObjectStore] = None) -> dict:
+    """hydrate_payload behind the authorization policy. Blobs are content-addressed
+    and DEDUPLICATED across owners, so a storage key is never an access grant and
+    carries no ACL of its own: the ACL is the referencing job/object. The caller
+    must be able to read that object (authorization.can_read) before any blob
+    reference in its payload is dereferenced."""
+    from app.services.authorization import Action, authorize
+
+    authorize(ctx, Action.READ, obj)
+    return await hydrate_payload(payload, store=store)

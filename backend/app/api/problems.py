@@ -9,10 +9,11 @@ from __future__ import annotations
 
 from typing import Any, Optional
 
+from app.services import auth_context as _ac
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
-from app.api.deps import get_scope
+from app.api.deps import get_scope, require_scopes
 from app.services import product_model as pm
 from app.services.access import AccessScope
 
@@ -80,7 +81,7 @@ class EvaluationCompleteIn(BaseModel):
 
 
 # ---- Problem ------------------------------------------------------------
-@router.post("/problems")
+@router.post("/problems", dependencies=[Depends(require_scopes(_ac.KNOWLEDGE_WRITE))])
 async def create_problem(body: ProblemIn, pool=Depends(get_pool),
                          scope: AccessScope = Depends(get_scope)) -> dict[str, Any]:
     try:
@@ -145,7 +146,7 @@ async def problem_leaderboard(problem_id: str, benchmark_id: Optional[str] = Non
 
 
 # ---- Benchmark -------------------------------------------------------------
-@router.post("/benchmarks")
+@router.post("/benchmarks", dependencies=[Depends(require_scopes(_ac.KNOWLEDGE_WRITE))])
 async def create_benchmark(body: BenchmarkIn, pool=Depends(get_pool),
                            scope: AccessScope = Depends(get_scope)) -> dict[str, Any]:
     try:
@@ -154,7 +155,7 @@ async def create_benchmark(body: BenchmarkIn, pool=Depends(get_pool),
         raise HTTPException(status_code=422, detail=str(e))
 
 
-@router.post("/benchmarks/{benchmark_id}/freeze")
+@router.post("/benchmarks/{benchmark_id}/freeze", dependencies=[Depends(require_scopes(_ac.KNOWLEDGE_WRITE))])
 async def freeze_benchmark(benchmark_id: str, pool=Depends(get_pool),
                            scope: AccessScope = Depends(get_scope)) -> dict[str, Any]:
     try:
@@ -173,7 +174,7 @@ async def get_benchmark(benchmark_id: str, pool=Depends(get_pool),
 
 
 # ---- Solution -----------------------------------------------------------
-@router.post("/solutions/associate")
+@router.post("/solutions/associate", dependencies=[Depends(require_scopes(_ac.KNOWLEDGE_WRITE))])
 async def associate_solution(body: SolutionIn, pool=Depends(get_pool),
                              scope: AccessScope = Depends(get_scope)) -> dict[str, Any]:
     try:
@@ -183,7 +184,7 @@ async def associate_solution(body: SolutionIn, pool=Depends(get_pool),
 
 
 # ---- Evaluation --------------------------------------------------------
-@router.post("/evaluations")
+@router.post("/evaluations", dependencies=[Depends(require_scopes(_ac.KNOWLEDGE_WRITE))])
 async def request_evaluation(body: EvaluationIn, pool=Depends(get_pool),
                              scope: AccessScope = Depends(get_scope)) -> dict[str, Any]:
     try:
@@ -192,7 +193,7 @@ async def request_evaluation(body: EvaluationIn, pool=Depends(get_pool),
         raise HTTPException(status_code=422, detail=str(e))
 
 
-@router.post("/evaluations/{evaluation_id}/complete")
+@router.post("/evaluations/{evaluation_id}/complete", dependencies=[Depends(require_scopes(_ac.KNOWLEDGE_WRITE))])
 async def complete_evaluation(evaluation_id: str, body: EvaluationCompleteIn,
                               pool=Depends(get_pool),
                               scope: AccessScope = Depends(get_scope)) -> dict[str, Any]:
@@ -205,7 +206,7 @@ async def complete_evaluation(evaluation_id: str, body: EvaluationCompleteIn,
         raise HTTPException(status_code=422, detail=str(e))
 
 
-@router.post("/evaluations/{evaluation_id}/invalidate")
+@router.post("/evaluations/{evaluation_id}/invalidate", dependencies=[Depends(require_scopes(_ac.KNOWLEDGE_WRITE))])
 async def invalidate_evaluation(evaluation_id: str, reason: str = Query(...),
                                 pool=Depends(get_pool),
                                 scope: AccessScope = Depends(get_scope)) -> dict[str, Any]:

@@ -72,3 +72,35 @@ async def record_audit_event(
             f"audit write returned no row for {action} on {object_type}/{object_id}"
         )
     return str(row["id"])
+
+
+async def record_security_event(
+    pool: Any,
+    *,
+    actor_subject: Optional[str],
+    action: str,
+    object_type: str,
+    object_id: str,
+    tenant_id: Optional[str] = None,
+    details: Optional[dict] = None,
+) -> None:
+    """BEST-EFFORT twin of record_audit_event for events whose failure must not
+    change the outcome of the request that produced them: access-denied,
+    legacy-admin-key use, credential rejection. It never raises (a broken audit
+    table must not turn a 403 into a 500 or gate a security decision on audit
+    availability) and logs a warning instead. State-changing security
+    transitions (publication, deletion, role/credential changes) keep using the
+    fail-closed record_audit_event.
+
+    Callers must never put tokens, keys or raw JWTs in `details`."""
+    import logging
+
+    if pool is None:
+        return
+    try:
+        await record_audit_event(
+            pool, actor_subject=actor_subject or "anonymous", action=action,
+            object_type=object_type, object_id=object_id, tenant_id=tenant_id, details=details,
+        )
+    except Exception as exc:  # noqa: BLE001
+        logging.getLogger(__name__).warning("security audit write failed for %s: %s", action, type(exc).__name__)

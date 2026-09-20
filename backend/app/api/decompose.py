@@ -12,10 +12,11 @@ import logging
 from typing import Optional
 from uuid import UUID
 
+from app.services import auth_context as _ac
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 
-from app.api.deps import enforce_limits, get_scope, make_cost_recorder
+from app.api.deps import enforce_limits, get_scope, make_cost_recorder, require_scopes
 from app.debate.panel import default_judge, default_panel
 from app.models.change import ChangeSet
 from app.services.access import AccessScope
@@ -137,7 +138,7 @@ async def decompose(
     )
 
 
-@router.get("/pending")
+@router.get("/pending", dependencies=[Depends(require_scopes(_ac.KNOWLEDGE_READ))])
 async def list_pending(pool=Depends(get_pool)):
     """Proposals awaiting a decision, newest first."""
     rows = await pool.fetch(
@@ -149,7 +150,7 @@ async def list_pending(pool=Depends(get_pool)):
     return [dict(r) for r in rows]
 
 
-@router.get("/{decomposition_id}")
+@router.get("/{decomposition_id}", dependencies=[Depends(require_scopes(_ac.KNOWLEDGE_READ))])
 async def get_decomposition(decomposition_id: UUID, pool=Depends(get_pool)):
     row = await pool.fetchrow(
         "SELECT * FROM decompositions WHERE id = $1", decomposition_id
@@ -159,7 +160,7 @@ async def get_decomposition(decomposition_id: UUID, pool=Depends(get_pool)):
     return dict(row)
 
 
-@router.post("/{decomposition_id}/decide", response_model=DecideResponse)
+@router.post("/{decomposition_id}/decide", response_model=DecideResponse, dependencies=[Depends(require_scopes(_ac.KNOWLEDGE_PUBLISH))])
 async def decide(
     decomposition_id: UUID,
     body: DecideRequest,

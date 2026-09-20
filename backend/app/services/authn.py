@@ -101,6 +101,27 @@ def current_actor_id() -> Optional[str]:
     return actor.subject if actor else None
 
 
+# The verified SERVICE identity (worker/maintenance credential), if the request
+# carried one. Kept apart from the human Actor on purpose: a request is one or
+# the other, never both (the middleware rejects a request presenting both).
+_service_cv: contextvars.ContextVar[Optional[Any]] = contextvars.ContextVar(
+    "current_service", default=None
+)
+
+
+def set_current_service(ctx: Optional[Any]) -> "contextvars.Token":
+    return _service_cv.set(ctx)
+
+
+def reset_current_service(token: "contextvars.Token") -> None:
+    _service_cv.reset(token)
+
+
+def current_service() -> Optional[Any]:
+    """The ServiceAuthContext for this request, or None."""
+    return _service_cv.get()
+
+
 # ---------------------------------------------------------------------------
 # Configuration + frozen-posture guard.
 # ---------------------------------------------------------------------------
@@ -486,22 +507,37 @@ def extract_bearer(authorization: Optional[str]) -> Optional[str]:
     return rest.strip()
 
 
+SERVICE_TOKEN_HEADER = "x-stealth-service-token"
+
+
+async def _reject(send, status: int, detail: str) -> None:
+    body = json.dumps({"detail": detail}).encode("utf-8")
+    await send({"type": "http.response.start", "status": status,
+                "headers": [(b"content-type", b"application/json")]})
+    await send({"type": "http.response.body", "body": body})
+
+
 def make_actor_middleware(
     config: Optional[OidcConfig],
     jwks_provider: Any,
     *,
     private_visibility_enabled: bool,
+    service_verifier: Optional[Callable[[str], Any]] = None,
 ):
     """Pure-ASGI middleware factory: validates a presented bearer against
-    config, publishes the Actor on the contextvar for the whole downstream
-    request, and enforces the missing-token policy implied by the posture.
+    config (human) or a service credential header (worker), publishes the
+    identity on a contextvar for the whole downstream request, and enforces the
+    missing-token policy implied by the posture.
 
     Returns the standard wrap(app)->ASGI-callable shape, so it installs via
     add_middleware exactly like a class would.
 
-    With config=None (public posture, OIDC unconfigured) it is an exact
-    pass-through: nothing authenticates, nothing blocks, and the posture
-    guard at boot is what keeps that posture honest."""
+    With config=None and no service verifier (TEST posture, OIDC unconfigured)
+    it is an exact pass-through; runtime_guard refuses to boot that posture
+    outside TEST.
+
+    A request with no credential is anonymous; scope-gated routes 401 in their
+    own dependency (deps.require_scopes), public-read routes see public rows."""
 
     def wrap(app):  # noqa: ANN001 - ASGI signature
 
@@ -515,39 +551,43 @@ def make_actor_middleware(
                 for k, v in scope.get("headers", [])
             }
             token = extract_bearer(headers.get("authorization"))
+            service_token = (headers.get(SERVICE_TOKEN_HEADER) or "").strip() or None
             actor: Optional[Actor] = None
+            service_ctx: Optional[Any] = None
 
-            if config is not None:
+            if service_token is not None:
+                if token is not None:
+                    await _reject(send, 400, "ambiguous credentials: present a user token OR a service token, not both")
+                    return
+                if service_verifier is None:
+                    await _reject(send, 401, "service authentication is not configured")
+                    return
+                try:
+                    service_ctx = await service_verifier(service_token)
+                except Exception as exc:  # noqa: BLE001 - any verifier failure is a 401, never a 500 and never anonymous
+                    import logging
+
+                    logging.getLogger(__name__).warning(
+                        "service credential rejected: %s", getattr(exc, "reason", type(exc).__name__))
+                    await _reject(send, 401, "invalid service credential")
+                    return
+            elif config is not None:
                 if token is not None:
                     try:
                         actor = await validate_token_async(token, config=config, jwks_provider=jwks_provider)
                     except TokenRejected as exc:
-                        body = json.dumps({"detail": f"invalid token: {exc}"}).encode("utf-8")
-                        await send(
-                            {
-                                "type": "http.response.start",
-                                "status": 401,
-                                "headers": [(b"content-type", b"application/json")],
-                            }
-                        )
-                        await send({"type": "http.response.body", "body": body})
+                        await _reject(send, 401, f"invalid token: {exc}")
                         return
                 elif private_visibility_enabled and scope.get("path") not in EXEMPT_PATHS:
-                    body = json.dumps({"detail": "authentication required"}).encode("utf-8")
-                    await send(
-                        {
-                            "type": "http.response.start",
-                            "status": 401,
-                            "headers": [(b"content-type", b"application/json")],
-                        }
-                    )
-                    await send({"type": "http.response.body", "body": body})
+                    await _reject(send, 401, "authentication required")
                     return
 
             tok = set_current_actor(actor)
+            stok = set_current_service(service_ctx)
             try:
                 await app(scope, receive, send)
             finally:
+                reset_current_service(stok)
                 reset_current_actor(tok)
 
         return actor_middleware
@@ -555,21 +595,44 @@ def make_actor_middleware(
     return wrap
 
 
-def install_actor_middleware(app: Any, settings: Any, jwks_provider: Any = None) -> None:
+def install_actor_middleware(app: Any, settings: Any, jwks_provider: Any = None, service_verifier: Any = None) -> None:
     """Wire onto a FastAPI/Starlette app. Idempotent-ish: guards against
     double-install because re-wrapping would validate twice per request."""
     if getattr(app.state, "actor_middleware_installed", False):
         return
     config = OidcConfig.from_settings(settings)
     provider = jwks_provider or (FetchingJwks(config.jwks_url) if config else None)
+    if service_verifier is None:
+        service_verifier = build_service_verifier(app, settings)
     app.add_middleware(
         make_actor_middleware(
             config,
             provider,
             private_visibility_enabled=bool(getattr(settings, "private_visibility_enabled", False)),
+            service_verifier=service_verifier,
         )
     )
     app.state.actor_middleware_installed = True
+
+
+def build_service_verifier(app: Any, settings: Any):
+    """Service-credential verifier bound to this app's pool (resolved lazily —
+    the pool is created in lifespan, after middleware installation). Returns
+    None when service tokens are not configured."""
+    from app.services.service_identity import PgServiceRegistry, ServiceTokenConfig, verify_service_token
+
+    cfg = ServiceTokenConfig.from_settings(settings)
+    if cfg is None:
+        return None
+
+    async def verify(token: str):
+        registry = getattr(app.state, "service_registry", None)
+        if registry is None:
+            registry = PgServiceRegistry(app.state.pool, ttl=float(getattr(settings, "auth_cache_ttl", 30.0)))
+            app.state.service_registry = registry
+        return await verify_service_token(token, config=cfg, registry=registry)
+
+    return verify
 
 
 # ---------------------------------------------------------------------------

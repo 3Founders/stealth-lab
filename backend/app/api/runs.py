@@ -21,9 +21,10 @@ from __future__ import annotations
 from typing import Any
 
 import asyncpg
+from app.services import auth_context as _ac
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
-from app.api.deps import get_scope
+from app.api.deps import get_scope, require_scopes
 from app.execution import durable_resume as _dres
 from app.execution import durable_run as _dr
 from app.services.access import AccessScope
@@ -58,7 +59,7 @@ async def get_run_nodes(run_id: str, pool=Depends(get_pool),
     return hist
 
 
-@router.post("/{run_id}/resume")
+@router.post("/{run_id}/resume", dependencies=[Depends(require_scopes(_ac.EXECUTION_RUN))])
 async def resume_run(run_id: str, pool=Depends(get_pool),
                      scope: AccessScope = Depends(get_scope)) -> dict[str, Any]:
     try:
@@ -77,7 +78,7 @@ async def resume_run(run_id: str, pool=Depends(get_pool),
         raise HTTPException(status_code=409, detail=f"database rejected the transition: {e}")
 
 
-@router.post("/{run_id}/nodes/{node_order}/retry")
+@router.post("/{run_id}/nodes/{node_order}/retry", dependencies=[Depends(require_scopes(_ac.EXECUTION_RUN))])
 async def retry_node(run_id: str, node_order: int, force: bool = Query(False),
                      pool=Depends(get_pool),
                      scope: AccessScope = Depends(get_scope)) -> dict[str, Any]:
