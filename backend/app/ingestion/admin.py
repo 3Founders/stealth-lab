@@ -10,6 +10,7 @@
     python -m app.ingestion.admin drain-projections
     python -m app.ingestion.admin verify-projections          # exit 1 if projections disagree with canonical rows
     python -m app.ingestion.admin reconcile-goals [--all]     # judge unreconciled goals; merge same-goal paraphrases
+    python -m app.ingestion.admin verify-refs                 # remote references resolve on their shards (no cross-DB FK)
     python -m app.ingestion.admin verify-dedup                # duplicate goal names / procedures without a goal link
 """
 from __future__ import annotations
@@ -47,6 +48,7 @@ def _parse(argv=None) -> argparse.Namespace:
     sub.add_parser("drain-projections")
     sub.add_parser("verify-projections")
     sub.add_parser("verify-dedup")
+    sub.add_parser("verify-refs")
     rg = sub.add_parser("reconcile-goals")
     rg.add_argument("--all", action="store_true", help="ignore the time window (legacy corpus sweep)")
     rg.add_argument("--batch", type=int, default=500)
@@ -73,6 +75,15 @@ async def _amain(a: argparse.Namespace) -> int:
                                      ids=[int(x) for x in a.ids.split(",")] if a.ids else None)
             print(json.dumps({"requeued": n}))
         elif a.cmd == "register-shard":
+            import os
+            dsn = os.environ.get(a.dsn_env)
+            if not dsn:
+                print(f"ERROR: env var {a.dsn_env} is not set in this shell; cannot verify the shard database", file=sys.stderr)
+                return 2
+            problems = await sh.check_shard_schema(dsn)
+            if problems:
+                print("ERROR: not a usable knowledge shard: " + "; ".join(problems) + " -- provision it with: python scripts/migrate.py --dsn <shard dsn>", file=sys.stderr)
+                return 2
             print(await sh.register_shard(pool, a.shard_id, dsn_env=a.dsn_env, weight=a.weight, capacity_rows=a.capacity_rows))
         elif a.cmd == "shard-status":
             await sh.set_shard_status(pool, a.shard_id, a.status)
@@ -97,6 +108,10 @@ async def _amain(a: argparse.Namespace) -> int:
             print(json.dumps(await reconcile_goals(
                 pool, judge=Dependencies.get_judge(),
                 window_minutes=None if a.all else 30.0, batch=a.batch)))
+        elif a.cmd == "verify-refs":
+            rep = await sh.verify_routes(pool)
+            print(json.dumps(rep, default=str, indent=2))
+            return 0 if rep["ok"] else 1
         elif a.cmd == "verify-dedup":
             dup = await pool.fetch(
                 "SELECT normalized_name, scope_type, count(*) AS n FROM goals WHERE t_invalid IS NULL AND status <> 'merged' "

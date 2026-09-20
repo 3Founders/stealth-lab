@@ -243,7 +243,19 @@ async def capture_procedure(
     from app.services.shards import cached_shards, choose_child_shard, writable_shards
 
     home_shard_id = choose_child_shard(
-        resolved_goal.get("home_shard_id"), str(procedure_id), writable_shards(await cached_shards(pool)))
+        resolved_goal.get("home_shard_id"), str(procedure_id),
+        writable_shards(await cached_shards(pool), visibility=visibility))
+    row_id = str(uuid7())
+    wpool = pool
+    if home_shard_id != "K000":
+        # REMOTE canonical write: route first (so control-side references validate), write on the
+        # procedure's home shard, then project. Evidence/edges for it are written on that shard too.
+        from app.services.shards import pools_for, record_route
+        await record_route(pool, "procedure", str(procedure_id), home_shard_id)
+        await pool.execute(
+            "INSERT INTO procedure_row_routes (row_id, procedure_id, version, home_shard_id) VALUES ($1::uuid, $2::uuid, 1, $3) "
+            "ON CONFLICT DO NOTHING", row_id, str(procedure_id), home_shard_id)
+        wpool = await pools_for(pool).get(home_shard_id)
 
     # --- retrieval-representation contract (plan Part 18) -------------------
     # A stored vector only means something relative to the text it was
@@ -297,7 +309,7 @@ async def capture_procedure(
         display_description = display_description or d_desc
         display_metadata_version = display_metadata_version or DISPLAY_METADATA_VERSION
 
-    row = await pool.fetchrow(
+    row = await wpool.fetchrow(
         """
         INSERT INTO procedures (
             id, procedure_id, name, goal, steps, parameter_schema, preconditions, required_state,
@@ -344,7 +356,7 @@ async def capture_procedure(
         to_pgvector(embedding) if embedding is not None else None,
         # Band 1.5: time-ordered id generated app-side (UUIDv7); the DB
         # default remains as a last-resort fallback for non-repository writes.
-        str(uuid7()),
+        row_id,
         procedure_scope_type,
         procedure_scope_entity_id,
         # Band 1.6: embedding provenance stamps — which model produced this
@@ -375,18 +387,34 @@ async def capture_procedure(
         source_key,
     )
     if row is None:
+        if home_shard_id != "K000":
+            await pool.execute("DELETE FROM procedure_row_routes WHERE row_id = $1::uuid", row_id)
+            await pool.execute("DELETE FROM object_routes WHERE object_type = 'procedure' AND object_id = $1::uuid "
+                               "AND NOT EXISTS (SELECT 1 FROM procedure_row_routes WHERE procedure_id = $1::uuid)", str(procedure_id))
         # Same source already ingested (retry, duplicate delivery, or a racing
         # worker won): return the existing live Procedure instead of creating a
         # second one. The unique index on source_key makes this race-proof.
-        existing = await pool.fetchrow(
+        existing = await wpool.fetchrow(
             "SELECT id, procedure_id FROM procedures WHERE source_key = $1 AND t_invalid IS NULL", source_key)
         return {"id": str(existing["id"]), "procedure_id": str(existing["procedure_id"]), "duplicate": True}
+    if home_shard_id != "K000":
+        from app.services.search_projection import enqueue, project_object
+        from app.services.shards import pools_for
+        await enqueue(pool, "procedure", str(row["procedure_id"]))
+        try:
+            async with pool.acquire() as conn:
+                async with conn.transaction():
+                    await project_object(conn, "procedure", str(row["procedure_id"]), pools=pools_for(pool))
+        except Exception:  # noqa: BLE001 -- outbox repairs
+            pass
     return {"id": str(row["id"]), "procedure_id": str(row["procedure_id"])}
 
 
 async def get_procedure(pool: asyncpg.Pool, procedure_row_id: str) -> Optional[dict]:
     """Fetch one procedure version row by its own `id` (not
     `procedure_id`, which may have multiple version rows)."""
+    from app.services.shards import home_pool as _home_pool
+    pool = await _home_pool(pool, "procedure", str(procedure_row_id), by_row_id=True)  # evidence/edges live with the procedure
     row = await pool.fetchrow("SELECT * FROM procedures WHERE id = $1", procedure_row_id)
     return dict(row) if row else None
 
@@ -503,6 +531,9 @@ async def supersede_procedure(
 
     now = datetime.now(timezone.utc)
     new_id = str(uuid7())
+    from app.services.shards import home_pool as _home_pool
+    control = pool
+    pool = await _home_pool(control, "procedure", str(prior_row_id), by_row_id=True)   # new version lives with its procedure
 
     async with pool.acquire() as conn:
         async with conn.transaction():
@@ -598,6 +629,13 @@ async def supersede_procedure(
         ],
     )
 
+    if pool is not control:   # remote version: register its row route and refresh the global projection
+        from app.services.search_projection import enqueue
+        shard = await control.fetchval("SELECT home_shard_id FROM procedure_row_routes WHERE row_id = $1::uuid", prior_row_id)
+        await control.execute(
+            "INSERT INTO procedure_row_routes (row_id, procedure_id, version, home_shard_id) VALUES ($1::uuid, $2::uuid, $3, $4) "
+            "ON CONFLICT DO NOTHING", str(inserted["id"]), str(inserted["procedure_id"]), inserted["version"], shard)
+        await enqueue(control, "procedure", str(inserted["procedure_id"]))
     return {
         "id": str(inserted["id"]),
         "procedure_id": str(inserted["procedure_id"]),
@@ -682,6 +720,8 @@ async def record_execution_outcome(
     so a caller can observe a promotion/quarantine/circuit-open that
     just happened as a direct result of this call.
     """
+    from app.services.shards import home_pool as _home_pool
+    pool = await _home_pool(pool, "procedure", str(procedure_row_id), by_row_id=True)  # evidence/edges live with the procedure
     scope = tenant_scope if tenant_scope is not None else TenantScope.commons()
     async with tenant_transaction(pool, scope) as conn:
         row = await conn.fetchrow(
@@ -871,6 +911,8 @@ async def check_quarantine_and_disable(pool: asyncpg.Pool, procedure_row_id: str
     that is real, separate schema work (a procedure_executions table),
     not something to silently approximate here.
     """
+    from app.services.shards import home_pool as _home_pool
+    pool = await _home_pool(pool, "procedure", str(procedure_row_id), by_row_id=True)  # evidence/edges live with the procedure
     row = await pool.fetchrow("SELECT * FROM procedures WHERE id = $1", procedure_row_id)
     if row is None:
         raise ProcedureNotFound(procedure_row_id)
@@ -915,6 +957,8 @@ async def compute_utility(pool: asyncpg.Pool, procedure_row_id: str) -> Optional
     history yet -- utility is undefined for a never-executed procedure,
     not zero.
     """
+    from app.services.shards import home_pool as _home_pool
+    pool = await _home_pool(pool, "procedure", str(procedure_row_id), by_row_id=True)  # evidence/edges live with the procedure
     row = await pool.fetchrow("SELECT verification_stats FROM procedures WHERE id = $1", procedure_row_id)
     if row is None:
         raise ProcedureNotFound(procedure_row_id)
@@ -1037,6 +1081,8 @@ async def approve_procedure(pool: asyncpg.Pool, *, procedure_row_id: str, approv
     Records a ChangeSet (Band 1.9c, invariant #7): approval is a [V]
     status mutation and must be auditable after the fact.
     """
+    from app.services.shards import home_pool as _home_pool
+    pool = await _home_pool(pool, "procedure", str(procedure_row_id), by_row_id=True)  # evidence/edges live with the procedure
     await pool.execute(
         "UPDATE procedures SET approval_status = 'approved', approved_by = $2, "
         "approved_at = now() WHERE id = $1::uuid",
@@ -1144,6 +1190,8 @@ async def merge_duplicate_procedures(
     real producer would be exactly the "second dedup system" Rule 6
     forbids building preemptively.
     """
+    from app.services.shards import home_pool as _home_pool
+    pool = await _home_pool(pool, "procedure", str(procedure_row_id), by_row_id=True)  # evidence/edges live with the procedure
     now = datetime.now(timezone.utc)
 
     async with pool.acquire() as conn:

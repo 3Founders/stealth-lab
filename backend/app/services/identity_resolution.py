@@ -197,6 +197,37 @@ async def generate_goal_candidates(
             c.vec_rank, c.vec_distance = rank, float(r["dist"])
             vec_ids.append(r["id"])
 
+    # Goals homed on OTHER shards are not in this database's `goals`: candidates for them come
+    # from the global goal projection (their canonical rows stay on their shard).
+    from app.services.shards import HOME_SHARD, multi_shard
+
+    if await multi_shard(pool):
+        rparams: list[Any] = [HOME_SHARD, "global" if scope_type == "global" else scope_type, scope_entity_id or ""]
+        rbase = ("home_shard_id <> $1 AND status <> 'merged' AND COALESCE(scope_type, 'global') = $2 "
+                 "AND COALESCE(scope_entity_id, '') = $3")
+        if exclude_id:
+            rparams.append(exclude_id)
+            rbase += f" AND goal_id <> ${len(rparams)}::uuid"
+        if q:
+            n = len(rparams) + 1
+            for rank, r in enumerate(await pool.fetch(
+                    f"SELECT goal_id::text AS id, canonical_name, short_description AS description, home_shard_id FROM goal_search_index "
+                    f"WHERE {rbase} AND search_tsv @@ to_tsquery('english', ${n}) "
+                    f"ORDER BY ts_rank_cd(search_tsv, to_tsquery('english', ${n})) DESC, goal_id LIMIT {int(fts_k)}", *rparams, q), 1):
+                c = by_id.setdefault(r["id"], Candidate(r["id"], r["canonical_name"], _goal_text(r), home_shard_id=r["home_shard_id"]))
+                c.fts_rank = c.fts_rank or rank
+                fts_ids.append(r["id"])
+        if embedding is not None and embedding_model:
+            n = len(rparams) + 1
+            for rank, r in enumerate(await pool.fetch(
+                    f"SELECT goal_id::text AS id, canonical_name, short_description AS description, home_shard_id, "
+                    f"embedding <=> ${n}::vector AS dist FROM goal_search_index WHERE {rbase} AND embedding IS NOT NULL "
+                    f"AND embedding_model = ${n + 1} ORDER BY dist, goal_id LIMIT {int(vector_k)}",
+                    *rparams, to_pgvector(embedding), embedding_model), 1):
+                c = by_id.setdefault(r["id"], Candidate(r["id"], r["canonical_name"], _goal_text(r), home_shard_id=r["home_shard_id"]))
+                c.vec_rank, c.vec_distance = rank, float(r["dist"])
+                vec_ids.append(r["id"])
+
     scores = rrf_fuse(fts_ids, vec_ids)
     for oid, sc in scores.items():
         by_id[oid].rrf = sc
@@ -362,6 +393,10 @@ async def merge_goal(pool: asyncpg.Pool, loser_id: str, survivor_id: str, *, dec
     that pointed at the loser now points at the survivor, hierarchy edges move,
     the loser's names become aliases, and the loser row becomes status='merged'
     (kept for audit; never deleted). Idempotent."""
+    from app.services.shards import HOME_SHARD, list_shards, multi_shard, pools_for
+
+    if await multi_shard(pool):
+        return await _merge_goal_sharded(pool, loser_id, survivor_id)
     async with pool.acquire() as conn:
         async with conn.transaction():
             await conn.execute("SELECT pg_advisory_xact_lock(hashtext($1))", f"goal-merge:{loser_id}")
@@ -414,13 +449,24 @@ async def reconcile_goals(
             out["skipped"] = True
             return out
         try:
-            rows = await pool.fetch(
-                "SELECT id::text AS id, canonical_name, description, scope_type, scope_entity_id, t_created, "
-                "embedding::text AS emb, embedding_model_id FROM goals "
-                "WHERE reconciled_at IS NULL AND status <> 'merged' AND t_invalid IS NULL ORDER BY id LIMIT $1", batch)
-            for g in rows:
+            from app.services.shards import HOME_SHARD, list_shards, multi_shard, pools_for
+
+            sources: list[tuple[Any, Any]] = []      # (row, pool that owns it)
+            shard_list = [s.shard_id for s in await list_shards(pool)] if await multi_shard(pool) else [HOME_SHARD]
+            for sid in shard_list:
+                try:
+                    spool = pool if sid == HOME_SHARD else await pools_for(pool).get(sid)
+                    for r in await spool.fetch(
+                            "SELECT id::text AS id, canonical_name, description, scope_type, scope_entity_id, t_created, "
+                            "embedding::text AS emb, embedding_model_id FROM goals "
+                            "WHERE reconciled_at IS NULL AND status <> 'merged' AND t_invalid IS NULL ORDER BY id LIMIT $1", batch):
+                        sources.append((r, spool))
+                except Exception:  # noqa: BLE001 -- unreachable shard: its goals stay unreconciled until it is back
+                    out["deferred"] += 1
+            sources.sort(key=lambda t: t[0]["id"])
+            for g, gpool in sources[:batch]:
                 out["checked"] += 1
-                if await pool.fetchval("SELECT status FROM goals WHERE id = $1::uuid", g["id"]) == "merged":
+                if await gpool.fetchval("SELECT status FROM goals WHERE id = $1::uuid", g["id"]) == "merged":
                     continue
                 emb = [float(x) for x in g["emb"].strip("[]").split(",")] if g["emb"] else None
                 text = _goal_text({"canonical_name": g["canonical_name"], "description": g["description"]})
@@ -452,8 +498,51 @@ async def reconcile_goals(
                 if unavailable:
                     out["deferred"] += 1
                     continue
-                await pool.execute("UPDATE goals SET reconciled_at = now() WHERE id = $1::uuid AND reconciled_at IS NULL", g["id"])
+                await gpool.execute("UPDATE goals SET reconciled_at = now() WHERE id = $1::uuid AND reconciled_at IS NULL", g["id"])
         finally:
             await lock.execute("SELECT pg_advisory_unlock(hashtext($1))", RECONCILE_LOCK)
     out["relinked"] = await relink_procedures_of_merged_goals(pool)
     return out
+
+
+async def _merge_goal_sharded(pool: asyncpg.Pool, loser_id: str, survivor_id: str) -> dict[str, int]:
+    """merge_goal when more than one shard exists: procedures that achieve the loser may live on
+    ANY shard, the loser row lives on its home shard, control tables (relations, names) are here.
+    Each step is idempotent, so a crash mid-way is repaired by simply running the merge again."""
+    from app.services.shards import HOME_SHARD, list_shards, pools_for
+
+    sp = pools_for(pool)
+    loser_shard = await pool.fetchval("SELECT home_shard_id FROM object_routes WHERE object_type='goal' AND object_id=$1::uuid", loser_id) or HOME_SHARD
+    lpool = pool if loser_shard == HOME_SHARD else await sp.get(loser_shard)
+    state = await lpool.fetchval("SELECT status FROM goals WHERE id = $1::uuid", loser_id)
+    if state is None or state == "merged":
+        return {"procedures": 0, "already_merged": 1}
+    moved = 0
+    for shard in await list_shards(pool):
+        try:
+            spool = pool if shard.shard_id == HOME_SHARD else await sp.get(shard.shard_id)
+        except Exception:  # noqa: BLE001 -- an unreachable shard: procedures there are repaired by the relink sweep
+            continue
+        moved += int((await spool.execute(
+            "UPDATE procedures SET achieves_goal_id = $2::uuid WHERE achieves_goal_id = $1::uuid", loser_id, survivor_id)).split()[-1])
+        await spool.execute("UPDATE implementations SET goal_id = $2::uuid WHERE goal_id = $1::uuid", loser_id, survivor_id)
+    await pool.execute(
+        "INSERT INTO goal_relations (specific_goal_id, abstract_goal_id, relation_type, status, confidence, provenance) "
+        "SELECT CASE WHEN specific_goal_id = $1::uuid THEN $2::uuid ELSE specific_goal_id END, "
+        "       CASE WHEN abstract_goal_id = $1::uuid THEN $2::uuid ELSE abstract_goal_id END, relation_type, status, confidence, provenance "
+        "FROM goal_relations WHERE (specific_goal_id = $1::uuid OR abstract_goal_id = $1::uuid) "
+        "AND NOT (specific_goal_id = $1::uuid AND abstract_goal_id = $2::uuid) "
+        "AND NOT (abstract_goal_id = $1::uuid AND specific_goal_id = $2::uuid) ON CONFLICT DO NOTHING", loser_id, survivor_id)
+    await pool.execute("DELETE FROM goal_relations WHERE specific_goal_id = $1::uuid OR abstract_goal_id = $1::uuid", loser_id)
+    lrow = await lpool.fetchrow("SELECT canonical_name, aliases FROM goals WHERE id = $1::uuid", loser_id)
+    survivor_shard = await pool.fetchval("SELECT home_shard_id FROM object_routes WHERE object_type='goal' AND object_id=$1::uuid", survivor_id) or HOME_SHARD
+    surv_pool = pool if survivor_shard == HOME_SHARD else await sp.get(survivor_shard)
+    await surv_pool.execute(
+        "UPDATE goals g SET aliases = (SELECT ARRAY(SELECT DISTINCT a FROM unnest(g.aliases || $2::text[]) a WHERE a <> g.canonical_name)) "
+        "WHERE g.id = $1::uuid", survivor_id, list(lrow["aliases"] or []) + [lrow["canonical_name"]])
+    await lpool.execute("UPDATE goals SET status = 'merged', merged_into_id = $2::uuid, reconciled_at = now() WHERE id = $1::uuid", loser_id, survivor_id)
+    await pool.execute("DELETE FROM goal_names WHERE goal_id = $1::uuid", loser_id)
+    from app.services.search_projection import enqueue
+    for oid in (loser_id, survivor_id):
+        await enqueue(pool, "goal", oid)
+    return {"procedures": moved, "already_merged": 0}

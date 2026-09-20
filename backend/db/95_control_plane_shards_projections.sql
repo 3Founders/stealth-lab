@@ -283,6 +283,13 @@ BEGIN
     ELSE
         otype := 'claim'; oid := NEW.id;
     END IF;
+    -- Objects homed on a REMOTE shard are written by app code on that shard's database; the control
+    -- plane (routes, outbox) for them is maintained by the app (knowledge_store / shards.record_route).
+    -- Without this guard the same trigger firing on a shard database would write into that shard's
+    -- (unused) control tables.
+    IF shard <> 'K000' THEN
+        RETURN NEW;
+    END IF;
     IF TG_OP = 'INSERT' THEN
         INSERT INTO object_routes (object_type, object_id, home_shard_id)
         VALUES (otype, oid, shard) ON CONFLICT (object_type, object_id) DO NOTHING;

@@ -167,6 +167,46 @@ def goal_embedding_text(canonical_name: str, description: Optional[str] = None) 
     return canonical_name
 
 
+async def _find_remote_exact(pool, normalized: str, canonical_name: str, scope_type: str, scope_entity_id) -> Optional[dict]:
+    """Exact identity across ALL shards: the global goal_names index (name) and the goal projection
+    (aliases) -- then the canonical row is read from its home shard."""
+    from app.services.shards import HOME_SHARD, pools_for
+
+    scope_key = "global" if scope_type == "global" else f"{scope_type}:{scope_entity_id or ''}"
+    hit = await pool.fetchrow(
+        "SELECT goal_id::text AS id, home_shard_id FROM goal_names WHERE scope_key = $1 AND normalized_name = $2",
+        scope_key, normalized)
+    if hit is None:
+        hit = await pool.fetchrow(
+            "SELECT goal_id::text AS id, home_shard_id FROM goal_search_index WHERE home_shard_id <> $1 AND status <> 'merged' "
+            "AND COALESCE(scope_type, 'global') = $2 AND COALESCE(scope_entity_id, '') = COALESCE($3, '') "
+            "AND EXISTS (SELECT 1 FROM unnest(aliases) a WHERE lower(trim(a)) = lower(trim($4))) LIMIT 1",
+            HOME_SHARD, scope_type, scope_entity_id, canonical_name)
+    if hit is None or hit["home_shard_id"] == HOME_SHARD:
+        return None
+    shard_pool = await pools_for(pool).get(hit["home_shard_id"])
+    row = await shard_pool.fetchrow("SELECT id, canonical_name FROM goals WHERE id = $1::uuid", hit["id"])
+    if row is None:
+        return None
+    return {"id": str(row["id"]), "canonical_name": row["canonical_name"], "created": False,
+            "home_shard_id": hit["home_shard_id"], "decision": "exact_match"}
+
+
+async def _finish_remote_goal(pool, goal_id: str) -> None:
+    """After a remote canonical write: queue the projection (durable) and apply it now (best effort),
+    so the goal is searchable/identifiable immediately by concurrent workers."""
+    from app.services.search_projection import enqueue, project_object
+    from app.services.shards import pools_for
+
+    await enqueue(pool, "goal", goal_id)
+    try:
+        async with pool.acquire() as conn:
+            async with conn.transaction():
+                await project_object(conn, "goal", goal_id, pools=pools_for(pool))
+    except Exception:  # noqa: BLE001 -- the outbox entry repairs it
+        pass
+
+
 async def find_or_create_goal(
     pool: asyncpg.Pool,
     *,
@@ -250,6 +290,18 @@ async def find_or_create_goal(
             "created": False,
         }
 
+    from app.services.shards import HOME_SHARD, multi_shard, pools_for, record_route
+
+    if await multi_shard(pool):
+        remote = await _find_remote_exact(pool, normalized, canonical_name, resolved_scope_type, resolved_scope_entity_id)
+        if remote:
+            return remote
+
+    # Private/org writes (everything a user pushes from a local .stealth cache) must never be
+    # blocked by a model outage: they are recorded and can be reviewed/merged later.
+    if on_unavailable is None and visibility != "public":
+        on_unavailable = "create"
+
     # Semantic identity (docs/dedup_and_identity.md): FTS + vector candidates
     # over canonical goals, RRF-fused, then a MODEL (JEV -> Gemini -> Gemma via
     # app.services.semantic) decides same / narrower / broader / related /
@@ -272,7 +324,9 @@ async def find_or_create_goal(
         judge=judge, on_unavailable=on_unavailable, job_id=job_id, idempotency_key=idempotency_key,
     )
     if outcome.action == "reuse":
-        matched = await pool.fetchrow(
+        from app.services.shards import home_pool as _home_pool
+        owner_pool = await _home_pool(pool, "goal", outcome.resolved_id)
+        matched = await owner_pool.fetchrow(
             "UPDATE goals SET aliases = CASE WHEN $2 = ANY(aliases) OR normalized_name = $3 "
             "THEN aliases ELSE array_append(aliases, $2) END WHERE id = $1::uuid "
             "RETURNING id, canonical_name, home_shard_id", outcome.resolved_id, canonical_name, normalized)
@@ -296,9 +350,27 @@ async def find_or_create_goal(
     goal_id = uuid7()
     from app.services.shards import cached_shards, choose_shard, writable_shards
 
-    home_shard = choose_shard(str(goal_id), writable_shards(await cached_shards(pool)))
+    home_shard = choose_shard(str(goal_id), writable_shards(await cached_shards(pool), visibility=visibility))
+    wpool = pool
+    if home_shard != HOME_SHARD:
+        # REMOTE canonical write. The control database arbitrates exact identity through the
+        # global goal_names index BEFORE the row exists anywhere, then routes, then writes.
+        scope_key = "global" if resolved_scope_type == "global" else f"{resolved_scope_type}:{resolved_scope_entity_id or ''}"
+        claimed = await pool.fetchrow(
+            "INSERT INTO goal_names (scope_key, normalized_name, goal_id, home_shard_id) VALUES ($1, $2, $3::uuid, $4) "
+            "ON CONFLICT (scope_key, normalized_name) DO NOTHING RETURNING goal_id", scope_key, normalized, str(goal_id), home_shard)
+        if claimed is None:
+            winner = await _find_remote_exact(pool, normalized, canonical_name, resolved_scope_type, resolved_scope_entity_id)
+            if winner:
+                return winner
+            return await find_or_create_goal(
+                pool, canonical_name=canonical_name, scope_type=scope_type, scope_entity_id=scope_entity_id,
+                provenance=provenance, embedder=embedder, judge=judge, on_unavailable=on_unavailable,
+                job_id=job_id, idempotency_key=idempotency_key, visibility=visibility)
+        await record_route(pool, "goal", str(goal_id), home_shard)
+        wpool = await pools_for(pool).get(home_shard)
     try:
-        row = await pool.fetchrow(
+        row = await wpool.fetchrow(
             """
             INSERT INTO goals (
                 id, canonical_name, normalized_name, description, expected_outcome,
@@ -324,6 +396,8 @@ async def find_or_create_goal(
             embedding_meta.text_sha256 if embedding_meta is not None else None,
             home_shard,
         )
+        if home_shard != HOME_SHARD:
+            await _finish_remote_goal(pool, str(goal_id))
     except asyncpg.UniqueViolationError:
         # Lost a race against a concurrent insert of the identical
         # (normalized_name, scope) pair -- migration 83's partial unique index
@@ -332,8 +406,13 @@ async def find_or_create_goal(
             pool, canonical_name=canonical_name, scope_type=scope_type,
             scope_entity_id=scope_entity_id, provenance=provenance,
             embedder=embedder, judge=judge, on_unavailable=on_unavailable,
-            job_id=job_id, idempotency_key=idempotency_key,
+            job_id=job_id, idempotency_key=idempotency_key, visibility=visibility,
         )
+    except Exception:
+        if home_shard != HOME_SHARD:  # the remote write failed: release the global name claim and route
+            await pool.execute("DELETE FROM goal_names WHERE goal_id = $1::uuid", str(goal_id))
+            await pool.execute("DELETE FROM object_routes WHERE object_type = 'goal' AND object_id = $1::uuid", str(goal_id))
+        raise
     if outcome.relations:
         await propose_goal_relations(pool, str(row["id"]), outcome.relations, decision_id=outcome.decision_id)
     return {"id": str(row["id"]), "canonical_name": row["canonical_name"], "created": True,

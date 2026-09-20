@@ -86,6 +86,10 @@ async def pool():
     await p.execute("UPDATE procedures SET t_invalid = now() WHERE name LIKE 'e2e%' AND t_invalid IS NULL")
     await p.execute("UPDATE goals SET t_invalid = now() WHERE canonical_name LIKE 'e2e%' AND t_invalid IS NULL")
     await p.execute("DELETE FROM ingestion_jobs WHERE job_type = $1", JOB_TYPE)
+    # projection rows whose canonical row another test deleted are orphans: drop them so verify_projection is about THIS run
+    await p.execute("DELETE FROM goal_search_index WHERE goal_id NOT IN (SELECT id FROM goals)")
+    await p.execute("DELETE FROM procedure_search_index WHERE procedure_id NOT IN (SELECT procedure_id FROM procedures)")
+    await p.execute("DELETE FROM claim_search_index WHERE claim_id NOT IN (SELECT id FROM knowledge_nodes)")
     judge = make_judge(CallbackProvider(frozen, name="jev"))
     Dependencies.configure(embedder=EMB, judge=judge)
     ir._DEFAULT_JUDGE = judge                                     # retrieval service resolves its judge the production way

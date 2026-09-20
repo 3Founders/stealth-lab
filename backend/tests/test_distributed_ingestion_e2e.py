@@ -71,7 +71,7 @@ async def pool():
 
 async def counts(pool):
     return dict(
-        goals=await pool.fetchval("SELECT count(*) FROM goals WHERE canonical_name LIKE $1", f"{T} %"),
+        goals=await pool.fetchval("SELECT count(*) FROM goals WHERE canonical_name LIKE $1 AND status <> 'merged'", f"{T} %"),
         procs=await pool.fetchval("SELECT count(*) FROM procedures WHERE name LIKE $1 AND t_invalid IS NULL", f"{T} %"),
         claims=await pool.fetchval("SELECT count(*) FROM knowledge_nodes WHERE node_type='claim' AND name LIKE $1", f"{T} %"),
         ctx=await pool.fetchval("SELECT count(*) FROM ingestion_contexts WHERE source_uri LIKE $1", f"bundle:{T}-%"),
