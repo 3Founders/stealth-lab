@@ -160,8 +160,15 @@ def _general_compute_client() -> Optional[Any]:
 
     GENERAL_COMPUTE_API_KEYS (comma-separated, optional) adds fallback
     keys rotated on 429/auth failure -- same convention as GEMINI_API_KEYS.
-    With zero or one effective key this returns a plain `OpenAI` client,
-    identical to before this existed; rotation only engages with >1 key."""
+    Falls back to GEMINI_API_KEYS itself when GENERAL_COMPUTE_API_KEYS
+    isn't set: every deployment of this worker so far points General
+    Compute's base URL at Gemini's own OpenAI-compatible endpoint anyway
+    (GENERAL_COMPUTE_BASE_URL, see deploy/ingestion/cloudrun/job.yaml), so
+    the Gemini key pool this project already maintains is the right
+    fallback pool without asking for the same keys under a second env-var
+    name. With zero or one effective key this returns a plain `OpenAI`
+    client, identical to before this existed; rotation only engages with
+    >1 key."""
     from app.config import settings
 
     if not settings.general_compute_api_key or not settings.general_compute_judge_model:
@@ -169,7 +176,8 @@ def _general_compute_client() -> Optional[Any]:
     from openai import OpenAI
 
     keys = [settings.general_compute_api_key]
-    for k in (settings.general_compute_api_keys or "").split(","):
+    extra_keys_csv = settings.general_compute_api_keys or settings.gemini_api_keys or ""
+    for k in extra_keys_csv.split(","):
         k = k.strip()
         if k and k not in keys:
             keys.append(k)
