@@ -1408,6 +1408,9 @@ class IngestOutcome:
     "rejected" (the document had no extractable structure)."""
 
     status: str
+    # Model that produced the structured extraction, when an LLM was used.
+    # This is operational provenance; it is not a claim about quality.
+    extraction_model: Optional[str] = None
     procedure_id: Optional[str] = None
     version_row_id: Optional[str] = None
     task_node_ids: list[str] = field(default_factory=list)
@@ -1768,6 +1771,34 @@ _ADMISSION_AUDIT_COLUMNS = (
     "admission_llm_verdict, admission_llm_reason"
 )
 
+# idx_ingested_artifacts_compilation_identity (migration 40) is a full,
+# non-partial unique index on this exact tuple -- ANY second write for the
+# same document/extractor_version (a retried job, two overlapping worker
+# executions, or a genuine re-ingest) must upsert through it, never a bare
+# INSERT. `procedure_id`/`procedure_row_id` only move from NULL to a real
+# id (COALESCE keeps a prior real link if this write is itself a rejected/
+# audit-only retry) -- never the reverse, so a later successful capture
+# can still attach to a row an earlier attempt wrote as reject-only, but a
+# later reject-only retry can't blow away an earlier real link.
+_ARTIFACT_UPSERT_CONFLICT = (
+    "ON CONFLICT (source_type, uri, content_hash, (COALESCE(extractor_version, ''))) "
+    "DO UPDATE SET "
+    "procedure_id = COALESCE(EXCLUDED.procedure_id, ingested_artifacts.procedure_id), "
+    "procedure_row_id = COALESCE(EXCLUDED.procedure_row_id, ingested_artifacts.procedure_row_id), "
+    "run_id = EXCLUDED.run_id, last_seen = now(), "
+    "admission_decision = EXCLUDED.admission_decision, "
+    "admission_checks = EXCLUDED.admission_checks, "
+    "admission_reason = EXCLUDED.admission_reason, "
+    "admission_policy_version = EXCLUDED.admission_policy_version, "
+    "admission_escalated = EXCLUDED.admission_escalated, "
+    "admission_llm_model = EXCLUDED.admission_llm_model, "
+    "admission_llm_verdict = EXCLUDED.admission_llm_verdict, "
+    "admission_llm_reason = EXCLUDED.admission_llm_reason, "
+    "source_ref = EXCLUDED.source_ref, "
+    "ingestion_context_id = EXCLUDED.ingestion_context_id "
+    "RETURNING id"
+)
+
 
 def _admission_audit_values(admission: Optional[Any]) -> tuple:
     """(migration 49) Positional values for _ADMISSION_AUDIT_COLUMNS.
@@ -1816,7 +1847,7 @@ async def _write_artifact_row(
             "$5, $6, $7, $8::uuid, $9::uuid, $10::uuid, now(), now(), $11, $12, $13, "
             "$14::jsonb, $15, $16::jsonb, $17::jsonb, $18::jsonb, $19::jsonb, "
             "$20::ingestion_admission_decision, $21::jsonb, $22, $23, $24, $25, $26, $27, "
-            "$28::uuid, $29::uuid) RETURNING id",
+            "$28::uuid, $29::uuid) " + _ARTIFACT_UPSERT_CONFLICT,
             artifact.source_type, artifact.uri, artifact.repository, artifact.path,
             artifact.commit, artifact.bundle_hash or artifact.content_hash, extractor_version,
             procedure_id, procedure_row_id, run_id, owner_id, artifact.source_id,
@@ -1838,7 +1869,7 @@ async def _write_artifact_row(
         "VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, $6, $7, $8::uuid, $9::uuid, "
         "$10::uuid, now(), now(), $11, "
         "$12::ingestion_admission_decision, $13::jsonb, $14, $15, $16, $17, $18, $19, "
-        "$20::uuid, $21::uuid) RETURNING id",
+        "$20::uuid, $21::uuid) " + _ARTIFACT_UPSERT_CONFLICT,
         artifact.source_type, artifact.uri, artifact.repository, artifact.path,
         artifact.commit, artifact.content_hash, extractor_version,
         procedure_id, procedure_row_id, run_id, owner_id,
@@ -1962,6 +1993,7 @@ async def compile_skill_artifact(
     owner_id: Optional[str] = None,
     admission_llm_model: str = "gemma-4-31B-it",
     extraction_llm_model: str = "gemma-4-31B-it",
+    fallback_extraction_llm_model: Optional[str] = None,
     claim_extraction_llm_model: str = "gemma-4-31B-it",
     extractor_module: Any = None,
 ) -> IngestOutcome:
@@ -2111,14 +2143,15 @@ async def compile_skill_artifact(
     quarantined = admission.decision == "review"
     resolved_scope_type = "entity" if domain else "global"
 
-    # --- staleness precheck: this exact content already ingested under
-    # this extractor_version? Bump last_seen on every matching row (a
-    # document may have produced several) and return early. ---
+    # --- staleness precheck: this exact content already produced a
+    # procedure under this extractor_version? Rows written for an
+    # extraction failure/abstention have no procedure_row_id and must not
+    # suppress a later retry after credentials or providers are fixed. ---
     fingerprint = getattr(artifact, "bundle_hash", None) or artifact.content_hash
     already_rows = await pool.fetch(
         "SELECT id, procedure_id FROM ingested_artifacts "
         "WHERE source_type = $1 AND uri = $2 AND content_hash = $3 "
-        "AND extractor_version = $4 AND t_invalid IS NULL",
+        "AND extractor_version = $4 AND procedure_row_id IS NOT NULL AND t_invalid IS NULL",
         artifact.source_type, artifact.uri, fingerprint, extractor_version,
     )
     if already_rows:
@@ -2154,17 +2187,35 @@ async def compile_skill_artifact(
             quarantined=quarantined, admission_escalated=admission.escalated,
         )
 
-    try:
-        extracted = await extractor_module.extract_document(
-            client, artifact.content, resource_paths=resource_paths, model=extraction_llm_model,
-        )
-    except SkillExtractionTransientFailure as exc:
+    extraction_models = [extraction_llm_model]
+    if fallback_extraction_llm_model and fallback_extraction_llm_model not in extraction_models:
+        extraction_models.append(fallback_extraction_llm_model)
+    extracted = None
+    extraction_errors: list[str] = []
+    extraction_model_used: Optional[str] = None
+    for model in extraction_models:
+        try:
+            extracted = await extractor_module.extract_document(
+                client, artifact.content, resource_paths=resource_paths, model=model,
+            )
+            extraction_model_used = model
+            break
+        except SkillExtractionTransientFailure as exc:
+            extraction_errors.append(f"{model}: {exc}")
+            if model == extraction_models[-1]:
+                break
+            log.warning(
+                "skill extraction primary model failed; trying fallback",
+                extra={"failed_model": model, "fallback_model": extraction_models[1]},
+            )
+    if extraction_errors and extracted is None:
         await _write_artifact_row(
             pool, artifact, run_id=run_id, procedure_id=None, procedure_row_id=None,
             extractor_version=extractor_version, owner_id=owner_id, admission=admission,
         )
         return IngestOutcome(
-            status="rejected", reason=f"extraction failed: {exc}",
+            status="rejected", extraction_model=None,
+            reason="extraction failed: " + " | ".join(extraction_errors),
             capability_abstained=True, injection_screened=bool(injection_signals),
             admission_decision=admission.decision, quarantined=quarantined,
             admission_escalated=admission.escalated,
@@ -2180,7 +2231,7 @@ async def compile_skill_artifact(
             if extracted is None else "extraction produced zero procedures"
         )
         return IngestOutcome(
-            status="rejected", reason=reason, capability_abstained=True,
+            status="rejected", extraction_model=extraction_model_used, reason=reason, capability_abstained=True,
             injection_screened=bool(injection_signals), admission_decision=admission.decision,
             quarantined=quarantined, admission_escalated=admission.escalated,
         )
@@ -2370,15 +2421,24 @@ async def compile_skill_artifact(
             )
             all_document_claim_evidence_ids.append(ev_id)
 
-        artifact_id = await _write_artifact_row(
-            pool, artifact, run_id=run_id, procedure_id=procedure_id,
-            procedure_row_id=procedure_row_id, extractor_version=extractor_version,
-            owner_id=owner_id, admission=admission,
-            source_ref=source_id, ingestion_context_id=ingestion_context_id,
-        )
-        artifact_ids.append(artifact_id)
-
         if i == 0:
+            # `ingested_artifacts` has ONE row per document (its unique
+            # identity -- source_type, uri, content_hash, extractor_version
+            # -- is document-level, via idx_ingested_artifacts_compilation_
+            # identity), not per-procedure. Calling `_write_artifact_row`
+            # once per `extracted.procedures` entry made every document
+            # producing >1 procedure self-conflict on its own second write
+            # (same identity, no ON CONFLICT) and fail the whole job. The
+            # row links to the FIRST procedure only -- matches
+            # IngestOutcome.procedure_id/artifact_id below, which were
+            # already only ever reading index [0].
+            artifact_id = await _write_artifact_row(
+                pool, artifact, run_id=run_id, procedure_id=procedure_id,
+                procedure_row_id=procedure_row_id, extractor_version=extractor_version,
+                owner_id=owner_id, admission=admission,
+                source_ref=source_id, ingestion_context_id=ingestion_context_id,
+            )
+            artifact_ids.append(artifact_id)
             artifact_block_ids = await _persist_document_blocks(
                 pool, artifact, artifact_id=artifact_id,
                 ingestion_context_id=ingestion_context_id, created_by=created_by,
@@ -2422,6 +2482,7 @@ async def compile_skill_artifact(
     await complete_ingestion_context(pool, ingestion_context_id, status="completed")
     return IngestOutcome(
         status="captured",
+        extraction_model=extraction_model_used,
         procedure_id=procedure_ids[0] if procedure_ids else None,
         version_row_id=version_row_ids[0] if version_row_ids else None,
         artifact_id=artifact_ids[0] if artifact_ids else None,
