@@ -1781,7 +1781,7 @@ _ADMISSION_AUDIT_COLUMNS = (
 # can still attach to a row an earlier attempt wrote as reject-only, but a
 # later reject-only retry can't blow away an earlier real link.
 _ARTIFACT_UPSERT_CONFLICT = (
-    "ON CONFLICT (source_type, uri, content_hash, (COALESCE(extractor_version, ''))) "
+    "ON CONFLICT (source_type, uri, content_hash, (COALESCE(extractor_version, ''::text))) "
     "DO UPDATE SET "
     "procedure_id = COALESCE(EXCLUDED.procedure_id, ingested_artifacts.procedure_id), "
     "procedure_row_id = COALESCE(EXCLUDED.procedure_row_id, ingested_artifacts.procedure_row_id), "
@@ -1902,7 +1902,8 @@ async def _preserve_script_artifact(pool: asyncpg.Pool, artifact: Any, resource:
         "INSERT INTO ingested_artifacts (id, source_type, uri, repository, path, \"commit\", content_hash, "
         " role, mime_type, language, byte_size, content_ref, extraction_status, execution_allowed, visibility) "
         "VALUES (gen_random_uuid(), 'skill_package_resource', $1, $2, $3, $4, $5, 'executable_source', $6, $7, $8, $9::jsonb, $10, false, 'public') "
-        "ON CONFLICT (source_type, uri, content_hash) DO UPDATE SET last_seen = now() RETURNING id",
+        "ON CONFLICT (source_type, uri, content_hash) WHERE role = 'executable_source' "
+        "DO UPDATE SET last_seen = now() RETURNING id",
         raw_url, getattr(artifact, "repository", None), resource.path, getattr(artifact, "commit", None), resource.sha256,
         "text/x-script", _SCRIPT_RUNTIMES.get(ext), int(getattr(resource, "size", 0) or 0), content_ref, status,
     )
@@ -2728,7 +2729,7 @@ async def persist_source_snapshot(pool: asyncpg.Pool, adapter: Any) -> dict:
         "INSERT INTO ingestion_source_snapshots (id, source_id, repo_url, resolved_commit, "
         "retrieved_at, license_metadata, source_path, content_hash, expected_format) "
         "VALUES (gen_random_uuid(), $1, $2, $3, now(), $4::jsonb, $5, $6, $7) "
-        "ON CONFLICT (source_id, resolved_commit, (COALESCE(source_path, ''))) DO UPDATE "
+        "ON CONFLICT (source_id, resolved_commit, (COALESCE(source_path, ''::text))) DO UPDATE "
         "SET retrieved_at=EXCLUDED.retrieved_at RETURNING *",
         snapshot["source_id"], snapshot["repo_url"], snapshot["resolved_commit"],
         snapshot["license_metadata"], snapshot["source_path"],
