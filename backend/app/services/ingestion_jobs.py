@@ -97,6 +97,55 @@ async def resolve_trace_ingestion_context(
     )
 
 
+class _RotatingCompletions:
+    """Same shape as `openai.OpenAI().chat.completions` (`.create(**kwargs)`),
+    but tries each configured key in turn before giving up -- the exact
+    rotation rule `OpenAICompatProvider._complete` already uses for the
+    semantic-judge chain (app/services/semantic/providers.py), reused here
+    rather than reinvented. A bad/exhausted key rotates to the next one; a
+    genuine transient failure (timeout, 5xx -- not quota/auth) raises
+    immediately rather than burning every remaining key on an outage."""
+
+    def __init__(self, clients: list):
+        self._clients = clients
+
+    def create(self, **kwargs):
+        from app.services.semantic.errors import ErrorKind, classify_exception
+
+        last: Optional[BaseException] = None
+        for client in self._clients:
+            try:
+                return client.chat.completions.create(**kwargs)
+            except Exception as exc:  # noqa: BLE001 -- classified below, not swallowed
+                last = exc
+                rotatable = (
+                    classify_exception(exc) is ErrorKind.PERMANENT
+                    or getattr(exc, "status_code", None) == 429
+                    or type(exc).__name__ == "RateLimitError"
+                )
+                if len(self._clients) > 1 and rotatable:
+                    log.warning("general_compute: key failed (%s), rotating to next", type(exc).__name__)
+                    continue
+                raise
+        assert last is not None
+        raise last
+
+
+class _RotatingOpenAIClient:
+    """Drop-in for a single `openai.OpenAI` client -- every caller in this
+    module (extraction, admission, goal dedup, claim classification) only
+    ever touches `.chat.completions.create(...)`, so this is the entire
+    surface that needs to fan out across keys."""
+
+    def __init__(self, clients: list):
+        self.chat = _SimpleNamespace(completions=_RotatingCompletions(clients))
+
+
+class _SimpleNamespace:
+    def __init__(self, **kwargs):
+        self.__dict__.update(kwargs)
+
+
 def _general_compute_client() -> Optional[Any]:
     """One shared, general-purpose chat-completions client for the
     capability-abstraction / admission-escalation model calls this worker
@@ -107,17 +156,27 @@ def _general_compute_client() -> Optional[Any]:
     ingestion job) if General Compute isn't configured -- compile_skill_
     artifact's own client=None path already handles that by honestly
     abstaining from capability-statement generation, exactly as it did
-    before this function existed."""
+    before this function existed.
+
+    GENERAL_COMPUTE_API_KEYS (comma-separated, optional) adds fallback
+    keys rotated on 429/auth failure -- same convention as GEMINI_API_KEYS.
+    With zero or one effective key this returns a plain `OpenAI` client,
+    identical to before this existed; rotation only engages with >1 key."""
     from app.config import settings
 
     if not settings.general_compute_api_key or not settings.general_compute_judge_model:
         return None
     from openai import OpenAI
 
-    return OpenAI(
-        api_key=settings.general_compute_api_key,
-        base_url=settings.general_compute_base_url,
-    )
+    keys = [settings.general_compute_api_key]
+    for k in (settings.general_compute_api_keys or "").split(","):
+        k = k.strip()
+        if k and k not in keys:
+            keys.append(k)
+    clients = [OpenAI(api_key=k, base_url=settings.general_compute_base_url) for k in keys]
+    if len(clients) == 1:
+        return clients[0]
+    return _RotatingOpenAIClient(clients)
 
 
 async def handle_ingest_skill_package(pool: asyncpg.Pool, payload: dict) -> None:

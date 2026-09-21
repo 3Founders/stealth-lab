@@ -100,6 +100,11 @@ class Settings(BaseSettings):
     # catalog) rather than hardcoded, since availability changes.
     use_general_compute: bool = False
     general_compute_api_key: Optional[str] = None
+    # Comma-separated additional keys, rotated in order when a key hits its
+    # quota (429) or is otherwise rejected -- same convention as
+    # gemini_api_keys above. general_compute_api_key (if set) is always
+    # tried first; these are extra capacity/failover, not a replacement.
+    general_compute_api_keys: Optional[str] = None
     # Confirmed via General Compute's own docs (Vercel AI SDK example),
     # not their homepage marketing snippet, which omits the /v1 and is
     # wrong. Get this wrong and every call 404s before it ever reaches a
