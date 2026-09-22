@@ -106,7 +106,7 @@ def test_public_profile_absent_when_not_opted_in():
 def test_public_profile_returns_counts_when_public():
     ex = FakeExec(
         public_rows=[{
-            "user_id": "u1", "display_name": "Ada L", "tagline": "kernels",
+            "user_id": "u1", "display_name": "Ada L", "username": "AdaLovelace", "tagline": "kernels",
             "profile_since": "t0",
         }],
         proc_row={"authored": 4, "verified": 3},

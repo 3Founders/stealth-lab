@@ -61,3 +61,8 @@ opentelemetry-exporter-otlp-proto-http
 # python-docx (DocxAdapter, app/services/ingestion_sources/document_adapters/
 # docx_adapter.py) - reads .docx paragraphs/tables for the document ingestion
 # SourceAdapter layer. pdfplumber above already covers PDF for the same layer.
+
+# Pillow (app/services/avatar.py) - decodes/normalizes uploaded profile
+# pictures (real image content, not just the client's claimed MIME type),
+# strips EXIF, and re-encodes to WebP before the bytes reach ObjectStore.
+Pillow

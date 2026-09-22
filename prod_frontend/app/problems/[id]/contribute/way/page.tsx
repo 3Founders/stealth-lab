@@ -7,14 +7,15 @@ import {
   createProcedureSubmission, getProblem, getRankedProcedures,
   type Problem, type RankedProcedure, type SubmissionResult,
 } from "@/lib/kel-api";
-import { getSession } from "@/lib/session";
+import { getSession, type Session } from "@/lib/session";
 import type { ApiState } from "@/lib/api";
 
 export default function ContributeWayPage() {
   const { id } = useParams<{ id: string }>();
   const [problem, setProblem] = useState<ApiState<Problem>>({ kind: "loading" });
   const [candidates, setCandidates] = useState<RankedProcedure[]>([]);
-  const session = getSession();
+  const [session, setSession] = useState<Session | null>(null);
+  useEffect(() => { getSession().then(setSession); }, []);
 
   const [submissionType, setSubmissionType] = useState<"new" | "improvement">("new");
   const [parentId, setParentId] = useState("");
@@ -75,7 +76,7 @@ export default function ContributeWayPage() {
         <section className="frame grid" style={{ paddingBottom: 120 }}>
           <div className="empty" style={{ gridColumn: "1 / span 8" }}>
             <b>Contributions are attributed to a real, signed-in account.</b>
-            <p>keळ never lets a submission claim someone else&rsquo;s identity — the server derives who contributed from your session, not from anything a form could say. <Link href="/sign-in" style={{ textDecoration: "underline" }}>Sign in</Link> to continue.</p>
+            <p>keळ never lets a submission claim someone else&rsquo;s identity — the server derives who contributed from your session, not from anything a form could say. <Link href={`/sign-in?redirect=${encodeURIComponent(`/problems/${id}/contribute/way`)}`} style={{ textDecoration: "underline" }}>Sign in</Link> to continue.</p>
           </div>
         </section>
       </>

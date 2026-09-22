@@ -4,7 +4,9 @@ import Image from "next/image";
 import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
 import { track } from "@/lib/analytics";
+import { getMyProfile } from "@/lib/kel-api";
 import { getSession } from "@/lib/session";
+import AccountMenu from "@/components/AccountMenu";
 
 const links = [
   { href: "/", label: "Home" },
@@ -24,13 +26,26 @@ export default function Header() {
   const pathname = usePathname();
   const [open, setOpen] = useState(false);
   const [aboutInView, setAboutInView] = useState(false);
-  // Read only after mount (localStorage isn't available during SSR) --
-  // starts signed-out, then reflects the real session once known. Never
-  // more than a display convenience: every page this points at still
-  // gates on the real server response (401 -> StateNotice's own honest
-  // "sign in" state), not on this alone.
-  const [subject, setSubject] = useState<string | null>(null);
-  useEffect(() => { setSubject(getSession()?.subject ?? null); }, [pathname]);
+  // Read only after mount (Supabase's session read is async) -- starts
+  // signed-out, then reflects the real session once known. Never more
+  // than a display convenience: every gated page still gates on the
+  // real server response, not on this alone.
+  const [username, setUsername] = useState<string | null | undefined>(undefined); // undefined = not resolved yet
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const session = await getSession();
+      if (!session) {
+        if (!cancelled) setUsername(null);
+        return;
+      }
+      const profile = await getMyProfile();
+      if (cancelled) return;
+      setUsername(profile.kind === "ok" ? profile.data.profile.username : null);
+    })();
+    return () => { cancelled = true; };
+  }, [pathname]);
 
   // Mirrors SectionRail's own scroll-tracking: the "About" nav link should read as
   // active while its section is on screen, the same way SectionRail's dots already do --
@@ -42,7 +57,7 @@ export default function Header() {
       return;
     }
     const io = new IntersectionObserver(
-      (entries) => entries.forEach((e) => setAboutInView(e.isIntersecting)),
+      (entries) => entries.forEach((e) => { if (e.isIntersecting) setAboutInView(e.isIntersecting); }),
       { rootMargin: "-40% 0px -55% 0px" },
     );
     io.observe(el);
@@ -89,8 +104,8 @@ export default function Header() {
             <Image src="/kel-wordmark.png" alt="keळ" width={800} height={440} priority style={{ height: 54, width: "auto" }} />
           </Link>
           <nav aria-label="Primary" className="nav-links">{links.map(item)}</nav>
-          {subject ? (
-            <Link href="/account/credits" className="btn-ink desk">Credits <Arrow /></Link>
+          {username ? (
+            <AccountMenu username={username} />
           ) : (
             <Link href="/sign-in" className="btn-ink desk" onClick={() => track("sign_in_click", { where: "header" })}>Sign in <Arrow /></Link>
           )}
@@ -100,8 +115,12 @@ export default function Header() {
           {open && (
             <nav id="nav-panel" aria-label="Mobile" className="nav-panel">
               {links.map(item)}
-              {subject ? (
-                <Link href="/account/credits" onClick={() => setOpen(false)}>Credits</Link>
+              {username ? (
+                <>
+                  <Link href={`/u/${encodeURIComponent(username)}`} onClick={() => setOpen(false)}>View profile</Link>
+                  <Link href="/account/credits" onClick={() => setOpen(false)}>Credits &amp; Standing</Link>
+                  <Link href="/account/settings" onClick={() => setOpen(false)}>Settings</Link>
+                </>
               ) : (
                 <Link href="/sign-in" onClick={() => { setOpen(false); track("sign_in_click", { where: "menu" }); }}>Sign in</Link>
               )}

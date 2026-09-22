@@ -1,4 +1,4 @@
-import { apiGet, apiPost, type ApiState } from "@/lib/api";
+import { API_URL, apiDelete, apiGet, apiPost, apiPut, apiUpload, type ApiState } from "@/lib/api";
 
 /**
  * Typed reads for the Problems → Goal → Procedure surface. Every shape here mirrors what
@@ -333,3 +333,70 @@ export interface CreditEvent extends Row {
 
 export const getCreditsHistory = (contributorId: string, signal?: AbortSignal) =>
   apiGet<{ contributor_id: string; events: CreditEvent[] }>(`/v1/economy/contributors/${j(contributorId)}/credits/history?limit=50`, signal);
+
+// ---------------------------------------------------------------------------
+// V1 contributor identity: username, avatar, onboarding, public profile.
+// Public keळ identity (username/avatar/tagline) — never authentication.
+// See backend/app/api/profile.py and backend/app/api/contributors.py.
+// ---------------------------------------------------------------------------
+
+export interface ContributorProfile extends Row {
+  user_id: string;
+  visibility: "private" | "public";
+  disclosed_at: string | null;
+  tagline: string | null;
+  username: string | null;
+  avatar_locator: string | null;
+  onboarding_complete: boolean;
+  t_created: string;
+  t_updated: string;
+}
+
+export interface MyProfileResult extends Row {
+  profile: ContributorProfile;
+  counts: Row;
+  display_name: string | null;
+  avatar_url: string | null;
+  disclosure_required: boolean;
+  onboarding_required: boolean;
+}
+
+export const getMyProfile = (signal?: AbortSignal) => apiGet<MyProfileResult>("/v1/me/profile", signal);
+
+export interface ProfileUpdateInput {
+  visibility?: "private" | "public";
+  tagline?: string;
+  username?: string;
+  onboarding_complete?: boolean;
+}
+
+export const updateMyProfile = (body: ProfileUpdateInput, signal?: AbortSignal) =>
+  apiPut<MyProfileResult>("/v1/me/profile", body, signal);
+
+export const suggestUsernames = (limit = 1, signal?: AbortSignal) =>
+  apiGet<{ suggestions: string[] }>(`/v1/me/profile/username/suggestions?limit=${limit}`, signal);
+
+export const uploadAvatar = (file: File, signal?: AbortSignal) => {
+  const form = new FormData();
+  form.append("file", file);
+  return apiUpload<MyProfileResult>("/v1/me/avatar", form, signal);
+};
+
+export const removeAvatar = (signal?: AbortSignal) => apiDelete<MyProfileResult>("/v1/me/avatar", signal);
+
+export interface PublicContributorProfile extends Row {
+  username: string;
+  display_name: string;
+  tagline: string | null;
+  profile_since: string;
+  counts: Row;
+  renamed_to: string | null;
+}
+
+export const getPublicProfileByUsername = (username: string, signal?: AbortSignal) =>
+  apiGet<PublicContributorProfile>(`/v1/contributors/by-username/${j(username)}`, signal);
+
+/** Always resolves to a real image — the backend serves either the
+ * contributor's own picture or a deterministic initials fallback, never a
+ * broken link (backend/app/services/avatar.py). */
+export const avatarUrlFor = (username: string): string => `${API_URL}/v1/contributors/by-username/${j(username)}/avatar`;

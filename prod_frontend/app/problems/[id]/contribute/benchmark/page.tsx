@@ -4,13 +4,14 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import StateNotice from "@/components/NotConnected";
 import { createBenchmarkSubmission, getProblem, type Problem, type SubmissionResult } from "@/lib/kel-api";
-import { getSession } from "@/lib/session";
+import { getSession, type Session } from "@/lib/session";
 import type { ApiState } from "@/lib/api";
 
 export default function ContributeBenchmarkPage() {
   const { id } = useParams<{ id: string }>();
   const [problem, setProblem] = useState<ApiState<Problem>>({ kind: "loading" });
-  const session = getSession();
+  const [session, setSession] = useState<Session | null>(null);
+  useEffect(() => { getSession().then(setSession); }, []);
 
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
@@ -70,7 +71,7 @@ export default function ContributeBenchmarkPage() {
         <section className="frame grid" style={{ paddingBottom: 120 }}>
           <div className="empty" style={{ gridColumn: "1 / span 8" }}>
             <b>Benchmarks are attributed to a real, signed-in account.</b>
-            <p><Link href="/sign-in" style={{ textDecoration: "underline" }}>Sign in</Link> to continue.</p>
+            <p><Link href={`/sign-in?redirect=${encodeURIComponent(`/problems/${id}/contribute/benchmark`)}`} style={{ textDecoration: "underline" }}>Sign in</Link> to continue.</p>
           </div>
         </section>
       </>

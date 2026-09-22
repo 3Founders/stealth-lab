@@ -9,7 +9,7 @@ export default function Docs() {
     <>
       <section className="page-hero frame grid">
         <div className="marker caption" style={{ gridColumn: "1 / -1" }}><b>DOCS</b></div>
-        <h1 className="display">Docs.</h1>
+        <h1 className="display">Docs</h1>
         <p className="lead">Setup, day-to-day use, and how contribution and rewards work.</p>
       </section>
 
