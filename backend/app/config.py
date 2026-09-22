@@ -117,6 +117,26 @@ class Settings(BaseSettings):
     general_compute_panel_models: str = ""
     general_compute_judge_model: str = ""
 
+    # --- Vertex AI (OAuth2/ADC, no API key) ---
+    # The Cloud Run job's own attached service account already has
+    # roles/editor (includes aiplatform.endpoints.predict) on this
+    # project -- confirmed 2026-09-22, no IAM grant needed. Real IAM-based
+    # Vertex AI quota, not a free-tier API-key cap that's shared across
+    # every key issued from the same project (the actual root cause of the
+    # 429 storms general_compute/gemini key rotation kept hitting). Empty
+    # vertex_project disables this tier entirely -- google.auth.default()
+    # failing (no ADC available, e.g. plain local dev with no `gcloud auth
+    # application-default login`) does too, never fails the job.
+    vertex_project: str = ""
+    vertex_region: str = "us-central1"
+    # "google/gemini-2.5-flash" is the only Gemini flash model actually
+    # published on Vertex's catalog for this project/region as of
+    # 2026-09-22 (confirmed live: gemini-3.6-flash/3.8-flash both 404
+    # "Publisher model ... not found"). Vertex's own publisher catalog
+    # lags the direct Generative Language API's -- re-check before
+    # assuming a newer model is available here.
+    vertex_model: str = "google/gemini-2.5-flash"
+
     # --- OpenRouter (WAVE-3 debate panel wiring) ---
     # Fourth provider posture next to local / General Compute / the paid
     # closed roster: ONE OpenRouter account serves all four debate seats

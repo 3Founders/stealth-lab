@@ -146,6 +146,68 @@ class _SimpleNamespace:
         self.__dict__.update(kwargs)
 
 
+class _VertexOAuthCompletions:
+    """Forwards to a real OpenAI client against Vertex AI's OpenAI-compatible
+    endpoint, but always substitutes OUR configured model name -- the
+    rotation list passes whatever `model=` the caller asked for (e.g.
+    GENERAL_COMPUTE_JUDGE_MODEL's "gemini-3.8-flash"), which isn't
+    published on Vertex's catalog for this project (confirmed live,
+    2026-09-22: only "google/gemini-2.5-flash" is). Silently swapping the
+    model here, rather than requiring every caller to know Vertex's naming,
+    keeps this a drop-in rotation member."""
+
+    def __init__(self, client: Any, model: str):
+        self._client = client
+        self._model = model
+
+    def create(self, **kwargs):
+        kwargs = dict(kwargs)
+        kwargs["model"] = self._model
+        return self._client.chat.completions.create(**kwargs)
+
+
+class _VertexOAuthClient:
+    def __init__(self, client: Any, model: str):
+        self.chat = _SimpleNamespace(completions=_VertexOAuthCompletions(client, model))
+
+
+def _vertex_oauth_client() -> Optional[Any]:
+    """Vertex AI via OAuth2/ADC -- no API key, no per-key quota bucket.
+    The Cloud Run job's own attached service account already has
+    roles/editor (includes aiplatform.endpoints.predict), confirmed
+    2026-09-22, no IAM grant needed. Real IAM-based project quota instead
+    of a free-tier API-key cap shared across every key on the same GCP
+    project -- the actual root cause of the sustained 429 storms the
+    key-rotation tier kept hitting (verified live: every GENERAL_COMPUTE/
+    GEMINI key failed simultaneously, because they all draw from one
+    project-level bucket).
+
+    Returns None (never fails the job) when VERTEX_PROJECT isn't set, or
+    when google.auth.default() finds no ADC -- e.g. plain local dev
+    without `gcloud auth application-default login`. Cloud Run itself
+    always has ADC via the metadata server; this is a local-only gap."""
+    from app.config import settings
+
+    if not settings.vertex_project:
+        return None
+    try:
+        import google.auth
+        import google.auth.transport.requests
+        from openai import OpenAI
+
+        credentials, _ = google.auth.default(scopes=["https://www.googleapis.com/auth/cloud-platform"])
+        credentials.refresh(google.auth.transport.requests.Request())
+    except Exception:  # noqa: BLE001 -- ADC unavailable/misconfigured is not a job failure
+        log.warning("vertex: ADC unavailable, skipping the Vertex AI OAuth2 tier", exc_info=True)
+        return None
+    base_url = (
+        f"https://{settings.vertex_region}-aiplatform.googleapis.com/v1/"
+        f"projects/{settings.vertex_project}/locations/{settings.vertex_region}/endpoints/openapi"
+    )
+    client = OpenAI(api_key=credentials.token, base_url=base_url)
+    return _VertexOAuthClient(client, settings.vertex_model)
+
+
 def _general_compute_client() -> Optional[Any]:
     """One shared, general-purpose chat-completions client for the
     capability-abstraction / admission-escalation model calls this worker
@@ -153,35 +215,38 @@ def _general_compute_client() -> Optional[Any]:
     OpenAI-compatible construction) is this codebase's existing named
     tier for "some general-purpose hosted model," reused here rather than
     inventing a second provider concept. Returns None (never fails the
-    ingestion job) if General Compute isn't configured -- compile_skill_
+    ingestion job) if nothing at all is configured -- compile_skill_
     artifact's own client=None path already handles that by honestly
     abstaining from capability-statement generation, exactly as it did
     before this function existed.
 
-    GENERAL_COMPUTE_API_KEYS (comma-separated, optional) adds fallback
-    keys rotated on 429/auth failure -- same convention as GEMINI_API_KEYS.
-    Falls back to GEMINI_API_KEYS itself when GENERAL_COMPUTE_API_KEYS
-    isn't set: every deployment of this worker so far points General
-    Compute's base URL at Gemini's own OpenAI-compatible endpoint anyway
-    (GENERAL_COMPUTE_BASE_URL, see deploy/ingestion/cloudrun/job.yaml), so
-    the Gemini key pool this project already maintains is the right
-    fallback pool without asking for the same keys under a second env-var
-    name. With zero or one effective key this returns a plain `OpenAI`
-    client, identical to before this existed; rotation only engages with
-    >1 key."""
+    Rotation order: Vertex AI (OAuth2/ADC, real IAM quota) first when
+    configured, then GENERAL_COMPUTE_API_KEY plus GENERAL_COMPUTE_API_KEYS
+    (comma-separated, falling back to GEMINI_API_KEYS when unset -- same
+    convention every deployment already uses, since General Compute's
+    base URL points at Gemini's own endpoint). With a single effective
+    client this returns it directly, identical to before Vertex/rotation
+    existed; rotation only engages with >1."""
     from app.config import settings
 
-    if not settings.general_compute_api_key or not settings.general_compute_judge_model:
-        return None
-    from openai import OpenAI
+    clients: list[Any] = []
+    vertex = _vertex_oauth_client()
+    if vertex is not None:
+        clients.append(vertex)
 
-    keys = [settings.general_compute_api_key]
-    extra_keys_csv = settings.general_compute_api_keys or settings.gemini_api_keys or ""
-    for k in extra_keys_csv.split(","):
-        k = k.strip()
-        if k and k not in keys:
-            keys.append(k)
-    clients = [OpenAI(api_key=k, base_url=settings.general_compute_base_url) for k in keys]
+    if settings.general_compute_api_key and settings.general_compute_judge_model:
+        from openai import OpenAI
+
+        keys = [settings.general_compute_api_key]
+        extra_keys_csv = settings.general_compute_api_keys or settings.gemini_api_keys or ""
+        for k in extra_keys_csv.split(","):
+            k = k.strip()
+            if k and k not in keys:
+                keys.append(k)
+        clients.extend(OpenAI(api_key=k, base_url=settings.general_compute_base_url) for k in keys)
+
+    if not clients:
+        return None
     if len(clients) == 1:
         return clients[0]
     return _RotatingOpenAIClient(clients)

@@ -48,6 +48,10 @@ dependencies = [
     "uvicorn",
     "voyageai",
     "google-genai",
+    # app/services/ingestion_jobs.py -- Vertex AI OAuth2/ADC tier (real IAM
+    # quota, no per-key free-tier cap). google-genai already pulls this in
+    # transitively; declared explicitly since we import google.auth directly.
+    "google-auth",
     # app/telemetry.py -- vendor-neutral tracing; no-op unless enabled.
     "opentelemetry-sdk",
     "opentelemetry-exporter-otlp-proto-http",
