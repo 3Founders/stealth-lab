@@ -11,7 +11,7 @@ const cols = [
     ],
   },
   { h: "Account", items: [["Sign in", "/sign-in"], ["Credits", "/account/credits"]] },
-  { h: "About", items: [["About keळ", "/#about"], ["Source", "https://github.com/3Founders/stealth-lab"]] },
+  { h: "About", items: [["About keळ", "/#about"]] },
 ];
 
 export default function Footer() {

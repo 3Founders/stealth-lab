@@ -64,7 +64,7 @@ pip install -e packaging/`}</code></pre>
 MCP_SERVER_REQUEST_TIMEOUT=300000 mcp dev app/mcp_server/server.py:server --with-editable .`}</code></pre>
 
             <p className="small dim" style={{ marginTop: 14 }}>
-              For deeper setup, see the repository README. <a href="https://github.com/3Founders/stealth-lab/blob/main/backend/README_MCP_SERVER.md" rel="noopener" style={{ textDecoration: "underline" }}>Source on GitHub</a>.
+              For deeper setup, see <code>backend/README_MCP_SERVER.md</code> in the repository.
             </p>
           </section>
         )}
