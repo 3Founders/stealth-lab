@@ -186,7 +186,8 @@ Procedure:
   required_state: {claims: [{claim_id, claim_version}]}
   preconditions: [{type: claim_check|tool_check|environment_check|custom_check, definition}]
   steps:                                    # planner-neutral — NO scheduling edges here
-    - {id, action, inputs, depends_on[], preconditions[], implementation_ids[]}
+    - {id, action, inputs, depends_on[], preconditions[], references[]}  # references: → Procedure,
+                                                                          # was implementation_ids[]
   branches: [{condition, next_steps[]}]
   required_capabilities: [{capability_id, minimum_level}]
   required_tools: [tool_id]
@@ -196,6 +197,15 @@ Procedure:
   known_failures: [...]
   failure_conditions: [...]
   cost: object
+  latency: object
+  # Implementation folded into Procedure (D-2026-09-22): a logical capability
+  # with several executable variants (a script path vs. a shell/API path to
+  # the same outcome) is modeled as several Procedure rows sharing a Goal,
+  # each with its own type/model/requirements here and its own independently
+  # tracked capability grade — never one row averaging across variants.
+  type: deterministic_code | shell | api | rule | lookup | slm | frontier_llm | human | another_procedure | null
+  model: string | null
+  requirements: []
   # lifecycle / trust — three orthogonal axes mirroring db/18_procedures.sql
   # (ticket 13 deliberately rejects a single flat status enum):
   verification_state: candidate | verified | retired      # procedure_verification_state
@@ -205,22 +215,6 @@ Procedure:
   evidence_refs: [→ Evidence]              # what lifecycle transitions stand on
   capability_statement: string             # abstract retrieval surface (V4-checked)
   extracted_by: extractor_id@version       # §39 invariants 20–21 provenance
-```
-
-
-
-### Implementation `[V]`
-
-Executable variant satisfying a procedure (or step).
-
-```yaml
-Implementation:
-  procedure_id: → Procedure
-  type: deterministic_code | shell | api | rule | lookup | slm | frontier_llm | human | procedure_ref
-  model: string | null
-  requirements: []
-  cost: object
-  latency: object
 ```
 
 
@@ -239,13 +233,16 @@ Verdicts: `applicable | probably_applicable | uncertain | not_applicable | unsaf
 
 ### Capability `[D — computed, never authored]`
 
-How reliably an implementation achieves the outcome under stated conditions.
+How reliably a procedure achieves the outcome under stated conditions. Every
+Procedure row is graded independently (D-2026-09-22) — a variant's executable
+strategy lives on that row's own `type`/`model` (§Procedure), so it is not a
+separate conditioning term below.
 
 ```text
-Capability = P(required outcome | state, procedure, implementation)
+Capability = P(required outcome | state, procedure)
 Levels: 0 unknown → 1 observed → 2 reproduced → 3 validated → 4 generalized → 5 trusted
 Moves both directions; decreases on failure or dependency change; conditional on
-task, state, environment, inputs, implementation, constraints.
+task, state, environment, inputs, constraints.
 ```
 
 ---
@@ -269,7 +266,7 @@ ExecutionPlan:
   resolved_claims: [{claim_id, version}]
   selected_branches: []
   task_graph: → TaskGraph
-  implementations: {step_id → implementation_id}
+  resolved_procedures: {step_id → procedure_id}   # was step_id → implementation_id
   safety_check: passed | failed | requires_review
   verification_plan: object
 ```
@@ -285,7 +282,7 @@ TaskNode:
   step_ref: {procedure_id, version, order}
   parameters: object
   node_class: predictable | uncertain | high-risk
-  implementation_id: → Implementation
+  procedure_id: → Procedure                 # was implementation_id → Implementation
   cost_budget: object
   verification_gate: object
   deps: [node_ids]                          # scheduling edges exist ONLY here
@@ -302,7 +299,6 @@ Execution:
   execution_plan_id: → ExecutionPlan
   procedure_version: procedure_id:vN        # exact version, always recorded
   state_id: → State
-  implementation_id: → Implementation
   parameters: object
   task_graph_id: → TaskGraph
   trace_id: → Trace
@@ -404,13 +400,11 @@ flowchart TD
 
     subgraph PROCEDURE["Procedure Layer"]
         PRD[Procedure V]
-        IMP[Implementation V]
         AR[ApplicabilityRule V]
         CAP[Capability D]
         RVW[Review H]
-        IMP -- implements --> PRD
+        PRD -- "references (steps)" --> PRD
         AR -- gates --> PRD
-        CAP -- grades --> IMP
         CAP -- grades --> PRD
         EVD -- supported_by --> PRD
         PRD -- requires --> CLM
@@ -426,7 +420,7 @@ flowchart TD
         OUT[Outcome H]
         PRD -- instantiate --> PLAN
         TG --- PLAN
-        IMP -- "selected per node" --> TG
+        PRD -- "selected per node" --> TG
         ST -- starting_state --> PLAN
         CLM -- resolved_into --> PLAN
         PLAN -- runs --> EXE
