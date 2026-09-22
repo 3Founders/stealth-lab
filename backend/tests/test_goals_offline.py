@@ -212,6 +212,7 @@ def test_find_or_create_goal_rejects_empty_canonical_name():
     "rg",
     "src/generated/api.yaml",
     "in repo stealthlab",
+    'run `git commit -m "wip"`',
 ])
 def test_describe_goal_quality_issue_flags_ingestion_md_bad_examples(bad_name):
     assert describe_goal_quality_issue(bad_name) is not None
@@ -222,6 +223,8 @@ def test_describe_goal_quality_issue_flags_ingestion_md_bad_examples(bad_name):
     "verify generated consistency",
     "safely deploy service",
     "inspect semantic code delta",
+    "Use the `openpyxl` library to manipulate the spreadsheet",
+    "Read the corresponding theme file from the `themes/` directory",
 ])
 def test_describe_goal_quality_issue_passes_ingestion_md_good_examples(good_name):
     assert describe_goal_quality_issue(good_name) is None

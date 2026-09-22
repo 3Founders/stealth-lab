@@ -103,6 +103,15 @@ _RUN_THIS_RE = re.compile(r"\brun (this|the) (exact |specific )?(command|script)
 # binding (ingestion.md Sec 9/20), not a generalizable outcome.
 _FILE_PATH_RE = re.compile(r"[\w.-]+/[\w.-]+\.\w{1,6}\b")
 _REPO_MENTION_RE = re.compile(r"\bin repo\b|\bin this repo(sitory)?\b|\brepo [a-z0-9_-]+\b")
+# A backtick-delimited span with whitespace inside is a raw command/snippet
+# echoed verbatim (e.g. "run `git commit -m \"...\"`") -- the failure mode
+# Sec 20 actually means to catch. A single bare identifier in backticks
+# (e.g. "Use the `openpyxl` library...", "the `themes/` directory") is just
+# inline-code markdown around ordinary technical vocabulary inside an
+# otherwise well-formed outcome sentence -- confirmed live 2026-09-22: this
+# was rejecting ~45% of step-level goals from real anthropics/skills
+# extractions for exactly that reason, not for describing a raw command.
+_BACKTICK_SPAN_RE = re.compile(r"`([^`]*)`")
 
 
 def describe_goal_quality_issue(canonical_name: str) -> Optional[str]:
@@ -115,7 +124,7 @@ def describe_goal_quality_issue(canonical_name: str) -> Optional[str]:
     if not tokens:
         return None  # the separate empty-name check in find_or_create_goal owns this case
     lowered = canonical_name.strip().lower()
-    if "`" in canonical_name:
+    if any(" " in span for span in _BACKTICK_SPAN_RE.findall(canonical_name)):
         return "contains literal code/command syntax (backtick) -- not a described outcome"
     if _COMMAND_ECHO_RE.match(normalized) or _RUN_THIS_RE.search(lowered):
         return "reads as a raw command/tool invocation, not a reusable outcome"
