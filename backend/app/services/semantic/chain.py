@@ -15,6 +15,7 @@ SemanticJudge: ordered provider fallback with bounded, classified retries.
 from __future__ import annotations
 
 import asyncio
+import logging
 import random
 import time
 from dataclasses import dataclass, field
@@ -35,6 +36,8 @@ from app.services.semantic.providers import (
     CAP_SUMMARY,
     SemanticProvider,
 )
+
+log = logging.getLogger(__name__)
 
 
 @dataclass
@@ -170,4 +173,10 @@ class SemanticJudge:
                   else "deadline exceeded" if deadline_hit else "all semantic providers failed")
         m.inc("semantic.chain_exhausted")
         m.event("chain_exhausted", op=op, reason=reason, attempts=len(attempts))
+        if attempts:
+            log.warning(
+                "semantic: chain exhausted for %s (%s): %s",
+                op, reason,
+                " | ".join(f"{a.provider}#{a.attempt} {a.error_kind}: {a.detail}" for a in attempts),
+            )
         return ChainResult(False, None, None, None, False, attempts, (self._mono() - start) * 1000, reason)
