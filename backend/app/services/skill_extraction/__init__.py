@@ -26,6 +26,7 @@ from app.services.skill_extraction.schema import (
     ExtractedImplementation,
     ExtractedProcedure,
     ExtractedProcedureStep,
+    ExtractedReferenceResource,
     SkillExtractionTransientFailure,
 )
 
@@ -35,6 +36,7 @@ __all__ = [
     "ExtractedImplementation",
     "ExtractedProcedure",
     "ExtractedProcedureStep",
+    "ExtractedReferenceResource",
     "SkillExtractionTransientFailure",
     "DocumentExtractor",
 ]

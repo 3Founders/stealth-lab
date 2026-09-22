@@ -23,6 +23,7 @@ from app.services.skill_extraction.schema import (
     ExtractedImplementation,
     ExtractedProcedure,
     ExtractedProcedureStep,
+    ExtractedReferenceResource,
     SkillExtractionTransientFailure,
 )
 
@@ -77,9 +78,22 @@ def test_extracted_goal_rejects_blank_canonical_name():
         ExtractedGoal(canonical_name="")
 
 
+def test_extracted_reference_resource_rejects_unknown_role():
+    with pytest.raises(ValidationError):
+        ExtractedReferenceResource(name="x", role="banana", resource_path="theme/glossy.ts")
+
+
+def test_extracted_reference_resource_accepts_style_reference():
+    ref = ExtractedReferenceResource(name="glossy card", role="style_reference", resource_path="theme/glossy.ts")
+    assert ref.role == "style_reference"
+
+
 def test_extracted_document_defaults_to_all_empty():
     doc = ExtractedDocument()
-    assert doc.procedures == [] and doc.goals == [] and doc.implementations == []
+    assert (
+        doc.procedures == [] and doc.goals == [] and doc.implementations == []
+        and doc.reference_resources == []
+    )
 
 
 # --- grounded.extract_document: three-way outcome contract ----------------
@@ -179,6 +193,22 @@ def test_grounded_extract_drops_an_implementation_with_a_hallucinated_path():
     assert result.implementations[0].resource_path == "scripts/real.py"
 
 
+def test_grounded_extract_drops_a_reference_resource_with_a_hallucinated_path():
+    content = "This skill bundles theme/glossy.ts as a style example."
+    response = json.dumps({
+        "procedures": [], "goals": [], "implementations": [],
+        "reference_resources": [
+            {"name": "glossy card", "role": "style_reference", "resource_path": "theme/glossy.ts"},
+            {"name": "fake", "role": "style_reference", "resource_path": "theme/does_not_exist.ts"},
+        ],
+    })
+    client = FakeClient([response])
+    result = _run(grounded.extract_document(content=content, client=client, resource_paths=["theme/glossy.ts"]))
+    assert len(result.reference_resources) == 1
+    assert result.reference_resources[0].resource_path == "theme/glossy.ts"
+    assert result.reference_resources[0].role == "style_reference"
+
+
 def test_grounded_extract_step_count_mismatch_with_expected_shape_raises():
     """A response missing required fields entirely (not just a bad quote)
     is a schema failure, not a per-step drop."""
@@ -225,6 +255,28 @@ def test_ungrounded_extract_still_drops_a_hallucinated_resource_path():
     client = FakeClient([response])
     result = _run(ungrounded.extract_document(client, "content", resource_paths=["real.py"]))
     assert result.implementations == []
+
+
+def test_ungrounded_extract_still_drops_a_hallucinated_reference_resource_path():
+    response = json.dumps({
+        "procedures": [], "goals": [], "implementations": [],
+        "reference_resources": [{"name": "fake", "role": "style_reference", "resource_path": "nope.ts"}],
+    })
+    client = FakeClient([response])
+    result = _run(ungrounded.extract_document(client, "content", resource_paths=["real.ts"]))
+    assert result.reference_resources == []
+
+
+def test_ungrounded_extract_keeps_a_real_reference_resource():
+    response = json.dumps({
+        "procedures": [], "goals": [], "implementations": [],
+        "reference_resources": [{"name": "glossy card", "role": "style_reference", "resource_path": "theme/glossy.ts",
+                                  "note": "glossy-card visual style"}],
+    })
+    client = FakeClient([response])
+    result = _run(ungrounded.extract_document(client, "content", resource_paths=["theme/glossy.ts"]))
+    assert len(result.reference_resources) == 1
+    assert result.reference_resources[0].note == "glossy-card visual style"
 
 
 def test_ungrounded_extract_raises_on_malformed_json():

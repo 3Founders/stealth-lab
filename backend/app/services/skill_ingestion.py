@@ -1424,6 +1424,7 @@ class IngestOutcome:
     # and the model was never run on the document.
     injection_screened: bool = False
     script_procedure_ids: list[str] = field(default_factory=list)
+    reference_procedure_ids: list[str] = field(default_factory=list)
     dependency_count: int = 0
     # Global internet/public-source admission gate (app.services.
     # ingestion_admission). `admission_decision` is one of "admit" /
@@ -1880,13 +1881,33 @@ async def _write_artifact_row(
 
 
 _SCRIPT_RUNTIMES = {".py": "python", ".sh": "shell", ".bash": "shell", ".js": "node", ".mjs": "node", ".ts": "node", ".rb": "ruby", ".ps1": "powershell"}
+# Best-effort language tag for a preserved reference resource (style/design/doc/etc) -- purely
+# descriptive metadata, unlike _SCRIPT_RUNTIMES which _preserve_script_artifact's caller actually
+# needs (a step's binding.runtime). None (unknown extension) is honest, never guessed.
+_LANGUAGE_BY_EXT = {
+    **_SCRIPT_RUNTIMES,
+    ".tsx": "typescript", ".jsx": "javascript", ".css": "css", ".scss": "scss",
+    ".html": "html", ".json": "json", ".yaml": "yaml", ".yml": "yaml", ".md": "markdown",
+    ".toml": "toml",
+}
 
 
-async def _preserve_script_artifact(pool: asyncpg.Pool, artifact: Any, resource: Any, raw_url: str, *, created_by: str) -> str:
-    """Preserve the script's exact bytes as an immutable `ingested_artifacts` row (role `executable_source`),
-    keyed by content hash. Found source is NOT trusted: `execution_allowed` starts false and `admission_decision`
-    stays NULL (unscreened) until the screening step admits it. Bytes go to object storage when one is configured
-    (`content_ref`); otherwise only the hash/locator are kept (`extraction_status='metadata_only'`)."""
+async def _preserve_script_artifact(
+    pool: asyncpg.Pool, artifact: Any, resource: Any, raw_url: str, *, created_by: str,
+    role: str = "executable_source",
+) -> str:
+    """Preserve one bundled resource's exact bytes as an immutable `ingested_artifacts` row,
+    keyed by content hash. Found source is NOT trusted: `execution_allowed` starts false and
+    `admission_decision` stays NULL (unscreened) until the screening step admits it (and even
+    then only role='executable_source' may ever become execution_allowed, db/98's own CHECK).
+    Bytes go to object storage when one is configured (`content_ref`); otherwise only the
+    hash/locator are kept (`extraction_status='metadata_only'`).
+
+    `role` covers both this function's original executable_source case and the non-executable
+    REFERENCE_ROLES (style_reference, design_reference, documentation, dependency_manifest,
+    test_fixture, see skill_extraction/schema.py) -- the upsert identity (db/105) is the same
+    (source_type, uri, content_hash) regardless of role, since byte-identical content is
+    byte-identical content whatever it's classified as."""
     import os as _os
 
     from app.services.object_storage import get_store, store_blob
@@ -1898,14 +1919,15 @@ async def _preserve_script_artifact(pool: asyncpg.Pool, artifact: Any, resource:
     if store is not None and getattr(resource, "content", b""):
         content_ref = await store_blob(pool, store, resource.content, content_type="text/plain")
         status = "stored"
+    mime_type = "text/x-script" if role == "executable_source" else "text/plain"
     row = await pool.fetchrow(
         "INSERT INTO ingested_artifacts (id, source_type, uri, repository, path, \"commit\", content_hash, "
         " role, mime_type, language, byte_size, content_ref, extraction_status, execution_allowed, visibility) "
-        "VALUES (gen_random_uuid(), 'skill_package_resource', $1, $2, $3, $4, $5, 'executable_source', $6, $7, $8, $9::jsonb, $10, false, 'public') "
-        "ON CONFLICT (source_type, uri, content_hash) WHERE role = 'executable_source' "
+        "VALUES (gen_random_uuid(), 'skill_package_resource', $1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, $11, false, 'public') "
+        "ON CONFLICT (source_type, uri, content_hash) WHERE role IS NOT NULL "
         "DO UPDATE SET last_seen = now() RETURNING id",
         raw_url, getattr(artifact, "repository", None), resource.path, getattr(artifact, "commit", None), resource.sha256,
-        "text/x-script", _SCRIPT_RUNTIMES.get(ext), int(getattr(resource, "size", 0) or 0), content_ref, status,
+        role, mime_type, _LANGUAGE_BY_EXT.get(ext), int(getattr(resource, "size", 0) or 0), content_ref, status,
     )
     return str(row["id"])
 
@@ -1962,6 +1984,73 @@ async def _persist_script_procedures(
             )
         except GoalQualityRejected:
             continue  # a low-quality goal rejects only this script's procedure (ingestion.md Sec 20)
+        out.append(str(result["procedure_id"]))
+    return out
+
+
+_REFERENCE_ROLE_GOAL_VERB = {
+    "style_reference": "match the visual/coding style demonstrated in",
+    "design_reference": "follow the design pattern demonstrated in",
+    "documentation": "consult the documentation in",
+    "dependency_manifest": "check the dependency pins recorded in",
+    "test_fixture": "reuse the test fixture in",
+}
+
+
+async def _persist_reference_resources(
+    pool: asyncpg.Pool, artifact: Any, *,
+    references: list[Any], created_by: str, provenance: str = "prior_library",
+    embedder: Optional[Any] = None, client: Optional[Any] = None,
+) -> list[str]:
+    """Each bundled NON-executable resource the extractor found (a style/design pattern, bundled
+    documentation, a dependency manifest, a test fixture -- skill_extraction/schema.py's
+    REFERENCE_ROLES) is (1) PRESERVED as an immutable artifact, same mechanism as
+    _persist_script_procedures, and (2) proposed as a ONE-STEP candidate Procedure with NO
+    binding at all -- there is nothing to execute, only something to retrieve and look at (db/98:
+    "a style/design reference is retrievable context, never executable"). Retrieval already
+    surfaces a captured Procedure's `source_artifacts` (retrieval_service.py's own column list),
+    so this is the whole mechanism: no separate artifact-search surface needed for a caller to
+    later find, say, a preserved .ts file demonstrating a particular visual style.
+
+    `references` is `ExtractedDocument.reference_resources` (paths already validated against the
+    discovered file list). Identity goes through `capture_procedure(procedure_dedup=True)` with a
+    stable `source_key`, same pattern as scripts. Returns stable procedure ids."""
+    if getattr(artifact, "source_type", None) != "skill_package":
+        return []
+    from app.services.goals import GoalQualityRejected
+    from app.services.procedures import capture_procedure
+
+    resources_by_path = {r.path: r for r in getattr(artifact, "resources", ())}
+    out: list[str] = []
+    for ref in references:
+        resource = resources_by_path.get(ref.resource_path)
+        if resource is None:
+            continue  # the extractor already filtered non-real paths; defense in depth
+        raw_url = f"https://raw.githubusercontent.com/{artifact.repository}/{artifact.commit}/{ref.resource_path}"
+        artifact_id = await _preserve_script_artifact(
+            pool, artifact, resource, raw_url, created_by=created_by, role=ref.role)
+        verb = _REFERENCE_ROLE_GOAL_VERB.get(ref.role, "consult")
+        goal = ref.note or f"{verb} {ref.resource_path}"
+        locator = {k: v for k, v in {
+            "source_id": getattr(artifact, "source_id", None) or artifact.uri, "uri": raw_url,
+            "path": ref.resource_path, "commit": getattr(artifact, "commit", None),
+            "content_hash": resource.sha256, "granularity": "document"}.items() if v}
+        step = {
+            "order": 0, "description": f"Consult {ref.resource_path}", "goal": goal,
+            "source_locator": locator,
+            # No `binding`: this is retrievable context, never executed (db/98).
+        }
+        try:
+            result = await capture_procedure(
+                pool, name=f"{artifact.source_id}:{ref.resource_path}",
+                goal=goal, steps=[step], provenance=provenance, scope_type="global", created_by=created_by,
+                goal_embedder=embedder, goal_adjudication_client=client,
+                procedure_dedup=True, source_key=f"skill-reference:{artifact.content_hash}:{ref.resource_path}",
+                source_locator=locator, require_source_locators=True,
+                source_artifacts=[{"artifact_id": artifact_id, "path": ref.resource_path, "role": ref.role, "execution_allowed": False}],
+            )
+        except GoalQualityRejected:
+            continue  # a low-quality goal rejects only this resource's procedure (ingestion.md Sec 20)
         out.append(str(result["procedure_id"]))
     return out
 
@@ -2280,6 +2369,7 @@ async def compile_skill_artifact(
     procedure_ids: list[str] = []
     version_row_ids: list[str] = []
     script_procedure_ids: list[str] = []
+    reference_procedure_ids: list[str] = []
     artifact_ids: list[str] = []
     all_document_claim_ids: list[str] = []
     all_document_claim_evidence_ids: list[str] = []
@@ -2412,10 +2502,15 @@ async def compile_skill_artifact(
         screening_decision_ids = decision_ids
         all_document_claim_ids.extend(claim_ids)
 
-        # Bundled scripts become one-step procedures (once per document, on its first procedure's turn).
+        # Bundled scripts/references become one-step procedures (once per document, on its
+        # first procedure's turn).
         if i == 0:
             script_procedure_ids.extend(await _persist_script_procedures(
                 pool, artifact, scripts=extracted.implementations, created_by=created_by,
+                provenance=provenance, embedder=embedder, client=client,
+            ))
+            reference_procedure_ids.extend(await _persist_reference_resources(
+                pool, artifact, references=extracted.reference_resources, created_by=created_by,
                 provenance=provenance, embedder=embedder, client=client,
             ))
 
@@ -2505,6 +2600,7 @@ async def compile_skill_artifact(
         injection_screened=bool(injection_signals),
         reason=screen_reason or (admission.reason if quarantined else None),
         script_procedure_ids=script_procedure_ids,
+        reference_procedure_ids=reference_procedure_ids,
         dependency_count=0,
         artifact_block_ids=first_artifact_block_ids,
         block_observation_ids=first_block_observation_ids,
@@ -2596,6 +2692,7 @@ async def run_skill_ingestion(
         # etc. (a screened doc is normally also `accepted`).
         "screened": 0,
         "script_procedures": 0,
+        "reference_procedures": 0,
         "procedure_dependencies": 0,
         # Admission gate (this pass). `admission_rejected` overlaps
         # `rejected` (every admission-gate reject IS a rejected outcome,
@@ -2678,6 +2775,7 @@ async def run_skill_ingestion(
             metrics["errors"] += 1
             continue
         metrics["script_procedures"] += len(outcome.script_procedure_ids)
+        metrics["reference_procedures"] += len(outcome.reference_procedure_ids)
         metrics["procedure_dependencies"] += outcome.dependency_count
         # `candidates` counts every artifact that reached the compiler,
         # rejected ones included (brief section 14: candidates == accepted +
