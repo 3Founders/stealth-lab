@@ -1,4 +1,4 @@
-import { apiGet, type ApiState } from "@/lib/api";
+import { apiGet, apiPost, type ApiState } from "@/lib/api";
 
 /**
  * Typed reads for the Problems → Goal → Procedure surface. Every shape here mirrors what
@@ -59,8 +59,20 @@ export interface Evaluation extends Row {
   completed_at?: string | null;
 }
 
+/**
+ * Canonical evidence trust summary (backend: app.services.evidence_trust.summarize).
+ * success_count/failure_count are kept for older readers but now mean
+ * VERIFIED specifically — verified_success/verified_failure are the same
+ * numbers under their honest names; claimed_success/unknown are real,
+ * separate buckets, never folded into "success".
+ */
 export interface EvidenceSummary {
   total?: number;
+  outcome_bearing_total?: number;
+  unknown?: number;
+  claimed_success?: number;
+  verified_success?: number;
+  verified_failure?: number;
   success_count?: number;
   failure_count?: number;
 }
@@ -137,25 +149,39 @@ export function settled(states: ApiState<unknown>[]): boolean {
 }
 
 /**
- * Contextual rank + verification bucket for a Procedure within one Goal's comparison list.
- * Derived entirely from real fields already on ProcedureDetail (verification_state,
- * evidence_summary) — never a claim of universal ranking, only "best fit we can see for
- * this goal, from what's recorded so far."
+ * Ranking is now computed by the backend ONLY (GET /v1/economy/goals/{id}/procedures/ranked
+ * — app/economy/ranking.py, wrapping the pre-existing Wilson-based capability estimator).
+ * The client-side rankScore/verificationBucket heuristic that used to live here is removed —
+ * it was a third, less rigorous ranking implementation alongside the backend's real one and
+ * the older capability estimator; keeping it would mean the frontend could disagree with the
+ * backend about which way is "best". See getRankedProcedures below.
  */
-export function verificationBucket(p: ProcedureDetail): "Verified" | "Candidate" | "Needs evidence" {
-  if (p.verification_state === "verified") return "Verified";
-  const total = p.evidence_summary?.total ?? 0;
-  if (total === 0) return "Needs evidence";
-  return "Candidate";
+export interface RankedProcedure {
+  procedure_row_id: string;
+  procedure_id: string;
+  version: number;
+  display_name?: string | null;
+  display_description?: string | null;
+  applicability_summary?: string | null;
+  created_by?: string | null;
+  bucket: "verified" | "candidate" | "needs_evidence" | "verified_failure";
+  bucket_label: string;
+  rank: number;
+  of: number;
+  wilson_lower_bound: number;
+  wilson_upper_bound: number;
+  evidence_count: number;
+  success_count: number;
+  independent_groups: number;
+  cost?: Row;
+  context_matched: boolean;
 }
 
-export function rankScore(p: ProcedureDetail): number {
-  const ev = p.evidence_summary;
-  const success = ev?.success_count ?? 0;
-  const failure = ev?.failure_count ?? 0;
-  const verified = p.verification_state === "verified" ? 1000 : 0;
-  return verified + success * 10 - failure * 4;
-}
+export const getRankedProcedures = (goalId: string, contextKey?: string, signal?: AbortSignal) =>
+  apiGet<{ goal_id: string; context_key: string | null; note: string; ranked: RankedProcedure[] }>(
+    `/v1/economy/goals/${j(goalId)}/procedures/ranked${contextKey ? `?context_key=${encodeURIComponent(contextKey)}` : ""}`,
+    signal,
+  );
 
 /** Coarse, honest relative time. Never invents a date: no input → no output. */
 export function timeAgo(iso?: string | null): string | null {
@@ -196,12 +222,114 @@ export interface ProblemStats {
 
 /** One real-data rollup per Problem, built from /solutions and /evaluations. No number here is invented. */
 export async function getProblemStats(id: string, signal?: AbortSignal): Promise<ProblemStats | null> {
-  const [sol, ev] = await Promise.all([getProblemSolutions(id, signal), getProblemEvaluations(id, signal)]);
-  if (sol.kind !== "ok" && ev.kind !== "ok") return null;
+  const [sol, ev, subs] = await Promise.all([
+    getProblemSolutions(id, signal), getProblemEvaluations(id, signal), listProcedureSubmissions(id, signal),
+  ]);
+  if (sol.kind !== "ok" && ev.kind !== "ok" && subs.kind !== "ok") return null;
   const ways = sol.kind === "ok" ? sol.data.solutions.filter((s) => s.target_table === "procedures").length : 0;
   const evals = ev.kind === "ok" ? ev.data.evaluations : [];
   const verifiedRuns = evals.filter((e) => e.aggregate_result === "pass").reduce((n, e) => n + (e.run_count ?? 0), 0);
-  const stamps = evals.map((e) => e.completed_at ?? e.created_at).filter(Boolean) as string[];
+  // Recent activity = the most recent of: an evaluation completing, or a
+  // procedure/benchmark submission arriving — real timestamps from real
+  // rows (§11), not a fabricated popularity score.
+  const evalStamps = evals.map((e) => e.completed_at ?? e.created_at).filter(Boolean) as string[];
+  const subStamps = subs.kind === "ok" ? (subs.data.submissions.map((s) => s.created_at as string).filter(Boolean)) : [];
+  const stamps = [...evalStamps, ...subStamps];
   const lastActivity = stamps.length ? stamps.sort().at(-1)! : null;
   return { ways, verifiedRuns, lastActivity };
 }
+
+// ---------------------------------------------------------------------------
+// Economy: submissions, ranking already above, contributors, Credits, Standing.
+// All authenticated writes go through apiPost (lib/api.ts), which attaches
+// the session token (lib/session.ts) and never sends an identity field the
+// server would trust — the backend derives the acting identity itself.
+// ---------------------------------------------------------------------------
+
+export interface SubmissionResult extends Row {
+  id: string;
+  status: "candidate" | "needs_review" | "accepted" | "rejected";
+  status_reason?: string | null;
+  procedure_row_id?: string | null;
+  benchmark_id?: string | null;
+  duplicate_score?: number | null;
+  parent_similarity_score?: number | null;
+}
+
+export interface ProcedureSubmissionInput {
+  goal_id: string;
+  submission_type: "new" | "improvement";
+  name: string;
+  steps: string[];
+  rationale?: string;
+  applicability_context?: Row;
+  constraints?: string[];
+  implementation_requirements?: Row;
+  supporting_evidence?: string[];
+  parent_procedure_row_id?: string;
+  provenance?: string;
+  visibility?: "public" | "private";
+}
+
+export interface BenchmarkSubmissionInput {
+  goal_id: string;
+  name: string;
+  description?: string;
+  success_criteria?: Row;
+  invariants?: string[];
+  verification_method?: Row;
+  provenance?: string;
+  visibility?: "public" | "private";
+}
+
+export const createProcedureSubmission = (body: ProcedureSubmissionInput, signal?: AbortSignal) =>
+  apiPost<SubmissionResult>("/v1/economy/procedure-submissions", body, signal);
+
+export const createBenchmarkSubmission = (body: BenchmarkSubmissionInput, signal?: AbortSignal) =>
+  apiPost<SubmissionResult>("/v1/economy/benchmark-submissions", body, signal);
+
+export const listProcedureSubmissions = (goalId: string, signal?: AbortSignal) =>
+  apiGet<{ submissions: SubmissionResult[] }>(`/v1/economy/procedure-submissions?goal_id=${j(goalId)}&limit=20`, signal);
+
+export interface GoalContributor {
+  contributor_id: string;
+  procedures: number;
+  improvements: number;
+  benchmarks: number;
+}
+
+/** Canonical goal-level contributor view — server-computed from accepted
+ * submissions, never re-tallied client-side from fetched procedures. */
+export const getGoalContributors = (goalId: string, signal?: AbortSignal) =>
+  apiGet<{ goal_id: string; note: string; contributors: GoalContributor[] }>(`/v1/economy/goals/${j(goalId)}/contributors`, signal);
+
+export interface StandingResult {
+  contributor_id: string;
+  standing_score: number;
+  accepted_new_procedures: number;
+  accepted_improvements: number;
+  accepted_benchmarks: number;
+  verified_independent_outcomes: number;
+  reliable_evidence_count: number;
+  method: string;
+}
+
+export const getStanding = (contributorId: string, signal?: AbortSignal) =>
+  apiGet<StandingResult>(`/v1/economy/contributors/${j(contributorId)}/standing`, signal);
+
+export const getCreditsBalance = (contributorId: string, signal?: AbortSignal) =>
+  apiGet<{ contributor_id: string; balance: number }>(`/v1/economy/contributors/${j(contributorId)}/credits`, signal);
+
+export interface CreditEvent extends Row {
+  id: string;
+  contributor_id: string;
+  amount: number;
+  reason: "new_procedure" | "improvement" | "verified_reuse" | "clawback" | "admin_adjustment";
+  goal_id?: string | null;
+  procedure_row_id?: string | null;
+  reversal_of_event_id?: string | null;
+  created_at: string;
+}
+
+export const getCreditsHistory = (contributorId: string, signal?: AbortSignal) =>
+  apiGet<{ contributor_id: string; events: CreditEvent[] }>(`/v1/economy/contributors/${j(contributorId)}/credits/history?limit=50`, signal);

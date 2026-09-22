@@ -13,7 +13,7 @@ from app.services import auth_context as _ac
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
-from app.api.deps import get_scope, require_scopes
+from app.api.deps import AuthenticatedPrincipal, get_scope, require_authenticated_user, require_scopes
 from app.services import product_model as pm
 from app.services.access import AccessScope
 
@@ -121,7 +121,16 @@ async def get_problem(problem_id: str, pool=Depends(get_pool),
 @router.get("/problems/{problem_id}/solutions")
 async def problem_solutions(problem_id: str, pool=Depends(get_pool),
                             scope: AccessScope = Depends(get_scope)) -> dict[str, Any]:
-    return {"solutions": await pm.list_problem_solutions(pool, problem_id, scope=scope)}
+    # B1 hardening, defense in depth: the public Goal page reads this
+    # endpoint directly. Even though the association API can no longer
+    # itself create a 'proposed' row that later gets silently promoted,
+    # this filter means an unreviewed association could NEVER surface
+    # here even if some other internal writer ever created one at a
+    # status other than 'active' -- 'active' is set in exactly one place,
+    # app.economy.submissions.review_procedure_submission/
+    # review_benchmark_submission, once a human has accepted the submission.
+    all_solutions = await pm.list_problem_solutions(pool, problem_id, scope=scope)
+    return {"solutions": [s for s in all_solutions if s.get("status") == "active"]}
 
 
 @router.get("/problems/{problem_id}/benchmarks")
@@ -155,13 +164,51 @@ async def create_benchmark(body: BenchmarkIn, pool=Depends(get_pool),
         raise HTTPException(status_code=422, detail=str(e))
 
 
-@router.post("/benchmarks/{benchmark_id}/freeze", dependencies=[Depends(require_scopes(_ac.KNOWLEDGE_WRITE))])
-async def freeze_benchmark(benchmark_id: str, pool=Depends(get_pool),
-                           scope: AccessScope = Depends(get_scope)) -> dict[str, Any]:
+# B3 hardening (audit finding: any authenticated user, holding only the
+# baseline KNOWLEDGE_WRITE scope, could freeze ANY benchmark -- and the
+# Goal page reads frozen==verified). Freezing is now: (1) a reviewer-only
+# operation (KNOWLEDGE_PUBLISH, the same scope every other review action
+# in this codebase already requires), (2) only possible once the
+# benchmark has actually been through the canonical review workflow
+# (app.economy.submissions.review_benchmark_submission has accepted a
+# benchmark_submissions row pointing at it) -- a benchmark created
+# directly via POST /v1/problems/benchmarks (still just a 'draft' row,
+# unchanged) has no such row and can never be frozen through this route,
+# and (3) audited: actor/target/reason recorded via the same
+# record_audit_event ticket-09 private-object-creation already uses.
+@router.post("/benchmarks/{benchmark_id}/freeze", dependencies=[Depends(require_scopes(_ac.KNOWLEDGE_PUBLISH))])
+async def freeze_benchmark(
+    benchmark_id: str, pool=Depends(get_pool), scope: AccessScope = Depends(get_scope),
+    principal: AuthenticatedPrincipal = Depends(require_authenticated_user),
+) -> dict[str, Any]:
+    accepted_submission = await pool.fetchval(
+        "SELECT id FROM benchmark_submissions WHERE benchmark_id = $1 AND status = 'accepted' LIMIT 1",
+        benchmark_id,
+    )
+    if accepted_submission is None:
+        raise HTTPException(
+            status_code=409,
+            detail="this benchmark has no accepted submission on record -- it must go through "
+                   "the contribution review workflow (POST /v1/economy/benchmark-submissions, "
+                   "then a reviewer's .../review) before it can be frozen",
+        )
     try:
-        return await pm.freeze_benchmark(pool, benchmark_id)
+        result = await pm.freeze_benchmark(pool, benchmark_id)
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
+    try:
+        from app.services.audit import record_audit_event
+
+        await record_audit_event(
+            pool, actor_subject=principal.subject, action="benchmark_frozen",
+            object_type="benchmark", object_id=benchmark_id, actor_user_id=principal.user_id,
+            details={"submission_id": str(accepted_submission)},
+        )
+    except Exception:  # noqa: BLE001 -- audit logging is additive, never fatal to the real action
+        import logging
+
+        logging.getLogger(__name__).warning("audit write failed for benchmark_frozen")
+    return result
 
 
 @router.get("/benchmarks/{benchmark_id}")
@@ -174,11 +221,41 @@ async def get_benchmark(benchmark_id: str, pool=Depends(get_pool),
 
 
 # ---- Solution -----------------------------------------------------------
+# B1 hardening (audit finding: this endpoint was a second, unreviewed path
+# to a "live" association -- a caller could set status='active' and an
+# arbitrary `proposer` directly, with no relationship at all to
+# app.economy.submissions's procedure_submissions/benchmark_submissions
+# review workflow). This is now the ONE public entry point for a
+# client-initiated association, and it can only ever create a 'proposed'
+# one: identity is server-derived, and status is forced regardless of
+# what the body asks for. It is NOT a second path to 'active' -- the only
+# way a solution reaches 'active' (and therefore appears on a Goal page /
+# is ranked -- see list_problem_solutions's status filter below) is
+# app.economy.submissions.review_procedure_submission/
+# review_benchmark_submission calling app.services.product_model.
+# associate_solution DIRECTLY (a Python call, not this HTTP route) once a
+# human has accepted the submission.
 @router.post("/solutions/associate", dependencies=[Depends(require_scopes(_ac.KNOWLEDGE_WRITE))])
-async def associate_solution(body: SolutionIn, pool=Depends(get_pool),
-                             scope: AccessScope = Depends(get_scope)) -> dict[str, Any]:
+async def associate_solution(
+    body: SolutionIn, pool=Depends(get_pool), scope: AccessScope = Depends(get_scope),
+    principal: AuthenticatedPrincipal = Depends(require_authenticated_user),
+) -> dict[str, Any]:
+    # Never let a public call downgrade an association the canonical
+    # review workflow already made 'active' -- the ON CONFLICT upsert
+    # below would otherwise let anyone "un-list" an accepted Procedure/
+    # Benchmark just by re-posting the same association.
+    existing = await pool.fetchrow(
+        "SELECT * FROM solutions WHERE problem_id=$1 AND solution_type=$2 AND target_id=$3 AND version=$4",
+        body.problem_id, body.solution_type, body.target_id, body.version,
+    )
+    if existing is not None and existing["status"] == "active":
+        return dict(existing)
+
+    payload = body.model_dump()
+    payload["proposer"] = principal.subject
+    payload["status"] = "proposed"
     try:
-        return await pm.associate_solution(pool, **body.model_dump())
+        return await pm.associate_solution(pool, **payload)
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e))
 

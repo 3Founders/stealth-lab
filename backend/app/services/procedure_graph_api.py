@@ -59,6 +59,7 @@ from app.execution.procedure_graph import (
     ProcedureCompositionError,
     expand_procedure_steps,
 )
+from app.services import evidence_trust as _evidence_trust
 from app.services.access import AccessScope, TenantScope, scope_predicates, visibility_predicate
 from app.services.applicability import PROCEDURE_COLS_NO_HEAVY
 from app.services.procedure_extraction.capability import (
@@ -82,7 +83,13 @@ from app.services.retrieval_document import (
 # view aggregates per (procedure_id, version) and this module needs the
 # individual rows too (for independence_group counting and the raw
 # evidence listing endpoint).
-_OUTCOME_BEARING_EVIDENCE_TYPES = ("execution_result", "reproduction")
+#
+# CANONICAL SOURCE: this tuple now lives in app.services.evidence_trust
+# (the one shared outcome-trust module -- see its docstring for why) and
+# is imported (see the top-of-file import), not redefined, so this
+# estimator and the Procedure-detail/Goal-page evidence_summary can never
+# quietly drift apart on "what counts as real evidence" again.
+_OUTCOME_BEARING_EVIDENCE_TYPES = _evidence_trust.OUTCOME_BEARING_EVIDENCE_TYPES
 
 
 # ---------------------------------------------------------------------------
@@ -285,8 +292,13 @@ async def get_procedure_detail(
     claims = await get_procedure_claims(pool, procedure_row_id, scope=scope)
     evidence = await get_procedure_evidence(pool, procedure_row_id, scope=scope)
 
-    success_count = sum(1 for e in evidence if e.get("outcome_status") == "success")
-    failure_count = sum(1 for e in evidence if e.get("outcome_status") == "failure")
+    # Canonical trust classification (app.services.evidence_trust) -- NOT a
+    # raw count of rows whose outcome_status says "success". success_count/
+    # failure_count below mean VERIFIED_SUCCESS/VERIFIED_FAILURE
+    # specifically, so a caller (the Procedure page's "Verified runs"
+    # label, ranking) reading these two names is now telling the truth
+    # without needing its own code changed.
+    evidence_summary = _evidence_trust.summarize(evidence)
 
     executor_kinds = _advertised_executor_kinds(procedure)
 
@@ -321,11 +333,7 @@ async def get_procedure_detail(
         "t_invalid": procedure.get("t_invalid"),
         "t_created": procedure.get("t_created"),
         "claims": claims,
-        "evidence_summary": {
-            "total": len(evidence),
-            "success_count": success_count,
-            "failure_count": failure_count,
-        },
+        "evidence_summary": evidence_summary,
         "executor_kinds": executor_kinds,
     }
 

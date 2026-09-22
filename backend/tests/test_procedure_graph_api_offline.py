@@ -23,6 +23,7 @@ from app.api.procedures import router as procedures_router
 from app.api.solutions import router as solutions_router
 from app.execution.procedure_graph import UnresolvedSubprocedureRef
 from app.services.access import AccessScope
+from app.services.procedures import OUTCOME_WRITER_STAMP
 from app.services.procedure_graph_api import (
     get_procedure_claims,
     get_procedure_detail,
@@ -105,6 +106,13 @@ def _evidence(evidence_id, **overrides):
         "tenant_id": "00000000-0000-0000-0000-000000000001",
         "t_valid": NOW,
         "t_invalid": None,
+        # Real execution_result evidence is only ever written by the
+        # trusted execution-outcome pipeline (app.services.procedures.
+        # record_execution_outcome) -- app.services.evidence_trust now
+        # requires this to count as VERIFIED, not just CLAIMED. Default
+        # here matches what a real row of this evidence_type looks like;
+        # a test asserting the CLAIMED-only path overrides it explicitly.
+        "created_by": OUTCOME_WRITER_STAMP,
     }
     row.update(overrides)
     return row
@@ -191,7 +199,16 @@ def test_get_procedure_detail_composes_claims_and_evidence_summary():
     assert detail["procedure_id"] == PROC_ID
     assert len(detail["claims"]) == 1
     assert detail["claims"][0]["id"] == CLAIM_ID
-    assert detail["evidence_summary"] == {"total": 2, "success_count": 1, "failure_count": 1}
+    # app.services.evidence_trust.summarize's canonical shape (knowledge/
+    # verification consolidation pass): success_count/failure_count now
+    # mean VERIFIED specifically -- both fixture rows are evidence_type
+    # 'execution_result' written by OUTCOME_WRITER_STAMP (see _evidence's
+    # default), so both count as verified here.
+    assert detail["evidence_summary"] == {
+        "total": 2, "outcome_bearing_total": 2,
+        "unknown": 0, "claimed_success": 0, "verified_success": 1, "verified_failure": 1,
+        "success_count": 1, "failure_count": 1,
+    }
     assert detail["executor_kinds"] == []
 
 

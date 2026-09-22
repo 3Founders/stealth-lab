@@ -4,27 +4,41 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import StateNotice from "@/components/NotConnected";
 import {
-  getProblem, getProblemBenchmarks, getProblemSolutions, getProcedure, humanize,
-  rankScore, verificationBucket, type Benchmark, type Problem, type ProcedureDetail, type Solution,
+  getGoalContributors, getProblem, getProblemBenchmarks, getProblemSolutions, getProcedure, getRankedProcedures, humanize,
+  type Benchmark, type GoalContributor, type Problem, type ProcedureDetail, type RankedProcedure,
 } from "@/lib/kel-api";
 import { categoryOf } from "@/lib/mock-adapter";
 import type { ApiState } from "@/lib/api";
 
-const bucketToStatus: Record<string, string> = { Verified: "verified", Candidate: "candidate", "Needs evidence": "unknown" };
+const bucketToStatus: Record<string, string> = {
+  verified: "verified", candidate: "candidate", needs_evidence: "unknown", verified_failure: "failed",
+};
 
 export default function GoalPage() {
   const { id } = useParams<{ id: string }>();
   const [problem, setProblem] = useState<ApiState<Problem>>({ kind: "loading" });
   const [benchmarks, setBenchmarks] = useState<ApiState<Benchmark[]>>({ kind: "loading" });
   const [procedures, setProcedures] = useState<ApiState<ProcedureDetail[]>>({ kind: "loading" });
+  // The ordered, bucketed list of Ways is computed by the backend ONLY
+  // (app/economy/ranking.py) — this page never re-derives rank/bucket
+  // client-side. `procedures` above is fetched separately, only for
+  // claims aggregation below (not in the ranked response).
+  const [ranked, setRanked] = useState<ApiState<RankedProcedure[]>>({ kind: "loading" });
+  // Canonical Goal-level contributor view (app/api/economy.py's
+  // /goals/{id}/contributors) — computed server-side from accepted
+  // submissions, never re-tallied here from fetched procedures.
+  const [contributors, setContributors] = useState<ApiState<GoalContributor[]>>({ kind: "loading" });
 
   useEffect(() => {
     const ac = new AbortController();
     getProblem(id, ac.signal).then(setProblem);
     getProblemBenchmarks(id, ac.signal).then((r) => setBenchmarks(r.kind === "ok" ? { kind: "ok", data: r.data.benchmarks ?? [] } : (r as ApiState<Benchmark[]>)));
+    getRankedProcedures(id, undefined, ac.signal).then((r) => setRanked(r.kind === "ok" ? { kind: "ok", data: r.data.ranked } : (r as ApiState<RankedProcedure[]>)));
+    getGoalContributors(id, ac.signal).then((r) => setContributors(r.kind === "ok" ? { kind: "ok", data: r.data.contributors } : (r as ApiState<GoalContributor[]>)));
 
     // Procedures for this goal come through the Solution association (problem -> solution ->
-    // procedure); each one is then fetched for its real verification/evidence/claims detail.
+    // procedure); each one is then fetched for its real claims (ranking/evidence come from
+    // getRankedProcedures above, not re-derived here).
     (async () => {
       const sol = await getProblemSolutions(id, ac.signal);
       if (sol.kind !== "ok") return setProcedures(sol as ApiState<ProcedureDetail[]>);
@@ -47,24 +61,6 @@ export default function GoalPage() {
     return [...seen.values()];
   }, [procedures]);
 
-  const ranked = useMemo(() => {
-    if (procedures.kind !== "ok") return [];
-    return procedures.data
-      .map((p) => ({ p, bucket: verificationBucket(p), score: rankScore(p) }))
-      .sort((a, b) => b.score - a.score);
-  }, [procedures]);
-
-  const contributors = useMemo(() => {
-    if (procedures.kind !== "ok") return [];
-    const counts = new Map<string, number>();
-    for (const p of procedures.data) {
-      const who = (p.created_by as string) || null;
-      if (!who) continue;
-      counts.set(who, (counts.get(who) ?? 0) + 1);
-    }
-    return [...counts.entries()].sort((a, b) => b[1] - a[1]);
-  }, [procedures]);
-
   if (problem.kind !== "ok") {
     return (
       <section className="frame grid" style={{ paddingTop: 160, paddingBottom: 120 }}>
@@ -73,8 +69,9 @@ export default function GoalPage() {
     );
   }
   const p = problem.data;
-  const groups: Array<{ label: "Verified" | "Candidate" | "Needs evidence" }> = [
-    { label: "Verified" }, { label: "Candidate" }, { label: "Needs evidence" },
+  const groups: Array<{ bucket: RankedProcedure["bucket"]; label: string }> = [
+    { bucket: "verified", label: "Verified" }, { bucket: "candidate", label: "Candidate" },
+    { bucket: "needs_evidence", label: "Needs evidence" }, { bucket: "verified_failure", label: "Verified failure" },
   ];
 
   return (
@@ -162,35 +159,36 @@ export default function GoalPage() {
             <p className="small dim">Ranked for this goal’s recorded evidence — not a universal “best.”</p>
           </div>
           <div style={{ display: "flex", gap: 10 }}>
-            <Link href="/sign-in" className="btn-ink"><span>Contribute a way</span><span className="sq" aria-hidden="true">→</span></Link>
-            <Link href="/sign-in" className="btn-ink" style={{ background: "transparent", color: "var(--ink)", border: "1px solid var(--rule-strong)" }}>
+            <Link href={`/problems/${id}/contribute/way`} className="btn-ink"><span>Contribute a way</span><span className="sq" aria-hidden="true">→</span></Link>
+            <Link href={`/problems/${id}/contribute/benchmark`} className="btn-ink" style={{ background: "transparent", color: "var(--ink)", border: "1px solid var(--rule-strong)" }}>
               <span>Contribute a benchmark</span><span className="sq" aria-hidden="true">→</span>
             </Link>
           </div>
         </div>
 
-        {procedures.kind === "ok" && ranked.length > 0 ? (
-          groups.map(({ label }) => {
-            const items = ranked.filter((r) => r.bucket === label);
+        {ranked.kind === "ok" && ranked.data.length > 0 ? (
+          groups.map(({ bucket, label }) => {
+            const items = ranked.data.filter((r) => r.bucket === bucket);
             if (items.length === 0) return null;
             return (
-              <div key={label} style={{ gridColumn: "1 / span 12" }}>
+              <div key={bucket} style={{ gridColumn: "1 / span 12" }}>
                 <div className="caption dim" style={{ margin: "20px 0 4px" }}>{label} · {items.length}</div>
                 <ul className="list" style={{ marginTop: 0 }}>
-                  {items.map(({ p: pr, bucket }, i) => (
-                    <li key={pr.id}>
-                      <Link href={`/problems/${id}/procedures/${pr.id}`}>
-                        <span className="n">#{i + 1}</span>
+                  {items.map((pr) => (
+                    <li key={pr.procedure_row_id}>
+                      <Link href={`/problems/${id}/procedures/${pr.procedure_row_id}`}>
+                        <span className="n">#{pr.rank}</span>
                         <div>
-                          <h3>{pr.display_name || pr.name || "Untitled procedure"}</h3>
+                          <h3>{pr.display_name || "Untitled procedure"}</h3>
                           {pr.display_description && <p className="desc">{pr.display_description}</p>}
                           <div className="meta">
                             {pr.applicability_summary && <span>{pr.applicability_summary}</span>}
-                            <span>{(pr.evidence_summary?.success_count ?? 0)} successful · {(pr.evidence_summary?.failure_count ?? 0)} failed</span>
+                            {pr.context_matched && <span>matches your context</span>}
+                            <span>{pr.success_count} verified · {pr.evidence_count} recorded</span>
                             {pr.created_by && <span>by {pr.created_by}</span>}
                           </div>
                         </div>
-                        <span className="status" data-s={bucketToStatus[bucket]}>{bucket}</span>
+                        <span className="status" data-s={bucketToStatus[bucket]}>{pr.bucket_label}</span>
                       </Link>
                     </li>
                   ))}
@@ -199,20 +197,25 @@ export default function GoalPage() {
             );
           })
         ) : (
-          <StateNotice state={procedures} empty={procedures.kind === "ok" ? "No procedures are recorded for this goal yet." : undefined} />
+          <StateNotice state={ranked} empty={ranked.kind === "ok" ? "No procedures are recorded for this goal yet." : undefined} />
         )}
 
         {/* contributors */}
-        {contributors.length > 0 && (
+        {contributors.kind === "ok" && contributors.data.length > 0 && (
           <>
             <div style={{ gridColumn: "1 / span 12", marginTop: 16 }}>
               <h2 className="h3" style={{ marginBottom: 4 }}>Who’s contributed here</h2>
               <p className="small dim">Contribution to this goal specifically, not a site-wide ranking.</p>
             </div>
             <div className="run-ledger">
-              {contributors.slice(0, 8).map(([who, n]) => (
-                <div key={who}><b>{who}</b><span>{n} procedure{n === 1 ? "" : "s"} on this goal</span></div>
-              ))}
+              {contributors.data.slice(0, 8).map((c) => {
+                const parts = [
+                  c.procedures ? `${c.procedures} way${c.procedures === 1 ? "" : "s"}` : null,
+                  c.improvements ? `${c.improvements} improvement${c.improvements === 1 ? "" : "s"}` : null,
+                  c.benchmarks ? `${c.benchmarks} benchmark${c.benchmarks === 1 ? "" : "s"}` : null,
+                ].filter(Boolean);
+                return <div key={c.contributor_id}><b>{c.contributor_id}</b><span>{parts.join(", ")} on this goal</span></div>;
+              })}
             </div>
           </>
         )}

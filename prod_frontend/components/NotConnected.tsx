@@ -1,7 +1,17 @@
+import Link from "next/link";
 import type { ApiState } from "@/lib/api";
 
 /** Honest empty/failed states shared by data-backed pages. */
 export default function StateNotice({ state, empty }: { state: ApiState<unknown>; empty?: string }) {
+  if (state.kind === "unauthenticated")
+    return (
+      <div className="empty">
+        <b>Sign in to see this.</b>
+        <p>This is your own private data — nothing is shown until you're signed in. <Link href="/sign-in" style={{ textDecoration: "underline" }}>Sign in</Link>.</p>
+      </div>
+    );
+  if (state.kind === "forbidden")
+    return (<div className="empty"><b>Not available.</b><p>{state.message}</p></div>);
   if (state.kind === "unconfigured")
     return (
       <div className="empty">

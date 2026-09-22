@@ -2119,10 +2119,16 @@ async def find_best_way(task_description: str, ctx: Context,
     # "gave up cleanly", not "succeeded".
     run_succeeded = graph_result.outcome == "success" and bool(combined_patch)
     if matched_procedure:
+        # Durable, sandboxed tier-2: graph_result comes from
+        # run_graph_durably (a real execution_runs row) -- explicitly
+        # marked verified, not merely relying on the default (B2
+        # hardening: report_execution's self-report path is the only
+        # caller that must NOT set this).
         await record_execution_outcome(
             pool, procedure_row_id=str(matched_procedure["id"]), success=run_succeeded,
             context_key=os.path.basename(os.path.abspath(repo_path)),
             steps_used=total_calls,
+            execution_verified=True,
         )
 
     # NOTE: the immutable `executions` row is appended by durable_run's
@@ -2506,7 +2512,36 @@ async def reproduce_procedure(procedure_id: str, repo_path: str, ctx: Context,
             context_key=context_key,
             steps_used=total_calls,
             evidence_type="reproduction",
+            execution_verified=True,  # durable, sandboxed (run_graph_durably) -- explicit, not merely the default
         )
+
+        # Real Usage Event (Run -> Evidence -> Verification -> Usage loop):
+        # this is THE integration point "Try this way" points users at
+        # (the frontend's copy-block literally reads
+        # reproduce_procedure(procedure_id=...)). The usage event is
+        # recorded AFTER real execution, from the real execution_run
+        # (graph_result.run_id, durable/app.execution.durable_graph) and
+        # the real evidence row record_execution_outcome just wrote
+        # (updated["evidence_id"]) -- never a bare "this succeeded" claim.
+        # app.economy.verification.record_usage_event independently re-
+        # verifies both against `procedures`/`execution_runs`/`evidence`
+        # before it will call the outcome "verified" (see its own
+        # docstring) -- this call supplies the ids, it does not assert
+        # the trust itself. Best-effort: a failure here must never break
+        # the actual reproduce_procedure response the caller is waiting on.
+        try:
+            from app.economy.verification import record_usage_event as _record_usage_event
+
+            await _record_usage_event(
+                pool, procedure_row_id=procedure_id,
+                executor_subject=_resolve_caller_identity(fallback="reproduce_procedure"),
+                execution_run_id=graph_result.run_id, evidence_id=updated.get("evidence_id"),
+                context_key=context_key,
+            )
+        except Exception:  # noqa: BLE001 -- usage-event recording is additive, never fatal to the real run
+            import logging
+
+            logging.getLogger(__name__).exception("reproduce_procedure: failed to record usage event (execution itself still succeeded)")
 
         return {
             "run_succeeded": run_succeeded,
@@ -3084,10 +3119,22 @@ async def report_execution(procedure_id: str, success: bool, context_key: str, c
         )
 
     try:
+        # B2 hardening: this tool is, by its own docstring, a HOST SELF-
+        # REPORT -- no durable execution_runs row backs it (unlike
+        # find_best_way/reproduce_procedure, which run through
+        # app.execution.durable_graph.run_graph_durably). `success` here
+        # is a bare caller-asserted boolean, not something this process
+        # observed. execution_verified=False is what keeps that claim
+        # from being read as VERIFIED_SUCCESS anywhere downstream
+        # (app.services.evidence_trust) or from promoting
+        # verification_state / feeding the circuit breaker / counting
+        # toward ranking's Wilson estimate -- see record_execution_
+        # outcome's own docstring for the exact mechanism.
         updated = await record_execution_outcome(
             pool, procedure_row_id=str(procedure["id"]), success=success,
             context_key=context_key, steps_used=steps_used,
             success_criteria=success_criteria, failure_class=failure_class,
+            execution_verified=False,
         )
     except Exception as exc:  # noqa: BLE001 -- a producer-side contract
         # violation (e.g. invariant #13's bare-success refusal, or an
@@ -3100,6 +3147,7 @@ async def report_execution(procedure_id: str, success: bool, context_key: str, c
         "verification_state": updated["verification_state"],
         "availability": updated["availability"],
         "verification_stats": updated["verification_stats"],
+        "note": "recorded as a self-report (CLAIMED, not verified) -- see keळ docs on verification layers",
     }
 
     # B18 fix: host-executed learning loop. Gated on success AND real

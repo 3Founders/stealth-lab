@@ -4,6 +4,7 @@ import Image from "next/image";
 import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
 import { track } from "@/lib/analytics";
+import { getSession } from "@/lib/session";
 
 const links = [
   { href: "/", label: "Home" },
@@ -23,6 +24,13 @@ export default function Header() {
   const pathname = usePathname();
   const [open, setOpen] = useState(false);
   const [aboutInView, setAboutInView] = useState(false);
+  // Read only after mount (localStorage isn't available during SSR) --
+  // starts signed-out, then reflects the real session once known. Never
+  // more than a display convenience: every page this points at still
+  // gates on the real server response (401 -> StateNotice's own honest
+  // "sign in" state), not on this alone.
+  const [subject, setSubject] = useState<string | null>(null);
+  useEffect(() => { setSubject(getSession()?.subject ?? null); }, [pathname]);
 
   // Mirrors SectionRail's own scroll-tracking: the "About" nav link should read as
   // active while its section is on screen, the same way SectionRail's dots already do --
@@ -81,14 +89,22 @@ export default function Header() {
             <Image src="/kel-wordmark.png" alt="keळ" width={800} height={440} priority style={{ height: 54, width: "auto" }} />
           </Link>
           <nav aria-label="Primary" className="nav-links">{links.map(item)}</nav>
-          <Link href="/sign-in" className="btn-ink desk" onClick={() => track("sign_in_click", { where: "header" })}>Sign in <Arrow /></Link>
+          {subject ? (
+            <Link href="/account/credits" className="btn-ink desk">Credits <Arrow /></Link>
+          ) : (
+            <Link href="/sign-in" className="btn-ink desk" onClick={() => track("sign_in_click", { where: "header" })}>Sign in <Arrow /></Link>
+          )}
           <button className="btn-ink menu-btn" aria-expanded={open} aria-controls="nav-panel" onClick={() => setOpen(!open)}>
             {open ? "Close" : "Menu"}
           </button>
           {open && (
             <nav id="nav-panel" aria-label="Mobile" className="nav-panel">
               {links.map(item)}
-              <Link href="/sign-in" onClick={() => { setOpen(false); track("sign_in_click", { where: "menu" }); }}>Sign in</Link>
+              {subject ? (
+                <Link href="/account/credits" onClick={() => setOpen(false)}>Credits</Link>
+              ) : (
+                <Link href="/sign-in" onClick={() => { setOpen(false); track("sign_in_click", { where: "menu" }); }}>Sign in</Link>
+              )}
             </nav>
           )}
         </header>

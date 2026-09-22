@@ -314,6 +314,59 @@ async def request_evaluation(
 ) -> dict[str, Any]:
     eid = str(uuid7())
     async with tenant_transaction(pool, tenant_scope or _commons()) as conn:
+        # N1 hardening: problem_id/benchmark_id/solution_id/procedure_id/
+        # procedure_version are never trusted as a self-consistent bundle
+        # just because the client sent them together. solution_id and
+        # benchmark_id are resolved server-side and checked against
+        # problem_id, and (for procedure solutions) the real target
+        # procedure+version is resolved from the solution's target_id --
+        # not from whatever procedure_id/procedure_version the client
+        # separately supplied -- so a mismatched pairing can never be
+        # recorded, and downstream (the benchmark used/validated
+        # lifecycle, complete_evaluation's own lineage checks) can trust
+        # the Evaluation's own stored columns.
+        solution = await conn.fetchrow("SELECT * FROM solutions WHERE id = $1", solution_id)
+        if solution is None:
+            raise ValueError(f"solution {solution_id} not found")
+        if str(solution["problem_id"]) != str(problem_id):
+            raise ValueError(
+                f"solution {solution_id} belongs to problem {solution['problem_id']}, not {problem_id}"
+            )
+
+        benchmark = await conn.fetchrow("SELECT * FROM benchmarks WHERE id = $1", benchmark_id)
+        if benchmark is None:
+            raise ValueError(f"benchmark {benchmark_id} not found")
+        if str(benchmark["problem_id"]) != str(problem_id):
+            raise ValueError(
+                f"benchmark {benchmark_id} belongs to problem {benchmark['problem_id']}, not {problem_id}"
+            )
+
+        if solution["solution_type"] == "procedure":
+            # _SOLUTION_TARGET_COL: a procedure Solution's target_id IS the
+            # stable procedure_id already, not a version row id -- the live
+            # (t_invalid IS NULL) row's version is what an Evaluation pins.
+            resolved_procedure_id = str(solution["target_id"])
+            proc_row = await conn.fetchrow(
+                "SELECT version FROM procedures WHERE procedure_id = $1 AND t_invalid IS NULL",
+                solution["target_id"],
+            )
+            if proc_row is None:
+                raise ValueError(
+                    f"solution {solution_id} targets procedure {resolved_procedure_id} which has no live version"
+                )
+            resolved_procedure_version = proc_row["version"]
+            if procedure_id is not None and str(procedure_id) != resolved_procedure_id:
+                raise ValueError(
+                    f"procedure_id {procedure_id} does not match solution {solution_id}'s "
+                    f"actual procedure {resolved_procedure_id}"
+                )
+            if procedure_version is not None and procedure_version != resolved_procedure_version:
+                raise ValueError(
+                    f"procedure_version {procedure_version} does not match solution {solution_id}'s "
+                    f"actual procedure version {resolved_procedure_version}"
+                )
+            procedure_id, procedure_version = resolved_procedure_id, resolved_procedure_version
+
         r = await conn.fetchrow(
             "INSERT INTO evaluations (id, problem_id, benchmark_id, solution_id, procedure_id, "
             " procedure_version, environment, "
@@ -343,14 +396,67 @@ async def complete_evaluation(
     if not execution_ids:
         raise ValueError("cannot complete an evaluation with no linked executions (§16)")
     async with tenant_transaction(pool, tenant_scope or _commons()) as conn:
+        # B4 hardening: load the Evaluation FIRST -- its own problem_id/
+        # benchmark_id/procedure_id/procedure_version were fixed at
+        # request_evaluation() time and are never parameters of this
+        # call, so "does this evaluation belong to the right Benchmark/
+        # Goal" is already structurally true by construction. What is
+        # NOT structurally true, and what this hardening adds, is
+        # verifying the referenced executions actually belong to the
+        # SAME Procedure+version this evaluation was requested against.
+        evaluation = await conn.fetchrow("SELECT * FROM evaluations WHERE id = $1 FOR UPDATE", evaluation_id)
+        if evaluation is None:
+            raise ValueError(f"evaluation {evaluation_id} not found")
+        if evaluation["status"] == "completed":
+            # Idempotent (§34/H): a retry with the EXACT same execution
+            # set returns the already-completed row unchanged, never
+            # rewritten with a possibly-different result. A retry that
+            # names a different execution set is refused outright rather
+            # than silently overwriting a completed, immutable-by-intent
+            # result.
+            existing_exec_ids = {
+                str(r["execution_id"]) for r in
+                await conn.fetch("SELECT execution_id FROM evaluation_executions WHERE evaluation_id = $1", evaluation_id)
+            }
+            if existing_exec_ids == set(execution_ids):
+                return _row(evaluation)
+            raise ValueError(
+                f"evaluation {evaluation_id} is already completed and cannot be re-completed "
+                "with a different set of executions"
+            )
+
         found = await conn.fetch(
-            "SELECT id, outcome, started_at, ended_at FROM executions WHERE id = ANY($1::uuid[])",
+            "SELECT id, outcome, procedure_id, procedure_version, started_at, ended_at "
+            "FROM executions WHERE id = ANY($1::uuid[])",
             execution_ids,
         )
         found_ids = {str(r["id"]) for r in found}
         missing = [x for x in execution_ids if x not in found_ids]
         if missing:
             raise ValueError(f"execution ids not found: {missing}")
+
+        # Every referenced execution must be of the SAME Procedure +
+        # version this Evaluation was requested against -- otherwise a
+        # caller could "prove" a benchmark passed using executions of an
+        # entirely unrelated Procedure (or even Goal).
+        if evaluation["procedure_id"] is not None:
+            mismatched = [
+                str(r["id"]) for r in found
+                if str(r["procedure_id"]) != str(evaluation["procedure_id"])
+                or (evaluation["procedure_version"] is not None and r["procedure_version"] != evaluation["procedure_version"])
+            ]
+            if mismatched:
+                raise ValueError(
+                    f"execution(s) {mismatched} do not match this evaluation's own procedure/version "
+                    f"({evaluation['procedure_id']}, v{evaluation['procedure_version']})"
+                )
+
+        # Every referenced execution must have actually finished with a
+        # real terminal outcome -- a still-running or never-started
+        # execution proves nothing.
+        unfinished = [str(r["id"]) for r in found if r["outcome"] is None or r["ended_at"] is None]
+        if unfinished:
+            raise ValueError(f"execution(s) {unfinished} have not completed -- no terminal outcome recorded")
 
         for x in execution_ids:
             await conn.execute(
@@ -397,11 +503,25 @@ async def complete_evaluation(
                          "success_rate", "verified_success_wilson_lower"):
                 metrics[k] = v
 
-        agg = aggregate_result
-        if agg not in ("pass", "fail", "partial", "inconclusive", None):
-            raise ValueError("aggregate_result must be pass|fail|partial|inconclusive|null")
-        if agg is None and run_count:
-            agg = "pass" if successes == run_count else "fail" if successes == 0 else "partial"
+        # B4 hardening: aggregate_result is ALWAYS derived server-side
+        # from the recomputed run_count/successes above -- never taken
+        # from the caller as authoritative. A caller MAY optionally send
+        # a requested result (kept for API compatibility), but it is
+        # only ever a claim to check, not a fact to record: a mismatch
+        # is rejected outright rather than silently overridden or
+        # silently trusted.
+        derived_agg = "pass" if successes == run_count else "fail" if successes == 0 else "partial"
+        if aggregate_result is not None:
+            if aggregate_result not in ("pass", "fail", "partial", "inconclusive"):
+                raise ValueError("aggregate_result must be pass|fail|partial|inconclusive")
+            if aggregate_result != derived_agg:
+                raise ValueError(
+                    f"aggregate_result={aggregate_result!r} does not match the server-derived result "
+                    f"{derived_agg!r} ({successes}/{run_count} successes, {verified} verified) -- "
+                    "the client-requested result is never trusted, only confirmed against real "
+                    "execution/evidence data"
+                )
+        agg = derived_agg
 
         r = await conn.fetchrow(
             "UPDATE evaluations SET status='completed', completed_at=now(), "

@@ -261,7 +261,7 @@ async def test_report_execution_translates_contract_violations_to_refused(monkey
 @pytest.mark.asyncio
 async def test_report_execution_returns_the_updated_state(monkeypatch):
     async def fake_record(pool, *, procedure_row_id, success, context_key, steps_used,
-                           success_criteria, failure_class):
+                           success_criteria, failure_class, execution_verified=False):
         assert procedure_row_id == ROW_ID
         assert success is True
         assert success_criteria == {"predicate": "real check"}
@@ -289,7 +289,7 @@ async def test_report_execution_passes_structured_dict_straight_through(monkeypa
     captured = {}
 
     async def fake_record(pool, *, procedure_row_id, success, context_key, steps_used,
-                           success_criteria, failure_class):
+                           success_criteria, failure_class, execution_verified=False):
         captured["success_criteria"] = success_criteria
         return {
             "verification_state": "candidate", "availability": "active",
@@ -318,7 +318,7 @@ async def test_report_execution_omits_success_criteria_cleanly(monkeypatch):
     captured = {}
 
     async def fake_record(pool, *, procedure_row_id, success, context_key, steps_used,
-                           success_criteria, failure_class):
+                           success_criteria, failure_class, execution_verified=False):
         captured["success_criteria"] = success_criteria
         return {
             "verification_state": "candidate", "availability": "active",
@@ -383,7 +383,7 @@ async def test_report_execution_schema_accepts_structured_object(monkeypatch):
     captured = {}
 
     async def fake_record(pool, *, procedure_row_id, success, context_key, steps_used,
-                           success_criteria, failure_class):
+                           success_criteria, failure_class, execution_verified=False):
         captured["success_criteria"] = success_criteria
         return {
             "verification_state": "verified", "availability": "active",

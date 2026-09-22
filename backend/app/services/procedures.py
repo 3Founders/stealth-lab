@@ -46,6 +46,20 @@ CREATED_BY = "procedure_capture"
 # rather than permissive-by-absence (cross-lane request #1).
 OUTCOME_WRITER_STAMP = "record_execution_outcome@1"
 
+# B2 hardening (audit finding: "a host self-report is not verified
+# execution"): a SECOND, distinct provenance stamp for outcomes recorded
+# via `execution_verified=False` (today: only app.mcp_server.server's
+# report_execution -- a non-durable, host-self-report tool with no real
+# execution_runs row behind it, per its own docstring). This is the ONLY
+# thing that changes what app.services.evidence_trust.is_trusted_writer /
+# app.economy.verification._verify_execution_chain see -- both already
+# check `created_by == OUTCOME_WRITER_STAMP` exactly, so a row stamped
+# with THIS constant instead is automatically classified CLAIMED_SUCCESS/
+# UNKNOWN, never VERIFIED_*, with no change needed to either of those
+# files. Never used to gate anything itself -- it is read-only provenance,
+# exactly like OUTCOME_WRITER_STAMP already was.
+OUTCOME_WRITER_STAMP_CLAIMED = "record_execution_outcome@1:self_report"
+
 # Invariant #13 judgment call, named: the lifecycle writer records REAL
 # runs (the executor calls this after an actual execution), but its
 # historical API carries only `success: bool` -- no criteria argument.
@@ -707,8 +721,35 @@ async def record_execution_outcome(
     visibility: str = "public",
     tenant_scope: Optional[TenantScope] = None,
     evidence_type: str = "execution_result",
+    execution_verified: bool = True,
 ) -> dict:
     """
+    `execution_verified` (B2 hardening -- default True, unchanged
+    behavior for every existing real-execution caller): True means the
+    caller has a genuine execution-backed outcome to report -- a durable
+    `execution_runs` row from a sandboxed run
+    (app.mcp_server.server's reproduce_procedure/find_best_way, via
+    app.execution.durable_graph.run_graph_durably). False means a bare
+    HOST SELF-REPORT with no such backing (report_execution's own
+    docstring: "the host runs outside Stealth's own sandbox") -- a claim,
+    not verified execution.
+
+    When False:
+      - the evidence row is written with OUTCOME_WRITER_STAMP_CLAIMED
+        instead of OUTCOME_WRITER_STAMP, so
+        app.services.evidence_trust.trust_state() classifies it
+        CLAIMED_SUCCESS/UNKNOWN, never VERIFIED_SUCCESS/VERIFIED_FAILURE,
+        and app.economy.verification._verify_execution_chain (which
+        requires OUTCOME_WRITER_STAMP exactly) can never treat it as
+        real for reuse-reward purposes either;
+      - `verification_stats` (attempts/successes/distinct_contexts/
+        circuit-breaker) is NOT mutated and `verification_state`/
+        `availability` are NOT transitioned -- a self-report can never
+        promote a Procedure to `verified`, open/close the circuit
+        breaker, or otherwise move the authoritative lifecycle state.
+    The claim is still recorded (never silently dropped) -- just not
+    trusted as proof.
+
     Real, single source of truth for every ticket 13 lifecycle
     transition -- promotion, circuit breaker, quarantine all derive from
     the same `verification_stats` this function updates, under one
@@ -780,78 +821,85 @@ async def record_execution_outcome(
             raise ProcedureNotFound(procedure_row_id)
 
         stats = dict(row["verification_stats"])
-        stats.setdefault("context_keys_seen", [])
-        stats.setdefault("consecutive_failures", 0)
-        stats.setdefault("quarantine_entered_at", None)
-        stats.setdefault("consecutive_successes_since_quarantine", 0)
-
-        stats["attempts"] = stats.get("attempts", 0) + 1
-        stats["match_cost_total"] = stats.get("match_cost_total", 0) + match_cost
-        stats["realised_savings_total"] = stats.get("realised_savings_total", 0) + realised_savings
-
-        if context_key not in stats["context_keys_seen"]:
-            stats["context_keys_seen"].append(context_key)
-        stats["distinct_contexts"] = len(stats["context_keys_seen"])
-
-        if success:
-            stats["successes"] = stats.get("successes", 0) + 1
-            stats["consecutive_failures"] = 0
-            if steps_used is not None:
-                prior_mean = stats.get("mean_steps")
-                prior_successes = stats["successes"] - 1
-                stats["mean_steps"] = (
-                    steps_used if prior_mean is None or prior_successes == 0
-                    else (prior_mean * prior_successes + steps_used) / stats["successes"]
-                )
-        else:
-            stats["consecutive_failures"] = stats.get("consecutive_failures", 0) + 1
-
         verification_state = row["verification_state"]
         availability = row["availability"]
 
-        # Ticket 13: ">=10 successes, 0 failures, across >=3 distinct
-        # contexts" for verified. "0 failures" means the procedure
-        # has never recorded a failure at all -- not just none
-        # recently -- since a single real failure genuinely
-        # disqualifies the Beta(11,1) argument this threshold rests
-        # on (successes minus failures, not successes alone).
-        total_failures = stats["attempts"] - stats["successes"]
-        if (
-            verification_state == "candidate"
-            and total_failures == 0
-            and stats["successes"] >= MIN_SUCCESSES_FOR_VERIFIED
-            and stats["distinct_contexts"] >= MIN_DISTINCT_CONTEXTS_FOR_VERIFIED
-        ):
-            verification_state = "verified"
+        # B2 hardening: a self-report (execution_verified=False) records
+        # its claim as evidence (below) but MUST NOT touch the
+        # authoritative lifecycle -- no counters, no promotion, no
+        # circuit-breaker transition. Everything in this block is the
+        # UNMODIFIED ticket-13 logic, now simply skipped for a claim that
+        # isn't backed by a real execution.
+        if execution_verified:
+            stats.setdefault("context_keys_seen", [])
+            stats.setdefault("consecutive_failures", 0)
+            stats.setdefault("quarantine_entered_at", None)
+            stats.setdefault("consecutive_successes_since_quarantine", 0)
 
-        # Ticket 13's circuit breaker: open (quarantine) after 5
-        # failures; close (un-quarantine) after 5 consecutive
-        # successes recorded WHILE quarantined. The half-open probe
-        # itself isn't a separate stored state -- availability=
-        # 'quarantined' already means "don't auto-select this, but
-        # an explicit call here can still record an outcome for
-        # it", which IS the probe; each such call while quarantined
-        # is one probe result.
-        if availability == "quarantined":
+            stats["attempts"] = stats.get("attempts", 0) + 1
+            stats["match_cost_total"] = stats.get("match_cost_total", 0) + match_cost
+            stats["realised_savings_total"] = stats.get("realised_savings_total", 0) + realised_savings
+
+            if context_key not in stats["context_keys_seen"]:
+                stats["context_keys_seen"].append(context_key)
+            stats["distinct_contexts"] = len(stats["context_keys_seen"])
+
             if success:
-                stats["consecutive_successes_since_quarantine"] = (
-                    stats.get("consecutive_successes_since_quarantine", 0) + 1
-                )
+                stats["successes"] = stats.get("successes", 0) + 1
+                stats["consecutive_failures"] = 0
+                if steps_used is not None:
+                    prior_mean = stats.get("mean_steps")
+                    prior_successes = stats["successes"] - 1
+                    stats["mean_steps"] = (
+                        steps_used if prior_mean is None or prior_successes == 0
+                        else (prior_mean * prior_successes + steps_used) / stats["successes"]
+                    )
             else:
-                stats["consecutive_successes_since_quarantine"] = 0
+                stats["consecutive_failures"] = stats.get("consecutive_failures", 0) + 1
 
-        if not success and stats["consecutive_failures"] >= CIRCUIT_BREAKER_OPEN_AFTER_FAILURES:
-            if availability == "active":
-                availability = "quarantined"
-                stats["quarantine_entered_at"] = datetime.now(timezone.utc).isoformat()
+            # Ticket 13: ">=10 successes, 0 failures, across >=3 distinct
+            # contexts" for verified. "0 failures" means the procedure
+            # has never recorded a failure at all -- not just none
+            # recently -- since a single real failure genuinely
+            # disqualifies the Beta(11,1) argument this threshold rests
+            # on (successes minus failures, not successes alone).
+            total_failures = stats["attempts"] - stats["successes"]
+            if (
+                verification_state == "candidate"
+                and total_failures == 0
+                and stats["successes"] >= MIN_SUCCESSES_FOR_VERIFIED
+                and stats["distinct_contexts"] >= MIN_DISTINCT_CONTEXTS_FOR_VERIFIED
+            ):
+                verification_state = "verified"
+
+            # Ticket 13's circuit breaker: open (quarantine) after 5
+            # failures; close (un-quarantine) after 5 consecutive
+            # successes recorded WHILE quarantined. The half-open probe
+            # itself isn't a separate stored state -- availability=
+            # 'quarantined' already means "don't auto-select this, but
+            # an explicit call here can still record an outcome for
+            # it", which IS the probe; each such call while quarantined
+            # is one probe result.
+            if availability == "quarantined":
+                if success:
+                    stats["consecutive_successes_since_quarantine"] = (
+                        stats.get("consecutive_successes_since_quarantine", 0) + 1
+                    )
+                else:
+                    stats["consecutive_successes_since_quarantine"] = 0
+
+            if not success and stats["consecutive_failures"] >= CIRCUIT_BREAKER_OPEN_AFTER_FAILURES:
+                if availability == "active":
+                    availability = "quarantined"
+                    stats["quarantine_entered_at"] = datetime.now(timezone.utc).isoformat()
+                    stats["consecutive_successes_since_quarantine"] = 0
+            elif (
+                availability == "quarantined"
+                and stats["consecutive_successes_since_quarantine"] >= CIRCUIT_BREAKER_CLOSE_AFTER_SUCCESSES
+            ):
+                availability = "active"
+                stats["quarantine_entered_at"] = None
                 stats["consecutive_successes_since_quarantine"] = 0
-        elif (
-            availability == "quarantined"
-            and stats["consecutive_successes_since_quarantine"] >= CIRCUIT_BREAKER_CLOSE_AFTER_SUCCESSES
-        ):
-            availability = "active"
-            stats["quarantine_entered_at"] = None
-            stats["consecutive_successes_since_quarantine"] = 0
 
         # ---- evidence write (WAVE-3): one row per outcome, before the
         # counters UPDATE so migration 30's engine trigger counts THIS
@@ -881,7 +929,7 @@ async def record_execution_outcome(
             success_criteria=criteria,
             failure_class=failure_class,
             context_key=context_key,
-            created_by=OUTCOME_WRITER_STAMP,
+            created_by=OUTCOME_WRITER_STAMP if execution_verified else OUTCOME_WRITER_STAMP_CLAIMED,
             visibility=visibility,
             owner_id=owner_id,
         )
@@ -940,7 +988,15 @@ async def record_execution_outcome(
             """,
             procedure_row_id, stats, verification_state, availability,
         )
-        return dict(updated)
+        result = dict(updated)
+        # Additive: the real evidence row this call just wrote, so a
+        # caller sitting on a durable execution_run (app/mcp_server/
+        # server.py's reproduce_procedure/find_best_way) can hand both ids
+        # to app.economy.verification.record_usage_event without a second,
+        # fragile lookup-by-timestamp query. Every existing caller that
+        # only reads verification_state/availability/etc. is unaffected.
+        result["evidence_id"] = str(evidence.id)
+        return result
 
 
 async def check_quarantine_and_disable(pool: asyncpg.Pool, procedure_row_id: str) -> dict:

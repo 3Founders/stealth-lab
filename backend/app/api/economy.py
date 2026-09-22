@@ -1,0 +1,334 @@
+"""
+Contribution + verification + ranking + Credits REST surface (migration
+102). Thin, same shape as app/api/problems.py: hydrates scope/pool and
+delegates to app.economy.*. No business logic lives here.
+
+Only endpoints for capabilities that are actually implemented are exposed
+here -- Problems/Goals, Procedure/Benchmark detail, Runs/Evidence and
+Contributor profile already have their own routers (problems.py,
+goals.py, procedures.py, runs.py, contributors.py) and are not duplicated.
+
+HARDENING PASS (audit findings D1/D3/D6/D7/D25): every economically
+meaningful write now requires `require_authenticated_user` (the same
+mechanism runs.py/agent_store.py/approval.py already use) and derives the
+acting identity from `principal.subject` -- request bodies no longer carry
+`submitted_by`/`executed_by`/`reviewed_by`/`created_by` at all, so there is
+nothing for a client to spoof. The three Credits/Standing GET endpoints now
+require authentication and restrict reads to the caller's own data unless
+they hold `ADMIN_OPS`. Submission and usage-event writes are rate-limited
+via the existing `app.services.governance.RateLimiter`, keyed by the
+authenticated subject, never a client-supplied string.
+"""
+from __future__ import annotations
+
+from datetime import timedelta
+from typing import Any, Optional
+
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from pydantic import BaseModel, Field
+
+from app.api.deps import AuthenticatedPrincipal, get_scope, require_authenticated_user, require_scopes
+from app.economy import constants as c
+from app.economy import credits as credits_service
+from app.economy import ranking as ranking_service
+from app.economy import standing as standing_service
+from app.economy import submissions as submissions_service
+from app.economy import verification as verification_service
+from app.services import auth_context as _ac
+from app.services.access import AccessScope
+from app.services.governance import RateLimit, RateLimiter, RateLimitExceeded
+from app.services.product_model import get_problem, list_problem_solutions
+
+router = APIRouter(prefix="/v1/economy", tags=["economy"])
+
+
+async def get_pool(request: Request):
+    return request.app.state.pool
+
+
+_WRITE_RATE_LIMITS = {
+    "/v1/economy/procedure-submissions": RateLimit(max_requests=c.SUBMISSION_RATE_LIMIT_MAX, window=timedelta(hours=c.SUBMISSION_RATE_LIMIT_WINDOW_HOURS)),
+    "/v1/economy/benchmark-submissions": RateLimit(max_requests=c.SUBMISSION_RATE_LIMIT_MAX, window=timedelta(hours=c.SUBMISSION_RATE_LIMIT_WINDOW_HOURS)),
+    "/v1/economy/usage-events": RateLimit(max_requests=c.USAGE_EVENT_RATE_LIMIT_MAX, window=timedelta(hours=c.USAGE_EVENT_RATE_LIMIT_WINDOW_HOURS)),
+}
+
+
+async def _authenticated_and_rate_limited(
+    request: Request, principal: AuthenticatedPrincipal = Depends(require_authenticated_user), pool=Depends(get_pool),
+) -> AuthenticatedPrincipal:
+    """Identity + abuse control for the write endpoints (§12). Keyed by the
+    verified subject -- never a request-body field -- so a client cannot
+    reset its own rate-limit window by claiming a different identity."""
+    try:
+        await RateLimiter(pool, limits=_WRITE_RATE_LIMITS).check_and_record(f"user:{principal.subject}", request.url.path)
+    except RateLimitExceeded as exc:
+        raise HTTPException(status_code=429, detail=str(exc), headers={"Retry-After": str(exc.retry_after_seconds)}) from exc
+    return principal
+
+
+def _require_self_or_admin(principal: AuthenticatedPrincipal, contributor_id: str) -> None:
+    """Private economic data (§2): a caller may read only their own Credits/
+    Standing/history unless they hold ADMIN_OPS. Enforced server-side --
+    never inferred from a hidden frontend button."""
+    if principal.subject == contributor_id:
+        return
+    if principal.has_scope(_ac.ADMIN_OPS):
+        return
+    raise HTTPException(status_code=403, detail="you may only view your own economic data")
+
+
+# ---- request bodies --------------------------------------------------------
+# No identity fields (submitted_by / executed_by / reviewed_by / created_by)
+# on any of these -- the acting identity is always server-derived from the
+# authenticated principal (see each route below). This is intentional, not
+# an oversight: adding one back would reopen the exact hole the hardening
+# pass closed.
+class ProcedureSubmissionIn(BaseModel):
+    goal_id: str
+    submission_type: str  # 'new' | 'improvement'
+    name: str
+    steps: list[Any] = Field(default_factory=list)
+    rationale: Optional[str] = None
+    applicability_context: dict[str, Any] = Field(default_factory=dict)
+    constraints: list[Any] = Field(default_factory=list)
+    implementation_requirements: dict[str, Any] = Field(default_factory=dict)
+    supporting_evidence: list[Any] = Field(default_factory=list)
+    parent_procedure_row_id: Optional[str] = None
+    provenance: Optional[str] = None
+    scope_type: Optional[str] = None
+    scope_entity_id: Optional[str] = None
+    visibility: str = "public"
+
+
+class SubmissionReviewIn(BaseModel):
+    decision: str  # 'accepted' | 'rejected' | 'needs_review'
+    note: Optional[str] = None
+
+
+class BenchmarkSubmissionIn(BaseModel):
+    goal_id: str
+    name: str
+    description: Optional[str] = None
+    success_criteria: dict[str, Any] = Field(default_factory=dict)
+    invariants: list[Any] = Field(default_factory=list)
+    verification_method: dict[str, Any] = Field(default_factory=dict)
+    provenance: Optional[str] = None
+    scope_type: Optional[str] = None
+    scope_entity_id: Optional[str] = None
+    visibility: str = "public"
+
+
+class UsageEventIn(BaseModel):
+    procedure_row_id: str
+    # outcome_state / verification_layer are NOT client-settable -- the
+    # server derives them from execution_run_id + evidence_id (see
+    # app.economy.verification._verify_execution_chain). Omitting either
+    # produces an 'unknown' usage event, which is still real and recorded,
+    # just not reward-eligible.
+    execution_run_id: Optional[str] = None
+    evidence_id: Optional[str] = None
+    benchmark_id: Optional[str] = None
+    context_key: Optional[str] = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class ClawbackIn(BaseModel):
+    reason_text: str
+
+
+# ---- Procedure submissions (§1, §11) --------------------------------------
+@router.post("/procedure-submissions", dependencies=[Depends(require_scopes(_ac.KNOWLEDGE_WRITE))])
+async def create_procedure_submission(
+    body: ProcedureSubmissionIn, pool=Depends(get_pool),
+    principal: AuthenticatedPrincipal = Depends(_authenticated_and_rate_limited),
+) -> dict[str, Any]:
+    try:
+        return await submissions_service.create_procedure_submission(pool, actor_subject=principal.subject, **body.model_dump())
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+
+
+@router.get("/procedure-submissions")
+async def list_procedure_submissions(
+    goal_id: Optional[str] = None, status: Optional[str] = None, submitted_by: Optional[str] = None,
+    limit: int = Query(50, ge=1, le=200), pool=Depends(get_pool),
+) -> dict[str, Any]:
+    return {"submissions": await submissions_service.list_procedure_submissions(pool, goal_id=goal_id, status=status, submitted_by=submitted_by, limit=limit)}
+
+
+@router.get("/procedure-submissions/{submission_id}")
+async def get_procedure_submission(submission_id: str, pool=Depends(get_pool)) -> dict[str, Any]:
+    row = await submissions_service.get_procedure_submission(pool, submission_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="procedure submission not found")
+    return row
+
+
+@router.post("/procedure-submissions/{submission_id}/review", dependencies=[Depends(require_scopes(_ac.KNOWLEDGE_PUBLISH))])
+async def review_procedure_submission(
+    submission_id: str, body: SubmissionReviewIn, pool=Depends(get_pool),
+    principal: AuthenticatedPrincipal = Depends(require_authenticated_user),
+) -> dict[str, Any]:
+    try:
+        return await submissions_service.review_procedure_submission(pool, submission_id=submission_id, decision=body.decision, actor_subject=principal.subject, note=body.note)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+
+
+# ---- Benchmark submissions (§2, §11) ---------------------------------------
+@router.post("/benchmark-submissions", dependencies=[Depends(require_scopes(_ac.KNOWLEDGE_WRITE))])
+async def create_benchmark_submission(
+    body: BenchmarkSubmissionIn, pool=Depends(get_pool),
+    principal: AuthenticatedPrincipal = Depends(_authenticated_and_rate_limited),
+) -> dict[str, Any]:
+    try:
+        return await submissions_service.create_benchmark_submission(pool, actor_subject=principal.subject, **body.model_dump())
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+
+
+@router.get("/benchmark-submissions")
+async def list_benchmark_submissions(
+    goal_id: Optional[str] = None, status: Optional[str] = None, submitted_by: Optional[str] = None,
+    limit: int = Query(50, ge=1, le=200), pool=Depends(get_pool),
+) -> dict[str, Any]:
+    return {"submissions": await submissions_service.list_benchmark_submissions(pool, goal_id=goal_id, status=status, submitted_by=submitted_by, limit=limit)}
+
+
+@router.get("/benchmark-submissions/{submission_id}")
+async def get_benchmark_submission(submission_id: str, pool=Depends(get_pool)) -> dict[str, Any]:
+    row = await submissions_service.get_benchmark_submission(pool, submission_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="benchmark submission not found")
+    return row
+
+
+@router.post("/benchmark-submissions/{submission_id}/review", dependencies=[Depends(require_scopes(_ac.KNOWLEDGE_PUBLISH))])
+async def review_benchmark_submission(
+    submission_id: str, body: SubmissionReviewIn, pool=Depends(get_pool),
+    principal: AuthenticatedPrincipal = Depends(require_authenticated_user),
+) -> dict[str, Any]:
+    try:
+        return await submissions_service.review_benchmark_submission(pool, submission_id=submission_id, decision=body.decision, actor_subject=principal.subject, note=body.note)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+
+
+# ---- Usage events / verification state (§3, §5, §11) -----------------------
+@router.post("/usage-events", dependencies=[Depends(require_scopes(_ac.EXECUTION_RUN))])
+async def record_usage_event(
+    body: UsageEventIn, pool=Depends(get_pool),
+    principal: AuthenticatedPrincipal = Depends(_authenticated_and_rate_limited),
+) -> dict[str, Any]:
+    try:
+        row = await verification_service.record_usage_event(pool, executor_subject=principal.subject, **body.model_dump())
+    except verification_service.VerificationMismatch as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    if row is None:
+        raise HTTPException(status_code=404, detail="procedure not found")
+    if row["outcome_state"] == "verified_success" and not row["is_self_use"]:
+        row = dict(row)
+        row["reward_events"] = await credits_service.reward_verified_reuse(pool, usage_event=row)
+    return row
+
+
+@router.get("/procedures/{procedure_row_id}/usage-events")
+async def list_procedure_usage_events(procedure_row_id: str, limit: int = Query(50, ge=1, le=200), pool=Depends(get_pool)) -> dict[str, Any]:
+    rows = await pool.fetch(
+        "SELECT * FROM procedure_usage_events WHERE procedure_row_id = $1 ORDER BY created_at DESC LIMIT $2",
+        procedure_row_id, limit,
+    )
+    return {"usage_events": [dict(r) for r in rows]}
+
+
+# ---- Contextual ranking (§5/§6 of the harden+consolidate directive) -------
+# ONE canonical ranking implementation: app.economy.ranking wraps the
+# pre-existing, more rigorous Wilson-based capability estimator
+# (procedure_graph_api.get_solution_view) rather than recomputing its own
+# statistics. See app/economy/ranking.py's module docstring.
+@router.get("/goals/{goal_id}/procedures/ranked")
+async def ranked_procedures_for_goal(
+    goal_id: str, context_key: Optional[str] = None, pool=Depends(get_pool), scope: AccessScope = Depends(get_scope),
+) -> dict[str, Any]:
+    # B1 hardening, defense in depth: only 'active' associations (set
+    # exclusively by the canonical review workflow, never by the public
+    # /v1/solutions/associate route) are ranked.
+    solutions = await list_problem_solutions(pool, goal_id, scope=scope)
+    procedure_ids = [str(s["target_id"]) for s in solutions if s["target_table"] == "procedures" and s.get("status") == "active"]
+    ranked = await ranking_service.rank_procedures_for_goal(pool, procedure_ids, scope=scope, context_key=context_key)
+    return {
+        "goal_id": goal_id, "context_key": context_key,
+        "note": "ranked for this goal's recorded evidence in a matching context -- not a universal best; "
+                "a specialized procedure can rank highly within its own niche",
+        "ranked": ranked,
+    }
+
+
+# ---- Contributor Standing / Credits (§6, §7, §8, §11) -----------------------
+# All three require authentication and are self-or-admin only (§2) -- a
+# contributor's Credits balance/history and Standing are private economic
+# data, not a public leaderboard.
+@router.get("/contributors/{contributor_id}/standing")
+async def contributor_standing(
+    contributor_id: str, pool=Depends(get_pool), principal: AuthenticatedPrincipal = Depends(require_authenticated_user),
+) -> dict[str, Any]:
+    _require_self_or_admin(principal, contributor_id)
+    return await standing_service.compute_standing(pool, contributor_id)
+
+
+@router.get("/contributors/{contributor_id}/credits")
+async def contributor_credits_balance(
+    contributor_id: str, pool=Depends(get_pool), principal: AuthenticatedPrincipal = Depends(require_authenticated_user),
+) -> dict[str, Any]:
+    _require_self_or_admin(principal, contributor_id)
+    return {"contributor_id": contributor_id, "balance": await credits_service.get_balance(pool, contributor_id)}
+
+
+@router.get("/contributors/{contributor_id}/credits/history")
+async def contributor_credits_history(
+    contributor_id: str, limit: int = Query(50, ge=1, le=200), pool=Depends(get_pool),
+    principal: AuthenticatedPrincipal = Depends(require_authenticated_user),
+) -> dict[str, Any]:
+    _require_self_or_admin(principal, contributor_id)
+    return {"contributor_id": contributor_id, "events": await credits_service.get_history(pool, contributor_id, limit=limit)}
+
+
+@router.post("/credits/{event_id}/clawback", dependencies=[Depends(require_scopes(_ac.ADMIN_OPS))])
+async def clawback_credit_event(
+    event_id: str, body: ClawbackIn, pool=Depends(get_pool),
+    principal: AuthenticatedPrincipal = Depends(require_authenticated_user),
+) -> dict[str, Any]:
+    try:
+        return await credits_service.clawback(pool, event_id=event_id, reason_text=body.reason_text, created_by=principal.subject)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+
+
+# ---- Goal-level contributors (§11) -----------------------------------------
+@router.get("/goals/{goal_id}/contributors")
+async def goal_contributors(goal_id: str, pool=Depends(get_pool), scope: AccessScope = Depends(get_scope)) -> dict[str, Any]:
+    goal = await get_problem(pool, goal_id, scope=scope)
+    if goal is None:
+        raise HTTPException(status_code=404, detail="goal not found")
+    rows = await pool.fetch(
+        """
+        SELECT contributor_id,
+               count(*) FILTER (WHERE kind = 'procedure') AS procedures,
+               count(*) FILTER (WHERE kind = 'improvement') AS improvements,
+               count(*) FILTER (WHERE kind = 'benchmark') AS benchmarks
+        FROM (
+            SELECT submitted_by AS contributor_id, 'procedure' AS kind FROM procedure_submissions
+            WHERE goal_id = $1 AND status = 'accepted' AND submission_type = 'new'
+            UNION ALL
+            SELECT submitted_by, 'improvement' FROM procedure_submissions
+            WHERE goal_id = $1 AND status = 'accepted' AND submission_type = 'improvement'
+            UNION ALL
+            SELECT submitted_by, 'benchmark' FROM benchmark_submissions
+            WHERE goal_id = $1 AND status = 'accepted'
+        ) contributions
+        GROUP BY contributor_id
+        ORDER BY procedures + improvements + benchmarks DESC
+        """,
+        goal_id,
+    )
+    return {"goal_id": goal_id, "note": "contribution to this goal specifically, not a global ranking", "contributors": [dict(r) for r in rows]}

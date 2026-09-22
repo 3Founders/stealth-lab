@@ -5,13 +5,14 @@ import { useParams } from "next/navigation";
 import StateNotice from "@/components/NotConnected";
 import TryThisWay from "@/components/TryThisWay";
 import {
-  getProblem, getProblemEvaluations, getProblemSolutions, getProcedure, getProcedureEvidence, getProcedureVersions,
-  rankScore, verificationBucket, type Evaluation, type EvidenceRow, type Problem,
-  type ProcedureDetail, type ProcedureVersionRow,
+  getProblem, getProblemEvaluations, getProcedure, getProcedureEvidence, getProcedureVersions, getRankedProcedures,
+  type Evaluation, type EvidenceRow, type Problem, type ProcedureDetail, type ProcedureVersionRow, type RankedProcedure,
 } from "@/lib/kel-api";
 import type { ApiState } from "@/lib/api";
 
-const bucketToStatus: Record<string, string> = { Verified: "verified", Candidate: "candidate", "Needs evidence": "unknown" };
+const bucketToStatus: Record<string, string> = {
+  verified: "verified", candidate: "candidate", needs_evidence: "unknown", verified_failure: "failed",
+};
 const outcomeToStatus = (o?: string) => (o === "success" || o === "pass" ? "successful" : o === "failure" || o === "fail" ? "failed" : "unknown");
 const step = (s: unknown): string =>
   typeof s === "string" ? s : typeof s === "object" && s ? String((s as Record<string, unknown>).description ?? (s as Record<string, unknown>).action ?? (s as Record<string, unknown>).name ?? JSON.stringify(s)) : String(s);
@@ -22,7 +23,7 @@ export default function ProcedurePage() {
   const [proc, setProc] = useState<ApiState<ProcedureDetail>>({ kind: "loading" });
   const [versions, setVersions] = useState<ApiState<ProcedureVersionRow[]>>({ kind: "loading" });
   const [evidence, setEvidence] = useState<ApiState<EvidenceRow[]>>({ kind: "loading" });
-  const [siblingRank, setSiblingRank] = useState<{ rank: number; of: number } | null>(null);
+  const [ranked, setRanked] = useState<ApiState<RankedProcedure[]>>({ kind: "loading" });
   const [evals, setEvals] = useState<Evaluation[]>([]);
 
   useEffect(() => {
@@ -31,18 +32,11 @@ export default function ProcedurePage() {
     getProcedure(procedureId, ac.signal).then(setProc);
     getProcedureVersions(procedureId, ac.signal).then((r) => setVersions(r.kind === "ok" ? { kind: "ok", data: Array.isArray(r.data) ? r.data : [] } : (r as ApiState<ProcedureVersionRow[]>)));
     getProcedureEvidence(procedureId, ac.signal).then((r) => setEvidence(r.kind === "ok" ? { kind: "ok", data: Array.isArray(r.data) ? r.data : [] } : (r as ApiState<EvidenceRow[]>)));
+    // Rank/bucket for this procedure within its goal come from the backend
+    // ONLY (app/economy/ranking.py) — never recomputed client-side.
+    getRankedProcedures(id, undefined, ac.signal).then((r) => setRanked(r.kind === "ok" ? { kind: "ok", data: r.data.ranked } : (r as ApiState<RankedProcedure[]>)));
 
     (async () => {
-      const sol = await getProblemSolutions(id, ac.signal);
-      if (sol.kind !== "ok") return;
-      const ids = sol.data.solutions.filter((s) => s.target_table === "procedures").map((s) => s.target_id);
-      const details = await Promise.all(ids.map((pid) => getProcedure(pid, ac.signal)));
-      const ok = details.filter((d): d is { kind: "ok"; data: ProcedureDetail } => d.kind === "ok").map((d) => d.data);
-      if (ok.length) {
-        const scored = ok.map((p) => ({ id: p.id, score: rankScore(p) })).sort((a, b) => b.score - a.score);
-        const idx = scored.findIndex((s) => s.id === procedureId);
-        if (idx >= 0) setSiblingRank({ rank: idx + 1, of: scored.length });
-      }
       const ev = await getProblemEvaluations(id, ac.signal);
       if (ev.kind === "ok") setEvals(ev.data.evaluations.filter((e) => e.procedure_id === procedureId));
     })();
@@ -50,7 +44,10 @@ export default function ProcedurePage() {
     return () => ac.abort();
   }, [id, procedureId]);
 
-  const bucket = useMemo(() => (proc.kind === "ok" ? verificationBucket(proc.data) : null), [proc]);
+  const rankEntry = useMemo(
+    () => (ranked.kind === "ok" ? ranked.data.find((r) => r.procedure_row_id === procedureId) ?? null : null),
+    [ranked, procedureId],
+  );
 
   if (proc.kind !== "ok") {
     return (
@@ -60,9 +57,15 @@ export default function ProcedurePage() {
     );
   }
   const p = proc.data;
-  const successN = p.evidence_summary?.success_count ?? 0;
-  const failN = p.evidence_summary?.failure_count ?? 0;
-  const unknownN = Math.max((p.evidence_summary?.total ?? 0) - successN - failN, 0);
+  // Canonical, backend-computed trust states (app.services.evidence_trust)
+  // — never inferred from a generic evidence row here. verified_success/
+  // verified_failure/claimed_success/unknown are always shown separately;
+  // a claim is never displayed as if it were verified.
+  const es = p.evidence_summary;
+  const verifiedSuccessN = es?.verified_success ?? es?.success_count ?? 0;
+  const verifiedFailureN = es?.verified_failure ?? es?.failure_count ?? 0;
+  const claimedSuccessN = es?.claimed_success ?? 0;
+  const unknownN = es?.unknown ?? 0;
 
   return (
     <>
@@ -73,8 +76,8 @@ export default function ProcedurePage() {
         </div>
         <h1 className="display" style={{ gridColumn: "1 / span 10" }}>{p.display_name || p.name || "Untitled procedure"}</h1>
         <div className="states" style={{ marginTop: 20 }}>
-          {bucket && <span className="status" data-s={bucketToStatus[bucket]}>{bucket}</span>}
-          {siblingRank && <span className="caption dim">Ranked #{siblingRank.rank} of {siblingRank.of} for this goal</span>}
+          {rankEntry && <span className="status" data-s={bucketToStatus[rankEntry.bucket]}>{rankEntry.bucket_label}</span>}
+          {rankEntry && <span className="caption dim">Ranked #{rankEntry.rank} of {rankEntry.of} for this goal{rankEntry.context_matched ? " — matches your context" : ""}</span>}
         </div>
       </section>
 
@@ -131,11 +134,12 @@ export default function ProcedurePage() {
           <p className="small dim" style={{ marginBottom: 16 }}>
             {p.t_created ? `Recorded since ${new Date(p.t_created).toLocaleDateString()}.` : ""} {evals.length > 0 ? `Used by ${evals.length} benchmark evaluation${evals.length === 1 ? "" : "s"} for this goal.` : "Not yet used by a benchmark evaluation for this goal."}
           </p>
-          <div className="two-out">
-            <div className="out ok"><h3>{successN}</h3><p>Verified runs that reached the goal.</p></div>
-            <div className="out fail"><h3>{failN}</h3><p>Runs that did not reach the goal.</p></div>
+          <div className="run-ledger" style={{ marginTop: 0 }}>
+            <div><b>{verifiedSuccessN}</b><span>Verified successful — a real execution, independently confirmed.</span></div>
+            <div><b>{verifiedFailureN}</b><span>Verified failed — a real execution that didn&rsquo;t reach the goal.</span></div>
+            <div><b>{claimedSuccessN}</b><span>Claimed, not verified — reported success without execution-backed proof.</span></div>
+            <div><b>{unknownN}</b><span>Unknown outcome — recorded, but not resolved either way.</span></div>
           </div>
-          {unknownN > 0 && <p className="small dim" style={{ marginTop: 12 }}>{unknownN} run{unknownN === 1 ? "" : "s"} with an unresolved outcome — kept as unknown, not counted as success.</p>}
         </div>
 
         {/* what happened */}
