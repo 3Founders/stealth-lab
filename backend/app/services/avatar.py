@@ -22,8 +22,11 @@ every request, never stored) used when a contributor has no custom avatar.
 """
 from __future__ import annotations
 
+import base64
+import functools
 import hashlib
 import io
+import os
 from typing import Optional
 
 from PIL import Image, ImageOps
@@ -32,6 +35,32 @@ MAX_UPLOAD_BYTES = 5 * 1024 * 1024  # 5 MiB, enforced by the caller before this 
 TARGET_SIZE = 512
 WEBP_QUALITY = 85
 _ALLOWED_FORMATS = frozenset({"JPEG", "PNG", "WEBP"})
+
+# The fallback-avatar initials are set in Barlow -- the site's own declared
+# companion face for Bahnschrift (see app/globals.css's --font stack:
+# Bahnschrift first, Barlow second, loaded everywhere else via
+# @fontsource/barlow). A plain `font-family="Barlow"` would only resolve on
+# a viewer that happens to have it installed as a SYSTEM font, which almost
+# no one does -- this SVG is served standalone (as an <img> src), so it
+# can't reach the app's own page-level web font the way normal site text
+# does. Embedding the woff2 bytes directly as a data: URI inside the SVG's
+# own @font-face makes it self-contained: the initials render in the exact
+# same face as every button/heading on the site, on any viewer, with no
+# extra network request.
+_FONT_PATH = os.path.join(os.path.dirname(__file__), "..", "assets", "fonts", "barlow-semibold.woff2")
+
+
+@functools.lru_cache(maxsize=1)
+def _embedded_font_face() -> str:
+    try:
+        with open(_FONT_PATH, "rb") as fh:
+            b64 = base64.b64encode(fh.read()).decode("ascii")
+    except OSError:
+        return ""  # font asset missing -- text still renders, just via the sans-serif fallback below
+    return (
+        "<style>@font-face{font-family:'Barlow';font-weight:600;font-style:normal;"
+        f"src:url(data:font/woff2;base64,{b64}) format('woff2');}}</style>"
+    )
 
 
 class InvalidImage(ValueError):
@@ -80,9 +109,23 @@ def process_avatar(data: bytes) -> bytes:
 
 # --- deterministic fallback (no custom avatar) ---------------------------
 
-_PALETTE: tuple[str, ...] = (
-    "#3A5A78", "#6B4C9A", "#2E7D6B", "#8A5A2E", "#5A4A8A",
-    "#2E6B8A", "#7A3A5A", "#4A7A3A", "#8A6B2E", "#3A3A8A",
+# Each entry is a two-stop gradient (dark, light), curated to stay in the
+# same muted/editorial register as the rest of the site (see app/globals.css's
+# --ink/--yellow/--cobalt) rather than going bright/neon -- these are meant
+# to read as "a calm identity chip", not a logo.
+_PALETTE: tuple[tuple[str, str], ...] = (
+    ("#2C3E63", "#5B7FB8"),  # cobalt
+    ("#5A3E7A", "#9B6FC4"),  # violet
+    ("#1F5C4E", "#4FA88C"),  # teal
+    ("#7A4A1F", "#D19A4E"),  # copper
+    ("#3E2C63", "#7B5FB8"),  # indigo
+    ("#1F4A5C", "#4E8DA8"),  # slate blue
+    ("#5C1F3E", "#B85B85"),  # plum
+    ("#2C5C1F", "#7BA84E"),  # moss
+    ("#5C4A1F", "#B8954E"),  # amber
+    ("#1F2C5C", "#5F6FB8"),  # deep blue
+    ("#4A1F5C", "#A85FB8"),  # magenta
+    ("#5C3E1F", "#B87F4E"),  # rust
 )
 
 
@@ -100,24 +143,49 @@ def initials_for(display_text: str) -> str:
     return "".join(letters[:2]).upper()
 
 
-def _color_for(seed: str) -> str:
+def _gradient_for(seed: str) -> tuple[str, str]:
     digest = hashlib.sha256(seed.encode("utf-8")).digest()
     return _PALETTE[digest[0] % len(_PALETTE)]
 
 
+def _angle_for(seed: str) -> int:
+    """One of 4 diagonal angles -- enough variety that same-palette avatars
+    don't all look identical, still deterministic per identity."""
+    digest = hashlib.sha256((seed + ":angle").encode("utf-8")).digest()
+    return (0, 45, 90, 135)[digest[0] % 4]
+
+
 def fallback_avatar_svg(display_text: str, *, seed: Optional[str] = None) -> bytes:
-    """A small deterministic SVG: initials on a stable background color
-    derived from `seed` (falls back to display_text). Never randomized per
-    render -- same identity always renders the same fallback."""
+    """A small deterministic SVG: initials over a two-tone diagonal
+    gradient chip, derived entirely from `seed` (falls back to
+    display_text). Never randomized per render -- same identity always
+    renders the same fallback, in the same site-appropriate muted palette."""
+    key = seed or display_text
     initials = initials_for(display_text)
-    color = _color_for(seed or display_text)
+    dark, light = _gradient_for(key)
+    angle = _angle_for(key)
+    gid = f"g{abs(hash(key)) % 100000}"
+    size = TARGET_SIZE
     svg = (
-        f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {TARGET_SIZE} {TARGET_SIZE}" '
-        f'width="{TARGET_SIZE}" height="{TARGET_SIZE}">'
-        f'<rect width="100%" height="100%" fill="{color}"/>'
-        f'<text x="50%" y="50%" dy=".08em" text-anchor="middle" dominant-baseline="middle" '
-        f'font-family="Helvetica, Arial, sans-serif" font-size="{TARGET_SIZE // 2}" '
-        f'fill="#F8F6EF" font-weight="500">{initials}</text>'
+        f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {size} {size}" '
+        f'width="{size}" height="{size}">'
+        f'<defs>'
+        f'<linearGradient id="{gid}" gradientTransform="rotate({angle} 0.5 0.5)">'
+        f'<stop offset="0%" stop-color="{dark}"/>'
+        f'<stop offset="100%" stop-color="{light}"/>'
+        f'</linearGradient>'
+        f'<radialGradient id="{gid}-sheen" cx="30%" cy="26%" r="75%">'
+        f'<stop offset="0%" stop-color="#FFFFFF" stop-opacity="0.22"/>'
+        f'<stop offset="55%" stop-color="#FFFFFF" stop-opacity="0"/>'
+        f'</radialGradient>'
+        f'</defs>'
+        f'{_embedded_font_face()}'
+        f'<rect width="100%" height="100%" fill="url(#{gid})"/>'
+        f'<rect width="100%" height="100%" fill="url(#{gid}-sheen)"/>'
+        f'<text x="50%" y="50%" dy=".07em" text-anchor="middle" dominant-baseline="middle" '
+        f'font-family="Barlow, Helvetica Neue, Helvetica, Arial, sans-serif" font-size="{size * 0.42:.0f}" '
+        f'letter-spacing="1" fill="#F8F6EF" fill-opacity="0.96" font-weight="600" '
+        f'style="text-shadow:0 1px 3px rgba(0,0,0,.25)">{initials}</text>'
         f'</svg>'
     )
     return svg.encode("utf-8")
