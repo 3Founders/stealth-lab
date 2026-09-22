@@ -78,28 +78,20 @@ export default function GoalPage() {
     <>
       <section className="page-hero frame grid">
         <div className="marker caption" style={{ gridColumn: "1 / -1" }}><b>GOAL</b><span>/ {categoryOf(p)}</span></div>
-        <h1 className="display">{p.title}</h1>
+        <h1 className="h1" style={{ gridColumn: "1 / span 10" }}>{p.title}</h1>
         {p.description && <p className="lead">{p.description}</p>}
       </section>
 
       <section className="frame grid" style={{ paddingBottom: 100, rowGap: 40 }}>
         {/* structured info */}
-        <div className="cells">
-          {p.objective && (
-            <div className="cell"><div className="n"><span>01</span></div><div><span className="q">Objective</span><p>{p.objective}</p></div></div>
-          )}
+        <div className="log" style={{ gridColumn: "1 / span 12", maxWidth: "48em" }}>
+          {p.objective && (<div><span>Objective</span><span>{p.objective}</span></div>)}
           {Array.isArray(p.constraints) && p.constraints.length > 0 && (
-            <div className="cell">
-              <div className="n"><span>02</span></div>
-              <div><span className="q">Constraints</span><p>{p.constraints.map((c) => (typeof c === "string" ? c : JSON.stringify(c))).join(" · ")}</p></div>
-            </div>
+            <div><span>Constraints</span><span>{p.constraints.map((c) => (typeof c === "string" ? c : JSON.stringify(c))).join(" · ")}</span></div>
           )}
-          <div className="cell"><div className="n"><span>03</span></div><div><span className="q">Status</span><p style={{ textTransform: "capitalize" }}>{p.status ?? "unknown"}</p></div></div>
+          <div><span>Status</span><span style={{ textTransform: "capitalize" }}>{p.status ?? "unknown"}</span></div>
           {(p.scope_type || p.proposer) && (
-            <div className="cell">
-              <div className="n"><span>04</span></div>
-              <div><span className="q">Scope</span><p>{[p.scope_type, p.proposer ? `proposed by ${p.proposer}` : null].filter(Boolean).join(" · ") || "Not recorded"}</p></div>
-            </div>
+            <div><span>Scope</span><span>{[p.scope_type, p.proposer ? `proposed by ${p.proposer}` : null].filter(Boolean).join(" · ") || "Not recorded"}</span></div>
           )}
         </div>
 

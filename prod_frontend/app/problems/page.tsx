@@ -57,7 +57,6 @@ export default function ProblemsPage() {
 
         <div style={{ gridColumn: "1 / span 12" }}>
           <h2 className="h3" style={{ marginBottom: 4 }}>Hot problems</h2>
-          <p className="small dim">Ranked by recorded activity, not personalized to you.</p>
         </div>
 
         {state.kind === "ok" && rows.length > 0 ? (

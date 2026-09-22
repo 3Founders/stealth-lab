@@ -7,13 +7,17 @@ import { bucket, track } from "@/lib/analytics";
 type Row = Record<string, unknown>;
 type Groups = { name: string; rows: Row[] }[];
 
-// What the backend can search today: /v1/search covers procedures, tasks and claims; /v1/problems/find covers problems.
-const scopes = ["Problems", "Procedures", "Claims", "Tasks"];
+type Scope = "problems" | "claims";
+const scopes: { key: Scope; label: string }[] = [
+  { key: "problems", label: "Problems" },
+  { key: "claims", label: "Claims" },
+];
 
 export default function SearchPage() {
   const [q, setQ] = useState("");
   const [asked, setAsked] = useState("");
   const [state, setState] = useState<ApiState<Groups>>({ kind: "idle" });
+  const [scope, setScope] = useState<Scope>("problems");
   const ac = useRef<AbortController | undefined>(undefined);
 
   async function run(e: React.FormEvent) {
@@ -38,8 +42,6 @@ export default function SearchPage() {
     track("search_result", { results: bucket(groups.reduce((n, g) => n + g.rows.length, 0)) });
   }
 
-  const total = state.kind === "ok" ? state.data.reduce((n, g) => n + g.rows.length, 0) : 0;
-
   return (
     <>
       <section className="page-hero frame grid">
@@ -52,21 +54,33 @@ export default function SearchPage() {
           <input id="goal" value={q} onChange={(e) => setQ(e.target.value)} placeholder="e.g. deploy a service to staging" autoComplete="off" />
           <button className="btn-ink" type="submit">Find ways <span className="sq" aria-hidden="true">→</span></button>
         </form>
-        <div className="scopes" aria-label="Searchable today">{scopes.map((s) => <span key={s}>{s}</span>)}</div>
-        <p className="small dim" style={{ gridColumn: "1 / -1", marginTop: 12 }}>Searches what the connected backend can search today. Evidence and runs are reached through the procedures and problems they belong to.</p>
-
-        <div className="hits" aria-live="polite">
-          {state.kind === "idle" && null}
-          {state.kind === "ok" && total > 0 && state.data.filter((g) => g.rows.length).map((g) => (
-            <div key={g.name} style={{ marginBottom: 32 }}>
-              <div className="caption dim" style={{ marginBottom: 8 }}>{g.name} · {g.rows.length}</div>
-              <ul className="list" style={{ gridColumn: "auto" }}>
-                {g.rows.map((r, i) => (<li key={String(r.id ?? i)}><span className="n">{String(i + 1).padStart(2, "0")}</span><h3>{labelOf(r)}</h3><span className="caption dim">{typeof r.status === "string" ? r.status : ""}</span></li>))}
-              </ul>
-            </div>
+        <div className="scopes" aria-label="Search in" role="tablist">
+          {scopes.map((s) => (
+            <button key={s.key} type="button" role="tab" aria-pressed={scope === s.key} onClick={() => setScope(s.key)}>{s.label}</button>
           ))}
-          {state.kind !== "idle" && !(state.kind === "ok" && total > 0) && (
-            <StateNotice state={state} empty={state.kind === "ok" ? `No recorded ways found for “${asked}”.` : undefined} />
+        </div>
+        <div className="hits" aria-live="polite">
+          {scope === "claims" ? (
+            <div className="empty"><p>Claims search is coming soon.</p></div>
+          ) : (
+            <>
+              {state.kind === "idle" && null}
+              {state.kind === "ok" && state.data.some((g) => g.name === "problems" && g.rows.length > 0) && (
+                <div style={{ marginBottom: 32 }}>
+                  {state.data.filter((g) => g.name === "problems").map((g) => (
+                    <div key={g.name}>
+                      <div className="caption dim" style={{ marginBottom: 8 }}>{g.name} · {g.rows.length}</div>
+                      <ul className="list" style={{ gridColumn: "auto" }}>
+                        {g.rows.map((r, i) => (<li key={String(r.id ?? i)}><span className="n">{String(i + 1).padStart(2, "0")}</span><h3>{labelOf(r)}</h3><span className="caption dim">{typeof r.status === "string" ? r.status : ""}</span></li>))}
+                      </ul>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {state.kind !== "idle" && !(state.kind === "ok" && state.data.some((g) => g.name === "problems" && g.rows.length > 0)) && (
+                <StateNotice state={state} empty={state.kind === "ok" ? `No recorded problems found for “${asked}”.` : undefined} />
+              )}
+            </>
           )}
         </div>
       </section>
