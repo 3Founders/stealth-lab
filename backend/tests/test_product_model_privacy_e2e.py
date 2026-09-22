@@ -17,7 +17,6 @@ inference-leak checks. Skips without a real DATABASE_URL.
 """
 from __future__ import annotations
 
-import json
 import os
 import uuid
 
@@ -32,7 +31,6 @@ import httpx  # noqa: E402
 from app.db.session import create_pool  # noqa: E402
 from app.services import product_model as pm  # noqa: E402
 from app.services.access import AccessScope  # noqa: E402
-from app.services.authn import Actor, reset_current_actor, set_current_actor  # noqa: E402
 from tests.test_product_model_e2e import _make_procedure, _run_executions  # noqa: E402
 
 _PREFIX = "pm-privacy-e2e"
@@ -173,63 +171,11 @@ async def test_private_benchmark_and_evaluation_denied_cross_user_over_rest():
     finally:
         await pool.close()
 
-
-@pytest.mark.asyncio
-async def test_private_benchmark_and_evaluation_not_exposed_through_mcp_tools():
-    from app.mcp_server import server as srv
-
-    class _Ctx:
-        def __init__(self, pool):
-            class _RC:
-                pass
-            self.request_context = _RC()
-            self.request_context.lifespan_context = {"pool": pool}
-
-    pool = await create_pool(statement_cache_size=0)
-    tag = uuid.uuid4().hex[:8]
-    try:
-        priv = await _full_lineage(pool, visibility="private", owner_id=ALICE, tag=f"mcp-{tag}")
-        ctx = _Ctx(pool)
-        # a goal that is JUST the rare nonce token -> the private problem is
-        # its only possible lexical match anywhere in the DB
-        goal = priv["nonce"]
-
-        # --- anonymous caller (no token, no actor contextvar) ---
-        assert "REFUSED" in await srv.inspect_problem(priv["problem_id"], ctx)
-        assert "REFUSED" in await srv.inspect_evaluation(priv["evaluation_id"], ctx)
-
-        cmp_out = json.loads(await srv.compare_solutions(
-            priv["problem_id"], json.dumps([priv["solution_id"]]), ctx))
-        assert cmp_out["leaderboard"] == [] and cmp_out["current_best"] == []
-        assert cmp_out["benchmark_id"] is None
-        assert priv["benchmark_id"] not in json.dumps(cmp_out)
-
-        fbs = json.loads(await srv.find_best_solution(goal, ctx))
-        # the private problem is the only lexical match for the nonce and it
-        # is invisible to anon -> no match, and certainly no leak of its ids.
-        assert fbs["result"] == "no matching problem", fbs
-        assert priv["solution_id"] not in json.dumps(fbs)
-        assert priv["problem_id"] not in json.dumps(fbs)
-
-        lps = json.loads(await srv.list_problem_solutions(priv["problem_id"], ctx))
-        assert lps["solutions"] == []
-
-        # --- same calls as the owner (real actor contextvar) now succeed ---
-        token = set_current_actor(Actor(subject=ALICE))
-        try:
-            ip = json.loads(await srv.inspect_problem(priv["problem_id"], ctx))
-            assert ip["problem"]["id"] == priv["problem_id"]
-            assert any(b["id"] == priv["benchmark_id"] for b in ip["benchmarks"])
-            assert ip["leaderboard"]["current_best"] == [priv["solution_id"]]
-            ie = json.loads(await srv.inspect_evaluation(priv["evaluation_id"], ctx))
-            assert ie["id"] == priv["evaluation_id"]
-            # the same nonce goal now DOES resolve for the owner -> proves
-            # the anon "no matching problem" above was a scope denial, not a
-            # lexical miss.
-            fbs_owner = json.loads(await srv.find_best_solution(priv["nonce"], ctx))
-            assert fbs_owner["matched_problem"]["id"] == priv["problem_id"]
-            assert fbs_owner["current_best"] == [priv["solution_id"]]
-        finally:
-            reset_current_actor(token)
-    finally:
-        await pool.close()
+# test_private_benchmark_and_evaluation_not_exposed_through_mcp_tools removed
+# 2026-09-22: the product-model MCP tools it exercised (inspect_problem,
+# inspect_evaluation, compare_solutions, find_best_solution,
+# list_problem_solutions) were removed from the MCP surface -- prod_frontend
+# now calls the identical app.services.product_model service over REST
+# (test_private_benchmark_and_evaluation_denied_cross_user_over_rest above),
+# which remains the real, live, tested path. The service-layer and REST-
+# layer regression tests in this file are unchanged.

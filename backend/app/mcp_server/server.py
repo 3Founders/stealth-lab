@@ -109,7 +109,6 @@ from app.mcp_server.goal_run_page import GOAL_RUN_HTML
 from app.mcp_server.procedure_graph_page import PROCEDURE_GRAPH_HTML
 from app.services import claim_graph_api
 from app.services import procedure_task_graph_api
-from app.services import product_model as _pm
 
 # Set once by `lifespan` (below) so the non-MCP custom HTTP routes
 # (/claim-graph, /claim-graph/data) can reach the same pool the MCP tools
@@ -412,9 +411,8 @@ _TOOL_SCOPES: dict[str, str] = {
     **{n: _READ for n in (
         "retrieve_precedent", "search_procedures", "get_claim_graph", "get_relevant_claims", "get_procedure",
         "check_applicability", "check_procedure", "search_goals", "inspect_goal", "list_goal_procedures",
-        "resolve_intent", "explain_goal_route", "estimate_goal_cost", "compile_goal", "find_problem",
-        "inspect_problem", "list_problem_solutions", "compare_solutions", "inspect_evaluation",
-        "find_best_solution", "get_route_decision", "project_knowledge", "inspect_trajectory",
+        "resolve_intent", "explain_goal_route", "estimate_goal_cost", "compile_goal",
+        "get_route_decision", "project_knowledge", "inspect_trajectory",
         "list_trajectory_events", "inspect_extraction", "list_extraction_objects",
         "inspect_trajectory_provenance", "get_goal_run_status", "list_goal_artifacts", "get_goal_artifact",
         "inspect_run", "list_stealth_edits", "generate_review_packet", "preview_local_sync")},
@@ -4022,115 +4020,14 @@ async def get_goal_artifact(
 
 # ---------------------------------------------------------------------------
 # Product-model tools (directive §37) -- Problem / Benchmark / Solution /
-# Evaluation. Every one is a thin read wrapper over
-# app.services.product_model: REST and MCP converge on that one service,
-# no ranking or lineage logic here.
+# Evaluation -- REMOVED from the MCP surface (2026-09-22): prod_frontend
+# now talks to this exact subsystem over REST (/v1/problems/*,
+# app/api/problems.py, from the "keळ V1 contribution/verification/
+# ranking/Credits" commit), making the MCP tools a second, unused path to
+# the same app.services.product_model service. The service itself and its
+# REST routes are UNTOUCHED -- only this MCP wrapper layer is gone. No
+# tool ever mutates the knowledge graph through this subsystem either way.
 # ---------------------------------------------------------------------------
-@server.tool()
-async def find_problem(query: str, ctx: Context, limit: int = 10) -> str:
-    """
-    Natural-language search for a Problem. Returns ranked matches
-    (title/description/objective), scoped to the caller. JSON:
-    {query, problems:[{id, title, status, objective, ...}]}.
-    """
-    pool = ctx.request_context.lifespan_context["pool"]
-    rows = await _pm.find_problem(pool, query, scope=_caller_access_scope(), limit=limit)
-    return json.dumps({"query": query, "problems": rows}, default=str)
-
-
-@server.tool()
-async def inspect_problem(problem_id: str, ctx: Context) -> str:
-    """
-    One Problem with its benchmarks, solutions and the current
-    evidence-derived leaderboard (current best VERIFIED solution, or
-    []=none yet). JSON: {problem, benchmarks, solutions, leaderboard}.
-    """
-    pool = ctx.request_context.lifespan_context["pool"]
-    scope = _caller_access_scope()
-    p = await _pm.get_problem(pool, problem_id, scope=scope)
-    if p is None:
-        return "REFUSED: problem not found or out of scope"
-    return json.dumps({
-        "problem": p,
-        "benchmarks": await _pm.list_problem_benchmarks(pool, problem_id, scope=scope),
-        "solutions": await _pm.list_problem_solutions(pool, problem_id, scope=scope),
-        "leaderboard": await _pm.problem_leaderboard(pool, problem_id, scope=scope),
-    }, default=str)
-
-
-@server.tool()
-async def list_problem_solutions(problem_id: str, ctx: Context) -> str:
-    """Every Solution associated with a Problem (association rows only, no
-    target objects copied). JSON: {solutions:[...]}."""
-    pool = ctx.request_context.lifespan_context["pool"]
-    rows = await _pm.list_problem_solutions(pool, problem_id, scope=_caller_access_scope())
-    return json.dumps({"problem_id": problem_id, "solutions": rows}, default=str)
-
-
-@server.tool()
-async def compare_solutions(problem_id: str, solution_ids_json: str, ctx: Context) -> str:
-    """
-    Compare specific Solutions of one Problem on their COMPARABLE completed
-    evaluations only (§18/§52). solution_ids_json: a JSON list of solution
-    ids. JSON: {leaderboard:[only the requested, comparable ones],
-    current_best, conditional_leaders, excluded:[ids not comparable or
-    without evidence]}.
-    """
-    pool = ctx.request_context.lifespan_context["pool"]
-    try:
-        want = set(json.loads(solution_ids_json))
-    except (ValueError, TypeError):
-        return "REFUSED: solution_ids_json must be a JSON list of ids"
-    lb = await _pm.problem_leaderboard(pool, problem_id, scope=_caller_access_scope())
-    kept = [e for e in lb["leaderboard"] if e["solution_id"] in want]
-    excluded = sorted(want - {e["solution_id"] for e in kept})
-    best = [s for s in lb["current_best"] if s in want]
-    return json.dumps({
-        "problem_id": problem_id, "benchmark_id": lb["benchmark_id"],
-        "leaderboard": kept, "current_best": best,
-        "current_best_is_tie": len(best) > 1,
-        "conditional_leaders": {k: v for k, v in lb["conditional_leaders"].items()
-                                if v in want},
-        "excluded": excluded,
-        "note": "only completed, mutually-comparable evaluations are ranked (§18).",
-    }, default=str)
-
-
-@server.tool()
-async def inspect_evaluation(evaluation_id: str, ctx: Context) -> str:
-    """
-    One Evaluation: its version-pinned procedure, recomputed
-    metrics, verification summary, status, and the linked execution ids
-    (the lineage a completed result must have). JSON: the evaluation row +
-    {executions:[...]}.
-    """
-    pool = ctx.request_context.lifespan_context["pool"]
-    e = await _pm.get_evaluation(pool, evaluation_id, scope=_caller_access_scope())
-    if e is None:
-        return "REFUSED: evaluation not found"
-    return json.dumps(e, default=str)
-
-
-@server.tool()
-async def find_best_solution(goal: str, ctx: Context) -> str:
-    """
-    Natural-language goal -> matched Problem -> that Problem's current best
-    VERIFIED solution, derived from completed-evaluation lineage
-    (§38/§51). Never picks a "best" from text similarity alone: the match
-    is a Problem, the answer is that Problem's evidence-derived
-    leaderboard. Returns {result: "verified" | "no verified solution yet"
-    | "no matching problem", matched_problem, current_best, leaderboard,
-    conditional_leaders}.
-
-    Distinct from `find_best_way`, which is the retrieval-grounded HTN
-    coding agent (precedent -> plan -> execute). This one answers "which
-    known solution is measurably best" and does not execute anything.
-    """
-    pool = ctx.request_context.lifespan_context["pool"]
-    return json.dumps(
-        await _pm.find_best_way(pool, goal, scope=_caller_access_scope()),
-        default=str,
-    )
 
 
 # ---------------------------------------------------------------------------

@@ -488,22 +488,20 @@ async def test_find_best_way_one_verified_solution_converges_to_it(pool):
 
 @pytest.mark.asyncio
 @with_pool
-async def test_find_best_solution_mcp_tool_is_the_product_model_lookup_not_the_htn_agent(pool):
-    """find_best_way (this module's service function, surfaced by the MCP
-    tool `find_best_solution`) answers 'which known solution is measurably
-    best' from evidence -- it is a DIFFERENT tool from the MCP `find_best_way`
-    HTN coding-agent tool (retrieval -> plan -> sandboxed execution). Proven
-    two ways: (1) they are distinct callables in the MCP server module, and
-    (2) find_best_solution's answer is driven by Wilson-lower-bound
-    evidence, not by which procedure's text is most similar to the goal --
-    a lexically-closer but unverified/weaker procedure must not win over a
-    lexically-weaker but verified, evidence-backed one."""
-    import app.mcp_server.server as srv
+async def test_find_best_way_service_ranks_by_evidence_not_lexical_similarity(pool):
+    """`app.services.product_model.find_best_way` answers 'which known
+    solution is measurably best' from evidence -- driven by Wilson-lower-
+    bound evidence, not by which procedure's text is most similar to the
+    goal. A lexically-closer but unverified/weaker procedure must not win
+    over a lexically-weaker but verified, evidence-backed one.
 
-    assert srv.find_best_way is not srv.find_best_solution
-    assert srv.find_best_way.__doc__ and "TIER 2" in srv.find_best_way.__doc__ and "sandboxed" in srv.find_best_way.__doc__
-    assert "text similarity" in srv.find_best_solution.__doc__
-
+    Was `test_find_best_solution_mcp_tool_is_the_product_model_lookup_not_
+    the_htn_agent`, exercised through the MCP `find_best_solution` tool;
+    that tool was removed from the MCP surface 2026-09-22 (prod_frontend
+    now calls this exact service over REST instead) -- this keeps the real
+    evidence-vs-lexical-similarity regression property by calling the
+    service function directly, the same one both REST and the (now
+    removed) MCP tool always delegated to."""
     tag = _tag()
     problem = await pm.create_problem(
         pool, title=f"[pm-gold {tag}] convergence not similarity",
@@ -528,15 +526,6 @@ async def test_find_best_solution_mcp_tool_is_the_product_model_lookup_not_the_h
     await pm.complete_evaluation(pool, ev_close["id"], execution_ids=exec_close)
     await pm.complete_evaluation(pool, ev_far["id"], execution_ids=exec_far)
 
-    ctx = _FakeCtx(pool)
-    fbs = json.loads(await srv.find_best_solution(f"convergence not similarity {tag}", ctx))
+    fbs = await pm.find_best_way(pool, f"convergence not similarity {tag}", scope=AccessScope.unrestricted())
     assert fbs["result"] == "verified"
     assert fbs["current_best"] == [sol_far["id"]], fbs  # evidence wins, not text proximity
-
-
-class _FakeCtx:
-    def __init__(self, pool):
-        class _RC:
-            pass
-        self.request_context = _RC()
-        self.request_context.lifespan_context = {"pool": pool}
