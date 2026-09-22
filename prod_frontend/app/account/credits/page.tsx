@@ -55,7 +55,7 @@ export default function CreditsPage() {
           <div className="cells" style={{ gridTemplateColumns: "repeat(2, 1fr)" }}>
             <div className="cell">
               <div className="n"><span>Balance</span></div>
-              <div><h3 className="h3">{balance.data.balance} Credits</h3><p>An internal utility number, not cash — see <Link href="/docs#submissions" style={{ textDecoration: "underline" }}>how contribution is recorded</Link>.</p></div>
+              <div><h3 className="h3">{balance.data.balance} Credits</h3><p>An internal utility number, not cash — see <Link href="/docs#contribution-rewards" style={{ textDecoration: "underline" }}>how contribution and rewards work</Link>.</p></div>
             </div>
             <div className="cell">
               <div className="n"><span>Standing</span></div>
