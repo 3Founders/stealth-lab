@@ -97,6 +97,47 @@ class JEVProvider(SemanticProvider):
 # --------------------------------------------------------- OpenAI-compat
 
 
+class _VertexChatNamespace:
+    def __init__(self, completions: Any):
+        self.completions = completions
+
+
+class _VertexRefreshingCompletions:
+    """Refreshes the ADC access token before any call whose token has gone
+    stale, instead of freezing one token at client-construction time.
+
+    Needed because this provider is built ONCE and cached for the life of
+    the worker process (`identity_resolution.py::default_judge`'s
+    process-wide `_DEFAULT_JUDGE` singleton) -- a token frozen at
+    construction expires mid-batch on any run longer than its ~1hr TTL.
+    Confirmed live 2026-09-22: 401 AuthenticationError partway through a
+    long anthropics/skills batch. The extraction path never hits this
+    because it builds a fresh Vertex client per job
+    (`ingestion_jobs.py::_vertex_oauth_client`)."""
+
+    def __init__(self, client: Any, credentials: Any, model: str):
+        self._client = client
+        self._credentials = credentials
+        self._model = model
+
+    async def create(self, **kwargs):
+        import google.auth.transport.requests
+
+        if not self._credentials.valid:
+            self._credentials.refresh(google.auth.transport.requests.Request())
+        kwargs = dict(kwargs)
+        kwargs["model"] = self._model
+        headers = dict(kwargs.pop("extra_headers", None) or {})
+        headers["Authorization"] = f"Bearer {self._credentials.token}"
+        kwargs["extra_headers"] = headers
+        return await self._client.chat.completions.create(**kwargs)
+
+
+class _VertexRefreshingClient:
+    def __init__(self, client: Any, credentials: Any, model: str):
+        self.chat = _VertexChatNamespace(_VertexRefreshingCompletions(client, credentials, model))
+
+
 class OpenAICompatProvider(SemanticProvider):
     """`clients` is a list of AsyncOpenAI-shaped objects (one per API key;
     rate-limit on one rotates to the next before the chain sees a failure)."""
@@ -185,8 +226,15 @@ class OpenAICompatProvider(SemanticProvider):
     async def claim_relation(self, statement_a, statement_b):
         from app.services import claim_equivalence as ce
 
+        # 1500, not 80: a "thinking" model (gemini-3.8-flash and friends)
+        # spends part of max_tokens on invisible reasoning before any visible
+        # output -- a small budget here means an empty completion, not a
+        # short one (confirmed live 2026-09-22, same root cause as identity()
+        # below and as skill_extraction's max_tokens fix). Applies to every
+        # OpenAICompatProvider instance, not just "vertex" -- gemini uses the
+        # same reasoning-model family via SEMANTIC_GEMINI_MODEL.
         text = await self._complete(
-            ce._CLASSIFY_SYSTEM_PROMPT, f'Claim A: "{statement_a}"\nClaim B: "{statement_b}"', 80)
+            ce._CLASSIFY_SYSTEM_PROMPT, f'Claim A: "{statement_a}"\nClaim B: "{statement_b}"', 1500)
         try:
             return _validated_relation(prompts._loads_object(text), self.name)
         except ValueError as exc:
@@ -195,7 +243,7 @@ class OpenAICompatProvider(SemanticProvider):
 
     async def identity(self, kind, a, b):
         text = await self._complete(
-            prompts.IDENTITY_SYSTEM_PROMPTS[kind], prompts.build_identity_user(kind, a, b), 80)
+            prompts.IDENTITY_SYSTEM_PROMPTS[kind], prompts.build_identity_user(kind, a, b), 1500)
         try:
             return prompts.parse_identity(kind, prompts._loads_object(text))
         except ValueError as exc:
@@ -293,7 +341,12 @@ def build_provider(name: str, settings, *, timeout_s: float) -> Optional[Semanti
             f"https://{settings.vertex_region}-aiplatform.googleapis.com/v1/"
             f"projects/{settings.vertex_project}/locations/{settings.vertex_region}/endpoints/openapi"
         )
-        client = AsyncOpenAI(api_key=credentials.token, base_url=base_url, max_retries=0, timeout=timeout_s)
+        raw_client = AsyncOpenAI(api_key="placeholder", base_url=base_url, max_retries=0, timeout=timeout_s)
+        # This provider is built once and cached for the worker process's
+        # whole lifetime (identity_resolution.py's default_judge()), so the
+        # token must be refreshed per call, not frozen here -- see
+        # _VertexRefreshingCompletions.
+        client = _VertexRefreshingClient(raw_client, credentials, settings.vertex_model)
         return OpenAICompatProvider("vertex", [client], settings.vertex_model, min_max_tokens=2000)
     if name == "gemini":
         keys = _gemini_keys(settings)
