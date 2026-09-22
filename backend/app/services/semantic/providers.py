@@ -103,13 +103,24 @@ class OpenAICompatProvider(SemanticProvider):
 
     capabilities = ALL_CAPS
 
-    def __init__(self, name: str, clients: list[Any], model: str, *, max_concurrency: int = 4):
+    def __init__(self, name: str, clients: list[Any], model: str, *, max_concurrency: int = 4,
+                 min_max_tokens: int = 0):
         self.name = name
         self.model = model
         self._clients = clients
         self._sem = asyncio.Semaphore(max_concurrency)
+        # Gemini's reasoning ("thinking") models spend part of max_tokens on
+        # internal reasoning before any visible output -- same root cause
+        # as skill_extraction's own max_tokens fix (2026-09-22). The short
+        # per-call budgets below (80-500) are fine for jev/gemini/gemma's
+        # non-reasoning models but starve a thinking model into an empty
+        # response. A provider whose model needs more headroom (Vertex)
+        # sets this floor at construction; everyone else's calls are
+        # unaffected (default 0 = no floor).
+        self._min_max_tokens = min_max_tokens
 
     async def _complete(self, system: str, user: str, max_tokens: int) -> str:
+        max_tokens = max(max_tokens, self._min_max_tokens)
         last: Optional[BaseException] = None
         for client in self._clients:
             try:
@@ -117,7 +128,15 @@ class OpenAICompatProvider(SemanticProvider):
                     model=self.model, temperature=0.0, max_tokens=max_tokens,
                     messages=[{"role": "system", "content": system}, {"role": "user", "content": user}],
                 )
-                return (resp.choices[0].message.content or "").strip()
+                text = (resp.choices[0].message.content or "").strip()
+                if not text:
+                    raise ProviderError(
+                        ErrorKind.TRANSIENT,
+                        f"empty response (finish_reason={resp.choices[0].finish_reason!r}) -- "
+                        "likely truncated by the reasoning/thinking budget before any output",
+                        provider=self.name,
+                    )
+                return text
             except Exception as exc:  # noqa: BLE001
                 last = exc
                 if classify_exception(exc) is ErrorKind.PERMANENT and len(self._clients) > 1:
@@ -214,6 +233,26 @@ def _split_keep_case(csv: Optional[str]) -> list[str]:
     return [p.strip() for p in (csv or "").split(",") if p.strip()]
 
 
+def _general_compute_keys(settings) -> list[str]:
+    """Same rotation pool `app.services.ingestion_jobs._general_compute_client`
+    builds -- GENERAL_COMPUTE_API_KEYS if set, else falling back to
+    GEMINI_API_KEYS (every deployment of this worker points General
+    Compute's base URL at Gemini's own endpoint anyway). Kept in sync
+    with that function rather than duplicating divergent logic; this one
+    feeds OpenAICompatProvider's own multi-client rotation instead."""
+    primary = getattr(settings, "general_compute_api_key", None)
+    if not primary:
+        return []  # General Compute genuinely unconfigured -- never fall
+                    # back to GEMINI_API_KEYS just because that's set for
+                    # something else entirely (e.g. the "gemini" provider).
+    keys = [primary]
+    extra_csv = getattr(settings, "general_compute_api_keys", None) or getattr(settings, "gemini_api_keys", None) or ""
+    for k in _split_keep_case(extra_csv):
+        if k not in keys:
+            keys.append(k)
+    return keys
+
+
 def build_provider(name: str, settings, *, timeout_s: float) -> Optional[SemanticProvider]:
     """One configured provider, or None when it has no credentials/endpoint
     (skipped -- an unconfigured provider is not an attempted failure)."""
@@ -227,6 +266,35 @@ def build_provider(name: str, settings, *, timeout_s: float) -> Optional[Semanti
             RemoteHTTPJudge(settings.jev_base_url, model="jev", timeout_seconds=timeout_s,
                             api_key=settings.jev_api_key),
             caps)
+    if name == "vertex":
+        # Real IAM-based Vertex AI quota via OAuth2/ADC -- same mechanism
+        # and same root-cause fix as _vertex_oauth_client() in
+        # app/services/ingestion_jobs.py (see that function's docstring:
+        # the free-tier API-key quota gemini/gemma draw on is scoped per
+        # GCP PROJECT, not per key, so every key exhausts together).
+        # Wired into THIS chain too because goal-identity/claim-relation/
+        # applicability judgments (jev + gemini today) hit the exact same
+        # shared-quota wall extraction did before Vertex was added there --
+        # confirmed live 2026-09-22: ~80% of a real ingestion batch stuck
+        # on SemanticJudgmentUnavailable while extraction itself (already
+        # on Vertex) succeeded cleanly.
+        if not settings.vertex_project:
+            return None
+        try:
+            import google.auth
+            import google.auth.transport.requests
+            from openai import AsyncOpenAI
+
+            credentials, _ = google.auth.default(scopes=["https://www.googleapis.com/auth/cloud-platform"])
+            credentials.refresh(google.auth.transport.requests.Request())
+        except Exception:  # noqa: BLE001 -- ADC unavailable is "not configured", not a failure
+            return None
+        base_url = (
+            f"https://{settings.vertex_region}-aiplatform.googleapis.com/v1/"
+            f"projects/{settings.vertex_project}/locations/{settings.vertex_region}/endpoints/openapi"
+        )
+        client = AsyncOpenAI(api_key=credentials.token, base_url=base_url, max_retries=0, timeout=timeout_s)
+        return OpenAICompatProvider("vertex", [client], settings.vertex_model, min_max_tokens=2000)
     if name == "gemini":
         keys = _gemini_keys(settings)
         if not keys:
@@ -237,6 +305,19 @@ def build_provider(name: str, settings, *, timeout_s: float) -> Optional[Semanti
                                max_retries=0, timeout=timeout_s) for k in keys]
         return OpenAICompatProvider("gemini", clients, settings.semantic_gemini_model)
     if name == "gemma":
+        # Production fallback: use the configured General Compute
+        # OpenAI-compatible endpoint when available. This is the same
+        # Google endpoint used by skill extraction, but a distinct model.
+        # Keep the local path for development when General Compute is absent.
+        keys = _general_compute_keys(settings)
+        if keys:
+            from openai import AsyncOpenAI
+
+            model = getattr(settings, "general_compute_fallback_model", None) or "gemma-4-31b-it"
+            base_url = getattr(settings, "general_compute_base_url", None)
+            clients = [AsyncOpenAI(api_key=k, base_url=base_url,
+                                   max_retries=0, timeout=timeout_s) for k in keys]
+            return OpenAICompatProvider("gemma", clients, model)
         model = settings.local_model_name or (settings.local_judge_model if settings.use_local_models else None)
         if not model:
             return None

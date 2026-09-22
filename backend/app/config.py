@@ -189,7 +189,12 @@ class Settings(BaseSettings):
     # claim-relation). JEV is the preferred fast judge; it is never the only
     # path. Secrets stay in env -- nothing here is ever written to .stealth.
     semantic_provider_primary: str = "jev"
-    semantic_provider_fallbacks: str = "gemini,gemma"
+    # "vertex" first: real IAM-based Vertex AI quota (OAuth2/ADC), tried
+    # before "gemini"'s free-tier API keys, which share one project-level
+    # quota bucket regardless of how many distinct keys are configured --
+    # confirmed live 2026-09-22 as the actual cause of sustained
+    # SemanticJudgmentUnavailable storms even with a healthy key pool.
+    semantic_provider_fallbacks: str = "vertex,gemini,gemma"
     # JEV = the operator-hosted judge service (POST {url}/judge-applicability,
     # same contract RemoteHTTPJudge already speaks). Comma-separated ops it
     # really exposes; anything else skips JEV and goes to the next provider.
