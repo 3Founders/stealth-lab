@@ -1,54 +1,89 @@
 "use client";
 import { useEffect, useState } from "react";
-import { apiGet, labelOf, type ApiState } from "@/lib/api";
+import Link from "next/link";
 import StateNotice from "@/components/NotConnected";
-import StatusLabel from "@/components/StatusLabel";
-
-type Row = Record<string, unknown>;
-
-const facets = [
-  ["Goals", "The family’s shared aim, stated once."],
-  ["Procedures", "Known methods for reaching it."],
-  ["Implementations", "The tools and systems that carry them out."],
-  ["Benchmarks", "Defined tests to compare candidates."],
-  ["Runs", "What actually happened when people tried."],
-];
+import { CATEGORIES, categoryOf, type Category } from "@/lib/mock-adapter";
+import { getProblems, getProblemStats, timeAgo, type Problem, type ProblemStats } from "@/lib/kel-api";
+import type { ApiState } from "@/lib/api";
 
 export default function ProblemsPage() {
-  const [state, setState] = useState<ApiState<Row[]>>({ kind: "loading" });
+  const [state, setState] = useState<ApiState<Problem[]>>({ kind: "loading" });
+  const [stats, setStats] = useState<Record<string, ProblemStats | null>>({});
+  const [cat, setCat] = useState<Category>("All");
 
   useEffect(() => {
     const ac = new AbortController();
-    apiGet<{ problems: Row[] }>("/v1/problems?limit=100", ac.signal).then((r) =>
-      setState(r.kind === "ok" ? { kind: "ok", data: r.data.problems ?? [] } : (r as ApiState<Row[]>)),
-    );
+    getProblems(100, ac.signal).then((r) => setState(r.kind === "ok" ? { kind: "ok", data: r.data.problems ?? [] } : (r as ApiState<Problem[]>)));
     return () => ac.abort();
   }, []);
+
+  // Per-row stats are real (solutions + evaluations), not mocked — fetched once the problem
+  // list itself is in, one small pair of calls per row. See lib/kel-api.ts#getProblemStats.
+  useEffect(() => {
+    if (state.kind !== "ok") return;
+    const ac = new AbortController();
+    Promise.all(state.data.map(async (p) => [p.id, await getProblemStats(p.id, ac.signal)] as const)).then((pairs) => {
+      setStats(Object.fromEntries(pairs));
+    });
+    return () => ac.abort();
+  }, [state]);
+
+  const rows =
+    state.kind === "ok"
+      ? state.data
+          .filter((p) => cat === "All" || categoryOf(p) === cat)
+          .slice()
+          .sort((a, b) => {
+            const sa = stats[a.id], sb = stats[b.id];
+            const score = (s: ProblemStats | null | undefined) => (s ? s.verifiedRuns * 2 + s.ways : 0);
+            return score(sb) - score(sa);
+          })
+      : [];
 
   return (
     <>
       <section className="page-hero frame grid">
         <div className="marker caption" style={{ gridColumn: "1 / -1" }}><b>PROBLEMS</b></div>
-        <h1 className="display">A family of goals.</h1>
-        <p className="lead">A collection of known ways. A place to see what has actually worked.</p>
+        <h1 className="display">Problems</h1>
+        <p className="lead">Discover goals worth accomplishing, and the ways people and agents have found to reach them.</p>
       </section>
 
       <section className="frame grid" style={{ paddingBottom: 120, rowGap: 40 }}>
-        <div className="family">
-          {facets.map(([t, d], i) => (
-            <div className="cell" key={t}><div className="n"><span>{String(i + 1).padStart(2, "0")}</span></div><div><h3 className="h3">{t}</h3><p>{d}</p></div></div>
+        <nav className="tabs" aria-label="Category">
+          {CATEGORIES.map((c) => (
+            <button key={c} type="button" aria-pressed={cat === c} onClick={() => setCat(c)}>{c}</button>
           ))}
+        </nav>
+
+        <div style={{ gridColumn: "1 / span 12" }}>
+          <h2 className="h3" style={{ marginBottom: 4 }}>Hot problems</h2>
+          <p className="small dim">Ranked by recorded activity, not personalized to you.</p>
         </div>
 
-        {state.kind === "ok" && state.data.length > 0 ? (
+        {state.kind === "ok" && rows.length > 0 ? (
           <ul className="list" aria-label="Problems">
-            {state.data.map((p, i) => (
-              <li key={String(p.id ?? i)}>
-                <span className="n">{String(i + 1).padStart(3, "0")}</span>
-                <h3>{labelOf(p)}</h3>
-                {typeof p.status === "string" && ["candidate", "verified", "unknown"].includes(p.status) ? <StatusLabel s={p.status as "candidate"} /> : <span className="caption dim">{typeof p.status === "string" ? p.status : ""}</span>}
-              </li>
-            ))}
+            {rows.map((p, i) => {
+              const s = stats[p.id];
+              const recent = s?.lastActivity ? timeAgo(s.lastActivity) : null;
+              return (
+                <li key={p.id}>
+                  <Link href={`/problems/${p.id}`}>
+                    <span className="n">{String(i + 1).padStart(3, "0")}</span>
+                    <div>
+                      <h3>{p.title}</h3>
+                      {p.description && <p className="desc">{p.description}</p>}
+                      <div className="meta">
+                        <span>{categoryOf(p)}</span>
+                        <span>{s ? `${s.ways} way${s.ways === 1 ? "" : "s"}` : "…"}</span>
+                        <span>{s ? `${s.verifiedRuns} verified run${s.verifiedRuns === 1 ? "" : "s"}` : "…"}</span>
+                        <span>{recent ? `updated ${recent}` : "no recorded activity yet"}</span>
+                      </div>
+                    </div>
+                    <span className="caption dim" aria-hidden="true">→</span>
+                  </Link>
+                </li>
+              );
+            })}
           </ul>
         ) : (
           <StateNotice state={state} empty={state.kind === "ok" ? "No problems are recorded yet." : undefined} />

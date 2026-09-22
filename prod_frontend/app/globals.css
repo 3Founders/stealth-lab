@@ -96,24 +96,76 @@ main, footer { position: relative; z-index: 1; }
 @media (max-width: 1240px) { .rail { display: none; } }
 
 /* hero */
-.hero { padding-top: clamp(140px, 16vw, 220px); }
+.hero { --hero-pad-top: clamp(140px, 16vw, 220px); padding-top: var(--hero-pad-top); position: relative; }
 .hero h1 { grid-column: 1 / span 12; }
 .hero h1 .l2 { color: #5d5d5a; }
 .hero-sub { grid-column: 1 / span 6; margin-top: clamp(28px, 3.5vw, 48px); }
+.hero-sub .lead { font-size: clamp(20px, 1.7vw, 24px); }
+.hero-sub .small { font-size: 17px; }
 .hero-install { grid-column: 1 / span 7; margin-top: clamp(28px, 3vw, 44px); }
-.hero-legend { grid-column: 1 / span 12; margin-top: clamp(56px, 7vw, 104px); border-top: 1px solid var(--rule); display: grid; grid-template-columns: repeat(4, 1fr); gap: var(--gap); padding-top: 18px; }
-.hero-legend div { font-size: 14px; color: var(--grey); }
-.hero-legend b { display: block; font-weight: 400; color: var(--ink); font-size: 15px; margin-bottom: 2px; }
-@media (max-width: 900px) { .hero-sub, .hero-install { grid-column: 1 / -1; } .hero-legend { grid-template-columns: 1fr 1fr; row-gap: 20px; } }
+@media (max-width: 900px) { .hero-sub, .hero-install { grid-column: 1 / -1; } }
 
+/* hero artwork -- decorative, living line mark built from the real keळ logo asset */
+/* width is capped as a % of the frame (the same reference the 12-col grid uses), not raw
+   vw, so it can never mathematically grow past where the text column ends regardless of
+   viewport width -- vw alone doesn't know how wide the grid's own left column is. The
+   text column (hero-install: grid-column 1/span 7) is a constant 57.58% of the frame at
+   every breakpoint, so 42.42% is the true zero-margin ceiling; 41.5% leaves a small buffer
+   while still using nearly all of the right column the grid actually offers. Pushed as
+   close to the frame's own right edge as the other hero content (right: 0-ish, not a
+   large inset) so it reads as filling column 8-12, not floating apart from it. */
+.hero-art { position: absolute; top: calc(var(--hero-pad-top) + clamp(8px, 3vw, 42px)); right: clamp(0px, 0.2vw, 4px); width: clamp(355px, 42vw, 580px); max-width: 41.5%; aspect-ratio: 1 / 1; pointer-events: auto; }
+.hero-art canvas { display: block; width: 100%; height: 100%; }
+@media (max-width: 1240px) { .hero-art { width: clamp(290px, 39vw, 495px); max-width: 41%; } }
+@media (max-width: 900px) { .hero-art { position: static; margin: 40px auto 0; width: min(78vw, 380px); max-width: none; } }
+
+/* sized up ~20-25% from the original utility-widget proportions (padding/gap/type), not
+   wider -- widening the grid column risks overlapping the hero artwork's own safe zone
+   (see .hero-art's comment above: the text column's width is load-bearing there). */
 .install { border: 1px solid var(--rule-strong); background: rgba(255,255,255,.6); border-radius: 6px; overflow: hidden; }
-.install-head { display: flex; justify-content: space-between; align-items: center; padding: 8px 12px; border-bottom: 1px solid var(--rule); color: var(--grey); }
-.install-body { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; padding: 14px 12px 14px 14px; }
-.install pre { margin: 0; font-size: 14px; line-height: 1.7; white-space: pre-wrap; word-break: break-all; flex: 1; font-weight: 400; }
+.install-head { display: flex; justify-content: space-between; align-items: center; padding: 11px 18px; border-bottom: 1px solid var(--rule); color: var(--grey); }
+.install-body { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; padding: 20px 18px 20px 20px; }
+.install pre { margin: 0; font-size: 15px; line-height: 1.8; white-space: pre-wrap; word-break: break-all; flex: 1; font-weight: 400; }
 .install pre .p { color: var(--grey); user-select: none; }
-.copy { flex: none; font-family: inherit; font-size: 13px; font-weight: 400; padding: 6px 12px; border: 1px solid var(--ink); background: transparent; color: var(--ink); border-radius: 4px; cursor: pointer; transition: background .2s; }
+.copy { flex: none; font-family: inherit; font-size: 13.5px; font-weight: 400; padding: 9px 16px; border: 1px solid var(--ink); background: transparent; color: var(--ink); border-radius: 4px; cursor: pointer; transition: background .2s; }
 .copy:hover, .copy[data-done="true"] { background: var(--yellow); }
-.install-foot { padding: 8px 12px; border-top: 1px solid var(--rule); font-size: 13px; color: var(--grey); }
+.install-foot { padding: 11px 18px; border-top: 1px solid var(--rule); font-size: 13.5px; color: var(--grey); }
+
+/* hero threshold -- quiet editorial chapter boundary between the hero and the first
+   explanatory section. No chapter index/label (see HeroThreshold.tsx) -- the rule and
+   signal field carry the whole thing, so both are sized to read as clearly intentional on
+   their own. Deliberately lighter on its own top/bottom padding than .section's usual
+   clamp(80,12vw,176) 0, since the About section right after it already contributes that
+   same generous rhythm as its own top padding -- stacking two full .section paddings back
+   to back would overshoot "a pause" into "a gap." */
+.threshold { padding-block: clamp(64px, 9vw, 128px) clamp(36px, 5vw, 76px); }
+.threshold-visual { grid-column: 1 / span 12; }
+.motion .threshold-visual.reveal { opacity: 1; transform: none; } /* this wrapper only carries the IntersectionObserver trigger; children below do the actual motion */
+
+.threshold-rule-wrap { margin-top: 0; }
+.threshold-rule-line { height: 2px; background: var(--rule-strong); transform-origin: left; }
+.motion .threshold-rule-line { transform: scaleX(0); transition: transform 1s var(--ease) .1s; }
+.motion .threshold-visual.in .threshold-rule-line { transform: scaleX(1); }
+
+.threshold-signal { display: block; width: 100%; height: clamp(58px, 7.5vw, 100px); margin-top: 14px; }
+/* base state (no JS / reduced motion / .motion never added): each line's own resting
+   opacity, immediately, no hidden step -- this is the single non-.motion-scoped rule the
+   two states below layer on top of. */
+.sig-line, .sig-node { opacity: var(--o, 1); }
+.motion .sig-line { opacity: 0; transform: translateX(-8px); transition: opacity .8s var(--ease) var(--d, 0ms), transform .8s var(--ease) var(--d, 0ms); }
+.motion .sig-node { opacity: 0; transform: scale(.8); transform-box: fill-box; transform-origin: center; transition: opacity .6s var(--ease) var(--d, 0ms), transform .6s var(--ease) var(--d, 0ms); }
+.motion .threshold-visual.in .sig-line, .motion .threshold-visual.in .sig-node { opacity: var(--o, 1); transform: none; }
+@media (max-width: 1240px) {
+  .threshold { padding-block: clamp(50px, 7.5vw, 96px) clamp(28px, 4vw, 56px); }
+  .threshold-signal { height: clamp(42px, 6vw, 66px); }
+  .sig-i3, .sig-i4, .sig-cobalt, .sig-n2 { display: none; }
+}
+@media (max-width: 900px) {
+  .threshold { padding-block: clamp(36px, 8vw, 68px) clamp(22px, 5vw, 40px); }
+  .threshold-rule-line { height: 1.5px; }
+  .threshold-signal { height: 26px; margin-top: 8px; }
+  .sig-i1, .sig-i2, .sig-n0, .sig-n1 { display: none; }
+}
 
 /* about */
 .statement { grid-column: 1 / span 10; }
@@ -243,6 +295,17 @@ main, footer { position: relative; z-index: 1; }
 .list li { display: grid; grid-template-columns: 60px 1fr auto; gap: 14px; padding: 18px 0; border-bottom: 1px solid var(--rule); align-items: baseline; }
 .list li .n { color: var(--grey); font-size: 13px; }
 .list li h3 { font-size: 24px; }
+.list li:has(a):hover { background: var(--soft); }
+.list li > a { display: contents; }
+.list .meta { font-size: 13.5px; color: var(--grey); margin-top: 6px; display: flex; flex-wrap: wrap; gap: 0 8px; }
+.list .meta span:not(:last-child)::after { content: "\00b7"; margin-left: 8px; }
+.list .desc { font-size: 15px; color: #55554f; margin-top: 4px; max-width: 46em; }
+
+/* category / scope tabs */
+.tabs { grid-column: 1 / span 12; display: flex; flex-wrap: wrap; gap: 8px; margin-top: 20px; }
+.tabs button { font: inherit; font-size: 12px; letter-spacing: .06em; text-transform: uppercase; border: 1px solid var(--rule-strong); background: transparent; padding: 6px 12px 5px; border-radius: 3px; cursor: pointer; color: var(--ink); }
+.tabs button[aria-pressed="true"] { background: var(--yellow); }
+.tabs button:hover:not([aria-pressed="true"]) { background: var(--soft); }
 .family { grid-column: 1 / span 12; display: grid; grid-template-columns: repeat(4, 1fr); border-top: 1px solid var(--rule-strong); border-left: 1px solid var(--rule-strong); }
 .family .cell { min-height: 200px; }
 @media (max-width: 1024px) { .family { grid-template-columns: repeat(2, 1fr); } }

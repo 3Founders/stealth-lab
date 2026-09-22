@@ -2,17 +2,17 @@ import Link from "next/link";
 import InstallCommand from "@/components/InstallCommand";
 import Reveal from "@/components/Reveal";
 import SectionRail from "@/components/SectionRail";
-import StatusLabel, { type Status } from "@/components/StatusLabel";
 import ActionWalkthrough from "@/components/ActionWalkthrough";
+import InteractiveLogo from "@/components/interactive-logo/InteractiveLogo";
+import HeroThreshold from "@/components/HeroThreshold";
 
 const rail = [
   { id: "top", label: "Introduction" },
-  { id: "about", label: "About" },
-  { id: "how", label: "How keळ works" },
-  { id: "knowledge", label: "Knowledge" },
+  { id: "about", label: "What you can do" },
+  { id: "knowledge", label: "What you get" },
   { id: "action", label: "Knowledge in action" },
-  { id: "execution", label: "Execution" },
-  { id: "learning", label: "Learning" },
+  { id: "execution", label: "Contribution" },
+  { id: "learning", label: "Value" },
   { id: "use", label: "Use it" },
 ];
 
@@ -20,37 +20,37 @@ const Marker = ({ n, label }: { n: string; label: string }) => (
   <div className="marker caption"><b>{n}</b><span>/ {label}</span></div>
 );
 
-const ontology = [
-  ["Goal", "What", "What someone wants to accomplish."],
-  ["Procedure", "How", "A reusable method for accomplishing a Goal."],
-  ["Implementation", "With what", "The concrete tool, API or system through which a Procedure can be executed."],
-  ["Route", "Which way", "One candidate path: Goal → Procedure → Implementation. Several can exist; selection weighs applicability, constraints, evidence, performance and cost."],
-  ["Run", "What happened", "An actual attempt. Distinct from a Procedure: it records what really occurred, including failure."],
-  ["Claim", "What we hold", "Reusable general knowledge, independent of any one Procedure."],
-  ["Evidence", "Why", "Support and provenance for Claims, Procedures and outcomes."],
-  ["Benchmark", "Under what test", "A defined test under which candidates are evaluated. Results are contextual, never universal."],
-  ["Submission", "Proposed", "A proposed new or improved Procedure, Implementation, or supporting knowledge."],
-  ["Usage", "Reused", "Actual reuse of knowledge."],
-  ["Value event", "Measured", "A measurable value event associated with usage."],
-  ["Human intervention", "Your call", "An explicit point where a person supplies missing information, credentials, approval, an override, or verification. The human stays in control."],
+const uses = [
+  ["Ways", "", "Reusable ways to accomplish a goal."],
+  ["Routes", "", "Different possible paths to the same goal."],
+  ["Implementations", "", "The tools, systems, agents, APIs, or mechanisms a way can use."],
+  ["Runs", "", "What actually happened when a way was tried."],
+  ["Evidence", "", "What supports confidence in a way or outcome."],
+  ["Benchmarks", "", "How a way can be tested under defined conditions."],
+  ["Claims", "", "Useful knowledge discovered along the way."],
+  ["Artifacts", "", "What the work produces."],
+  ["History", "", "Where a way came from and how it changed."],
+  ["Usage", "", "Where and how a way has been reused."],
+  ["Contributions", "", "Ways and improvements added by people or agents."],
+  ["Human input", "", "Places where a person had to decide, provide information, approve, or intervene."],
 ];
 
 const steps = [
-  ["Goal", "State what you are trying to get done."],
-  ["Known ways", "Recorded Procedures and the Implementations that can carry them."],
-  ["Routes", "Candidate Goal → Procedure → Implementation paths, side by side."],
-  ["Selection", "One Route is chosen against constraints, evidence and cost — with a reason."],
-  ["Execution", "The Route is run. People are pulled in only where a decision is theirs."],
-  ["Observation", "Events, artifacts, tool use and outputs are recorded as they happen."],
-  ["Verification", "The outcome is checked against the Goal, not against the Run’s own report."],
-  ["Reusable knowledge", "Evidence updates what is known — no more than the evidence supports."],
+  ["Find", "Describe what you're trying to accomplish, including your environment and constraints."],
+  ["Explore", "See possible ways to accomplish it, rather than receiving one generic answer."],
+  ["Choose", "Compare the available ways and select one appropriate to your situation."],
+  ["Run", "Put the selected way into practice."],
+  ["Check", "See what happened, and whether the goal was actually achieved."],
+  ["Reuse", "Use what was learned the next time a similar goal comes up."],
 ];
 
-const trust: [string, string][] = [
-  ["Unknown", "False"], ["Candidate", "Verified"], ["Source statement", "Established fact"],
-  ["Successful execution", "Universally best"], ["High usage", "Proof of superiority"],
+const contributions = [
+  ["Add a way", "Share a procedure that worked."],
+  ["Improve a way", "Adapt or correct an existing way."],
+  ["Add evidence", "Record what happened when it was actually used."],
+  ["Add a benchmark", "Help define how success should be measured."],
+  ["Report what failed", "Help prevent the same bad path from being repeated."],
 ];
-const states: Status[] = ["unknown", "candidate", "observed", "claimed", "evidenced", "verified", "executed", "failed", "successful"];
 
 export default function Home() {
   return (
@@ -60,53 +60,29 @@ export default function Home() {
       {/* HERO */}
       <section id="top" className="hero frame grid" aria-labelledby="h-hero">
         <h1 id="h-hero" className="display">
-          <span className="ln" style={{ "--d": "0ms" } as React.CSSProperties}><span>Remember how</span></span>
-          <span className="ln l2" style={{ "--d": "90ms" } as React.CSSProperties}><span>things <span className="hl">actually</span></span></span>
-          <span className="ln l2" style={{ "--d": "180ms" } as React.CSSProperties}><span>get done.</span></span>
+          <span className="ln" style={{ "--d": "0ms" } as React.CSSProperties}><span>Find ways to do</span></span>
+          <span className="ln l2" style={{ "--d": "90ms" } as React.CSSProperties}><span><span className="hl">anything</span>.</span></span>
+          <span className="ln l2" style={{ "--d": "180ms" } as React.CSSProperties}><span>Make them better.</span></span>
         </h1>
-        <Reveal className="hero-sub" delay={250}>
-          <p className="lead">keळ finds known ways to accomplish real-world goals, executes them, verifies what happened, and turns experience into reusable knowledge.</p>
+        <Reveal className="hero-sub stack" delay={250}>
+          <p className="lead">keळ finds ways to accomplish a goal in your specific environment and constraints, puts them into practice, and learns from what happens.</p>
+          <p className="dim small">What you learn can make the next run better.</p>
         </Reveal>
         <Reveal className="hero-install" delay={350}><InstallCommand /></Reveal>
-        <Reveal className="hero-legend" delay={450}>
-          <div><b>Goal</b>what you want done</div>
-          <div><b>Route</b>a known way to do it</div>
-          <div><b>Run</b>what actually happened</div>
-          <div><b>Evidence</b>why we believe it</div>
-        </Reveal>
+        <InteractiveLogo />
       </section>
 
-      {/* 01 ABOUT */}
+      <HeroThreshold />
+
+      {/* 01 WHAT YOU CAN DO */}
       <section id="about" className="section frame grid" aria-labelledby="h-about">
-        <Marker n="01" label="ABOUT" />
-        <Reveal className="statement">
-          <h2 id="h-about" className="h1">Most systems remember data. <span className="dim">keळ remembers how things got done.</span></h2>
-        </Reveal>
-        <div className="col-a" style={{ marginTop: "clamp(32px,5vw,72px)" }}>
-          <Reveal className="stack">
-            <p className="lead">Documentation says how something should work. A tool says what it can do. Neither says what happened the last time someone tried.</p>
-            <p className="lead">keळ keeps the missing layer: the known ways of getting a real goal done, with the record of when they worked, when they didn’t, and why.</p>
-          </Reveal>
-        </div>
-        <div className="col-b" style={{ marginTop: "clamp(32px,5vw,72px)" }}>
-          <Reveal className="stack" delay={120}>
-            <p>It captures executable knowledge from what already exists and from what happens next. It does not treat any of it as truth on arrival: a source is a source, and every claim stays tied to what supports it.</p>
-            <p className="dim small">keळ is not a chatbot, a workflow builder, a documentation system, or a generic agent platform. It is a system for finding, running, judging and accumulating known ways.</p>
-          </Reveal>
-        </div>
-        <ul className="source-list" aria-label="What keळ learns from">
-          {["Documented procedures", "Tools", "Implementations", "Previous executions", "Outcomes", "Evidence", "Benchmarks", "Failures", "Successful runs", "Human interventions"].map((t, i) => (
-            <li key={t}><span>{String(i + 1).padStart(2, "0")}</span>{t}</li>
-          ))}
-        </ul>
-      </section>
-
-      {/* 02 HOW IT WORKS */}
-      <section id="how" className="section frame grid" aria-labelledby="h-how">
-        <Marker n="02" label="HOW IT WORKS" />
+        <Marker n="01" label="WHAT YOU CAN DO" />
         <div className="how-title">
-          <h2 id="h-how" className="h1">From a goal to a better-known way.</h2>
-          <p className="lead dim" style={{ marginTop: 24 }}>Ask or discover. keळ works through the same loop each time — and every pass leaves the knowledge slightly better evidenced.</p>
+          <h2 id="h-about" className="h1">Start with something you need to do.</h2>
+          <p className="lead dim" style={{ marginTop: 24 }}>Automatic, through your coding agent.</p>
+          <p className="small dim" style={{ marginTop: 16 }}>
+            Prefer to look something up yourself? <Link href="/search" style={{ textDecoration: "underline" }}>Search keळ directly</Link>.
+          </p>
         </div>
         <ol className="steps">
           {steps.map(([t, d], i) => (
@@ -118,96 +94,67 @@ export default function Home() {
         </ol>
       </section>
 
-      {/* 03 KNOWLEDGE */}
+      {/* 02 WHAT YOU GET */}
       <section id="knowledge" className="section frame grid" aria-labelledby="h-know">
-        <Marker n="03" label="KNOWLEDGE" />
+        <Marker n="02" label="WHAT YOU GET" />
         <Reveal className="statement">
-          <h2 id="h-know" className="h1">Twelve things, <span className="dim">never collapsed into “workflow.”</span></h2>
+          <h2 id="h-know" className="h1">Everything you need <span className="dim">to pick up the work again.</span></h2>
         </Reveal>
         <div className="cells">
-          {ontology.map(([t, q, d], i) => (
+          {uses.map(([t, q, d], i) => (
             <Reveal key={t} className="cell" delay={(i % 4) * 60}>
               <div className="n"><span>{String(i + 1).padStart(2, "0")}</span></div>
               <div><span className="q">{q}</span><h3 className="h3">{t}</h3><p>{d}</p></div>
             </Reveal>
           ))}
         </div>
-
-        <Reveal className="lineage">
-          <h3 className="h2">Where knowledge comes from</h3>
-          <ol>
-            {[["Source", "not truth"], ["Artifact", ""], ["Observation", ""], ["Claim", ""], ["Procedure", ""], ["Implementation", ""], ["Execution", ""], ["Events · artifacts · outcome", ""], ["Observation · evidence", ""], ["Improved knowledge", ""]].map(([t, s]) => (
-              <li key={t} className={t === "Source" ? "key" : ""}>{t}{s && <small>{s}</small>}</li>
-            ))}
-          </ol>
-          <p className="note">This is a map of how things can relate, not a mandatory pipeline. A Source does not have to produce every object, and keळ does not manufacture objects to complete the picture. <b style={{ fontWeight: 400 }}>Source is not truth.</b></p>
-        </Reveal>
-
-        <Reveal className="lineage">
-          <h3 className="h2">Epistemic discipline</h3>
-        </Reveal>
-        <div className="trust" style={{ marginTop: 28 }}>
-          {trust.map(([a, b]) => (<div key={a}><span>{a}</span><i>≠</i><em>{b}</em></div>))}
-        </div>
-        <div className="states" aria-label="States knowledge can be in">
-          {states.map((s) => <StatusLabel key={s} s={s} />)}
-        </div>
       </section>
 
-      {/* 04 ACTION */}
+      {/* 03 KNOWLEDGE IN ACTION */}
       <section id="action" className="section frame grid" aria-labelledby="h-action">
-        <Marker n="04" label="KNOWLEDGE IN ACTION" />
+        <Marker n="03" label="KNOWLEDGE IN ACTION" />
         <Reveal className="statement">
-          <h2 id="h-action" className="h1">One request, <span className="dim">followed all the way through.</span></h2>
+          <h2 id="h-action" className="h1">One goal, <span className="dim">followed all the way through.</span></h2>
         </Reveal>
         <ActionWalkthrough />
       </section>
 
-      {/* 05 EXECUTION */}
+      {/* 04 CONTRIBUTION */}
       <section id="execution" className="section frame grid" aria-labelledby="h-exec">
-        <Marker n="05" label="EXECUTION & EXPERIENCE" />
+        <Marker n="04" label="CONTRIBUTION" />
         <Reveal className="statement">
-          <h2 id="h-exec" className="h1">keळ learns from what <span className="dim">actually happened.</span></h2>
+          <h2 id="h-exec" className="h1">Leave something <span className="dim">useful behind.</span></h2>
         </Reveal>
         <div className="col-a" style={{ marginTop: "clamp(28px,4vw,56px)" }}>
-          <Reveal><p className="lead">Every Run is preserved as a Run. It is never quietly promoted to a Procedure, and never assumed to have taught anything.</p></Reveal>
+          <Reveal><p className="lead">You don't only use keळ. What you learn (a way that worked, a fix, a failure worth knowing about) can improve it for the next run.</p></Reveal>
         </div>
-        <div className="run-ledger" aria-label="What a Run can preserve">
-          {[["Events", "what happened, in order"], ["Nodes", "the steps that ran"], ["Artifacts", "what was produced"], ["Cost & tool use", "what it took"], ["Outputs", "what came back"], ["Outcome", "how it ended"], ["Verification", "whether it held"], ["Human intervention", "where a person decided"]].map(([b, s]) => (
+        <div className="run-ledger" aria-label="Ways to contribute">
+          {contributions.map(([b, s]) => (
             <Reveal key={b}><b>{b}</b><span>{s}</span></Reveal>
           ))}
         </div>
-        <div className="two-out">
-          <Reveal className="out fail">
-            <StatusLabel s="failed" />
-            <h3>A failed Run</h3>
-            <p>Stays failed. It can be useful evidence — that a route doesn’t apply, that a precondition was missing — but it can never become a Procedure by itself.</p>
-          </Reveal>
-          <Reveal className="out ok" delay={100}>
-            <StatusLabel s="verified" />
-            <h3>A verified Run</h3>
-            <p>Stronger evidence. Still contextual: one success in one environment is not proof that a way is best everywhere. And not every Run produces reusable knowledge.</p>
-          </Reveal>
-        </div>
       </section>
 
-      {/* 06 LEARNING */}
+      {/* 05 VALUE */}
       <section id="learning" className="section frame grid" aria-labelledby="h-learn">
-        <Marker n="06" label="LEARNING" />
+        <Marker n="05" label="VALUE" />
         <Reveal className="statement">
-          <h2 id="h-learn" className="h1">Better-known ways, <span className="dim">through evidence, execution and reuse.</span></h2>
+          <h2 id="h-learn" className="h1">Useful work should <span className="dim">become useful again.</span></h2>
         </Reveal>
+        <div className="col-a" style={{ marginTop: "clamp(28px,4vw,56px)" }}>
+          <Reveal><p className="lead">When a way is reused, improved, and backed by more experience, its value to the network can grow.</p></Reveal>
+        </div>
         <ol className="loop">
-          {["Use knowledge", "Execute", "Observe reality", "Verify outcome", "Capture evidence", "Improve knowledge", "Reuse"].map((t, i) => (
-            <Reveal as="li" key={t} delay={i * 50}><span>{String(i + 1).padStart(2, "0")}</span>{t}</Reveal>
+          {["Contribute", "Use", "Verify", "Improve", "Reward"].map((t, i) => (
+            <Reveal as="li" key={t + i} delay={i * 50}><span>{String(i + 1).padStart(2, "0")}</span>{t}</Reveal>
           ))}
         </ol>
-        <p className="loop-back">Reuse is the next use. keळ doesn’t claim to always find the best solution — it accumulates better-known ways, and shows its evidence.</p>
+        <p className="loop-back">What "reward" means here is still being worked out.</p>
       </section>
 
-      {/* 07 USE IT */}
+      {/* 06 USE IT */}
       <section id="use" className="section close frame grid" aria-labelledby="h-use">
-        <Marker n="07" label="USE IT" />
+        <Marker n="06" label="USE IT" />
         <Reveal className="statement">
           <h2 id="h-use" className="h1">Start with a goal.</h2>
         </Reveal>

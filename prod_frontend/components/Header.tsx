@@ -2,10 +2,11 @@
 import Link from "next/link";
 import Image from "next/image";
 import { usePathname } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { track } from "@/lib/analytics";
 
 const links = [
+  { href: "/", label: "Home" },
   { href: "/problems", label: "Problems" },
   { href: "/search", label: "Search" },
   { href: "/docs", label: "Docs" },
@@ -21,6 +22,24 @@ const Arrow = () => (
 export default function Header() {
   const pathname = usePathname();
   const [open, setOpen] = useState(false);
+  const [aboutInView, setAboutInView] = useState(false);
+
+  // Mirrors SectionRail's own scroll-tracking: the "About" nav link should read as
+  // active while its section is on screen, the same way SectionRail's dots already do --
+  // usePathname alone can't see this, since #about is a same-page anchor, not a route.
+  useEffect(() => {
+    const el = document.getElementById("about");
+    if (!el) {
+      setAboutInView(false);
+      return;
+    }
+    const io = new IntersectionObserver(
+      (entries) => entries.forEach((e) => setAboutInView(e.isIntersecting)),
+      { rootMargin: "-40% 0px -55% 0px" },
+    );
+    io.observe(el);
+    return () => io.disconnect();
+  }, [pathname]);
 
   // On the homepage, About glides in place; elsewhere the default navigation to /#about runs and SmoothScroll resolves it.
   const onAbout = (e: React.MouseEvent) => {
@@ -32,12 +51,23 @@ export default function Header() {
     }
   };
 
+  // Same idea as the logo: on the homepage, glide back to the top instead of a full
+  // reload; elsewhere, the default Link navigation to "/" just lands there normally.
+  const onHome = (e: React.MouseEvent) => {
+    setOpen(false);
+    if (pathname === "/" && window.__kelScrollTo) {
+      e.preventDefault();
+      window.history.pushState(null, "", "/");
+      window.__kelScrollTo("#top");
+    }
+  };
+
   const item = (l: (typeof links)[number]) => (
     <Link
       key={l.href}
       href={l.href}
-      aria-current={pathname === l.href ? "page" : undefined}
-      onClick={l.label === "About" ? onAbout : () => setOpen(false)}
+      aria-current={pathname === l.href || (l.href === "/#about" && aboutInView) ? "page" : undefined}
+      onClick={l.label === "About" ? onAbout : l.label === "Home" ? onHome : () => setOpen(false)}
     >
       {l.label}
     </Link>
@@ -47,7 +77,7 @@ export default function Header() {
     <div className="nav-wrap">
       <div className="frame">
         <header className="nav">
-          <Link href="/" className="logo" aria-label="keळ — home" onClick={() => setOpen(false)}>
+          <Link href="/" className="logo" aria-label="keळ, home" onClick={() => setOpen(false)}>
             <Image src="/kel-wordmark.png" alt="keळ" width={800} height={440} priority style={{ height: 54, width: "auto" }} />
           </Link>
           <nav aria-label="Primary" className="nav-links">{links.map(item)}</nav>

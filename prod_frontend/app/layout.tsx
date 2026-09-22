@@ -9,9 +9,9 @@ import SmoothScroll from "@/components/SmoothScroll";
 import Telemetry from "@/components/Telemetry";
 
 export const metadata: Metadata = {
-  title: { default: "keळ — Remember how things actually get done", template: "%s — keळ" },
+  title: { default: "keळ: Find ways to do anything. Make them better.", template: "%s · keळ" },
   description:
-    "keळ finds known ways to accomplish real-world goals, executes them, verifies what happened, and turns experience into reusable knowledge.",
+    "keळ finds ways to accomplish a goal in your specific environment and constraints, puts them into practice, and learns from what happens.",
   icons: { icon: "/kel-mark.png" },
 };
 
