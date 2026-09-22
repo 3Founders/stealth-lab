@@ -91,7 +91,11 @@ the outcome, e.g. "find every caller of a function across a codebase", NEVER a c
 document's own marketing/frontmatter description) and an ordered list of STEPS. Each step's \
 `action` must be paraphrased from the document, and `source_quote` must be an EXACT, VERBATIM \
 substring of the document text that supports that step (copy it exactly, do not paraphrase \
-the quote itself).
+the quote itself). Each step also has a `depends_on` array of the OTHER steps' `order` numbers \
+(in this same procedure) that must happen first for this step to make sense on its own. Leave \
+`depends_on` empty when the step is self-contained -- someone could follow just that one step, \
+out of context, without needing the rest of the procedure (e.g. "run the linter" is usually \
+independent; "apply the fix it suggested" usually isn't).
 
 A document may also express standalone GOALS not tied to one specific procedure (e.g. a \
 subgoal referenced by a step, or an outcome the document describes without a full procedure \
@@ -118,7 +122,7 @@ does running it accomplish something (implementation), or is it just a pattern t
 
 Reply with ONLY a JSON object, no other text, matching exactly this shape:
 {"procedures": [{"name": "...", "goal": "...", "steps": [{"order": 0, "action": "...", \
-"source_quote": "..."}], "preconditions": [...], "failure_conditions": [...], \
+"source_quote": "...", "depends_on": []}], "preconditions": [...], "failure_conditions": [...], \
 "postconditions": [...], "exclusions": [...], "license": null, "compatibility": null, \
 "allowed_tools": [...]}],
  "goals": [{"canonical_name": "...", "description": null, "expected_outcome": null, \
@@ -245,7 +249,7 @@ def _verify_and_filter(
         kept_procedures.append(
             ExtractedProcedure(
                 name=proc.name, goal=proc.goal,
-                steps=[ExtractedProcedureStep(order=s.order, action=s.action) for s in kept_steps],
+                steps=[ExtractedProcedureStep(order=s.order, action=s.action, depends_on=s.depends_on) for s in kept_steps],
                 preconditions=proc.preconditions, failure_conditions=proc.failure_conditions,
                 postconditions=proc.postconditions, exclusions=proc.exclusions,
                 license=proc.license, compatibility=proc.compatibility,

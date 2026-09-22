@@ -73,7 +73,11 @@ Certificate"), NEVER a copy of the document's own filename-style slug (e.g. neve
 real title. Each procedure also has a `goal` (what reusable outcome it achieves -- a real sentence describing \
 the outcome, e.g. "find every caller of a function across a codebase", NEVER a copy of the \
 document's own marketing/frontmatter description) and an ordered list of STEPS, each with an \
-`action` paraphrased from the document.
+`action` paraphrased from the document and a `depends_on` array of the OTHER steps' `order` \
+numbers (in this same procedure) that must happen first for this step to make sense on its own. \
+Leave `depends_on` empty when the step is self-contained -- someone could follow just that one \
+step, out of context, without needing the rest of the procedure (e.g. "run the linter" is usually \
+independent; "apply the fix it suggested" usually isn't).
 
 A document may also express standalone GOALS not tied to one specific procedure (e.g. a \
 subgoal referenced by a step, or an outcome the document describes without a full procedure \
@@ -99,7 +103,8 @@ does running it accomplish something (implementation), or is it just a pattern t
 (reference_resource)?
 
 Reply with ONLY a JSON object, no other text, matching exactly this shape:
-{"procedures": [{"name": "...", "goal": "...", "steps": [{"order": 0, "action": "..."}], \
+{"procedures": [{"name": "...", "goal": "...", "steps": [{"order": 0, "action": "...", \
+"depends_on": []}], \
 "preconditions": [...], "failure_conditions": [...], "postconditions": [...], \
 "exclusions": [...], "license": null, "compatibility": null, "allowed_tools": [...]}],
  "goals": [{"canonical_name": "...", "description": null, "expected_outcome": null, \
