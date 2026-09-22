@@ -2078,7 +2078,20 @@ async def compile_skill_artifact(
     from app.services.skill_extraction.schema import SkillExtractionTransientFailure
     from app.services.v0_gate import V0Violation
 
-    extractor_module = extractor_module or _grounded_extractor
+    # Default switched to ungrounded 2026-09-22: grounded's verbatim
+    # source_quote check drops steps whose quote doesn't match the raw
+    # document exactly (whitespace/lowercase-normalized substring only,
+    # no fuzz tolerance) -- confirmed live that gemini-2.5-flash (the
+    # only model published on Vertex for this project right now) doesn't
+    # reliably quote verbatim, which dropped ALL of algorithmic-art's 13
+    # steps and therefore the whole procedure. This is a real, disclosed
+    # trade-off (the module docstrings on both grounded.py/ungrounded.py
+    # already name it as a founder-deferred choice, "build both, keep
+    # exactly one"), not something to quietly patch around here -- if the
+    # grounding guarantee (every step provably traces to real document
+    # text) matters more than capture completeness for a given caller,
+    # pass extractor_module=grounded explicitly.
+    extractor_module = extractor_module or _ungrounded_extractor
     extractor_version = (
         _grounded_extractor.EXTRACTOR_VERSION_SKILL_EXTRACTION_GROUNDED_V1
         if extractor_module is _grounded_extractor

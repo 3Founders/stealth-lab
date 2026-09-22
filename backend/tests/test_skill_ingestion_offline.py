@@ -659,9 +659,18 @@ async def test_compile_step_resolves_its_own_goal_id():
     pre-existing free-text `goal` key -- additive, never a schema change
     (migration 83's own comment: 'a writer-populated goal_id key inside
     that JSONB')."""
+    from app.services.skill_extraction import grounded as _grounded
+
     client = FakeLLMClient(_grounded_response())
     pool = CompilerFakePool()
-    outcome = await compile_skill_artifact(pool, _skill_artifact(), embedder=FakeEmbedder(), client=client)
+    # Explicit: this fixture's raw response has a step whose quote won't
+    # verify, deliberately, to exercise grounded's own drop -- ungrounded
+    # (the default since 2026-09-22) wouldn't drop it, changing the step
+    # count this test asserts on for a reason unrelated to what it's
+    # actually testing (goal_id resolution).
+    outcome = await compile_skill_artifact(
+        pool, _skill_artifact(), embedder=FakeEmbedder(), client=client, extractor_module=_grounded,
+    )
     assert outcome.status == "captured"
     steps = pool.captured["procedures"][0][2]
     assert len(steps) == 1
