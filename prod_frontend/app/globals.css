@@ -61,6 +61,14 @@ main, footer { position: relative; z-index: 1; }
 .marker::after { content: ""; flex: 1; height: 1px; background: var(--rule); }
 .rule { border: 0; border-top: 1px solid var(--rule); margin: 0; }
 
+/* back button */
+.back-btn {
+  position: absolute; top: clamp(44px, 6vw, 64px); left: var(--pad); z-index: 20;
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 40px; height: 40px; color: var(--ink); background: none; border: 0; padding: 0; cursor: pointer;
+}
+.back-btn:hover { opacity: .6; }
+
 /* nav */
 .nav-wrap { position: sticky; top: 14px; z-index: 50; margin-top: 14px; height: 0; }
 .nav {
@@ -317,7 +325,10 @@ main, footer { position: relative; z-index: 1; }
 .ask:focus-within { border-bottom-color: var(--cobalt); box-shadow: 0 2px 0 var(--yellow); }
 .ask .btn-ink { margin-bottom: 4px; }
 .scopes { grid-column: 1 / span 12; display: flex; flex-wrap: wrap; gap: 8px; margin-top: 18px; }
-.scopes span { font-size: 12px; letter-spacing: .06em; text-transform: uppercase; border: 1px solid var(--rule-strong); padding: 5px 10px 4px; border-radius: 3px; font-weight: 400; }
+.scopes span, .scopes button { font-size: 12px; letter-spacing: .06em; text-transform: uppercase; border: 1px solid var(--rule-strong); padding: 5px 10px 4px; border-radius: 3px; font-weight: 400; }
+.scopes button { background: none; color: var(--ink); cursor: pointer; }
+.scopes button[aria-pressed="true"] { background: var(--yellow); }
+.scopes button:hover:not([aria-pressed="true"]) { background: var(--soft); }
 .hits { grid-column: 1 / span 12; margin-top: 36px; }
 
 .docs { display: grid; grid-template-columns: 3fr 9fr; gap: var(--gap); padding-bottom: 120px; }
