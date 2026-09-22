@@ -232,9 +232,19 @@ async def extract_document(
                 {"role": "user", "content": user_prompt},
             ],
             temperature=temperature,
-            max_tokens=4000,
+            # See grounded.py's same change for why -- Gemini's reasoning
+            # models spend part of max_tokens on internal thinking before
+            # any visible output, and the old 4000 truncated large real
+            # documents' full structured response mid-JSON.
+            max_tokens=16000,
         )
-        text = response.choices[0].message.content.strip()
+        text = (response.choices[0].message.content or "").strip()
+        if not text:
+            raise SkillExtractionTransientFailure(
+                f"LLM returned no visible content (finish_reason={response.choices[0].finish_reason!r}) "
+                "-- likely truncated by the reasoning/thinking budget before any output",
+                is_rate_limit=False,
+            )
     except Exception as exc:  # noqa: BLE001 -- any client/transport failure is real
         raise SkillExtractionTransientFailure(
             f"LLM call failed: {exc!r}", is_rate_limit=_looks_like_rate_limit(exc),

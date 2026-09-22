@@ -304,9 +304,24 @@ async def extract_document(
                 {"role": "user", "content": user_prompt},
             ],
             temperature=temperature,
-            max_tokens=4000,
+            # Gemini's reasoning models ("thinking") spend PART of max_tokens
+            # on internal reasoning before any visible output -- confirmed
+            # live (2026-09-22, Vertex AI gemini-2.5-flash): a large
+            # document's full structured response (multiple procedures,
+            # each with several steps, plus goals/implementations) got cut
+            # off mid-JSON at the old max_tokens=4000, producing invalid
+            # JSON that silently looked like an extraction failure rather
+            # than a token-budget problem. Raised well above what even a
+            # large real document has needed so far.
+            max_tokens=16000,
         )
-        text = response.choices[0].message.content.strip()
+        text = (response.choices[0].message.content or "").strip()
+        if not text:
+            raise SkillExtractionTransientFailure(
+                f"LLM returned no visible content (finish_reason={response.choices[0].finish_reason!r}) "
+                "-- likely truncated by the reasoning/thinking budget before any output",
+                is_rate_limit=False,
+            )
     except Exception as exc:  # noqa: BLE001 -- any client/transport failure is real
         raise SkillExtractionTransientFailure(
             f"LLM call failed: {exc!r}", is_rate_limit=_looks_like_rate_limit(exc),
