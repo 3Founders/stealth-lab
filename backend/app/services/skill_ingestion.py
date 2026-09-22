@@ -1425,6 +1425,7 @@ class IngestOutcome:
     injection_screened: bool = False
     script_procedure_ids: list[str] = field(default_factory=list)
     reference_procedure_ids: list[str] = field(default_factory=list)
+    independent_step_procedure_ids: list[str] = field(default_factory=list)
     dependency_count: int = 0
     # Global internet/public-source admission gate (app.services.
     # ingestion_admission). `admission_decision` is one of "admit" /
@@ -2055,6 +2056,56 @@ async def _persist_reference_resources(
     return out
 
 
+async def _persist_independent_steps(
+    pool: asyncpg.Pool, artifact: Any, *,
+    parent_name: str, steps: list[Any], steps_json: list[dict], created_by: str,
+    provenance: str = "prior_library", embedder: Optional[Any] = None, client: Optional[Any] = None,
+) -> list[str]:
+    """A step with an empty `depends_on` (schema.md's own documented Procedure.steps shape --
+    ExtractedProcedureStep.depends_on) is structurally independent: someone could follow just
+    that one step without the rest of the procedure. Each such step is ALSO captured as its own
+    one-step, retrievable Procedure, on top of remaining a step of its parent -- one level up
+    from the existing "every step gets its own Goal too" idea (Sec 3/11's "Step S1 -> Goal G2"),
+    now also Step -> Procedure when the step is genuinely self-contained.
+
+    Skips: a procedure with only one step (it IS already exactly that, promoting it would be
+    pure duplication); a step already tied to a bundled script (`steps_json[i]["source_locator"]`
+    came from a resource match in the caller's loop) -- that content is already independently
+    captured via `_persist_script_procedures`, promoting it again would duplicate it.
+
+    `steps`/`steps_json` are the SAME list, in the SAME order (`ExtractedProcedureStep` objects
+    and the already-built step JSONB entries respectively) -- paired positionally, not by id."""
+    if len(steps) <= 1:
+        return []
+    from app.services.goals import GoalQualityRejected
+    from app.services.procedures import capture_procedure
+
+    locator = {k: v for k, v in {
+        "source_id": getattr(artifact, "source_id", None) or artifact.uri, "uri": artifact.uri,
+        "content_hash": artifact.content_hash, "commit": getattr(artifact, "commit", None),
+        "path": getattr(artifact, "path", None), "granularity": "document"}.items() if v}
+
+    out: list[str] = []
+    for s, entry in zip(steps, steps_json):
+        if s.depends_on or "source_locator" in entry:
+            continue
+        goal = s.action
+        step = {"order": 0, "description": f"{parent_name} -- step {s.order}", "goal": goal,
+                "source_locator": locator}
+        try:
+            result = await capture_procedure(
+                pool, name=f"{parent_name}:step{s.order}",
+                goal=goal, steps=[step], provenance=provenance, scope_type="global", created_by=created_by,
+                goal_embedder=embedder, goal_adjudication_client=client,
+                procedure_dedup=True, source_key=f"skill-step:{artifact.content_hash}:{parent_name}:{s.order}",
+                source_locator=locator, require_source_locators=True,
+            )
+        except GoalQualityRejected:
+            continue  # a low-quality goal rejects only this step's standalone procedure
+        out.append(str(result["procedure_id"]))
+    return out
+
+
 async def resolve_procedure_dependencies(pool: asyncpg.Pool) -> int:
     """Resolve repository-local dependency paths after independently ordered jobs."""
     result = await pool.execute(
@@ -2370,6 +2421,7 @@ async def compile_skill_artifact(
     version_row_ids: list[str] = []
     script_procedure_ids: list[str] = []
     reference_procedure_ids: list[str] = []
+    independent_step_procedure_ids: list[str] = []
     artifact_ids: list[str] = []
     all_document_claim_ids: list[str] = []
     all_document_claim_evidence_ids: list[str] = []
@@ -2421,6 +2473,10 @@ async def compile_skill_artifact(
             except (V0Violation, GoalQualityRejected):
                 pass
             steps_json.append(step_entry)
+        independent_step_procedure_ids.extend(await _persist_independent_steps(
+            pool, artifact, parent_name=proc.name, steps=proc.steps, steps_json=steps_json,
+            created_by=created_by, provenance=provenance, embedder=embedder, client=client,
+        ))
         retrieval_doc = build_procedure_retrieval_document({
             "name": proc.name, "goal": proc.goal, "steps": steps_json,
             "preconditions": proc.preconditions, "invariants": [],
@@ -2601,6 +2657,7 @@ async def compile_skill_artifact(
         reason=screen_reason or (admission.reason if quarantined else None),
         script_procedure_ids=script_procedure_ids,
         reference_procedure_ids=reference_procedure_ids,
+        independent_step_procedure_ids=independent_step_procedure_ids,
         dependency_count=0,
         artifact_block_ids=first_artifact_block_ids,
         block_observation_ids=first_block_observation_ids,
@@ -2693,6 +2750,7 @@ async def run_skill_ingestion(
         "screened": 0,
         "script_procedures": 0,
         "reference_procedures": 0,
+        "independent_step_procedures": 0,
         "procedure_dependencies": 0,
         # Admission gate (this pass). `admission_rejected` overlaps
         # `rejected` (every admission-gate reject IS a rejected outcome,
@@ -2776,6 +2834,7 @@ async def run_skill_ingestion(
             continue
         metrics["script_procedures"] += len(outcome.script_procedure_ids)
         metrics["reference_procedures"] += len(outcome.reference_procedure_ids)
+        metrics["independent_step_procedures"] += len(outcome.independent_step_procedure_ids)
         metrics["procedure_dependencies"] += outcome.dependency_count
         # `candidates` counts every artifact that reached the compiler,
         # rejected ones included (brief section 14: candidates == accepted +

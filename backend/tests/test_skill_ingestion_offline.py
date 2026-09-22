@@ -644,8 +644,11 @@ async def test_compile_with_grounded_response_captures_a_real_goal():
     outcome = await compile_skill_artifact(pool, _skill_artifact(), embedder=FakeEmbedder(), client=client)
     assert outcome.status == "captured"
     assert outcome.capability_abstained is False
-    assert len(pool.captured["procedures"]) == 1
-    proc_args = pool.captured["procedures"][0]
+    # 3, not 1: the fixture's 2 steps both have an empty depends_on, so each is ALSO
+    # captured as its own standalone procedure (_persist_independent_steps) on top of the
+    # parent -- find the parent by name rather than assuming it's the only capture.
+    assert len(pool.captured["procedures"]) == 3
+    proc_args = next(p for p in pool.captured["procedures"] if p[0] == "pandas-append-fix")
     # capture_procedure()'s positional index 1 is `goal` (0 is name).
     assert proc_args[1] == "find and fix a removed pandas DataFrame method call"
     assert "description" not in proc_args[1]  # sanity: not a dict/other shape leaking through
@@ -672,7 +675,11 @@ async def test_compile_step_resolves_its_own_goal_id():
         pool, _skill_artifact(), embedder=FakeEmbedder(), client=client, extractor_module=_grounded,
     )
     assert outcome.status == "captured"
-    steps = pool.captured["procedures"][0][2]
+    # The surviving step (order=0, empty depends_on) is ALSO captured standalone via
+    # _persist_independent_steps -- BEFORE the parent, since that runs inside the same
+    # per-step loop -- so find the parent by name rather than assuming index 0.
+    proc_args = next(p for p in pool.captured["procedures"] if p[0] == "pandas-append-fix")
+    steps = proc_args[2]
     assert len(steps) == 1
     assert steps[0]["goal"] == "locate the failing DataFrame.append call"
     assert "goal_id" in steps[0]
@@ -682,6 +689,53 @@ async def test_compile_step_resolves_its_own_goal_id():
     assert any(
         g[1] == "locate the failing DataFrame.append call" for g in pool.captured["goals"]
     )
+
+
+@pytest.mark.asyncio
+async def test_compile_promotes_independent_steps_but_not_dependent_ones():
+    """A step with an empty depends_on (schema.md's Procedure.steps.depends_on) is
+    structurally independent and gets captured as its own standalone, one-step procedure
+    via _persist_independent_steps, on top of remaining a step of its parent -- a step
+    that names a real dependency does not get promoted."""
+    response = json.dumps({
+        "procedures": [{
+            "name": "pandas-append-fix", "goal": "find and fix a removed pandas DataFrame method call",
+            "steps": [
+                {"order": 0, "action": "locate the failing DataFrame.append call", "depends_on": []},
+                {"order": 1, "action": "replace it with pandas.concat", "depends_on": [0]},
+            ],
+        }],
+        "goals": [], "implementations": [],
+    })
+    client = FakeLLMClient(response)
+    pool = CompilerFakePool()
+    outcome = await compile_skill_artifact(pool, _skill_artifact(), embedder=FakeEmbedder(), client=client)
+    assert outcome.status == "captured"
+    names = [p[0] for p in pool.captured["procedures"]]
+    assert "pandas-append-fix" in names
+    assert "pandas-append-fix:step0" in names  # promoted: empty depends_on
+    assert "pandas-append-fix:step1" not in names  # not promoted: depends_on=[0]
+    assert len(pool.captured["procedures"]) == 2
+    assert outcome.independent_step_procedure_ids  # non-empty: one real promotion happened
+
+
+@pytest.mark.asyncio
+async def test_compile_does_not_promote_a_single_step_procedures_own_step():
+    """A single-step procedure IS already exactly that step -- promoting it too would
+    be pure duplication, so _persist_independent_steps skips procedures with <= 1 step."""
+    response = json.dumps({
+        "procedures": [{
+            "name": "p1", "goal": "find and fix a removed pandas DataFrame method call",
+            "steps": [{"order": 0, "action": "locate the failing DataFrame.append call", "depends_on": []}],
+        }],
+        "goals": [], "implementations": [],
+    })
+    client = FakeLLMClient(response)
+    pool = CompilerFakePool()
+    outcome = await compile_skill_artifact(pool, _skill_artifact(), embedder=FakeEmbedder(), client=client)
+    assert outcome.status == "captured"
+    assert len(pool.captured["procedures"]) == 1
+    assert outcome.independent_step_procedure_ids == []
 
 
 @pytest.mark.asyncio

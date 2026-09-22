@@ -61,6 +61,16 @@ def test_extracted_procedure_rejects_zero_steps():
         ExtractedProcedure(name="x", goal="find references", steps=[])
 
 
+def test_extracted_procedure_step_defaults_depends_on_empty():
+    step = ExtractedProcedureStep(order=0, action="do it")
+    assert step.depends_on == []
+
+
+def test_extracted_procedure_step_rejects_negative_depends_on():
+    with pytest.raises(ValidationError):
+        ExtractedProcedureStep(order=1, action="do it", depends_on=[-1])
+
+
 def test_extracted_procedure_rejects_blank_goal():
     with pytest.raises(ValidationError):
         ExtractedProcedure(

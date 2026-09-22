@@ -109,6 +109,13 @@ class SkillExtractionTransientFailure(Exception):
 class ExtractedProcedureStep(BaseModel):
     order: int
     action: str = Field(min_length=1, max_length=_MAX_PROSE_TEXT)
+    # schema.md's Procedure.steps has always documented depends_on[] (order-indices of
+    # OTHER steps in this same procedure this one needs first) -- this extraction schema
+    # never actually captured it until now. Empty means "structurally independent": someone
+    # could follow just this one step without the rest of the procedure. Used to decide
+    # which steps also get captured as their own standalone, retrievable procedure
+    # (skill_ingestion.py's _persist_independent_steps).
+    depends_on: list[int] = Field(default_factory=list)
 
     @field_validator("action")
     @classmethod
@@ -116,6 +123,13 @@ class ExtractedProcedureStep(BaseModel):
         v = v.strip()
         if not v:
             raise ValueError("step action must not be blank")
+        return v
+
+    @field_validator("depends_on")
+    @classmethod
+    def _depends_on_non_negative(cls, v: list[int]) -> list[int]:
+        if any(d < 0 for d in v):
+            raise ValueError("depends_on entries must be non-negative step order numbers")
         return v
 
 
