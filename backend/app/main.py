@@ -14,6 +14,7 @@ from app.api import problems, runs
 from app.api import publications, workspaces
 from app.api import contributors as contributors_api
 from app.api import profile as profile_api
+from app.api.profile import avatar_router as profile_avatar_api
 from app.api import trajectories
 from app.api import economy
 from app.api.deps import require_trustworthy_identity
@@ -142,6 +143,7 @@ app.include_router(publications.router)
 app.include_router(workspaces.router)
 app.include_router(contributors_api.router)
 app.include_router(profile_api.router)
+app.include_router(profile_avatar_api)
 app.include_router(economy.router)
 
 

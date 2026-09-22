@@ -1,19 +1,17 @@
 import Link from "next/link";
 import Image from "next/image";
-import { LEGAL_DOCS } from "@/lib/legal";
 
 // Only routes and anchors that exist in this build.
 const cols = [
   { h: "Product", items: [["Problems", "/problems"], ["Search", "/search"], ["Docs", "/docs"]] },
   {
-    h: "Knowledge",
+    h: "How to use",
     items: [
-      ["Goals", "/docs#goals"], ["Procedures", "/docs#procedures"], ["Implementations", "/docs#implementations"],
-      ["Routes", "/docs#routes"], ["Runs", "/docs#runs"], ["Benchmarks", "/docs#benchmarks"],
+      ["Getting started", "/docs#getting-started"], ["How to use", "/docs#how-to-use"], ["Contribution & rewards", "/docs#contribution-rewards"],
     ],
   },
-  { h: "Contribute", items: [["Submissions", "/docs#submissions"], ["API", "/docs#api"]] },
-  { h: "Account & about", items: [["Sign in", "/sign-in"], ["About keळ", "/#about"], ["Source", "https://github.com/3Founders/stealth-lab"]] },
+  { h: "Account", items: [["Sign in", "/sign-in"], ["Credits", "/account/credits"]] },
+  { h: "About", items: [["About keळ", "/#about"]] },
 ];
 
 export default function Footer() {
@@ -38,7 +36,7 @@ export default function Footer() {
         ))}
         <nav className="footer-legal" aria-label="Legal">
           <span>Legal (drafts)</span>
-          {LEGAL_DOCS.map((d) => <Link key={d.slug} href={`/docs/legal/${d.slug}`}>{d.title}</Link>)}
+          <Link href="/docs#legal">Legal documents</Link>
         </nav>
         <div className="footer-base">
           <span>© {new Date().getFullYear()} keळ</span>

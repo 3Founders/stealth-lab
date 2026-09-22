@@ -1,76 +1,102 @@
 /**
- * Minimal session/token handling for the real, authenticated contribution
- * flows (submissions, usage events, Credits, Standing). keळ deployments
- * identify people through an external OIDC provider (see /sign-in) — this
- * app never collects a password. Once that provider redirects back with a
- * token, it is expected to land here under ACCESS_TOKEN_KEY; nothing in
- * this codebase runs that redirect yet (NEXT_PUBLIC_KEL_SIGNIN_URL is
- * unset in this build), so today `getAccessToken()` honestly returns null
- * and every authenticated call degrades to the same "sign in first" state
- * every other gated action in this app already shows.
+ * Session handling for the real, authenticated contribution flows
+ * (submissions, usage events, Credits, Standing, profile/avatar).
  *
- * The token itself is never sent anywhere but this deployment's own
- * backend (see lib/kel-api.ts's authedFetch). Decoding it client-side
- * (below) is for DISPLAY/URL-building only — e.g. knowing your own
- * contributor_id to link to your own Credits page — never for
- * authorization: the server independently verifies the token on every
- * request (app/api/deps.py::require_authenticated_user) and never trusts
- * anything the client derived from it.
+ * V1 identity: Supabase Auth (Google, GitHub, email+password) is the
+ * browser-side session mechanism (see lib/supabase.ts) — this module
+ * wraps its supported session APIs rather than reimplementing token
+ * storage. The backend independently verifies every access token itself
+ * (app/services/authn.py's Supabase Auth preset); nothing decoded here is
+ * ever treated as authorization, only as a DISPLAY/URL-building
+ * convenience (e.g. knowing whether to show "Sign in" or the account
+ * menu before the profile API has answered).
  */
 "use client";
 
-const ACCESS_TOKEN_KEY = "kel_access_token";
-
-export function getAccessToken(): string | null {
-  if (typeof window === "undefined") return null;
-  try {
-    return window.localStorage.getItem(ACCESS_TOKEN_KEY);
-  } catch {
-    return null;
-  }
-}
-
-export function setAccessToken(token: string): void {
-  try {
-    window.localStorage.setItem(ACCESS_TOKEN_KEY, token);
-  } catch {
-    /* private mode / blocked storage — session simply won't persist */
-  }
-}
-
-export function clearAccessToken(): void {
-  try {
-    window.localStorage.removeItem(ACCESS_TOKEN_KEY);
-  } catch {
-    /* nothing to clear */
-  }
-}
-
-/** Non-authoritative: display/URL-building only. See module docstring. */
-export function decodeJwtSubject(token: string): string | null {
-  try {
-    const [, payload] = token.split(".");
-    if (!payload) return null;
-    const json = atob(payload.replace(/-/g, "+").replace(/_/g, "/"));
-    const claims = JSON.parse(json) as Record<string, unknown>;
-    const sub = claims.sub;
-    return typeof sub === "string" && sub ? sub : null;
-  } catch {
-    return null;
-  }
-}
+import { getSupabase, supabaseConfigured } from "@/lib/supabase";
 
 export interface Session {
   token: string;
   subject: string;
 }
 
-/** Best-effort current session from the stored token. null when signed out
- * or the stored token doesn't even parse — never fabricated. */
-export function getSession(): Session | null {
-  const token = getAccessToken();
-  if (!token) return null;
-  const subject = decodeJwtSubject(token);
-  if (!subject) return null;
-  return { token, subject };
+/** The current access token, or null when signed out / Supabase isn't
+ * configured for this deployment. Async because Supabase's own session
+ * read is async (it may need to refresh a near-expired token). */
+export async function getAccessToken(): Promise<string | null> {
+  const client = getSupabase();
+  if (!client) return null;
+  try {
+    const { data } = await client.auth.getSession();
+    return data.session?.access_token ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/** Best-effort current session. null when signed out, misconfigured, or
+ * the client has no session yet — never fabricated. */
+export async function getSession(): Promise<Session | null> {
+  const client = getSupabase();
+  if (!client) return null;
+  try {
+    const { data } = await client.auth.getSession();
+    const session = data.session;
+    if (!session?.access_token || !session.user?.id) return null;
+    return { token: session.access_token, subject: session.user.id };
+  } catch {
+    return null;
+  }
+}
+
+export async function signOut(): Promise<void> {
+  const client = getSupabase();
+  if (!client) return;
+  await client.auth.signOut();
+}
+
+export { supabaseConfigured };
+
+/** Subscribe to sign-in/sign-out. Returns an unsubscribe function (or a
+ * no-op when Supabase isn't configured). */
+export function onSessionChange(cb: (session: Session | null) => void): () => void {
+  const client = getSupabase();
+  if (!client) return () => {};
+  const { data } = client.auth.onAuthStateChange((_event, session) => {
+    if (session?.access_token && session.user?.id) {
+      cb({ token: session.access_token, subject: session.user.id });
+    } else {
+      cb(null);
+    }
+  });
+  return () => data.subscription.unsubscribe();
+}
+
+// --- safe post-auth redirect target ---------------------------------------
+
+const REDIRECT_KEY = "kel_post_auth_redirect";
+
+/** Only same-origin, path-shaped destinations are ever honoured — never an
+ * absolute URL or protocol-relative one (open-redirect guard). */
+export function isSafeRedirectPath(path: string | null | undefined): path is string {
+  return typeof path === "string" && path.startsWith("/") && !path.startsWith("//") && !path.includes("://");
+}
+
+export function setPostAuthRedirect(path: string): void {
+  if (!isSafeRedirectPath(path)) return;
+  try {
+    window.sessionStorage.setItem(REDIRECT_KEY, path);
+  } catch {
+    /* private mode / blocked storage — falls back to the default destination */
+  }
+}
+
+export function consumePostAuthRedirect(): string {
+  try {
+    const path = window.sessionStorage.getItem(REDIRECT_KEY);
+    window.sessionStorage.removeItem(REDIRECT_KEY);
+    return isSafeRedirectPath(path) ? path : "/";
+  } catch {
+    return "/";
+  }
 }

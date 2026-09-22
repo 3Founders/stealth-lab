@@ -1,6 +1,15 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+vi.mock("@/lib/session", () => ({ getAccessToken: vi.fn(async () => null) }));
+
 const ORIGINAL_ENV = process.env.NEXT_PUBLIC_KEL_API_URL;
+
+/** Re-imports the (freshly re-mocked, post-resetModules) session module and
+ * configures getAccessToken's next resolution. Must run AFTER vi.resetModules(). */
+async function mockToken(token: string | null) {
+  const { getAccessToken } = await import("@/lib/session");
+  vi.mocked(getAccessToken).mockResolvedValue(token);
+}
 
 describe("kel-api module shape — no frontend ranking fallback", () => {
   it("does not export rankScore or verificationBucket", async () => {
@@ -71,8 +80,7 @@ describe("kel-api economy fetchers — real endpoints, real params", () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response('{"id":"s1","status":"candidate"}', { status: 200 }));
     vi.stubGlobal("fetch", fetchMock);
     const { createProcedureSubmission } = await import("@/lib/kel-api");
-    const { setAccessToken, clearAccessToken } = await import("@/lib/session");
-    setAccessToken("t");
+    await mockToken("t");
     await createProcedureSubmission({ goal_id: "g1", submission_type: "new", name: "n", steps: ["s"] });
     const [url, init] = fetchMock.mock.calls[0];
     expect(String(url)).toBe("http://backend.test/v1/economy/procedure-submissions");
@@ -81,7 +89,6 @@ describe("kel-api economy fetchers — real endpoints, real params", () => {
     expect(body).not.toHaveProperty("owner_id");
     expect(body).not.toHaveProperty("created_by");
     expect(body.goal_id).toBe("g1");
-    clearAccessToken();
   });
 
   it("createBenchmarkSubmission never lets the caller attach a target procedure", async () => {
@@ -89,14 +96,12 @@ describe("kel-api economy fetchers — real endpoints, real params", () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response('{"id":"b1","status":"candidate"}', { status: 200 }));
     vi.stubGlobal("fetch", fetchMock);
     const { createBenchmarkSubmission } = await import("@/lib/kel-api");
-    const { setAccessToken, clearAccessToken } = await import("@/lib/session");
-    setAccessToken("t");
+    await mockToken("t");
     await createBenchmarkSubmission({ goal_id: "g1", name: "bench" });
     const [, init] = fetchMock.mock.calls[0];
     const body = JSON.parse((init as RequestInit).body as string);
     expect(body).not.toHaveProperty("procedure_id");
     expect(body).not.toHaveProperty("procedure_row_id");
     expect(body).not.toHaveProperty("submitted_by");
-    clearAccessToken();
   });
 });

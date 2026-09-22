@@ -1,11 +1,20 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+vi.mock("@/lib/session", () => ({ getAccessToken: vi.fn(async () => null) }));
+
 const ORIGINAL_ENV = process.env.NEXT_PUBLIC_KEL_API_URL;
 
 async function freshApi() {
   vi.resetModules();
   const mod = await import("@/lib/api");
   return mod;
+}
+
+/** Re-imports the (freshly re-mocked, post-resetModules) session module and
+ * configures getAccessToken's next resolution. Must run AFTER freshApi(). */
+async function mockToken(token: string | null) {
+  const { getAccessToken } = await import("@/lib/session");
+  vi.mocked(getAccessToken).mockResolvedValue(token);
 }
 
 describe("apiGet — unconfigured backend", () => {
@@ -47,16 +56,24 @@ describe("apiGet — configured backend", () => {
     expect(result).toEqual({ kind: "ok", data: { hello: "world" } });
   });
 
-  it("attaches the stored bearer token when present", async () => {
+  it("attaches the session's bearer token when present", async () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response("{}", { status: 200 }));
     vi.stubGlobal("fetch", fetchMock);
     const { apiGet } = await freshApi();
-    const { setAccessToken, clearAccessToken } = await import("@/lib/session");
-    setAccessToken("real-token");
+    await mockToken("real-token");
     await apiGet("/v1/me");
     const [, init] = fetchMock.mock.calls[0];
     expect((init.headers as Record<string, string>).Authorization).toBe("Bearer real-token");
-    clearAccessToken();
+  });
+
+  it("sends no Authorization header when signed out", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response("{}", { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const { apiGet } = await freshApi();
+    await mockToken(null);
+    await apiGet("/v1/problems");
+    const [, init] = fetchMock.mock.calls[0];
+    expect((init.headers as Record<string, string>).Authorization).toBeUndefined();
   });
 });
 
@@ -68,8 +85,7 @@ describe("apiPost — never sends an authenticated write without a session", () 
     const fetchSpy = vi.fn();
     vi.stubGlobal("fetch", fetchSpy);
     const { apiPost } = await freshApi();
-    const { clearAccessToken } = await import("@/lib/session");
-    clearAccessToken();
+    await mockToken(null);
     const result = await apiPost("/v1/economy/procedure-submissions", { name: "x" });
     expect(result).toEqual({ kind: "unauthenticated" });
     expect(fetchSpy).not.toHaveBeenCalled();
@@ -78,35 +94,29 @@ describe("apiPost — never sends an authenticated write without a session", () 
   it("429 is surfaced as a distinct, human-readable rate-limit state", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({ detail: "too fast" }), { status: 429 })));
     const { apiPost } = await freshApi();
-    const { setAccessToken, clearAccessToken } = await import("@/lib/session");
-    setAccessToken("t");
+    await mockToken("t");
     const result = await apiPost("/v1/economy/procedure-submissions", { name: "x" });
     expect(result.kind).toBe("error");
     if (result.kind === "error") {
       expect(result.status).toBe(429);
       expect(result.message).toMatch(/too quickly/i);
     }
-    clearAccessToken();
   });
 
   it("422 surfaces the backend's own validation detail", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({ detail: "goal (problem) x not found" }), { status: 422 })));
     const { apiPost } = await freshApi();
-    const { setAccessToken, clearAccessToken } = await import("@/lib/session");
-    setAccessToken("t");
+    await mockToken("t");
     const result = await apiPost("/v1/economy/procedure-submissions", { name: "x" });
     expect(result.kind).toBe("error");
     if (result.kind === "error") expect(result.message).toBe("goal (problem) x not found");
-    clearAccessToken();
   });
 
   it("a successful submission returns the real server response", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({ id: "sub-1", status: "candidate" }), { status: 200 })));
     const { apiPost } = await freshApi();
-    const { setAccessToken, clearAccessToken } = await import("@/lib/session");
-    setAccessToken("t");
+    await mockToken("t");
     const result = await apiPost<{ id: string; status: string }>("/v1/economy/procedure-submissions", { name: "x" });
     expect(result).toEqual({ kind: "ok", data: { id: "sub-1", status: "candidate" } });
-    clearAccessToken();
   });
 });

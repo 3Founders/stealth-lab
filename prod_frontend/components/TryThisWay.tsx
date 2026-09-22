@@ -3,7 +3,7 @@ import { useRef, useState } from "react";
 import { track } from "@/lib/analytics";
 
 /**
- * Execution itself happens through the MCP tools (see /docs#execution — `reproduce_procedure`
+ * Execution itself happens through the MCP tools (see /docs#how-to-use — `reproduce_procedure`
  * et al.), not a browser button; there is no safe public "run it now" endpoint to wire up.
  * So "try this way" is the real, honest action: the exact call your coding agent would make,
  * ready to copy. Mirrors InstallCommand's copy pattern for visual and behavioral consistency.
@@ -37,7 +37,7 @@ export default function TryThisWay({ procedureId }: { procedureId: string }) {
         </button>
       </div>
       <div className="install-foot">
-        Run from your coding agent once keळ’s MCP server is connected. <a href="/docs#execution" style={{ textDecoration: "underline" }}>How execution works</a>
+        Run from your coding agent once keळ’s MCP server is connected. <a href="/docs#how-to-use" style={{ textDecoration: "underline" }}>How execution works</a>
       </div>
     </div>
   );

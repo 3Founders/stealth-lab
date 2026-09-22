@@ -5,6 +5,7 @@ import "@fontsource/barlow/500.css";
 import "./globals.css";
 import Header from "@/components/Header";
 import BackButton from "@/components/BackButton";
+import OnboardingGate from "@/components/OnboardingGate";
 import Footer from "@/components/Footer";
 import SmoothScroll from "@/components/SmoothScroll";
 import Telemetry from "@/components/Telemetry";
@@ -32,6 +33,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         </div>
         <SmoothScroll />
         <Telemetry />
+        <OnboardingGate />
         <Header />
         <main id="main">
           <BackButton />

@@ -116,6 +116,13 @@ DEFAULT_LIMITS: dict[str, RateLimit] = {
     "/v1/chat": RateLimit(max_requests=30, window=timedelta(hours=1)),
     # Cheap, but unbounded ingestion is still a denial-of-service vector.
     "/v1/traces": RateLimit(max_requests=120, window=timedelta(hours=1)),
+    # Onboarding "Generate another" (V1 contributor identity spec §12):
+    # capped at 3 within the window so it stays a quick pick, not a
+    # namespace-scanning tool.
+    "/v1/me/profile/username/suggestions": RateLimit(max_requests=3, window=timedelta(minutes=10)),
+    # Avatar upload: cheap per call but each one does real image decoding
+    # + an object-store write.
+    "/v1/me/avatar": RateLimit(max_requests=10, window=timedelta(hours=1)),
 }
 
 
