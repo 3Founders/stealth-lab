@@ -574,15 +574,34 @@ Procedure:
     - type: claim_check | tool_check | environment_check | custom_check
       definition: object
 
+  source_locator: object               # where the WHOLE procedure came from (db/97)
+
   steps:
     - id: string
       action: string
       inputs: object
       depends_on: [step_id]
       preconditions: [check]
-      references: [ProcedureRef]        # code/sub-procedures this step should look at --
-                                         # was implementation_ids; Implementation folded
-                                         # into Procedure (D-2026-09-22, see §16/§18)
+      source_locator: object           # where THIS step came from; inherits the procedure's,
+                                        # marked granularity=document/inherited, if it has none
+                                        # of its own (db/97)
+      binding:                         # how THIS step is executed -- replaces Implementation
+                                        # (db/98, D-2026-09-20/22, see §16/§18)
+        kind:
+          tool | model | mcp_tool | adapter | sandbox | command | runtime |
+          slm_artifact | http_api | binary | wasm | container | source_artifact
+        <kind>: string                 # the kind's own key holds its primary value,
+                                        # e.g. kind=mcp_tool -> mcp_tool: "<tool name>"
+        endpoint: string | null
+        server_url: string | null
+        path: string | null
+        image: string | null
+        args: [string]
+        env_refs: [string]             # credentials referenced by NAME, never stored
+        locator: object | null
+        parameters: object | null
+        verifier: object | null
+        resources: object | null
 
   branches:
     - condition: check
@@ -626,20 +645,20 @@ Procedure:
     time: number | null
     money: number | null
 
-  latency: object | null
-
-  # Implementation folded into Procedure (D-2026-09-22): a logical capability
-  # with several executable variants (a script path vs. a shell/API path to
-  # the same outcome) is modeled as SEVERAL Procedure rows sharing a Goal,
-  # each with its own `type`/`model`/`requirements` here and its own
-  # independently-tracked capability grade (§16/§18) -- never one row
-  # averaging across variants. `type: another_procedure` is how a step
-  # delegating to a sub-procedure is expressed (see steps[].references above).
-  type:
-    deterministic_code | shell | api | rule | lookup | slm | frontier_llm |
-    human | another_procedure | null
-  model: string | null
-  requirements: []
+  # Preserved source material this procedure draws on (db/98) -- there is no
+  # separate global Implementation object: "an implementation" is just a
+  # one-step procedure, or a step of a multi-step procedure (D-2026-09-20/22,
+  # see §16/§18). Each ref names an ingested Artifact + a ROLE; only
+  # role=executable_source may ever set execution_allowed -- a style/design
+  # reference is retrievable context, never executable.
+  source_artifacts:
+    - artifact_id: ArtifactRef
+      path: string
+      role:
+        executable_source | style_reference | design_reference |
+        documentation | dependency_manifest | test_fixture
+      execution_allowed: boolean       # only legal when role = executable_source
+      note: string | null
 
   # No stored trust/confidence field: confidence is derived from evidence at
   # read time (closed decision, done.md §4.6). See Capability (§16) and the
@@ -664,17 +683,24 @@ Preconditions ask:
 
 A procedure is **not a prompt**.
 
-A procedure's `type` (§13) -- what actually carries out its steps -- can be:
+A step's `binding.kind` (§13) -- what actually carries it out -- can be:
 
 ```text
-deterministic code
-shell / API
-rule
-lookup / cached result
-SLM
-frontier LLM
-human
-another procedure
+tool
+model
+mcp_tool
+adapter
+sandbox
+command
+runtime
+slm_artifact
+http_api
+binary
+wasm
+container
+source_artifact                          # run an immutable ingested artifact by id --
+                                          # only if that artifact is screened and
+                                          # execution_allowed
 ```
 
 
@@ -707,7 +733,7 @@ Process:
 5. check preconditions
 6. resolve tools
 7. build task graph
-8. select procedure variants (per step, per §13's `type`)
+8. resolve step bindings (per step, per §13's `binding.kind`)
 9. check safety
 10. produce ExecutionPlan
 
@@ -751,8 +777,10 @@ ExecutionPlan:
   task_graph:
     id: string
 
-  resolved_procedures:
-    step_id: procedure_id                 # was step_id: implementation_id
+  # No step_id -> implementation_id map here (db/98 DROPPED
+  # execution_plans.implementations outright, not renamed): each step's
+  # binding already lives embedded on the Procedure itself (steps[].binding),
+  # so there is nothing separate to resolve at plan level.
 
   safety_check:
     status: passed | failed | requires_review
@@ -795,9 +823,9 @@ P(required outcome | state, procedure)
 ```
 
 conditional on task, state, environment, inputs and constraints. (Implementation
-folded into Procedure, D-2026-09-22 -- a variant's executable strategy is now the
-procedure's own `type`/`model` fields, §13, so it no longer needs a separate
-conditioning term: it's already inside "procedure".)
+folded into Procedure, db/97-98, D-2026-09-20/22 -- a variant's executable
+strategy is now its step(s)' own `binding`, §13, so it no longer needs a
+separate conditioning term: it's already inside "procedure".)
 The ordinal ladder (levels 0–5: unknown → observed → reproduced → validated →
 generalized → trusted) is **a banding over P**, not a separate representation:
 each level corresponds to a P interval whose bounds tighten as evidence volume
@@ -830,15 +858,15 @@ Capability can decrease after failures or environment changes.
 
 ## 18. Search & Grading
 
-Every Procedure is graded independently (D-2026-09-22: Implementation is not a
-separate object -- see §13/§16). A logical capability with several executable
-variants -- a script path vs. a shell/API path to the same outcome -- is modeled
-as several Procedure rows sharing a Goal, each carrying its own `type`, never one
-row whose grade averages across variants; this preserves the original intent
-("a sound plan can have a weak variant, and vice versa") without a second object
-type. Grading carries a non-trivial, failure-location-linked decay: a failure
-attributable to a step, branch, or a referenced sub-procedure (steps[].references,
-§13) decays the grade of the object responsible for that location (per the
+Every Procedure is graded independently (db/97-98, D-2026-09-20/22: Implementation
+is not a separate object -- see §13/§16). A logical capability with several
+executable variants -- a script path vs. a shell/API path to the same outcome --
+is modeled as several Procedure rows sharing a Goal, each with a step carrying its
+own `binding`, never one row whose grade averages across variants; this preserves
+the original intent ("a sound plan can have a weak variant, and vice versa")
+without a second object type. Grading carries a non-trivial, failure-location-
+linked decay: a failure attributable to a step, branch, or a step's binding
+(§13) decays the grade of the object responsible for that location (per the
 failure classification of §36), not uniformly across the graph.
 
 ## 19. Versioning and ChangeSets
@@ -958,8 +986,8 @@ An Execution is the actual run of an ExecutionPlan.
 }
 ```
 
-Always record the exact Procedure version and ExecutionPlan (the resolved
-procedure variant per step is already in ExecutionPlan.resolved_procedures, §15).
+Always record the exact Procedure version and ExecutionPlan (each step's own
+binding is already embedded on the Procedure itself, §13/§15).
 
 ## 23. Capability-Based Routing
 
