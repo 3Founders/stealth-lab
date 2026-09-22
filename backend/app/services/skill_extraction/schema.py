@@ -207,6 +207,17 @@ EXECUTOR_KINDS = frozenset({
     "script", "config", "workflow", "doc", "other",
 })
 
+# ingested_artifacts.role's non-executable subset (db/98's
+# ingested_artifacts_role_chk) -- a reference resource is preserved and
+# retrievable but NEVER wrapped in a runnable step binding, unlike
+# EXECUTOR_KINDS above. Kept as a DIFFERENT closed vocabulary rather than
+# folded into EXECUTOR_KINDS: "this is a script that does something" and
+# "this is a pattern worth looking at" are different claims, and conflating
+# them would let a style file slip through with role=executable_source.
+REFERENCE_ROLES = frozenset({
+    "style_reference", "design_reference", "documentation", "dependency_manifest", "test_fixture",
+})
+
 
 class ExtractedImplementation(BaseModel):
     """One concrete mechanism this document bundles or describes.
@@ -245,6 +256,38 @@ class ExtractedImplementation(BaseModel):
         return v
 
 
+class ExtractedReferenceResource(BaseModel):
+    """A bundled/discovered file worth preserving and later RETRIEVING, but
+    never executed -- e.g. a `.ts`/`.tsx`/`.css` file that exemplifies a
+    distinctive visual or coding style, a design spec, bundled
+    documentation, or a dependency manifest. Distinct from
+    ExtractedImplementation: that's a mechanism that DOES something when
+    run; this is reference material with no step binding at all (db/98:
+    "a style/design reference is retrievable context, never executable").
+    Same real-discovered-path validation as ExtractedImplementation --
+    `resource_path` must match the real file list, checked post-parse."""
+
+    name: str = Field(min_length=1, max_length=_MAX_SHORT_TEXT)
+    role: str
+    resource_path: str = Field(min_length=1, max_length=_MAX_SHORT_TEXT)
+    note: Optional[str] = Field(default=None, max_length=_MAX_PROSE_TEXT)
+
+    @field_validator("role")
+    @classmethod
+    def _role_known(cls, v: str) -> str:
+        if v not in REFERENCE_ROLES:
+            raise ValueError(f"unknown reference role {v!r} (valid: {sorted(REFERENCE_ROLES)})")
+        return v
+
+    @field_validator("name", "resource_path")
+    @classmethod
+    def _not_blank(cls, v: str) -> str:
+        v = v.strip()
+        if not v:
+            raise ValueError("must not be blank")
+        return v
+
+
 class ExtractedDocument(BaseModel):
     """The whole structured result of extracting one document/artifact.
     Zero of any list is valid -- ingestion.md's own "zero objects is
@@ -254,3 +297,4 @@ class ExtractedDocument(BaseModel):
     procedures: list[ExtractedProcedure] = Field(default_factory=list)
     goals: list[ExtractedGoal] = Field(default_factory=list)
     implementations: list[ExtractedImplementation] = Field(default_factory=list)
+    reference_resources: list[ExtractedReferenceResource] = Field(default_factory=list)

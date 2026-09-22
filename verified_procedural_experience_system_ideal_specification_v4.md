@@ -23,7 +23,7 @@ Experience → Observation → Claim / State → Procedure → Verification
 8. Local knowledge has priority over global knowledge.
 9. Global reuse is earned through evidence and permissions.
 10. Reuse must be reversible.
-11. Mature procedures can replace expensive reasoning with cheaper implementations.
+11. Mature procedures can replace expensive reasoning with cheaper procedure variants.
 12. Humans control storage, sharing, execution and publication.
 
 
@@ -54,7 +54,7 @@ Events / Traces / Data
 Entity, Event, Observation, Episode, State
 Claim, ClaimFamily, Evidence, Source
 Procedure, ProcedureVersion, ProcedureStep
-Implementation, ExecutionPlan, Execution, Outcome, Artifact
+ExecutionPlan, Execution, Outcome, Artifact
 Capability, ApplicabilityRule, Dependency
 Task, TaskGraph, ChangeSet, Review
 Policy, Permission, User / Agent
@@ -574,13 +574,34 @@ Procedure:
     - type: claim_check | tool_check | environment_check | custom_check
       definition: object
 
+  source_locator: object               # where the WHOLE procedure came from (db/97)
+
   steps:
     - id: string
       action: string
       inputs: object
       depends_on: [step_id]
       preconditions: [check]
-      implementation_ids: [string]
+      source_locator: object           # where THIS step came from; inherits the procedure's,
+                                        # marked granularity=document/inherited, if it has none
+                                        # of its own (db/97)
+      binding:                         # how THIS step is executed -- replaces Implementation
+                                        # (db/98, D-2026-09-20/22, see §16/§18)
+        kind:
+          tool | model | mcp_tool | adapter | sandbox | command | runtime |
+          slm_artifact | http_api | binary | wasm | container | source_artifact
+        <kind>: string                 # the kind's own key holds its primary value,
+                                        # e.g. kind=mcp_tool -> mcp_tool: "<tool name>"
+        endpoint: string | null
+        server_url: string | null
+        path: string | null
+        image: string | null
+        args: [string]
+        env_refs: [string]             # credentials referenced by NAME, never stored
+        locator: object | null
+        parameters: object | null
+        verifier: object | null
+        resources: object | null
 
   branches:
     - condition: check
@@ -624,6 +645,21 @@ Procedure:
     time: number | null
     money: number | null
 
+  # Preserved source material this procedure draws on (db/98) -- there is no
+  # separate global Implementation object: "an implementation" is just a
+  # one-step procedure, or a step of a multi-step procedure (D-2026-09-20/22,
+  # see §16/§18). Each ref names an ingested Artifact + a ROLE; only
+  # role=executable_source may ever set execution_allowed -- a style/design
+  # reference is retrievable context, never executable.
+  source_artifacts:
+    - artifact_id: ArtifactRef
+      path: string
+      role:
+        executable_source | style_reference | design_reference |
+        documentation | dependency_manifest | test_fixture
+      execution_allowed: boolean       # only legal when role = executable_source
+      note: string | null
+
   # No stored trust/confidence field: confidence is derived from evidence at
   # read time (closed decision, done.md §4.6). See Capability (§16) and the
   # belief-aggregation contract (§9).
@@ -647,17 +683,24 @@ Preconditions ask:
 
 A procedure is **not a prompt**.
 
-Implementations can be:
+A step's `binding.kind` (§13) -- what actually carries it out -- can be:
 
 ```text
-deterministic code
-shell / API
-rule
-lookup / cached result
-SLM
-frontier LLM
-human
-another procedure
+tool
+model
+mcp_tool
+adapter
+sandbox
+command
+runtime
+slm_artifact
+http_api
+binary
+wasm
+container
+source_artifact                          # run an immutable ingested artifact by id --
+                                          # only if that artifact is screened and
+                                          # execution_allowed
 ```
 
 
@@ -690,7 +733,7 @@ Process:
 5. check preconditions
 6. resolve tools
 7. build task graph
-8. select implementations
+8. resolve step bindings (per step, per §13's `binding.kind`)
 9. check safety
 10. produce ExecutionPlan
 
@@ -734,8 +777,10 @@ ExecutionPlan:
   task_graph:
     id: string
 
-  implementations:
-    step_id: implementation_id
+  # No step_id -> implementation_id map here (db/98 DROPPED
+  # execution_plans.implementations outright, not renamed): each step's
+  # binding already lives embedded on the Procedure itself (steps[].binding),
+  # so there is nothing separate to resolve at plan level.
 
   safety_check:
     status: passed | failed | requires_review
@@ -768,16 +813,19 @@ and procedure should inherently be related with Execution plan
 
 Capability asks:
 
-> How reliably can this implementation achieve its required outcome under stated conditions?
+> How reliably can this procedure achieve its required outcome under stated conditions?
 
 **Single canonical representation:** capability is a continuous conditional
 probability,
 
 ```text
-P(required outcome | state, procedure, implementation)
+P(required outcome | state, procedure)
 ```
 
-conditional on task, state, environment, inputs, implementation and constraints.
+conditional on task, state, environment, inputs and constraints. (Implementation
+folded into Procedure, db/97-98, D-2026-09-20/22 -- a variant's executable
+strategy is now its step(s)' own `binding`, §13, so it no longer needs a
+separate conditioning term: it's already inside "procedure".)
 The ordinal ladder (levels 0–5: unknown → observed → reproduced → validated →
 generalized → trusted) is **a banding over P**, not a separate representation:
 each level corresponds to a P interval whose bounds tighten as evidence volume
@@ -810,11 +858,16 @@ Capability can decrease after failures or environment changes.
 
 ## 18. Search & Grading
 
-Procedure and Implementation are graded **separately** — a procedure can be sound
-while its current implementation is weak, and vice versa — and grading carries a
-non-trivial, failure-location-linked decay: a failure attributable to a step,
-branch, or dependency decays the grade of the object responsible for that
-location (per the failure classification of §36), not uniformly across the graph.
+Every Procedure is graded independently (db/97-98, D-2026-09-20/22: Implementation
+is not a separate object -- see §13/§16). A logical capability with several
+executable variants -- a script path vs. a shell/API path to the same outcome --
+is modeled as several Procedure rows sharing a Goal, each with a step carrying its
+own `binding`, never one row whose grade averages across variants; this preserves
+the original intent ("a sound plan can have a weak variant, and vice versa")
+without a second object type. Grading carries a non-trivial, failure-location-
+linked decay: a failure attributable to a step, branch, or a step's binding
+(§13) decays the grade of the object responsible for that location (per the
+failure classification of §36), not uniformly across the graph.
 
 ## 19. Versioning and ChangeSets
 
@@ -825,10 +878,9 @@ VERSIONED-MUTABLE [V]                HISTORICAL APPEND-ONLY [H]
 (change only via ChangeSet)          (never edited, never deleted)
   Claim                                Event / Trace
   Procedure (+ steps)                  Execution / Outcome
-  Implementation                       Artifact
-  ApplicabilityRule                    Review
-  Observation                          Evidence record
-  State
+  ApplicabilityRule                    Artifact
+  Observation                          Review
+  State                                Evidence record
   Policy / Permission
 
 DERIVED-FROZEN [D→frozen]
@@ -884,7 +936,6 @@ any versioned change
    ├── Claim superseded / retracted
    ├── Observation revised            → re-flag derived claims
    ├── Procedure new version          → re-check plans, routes, capability stats
-   ├── Implementation changed         → re-grade capability, re-route
    ├── ApplicabilityRule changed      → re-evaluate matching procedures
    └── Source reliability changed     → re-weight all evidence from that source
         ↓
@@ -896,7 +947,7 @@ re-evaluate affected objects only
 Example fan-outs:
 
 ```text
-Claim A changes        → dependent claims → dependent procedures → implementations/routes
+Claim A changes        → dependent claims → dependent procedures → routes
 Observation O revised  → claims with derived_from(O) → their dependents
 Evidence E retracted   → claims supported_by(E) → status/belief recomputation
 ```
@@ -928,7 +979,6 @@ An Execution is the actual run of an ExecutionPlan.
   },
   "procedure_version": "procedure_42:v7",
   "state_id": "state_99",
-  "implementation_id": "slm_4",
   "parameters": {},
   "task_graph_id": "graph_7",
   "trace_id": "trace_8",
@@ -936,11 +986,12 @@ An Execution is the actual run of an ExecutionPlan.
 }
 ```
 
-Always record the exact Procedure version, ExecutionPlan and implementation.
+Always record the exact Procedure version and ExecutionPlan (each step's own
+binding is already embedded on the Procedure itself, §13/§15).
 
 ## 23. Capability-Based Routing
 
-Choose the cheapest implementation that meets required capability and safety.
+Choose the cheapest procedure variant that meets required capability and safety.
 Thresholds apply to **P** (the continuous conditional probability of §16), never
 to the ordinal level label.
 
@@ -1273,7 +1324,7 @@ Evidence row produced by the failed execution (one of the causes above, mapped t
 snake_case — `false_reuse` marks a reuse attempt itself causing the failure). The
 class drives
 the routing: `procedure wrong` → new procedure version; `implementation wrong` →
-capability demotion on that implementation; `environment changed` → dependent
+capability demotion on that procedure variant (§18); `environment changed` → dependent
 claims into the dependency queue; `input abnormal` → applicability narrowing;
 `verification wrong` → verification-plan revision; `external failure` → no
 knowledge update. An unclassified failure is routed to `requires_review`.
@@ -1367,12 +1418,12 @@ POST /changesets/:id/reject
 4. Every procedure has applicability conditions.
 5. Every capability has a defined task and evaluation criterion.
 6. Every claim has provenance.
-7. Every change to a versioned object (claim, procedure, implementation, applicability rule, observation, state) creates a version/change record.
+7. Every change to a versioned object (claim, procedure, applicability rule, observation, state) creates a version/change record.
 8. Invalid dependencies cannot silently leave procedures trusted.
 9. Private evidence cannot automatically become public.
 10. Failure can reduce capability.
 11. The system can refuse reuse.
-12. Implementation capability is evidence-based, not model-brand-based.
+12. Procedure capability is evidence-based, not model-brand-based.
 13. Outcomes are distinguishable from model self-reports.
 14. Raw events and source material are immutable.
 15. Candidate extractions are distinguishable from accepted knowledge.

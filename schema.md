@@ -185,8 +185,29 @@ Procedure:
   inputs: [{name, type, required}]
   required_state: {claims: [{claim_id, claim_version}]}
   preconditions: [{type: claim_check|tool_check|environment_check|custom_check, definition}]
+  source_locator: object                    # where the WHOLE procedure came from (db/97)
   steps:                                    # planner-neutral — NO scheduling edges here
-    - {id, action, inputs, depends_on[], preconditions[], implementation_ids[]}
+    - id: string
+      action: string
+      inputs: object
+      depends_on: [step_id]
+      preconditions: [check]
+      source_locator: object                # where THIS step came from; inherits the procedure's,
+                                             # marked granularity=document/inherited, if it has none of its own (db/97)
+      binding:                              # how THIS step is executed -- replaces Implementation (db/98)
+        kind: tool | model | mcp_tool | adapter | sandbox | command | runtime | slm_artifact |
+              http_api | binary | wasm | container | source_artifact
+        <kind>: string                      # the kind's own key holds its primary value
+        endpoint: string | null
+        server_url: string | null
+        path: string | null
+        image: string | null
+        args: [string]
+        env_refs: [string]                  # credentials referenced by NAME, never stored
+        locator: object | null
+        parameters: object | null
+        verifier: object | null
+        resources: object | null
   branches: [{condition, next_steps[]}]
   required_capabilities: [{capability_id, minimum_level}]
   required_tools: [tool_id]
@@ -196,6 +217,18 @@ Procedure:
   known_failures: [...]
   failure_conditions: [...]
   cost: object
+  # Preserved source material this procedure draws on (db/98) -- an "implementation"
+  # is just a one-step procedure, or a step of a multi-step procedure (D-2026-09-20/22,
+  # see §Capability): there is no separate global Implementation object. Each ref names an
+  # ingested artifact + a ROLE; only role=executable_source may ever set execution_allowed
+  # (a style/design reference is retrievable context, never executable).
+  source_artifacts:
+    - artifact_id: → Artifact
+      path: string
+      role: executable_source | style_reference | design_reference | documentation |
+            dependency_manifest | test_fixture
+      execution_allowed: boolean            # only legal when role = executable_source
+      note: string | null
   # lifecycle / trust — three orthogonal axes mirroring db/18_procedures.sql
   # (ticket 13 deliberately rejects a single flat status enum):
   verification_state: candidate | verified | retired      # procedure_verification_state
@@ -205,22 +238,6 @@ Procedure:
   evidence_refs: [→ Evidence]              # what lifecycle transitions stand on
   capability_statement: string             # abstract retrieval surface (V4-checked)
   extracted_by: extractor_id@version       # §39 invariants 20–21 provenance
-```
-
-
-
-### Implementation `[V]`
-
-Executable variant satisfying a procedure (or step).
-
-```yaml
-Implementation:
-  procedure_id: → Procedure
-  type: deterministic_code | shell | api | rule | lookup | slm | frontier_llm | human | procedure_ref
-  model: string | null
-  requirements: []
-  cost: object
-  latency: object
 ```
 
 
@@ -239,13 +256,17 @@ Verdicts: `applicable | probably_applicable | uncertain | not_applicable | unsaf
 
 ### Capability `[D — computed, never authored]`
 
-How reliably an implementation achieves the outcome under stated conditions.
+How reliably a procedure achieves the outcome under stated conditions. There is
+no separate Implementation object to grade apart from it (db/97-98,
+D-2026-09-20/22): a variant's executable strategy lives on its step(s)'
+`binding` (§Procedure), and "an implementation" is just a one-step procedure,
+or a step of a multi-step one — so it is not a separate conditioning term below.
 
 ```text
-Capability = P(required outcome | state, procedure, implementation)
+Capability = P(required outcome | state, procedure)
 Levels: 0 unknown → 1 observed → 2 reproduced → 3 validated → 4 generalized → 5 trusted
 Moves both directions; decreases on failure or dependency change; conditional on
-task, state, environment, inputs, implementation, constraints.
+task, state, environment, inputs, constraints.
 ```
 
 ---
@@ -269,7 +290,9 @@ ExecutionPlan:
   resolved_claims: [{claim_id, version}]
   selected_branches: []
   task_graph: → TaskGraph
-  implementations: {step_id → implementation_id}
+  # No step_id -> implementation_id map here (db/98 DROPPED execution_plans.implementations
+  # outright, not renamed): each step's binding already lives embedded on the Procedure
+  # itself (steps[].binding), so there is nothing separate to resolve at plan level.
   safety_check: passed | failed | requires_review
   verification_plan: object
 ```
@@ -285,7 +308,9 @@ TaskNode:
   step_ref: {procedure_id, version, order}
   parameters: object
   node_class: predictable | uncertain | high-risk
-  implementation_id: → Implementation
+  binding: object                           # copied from steps[].binding at instantiation
+                                             # (db/98: execution_run_nodes.binding JSONB;
+                                             # was implementation_id → Implementation)
   cost_budget: object
   verification_gate: object
   deps: [node_ids]                          # scheduling edges exist ONLY here
@@ -302,7 +327,6 @@ Execution:
   execution_plan_id: → ExecutionPlan
   procedure_version: procedure_id:vN        # exact version, always recorded
   state_id: → State
-  implementation_id: → Implementation
   parameters: object
   task_graph_id: → TaskGraph
   trace_id: → Trace
@@ -404,13 +428,11 @@ flowchart TD
 
     subgraph PROCEDURE["Procedure Layer"]
         PRD[Procedure V]
-        IMP[Implementation V]
         AR[ApplicabilityRule V]
         CAP[Capability D]
         RVW[Review H]
-        IMP -- implements --> PRD
+        PRD -- "draws_on (source_artifacts)" --> ART
         AR -- gates --> PRD
-        CAP -- grades --> IMP
         CAP -- grades --> PRD
         EVD -- supported_by --> PRD
         PRD -- requires --> CLM
@@ -426,7 +448,6 @@ flowchart TD
         OUT[Outcome H]
         PRD -- instantiate --> PLAN
         TG --- PLAN
-        IMP -- "selected per node" --> TG
         ST -- starting_state --> PLAN
         CLM -- resolved_into --> PLAN
         PLAN -- runs --> EXE

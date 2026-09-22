@@ -24,6 +24,7 @@ from app.services.skill_extraction.schema import (
     ExtractedGoal,
     ExtractedImplementation,
     ExtractedProcedure,
+    ExtractedReferenceResource,
     SkillExtractionTransientFailure,
     is_safe_extracted_text,
 )
@@ -86,6 +87,17 @@ not in the list). State its `goal` (what reusable outcome running it accomplishe
 document says what success looks like, its `expected_outcome` -- both null if the document \
 gives no real signal, never guessed.
 
+Some bundled files are worth PRESERVING and RETRIEVING LATER even though nothing runs them -- \
+e.g. a source file (any language) that exemplifies a distinctive visual or coding STYLE worth \
+reusing elsewhere, a design spec, bundled documentation, or a dependency manifest. For each \
+one, produce a REFERENCE_RESOURCE entry instead of an implementation: `resource_path` EXACTLY \
+one of the given real paths, a `role` of exactly one of style_reference / design_reference / \
+documentation / dependency_manifest / test_fixture, and an optional `note` on what makes it \
+worth keeping (e.g. "glossy-card visual style" or "the project's dependency pins"). Never give \
+the same file both an IMPLEMENTATION and a REFERENCE_RESOURCE entry -- pick whichever is true: \
+does running it accomplish something (implementation), or is it just a pattern to look at \
+(reference_resource)?
+
 Reply with ONLY a JSON object, no other text, matching exactly this shape:
 {"procedures": [{"name": "...", "goal": "...", "steps": [{"order": 0, "action": "..."}], \
 "preconditions": [...], "failure_conditions": [...], "postconditions": [...], \
@@ -93,7 +105,9 @@ Reply with ONLY a JSON object, no other text, matching exactly this shape:
  "goals": [{"canonical_name": "...", "description": null, "expected_outcome": null, \
 "verification_requirement": null}],
  "implementations": [{"name": "...", "kind": "script", "resource_path": "...", \
-"goal": null, "expected_outcome": null}]}
+"goal": null, "expected_outcome": null}],
+ "reference_resources": [{"name": "...", "role": "style_reference", "resource_path": "...", \
+"note": null}]}
 
 If this document expresses nothing extractable at all, reply with exactly this JSON object \
 instead: {"abstain": true}
@@ -104,6 +118,7 @@ class _UngroundedDocumentResponse(BaseModel):
     procedures: list[ExtractedProcedure] = Field(default_factory=list)
     goals: list[ExtractedGoal] = Field(default_factory=list)
     implementations: list[ExtractedImplementation] = Field(default_factory=list)
+    reference_resources: list[ExtractedReferenceResource] = Field(default_factory=list)
 
 
 _ABSTAIN = object()
@@ -195,8 +210,26 @@ def _filter_real_resources(
             continue
         kept_implementations.append(impl)
 
+    kept_reference_resources = []
+    for ref in response.reference_resources:
+        if ref.resource_path not in resource_paths:
+            log.info(
+                "skill_extraction (ungrounded): dropping reference_resource %r -- resource_path "
+                "%r is not a real discovered file for this artifact",
+                ref.name, ref.resource_path,
+            )
+            continue
+        if not is_safe_extracted_text(ref.name):
+            log.warning(
+                "skill_extraction (ungrounded): dropping reference_resource %r -- name tripped "
+                "the trust-assertion/meta-directive safety check", ref.name[:80],
+            )
+            continue
+        kept_reference_resources.append(ref)
+
     return ExtractedDocument(
         procedures=kept_procedures, goals=kept_goals, implementations=kept_implementations,
+        reference_resources=kept_reference_resources,
     )
 
 
