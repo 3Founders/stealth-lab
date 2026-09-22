@@ -39,7 +39,7 @@ export default function InstallCommand() {
         </button>
       </div>
       <div className="install-foot">
-        Installs from source — not yet on PyPI. Needs Postgres 15+ with pgvector for the MCP server.{" "}
+        Installs from source, not yet on PyPI. Needs Postgres 15+ with pgvector for the MCP server.{" "}
         <a href="/docs#getting-started" style={{ textDecoration: "underline" }}>Full setup</a>
       </div>
     </div>

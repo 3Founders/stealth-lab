@@ -22,7 +22,7 @@ export default function Footer() {
       <div className="frame grid">
         <div className="footer-mark">
           <span className="footer-logo"><Image src="/kel-wordmark.png" alt="keळ" width={800} height={440} /></span>
-          <p>Remember how things actually get done.</p>
+          <p>Find ways to do anything. Make them better.</p>
         </div>
         {cols.map((c) => (
           <nav key={c.h} className="footer-col" aria-label={c.h}>
