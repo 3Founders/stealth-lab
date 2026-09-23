@@ -312,21 +312,28 @@ async def goal_contributors(goal_id: str, pool=Depends(get_pool), scope: AccessS
         raise HTTPException(status_code=404, detail="goal not found")
     rows = await pool.fetch(
         """
-        SELECT contributor_id,
-               count(*) FILTER (WHERE kind = 'procedure') AS procedures,
-               count(*) FILTER (WHERE kind = 'improvement') AS improvements,
-               count(*) FILTER (WHERE kind = 'benchmark') AS benchmarks
-        FROM (
-            SELECT submitted_by AS contributor_id, 'procedure' AS kind FROM procedure_submissions
-            WHERE goal_id = $1 AND status = 'accepted' AND submission_type = 'new'
-            UNION ALL
-            SELECT submitted_by, 'improvement' FROM procedure_submissions
-            WHERE goal_id = $1 AND status = 'accepted' AND submission_type = 'improvement'
-            UNION ALL
-            SELECT submitted_by, 'benchmark' FROM benchmark_submissions
-            WHERE goal_id = $1 AND status = 'accepted'
-        ) contributions
-        GROUP BY contributor_id
+        SELECT * FROM (
+            SELECT contributor_id,
+                   count(*) FILTER (WHERE kind = 'procedure') AS procedures,
+                   count(*) FILTER (WHERE kind = 'improvement') AS improvements,
+                   count(*) FILTER (WHERE kind = 'benchmark') AS benchmarks
+            FROM (
+                SELECT submitted_by AS contributor_id, 'procedure' AS kind FROM procedure_submissions
+                WHERE goal_id = $1 AND status = 'accepted' AND submission_type = 'new'
+                UNION ALL
+                SELECT submitted_by, 'improvement' FROM procedure_submissions
+                WHERE goal_id = $1 AND status = 'accepted' AND submission_type = 'improvement'
+                UNION ALL
+                SELECT submitted_by, 'benchmark' FROM benchmark_submissions
+                WHERE goal_id = $1 AND status = 'accepted'
+            ) contributions
+            GROUP BY contributor_id
+        ) totals
+        -- Postgres only allows a BARE output alias in ORDER BY, not one used
+        -- inside a larger expression -- it tries to resolve `procedures` as
+        -- an INPUT column instead (and this schema happens to have a real
+        -- `procedures` table, which is why the error name is misleading).
+        -- Wrapping in a subquery makes the aliases real input columns here.
         ORDER BY procedures + improvements + benchmarks DESC
         """,
         goal_id,

@@ -1,5 +1,6 @@
 "use client";
 import { useRef, useState } from "react";
+import Link from "next/link";
 import { apiGet, labelOf, type ApiState } from "@/lib/api";
 import AnimatedHeading from "@/components/AnimatedHeading";
 import StateNotice from "@/components/NotConnected";
@@ -72,7 +73,15 @@ export default function SearchPage() {
                     <div key={g.name}>
                       <div className="caption dim" style={{ marginBottom: 8 }}>{g.name} · {g.rows.length}</div>
                       <ul className="list" style={{ gridColumn: "auto" }}>
-                        {g.rows.map((r, i) => (<li key={String(r.id ?? i)}><span className="n">{String(i + 1).padStart(2, "0")}</span><h3>{labelOf(r)}</h3><span className="caption dim">{typeof r.status === "string" ? r.status : ""}</span></li>))}
+                        {g.rows.map((r, i) => (
+                          <li key={String(r.id ?? i)}>
+                            <Link href={`/goals/${r.id}`}>
+                              <span className="n">{String(i + 1).padStart(2, "0")}</span>
+                              <h3>{labelOf(r)}</h3>
+                              <span className="caption dim">{typeof r.status === "string" ? r.status : ""}</span>
+                            </Link>
+                          </li>
+                        ))}
                       </ul>
                     </div>
                   ))}

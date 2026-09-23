@@ -74,7 +74,7 @@ export default function GoalPage() {
       : await reviewBenchmarkSubmission(submissionId, decision);
     setReviewBusy(null);
     if (r.kind !== "ok") {
-      setReviewError(r.kind === "error" ? r.message : "Could not record that review — try again.");
+      setReviewError(r.kind === "error" ? r.message : "Could not record that review. Try again.");
       return;
     }
     loadPendingSubmissions();
@@ -132,7 +132,9 @@ export default function GoalPage() {
     <>
       <section className="page-hero frame grid">
         <div className="marker caption" style={{ gridColumn: "1 / -1" }}><b>GOAL</b><span>/ {categoryOf(p)}</span></div>
-        <h1 className="h1" style={{ gridColumn: "1 / span 10" }}><AnimatedHeading>{p.canonical_name}</AnimatedHeading></h1>
+        <h1 className="h1" style={{ gridColumn: "1 / span 10", fontSize: "clamp(26px, 3.2vw, 44px)", lineHeight: 1.15 }}>
+          <AnimatedHeading>{p.canonical_name}</AnimatedHeading>
+        </h1>
         {p.description && <p className="lead">{p.description}</p>}
       </section>
 

@@ -511,9 +511,24 @@ EXEMPT_PATHS = frozenset({"/health", "/docs", "/redoc", "/openapi.json"})
 # require_authenticated_user / require_scopes dependency independently --
 # this only stops the pre-emptive reject from shadowing that route-level
 # check for the READ routes that were never supposed to need one.
+#
+# "/v1/problems" -> "/v1/goals" 2026-09-23: migration 110 folded Problem
+# into Goal and retired app/api/problems.py in favor of app/api/goals.py;
+# this list wasn't updated at the same time, silently re-blocking every
+# anonymous visitor from the entire Goals surface (the exact regression
+# this list exists to prevent) until caught live testing the rename.
 EXEMPT_PATH_PREFIXES = (
-    "/v1/problems", "/v1/best-way", "/v1/benchmarks", "/v1/evaluations",
+    "/v1/goals", "/v1/best-way", "/v1/benchmarks", "/v1/evaluations",
     "/v1/search", "/v1/contributors", "/v1/procedures",
+    # /v1/economy has real private routes (credits/standing by contributor
+    # id, submission review) too, but every one of them already enforces
+    # its own require_authenticated_user + self-or-admin/scope check
+    # independently -- confirmed by reading each route before adding this,
+    # same as every other prefix in this tuple. Missing from the original
+    # 2026-09-23 fix entirely (not just a stale "/v1/problems" leftover);
+    # caught testing the Goal detail page anonymously, which calls
+    # /v1/economy/goals/{id}/procedures/ranked and .../contributors.
+    "/v1/economy",
 )
 
 
