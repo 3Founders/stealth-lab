@@ -386,18 +386,38 @@ _MCP_PORT = 8765  # not the SDK's default 8000, which app/main.py's FastAPI app 
 
 _TOKEN_VERIFIER = _build_token_verifier(_require_mcp_token())
 
+# MCP v1 surface (final_thing.md): an agent sees exactly two tools -- find the
+# way (find_ways) and report what it learned (report_discovery) -- plus
+# read-only claim resources. Every other tool is v2: its code, tests and
+# callers stay intact (still importable, still unit-testable as plain
+# functions), it just isn't registered on the MCP surface. Set
+# STEALTHLAB_MCP_SURFACE=v2 to expose the full legacy surface again.
+MCP_SURFACE = os.environ.get("STEALTHLAB_MCP_SURFACE", "v1").strip().lower()
+
+_V1_INSTRUCTIONS = (
+    "StealthLab: proven procedures for coding tasks. 1) find_ways(query, "
+    "execute=false) returns a step-by-step plan (Goal -> Procedure -> steps). 2) Read "
+    "stealth://procedures/{procedure_id}/claims for the facts and past "
+    "discoveries a step needs. 3) Do the work yourself (or hand one-line step "
+    "pointers to subagents) and verify each step. 4) report_discovery(...) "
+    "anything you had to fix or found a better way to do -- it's saved "
+    "privately and comes back with that procedure next time. Reads need no "
+    "token; report_discovery needs a signed-in user."
+)
+_V2_INSTRUCTIONS = (
+    "Retrieval, Goal/Procedure, and knowledge-graph "
+    "tools for StealthLab's bi-temporal task/knowledge graph, plus a "
+    "retrieval-grounded coding agent. find_best_way is genuinely "
+    "long-running (multi-step agent loop) -- clients that declare the "
+    "io.modelcontextprotocol/tasks extension capability get a "
+    "CreateTaskResult back immediately and poll tasks/get; clients "
+    "that don't get the plain synchronous result, same as before."
+)
+
 server = MCPServer(
     name="stealthlab",
     version="1.0.0",
-    instructions=(
-        "Retrieval, Goal/Procedure, and knowledge-graph "
-        "tools for StealthLab's bi-temporal task/knowledge graph, plus a "
-        "retrieval-grounded coding agent. find_best_way is genuinely "
-        "long-running (multi-step agent loop) -- clients that declare the "
-        "io.modelcontextprotocol/tasks extension capability get a "
-        "CreateTaskResult back immediately and poll tasks/get; clients "
-        "that don't get the plain synchronous result, same as before."
-    ),
+    instructions=(_V1_INSTRUCTIONS if MCP_SURFACE == "v1" else _V2_INSTRUCTIONS),
     lifespan=lifespan,
     extensions=[TasksExtension()],
     # Authorization applies to HTTP transports only -- stdio (the `mcp dev`
@@ -461,13 +481,6 @@ def _enforce_tool_scope(tool_name: str) -> None:
         raise PermissionError(f"forbidden: tool {tool_name!r} requires scope {needed!r}")
 
 
-# MCP v1 surface (final_thing.md): an agent sees exactly two tools -- find the
-# way (find_ways) and report what it learned (report_discovery) -- plus
-# read-only claim resources. Every other tool is v2: its code, tests and
-# callers stay intact (still importable, still unit-testable as plain
-# functions), it just isn't registered on the MCP surface. Set
-# STEALTHLAB_MCP_SURFACE=v2 to expose the full legacy surface again.
-MCP_SURFACE = os.environ.get("STEALTHLAB_MCP_SURFACE", "v1").strip().lower()
 V1_TOOLS: frozenset[str] = frozenset({"find_ways", "report_discovery"})
 
 
@@ -4054,8 +4067,8 @@ async def find_ways(
     """
     ONE call, the whole thing: fuzzy text -> Goal search -> Procedure
     search -> a compiled DAG -> (by default) a real execution ->
-    `goal_run.md`. Additive alongside `find_best_way`/`reproduce_procedure`
-    while this unified path is validated -- not a replacement yet.
+    `goal_run.md`. The v1 entry point (final_thing.md); pass `execute=False`
+    to get just the plan and do the work yourself -- no token needed.
 
     Composes ONLY existing, already-tested primitives, verbatim, in the
     same order `resolve_intent` -> `compile_goal` -> `execute_goal`
