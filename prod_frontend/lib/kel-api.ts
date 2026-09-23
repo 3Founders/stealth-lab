@@ -391,6 +391,12 @@ export interface PublicContributorProfile extends Row {
   profile_since: string;
   counts: Row;
   renamed_to: string | null;
+  /** Only ever true when this IS the signed-in caller's own username --
+   * the backend never reveals ownership to anyone else. When true, the
+   * profile came back even if `visibility` is "private" (see
+   * app/api/contributors.py's owner-exception). */
+  is_owner: boolean;
+  visibility: "private" | "public";
 }
 
 export const getPublicProfileByUsername = (username: string, signal?: AbortSignal) =>

@@ -1,6 +1,7 @@
 "use client";
 import { Suspense, useEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import AnimatedHeading from "@/components/AnimatedHeading";
 import Avatar from "@/components/Avatar";
 import StateNotice from "@/components/NotConnected";
 import { getMyProfile, suggestUsernames, updateMyProfile, uploadAvatar, type MyProfileResult } from "@/lib/kel-api";
@@ -97,7 +98,7 @@ function OnboardingInner() {
     <>
       <section className="page-hero frame grid">
         <div className="marker caption" style={{ gridColumn: "1 / -1" }}><b>WELCOME</b></div>
-        <h1 className="display">Welcome to keळ.</h1>
+        <h1 className="display"><AnimatedHeading>Welcome to keळ</AnimatedHeading></h1>
         <p className="lead">Choose the name people will see on your contributions.</p>
       </section>
 
@@ -128,7 +129,7 @@ function OnboardingInner() {
           </div>
 
           <div>
-            <p className="small dim" style={{ marginBottom: 8 }}>Profile picture — optional</p>
+            <p className="small dim" style={{ marginBottom: 8 }}>Profile picture (optional)</p>
             <input ref={fileInputRef} type="file" accept="image/png,image/jpeg,image/webp" onChange={onPickFile} style={{ display: "none" }} />
             <button type="button" className="oauth-btn" style={{ width: "auto" }} onClick={() => fileInputRef.current?.click()}>
               {avatarFile ? "Choose a different image" : "Upload image"}

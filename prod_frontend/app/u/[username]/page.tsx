@@ -1,6 +1,8 @@
 "use client";
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
+import AnimatedHeading from "@/components/AnimatedHeading";
 import Avatar from "@/components/Avatar";
 import StateNotice from "@/components/NotConnected";
 import { getPublicProfileByUsername, type PublicContributorProfile } from "@/lib/kel-api";
@@ -53,14 +55,25 @@ export default function PublicProfilePage() {
       <section className="page-hero frame grid">
         <div className="marker caption" style={{ gridColumn: "1 / -1" }}><b>PROFILE</b></div>
         <div style={{ gridColumn: "1 / span 8", display: "flex", alignItems: "center", gap: 20, marginTop: 8 }}>
-          <Avatar username={p.username} size={72} />
+          <Avatar username={p.username} size={72} authenticated={p.is_owner} />
           <div>
-            <h1 className="h1" style={{ marginBottom: 4 }}>{p.username}</h1>
+            <h1 className="h1" style={{ marginBottom: 4 }}><AnimatedHeading>{p.username}</AnimatedHeading></h1>
             {p.tagline && <p className="lead" style={{ marginTop: 4 }}>{p.tagline}</p>}
             {since && <p className="small dim" style={{ marginTop: 6 }}>Member since {since}</p>}
           </div>
         </div>
       </section>
+
+      {p.is_owner && p.visibility === "private" && (
+        <section className="frame grid" style={{ paddingBottom: 0 }}>
+          <div className="empty" style={{ gridColumn: "1 / span 12" }}>
+            <b>This is a preview. Only you can see it.</b>
+            <p>
+              Your profile is private, so nobody else can view this page yet. <Link href="/account/settings" style={{ textDecoration: "underline" }}>Make it public in Settings</Link> to share it.
+            </p>
+          </div>
+        </section>
+      )}
 
       <section className="frame grid" style={{ paddingBottom: 100, rowGap: 40 }}>
         <div style={{ gridColumn: "1 / span 12" }}>
@@ -77,7 +90,7 @@ export default function PublicProfilePage() {
           <h2 className="h3" style={{ marginBottom: 4 }}>Work</h2>
         </div>
         <div className="empty" style={{ gridColumn: "1 / span 12" }}>
-          <p>A per-contributor list of individual ways isn&rsquo;t available yet — the counts above are real and server-computed; browse <a href="/problems" style={{ textDecoration: "underline" }}>Problems</a> to find this person&rsquo;s work by Goal.</p>
+          <p>A per-contributor list of individual ways isn&rsquo;t available yet. The counts above are real and server-computed; browse <a href="/problems" style={{ textDecoration: "underline" }}>Problems</a> to find this person&rsquo;s work by Goal.</p>
         </div>
       </section>
     </>

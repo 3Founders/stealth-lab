@@ -1,6 +1,7 @@
 "use client";
 import { useEffect, useState } from "react";
 import Link from "next/link";
+import AnimatedHeading from "@/components/AnimatedHeading";
 import StateNotice from "@/components/NotConnected";
 import { getMyStealthProjects, timeAgo, type StealthProjectSummary } from "@/lib/kel-api";
 import { getSession, type Session } from "@/lib/session";
@@ -80,8 +81,8 @@ export default function AccountPage() {
     <>
       <section className="page-hero frame grid">
         <div className="marker caption" style={{ gridColumn: "1 / -1" }}><b>ACCOUNT</b></div>
-        <h1 className="display">Your local projects.</h1>
-        <p className="lead">Private to your account — never published to the Commons on its own.</p>
+        <h1 className="display"><AnimatedHeading>Your local projects</AnimatedHeading></h1>
+        <p className="lead">Private to your account, never published to the Commons on its own.</p>
       </section>
 
       <section className="frame grid" style={{ paddingBottom: 40, rowGap: 24 }}>
@@ -105,7 +106,7 @@ export default function AccountPage() {
           </div>
           {infoOpen && (
             <p id="sync-privacy-note" className="small dim" style={{ marginTop: 8, maxWidth: 640 }}>
-              Synced project contents are encrypted in your browser before they ever leave your device — keळ
+              Synced project contents are encrypted in your browser before they ever leave your device. keळ
               stores only ciphertext, and never has the key needed to read it. Decryption happens locally too,
               using your recovery passphrase. Never published to Problems, search, or public profiles unless
               you explicitly publish through keळ&rsquo;s separate Commons contribution flow.
@@ -121,7 +122,7 @@ export default function AccountPage() {
           </p>
         ) : newlyDiscovered.length === 0 ? (
           <p className="small dim" style={{ gridColumn: "1 / span 12" }}>
-            No new local projects to sync — everything this machine knows about is already synced.
+            No new local projects to sync. Everything this machine knows about is already synced.
           </p>
         ) : !passphraseStep ? (
           <div style={{ gridColumn: "1 / span 12" }}>
@@ -153,7 +154,7 @@ export default function AccountPage() {
             <h2 className="h3" style={{ marginBottom: 4 }}>Set a sync recovery passphrase</h2>
             <p className="small dim">
               This will connect {selected.size} private local project{selected.size === 1 ? "" : "s"} to your keळ
-              account. Your recovery passphrase encrypts them — keळ never sees it, never stores it, and cannot
+              account. Your recovery passphrase encrypts them, keळ never sees it, never stores it, and cannot
               recover your data without it. Choose something memorable; losing it (with no synced device left)
               means this data can&rsquo;t be recovered.
             </p>

@@ -1,6 +1,7 @@
 "use client";
 import { useEffect, useState } from "react";
 import Link from "next/link";
+import AnimatedHeading from "@/components/AnimatedHeading";
 import StateNotice from "@/components/NotConnected";
 import { CATEGORIES, categoryOf, type Category } from "@/lib/mock-adapter";
 import { getProblems, getProblemStats, timeAgo, type Problem, type ProblemStats } from "@/lib/kel-api";
@@ -44,7 +45,7 @@ export default function ProblemsPage() {
     <>
       <section className="page-hero frame grid">
         <div className="marker caption" style={{ gridColumn: "1 / -1" }}><b>PROBLEMS</b></div>
-        <h1 className="display">Problems</h1>
+        <h1 className="display"><AnimatedHeading>Problems</AnimatedHeading></h1>
         <p className="lead">Discover goals worth accomplishing, and the ways people and agents have found to reach them.</p>
       </section>
 

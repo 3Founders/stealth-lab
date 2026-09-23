@@ -1,6 +1,7 @@
 "use client";
 import { useEffect, useState } from "react";
 import Link from "next/link";
+import AnimatedHeading from "@/components/AnimatedHeading";
 import StateNotice from "@/components/NotConnected";
 import { getCreditsBalance, getCreditsHistory, getStanding, type CreditEvent, type StandingResult } from "@/lib/kel-api";
 import { getSession, type Session } from "@/lib/session";
@@ -50,8 +51,8 @@ export default function CreditsPage() {
     <>
       <section className="page-hero frame grid">
         <div className="marker caption" style={{ gridColumn: "1 / -1" }}><b>YOUR CREDITS</b></div>
-        <h1 className="display">What you&rsquo;ve earned.</h1>
-        <p className="lead">Private to your account — never a public leaderboard.</p>
+        <h1 className="display"><AnimatedHeading>What you&rsquo;ve earned</AnimatedHeading></h1>
+        <p className="lead">Private to your account, never a public leaderboard.</p>
       </section>
 
       <section className="frame grid" style={{ paddingBottom: 120, rowGap: 40 }}>
@@ -59,14 +60,14 @@ export default function CreditsPage() {
           <div className="cells" style={{ gridTemplateColumns: "repeat(2, 1fr)" }}>
             <div className="cell">
               <div className="n"><span>Balance</span></div>
-              <div><h3 className="h3">{balance.data.balance} Credits</h3><p>An internal utility number, not cash — see <Link href="/docs#contribution-rewards" style={{ textDecoration: "underline" }}>how contribution and rewards work</Link>.</p></div>
+              <div><h3 className="h3">{balance.data.balance} Credits</h3><p>An internal utility number, not cash. See <Link href="/docs#contribution-rewards" style={{ textDecoration: "underline" }}>how contribution and rewards work</Link>.</p></div>
             </div>
             <div className="cell">
               <div className="n"><span>Standing</span></div>
               {standing.kind === "ok" ? (
                 <div>
                   <h3 className="h3">{standing.data.standing_score}</h3>
-                  <p>Trust from historical contribution quality — separate from Credits. More Credits doesn&rsquo;t mean more trusted.</p>
+                  <p>Trust from historical contribution quality, separate from Credits. More Credits doesn&rsquo;t mean more trusted.</p>
                 </div>
               ) : (
                 <div><p className="small dim">Not available.</p></div>
@@ -92,7 +93,7 @@ export default function CreditsPage() {
 
         <div style={{ gridColumn: "1 / span 12" }}>
           <h2 className="h3" style={{ marginBottom: 4 }}>Recent earnings</h2>
-          <p className="small dim">Every entry traces to a real, server-recorded event — never a client-side total.</p>
+          <p className="small dim">Every entry traces to a real, server-recorded event, never a client-side total.</p>
         </div>
         {history.kind === "ok" && history.data.length > 0 ? (
           <ul className="list" style={{ marginTop: 0 }}>
@@ -111,7 +112,7 @@ export default function CreditsPage() {
             })}
           </ul>
         ) : (
-          <StateNotice state={history} empty={history.kind === "ok" ? "No Credits yet — they come from an accepted contribution or a verified, independent reuse of something you made." : undefined} />
+          <StateNotice state={history} empty={history.kind === "ok" ? "No Credits yet. They come from an accepted contribution or a verified, independent reuse of something you made." : undefined} />
         )}
       </section>
     </>

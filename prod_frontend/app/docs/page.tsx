@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import AnimatedHeading from "@/components/AnimatedHeading";
 import DocsSidebar from "@/components/DocsSidebar";
 import { LEGAL_DOCS } from "@/lib/legal";
 
@@ -9,7 +10,7 @@ export default function Docs() {
     <>
       <section className="page-hero frame grid">
         <div className="marker caption" style={{ gridColumn: "1 / -1" }}><b>DOCS</b></div>
-        <h1 className="display">Docs</h1>
+        <h1 className="display"><AnimatedHeading>Docs</AnimatedHeading></h1>
         <p className="lead">Setup, day-to-day use, and how contribution and rewards work.</p>
       </section>
 

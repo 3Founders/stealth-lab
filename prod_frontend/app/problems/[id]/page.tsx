@@ -2,6 +2,7 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
+import AnimatedHeading from "@/components/AnimatedHeading";
 import StateNotice from "@/components/NotConnected";
 import {
   getGoalContributors, getProblem, getProblemBenchmarks, getProblemSolutions, getProcedure, getRankedProcedures, humanize,
@@ -78,7 +79,7 @@ export default function GoalPage() {
     <>
       <section className="page-hero frame grid">
         <div className="marker caption" style={{ gridColumn: "1 / -1" }}><b>GOAL</b><span>/ {categoryOf(p)}</span></div>
-        <h1 className="h1" style={{ gridColumn: "1 / span 10" }}>{p.title}</h1>
+        <h1 className="h1" style={{ gridColumn: "1 / span 10" }}><AnimatedHeading>{p.title}</AnimatedHeading></h1>
         {p.description && <p className="lead">{p.description}</p>}
       </section>
 
@@ -148,7 +149,7 @@ export default function GoalPage() {
         <div style={{ gridColumn: "1 / span 12", marginTop: 16, display: "flex", justifyContent: "space-between", alignItems: "flex-end", flexWrap: "wrap", gap: 12 }}>
           <div>
             <h2 className="h3" style={{ marginBottom: 4 }}>Ways to do this</h2>
-            <p className="small dim">Ranked for this goal’s recorded evidence — not a universal “best.”</p>
+            <p className="small dim">Ranked for this goal’s recorded evidence, not a universal “best.”</p>
           </div>
           <div style={{ display: "flex", gap: 10 }}>
             <Link href={`/problems/${id}/contribute/way`} className="btn-ink"><span>Contribute a way</span><span className="sq" aria-hidden="true">→</span></Link>

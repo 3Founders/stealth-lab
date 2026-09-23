@@ -1,6 +1,7 @@
 "use client";
 import { Suspense, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import AnimatedHeading from "@/components/AnimatedHeading";
 import InteractiveLogo from "@/components/interactive-logo/InteractiveLogo";
 import { getSupabase, supabaseConfigured } from "@/lib/supabase";
 import { isSafeRedirectPath } from "@/lib/session";
@@ -77,7 +78,7 @@ function SignInInner() {
       const { data, error } = await client.auth.signUp({ email, password });
       if (error) {
         setStatus("error");
-        setMessage(/already registered|already exists/i.test(error.message) ? "An account with that email already exists — sign in instead." : "Could not create an account with those details.");
+        setMessage(/already registered|already exists/i.test(error.message) ? "An account with that email already exists. Sign in instead." : "Could not create an account with those details.");
         return;
       }
       if (!data.session) {
@@ -103,7 +104,7 @@ function SignInInner() {
         <p className="lead">Sign-in isn&rsquo;t connected in this build.</p>
         <p className="small dim">
           Set <code>NEXT_PUBLIC_SUPABASE_URL</code> and <code>NEXT_PUBLIC_SUPABASE_ANON_KEY</code> to this deployment&rsquo;s
-          Supabase project and this page will work. No password is ever stored by this app itself — Supabase Auth owns
+          Supabase project and this page will work. No password is ever stored by this app itself. Supabase Auth owns
           credentials, OAuth, and email confirmation.
         </p>
       </div>
@@ -186,7 +187,7 @@ export default function SignIn() {
     <div className="frame" style={{ position: "relative", "--hero-pad-top": "clamp(140px, 16vw, 220px)" } as React.CSSProperties}>
       <section className="page-hero grid">
         <div className="marker caption" style={{ gridColumn: "1 / -1" }}><b>SIGN IN</b></div>
-        <h1 className="display">Pick up where your work left off.</h1>
+        <h1 className="display"><AnimatedHeading>Pick up where your work left off</AnimatedHeading></h1>
       </section>
       <section className="grid" style={{ paddingBottom: 120 }}>
         <Suspense fallback={<div className="signin"><p className="lead">Loading…</p></div>}>

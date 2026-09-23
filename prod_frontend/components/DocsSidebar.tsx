@@ -47,7 +47,7 @@ export default function DocsSidebar({ legalDocs }: { legalDocs: LegalDoc[] }) {
             <pre><code>{`git clone https://github.com/3Founders/stealth-lab
 cd stealth-lab
 pip install -e packaging/`}</code></pre>
-            <p>Installs from source — there is no hosted installer or PyPI release yet.</p>
+            <p>Installs from source. There is no hosted installer or PyPI release yet.</p>
 
             <h3>2. Configure the MCP server</h3>
             <p>In <code>backend/.env</code>, set at minimum:</p>
@@ -167,7 +167,7 @@ MCP_SERVER_REQUEST_TIMEOUT=300000 mcp dev app/mcp_server/server.py:server --with
               {legalDocs.map((d) => (
                 <li key={d.slug} style={{ borderBottom: "1px solid var(--rule)", padding: "10px 0" }}>
                   <Link href={`/docs/legal/${d.slug}`} style={{ fontWeight: 400, textDecoration: "underline" }}>{d.title}</Link>
-                  <span className="dim small"> — {d.blurb}</span>
+                  <span className="dim small">: {d.blurb}</span>
                 </li>
               ))}
             </ul>

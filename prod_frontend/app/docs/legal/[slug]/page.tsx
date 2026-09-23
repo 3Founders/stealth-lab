@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import AnimatedHeading from "@/components/AnimatedHeading";
 import { LEGAL_DOCS, getLegalDoc, renderLegal } from "@/lib/legal";
 
 export function generateStaticParams() {
@@ -22,7 +23,7 @@ export default async function LegalDocPage({ params }: { params: Promise<{ slug:
         <div className="marker caption" style={{ gridColumn: "1 / -1" }}>
           <b>DOCS</b><span>/ <Link href="/docs/legal" style={{ textDecoration: "underline" }}>LEGAL</Link> / {doc.title.toUpperCase()}</span>
         </div>
-        <h1 className="h1" style={{ gridColumn: "1 / span 10" }}>{doc.title}</h1>
+        <h1 className="h1" style={{ gridColumn: "1 / span 10" }}><AnimatedHeading>{doc.title}</AnimatedHeading></h1>
       </section>
       <div className="frame docs">
         <nav className="docs-nav" aria-label="Legal documents">

@@ -1,6 +1,7 @@
 "use client";
 import { useRef, useState } from "react";
 import { apiGet, labelOf, type ApiState } from "@/lib/api";
+import AnimatedHeading from "@/components/AnimatedHeading";
 import StateNotice from "@/components/NotConnected";
 import { bucket, track } from "@/lib/analytics";
 
@@ -46,7 +47,7 @@ export default function SearchPage() {
     <>
       <section className="page-hero frame grid">
         <div className="marker caption" style={{ gridColumn: "1 / -1" }}><b>SEARCH</b></div>
-        <h1 className="display">What are you trying to get done?</h1>
+        <h1 className="display"><AnimatedHeading>What are you trying to get done?</AnimatedHeading></h1>
       </section>
       <section className="frame grid" style={{ paddingBottom: 120 }}>
         <form className="ask" onSubmit={run} role="search">

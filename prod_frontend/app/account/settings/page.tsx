@@ -1,5 +1,6 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
+import AnimatedHeading from "@/components/AnimatedHeading";
 import Avatar from "@/components/Avatar";
 import StateNotice from "@/components/NotConnected";
 import { getMyProfile, removeAvatar, updateMyProfile, uploadAvatar, type MyProfileResult } from "@/lib/kel-api";
@@ -82,7 +83,7 @@ export default function AccountSettingsPage() {
     <>
       <section className="page-hero frame grid">
         <div className="marker caption" style={{ gridColumn: "1 / -1" }}><b>SETTINGS</b></div>
-        <h1 className="display">Your profile.</h1>
+        <h1 className="display"><AnimatedHeading>Your profile</AnimatedHeading></h1>
       </section>
 
       <section className="frame grid" style={{ paddingBottom: 120, rowGap: 40 }}>
@@ -135,7 +136,7 @@ export default function AccountSettingsPage() {
           {visibility === "public" ? (
             <p className="small dim">Your profile is public: your username, picture, tagline, and contribution counts are visible at <code>/u/{profile.data.profile.username}</code>. Credits and Standing are never public.</p>
           ) : (
-            <p className="small dim">Your profile is private: nothing about you is visible to other people. Making it public will show your username, picture, tagline, and contribution counts — never Credits or Standing.</p>
+            <p className="small dim">Your profile is private: nothing about you is visible to other people. Making it public will show your username, picture, tagline, and contribution counts, never Credits or Standing.</p>
           )}
           <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
             {visibility === "private" ? (

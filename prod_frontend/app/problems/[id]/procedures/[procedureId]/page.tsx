@@ -2,6 +2,7 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
+import AnimatedHeading from "@/components/AnimatedHeading";
 import StateNotice from "@/components/NotConnected";
 import TryThisWay from "@/components/TryThisWay";
 import {
@@ -74,10 +75,10 @@ export default function ProcedurePage() {
           <b>PROCEDURE</b>
           {problem.kind === "ok" && <span>/ for <Link href={`/problems/${id}`} style={{ textDecoration: "underline" }}>{problem.data.title}</Link></span>}
         </div>
-        <h1 className="display" style={{ gridColumn: "1 / span 10" }}>{p.display_name || p.name || "Untitled procedure"}</h1>
+        <h1 className="display" style={{ gridColumn: "1 / span 10" }}><AnimatedHeading>{p.display_name || p.name || "Untitled procedure"}</AnimatedHeading></h1>
         <div className="states" style={{ marginTop: 20 }}>
           {rankEntry && <span className="status" data-s={bucketToStatus[rankEntry.bucket]}>{rankEntry.bucket_label}</span>}
-          {rankEntry && <span className="caption dim">Ranked #{rankEntry.rank} of {rankEntry.of} for this goal{rankEntry.context_matched ? " — matches your context" : ""}</span>}
+          {rankEntry && <span className="caption dim">Ranked #{rankEntry.rank} of {rankEntry.of} for this goal{rankEntry.context_matched ? " (matches your context)" : ""}</span>}
         </div>
       </section>
 
@@ -135,10 +136,10 @@ export default function ProcedurePage() {
             {p.t_created ? `Recorded since ${new Date(p.t_created).toLocaleDateString()}.` : ""} {evals.length > 0 ? `Used by ${evals.length} benchmark evaluation${evals.length === 1 ? "" : "s"} for this goal.` : "Not yet used by a benchmark evaluation for this goal."}
           </p>
           <div className="run-ledger" style={{ marginTop: 0 }}>
-            <div><b>{verifiedSuccessN}</b><span>Verified successful — a real execution, independently confirmed.</span></div>
-            <div><b>{verifiedFailureN}</b><span>Verified failed — a real execution that didn&rsquo;t reach the goal.</span></div>
-            <div><b>{claimedSuccessN}</b><span>Claimed, not verified — reported success without execution-backed proof.</span></div>
-            <div><b>{unknownN}</b><span>Unknown outcome — recorded, but not resolved either way.</span></div>
+            <div><b>{verifiedSuccessN}</b><span>Verified successful, a real execution, independently confirmed.</span></div>
+            <div><b>{verifiedFailureN}</b><span>Verified failed, a real execution that didn&rsquo;t reach the goal.</span></div>
+            <div><b>{claimedSuccessN}</b><span>Claimed, not verified, reported success without execution-backed proof.</span></div>
+            <div><b>{unknownN}</b><span>Unknown outcome, recorded, but not resolved either way.</span></div>
           </div>
         </div>
 

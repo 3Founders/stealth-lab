@@ -2,6 +2,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
+import AnimatedHeading from "@/components/AnimatedHeading";
 import StateNotice from "@/components/NotConnected";
 import {
   createProcedureSubmission, getProblem, getRankedProcedures,
@@ -71,12 +72,12 @@ export default function ContributeWayPage() {
       <>
         <section className="page-hero frame grid">
           <div className="marker caption" style={{ gridColumn: "1 / -1" }}><b>CONTRIBUTE A WAY</b><span>/ {problem.data.title}</span></div>
-          <h1 className="display">Sign in to contribute.</h1>
+          <h1 className="display"><AnimatedHeading>Sign in to contribute</AnimatedHeading></h1>
         </section>
         <section className="frame grid" style={{ paddingBottom: 120 }}>
           <div className="empty" style={{ gridColumn: "1 / span 8" }}>
             <b>Contributions are attributed to a real, signed-in account.</b>
-            <p>keळ never lets a submission claim someone else&rsquo;s identity — the server derives who contributed from your session, not from anything a form could say. <Link href={`/sign-in?redirect=${encodeURIComponent(`/problems/${id}/contribute/way`)}`} style={{ textDecoration: "underline" }}>Sign in</Link> to continue.</p>
+            <p>keळ never lets a submission claim someone else&rsquo;s identity. The server derives who contributed from your session, not from anything a form could say. <Link href={`/sign-in?redirect=${encodeURIComponent(`/problems/${id}/contribute/way`)}`} style={{ textDecoration: "underline" }}>Sign in</Link> to continue.</p>
           </div>
         </section>
       </>
@@ -89,12 +90,12 @@ export default function ContributeWayPage() {
       <>
         <section className="page-hero frame grid">
           <div className="marker caption" style={{ gridColumn: "1 / -1" }}><b>CONTRIBUTE A WAY</b><span>/ {problem.data.title}</span></div>
-          <h1 className="display">Submitted.</h1>
+          <h1 className="display"><AnimatedHeading>Submitted</AnimatedHeading></h1>
         </section>
         <section className="frame grid" style={{ paddingBottom: 120 }}>
           <div className="cform-result">
             <b>Status: {r.status === "candidate" ? "Candidate" : r.status === "needs_review" ? "Needs review" : r.status}</b>
-            <p>This is <em>not</em> a verified way yet — that only happens once it&rsquo;s reused and its outcomes are independently verified. {r.status === "needs_review" ? "A person will look at this before it&rsquo;s listed on the goal page." : "It's recorded and will go through review before appearing as a way to do this."}</p>
+            <p>This is <em>not</em> a verified way yet. That only happens once it&rsquo;s reused and its outcomes are independently verified. {r.status === "needs_review" ? "A person will look at this before it&rsquo;s listed on the goal page." : "It's recorded and will go through review before appearing as a way to do this."}</p>
             {r.status_reason && <p className="small dim">Automated review noted: {r.status_reason}</p>}
             <p style={{ marginTop: 16 }}><Link href={`/problems/${id}`} style={{ textDecoration: "underline" }}>Back to the goal</Link></p>
           </div>
@@ -107,8 +108,8 @@ export default function ContributeWayPage() {
     <>
       <section className="page-hero frame grid">
         <div className="marker caption" style={{ gridColumn: "1 / -1" }}><b>CONTRIBUTE A WAY</b><span>/ {problem.data.title}</span></div>
-        <h1 className="display">Share a way to do this.</h1>
-        <p className="lead">Submitted as candidate. It's reviewed, then listed — never marked verified just for showing up.</p>
+        <h1 className="display"><AnimatedHeading>Share a way to do this</AnimatedHeading></h1>
+        <p className="lead">Submitted as candidate. It's reviewed, then listed, never marked verified just for showing up.</p>
       </section>
 
       <section className="frame grid" style={{ paddingBottom: 120, rowGap: 28 }}>
@@ -128,7 +129,7 @@ export default function ContributeWayPage() {
                 <option value="" disabled>Choose the way this improves</option>
                 {candidates.map((c) => <option key={c.procedure_row_id} value={c.procedure_row_id}>{c.display_name}</option>)}
               </select>
-              <p className="hint">This creates a new, improved version — attributed to you, with the original still credited.</p>
+              <p className="hint">This creates a new, improved version, attributed to you, with the original still credited.</p>
             </div>
           )}
 
@@ -157,7 +158,7 @@ export default function ContributeWayPage() {
 
           <div className="cfield">
             <label htmlFor="applicability">Applicability / context</label>
-            <textarea id="applicability" value={applicability} onChange={(e) => setApplicability(e.target.value)} placeholder="When does this apply — environment, tooling, situation?" />
+            <textarea id="applicability" value={applicability} onChange={(e) => setApplicability(e.target.value)} placeholder="When does this apply (environment, tooling, situation)?" />
           </div>
 
           <div className="cfield">
@@ -187,11 +188,11 @@ export default function ContributeWayPage() {
             <button className="btn-ink" type="submit" disabled={submitting || !name.trim() || !rationale.trim() || steps.every((s) => !s.trim())}>
               <span>{submitting ? "Submitting…" : "Submit as candidate"}</span><span className="sq" aria-hidden="true">→</span>
             </button>
-            {result.kind === "unauthenticated" && <span className="small dim">Your session expired — <Link href="/sign-in" style={{ textDecoration: "underline" }}>sign in again</Link>.</span>}
+            {result.kind === "unauthenticated" && <span className="small dim">Your session expired. <Link href="/sign-in" style={{ textDecoration: "underline" }}>Sign in again</Link>.</span>}
             {result.kind === "error" && <span className="small dim">{result.message}</span>}
           </div>
         </form>
-        <p className="cform-note">Nothing here is treated as verified success — a submission becomes a real Procedure right away (so it can be reviewed), but only reaches the goal page and earns anything once a person accepts it, and only counts as proven once independent reuse verifies it.</p>
+        <p className="cform-note">Nothing here is treated as verified success. A submission becomes a real Procedure right away (so it can be reviewed), but only reaches the goal page and earns anything once a person accepts it, and only counts as proven once independent reuse verifies it.</p>
       </section>
     </>
   );

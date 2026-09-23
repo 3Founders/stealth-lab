@@ -67,7 +67,11 @@ async def contributor_leaderboard(
 
 
 @router.get("/by-username/{username}")
-async def get_contributor_by_username(username: str, pool=Depends(get_pool)) -> dict:
+async def get_contributor_by_username(
+    username: str,
+    pool=Depends(get_pool),
+    principal: Optional[object] = Depends(optional_authenticated_user),
+) -> dict:
     """Public profile by keळ username (the frontend's /u/[username]).
     Resolves the CURRENT username first, then username_history, so an old
     link keeps landing on the right account -- never a different person's
@@ -78,13 +82,38 @@ async def get_contributor_by_username(username: str, pool=Depends(get_pool)) -> 
     `public_profile` -- not this route -- is the one place that decides
     "is this visible publicly": a real username whose profile is private
     reports 404, identically to an unknown username, so a 404 here never
-    confirms an account exists."""
+    confirms an account exists to anyone else. The one exception is the
+    OWNER themselves (matches the avatar route's own owner-exception,
+    below): a private profile is still yours to preview, so a signed-in
+    caller viewing their own username gets it back with `is_owner: true`
+    and the real `visibility`, instead of the generic 404 -- the frontend
+    uses that to show "this is private" instead of pretending the account
+    doesn't exist to the one person who already knows it does."""
     resolved = await contributors.get_profile_by_username(pool, username)
     if resolved is None:
         raise HTTPException(404, "no public contributor profile for this username")
-    profile = await contributors.public_profile(pool, str(resolved["user_id"]))
-    if profile is None:
-        raise HTTPException(404, "no public contributor profile for this username")
+    owner_id = str(resolved["user_id"])
+
+    is_owner = principal is not None and getattr(principal, "user_id", None) is not None \
+        and str(principal.user_id) == owner_id
+    if is_owner:
+        own = await contributors.get_profile(pool, owner_id)
+        counts = await contributors.contribution_counts(pool, user_id=owner_id, subject=principal.subject)
+        profile = {
+            "username": own["username"],
+            "display_name": principal.name or "Contributor",
+            "tagline": own["tagline"],
+            "profile_since": own["t_created"],
+            "counts": counts,
+            "visibility": own["visibility"],
+            "is_owner": True,
+        }
+    else:
+        profile = await contributors.public_profile(pool, owner_id)
+        if profile is None:
+            raise HTTPException(404, "no public contributor profile for this username")
+        profile["is_owner"] = False
+
     # Set only when `username` was an OLD name for this same account -- the
     # frontend uses this to replace the URL with the current one, so old
     # bookmarks/links settle onto /u/<current-username> instead of staying

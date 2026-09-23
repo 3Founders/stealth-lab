@@ -2,6 +2,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
+import AnimatedHeading from "@/components/AnimatedHeading";
 import StateNotice from "@/components/NotConnected";
 import { getMyStealthProject, unsyncStealthProject, timeAgo, type StealthProjectDetail, type DecryptedProjectContent } from "@/lib/kel-api";
 import { getSession, type Session } from "@/lib/session";
@@ -120,12 +121,12 @@ export default function StealthProjectDetailPage() {
     <>
       <section className="page-hero frame grid">
         <div className="marker caption" style={{ gridColumn: "1 / -1" }}>
-          <Link href="/account" style={{ textDecoration: "underline" }}>ACCOUNT</Link> — PROJECT
+          <Link href="/account" style={{ textDecoration: "underline" }}>ACCOUNT</Link> / PROJECT
         </div>
-        <h1 className="display" style={{ fontFamily: "monospace", fontSize: "clamp(28px, 4vw, 44px)" }}>{p.project_id}</h1>
+        <h1 className="display" style={{ fontFamily: "monospace", fontSize: "clamp(28px, 4vw, 44px)" }}><AnimatedHeading>{p.project_id}</AnimatedHeading></h1>
         <p className="lead">
-          {p.bootstrapped_at ? "Backed up to your account" : "Synced — not yet backed up"}
-          {synced ? ` — synced ${synced}` : ""}
+          {p.bootstrapped_at ? "Backed up to your account" : "Synced, not yet backed up"}
+          {synced ? `, synced ${synced}` : ""}
         </p>
       </section>
 
@@ -134,7 +135,7 @@ export default function StealthProjectDetailPage() {
           <div className="signin" style={{ gridColumn: "1 / span 6" }}>
             <h2 className="h3" style={{ marginBottom: 4 }}>Enter your sync recovery passphrase</h2>
             <p className="small dim">
-              This project&rsquo;s contents are end-to-end encrypted — decryption happens only in your browser,
+              This project&rsquo;s contents are end-to-end encrypted. Decryption happens only in your browser,
               using the recovery passphrase you set when you first synced it. keळ never sees the decrypted content.
             </p>
             <form onSubmit={unlock} className="cform" style={{ gridColumn: "auto", gap: 16 }}>
@@ -155,7 +156,7 @@ export default function StealthProjectDetailPage() {
           <div className="empty" style={{ gridColumn: "1 / span 12" }}><p>Decrypting locally…</p></div>
         ) : decrypted.kind === "no-ciphertext-yet" ? (
           <div className="empty" style={{ gridColumn: "1 / span 12" }}>
-            <p>Claimed, not yet backed up — no encrypted content is available for this project yet.</p>
+            <p>Claimed, not yet backed up. No encrypted content is available for this project yet.</p>
           </div>
         ) : (
           <>
@@ -208,7 +209,7 @@ export default function StealthProjectDetailPage() {
                 {enableLocalSync === "enabled" && "Ongoing sync enabled from this device."}
                 {enableLocalSync === "no_local_bridge" && "No local keळ process detected on this device."}
                 {enableLocalSync === "not_found_on_this_machine" && "This device doesn't have a local checkout of this project."}
-                {enableLocalSync === "error" && "Couldn't enable local sync on this device — try again later."}
+                {enableLocalSync === "error" && "Couldn't enable local sync on this device. Try again later."}
               </p>
             )}
           </>

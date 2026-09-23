@@ -2,6 +2,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
+import AnimatedHeading from "@/components/AnimatedHeading";
 import StateNotice from "@/components/NotConnected";
 import { createBenchmarkSubmission, getProblem, type Problem, type SubmissionResult } from "@/lib/kel-api";
 import { getSession, type Session } from "@/lib/session";
@@ -66,7 +67,7 @@ export default function ContributeBenchmarkPage() {
       <>
         <section className="page-hero frame grid">
           <div className="marker caption" style={{ gridColumn: "1 / -1" }}><b>CONTRIBUTE A BENCHMARK</b><span>/ {problem.data.title}</span></div>
-          <h1 className="display">Sign in to contribute.</h1>
+          <h1 className="display"><AnimatedHeading>Sign in to contribute</AnimatedHeading></h1>
         </section>
         <section className="frame grid" style={{ paddingBottom: 120 }}>
           <div className="empty" style={{ gridColumn: "1 / span 8" }}>
@@ -84,12 +85,12 @@ export default function ContributeBenchmarkPage() {
       <>
         <section className="page-hero frame grid">
           <div className="marker caption" style={{ gridColumn: "1 / -1" }}><b>CONTRIBUTE A BENCHMARK</b><span>/ {problem.data.title}</span></div>
-          <h1 className="display">Submitted.</h1>
+          <h1 className="display"><AnimatedHeading>Submitted</AnimatedHeading></h1>
         </section>
         <section className="frame grid" style={{ paddingBottom: 120 }}>
           <div className="cform-result">
             <b>Status: {r.status === "candidate" ? "Candidate" : r.status === "needs_review" ? "Needs review" : r.status}</b>
-            <p>A benchmark describes how this Goal&rsquo;s success is checked — it isn&rsquo;t accepted automatically, and being accepted still isn&rsquo;t the same as being validated. It becomes validated once real evaluations show it can actually tell a success from a failure.</p>
+            <p>A benchmark describes how this Goal&rsquo;s success is checked. It isn&rsquo;t accepted automatically, and being accepted still isn&rsquo;t the same as being validated. It becomes validated once real evaluations show it can actually tell a success from a failure.</p>
             {r.status_reason && <p className="small dim">Automated review noted: {r.status_reason}</p>}
             <p style={{ marginTop: 16 }}><Link href={`/problems/${id}`} style={{ textDecoration: "underline" }}>Back to the goal</Link></p>
           </div>
@@ -102,8 +103,8 @@ export default function ContributeBenchmarkPage() {
     <>
       <section className="page-hero frame grid">
         <div className="marker caption" style={{ gridColumn: "1 / -1" }}><b>CONTRIBUTE A BENCHMARK</b><span>/ {problem.data.title}</span></div>
-        <h1 className="display">Propose how to check this.</h1>
-        <p className="lead">A Benchmark describes how the Goal is verified — not how one procedure proves itself. It's reviewed like any other contribution.</p>
+        <h1 className="display"><AnimatedHeading>Propose how to check this</AnimatedHeading></h1>
+        <p className="lead">A Benchmark describes how the Goal is verified, not how one procedure proves itself. It's reviewed like any other contribution.</p>
       </section>
 
       <section className="frame grid" style={{ paddingBottom: 120, rowGap: 28 }}>
@@ -148,7 +149,7 @@ export default function ContributeBenchmarkPage() {
 
           <div className="cfield">
             <label htmlFor="bimpl">Implementation (if executable)</label>
-            <textarea id="bimpl" value={implementation} onChange={(e) => setImplementation(e.target.value)} placeholder="Optional — how it's actually run" />
+            <textarea id="bimpl" value={implementation} onChange={(e) => setImplementation(e.target.value)} placeholder="Optional, how it's actually run" />
           </div>
 
           <div className="cfield">
@@ -160,11 +161,11 @@ export default function ContributeBenchmarkPage() {
             <button className="btn-ink" type="submit" disabled={submitting || !name.trim() || !description.trim()}>
               <span>{submitting ? "Submitting…" : "Submit as candidate"}</span><span className="sq" aria-hidden="true">→</span>
             </button>
-            {result.kind === "unauthenticated" && <span className="small dim">Your session expired — <Link href="/sign-in" style={{ textDecoration: "underline" }}>sign in again</Link>.</span>}
+            {result.kind === "unauthenticated" && <span className="small dim">Your session expired. <Link href="/sign-in" style={{ textDecoration: "underline" }}>Sign in again</Link>.</span>}
             {result.kind === "error" && <span className="small dim">{result.message}</span>}
           </div>
         </form>
-        <p className="cform-note">A Procedure cannot redefine what success means for its own Goal — this benchmark belongs to the Goal, not to any one way of accomplishing it. If you&rsquo;ve also contributed a way here, that&rsquo;s flagged for review, not rejected.</p>
+        <p className="cform-note">A Procedure cannot redefine what success means for its own Goal. This benchmark belongs to the Goal, not to any one way of accomplishing it. If you&rsquo;ve also contributed a way here, that&rsquo;s flagged for review, not rejected.</p>
       </section>
     </>
   );
