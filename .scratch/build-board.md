@@ -4734,3 +4734,33 @@ Grounded findings from  3_access.sql/ 4_governance.sql/deps.py review. Sequence:
   dirty changes. Reproduced raw-host TLS failure while GitHub API succeeds.
   Use commit-pinned API recovery after bounded transport retries, not IP pinning
   or disabled TLS verification. No schema, deduplication, or admission changes.
+
+### Backlog — wire the document (HTML/PDF/DOCX/etc.) ingestion path (unclaimed, flagged 2026-09-22)
+
+- `[ ]` Not started. Audited 2026-09-22 while debugging the SKILL.md package pipeline
+  (`.scratch/build-board.md` history above): the per-format document adapters already
+  exist and pass their own tests --
+  `backend/app/services/ingestion_sources/document_adapters/{html,pdf,docx,markdown,api,github}_adapter.py`,
+  21 passing offline tests (`tests/test_document_adapters_offline.py`) -- plus a real
+  orchestrator, `backend/app/services/document_ingestion.py::ingest_canonical_document()`,
+  that writes into the SAME `ingested_artifacts`/`artifact_blocks`/`sources` tables every
+  other ingestion path uses. But it is completely dormant: grepped the whole repo for
+  `ingest_canonical_document(` and found zero callers anywhere outside its own file/tests;
+  `ingestion_jobs.JOB_HANDLERS` has no `job_type` registered for it (only
+  `ingest_skill_package` + the trajectory/episode/claim job types); `deploy/ingestion/cloudrun/`
+  has exactly one `job.yaml`, for the skill-package worker, nothing document-specific.
+  `document_ingestion.py`'s own docstring additionally discloses a real gap: even once
+  invoked, it only stores the raw document + structural blocks -- it does NOT run any
+  semantic extraction (no Procedures/Goals/Claims), unlike `skill_ingestion.py::
+  compile_skill_artifact`'s LLM pipeline for SKILL.md packages.
+- Concrete remaining work, in order: (1) register a `job_type` (e.g. `ingest_document`) +
+  handler in `ingestion_jobs.py`, mirroring `handle_ingest_skill_package`; (2) build the
+  actual semantic-extraction step for a `CanonicalDocument` -- reuse the
+  `app/services/skill_extraction/` LLM pipeline (grounded/ungrounded) rather than a second
+  extractor, since it is already document-shaped and not SKILL.md-specific in its own
+  prompt; (3) a Cloud Run job for it -- likely reusable off the SAME worker image (job_type
+  is just a dispatch key), so this may be a new `job.yaml` variant rather than a fresh
+  deployment; (4) a discovery/enumeration entrypoint for HTML/PDF/DOCX sources, mirroring
+  `packages.jsonl` for skill packages.
+- Not a redesign: the adapters and the storage layer are already solid (21/21 tests,
+  reuses every existing table). This is wiring + one new extraction step, bounded scope.

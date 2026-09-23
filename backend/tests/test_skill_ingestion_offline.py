@@ -1192,3 +1192,102 @@ async def test_run_skill_ingestion_concurrency_isolates_per_artifact_errors():
     assert m["artifacts_seen"] == 3
     assert m["errors"] == 1
     assert m["accepted"] == 2
+
+
+# --- ingestion_jobs.handle_ingest_document: the document-format job handler,
+# proving it actually reaches compile_skill_artifact's real capture path
+# (not just the DocumentSourceAdapter/CanonicalDocument layer, which
+# tests/test_document_adapters_offline.py already covers on its own). -------
+
+@pytest.mark.asyncio
+async def test_handle_ingest_document_captures_a_real_goal_from_html(monkeypatch):
+    from app.services import ingestion_jobs
+
+    html = (
+        b"<html><head><title>Deploy Runbook</title></head><body>"
+        b"<h1>Deploy the payments service</h1>"
+        b"<p>First run the migration. Then restart the service and confirm health.</p>"
+        b"</body></html>"
+    )
+    response = json.dumps({
+        "procedures": [{
+            "name": "deploy-payments",
+            "goal": "deploy the payments service to production and confirm health",
+            "steps": [{"order": 0, "action": "run the migration"}],
+        }],
+        "goals": [], "implementations": [], "reference_resources": [],
+    })
+    client = FakeLLMClient(response)
+    pool = CompilerFakePool()
+
+    monkeypatch.setattr(ingestion_jobs, "_general_compute_client", lambda: client)
+    monkeypatch.setattr(
+        "app.services.embeddings.Embedder",
+        lambda *a, **kw: FakeEmbedder(),
+    )
+
+    await ingestion_jobs.handle_ingest_document(pool, {
+        "raw_bytes": html, "content_type_hint": "text/html",
+        "uri": "https://example.com/docs/deploy-runbook.html",
+    })
+
+    assert len(pool.captured["procedures"]) == 1
+    proc_args = pool.captured["procedures"][0]
+    assert proc_args[1] == "deploy the payments service to production and confirm health"
+
+
+@pytest.mark.asyncio
+async def test_handle_ingest_document_raises_for_an_unrecognized_locator():
+    from app.services import ingestion_jobs
+
+    pool = CompilerFakePool()
+    with pytest.raises(ValueError, match="no DocumentSourceAdapter recognizes"):
+        await ingestion_jobs.handle_ingest_document(pool, {})
+
+
+@pytest.mark.asyncio
+async def test_handle_ingest_document_fetches_a_github_hosted_file_over_the_network(monkeypatch):
+    """Regression test for a real bug caught live 2026-09-23: a payload naming
+    a real GitHub-hosted .html file was matched by select_adapter() to the
+    format-only HtmlAdapter (by uri suffix), which can only read local_path/
+    raw_bytes -- it never reaches the network, failing at fetch() with
+    AdapterNotApplicable. GitHubFileAdapter (the actual network-capable
+    transport) must be tried first whenever the payload names a real repo+path."""
+    from app.services import ingestion_jobs
+    from app.services.ingestion_sources.document_adapters import github_adapter as _gh
+
+    html = (
+        b"<html><head><title>Style Guide</title></head><body>"
+        b"<h1>Apply the glossy card style</h1>"
+        b"<p>Use the glossy-card class for elevated surfaces.</p>"
+        b"</body></html>"
+    )
+
+    def fake_http_get(url: str):
+        if "/commits/" in url:
+            return 200, b'{"sha": "deadbeef"}'
+        return 200, html
+
+    monkeypatch.setattr(_gh, "_default_http_get", fake_http_get)
+
+    response = json.dumps({
+        "procedures": [{
+            "name": "apply-glossy-style",
+            "goal": "apply the glossy card visual style to elevated surfaces",
+            "steps": [{"order": 0, "action": "use the glossy-card class"}],
+        }],
+        "goals": [], "implementations": [], "reference_resources": [],
+    })
+    client = FakeLLMClient(response)
+    pool = CompilerFakePool()
+
+    monkeypatch.setattr(ingestion_jobs, "_general_compute_client", lambda: client)
+    monkeypatch.setattr("app.services.embeddings.Embedder", lambda *a, **kw: FakeEmbedder())
+
+    await ingestion_jobs.handle_ingest_document(pool, {
+        "repository": "example/frontend-repo", "path": "docs/style.html", "commit": "deadbeef",
+    })
+
+    assert len(pool.captured["procedures"]) == 1
+    proc_args = pool.captured["procedures"][0]
+    assert proc_args[1] == "apply the glossy card visual style to elevated surfaces"

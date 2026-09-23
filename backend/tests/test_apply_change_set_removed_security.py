@@ -40,12 +40,12 @@ BACKEND_APP = pathlib.Path(srv.__file__).resolve().parents[1]
 
 EXPECTED_29 = sorted(
     [
-        "check_applicability", "check_procedure", "compare_solutions",
+        "check_applicability", "check_procedure",
         "decide_procedure",
-        "find_best_solution", "find_best_way",
-        "find_problem", "get_claim_graph",
-        "get_procedure", "inspect_evaluation",
-        "inspect_problem", "inspect_run", "list_problem_solutions", "report_execution",
+        "find_best_way",
+        "get_claim_graph",
+        "get_procedure",
+        "inspect_run", "report_execution",
         "reproduce_procedure", "resume_execution_run",
         "retrieve_precedent", "retry_run_node", "search_procedures",
         "submit_procedure",
@@ -55,7 +55,15 @@ EXPECTED_29 = sorted(
 # propose_synthesis, submit_approval were REMOVED from this list -- the
 # debate/decomposition MCP surface was deleted (see app/mcp_server/
 # server.py's own top docstring), not a regression this test should catch.
-# The name EXPECTED_29 is now stale (24 entries) -- left as-is rather than
+# 2026-09-22: compare_solutions, find_best_solution, find_problem,
+# inspect_evaluation, inspect_problem, list_problem_solutions were REMOVED
+# too -- the product-model MCP tools were pruned (prod_frontend now calls
+# app.services.product_model over REST instead; see server.py's own
+# "Product-model tools ... REMOVED" comment). Unlike the 2026-09-16 note,
+# these ARE actually deleted from the list this time (not left stale) --
+# the whole point of this pass was to prune tool names, so leaving removed
+# names in a "still expected" list would defeat the point.
+# The name EXPECTED_29 is now stale (14 entries) -- left as-is rather than
 # renamed, since the security property below is a subset check, not a
 # count, and renaming a well-known constant mid-file for a cosmetic reason
 # isn't worth the diff noise.
