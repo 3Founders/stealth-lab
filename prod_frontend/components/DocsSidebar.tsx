@@ -89,18 +89,17 @@ MCP_SERVER_REQUEST_TIMEOUT=300000 mcp dev app/mcp_server/server.py:server --with
             <table><tbody>
               <tr><td><Link href="/problems" style={{ textDecoration: "underline" }}>Problems</Link></td><td>Start from a Goal and see the available ways, evidence, benchmarks, and contributor activity.</td></tr>
               <tr><td><Link href="/search" style={{ textDecoration: "underline" }}>Search</Link></td><td>Search the shared knowledge directly.</td></tr>
-              <tr><td>Procedure</td><td>Open a way to see when it applies, its steps, evidence, and recent outcomes.</td></tr>
+              <tr><td>Way</td><td>Open a way to see when it applies, its steps, evidence, and recent outcomes.</td></tr>
               <tr><td><Link href="/account/credits" style={{ textDecoration: "underline" }}>Credits</Link></td><td>Signed-in contributors can see their private Credits and Standing.</td></tr>
             </tbody></table>
 
             <h3>Search manually</h3>
-            <p><Link href="/search" style={{ textDecoration: "underline" }}>/search</Link> lets you search without MCP. Today it covers Problems, plus Claims (coming soon). Some things to try:</p>
+            <p><Link href="/search" style={{ textDecoration: "underline" }}>Search</Link> lets you search without MCP. Today it covers Problems, plus Claims (coming soon). Some things to try:</p>
             <ul>
               <li>deploy a service to staging</li>
               <li>rotate a leaked credential</li>
               <li>add a health check endpoint</li>
             </ul>
-            <p className="small dim">These are examples of the kind of goal to search for, not a guarantee that a matching result exists yet.</p>
 
             <h3>Contribution & rewards</h3>
             <p>You can add a problem, contribute a way, improve a way, add a benchmark, record evidence, or report a failure.</p>
@@ -125,11 +124,11 @@ MCP_SERVER_REQUEST_TIMEOUT=300000 mcp dev app/mcp_server/server.py:server --with
             <h3>What you can contribute</h3>
             <table><tbody>
               <tr><td><Link href="/problems/add" style={{ textDecoration: "underline" }}>Add a problem</Link></td><td>A goal worth accomplishing that isn&rsquo;t in keळ yet.</td></tr>
-              <tr><td>Add a way</td><td>A procedure for accomplishing a Goal.</td></tr>
-              <tr><td>Improve a way</td><td>A correction or better version of an existing procedure.</td></tr>
-              <tr><td>Add a benchmark</td><td>A clear way to check whether a Goal was achieved.</td></tr>
-              <tr><td>Add evidence</td><td>What actually happened during use.</td></tr>
-              <tr><td>Report a failure</td><td>Evidence that a way did not work in a particular context.</td></tr>
+              <tr><td><Link href="/problems" style={{ textDecoration: "underline" }}>Add a way</Link></td><td>A procedure for accomplishing a Goal. Open a problem, then &ldquo;Contribute a way.&rdquo;</td></tr>
+              <tr><td><Link href="/problems" style={{ textDecoration: "underline" }}>Improve a way</Link></td><td>A correction or better version of an existing procedure. Same page, choose &ldquo;improvement.&rdquo;</td></tr>
+              <tr><td><Link href="/problems" style={{ textDecoration: "underline" }}>Add a benchmark</Link></td><td>A clear way to check whether a Goal was achieved. Open a problem, then &ldquo;Contribute a benchmark.&rdquo;</td></tr>
+              <tr><td>Add evidence</td><td>What actually happened during use. No dedicated form yet, comes from real recorded execution.</td></tr>
+              <tr><td>Report a failure</td><td>Evidence that a way did not work in a particular context. Same as above.</td></tr>
             </tbody></table>
 
             <h3>What earns Credits</h3>
