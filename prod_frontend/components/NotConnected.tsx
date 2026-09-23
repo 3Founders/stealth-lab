@@ -22,6 +22,6 @@ export default function StateNotice({ state, empty }: { state: ApiState<unknown>
   if (state.kind === "error")
     return (<div className="empty"><b>Couldn’t load.</b><p>{state.message} Nothing has been substituted.</p></div>);
   if (state.kind === "loading") return <div className="empty"><p>Loading…</p></div>;
-  if (empty) return (<div className="empty"><b>{empty}</b><p>An empty result is reported as empty. It doesn’t mean a goal has no way of being done — only that none is recorded here yet.</p></div>);
+  if (empty) return (<div className="empty"><b>{empty}</b><p>An empty result is reported as empty — nothing has been substituted or made up.</p></div>);
   return null;
 }

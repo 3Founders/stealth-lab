@@ -118,6 +118,7 @@ export default function Header() {
               {username ? (
                 <>
                   <Link href={`/u/${encodeURIComponent(username)}`} onClick={() => setOpen(false)}>View profile</Link>
+                  <Link href="/account" onClick={() => setOpen(false)}>Projects</Link>
                   <Link href="/account/credits" onClick={() => setOpen(false)}>Credits &amp; Standing</Link>
                   <Link href="/account/settings" onClick={() => setOpen(false)}>Settings</Link>
                 </>

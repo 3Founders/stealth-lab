@@ -64,6 +64,7 @@ export default function AccountMenu({ username }: { username: string }) {
           <Link ref={firstItemRef} href={`/u/${encodeURIComponent(username)}`} role="menuitem" onClick={() => setOpen(false)}>
             View profile
           </Link>
+          <Link href="/account" role="menuitem" onClick={() => setOpen(false)}>Projects</Link>
           <Link href="/account/credits" role="menuitem" onClick={() => setOpen(false)}>Credits &amp; Standing</Link>
           <Link href="/account/settings" role="menuitem" onClick={() => setOpen(false)}>Settings</Link>
           <hr />

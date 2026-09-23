@@ -174,25 +174,26 @@ function SignInInner() {
 
 export default function SignIn() {
   return (
-    <>
-      {/* Stays "page-hero" so the heading sits at the same height as every
-          other inner page's title. The logo's position is pinned
-          separately: .hero-art (rendered by InteractiveLogo) computes its
-          offset purely from the --hero-pad-top custom property, so setting
-          that one variable to the homepage's own value -- without adopting
-          the homepage's ".hero" padding for the heading too -- lands the
-          logo at the exact same pixel spot and size as on "/", with no
-          effect on where the heading text falls. */}
-      <section className="page-hero frame grid" style={{ position: "relative", "--hero-pad-top": "clamp(140px, 16vw, 220px)" } as React.CSSProperties}>
+    // "frame" (width/max-width/centering) is hoisted here, off both inner
+    // sections, so InteractiveLogo can live as a sibling AFTER the signin
+    // section in the DOM while still sharing the exact same positioned
+    // ancestor + width the homepage's own ".hero frame" gives it -- desktop
+    // math (position:absolute, offsets from --hero-pad-top) is unaffected
+    // by DOM order, so the logo still lands at the identical pixel spot and
+    // size as "/". On mobile, .hero-art switches to position:static (see
+    // globals.css), so it now renders in normal flow -- i.e. below the
+    // signin box, since it comes after it in the DOM.
+    <div className="frame" style={{ position: "relative", "--hero-pad-top": "clamp(140px, 16vw, 220px)" } as React.CSSProperties}>
+      <section className="page-hero grid">
         <div className="marker caption" style={{ gridColumn: "1 / -1" }}><b>SIGN IN</b></div>
         <h1 className="display">Pick up where your work left off.</h1>
-        <InteractiveLogo />
       </section>
-      <section className="frame grid" style={{ paddingBottom: 120 }}>
+      <section className="grid" style={{ paddingBottom: 120 }}>
         <Suspense fallback={<div className="signin"><p className="lead">Loading…</p></div>}>
           <SignInInner />
         </Suspense>
       </section>
-    </>
+      <InteractiveLogo />
+    </div>
   );
 }

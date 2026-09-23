@@ -675,6 +675,17 @@ async def generate_projection(
     byte budget (a real signal the working set pulled in too much).
     """
     ctx_budget = CONTEXT_MD_MAX_BYTES if context_md_max_bytes is None else context_md_max_bytes
+    from app.stealth.project_sync import ensure_stable_project_id
+
+    # Read-or-mint once, persisted at meta.json's own "stable_project_id"
+    # key (see app.stealth.project_sync's module docstring) -- a UUID identity
+    # that survives this workspace folder being renamed or moved, unlike
+    # this function's own run-scoped `workspace_id` field below (a
+    # scope_entity_id/path-hash short string, unrelated). Read here, before
+    # meta_json is rebuilt from scratch a few lines down, so a regeneration
+    # never mints a fresh one.
+    stable_project_id = ensure_stable_project_id(workspace_root)
+
     from app.execution.durable_resume import get_run_context
     from app.execution.procedure_graph import fetch_procedure_version
     from app.services.verification import evaluate_run_completion
@@ -768,6 +779,7 @@ async def generate_projection(
         file_list += [*OPTIONAL_CONTENT_PAGE_FILES, "index/exploration.idx"]
     meta_json.update({
         "schema": "stealth-projection/2",
+        "stable_project_id": stable_project_id,
         "workspace_id": str(run_row.get("scope_entity_id") or _short(hashlib.sha1(
             workspace_root.encode("utf-8")).hexdigest(), 12)),
         "change_cursor": change_cursor,

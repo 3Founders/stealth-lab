@@ -438,7 +438,7 @@ _TOOL_SCOPES: dict[str, str] = {
     **{n: _WRITE for n in (
         "submit_procedure", "create_goal", "report_execution", "record_run_update", "record_stealth_edit",
         "declare_file_intent", "report_node_progress", "commit_local_sync", "init_workspace",
-        "open_exploration", "close_exploration", "verify_completion")},
+        "open_exploration", "close_exploration", "verify_completion", "unsync_local_project")},
     **{n: _acx.INGESTION_SUBMIT for n in ("ingest_trajectory", "run_semantic_extraction", "reextract_trajectory")},
     **{n: _EXEC for n in (
         "find_best_way", "reproduce_procedure", "execute_goal", "continue_run", "resume_execution_run",
@@ -726,10 +726,58 @@ async def root_health(request: Request) -> JSONResponse:  # noqa: ARG001
     })
 
 
+# ---------------------------------------------------------------------------
+# Local project sync bridge -- see app.mcp_server.local_sync_bridge's own
+# module docstring and docs/local_project_sync_security.md §C. The only
+# browser-facing, state-mutating surface this server exposes; every route
+# below re-checks Origin + Host + a single-use capability token on every
+# call (enforced inside local_sync_bridge, not here) before doing anything.
+# ---------------------------------------------------------------------------
+from app.mcp_server import local_sync_bridge as _bridge
+
+
+@server.custom_route("/.well-known/stealthlab-local", methods=["GET"], include_in_schema=False)
+async def local_sync_discover(request: Request) -> Response:
+    return await _bridge.handle_discover(request, port=_MCP_PORT)
+
+
+@server.custom_route("/local-sync/start-handshake", methods=["POST"], include_in_schema=False)
+async def local_sync_start_handshake(request: Request) -> Response:
+    return await _bridge.handle_start_handshake(request, settings=settings, port=_MCP_PORT)
+
+
+@server.custom_route("/local-sync/list-projects", methods=["POST"], include_in_schema=False)
+async def local_sync_list_projects(request: Request) -> Response:
+    return await _bridge.handle_list_projects(request, settings=settings, port=_MCP_PORT)
+
+
+@server.custom_route("/local-sync/prepare-payload", methods=["POST"], include_in_schema=False)
+async def local_sync_prepare_payload(request: Request) -> Response:
+    return await _bridge.handle_prepare_payload(request, settings=settings, port=_MCP_PORT)
+
+
+@server.custom_route("/local-sync/register-local-key", methods=["POST"], include_in_schema=False)
+async def local_sync_register_local_key(request: Request) -> Response:
+    return await _bridge.handle_register_local_key(request, settings=settings, port=_MCP_PORT)
+
+
+# CORS preflight for every state-mutating /local-sync/* route (the browser
+# sends OPTIONS first because these POSTs carry a custom x-sync-capability
+# header) -- NOT the security boundary, see local_sync_bridge's own module
+# docstring; the real request still re-validates Origin/Host/capability
+# regardless of what this returns.
+@server.custom_route("/local-sync/start-handshake", methods=["OPTIONS"], include_in_schema=False)
+@server.custom_route("/local-sync/list-projects", methods=["OPTIONS"], include_in_schema=False)
+@server.custom_route("/local-sync/prepare-payload", methods=["OPTIONS"], include_in_schema=False)
+@server.custom_route("/local-sync/register-local-key", methods=["OPTIONS"], include_in_schema=False)
+async def local_sync_preflight(request: Request) -> Response:
+    return await _bridge.handle_preflight(request, settings=settings, port=_MCP_PORT)
+
+
 # Free-reads/gated-writes: wraps the SDK's own fully-built app (auth
-# middleware, /mcp route, every custom_route) -- see anonymous_read.py's
-# own module docstring for why this is the robust shape (injects a
-# credential rather than forking the SDK's auth enforcement).
+# middleware, /mcp route, every custom_route above including local-sync) --
+# see anonymous_read.py's own module docstring for why this is the robust
+# shape (injects a credential rather than forking the SDK's auth enforcement).
 app = AnonymousReadInjectorMiddleware(server.streamable_http_app())
 
 
@@ -833,6 +881,24 @@ def _resolve_caller_identity(fallback: str) -> str:
     if actor_id:
         return actor_id
     return fallback
+
+
+def _real_caller_subject() -> Optional[str]:
+    """The same two REAL identity sources `_resolve_caller_identity`
+    checks, but with NO fallback -- returns `None` instead of a
+    tool-name/fabricated string when neither resolves. Used by the
+    local-project-sync tools (`preview_sync_local_project` /
+    `sync_local_project`), where an honest per-caller identity is
+    REQUIRED (ownership), not merely nice-to-have attribution the way
+    `record_stealth_edit`'s softer audit-log use of
+    `_resolve_caller_identity` is -- syncing a project under a fabricated
+    fallback identity would be worthless (and potentially
+    confusing/colliding) as an ownership record, so these tools refuse
+    outright instead."""
+    token = get_access_token()
+    if token is not None and token.subject:
+        return token.subject
+    return current_actor_id()
 
 
 async def _resolve_trace_id(pool, *, parent_run_id: Optional[str], session_id: Optional[str]) -> str:
@@ -4607,7 +4673,24 @@ async def close_exploration(
         )
     except OSError as exc:
         return f"REFUSED: .stealth/ write failed -- {exc}"
-    return json.dumps({"exploration_id": exploration_id, "status": status, "claim_id": claim_id})
+
+    result = {"exploration_id": exploration_id, "status": status, "claim_id": claim_id}
+
+    # Ongoing automatic sync hook (docs/local_project_sync_security.md
+    # §G) -- a third existing local write point. Instant no-op when this
+    # project has never been synced on this machine.
+    from app.stealth.ongoing_sync import sync_delta_if_synced
+    from app.stealth.project_sync import ensure_stable_project_id as _ensure_stable_id
+
+    try:
+        stable_id = _ensure_stable_id(repo_path)
+        result["ongoing_sync"] = await sync_delta_if_synced(
+            repo_path, stable_project_id=stable_id, file_path="exploration.md",
+            summary=f"{exploration_id} {status}: {resolution[:200]}", actor=owner,
+        )
+    except Exception as exc:  # noqa: BLE001 -- best-effort; the closure itself already succeeded
+        result["ongoing_sync"] = f"error: {exc}"
+    return json.dumps(result, default=str)
 
 
 @server.tool()
@@ -4868,6 +4951,22 @@ async def record_run_update(
             result["journal"] = "written"
         except (OSError, StealthLockError) as exc:
             result["journal"] = f"write_failed: {exc}"
+
+        # Ongoing automatic sync hook (docs/local_project_sync_security.md
+        # §G) -- a second existing local write point, same pattern as
+        # record_stealth_edit's own hook. Instant no-op when this project
+        # has never been synced on this machine.
+        from app.stealth.ongoing_sync import sync_delta_if_synced
+        from app.stealth.project_sync import ensure_stable_project_id as _ensure_stable_id
+
+        try:
+            stable_id = _ensure_stable_id(repo_path)
+            result["ongoing_sync"] = await sync_delta_if_synced(
+                repo_path, stable_project_id=stable_id, file_path="run.md",
+                summary=f"{kind}: {body[:200]}", actor=result["actor_agent_id"],
+            )
+        except Exception as exc:  # noqa: BLE001 -- best-effort; the update itself already succeeded
+            result["ongoing_sync"] = f"error: {exc}"
     return json.dumps(result, default=str)
 
 
@@ -4942,7 +5041,114 @@ async def record_stealth_edit(
         result["ledger_projection"] = "written"
     except OSError as exc:
         result["ledger_projection"] = f"write_failed: {exc}"
+
+    # Ongoing automatic sync hook (docs/local_project_sync_security.md
+    # §G) -- this is an EXISTING local write point (an edit was just
+    # recorded), reused rather than building a new watcher. Instant no-op
+    # for the overwhelming majority of calls, where this project has never
+    # been synced on this machine (no cached key) -- see app.stealth.
+    # ongoing_sync's own docstring. Never raises, never blocks this tool's
+    # own success.
+    from app.stealth.ongoing_sync import sync_delta_if_synced
+    from app.stealth.project_sync import ensure_stable_project_id as _ensure_stable_id
+
+    try:
+        stable_id = _ensure_stable_id(repo_path)
+        result["ongoing_sync"] = await sync_delta_if_synced(
+            repo_path, stable_project_id=stable_id, file_path=file_path, summary=summary, actor=resolved_actor,
+        )
+    except Exception as exc:  # noqa: BLE001 -- best-effort; the edit itself already succeeded and must not be undone
+        result["ongoing_sync"] = f"error: {exc}"
     return json.dumps(result, default=str)
+
+
+_SYNC_NO_IDENTITY_MESSAGE = (
+    "REFUSED: no verified per-caller identity on this connection -- managing a local project sync "
+    "requires knowing WHO is asking. This server must be configured with OIDC_ISSUER/OIDC_AUDIENCE (or "
+    "the Supabase Auth preset) and your MCP client must complete that sign-in -- this tool does not "
+    "implement its own browser/OAuth flow; the MCP transport already advertises OAuth requirements "
+    "(see this server's own AuthSettings) and a compliant client (e.g. Claude Code) drives the "
+    "browser sign-in automatically once OIDC is configured. See README_MCP_SERVER.md's OIDC section."
+)
+
+# HISTORICAL NOTE: the local-project sync flow used to be MCP-tool-driven
+# (preview_sync_local_project / sync_local_project, removed here) -- those
+# tools read `.stealth/*.md` content and stored it SERVER-SIDE as
+# plaintext JSON, which conflicts with the end-to-end encryption design in
+# docs/local_project_sync_security.md (the server must never receive
+# plaintext project content). The flow is now browser-initiated: the
+# browser detects and talks to `app.mcp_server.local_sync_bridge`'s
+# `/local-sync/*` routes directly (discovery, capability handshake,
+# plaintext-over-loopback-only, client-side encryption, then a ciphertext
+# upload to `POST /v1/me/synced-projects/{project_id}/sync`). The one
+# piece still naturally an MCP tool -- because it should work even with no
+# browser open, straight from the agent -- is `unsync_local_project`
+# below.
+
+
+@server.tool()
+async def unsync_local_project(repo_path: str, confirm: bool, ctx: Context) -> str:
+    """
+    Stop syncing this local project and delete its encrypted copy from
+    your keळ account. REFUSED unless `confirm=True`: the calling agent
+    must show the user an explicit prompt -- "Stop syncing this project
+    and remove its synchronized copy from your keळ account?" -- and
+    receive their confirmation BEFORE ever passing `confirm=True`. This
+    tool performs no confirmation UI of its own.
+
+    On confirm:
+      1. Re-resolves the caller's verified identity (same REFUSED-if-none
+         rule the sync flow itself uses -- there is no honest fallback
+         identity for an account-changing action).
+      2. Deletes the `synced_projects` row (which also drops the wrapped
+         P-DEK) and the ciphertext blob from object storage
+         (app.stealth.project_sync.unsync_project).
+      3. Revokes every live sync device credential for this project
+         (app.services.sync_device_identity.
+         revoke_all_sync_device_credentials_for_project) -- this is what
+         actually stops future automatic sync uploads, immediately.
+      4. Purges this machine's locally cached P-DEK and sync device
+         credential from the OS keychain (app.stealth.local_key_store) --
+         best-effort; a failure here does not undo steps 2-3.
+
+    Does NOT touch `.stealth/` locally -- this tool has no filesystem
+    write access to project content at all, by construction (only a
+    best-effort OS-keychain purge, which is not a `.stealth/` write).
+    Local `.stealth` files remain exactly as they were; the local MCP
+    server remains fully usable; the user can sync again later, which
+    mints a fresh P-DEK (never reusing the deleted one).
+
+    REFUSED if the project was never synced, or was synced to a
+    different account -- indistinguishable on purpose (same
+    ownership-hiding discipline as every other endpoint in this feature).
+
+    Returns JSON: `{project_id, unsynced: true}`.
+    """
+    from app.services.sync_device_identity import revoke_all_sync_device_credentials_for_project
+    from app.stealth.local_key_store import delete_device_token, delete_p_dek
+    from app.stealth.project_sync import ensure_stable_project_id, unsync_project as _unsync_project
+
+    if not confirm:
+        return ("REFUSED: unsync_local_project requires confirm=True -- show the user the confirmation "
+                "prompt before setting confirm=True")
+    if not os.path.isdir(repo_path):
+        return f"REFUSED: repo_path {repo_path!r} is not a directory on this server."
+    subject = _real_caller_subject()
+    if subject is None:
+        return _SYNC_NO_IDENTITY_MESSAGE
+
+    pool = ctx.request_context.lifespan_context["pool"]
+    stable_id = ensure_stable_project_id(repo_path)
+    deleted = await _unsync_project(pool, project_id=stable_id, owner_subject=subject)
+    if not deleted:
+        return f"REFUSED: project {stable_id} is not currently synced to this keळ account"
+
+    await revoke_all_sync_device_credentials_for_project(
+        pool, project_id=stable_id, owner_subject=subject, reason="unsynced",
+    )
+    delete_p_dek(stable_id)
+    delete_device_token(stable_id)
+    return json.dumps({"project_id": stable_id, "unsynced": True})
 
 
 @server.tool()

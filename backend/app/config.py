@@ -381,6 +381,31 @@ class Settings(BaseSettings):
     service_token_keys: Optional[str] = None
     service_token_alg: str = "HS256"
     service_token_max_ttl_seconds: int = 3600
+    # Local-project-sync device credentials: a THIRD, distinct trust domain
+    # from both the human Supabase/OIDC identity and worker service tokens
+    # above -- a local sync device acting on behalf of one signed-in
+    # account, scoped to sync:upload only. Own issuer/audience/keys so a
+    # token minted here can never verify against either other domain.
+    # See docs/local_project_sync_security.md's Implementation Closure §1.
+    sync_device_token_issuer: Optional[str] = None
+    sync_device_token_audience: Optional[str] = None
+    sync_device_token_keys: Optional[str] = None
+    sync_device_token_alg: str = "HS256"
+    sync_device_token_max_ttl_seconds: int = 2_592_000  # 30 days
+    # Local sync bridge (app/mcp_server/local_sync_bridge.py): the exact,
+    # comma-separated allowlist of browser origins permitted to call the
+    # local bridge's /local-sync/* routes. Checked server-side on every
+    # request, never delegated to CORS headers alone -- see
+    # docs/local_project_sync_security.md §C. Empty/unset means the bridge
+    # accepts no browser at all (fails closed, not open).
+    sync_bridge_allowed_origins: str = ""
+    # The REST API base URL the LOCAL process uploads ongoing encrypted
+    # deltas to (app.stealth.ongoing_sync) -- a different concern from
+    # sync_bridge_allowed_origins above (that's who may call INTO this
+    # local process; this is where this local process calls OUT to).
+    # Empty means ongoing sync uploads are disabled on this machine
+    # (fails closed -- never guesses a URL).
+    sync_upload_api_url: str = ""
     # The legacy static X-Admin-Api-Key. Kept for compatibility; every use is
     # audit-logged and it can be switched off once operators hold scoped
     # identities (admin:ops).

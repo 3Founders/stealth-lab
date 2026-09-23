@@ -400,3 +400,67 @@ export const getPublicProfileByUsername = (username: string, signal?: AbortSigna
  * contributor's own picture or a deterministic initials fallback, never a
  * broken link (backend/app/services/avatar.py). */
 export const avatarUrlFor = (username: string): string => `${API_URL}/v1/contributors/by-username/${j(username)}/avatar`;
+
+// ---------------------------------------------------------------------------
+// Synced local `.stealth` projects — CLIENT-SIDE END-TO-END ENCRYPTED. See
+// docs/local_project_sync_security.md and backend/app/api/me.py /
+// backend/app/stealth/project_sync.py. A project only appears here once
+// explicitly synced via the local bridge + browser encryption flow
+// (lib/sync.ts) — this backend never sees plaintext file/activity
+// content, ever; everything below is either ciphertext or key-wrapping
+// metadata. `project_id` is the STABLE identity persisted in the
+// workspace's own `.stealth/meta.json` (survives rename/move).
+//
+// NAMING: "sync" / "local project sync" / "synced project" / "unsync" —
+// never "claim" (that word already means something else in keळ:
+// claims.md, verification claims, the claim graph).
+// ---------------------------------------------------------------------------
+
+export interface StealthProjectSummary extends Row {
+  project_id: string;
+  synced_at: string | null;
+  bootstrapped_at: string | null;
+  revision: number;
+}
+
+export const getMyStealthProjects = (signal?: AbortSignal) =>
+  apiGet<{ projects: StealthProjectSummary[] }>("/v1/me/stealth-projects", signal);
+
+/** Ciphertext + the key-wrapping metadata needed to decrypt it CLIENT-SIDE
+ * (lib/sync-crypto.ts). Never plaintext file/activity fields — the server
+ * does not have them. */
+export interface StealthProjectDetail extends Row {
+  project_id: string;
+  synced_at: string | null;
+  bootstrapped_at: string | null;
+  revision: number;
+  wrapped_p_dek: string | null;
+  recovery_salt: string | null;
+  kdf_params: { m: number; t: number; p: number } | null;
+  ciphertext_base64: string | null;
+}
+
+export const getMyStealthProject = (projectId: string, signal?: AbortSignal) =>
+  apiGet<StealthProjectDetail>(`/v1/me/stealth-projects/${j(projectId)}`, signal);
+
+export const unsyncStealthProject = (projectId: string, signal?: AbortSignal) =>
+  apiDelete<{ project_id: string; unsynced: boolean }>(`/v1/me/stealth-projects/${j(projectId)}`, signal);
+
+/** Establishes the sync relationship (if not already synced by this
+ * account) and issues a sync device credential — a DIFFERENT, narrowly
+ * scoped credential from the ordinary Supabase session, handed to the
+ * local bridge afterward so the local MCP process can keep syncing after
+ * this tab closes. See docs/local_project_sync_security.md's
+ * Implementation Closure §1. */
+export const issueSyncDevice = (projectId: string, signal?: AbortSignal) =>
+  apiPost<{ token: string; project_id: string; ttl_seconds: number }>(
+    "/v1/me/sync-devices", { project_id: projectId }, signal,
+  );
+
+/** Decrypted project content shape, client-side only — the server never
+ * sees this. Mirrors the plaintext bundle build_bootstrap_snapshot /
+ * local_sync_bridge.handle_prepare_payload assembles before encryption. */
+export interface DecryptedProjectContent {
+  files: Record<string, string>;
+  activity: Array<{ timestamp: string | null; file_path: string; summary: string; actor: string }>;
+}
