@@ -5,9 +5,11 @@ import { useParams } from "next/navigation";
 import AnimatedHeading from "@/components/AnimatedHeading";
 import StateNotice from "@/components/NotConnected";
 import {
-  getGoalContributors, getProblem, getProblemBenchmarks, getProblemSolutions, getProcedure, getRankedProcedures, humanize,
-  type Benchmark, type GoalContributor, type Problem, type ProcedureDetail, type RankedProcedure,
+  getGoalContributors, getMyProfile, getProblem, getProblemBenchmarks, getProblemSolutions, getProcedure, getRankedProcedures,
+  humanize, listBenchmarkSubmissions, listProcedureSubmissions, reviewBenchmarkSubmission, reviewProcedureSubmission,
+  type Benchmark, type GoalContributor, type Problem, type ProcedureDetail, type RankedProcedure, type SubmissionResult,
 } from "@/lib/kel-api";
+import { getSession } from "@/lib/session";
 import { categoryOf } from "@/lib/mock-adapter";
 import type { ApiState } from "@/lib/api";
 
@@ -29,6 +31,57 @@ export default function GoalPage() {
   // /goals/{id}/contributors) — computed server-side from accepted
   // submissions, never re-tallied here from fetched procedures.
   const [contributors, setContributors] = useState<ApiState<GoalContributor[]>>({ kind: "loading" });
+
+  // Reviewer-only (Band 2.9's KNOWLEDGE_PUBLISH). Display convenience --
+  // the review endpoints re-check this server-side regardless, so a stale
+  // or forged `true` here can never actually accept/reject anything.
+  const [isReviewer, setIsReviewer] = useState(false);
+  const [pendingWays, setPendingWays] = useState<ApiState<SubmissionResult[]>>({ kind: "loading" });
+  const [pendingBenchmarks, setPendingBenchmarks] = useState<ApiState<SubmissionResult[]>>({ kind: "loading" });
+  const [reviewBusy, setReviewBusy] = useState<string | null>(null);
+  const [reviewError, setReviewError] = useState<string | null>(null);
+
+  const isPending = (s: SubmissionResult) => s.status === "candidate" || s.status === "needs_review";
+
+  function loadPendingSubmissions(signal?: AbortSignal) {
+    // No server-side OR-of-statuses filter -- fetch unfiltered and keep
+    // only candidate/needs_review client-side (both count as "pending").
+    listProcedureSubmissions(id, undefined, signal).then((r) =>
+      setPendingWays(r.kind === "ok" ? { kind: "ok", data: r.data.submissions.filter(isPending) } : (r as ApiState<SubmissionResult[]>)));
+    listBenchmarkSubmissions(id, undefined, signal).then((r) =>
+      setPendingBenchmarks(r.kind === "ok" ? { kind: "ok", data: r.data.submissions.filter(isPending) } : (r as ApiState<SubmissionResult[]>)));
+  }
+
+  useEffect(() => {
+    const ac = new AbortController();
+    getSession().then((s) => {
+      if (!s) return;
+      getMyProfile(ac.signal).then((r) => {
+        if (r.kind === "ok" && r.data.is_reviewer) {
+          setIsReviewer(true);
+          loadPendingSubmissions(ac.signal);
+        }
+      });
+    });
+    return () => ac.abort();
+  }, [id]);
+
+  async function review(kind: "way" | "benchmark", submissionId: string, decision: "accepted" | "rejected") {
+    setReviewBusy(submissionId);
+    setReviewError(null);
+    const r = kind === "way"
+      ? await reviewProcedureSubmission(submissionId, decision)
+      : await reviewBenchmarkSubmission(submissionId, decision);
+    setReviewBusy(null);
+    if (r.kind !== "ok") {
+      setReviewError(r.kind === "error" ? r.message : "Could not record that review — try again.");
+      return;
+    }
+    loadPendingSubmissions();
+    // Accepting can change the ranked ways / benchmarks lists below.
+    getRankedProcedures(id).then((rr) => setRanked(rr.kind === "ok" ? { kind: "ok", data: rr.data.ranked } : (rr as ApiState<RankedProcedure[]>)));
+    getProblemBenchmarks(id).then((rr) => setBenchmarks(rr.kind === "ok" ? { kind: "ok", data: rr.data.benchmarks ?? [] } : (rr as ApiState<Benchmark[]>)));
+  }
 
   useEffect(() => {
     const ac = new AbortController();
@@ -143,6 +196,53 @@ export default function GoalPage() {
           </div>
         ) : (
           <StateNotice state={benchmarks} empty={benchmarks.kind === "ok" ? "No benchmark or success criteria recorded for this goal yet." : undefined} />
+        )}
+
+        {/* pending review (reviewer-only) */}
+        {isReviewer && (
+          (pendingWays.kind === "ok" && pendingWays.data.length > 0) ||
+          (pendingBenchmarks.kind === "ok" && pendingBenchmarks.data.length > 0)
+        ) && (
+          <div style={{ gridColumn: "1 / span 12", marginTop: 16 }}>
+            <div className="marker caption"><b>PENDING REVIEW</b></div>
+            {reviewError && <p className="small dim" style={{ marginBottom: 12 }}>{reviewError}</p>}
+            <div style={{ display: "grid", gap: 12 }}>
+              {pendingWays.kind === "ok" && pendingWays.data.map((s) => (
+                <div className="log" key={s.id} style={{ padding: "14px 18px", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 16, flexWrap: "wrap" }}>
+                  <div>
+                    <span className="status" data-s="candidate" style={{ marginRight: 10 }}>way</span>
+                    <span>{(s.name as string) || "Untitled way"}</span>
+                  </div>
+                  <div style={{ display: "flex", gap: 8 }}>
+                    <button type="button" className="btn-ink" disabled={reviewBusy === s.id} onClick={() => review("way", s.id, "accepted")}>
+                      <span>{reviewBusy === s.id ? "…" : "Accept"}</span>
+                    </button>
+                    <button type="button" className="btn-ink" style={{ background: "transparent", color: "var(--ink)", border: "1px solid var(--rule-strong)" }}
+                            disabled={reviewBusy === s.id} onClick={() => review("way", s.id, "rejected")}>
+                      <span>Reject</span>
+                    </button>
+                  </div>
+                </div>
+              ))}
+              {pendingBenchmarks.kind === "ok" && pendingBenchmarks.data.map((s) => (
+                <div className="log" key={s.id} style={{ padding: "14px 18px", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 16, flexWrap: "wrap" }}>
+                  <div>
+                    <span className="status" data-s="candidate" style={{ marginRight: 10 }}>benchmark</span>
+                    <span>{(s.name as string) || "Untitled benchmark"}</span>
+                  </div>
+                  <div style={{ display: "flex", gap: 8 }}>
+                    <button type="button" className="btn-ink" disabled={reviewBusy === s.id} onClick={() => review("benchmark", s.id, "accepted")}>
+                      <span>{reviewBusy === s.id ? "…" : "Accept"}</span>
+                    </button>
+                    <button type="button" className="btn-ink" style={{ background: "transparent", color: "var(--ink)", border: "1px solid var(--rule-strong)" }}
+                            disabled={reviewBusy === s.id} onClick={() => review("benchmark", s.id, "rejected")}>
+                      <span>Reject</span>
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
         )}
 
         {/* ways to do this */}

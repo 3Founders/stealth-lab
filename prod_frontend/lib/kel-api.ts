@@ -236,7 +236,7 @@ export interface ProblemStats {
 /** One real-data rollup per Problem, built from /solutions and /evaluations. No number here is invented. */
 export async function getProblemStats(id: string, signal?: AbortSignal): Promise<ProblemStats | null> {
   const [sol, ev, subs] = await Promise.all([
-    getProblemSolutions(id, signal), getProblemEvaluations(id, signal), listProcedureSubmissions(id, signal),
+    getProblemSolutions(id, signal), getProblemEvaluations(id, signal), listProcedureSubmissions(id, undefined, signal),
   ]);
   if (sol.kind !== "ok" && ev.kind !== "ok" && subs.kind !== "ok") return null;
   const ways = sol.kind === "ok" ? sol.data.solutions.filter((s) => s.target_table === "procedures").length : 0;
@@ -301,8 +301,25 @@ export const createProcedureSubmission = (body: ProcedureSubmissionInput, signal
 export const createBenchmarkSubmission = (body: BenchmarkSubmissionInput, signal?: AbortSignal) =>
   apiPost<SubmissionResult>("/v1/economy/benchmark-submissions", body, signal);
 
-export const listProcedureSubmissions = (goalId: string, signal?: AbortSignal) =>
-  apiGet<{ submissions: SubmissionResult[] }>(`/v1/economy/procedure-submissions?goal_id=${j(goalId)}&limit=20`, signal);
+export const listProcedureSubmissions = (goalId: string, status?: string, signal?: AbortSignal) =>
+  apiGet<{ submissions: SubmissionResult[] }>(
+    `/v1/economy/procedure-submissions?goal_id=${j(goalId)}&limit=20${status ? `&status=${j(status)}` : ""}`, signal,
+  );
+
+export const listBenchmarkSubmissions = (goalId: string, status?: string, signal?: AbortSignal) =>
+  apiGet<{ submissions: SubmissionResult[] }>(
+    `/v1/economy/benchmark-submissions?goal_id=${j(goalId)}&limit=20${status ? `&status=${j(status)}` : ""}`, signal,
+  );
+
+/** Reviewer-only (KNOWLEDGE_PUBLISH) -- `require_scopes` re-checks this
+ * server-side regardless of what the caller's own /v1/me/profile said, so
+ * a stale/forged `is_reviewer` flag client-side can never actually accept
+ * or reject anything. */
+export const reviewProcedureSubmission = (submissionId: string, decision: "accepted" | "rejected", note?: string, signal?: AbortSignal) =>
+  apiPost<SubmissionResult>(`/v1/economy/procedure-submissions/${j(submissionId)}/review`, { decision, note }, signal);
+
+export const reviewBenchmarkSubmission = (submissionId: string, decision: "accepted" | "rejected", note?: string, signal?: AbortSignal) =>
+  apiPost<SubmissionResult>(`/v1/economy/benchmark-submissions/${j(submissionId)}/review`, { decision, note }, signal);
 
 export interface GoalContributor {
   contributor_id: string;
@@ -372,6 +389,9 @@ export interface MyProfileResult extends Row {
   avatar_url: string | null;
   disclosure_required: boolean;
   onboarding_required: boolean;
+  /** Display convenience only -- every route that actually accepts/rejects
+   * a submission re-checks KNOWLEDGE_PUBLISH itself server-side. */
+  is_reviewer: boolean;
 }
 
 export const getMyProfile = (signal?: AbortSignal) => apiGet<MyProfileResult>("/v1/me/profile", signal);

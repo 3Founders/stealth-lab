@@ -25,6 +25,7 @@ from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
 from pydantic import BaseModel, Field
 
 from app.api.deps import AuthenticatedPrincipal, require_authenticated_user
+from app.services import auth_context as _ac
 from app.services import avatar as avatar_service
 from app.services import contributors
 from app.services import object_storage
@@ -68,6 +69,11 @@ async def get_my_profile(
         "avatar_url": _avatar_url(profile),
         "disclosure_required": profile.get("disclosed_at") is None,
         "onboarding_required": not profile.get("onboarding_complete"),
+        # UI-display convenience ONLY -- every route that actually accepts
+        # or rejects a submission independently re-checks KNOWLEDGE_PUBLISH
+        # via require_scopes (app/api/economy.py), same rule as every other
+        # scope-gated UI affordance in this codebase.
+        "is_reviewer": _ac.KNOWLEDGE_PUBLISH in principal.scopes,
     }
 
 
