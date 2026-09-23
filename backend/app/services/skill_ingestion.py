@@ -2271,6 +2271,34 @@ async def compile_skill_artifact(
             screening_decision_ids=list(screen_result["decision_ids"]),
         )
 
+    # --- G3c: real SPDX license admission -- see screening.spdx_license_
+    # signal's own comment. Distinct from the content-screen license
+    # check above (which only catches restrictive PHRASES inside the
+    # document's own text); this checks the repository's actual detected
+    # license (GitHub/Licensee, already captured as artifact.
+    # license_metadata by github_corpus.py) against a real denylist. ---
+    license_meta = getattr(artifact, "license_metadata", None) or {}
+    spdx_finding = screening.spdx_license_signal(license_meta.get("spdx_id"))
+    if spdx_finding is not None:
+        screen_result = await screening.record_screening_run(
+            pool, findings=[spdx_finding], artifact_uri=artifact.uri,
+            content_hash=artifact.content_hash, created_by=created_by,
+        )
+        reason = "license screen blocked ingestion: " + spdx_finding["signals"][0]
+        await _write_artifact_row(
+            pool, artifact, run_id=run_id, procedure_id=None, procedure_row_id=None,
+            extractor_version=extractor_version, owner_id=owner_id,
+            admission=AdmissionDecision(
+                decision="reject",
+                checks=(AdmissionCheck("license_spdx", "reject", spdx_finding["signals"][0]),),
+            ),
+        )
+        return IngestOutcome(
+            status="rejected", reason=reason, admission_decision="reject",
+            screening_decision=screen_result["decision"],
+            screening_decision_ids=list(screen_result["decision_ids"]),
+        )
+
     # --- §29: screen the untrusted document BEFORE any model call ---
     injection_signals = _screen_untrusted_document_raw(artifact.content, name=fallback_name)
     provenance = "system_pending_review" if injection_signals else "prior_library"

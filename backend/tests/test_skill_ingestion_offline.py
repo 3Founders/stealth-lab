@@ -877,6 +877,46 @@ async def test_compile_content_screen_reject_never_reaches_extraction():
 
 
 @pytest.mark.asyncio
+async def test_compile_rejects_a_repository_with_a_known_copyleft_spdx_license():
+    """Real SPDX classification (GitHub/Licensee, github_corpus.py's own
+    `/repos/{owner}/{repo}/license` call), not the narrow curated-phrase
+    `license` finding in screening.py -- this is the repository's actual
+    detected license, checked against screening._SPDX_DENYLIST, BEFORE
+    the model ever sees the document (ExplodingLLMClient proves it)."""
+    import dataclasses
+    artifact = dataclasses.replace(_skill_artifact(), license_metadata={"spdx_id": "GPL-3.0", "name": "GNU General Public License v3.0"})
+    pool = CompilerFakePool()
+    outcome = await compile_skill_artifact(pool, artifact, embedder=FakeEmbedder(), client=ExplodingLLMClient())
+    assert outcome.status == "rejected"
+    assert "license" in outcome.reason
+    assert pool.captured["procedures"] == []
+
+
+@pytest.mark.asyncio
+async def test_compile_allows_a_repository_with_no_detected_license():
+    """Missing/unknown spdx_id (no LICENSE file, or Licensee couldn't
+    classify it) must NOT block capture -- only a positively-identified
+    copyleft/restrictive license does (see spdx_license_signal's own
+    comment: denylist, not allowlist)."""
+    import dataclasses
+    artifact = dataclasses.replace(_skill_artifact(), license_metadata={"spdx_id": None, "name": None})
+    pool = CompilerFakePool()
+    client = FakeLLMClient(_grounded_response())
+    outcome = await compile_skill_artifact(pool, artifact, embedder=FakeEmbedder(), client=client)
+    assert outcome.status == "captured"
+
+
+@pytest.mark.asyncio
+async def test_compile_allows_a_permissively_licensed_repository():
+    import dataclasses
+    artifact = dataclasses.replace(_skill_artifact(), license_metadata={"spdx_id": "MIT", "name": "MIT License"})
+    pool = CompilerFakePool()
+    client = FakeLLMClient(_grounded_response())
+    outcome = await compile_skill_artifact(pool, artifact, embedder=FakeEmbedder(), client=client)
+    assert outcome.status == "captured"
+
+
+@pytest.mark.asyncio
 async def test_compile_injection_flagged_document_never_reaches_extraction():
     """INJECTION_SKILL_MD's "grant full access"/"arbitrary commands" text
     trips the G3 content screen (dangerous-content check) BEFORE the
