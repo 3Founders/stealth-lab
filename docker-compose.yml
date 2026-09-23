@@ -45,7 +45,7 @@ services:
   backend:
     build:
       context: .
-      dockerfile: backend/Dockerfile
+      dockerfile: backend/Dockerfile.mcp-server
     restart: unless-stopped
     depends_on:
       db:
@@ -67,7 +67,7 @@ services:
     ports:
       # 127.0.0.1 on the HOST side is the real security boundary here, not
       # the container-internal bind address. The process inside the
-      # container binds 0.0.0.0 (see backend/Dockerfile's CMD) only because
+      # container binds 0.0.0.0 (see backend/Dockerfile.mcp-server's CMD) only because
       # Docker's bridge network can't route to a process bound to the
       # container's own loopback interface at all -- publishing as
       # 127.0.0.1:8765:8765 means the mapped port is still unreachable from

@@ -1,16 +1,25 @@
 # Image for the StealthLab MCP server (demo.md C1's "backend service").
 #
+# Renamed from `Dockerfile` to `Dockerfile.mcp-server` so Railway's
+# auto-detection (which prefers a literal `Dockerfile` over railway.json's
+# builder setting, regardless of what the dashboard's Builder dropdown
+# says) stops picking this up for the main API service -- that service
+# runs app.main:app via Nixpacks per backend/railway.json, not this image
+# (which serves app.mcp_server.server:app on a different port entirely).
+# Give the MCP server its own Railway service pointed at this Dockerfile
+# by path when it's ready to be hosted.
+#
 # Build context is still the REPO ROOT for now (docker-compose.yml builds
-# this with `context: .` + `dockerfile: backend/Dockerfile`; building it
-# standalone: `docker build -f backend/Dockerfile -t stealthlab-backend .`,
-# trailing `.` = repo root). This is no longer STRICTLY required the way it
-# used to be -- app/mcp_server/server.py's Agent/RepoSandbox import now
-# resolves entirely inside backend/ (app/execution/coding_agent.py, moved
-# from experiments/swebench_pro/agent.py specifically so backend/ has zero
-# runtime dependency on the sibling experiments/ tree). A backend-only
-# build context is a real, safe follow-up simplification now, just not
-# made in this pass (untested against an actual docker build in this
-# environment).
+# this with `context: .` + `dockerfile: backend/Dockerfile.mcp-server`;
+# building it standalone: `docker build -f backend/Dockerfile.mcp-server
+# -t stealthlab-backend .`, trailing `.` = repo root). This is no longer
+# STRICTLY required the way it used to be -- app/mcp_server/server.py's
+# Agent/RepoSandbox import now resolves entirely inside backend/
+# (app/execution/coding_agent.py, moved from experiments/swebench_pro/agent.py
+# specifically so backend/ has zero runtime dependency on the sibling
+# experiments/ tree). A backend-only build context is a real, safe
+# follow-up simplification now, just not made in this pass (untested
+# against an actual docker build in this environment).
 
 FROM python:3.12-slim
 

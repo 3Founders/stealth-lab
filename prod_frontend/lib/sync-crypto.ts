@@ -36,7 +36,22 @@
  * `/wasm/` (copied from `node_modules/argon2id/dist/` -- see that
  * directory if the package is ever upgraded, the binaries need re-copying).
  */
-import type { Argon2idParams } from "argon2id";
+// NOT `import type { Argon2idParams } from "argon2id"` -- that package's
+// index.js does unconditional top-level `import wasm from './dist/*.wasm'`,
+// and pulling in ANY module specifier rooted at the package (even a
+// type-only one) makes webpack try to parse index.js, which fails before
+// tree-shaking ever runs (see this file's own WASM LOADING note above).
+// This local type mirrors argon2id/lib/setup.d.ts's Argon2idParams exactly.
+interface Argon2idParams {
+  password: Uint8Array;
+  salt: Uint8Array;
+  parallelism: number;
+  passes: number;
+  memorySize: number;
+  tagLength: number;
+  ad?: Uint8Array;
+  secret?: Uint8Array;
+}
 
 const AES_ALG = "AES-GCM";
 const IV_BYTES = 12;

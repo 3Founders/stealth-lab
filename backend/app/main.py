@@ -87,6 +87,23 @@ observability.init("api")
 
 app = FastAPI(title="Workflow Debate Platform", version="0.1.0", lifespan=lifespan)
 
+# Band 2.9 identity gate: bearer-token validation + actor propagation on
+# every request. Pass-through no-op while OIDC is unconfigured; the boot
+# posture guard above is what keeps that honest.
+#
+# Registered BEFORE CORSMiddleware below on purpose. Starlette's
+# add_middleware() inserts at the front of the stack, and the stack is
+# built by wrapping in reverse -- so whichever middleware is added LAST
+# ends up OUTERMOST and runs FIRST on every incoming request. With the
+# order reversed (as it was before), this actor middleware ran before
+# CORSMiddleware and 401'd cross-origin browser preflight OPTIONS
+# requests (which never carry Authorization) before CORS ever got a
+# chance to short-circuit them -- the preflight's response then had no
+# Access-Control-Allow-Origin header, so the browser blocked the real
+# request too. Confirmed live against the deployed Vercel frontend +
+# Railway backend on 2026-09-23. CORS must be outermost.
+install_actor_middleware(app, settings)
+
 # CORS: a separately-hosted frontend (e.g. Vercel) is a different origin
 # from the API (e.g. Railway/Render), so the browser blocks requests here
 # by default without this. FRONTEND_ORIGIN (comma-separated for more than
@@ -101,11 +118,6 @@ app.add_middleware(
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["*"],
 )
-
-# Band 2.9 identity gate: bearer-token validation + actor propagation on
-# every request. Pass-through no-op while OIDC is unconfigured; the boot
-# posture guard above is what keeps that honest.
-install_actor_middleware(app, settings)
 
 app.include_router(ingest.router)
 app.include_router(approval.router)
