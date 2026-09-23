@@ -493,20 +493,40 @@ class Embedder:
         # already reviewed, for exactly the transient-only case the SDK's own
         # retry predicate selects -- an auth/malformed-request failure still
         # raises immediately, exactly as before.
-        client = voyageai.AsyncClient(
-            api_key=settings.require("voyage_api_key"),
-            max_retries=settings.voyage_max_retries,
-        )
-        try:
-            result = await client.embed(
-                list(texts), model=self.model, input_type=input_type
-            )
-        except Exception as exc:  # noqa: BLE001
-            raise EmbeddingError(f"Voyage embedding failed: {exc}") from exc
+        #
+        # Key rotation (2026-09-23, same pattern as _embed_gemini): VOYAGE_API_KEYS
+        # (comma-separated) is tried in order whenever a call fails -- a per-key
+        # rate/quota error on one key does not burn the next key's independent
+        # window. Single-key by default (VOYAGE_API_KEY alone) is unaffected;
+        # this only activates once a second key is actually configured.
+        keys = [
+            k.strip() for k in (getattr(settings, "voyage_api_keys", None) or "").split(",") if k.strip()
+        ]
+        primary = settings.voyage_api_key
+        if primary and primary not in keys:
+            keys.insert(0, primary)
+        if not keys:
+            raise EmbeddingError("no Voyage API key configured")
 
-        vectors = result.embeddings
-        self._check_dimension(vectors, self.model)
-        return vectors
+        failures: list[str] = []
+        for i, key in enumerate(keys):
+            client = voyageai.AsyncClient(api_key=key, max_retries=settings.voyage_max_retries)
+            try:
+                result = await client.embed(
+                    list(texts), model=self.model, input_type=input_type
+                )
+            except Exception as exc:  # noqa: BLE001
+                failures.append(str(exc)[:150])
+                log.warning(
+                    "voyage key %d/%d failed (%s) -- %s", i + 1, len(keys),
+                    str(exc)[:120], "rotating" if i < len(keys) - 1 else "exhausted",
+                )
+                continue
+            vectors = result.embeddings
+            self._check_dimension(vectors, self.model)
+            return vectors
+
+        raise EmbeddingError(f"Voyage embedding failed across {len(keys)} key(s): " + " | ".join(failures))
 
     def _check_dimension(self, vectors: list[list[float]], model_name: str) -> None:
         """

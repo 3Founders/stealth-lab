@@ -217,5 +217,56 @@ async def test_gemini_configured_with_no_key_fails_closed_never_silently_switche
     assert fake.calls == 0, "must never fall through to Voyage on a Gemini failure"
 
 
+@pytest.mark.asyncio
+async def test_a_bad_first_key_rotates_to_a_working_second_key(monkeypatch):
+    """Key rotation (2026-09-23, same pattern as _embed_gemini's GEMINI_API_KEYS):
+    an AuthenticationError on the first configured key (not retried by the SDK's
+    own controller, per the negative test above) must not fail the whole call --
+    it should rotate to the next key in VOYAGE_API_KEYS and succeed there."""
+    monkeypatch.setattr(settings, "voyage_api_key", "bad-key")
+    monkeypatch.setattr(settings, "voyage_api_keys", "good-key")
+    monkeypatch.setattr(settings, "voyage_max_retries", 5)
+    monkeypatch.setattr(settings, "embedding_dimension", 3)
+
+    calls = {"n": 0}
+
+    async def fake_acreate(*args, **kwargs):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise voyageai.error.AuthenticationError("invalid API key")
+        return _fake_response([[0.7, 0.8, 0.9]])
+
+    monkeypatch.setattr(voyageai.Embedding, "acreate", fake_acreate, raising=True)
+
+    embedder = Embedder(model="voyage-3-large", dimension=3)
+    vectors = await embedder._embed_voyage(["find the largest function"], "query")
+
+    assert vectors == [[0.7, 0.8, 0.9]]
+    assert calls["n"] == 2, "expected exactly 1 failed call on the bad key + 1 successful call on the good key"
+
+
+@pytest.mark.asyncio
+async def test_every_key_bad_raises_a_real_embeddingerror_naming_the_key_count(monkeypatch):
+    """The negative half: if EVERY configured key fails, the call must still
+    raise a real, honest EmbeddingError (never silently return nothing) --
+    same fail-closed contract every other provider path in this file proves."""
+    monkeypatch.setattr(settings, "voyage_api_key", "bad-key-1")
+    monkeypatch.setattr(settings, "voyage_api_keys", "bad-key-2,bad-key-3")
+    monkeypatch.setattr(settings, "voyage_max_retries", 0)
+    monkeypatch.setattr(settings, "embedding_dimension", 3)
+
+    fake = _FlakyThenOK(
+        n_failures=999,
+        exc_factory=lambda: voyageai.error.AuthenticationError("invalid API key"),
+        vectors=[[0.1, 0.2, 0.3]],
+    )
+    monkeypatch.setattr(voyageai.Embedding, "acreate", fake, raising=True)
+
+    embedder = Embedder(model="voyage-3-large", dimension=3)
+    with pytest.raises(EmbeddingError, match=r"Voyage embedding failed across 3 key\(s\)"):
+        await embedder._embed_voyage(["find the largest function"], "query")
+    assert fake.calls == 3, "must try all 3 configured keys, once each, before giving up"
+
+
 if __name__ == "__main__":
     raise SystemExit(pytest.main([__file__, "-v"]))
