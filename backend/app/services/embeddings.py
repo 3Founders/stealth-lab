@@ -225,6 +225,8 @@ class Embedder:
         provider = self._configured_provider()
         if provider == "gemini":
             return f"gemini:{settings.gemini_embedding_model}"
+        if provider == "vertex":
+            return f"vertex:{settings.gemini_embedding_model}"
         if provider == "voyage":
             return f"voyage:{self.model}"
         if provider == "local":
@@ -318,6 +320,8 @@ class Embedder:
                            input_count=len(texts)):
                 if provider == "gemini":
                     vectors = await self._embed_gemini(texts, input_type)
+                elif provider == "vertex":
+                    vectors = await self._embed_vertex(texts, input_type)
                 elif provider == "voyage":
                     vectors = await self._embed_voyage(texts, input_type)
                 else:
@@ -328,6 +332,64 @@ class Embedder:
             raise
         self._check_dimension(vectors, self.embedding_model_id())
         await ingest_budget.record_embedding(provider, self.embedding_model_id(), list(texts))
+        return vectors
+
+    async def _embed_vertex(
+        self, texts: Sequence[str], input_type: InputType
+    ) -> list[list[float]]:
+        """
+        Vertex AI's NATIVE embedding prediction endpoint, authenticated via
+        OAuth2/ADC (no API key) -- the same auth mechanism already proven
+        live for extraction and the semantic-judge chain (2026-09-22), and
+        billed against real IAM-based project quota/credits rather than the
+        shared free-tier API-key pool _embed_gemini draws on.
+
+        Confirmed live 2026-09-23: the OpenAI-compatible surface Vertex
+        exposes elsewhere in this codebase does NOT support
+        gemini-embedding-001 ("OpenMaaS model ... not supported", 400) --
+        this uses the native `:predict` endpoint instead, which does.
+        `task_type`/`outputDimensionality` map straight onto this module's
+        own input_type/dimension, same MRL truncation _embed_gemini already
+        relies on.
+        """
+        import google.auth
+        import google.auth.transport.requests
+        import httpx
+
+        if not settings.vertex_project:
+            raise EmbeddingError("no Vertex project configured (VERTEX_PROJECT)")
+        try:
+            credentials, _ = google.auth.default(scopes=["https://www.googleapis.com/auth/cloud-platform"])
+            credentials.refresh(google.auth.transport.requests.Request())
+        except Exception as exc:  # noqa: BLE001
+            raise EmbeddingError(f"Vertex ADC unavailable: {exc}") from exc
+
+        task_type = "RETRIEVAL_QUERY" if input_type == "query" else "RETRIEVAL_DOCUMENT"
+        url = (
+            f"https://{settings.vertex_region}-aiplatform.googleapis.com/v1/projects/"
+            f"{settings.vertex_project}/locations/{settings.vertex_region}/publishers/google/"
+            f"models/{settings.gemini_embedding_model}:predict"
+        )
+        instances = [{"content": t, "task_type": task_type} for t in texts]
+        try:
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                resp = await client.post(
+                    url,
+                    headers={"Authorization": f"Bearer {credentials.token}"},
+                    json={"instances": instances, "parameters": {"outputDimensionality": self.dimension}},
+                )
+                resp.raise_for_status()
+                body = resp.json()
+        except Exception as exc:  # noqa: BLE001
+            raise EmbeddingError(f"Vertex embedding failed: {exc}") from exc
+
+        predictions = body.get("predictions") or []
+        if len(predictions) != len(texts):
+            raise EmbeddingError(
+                f"Vertex returned {len(predictions)} embeddings for {len(texts)} texts"
+            )
+        vectors = [p["embeddings"]["values"] for p in predictions]
+        self._check_dimension(vectors, self.embedding_model_id())
         return vectors
 
     async def _embed_gemini(
@@ -493,20 +555,40 @@ class Embedder:
         # already reviewed, for exactly the transient-only case the SDK's own
         # retry predicate selects -- an auth/malformed-request failure still
         # raises immediately, exactly as before.
-        client = voyageai.AsyncClient(
-            api_key=settings.require("voyage_api_key"),
-            max_retries=settings.voyage_max_retries,
-        )
-        try:
-            result = await client.embed(
-                list(texts), model=self.model, input_type=input_type
-            )
-        except Exception as exc:  # noqa: BLE001
-            raise EmbeddingError(f"Voyage embedding failed: {exc}") from exc
+        #
+        # Key rotation (2026-09-23, same pattern as _embed_gemini): VOYAGE_API_KEYS
+        # (comma-separated) is tried in order whenever a call fails -- a per-key
+        # rate/quota error on one key does not burn the next key's independent
+        # window. Single-key by default (VOYAGE_API_KEY alone) is unaffected;
+        # this only activates once a second key is actually configured.
+        keys = [
+            k.strip() for k in (getattr(settings, "voyage_api_keys", None) or "").split(",") if k.strip()
+        ]
+        primary = settings.voyage_api_key
+        if primary and primary not in keys:
+            keys.insert(0, primary)
+        if not keys:
+            raise EmbeddingError("no Voyage API key configured")
 
-        vectors = result.embeddings
-        self._check_dimension(vectors, self.model)
-        return vectors
+        failures: list[str] = []
+        for i, key in enumerate(keys):
+            client = voyageai.AsyncClient(api_key=key, max_retries=settings.voyage_max_retries)
+            try:
+                result = await client.embed(
+                    list(texts), model=self.model, input_type=input_type
+                )
+            except Exception as exc:  # noqa: BLE001
+                failures.append(str(exc)[:150])
+                log.warning(
+                    "voyage key %d/%d failed (%s) -- %s", i + 1, len(keys),
+                    str(exc)[:120], "rotating" if i < len(keys) - 1 else "exhausted",
+                )
+                continue
+            vectors = result.embeddings
+            self._check_dimension(vectors, self.model)
+            return vectors
+
+        raise EmbeddingError(f"Voyage embedding failed across {len(keys)} key(s): " + " | ".join(failures))
 
     def _check_dimension(self, vectors: list[list[float]], model_name: str) -> None:
         """
