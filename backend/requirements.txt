@@ -66,3 +66,20 @@ opentelemetry-exporter-otlp-proto-http
 # pictures (real image content, not just the client's claimed MIME type),
 # strips EXIF, and re-encodes to WebP before the bytes reach ObjectStore.
 Pillow
+
+# Local project sync (app/stealth/local_registry.py, app/stealth/
+# local_key_store.py, app/stealth/local_sync_encrypt.py) - see
+# docs/local_project_sync_security.md. platformdirs: the standard,
+# cross-platform way to find the per-OS user-scoped app-data directory for
+# the local project registry (never %APPDATA%/~/.config hardcoded).
+# keyring: OS-secure credential storage (Windows Credential Manager /
+# macOS Keychain / Linux Secret Service) for the P-DEK and sync device
+# credential cache -- never a plaintext file. cryptography: already an
+# indirect dependency (PyJWT's RS256/ES256 support); pinned here directly
+# too because local_sync_encrypt.py now depends on its AESGCM primitive
+# for real, not just transitively -- the SAME AES-256-GCM construction
+# the browser uses via Web Crypto, so ciphertext either side produces is
+# decryptable by the other.
+platformdirs
+keyring
+cryptography

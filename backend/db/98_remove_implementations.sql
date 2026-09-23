@@ -159,9 +159,27 @@ ALTER TABLE execution_plans     DROP COLUMN IF EXISTS implementations;
 ALTER TABLE evaluations         DROP COLUMN IF EXISTS implementation_id, DROP COLUMN IF EXISTS implementation_version;
 
 -- Evidence / extraction rows that targeted an implementation have no target any more.
-DELETE FROM evidence WHERE target_type = 'implementation';
+-- `evidence` is append-only (Band 1.9a, invariant #19, db/24_evidence.sql's
+-- tg_evidence_append_only trigger): DELETE is rejected outright, and the
+-- one legal UPDATE shape is the t_invalid retraction tombstone (every
+-- other column must stay byte-identical). Retracting instead of deleting
+-- keeps these rows queryable as historical testimony while dropping them
+-- out of every live statistic (same t_invalid IS NULL filters every
+-- other evidence read already uses) -- functionally equivalent to the
+-- delete this replaces, without violating the invariant.
+UPDATE evidence SET t_invalid = now() WHERE target_type = 'implementation' AND t_invalid IS NULL;
 ALTER TABLE evidence DROP CONSTRAINT IF EXISTS evidence_target_type_chk;
-ALTER TABLE evidence ADD CONSTRAINT evidence_target_type_chk CHECK (target_type IN ('claim', 'procedure'));
+-- NOT VALID, not a blanket CHECK: the retraction above can drop these
+-- rows out of every live query (t_invalid IS NULL filters) but, per the
+-- append-only trigger above, can never change target_type itself on an
+-- existing row -- so a validated CHECK here would fail permanently on
+-- any environment that ever recorded implementation-targeted evidence
+-- (it did, in the real database this migration was written against).
+-- NOT VALID enforces the rule for every future insert/update while
+-- leaving already-written rows exactly as history recorded them --
+-- the standard Postgres idiom for tightening a constraint without
+-- touching or breaking existing data.
+ALTER TABLE evidence ADD CONSTRAINT evidence_target_type_chk CHECK (target_type IN ('claim', 'procedure')) NOT VALID;
 
 DELETE FROM trajectory_extraction_objects WHERE object_type = 'implementation';
 DO $$

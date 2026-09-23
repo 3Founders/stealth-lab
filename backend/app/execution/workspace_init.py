@@ -238,12 +238,19 @@ def _write_bootstrap_marker(
     from datetime import datetime, timezone
 
     from app.stealth.atomic import atomic_write_batch
+    from app.stealth.project_sync import ensure_stable_project_id
 
     stealth_dir = os.path.join(repo_path, STEALTH_DIRNAME)
     os.makedirs(stealth_dir, exist_ok=True)
     now_iso = datetime.now(timezone.utc).isoformat()
+    # Read-or-mint the same stable, rename/move-durable identity
+    # generate_projection persists (app.stealth.project_sync.
+    # ensure_stable_project_id) -- so a workspace has one stable_project_id
+    # regardless of whether it currently has a run to project.
+    stable_project_id = ensure_stable_project_id(repo_path)
     meta = {
         "schema": "stealth-workspace-init/1",
+        "stable_project_id": stable_project_id,
         "workspace_id": project_id,
         "generated_at": now_iso,
         "first_connection": first_connection,

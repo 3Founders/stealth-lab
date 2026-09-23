@@ -38,6 +38,7 @@ import argparse
 import asyncio
 import hashlib
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -67,18 +68,33 @@ def _checksum(path: Path) -> str:
     return hashlib.sha256(raw).hexdigest()
 
 
+def _sort_key(path: Path) -> tuple[int, str]:
+    """(leading integer, full filename) -- numeric on the migration
+    number, string as the tiebreak (so 08a/08b, both number 8, still sort
+    08a before 08b). A pure lexical sort on the filename (this script's
+    original approach) breaks the moment a migration number exceeds 99:
+    "100_..." sorts before "93_..." as a STRING (its own prior docstring
+    already flagged this exact caveat as a future risk). That silently
+    hit in practice once migrations 100-107 existed alongside pending
+    93-99 -- 101_preserved_script_identity.sql (which needs the `role`
+    column migration 98 adds) ran before 98 ever did, and failed with
+    UndefinedColumnError. Numeric comparison on the leading digits fixes
+    the ordering for any number of digits, not just up to 99."""
+    m = re.match(r"^(\d+)", path.name)
+    return (int(m.group(1)) if m else 0, path.name)
+
+
 def _real_files(directory: Path) -> list[Path]:
     """
-    Real files, in real lexical order -- deliberately not the buggy
-    `sorted(directory.glob("0*.sql"))` pattern this replaces. Lexical sort
-    on the current, real, 2-digit zero-padded filenames (01..12, with 08a/
-    08b as letter-suffixed variants of 08) sorts correctly as-is; a future
-    migration numbered past 99 would need 3-digit padding to keep sorting
-    correctly, same caveat any lexically-sorted numbering scheme has.
+    Real files, in real NUMERIC order (see `_sort_key`) -- deliberately
+    not `sorted(directory.glob("0*.sql"))` (the buggy pattern this
+    replaced originally: it only matches filenames starting with '0') nor
+    a plain lexical `sorted()` on the path (broken for migration numbers
+    >= 100, see `_sort_key`'s own docstring).
     """
     if not directory.exists():
         return []
-    return sorted(p for p in directory.glob("*.sql") if p.is_file())
+    return sorted((p for p in directory.glob("*.sql") if p.is_file()), key=_sort_key)
 
 
 async def _ensure_ledger(conn: asyncpg.Connection) -> None:
