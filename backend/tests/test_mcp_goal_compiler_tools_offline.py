@@ -133,7 +133,7 @@ def test_compile_goal_with_workspace_root_writes_a_real_planned_goal_run_md(monk
     assert goal_run_path.exists()
     content = goal_run_path.read_text()
     assert "GOAL_RUN|-|planned" in content
-    assert "GOAL_NODE|G-1|step|planned|binding=-" in content
+    assert "GOAL_NODE|G-1|step|planned|do the thing|binding=-" in content
 
 
 def test_compile_goal_without_workspace_root_writes_nothing(monkeypatch, tmp_path):

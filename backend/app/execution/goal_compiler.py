@@ -140,7 +140,7 @@ def compiled_goal_to_run_md(nodes: list[GoalPlanNode]) -> str:
 
     lines = [
         GoalRunLine(
-            goal_id=n.goal_id, kind=n.kind,
+            goal_id=n.goal_id, kind=n.kind, goal_name=n.goal_name,
             status="planned" if n.kind == "step" else "needs_input",
         )
         for n in nodes

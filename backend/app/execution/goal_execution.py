@@ -426,7 +426,7 @@ def render_goal_run_md(execution: GoalExecutionResult) -> str:
 
     lines = [
         GoalRunLine(
-            goal_id=gid, kind="step", status=r.status,
+            goal_id=gid, kind="step", status=r.status, goal_name=r.goal_name,
             binding=r.used_binding_kind, verification_state=(
                 r.attempts[-1].verification_state if r.attempts else None
             ),
@@ -435,7 +435,7 @@ def render_goal_run_md(execution: GoalExecutionResult) -> str:
         for gid, r in execution.node_results.items()
     ] + [
         GoalRunLine(
-            goal_id=gid, kind="procedure", status=r.status,
+            goal_id=gid, kind="procedure", status=r.status, goal_name=r.goal_name,
             procedure_id=r.used_procedure_id, human_intervention_needed=r.human_intervention_needed,
             resumed_from_journal=r.resumed_from_journal,
         )

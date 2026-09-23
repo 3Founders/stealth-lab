@@ -126,10 +126,11 @@ async function load() {
       for (const n of run.nodes) {
         const top = el("div", {className: "top"},
           pill(n.status, STATUS_COLOR[n.status]),
-          el("span", {className: "goal", textContent: n.goal_id}),
+          el("span", {className: "goal", textContent: n.goal_name || n.goal_id}),
           el("span", {style: "color:var(--muted)", textContent: n.kind}));
         const kv = el("dl", {className: "kv"});
         const add = (k, v) => { if (v) { kv.append(el("dt", {textContent: k}), el("dd", {textContent: v})); } };
+        add("goal_id", n.goal_id);
         add("binding", n.binding);
         add("procedure", n.procedure_id);
         add("verify", n.verification_state);

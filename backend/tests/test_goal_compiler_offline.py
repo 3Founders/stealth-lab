@@ -146,7 +146,7 @@ def test_compiled_run_md_marks_implementation_nodes_as_planned_never_success():
     nodes = flatten_goal_tree(tree)
     md = compiled_goal_to_run_md(nodes)
     assert "GOAL_RUN|-|planned" in md
-    assert "GOAL_NODE|G-1|step|planned|binding=-" in md
+    assert "GOAL_NODE|G-1|step|planned|find references|binding=-" in md
     assert "success" not in md and "failure" not in md
 
 
@@ -154,7 +154,7 @@ def test_compiled_run_md_marks_human_nodes_as_needs_input():
     tree = _unresolved_leaf("G-1", "no match", reason="nothing links")
     nodes = flatten_goal_tree(tree)
     md = compiled_goal_to_run_md(nodes)
-    assert "GOAL_NODE|G-1|human|needs_input|binding=-" in md
+    assert "GOAL_NODE|G-1|human|needs_input|no match|binding=-" in md
 
 
 def test_compiled_run_md_never_fabricates_an_execution_id():
@@ -174,6 +174,6 @@ def test_compiled_run_md_covers_a_multi_node_real_procedure_chain():
     md = compiled_goal_to_run_md(nodes)
     data_lines = [ln for ln in md.splitlines() if ln.startswith("GOAL_NODE|")]
     assert len(data_lines) == 3
-    assert "GOAL_NODE|G-1|step|planned|binding=-" in md
-    assert "GOAL_NODE|G-2|human|needs_input|binding=-" in md
-    assert "GOAL_NODE|G-3|step|planned|binding=-" in md
+    assert "GOAL_NODE|G-1|step|planned|first|binding=-" in md
+    assert "GOAL_NODE|G-2|human|needs_input|unmatched|binding=-" in md
+    assert "GOAL_NODE|G-3|step|planned|third|binding=-" in md
