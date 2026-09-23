@@ -65,10 +65,10 @@ export default function PublicProfilePage() {
       </section>
 
       {p.is_owner && p.visibility === "private" && (
-        <section className="frame grid" style={{ paddingBottom: 0 }}>
-          <div className="empty" style={{ gridColumn: "1 / span 12" }}>
-            <b>This is a preview. Only you can see it.</b>
-            <p>
+        <section className="frame grid" style={{ paddingBottom: 32 }}>
+          <div className="empty" style={{ gridColumn: "1 / span 12", padding: 16 }}>
+            <b style={{ fontSize: 16, marginBottom: 2 }}>This is a preview. Only you can see it.</b>
+            <p style={{ fontSize: 14 }}>
               Your profile is private, so nobody else can view this page yet. <Link href="/account/settings" style={{ textDecoration: "underline" }}>Make it public in Settings</Link> to share it.
             </p>
           </div>

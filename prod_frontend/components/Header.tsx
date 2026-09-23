@@ -104,7 +104,15 @@ export default function Header() {
             <Image src="/kel-wordmark.png" alt="keळ" width={800} height={440} priority style={{ height: 54, width: "auto" }} />
           </Link>
           <nav aria-label="Primary" className="nav-links">{links.map(item)}</nav>
-          {username ? (
+          {username === undefined ? (
+            // Session resolution is async (Supabase's own session read, then a
+            // real network round trip to fetch the profile that decides
+            // between this and AccountMenu) -- rendering "Sign in" here while
+            // that's pending would falsely flash a signed-out state for every
+            // visitor who's actually signed in, right before flipping to
+            // AccountMenu. An invisible placeholder holds the layout instead.
+            <span className="btn-ink desk" aria-hidden="true" style={{ visibility: "hidden" }}>Sign in <Arrow /></span>
+          ) : username ? (
             <AccountMenu username={username} />
           ) : (
             <Link href="/sign-in" className="btn-ink desk" onClick={() => track("sign_in_click", { where: "header" })}>Sign in <Arrow /></Link>

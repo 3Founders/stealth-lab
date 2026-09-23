@@ -76,8 +76,9 @@ main, footer { position: relative; z-index: 1; }
   border-radius: 10px; min-width: 200px; padding: 6px; display: grid; box-shadow: 0 10px 28px rgba(23,23,23,.1); z-index: 60;
 }
 .account-menu a, .account-menu button {
-  display: block; width: 100%; text-align: left; padding: 9px 10px; font-size: 15px; border-radius: 6px;
-  background: none; border: 0; font: inherit; color: var(--ink); cursor: pointer;
+  display: block; width: 100%; text-align: left; padding: 9px 10px; border-radius: 6px;
+  background: none; border: 0; color: var(--ink); cursor: pointer;
+  font-family: var(--font); font-weight: 400; font-size: 16px;
 }
 .account-menu a:hover, .account-menu button:hover { background: var(--soft); }
 .account-menu hr { border: 0; border-top: 1px solid var(--rule); margin: 4px 0; }

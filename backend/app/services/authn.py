@@ -497,6 +497,29 @@ async def validate_token_async(token: str, *, config: OidcConfig, jwks_provider:
 
 EXEMPT_PATHS = frozenset({"/health", "/docs", "/redoc", "/openapi.json"})
 
+# Path PREFIXES for the public commons' own read surface -- every route
+# under these already resolves an anonymous caller to AccessScope.anonymous()
+# (app/api/deps.py::get_scope) or a 404 that leaks nothing (contributors'
+# public_profile), so the blanket private_visibility_enabled gate below is
+# redundant for them and, left unexempted, contradicts this module's own
+# documented contract ("public-read routes see public rows") -- confirmed
+# live 2026-09-23: with PRIVATE_VISIBILITY_ENABLED=true (turned on this
+# session for the identity feature), anonymous /v1/problems and /v1/search
+# 401'd outright, breaking the site's entire public browsing surface for
+# every signed-out visitor. Any WRITE route nested under one of these
+# prefixes (e.g. POST /v1/benchmarks) still enforces its own
+# require_authenticated_user / require_scopes dependency independently --
+# this only stops the pre-emptive reject from shadowing that route-level
+# check for the READ routes that were never supposed to need one.
+EXEMPT_PATH_PREFIXES = (
+    "/v1/problems", "/v1/best-way", "/v1/benchmarks", "/v1/evaluations",
+    "/v1/search", "/v1/contributors", "/v1/procedures",
+)
+
+
+def _is_exempt_path(path: str) -> bool:
+    return path in EXEMPT_PATHS or path.startswith(EXEMPT_PATH_PREFIXES)
+
 
 def extract_bearer(authorization: Optional[str]) -> Optional[str]:
     if not authorization:
@@ -578,7 +601,7 @@ def make_actor_middleware(
                     except TokenRejected as exc:
                         await _reject(send, 401, f"invalid token: {exc}")
                         return
-                elif private_visibility_enabled and scope.get("path") not in EXEMPT_PATHS:
+                elif private_visibility_enabled and not _is_exempt_path(scope.get("path") or ""):
                     await _reject(send, 401, "authentication required")
                     return
 

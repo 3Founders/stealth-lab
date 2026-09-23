@@ -25,6 +25,7 @@ from cryptography.hazmat.primitives.asymmetric import rsa
 from app.services.agent_review_state_machine import AgentReviewStateMachine
 from app.services.authn import (
     EXEMPT_PATHS,
+    EXEMPT_PATH_PREFIXES,
     Actor,
     OidcConfig,
     StaticJwks,
@@ -399,6 +400,31 @@ def test_private_posture_requires_token_except_exempt_paths(config, jwks):
         h2 = Harness(_mw(config, jwks, private=True))
         res2 = asyncio.run(h2.call(path=exempt))
         assert res2[0]["status"] == 200 and h2.called, exempt
+
+
+def test_private_posture_still_allows_anonymous_public_commons_reads(config, jwks):
+    """The commons' own read surface (Problems, Search, public profiles,
+    Procedures) is supposed to stay anonymously browsable regardless of
+    private_visibility_enabled -- each of those routes already resolves an
+    anonymous caller to AccessScope.anonymous() (public rows only) or a
+    404 that leaks nothing, per this module's own docstring ("public-read
+    routes see public rows"). Confirmed live against the deployed
+    frontend/backend on 2026-09-23 that this was NOT actually true before
+    EXEMPT_PATH_PREFIXES existed: turning on private_visibility_enabled
+    401'd every anonymous GET to /v1/problems and /v1/search outright,
+    breaking the site's entire public browsing surface for every
+    signed-out visitor."""
+    for prefix in EXEMPT_PATH_PREFIXES:
+        h = Harness(_mw(config, jwks, private=True))
+        res = asyncio.run(h.call(path=prefix))
+        assert res[0]["status"] == 200 and h.called, prefix
+        assert h.seen_actor_ids == [None]
+
+    # A genuinely private route (not under any exempt prefix) must still
+    # 401 anonymously -- the exemption is narrow, not a blanket bypass.
+    h2 = Harness(_mw(config, jwks, private=True))
+    res2 = asyncio.run(h2.call(path="/v1/graph"))
+    assert res2[0]["status"] == 401 and not h2.called
 
 
 def test_contextvar_is_reset_after_each_request(config, jwks, pem):
