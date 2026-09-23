@@ -328,6 +328,84 @@ async def handle_ingest_skill_package(pool: asyncpg.Pool, payload: dict) -> None
         elif status in ("duplicate", "unchanged"):
             _tel.set_attrs(sp, failure_code=_tel.FailureCode.DUPLICATE_OBJECT)
 
+async def handle_ingest_document(pool: asyncpg.Pool, payload: dict) -> None:
+    """Ingest exactly one document (HTML/PDF/DOCX/Markdown/API -- any format a
+    registered DocumentSourceAdapter recognizes) through the FULL semantic-
+    extraction pipeline, retryably and idempotently. Mirrors
+    handle_ingest_skill_package's shape exactly on purpose.
+
+    Reuses compile_skill_artifact directly rather than building a second
+    extraction path: the only source_type-gated branch anywhere in its call
+    graph is _persist_script_procedures' bundled-script capture, which already
+    no-ops for anything other than 'skill_package' -- everything else
+    (LLM extraction, procedure/goal/claim capture, admission screening,
+    artifact/block writing) is genuinely source-agnostic. Deliberately does
+    NOT also call document_ingestion.ingest_canonical_document -- that would
+    write a second, extractor_version-diverged ingested_artifacts row for the
+    same document through a different path; compile_skill_artifact already
+    owns the one real write here, the same way it does for skill packages.
+    """
+    from app.config import settings
+    from app.services.document_ingestion import source_artifact_from_canonical_document
+    from app.services.embeddings import Embedder
+    from app.services.ingestion_sources.document_adapter import DocumentLocator
+    from app.services.ingestion_sources.document_adapters import select_adapter
+    from app.services.skill_ingestion import compile_skill_artifact
+
+    locator = DocumentLocator(
+        local_path=payload.get("local_path"), uri=payload.get("uri"),
+        raw_bytes=payload.get("raw_bytes"),
+        filename=payload.get("filename"), content_type_hint=payload.get("content_type_hint"),
+        repository=payload.get("repository"), path=payload.get("path"), commit=payload.get("commit"),
+    )
+    adapter = select_adapter(locator)
+    if adapter is None:
+        # Refuse rather than fabricate: no registered format recognizes this
+        # locator. A payload built by a real enqueue path should never hit
+        # this -- it already ran select_adapter to decide the job was worth
+        # creating -- so treat it as loud, not a silent drop.
+        raise ValueError(f"handle_ingest_document: no DocumentSourceAdapter recognizes {locator!r}")
+
+    with _tel.span("ingestion.fetch", kind="TOOL", on_error=_tel.FailureCode.INGESTION_ERROR,
+                   source_type=adapter.source_type):
+        doc = adapter.fetch_and_normalize(locator)
+    artifact = source_artifact_from_canonical_document(doc)
+
+    client = _general_compute_client()
+    if client is None:
+        log.warning(
+            "handle_ingest_document: no LLM client configured "
+            "(GENERAL_COMPUTE_API_KEY/GENERAL_COMPUTE_JUDGE_MODEL) -- "
+            "this artifact will be refused, not deterministically captured",
+        )
+    with _tel.span("ingestion.compile", kind="CHAIN", on_error=_tel.FailureCode.INGESTION_ERROR,
+                   items_attempted=1, source_type=adapter.source_type) as sp:
+        outcome = await compile_skill_artifact(
+            pool, artifact, embedder=Embedder(rate_limit_pool=pool),
+            created_by="document_ingestion_worker",
+            client=client,
+            admission_llm_model=settings.general_compute_judge_model or "gemma-4-31B-it",
+            extraction_llm_model=settings.general_compute_judge_model or "gemma-4-31B-it",
+            fallback_extraction_llm_model=settings.general_compute_fallback_model or None,
+            claim_extraction_llm_model=settings.general_compute_judge_model or "gemma-4-31B-it",
+        )
+        status = getattr(outcome, "status", None)
+        _tel.set_attrs(
+            sp, ingest_status=status,
+            items_accepted=int(status in ("captured", "new_version")),
+            items_duplicate=int(status in ("duplicate", "unchanged")),
+            items_rejected=int(status == "rejected"),
+            items_failed=int(status == "error"),
+            procedure_id=getattr(outcome, "procedure_id", None),
+            extraction_model=getattr(outcome, "extraction_model", None))
+        if status == "error":
+            _tel.fail(sp, _tel.FailureCode.INGESTION_ERROR)
+        elif status == "rejected":
+            _tel.fail(sp, _tel.FailureCode.INGESTION_PARSE_ERROR, force_keep=False)
+        elif status in ("duplicate", "unchanged"):
+            _tel.set_attrs(sp, failure_code=_tel.FailureCode.DUPLICATE_OBJECT)
+
+
 log = logging.getLogger(__name__)
 
 # job_type registry -- deliberately a plain dict, not a class hierarchy;
@@ -580,6 +658,7 @@ JOB_HANDLERS: dict[str, JobHandler] = {
     "normalize_trace_event": handle_normalize_trace_event,
     "promote_observation_to_claim": handle_promote_observation_to_claim,
     "ingest_skill_package": handle_ingest_skill_package,
+    "ingest_document": handle_ingest_document,
     # 'extract_procedure_from_episode' is registered further down, right
     # after its handler is defined -- that handler sits below the sweep it
     # belongs with, and a forward reference here would be a NameError at

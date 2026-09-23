@@ -85,6 +85,27 @@ class DocumentIngestOutcome:
     warnings: tuple[str, ...]
 
 
+def source_artifact_from_canonical_document(doc: CanonicalDocument) -> SourceArtifact:
+    """The one conversion from a `CanonicalDocument` (any DocumentSourceAdapter's
+    output) to the `SourceArtifact` shape `skill_ingestion.compile_skill_artifact`
+    expects. Used here (structural-only ingestion) AND by
+    `ingestion_jobs.handle_ingest_document` (full semantic extraction) -- kept as
+    ONE function so the two paths can never quietly drift apart on what a
+    document's provenance fields mean."""
+    return SourceArtifact(
+        source_type=doc.source_type,
+        uri=doc.source_uri,
+        content=doc.canonical_markdown,
+        content_hash=doc.content_hash,
+        repository=doc.repository,
+        path=doc.path,
+        commit=doc.version,
+        discovered_at=doc.fetched_at,
+        source_id=doc.source_id,
+        license_metadata={"license": doc.license} if doc.license else {},
+    )
+
+
 async def _find_existing(pool: asyncpg.Pool, doc: CanonicalDocument) -> Optional[dict]:
     rows = await pool.fetch(
         "SELECT id FROM ingested_artifacts "
@@ -136,18 +157,7 @@ async def ingest_canonical_document(
         )
         source_ref = result["id"]
 
-    artifact = SourceArtifact(
-        source_type=doc.source_type,
-        uri=doc.source_uri,
-        content=doc.canonical_markdown,
-        content_hash=doc.content_hash,
-        repository=doc.repository,
-        path=doc.path,
-        commit=doc.version,
-        discovered_at=doc.fetched_at,
-        source_id=doc.source_id,
-        license_metadata={"license": doc.license} if doc.license else {},
-    )
+    artifact = source_artifact_from_canonical_document(doc)
     artifact_id = await _write_artifact_row(
         pool, artifact,
         run_id=run_id, procedure_id=None, procedure_row_id=None,

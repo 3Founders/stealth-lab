@@ -1192,3 +1192,54 @@ async def test_run_skill_ingestion_concurrency_isolates_per_artifact_errors():
     assert m["artifacts_seen"] == 3
     assert m["errors"] == 1
     assert m["accepted"] == 2
+
+
+# --- ingestion_jobs.handle_ingest_document: the document-format job handler,
+# proving it actually reaches compile_skill_artifact's real capture path
+# (not just the DocumentSourceAdapter/CanonicalDocument layer, which
+# tests/test_document_adapters_offline.py already covers on its own). -------
+
+@pytest.mark.asyncio
+async def test_handle_ingest_document_captures_a_real_goal_from_html(monkeypatch):
+    from app.services import ingestion_jobs
+
+    html = (
+        b"<html><head><title>Deploy Runbook</title></head><body>"
+        b"<h1>Deploy the payments service</h1>"
+        b"<p>First run the migration. Then restart the service and confirm health.</p>"
+        b"</body></html>"
+    )
+    response = json.dumps({
+        "procedures": [{
+            "name": "deploy-payments",
+            "goal": "deploy the payments service to production and confirm health",
+            "steps": [{"order": 0, "action": "run the migration"}],
+        }],
+        "goals": [], "implementations": [], "reference_resources": [],
+    })
+    client = FakeLLMClient(response)
+    pool = CompilerFakePool()
+
+    monkeypatch.setattr(ingestion_jobs, "_general_compute_client", lambda: client)
+    monkeypatch.setattr(
+        "app.services.embeddings.Embedder",
+        lambda *a, **kw: FakeEmbedder(),
+    )
+
+    await ingestion_jobs.handle_ingest_document(pool, {
+        "raw_bytes": html, "content_type_hint": "text/html",
+        "uri": "https://example.com/docs/deploy-runbook.html",
+    })
+
+    assert len(pool.captured["procedures"]) == 1
+    proc_args = pool.captured["procedures"][0]
+    assert proc_args[1] == "deploy the payments service to production and confirm health"
+
+
+@pytest.mark.asyncio
+async def test_handle_ingest_document_raises_for_an_unrecognized_locator():
+    from app.services import ingestion_jobs
+
+    pool = CompilerFakePool()
+    with pytest.raises(ValueError, match="no DocumentSourceAdapter recognizes"):
+        await ingestion_jobs.handle_ingest_document(pool, {})
