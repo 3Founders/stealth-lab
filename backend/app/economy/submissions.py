@@ -54,7 +54,7 @@ from app.economy import verification as verification_service
 from app.economy.duplicates import embed_submission_text, score_against_parent, score_procedure_duplicate, score_benchmark_duplicate, submission_dedup_text
 from app.services.embeddings import Embedder, to_pgvector
 from app.services.procedures import capture_procedure
-from app.services.product_model import associate_solution, create_benchmark, get_problem
+from app.services.product_model import associate_solution, create_benchmark, get_goal_for_product
 from app.services.access import AccessScope
 from app.services.v0_gate import validate_provenance, validate_scope
 from app.utils.ids import uuid7
@@ -75,9 +75,9 @@ async def create_procedure_submission(
     if submission_type == "improvement" and not parent_procedure_row_id:
         raise ValueError("an 'improvement' submission requires parent_procedure_row_id")
 
-    goal = await get_problem(pool, goal_id, scope=AccessScope.unrestricted())
+    goal = await get_goal_for_product(pool, goal_id, scope=AccessScope.unrestricted())
     if goal is None:
-        raise ValueError(f"goal (problem) {goal_id} not found")
+        raise ValueError(f"goal {goal_id} not found")
 
     validate_provenance(provenance)
     resolved_scope_type, resolved_scope_entity_id = validate_scope(scope_type, scope_entity_id, allow_global_entity_id=bool(scope_type == "global" and scope_entity_id))
@@ -193,7 +193,7 @@ async def review_procedure_submission(
     # constraints), so a reviewer can just call this again on failure.
     if decision == "accepted" and submission.get("procedure_row_id"):
         await associate_solution(
-            pool, problem_id=str(submission["goal_id"]), solution_type="procedure",
+            pool, goal_id=str(submission["goal_id"]), solution_type="procedure",
             target_id=str(submission["procedure_row_id"]), status="active",
             proposer=submission["submitted_by"], provenance=submission.get("provenance"),
             owner_id=submission["submitted_by"], scope_type=submission.get("scope_type"),
@@ -245,9 +245,9 @@ async def create_benchmark_submission(
     scope_type: Optional[str] = None, scope_entity_id: Optional[str] = None, visibility: str = "public",
     embedder: Optional[Embedder] = None, llm_evaluator=None,
 ) -> dict[str, Any]:
-    goal = await get_problem(pool, goal_id, scope=AccessScope.unrestricted())
+    goal = await get_goal_for_product(pool, goal_id, scope=AccessScope.unrestricted())
     if goal is None:
-        raise ValueError(f"goal (problem) {goal_id} not found")
+        raise ValueError(f"goal {goal_id} not found")
 
     validate_provenance(provenance)
     resolved_scope_type, resolved_scope_entity_id = validate_scope(scope_type, scope_entity_id, allow_global_entity_id=bool(scope_type == "global" and scope_entity_id))
@@ -281,7 +281,7 @@ async def create_benchmark_submission(
     # own default status='draft') so it is inspectable during review; it is
     # NOT frozen/activated until accepted below.
     benchmark = await create_benchmark(
-        pool, problem_id=goal_id, name=name, description=description,
+        pool, goal_id=goal_id, name=name, description=description,
         success_criteria=success_criteria, environment_specification={}, comparison_policy={},
         status="draft", provenance=provenance,
         metadata={"invariants": invariants or [], "verification_method": verification_method or {}, "submitted_by": actor_subject},

@@ -108,7 +108,7 @@ export default function AccountPage() {
             <p id="sync-privacy-note" className="small dim" style={{ marginTop: 8, maxWidth: 640 }}>
               Synced project contents are encrypted in your browser before they ever leave your device. keळ
               stores only ciphertext, and never has the key needed to read it. Decryption happens locally too,
-              using your recovery passphrase. Never published to Problems, search, or public profiles unless
+              using your recovery passphrase. Never published to Goals, search, or public profiles unless
               you explicitly publish through keळ&rsquo;s separate Commons contribution flow.
             </p>
           )}

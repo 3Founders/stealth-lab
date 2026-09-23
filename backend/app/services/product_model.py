@@ -1,13 +1,17 @@
 """
-Problem / Benchmark / Solution / Evaluation -- the final-V1 product layer
-(directive §9-§19, §36-§37).
+Benchmark / Solution / Evaluation -- the final-V1 product layer
+(directive §9-§19, §36-§37), now hung directly off Goal (migration 110
+folded the former separate "Problem" concept into Goal -- they were the
+same real-world thing represented twice; Goal is the load-bearing one
+with real data and a direct FK from procedures.achieves_goal_id, so
+Problem was retired and this layer re-pointed at `goals` instead).
 
 This is an ASSOCIATION + READ-MODEL service over the existing substrate.
 It does not execute anything and it does not copy any target object:
 
-    Problem -> Benchmark -> Solution -> (procedure|task_graph|task)
-            -> Evaluation (aggregate over real executions + evidence)
-            -> current-best-verified (DERIVED on read, never stored)
+    Goal -> Benchmark -> Solution -> (procedure|task_graph|task)
+         -> Evaluation (aggregate over real executions + evidence)
+         -> current-best-verified (DERIVED on read, never stored)
 
 Rules honoured here:
   - every read threads scope through access.scope_predicates() (CLAUDE.md).
@@ -19,6 +23,13 @@ Rules honoured here:
     -- enforced HERE and, as a backstop, by migration 35's trigger.
   - no universal winner field: a benchmark leader is computed per request.
   - unknown stays unknown (aggregate_result NULL, INSUFFICIENT_EVIDENCE).
+
+Goal creation/search/get itself is NOT duplicated here -- that's
+app.services.goals's job (find_or_create_goal's dedup discipline, V0
+quality gate, embeddings). This module only lists/finds goals for its
+OWN association-layer purposes (list_goals, find_goal) and gates
+Benchmark/Solution/Evaluation visibility on a goal being visible
+(get_goal_for_product), never re-implements goal creation.
 """
 from __future__ import annotations
 
@@ -75,83 +86,71 @@ def _row(r: asyncpg.Record | None) -> Optional[dict[str, Any]]:
                 pass
         if hasattr(v, "isoformat"):
             d[k] = v.isoformat()
-        if k in ("id", "problem_id", "benchmark_id", "solution_id", "target_id",
+        if k in ("id", "goal_id", "benchmark_id", "solution_id", "target_id",
                  "procedure_id") and v is not None:
             d[k] = str(v)
     return d
 
 
 # ---------------------------------------------------------------------------
-# Problem
+# Goal (list/find only -- create/get live in app.services.goals)
 # ---------------------------------------------------------------------------
-async def create_problem(
-    pool: asyncpg.Pool, *, title: str, description: Optional[str] = None,
-    objective: Optional[str] = None, constraints: Optional[list] = None,
-    status: str = "open", proposer: Optional[str] = None,
-    provenance: Optional[str] = None, metadata: Optional[dict] = None,
-    owner_id: Optional[str] = None, visibility: str = "public",
-    scope_type: Optional[str] = None, scope_entity_id: Optional[str] = None,
-    tenant_scope: Optional[TenantScope] = None,
-) -> dict[str, Any]:
-    if not title or not title.strip():
-        raise ValueError("problem title is required")
-    pid = str(uuid7())
-    async with tenant_transaction(pool, tenant_scope or _commons()) as conn:
-        r = await conn.fetchrow(
-            "INSERT INTO problems (id, title, description, objective, constraints, status, "
-            " proposer, provenance, metadata, owner_id, visibility, scope_type, scope_entity_id) "
-            "VALUES ($1,$2,$3,$4,$5::jsonb,$6,$7,$8,$9::jsonb,$10,$11,$12,$13) RETURNING *",
-            pid, title.strip(), description, objective,
-            json.dumps(constraints or []), status, proposer, provenance,
-            json.dumps(metadata or {}), owner_id, visibility, scope_type, scope_entity_id,
-        )
-    return _row(r)
-
-
-async def get_problem(
-    pool: asyncpg.Pool, problem_id: str, *, scope: AccessScope,
+async def get_goal_for_product(
+    pool: asyncpg.Pool, goal_id: str, *, scope: AccessScope,
     tenant_scope: Optional[TenantScope] = None,
 ) -> Optional[dict[str, Any]]:
+    """Existence + visibility gate used throughout this module before
+    exposing any Benchmark/Solution/Evaluation -- deliberately lighter
+    than app.services.goals.get_goal (no procedure hydration), since every
+    caller here only needs "does this goal exist and is it visible to
+    `scope`", not the full Goal+Procedures view."""
     sql, params, _ = scope_predicates(scope, tenant_scope or TenantScope.unrestricted(),
-                                      alias="p", param_index=2)
+                                      alias="g", param_index=2)
     r = await pool.fetchrow(
-        f"SELECT p.* FROM problems p WHERE p.id = $1 AND {sql}", problem_id, *params,
+        f"SELECT g.* FROM goals g WHERE g.id = $1 AND g.t_invalid IS NULL AND {sql}", goal_id, *params,
     )
     return _row(r)
 
 
-async def list_problems(
+async def list_goals(
     pool: asyncpg.Pool, *, scope: AccessScope, status: Optional[str] = None,
     limit: int = 50, tenant_scope: Optional[TenantScope] = None,
 ) -> list[dict[str, Any]]:
-    clauses, args = [], []
+    """Plain recency-ordered listing (the product surface's "browse all
+    goals" need) -- distinct from app.services.goals.search_goals, which
+    requires a query_text/query_embedding and can't do a bare listing.
+    `status`, if given, filters on goals.status (candidate/active/
+    deprecated/merged -- the ingestion-lifecycle vocabulary), NOT the
+    former Problem-only open/active/solved/archived vocabulary that
+    concept had before migration 110 retired it."""
+    clauses, args = ["g.t_invalid IS NULL"], []
     idx = 1
     if status:
-        clauses.append(f"p.status = ${idx}")
+        clauses.append(f"g.status = ${idx}")
         args.append(status)
         idx += 1
     sql, params, _ = scope_predicates(scope, tenant_scope or TenantScope.unrestricted(),
-                                      alias="p", param_index=idx)
+                                      alias="g", param_index=idx)
     args.extend(params)
     idx += len(params)
-    where = " AND ".join([*clauses, sql]) if clauses else sql
+    where = " AND ".join([*clauses, sql])
     args.append(min(int(limit), 200))
     rows = await pool.fetch(
-        f"SELECT p.* FROM problems p WHERE {where} ORDER BY p.updated_at DESC LIMIT ${idx}",
+        f"SELECT g.* FROM goals g WHERE {where} ORDER BY g.t_created DESC LIMIT ${idx}",
         *args,
     )
     return [_row(r) for r in rows]
 
 
-async def find_problem(
+async def find_goal(
     pool: asyncpg.Pool, query: str, *, scope: AccessScope, limit: int = 10,
     tenant_scope: Optional[TenantScope] = None,
 ) -> list[dict[str, Any]]:
     """
-    NL goal -> Problem(s), ranked. A natural-language goal is not a strict
+    NL goal text -> Goal(s), ranked. A natural-language goal is not a strict
     boolean query, so the words are OR'd into the tsquery and `ts_rank`
-    does the discrimination; a problem must still share at least one
-    lexeme with the goal (rank > 0). Searches title + description +
+    does the discrimination; a goal must still share at least one lexeme
+    with the query (rank > 0). Searches canonical_name + description +
     objective.
     """
     import re as _re
@@ -160,11 +159,11 @@ async def find_problem(
         return []
     tsq = " | ".join(words)  # OR: an NL goal is not a boolean AND query
     sql, params, _ = scope_predicates(scope, tenant_scope or TenantScope.unrestricted(),
-                                      alias="p", param_index=2)
-    doc = "p.title || ' ' || COALESCE(p.description,'') || ' ' || COALESCE(p.objective,'')"
+                                      alias="g", param_index=2)
+    doc = "g.canonical_name || ' ' || COALESCE(g.description,'') || ' ' || COALESCE(g.objective,'')"
     rows = await pool.fetch(
-        f"SELECT p.*, ts_rank(to_tsvector('english', {doc}), to_tsquery('english', $1)) AS _rank "
-        f"FROM problems p WHERE {sql} "
+        f"SELECT g.*, ts_rank(to_tsvector('english', {doc}), to_tsquery('english', $1)) AS _rank "
+        f"FROM goals g WHERE g.t_invalid IS NULL AND {sql} "
         f"AND to_tsvector('english', {doc}) @@ to_tsquery('english', $1) "
         f"ORDER BY _rank DESC LIMIT ${2 + len(params)}",
         tsq, *params, min(int(limit), 50),
@@ -176,7 +175,7 @@ async def find_problem(
 # Benchmark
 # ---------------------------------------------------------------------------
 async def create_benchmark(
-    pool: asyncpg.Pool, *, problem_id: str, name: str, description: Optional[str] = None,
+    pool: asyncpg.Pool, *, goal_id: str, name: str, description: Optional[str] = None,
     version: int = 1, evaluation_protocol: Optional[dict] = None,
     environment_specification: Optional[dict] = None, success_criteria: Optional[dict] = None,
     comparison_policy: Optional[dict] = None, status: str = "draft",
@@ -186,12 +185,12 @@ async def create_benchmark(
     bid = str(uuid7())
     async with tenant_transaction(pool, tenant_scope or _commons()) as conn:
         r = await conn.fetchrow(
-            "INSERT INTO benchmarks (id, problem_id, name, description, version, "
+            "INSERT INTO benchmarks (id, goal_id, name, description, version, "
             " evaluation_protocol, environment_specification, success_criteria, "
             " comparison_policy, status, provenance, metadata) "
             "VALUES ($1,$2,$3,$4,$5,$6::jsonb,$7::jsonb,$8::jsonb,$9::jsonb,$10,$11,$12::jsonb) "
             "RETURNING *",
-            bid, problem_id, name, description, version,
+            bid, goal_id, name, description, version,
             json.dumps(evaluation_protocol or {}), json.dumps(environment_specification or {}),
             json.dumps(success_criteria or {}), json.dumps(comparison_policy or {}),
             status, provenance, json.dumps(metadata or {}),
@@ -218,29 +217,29 @@ async def get_benchmark(
     tenant_scope: Optional[TenantScope] = None,
 ) -> Optional[dict[str, Any]]:
     """A Benchmark has no independent visibility -- it inherits the owning
-    Problem's (same rule as ``list_problem_solutions``). Resolve the row,
-    then gate on the Problem being visible to ``scope``; otherwise it is
+    Goal's (same rule as ``list_goal_solutions``). Resolve the row, then
+    gate on the Goal being visible to ``scope``; otherwise it is
     indistinguishable from "not found" (Bug #8)."""
     r = await pool.fetchrow("SELECT * FROM benchmarks WHERE id=$1", benchmark_id)
     if r is None:
         return None
-    if await get_problem(pool, str(r["problem_id"]), scope=scope,
-                         tenant_scope=tenant_scope) is None:
+    if await get_goal_for_product(pool, str(r["goal_id"]), scope=scope,
+                                  tenant_scope=tenant_scope) is None:
         return None
     return _row(r)
 
 
-async def list_problem_benchmarks(
-    pool: asyncpg.Pool, problem_id: str, *, scope: AccessScope,
+async def list_goal_benchmarks(
+    pool: asyncpg.Pool, goal_id: str, *, scope: AccessScope,
     tenant_scope: Optional[TenantScope] = None,
 ) -> list[dict[str, Any]]:
-    """Benchmarks inherit the Problem's visibility -- gate on the Problem
-    first, then return all of its benchmarks (Bug #8)."""
-    if await get_problem(pool, problem_id, scope=scope, tenant_scope=tenant_scope) is None:
+    """Benchmarks inherit the Goal's visibility -- gate on the Goal first,
+    then return all of its benchmarks (Bug #8)."""
+    if await get_goal_for_product(pool, goal_id, scope=scope, tenant_scope=tenant_scope) is None:
         return []
     rows = await pool.fetch(
-        "SELECT * FROM benchmarks WHERE problem_id=$1 ORDER BY version DESC, created_at DESC",
-        problem_id,
+        "SELECT * FROM benchmarks WHERE goal_id=$1 ORDER BY version DESC, created_at DESC",
+        goal_id,
     )
     return [_row(r) for r in rows]
 
@@ -249,7 +248,7 @@ async def list_problem_benchmarks(
 # Solution (association only -- no target copied)
 # ---------------------------------------------------------------------------
 async def associate_solution(
-    pool: asyncpg.Pool, *, problem_id: str, solution_type: str, target_id: str,
+    pool: asyncpg.Pool, *, goal_id: str, solution_type: str, target_id: str,
     version: int = 1, status: str = "proposed", proposer: Optional[str] = None,
     provenance: Optional[str] = None, metadata: Optional[dict] = None,
     owner_id: Optional[str] = None, scope_type: Optional[str] = None,
@@ -271,34 +270,34 @@ async def associate_solution(
                 f"({target_table}.{id_col})"
             )
         r = await conn.fetchrow(
-            "INSERT INTO solutions (id, problem_id, solution_type, target_id, target_table, "
+            "INSERT INTO solutions (id, goal_id, solution_type, target_id, target_table, "
             " version, status, proposer, provenance, metadata, owner_id, scope_type, scope_entity_id) "
             "VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb,$11,$12,$13) "
-            "ON CONFLICT (problem_id, solution_type, target_id, version) DO UPDATE "
+            "ON CONFLICT (goal_id, solution_type, target_id, version) DO UPDATE "
             "  SET status=EXCLUDED.status, metadata=EXCLUDED.metadata, updated_at=now() "
             "RETURNING *",
-            sid, problem_id, solution_type, target_id, target_table, version, status,
+            sid, goal_id, solution_type, target_id, target_table, version, status,
             proposer, provenance, json.dumps(metadata or {}), owner_id, scope_type, scope_entity_id,
         )
     return _row(r)
 
 
-async def list_problem_solutions(
-    pool: asyncpg.Pool, problem_id: str, *, scope: AccessScope,
+async def list_goal_solutions(
+    pool: asyncpg.Pool, goal_id: str, *, scope: AccessScope,
     tenant_scope: Optional[TenantScope] = None,
 ) -> list[dict[str, Any]]:
     """
-    A Solution has no independent visibility -- it inherits the Problem's
-    (a solution to a private problem is only reachable through that
-    problem). Same precedent as task_graphs inheriting an execution
-    plan's scope (migration 23). So: gate on the Problem being visible to
-    `scope`, then return all its solutions.
+    A Solution has no independent visibility -- it inherits the Goal's (a
+    solution to a private goal is only reachable through that goal). Same
+    precedent as task_graphs inheriting an execution plan's scope
+    (migration 23). So: gate on the Goal being visible to `scope`, then
+    return all its solutions.
     """
-    if await get_problem(pool, problem_id, scope=scope, tenant_scope=tenant_scope) is None:
+    if await get_goal_for_product(pool, goal_id, scope=scope, tenant_scope=tenant_scope) is None:
         return []
     rows = await pool.fetch(
-        "SELECT s.* FROM solutions s WHERE s.problem_id=$1 ORDER BY s.created_at",
-        problem_id,
+        "SELECT s.* FROM solutions s WHERE s.goal_id=$1 ORDER BY s.created_at",
+        goal_id,
     )
     return [_row(r) for r in rows]
 
@@ -307,18 +306,18 @@ async def list_problem_solutions(
 # Evaluation
 # ---------------------------------------------------------------------------
 async def request_evaluation(
-    pool: asyncpg.Pool, *, problem_id: str, benchmark_id: str, solution_id: str,
+    pool: asyncpg.Pool, *, goal_id: str, benchmark_id: str, solution_id: str,
     procedure_id: Optional[str] = None, procedure_version: Optional[int] = None,
     environment: Optional[dict] = None, methodology: Optional[dict] = None,
     provenance: Optional[str] = None, tenant_scope: Optional[TenantScope] = None,
 ) -> dict[str, Any]:
     eid = str(uuid7())
     async with tenant_transaction(pool, tenant_scope or _commons()) as conn:
-        # N1 hardening: problem_id/benchmark_id/solution_id/procedure_id/
+        # N1 hardening: goal_id/benchmark_id/solution_id/procedure_id/
         # procedure_version are never trusted as a self-consistent bundle
         # just because the client sent them together. solution_id and
         # benchmark_id are resolved server-side and checked against
-        # problem_id, and (for procedure solutions) the real target
+        # goal_id, and (for procedure solutions) the real target
         # procedure+version is resolved from the solution's target_id --
         # not from whatever procedure_id/procedure_version the client
         # separately supplied -- so a mismatched pairing can never be
@@ -328,17 +327,17 @@ async def request_evaluation(
         solution = await conn.fetchrow("SELECT * FROM solutions WHERE id = $1", solution_id)
         if solution is None:
             raise ValueError(f"solution {solution_id} not found")
-        if str(solution["problem_id"]) != str(problem_id):
+        if str(solution["goal_id"]) != str(goal_id):
             raise ValueError(
-                f"solution {solution_id} belongs to problem {solution['problem_id']}, not {problem_id}"
+                f"solution {solution_id} belongs to goal {solution['goal_id']}, not {goal_id}"
             )
 
         benchmark = await conn.fetchrow("SELECT * FROM benchmarks WHERE id = $1", benchmark_id)
         if benchmark is None:
             raise ValueError(f"benchmark {benchmark_id} not found")
-        if str(benchmark["problem_id"]) != str(problem_id):
+        if str(benchmark["goal_id"]) != str(goal_id):
             raise ValueError(
-                f"benchmark {benchmark_id} belongs to problem {benchmark['problem_id']}, not {problem_id}"
+                f"benchmark {benchmark_id} belongs to goal {benchmark['goal_id']}, not {goal_id}"
             )
 
         if solution["solution_type"] == "procedure":
@@ -368,11 +367,11 @@ async def request_evaluation(
             procedure_id, procedure_version = resolved_procedure_id, resolved_procedure_version
 
         r = await conn.fetchrow(
-            "INSERT INTO evaluations (id, problem_id, benchmark_id, solution_id, procedure_id, "
+            "INSERT INTO evaluations (id, goal_id, benchmark_id, solution_id, procedure_id, "
             " procedure_version, environment, "
             " methodology, status, provenance) "
             "VALUES ($1,$2,$3,$4,$5,$6,$7::jsonb,$8::jsonb,'requested',$9) RETURNING *",
-            eid, problem_id, benchmark_id, solution_id, procedure_id, procedure_version,
+            eid, goal_id, benchmark_id, solution_id, procedure_id, procedure_version,
             json.dumps(environment or {}),
             json.dumps(methodology or {}), provenance,
         )
@@ -396,7 +395,7 @@ async def complete_evaluation(
     if not execution_ids:
         raise ValueError("cannot complete an evaluation with no linked executions (§16)")
     async with tenant_transaction(pool, tenant_scope or _commons()) as conn:
-        # B4 hardening: load the Evaluation FIRST -- its own problem_id/
+        # B4 hardening: load the Evaluation FIRST -- its own goal_id/
         # benchmark_id/procedure_id/procedure_version were fixed at
         # request_evaluation() time and are never parameters of this
         # call, so "does this evaluation belong to the right Benchmark/
@@ -555,14 +554,14 @@ async def get_evaluation(
     pool: asyncpg.Pool, evaluation_id: str, *, scope: AccessScope,
     tenant_scope: Optional[TenantScope] = None,
 ) -> Optional[dict[str, Any]]:
-    """An Evaluation inherits the owning Problem's visibility. Resolve the
-    row, gate on the Problem being visible to ``scope``, then hydrate the
+    """An Evaluation inherits the owning Goal's visibility. Resolve the
+    row, gate on the Goal being visible to ``scope``, then hydrate the
     linked execution ids (Bug #8)."""
     r = await pool.fetchrow("SELECT * FROM evaluations WHERE id=$1", evaluation_id)
     if r is None:
         return None
-    if await get_problem(pool, str(r["problem_id"]), scope=scope,
-                         tenant_scope=tenant_scope) is None:
+    if await get_goal_for_product(pool, str(r["goal_id"]), scope=scope,
+                                  tenant_scope=tenant_scope) is None:
         return None
     d = _row(r)
     if d:
@@ -575,16 +574,16 @@ async def get_evaluation(
     return d
 
 
-async def list_problem_evaluations(
-    pool: asyncpg.Pool, problem_id: str, *, scope: AccessScope,
+async def list_goal_evaluations(
+    pool: asyncpg.Pool, goal_id: str, *, scope: AccessScope,
     tenant_scope: Optional[TenantScope] = None,
 ) -> list[dict[str, Any]]:
-    """Evaluations inherit the Problem's visibility -- gate on the Problem
+    """Evaluations inherit the Goal's visibility -- gate on the Goal
     first, then return all of its evaluations (Bug #8)."""
-    if await get_problem(pool, problem_id, scope=scope, tenant_scope=tenant_scope) is None:
+    if await get_goal_for_product(pool, goal_id, scope=scope, tenant_scope=tenant_scope) is None:
         return []
     rows = await pool.fetch(
-        "SELECT * FROM evaluations WHERE problem_id=$1 ORDER BY created_at DESC", problem_id,
+        "SELECT * FROM evaluations WHERE goal_id=$1 ORDER BY created_at DESC", goal_id,
     )
     return [_row(r) for r in rows]
 
@@ -711,36 +710,36 @@ async def _ineligible_solution_reasons(
     return out
 
 
-async def problem_leaderboard(
-    pool: asyncpg.Pool, problem_id: str, *, scope: AccessScope,
+async def goal_leaderboard(
+    pool: asyncpg.Pool, goal_id: str, *, scope: AccessScope,
     benchmark_id: Optional[str] = None, tenant_scope: Optional[TenantScope] = None,
 ) -> dict[str, Any]:
     """
-    For each Solution of the Problem, aggregate its COMPLETED evaluations
+    For each Solution of the Goal, aggregate its COMPLETED evaluations
     (restricted to one benchmark, or the newest benchmark version if not
     given), rank by Wilson lower bound of verified success. Emits the four
     derived states + conditional leaders + ties. Never mutates a stored
     'winner'.
     """
-    # Gate the whole read on the Problem being visible to `scope` -- so a
-    # private Problem's leaderboard can't even leak its benchmark_id to a
+    # Gate the whole read on the Goal being visible to `scope` -- so a
+    # private Goal's leaderboard can't even leak its benchmark_id to a
     # stranger (Bug #8). The sub-calls below are each independently gated
     # too; this keeps the empty shape clean and mirrors the REST route.
-    if await get_problem(pool, problem_id, scope=scope, tenant_scope=tenant_scope) is None:
+    if await get_goal_for_product(pool, goal_id, scope=scope, tenant_scope=tenant_scope) is None:
         return {
-            "problem_id": problem_id, "benchmark_id": None, "leaderboard": [],
+            "goal_id": goal_id, "benchmark_id": None, "leaderboard": [],
             "current_best": [], "current_best_is_tie": False,
             "conditional_leaders": {"best_reliability": None, "best_cost": None,
                                     "best_latency": None, "best_first_pass": None},
             "ineligible_solutions": [],
-            "note": "problem not found or out of scope",
+            "note": "goal not found or out of scope",
         }
-    sols = await list_problem_solutions(pool, problem_id, scope=scope, tenant_scope=tenant_scope)
-    benches = await list_problem_benchmarks(pool, problem_id, scope=scope, tenant_scope=tenant_scope)
+    sols = await list_goal_solutions(pool, goal_id, scope=scope, tenant_scope=tenant_scope)
+    benches = await list_goal_benchmarks(pool, goal_id, scope=scope, tenant_scope=tenant_scope)
     if benchmark_id is None and benches:
         benchmark_id = benches[0]["id"]
-    all_evals = await list_problem_evaluations(pool, problem_id, scope=scope,
-                                               tenant_scope=tenant_scope)
+    all_evals = await list_goal_evaluations(pool, goal_id, scope=scope,
+                                            tenant_scope=tenant_scope)
     completed = [e for e in all_evals if e["status"] == "completed"
                  and (benchmark_id is None or e["benchmark_id"] == benchmark_id)]
 
@@ -825,7 +824,7 @@ async def problem_leaderboard(
         return pick["solution_id"]
 
     return {
-        "problem_id": problem_id,
+        "goal_id": goal_id,
         "benchmark_id": benchmark_id,
         "leaderboard": ranked,
         "current_best": best,                       # [] means: no verified solution yet (§38)
@@ -847,29 +846,36 @@ async def problem_leaderboard(
     }
 
 
-async def find_best_way(
+async def find_best_verified_solution(
     pool: asyncpg.Pool, goal: str, *, scope: AccessScope, limit: int = 5,
     tenant_scope: Optional[TenantScope] = None,
 ) -> dict[str, Any]:
     """
-    NL goal -> matching Problem(s) -> that problem's current best VERIFIED
+    NL goal text -> matching Goal(s) -> that goal's current best VERIFIED
     solution (§38). Never picks a 'best' from text similarity alone: the
-    match is a Problem, and the answer is that Problem's evidence-derived
+    match is a Goal, and the answer is that Goal's evidence-derived
     leaderboard.
+
+    Renamed from the former `find_best_way` (product_model.py's own,
+    unrelated to app/mcp_server/server.py's `find_best_way` MCP tool,
+    which actually EXECUTES an agent -- two different functions had
+    confusingly identical names in two different modules; this one only
+    ever looks up an existing verified leaderboard entry, never runs
+    anything).
     """
-    matches = await find_problem(pool, goal, scope=scope, limit=limit, tenant_scope=tenant_scope)
+    matches = await find_goal(pool, goal, scope=scope, limit=limit, tenant_scope=tenant_scope)
     if not matches:
-        return {"goal": goal, "matched_problem": None,
-                "result": "no matching problem", "current_best": []}
-    p = matches[0]
-    lb = await problem_leaderboard(pool, p["id"], scope=scope, tenant_scope=tenant_scope)
+        return {"goal": goal, "matched_goal": None,
+                "result": "no matching goal", "current_best": []}
+    g = matches[0]
+    lb = await goal_leaderboard(pool, g["id"], scope=scope, tenant_scope=tenant_scope)
     if not lb["current_best"]:
-        return {"goal": goal, "matched_problem": p, "benchmark_id": lb["benchmark_id"],
+        return {"goal": goal, "matched_goal": g, "benchmark_id": lb["benchmark_id"],
                 "result": "no verified solution yet", "current_best": [],
                 "leaderboard": lb["leaderboard"]}
-    return {"goal": goal, "matched_problem": p, "benchmark_id": lb["benchmark_id"],
+    return {"goal": goal, "matched_goal": g, "benchmark_id": lb["benchmark_id"],
             "result": "verified", "current_best": lb["current_best"],
             "current_best_is_tie": lb["current_best_is_tie"],
             "leaderboard": lb["leaderboard"],
             "conditional_leaders": lb["conditional_leaders"],
-            "other_matched_problems": [m["id"] for m in matches[1:]]}
+            "other_matched_goals": [m["id"] for m in matches[1:]]}

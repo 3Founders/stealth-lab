@@ -5,15 +5,15 @@ import { useParams } from "next/navigation";
 import AnimatedHeading from "@/components/AnimatedHeading";
 import StateNotice from "@/components/NotConnected";
 import {
-  createProcedureSubmission, getProblem, getRankedProcedures,
-  type Problem, type RankedProcedure, type SubmissionResult,
+  createProcedureSubmission, getGoal, getRankedProcedures,
+  type Goal, type RankedProcedure, type SubmissionResult,
 } from "@/lib/kel-api";
 import { getSession, type Session } from "@/lib/session";
 import type { ApiState } from "@/lib/api";
 
 export default function ContributeWayPage() {
   const { id } = useParams<{ id: string }>();
-  const [problem, setProblem] = useState<ApiState<Problem>>({ kind: "loading" });
+  const [goal, setGoal] = useState<ApiState<Goal>>({ kind: "loading" });
   const [candidates, setCandidates] = useState<RankedProcedure[]>([]);
   const [session, setSession] = useState<Session | null>(null);
   useEffect(() => { getSession().then(setSession); }, []);
@@ -33,7 +33,7 @@ export default function ContributeWayPage() {
 
   useEffect(() => {
     const ac = new AbortController();
-    getProblem(id, ac.signal).then(setProblem);
+    getGoal(id, ac.signal).then(setGoal);
     getRankedProcedures(id, undefined, ac.signal).then((r) => { if (r.kind === "ok") setCandidates(r.data.ranked); });
     return () => ac.abort();
   }, [id]);
@@ -59,10 +59,10 @@ export default function ContributeWayPage() {
     setSubmitting(false);
   }
 
-  if (problem.kind !== "ok") {
+  if (goal.kind !== "ok") {
     return (
       <section className="frame grid" style={{ paddingTop: 160, paddingBottom: 120 }}>
-        <StateNotice state={problem} empty={undefined} />
+        <StateNotice state={goal} empty={undefined} />
       </section>
     );
   }
@@ -71,13 +71,13 @@ export default function ContributeWayPage() {
     return (
       <>
         <section className="page-hero frame grid">
-          <div className="marker caption" style={{ gridColumn: "1 / -1" }}><b>CONTRIBUTE A WAY</b><span>/ {problem.data.title}</span></div>
+          <div className="marker caption" style={{ gridColumn: "1 / -1" }}><b>CONTRIBUTE A WAY</b><span>/ {goal.data.canonical_name}</span></div>
           <h1 className="display"><AnimatedHeading>Sign in to contribute</AnimatedHeading></h1>
         </section>
         <section className="frame grid" style={{ paddingBottom: 120 }}>
           <div className="empty" style={{ gridColumn: "1 / span 8" }}>
             <b>Contributions are attributed to a real, signed-in account.</b>
-            <p>keळ never lets a submission claim someone else&rsquo;s identity. The server derives who contributed from your session, not from anything a form could say. <Link href={`/sign-in?redirect=${encodeURIComponent(`/problems/${id}/contribute/way`)}`} style={{ textDecoration: "underline" }}>Sign in</Link> to continue.</p>
+            <p>keळ never lets a submission claim someone else&rsquo;s identity. The server derives who contributed from your session, not from anything a form could say. <Link href={`/sign-in?redirect=${encodeURIComponent(`/goals/${id}/contribute/way`)}`} style={{ textDecoration: "underline" }}>Sign in</Link> to continue.</p>
           </div>
         </section>
       </>
@@ -89,7 +89,7 @@ export default function ContributeWayPage() {
     return (
       <>
         <section className="page-hero frame grid">
-          <div className="marker caption" style={{ gridColumn: "1 / -1" }}><b>CONTRIBUTE A WAY</b><span>/ {problem.data.title}</span></div>
+          <div className="marker caption" style={{ gridColumn: "1 / -1" }}><b>CONTRIBUTE A WAY</b><span>/ {goal.data.canonical_name}</span></div>
           <h1 className="display"><AnimatedHeading>Submitted</AnimatedHeading></h1>
         </section>
         <section className="frame grid" style={{ paddingBottom: 120 }}>
@@ -97,7 +97,7 @@ export default function ContributeWayPage() {
             <b>Status: {r.status === "candidate" ? "Candidate" : r.status === "needs_review" ? "Needs review" : r.status}</b>
             <p>This is <em>not</em> a verified way yet. That only happens once it&rsquo;s reused and its outcomes are independently verified. {r.status === "needs_review" ? "A person will look at this before it&rsquo;s listed on the goal page." : "It's recorded and will go through review before appearing as a way to do this."}</p>
             {r.status_reason && <p className="small dim">Automated review noted: {r.status_reason}</p>}
-            <p style={{ marginTop: 16 }}><Link href={`/problems/${id}`} style={{ textDecoration: "underline" }}>Back to the goal</Link></p>
+            <p style={{ marginTop: 16 }}><Link href={`/goals/${id}`} style={{ textDecoration: "underline" }}>Back to the goal</Link></p>
           </div>
         </section>
       </>
@@ -107,7 +107,7 @@ export default function ContributeWayPage() {
   return (
     <>
       <section className="page-hero frame grid">
-        <div className="marker caption" style={{ gridColumn: "1 / -1" }}><b>CONTRIBUTE A WAY</b><span>/ {problem.data.title}</span></div>
+        <div className="marker caption" style={{ gridColumn: "1 / -1" }}><b>CONTRIBUTE A WAY</b><span>/ {goal.data.canonical_name}</span></div>
         <h1 className="display"><AnimatedHeading>Share a way to do this</AnimatedHeading></h1>
         <p className="lead">Submitted as candidate. It's reviewed, then listed, never marked verified just for showing up.</p>
       </section>

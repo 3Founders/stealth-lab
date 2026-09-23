@@ -5,9 +5,9 @@ import { useParams } from "next/navigation";
 import AnimatedHeading from "@/components/AnimatedHeading";
 import StateNotice from "@/components/NotConnected";
 import {
-  getGoalContributors, getMyProfile, getProblem, getProblemBenchmarks, getProblemSolutions, getProcedure, getRankedProcedures,
+  getGoalContributors, getMyProfile, getGoal, getGoalBenchmarks, getGoalSolutions, getProcedure, getRankedProcedures,
   humanize, listBenchmarkSubmissions, listProcedureSubmissions, reviewBenchmarkSubmission, reviewProcedureSubmission,
-  type Benchmark, type GoalContributor, type Problem, type ProcedureDetail, type RankedProcedure, type SubmissionResult,
+  type Benchmark, type GoalContributor, type Goal, type ProcedureDetail, type RankedProcedure, type SubmissionResult,
 } from "@/lib/kel-api";
 import { getSession } from "@/lib/session";
 import { categoryOf } from "@/lib/mock-adapter";
@@ -19,7 +19,7 @@ const bucketToStatus: Record<string, string> = {
 
 export default function GoalPage() {
   const { id } = useParams<{ id: string }>();
-  const [problem, setProblem] = useState<ApiState<Problem>>({ kind: "loading" });
+  const [goal, setGoal] = useState<ApiState<Goal>>({ kind: "loading" });
   const [benchmarks, setBenchmarks] = useState<ApiState<Benchmark[]>>({ kind: "loading" });
   const [procedures, setProcedures] = useState<ApiState<ProcedureDetail[]>>({ kind: "loading" });
   // The ordered, bucketed list of Ways is computed by the backend ONLY
@@ -80,21 +80,21 @@ export default function GoalPage() {
     loadPendingSubmissions();
     // Accepting can change the ranked ways / benchmarks lists below.
     getRankedProcedures(id).then((rr) => setRanked(rr.kind === "ok" ? { kind: "ok", data: rr.data.ranked } : (rr as ApiState<RankedProcedure[]>)));
-    getProblemBenchmarks(id).then((rr) => setBenchmarks(rr.kind === "ok" ? { kind: "ok", data: rr.data.benchmarks ?? [] } : (rr as ApiState<Benchmark[]>)));
+    getGoalBenchmarks(id).then((rr) => setBenchmarks(rr.kind === "ok" ? { kind: "ok", data: rr.data.benchmarks ?? [] } : (rr as ApiState<Benchmark[]>)));
   }
 
   useEffect(() => {
     const ac = new AbortController();
-    getProblem(id, ac.signal).then(setProblem);
-    getProblemBenchmarks(id, ac.signal).then((r) => setBenchmarks(r.kind === "ok" ? { kind: "ok", data: r.data.benchmarks ?? [] } : (r as ApiState<Benchmark[]>)));
+    getGoal(id, ac.signal).then(setGoal);
+    getGoalBenchmarks(id, ac.signal).then((r) => setBenchmarks(r.kind === "ok" ? { kind: "ok", data: r.data.benchmarks ?? [] } : (r as ApiState<Benchmark[]>)));
     getRankedProcedures(id, undefined, ac.signal).then((r) => setRanked(r.kind === "ok" ? { kind: "ok", data: r.data.ranked } : (r as ApiState<RankedProcedure[]>)));
     getGoalContributors(id, ac.signal).then((r) => setContributors(r.kind === "ok" ? { kind: "ok", data: r.data.contributors } : (r as ApiState<GoalContributor[]>)));
 
-    // Procedures for this goal come through the Solution association (problem -> solution ->
+    // Procedures for this goal come through the Solution association (goal -> solution ->
     // procedure); each one is then fetched for its real claims (ranking/evidence come from
     // getRankedProcedures above, not re-derived here).
     (async () => {
-      const sol = await getProblemSolutions(id, ac.signal);
+      const sol = await getGoalSolutions(id, ac.signal);
       if (sol.kind !== "ok") return setProcedures(sol as ApiState<ProcedureDetail[]>);
       const targets = sol.data.solutions.filter((s) => s.target_table === "procedures");
       const details = await Promise.all(targets.map((s) => getProcedure(s.target_id, ac.signal)));
@@ -115,14 +115,14 @@ export default function GoalPage() {
     return [...seen.values()];
   }, [procedures]);
 
-  if (problem.kind !== "ok") {
+  if (goal.kind !== "ok") {
     return (
       <section className="frame grid" style={{ paddingTop: 160, paddingBottom: 120 }}>
-        <StateNotice state={problem} empty={undefined} />
+        <StateNotice state={goal} empty={undefined} />
       </section>
     );
   }
-  const p = problem.data;
+  const p = goal.data;
   const groups: Array<{ bucket: RankedProcedure["bucket"]; label: string }> = [
     { bucket: "verified", label: "Verified" }, { bucket: "candidate", label: "Candidate" },
     { bucket: "needs_evidence", label: "Needs evidence" }, { bucket: "verified_failure", label: "Verified failure" },
@@ -132,7 +132,7 @@ export default function GoalPage() {
     <>
       <section className="page-hero frame grid">
         <div className="marker caption" style={{ gridColumn: "1 / -1" }}><b>GOAL</b><span>/ {categoryOf(p)}</span></div>
-        <h1 className="h1" style={{ gridColumn: "1 / span 10" }}><AnimatedHeading>{p.title}</AnimatedHeading></h1>
+        <h1 className="h1" style={{ gridColumn: "1 / span 10" }}><AnimatedHeading>{p.canonical_name}</AnimatedHeading></h1>
         {p.description && <p className="lead">{p.description}</p>}
       </section>
 
@@ -252,8 +252,8 @@ export default function GoalPage() {
             <p className="small dim">Ranked for this goal’s recorded evidence, not a universal “best.”</p>
           </div>
           <div style={{ display: "flex", gap: 10 }}>
-            <Link href={`/problems/${id}/contribute/way`} className="btn-ink"><span>Contribute a way</span><span className="sq" aria-hidden="true">→</span></Link>
-            <Link href={`/problems/${id}/contribute/benchmark`} className="btn-ink" style={{ background: "transparent", color: "var(--ink)", border: "1px solid var(--rule-strong)" }}>
+            <Link href={`/goals/${id}/contribute/way`} className="btn-ink"><span>Contribute a way</span><span className="sq" aria-hidden="true">→</span></Link>
+            <Link href={`/goals/${id}/contribute/benchmark`} className="btn-ink" style={{ background: "transparent", color: "var(--ink)", border: "1px solid var(--rule-strong)" }}>
               <span>Contribute a benchmark</span><span className="sq" aria-hidden="true">→</span>
             </Link>
           </div>
@@ -269,7 +269,7 @@ export default function GoalPage() {
                 <ul className="list" style={{ marginTop: 0 }}>
                   {items.map((pr) => (
                     <li key={pr.procedure_row_id}>
-                      <Link href={`/problems/${id}/procedures/${pr.procedure_row_id}`}>
+                      <Link href={`/goals/${id}/procedures/${pr.procedure_row_id}`}>
                         <span className="n">#{pr.rank}</span>
                         <div>
                           <h3>{pr.display_name || "Untitled procedure"}</h3>

@@ -45,7 +45,7 @@ describe("signOut", () => {
 
 describe("isSafeRedirectPath — open-redirect guard, only same-origin paths", () => {
   it("accepts a same-origin path", () => {
-    expect(isSafeRedirectPath("/problems/123")).toBe(true);
+    expect(isSafeRedirectPath("/goals/123")).toBe(true);
   });
 
   it("rejects an absolute URL", () => {
@@ -68,12 +68,12 @@ describe("post-auth redirect round-trip", () => {
   beforeEach(() => { window.sessionStorage.clear(); });
 
   it("stores and consumes a safe path", () => {
-    setPostAuthRedirect("/problems/123/contribute/way");
-    expect(consumePostAuthRedirect()).toBe("/problems/123/contribute/way");
+    setPostAuthRedirect("/goals/123/contribute/way");
+    expect(consumePostAuthRedirect()).toBe("/goals/123/contribute/way");
   });
 
   it("consuming clears it — a stale redirect never applies twice", () => {
-    setPostAuthRedirect("/problems/123");
+    setPostAuthRedirect("/goals/123");
     consumePostAuthRedirect();
     expect(consumePostAuthRedirect()).toBe("/");
   });

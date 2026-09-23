@@ -9,10 +9,10 @@ npm run dev      # http://localhost:3100
 npm run build && npm start
 ```
 
-Copy `.env.example` to `.env.local` to connect a backend (`NEXT_PUBLIC_KEL_API_URL`) and a sign-in entry point (`NEXT_PUBLIC_KEL_SIGNIN_URL`). Without them, `/problems`, `/search` and `/sign-in` show explicit “not connected” states — nothing is fabricated.
+Copy `.env.example` to `.env.local` to connect a backend (`NEXT_PUBLIC_KEL_API_URL`) and a sign-in entry point (`NEXT_PUBLIC_KEL_SIGNIN_URL`). Without them, `/goals`, `/search` and `/sign-in` show explicit “not connected” states — nothing is fabricated.
 
 ## Routes
-`/` (Hero, install, `#about` what you can do, what you get, knowledge in action, contribution, value, use it) · `/problems` · `/search` · `/docs` · `/sign-in`. "About" is a homepage section (`/#about`), not a page — the nav's "About" link scrolls to the homepage's first content section.
+`/` (Hero, install, `#about` what you can do, what you get, knowledge in action, contribution, value, use it) · `/goals` · `/search` · `/docs` · `/sign-in`. "About" is a homepage section (`/#about`), not a page — the nav's "About" link scrolls to the homepage's first content section.
 
 ## Decisions
 - **Install command** is the real one from the repo README (`pip install -e packaging/` from a clone). No hosted installer / PyPI release exists, and the site says so.

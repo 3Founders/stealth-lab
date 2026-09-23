@@ -3,7 +3,7 @@ import Image from "next/image";
 
 // Only routes and anchors that exist in this build.
 const cols = [
-  { h: "Product", items: [["Problems", "/problems"], ["Search", "/search"], ["Docs", "/docs"]] },
+  { h: "Product", items: [["Goals", "/goals"], ["Search", "/search"], ["Docs", "/docs"]] },
   {
     h: "How to use",
     items: [

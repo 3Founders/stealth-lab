@@ -20,14 +20,17 @@ _TOOLS_NOTE = (
     "Tools available: init_workspace, search_procedures, get_procedure, check_applicability, "
     "check_procedure, decide_procedure, find_best_way, reproduce_procedure, "
     "report_execution, submit_procedure, retrieve_precedent, "
-    "find_problem, "
-    "inspect_problem, compare_solutions, inspect_evaluation, "
-    "find_best_solution, inspect_run, resume_execution_run, "
+    "search_goals, inspect_goal, "
+    "inspect_run, resume_execution_run, "
     "retry_run_node, record_run_update, preview_local_sync, commit_local_sync, "
     "record_stealth_edit, list_stealth_edits. "
+    # find_problem/inspect_problem/compare_solutions/inspect_evaluation/
+    # find_best_solution were already removed from the MCP tool surface
+    # (product-model tools pruned, then Problem itself folded into Goal
+    # by migration 110) -- this note was still listing them as if live.
     "Resources (read-only): "
     "stealth://procedures/{id}, "
-    "stealth://problems/{id}, stealth://problems/{id}/solutions, "
+    "stealth://goals/{id}, stealth://goals/{id}/solutions, "
     "stealth://claims/{id}, stealth://evaluations/{id}, "
     ""
     "stealth://runs/{id}."
@@ -121,9 +124,9 @@ def research_with_stealth(question: str) -> str:
 Question: {question}
 
 Policy:
-1. Gather the relevant objects: `search_procedures` / `find_problem` to
+1. Gather the relevant objects: `search_procedures` / `search_goals` to
    locate them, then read `stealth://procedures/<id>`, `stealth://claims/<id>`,
-   `stealth://problems/<id>`, `stealth://evaluations/<id>`.
+   `stealth://goals/<id>`, `stealth://evaluations/<id>`.
 2. Separate what is EVIDENCE-BACKED (verified procedures, completed
    evaluations, supported claims) from what is HYPOTHESIS (candidate
    procedures, disputed or unsupported claims, incomplete evaluations).
@@ -137,17 +140,17 @@ Policy:
 {_TOOLS_NOTE}"""
 
 
-def improve_with_stealth(problem_id: str = "", goal: str = "") -> str:
+def improve_with_stealth(goal_id: str = "", goal: str = "") -> str:
     """Policy for challenging an incumbent solution: find a measurable
     weakness, try a challenger, compare under the same benchmark."""
     return f"""You are trying to improve on a known solution with StealthLab.
 
-{f"Problem id: {problem_id}" if problem_id else ""}
+{f"Goal id: {goal_id}" if goal_id else ""}
 {f"Goal: {goal}" if goal else ""}
 
 Policy:
-1. Identify the incumbent: `find_problem` (or the given problem id) then
-   read `stealth://problems/<id>` and `stealth://problems/<id>/solutions`
+1. Identify the incumbent: `search_goals` (or the given goal id) then
+   read `stealth://goals/<id>` and `stealth://goals/<id>/solutions`
    for the current best VERIFIED solution and its leaderboard.
 2. Inspect the benchmark and its evaluations via `stealth://evaluations/<id>`
    -- understand exactly what is being measured and under what environment.
@@ -155,9 +158,9 @@ Policy:
    class, an environment it does not cover). Be specific and quantified.
 4. Build or select a challenger method and `submit_procedure` it (private
    candidate by default). Do not submit a generic or noisy procedure.
-5. Compare challenger vs incumbent with `compare_solutions` under the SAME
-   benchmark and environment. Only completed, mutually-comparable
-   evaluations count.
+5. Compare challenger vs incumbent by reading `stealth://goals/<id>`'s
+   leaderboard for both under the SAME benchmark and environment. Only
+   completed, mutually-comparable evaluations count.
 6. Report the comparison honestly, including where the challenger is worse.
 
 {_TOOLS_NOTE}"""

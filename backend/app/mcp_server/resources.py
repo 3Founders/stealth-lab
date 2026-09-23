@@ -170,22 +170,22 @@ async def procedure_resource(procedure_id: str, ctx: Context) -> str:
     return md.rstrip() + "\n"
 
 
-async def problem_resource(problem_id: str, ctx: Context) -> str:
-    """stealth://problems/{problem_id} -- problem + benchmarks + solutions + leaderboard."""
+async def goal_product_resource(goal_id: str, ctx: Context) -> str:
+    """stealth://goals/{goal_id} -- goal + benchmarks + solutions + leaderboard."""
     scope = _scope()
     pool = _pool(ctx)
-    p = await _pm.get_problem(pool, problem_id, scope=scope)
-    if p is None:
+    g = await _pm.get_goal_for_product(pool, goal_id, scope=scope)
+    if g is None:
         return _NOT_FOUND
-    benchmarks = await _pm.list_problem_benchmarks(pool, problem_id, scope=scope)
-    solutions = await _pm.list_problem_solutions(pool, problem_id, scope=scope)
-    lb = await _pm.problem_leaderboard(pool, problem_id, scope=scope)
+    benchmarks = await _pm.list_goal_benchmarks(pool, goal_id, scope=scope)
+    solutions = await _pm.list_goal_solutions(pool, goal_id, scope=scope)
+    lb = await _pm.goal_leaderboard(pool, goal_id, scope=scope)
 
-    md = f"# Problem: {p.get('title') or problem_id}\n\n"
-    md += _kv("ID", p.get("id"))
-    md += _kv("Status", p.get("status"))
-    md += _kv("Objective", p.get("objective"))
-    md += _section("Description", p.get("description") or "")
+    md = f"# Goal: {g.get('canonical_name') or goal_id}\n\n"
+    md += _kv("ID", g.get("id"))
+    md += _kv("Status", g.get("status"))
+    md += _kv("Objective", g.get("objective"))
+    md += _section("Description", g.get("description") or "")
     md += _section("Benchmarks", _bullets([
         {"description": f"{b.get('name') or b.get('id')} ({b.get('status', 'unknown')})"}
         for b in benchmarks
@@ -206,14 +206,14 @@ async def problem_resource(problem_id: str, ctx: Context) -> str:
     return md.rstrip() + "\n"
 
 
-async def problem_solutions_resource(problem_id: str, ctx: Context) -> str:
-    """stealth://problems/{problem_id}/solutions -- association rows only."""
+async def goal_solutions_resource(goal_id: str, ctx: Context) -> str:
+    """stealth://goals/{goal_id}/solutions -- association rows only."""
     scope = _scope()
     pool = _pool(ctx)
-    if await _pm.get_problem(pool, problem_id, scope=scope) is None:
+    if await _pm.get_goal_for_product(pool, goal_id, scope=scope) is None:
         return _NOT_FOUND
-    rows = await _pm.list_problem_solutions(pool, problem_id, scope=scope)
-    md = f"# Solutions for problem `{problem_id}`\n\n"
+    rows = await _pm.list_goal_solutions(pool, goal_id, scope=scope)
+    md = f"# Solutions for goal `{goal_id}`\n\n"
     if not rows:
         return md + "_none associated yet_\n"
     return md + _fence(rows)
@@ -253,7 +253,7 @@ async def evaluation_resource(evaluation_id: str, ctx: Context) -> str:
         return _NOT_FOUND
     md = f"# Evaluation `{evaluation_id}`\n\n"
     md += _kv("Status", e.get("status"))
-    md += _kv("Problem", e.get("problem_id"))
+    md += _kv("Goal", e.get("goal_id"))
     md += _kv("Benchmark", e.get("benchmark_id"))
     md += _kv("Solution", e.get("solution_id"))
     md += _kv("Procedure version", e.get("procedure_version_id") or e.get("procedure_id"))
@@ -288,13 +288,13 @@ _RESOURCES = [
      "preconditions, constraints, failure modes, evidence summary, "
      "verification/approval state, provenance. Accepts the stable procedure_id "
      "handle or a version row id.", procedure_resource),
-    ("stealth://problems/{problem_id}", "problem", "Problem",
-     "One Problem with its benchmarks, associated Solutions and the "
+    ("stealth://goals/{goal_id}", "goal-product", "Goal (product layer)",
+     "One Goal with its benchmarks, associated Solutions and the "
      "evidence-derived leaderboard (current best VERIFIED solution, or none yet).",
-     problem_resource),
-    ("stealth://problems/{problem_id}/solutions", "problem-solutions", "Problem solutions",
-     "Every Solution associated with a Problem (association rows; target objects "
-     "are read via their own resources).", problem_solutions_resource),
+     goal_product_resource),
+    ("stealth://goals/{goal_id}/solutions", "goal-solutions", "Goal solutions",
+     "Every Solution associated with a Goal (association rows; target objects "
+     "are read via their own resources).", goal_solutions_resource),
     ("stealth://claims/{claim_id}", "claim", "Claim",
      "One structured epistemic claim: subject/predicate/object, truth state, "
      "epistemic status, and its live evidence.", claim_resource),

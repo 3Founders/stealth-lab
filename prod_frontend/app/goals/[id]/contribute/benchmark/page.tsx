@@ -4,13 +4,13 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import AnimatedHeading from "@/components/AnimatedHeading";
 import StateNotice from "@/components/NotConnected";
-import { createBenchmarkSubmission, getProblem, type Problem, type SubmissionResult } from "@/lib/kel-api";
+import { createBenchmarkSubmission, getGoal, type Goal, type SubmissionResult } from "@/lib/kel-api";
 import { getSession, type Session } from "@/lib/session";
 import type { ApiState } from "@/lib/api";
 
 export default function ContributeBenchmarkPage() {
   const { id } = useParams<{ id: string }>();
-  const [problem, setProblem] = useState<ApiState<Problem>>({ kind: "loading" });
+  const [goal, setGoal] = useState<ApiState<Goal>>({ kind: "loading" });
   const [session, setSession] = useState<Session | null>(null);
   useEffect(() => { getSession().then(setSession); }, []);
 
@@ -28,7 +28,7 @@ export default function ContributeBenchmarkPage() {
 
   useEffect(() => {
     const ac = new AbortController();
-    getProblem(id, ac.signal).then(setProblem);
+    getGoal(id, ac.signal).then(setGoal);
     return () => ac.abort();
   }, [id]);
 
@@ -54,10 +54,10 @@ export default function ContributeBenchmarkPage() {
     setSubmitting(false);
   }
 
-  if (problem.kind !== "ok") {
+  if (goal.kind !== "ok") {
     return (
       <section className="frame grid" style={{ paddingTop: 160, paddingBottom: 120 }}>
-        <StateNotice state={problem} empty={undefined} />
+        <StateNotice state={goal} empty={undefined} />
       </section>
     );
   }
@@ -66,13 +66,13 @@ export default function ContributeBenchmarkPage() {
     return (
       <>
         <section className="page-hero frame grid">
-          <div className="marker caption" style={{ gridColumn: "1 / -1" }}><b>CONTRIBUTE A BENCHMARK</b><span>/ {problem.data.title}</span></div>
+          <div className="marker caption" style={{ gridColumn: "1 / -1" }}><b>CONTRIBUTE A BENCHMARK</b><span>/ {goal.data.canonical_name}</span></div>
           <h1 className="display"><AnimatedHeading>Sign in to contribute</AnimatedHeading></h1>
         </section>
         <section className="frame grid" style={{ paddingBottom: 120 }}>
           <div className="empty" style={{ gridColumn: "1 / span 8" }}>
             <b>Benchmarks are attributed to a real, signed-in account.</b>
-            <p><Link href={`/sign-in?redirect=${encodeURIComponent(`/problems/${id}/contribute/benchmark`)}`} style={{ textDecoration: "underline" }}>Sign in</Link> to continue.</p>
+            <p><Link href={`/sign-in?redirect=${encodeURIComponent(`/goals/${id}/contribute/benchmark`)}`} style={{ textDecoration: "underline" }}>Sign in</Link> to continue.</p>
           </div>
         </section>
       </>
@@ -84,7 +84,7 @@ export default function ContributeBenchmarkPage() {
     return (
       <>
         <section className="page-hero frame grid">
-          <div className="marker caption" style={{ gridColumn: "1 / -1" }}><b>CONTRIBUTE A BENCHMARK</b><span>/ {problem.data.title}</span></div>
+          <div className="marker caption" style={{ gridColumn: "1 / -1" }}><b>CONTRIBUTE A BENCHMARK</b><span>/ {goal.data.canonical_name}</span></div>
           <h1 className="display"><AnimatedHeading>Submitted</AnimatedHeading></h1>
         </section>
         <section className="frame grid" style={{ paddingBottom: 120 }}>
@@ -92,7 +92,7 @@ export default function ContributeBenchmarkPage() {
             <b>Status: {r.status === "candidate" ? "Candidate" : r.status === "needs_review" ? "Needs review" : r.status}</b>
             <p>A benchmark describes how this Goal&rsquo;s success is checked. It isn&rsquo;t accepted automatically, and being accepted still isn&rsquo;t the same as being validated. It becomes validated once real evaluations show it can actually tell a success from a failure.</p>
             {r.status_reason && <p className="small dim">Automated review noted: {r.status_reason}</p>}
-            <p style={{ marginTop: 16 }}><Link href={`/problems/${id}`} style={{ textDecoration: "underline" }}>Back to the goal</Link></p>
+            <p style={{ marginTop: 16 }}><Link href={`/goals/${id}`} style={{ textDecoration: "underline" }}>Back to the goal</Link></p>
           </div>
         </section>
       </>
@@ -102,7 +102,7 @@ export default function ContributeBenchmarkPage() {
   return (
     <>
       <section className="page-hero frame grid">
-        <div className="marker caption" style={{ gridColumn: "1 / -1" }}><b>CONTRIBUTE A BENCHMARK</b><span>/ {problem.data.title}</span></div>
+        <div className="marker caption" style={{ gridColumn: "1 / -1" }}><b>CONTRIBUTE A BENCHMARK</b><span>/ {goal.data.canonical_name}</span></div>
         <h1 className="display"><AnimatedHeading>Propose how to check this</AnimatedHeading></h1>
         <p className="lead">A Benchmark describes how the Goal is verified, not how one procedure proves itself. It's reviewed like any other contribution.</p>
       </section>

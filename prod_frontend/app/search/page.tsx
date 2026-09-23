@@ -8,9 +8,9 @@ import { bucket, track } from "@/lib/analytics";
 type Row = Record<string, unknown>;
 type Groups = { name: string; rows: Row[] }[];
 
-type Scope = "problems" | "claims";
+type Scope = "goals" | "claims";
 const scopes: { key: Scope; label: string }[] = [
-  { key: "problems", label: "Problems" },
+  { key: "goals", label: "Goals" },
   { key: "claims", label: "Claims" },
 ];
 
@@ -18,7 +18,7 @@ export default function SearchPage() {
   const [q, setQ] = useState("");
   const [asked, setAsked] = useState("");
   const [state, setState] = useState<ApiState<Groups>>({ kind: "idle" });
-  const [scope, setScope] = useState<Scope>("problems");
+  const [scope, setScope] = useState<Scope>("goals");
   const ac = useRef<AbortController | undefined>(undefined);
 
   async function run(e: React.FormEvent) {
@@ -30,14 +30,14 @@ export default function SearchPage() {
     setAsked(term); setState({ kind: "loading" });
     track("search_submit");                                   // never the query text
     const enc = encodeURIComponent(term);
-    const [s, p] = await Promise.all([
+    const [s, g] = await Promise.all([
       apiGet<{ results: Record<string, Row[]> }>(`/v1/search?q=${enc}&limit=10`, ac.current.signal),
-      apiGet<{ problems: Row[] }>(`/v1/problems/find?q=${enc}&limit=10`, ac.current.signal),
+      apiGet<{ goals: Row[] }>(`/v1/goals/find?q=${enc}&limit=10`, ac.current.signal),
     ]);
     if (s.kind === "unconfigured") return setState(s);
-    if (s.kind === "error" && p.kind === "error") return setState(s);
+    if (s.kind === "error" && g.kind === "error") return setState(s);
     const groups: Groups = [];
-    if (p.kind === "ok") groups.push({ name: "problems", rows: p.data.problems ?? [] });
+    if (g.kind === "ok") groups.push({ name: "goals", rows: g.data.goals ?? [] });
     if (s.kind === "ok") for (const [name, rows] of Object.entries(s.data.results ?? {})) groups.push({ name, rows });
     setState({ kind: "ok", data: groups });
     track("search_result", { results: bucket(groups.reduce((n, g) => n + g.rows.length, 0)) });
@@ -66,9 +66,9 @@ export default function SearchPage() {
           ) : (
             <>
               {state.kind === "idle" && null}
-              {state.kind === "ok" && state.data.some((g) => g.name === "problems" && g.rows.length > 0) && (
+              {state.kind === "ok" && state.data.some((g) => g.name === "goals" && g.rows.length > 0) && (
                 <div style={{ marginBottom: 32 }}>
-                  {state.data.filter((g) => g.name === "problems").map((g) => (
+                  {state.data.filter((g) => g.name === "goals").map((g) => (
                     <div key={g.name}>
                       <div className="caption dim" style={{ marginBottom: 8 }}>{g.name} · {g.rows.length}</div>
                       <ul className="list" style={{ gridColumn: "auto" }}>
@@ -78,8 +78,8 @@ export default function SearchPage() {
                   ))}
                 </div>
               )}
-              {state.kind !== "idle" && !(state.kind === "ok" && state.data.some((g) => g.name === "problems" && g.rows.length > 0)) && (
-                <StateNotice state={state} empty={state.kind === "ok" ? `No recorded problems found for “${asked}”.` : undefined} />
+              {state.kind !== "idle" && !(state.kind === "ok" && state.data.some((g) => g.name === "goals" && g.rows.length > 0)) && (
+                <StateNotice state={state} empty={state.kind === "ok" ? `No recorded goals found for “${asked}”.` : undefined} />
               )}
             </>
           )}

@@ -9,7 +9,7 @@ account exists (INV-01: private by default; nothing about a person is
 world-readable until they opt in).
 
 The contributor leaderboard ranks people; it is unrelated to
-/v1/problems/{id}/leaderboard, which ranks solutions.
+/v1/goals/{id}/leaderboard, which ranks solutions.
 """
 from __future__ import annotations
 

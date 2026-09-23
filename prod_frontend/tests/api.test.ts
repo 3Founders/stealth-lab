@@ -24,7 +24,7 @@ describe("apiGet — unconfigured backend", () => {
   it("returns unconfigured without ever calling fetch", async () => {
     const fetchSpy = vi.spyOn(globalThis, "fetch");
     const { apiGet } = await freshApi();
-    const result = await apiGet("/v1/problems");
+    const result = await apiGet("/v1/goals");
     expect(result).toEqual({ kind: "unconfigured" });
     expect(fetchSpy).not.toHaveBeenCalled();
     fetchSpy.mockRestore();
@@ -52,7 +52,7 @@ describe("apiGet — configured backend", () => {
   it("ok response carries the real parsed body, not a fabricated one", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({ hello: "world" }), { status: 200 })));
     const { apiGet } = await freshApi();
-    const result = await apiGet<{ hello: string }>("/v1/problems");
+    const result = await apiGet<{ hello: string }>("/v1/goals");
     expect(result).toEqual({ kind: "ok", data: { hello: "world" } });
   });
 
@@ -71,7 +71,7 @@ describe("apiGet — configured backend", () => {
     vi.stubGlobal("fetch", fetchMock);
     const { apiGet } = await freshApi();
     await mockToken(null);
-    await apiGet("/v1/problems");
+    await apiGet("/v1/goals");
     const [, init] = fetchMock.mock.calls[0];
     expect((init.headers as Record<string, string>).Authorization).toBeUndefined();
   });
@@ -104,12 +104,12 @@ describe("apiPost — never sends an authenticated write without a session", () 
   });
 
   it("422 surfaces the backend's own validation detail", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({ detail: "goal (problem) x not found" }), { status: 422 })));
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({ detail: "goal x not found" }), { status: 422 })));
     const { apiPost } = await freshApi();
     await mockToken("t");
     const result = await apiPost("/v1/economy/procedure-submissions", { name: "x" });
     expect(result.kind).toBe("error");
-    if (result.kind === "error") expect(result.message).toBe("goal (problem) x not found");
+    if (result.kind === "error") expect(result.message).toBe("goal x not found");
   });
 
   it("a successful submission returns the real server response", async () => {

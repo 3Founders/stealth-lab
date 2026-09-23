@@ -20,7 +20,7 @@ from cryptography.hazmat.primitives.asymmetric import rsa
 from fastapi import Depends, FastAPI
 from fastapi.testclient import TestClient
 
-from app.api import admin, agent_store, approval, decompose, goals, ingest, problems, runs
+from app.api import admin, agent_store, approval, decompose, goals, ingest, runs
 from app.api import deps
 from app.api.deps import get_auth_context, get_scope, require_scopes
 from app.services import auth_context as ac
@@ -125,7 +125,7 @@ def env(monkeypatch, jwks):
 
     app.add_middleware(make_actor_middleware(
         OidcConfig.from_settings(deps.settings), jwks, private_visibility_enabled=False, service_verifier=verify_svc))
-    for r in (agent_store.router, approval.router, decompose.router, ingest.router, problems.router, runs.router,
+    for r in (agent_store.router, approval.router, decompose.router, ingest.router, goals._products_router, runs.router,
               admin.router, goals.router):
         app.include_router(r)
     app.state.pool = pool
@@ -159,7 +159,7 @@ GATED = [
     ("post", "/v1/agent-store/submit"), ("post", "/v1/agent-store/promote"), ("post", "/v1/agent-store/00000000-0000-0000-0000-000000000001/decide"),
     ("get", "/v1/agent-store/pending"), ("post", "/v1/approvals/00000000-0000-0000-0000-000000000001"),
     ("get", "/v1/approvals/pending"), ("post", "/v1/decompose/00000000-0000-0000-0000-000000000001/decide"),
-    ("get", "/v1/decompose/pending"), ("post", "/v1/traces"), ("post", "/v1/problems"), ("post", "/v1/benchmarks"),
+    ("get", "/v1/decompose/pending"), ("post", "/v1/traces"), ("post", "/v1/benchmarks"),
     ("post", "/v1/evaluations"), ("post", "/v1/runs/r1/resume"), ("post", "/v1/runs/r1/nodes/1/retry"),
     ("post", "/v1/goals"), ("get", "/v1/admin/index-lag"), ("post", "/v1/admin/extractors"),
 ]

@@ -1,12 +1,12 @@
 """
 Contribution + verification + ranking + Credits REST surface (migration
-102). Thin, same shape as app/api/problems.py: hydrates scope/pool and
+102). Thin, same shape as app/api/goals.py: hydrates scope/pool and
 delegates to app.economy.*. No business logic lives here.
 
 Only endpoints for capabilities that are actually implemented are exposed
-here -- Problems/Goals, Procedure/Benchmark detail, Runs/Evidence and
-Contributor profile already have their own routers (problems.py,
-goals.py, procedures.py, runs.py, contributors.py) and are not duplicated.
+here -- Goals, Procedure/Benchmark detail, Runs/Evidence and
+Contributor profile already have their own routers (goals.py,
+procedures.py, runs.py, contributors.py) and are not duplicated.
 
 HARDENING PASS (audit findings D1/D3/D6/D7/D25): every economically
 meaningful write now requires `require_authenticated_user` (the same
@@ -37,7 +37,7 @@ from app.economy import verification as verification_service
 from app.services import auth_context as _ac
 from app.services.access import AccessScope
 from app.services.governance import RateLimit, RateLimiter, RateLimitExceeded
-from app.services.product_model import get_problem, list_problem_solutions
+from app.services.product_model import get_goal_for_product, list_goal_solutions
 
 router = APIRouter(prefix="/v1/economy", tags=["economy"])
 
@@ -253,7 +253,7 @@ async def ranked_procedures_for_goal(
     # B1 hardening, defense in depth: only 'active' associations (set
     # exclusively by the canonical review workflow, never by the public
     # /v1/solutions/associate route) are ranked.
-    solutions = await list_problem_solutions(pool, goal_id, scope=scope)
+    solutions = await list_goal_solutions(pool, goal_id, scope=scope)
     procedure_ids = [str(s["target_id"]) for s in solutions if s["target_table"] == "procedures" and s.get("status") == "active"]
     ranked = await ranking_service.rank_procedures_for_goal(pool, procedure_ids, scope=scope, context_key=context_key)
     return {
@@ -307,7 +307,7 @@ async def clawback_credit_event(
 # ---- Goal-level contributors (§11) -----------------------------------------
 @router.get("/goals/{goal_id}/contributors")
 async def goal_contributors(goal_id: str, pool=Depends(get_pool), scope: AccessScope = Depends(get_scope)) -> dict[str, Any]:
-    goal = await get_problem(pool, goal_id, scope=scope)
+    goal = await get_goal_for_product(pool, goal_id, scope=scope)
     if goal is None:
         raise HTTPException(status_code=404, detail="goal not found")
     rows = await pool.fetch(

@@ -223,6 +223,9 @@ async def find_or_create_goal(
     scope_entity_id: Optional[str] = None,
     provenance: str,
     description: Optional[str] = None,
+    objective: Optional[str] = None,
+    constraints: Optional[list] = None,
+    metadata: Optional[dict] = None,
     expected_outcome: Optional[dict] = None,
     verification_requirement: Optional[dict] = None,
     status: str = "candidate",
@@ -381,19 +384,22 @@ async def find_or_create_goal(
         row = await wpool.fetchrow(
             """
             INSERT INTO goals (
-                id, canonical_name, normalized_name, description, expected_outcome,
+                id, canonical_name, normalized_name, description, objective, constraints,
+                metadata, expected_outcome,
                 verification_requirement, status, provenance, created_from, owner_id,
                 visibility, aliases, created_by, scope_type, scope_entity_id,
                 embedding, embedding_model_id, embedding_provider, embedding_text_hash,
                 home_shard_id
             ) VALUES (
-                $1, $2, $3, $4, $5::jsonb, $6::jsonb, $7, $8, $9, $10,
-                $11::visibility_level, $12, $13, $14, $15,
-                $16::vector, $17, $18, $19, $20
+                $1, $2, $3, $4, $5, $6::jsonb, $7::jsonb, $8::jsonb, $9::jsonb, $10, $11, $12, $13,
+                $14::visibility_level, $15, $16, $17, $18,
+                $19::vector, $20, $21, $22, $23
             )
             RETURNING id, canonical_name, home_shard_id
             """,
-            str(goal_id), canonical_name, normalized, description,
+            str(goal_id), canonical_name, normalized, description, objective,
+            constraints if constraints is not None else [],
+            metadata if metadata is not None else {},
             expected_outcome if expected_outcome is not None else {},
             verification_requirement if verification_requirement is not None else {},
             status, provenance, created_from, owner_id, visibility,
@@ -568,6 +574,8 @@ async def create_goal_from_user(
     scope_entity_id: Optional[str] = None,
     owner_id: str,
     description: Optional[str] = None,
+    objective: Optional[str] = None,
+    constraints: Optional[list] = None,
     expected_outcome: Optional[dict] = None,
     verification_requirement: Optional[dict] = None,
     embedder: Optional[Any] = None,
@@ -627,7 +635,8 @@ async def create_goal_from_user(
     result = await find_or_create_goal(
         pool, canonical_name=canonical_name, scope_type=scope_type,
         scope_entity_id=scope_entity_id, provenance="system_pending_review",
-        description=description, expected_outcome=expected_outcome,
+        description=description, objective=objective, constraints=constraints,
+        expected_outcome=expected_outcome,
         verification_requirement=verification_requirement,
         owner_id=owner_id, visibility="public", created_from="user_created",
         created_by=owner_id, embedder=embedder, client=client, adjudication_model=adjudication_model,

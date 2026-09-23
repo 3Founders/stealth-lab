@@ -10,7 +10,7 @@ import AccountMenu from "@/components/AccountMenu";
 
 const links = [
   { href: "/", label: "Home" },
-  { href: "/problems", label: "Problems" },
+  { href: "/goals", label: "Goals" },
   { href: "/search", label: "Search" },
   { href: "/docs", label: "Docs" },
   { href: "/#about", label: "About" },

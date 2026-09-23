@@ -60,7 +60,7 @@ async def score_procedure_duplicate(
         SELECT p.id, 'procedure' AS kind, 1 - (p.embedding <=> $1::vector) AS similarity
         FROM procedures p
         JOIN solutions s ON s.target_id = p.id AND s.target_table = 'procedures'
-        WHERE s.problem_id = $2 AND p.embedding IS NOT NULL AND p.t_invalid IS NULL
+        WHERE s.goal_id = $2 AND p.embedding IS NOT NULL AND p.t_invalid IS NULL
         ORDER BY similarity DESC
         LIMIT $3
         """,

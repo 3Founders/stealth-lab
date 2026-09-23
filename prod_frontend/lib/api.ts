@@ -99,7 +99,7 @@ export const apiUpload = <T>(path: string, form: FormData, signal?: AbortSignal)
 
 /** Loosely read a title-like field from a row whose exact shape we do not assume. */
 export function labelOf(row: Record<string, unknown>): string {
-  for (const k of ["title", "name", "statement", "goal", "description", "id"]) {
+  for (const k of ["canonical_name", "title", "name", "statement", "goal", "description", "id"]) {
     const v = row[k];
     if (typeof v === "string" && v.trim()) return v.length > 140 ? v.slice(0, 137) + "…" : v;
   }

@@ -10,7 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app import observability
 from app.api import admin, agent_store, agents, approval, chat, decompose, graph, ingest
 from app.api import claims, goals, me, procedures, projects, repositories, search, solutions, tasks
-from app.api import problems, runs
+from app.api import runs
 from app.api import publications, workspaces
 from app.api import contributors as contributors_api
 from app.api import profile as profile_api
@@ -142,10 +142,18 @@ app.include_router(tasks.router)
 app.include_router(me.router)
 app.include_router(search.router)
 
-# Final-V1 product layer (migration 35): Problem / Benchmark / Solution /
-# Evaluation + evidence-derived leaderboard. All routes delegate to
-# app.services.product_model -- REST and MCP share that one service.
-app.include_router(problems.router)
+# Final-V1 product layer (migration 35, folded into Goal by migration 110):
+# Benchmark / Solution / Evaluation + evidence-derived leaderboard. All
+# routes delegate to app.services.product_model -- REST and MCP share that
+# one service. goals.router itself was already included above (line 137);
+# these two carry the product-layer routes that used to live in the now-
+# retired app/api/problems.py, kept as separate router objects only
+# because they sit at different path prefixes (/v1/best-way, /v1/benchmarks,
+# /v1/solutions/associate, /v1/evaluations -- none nested under /v1/goals).
+from app.api.goals import _best_way_router, _products_router  # noqa: E402
+
+app.include_router(_best_way_router)
+app.include_router(_products_router)
 
 # Final-V1 §2: retry/resume REST surface over the durable-run service
 # (app/execution/durable_run.py, migrations 36/37). Thin -- delegates to

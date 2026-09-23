@@ -85,7 +85,7 @@ export default function Home() {
           </p>
           <div style={{ display: "flex", gap: 20, flexWrap: "wrap", marginTop: 16 }}>
             <Link href="/docs#getting-started" className="small" style={{ textDecoration: "underline" }}>Set up MCP →</Link>
-            <Link href="/problems" className="small" style={{ textDecoration: "underline" }}>Browse manually →</Link>
+            <Link href="/goals" className="small" style={{ textDecoration: "underline" }}>Browse manually →</Link>
           </div>
         </div>
         <ol className="steps">
@@ -173,7 +173,7 @@ export default function Home() {
         </Reveal>
         <div className="close-links">
           <Link href="/#install">Install keळ <span>from source</span></Link>
-          <Link href="/problems">Explore problems <span>→</span></Link>
+          <Link href="/goals">Explore goals <span>→</span></Link>
           <Link href="/search">Search knowledge <span>→</span></Link>
           <Link href="/docs">Read the docs <span>→</span></Link>
         </div>

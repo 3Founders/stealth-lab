@@ -1,9 +1,9 @@
 import { API_URL, apiDelete, apiGet, apiPost, apiPut, apiUpload, type ApiState } from "@/lib/api";
 
 /**
- * Typed reads for the Problems → Goal → Procedure surface. Every shape here mirrors what
+ * Typed reads for the Goal → Procedure surface. Every shape here mirrors what
  * the backend actually returns today (see backend/db/35_product_model.sql, 83_goals.sql,
- * app/api/problems.py, app/api/procedures.py) — loosely typed with `Record<string, unknown>`
+ * app/api/goals.py, app/api/procedures.py) — loosely typed with `Record<string, unknown>`
  * as the base, same convention as lib/api.ts's `labelOf`, because these are raw table rows
  * whose exact column set the backend itself says "may vary." Nothing here is fabricated:
  * a field that isn't returned is simply absent, and callers must treat it as such.
@@ -11,9 +11,9 @@ import { API_URL, apiDelete, apiGet, apiPost, apiPut, apiUpload, type ApiState }
 
 export type Row = Record<string, unknown>;
 
-export interface Problem extends Row {
+export interface Goal extends Row {
   id: string;
-  title: string;
+  canonical_name: string;
   description?: string | null;
   objective?: string | null;
   constraints?: unknown[];
@@ -24,7 +24,7 @@ export interface Problem extends Row {
 
 export interface Benchmark extends Row {
   id: string;
-  problem_id: string;
+  goal_id: string;
   name: string;
   description?: string | null;
   version?: number;
@@ -38,7 +38,7 @@ export interface Benchmark extends Row {
 
 export interface Solution extends Row {
   id: string;
-  problem_id: string;
+  goal_id: string;
   solution_type: "procedure" | "task_graph" | "task";
   target_id: string;
   target_table: string;
@@ -48,7 +48,7 @@ export interface Solution extends Row {
 
 export interface Evaluation extends Row {
   id: string;
-  problem_id: string;
+  goal_id: string;
   benchmark_id: string;
   solution_id: string;
   procedure_id?: string | null;
@@ -121,32 +121,47 @@ export interface EvidenceRow extends Row {
 
 const j = (v: unknown) => encodeURIComponent(String(v));
 
-export const getProblems = (limit = 100, signal?: AbortSignal) =>
-  apiGet<{ problems: Problem[] }>(`/v1/problems?limit=${limit}`, signal);
+export const getGoals = (limit = 100, signal?: AbortSignal) =>
+  apiGet<{ goals: Goal[] }>(`/v1/goals?limit=${limit}`, signal);
 
-export interface ProblemInput {
-  title: string;
+export interface GoalInput {
+  canonical_name: string;
   description?: string;
   objective?: string;
   constraints?: string[];
+  scope_type?: string;
+  scope_entity_id?: string;
+  allow_create_anyway?: boolean;
+  use_embeddings?: boolean;
+}
+
+/** POST /v1/goals is a two-step "check near matches first" flow, not a
+ * one-shot create: it can come back saying the goal already exists
+ * (`matched`), that there are close candidates to review (`near_matches`,
+ * re-submit with `allow_create_anyway: true` to force creation), or that a
+ * brand new goal was made (`created`). */
+export interface CreateGoalResult extends Row {
+  outcome: "near_matches" | "matched" | "created";
+  goal?: Goal;
+  candidates?: Goal[];
 }
 
 /** `proposer`/`owner_id` are derived server-side from the caller's verified
- * session (app/api/problems.py) -- never sent from here, there's nothing
+ * session (app/api/goals.py) -- never sent from here, there's nothing
  * for this form to spoof. */
-export const createProblem = (body: ProblemInput, signal?: AbortSignal) =>
-  apiPost<Problem>("/v1/problems", body, signal);
+export const createGoal = (body: GoalInput, signal?: AbortSignal) =>
+  apiPost<CreateGoalResult>("/v1/goals", body, signal);
 
-export const getProblem = (id: string, signal?: AbortSignal) => apiGet<Problem>(`/v1/problems/${j(id)}`, signal);
+export const getGoal = (id: string, signal?: AbortSignal) => apiGet<Goal>(`/v1/goals/${j(id)}`, signal);
 
-export const getProblemSolutions = (id: string, signal?: AbortSignal) =>
-  apiGet<{ solutions: Solution[] }>(`/v1/problems/${j(id)}/solutions`, signal);
+export const getGoalSolutions = (id: string, signal?: AbortSignal) =>
+  apiGet<{ solutions: Solution[] }>(`/v1/goals/${j(id)}/solutions`, signal);
 
-export const getProblemBenchmarks = (id: string, signal?: AbortSignal) =>
-  apiGet<{ benchmarks: Benchmark[] }>(`/v1/problems/${j(id)}/benchmarks`, signal);
+export const getGoalBenchmarks = (id: string, signal?: AbortSignal) =>
+  apiGet<{ benchmarks: Benchmark[] }>(`/v1/goals/${j(id)}/benchmarks`, signal);
 
-export const getProblemEvaluations = (id: string, signal?: AbortSignal) =>
-  apiGet<{ evaluations: Evaluation[] }>(`/v1/problems/${j(id)}/evaluations`, signal);
+export const getGoalEvaluations = (id: string, signal?: AbortSignal) =>
+  apiGet<{ evaluations: Evaluation[] }>(`/v1/goals/${j(id)}/evaluations`, signal);
 
 export const getProcedure = (id: string, signal?: AbortSignal) => apiGet<ProcedureDetail>(`/v1/procedures/${j(id)}`, signal);
 
@@ -227,16 +242,16 @@ export function humanize(obj: Row | undefined | null): [string, string][] {
   return out;
 }
 
-export interface ProblemStats {
+export interface GoalStats {
   ways: number;
   verifiedRuns: number;
   lastActivity: string | null;
 }
 
-/** One real-data rollup per Problem, built from /solutions and /evaluations. No number here is invented. */
-export async function getProblemStats(id: string, signal?: AbortSignal): Promise<ProblemStats | null> {
+/** One real-data rollup per Goal, built from /solutions and /evaluations. No number here is invented. */
+export async function getGoalStats(id: string, signal?: AbortSignal): Promise<GoalStats | null> {
   const [sol, ev, subs] = await Promise.all([
-    getProblemSolutions(id, signal), getProblemEvaluations(id, signal), listProcedureSubmissions(id, undefined, signal),
+    getGoalSolutions(id, signal), getGoalEvaluations(id, signal), listProcedureSubmissions(id, undefined, signal),
   ]);
   if (sol.kind !== "ok" && ev.kind !== "ok" && subs.kind !== "ok") return null;
   const ways = sol.kind === "ok" ? sol.data.solutions.filter((s) => s.target_table === "procedures").length : 0;

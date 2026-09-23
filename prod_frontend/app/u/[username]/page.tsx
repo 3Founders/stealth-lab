@@ -90,7 +90,7 @@ export default function PublicProfilePage() {
           <h2 className="h3" style={{ marginBottom: 4 }}>Work</h2>
         </div>
         <div className="empty" style={{ gridColumn: "1 / span 12" }}>
-          <p>A per-contributor list of individual ways isn&rsquo;t available yet. The counts above are real and server-computed; browse <a href="/problems" style={{ textDecoration: "underline" }}>Problems</a> to find this person&rsquo;s work by Goal.</p>
+          <p>A per-contributor list of individual ways isn&rsquo;t available yet. The counts above are real and server-computed; browse <a href="/goals" style={{ textDecoration: "underline" }}>Goals</a> to find this person&rsquo;s work by Goal.</p>
         </div>
       </section>
     </>

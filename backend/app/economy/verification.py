@@ -214,10 +214,10 @@ async def record_usage_event(
 
     goal_id = None
     if benchmark_id is not None:
-        goal_id = await pool.fetchval("SELECT problem_id FROM benchmarks WHERE id = $1", benchmark_id)
+        goal_id = await pool.fetchval("SELECT goal_id FROM benchmarks WHERE id = $1", benchmark_id)
     if goal_id is None:
         goal_id = await pool.fetchval(
-            "SELECT problem_id FROM solutions WHERE target_id = $1 AND target_table = 'procedures' LIMIT 1",
+            "SELECT goal_id FROM solutions WHERE target_id = $1 AND target_table = 'procedures' LIMIT 1",
             procedure_row_id,
         )
 

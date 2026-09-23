@@ -6,8 +6,8 @@ import AnimatedHeading from "@/components/AnimatedHeading";
 import StateNotice from "@/components/NotConnected";
 import TryThisWay from "@/components/TryThisWay";
 import {
-  getProblem, getProblemEvaluations, getProcedure, getProcedureEvidence, getProcedureVersions, getRankedProcedures,
-  type Evaluation, type EvidenceRow, type Problem, type ProcedureDetail, type ProcedureVersionRow, type RankedProcedure,
+  getGoal, getGoalEvaluations, getProcedure, getProcedureEvidence, getProcedureVersions, getRankedProcedures,
+  type Evaluation, type EvidenceRow, type Goal, type ProcedureDetail, type ProcedureVersionRow, type RankedProcedure,
 } from "@/lib/kel-api";
 import type { ApiState } from "@/lib/api";
 
@@ -20,7 +20,7 @@ const step = (s: unknown): string =>
 
 export default function ProcedurePage() {
   const { id, procedureId } = useParams<{ id: string; procedureId: string }>();
-  const [problem, setProblem] = useState<ApiState<Problem>>({ kind: "loading" });
+  const [goal, setGoal] = useState<ApiState<Goal>>({ kind: "loading" });
   const [proc, setProc] = useState<ApiState<ProcedureDetail>>({ kind: "loading" });
   const [versions, setVersions] = useState<ApiState<ProcedureVersionRow[]>>({ kind: "loading" });
   const [evidence, setEvidence] = useState<ApiState<EvidenceRow[]>>({ kind: "loading" });
@@ -29,7 +29,7 @@ export default function ProcedurePage() {
 
   useEffect(() => {
     const ac = new AbortController();
-    getProblem(id, ac.signal).then(setProblem);
+    getGoal(id, ac.signal).then(setGoal);
     getProcedure(procedureId, ac.signal).then(setProc);
     getProcedureVersions(procedureId, ac.signal).then((r) => setVersions(r.kind === "ok" ? { kind: "ok", data: Array.isArray(r.data) ? r.data : [] } : (r as ApiState<ProcedureVersionRow[]>)));
     getProcedureEvidence(procedureId, ac.signal).then((r) => setEvidence(r.kind === "ok" ? { kind: "ok", data: Array.isArray(r.data) ? r.data : [] } : (r as ApiState<EvidenceRow[]>)));
@@ -38,7 +38,7 @@ export default function ProcedurePage() {
     getRankedProcedures(id, undefined, ac.signal).then((r) => setRanked(r.kind === "ok" ? { kind: "ok", data: r.data.ranked } : (r as ApiState<RankedProcedure[]>)));
 
     (async () => {
-      const ev = await getProblemEvaluations(id, ac.signal);
+      const ev = await getGoalEvaluations(id, ac.signal);
       if (ev.kind === "ok") setEvals(ev.data.evaluations.filter((e) => e.procedure_id === procedureId));
     })();
 
@@ -73,7 +73,7 @@ export default function ProcedurePage() {
       <section className="page-hero frame grid">
         <div className="marker caption" style={{ gridColumn: "1 / -1" }}>
           <b>PROCEDURE</b>
-          {problem.kind === "ok" && <span>/ for <Link href={`/problems/${id}`} style={{ textDecoration: "underline" }}>{problem.data.title}</Link></span>}
+          {goal.kind === "ok" && <span>/ for <Link href={`/goals/${id}`} style={{ textDecoration: "underline" }}>{goal.data.canonical_name}</Link></span>}
         </div>
         <h1 className="display" style={{ gridColumn: "1 / span 10" }}><AnimatedHeading>{p.display_name || p.name || "Untitled procedure"}</AnimatedHeading></h1>
         <div className="states" style={{ marginTop: 20 }}>
