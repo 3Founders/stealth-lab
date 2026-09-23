@@ -297,19 +297,19 @@ def test_collab_summary_a_resolved_blocker_does_not_affect_a_separate_open_one()
 def test_goal_run_md_exact_grammar():
     nodes = [
         GoalRunLine(
-            goal_id="G-1", kind="step", status="success",
+            goal_id="G-1", kind="step", status="success", goal_name="do it",
             binding="command", verification_state="checked",
         ),
         GoalRunLine(
-            goal_id="G-parent", kind="procedure", status="failure",
+            goal_id="G-parent", kind="procedure", status="failure", goal_name="the parent goal",
             procedure_id=None, human_intervention_needed=True,
         ),
     ]
     md = render_goal_run_md("E-1", "failure", nodes)
     lines = md.splitlines()
     assert "GOAL_RUN|E-1|failure" in lines
-    assert "GOAL_NODE|G-1|step|success|binding=command|proc=-|verify=checked|human_intervention=False|resumed=False" in lines
-    assert "GOAL_NODE|G-parent|procedure|failure|binding=-|proc=-|verify=-|human_intervention=True|resumed=False" in lines
+    assert "GOAL_NODE|G-1|step|success|do it|binding=command|proc=-|verify=checked|human_intervention=False|resumed=False" in lines
+    assert "GOAL_NODE|G-parent|procedure|failure|the parent goal|binding=-|proc=-|verify=-|human_intervention=True|resumed=False" in lines
 
 
 def test_goal_run_md_empty_nodes_is_honest():
@@ -355,7 +355,7 @@ def test_goal_run_md_no_artifacts_emits_no_artifact_lines():
 def test_parse_goal_run_md_round_trips_every_field():
     nodes = [
         GoalRunLine(
-            goal_id="G-1", kind="step", status="success",
+            goal_id="G-1", kind="step", status="success", goal_name="do the real thing",
             binding="command", procedure_id="P-1", verification_state="checked",
             human_intervention_needed=True, resumed_from_journal=True,
         ),
@@ -369,6 +369,7 @@ def test_parse_goal_run_md_round_trips_every_field():
     assert n["goal_id"] == "G-1"
     assert n["kind"] == "step"
     assert n["status"] == "success"
+    assert n["goal_name"] == "do the real thing"
     assert n["binding"] == "command"
     assert n["procedure_id"] == "P-1"
     assert n["verification_state"] == "checked"

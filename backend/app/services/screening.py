@@ -388,6 +388,52 @@ def screen_document_text(
     return findings
 
 
+# (spdx_license) a real SPDX classification, unlike `_LICENSE_PHRASES`
+# above -- GitHub's own license-detection API (backed by Licensee,
+# `github_corpus.py::_ensure_snapshot`'s `/repos/{owner}/{repo}/license`
+# call) already resolves a repository's actual LICENSE file to an SPDX id
+# and is captured into every SourceArtifact as `license_metadata`. This
+# was captured but never checked against a policy anywhere in the
+# pipeline until now. Curated denylist, not an allowlist: an unrecognized
+# or missing spdx_id (no LICENSE file, or Licensee couldn't classify it)
+# does NOT flag -- only a license GitHub positively identified as
+# copyleft/restrictive/non-commercial does. Permissive licenses (MIT,
+# Apache-2.0, BSD, ISC, 0BSD, Unlicense, CC0-1.0, MPL-2.0, ...) and the
+# unknown/no-license case are both the unflagged, expected default.
+_SPDX_DENYLIST: frozenset[str] = frozenset({
+    "GPL-1.0", "GPL-1.0-only", "GPL-1.0-or-later",
+    "GPL-2.0", "GPL-2.0-only", "GPL-2.0-or-later",
+    "GPL-3.0", "GPL-3.0-only", "GPL-3.0-or-later",
+    "AGPL-1.0", "AGPL-1.0-only", "AGPL-1.0-or-later",
+    "AGPL-3.0", "AGPL-3.0-only", "AGPL-3.0-or-later",
+    "LGPL-2.0", "LGPL-2.0-only", "LGPL-2.0-or-later",
+    "LGPL-2.1", "LGPL-2.1-only", "LGPL-2.1-or-later",
+    "LGPL-3.0", "LGPL-3.0-only", "LGPL-3.0-or-later",
+    "SSPL-1.0",
+    "CC-BY-NC-4.0", "CC-BY-NC-SA-4.0", "CC-BY-NC-ND-4.0",
+    "CC-BY-ND-4.0",
+})
+
+
+def spdx_license_signal(spdx_id: Optional[str]) -> Optional[dict]:
+    """A finding iff `spdx_id` is a KNOWN copyleft/restrictive/non-
+    commercial license (see `_SPDX_DENYLIST`'s own comment for why unknown
+    /missing never flags). Returns the same `{"check_type", "signals",
+    "severity"}` shape `screen_document_text` findings use, so callers can
+    feed it through the same `record_screening_run` audit path."""
+    if not spdx_id or spdx_id not in _SPDX_DENYLIST:
+        return None
+    # check_type stays "license" -- CHECK_TYPES is a closed vocabulary
+    # backed by a DB CHECK constraint (schema.md is frozen); the
+    # "spdx_license:" signal prefix (vs. "license:" from the curated-
+    # phrase check) is how a caller tells the two apart.
+    return {
+        "check_type": "license",
+        "signals": [f"spdx_license:{spdx_id}"],
+        "severity": "flag",
+    }
+
+
 def decide(findings: list[dict]) -> str:
     """Pure fold. Any `severity == "block"` -> REJECT; else any
     `severity == "flag"` -> QUARANTINE; `[]` (or all-clear) -> ALLOW."""

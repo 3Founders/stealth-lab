@@ -427,6 +427,57 @@ async def find_or_create_goal(
             "home_shard_id": row.get("home_shard_id", home_shard), "decision": outcome.decision}
 
 
+async def find_or_create_goal_cached(
+    pool: asyncpg.Pool,
+    *,
+    canonical_name: str,
+    scope_type: str,
+    scope_entity_id: Optional[str] = None,
+    goal_cache: Optional[dict[tuple, dict[str, Any]]],
+    **kwargs: Any,
+) -> dict[str, Any]:
+    """Thin wrapper over `find_or_create_goal`: skip the DB round trip
+    AND the embedding/semantic-judge call entirely when this exact
+    (scope, normalized name) was already resolved earlier in the SAME
+    caller-owned `goal_cache` dict.
+
+    WHY A WRAPPER, NOT CACHE LOGIC INSIDE `find_or_create_goal` ITSELF:
+    that function has five distinct return points (exact match, remote
+    exact match, judge-reuse, fresh insert, unique-violation-race retry)
+    -- threading a cache write into every one of them is exactly the
+    kind of edit that silently misses a path. Wrapping the whole call
+    means every return value, from every tier, gets cached uniformly,
+    with zero risk of divergence from the real function's own logic.
+
+    `goal_cache=None` (the default at every existing call site unless a
+    caller explicitly opts in) makes this byte-for-byte identical to
+    calling `find_or_create_goal` directly -- no behavior change for any
+    caller that doesn't pass a cache. A caller that DOES pass one owns
+    its lifetime (typically one dict per document/job, so a repeated
+    goal string within that document -- e.g. the same step goal restated
+    across several extracted procedures -- resolves once, not N times);
+    sharing one cache across multiple DB transactions/jobs is a caller
+    decision this wrapper does not make for you.
+
+    NOT a semantic/fuzzy cache: the key is `normalize_goal_name()` (tier
+    1's own exact-match normalization), same as `find_or_create_goal`'s
+    own first DB check -- a near-duplicate-but-not-identical goal string
+    still goes through the real function's own tier 3/4/5 dedup, exactly
+    as before. This cache only removes REPEATED identical work, never
+    changes which row two different strings resolve to.
+    """
+    key = (scope_type, scope_entity_id, normalize_goal_name(canonical_name))
+    if goal_cache is not None and key in goal_cache:
+        return goal_cache[key]
+    result = await find_or_create_goal(
+        pool, canonical_name=canonical_name, scope_type=scope_type,
+        scope_entity_id=scope_entity_id, **kwargs,
+    )
+    if goal_cache is not None:
+        goal_cache[key] = result
+    return result
+
+
 async def get_goal(
     pool: asyncpg.Pool,
     goal_id: str,

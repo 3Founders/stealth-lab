@@ -2212,7 +2212,17 @@ async def compile_skill_artifact(
     returns `status="rejected"` instead.
     """
     from app.services import screening
-    from app.services.goals import GoalQualityRejected, find_or_create_goal
+    from app.services.goals import GoalQualityRejected, find_or_create_goal_cached
+
+    # One dict, this document's whole compile call only (never shared
+    # across documents/jobs -- see find_or_create_goal_cached's own
+    # docstring for why that's a caller decision, not this function's).
+    # A repeated goal string within ONE document -- e.g. the same step
+    # action restated across several extracted procedures, exactly the
+    # anthropic-skills xlsx/docx schema-package shape that motivated
+    # this (12-17 procedures/document, real measured 800-900s jobs) --
+    # resolves via one embedding+judge round trip instead of N.
+    goal_cache: dict = {}
     from app.services.skill_extraction import grounded as _grounded_extractor
     from app.services.skill_extraction import ungrounded as _ungrounded_extractor
     from app.services.skill_extraction.schema import SkillExtractionTransientFailure
@@ -2263,6 +2273,34 @@ async def compile_skill_artifact(
                                    ",".join(f.get("signals") or []))
                     for f in pre_findings
                 ),
+            ),
+        )
+        return IngestOutcome(
+            status="rejected", reason=reason, admission_decision="reject",
+            screening_decision=screen_result["decision"],
+            screening_decision_ids=list(screen_result["decision_ids"]),
+        )
+
+    # --- G3c: real SPDX license admission -- see screening.spdx_license_
+    # signal's own comment. Distinct from the content-screen license
+    # check above (which only catches restrictive PHRASES inside the
+    # document's own text); this checks the repository's actual detected
+    # license (GitHub/Licensee, already captured as artifact.
+    # license_metadata by github_corpus.py) against a real denylist. ---
+    license_meta = getattr(artifact, "license_metadata", None) or {}
+    spdx_finding = screening.spdx_license_signal(license_meta.get("spdx_id"))
+    if spdx_finding is not None:
+        screen_result = await screening.record_screening_run(
+            pool, findings=[spdx_finding], artifact_uri=artifact.uri,
+            content_hash=artifact.content_hash, created_by=created_by,
+        )
+        reason = "license screen blocked ingestion: " + spdx_finding["signals"][0]
+        await _write_artifact_row(
+            pool, artifact, run_id=run_id, procedure_id=None, procedure_row_id=None,
+            extractor_version=extractor_version, owner_id=owner_id,
+            admission=AdmissionDecision(
+                decision="reject",
+                checks=(AdmissionCheck("license_spdx", "reject", spdx_finding["signals"][0]),),
             ),
         )
         return IngestOutcome(
@@ -2464,9 +2502,9 @@ async def compile_skill_artifact(
                         "path": script.resource_path, "content_hash": res.sha256, "granularity": "document"}
                     break
             try:
-                step_goal = await find_or_create_goal(
+                step_goal = await find_or_create_goal_cached(
                     pool, canonical_name=s.action, scope_type=step_goal_scope_type,
-                    scope_entity_id=domain, provenance=provenance,
+                    scope_entity_id=domain, goal_cache=goal_cache, provenance=provenance,
                     created_from="skill_extraction_step", embedder=embedder,
                 )
                 step_entry["goal_id"] = step_goal["id"]
@@ -2502,7 +2540,7 @@ async def compile_skill_artifact(
                 artifact, proc, embedding=embedding_metadata.__dict__,
             ),
             scope_type="entity" if domain else "global", scope_entity_id=domain,
-            created_by=created_by,
+            created_by=created_by, goal_cache=goal_cache,
             embedding=goal_vec, embedding_model_id=embedding_metadata.model_id,
             embedding_provider=embedding_metadata.provider,
             embedding_input_type=embedding_metadata.input_type,
@@ -2632,9 +2670,10 @@ async def compile_skill_artifact(
     # "refuse rather than fabricate", not silently drop the main goal). ---
     for g in extracted.goals:
         try:
-            await find_or_create_goal(
+            await find_or_create_goal_cached(
                 pool, canonical_name=g.canonical_name,
                 scope_type="entity" if domain else "global", scope_entity_id=domain,
+                goal_cache=goal_cache,
                 provenance=provenance, description=g.description,
                 expected_outcome=g.expected_outcome,
                 verification_requirement=g.verification_requirement,

@@ -157,6 +157,7 @@ async def capture_procedure(
     source_locator: Optional[dict] = None,
     require_source_locators: Optional[bool] = None,
     source_artifacts: Optional[list] = None,
+    goal_cache: Optional[dict] = None,
 ) -> dict:
     """
     Inserts a new procedure, always starting `candidate` / `fresh` /
@@ -251,13 +252,14 @@ async def capture_procedure(
     # A caller that omits them still gets tier 1/2 (exact/alias) and tier
     # 2.5 (SimHash, always on, zero cost) dedup -- but the Goal is never
     # embedded/searchable without an embedder passed here.
-    from app.services.goals import find_or_create_goal
+    from app.services.goals import find_or_create_goal_cached
 
-    resolved_goal = await find_or_create_goal(
+    resolved_goal = await find_or_create_goal_cached(
         pool,
         canonical_name=goal,
         scope_type=procedure_scope_type,
         scope_entity_id=procedure_scope_entity_id,
+        goal_cache=goal_cache,
         provenance=provenance,
         created_from="procedure_capture",
         owner_id=owner_id,

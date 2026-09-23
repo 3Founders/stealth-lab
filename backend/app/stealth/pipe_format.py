@@ -360,7 +360,7 @@ def render_run_md(run: RunLine, nodes: list[NodeLine], collab: list[CollabLine] 
 _GOAL_RUN_HEADER = (
     "# goal_run.md -- GENERATED, not canonical. Do not hand-edit.\n"
     "# GOAL_RUN|<execution_id>|<outcome>\n"
-    "# GOAL_NODE|<goal_id>|<kind>|<status>|binding=<binding_kind_or_->|proc=<procedure_id_or_->|"
+    "# GOAL_NODE|<goal_id>|<kind>|<status>|<goal_name>|binding=<binding_kind_or_->|proc=<procedure_id_or_->|"
     "verify=<verification_state_or_->|human_intervention=<bool>|resumed=<bool>\n"
     "# ARTIFACT|<goal_id>|<filename>|sha256=<sha256>|size=<size_bytes>\n\n"
 )
@@ -371,6 +371,15 @@ class GoalRunLine:
     goal_id: str
     kind: str  # "step" | "procedure"
     status: str
+    # The real Goal's own name/canonical_name -- NOT cross-referenced from
+    # a companion goals.md, because compile_goal/execute_goal's
+    # workspace_root path never generates one alongside goal_run.md (only
+    # the full Procedure-run projection does). Without this, a goal_id-only
+    # line is opaque to a reader with no DB access. Positional (not a
+    # `name=` kv field) to match run.md's own `NODE|id|status|name|...`
+    # convention in this same module. "" (never fabricated) when genuinely
+    # unavailable -- rendered as "-".
+    goal_name: str = ""
     binding: Optional[str] = None
     procedure_id: Optional[str] = None
     verification_state: Optional[str] = None
@@ -395,7 +404,7 @@ def render_goal_run_md(execution_id: str, outcome: str, nodes: list[GoalRunLine]
     lines: list[str] = []
     for n in nodes:
         lines.append(
-            _row("GOAL_NODE", n.goal_id, n.kind, n.status)
+            _row("GOAL_NODE", n.goal_id, n.kind, n.status, n.goal_name or "-")
             + _SEP + _kv_field("binding", n.binding or "-")
             + _SEP + _kv_field("proc", n.procedure_id or "-")
             + _SEP + _kv_field("verify", n.verification_state or "-")
@@ -439,10 +448,11 @@ def parse_goal_run_md(content: str) -> dict:
         tag = parts[0]
         if tag == "GOAL_RUN" and len(parts) >= 3:
             execution_id, outcome = parts[1], parts[2]
-        elif tag == "GOAL_NODE" and len(parts) >= 4:
-            kv = _kv_map(parts[4:])
+        elif tag == "GOAL_NODE" and len(parts) >= 5:
+            kv = _kv_map(parts[5:])
             current = {
                 "goal_id": parts[1], "kind": parts[2], "status": parts[3],
+                "goal_name": parts[4] if parts[4] != "-" else None,
                 "binding": kv.get("binding") if kv.get("binding", "-") != "-" else None,
                 "procedure_id": kv.get("proc") if kv.get("proc", "-") != "-" else None,
                 "verification_state": kv.get("verify") if kv.get("verify", "-") != "-" else None,

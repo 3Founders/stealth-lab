@@ -406,7 +406,7 @@ def test_workspace_root_writes_a_real_goal_run_md_page(monkeypatch, tmp_path):
     assert goal_run_path.exists()
     content = goal_run_path.read_text()
     assert f"GOAL_RUN|{result.execution_id}|success" in content
-    assert "GOAL_NODE|G-1|step|success|binding=command" in content
+    assert "GOAL_NODE|G-1|step|success|do it|binding=command" in content
 
     status = ge.read_goal_run_status(ws)
     assert status["execution_id"] == result.execution_id
