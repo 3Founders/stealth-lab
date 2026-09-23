@@ -104,7 +104,7 @@ function OnboardingInner() {
       <section className="frame grid" style={{ paddingBottom: 120 }}>
         <div className="signin" style={{ gridColumn: "1 / span 6" }}>
           <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
-            <Avatar username={avatarPreview ? null : name} size={48} />
+            <Avatar username={avatarPreview ? null : name} size={48} authenticated />
             {avatarPreview && (
               // eslint-disable-next-line @next/next/no-img-element
               <img src={avatarPreview} alt="" width={48} height={48} style={{ width: 48, height: 48, borderRadius: "50%", objectFit: "cover" }} />

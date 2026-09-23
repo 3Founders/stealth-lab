@@ -55,7 +55,7 @@ export default function AccountMenu({ username }: { username: string }) {
         aria-expanded={open}
         onClick={() => setOpen((o) => !o)}
       >
-        <Avatar username={username} size={26} />
+        <Avatar username={username} size={26} authenticated />
         <span className="account-name">{username}</span>
         <span className="caret" aria-hidden="true">▾</span>
       </button>

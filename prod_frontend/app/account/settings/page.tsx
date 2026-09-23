@@ -107,7 +107,7 @@ export default function AccountSettingsPage() {
         <div className="signin" style={{ gridColumn: "7 / span 6" }}>
           <h2 className="h3" style={{ margin: 0 }}>Profile picture</h2>
           <p className="small dim">Shown next to your public contributions.</p>
-          <Avatar username={profile.data.profile.username} size={72} />
+          <Avatar username={profile.data.profile.username} size={72} authenticated />
           <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
             <input ref={fileInputRef} type="file" accept="image/png,image/jpeg,image/webp" onChange={onPickAvatar} style={{ display: "none" }} />
             <button type="button" className="oauth-btn" style={{ width: "auto" }} onClick={() => fileInputRef.current?.click()} disabled={avatarStatus === "busy"}>
