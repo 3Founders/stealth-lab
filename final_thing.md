@@ -120,8 +120,23 @@ functions; they just aren't registered on MCP in v1.
 - [x] related-claims resources (grouped, caller-scoped, never unrestricted)
 - [ ] **Repo survey:** agent prompt/skill that writes `.stealth/claims.md` from
       repo files, grouped by topic, with `source=file:line#sha`
-- [ ] **`find_ways` takes repo claims:** use them to re-rank Goals (settles
-      ties like docx-js vs docx) and to rule out Procedures whose preconditions fail
+- [x] **`find_ways` takes repo claims** (`repo_claims` = the claims.md text,
+      ≤200 facts / 64 KB, request-scoped, never stored). Goal step: when search
+      is ambiguous, repo fit (token overlap) breaks the tie only if one Goal
+      fits clearly better, using the same 0.12 margin; otherwise it stays
+      ambiguous. Procedure step: 5–20 most related facts per feasible Procedure
+      go to the existing NLI/JEV judge chain. Procedures whose REQUIRED
+      condition is contradicted (≥0.75) are dropped, the rest are re-ordered by
+      verdict, and the chosen one carries `repo_fit` with supporting/blocking
+      fact ids. Judge down → `not_checked`, plan still returned. Live-verified:
+      JEV judged a real procedure APPLICABLE citing R-001/R-003/R-004.
+- [ ] **Feed step requirements to the judge:** today the judge sees only
+      written preconditions, not what a step's binding needs (e.g.
+      `runtime: python`). Live run: "no Python toolchain" did not block a
+      Python-script procedure because it had no written precondition.
+- [ ] **Merge duplicate Goals:** "docx-js library" and "'docx' library" are the
+      same npm package, but they're two Goals, so no repo fact can separate
+      them and search stays ambiguous.
 - [ ] **Richer plan output:** step description, source locator, success check,
       and claim ids per node
 - [ ] **Goal path writes the local pages:** `goals.md`, `procedures.md`,

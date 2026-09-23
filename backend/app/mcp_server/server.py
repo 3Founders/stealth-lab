@@ -4063,8 +4063,10 @@ async def find_ways(
     workspace_root: Optional[str] = None, execute: bool = True,
     current_scope_json: str = "{}", max_depth: int = 6,
     semantic: bool = True, use_llm: bool = True, top_k: int = 5,
+    repo_claims: str = "",
 ) -> str:
     """
+
     ONE call, the whole thing: fuzzy text -> Goal search -> Procedure
     search -> a compiled DAG -> (by default) a real execution ->
     `goal_run.md`. The v1 entry point (final_thing.md); pass `execute=False`
@@ -4103,6 +4105,18 @@ async def find_ways(
     `execute_goal`): writes the real `.stealth/goal_run.md` -- a
     `"planned"` dry-run when `execute=False`, the real post-execution
     outcome when `execute=True`.
+
+    `repo_claims` (final_thing.md): the text of the repo's `.stealth/claims.md`
+    (`CLAIM|R-001|current|stack|repository|Node 20.11|source=...|version=1`
+    lines; up to 200 facts / 64 KB). Used only for this request -- never
+    stored or logged. Two effects: (1) when the Goal search is ambiguous, a
+    cheap token-overlap score against the repo facts can break the tie;
+    (2) the feasible Procedures are checked against the 5-20 most related
+    facts by the claim-conditioned NLI/JEV judge -- ones whose REQUIRED
+    conditions the repo contradicts are dropped, the rest re-ordered, and each
+    chosen procedure carries `repo_fit` with the supporting/blocking fact ids.
+    Everything is reported under `repo_facts`; if the judge chain is down the
+    plan still comes back with `procedure_check.status = "not_checked"`.
     """
     from app.execution.goal_compiler import compiled_goal_to_run_md, flatten_goal_tree
     from app.execution.goal_execution import execute_goal_tree, write_goal_run_md_file
@@ -4144,15 +4158,31 @@ async def find_ways(
         from app.services.embeddings import Embedder
         embedder = Embedder()
 
+    from app.execution import repo_facts as _rf
+    from app.execution.intent_resolution import _AMBIGUITY_MARGIN
+
+    facts, facts_truncated = _rf.parse_repo_claims(repo_claims) if repo_claims.strip() else ([], False)
+    repo_report: Optional[dict] = None
+    if facts:
+        repo_report = {"count": len(facts), "truncated": facts_truncated, "goal_tiebreak": None,
+                       "procedure_check": None}
+
     scope = _caller_access_scope()
     intent = await _resolve_intent(
         pool, query, context={"current_scope": current_scope},
         client=client, embedder=embedder, scope=scope, top_k=top_k,
     )
 
+    if intent.outcome == "ambiguous" and facts:
+        winner, detail = _rf.goal_tiebreak(intent.candidates, facts, margin=_AMBIGUITY_MARGIN)
+        repo_report["goal_tiebreak"] = {"resolved": winner is not None, "candidates": detail}
+        if winner is not None:
+            intent.outcome, intent.selected_goal = "resolved", winner.goal
+
     if intent.outcome != "resolved":
         return json.dumps({
             "outcome": intent.outcome,
+            "repo_facts": repo_report,
             "normalized": {
                 "outcome": intent.normalized.outcome, "object": intent.normalized.object,
                 "action": intent.normalized.action, "used_fallback": intent.normalized.used_fallback,
@@ -4165,13 +4195,26 @@ async def find_ways(
         }, default=str)
 
     goal_id = intent.selected_goal["id"]
+    resolve_context: dict = {"current_scope": current_scope}
+    selector = None
+    if facts:
+        judge = None
+        try:
+            from app.services.semantic.applicability import ChainedApplicabilityJudge
+            judge = ChainedApplicabilityJudge.from_settings()
+        except Exception:  # noqa: BLE001 -- no provider configured: the selector reports not_checked
+            judge = None
+        selector = _rf.RepoFactsProcedureSelector(claims=facts, judge=judge)
+        resolve_context["_procedure_selector"] = selector
     try:
         tree = await resolve_goal(
-            pool, goal_id, context={"current_scope": current_scope}, scope=scope,
+            pool, goal_id, context=resolve_context, scope=scope,
             max_depth=max_depth, embedder=embedder,
         )
     except GoalResolutionError as exc:
         return f"REFUSED: {exc}"
+    if selector is not None:
+        repo_report["procedure_check"] = selector.report()
 
     nodes = flatten_goal_tree(tree)
 
@@ -4180,6 +4223,7 @@ async def find_ways(
             write_goal_run_md_file(workspace_root, compiled_goal_to_run_md(nodes))
         return json.dumps({
             "outcome": "resolved", "goal_id": goal_id, "executed": False,
+            "repo_facts": repo_report,
             "tree": _resolved_goal_node_to_dict(tree),
             "nodes": [
                 {
@@ -4197,6 +4241,7 @@ async def find_ways(
     )
     return json.dumps({
         "outcome": "resolved", "goal_id": goal_id, "executed": True,
+        "repo_facts": repo_report,
         "tree": _resolved_goal_node_to_dict(tree),
         "execution_outcome": execution.outcome,
         "execution_id": execution.execution_id,

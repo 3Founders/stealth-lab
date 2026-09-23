@@ -329,6 +329,14 @@ async def resolve_goal(
     # stays exactly the existing verified-first/recency-second pick.
     for _proc in feasible:
         _proc["_cost_score"] = _procedure_cost_score(_proc)
+    # Repo facts (find_ways, final_thing.md): an optional request-scoped
+    # selector re-orders feasible Procedures by the claim-conditioned judge
+    # and drops ones whose REQUIRED conditions the repo contradicts. Absent
+    # (every other caller), selection is exactly as before.
+    repo_rejected: list[dict] = []
+    selector = context.get("_procedure_selector")
+    if selector is not None and feasible:
+        feasible, repo_rejected = await selector(goal_name, feasible, depth=depth)
     if feasible:
         proc = feasible[0]  # already ordered verified-first, recency-second by the query itself
         children = await _resolve_procedure_children(
@@ -340,6 +348,7 @@ async def resolve_goal(
             procedure={
                 "id": str(proc["id"]), "procedure_id": str(proc["procedure_id"]),
                 "name": proc.get("name"), "version": proc.get("version"),
+                **({"repo_fit": proc["_repo_fit"]} if proc.get("_repo_fit") else {}),
             },
             verification_requirement=goal.get("verification_requirement") or {},
             children=children, procedure_alternates=feasible[1:],
@@ -352,7 +361,15 @@ async def resolve_goal(
 
     # nothing feasible -- honest, explained unresolved
     reasons = []
-    if candidates:
+    if repo_rejected:
+        reasons.append(
+            f"{len(repo_rejected)} feasible procedure(s) contradicted by repo facts: "
+            + ", ".join(
+                f"{p.get('name')!r} (facts {','.join((p.get('_repo_fit') or {}).get('blocking_fact_ids') or []) or '?'})"
+                for p in repo_rejected
+            )
+        )
+    elif candidates:
         reasons.append(f"{len(candidates)} procedure(s) linked, none feasible")
     if not reasons:
         reasons.append("no procedure linked to this goal")
