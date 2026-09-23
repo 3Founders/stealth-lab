@@ -430,7 +430,7 @@ _TOOL_SCOPES: dict[str, str] = {
     **{n: _READ for n in (
         "retrieve_precedent", "search_procedures", "get_claim_graph", "get_relevant_claims", "get_procedure",
         "check_applicability", "check_procedure", "search_goals", "inspect_goal", "list_goal_procedures",
-        "resolve_intent", "explain_goal_route", "estimate_goal_cost", "compile_goal",
+        "resolve_intent", "explain_goal_route", "estimate_goal_cost", "compile_goal", "find_ways",
         "get_route_decision", "project_knowledge", "inspect_trajectory",
         "list_trajectory_events", "inspect_extraction", "list_extraction_objects",
         "inspect_trajectory_provenance", "get_goal_run_status", "list_goal_artifacts", "get_goal_artifact",
@@ -441,8 +441,8 @@ _TOOL_SCOPES: dict[str, str] = {
         "open_exploration", "close_exploration", "verify_completion", "unsync_local_project")},
     **{n: _acx.INGESTION_SUBMIT for n in ("ingest_trajectory", "run_semantic_extraction", "reextract_trajectory")},
     **{n: _EXEC for n in (
-        "find_best_way", "reproduce_procedure", "execute_goal", "continue_run", "resume_execution_run",
-        "retry_run_node")},
+        "find_best_way", "reproduce_procedure", "execute_goal", "continue_run",
+        "resume_execution_run", "retry_run_node")},
     "decide_procedure": _acx.KNOWLEDGE_PUBLISH,
 }
 
@@ -3994,6 +3994,183 @@ if a WHOLE Procedure's
     return json.dumps({
         "tree": _resolved_goal_node_to_dict(tree),
         "outcome": execution.outcome,
+        "execution_id": execution.execution_id,
+        "node_results": {
+            gid: {
+                "goal_name": r.goal_name, "status": r.status,
+                "used_binding_kind": r.used_binding_kind,
+                "resumed_from_journal": r.resumed_from_journal,
+                "artifacts": r.artifacts,
+                "attempts": [
+                    {
+                        "step_order": a.step_order, "binding_kind": a.binding_kind,
+                        "status": a.status, "notes": a.notes,
+                        "verification_state": a.verification_state, "verification_detail": a.verification_detail,
+                    }
+                    for a in r.attempts
+                ],
+            }
+            for gid, r in execution.node_results.items()
+        },
+        "procedure_results": {
+            gid: {
+                "goal_name": r.goal_name, "status": r.status,
+                "used_procedure_id": r.used_procedure_id,
+                "human_intervention_needed": r.human_intervention_needed,
+                "resumed_from_journal": r.resumed_from_journal,
+                "attempts": [
+                    {"procedure_id": a.procedure_id, "procedure_name": a.procedure_name, "status": a.status}
+                    for a in r.attempts
+                ],
+            }
+            for gid, r in execution.procedure_results.items()
+        },
+        "unresolved_goal_names": execution.unresolved_goal_names,
+    }, default=str)
+
+
+@server.tool()
+async def find_ways(
+    query: str, ctx: Context,
+    workspace_root: Optional[str] = None, execute: bool = True,
+    current_scope_json: str = "{}", max_depth: int = 6,
+    semantic: bool = True, use_llm: bool = True, top_k: int = 5,
+) -> str:
+    """
+    ONE call, the whole thing: fuzzy text -> Goal search -> Procedure
+    search -> a compiled DAG -> (by default) a real execution ->
+    `goal_run.md`. Additive alongside `find_best_way`/`reproduce_procedure`
+    while this unified path is validated -- not a replacement yet.
+
+    Composes ONLY existing, already-tested primitives, verbatim, in the
+    same order `resolve_intent` -> `compile_goal` -> `execute_goal`
+    already run as three separate calls -- no new resolution,
+    compilation, or execution logic lives here:
+      1. `app.execution.intent_resolution.resolve_intent` -- fuzzy
+         `query` -> Goal search (peer "ingestion"'s real lexical+
+         semantic search_goals).
+      2. `app.execution.goal_resolution.resolve_goal` -- recursively
+         resolves the matched Goal, which ALREADY searches and selects
+         feasible Procedures internally (`_feasible_procedures_for_goal`)
+         -- this is why one call covers both Goal and Procedure search,
+         not two separate lookups glued together.
+      3. `app.execution.goal_compiler.flatten_goal_tree` -- the DAG.
+      4. `execute=True` (default): `app.execution.goal_execution.
+         execute_goal_tree` -- real dispatch, same as `execute_goal`.
+         `execute=False`: `compiled_goal_to_run_md` instead -- a real
+         "planned" dry-run, same as `compile_goal`.
+
+    Three honest outcomes on the SEARCH step, never a guess (identical
+    vocabulary to `resolve_intent`'s own tool):
+      `{"outcome": "resolved", ...}` -- exactly one Goal cleared both a
+        relevance floor and a decisive margin. Proceeds to compile/
+        execute automatically.
+      `{"outcome": "ambiguous", "candidates": [...]}` -- 2+ plausible
+        Goals, too close to call. Stops here -- never guesses which one.
+      `{"outcome": "no_match", "proposed_goal": {...}}` -- nothing
+        matched. Stops here -- `proposed_goal` is a real, disclosed
+        skeleton for review via `create_goal`, nothing written.
+
+    `workspace_root` (opt-in, same contract as `compile_goal`/
+    `execute_goal`): writes the real `.stealth/goal_run.md` -- a
+    `"planned"` dry-run when `execute=False`, the real post-execution
+    outcome when `execute=True`.
+    """
+    from app.execution.goal_compiler import compiled_goal_to_run_md, flatten_goal_tree
+    from app.execution.goal_execution import execute_goal_tree, write_goal_run_md_file
+    from app.execution.goal_resolution import GoalResolutionError, resolve_goal
+    from app.execution.intent_resolution import resolve_intent as _resolve_intent
+
+    if execute:
+        # find_ways is classified _READ in _TOOL_SCOPES (so plan-only
+        # calls, execute=False, are free -- same tier as compile_goal),
+        # deliberately NOT _EXEC like execute_goal/find_best_way. That
+        # means the blanket per-tool check in _enforce_tool_scope never
+        # gates this specific, real side-effecting path -- so it's
+        # gated explicitly, right here, the moment a caller actually
+        # asks for execution. Same failure shape (PermissionError ->
+        # "forbidden: ...") every other _EXEC-scoped tool already
+        # produces, not a different REFUSED-string convention.
+        token = get_access_token()
+        if token is not None and _EXEC not in (token.scopes or []):
+            raise PermissionError(f"forbidden: find_ways with execute=True requires scope {_EXEC!r}")
+
+    pool = ctx.request_context.lifespan_context["pool"]
+    try:
+        current_scope = json.loads(current_scope_json)
+    except json.JSONDecodeError as exc:
+        return f"REFUSED: current_scope_json is not valid JSON -- {exc}"
+
+    client = None
+    if use_llm:
+        try:
+            client = OpenAI(
+                max_retries=0, api_key=settings.require("general_compute_api_key"),
+                base_url=settings.general_compute_base_url,
+            )
+        except Exception:  # noqa: BLE001 -- no configured key is a real, honest degrade, not a crash
+            client = None
+
+    embedder = None
+    if semantic:
+        from app.services.embeddings import Embedder
+        embedder = Embedder()
+
+    scope = _caller_access_scope()
+    intent = await _resolve_intent(
+        pool, query, context={"current_scope": current_scope},
+        client=client, embedder=embedder, scope=scope, top_k=top_k,
+    )
+
+    if intent.outcome != "resolved":
+        return json.dumps({
+            "outcome": intent.outcome,
+            "normalized": {
+                "outcome": intent.normalized.outcome, "object": intent.normalized.object,
+                "action": intent.normalized.action, "used_fallback": intent.normalized.used_fallback,
+            },
+            "candidates": [
+                {"goal": c.goal, "score": c.score, "rationale": c.rationale} for c in intent.candidates
+            ],
+            "proposed_goal": intent.proposed_goal,
+            "rationale": intent.rationale,
+        }, default=str)
+
+    goal_id = intent.selected_goal["id"]
+    try:
+        tree = await resolve_goal(
+            pool, goal_id, context={"current_scope": current_scope}, scope=scope,
+            max_depth=max_depth, embedder=embedder,
+        )
+    except GoalResolutionError as exc:
+        return f"REFUSED: {exc}"
+
+    nodes = flatten_goal_tree(tree)
+
+    if not execute:
+        if workspace_root:
+            write_goal_run_md_file(workspace_root, compiled_goal_to_run_md(nodes))
+        return json.dumps({
+            "outcome": "resolved", "goal_id": goal_id, "executed": False,
+            "tree": _resolved_goal_node_to_dict(tree),
+            "nodes": [
+                {
+                    "node_id": n.node_id, "goal_id": n.goal_id, "goal_name": n.goal_name,
+                    "kind": n.kind, "step_order": n.step_order, "executor": n.executor,
+                    "deps": n.deps, "rationale": n.rationale, "depth": n.depth,
+                }
+                for n in nodes
+            ],
+        }, default=str)
+
+    execution = await execute_goal_tree(
+        pool, tree, {"current_scope": current_scope, "goal_id": goal_id}, scope=scope,
+        workspace_root=workspace_root,
+    )
+    return json.dumps({
+        "outcome": "resolved", "goal_id": goal_id, "executed": True,
+        "tree": _resolved_goal_node_to_dict(tree),
+        "execution_outcome": execution.outcome,
         "execution_id": execution.execution_id,
         "node_results": {
             gid: {
