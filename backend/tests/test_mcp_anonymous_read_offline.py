@@ -131,6 +131,38 @@ def test_passes_through_a_malformed_authorization_header_untouched():
     assert seen_scopes[0]["headers"] == garbage_header
 
 
+def test_injects_when_authorization_header_present_but_empty():
+    """The real Inspector bug (2026-09-23): a browser client's blank
+    'Bearer Token' field sends the header PRESENT but empty -- must be
+    treated the same as fully absent, not passed through to 401."""
+    seen_scopes = []
+
+    async def fake_app(scope, receive, send):
+        seen_scopes.append(scope)
+
+    mw = AnonymousReadInjectorMiddleware(fake_app)
+    blank_header = [(b"authorization", b"")]
+    _run(mw(_http_scope(blank_header), _noop_receive, _noop_send))
+
+    headers = dict(seen_scopes[0]["headers"])
+    assert headers[b"authorization"] == f"Bearer {_ANONYMOUS_READ_TOKEN}".encode("ascii")
+
+
+def test_injects_when_authorization_header_is_bare_bearer_with_nothing_after():
+    seen_scopes = []
+
+    async def fake_app(scope, receive, send):
+        seen_scopes.append(scope)
+
+    mw = AnonymousReadInjectorMiddleware(fake_app)
+    for value in (b"Bearer", b"Bearer ", b"bearer   "):
+        seen_scopes.clear()
+        mw2 = AnonymousReadInjectorMiddleware(fake_app)
+        _run(mw2(_http_scope([(b"authorization", value)]), _noop_receive, _noop_send))
+        headers = dict(seen_scopes[0]["headers"])
+        assert headers[b"authorization"] == f"Bearer {_ANONYMOUS_READ_TOKEN}".encode("ascii"), value
+
+
 def test_authorization_header_check_is_case_insensitive():
     seen_scopes = []
 
