@@ -104,6 +104,7 @@ from starlette.requests import Request
 from starlette.responses import HTMLResponse, JSONResponse, Response
 
 from app.mcp_server.tasks_extension import TasksExtension
+from app.mcp_server.anonymous_read import _ANONYMOUS_READ_TOKEN, AnonymousReadInjectorMiddleware
 from app.mcp_server.claim_graph_page import CLAIM_GRAPH_HTML, FORCE_GRAPH_JS
 from app.mcp_server.goal_run_page import GOAL_RUN_HTML
 from app.mcp_server.procedure_graph_page import PROCEDURE_GRAPH_HTML
@@ -260,6 +261,24 @@ class OidcAwareTokenVerifier(TokenVerifier):
         )
 
     async def verify_token(self, token: str) -> AccessToken | None:
+        if token == _ANONYMOUS_READ_TOKEN:
+            # Free reads, always -- regardless of deployment_mode/
+            # allow_shared_token (this is a DIFFERENT, deliberately
+            # powerless credential, not the operator's shared secret, so
+            # deployment_mode="shared" disabling the shared-token fallback
+            # does not touch this branch). No `subject` -- an anonymous
+            # reader is never attributed as a user, same posture the
+            # service-token branch below already uses. Scopes carry
+            # `stealthlab:tools` (the SDK-level AuthSettings.required_scopes
+            # gate) plus ONLY retrieval:read -- _enforce_tool_scope already
+            # denies every write/execute/publish/ingestion-scoped tool to
+            # this token for free, zero changes needed there.
+            from app.services import auth_context as _ac
+
+            return AccessToken(
+                token=token, client_id="stealthlab-anonymous",
+                scopes=["stealthlab:tools", _ac.RETRIEVAL_READ],
+            )
         if self._oidc_config is not None:
             actor = None
             try:
@@ -707,7 +726,11 @@ async def root_health(request: Request) -> JSONResponse:  # noqa: ARG001
     })
 
 
-app = server.streamable_http_app()
+# Free-reads/gated-writes: wraps the SDK's own fully-built app (auth
+# middleware, /mcp route, every custom_route) -- see anonymous_read.py's
+# own module docstring for why this is the robust shape (injects a
+# credential rather than forking the SDK's auth enforcement).
+app = AnonymousReadInjectorMiddleware(server.streamable_http_app())
 
 
 def _resolve_caller_identity(fallback: str) -> str:
