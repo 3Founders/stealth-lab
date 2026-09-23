@@ -124,6 +124,19 @@ const j = (v: unknown) => encodeURIComponent(String(v));
 export const getProblems = (limit = 100, signal?: AbortSignal) =>
   apiGet<{ problems: Problem[] }>(`/v1/problems?limit=${limit}`, signal);
 
+export interface ProblemInput {
+  title: string;
+  description?: string;
+  objective?: string;
+  constraints?: string[];
+}
+
+/** `proposer`/`owner_id` are derived server-side from the caller's verified
+ * session (app/api/problems.py) -- never sent from here, there's nothing
+ * for this form to spoof. */
+export const createProblem = (body: ProblemInput, signal?: AbortSignal) =>
+  apiPost<Problem>("/v1/problems", body, signal);
+
 export const getProblem = (id: string, signal?: AbortSignal) => apiGet<Problem>(`/v1/problems/${j(id)}`, signal);
 
 export const getProblemSolutions = (id: string, signal?: AbortSignal) =>

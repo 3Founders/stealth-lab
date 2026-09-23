@@ -31,7 +31,6 @@ class ProblemIn(BaseModel):
     objective: Optional[str] = None
     constraints: list[Any] = Field(default_factory=list)
     status: str = "open"
-    proposer: Optional[str] = None
     provenance: Optional[str] = None
     metadata: dict[str, Any] = Field(default_factory=dict)
     visibility: str = "public"
@@ -81,11 +80,23 @@ class EvaluationCompleteIn(BaseModel):
 
 
 # ---- Problem ------------------------------------------------------------
-@router.post("/problems", dependencies=[Depends(require_scopes(_ac.KNOWLEDGE_WRITE))])
-async def create_problem(body: ProblemIn, pool=Depends(get_pool),
-                         scope: AccessScope = Depends(get_scope)) -> dict[str, Any]:
+@router.post("/problems")
+async def create_problem(
+    body: ProblemIn, pool=Depends(get_pool),
+    principal: AuthenticatedPrincipal = Depends(require_authenticated_user),
+) -> dict[str, Any]:
+    """`proposer`/`owner_id` are derived from the verified session, never
+    accepted in the request body -- same rule every other write route in
+    this codebase follows (see app/api/deps.py::get_scope's own doc, and
+    the frontend's contribute pages' own stated guarantee). A caller could
+    previously submit a Problem crediting anyone they liked; ProblemIn no
+    longer even has a `proposer` field to close that off structurally, not
+    just by convention."""
     try:
-        return await pm.create_problem(pool, **body.model_dump())
+        return await pm.create_problem(
+            pool, proposer=principal.name or principal.subject, owner_id=principal.subject,
+            **body.model_dump(),
+        )
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e))
 

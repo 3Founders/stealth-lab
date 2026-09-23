@@ -47,6 +47,9 @@ export default function ProblemsPage() {
         <div className="marker caption" style={{ gridColumn: "1 / -1" }}><b>PROBLEMS</b></div>
         <h1 className="display"><AnimatedHeading>Problems</AnimatedHeading></h1>
         <p className="lead">Discover goals worth accomplishing, and the ways people and agents have found to reach them.</p>
+        <p className="small" style={{ gridColumn: "1 / span 12", marginTop: 8 }}>
+          <Link href="/problems/add" style={{ textDecoration: "underline" }}>Add a problem →</Link>
+        </p>
       </section>
 
       <section className="frame grid" style={{ paddingBottom: 120, rowGap: 40 }}>
