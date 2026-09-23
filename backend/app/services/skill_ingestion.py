@@ -2212,7 +2212,17 @@ async def compile_skill_artifact(
     returns `status="rejected"` instead.
     """
     from app.services import screening
-    from app.services.goals import GoalQualityRejected, find_or_create_goal
+    from app.services.goals import GoalQualityRejected, find_or_create_goal_cached
+
+    # One dict, this document's whole compile call only (never shared
+    # across documents/jobs -- see find_or_create_goal_cached's own
+    # docstring for why that's a caller decision, not this function's).
+    # A repeated goal string within ONE document -- e.g. the same step
+    # action restated across several extracted procedures, exactly the
+    # anthropic-skills xlsx/docx schema-package shape that motivated
+    # this (12-17 procedures/document, real measured 800-900s jobs) --
+    # resolves via one embedding+judge round trip instead of N.
+    goal_cache: dict = {}
     from app.services.skill_extraction import grounded as _grounded_extractor
     from app.services.skill_extraction import ungrounded as _ungrounded_extractor
     from app.services.skill_extraction.schema import SkillExtractionTransientFailure
@@ -2492,9 +2502,9 @@ async def compile_skill_artifact(
                         "path": script.resource_path, "content_hash": res.sha256, "granularity": "document"}
                     break
             try:
-                step_goal = await find_or_create_goal(
+                step_goal = await find_or_create_goal_cached(
                     pool, canonical_name=s.action, scope_type=step_goal_scope_type,
-                    scope_entity_id=domain, provenance=provenance,
+                    scope_entity_id=domain, goal_cache=goal_cache, provenance=provenance,
                     created_from="skill_extraction_step", embedder=embedder,
                 )
                 step_entry["goal_id"] = step_goal["id"]
@@ -2530,7 +2540,7 @@ async def compile_skill_artifact(
                 artifact, proc, embedding=embedding_metadata.__dict__,
             ),
             scope_type="entity" if domain else "global", scope_entity_id=domain,
-            created_by=created_by,
+            created_by=created_by, goal_cache=goal_cache,
             embedding=goal_vec, embedding_model_id=embedding_metadata.model_id,
             embedding_provider=embedding_metadata.provider,
             embedding_input_type=embedding_metadata.input_type,
@@ -2660,9 +2670,10 @@ async def compile_skill_artifact(
     # "refuse rather than fabricate", not silently drop the main goal). ---
     for g in extracted.goals:
         try:
-            await find_or_create_goal(
+            await find_or_create_goal_cached(
                 pool, canonical_name=g.canonical_name,
                 scope_type="entity" if domain else "global", scope_entity_id=domain,
+                goal_cache=goal_cache,
                 provenance=provenance, description=g.description,
                 expected_outcome=g.expected_outcome,
                 verification_requirement=g.verification_requirement,

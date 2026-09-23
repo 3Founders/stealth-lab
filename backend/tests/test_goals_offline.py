@@ -16,6 +16,7 @@ from app.services.goals import (
     create_goal_from_user,
     describe_goal_quality_issue,
     find_or_create_goal,
+    find_or_create_goal_cached,
     get_goal,
     normalize_goal_name,
     search_goals,
@@ -143,6 +144,98 @@ def test_find_or_create_goal_dedups_on_exact_normalized_name_same_scope():
     assert second["created"] is False
     assert second["id"] == first["id"]
     assert len(pool.rows) == 1
+
+
+class _ExplodingPool:
+    """Any call is a test failure -- proves a cache hit never reaches the
+    pool at all (not just 'reaches it but returns fast')."""
+
+    async def fetchrow(self, sql, *params):
+        raise AssertionError(f"unexpected fetchrow on a cache hit: {sql!r}")
+
+    async def fetch(self, sql, *params):
+        raise AssertionError(f"unexpected fetch on a cache hit: {sql!r}")
+
+    async def execute(self, sql, *params):
+        raise AssertionError(f"unexpected execute on a cache hit: {sql!r}")
+
+
+def test_find_or_create_goal_cached_skips_the_pool_entirely_on_a_repeat():
+    """The real bug this closes: a document with N procedures repeating
+    the same goal text (the anthropic-skills xlsx/docx schema-package
+    shape) previously paid for N full embedding+judge round trips."""
+    pool = _FakeGoalsPool()
+    cache: dict = {}
+    first = _run(find_or_create_goal_cached(
+        pool, canonical_name="Find references", scope_type="global",
+        goal_cache=cache, provenance="system_pending_review",
+    ))
+    assert len(pool.rows) == 1
+
+    second = _run(find_or_create_goal_cached(
+        _ExplodingPool(), canonical_name="find   references", scope_type="global",
+        goal_cache=cache, provenance="system_pending_review",
+    ))
+    assert second == first
+
+
+def test_find_or_create_goal_cached_treats_a_different_name_as_a_real_miss():
+    pool = _FakeGoalsPool()
+    cache: dict = {}
+    _run(find_or_create_goal_cached(
+        pool, canonical_name="Find references", scope_type="global",
+        goal_cache=cache, provenance="system_pending_review",
+    ))
+    second = _run(find_or_create_goal_cached(
+        pool, canonical_name="Find callers", scope_type="global",
+        goal_cache=cache, provenance="system_pending_review",
+    ))
+    assert len(pool.rows) == 2
+    assert second["canonical_name"] == "Find callers"
+
+
+def test_find_or_create_goal_cached_keys_on_scope_not_just_name():
+    """Same normalized name, different local scope -- must NOT collide,
+    matching find_or_create_goal's own scope-isolation semantics."""
+    pool = _FakeGoalsPool()
+    cache: dict = {}
+    first = _run(find_or_create_goal_cached(
+        pool, canonical_name="fix the bug", scope_type="entity", scope_entity_id="repo-a",
+        goal_cache=cache, provenance="system_pending_review",
+    ))
+    second = _run(find_or_create_goal_cached(
+        pool, canonical_name="fix the bug", scope_type="entity", scope_entity_id="repo-b",
+        goal_cache=cache, provenance="system_pending_review",
+    ))
+    assert len(pool.rows) == 2
+    assert first["id"] != second["id"]
+
+
+def test_find_or_create_goal_cached_with_no_cache_is_a_transparent_passthrough():
+    """goal_cache=None (every existing call site's default) must behave
+    byte-for-byte like calling find_or_create_goal directly -- including
+    hitting the pool on BOTH calls, not caching anything."""
+    pool = _FakeGoalsPool()
+    _run(find_or_create_goal_cached(
+        pool, canonical_name="Find references", scope_type="global",
+        goal_cache=None, provenance="system_pending_review",
+    ))
+    _run(find_or_create_goal_cached(
+        pool, canonical_name="Find references", scope_type="global",
+        goal_cache=None, provenance="system_pending_review",
+    ))
+    assert len(pool.rows) == 1  # the real function's own dedup still applies -- just re-checked each time
+
+
+def test_find_or_create_goal_cached_never_caches_a_rejected_goal():
+    pool = _FakeGoalsPool()
+    cache: dict = {}
+    with pytest.raises(GoalQualityRejected):
+        _run(find_or_create_goal_cached(
+            pool, canonical_name="use rg command", scope_type="global",
+            goal_cache=cache, provenance="system_pending_review",
+        ))
+    assert cache == {}
 
 
 def test_find_or_create_goal_does_not_dedup_across_different_local_scopes():
