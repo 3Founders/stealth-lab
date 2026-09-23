@@ -438,6 +438,12 @@ main, footer { position: relative; z-index: 1; }
 .motion .ln { display: block; overflow: hidden; padding-bottom: .08em; margin-bottom: -.08em; }
 .motion .ln > span { display: block; transform: translateY(105%); animation: rise 1.1s var(--ease) forwards; animation-delay: var(--d, 0ms); }
 @keyframes rise { to { transform: none; } }
+/* Header account-menu / sign-in link: an invisible placeholder holds this
+   slot during session resolution (Header.tsx), so whichever of the two
+   real elements below replaces it is a freshly-inserted DOM node -- this
+   animation plays on that insertion, in place of the instant pop-in. */
+.motion .nav > .account-wrap, .motion .nav > a.btn-ink.desk { animation: header-fade .4s var(--ease); }
+@keyframes header-fade { from { opacity: 0; transform: translateY(3px); } to { opacity: 1; transform: none; } }
 @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; scroll-behavior: auto !important; } }
 
 /* rendered markdown (legal documents) */
