@@ -350,6 +350,7 @@ async def handle_ingest_document(pool: asyncpg.Pool, payload: dict) -> None:
     from app.services.embeddings import Embedder
     from app.services.ingestion_sources.document_adapter import DocumentLocator
     from app.services.ingestion_sources.document_adapters import select_adapter
+    from app.services.ingestion_sources.document_adapters.github_adapter import GitHubFileAdapter
     from app.services.skill_ingestion import compile_skill_artifact
 
     locator = DocumentLocator(
@@ -358,7 +359,17 @@ async def handle_ingest_document(pool: asyncpg.Pool, payload: dict) -> None:
         filename=payload.get("filename"), content_type_hint=payload.get("content_type_hint"),
         repository=payload.get("repository"), path=payload.get("path"), commit=payload.get("commit"),
     )
-    adapter = select_adapter(locator)
+    # GitHubFileAdapter is deliberately NOT in DEFAULT_DOCUMENT_ADAPTERS (it is a
+    # transport wrapping the per-format adapters' own normalize(), not a peer
+    # format) -- but it is the only adapter that can actually FETCH a document
+    # over the network at all today; the format adapters (HtmlAdapter etc.) only
+    # read local_path/raw_bytes. Tried first, ahead of select_adapter's format
+    # list, whenever the payload names a real repo+path -- confirmed live
+    # 2026-09-23: without this, a payload naming a real GitHub-hosted .html file
+    # was silently matched to the format-only HtmlAdapter by uri suffix and then
+    # failed at fetch() with AdapterNotApplicable, never reaching the network.
+    github_adapter = GitHubFileAdapter()
+    adapter = github_adapter if github_adapter.can_handle(locator) else select_adapter(locator)
     if adapter is None:
         # Refuse rather than fabricate: no registered format recognizes this
         # locator. A payload built by a real enqueue path should never hit
