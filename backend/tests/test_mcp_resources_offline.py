@@ -83,6 +83,8 @@ def _templates():
 
 
 def test_all_six_resource_uris_registered():
+    # v2 surface (conftest pins it): the six legacy resources plus the two
+    # v1 related-claims resources.
     assert _templates() == {
         "stealth://procedures/{procedure_id}",
         "stealth://goals/{goal_id}",
@@ -90,6 +92,8 @@ def test_all_six_resource_uris_registered():
         "stealth://claims/{claim_id}",
         "stealth://evaluations/{evaluation_id}",
         "stealth://runs/{run_id}",
+        "stealth://procedures/{procedure_id}/claims",
+        "stealth://goals/{goal_id}/claims",
     }
 
 

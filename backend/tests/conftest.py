@@ -35,6 +35,12 @@ import os
 
 import dotenv
 
+# The suite exercises every tool's code, including the v2 tools the default
+# MCP v1 surface doesn't expose. Registration happens once at server.py import,
+# so pin the full surface for the session; the real v1 surface is asserted in a
+# fresh subprocess by test_mcp_v1_surface_offline.py.
+os.environ.setdefault("STEALTHLAB_MCP_SURFACE", "v2")
+
 # Point the live-DB suite at a throwaway Postgres without exporting the real
 # DATABASE_URL.
 #

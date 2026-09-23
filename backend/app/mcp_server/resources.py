@@ -282,6 +282,110 @@ async def run_resource(run_id: str, ctx: Context) -> str:
     return md.rstrip() + "\n"
 
 
+# --------------------------------------------------------------------------
+# MCP v1 related-claims resources (final_thing.md). Output is claims.md's own
+# pipe grammar, grouped into contiguous blocks (discovery / precondition /
+# related) so a small executor agent gets everything for one step in a single
+# read or one `rg`. Always scoped to the caller -- never unrestricted.
+# --------------------------------------------------------------------------
+def _claim_statement(row: dict) -> str:
+    props = row.get("properties") or {}
+    if isinstance(props, str):
+        try:
+            props = json.loads(props)
+        except ValueError:
+            props = {}
+    return props.get("statement") or row.get("statement") or row.get("name") or ""
+
+
+def _claim_block(topic: str, rows: list[dict]) -> str:
+    from app.stealth.pipe_format import _kv_field, _row, _SEP
+
+    lines = []
+    for r in rows:
+        cid = str(r.get("claim_id") or r.get("id"))
+        scope = r.get("scope")
+        scope_s = (scope.get("scope_type") if isinstance(scope, dict) else None) or r.get("scope_type") or "global"
+        lines.append(
+            _row("CLAIM", cid, r.get("status") or r.get("claim_status") or "current", topic, scope_s,
+                 _claim_statement(r))
+            + _SEP + _kv_field("version", r.get("version") or 1)
+        )
+    return "\n".join(lines)
+
+
+async def _discovery_claims(pool, procedure_id: str, scope) -> list[dict]:
+    from app.services.access import visibility_predicate
+    from app.services.shards import fanout_fetch
+
+    vis_sql, vis_params = visibility_predicate(scope, param_index=2)
+    rows = await fanout_fetch(
+        pool,
+        f"SELECT id, properties, visibility, scope_type, claim_status, t_created FROM knowledge_nodes "
+        f"WHERE node_type = 'claim' AND t_invalid IS NULL "
+        f"AND properties->>'source' = 'report_discovery' AND properties->>'procedure_id' = $1 "
+        f"AND {vis_sql} ORDER BY t_created",
+        procedure_id, *vis_params,
+    )
+    return [dict(r) for r in rows]
+
+
+async def procedure_claims_resource(procedure_id: str, ctx: Context) -> str:
+    """stealth://procedures/{procedure_id}/claims -- every claim an agent needs
+    for this Procedure, in three contiguous blocks: discoveries recorded
+    against it (report_discovery), claims its preconditions cite, and claims
+    related to its goal."""
+    from app.mcp_server.server import _resolve_live_procedure
+    from app.services.applicability import ProcedureNotFound
+    from app.services.relevant_claims import get_relevant_claims
+
+    scope = _scope()
+    pool = _pool(ctx)
+    try:
+        proc = await _resolve_live_procedure(pool, procedure_id, access_scope=scope)
+    except ProcedureNotFound:
+        return _NOT_FOUND
+    stable_id = str(proc["procedure_id"])
+    discoveries = await _discovery_claims(pool, stable_id, scope)
+    preconditions = await _pg.get_procedure_claims(pool, str(proc["id"]), scope=scope)
+    related = await get_relevant_claims(pool, goal=proc.get("goal") or proc.get("name") or "",
+                                        access_scope=scope, top_k=10)
+    seen = {str(r.get("id")) for r in discoveries + preconditions}
+    related = [r for r in related if str(r.get("claim_id")) not in seen]
+    blocks = [f"# claims for procedure {stable_id} ({proc.get('name')})"]
+    for topic, rows in (("discovery", discoveries), ("precondition", preconditions), ("related", related)):
+        if rows:
+            blocks.append(_claim_block(topic, rows))
+    return "\n".join(blocks) + "\n"
+
+
+async def goal_claims_resource(goal_id: str, ctx: Context) -> str:
+    """stealth://goals/{goal_id}/claims -- claims related to one Goal."""
+    from app.services import goals as _goals
+    from app.services.relevant_claims import get_relevant_claims
+
+    scope = _scope()
+    pool = _pool(ctx)
+    goal = await _goals.get_goal(pool, goal_id, scope=scope)
+    if goal is None:
+        return _NOT_FOUND
+    related = await get_relevant_claims(pool, goal=goal.get("canonical_name") or "", access_scope=scope, top_k=10)
+    body = _claim_block("related", related)
+    return f"# claims for goal {goal_id} ({goal.get('canonical_name')})\n" + (body + "\n" if body else "")
+
+
+_V1_RESOURCES = [
+    ("stealth://claims/{claim_id}", "claim", "Claim",
+     "One structured claim: subject/predicate/object, truth state, epistemic "
+     "status, and its live evidence.", claim_resource),
+    ("stealth://procedures/{procedure_id}/claims", "procedure-claims", "Claims for a procedure",
+     "Every claim needed for one Procedure, as grep-friendly CLAIM lines in "
+     "contiguous blocks: discoveries recorded against it, claims its "
+     "preconditions cite, and claims related to its goal.", procedure_claims_resource),
+    ("stealth://goals/{goal_id}/claims", "goal-claims", "Claims for a goal",
+     "Claims related to one Goal, as grep-friendly CLAIM lines.", goal_claims_resource),
+]
+
 _RESOURCES = [
     ("stealth://procedures/{procedure_id}", "procedure", "Procedure",
      "One procedure's canonical detail: capability, applicability, steps, "
@@ -308,12 +412,20 @@ _RESOURCES = [
 ]
 
 
-def register_resources(server) -> None:
-    """Bind the canonical read-only Resource surface to `server`.
+def resources_for_surface(surface: str) -> list:
+    """v1: claim resources only. v2: the full legacy set plus the v1 ones."""
+    if surface == "v1":
+        return list(_V1_RESOURCES)
+    uris = {r[0] for r in _RESOURCES}
+    return list(_RESOURCES) + [r for r in _V1_RESOURCES if r[0] not in uris]
+
+
+def register_resources(server, surface: str = "v2") -> None:
+    """Bind the read-only Resource surface to `server`.
 
     Called once from server.py after the @server.tool() definitions.
     """
-    for uri, name, title, description, fn in _RESOURCES:
+    for uri, name, title, description, fn in resources_for_surface(surface):
         server.resource(uri, name=name, title=title, description=description,
                         mime_type="text/markdown")(fn)
 

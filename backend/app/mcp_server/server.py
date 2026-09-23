@@ -438,7 +438,8 @@ _TOOL_SCOPES: dict[str, str] = {
     **{n: _WRITE for n in (
         "submit_procedure", "create_goal", "report_execution", "record_run_update", "record_stealth_edit",
         "declare_file_intent", "report_node_progress", "commit_local_sync", "init_workspace",
-        "open_exploration", "close_exploration", "verify_completion", "unsync_local_project")},
+        "open_exploration", "close_exploration", "verify_completion", "unsync_local_project",
+        "report_discovery")},
     **{n: _acx.INGESTION_SUBMIT for n in ("ingest_trajectory", "run_semantic_extraction", "reextract_trajectory")},
     **{n: _EXEC for n in (
         "find_best_way", "reproduce_procedure", "execute_goal", "continue_run",
@@ -460,9 +461,21 @@ def _enforce_tool_scope(tool_name: str) -> None:
         raise PermissionError(f"forbidden: tool {tool_name!r} requires scope {needed!r}")
 
 
-def _traced_tool(*targs, **tkwargs):
-    register = _register_tool(*targs, **tkwargs)
+# MCP v1 surface (final_thing.md): an agent sees exactly two tools -- find the
+# way (find_ways) and report what it learned (report_discovery) -- plus
+# read-only claim resources. Every other tool is v2: its code, tests and
+# callers stay intact (still importable, still unit-testable as plain
+# functions), it just isn't registered on the MCP surface. Set
+# STEALTHLAB_MCP_SURFACE=v2 to expose the full legacy surface again.
+MCP_SURFACE = os.environ.get("STEALTHLAB_MCP_SURFACE", "v1").strip().lower()
+V1_TOOLS: frozenset[str] = frozenset({"find_ways", "report_discovery"})
 
+
+def surface_includes(tool_name: str, surface: str = None) -> bool:  # type: ignore[assignment]
+    return (surface or MCP_SURFACE) != "v1" or tool_name in V1_TOOLS
+
+
+def _traced_tool(*targs, **tkwargs):
     def deco(fn):
         import functools as _ft
 
@@ -472,7 +485,9 @@ def _traced_tool(*targs, **tkwargs):
             with telemetry.span(f"mcp.tool.{fn.__name__}", kind="TOOL",
                                 on_error=telemetry.FailureCode.UNKNOWN, tool=fn.__name__):
                 return await fn(*a, **k)
-        return register(traced_fn)
+        if not surface_includes(fn.__name__):
+            return traced_fn  # v2: defined and callable in-process, not exposed over MCP
+        return _register_tool(*targs, **tkwargs)(traced_fn)
     return deco
 
 
@@ -4206,6 +4221,98 @@ async def find_ways(
     }, default=str)
 
 
+DISCOVERY_KINDS = frozenset({"fix", "missing_step", "precondition", "better_way", "correction", "filled_gap"})
+_DISCOVERY_TEXT_MAX = 4000
+_DISCOVERY_PROOF_MAX = 8000
+
+
+@server.tool()
+async def report_discovery(
+    kind: str, procedure_id: str, problem: str, solution: str, ctx: Context,
+    step_order: Optional[int] = None, proof: str = "", repo: Optional[str] = None,
+) -> str:
+    """
+    Report something learned while carrying out a Procedure: a fix, a missing
+    step, a precondition, a better way, a correction, or a way to do a step
+    that was previously a human-only gap. Call this from the planner (not a
+    step executor) once the proof has been checked.
+
+    kind: one of fix | missing_step | precondition | better_way | correction | filled_gap
+    procedure_id: the Procedure it's about (stable id or version row id)
+    step_order: which step, when it's about one step
+    problem / solution: one or two plain sentences each
+    proof: what shows it worked -- a diff, a test command and its output
+    repo: set when the discovery only holds for one repository (e.g.
+          "github.com/org/repo"); omit when it holds generally
+
+    Stored as a PRIVATE candidate Claim owned by the caller, linked to the
+    Procedure (and step). It comes back to the caller through the
+    `stealth://procedures/{procedure_id}/claims` resource the next time that
+    Procedure is used. Sharing it publicly, verification, and credits are v2 --
+    nothing here is published or paid.
+
+    Requires a signed-in caller (a real user identity): contributing is a
+    write, and a private claim nobody owns could never be read back.
+    """
+    from app.services.applicability import ProcedureNotFound
+    from app.services.claims import capture_claim
+    from app.services.sources import register_source
+    from app.services.trace_redaction import redact_value
+
+    if kind not in DISCOVERY_KINDS:
+        return f"REFUSED: kind must be one of {sorted(DISCOVERY_KINDS)}"
+    if not problem.strip() or not solution.strip():
+        return "REFUSED: problem and solution must both be non-empty"
+    scope = _caller_access_scope()
+    if not scope.viewer_id:
+        return "REFUSED: sign in to contribute -- report_discovery needs a real user identity"
+
+    pool = ctx.request_context.lifespan_context["pool"]
+    try:
+        proc = await _resolve_live_procedure(pool, procedure_id, access_scope=scope)
+    except ProcedureNotFound as exc:
+        return f"REFUSED: {exc}"
+
+    # Free text from an agent's working session can carry secrets (tokens in
+    # test output, keys in a diff): same redaction chokepoint trace ingestion uses.
+    matched: list[str] = []
+    problem_r = redact_value(problem.strip()[:_DISCOVERY_TEXT_MAX], matched)
+    solution_r = redact_value(solution.strip()[:_DISCOVERY_TEXT_MAX], matched)
+    proof_r = redact_value(proof[:_DISCOVERY_PROOF_MAX], matched)
+
+    stable_id = str(proc["procedure_id"])
+    where = f"step {step_order}" if step_order is not None else "procedure"
+    created_by = _resolve_caller_identity(fallback="report_discovery")
+    src = await register_source(
+        pool, source_type="agent_execution", locator=f"stealth-discovery:{stable_id}",
+        provenance="company_ingested", created_by=created_by,
+        visibility="public", owner_id=scope.viewer_id, scope_type="global", scope_entity_id=None,
+    )
+    claim_id = await capture_claim(
+        pool,
+        statement=f"[{kind}] {proc.get('name')} {where}: {problem_r} -> {solution_r}",
+        task_ids=[], source_ref=src["id"],
+        subject=f"procedure:{stable_id}" + (f"#step{step_order}" if step_order is not None else ""),
+        predicate=kind, object=solution_r,
+        properties={
+            "source": "report_discovery", "discovery_kind": kind,
+            "procedure_id": stable_id, "procedure_row_id": str(proc["id"]),
+            "step_order": step_order, "problem": problem_r, "solution": solution_r,
+            "proof": proof_r, "share": False, "redacted_patterns": sorted(set(matched)),
+        },
+        created_by=created_by, owner_id=scope.viewer_id, visibility="private",
+        scope_type="repository" if repo else "global", scope_entity_id=repo,
+    )
+    if claim_id is None:
+        return "REFUSED: the claim store declined this discovery (provenance anchor rule)"
+    return json.dumps({
+        "claim_id": claim_id, "visibility": "private", "status": "candidate",
+        "procedure_id": stable_id, "step_order": step_order, "kind": kind,
+        "redacted": bool(matched),
+        "next": f"returned by stealth://procedures/{stable_id}/claims for you; sharing/verification/credits are v2",
+    }, default=str)
+
+
 @server.tool()
 async def get_goal_run_status(workspace_root: str, ctx: Context) -> str:  # noqa: ARG001
     """
@@ -5575,8 +5682,12 @@ async def reextract_trajectory(extraction_id: str, ctx: Context) -> str:
 from app.mcp_server.resources import register_resources
 from app.mcp_server.prompts import register_prompts
 
-register_resources(server)
-register_prompts(server)
+register_resources(server, surface=MCP_SURFACE)
+if MCP_SURFACE != "v1":
+    # The orchestration prompts name v2 tools (find_best_way, search_procedures,
+    # ...); exposing them on the two-tool v1 surface would point agents at
+    # tools that aren't there.
+    register_prompts(server)
 
 
 if __name__ == "__main__":
