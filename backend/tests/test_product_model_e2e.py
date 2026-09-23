@@ -3,12 +3,12 @@
 
 Proves the whole chain WITHOUT a hand-written "final best" row:
 
-    Problem -> Benchmark v1 -> Solution A + Solution B
+    Goal -> Benchmark v1 -> Solution A + Solution B
             -> real execution_plans / task_graphs / executions / evidence
             -> request_evaluation -> complete_evaluation (metrics RECOMPUTED
                from the linked executions, not from the caller)
-            -> problem_leaderboard -> current_best derived from Wilson lower
-            -> same answer via REST GET /v1/problems/{id}/leaderboard
+            -> goal_leaderboard -> current_best derived from Wilson lower
+            -> same answer via REST GET /v1/goals/{id}/leaderboard
 
 Also proves §16: an evaluation cannot be completed with no execution lineage
 (service raises; the DB trigger is the backstop).
@@ -30,6 +30,7 @@ pytestmark = pytest.mark.skipif(
 from app.db.session import create_pool  # noqa: E402
 from app.services import product_model as pm  # noqa: E402
 from app.services.access import AccessScope  # noqa: E402
+from app.services.goals import find_or_create_goal  # noqa: E402
 from app.services.procedures import capture_procedure  # noqa: E402
 from app.utils.ids import uuid7  # noqa: E402
 
@@ -101,12 +102,14 @@ async def test_product_model_lineage_and_current_best_are_derived_not_stored():
     scope = AccessScope.unrestricted()
     tag = uuid.uuid4().hex[:8]
     try:
-        problem = await pm.create_problem(
-            pool, title=f"[pm-e2e {tag}] reduce coding-agent context",
-            objective="fewer input tokens at equal task success", proposer="pm_e2e",
+        goal = await find_or_create_goal(
+            pool, canonical_name=f"[pm-e2e {tag}] reduce coding-agent context",
+            scope_type="global", provenance="system_pending_review",
+            objective="fewer input tokens at equal task success",
+            created_by="pm_e2e", on_unavailable="create",
         )
         bench = await pm.create_benchmark(
-            pool, problem_id=problem["id"], name="ctx-bench", version=1,
+            pool, goal_id=goal["id"], name="ctx-bench", version=1,
             evaluation_protocol={"verification": "deterministic"},
             environment_specification={"runtime": "linux"},
         )
@@ -114,11 +117,11 @@ async def test_product_model_lineage_and_current_best_are_derived_not_stored():
         proc_a_id, proc_a_row = await _make_procedure(pool, f"pm-e2e-{tag}-solution-A")
         proc_b_id, proc_b_row = await _make_procedure(pool, f"pm-e2e-{tag}-solution-B")
         sol_a = await pm.associate_solution(
-            pool, problem_id=problem["id"], solution_type="procedure",
+            pool, goal_id=goal["id"], solution_type="procedure",
             target_id=proc_a_id, proposer="pm_e2e", status="active",
         )
         sol_b = await pm.associate_solution(
-            pool, problem_id=problem["id"], solution_type="procedure",
+            pool, goal_id=goal["id"], solution_type="procedure",
             target_id=proc_b_id, proposer="pm_e2e", status="active",
         )
 
@@ -127,12 +130,12 @@ async def test_product_model_lineage_and_current_best_are_derived_not_stored():
         exec_b = await _run_executions(pool, proc_b_id, proc_b_row, n=30, successes=12)
 
         eval_a = await pm.request_evaluation(
-            pool, problem_id=problem["id"], benchmark_id=bench["id"], solution_id=sol_a["id"],
+            pool, goal_id=goal["id"], benchmark_id=bench["id"], solution_id=sol_a["id"],
             procedure_id=proc_a_id, procedure_version=1,
             environment={"runtime": "linux"}, methodology={"verification": "deterministic"},
         )
         eval_b = await pm.request_evaluation(
-            pool, problem_id=problem["id"], benchmark_id=bench["id"], solution_id=sol_b["id"],
+            pool, goal_id=goal["id"], benchmark_id=bench["id"], solution_id=sol_b["id"],
             procedure_id=proc_b_id, procedure_version=1,
             environment={"runtime": "linux"}, methodology={"verification": "deterministic"},
         )
@@ -150,7 +153,7 @@ async def test_product_model_lineage_and_current_best_are_derived_not_stored():
         assert done_a["verification_summary"]["source"] == "recomputed_from_evaluation_executions"
         assert done_a["metrics"]["verified_success_wilson_lower"] > done_b["metrics"]["verified_success_wilson_lower"]
 
-        lb = await pm.problem_leaderboard(pool, problem["id"], scope=scope)
+        lb = await pm.goal_leaderboard(pool, goal["id"], scope=scope)
         assert lb["current_best"] == [sol_a["id"]], lb
         assert lb["current_best_is_tie"] is False
         by_sol = {e["solution_id"]: e for e in lb["leaderboard"]}
@@ -158,17 +161,17 @@ async def test_product_model_lineage_and_current_best_are_derived_not_stored():
         assert by_sol[sol_b["id"]]["state"] in ("HIGH_PERFORMING", "PROMISING", "INSUFFICIENT_EVIDENCE")
         assert by_sol[sol_a["id"]]["run_count"] == 30 and by_sol[sol_a["id"]]["verified_successes"] == 28
 
-        # no stored winner: the problem/solution rows carry no 'winner'/'best' field
-        prob_row = await pm.get_problem(pool, problem["id"], scope=scope)
-        assert "winner" not in prob_row and "best_solution_id" not in prob_row
+        # no stored winner: the goal/solution rows carry no 'winner'/'best' field
+        goal_row = await pm.get_goal_for_product(pool, goal["id"], scope=scope)
+        assert "winner" not in goal_row and "best_solution_id" not in goal_row
 
         # §57 REST leg: the same current_best via the HTTP surface.
         import httpx
-        from app.api import problems as problems_api
+        from app.api import goals as goals_api
 
-        transport = httpx.ASGITransport(app=_solo_app(problems_api))
+        transport = httpx.ASGITransport(app=_solo_app(goals_api))
         async with httpx.AsyncClient(transport=transport, base_url="http://t") as c:
-            r = await c.get(f"/v1/problems/{problem['id']}/leaderboard")
+            r = await c.get(f"/v1/goals/{goal['id']}/leaderboard")
             assert r.status_code == 200, r.text
             assert r.json()["current_best"] == [sol_a["id"]]
             r2 = await c.get("/v1/best-way", params={"goal": "reduce coding agent context tokens"})
@@ -179,7 +182,7 @@ async def test_product_model_lineage_and_current_best_are_derived_not_stored():
         await pool.close()
 
 
-def _solo_app(problems_api):
+def _solo_app(goals_api):
     from fastapi import FastAPI
     from app.db.session import get_pool
 
@@ -190,5 +193,7 @@ def _solo_app(problems_api):
         request.app.state.pool = await get_pool()
         return await call_next(request)
 
-    app.include_router(problems_api.router)
+    app.include_router(goals_api.router)
+    app.include_router(goals_api._products_router)
+    app.include_router(goals_api._best_way_router)
     return app

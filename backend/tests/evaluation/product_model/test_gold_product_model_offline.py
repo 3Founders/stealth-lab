@@ -1,4 +1,4 @@
-"""Gold-labeled offline coverage for the Problem/Benchmark/Solution/Evaluation
+"""Gold-labeled offline coverage for the Goal/Benchmark/Solution/Evaluation
 product layer (task spec sections 2-4), against the REAL
 app.services.product_model service -- no DB, no mocks of the thing under
 test.
@@ -8,14 +8,16 @@ Two independent things are proven here, both without a database:
 1. evaluations_comparable() is a pure function -- comparability.json gold-
    matrix-drives it exactly like gold_applicability drives
    check_hard_constraints.
-2. product_model's anti-fabrication / input-validation gates reject BEFORE
-   ever opening a transaction: create_problem's blank-title check,
-   associate_solution's solution_type whitelist check, and
-   complete_evaluation's empty-execution_ids check (spec section 3's "no
-   caller-fabricated completion") all raise synchronously before the first
-   `async with tenant_transaction(...)` line in product_model.py -- so they
-   are exercised here with pool=None, proving the reject is real code
-   executing, not a test double standing in for it.
+2. anti-fabrication / input-validation gates reject BEFORE ever opening a
+   transaction (or, for Goal creation, even before the pool is queried):
+   app.services.goals.find_or_create_goal's blank-canonical_name check (the
+   former create_problem's blank-title check, migrated to Goal by
+   migration 110), product_model's associate_solution solution_type
+   whitelist check, and complete_evaluation's empty-execution_ids check
+   (spec section 3's "no caller-fabricated completion") all raise
+   synchronously before the first `async with tenant_transaction(...)` /
+   pool access -- so they are exercised here with pool=None, proving the
+   reject is real code executing, not a test double standing in for it.
 """
 from __future__ import annotations
 
@@ -24,10 +26,10 @@ from pathlib import Path
 
 import pytest
 
+from app.services.goals import find_or_create_goal
 from app.services.product_model import (
     associate_solution,
     complete_evaluation,
-    create_problem,
     evaluations_comparable,
 )
 from tests.evaluation.harness.gold_runner import load_gold_set, run_gold_set
@@ -64,16 +66,25 @@ def test_gold_comparability_matrix():
 # ---------------------------------------------------------------------------
 
 
-def test_create_problem_rejects_blank_title_without_touching_the_pool():
-    with pytest.raises(ValueError, match="title"):
-        asyncio.run(create_problem(pool=None, title="   "))
+def test_find_or_create_goal_rejects_blank_canonical_name_without_touching_the_pool():
+    """The former create_problem's blank-title reject -- migration 110 moved
+    Goal creation's own validation to find_or_create_goal, and its blank-name
+    check (normalize_goal_name('   ') == '') still raises synchronously,
+    before any `pool` access, exactly like the retired function did."""
+    with pytest.raises(ValueError, match="canonical_name"):
+        asyncio.run(
+            find_or_create_goal(
+                pool=None, canonical_name="   ", scope_type="global",
+                provenance="prior_library",
+            )
+        )
 
 
 def test_associate_solution_rejects_unknown_solution_type_without_touching_the_pool():
     with pytest.raises(ValueError, match="solution_type"):
         asyncio.run(
             associate_solution(
-                pool=None, problem_id="p1", solution_type="not_a_real_type", target_id="t1",
+                pool=None, goal_id="g1", solution_type="not_a_real_type", target_id="t1",
             )
         )
 

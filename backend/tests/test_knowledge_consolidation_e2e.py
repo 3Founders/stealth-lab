@@ -22,8 +22,9 @@ from app.db.session import create_pool
 from app.economy import credits as credits_service
 from app.economy import submissions as submissions_service
 from app.economy.verification import record_usage_event
+from app.services.goals import find_or_create_goal
 from app.services.procedures import capture_procedure, supersede_procedure, OUTCOME_WRITER_STAMP
-from app.services.product_model import associate_solution, create_problem, request_evaluation
+from app.services.product_model import associate_solution, request_evaluation
 from app.utils.ids import uuid7
 
 DATABASE_URL = os.environ.get("DATABASE_URL")
@@ -39,12 +40,16 @@ async def _cleanup(pool, prefix: str) -> None:
     await pool.execute("DELETE FROM procedure_submissions WHERE submitted_by LIKE $1", f"{prefix}%")
     await pool.execute("DELETE FROM benchmark_submissions WHERE submitted_by LIKE $1", f"{prefix}%")
     await pool.execute("DELETE FROM procedures WHERE created_by LIKE $1", f"{prefix}%")
-    await pool.execute("DELETE FROM problems WHERE title LIKE $1", f"[{prefix}%")
+    await pool.execute("DELETE FROM goals WHERE canonical_name LIKE $1", f"[{prefix}%")
 
 
 async def _make_goal(pool, prefix: str) -> str:
-    problem = await create_problem(pool, title=f"[{prefix}] a goal", description="d", objective="o", constraints=[], status="open", proposer=None, provenance="system_pending_review", metadata={}, visibility="public", scope_type="global", scope_entity_id=None)
-    return str(problem["id"])
+    goal = await find_or_create_goal(
+        pool, canonical_name=f"[{prefix}] a goal", scope_type="global",
+        provenance="system_pending_review", description="d", objective="o",
+        constraints=[], visibility="public", on_unavailable="create",
+    )
+    return str(goal["id"])
 
 
 async def _verified_execution(pool, *, procedure_row_id, procedure_id, version, created_by, outcome="success"):
@@ -195,15 +200,15 @@ def test_benchmark_lifecycle_used_and_validated_derive_from_real_evaluations():
             assert still_unused["lifecycle"]["used"] is False, "acceptance alone must not imply usage"
 
             proc = await capture_procedure(pool, name="p", goal="g", steps=["s"], provenance="system_pending_review", scope_type="global", created_by=submitter, owner_id=submitter)
-            sol = await associate_solution(pool, problem_id=goal_id, solution_type="procedure", target_id=proc["id"], proposer=submitter)
-            ev_req = await request_evaluation(pool, problem_id=goal_id, benchmark_id=accepted["benchmark_id"], solution_id=sol["id"], procedure_id=proc["id"], procedure_version=1, environment={}, methodology={})
+            sol = await associate_solution(pool, goal_id=goal_id, solution_type="procedure", target_id=proc["id"], proposer=submitter)
+            ev_req = await request_evaluation(pool, goal_id=goal_id, benchmark_id=accepted["benchmark_id"], solution_id=sol["id"], procedure_id=proc["id"], procedure_version=1, environment={}, methodology={})
 
             row = await pool.fetchrow("UPDATE evaluations SET status='completed', aggregate_result='pass', run_count=1, completed_at=now() WHERE id=$1 RETURNING *", ev_req["id"])
             used_only = await submissions_service.get_benchmark_submission(pool, accepted["id"])
             assert used_only["lifecycle"]["used"] is True
             assert used_only["lifecycle"]["validated"] is False, "one pass-only result does not demonstrate the benchmark distinguishes outcomes"
 
-            ev_req2 = await request_evaluation(pool, problem_id=goal_id, benchmark_id=accepted["benchmark_id"], solution_id=sol["id"], procedure_id=proc["id"], procedure_version=1, environment={"x": 1}, methodology={})
+            ev_req2 = await request_evaluation(pool, goal_id=goal_id, benchmark_id=accepted["benchmark_id"], solution_id=sol["id"], procedure_id=proc["id"], procedure_version=1, environment={"x": 1}, methodology={})
             await pool.execute("UPDATE evaluations SET status='completed', aggregate_result='fail', run_count=1, completed_at=now() WHERE id=$1", ev_req2["id"])
             validated = await submissions_service.get_benchmark_submission(pool, accepted["id"])
             assert validated["lifecycle"]["validated"] is True, "a recorded pass AND a recorded fail together demonstrate real discrimination"

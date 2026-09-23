@@ -31,6 +31,7 @@ from app.db.session import create_pool  # noqa: E402
 from app.services import product_model as pm  # noqa: E402
 from app.services.access import AccessScope  # noqa: E402
 from app.services.claims import capture_claim, relate_claims  # noqa: E402
+from app.services.goals import find_or_create_goal  # noqa: E402
 from app.services.procedure_extraction.derive import precondition_with_claim  # noqa: E402
 from app.services.procedures import capture_procedure  # noqa: E402
 from tests.test_product_model_e2e import _FakeEmbedder, _make_procedure, _run_executions  # noqa: E402
@@ -93,12 +94,14 @@ async def test_stale_underlying_procedure_drops_out_of_current_best_and_fresh_on
     scope = AccessScope.unrestricted()
     tag = uuid.uuid4().hex[:8]
     try:
-        problem = await pm.create_problem(
-            pool, title=f"[{_PREFIX} {tag}] keep the deploy playbook current",
-            objective="deploy succeeds first try", proposer="pm_stale_lb_e2e",
+        goal = await find_or_create_goal(
+            pool, canonical_name=f"[{_PREFIX} {tag}] keep the deploy playbook current",
+            scope_type="global", provenance="system_pending_review",
+            objective="deploy succeeds first try", created_by="pm_stale_lb_e2e",
+            on_unavailable="create",
         )
         bench = await pm.create_benchmark(
-            pool, problem_id=problem["id"], name="deploy-bench", version=1,
+            pool, goal_id=goal["id"], name="deploy-bench", version=1,
             evaluation_protocol={"verification": "deterministic"},
             environment_specification={"runtime": "linux"},
         )
@@ -108,28 +111,28 @@ async def test_stale_underlying_procedure_drops_out_of_current_best_and_fresh_on
         pb_id, pb_row = await _make_procedure(pool, f"{_PREFIX}-B-{tag}")
 
         sol_a = await pm.associate_solution(
-            pool, problem_id=problem["id"], solution_type="procedure",
+            pool, goal_id=goal["id"], solution_type="procedure",
             target_id=pa_id, proposer="pm_stale_lb_e2e", status="active")
         sol_b = await pm.associate_solution(
-            pool, problem_id=problem["id"], solution_type="procedure",
+            pool, goal_id=goal["id"], solution_type="procedure",
             target_id=pb_id, proposer="pm_stale_lb_e2e", status="active")
 
         # A clearly ahead of B, both above the BEST_VERIFIED floor.
         exec_a = await _run_executions(pool, pa_id, pa_row, n=30, successes=30)
         exec_b = await _run_executions(pool, pb_id, pb_row, n=30, successes=28)
         eval_a = await pm.request_evaluation(
-            pool, problem_id=problem["id"], benchmark_id=bench["id"], solution_id=sol_a["id"],
+            pool, goal_id=goal["id"], benchmark_id=bench["id"], solution_id=sol_a["id"],
             procedure_id=pa_id, procedure_version=1,
             environment={"runtime": "linux"}, methodology={"verification": "deterministic"})
         eval_b = await pm.request_evaluation(
-            pool, problem_id=problem["id"], benchmark_id=bench["id"], solution_id=sol_b["id"],
+            pool, goal_id=goal["id"], benchmark_id=bench["id"], solution_id=sol_b["id"],
             procedure_id=pb_id, procedure_version=1,
             environment={"runtime": "linux"}, methodology={"verification": "deterministic"})
         done_a = await pm.complete_evaluation(pool, eval_a["id"], execution_ids=exec_a)
         await pm.complete_evaluation(pool, eval_b["id"], execution_ids=exec_b)
 
         # --- BEFORE: A is the sole current best, both are BEST_VERIFIED. ---
-        lb0 = await pm.problem_leaderboard(pool, problem["id"], scope=scope)
+        lb0 = await pm.goal_leaderboard(pool, goal["id"], scope=scope)
         by0 = {e["solution_id"]: e for e in lb0["leaderboard"]}
         assert lb0["current_best"] == [sol_a["id"]], lb0
         assert by0[sol_a["id"]]["state"] == "BEST_VERIFIED"
@@ -144,7 +147,7 @@ async def test_stale_underlying_procedure_drops_out_of_current_best_and_fresh_on
         assert await _staleness(pool, pb_row) == "fresh"   # B untouched
 
         # --- AFTER: recompute the leaderboard through the real service. ---
-        lb1 = await pm.problem_leaderboard(pool, problem["id"], scope=scope)
+        lb1 = await pm.goal_leaderboard(pool, goal["id"], scope=scope)
         by1 = {e["solution_id"]: e for e in lb1["leaderboard"]}
 
         # A is no longer an eligible current-best winner...
@@ -175,7 +178,7 @@ async def test_stale_underlying_procedure_drops_out_of_current_best_and_fresh_on
         assert hist["procedure_id"] == pa_id                 # lineage still pinned
         assert hist["procedure_version"] == 1
         assert hist["verification_summary"]["verified_successes"] == 30
-        all_evals = await pm.list_problem_evaluations(pool, problem["id"], scope=scope)
+        all_evals = await pm.list_goal_evaluations(pool, goal["id"], scope=scope)
         assert len(all_evals) == 2, "staleness must not fabricate a new evaluation"
         assert {e["status"] for e in all_evals} == {"completed"}
     finally:
@@ -188,32 +191,33 @@ async def test_stale_only_solution_leaves_no_current_best():
     scope = AccessScope.unrestricted()
     tag = uuid.uuid4().hex[:8]
     try:
-        problem = await pm.create_problem(
-            pool, title=f"[{_PREFIX} {tag}] single-solution problem",
-            objective="x", proposer="pm_stale_lb_e2e")
+        goal = await find_or_create_goal(
+            pool, canonical_name=f"[{_PREFIX} {tag}] single-solution goal",
+            scope_type="global", provenance="system_pending_review",
+            objective="x", created_by="pm_stale_lb_e2e", on_unavailable="create")
         bench = await pm.create_benchmark(
-            pool, problem_id=problem["id"], name="single-bench", version=1,
+            pool, goal_id=goal["id"], name="single-bench", version=1,
             evaluation_protocol={"verification": "deterministic"},
             environment_specification={"runtime": "linux"})
         pa_id, pa_row, claim_x, subject, task_name = await _claim_gated_procedure(
             pool, f"{_PREFIX}-solo-{tag}", tag)
         sol = await pm.associate_solution(
-            pool, problem_id=problem["id"], solution_type="procedure",
+            pool, goal_id=goal["id"], solution_type="procedure",
             target_id=pa_id, proposer="pm_stale_lb_e2e", status="active")
         ex = await _run_executions(pool, pa_id, pa_row, n=30, successes=30)
         ev = await pm.request_evaluation(
-            pool, problem_id=problem["id"], benchmark_id=bench["id"], solution_id=sol["id"],
+            pool, goal_id=goal["id"], benchmark_id=bench["id"], solution_id=sol["id"],
             procedure_id=pa_id, procedure_version=1,
             environment={"runtime": "linux"}, methodology={"verification": "deterministic"})
         await pm.complete_evaluation(pool, ev["id"], execution_ids=ex)
 
-        assert (await pm.problem_leaderboard(pool, problem["id"], scope=scope))["current_best"] == [sol["id"]]
+        assert (await pm.goal_leaderboard(pool, goal["id"], scope=scope))["current_best"] == [sol["id"]]
 
         marked = await _supersede_claim(pool, claim_x, subject, task_name)
         assert pa_row in marked
         assert await _staleness(pool, pa_row) == "stale"
 
-        lb = await pm.problem_leaderboard(pool, problem["id"], scope=scope)
+        lb = await pm.goal_leaderboard(pool, goal["id"], scope=scope)
         assert lb["current_best"] == []          # §38: "no verified solution yet"
         assert lb["current_best_is_tie"] is False
         assert lb["leaderboard"][0]["state"] == "STALE"   # still visible, just not a leader

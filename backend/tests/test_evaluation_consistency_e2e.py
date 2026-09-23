@@ -1,9 +1,9 @@
 """
 Real, live-database regression tests for the N1 hardening of
 request_evaluation() (final-audit non-blocking finding): the caller-supplied
-problem_id/benchmark_id/solution_id/procedure_id/procedure_version bundle is
+goal_id/benchmark_id/solution_id/procedure_id/procedure_version bundle is
 no longer trusted as self-consistent -- solution_id and benchmark_id are
-resolved server-side and cross-checked against problem_id, and (for
+resolved server-side and cross-checked against goal_id, and (for
 procedure solutions) the real target procedure+version is resolved from the
 solution's own target_id, not from whatever procedure_id/procedure_version
 the client separately supplied.
@@ -20,9 +20,10 @@ import os
 import pytest
 
 from app.db.session import create_pool
+from app.services.goals import find_or_create_goal
 from app.services.procedures import capture_procedure
 from app.services.product_model import (
-    associate_solution, complete_evaluation, create_benchmark, create_problem,
+    associate_solution, complete_evaluation, create_benchmark,
     request_evaluation,
 )
 from app.utils.ids import uuid7
@@ -36,34 +37,34 @@ pytestmark = pytest.mark.skipif(
 
 async def _cleanup(pool, prefix: str) -> None:
     # benchmarks in this file are all created with a fixed, non-prefixed
-    # provenance ("system_pending_review") -- clean them up by problem_id
-    # (via the prefix-tagged problem title) instead of by provenance.
+    # provenance ("system_pending_review") -- clean them up by goal_id
+    # (via the prefix-tagged goal canonical_name) instead of by provenance.
     await pool.execute("DELETE FROM evaluation_executions WHERE evaluation_id IN (SELECT id FROM evaluations WHERE provenance LIKE $1)", f"{prefix}%")
     await pool.execute("DELETE FROM evaluations WHERE provenance LIKE $1", f"{prefix}%")
     await pool.execute("DELETE FROM solutions WHERE proposer LIKE $1", f"{prefix}%")
-    await pool.execute("DELETE FROM benchmarks WHERE problem_id IN (SELECT id FROM problems WHERE title LIKE $1)", f"[{prefix}%")
+    await pool.execute("DELETE FROM benchmarks WHERE goal_id IN (SELECT id FROM goals WHERE canonical_name LIKE $1)", f"[{prefix}%")
     try:
         await pool.execute("DELETE FROM procedures WHERE created_by LIKE $1", f"{prefix}%")
     except Exception:
         # Band 1.7: `executions` is append-only/frozen by DB trigger -- a
         # procedure a test ran a real execution against can never be
         # deleted again. Expected and harmless in a disposable test DB;
-        # leave that row (and its problem, below) orphaned rather than fail
+        # leave that row (and its goal, below) orphaned rather than fail
         # cleanup.
         pass
     try:
-        await pool.execute("DELETE FROM problems WHERE title LIKE $1", f"[{prefix}%")
+        await pool.execute("DELETE FROM goals WHERE canonical_name LIKE $1", f"[{prefix}%")
     except Exception:
         pass
 
 
 async def _make_goal(pool, prefix: str, suffix: str = "") -> str:
-    problem = await create_problem(
-        pool, title=f"[{prefix}] a goal{suffix}", description="d", objective="o", constraints=[],
-        status="open", proposer=None, provenance="system_pending_review", metadata={},
-        visibility="public", scope_type="global", scope_entity_id=None,
+    goal = await find_or_create_goal(
+        pool, canonical_name=f"[{prefix}] a goal{suffix}", scope_type="global",
+        provenance="system_pending_review", description="d", objective="o",
+        constraints=[], visibility="public", on_unavailable="create",
     )
-    return str(problem["id"])
+    return str(goal["id"])
 
 
 async def _real_execution(pool, proc: dict) -> str:
@@ -91,11 +92,11 @@ def test_N1_matching_solution_procedure_version_succeeds():
             await _cleanup(pool, "n1test-1")
             goal_id = await _make_goal(pool, "n1test-1")
             proc = await capture_procedure(pool, name="p", goal="g", steps=["s"], provenance="system_pending_review", scope_type="global", created_by="n1test-1-owner", owner_id="n1test-1-owner")
-            bench = await create_benchmark(pool, problem_id=goal_id, name="b", provenance="system_pending_review")
-            sol = await associate_solution(pool, problem_id=goal_id, solution_type="procedure", target_id=proc["procedure_id"], status="active", proposer="n1test-1-owner")
+            bench = await create_benchmark(pool, goal_id=goal_id, name="b", provenance="system_pending_review")
+            sol = await associate_solution(pool, goal_id=goal_id, solution_type="procedure", target_id=proc["procedure_id"], status="active", proposer="n1test-1-owner")
 
             ev = await request_evaluation(
-                pool, problem_id=goal_id, benchmark_id=bench["id"], solution_id=sol["id"],
+                pool, goal_id=goal_id, benchmark_id=bench["id"], solution_id=sol["id"],
                 procedure_id=str(proc["procedure_id"]), procedure_version=1,
                 provenance="n1test-1",
             )
@@ -118,11 +119,11 @@ def test_N1_omitted_procedure_fields_are_derived_from_the_solution():
             await _cleanup(pool, "n1test-1b")
             goal_id = await _make_goal(pool, "n1test-1b")
             proc = await capture_procedure(pool, name="p", goal="g", steps=["s"], provenance="system_pending_review", scope_type="global", created_by="n1test-1b-owner", owner_id="n1test-1b-owner")
-            bench = await create_benchmark(pool, problem_id=goal_id, name="b", provenance="system_pending_review")
-            sol = await associate_solution(pool, problem_id=goal_id, solution_type="procedure", target_id=proc["procedure_id"], status="active", proposer="n1test-1b-owner")
+            bench = await create_benchmark(pool, goal_id=goal_id, name="b", provenance="system_pending_review")
+            sol = await associate_solution(pool, goal_id=goal_id, solution_type="procedure", target_id=proc["procedure_id"], status="active", proposer="n1test-1b-owner")
 
             ev = await request_evaluation(
-                pool, problem_id=goal_id, benchmark_id=bench["id"], solution_id=sol["id"],
+                pool, goal_id=goal_id, benchmark_id=bench["id"], solution_id=sol["id"],
                 provenance="n1test-1b",
             )
             assert str(ev["procedure_id"]) == str(proc["procedure_id"])
@@ -140,11 +141,11 @@ def test_N1_wrong_solution_id_is_rejected():
         try:
             await _cleanup(pool, "n1test-2")
             goal_id = await _make_goal(pool, "n1test-2")
-            bench = await create_benchmark(pool, problem_id=goal_id, name="b", provenance="system_pending_review")
+            bench = await create_benchmark(pool, goal_id=goal_id, name="b", provenance="system_pending_review")
 
             with pytest.raises(ValueError, match="not found"):
                 await request_evaluation(
-                    pool, problem_id=goal_id, benchmark_id=bench["id"], solution_id=str(uuid7()),
+                    pool, goal_id=goal_id, benchmark_id=bench["id"], solution_id=str(uuid7()),
                     provenance="n1test-2",
                 )
         finally:
@@ -163,12 +164,12 @@ def test_N1_wrong_procedure_id_is_rejected():
             goal_id = await _make_goal(pool, "n1test-3")
             proc_a = await capture_procedure(pool, name="a", goal="g", steps=["s"], provenance="system_pending_review", scope_type="global", created_by="n1test-3-owner", owner_id="n1test-3-owner")
             proc_b = await capture_procedure(pool, name="b", goal="g", steps=["s"], provenance="system_pending_review", scope_type="global", created_by="n1test-3-owner", owner_id="n1test-3-owner")
-            bench = await create_benchmark(pool, problem_id=goal_id, name="b", provenance="system_pending_review")
-            sol = await associate_solution(pool, problem_id=goal_id, solution_type="procedure", target_id=proc_a["procedure_id"], status="active", proposer="n1test-3-owner")
+            bench = await create_benchmark(pool, goal_id=goal_id, name="b", provenance="system_pending_review")
+            sol = await associate_solution(pool, goal_id=goal_id, solution_type="procedure", target_id=proc_a["procedure_id"], status="active", proposer="n1test-3-owner")
 
             with pytest.raises(ValueError, match="does not match solution"):
                 await request_evaluation(
-                    pool, problem_id=goal_id, benchmark_id=bench["id"], solution_id=sol["id"],
+                    pool, goal_id=goal_id, benchmark_id=bench["id"], solution_id=sol["id"],
                     procedure_id=str(proc_b["procedure_id"]), procedure_version=1,
                     provenance="n1test-3",
                 )
@@ -187,12 +188,12 @@ def test_N1_wrong_procedure_version_is_rejected():
             await _cleanup(pool, "n1test-4")
             goal_id = await _make_goal(pool, "n1test-4")
             proc = await capture_procedure(pool, name="p", goal="g", steps=["s"], provenance="system_pending_review", scope_type="global", created_by="n1test-4-owner", owner_id="n1test-4-owner")
-            bench = await create_benchmark(pool, problem_id=goal_id, name="b", provenance="system_pending_review")
-            sol = await associate_solution(pool, problem_id=goal_id, solution_type="procedure", target_id=proc["procedure_id"], status="active", proposer="n1test-4-owner")
+            bench = await create_benchmark(pool, goal_id=goal_id, name="b", provenance="system_pending_review")
+            sol = await associate_solution(pool, goal_id=goal_id, solution_type="procedure", target_id=proc["procedure_id"], status="active", proposer="n1test-4-owner")
 
             with pytest.raises(ValueError, match="does not match solution"):
                 await request_evaluation(
-                    pool, problem_id=goal_id, benchmark_id=bench["id"], solution_id=sol["id"],
+                    pool, goal_id=goal_id, benchmark_id=bench["id"], solution_id=sol["id"],
                     procedure_id=str(proc["procedure_id"]), procedure_version=1 + 1,
                     provenance="n1test-4",
                 )
@@ -212,12 +213,12 @@ def test_N1_wrong_goal_is_rejected():
             goal_a = await _make_goal(pool, "n1test-5", "-a")
             goal_b = await _make_goal(pool, "n1test-5", "-b")
             proc = await capture_procedure(pool, name="p", goal="g", steps=["s"], provenance="system_pending_review", scope_type="global", created_by="n1test-5-owner", owner_id="n1test-5-owner")
-            bench_b = await create_benchmark(pool, problem_id=goal_b, name="b", provenance="system_pending_review")
-            sol_a = await associate_solution(pool, problem_id=goal_a, solution_type="procedure", target_id=proc["procedure_id"], status="active", proposer="n1test-5-owner")
+            bench_b = await create_benchmark(pool, goal_id=goal_b, name="b", provenance="system_pending_review")
+            sol_a = await associate_solution(pool, goal_id=goal_a, solution_type="procedure", target_id=proc["procedure_id"], status="active", proposer="n1test-5-owner")
 
-            with pytest.raises(ValueError, match="belongs to problem"):
+            with pytest.raises(ValueError, match="belongs to goal"):
                 await request_evaluation(
-                    pool, problem_id=goal_b, benchmark_id=bench_b["id"], solution_id=sol_a["id"],
+                    pool, goal_id=goal_b, benchmark_id=bench_b["id"], solution_id=sol_a["id"],
                     procedure_id=str(proc["procedure_id"]), procedure_version=1,
                     provenance="n1test-5",
                 )
@@ -237,12 +238,12 @@ def test_N1_wrong_benchmark_goal_is_rejected():
             goal_a = await _make_goal(pool, "n1test-6", "-a")
             goal_b = await _make_goal(pool, "n1test-6", "-b")
             proc = await capture_procedure(pool, name="p", goal="g", steps=["s"], provenance="system_pending_review", scope_type="global", created_by="n1test-6-owner", owner_id="n1test-6-owner")
-            bench_b = await create_benchmark(pool, problem_id=goal_b, name="b", provenance="system_pending_review")
-            sol_a = await associate_solution(pool, problem_id=goal_a, solution_type="procedure", target_id=proc["procedure_id"], status="active", proposer="n1test-6-owner")
+            bench_b = await create_benchmark(pool, goal_id=goal_b, name="b", provenance="system_pending_review")
+            sol_a = await associate_solution(pool, goal_id=goal_a, solution_type="procedure", target_id=proc["procedure_id"], status="active", proposer="n1test-6-owner")
 
-            with pytest.raises(ValueError, match="belongs to problem"):
+            with pytest.raises(ValueError, match="belongs to goal"):
                 await request_evaluation(
-                    pool, problem_id=goal_a, benchmark_id=bench_b["id"], solution_id=sol_a["id"],
+                    pool, goal_id=goal_a, benchmark_id=bench_b["id"], solution_id=sol_a["id"],
                     procedure_id=str(proc["procedure_id"]), procedure_version=1,
                     provenance="n1test-6",
                 )
@@ -262,10 +263,10 @@ def test_N1_valid_evaluation_completion_still_works():
             await _cleanup(pool, "n1test-7")
             goal_id = await _make_goal(pool, "n1test-7")
             proc = await capture_procedure(pool, name="p", goal="g", steps=["s"], provenance="system_pending_review", scope_type="global", created_by="n1test-7-owner", owner_id="n1test-7-owner")
-            bench = await create_benchmark(pool, problem_id=goal_id, name="b", provenance="system_pending_review")
-            sol = await associate_solution(pool, problem_id=goal_id, solution_type="procedure", target_id=proc["procedure_id"], status="active", proposer="n1test-7-owner")
+            bench = await create_benchmark(pool, goal_id=goal_id, name="b", provenance="system_pending_review")
+            sol = await associate_solution(pool, goal_id=goal_id, solution_type="procedure", target_id=proc["procedure_id"], status="active", proposer="n1test-7-owner")
             ev = await request_evaluation(
-                pool, problem_id=goal_id, benchmark_id=bench["id"], solution_id=sol["id"],
+                pool, goal_id=goal_id, benchmark_id=bench["id"], solution_id=sol["id"],
                 procedure_id=str(proc["procedure_id"]), procedure_version=1,
                 provenance="n1test-7",
             )
@@ -290,10 +291,10 @@ def test_N1_idempotent_completion_still_intact():
             await _cleanup(pool, "n1test-8")
             goal_id = await _make_goal(pool, "n1test-8")
             proc = await capture_procedure(pool, name="p", goal="g", steps=["s"], provenance="system_pending_review", scope_type="global", created_by="n1test-8-owner", owner_id="n1test-8-owner")
-            bench = await create_benchmark(pool, problem_id=goal_id, name="b", provenance="system_pending_review")
-            sol = await associate_solution(pool, problem_id=goal_id, solution_type="procedure", target_id=proc["procedure_id"], status="active", proposer="n1test-8-owner")
+            bench = await create_benchmark(pool, goal_id=goal_id, name="b", provenance="system_pending_review")
+            sol = await associate_solution(pool, goal_id=goal_id, solution_type="procedure", target_id=proc["procedure_id"], status="active", proposer="n1test-8-owner")
             ev = await request_evaluation(
-                pool, problem_id=goal_id, benchmark_id=bench["id"], solution_id=sol["id"],
+                pool, goal_id=goal_id, benchmark_id=bench["id"], solution_id=sol["id"],
                 procedure_id=str(proc["procedure_id"]), procedure_version=1,
                 provenance="n1test-8",
             )

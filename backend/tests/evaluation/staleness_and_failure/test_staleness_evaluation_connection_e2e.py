@@ -40,8 +40,10 @@ from app.db.session import create_pool  # noqa: E402
 from app.services import product_model as pm  # noqa: E402
 from app.services.access import AccessScope  # noqa: E402
 from app.services.claims import capture_claim, relate_claims  # noqa: E402
+from app.services.goals import normalize_goal_name  # noqa: E402
 from app.services.procedure_extraction.derive import precondition_with_claim  # noqa: E402
 from app.services.procedures import capture_procedure  # noqa: E402
+from app.utils.ids import uuid7  # noqa: E402
 from tests.test_product_model_e2e import _run_executions  # noqa: E402
 
 PREFIX = "staleness-eval-gap-e2e"
@@ -54,6 +56,23 @@ class _FakeEmbedder:
 
 def _tag() -> str:
     return uuid.uuid4().hex[:8]
+
+
+async def _make_goal(pool, canonical_name, *, owner_id=None, visibility="public",
+                      provenance="system_pending_review", scope_type="global"):
+    """Raw-SQL goal fixture (migration 110 retired Problem/create_problem
+    entirely) -- inserts directly into `goals` rather than going through
+    find_or_create_goal's dedup/semantic-identity machinery, which isn't
+    the thing under test here."""
+    gid = str(uuid7())
+    row = await pool.fetchrow(
+        "INSERT INTO goals (id, canonical_name, normalized_name, provenance, owner_id, "
+        " visibility, scope_type) VALUES ($1,$2,$3,$4,$5,$6::visibility_level,$7) "
+        "RETURNING id, canonical_name",
+        gid, canonical_name, normalize_goal_name(canonical_name), provenance, owner_id,
+        visibility, scope_type,
+    )
+    return {"id": str(row["id"]), "canonical_name": row["canonical_name"]}
 
 
 @pytest.mark.asyncio
@@ -88,13 +107,13 @@ async def test_stale_underlying_procedure_removes_solution_from_current_best_but
         proc_row_id = procedure["id"]
         proc_logical_id = procedure["procedure_id"]
 
-        # --- Wire it into a real Problem/Benchmark/Solution/Evaluation. ---
-        problem = await pm.create_problem(
-            pool, title=f"[{PREFIX} {tag}] staleness vs evaluation gap probe", proposer="userA",
+        # --- Wire it into a real Goal/Benchmark/Solution/Evaluation. ---
+        problem = await _make_goal(
+            pool, f"[{PREFIX} {tag}] staleness vs evaluation gap probe", owner_id="userA",
         )
-        bench = await pm.create_benchmark(pool, problem_id=problem["id"], name="stale-gap-bench", version=1)
+        bench = await pm.create_benchmark(pool, goal_id=problem["id"], name="stale-gap-bench", version=1)
         sol = await pm.associate_solution(
-            pool, problem_id=problem["id"], solution_type="procedure", target_id=proc_logical_id,
+            pool, goal_id=problem["id"], solution_type="procedure", target_id=proc_logical_id,
         )
 
         # _run_executions (tests.test_product_model_e2e) writes a real
@@ -108,7 +127,7 @@ async def test_stale_underlying_procedure_removes_solution_from_current_best_but
         exec_ids = await _run_executions(pool, proc_logical_id, proc_row_id, n=n, successes=successes)
 
         ev = await pm.request_evaluation(
-            pool, problem_id=problem["id"], benchmark_id=bench["id"], solution_id=sol["id"],
+            pool, goal_id=problem["id"], benchmark_id=bench["id"], solution_id=sol["id"],
         )
         await pm.complete_evaluation(pool, ev["id"], execution_ids=exec_ids)
 
@@ -120,7 +139,7 @@ async def test_stale_underlying_procedure_removes_solution_from_current_best_but
         )
         assert before_staleness == "fresh"
 
-        board_before = await pm.problem_leaderboard(pool, problem["id"], scope=AccessScope.unrestricted())
+        board_before = await pm.goal_leaderboard(pool, problem["id"], scope=AccessScope.unrestricted())
         assert sol["id"] in board_before["current_best"]
         state_before = next(r["state"] for r in board_before["leaderboard"] if r["solution_id"] == sol["id"])
         assert state_before == "BEST_VERIFIED"
@@ -149,7 +168,7 @@ async def test_stale_underlying_procedure_removes_solution_from_current_best_but
         # every read. The Solution drops out of current_best, is marked
         # STALE/ineligible with a reason, but is neither deleted from the
         # board nor stripped of its historical numbers. ---
-        board_after = await pm.problem_leaderboard(pool, problem["id"], scope=AccessScope.unrestricted())
+        board_after = await pm.goal_leaderboard(pool, problem["id"], scope=AccessScope.unrestricted())
         assert sol["id"] not in board_after["current_best"], (
             "fixed: a Solution whose only underlying procedure is now stale must not "
             "remain current_best"
@@ -179,7 +198,7 @@ async def test_stale_underlying_procedure_removes_solution_from_current_best_but
             "before the claim change -- staleness demotes eligibility, it does not "
             "rewrite completed history"
         )
-        all_evals = await pm.list_problem_evaluations(pool, problem["id"], scope=AccessScope.unrestricted())
+        all_evals = await pm.list_goal_evaluations(pool, problem["id"], scope=AccessScope.unrestricted())
         assert len(all_evals) == 1, "staleness must not fabricate a new Evaluation"
         assert all_evals[0]["id"] == ev["id"]
     finally:

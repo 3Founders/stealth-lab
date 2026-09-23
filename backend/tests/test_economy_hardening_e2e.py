@@ -23,8 +23,9 @@ from app.economy import constants as c
 from app.economy import credits as credits_service
 from app.economy import submissions as submissions_service
 from app.economy.verification import VerificationMismatch, record_usage_event
+from app.services.goals import find_or_create_goal
 from app.services.procedures import capture_procedure
-from app.services.product_model import associate_solution, create_problem
+from app.services.product_model import associate_solution
 from app.utils.ids import uuid7
 
 DATABASE_URL = os.environ.get("DATABASE_URL")
@@ -39,12 +40,16 @@ async def _cleanup(pool, prefix: str) -> None:
     await pool.execute("DELETE FROM procedure_usage_events WHERE executed_by LIKE $1", f"{prefix}%")
     await pool.execute("DELETE FROM procedure_submissions WHERE submitted_by LIKE $1", f"{prefix}%")
     await pool.execute("DELETE FROM procedures WHERE created_by LIKE $1", f"{prefix}%")
-    await pool.execute("DELETE FROM problems WHERE title LIKE $1", f"[{prefix}%")
+    await pool.execute("DELETE FROM goals WHERE canonical_name LIKE $1", f"[{prefix}%")
 
 
 async def _make_goal(pool, prefix: str) -> str:
-    problem = await create_problem(pool, title=f"[{prefix}] a goal", description="d", objective="o", constraints=[], status="open", proposer=None, provenance="system_pending_review", metadata={}, visibility="public", scope_type="global", scope_entity_id=None)
-    return str(problem["id"])
+    goal = await find_or_create_goal(
+        pool, canonical_name=f"[{prefix}] a goal", scope_type="global",
+        provenance="system_pending_review", description="d", objective="o",
+        constraints=[], visibility="public", on_unavailable="create",
+    )
+    return str(goal["id"])
 
 
 async def _make_verified_execution(pool, *, procedure_row_id: str, procedure_id: str, version: int, created_by: str, outcome: str = "success"):
@@ -156,7 +161,7 @@ def test_I_duplicate_usage_event_for_the_same_evidence_does_not_double_pay():
             goal_id = await _make_goal(pool, "econtest-i")
             owner, reuser = "econtest-i-owner", "econtest-i-reuser"
             captured = await capture_procedure(pool, name="p", goal="g", steps=["s"], provenance="system_pending_review", scope_type="global", created_by=owner, owner_id=owner)
-            await associate_solution(pool, problem_id=goal_id, solution_type="procedure", target_id=captured["id"], proposer=owner)
+            await associate_solution(pool, goal_id=goal_id, solution_type="procedure", target_id=captured["id"], proposer=owner)
             run_id, evidence_id = await _make_verified_execution(pool, procedure_row_id=captured["id"], procedure_id=str(captured["procedure_id"]), version=1, created_by=reuser)
 
             event1 = await record_usage_event(pool, procedure_row_id=captured["id"], executor_subject=reuser, execution_run_id=run_id, evidence_id=evidence_id)

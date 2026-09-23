@@ -7,6 +7,7 @@ production), skips (not fails) without one.
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 
 import pytest
@@ -17,9 +18,10 @@ from app.economy.verification import record_usage_event
 from app.services import evidence_trust
 from app.services.access import AccessScope, TenantScope
 from app.services.procedures import capture_procedure, record_execution_outcome, OUTCOME_WRITER_STAMP
+from app.services.goals import normalize_goal_name
 from app.services.product_model import (
-    associate_solution, complete_evaluation, create_benchmark, create_problem,
-    freeze_benchmark, get_problem, list_problem_solutions, request_evaluation,
+    associate_solution, complete_evaluation, create_benchmark,
+    freeze_benchmark, get_goal_for_product, list_goal_solutions, request_evaluation,
 )
 from app.utils.ids import uuid7
 
@@ -38,12 +40,26 @@ async def _cleanup(pool, prefix: str) -> None:
     await pool.execute("DELETE FROM benchmarks WHERE provenance LIKE $1", f"{prefix}%")
     await pool.execute("DELETE FROM procedure_submissions WHERE submitted_by LIKE $1", f"{prefix}%")
     await pool.execute("DELETE FROM procedures WHERE created_by LIKE $1", f"{prefix}%")
-    await pool.execute("DELETE FROM problems WHERE title LIKE $1", f"[{prefix}%")
+    await pool.execute("DELETE FROM goals WHERE canonical_name LIKE $1", f"[{prefix}%")
 
 
 async def _make_goal(pool, prefix: str) -> str:
-    problem = await create_problem(pool, title=f"[{prefix}] a goal", description="d", objective="o", constraints=[], status="open", proposer=None, provenance="system_pending_review", metadata={}, visibility="public", scope_type="global", scope_entity_id=None)
-    return str(problem["id"])
+    """Raw-SQL goal fixture -- migration 110 retired Problem/create_problem
+    entirely; this inserts directly into `goals` rather than going through
+    find_or_create_goal's dedup/semantic-identity machinery, which isn't the
+    thing under test here."""
+    canonical_name = f"[{prefix}] a goal"
+    gid = str(uuid7())
+    row = await pool.fetchrow(
+        "INSERT INTO goals (id, canonical_name, normalized_name, description, objective, "
+        " constraints, status, provenance, metadata, visibility, scope_type, scope_entity_id) "
+        "VALUES ($1,$2,$3,$4,$5,$6::jsonb,$7,$8,$9::jsonb,$10::visibility_level,$11,$12) "
+        "RETURNING id",
+        gid, canonical_name, normalize_goal_name(canonical_name), "d", "o",
+        json.dumps([]), "candidate", "system_pending_review", json.dumps({}),
+        "public", "global", None,
+    )
+    return str(row["id"])
 
 
 def test_B1_direct_associate_never_makes_a_procedure_active_or_rankable():
@@ -56,9 +72,9 @@ def test_B1_direct_associate_never_makes_a_procedure_active_or_rankable():
 
             # Simulates what the HARDENED API route now always does:
             # server-forced status='proposed' regardless of what a client asked for.
-            await associate_solution(pool, problem_id=goal_id, solution_type="procedure", target_id=proc["id"], status="proposed", proposer="bypasstest-b1a-owner")
+            await associate_solution(pool, goal_id=goal_id, solution_type="procedure", target_id=proc["id"], status="proposed", proposer="bypasstest-b1a-owner")
 
-            solutions = await list_problem_solutions(pool, goal_id, scope=AccessScope.unrestricted())
+            solutions = await list_goal_solutions(pool, goal_id, scope=AccessScope.unrestricted())
             active_only = [s for s in solutions if s["status"] == "active"]
             assert len(solutions) == 1 and solutions[0]["status"] == "proposed"
             assert active_only == [], "a direct association must never be listed as an active, rankable Way"
@@ -82,7 +98,7 @@ def test_B1_canonical_acceptance_still_makes_a_procedure_active():
             )
             await submissions_service.review_procedure_submission(pool, submission_id=submission["id"], decision="accepted", actor_subject="bypasstest-b1b-reviewer")
 
-            solutions = await list_problem_solutions(pool, goal_id, scope=AccessScope.unrestricted())
+            solutions = await list_goal_solutions(pool, goal_id, scope=AccessScope.unrestricted())
             assert any(s["status"] == "active" and str(s["target_id"]) == submission["procedure_row_id"] for s in solutions)
         finally:
             await _cleanup(pool, "bypasstest-b1b")
@@ -193,7 +209,7 @@ def test_B3_normal_user_cannot_freeze_a_never_reviewed_benchmark():
         try:
             await _cleanup(pool, "bypasstest-b3a")
             goal_id = await _make_goal(pool, "bypasstest-b3a")
-            bench = await create_benchmark(pool, problem_id=goal_id, name="b", description="d", provenance="system_pending_review")
+            bench = await create_benchmark(pool, goal_id=goal_id, name="b", description="d", provenance="system_pending_review")
             # No benchmark_submissions row exists for this benchmark at all
             # (created directly, bypassing the submission workflow).
             has_accepted = await pool.fetchval("SELECT id FROM benchmark_submissions WHERE benchmark_id = $1 AND status = 'accepted'", bench["id"])
@@ -231,9 +247,9 @@ def test_B4_client_pass_claim_with_no_matching_evidence_is_rejected():
             await _cleanup(pool, "bypasstest-b4a")
             goal_id = await _make_goal(pool, "bypasstest-b4a")
             proc = await capture_procedure(pool, name="p", goal="g", steps=["s"], provenance="system_pending_review", scope_type="global", created_by="bypasstest-b4a-owner", owner_id="bypasstest-b4a-owner")
-            bench = await create_benchmark(pool, problem_id=goal_id, name="b", provenance="system_pending_review")
-            sol = await associate_solution(pool, problem_id=goal_id, solution_type="procedure", target_id=proc["id"], status="active", proposer="bypasstest-b4a-owner")
-            ev = await request_evaluation(pool, problem_id=goal_id, benchmark_id=bench["id"], solution_id=sol["id"], procedure_id=str(proc["procedure_id"]), procedure_version=proc["version"], provenance="bypasstest-b4a")
+            bench = await create_benchmark(pool, goal_id=goal_id, name="b", provenance="system_pending_review")
+            sol = await associate_solution(pool, goal_id=goal_id, solution_type="procedure", target_id=proc["id"], status="active", proposer="bypasstest-b4a-owner")
+            ev = await request_evaluation(pool, goal_id=goal_id, benchmark_id=bench["id"], solution_id=sol["id"], procedure_id=str(proc["procedure_id"]), procedure_version=proc["version"], provenance="bypasstest-b4a")
 
             plan_id, graph_id = str(uuid7()), str(uuid7())
             await pool.execute(
@@ -263,9 +279,9 @@ def test_B4_unrelated_execution_id_is_rejected():
             goal_id = await _make_goal(pool, "bypasstest-b4c")
             proc = await capture_procedure(pool, name="p", goal="g", steps=["s"], provenance="system_pending_review", scope_type="global", created_by="bypasstest-b4c-owner", owner_id="bypasstest-b4c-owner")
             other_proc = await capture_procedure(pool, name="other", goal="g2", steps=["s"], provenance="system_pending_review", scope_type="global", created_by="bypasstest-b4c-owner", owner_id="bypasstest-b4c-owner")
-            bench = await create_benchmark(pool, problem_id=goal_id, name="b", provenance="system_pending_review")
-            sol = await associate_solution(pool, problem_id=goal_id, solution_type="procedure", target_id=proc["id"], status="active", proposer="bypasstest-b4c-owner")
-            ev = await request_evaluation(pool, problem_id=goal_id, benchmark_id=bench["id"], solution_id=sol["id"], procedure_id=str(proc["procedure_id"]), procedure_version=proc["version"], provenance="bypasstest-b4c")
+            bench = await create_benchmark(pool, goal_id=goal_id, name="b", provenance="system_pending_review")
+            sol = await associate_solution(pool, goal_id=goal_id, solution_type="procedure", target_id=proc["id"], status="active", proposer="bypasstest-b4c-owner")
+            ev = await request_evaluation(pool, goal_id=goal_id, benchmark_id=bench["id"], solution_id=sol["id"], procedure_id=str(proc["procedure_id"]), procedure_version=proc["version"], provenance="bypasstest-b4c")
 
             plan_id, graph_id = str(uuid7()), str(uuid7())
             await pool.execute(
@@ -295,9 +311,9 @@ def test_B4_valid_execution_produces_correct_server_derived_result_and_is_idempo
             await _cleanup(pool, "bypasstest-b4f")
             goal_id = await _make_goal(pool, "bypasstest-b4f")
             proc = await capture_procedure(pool, name="p", goal="g", steps=["s"], provenance="system_pending_review", scope_type="global", created_by="bypasstest-b4f-owner", owner_id="bypasstest-b4f-owner")
-            bench = await create_benchmark(pool, problem_id=goal_id, name="b", provenance="system_pending_review")
-            sol = await associate_solution(pool, problem_id=goal_id, solution_type="procedure", target_id=proc["id"], status="active", proposer="bypasstest-b4f-owner")
-            ev = await request_evaluation(pool, problem_id=goal_id, benchmark_id=bench["id"], solution_id=sol["id"], procedure_id=str(proc["procedure_id"]), procedure_version=proc["version"], provenance="bypasstest-b4f")
+            bench = await create_benchmark(pool, goal_id=goal_id, name="b", provenance="system_pending_review")
+            sol = await associate_solution(pool, goal_id=goal_id, solution_type="procedure", target_id=proc["id"], status="active", proposer="bypasstest-b4f-owner")
+            ev = await request_evaluation(pool, goal_id=goal_id, benchmark_id=bench["id"], solution_id=sol["id"], procedure_id=str(proc["procedure_id"]), procedure_version=proc["version"], provenance="bypasstest-b4f")
 
             plan_id, graph_id = str(uuid7()), str(uuid7())
             await pool.execute(

@@ -34,6 +34,8 @@ pytestmark = pytest.mark.skipif(
 from app.db.session import create_pool  # noqa: E402
 from app.services import product_model as pm  # noqa: E402
 from app.services.access import AccessScope  # noqa: E402
+from app.services.goals import normalize_goal_name  # noqa: E402
+from app.utils.ids import uuid7  # noqa: E402
 from tests.test_product_model_e2e import _make_procedure, _run_executions  # noqa: E402
 
 
@@ -51,9 +53,32 @@ def with_pool(fn):
     return pytest.mark.asyncio(wrapper)
 
 
+async def _make_goal(
+    pool, canonical_name, *, objective=None, description=None,
+    owner_id=None, visibility="public", status="candidate",
+    scope_type="global", scope_entity_id=None, provenance="system_pending_review",
+):
+    """Raw-SQL goal fixture (migration 110 retired Problem entirely and
+    product_model.py no longer has create_problem) -- these tests need a row
+    with an exact, caller-controlled visibility/owner, so this inserts
+    directly into `goals` rather than going through find_or_create_goal's
+    dedup/semantic-identity machinery (which can make live model calls and
+    isn't the thing under test here)."""
+    gid = str(uuid7())
+    row = await pool.fetchrow(
+        "INSERT INTO goals (id, canonical_name, normalized_name, description, objective, "
+        " status, provenance, owner_id, visibility, scope_type, scope_entity_id) "
+        "VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::visibility_level,$10,$11) "
+        "RETURNING id, canonical_name",
+        gid, canonical_name, normalize_goal_name(canonical_name), description, objective,
+        status, provenance, owner_id, visibility, scope_type, scope_entity_id,
+    )
+    return {"id": str(row["id"]), "canonical_name": row["canonical_name"]}
+
+
 async def _rest_app(pool):
     from fastapi import FastAPI
-    from app.api import problems as problems_api
+    from app.api import goals as goals_api
 
     app = FastAPI()
 
@@ -62,7 +87,9 @@ async def _rest_app(pool):
         request.app.state.pool = pool
         return await call_next(request)
 
-    app.include_router(problems_api.router)
+    app.include_router(goals_api.router)
+    app.include_router(goals_api._products_router)
+    app.include_router(goals_api._best_way_router)
     return app
 
 
@@ -98,75 +125,75 @@ async def test_private_benchmark_and_evaluation_are_scope_checked(pool):
     other_scope = AccessScope.for_user("userB")
     anon_scope = AccessScope.anonymous()
 
-    problem = await pm.create_problem(
-        pool, title=f"[privacy-gold {tag}] private benchmark/evaluation scope probe",
-        proposer="userA", owner_id="userA", visibility="private",
+    problem = await _make_goal(
+        pool, f"[privacy-gold {tag}] private benchmark/evaluation scope probe",
+        owner_id="userA", visibility="private",
     )
-    bench = await pm.create_benchmark(pool, problem_id=problem["id"], name="secret-bench", version=1)
+    bench = await pm.create_benchmark(pool, goal_id=problem["id"], name="secret-bench", version=1)
     proc_id, proc_row = await _make_procedure(pool, f"privacy-gold-{tag}-proc")
     sol = await pm.associate_solution(
-        pool, problem_id=problem["id"], solution_type="procedure", target_id=proc_id,
+        pool, goal_id=problem["id"], solution_type="procedure", target_id=proc_id,
         owner_id="userA",
     )
     exec_ids = await _run_executions(pool, proc_id, proc_row, n=5, successes=5)
     ev = await pm.request_evaluation(
-        pool, problem_id=problem["id"], benchmark_id=bench["id"], solution_id=sol["id"],
+        pool, goal_id=problem["id"], benchmark_id=bench["id"], solution_id=sol["id"],
     )
     await pm.complete_evaluation(pool, ev["id"], execution_ids=exec_ids)
 
-    # Sanity: the parent Problem itself is private, as it always was.
-    assert await pm.get_problem(pool, problem["id"], scope=owner_scope) is not None
-    assert await pm.get_problem(pool, problem["id"], scope=other_scope) is None
-    assert await pm.get_problem(pool, problem["id"], scope=anon_scope) is None
+    # Sanity: the parent Goal itself is private, as it always was.
+    assert await pm.get_goal_for_product(pool, problem["id"], scope=owner_scope) is not None
+    assert await pm.get_goal_for_product(pool, problem["id"], scope=other_scope) is None
+    assert await pm.get_goal_for_product(pool, problem["id"], scope=anon_scope) is None
 
     # --- owner ("userA") can read the private Benchmark/Evaluation. ---
     owner_bench = await pm.get_benchmark(pool, bench["id"], scope=owner_scope)
     assert owner_bench is not None and owner_bench["id"] == bench["id"]
-    assert bench["id"] in {b["id"] for b in await pm.list_problem_benchmarks(pool, problem["id"], scope=owner_scope)}
+    assert bench["id"] in {b["id"] for b in await pm.list_goal_benchmarks(pool, problem["id"], scope=owner_scope)}
     owner_eval = await pm.get_evaluation(pool, ev["id"], scope=owner_scope)
     assert owner_eval is not None and owner_eval["id"] == ev["id"]
-    assert ev["id"] in {e["id"] for e in await pm.list_problem_evaluations(pool, problem["id"], scope=owner_scope)}
+    assert ev["id"] in {e["id"] for e in await pm.list_goal_evaluations(pool, problem["id"], scope=owner_scope)}
 
     # --- another authenticated user AND anonymous can read NEITHER, and the
     # list endpoints come back empty rather than 403/erroring (matching the
-    # already-established list_problem_solutions convention). ---
+    # already-established list_goal_solutions convention). ---
     for denied_scope in (other_scope, anon_scope):
         assert await pm.get_benchmark(pool, bench["id"], scope=denied_scope) is None
-        assert await pm.list_problem_benchmarks(pool, problem["id"], scope=denied_scope) == []
+        assert await pm.list_goal_benchmarks(pool, problem["id"], scope=denied_scope) == []
         assert await pm.get_evaluation(pool, ev["id"], scope=denied_scope) is None
-        assert await pm.list_problem_evaluations(pool, problem["id"], scope=denied_scope) == []
+        assert await pm.list_goal_evaluations(pool, problem["id"], scope=denied_scope) == []
 
     # --- same proof over the real REST surface, not just the service layer. ---
     client = await _rest_client(pool)
     async with client:
         # owner: everything allowed
-        r_problem_owner = await client.get(f"/v1/problems/{problem['id']}", headers={"X-Viewer-Id": "userA"})
+        r_problem_owner = await client.get(f"/v1/goals/{problem['id']}", headers={"X-Viewer-Id": "userA"})
         assert r_problem_owner.status_code == 200
         r_bench_owner = await client.get(f"/v1/benchmarks/{bench['id']}", headers={"X-Viewer-Id": "userA"})
         assert r_bench_owner.status_code == 200 and r_bench_owner.json()["id"] == bench["id"]
         r_eval_owner = await client.get(f"/v1/evaluations/{ev['id']}", headers={"X-Viewer-Id": "userA"})
         assert r_eval_owner.status_code == 200 and r_eval_owner.json()["id"] == ev["id"]
 
-        # another user: the Problem itself is 404 (unchanged), and now so are
+        # another user: the Goal itself is 404 (unchanged), and now so are
         # its Benchmark/Evaluation -- direct reads 404, list reads empty.
-        r_problem = await client.get(f"/v1/problems/{problem['id']}", headers={"X-Viewer-Id": "userB"})
-        assert r_problem.status_code == 404, "the Problem itself is correctly gated over REST"
+        r_problem = await client.get(f"/v1/goals/{problem['id']}", headers={"X-Viewer-Id": "userB"})
+        assert r_problem.status_code == 404, "the Goal itself is correctly gated over REST"
 
         r_bench_direct = await client.get(f"/v1/benchmarks/{bench['id']}", headers={"X-Viewer-Id": "userB"})
-        assert r_bench_direct.status_code == 404, "fixed: GET /v1/benchmarks/{id} now checks the parent Problem's visibility"
+        assert r_bench_direct.status_code == 404, "fixed: GET /v1/benchmarks/{id} now checks the parent Goal's visibility"
 
         r_eval_direct = await client.get(f"/v1/evaluations/{ev['id']}", headers={"X-Viewer-Id": "userB"})
-        assert r_eval_direct.status_code == 404, "fixed: GET /v1/evaluations/{id} now checks the parent Problem's visibility"
+        assert r_eval_direct.status_code == 404, "fixed: GET /v1/evaluations/{id} now checks the parent Goal's visibility"
 
         r_bench_list = await client.get(
-            f"/v1/problems/{problem['id']}/benchmarks", headers={"X-Viewer-Id": "userB"},
+            f"/v1/goals/{problem['id']}/benchmarks", headers={"X-Viewer-Id": "userB"},
         )
         assert r_bench_list.status_code == 200 and r_bench_list.json()["benchmarks"] == []
         # no id/name leak in the (empty) list response body either
         assert bench["id"] not in r_bench_list.text and bench["name"] not in r_bench_list.text
 
         r_eval_list = await client.get(
-            f"/v1/problems/{problem['id']}/evaluations", headers={"X-Viewer-Id": "userB"},
+            f"/v1/goals/{problem['id']}/evaluations", headers={"X-Viewer-Id": "userB"},
         )
         assert r_eval_list.status_code == 200 and r_eval_list.json()["evaluations"] == []
         assert ev["id"] not in r_eval_list.text
@@ -176,31 +203,31 @@ async def test_private_benchmark_and_evaluation_are_scope_checked(pool):
         assert r_bench_anon.status_code == 404
         r_eval_anon = await client.get(f"/v1/evaluations/{ev['id']}")
         assert r_eval_anon.status_code == 404
-        r_bench_list_anon = await client.get(f"/v1/problems/{problem['id']}/benchmarks")
+        r_bench_list_anon = await client.get(f"/v1/goals/{problem['id']}/benchmarks")
         assert r_bench_list_anon.status_code == 200 and r_bench_list_anon.json()["benchmarks"] == []
 
-    # --- public behavior is unchanged: a PUBLIC problem's downstream graph
+    # --- public behavior is unchanged: a PUBLIC goal's downstream graph
     # stays readable by anyone, proving the fix gates on visibility rather
     # than blanket-denying non-owners. ---
-    pub_problem = await pm.create_problem(
-        pool, title=f"[privacy-gold {tag}] public benchmark/evaluation scope probe",
-        proposer="userA", owner_id="userA", visibility="public",
+    pub_problem = await _make_goal(
+        pool, f"[privacy-gold {tag}] public benchmark/evaluation scope probe",
+        owner_id="userA", visibility="public",
     )
-    pub_bench = await pm.create_benchmark(pool, problem_id=pub_problem["id"], name="open-bench", version=1)
+    pub_bench = await pm.create_benchmark(pool, goal_id=pub_problem["id"], name="open-bench", version=1)
     pub_proc_id, pub_proc_row = await _make_procedure(pool, f"privacy-gold-{tag}-pub-proc")
     pub_sol = await pm.associate_solution(
-        pool, problem_id=pub_problem["id"], solution_type="procedure", target_id=pub_proc_id,
+        pool, goal_id=pub_problem["id"], solution_type="procedure", target_id=pub_proc_id,
         owner_id="userA",
     )
     pub_exec_ids = await _run_executions(pool, pub_proc_id, pub_proc_row, n=5, successes=5)
     pub_ev = await pm.request_evaluation(
-        pool, problem_id=pub_problem["id"], benchmark_id=pub_bench["id"], solution_id=pub_sol["id"],
+        pool, goal_id=pub_problem["id"], benchmark_id=pub_bench["id"], solution_id=pub_sol["id"],
     )
     await pm.complete_evaluation(pool, pub_ev["id"], execution_ids=pub_exec_ids)
     for who_scope in (other_scope, anon_scope):
         assert await pm.get_benchmark(pool, pub_bench["id"], scope=who_scope) is not None
         assert pub_bench["id"] in {
-            b["id"] for b in await pm.list_problem_benchmarks(pool, pub_problem["id"], scope=who_scope)
+            b["id"] for b in await pm.list_goal_benchmarks(pool, pub_problem["id"], scope=who_scope)
         }
         assert await pm.get_evaluation(pool, pub_ev["id"], scope=who_scope) is not None
 
@@ -219,40 +246,40 @@ async def test_private_benchmark_and_evaluation_are_scope_checked(pool):
 @with_pool
 async def test_published_solution_discoverable_by_b_and_bs_execution_is_independent_evidence(pool):
     tag = _tag()
-    problem = await pm.create_problem(
-        pool, title=f"[privacy-gold {tag}] deflake the shared test runner",
+    problem = await _make_goal(
+        pool, f"[privacy-gold {tag}] deflake the shared test runner",
         objective="stop the shared CI runner from flaking on retries",
-        proposer="userA", owner_id="userA", visibility="public",
+        owner_id="userA", visibility="public",
     )
-    bench = await pm.create_benchmark(pool, problem_id=problem["id"], name="published-bench", version=1)
+    bench = await pm.create_benchmark(pool, goal_id=problem["id"], name="published-bench", version=1)
     proc_id, proc_row = await _make_procedure(pool, f"privacy-gold-{tag}-published-proc")
     sol = await pm.associate_solution(
-        pool, problem_id=problem["id"], solution_type="procedure", target_id=proc_id,
+        pool, goal_id=problem["id"], solution_type="procedure", target_id=proc_id,
         owner_id="userA",
     )
     a_exec_ids = await _run_executions(pool, proc_id, proc_row, n=10, successes=9)
     a_eval = await pm.request_evaluation(
-        pool, problem_id=problem["id"], benchmark_id=bench["id"], solution_id=sol["id"],
+        pool, goal_id=problem["id"], benchmark_id=bench["id"], solution_id=sol["id"],
     )
     await pm.complete_evaluation(pool, a_eval["id"], execution_ids=a_exec_ids)
 
     b_scope = AccessScope.for_user("userB")
 
-    # B discovers ONLY what A explicitly published -- the public Problem,
+    # B discovers ONLY what A explicitly published -- the public Goal,
     # reachable by lexical search on its own real content (not a shared
     # random tag collision, per this suite's own established discipline
     # around this shared, never-cleaned-up dev DB).
-    found = await pm.find_problem(pool, f"deflake shared test runner {tag}", scope=b_scope)
+    found = await pm.find_goal(pool, f"deflake shared test runner {tag}", scope=b_scope)
     assert problem["id"] in {p["id"] for p in found}
-    assert await pm.get_problem(pool, problem["id"], scope=b_scope) is not None
-    solutions = await pm.list_problem_solutions(pool, problem["id"], scope=b_scope)
+    assert await pm.get_goal_for_product(pool, problem["id"], scope=b_scope) is not None
+    solutions = await pm.list_goal_solutions(pool, problem["id"], scope=b_scope)
     assert sol["id"] in {s["id"] for s in solutions}
 
     # B independently executes the same procedure/solution. This is B's
     # own real execution lineage, run separately from A's.
     b_exec_ids = await _run_executions(pool, proc_id, proc_row, n=4, successes=1)
     b_eval = await pm.request_evaluation(
-        pool, problem_id=problem["id"], benchmark_id=bench["id"], solution_id=sol["id"],
+        pool, goal_id=problem["id"], benchmark_id=bench["id"], solution_id=sol["id"],
     )
     await pm.complete_evaluation(pool, b_eval["id"], execution_ids=b_exec_ids)
 

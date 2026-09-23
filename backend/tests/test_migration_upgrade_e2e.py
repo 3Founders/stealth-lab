@@ -29,10 +29,10 @@ Flow:
          procedure is still filtered out for an anonymous AccessScope by
          the real scope_predicates() SQL;
        - the NEW product-model tables work ON THE UPGRADED DB and can
-         reference the pre-existing rows: Problem -> Benchmark -> Solution
+         reference the pre-existing rows: Goal -> Benchmark -> Solution
          bound to the pre-existing procedure -> request + complete an
          Evaluation whose lineage is the pre-existing executions ->
-         problem_leaderboard returns;
+         goal_leaderboard returns;
        - the NEW durable-run tables work: start_run + execute_run a 2-node
          graph against the pre-existing plan -> 'succeeded';
        - migrations 35/36/37 contain no DROP TABLE / DROP COLUMN / TRUNCATE
@@ -639,6 +639,7 @@ async def _assert_after_upgrade(dsn: str, rec: dict) -> None:
     from app.execution.durable_run import execute_run, start_run
     from app.services import product_model as pm
     from app.services.access import AccessScope, TenantScope, scope_predicates
+    from app.services.goals import find_or_create_goal
 
     pool = await create_pool(dsn, statement_cache_size=0, min_size=1, max_size=4)
     try:
@@ -670,23 +671,29 @@ async def _assert_after_upgrade(dsn: str, rec: dict) -> None:
             )
 
         # (c) NEW product-model tables work on the upgraded DB and reference
-        #     the pre-existing procedure + executions.
+        #     the pre-existing procedure + executions. By this point the
+        #     REAL migrate.py runner (phase 3 above) has applied every
+        #     remaining migration up to the current head -- including
+        #     migration 110, which folded Problem into Goal -- so the
+        #     `goals` table (not `problems`) is what actually exists here.
         scope = AccessScope.unrestricted()
-        problem = await pm.create_problem(
-            pool, title=f"[up-e2e {rec['tag']}] upgraded-db product model",
-            objective="new tables usable after an in-place upgrade", proposer="up_e2e",
+        goal = await find_or_create_goal(
+            pool, canonical_name=f"[up-e2e {rec['tag']}] upgraded-db product model",
+            scope_type="global", provenance="system_pending_review",
+            objective="new tables usable after an in-place upgrade",
+            created_by="up_e2e", on_unavailable="create",
         )
         bench = await pm.create_benchmark(
-            pool, problem_id=problem["id"], name="up-bench", version=1,
+            pool, goal_id=goal["id"], name="up-bench", version=1,
             evaluation_protocol={"verification": "deterministic"},
             environment_specification={"runtime": "linux"},
         )
         sol = await pm.associate_solution(
-            pool, problem_id=problem["id"], solution_type="procedure",
+            pool, goal_id=goal["id"], solution_type="procedure",
             target_id=rec["proc_pub_id"], proposer="up_e2e", status="active",
         )
         ev = await pm.request_evaluation(
-            pool, problem_id=problem["id"], benchmark_id=bench["id"], solution_id=sol["id"],
+            pool, goal_id=goal["id"], benchmark_id=bench["id"], solution_id=sol["id"],
             procedure_id=rec["proc_pub_id"], procedure_version=rec["proc_pub_version"],
             environment={"runtime": "linux"}, methodology={"verification": "deterministic"},
         )
@@ -694,7 +701,7 @@ async def _assert_after_upgrade(dsn: str, rec: dict) -> None:
         assert done["metrics"]["run_count"] == len(rec["exec_ids"]), done
         assert done["verification_summary"]["verified_successes"] == 5, done
 
-        lb = await pm.problem_leaderboard(pool, problem["id"], scope=scope)
+        lb = await pm.goal_leaderboard(pool, goal["id"], scope=scope)
         assert lb["leaderboard"], lb
         assert any(e["solution_id"] == sol["id"] for e in lb["leaderboard"]), lb
 

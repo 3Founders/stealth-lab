@@ -14,7 +14,7 @@ import asyncio
 import pytest
 from fastapi import HTTPException
 
-import app.api.problems as problems_api
+import app.api.goals as goals_api
 from app.api.deps import AuthenticatedPrincipal
 from app.services.access import AccessScope
 
@@ -40,14 +40,14 @@ def test_B1_associate_solution_forces_proposed_status_and_server_identity(monkey
     async def fake_fetchrow(*a, **kw):
         return None  # no existing row -> not an "already active" case
 
-    monkeypatch.setattr(problems_api.pm, "associate_solution", fake_associate)
+    monkeypatch.setattr(goals_api.pm, "associate_solution", fake_associate)
     fake_pool = type("P", (), {"fetchrow": staticmethod(fake_fetchrow)})()
 
-    body = problems_api.SolutionIn(
-        problem_id="goal-1", solution_type="procedure", target_id="proc-1",
+    body = goals_api.SolutionIn(
+        goal_id="goal-1", solution_type="procedure", target_id="proc-1",
         status="active", proposer="mallory",
     )
-    result = _run(problems_api.associate_solution(body, pool=fake_pool, scope=AccessScope.unrestricted(), principal=PRINCIPAL))
+    result = _run(goals_api.associate_solution(body, pool=fake_pool, scope=AccessScope.unrestricted(), principal=PRINCIPAL))
 
     assert captured["status"] == "proposed", "a direct client call must never create an 'active' association"
     assert captured["proposer"] == PRINCIPAL.subject, "attribution must be server-derived, never the client's 'proposer' field"
@@ -57,7 +57,7 @@ def test_B1_associate_solution_forces_proposed_status_and_server_identity(monkey
 def test_B1_associate_solution_never_downgrades_an_existing_active_row(monkeypatch):
     """A client re-posting the same association must not be able to
     silently un-list an already-accepted Procedure/Benchmark."""
-    existing_active = {"id": "sol-1", "problem_id": "goal-1", "solution_type": "procedure",
+    existing_active = {"id": "sol-1", "goal_id": "goal-1", "solution_type": "procedure",
                         "target_id": "proc-1", "version": 1, "status": "active", "proposer": "sub-bob"}
 
     async def fake_fetchrow(*a, **kw):
@@ -69,27 +69,27 @@ def test_B1_associate_solution_never_downgrades_an_existing_active_row(monkeypat
         called["associate"] = True
         return {}
 
-    monkeypatch.setattr(problems_api.pm, "associate_solution", fake_associate)
+    monkeypatch.setattr(goals_api.pm, "associate_solution", fake_associate)
     fake_pool = type("P", (), {"fetchrow": staticmethod(fake_fetchrow)})()
 
-    body = problems_api.SolutionIn(problem_id="goal-1", solution_type="procedure", target_id="proc-1", status="proposed")
-    result = _run(problems_api.associate_solution(body, pool=fake_pool, scope=AccessScope.unrestricted(), principal=PRINCIPAL))
+    body = goals_api.SolutionIn(goal_id="goal-1", solution_type="procedure", target_id="proc-1", status="proposed")
+    result = _run(goals_api.associate_solution(body, pool=fake_pool, scope=AccessScope.unrestricted(), principal=PRINCIPAL))
 
     assert result == existing_active
     assert called["associate"] is False, "an existing 'active' row must be echoed back untouched, never re-written by this route"
 
 
-def test_B1_problem_solutions_endpoint_filters_to_active_only(monkeypatch):
+def test_B1_goal_solutions_endpoint_filters_to_active_only(monkeypatch):
     rows = [
         {"id": "s1", "status": "active", "target_table": "procedures"},
         {"id": "s2", "status": "proposed", "target_table": "procedures"},
     ]
 
-    async def fake_list(pool, problem_id, *, scope):
+    async def fake_list(pool, goal_id, *, scope):
         return rows
 
-    monkeypatch.setattr(problems_api.pm, "list_problem_solutions", fake_list)
-    result = _run(problems_api.problem_solutions("goal-1", pool=object(), scope=AccessScope.unrestricted()))
+    monkeypatch.setattr(goals_api.pm, "list_goal_solutions", fake_list)
+    result = _run(goals_api.goal_solutions("goal-1", pool=object(), scope=AccessScope.unrestricted()))
     assert [s["id"] for s in result["solutions"]] == ["s1"]
 
 
@@ -104,7 +104,7 @@ def test_B3_freeze_benchmark_refuses_without_an_accepted_submission(monkeypatch)
     fake_pool = type("P", (), {"fetchval": staticmethod(fake_fetchval)})()
 
     with pytest.raises(HTTPException) as exc_info:
-        _run(problems_api.freeze_benchmark("bench-1", pool=fake_pool, scope=AccessScope.unrestricted(), principal=PRINCIPAL))
+        _run(goals_api.freeze_benchmark("bench-1", pool=fake_pool, scope=AccessScope.unrestricted(), principal=PRINCIPAL))
     assert exc_info.value.status_code == 409
 
 
@@ -122,10 +122,10 @@ def test_B3_freeze_benchmark_proceeds_and_audits_when_accepted(monkeypatch):
         return "audit-1"
 
     fake_pool = type("P", (), {"fetchval": staticmethod(fake_fetchval)})()
-    monkeypatch.setattr(problems_api.pm, "freeze_benchmark", fake_freeze)
+    monkeypatch.setattr(goals_api.pm, "freeze_benchmark", fake_freeze)
     monkeypatch.setattr("app.services.audit.record_audit_event", fake_audit)
 
-    result = _run(problems_api.freeze_benchmark("bench-1", pool=fake_pool, scope=AccessScope.unrestricted(), principal=PRINCIPAL))
+    result = _run(goals_api.freeze_benchmark("bench-1", pool=fake_pool, scope=AccessScope.unrestricted(), principal=PRINCIPAL))
     assert result == {"id": "bench-1", "status": "frozen"}
     assert audited.get("actor_subject") == PRINCIPAL.subject
     assert audited.get("action") == "benchmark_frozen"

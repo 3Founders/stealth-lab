@@ -31,8 +31,32 @@ pytestmark = pytest.mark.skipif(
 from app.db.session import create_pool  # noqa: E402
 from app.services import product_model as pm  # noqa: E402
 from app.services.access import AccessScope  # noqa: E402
+from app.services.goals import normalize_goal_name  # noqa: E402
 from app.utils.ids import uuid7  # noqa: E402
 from tests.test_product_model_e2e import _make_procedure, _run_executions  # noqa: E402
+
+
+async def _make_goal(
+    pool, canonical_name, *, objective=None, description=None,
+    owner_id=None, visibility="public", status="candidate",
+    scope_type="global", scope_entity_id=None, provenance="system_pending_review",
+):
+    """Raw-SQL goal fixture (migration 110 retired Problem entirely and
+    product_model.py no longer has create_problem) -- these tests need a row
+    with exact, caller-controlled columns (visibility, objective, etc.), so
+    this inserts directly into `goals` rather than going through
+    find_or_create_goal's dedup/semantic-identity machinery (which can make
+    live model calls and isn't the thing under test here)."""
+    gid = str(uuid7())
+    row = await pool.fetchrow(
+        "INSERT INTO goals (id, canonical_name, normalized_name, description, objective, "
+        " status, provenance, owner_id, visibility, scope_type, scope_entity_id) "
+        "VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::visibility_level,$10,$11) "
+        "RETURNING id, canonical_name",
+        gid, canonical_name, normalize_goal_name(canonical_name), description, objective,
+        status, provenance, owner_id, visibility, scope_type, scope_entity_id,
+    )
+    return {"id": str(row["id"]), "canonical_name": row["canonical_name"]}
 
 
 def with_pool(fn):
@@ -68,39 +92,44 @@ def _tag() -> str:
 @with_pool
 async def test_private_problem_invisible_to_other_user_visible_to_owner(pool):
     tag = _tag()
-    problem = await pm.create_problem(
-        pool, title=f"[pm-gold {tag}] private problem", proposer="userA",
+    problem = await _make_goal(
+        pool, f"[pm-gold {tag}] private problem",
         owner_id="userA", visibility="private",
     )
     owner_scope = AccessScope.for_user("userA")
     other_scope = AccessScope.for_user("userB")
     anon_scope = AccessScope.anonymous()
 
-    assert await pm.get_problem(pool, problem["id"], scope=owner_scope) is not None
-    assert await pm.get_problem(pool, problem["id"], scope=other_scope) is None
-    assert await pm.get_problem(pool, problem["id"], scope=anon_scope) is None
+    assert await pm.get_goal_for_product(pool, problem["id"], scope=owner_scope) is not None
+    assert await pm.get_goal_for_product(pool, problem["id"], scope=other_scope) is None
+    assert await pm.get_goal_for_product(pool, problem["id"], scope=anon_scope) is None
 
 
 @pytest.mark.asyncio
 @with_pool
 async def test_private_problem_does_not_leak_through_list_or_find(pool):
     tag = _tag()
-    problem = await pm.create_problem(
-        pool, title=f"[pm-gold {tag}] secret migration rollback procedure",
+    problem = await _make_goal(
+        pool, f"[pm-gold {tag}] secret migration rollback procedure",
         objective="rollback a bad migration without downtime",
-        proposer="userA", owner_id="userA", visibility="private",
+        owner_id="userA", visibility="private",
     )
     other_scope = AccessScope.for_user("userB")
 
-    listed = await pm.list_problems(pool, scope=other_scope, status="open")
+    # NOTE: list_goals' `status` filters on goals.status (candidate/active/
+    # deprecated/merged -- the ingestion-lifecycle vocabulary), NOT the
+    # former Problem-only open/active/solved/archived vocabulary, so this no
+    # longer passes status="open" -- a plain unfiltered listing still proves
+    # the same "private goal does not leak" property.
+    listed = await pm.list_goals(pool, scope=other_scope)
     assert problem["id"] not in {p["id"] for p in listed}
 
-    found = await pm.find_problem(pool, f"secret migration rollback {tag}", scope=other_scope)
+    found = await pm.find_goal(pool, f"secret migration rollback {tag}", scope=other_scope)
     assert problem["id"] not in {p["id"] for p in found}
 
     # But the owner's own scope DOES find it -- proves the absence above is
     # a real visibility filter, not a query/index bug that hides everyone.
-    found_owner = await pm.find_problem(
+    found_owner = await pm.find_goal(
         pool, f"secret migration rollback {tag}", scope=AccessScope.for_user("userA")
     )
     assert problem["id"] in {p["id"] for p in found_owner}
@@ -110,18 +139,18 @@ async def test_private_problem_does_not_leak_through_list_or_find(pool):
 @with_pool
 async def test_public_problem_lookup_by_natural_language_goal(pool):
     tag = _tag()
-    problem = await pm.create_problem(
-        pool, title=f"[pm-gold {tag}] deduplicate flaky retry loops",
-        objective="stop retry storms from duplicating side effects", proposer="userA",
+    problem = await _make_goal(
+        pool, f"[pm-gold {tag}] deduplicate flaky retry loops",
+        objective="stop retry storms from duplicating side effects",
     )
     scope = AccessScope.unrestricted()
-    found = await pm.find_problem(pool, f"deduplicate flaky retry storms {tag}", scope=scope)
+    found = await pm.find_goal(pool, f"deduplicate flaky retry storms {tag}", scope=scope)
     assert problem["id"] in {p["id"] for p in found}
     # A query sharing no lexeme with the problem must not match it. Deliberately
     # NOT reusing `tag` here -- it appears in the problem's own title, so a query
     # built from it would share a lexeme and this "unrelated" case would be
     # testing nothing.
-    unrelated = await pm.find_problem(pool, f"unrelated-{_tag()}-xyzzy-quokka", scope=scope)
+    unrelated = await pm.find_goal(pool, f"unrelated-{_tag()}-xyzzy-quokka", scope=scope)
     assert problem["id"] not in {p["id"] for p in unrelated}
 
 
@@ -132,9 +161,9 @@ async def test_public_problem_lookup_by_natural_language_goal(pool):
 @with_pool
 async def test_benchmark_freeze_makes_measured_meaning_immutable(pool):
     tag = _tag()
-    problem = await pm.create_problem(pool, title=f"[pm-gold {tag}] bench freeze", proposer="userA")
+    problem = await _make_goal(pool, f"[pm-gold {tag}] bench freeze")
     bench = await pm.create_benchmark(
-        pool, problem_id=problem["id"], name="freeze-bench", version=1,
+        pool, goal_id=problem["id"], name="freeze-bench", version=1,
         evaluation_protocol={"verification": "deterministic"},
     )
     frozen = await pm.freeze_benchmark(pool, bench["id"])
@@ -159,17 +188,17 @@ async def test_benchmark_freeze_makes_measured_meaning_immutable(pool):
 @with_pool
 async def test_benchmark_version_bump_is_a_distinct_evaluation_context(pool):
     tag = _tag()
-    problem = await pm.create_problem(pool, title=f"[pm-gold {tag}] bench version", proposer="userA")
+    problem = await _make_goal(pool, f"[pm-gold {tag}] bench version")
     v1 = await pm.create_benchmark(
-        pool, problem_id=problem["id"], name="vbump-bench", version=1,
+        pool, goal_id=problem["id"], name="vbump-bench", version=1,
         evaluation_protocol={"verification": "deterministic"},
     )
     v2 = await pm.create_benchmark(
-        pool, problem_id=problem["id"], name="vbump-bench", version=2,
+        pool, goal_id=problem["id"], name="vbump-bench", version=2,
         evaluation_protocol={"verification": "deterministic"},
     )
     assert v1["id"] != v2["id"]
-    benches = await pm.list_problem_benchmarks(pool, problem["id"], scope=AccessScope.unrestricted())
+    benches = await pm.list_goal_benchmarks(pool, problem["id"], scope=AccessScope.unrestricted())
     assert {b["id"] for b in benches} == {v1["id"], v2["id"]}
 
     # An evaluation against v1 and one against v2 are NOT comparable, even
@@ -189,8 +218,8 @@ async def test_benchmark_case_wraps_an_existing_task_node_not_a_new_abstraction(
     proven by inserting a real task_nodes row and a benchmark_cases row that
     references it via FK, exactly as migration 35's own comment says."""
     tag = _tag()
-    problem = await pm.create_problem(pool, title=f"[pm-gold {tag}] bench case", proposer="userA")
-    bench = await pm.create_benchmark(pool, problem_id=problem["id"], name="case-bench", version=1)
+    problem = await _make_goal(pool, f"[pm-gold {tag}] bench case")
+    bench = await pm.create_benchmark(pool, goal_id=problem["id"], name="case-bench", version=1)
     node_id = await pool.fetchval(
         "INSERT INTO task_nodes (id, name) VALUES ($1, $2) RETURNING id",
         str(uuid7()), f"pm-gold-{tag}-node",
@@ -213,11 +242,11 @@ async def test_benchmark_case_wraps_an_existing_task_node_not_a_new_abstraction(
 @with_pool
 async def test_solution_supports_all_three_target_types_with_no_copied_payload(pool):
     tag = _tag()
-    problem = await pm.create_problem(pool, title=f"[pm-gold {tag}] multi-type solutions", proposer="userA")
+    problem = await _make_goal(pool, f"[pm-gold {tag}] multi-type solutions")
 
     proc_id, proc_row_id = await _make_procedure(pool, f"pm-gold-{tag}-proc")
     sol_proc = await pm.associate_solution(
-        pool, problem_id=problem["id"], solution_type="procedure", target_id=proc_id,
+        pool, goal_id=problem["id"], solution_type="procedure", target_id=proc_id,
     )
     assert sol_proc["target_table"] == "procedures"
 
@@ -226,7 +255,7 @@ async def test_solution_supports_all_three_target_types_with_no_copied_payload(p
         str(uuid7()), f"pm-gold-{tag}-task",
     )
     sol_task = await pm.associate_solution(
-        pool, problem_id=problem["id"], solution_type="task", target_id=str(node_id),
+        pool, goal_id=problem["id"], solution_type="task", target_id=str(node_id),
     )
     assert sol_task["target_table"] == "task_nodes"
 
@@ -250,11 +279,11 @@ async def test_solution_supports_all_three_target_types_with_no_copied_payload(p
         str(uuid7()), plan_id, f"h-{uuid.uuid4().hex[:12]}", json.dumps({"nodes": []}),
     )
     sol_graph = await pm.associate_solution(
-        pool, problem_id=problem["id"], solution_type="task_graph", target_id=str(graph_id),
+        pool, goal_id=problem["id"], solution_type="task_graph", target_id=str(graph_id),
     )
     assert sol_graph["target_table"] == "task_graphs"
 
-    solutions = await pm.list_problem_solutions(pool, problem["id"], scope=AccessScope.unrestricted())
+    solutions = await pm.list_goal_solutions(pool, problem["id"], scope=AccessScope.unrestricted())
     assert {s["id"] for s in solutions} == {sol_proc["id"], sol_task["id"], sol_graph["id"]}
 
     # No copied payload: a Solution row's own keys are the association
@@ -268,10 +297,10 @@ async def test_solution_supports_all_three_target_types_with_no_copied_payload(p
 @with_pool
 async def test_associate_solution_rejects_a_target_that_does_not_exist(pool):
     tag = _tag()
-    problem = await pm.create_problem(pool, title=f"[pm-gold {tag}] bad target", proposer="userA")
+    problem = await _make_goal(pool, f"[pm-gold {tag}] bad target")
     with pytest.raises(ValueError, match="does not exist"):
         await pm.associate_solution(
-            pool, problem_id=problem["id"], solution_type="procedure",
+            pool, goal_id=problem["id"], solution_type="procedure",
             target_id="00000000-0000-4000-8000-000000000000",
         )
 
@@ -283,23 +312,23 @@ async def test_associate_solution_rejects_a_target_that_does_not_exist(pool):
 @with_pool
 async def test_completed_evaluation_requires_real_lineage_and_ignores_caller_fabricated_numbers(pool):
     tag = _tag()
-    problem = await pm.create_problem(pool, title=f"[pm-gold {tag}] lineage", proposer="userA")
-    bench = await pm.create_benchmark(pool, problem_id=problem["id"], name="lineage-bench", version=1)
+    problem = await _make_goal(pool, f"[pm-gold {tag}] lineage")
+    bench = await pm.create_benchmark(pool, goal_id=problem["id"], name="lineage-bench", version=1)
     proc_id, proc_row = await _make_procedure(pool, f"pm-gold-{tag}-lineage")
-    sol = await pm.associate_solution(pool, problem_id=problem["id"], solution_type="procedure", target_id=proc_id)
+    sol = await pm.associate_solution(pool, goal_id=problem["id"], solution_type="procedure", target_id=proc_id)
 
     # A completed status can never be inserted directly without lineage --
     # the DB trigger is the backstop underneath the service-layer check.
     with pytest.raises(Exception, match="lineage|linked execution"):
         await pool.execute(
-            "INSERT INTO evaluations (id, problem_id, benchmark_id, solution_id, status, completed_at) "
+            "INSERT INTO evaluations (id, goal_id, benchmark_id, solution_id, status, completed_at) "
             "VALUES ($1,$2,$3,$4,'completed', now())",
             str(uuid7()), problem["id"], bench["id"], sol["id"],
         )
 
     exec_ids = await _run_executions(pool, proc_id, proc_row, n=8, successes=6)
     ev = await pm.request_evaluation(
-        pool, problem_id=problem["id"], benchmark_id=bench["id"], solution_id=sol["id"],
+        pool, goal_id=problem["id"], benchmark_id=bench["id"], solution_id=sol["id"],
         procedure_id=proc_id, procedure_version=1,
     )
     # A caller-supplied success/verified count must be ignored -- only
@@ -324,28 +353,28 @@ async def test_completed_evaluation_requires_real_lineage_and_ignores_caller_fab
 @with_pool
 async def test_incomparable_evaluation_is_excluded_from_leaderboard_aggregation(pool):
     tag = _tag()
-    problem = await pm.create_problem(pool, title=f"[pm-gold {tag}] incomparable", proposer="userA")
-    bench = await pm.create_benchmark(pool, problem_id=problem["id"], name="incomp-bench", version=1)
+    problem = await _make_goal(pool, f"[pm-gold {tag}] incomparable")
+    bench = await pm.create_benchmark(pool, goal_id=problem["id"], name="incomp-bench", version=1)
     proc_id, proc_row = await _make_procedure(pool, f"pm-gold-{tag}-incomp")
-    sol = await pm.associate_solution(pool, problem_id=problem["id"], solution_type="procedure", target_id=proc_id)
+    sol = await pm.associate_solution(pool, goal_id=problem["id"], solution_type="procedure", target_id=proc_id)
 
     exec_1 = await _run_executions(pool, proc_id, proc_row, n=10, successes=9)
     exec_2 = await _run_executions(pool, proc_id, proc_row, n=10, successes=9)
 
     ev1 = await pm.request_evaluation(
-        pool, problem_id=problem["id"], benchmark_id=bench["id"], solution_id=sol["id"],
+        pool, goal_id=problem["id"], benchmark_id=bench["id"], solution_id=sol["id"],
         procedure_id=proc_id, procedure_version=1, environment={"runtime": "linux"},
         methodology={"verification": "deterministic"},
     )
     ev2 = await pm.request_evaluation(
-        pool, problem_id=problem["id"], benchmark_id=bench["id"], solution_id=sol["id"],
+        pool, goal_id=problem["id"], benchmark_id=bench["id"], solution_id=sol["id"],
         procedure_id=proc_id, procedure_version=1, environment={"runtime": "windows"},
         methodology={"verification": "deterministic"},
     )
     await pm.complete_evaluation(pool, ev1["id"], execution_ids=exec_1)
     await pm.complete_evaluation(pool, ev2["id"], execution_ids=exec_2)
 
-    lb = await pm.problem_leaderboard(pool, problem["id"], scope=AccessScope.unrestricted(), benchmark_id=bench["id"])
+    lb = await pm.goal_leaderboard(pool, problem["id"], scope=AccessScope.unrestricted(), benchmark_id=bench["id"])
     entry = next(e for e in lb["leaderboard"] if e["solution_id"] == sol["id"])
     # Only the pivot (first) evaluation's 10 runs count -- the
     # material-environment-incompatible second evaluation is excluded, not
@@ -362,27 +391,27 @@ async def test_incomparable_evaluation_is_excluded_from_leaderboard_aggregation(
 @with_pool
 async def test_ties_conditional_leaders_and_no_stored_winner_field(pool):
     tag = _tag()
-    problem = await pm.create_problem(pool, title=f"[pm-gold {tag}] ties", proposer="userA")
-    bench = await pm.create_benchmark(pool, problem_id=problem["id"], name="tie-bench", version=1)
+    problem = await _make_goal(pool, f"[pm-gold {tag}] ties")
+    bench = await pm.create_benchmark(pool, goal_id=problem["id"], name="tie-bench", version=1)
 
     proc_a, row_a = await _make_procedure(pool, f"pm-gold-{tag}-tie-A")
     proc_b, row_b = await _make_procedure(pool, f"pm-gold-{tag}-tie-B")
-    sol_a = await pm.associate_solution(pool, problem_id=problem["id"], solution_type="procedure", target_id=proc_a)
-    sol_b = await pm.associate_solution(pool, problem_id=problem["id"], solution_type="procedure", target_id=proc_b)
+    sol_a = await pm.associate_solution(pool, goal_id=problem["id"], solution_type="procedure", target_id=proc_a)
+    sol_b = await pm.associate_solution(pool, goal_id=problem["id"], solution_type="procedure", target_id=proc_b)
 
     # Same n, same successes -> effectively identical Wilson lower bounds
     # (within TIE_EPSILON) -> both should appear in current_best as a tie.
     exec_a = await _run_executions(pool, proc_a, row_a, n=40, successes=38)
     exec_b = await _run_executions(pool, proc_b, row_b, n=40, successes=38)
-    ev_a = await pm.request_evaluation(pool, problem_id=problem["id"], benchmark_id=bench["id"],
+    ev_a = await pm.request_evaluation(pool, goal_id=problem["id"], benchmark_id=bench["id"],
                                         solution_id=sol_a["id"], procedure_id=proc_a, procedure_version=1)
-    ev_b = await pm.request_evaluation(pool, problem_id=problem["id"], benchmark_id=bench["id"],
+    ev_b = await pm.request_evaluation(pool, goal_id=problem["id"], benchmark_id=bench["id"],
                                         solution_id=sol_b["id"], procedure_id=proc_b, procedure_version=1)
     # B is cheaper (extra_metrics 'cost' the substrate cannot derive on its own).
     await pm.complete_evaluation(pool, ev_a["id"], execution_ids=exec_a, extra_metrics={"cost": 0.50})
     await pm.complete_evaluation(pool, ev_b["id"], execution_ids=exec_b, extra_metrics={"cost": 0.05})
 
-    lb = await pm.problem_leaderboard(pool, problem["id"], scope=AccessScope.unrestricted(), benchmark_id=bench["id"])
+    lb = await pm.goal_leaderboard(pool, problem["id"], scope=AccessScope.unrestricted(), benchmark_id=bench["id"])
     assert lb["current_best_is_tie"] is True
     assert set(lb["current_best"]) == {sol_a["id"], sol_b["id"]}
     # Cost-conditional leader differs from (is a strict subset of) the tied
@@ -392,7 +421,7 @@ async def test_ties_conditional_leaders_and_no_stored_winner_field(pool):
     assert lb["conditional_leaders"]["best_reliability"] in lb["current_best"]
 
     # No stored winner anywhere in the row-level data this all comes from.
-    for row in (await pm.get_problem(pool, problem["id"], scope=AccessScope.unrestricted()),
+    for row in (await pm.get_goal_for_product(pool, problem["id"], scope=AccessScope.unrestricted()),
                 await pm.get_evaluation(pool, ev_a["id"], scope=AccessScope.unrestricted()),
                 await pm.get_evaluation(pool, ev_b["id"], scope=AccessScope.unrestricted())):
         assert "winner" not in row and "best_solution_id" not in row
@@ -407,17 +436,17 @@ async def test_small_n_perfect_solution_never_reaches_best_verified_through_the_
     leaderboard path, which is new coverage (task spec section 4: 'small
     sample size retained... 100%, n=2 must never dominate')."""
     tag = _tag()
-    problem = await pm.create_problem(pool, title=f"[pm-gold {tag}] small-n", proposer="userA")
-    bench = await pm.create_benchmark(pool, problem_id=problem["id"], name="small-n-bench", version=1)
+    problem = await _make_goal(pool, f"[pm-gold {tag}] small-n")
+    bench = await pm.create_benchmark(pool, goal_id=problem["id"], name="small-n-bench", version=1)
     proc_id, proc_row = await _make_procedure(pool, f"pm-gold-{tag}-small-n")
-    sol = await pm.associate_solution(pool, problem_id=problem["id"], solution_type="procedure", target_id=proc_id)
+    sol = await pm.associate_solution(pool, goal_id=problem["id"], solution_type="procedure", target_id=proc_id)
 
     exec_ids = await _run_executions(pool, proc_id, proc_row, n=2, successes=2)
-    ev = await pm.request_evaluation(pool, problem_id=problem["id"], benchmark_id=bench["id"],
+    ev = await pm.request_evaluation(pool, goal_id=problem["id"], benchmark_id=bench["id"],
                                       solution_id=sol["id"], procedure_id=proc_id, procedure_version=1)
     await pm.complete_evaluation(pool, ev["id"], execution_ids=exec_ids)
 
-    lb = await pm.problem_leaderboard(pool, problem["id"], scope=AccessScope.unrestricted(), benchmark_id=bench["id"])
+    lb = await pm.goal_leaderboard(pool, problem["id"], scope=AccessScope.unrestricted(), benchmark_id=bench["id"])
     entry = next(e for e in lb["leaderboard"] if e["solution_id"] == sol["id"])
     assert entry["success_rate"] == 1.0
     assert entry["state"] == "INSUFFICIENT_EVIDENCE"
@@ -436,30 +465,30 @@ async def test_find_best_way_no_matching_problem(pool):
     # matching SOME accumulated row in this shared, never-cleaned-up dev DB --
     # deliberately using only invented non-words (plus the random tag) so this
     # negative case can't collide with any other test's real problem titles.
-    result = await pm.find_best_way(pool, f"zzqvix-{tag}-fjwortk-plexnar", scope=AccessScope.unrestricted())
-    assert result["result"] == "no matching problem"
+    result = await pm.find_best_verified_solution(pool, f"zzqvix-{tag}-fjwortk-plexnar", scope=AccessScope.unrestricted())
+    assert result["result"] == "no matching goal"
     assert result["current_best"] == []
-    assert result["matched_problem"] is None
+    assert result["matched_goal"] is None
 
 
 @pytest.mark.asyncio
 @with_pool
 async def test_find_best_way_problem_matched_but_no_verified_solution(pool):
     tag = _tag()
-    problem = await pm.create_problem(
-        pool, title=f"[pm-gold {tag}] goal with only weak evidence",
-        objective="a problem with a solution that never clears the bar", proposer="userA",
+    problem = await _make_goal(
+        pool, f"[pm-gold {tag}] goal with only weak evidence",
+        objective="a problem with a solution that never clears the bar",
     )
-    bench = await pm.create_benchmark(pool, problem_id=problem["id"], name="weak-bench", version=1)
+    bench = await pm.create_benchmark(pool, goal_id=problem["id"], name="weak-bench", version=1)
     proc_id, proc_row = await _make_procedure(pool, f"pm-gold-{tag}-weak")
-    sol = await pm.associate_solution(pool, problem_id=problem["id"], solution_type="procedure", target_id=proc_id)
+    sol = await pm.associate_solution(pool, goal_id=problem["id"], solution_type="procedure", target_id=proc_id)
     exec_ids = await _run_executions(pool, proc_id, proc_row, n=20, successes=8)  # well under HIGH_PERFORMING
-    ev = await pm.request_evaluation(pool, problem_id=problem["id"], benchmark_id=bench["id"],
+    ev = await pm.request_evaluation(pool, goal_id=problem["id"], benchmark_id=bench["id"],
                                       solution_id=sol["id"], procedure_id=proc_id, procedure_version=1)
     await pm.complete_evaluation(pool, ev["id"], execution_ids=exec_ids)
 
-    result = await pm.find_best_way(pool, f"goal with only weak evidence {tag}", scope=AccessScope.unrestricted())
-    assert result["matched_problem"]["id"] == problem["id"]
+    result = await pm.find_best_verified_solution(pool, f"goal with only weak evidence {tag}", scope=AccessScope.unrestricted())
+    assert result["matched_goal"]["id"] == problem["id"]
     assert result["result"] == "no verified solution yet"
     assert result["current_best"] == []
 
@@ -468,19 +497,19 @@ async def test_find_best_way_problem_matched_but_no_verified_solution(pool):
 @with_pool
 async def test_find_best_way_one_verified_solution_converges_to_it(pool):
     tag = _tag()
-    problem = await pm.create_problem(
-        pool, title=f"[pm-gold {tag}] goal with one strong verified solution",
-        objective="exactly one solution clears BEST_VERIFIED", proposer="userA",
+    problem = await _make_goal(
+        pool, f"[pm-gold {tag}] goal with one strong verified solution",
+        objective="exactly one solution clears BEST_VERIFIED",
     )
-    bench = await pm.create_benchmark(pool, problem_id=problem["id"], name="strong-bench", version=1)
+    bench = await pm.create_benchmark(pool, goal_id=problem["id"], name="strong-bench", version=1)
     proc_id, proc_row = await _make_procedure(pool, f"pm-gold-{tag}-strong")
-    sol = await pm.associate_solution(pool, problem_id=problem["id"], solution_type="procedure", target_id=proc_id)
+    sol = await pm.associate_solution(pool, goal_id=problem["id"], solution_type="procedure", target_id=proc_id)
     exec_ids = await _run_executions(pool, proc_id, proc_row, n=30, successes=29)
-    ev = await pm.request_evaluation(pool, problem_id=problem["id"], benchmark_id=bench["id"],
+    ev = await pm.request_evaluation(pool, goal_id=problem["id"], benchmark_id=bench["id"],
                                       solution_id=sol["id"], procedure_id=proc_id, procedure_version=1)
     await pm.complete_evaluation(pool, ev["id"], execution_ids=exec_ids)
 
-    result = await pm.find_best_way(pool, f"goal with one strong verified solution {tag}", scope=AccessScope.unrestricted())
+    result = await pm.find_best_verified_solution(pool, f"goal with one strong verified solution {tag}", scope=AccessScope.unrestricted())
     assert result["result"] == "verified"
     assert result["current_best"] == [sol["id"]]
     assert "leaderboard" in result and "conditional_leaders" in result
@@ -503,29 +532,29 @@ async def test_find_best_way_service_ranks_by_evidence_not_lexical_similarity(po
     service function directly, the same one both REST and the (now
     removed) MCP tool always delegated to."""
     tag = _tag()
-    problem = await pm.create_problem(
-        pool, title=f"[pm-gold {tag}] convergence not similarity",
-        objective="prove ranking, not lexical closeness, decides the answer", proposer="userA",
+    problem = await _make_goal(
+        pool, f"[pm-gold {tag}] convergence not similarity",
+        objective="prove ranking, not lexical closeness, decides the answer",
     )
-    bench = await pm.create_benchmark(pool, problem_id=problem["id"], name="conv-bench", version=1)
+    bench = await pm.create_benchmark(pool, goal_id=problem["id"], name="conv-bench", version=1)
     # "closer" text match, weak evidence.
     proc_close, row_close = await _make_procedure(
         pool, f"pm-gold-{tag}-convergence not similarity exact phrase match"
     )
     # "further" text match, strong verified evidence.
     proc_far, row_far = await _make_procedure(pool, f"pm-gold-{tag}-totally-different-name")
-    sol_close = await pm.associate_solution(pool, problem_id=problem["id"], solution_type="procedure", target_id=proc_close)
-    sol_far = await pm.associate_solution(pool, problem_id=problem["id"], solution_type="procedure", target_id=proc_far)
+    sol_close = await pm.associate_solution(pool, goal_id=problem["id"], solution_type="procedure", target_id=proc_close)
+    sol_far = await pm.associate_solution(pool, goal_id=problem["id"], solution_type="procedure", target_id=proc_far)
 
     exec_close = await _run_executions(pool, proc_close, row_close, n=20, successes=6)
     exec_far = await _run_executions(pool, proc_far, row_far, n=20, successes=19)
-    ev_close = await pm.request_evaluation(pool, problem_id=problem["id"], benchmark_id=bench["id"],
+    ev_close = await pm.request_evaluation(pool, goal_id=problem["id"], benchmark_id=bench["id"],
                                             solution_id=sol_close["id"], procedure_id=proc_close, procedure_version=1)
-    ev_far = await pm.request_evaluation(pool, problem_id=problem["id"], benchmark_id=bench["id"],
+    ev_far = await pm.request_evaluation(pool, goal_id=problem["id"], benchmark_id=bench["id"],
                                           solution_id=sol_far["id"], procedure_id=proc_far, procedure_version=1)
     await pm.complete_evaluation(pool, ev_close["id"], execution_ids=exec_close)
     await pm.complete_evaluation(pool, ev_far["id"], execution_ids=exec_far)
 
-    fbs = await pm.find_best_way(pool, f"convergence not similarity {tag}", scope=AccessScope.unrestricted())
+    fbs = await pm.find_best_verified_solution(pool, f"convergence not similarity {tag}", scope=AccessScope.unrestricted())
     assert fbs["result"] == "verified"
     assert fbs["current_best"] == [sol_far["id"]], fbs  # evidence wins, not text proximity
