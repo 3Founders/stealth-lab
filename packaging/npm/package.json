@@ -1,0 +1,31 @@
+{
+  "name": "stealthlab-mcp",
+  "version": "0.1.0",
+  "description": "Connect Claude Code, Cursor, Claude Desktop, Windsurf, Codex and VS Code to the hosted StealthLab (keळ) MCP server.",
+  "license": "UNLICENSED",
+  "type": "module",
+  "bin": {
+    "stealthlab-mcp": "bin/stealthlab-mcp.mjs"
+  },
+  "files": [
+    "bin",
+    "lib",
+    "install",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=18.17"
+  },
+  "scripts": {
+    "test": "node --test",
+    "prepublishOnly": "node scripts/check-publish.mjs && node --test"
+  },
+  "stealthlab": {
+    "defaultMcpUrl": ""
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/3Founders/stealth-lab.git",
+    "directory": "packaging/npm"
+  }
+}

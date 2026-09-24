@@ -1,0 +1,34 @@
+name: Publish stealthlab-mcp
+
+# Publishes packaging/npm to npm when a `stealthlab-mcp-v<version>` tag is
+# pushed. The tag must match package.json's version, and prepublishOnly
+# (scripts/check-publish.mjs) refuses to publish until the hosted MCP URL is
+# set identically in package.json, install.sh and install.ps1.
+# Needs the NPM_TOKEN repository secret (an npm automation token).
+
+on:
+  push:
+    tags: ["stealthlab-mcp-v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: packaging/npm
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          registry-url: https://registry.npmjs.org
+      - name: Tag matches package.json version
+        run: |
+          want="stealthlab-mcp-v$(node -p "require('./package.json').version")"
+          [ "$GITHUB_REF_NAME" = "$want" ] || { echo "tag $GITHUB_REF_NAME != $want"; exit 1; }
+      - run: npm publish --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

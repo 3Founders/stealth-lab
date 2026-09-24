@@ -8,8 +8,8 @@
     "start": "next start -p 3100",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "predev": "node scripts/sync-legal.mjs",
-    "prebuild": "node scripts/sync-legal.mjs"
+    "predev": "node scripts/sync-legal.mjs && node scripts/sync-installers.mjs",
+    "prebuild": "node scripts/sync-legal.mjs && node scripts/sync-installers.mjs"
   },
   "dependencies": {
     "@fontsource/barlow": "^5.3.0",

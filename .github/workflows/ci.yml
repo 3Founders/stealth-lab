@@ -56,3 +56,34 @@ jobs:
       - run: pip install -e "packaging[test]"
 
       - run: pytest packaging/tests -q
+
+  mcp-client:
+    # packaging/npm: the zero-dependency `stealthlab-mcp` connector (npx /
+    # curl | bash / irm | iex). Pure Node, offline -- its relay test runs
+    # against an in-process HTTP server. All three OSes, because it writes
+    # agent configs at OS-specific paths and spawns .cmd shims on Windows.
+    name: MCP client (packaging/npm, ${{ matrix.os }}, node ${{ matrix.node }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        node: ["18", "22"]
+    defaults:
+      run:
+        working-directory: packaging/npm
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+      - run: npm test
+      - run: node bin/stealthlab-mcp.mjs --help
+      - if: runner.os != 'Windows'
+        run: bash -n install/install.sh
+      - if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $errors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile("$PWD/install/install.ps1", [ref]$null, [ref]$errors) | Out-Null
+          if ($errors) { $errors; exit 1 }
