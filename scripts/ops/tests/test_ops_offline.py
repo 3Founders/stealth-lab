@@ -185,3 +185,14 @@ def test_promotion_gate_requires_matching_sha(monkeypatch, tmp_path):
     assert checks.gate_ok("production") is None
     monkeypatch.setattr(checks, "run", lambda *a, **k: core.Proc(0, "sha-2\n", ""))
     assert "re-run promote" in checks.gate_ok("production")
+
+
+def test_ingest_manifest_kind_routes_documents_and_packages(tmp_path):
+    from stealth_ops.ingest import manifest_kind
+
+    docs = tmp_path / "docs.jsonl"
+    docs.write_text(json.dumps({"repository": "openai/codex", "path": "AGENTS.md", "commit": "a" * 40}) + "\n")
+    pkgs = tmp_path / "pkgs.jsonl"
+    pkgs.write_text(json.dumps({"source_id": "s", "repo": "https://github.com/x/y", "commit": "c", "path": "SKILL.md"}) + "\n")
+    assert manifest_kind(str(docs)) == "document"
+    assert manifest_kind(str(pkgs)) == "skill-package"

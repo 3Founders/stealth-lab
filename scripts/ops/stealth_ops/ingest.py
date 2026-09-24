@@ -23,6 +23,13 @@ def count_manifest(path: str) -> int:
         return sum(1 for line in fh if line.strip())
 
 
+def manifest_kind(path: str) -> str:
+    """'document' for GitHub-document lines ({"repository","path","commit"}), else 'skill-package'."""
+    with open(path, encoding="utf-8") as fh:
+        first = next((json.loads(line) for line in fh if line.strip()), {})
+    return "document" if "repository" in first and "repo" not in first else "skill-package"
+
+
 def metrics() -> dict[str, Any]:
     p = admin("metrics", timeout=120)
     if not p.ok:
@@ -93,8 +100,8 @@ def ingest(manifest: str, *, runner: str, workers: int, lanes: int, interval: fl
            max_permanent_failures: int, skip_preflight: bool, skip_snapshot: bool, dry_run: bool) -> int:
     if not os.path.exists(manifest):
         raise OpsError(f"manifest not found: {manifest}")
-    n = count_manifest(manifest)
-    print(f"manifest {manifest}: {n} package line(s)")
+    n, kind = count_manifest(manifest), manifest_kind(manifest)
+    print(f"manifest {manifest}: {n} {kind} line(s)")
     if not skip_preflight:
         print("== preflight ==")
         if checks.preflight() != 0:
@@ -112,7 +119,7 @@ def ingest(manifest: str, *, runner: str, workers: int, lanes: int, interval: fl
             print(f"cannot snapshot ({exc}); fix NEON_API_KEY or pass --skip-snapshot to accept the risk", file=sys.stderr)
             return 1
     before = metrics()["jobs"]
-    p = backend(["app.ingestion.enqueue", "skill-package", "--manifest", manifest], timeout=1800)
+    p = backend(["app.ingestion.enqueue", kind, "--manifest", manifest], timeout=1800)
     if not p.ok:
         raise OpsError(f"enqueue failed: {(p.err or p.out)[-400:]}")
     res = p.json()

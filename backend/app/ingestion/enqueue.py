@@ -7,6 +7,10 @@
     # a batch from a manifest of packages (JSON lines: {"source_id","repo","commit","path", ...})
     python -m app.ingestion.enqueue skill-package --manifest packages.jsonl
 
+    # GitHub-hosted documents of any adapter format (Markdown/HTML/PDF/DOCX/AGENTS.md/runbooks...)
+    # manifest JSON lines: {"repository": "owner/repo", "path": "...", "commit": "<sha>", ...extra}
+    python -m app.ingestion.enqueue document --manifest docs.jsonl
+
     # any registered job type with an explicit payload and scope
     python -m app.ingestion.enqueue raw --job-type normalize_trace_event --payload '{"trace_event_id": "..."}' \
         --idempotency-key trace-event:123 --scope-type session --scope-entity-id s1 --visibility private --owner-id u1
@@ -27,6 +31,7 @@ from app.services.auth_context import JobAuthority
 from app.ingestion.config import control_database_url
 
 SKILL_JOB = "ingest_skill_package"
+DOC_JOB = "ingest_document"
 
 
 def skill_package_key(source_id: str, commit: str, path: str) -> str:
@@ -51,6 +56,30 @@ async def enqueue_skill_packages(pool, packages: list[dict], *, config_version: 
     return {"created": created, "duplicate": duplicate}
 
 
+def document_key(repository: str, commit: str, path: str) -> str:
+    return "doc:" + hashlib.sha256(f"{repository}\x00{commit}\x00{path}".encode()).hexdigest()[:32]
+
+
+async def enqueue_documents(pool, docs: list[dict], *, config_version: Optional[str] = None,
+                            submitted_by: Optional[str] = None) -> dict:
+    """One ingest_document job per commit-pinned GitHub file (handled by
+    ingestion_jobs.handle_ingest_document). A pinned commit is required: it is the job's identity."""
+    created = duplicate = 0
+    for doc in docs:
+        payload = dict(doc)
+        for req in ("repository", "path", "commit"):
+            if not payload.get(req):
+                raise ValueError(f"document missing {req!r}: {doc}")
+        _, made = await q.enqueue(
+            pool, DOC_JOB, payload, idempotency_key=document_key(payload["repository"], payload["commit"], payload["path"]),
+            source_id=payload.get("source_id") or payload["repository"], scope_type="global", visibility="public",
+            config_version=config_version,
+            authority=JobAuthority(submitted_by_service_id=submitted_by, scope="global_public", visibility="public"))
+        created += made
+        duplicate += not made
+    return {"created": created, "duplicate": duplicate}
+
+
 def _parse(argv=None) -> argparse.Namespace:
     p = argparse.ArgumentParser(prog="python -m app.ingestion.enqueue", description=__doc__.split("\n\n")[0])
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -61,6 +90,12 @@ def _parse(argv=None) -> argparse.Namespace:
     s.add_argument("--commit")
     s.add_argument("--path")
     s.add_argument("--config-version")
+    d = sub.add_parser("document")
+    d.add_argument("--manifest", help="JSON-lines file of documents")
+    d.add_argument("--repository")
+    d.add_argument("--path")
+    d.add_argument("--commit")
+    d.add_argument("--config-version")
     r = sub.add_parser("raw")
     r.add_argument("--job-type", required=True)
     r.add_argument("--payload", required=True, help="JSON object")
@@ -86,6 +121,13 @@ async def _amain(a: argparse.Namespace) -> int:
             else:
                 pkgs = [{"source_id": a.source_id, "repo": a.repo, "commit": a.commit, "path": a.path}]
             print(json.dumps(await enqueue_skill_packages(pool, pkgs, config_version=a.config_version)))
+        elif a.cmd == "document":
+            if a.manifest:
+                with open(a.manifest, encoding="utf-8") as fh:
+                    docs = [json.loads(line) for line in fh if line.strip()]
+            else:
+                docs = [{"repository": a.repository, "path": a.path, "commit": a.commit}]
+            print(json.dumps(await enqueue_documents(pool, docs, config_version=a.config_version)))
         else:
             jid, made = await q.enqueue(
                 pool, a.job_type, json.loads(a.payload), idempotency_key=a.idempotency_key, source_id=a.source_id,
