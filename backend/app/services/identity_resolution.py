@@ -26,12 +26,15 @@ Failure policy (fail closed where correctness matters):
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
+import math
 import re
 import time
+import unicodedata
 from dataclasses import dataclass, field
-from typing import Any, Literal, Optional
+from typing import Any, Literal, Optional, cast
 
 import asyncpg
 
@@ -49,6 +52,107 @@ DEFAULT_JUDGE_TOP_N = 5
 # A model verdict of "same" below this self-reported confidence is treated as
 # "related" (fail closed). This is the MODEL's confidence, not a similarity threshold.
 SAME_MIN_CONFIDENCE = 0.75
+GoalIdentityMode = Literal["model", "none"]
+VALID_GOAL_IDENTITY_MODES = ("model", "none")
+VALID_ON_UNAVAILABLE = ("raise", "create")
+VALID_DECISIONS = frozenset({
+    "exact_match", "same", "related", "broader", "narrower", "contradicts",
+    "distinct", "no_candidates", "judge_unavailable", "new_version",
+})
+VALID_DECISIONS_BY_OBJECT = {
+    "goal": frozenset({
+        "exact_match", "same", "related", "broader", "narrower", "contradicts",
+        "distinct", "no_candidates", "judge_unavailable",
+    }),
+    "claim": frozenset({
+        "exact_match", "same", "related", "broader", "narrower", "contradicts",
+        "distinct", "no_candidates", "judge_unavailable",
+    }),
+    "procedure": frozenset({"same", "new_version", "distinct", "no_candidates", "judge_unavailable"}),
+}
+_SAFE_GOAL_CREATE_DECISIONS = frozenset({
+    "distinct", "related", "narrower", "broader",
+    "judge_unavailable", "no_candidates",
+})
+
+
+class PermanentIdentityConflict(ValueError):
+    def __init__(self, object_type: str, idempotency_key: str, reason: str):
+        self.object_type = object_type
+        self.idempotency_key = idempotency_key
+        self.reason = reason
+        self.permanent = True
+        super().__init__(
+            f"permanent identity conflict for {object_type} key {idempotency_key}: {reason}"
+        )
+
+
+class IdentityReplayError(ValueError):
+    pass
+
+
+def validate_identity_job_id(job_id: Any) -> Optional[int]:
+    """Validate a trusted ingestion job id without coercing untrusted input."""
+    if job_id is None:
+        return None
+    if isinstance(job_id, bool) or not isinstance(job_id, int) or job_id <= 0:
+        raise ValueError("identity_job_id must be a positive integer")
+    return job_id
+
+
+def validate_on_unavailable(on_unavailable: Optional[str]) -> Optional[str]:
+    if on_unavailable is None:
+        return None
+    if not isinstance(on_unavailable, str) or on_unavailable not in VALID_ON_UNAVAILABLE:
+        raise ValueError(
+            f"on_unavailable must be one of {VALID_ON_UNAVAILABLE!r}, got {on_unavailable!r}"
+        )
+    return on_unavailable
+
+
+def canonical_identity_text(text: Any) -> str:
+    return " ".join(
+        unicodedata.normalize("NFKC", str(text or "")).casefold().split()
+    )
+
+
+def _canonical_scope_type(scope_type: Any) -> str:
+    return str(scope_type or "global").strip().lower()
+
+
+def identity_idempotency_key(
+    job_id: Optional[int] = None,
+    source_hash: str = "",
+    object_type: str = "",
+    semantic_role: str = "",
+    scope_type: str = "global",
+    scope_entity_id: Optional[str] = None,
+    text: str = "",
+) -> Optional[str]:
+    """Return the stable replay key for one job-owned identity operation."""
+    job_id = validate_identity_job_id(job_id)
+    if job_id is None:
+        return None
+    normalized_text = canonical_identity_text(text)
+    fields = (
+        str(job_id),
+        str(source_hash or "").strip().lower(),
+        str(object_type or "").strip().lower(),
+        str(semantic_role or "").strip(),
+        _canonical_scope_type(scope_type),
+        "" if scope_entity_id is None else str(scope_entity_id),
+        normalized_text,
+    )
+    encoded = "\x1f".join(f"{len(value)}:{value}" for value in fields)
+    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+
+def validate_judge_mode(judge_mode: str) -> GoalIdentityMode:
+    if judge_mode not in VALID_GOAL_IDENTITY_MODES:
+        raise ValueError(
+            f"judge_mode must be one of {VALID_GOAL_IDENTITY_MODES!r}, got {judge_mode!r}"
+        )
+    return cast(GoalIdentityMode, judge_mode)
 
 _TOKEN_RE = re.compile(r"[a-z0-9]+")
 _STOP = frozenset("a an the of to for in on at by with and or from into is are be as it its this that".split())
@@ -243,10 +347,297 @@ def _goal_text(r) -> str:
 # ------------------------------------------------------------------ resolve
 
 
+def _row_value(row: Any, key: str, default: Any = None) -> Any:
+    if row is None:
+        return default
+    try:
+        return row[key]
+    except (KeyError, IndexError, TypeError, AttributeError):
+        return getattr(row, key, default)
+
+
+def _scope_matches(
+    stored_type: Any,
+    stored_entity_id: Any,
+    expected_type: Any,
+    expected_entity_id: Any,
+) -> bool:
+    return (
+        _canonical_scope_type(stored_type) == _canonical_scope_type(expected_type)
+        and stored_entity_id == expected_entity_id
+    )
+
+
+def _decision_metadata_mismatch_reason(
+    row: Any,
+    *,
+    candidate_text: str,
+    scope_type: str,
+    scope_entity_id: Optional[str],
+    job_id: Optional[int] = None,
+) -> Optional[str]:
+    stored_text = _row_value(row, "candidate_text")
+    if (
+        not isinstance(stored_text, str)
+        or canonical_identity_text(stored_text) != canonical_identity_text(candidate_text)
+    ):
+        return "candidate_text"
+    if _row_value(row, "job_id") != job_id:
+        return "job_id"
+    if not _scope_matches(
+        _row_value(row, "scope_type"),
+        _row_value(row, "scope_entity_id"),
+        scope_type,
+        scope_entity_id,
+    ):
+        return "scope"
+    return None
+
+
+def _decision_metadata_matches(
+    row: Any,
+    *,
+    candidate_text: str,
+    scope_type: str,
+    scope_entity_id: Optional[str],
+    job_id: Optional[int] = None,
+) -> bool:
+    return _decision_metadata_mismatch_reason(
+        row,
+        candidate_text=candidate_text,
+        scope_type=scope_type,
+        scope_entity_id=scope_entity_id,
+        job_id=job_id,
+    ) is None
+
+
+def _candidate_number(value: Any, field_name: str, *, minimum: Optional[float] = None,
+                      maximum: Optional[float] = None) -> Optional[float]:
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise IdentityReplayError(f"candidate {field_name} must be numeric")
+    number = float(value)
+    if not math.isfinite(number):
+        raise IdentityReplayError(f"candidate {field_name} must be finite")
+    if minimum is not None and number < minimum:
+        raise IdentityReplayError(f"candidate {field_name} is below its minimum")
+    if maximum is not None and number > maximum:
+        raise IdentityReplayError(f"candidate {field_name} is above its maximum")
+    return number
+
+
+def _candidate_rank(value: Any, field_name: str) -> Optional[int]:
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+        raise IdentityReplayError(f"candidate {field_name} must be a positive integer")
+    return value
+
+
+def _candidate_from_raw(raw: Any) -> Candidate:
+    if not isinstance(raw, dict):
+        raise IdentityReplayError("stored candidate must be an object")
+    identifier = raw.get("id")
+    if not isinstance(identifier, str) or not identifier.strip():
+        raise IdentityReplayError("stored candidate id must be a non-empty string")
+    name = raw.get("name", "")
+    text = raw.get("text", "")
+    if name is None:
+        name = ""
+    if text is None:
+        text = ""
+    if not isinstance(name, str) or not isinstance(text, str):
+        raise IdentityReplayError("stored candidate name and text must be strings")
+    relation = raw.get("relation")
+    if relation is not None and not isinstance(relation, str):
+        raise IdentityReplayError("stored candidate relation must be a string")
+    if relation in ("narrower", "broader"):
+        relation = "specializes" if relation == "narrower" else "generalizes"
+    if relation is not None and relation not in {
+        "same", "distinct", "related", "contradicts", "specializes",
+        "generalizes", "refinement",
+    }:
+        raise IdentityReplayError("stored candidate relation is not allowed")
+    home_shard_id = raw.get("home_shard_id")
+    if home_shard_id is not None and not isinstance(home_shard_id, str):
+        raise IdentityReplayError("stored candidate home_shard_id must be a string")
+    return Candidate(
+        id=identifier,
+        name=name,
+        text=text,
+        fts_rank=_candidate_rank(raw.get("fts_rank"), "fts_rank"),
+        vec_rank=_candidate_rank(raw.get("vec_rank"), "vec_rank"),
+        vec_distance=_candidate_number(raw.get("vec_distance"), "vec_distance", minimum=0.0),
+        rrf=_candidate_number(raw.get("rrf"), "rrf", minimum=0.0) or 0.0,
+        home_shard_id=home_shard_id,
+        relation=relation,
+        confidence=_candidate_number(raw.get("confidence"), "confidence", minimum=0.0, maximum=1.0),
+    )
+
+
+def _validate_candidate_object(candidate: Any) -> Candidate:
+    if not isinstance(candidate, Candidate):
+        raise IdentityReplayError("decision candidates must contain Candidate objects")
+    if not isinstance(candidate.id, str) or not candidate.id.strip():
+        raise IdentityReplayError("candidate id must be a non-empty string")
+    if not isinstance(candidate.name, str) or not isinstance(candidate.text, str):
+        raise IdentityReplayError("candidate name and text must be strings")
+    return _candidate_from_raw({
+        "id": candidate.id,
+        "name": candidate.name,
+        "text": candidate.text,
+        "fts_rank": candidate.fts_rank,
+        "vec_rank": candidate.vec_rank,
+        "vec_distance": candidate.vec_distance,
+        "rrf": candidate.rrf,
+        "home_shard_id": candidate.home_shard_id,
+        "relation": candidate.relation,
+        "confidence": candidate.confidence,
+    })
+
+
+def _validate_candidate_objects(candidates: Any) -> list[Candidate]:
+    if not isinstance(candidates, list):
+        raise IdentityReplayError("decision candidates must be a list")
+    return [_validate_candidate_object(candidate) for candidate in candidates]
+
+
+def _validate_decision(object_type: str, decision: Any, resolved_id: Any,
+                       candidates: list[Candidate]) -> Optional[str]:
+    allowed = VALID_DECISIONS_BY_OBJECT.get(object_type)
+    if (
+        allowed is None
+        or not isinstance(decision, str)
+        or decision not in VALID_DECISIONS
+        or decision not in allowed
+    ):
+        raise IdentityReplayError(f"decision is not allowed for {object_type}: {decision!r}")
+    if resolved_id is not None and not isinstance(resolved_id, str):
+        raise IdentityReplayError("resolved_id must be a string")
+    resolved = None if resolved_id is None else resolved_id
+    if decision in ("exact_match", "same", "new_version"):
+        if not resolved or resolved not in {candidate.id for candidate in candidates}:
+            raise IdentityReplayError(
+                f"{decision} resolved_id must be a member of stored candidates"
+            )
+    elif resolved is not None:
+        raise IdentityReplayError(f"{decision} must not have resolved_id")
+    if decision == "no_candidates" and candidates:
+        raise IdentityReplayError("no_candidates must store an empty candidate list")
+    return resolved
+
+
+def _stored_candidates(value: Any) -> list[Candidate]:
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except (TypeError, ValueError) as exc:
+            raise IdentityReplayError("stored candidates JSON is invalid") from exc
+    if not isinstance(value, list):
+        raise IdentityReplayError("stored candidates must be a JSON array")
+    candidates = [_candidate_from_raw(raw) for raw in value]
+    if len({candidate.id for candidate in candidates}) != len(candidates):
+        raise IdentityReplayError("stored candidate ids must be unique")
+    return candidates
+
+
+def _validate_stored_decision_row(row: Any, object_type: str) -> tuple[str, list[Candidate], Optional[str]]:
+    if row is None:
+        raise IdentityReplayError("identity decision row is missing")
+    decision_id = _row_value(row, "id")
+    if decision_id is None or not str(decision_id).strip():
+        raise IdentityReplayError("identity decision id is missing")
+    candidate_text = _row_value(row, "candidate_text")
+    if not isinstance(candidate_text, str) or not canonical_identity_text(candidate_text):
+        raise IdentityReplayError("identity decision candidate_text is invalid")
+    decision = _row_value(row, "decision")
+    candidates = _stored_candidates(_row_value(row, "candidates"))
+    resolved = _validate_decision(object_type, decision, _row_value(row, "resolved_id"), candidates)
+    return str(decision), candidates, resolved
+
+
 async def _load_prior_decision(pool, object_type: str, key: str) -> Optional[asyncpg.Record]:
     return await pool.fetchrow(
-        "SELECT id::text AS id, decision, resolved_id::text AS resolved_id, judge_provider, judge_model "
-        "FROM identity_decisions WHERE object_type = $1 AND idempotency_key = $2", object_type, key)
+        "SELECT id::text AS id, candidate_text, scope_type, scope_entity_id, decision, "
+        "resolved_id::text AS resolved_id, candidates, judge_provider, judge_model, "
+        "fts_candidates, vector_candidates, job_id, detail, idempotency_key "
+        "FROM identity_decisions WHERE object_type = $1 AND idempotency_key = $2",
+        object_type,
+        key,
+    )
+
+
+async def _live_goal(
+    pool: Any,
+    goal_id: str,
+    *,
+    scope_type: str,
+    scope_entity_id: Optional[str],
+) -> bool:
+    from app.services.shards import home_pool
+
+    owner = await home_pool(pool, "goal", str(goal_id))
+    query = (
+        "SELECT 1 FROM goals WHERE id = $1::uuid AND t_invalid IS NULL "
+        "AND status <> 'merged' AND (($2 = 'global' AND "
+        "(scope_type IS NULL OR scope_type = 'global') AND scope_entity_id IS NULL) "
+        "OR ($2 <> 'global' AND scope_type = $2 AND scope_entity_id = $3))"
+    )
+    args = (str(goal_id), scope_type or "global", scope_entity_id)
+    if hasattr(owner, "fetchval"):
+        return bool(await owner.fetchval(query, *args))
+    return bool(await owner.fetchrow(query, *args))
+
+
+def _stored_count(row: Any, field_name: str) -> int:
+    value = _row_value(row, field_name, 0)
+    if value is None:
+        return 0
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        raise IdentityReplayError(f"stored {field_name} must be a non-negative integer")
+    return value
+
+
+async def _replay_goal_decision(
+    pool: Any,
+    prior: Any,
+    *,
+    scope_type: str,
+    scope_entity_id: Optional[str],
+    on_unavailable: str,
+    reused_decision: bool = True,
+) -> IdentityOutcome:
+    decision, candidates, resolved_id = _validate_stored_decision_row(prior, "goal")
+    if decision == "judge_unavailable" and on_unavailable != "create":
+        raise IdentityReplayError("stored judge_unavailable decision conflicts with on_unavailable='raise'")
+    relations = [
+        candidate for candidate in candidates
+        if candidate.relation in ("specializes", "generalizes", "related")
+    ]
+    common = {
+        "candidates": candidates,
+        "relations": relations,
+        "decision_id": _row_value(prior, "id"),
+        "fts_candidates": _stored_count(prior, "fts_candidates"),
+        "vector_candidates": _stored_count(prior, "vector_candidates"),
+        "judge_provider": _row_value(prior, "judge_provider"),
+        "judge_model": _row_value(prior, "judge_model"),
+        "reused_decision": reused_decision,
+    }
+    if decision in _SAFE_GOAL_CREATE_DECISIONS:
+        return IdentityOutcome(
+            action="create", decision=decision, resolved_id=None, **common
+        )
+    if decision not in ("same", "exact_match"):
+        raise IdentityReplayError(f"unsupported goal replay decision: {decision!r}")
+    if not resolved_id or not await _live_goal(
+        pool, resolved_id, scope_type=scope_type, scope_entity_id=scope_entity_id
+    ):
+        raise IdentityReplayError("stored goal decision targets a dead goal")
+    return IdentityOutcome(
+        action="reuse", decision=decision, resolved_id=resolved_id, **common
+    )
 
 
 async def record_decision(
@@ -254,37 +645,82 @@ async def record_decision(
     scope_entity_id: Optional[str], decision: str, resolved_id: Optional[str], candidates: list[Candidate],
     judge: Optional[SemanticJudge], provider: Optional[str], model: Optional[str], fts_n: int, vec_n: int,
     job_id: Optional[int], idempotency_key: Optional[str], detail: Optional[dict] = None,
-) -> Optional[str]:
-    """Insert the durable decision row. With an idempotency key a concurrent
-    duplicate loses the race harmlessly and the winner's id is returned."""
-    row = await pool.fetchrow(
-        """
-        INSERT INTO identity_decisions (object_type, candidate_text, scope_type, scope_entity_id, decision,
-            resolved_id, candidates, judge_chain, judge_provider, judge_model, prompt_version,
-            fts_candidates, vector_candidates, job_id, idempotency_key, detail)
-        VALUES ($1, $2, $3, $4, $5, $6::uuid, $7::jsonb, $8, $9, $10, $11, $12, $13, $14, $15, $16::jsonb)
-        ON CONFLICT (object_type, idempotency_key) WHERE idempotency_key IS NOT NULL DO NOTHING
-        RETURNING id::text
-        """,
-        object_type, candidate_text[:2000], scope_type, scope_entity_id, decision, resolved_id,
-        [c.as_json() for c in candidates], (judge.chain_id if judge else None), provider, model,
-        IDENTITY_PROMPT_VERSION, fts_n, vec_n, job_id, idempotency_key, detail or {})
+    return_row: bool = True,
+) -> Any:
+    job_id = validate_identity_job_id(job_id)
+    canonical_text = canonical_identity_text(candidate_text)
+    validated_candidates = _validate_candidate_objects(candidates)
+    validated_resolved = _validate_decision(object_type, decision, resolved_id, validated_candidates)
+    if detail is not None and not isinstance(detail, dict):
+        raise IdentityReplayError("identity decision detail must be an object")
+    scope_value = None if scope_type is None else _canonical_scope_type(scope_type)
+    if isinstance(fts_n, bool) or not isinstance(fts_n, int) or fts_n < 0:
+        raise IdentityReplayError("fts_n must be a non-negative integer")
+    if isinstance(vec_n, bool) or not isinstance(vec_n, int) or vec_n < 0:
+        raise IdentityReplayError("vec_n must be a non-negative integer")
+    try:
+        row = await pool.fetchrow(
+            """
+            INSERT INTO identity_decisions (object_type, candidate_text, scope_type, scope_entity_id, decision,
+                resolved_id, candidates, judge_chain, judge_provider, judge_model, prompt_version,
+                fts_candidates, vector_candidates, job_id, idempotency_key, detail)
+            VALUES ($1, $2, $3, $4, $5, $6::uuid, $7::jsonb, $8, $9, $10, $11, $12, $13, $14, $15, $16::jsonb)
+            ON CONFLICT (object_type, idempotency_key) WHERE idempotency_key IS NOT NULL DO NOTHING
+            RETURNING id::text AS id, candidate_text, scope_type, scope_entity_id, decision,
+                resolved_id::text AS resolved_id, candidates, judge_provider, judge_model,
+                fts_candidates, vector_candidates, job_id, detail, idempotency_key
+            """,
+            object_type, candidate_text, scope_value, scope_entity_id, decision, validated_resolved,
+            [candidate.as_json() for candidate in validated_candidates],
+            (judge.chain_id if judge else None), provider, model, IDENTITY_PROMPT_VERSION,
+            fts_n, vec_n, job_id, idempotency_key, detail or {})
+    except asyncpg.UniqueViolationError:
+        if idempotency_key is None:
+            raise
+        row = None
     if row:
-        return row["id"]
-    prior = await _load_prior_decision(pool, object_type, idempotency_key or "")
-    return prior["id"] if prior else None  # pragma: no cover -- conflict implies a prior row
+        return row if return_row else _row_value(row, "id")
+    if not idempotency_key:
+        return None
+    prior = await _load_prior_decision(pool, object_type, idempotency_key)
+    if prior is None:
+        raise IdentityReplayError("identity decision conflict has no readable winner")
+    mismatch = _decision_metadata_mismatch_reason(
+        prior,
+        candidate_text=canonical_text,
+        scope_type=scope_value or "global",
+        scope_entity_id=scope_entity_id,
+        job_id=job_id,
+    )
+    if mismatch:
+        raise PermanentIdentityConflict(
+            object_type, idempotency_key, f"{mismatch} differs from the stored decision"
+        )
+    _validate_stored_decision_row(prior, object_type)
+    return prior if return_row else _row_value(prior, "id")
 
 
 async def resolve_goal_identity(
     pool: asyncpg.Pool, *, name: str, description: Optional[str], scope_type: str,
     scope_entity_id: Optional[str], embedding: Optional[list[float]], embedding_model: Optional[str],
-    judge: Optional[SemanticJudge] = None, on_unavailable: Optional[str] = None,
+    judge: Optional[SemanticJudge] = None, judge_mode: GoalIdentityMode = "model",
+    on_unavailable: Optional[str] = None,
     job_id: Optional[int] = None, idempotency_key: Optional[str] = None,
     fts_k: int = DEFAULT_FTS_K, vector_k: int = DEFAULT_VECTOR_K, top_n: int = DEFAULT_JUDGE_TOP_N,
     same_min_confidence: float = SAME_MIN_CONFIDENCE,
 ) -> IdentityOutcome:
     """Decide whether the candidate Goal already exists. Never mutates ``goals``;
-    the caller creates the row on ``action == 'create'``."""
+    the caller creates the row on ``action == 'create'``. ``judge_mode="model"``
+    runs semantic candidate generation and model judging; ``judge_mode="none"``
+    skips both and returns an explicit unpersisted create outcome."""
+    on_unavailable = validate_on_unavailable(on_unavailable)
+    judge_mode = validate_judge_mode(judge_mode)
+    job_id = validate_identity_job_id(job_id)
+    if judge_mode == "none":
+        return IdentityOutcome(
+            action="create", decision="judge_mode_none", candidates=[], relations=[],
+            decision_id=None, fts_candidates=0, vector_candidates=0,
+        )
     judge = judge if judge is not None else default_judge()
     if on_unavailable is None:
         on_unavailable = "raise" if judge.providers else "create"
@@ -292,54 +728,115 @@ async def resolve_goal_identity(
 
     if idempotency_key:
         prior = await _load_prior_decision(pool, "goal", idempotency_key)
-        if prior is not None and prior["decision"] in ("same", "exact_match") and prior["resolved_id"]:
-            alive = await pool.fetchval(
-                "SELECT 1 FROM goals WHERE id = $1::uuid AND status <> 'merged' AND t_invalid IS NULL", prior["resolved_id"])
-            if alive:
-                return IdentityOutcome("reuse", prior["decision"], prior["resolved_id"], decision_id=prior["id"],
-                                       judge_provider=prior["judge_provider"], judge_model=prior["judge_model"],
-                                       reused_decision=True)
+        if prior is not None:
+            mismatch = _decision_metadata_mismatch_reason(
+                prior,
+                candidate_text=cand_text,
+                scope_type=scope_type,
+                scope_entity_id=scope_entity_id,
+                job_id=job_id,
+            )
+            if mismatch:
+                raise PermanentIdentityConflict(
+                    "goal", idempotency_key, f"{mismatch} differs from the stored decision"
+                )
+            return await _replay_goal_decision(
+                pool, prior, scope_type=scope_type, scope_entity_id=scope_entity_id,
+                on_unavailable=on_unavailable,
+            )
 
     t0 = time.monotonic()
     candidates, n_fts, n_vec = await generate_goal_candidates(
         pool, cand_text, scope_type=scope_type, scope_entity_id=scope_entity_id, embedding=embedding,
         embedding_model=embedding_model, fts_k=fts_k, vector_k=vector_k, top_n=top_n)
+    candidates = _validate_candidate_objects(candidates)
     cand_ms = (time.monotonic() - t0) * 1000
 
     async def _finish(decision: str, resolved: Optional[str], *, provider=None, model=None, relations=None,
                       action: str = "create", detail: Optional[dict] = None) -> IdentityOutcome:
         detail = {**(detail or {}), "candidate_ms": round(cand_ms, 1)}
-        if decision == "no_candidates":
-            # Nothing was judged; the new goal row itself (created_from/provenance)
-            # is the durable record. Persisting these would double every write.
-            return IdentityOutcome(action, decision, resolved, candidates, [], None, n_fts, n_vec)  # type: ignore[arg-type]
-        did = await record_decision(
+        if decision == "no_candidates" and idempotency_key is None:
+            return IdentityOutcome(
+                action=action,
+                decision=decision,
+                resolved_id=resolved,
+                candidates=candidates,
+                relations=relations or [],
+                decision_id=None,
+                fts_candidates=n_fts,
+                vector_candidates=n_vec,
+                judge_provider=provider,
+                judge_model=model,
+            )
+        written = await record_decision(
             pool, object_type="goal", candidate_text=cand_text, scope_type=scope_type,
             scope_entity_id=scope_entity_id, decision=decision, resolved_id=resolved, candidates=candidates,
             judge=judge, provider=provider, model=model, fts_n=n_fts, vec_n=n_vec, job_id=job_id,
             idempotency_key=idempotency_key, detail=detail)
-        return IdentityOutcome(action, decision, resolved, candidates, relations or [], did, n_fts, n_vec, provider, model)  # type: ignore[arg-type]
+        if written is None:
+            if idempotency_key is not None:
+                raise IdentityReplayError("identity decision was not persisted")
+            return IdentityOutcome(
+                action=action,
+                decision=decision,
+                resolved_id=resolved,
+                candidates=candidates,
+                relations=relations or [],
+                decision_id=None,
+                fts_candidates=n_fts,
+                vector_candidates=n_vec,
+                judge_provider=provider,
+                judge_model=model,
+            )
+        if _row_value(written, "decision", None) is not None:
+            return await _replay_goal_decision(
+                pool, written, scope_type=scope_type, scope_entity_id=scope_entity_id,
+                on_unavailable=on_unavailable, reused_decision=False,
+            )
+        return IdentityOutcome(
+            action=action,
+            decision=decision,
+            resolved_id=resolved,
+            candidates=candidates,
+            relations=relations or [],
+            decision_id=_row_value(written, "id"),
+            fts_candidates=n_fts,
+            vector_candidates=n_vec,
+            judge_provider=provider,
+            judge_model=model,
+        )
+
 
     if not candidates:
         return await _finish("no_candidates", None)
 
     relations: list[Candidate] = []
-    for cand in candidates:
-        res = await judge.judge_identity("goal", cand_text, cand.text)
-        if not res.ok:
-            if on_unavailable == "raise":
-                raise SemanticJudgmentUnavailable(
-                    f"goal identity judgment unavailable ({res.reason}); {len(candidates)} candidate(s) unresolved",
-                    attempts=res.attempts)
-            return await _finish("judge_unavailable", None, relations=relations,
-                                 detail={"reason": res.reason, "unjudged": [c.id for c in candidates]})
-        verdict = res.value
+    batch_result = await judge.judge_identity_batch(
+        "goal", cand_text, [cand.text for cand in candidates])
+    if not batch_result.ok:
+        if on_unavailable == "raise":
+            raise SemanticJudgmentUnavailable(
+                f"goal identity judgment unavailable ({batch_result.reason}); {len(candidates)} candidate(s) unresolved",
+                attempts=batch_result.attempts)
+        return await _finish("judge_unavailable", None, relations=relations,
+                             detail={"reason": batch_result.reason,
+                                     "unjudged": [c.id for c in candidates]})
+    verdicts = batch_result.value
+    if not isinstance(verdicts, list) or len(verdicts) != len(candidates):
+        reason = "identity batch returned an invalid verdict count"
+        if on_unavailable == "raise":
+            raise SemanticJudgmentUnavailable(
+                f"goal identity judgment unavailable ({reason}); {len(candidates)} candidate(s) unresolved",
+                attempts=batch_result.attempts)
+        return await _finish("judge_unavailable", None, relations=relations,
+                             detail={"reason": reason, "unjudged": [c.id for c in candidates]})
+    for cand, verdict in zip(candidates, verdicts):
         cand.relation, cand.confidence = verdict["relation"], verdict["confidence"]
         if verdict["relation"] == "same":
             if verdict["confidence"] >= same_min_confidence:
-                return await _finish("same", cand.id, provider=res.provider, model=res.model, action="reuse",
-                                     relations=relations)
-            cand.relation = "related"  # low-confidence "same" is never a merge
+                return await _finish("same", cand.id, provider=batch_result.provider, model=batch_result.model,
+                                     action="reuse", relations=relations)
+            cand.relation = "related"
         if cand.relation in ("specializes", "generalizes", "related"):
             relations.append(cand)
     if not relations:
@@ -347,7 +844,7 @@ async def resolve_goal_identity(
     else:
         first = relations[0].relation
         final = {"specializes": "narrower", "generalizes": "broader"}.get(first, "related")
-    return await _finish(final, None, provider=res.provider, model=res.model,
+    return await _finish(final, None, provider=batch_result.provider, model=batch_result.model,
                          relations=relations, detail={"judged": len(candidates)})
 
 
@@ -474,26 +971,34 @@ async def reconcile_goals(
                     embedding_model=g["embedding_model_id"], exclude_id=g["id"],
                     created_within=(g["t_created"], window_minutes) if window_minutes else None)
                 unavailable = False
-                for cand in cands:
-                    res = await judge.judge_identity("goal", text, cand.text)
+                if cands:
+                    res = await judge.judge_identity_batch(
+                        "goal", text, [cand.text for cand in cands])
                     if not res.ok:
                         unavailable = True
-                        break
-                    cand.relation, cand.confidence = res.value["relation"], res.value["confidence"]
-                    if cand.relation == "same" and cand.confidence >= same_min_confidence:
-                        survivor, loser = (cand.id, g["id"]) if cand.id < g["id"] else (g["id"], cand.id)
-                        did = await record_decision(
-                            pool, object_type="goal", candidate_text=text, scope_type=g["scope_type"],
-                            scope_entity_id=g["scope_entity_id"], decision="same", resolved_id=survivor, candidates=cands,
-                            judge=judge, provider=res.provider, model=res.model, fts_n=n_fts, vec_n=n_vec, job_id=None,
-                            idempotency_key=f"reconcile:{loser}:{survivor}", detail={"reconcile": True, "merged_loser": loser})
-                        await merge_goal(pool, loser, survivor, decision_id=did)
-                        out["merged"] += 1
-                        break
-                    if cand.relation in ("specializes", "generalizes"):
-                        # hierarchy is added asynchronously: an edge whose other end did not exist at creation time
-                        out["relations"] = out.get("relations", 0) + await propose_goal_relations(
-                            pool, g["id"], [cand], decision_id=None, provenance="goal_reconciliation")
+                    elif not isinstance(res.value, list) or len(res.value) != len(cands):
+                        unavailable = True
+                    else:
+                        for cand, verdict in zip(cands, res.value):
+                            cand.relation, cand.confidence = verdict["relation"], verdict["confidence"]
+                            if cand.relation == "same":
+                                if cand.confidence >= same_min_confidence:
+                                    survivor, loser = (cand.id, g["id"]) if cand.id < g["id"] else (g["id"], cand.id)
+                                    decision_row = await record_decision(
+                                        pool, object_type="goal", candidate_text=text, scope_type=g["scope_type"],
+                                        scope_entity_id=g["scope_entity_id"], decision="same", resolved_id=survivor,
+                                        candidates=cands, judge=judge, provider=res.provider, model=res.model,
+                                        fts_n=n_fts, vec_n=n_vec, job_id=None,
+                                        idempotency_key=f"reconcile:{loser}:{survivor}",
+                                        detail={"reconcile": True, "merged_loser": loser})
+                                    decision_id = _row_value(decision_row, "id", decision_row)
+                                    await merge_goal(pool, loser, survivor, decision_id=decision_id)
+                                    out["merged"] += 1
+                                    break
+                                cand.relation = "related"
+                            if cand.relation in ("specializes", "generalizes"):
+                                out["relations"] = out.get("relations", 0) + await propose_goal_relations(
+                                    pool, g["id"], [cand], decision_id=None, provenance="goal_reconciliation")
                 if unavailable:
                     out["deferred"] += 1
                     continue

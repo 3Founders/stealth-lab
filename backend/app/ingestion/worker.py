@@ -101,10 +101,10 @@ class Worker:
             return await self._fail(job, f"scope refused: {exc}", retryable=False)
 
         payload = dict(job.payload)
-        # explicit scope travels with the work; handlers that understand it use it
-        payload.setdefault("_job", {"id": job.id, "attempt": job.attempt, "idempotency_key": job.idempotency_key,
-                                    "scope_type": job.scope_type, "scope_entity_id": job.scope_entity_id,
-                                    "owner_id": job.owner_id, "visibility": job.visibility})
+        try:
+            payload["_job"] = q.trusted_job_metadata(job)
+        except ValueError as exc:
+            return await self._fail(job, str(exc), retryable=False)
 
         lease_lost = asyncio.Event()
         hb = asyncio.create_task(self._heartbeat(job, lease_lost))
@@ -295,7 +295,13 @@ async def _amain(args: argparse.Namespace) -> int:
     if over:
         from dataclasses import replace
         cfg = replace(cfg, **over)
-    problems = validate_startup()
+    requested_job_types = {t.strip() for t in args.job_types.split(",")} if args.job_types else set()
+    # The production Cloud Run job intentionally has no job-type filter and
+    # can lease skill packages. Refuse startup before leasing anything when
+    # the extraction client is absent; otherwise jobs are marked done while
+    # artifacts are silently recorded without procedures.
+    requires_skill_extraction = not requested_job_types or "ingest_skill_package" in requested_job_types
+    problems = validate_startup(require_skill_extraction=requires_skill_extraction)
     if problems:
         for pr in problems:
             print(f"CONFIG ERROR: {pr}", file=sys.stderr)

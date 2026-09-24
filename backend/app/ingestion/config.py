@@ -60,7 +60,7 @@ def control_database_url() -> str:
     return os.environ.get("CONTROL_DATABASE_URL") or settings.require("database_url")
 
 
-def validate_startup(*, strict: bool | None = None) -> list[str]:
+def validate_startup(*, strict: bool | None = None, require_skill_extraction: bool = False) -> list[str]:
     """Return a list of configuration problems. Production (the default when
     STEALTHLAB_ENV is unset) must not silently fall back to fakes: a semantic
     provider chain and a real embedding provider are REQUIRED. ``strict=None``
@@ -80,6 +80,11 @@ def validate_startup(*, strict: bool | None = None) -> list[str]:
                 "production identity resolution and retrieval must not run without a JEV/NLI judge")
         if not (settings.gemini_api_key or settings.gemini_api_keys or settings.voyage_api_key or settings.use_local_models):
             problems.append("no embedding provider configured (GEMINI_API_KEY / VOYAGE_API_KEY / USE_LOCAL_MODELS)")
+        if require_skill_extraction:
+            if not settings.general_compute_api_key:
+                problems.append("GENERAL_COMPUTE_API_KEY is required for ingest_skill_package")
+            if not settings.general_compute_judge_model:
+                problems.append("GENERAL_COMPUTE_JUDGE_MODEL is required for ingest_skill_package")
     url = os.environ.get("OBJECT_STORAGE_URL", "")
     if strict and url.startswith("memory://"):
         problems.append("OBJECT_STORAGE_URL=memory:// is not allowed in PRODUCTION (in-memory storage loses data)")

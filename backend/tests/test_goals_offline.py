@@ -13,6 +13,7 @@ import pytest
 
 from app.services.goals import (
     GoalQualityRejected,
+    GoalResolutionCache,
     create_goal_from_user,
     describe_goal_quality_issue,
     find_or_create_goal,
@@ -21,6 +22,8 @@ from app.services.goals import (
     normalize_goal_name,
     search_goals,
 )
+from app.services.identity_resolution import Candidate, resolve_goal_identity
+from app.services.semantic.chain import ChainResult
 from app.services.v0_gate import V0Violation
 
 
@@ -59,6 +62,7 @@ class _FakeGoalsPool:
 
     def __init__(self):
         self.rows: list[dict] = []
+        self.goal_insert_params = None
         self._next_id = 1
 
     @staticmethod
@@ -88,11 +92,11 @@ class _FakeGoalsPool:
         if s.startswith("INSERT INTO identity_decisions"):
             return {"id": "00000000-0000-0000-0000-00000000dec1"}
         # INSERT INTO goals ... RETURNING id, canonical_name, home_shard_id
-        # (trailing params: embedding, embedding_model_id, provider, text hash, home_shard_id)
-        (goal_id, canonical_name, normalized_name, description, expected_outcome,
-         verification_requirement, status, provenance, created_from, owner_id,
-         visibility, aliases, created_by, scope_type, scope_entity_id,
-         *_embedding_fields, home_shard_id) = params
+        self.goal_insert_params = params
+        (goal_id, canonical_name, normalized_name, description, objective, constraints,
+         metadata, expected_outcome, verification_requirement, status, provenance,
+         created_from, owner_id, visibility, aliases, created_by, scope_type,
+         scope_entity_id, *_embedding_fields, home_shard_id) = params
         row = {
             "id": goal_id, "canonical_name": canonical_name, "normalized_name": normalized_name,
             "aliases": aliases, "home_shard_id": home_shard_id,
@@ -227,6 +231,23 @@ def test_find_or_create_goal_cached_with_no_cache_is_a_transparent_passthrough()
     assert len(pool.rows) == 1  # the real function's own dedup still applies -- just re-checked each time
 
 
+@pytest.mark.asyncio
+async def test_find_or_create_goal_cached_caches_a_terminal_quality_rejection():
+    pool = _FakeGoalsPool()
+    cache = GoalResolutionCache()
+    with pytest.raises(GoalQualityRejected):
+        await find_or_create_goal_cached(
+            pool, canonical_name="use rg command", scope_type="global",
+            goal_cache=cache, provenance="system_pending_review",
+        )
+    with pytest.raises(GoalQualityRejected):
+        await find_or_create_goal_cached(
+            pool, canonical_name="use rg command", scope_type="global",
+            goal_cache=cache, provenance="system_pending_review",
+        )
+    assert len(cache) == 1
+
+
 def test_find_or_create_goal_cached_never_caches_a_rejected_goal():
     pool = _FakeGoalsPool()
     cache: dict = {}
@@ -236,6 +257,208 @@ def test_find_or_create_goal_cached_never_caches_a_rejected_goal():
             goal_cache=cache, provenance="system_pending_review",
         ))
     assert cache == {}
+
+
+@pytest.mark.asyncio
+async def test_goal_resolution_cache_single_flight_keeps_first_request_metadata(monkeypatch):
+    calls = []
+
+    async def fake_find(pool, **kwargs):
+        calls.append(kwargs)
+        await asyncio.sleep(0)
+        return {
+            "id": "goal-1",
+            "canonical_name": kwargs["canonical_name"],
+            "created": True,
+        }
+
+    monkeypatch.setattr("app.services.goals.find_or_create_goal", fake_find)
+    cache = GoalResolutionCache(max_concurrency=2)
+    first, second = await asyncio.gather(
+        find_or_create_goal_cached(
+            object(), canonical_name="Find references", scope_type="global",
+            description="first", goal_cache=cache, provenance="system_pending_review",
+        ),
+        find_or_create_goal_cached(
+            object(), canonical_name="find   references", scope_type="global",
+            description="second", goal_cache=cache, provenance="system_pending_review",
+        ),
+    )
+
+    assert first == second
+    assert len(calls) == 1
+    assert calls[0]["description"] == "first"
+    assert len(cache) == 1
+
+
+@pytest.mark.asyncio
+async def test_goal_resolution_cache_does_not_cache_a_transient_failure(monkeypatch):
+    calls = 0
+
+    async def fail(pool, **kwargs):
+        nonlocal calls
+        calls += 1
+        raise RuntimeError("provider unavailable")
+
+    monkeypatch.setattr("app.services.goals.find_or_create_goal", fail)
+    cache = GoalResolutionCache()
+    for _ in range(2):
+        with pytest.raises(RuntimeError, match="provider unavailable"):
+            await find_or_create_goal_cached(
+                object(), canonical_name="find references", scope_type="global",
+                goal_cache=cache, provenance="system_pending_review",
+            )
+
+    assert calls == 2
+    assert cache == {}
+
+
+@pytest.mark.asyncio
+async def test_goal_resolution_cache_cancellation_releases_the_key_lock(monkeypatch):
+    calls = 0
+    entered = asyncio.Event()
+    release = asyncio.Event()
+
+    async def fake_find(pool, **kwargs):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            entered.set()
+            await release.wait()
+        return {"id": "goal-1", "canonical_name": "find references", "created": True}
+
+    monkeypatch.setattr("app.services.goals.find_or_create_goal", fake_find)
+    cache = GoalResolutionCache()
+    first = asyncio.create_task(find_or_create_goal_cached(
+        object(), canonical_name="find references", scope_type="global",
+        goal_cache=cache, provenance="system_pending_review",
+    ))
+    await entered.wait()
+    first.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await first
+    release.set()
+
+    result = await find_or_create_goal_cached(
+        object(), canonical_name="find references", scope_type="global",
+        goal_cache=cache, provenance="system_pending_review",
+    )
+
+    assert result["id"] == "goal-1"
+    assert calls == 2
+
+
+def test_find_or_create_goal_cached_separates_none_and_model_modes(monkeypatch):
+    calls = []
+
+    async def fake_find(pool, **kwargs):
+        calls.append(kwargs["judge_mode"])
+        return {
+            "id": f"goal-{kwargs['judge_mode']}",
+            "canonical_name": "find references",
+            "created": True,
+        }
+
+    monkeypatch.setattr("app.services.goals.find_or_create_goal", fake_find)
+    cache: dict = {}
+    none_result = _run(find_or_create_goal_cached(
+        object(), canonical_name="find references", scope_type="global",
+        goal_cache=cache, judge_mode="none", provenance="system_pending_review",
+    ))
+    model_result = _run(find_or_create_goal_cached(
+        object(), canonical_name="find references", scope_type="global",
+        goal_cache=cache, judge_mode="model", provenance="system_pending_review",
+    ))
+
+    assert calls == ["none", "model"]
+    assert none_result["id"] != model_result["id"]
+    assert len(cache) == 2
+
+
+def test_find_or_create_goal_none_skips_candidates_and_default_judge_but_stores_embedding(monkeypatch):
+    from app.services.embeddings import EmbeddingMetadata
+
+    class Embedder:
+        def __init__(self):
+            self.calls = 0
+
+        async def embed_one_with_metadata(self, text, input_type="document"):
+            self.calls += 1
+            return [0.1] * 4, EmbeddingMetadata(
+                provider="test", model_id="test:embedding-4", dimension=4,
+                input_type=input_type, text_sha256="a" * 64,
+            )
+
+    async def fail_candidates(*args, **kwargs):
+        raise AssertionError("none mode must not generate semantic candidates")
+
+    def fail_default_judge():
+        raise AssertionError("none mode must not construct the default judge")
+
+    monkeypatch.setattr("app.services.identity_resolution.generate_goal_candidates", fail_candidates)
+    monkeypatch.setattr("app.services.identity_resolution.default_judge", fail_default_judge)
+    embedder = Embedder()
+    pool = _FakeGoalsPool()
+    result = _run(find_or_create_goal(
+        pool, canonical_name="find references", scope_type="global",
+        provenance="system_pending_review", embedder=embedder, judge_mode="none",
+    ))
+
+    assert result["created"] is True
+    assert result["decision"] == "judge_mode_none"
+    assert embedder.calls == 1
+    assert pool.goal_insert_params[-5] is not None
+    assert pool.goal_insert_params[-4] == "test:embedding-4"
+    assert pool.goal_insert_params[-3] == "test"
+
+
+def test_find_or_create_goal_rejects_an_unsupported_judge_mode_before_pool_access():
+    with pytest.raises(ValueError, match="judge_mode"):
+        _run(find_or_create_goal(
+            _ExplodingPool(), canonical_name="find references", scope_type="global",
+            provenance="system_pending_review", judge_mode="heuristic",
+        ))
+
+
+def test_find_or_create_goal_cached_rejects_an_unsupported_judge_mode_on_a_cache_hit():
+    cache = {("global", None, "find references", "model"): {"cached": True}}
+    with pytest.raises(ValueError, match="judge_mode"):
+        _run(find_or_create_goal_cached(
+            _ExplodingPool(), canonical_name="find references", scope_type="global",
+            goal_cache=cache, judge_mode="heuristic", provenance="system_pending_review",
+        ))
+
+
+def test_capture_procedure_rejects_an_unsupported_judge_mode_before_pool_access():
+    from app.services.procedures import capture_procedure
+
+    with pytest.raises(ValueError, match="judge_mode"):
+        _run(capture_procedure(
+            _ExplodingPool(), name="p", goal="find references",
+            provenance="system_pending_review", scope_type="global",
+            judge_mode="heuristic",
+        ))
+
+
+def test_resolve_goal_identity_none_skips_candidates_and_default_judge(monkeypatch):
+    async def fail_candidates(*args, **kwargs):
+        raise AssertionError("none mode must not generate semantic candidates")
+
+    def fail_default_judge():
+        raise AssertionError("none mode must not construct the default judge")
+
+    monkeypatch.setattr("app.services.identity_resolution.generate_goal_candidates", fail_candidates)
+    monkeypatch.setattr("app.services.identity_resolution.default_judge", fail_default_judge)
+    outcome = _run(resolve_goal_identity(
+        _ExplodingPool(), name="find references", description=None,
+        scope_type="global", scope_entity_id=None, embedding=None,
+        embedding_model=None, judge_mode="none",
+    ))
+
+    assert outcome.action == "create"
+    assert outcome.decision == "judge_mode_none"
+    assert outcome.decision_id is None
+    assert outcome.candidates == []
 
 
 def test_find_or_create_goal_does_not_dedup_across_different_local_scopes():
@@ -419,6 +642,123 @@ def test_find_or_create_goal_matches_on_alias():
 # tests/test_goal_identity_e2e.py for the judge-decided identity tests.)
 
 
+class _IdentityResolutionPool:
+    def __init__(self, candidate_rows):
+        self.candidate_rows = candidate_rows
+        self.decision_rows = []
+
+    async def fetch(self, sql, *params):
+        normalized = " ".join(sql.split())
+        assert "FROM goals" in normalized and "to_tsquery" in normalized
+        return self.candidate_rows
+
+    async def fetchrow(self, sql, *params):
+        normalized = " ".join(sql.split())
+        assert normalized.startswith("INSERT INTO identity_decisions")
+        self.decision_rows.append(params)
+        return {"id": "decision-1"}
+
+
+class _BatchIdentityJudge:
+    providers = ("fake",)
+    chain_id = "fake:model"
+
+    def __init__(self, verdicts):
+        self._verdicts = verdicts
+        self.pair_calls = []
+        self.batch_calls = []
+
+    @staticmethod
+    def _result(value):
+        return ChainResult(ok=True, value=value, provider="fake", model="model")
+
+    async def judge_identity(self, kind, a, b):
+        self.pair_calls.append((kind, a, b))
+        return self._result(self._verdicts[b])
+
+    async def judge_identity_batch(self, kind, a, candidates):
+        texts = tuple(c.text if isinstance(c, Candidate) else c for c in candidates)
+        self.batch_calls.append((kind, a, texts))
+        return self._result([self._verdicts[text] for text in texts])
+
+
+def test_resolve_goal_identity_batches_candidates_and_preserves_relations():
+    candidate_rows = [
+        {"id": "goal-1", "canonical_name": "collect generated evidence", "description": None, "home_shard_id": "K000"},
+        {"id": "goal-2", "canonical_name": "reconcile project artifacts", "description": None, "home_shard_id": "K000"},
+        {"id": "goal-3", "canonical_name": "validate deployment state", "description": None, "home_shard_id": "K000"},
+        {"id": "goal-4", "canonical_name": "rewrite project documentation", "description": None, "home_shard_id": "K000"},
+    ]
+    verdicts = {
+        "collect generated evidence": {"relation": "same", "confidence": 0.4},
+        "reconcile project artifacts": {"relation": "specializes", "confidence": 0.9},
+        "validate deployment state": {"relation": "generalizes", "confidence": 0.8},
+        "rewrite project documentation": {"relation": "distinct", "confidence": 0.99},
+    }
+    pool = _IdentityResolutionPool(candidate_rows)
+    judge = _BatchIdentityJudge(verdicts)
+
+    outcome = _run(resolve_goal_identity(
+        pool,
+        name="reconcile generated artifacts",
+        description=None,
+        scope_type="global",
+        scope_entity_id=None,
+        embedding=None,
+        embedding_model=None,
+        judge=judge,
+    ))
+
+    assert (len(judge.batch_calls), len(judge.pair_calls)) == (1, 0)
+    assert judge.batch_calls == [(
+        "goal",
+        "reconcile generated artifacts",
+        tuple(row["canonical_name"] for row in candidate_rows),
+    )]
+    assert outcome.action == "create"
+    assert outcome.decision == "related"
+    assert outcome.resolved_id is None
+    assert [(c.id, c.relation, c.confidence) for c in outcome.candidates] == [
+        ("goal-1", "related", 0.4),
+        ("goal-2", "specializes", 0.9),
+        ("goal-3", "generalizes", 0.8),
+        ("goal-4", "distinct", 0.99),
+    ]
+    assert [(c.id, c.relation) for c in outcome.relations] == [
+        ("goal-1", "related"),
+        ("goal-2", "specializes"),
+        ("goal-3", "generalizes"),
+    ]
+
+
+def test_resolve_goal_identity_reuses_the_first_high_confidence_same_in_batch_order():
+    candidate_rows = [
+        {"id": "goal-1", "canonical_name": "first existing goal", "description": None, "home_shard_id": "K000"},
+        {"id": "goal-2", "canonical_name": "second existing goal", "description": None, "home_shard_id": "K000"},
+    ]
+    judge = _BatchIdentityJudge({
+        "first existing goal": {"relation": "same", "confidence": 0.95},
+        "second existing goal": {"relation": "same", "confidence": 0.99},
+    })
+
+    outcome = _run(resolve_goal_identity(
+        _IdentityResolutionPool(candidate_rows),
+        name="new goal",
+        description=None,
+        scope_type="global",
+        scope_entity_id=None,
+        embedding=None,
+        embedding_model=None,
+        judge=judge,
+    ))
+
+    assert outcome.action == "reuse"
+    assert outcome.decision == "same"
+    assert outcome.resolved_id == "goal-1"
+    assert len(judge.batch_calls) == 1
+    assert judge.pair_calls == []
+
+
 class _SearchFakePool:
     """Answers search_goals' lexical leg, semantic leg, and hydration
     query with fixed data -- proves the RRF fuse logic, not real
@@ -532,9 +872,52 @@ def test_create_goal_from_user_creates_when_no_near_matches(monkeypatch):
     pool = _FakeGoalsPool()
     result = _run(create_goal_from_user(
         pool, canonical_name="reconcile schema drift", scope_type="global", owner_id="u1",
+        rationale="why this matters", objective="the expected outcome",
     ))
     assert result["outcome"] == "created"
     assert result["goal"]["created"] is True
+
+
+def test_create_goal_from_user_merges_rationale_and_persists_expected_outcome(monkeypatch):
+    async def _no_matches(pool, **kw):
+        return []
+
+    monkeypatch.setattr("app.services.goals.search_goals", _no_matches)
+    pool = _FakeGoalsPool()
+    _run(create_goal_from_user(
+        pool,
+        canonical_name="reconcile schema drift",
+        scope_type="global",
+        owner_id="server-user",
+        rationale="why this matters",
+        objective="the objective",
+        expected_outcome={"summary": "the expected outcome"},
+        metadata={
+            "source": "form",
+            "owner_id": "spoofed-owner",
+            "provenance": "spoofed-provenance",
+        },
+    ))
+    assert pool.goal_insert_params[4] == "the objective"
+    assert pool.goal_insert_params[6] == {
+        "source": "form",
+        "rationale": "why this matters",
+    }
+    assert pool.goal_insert_params[7] == {"summary": "the expected outcome"}
+
+
+def test_create_goal_from_user_requires_rationale_and_an_outcome():
+    pool = _FakeGoalsPool()
+    with pytest.raises(ValueError, match="rationale"):
+        _run(create_goal_from_user(
+            pool, canonical_name="reconcile schema drift", scope_type="global", owner_id="u1",
+            objective="done",
+        ))
+    with pytest.raises(ValueError, match="expected_outcome"):
+        _run(create_goal_from_user(
+            pool, canonical_name="reconcile schema drift", scope_type="global", owner_id="u1",
+            rationale="why",
+        ))
 
 
 def test_create_goal_from_user_surfaces_near_matches_without_writing(monkeypatch):
@@ -545,6 +928,7 @@ def test_create_goal_from_user_surfaces_near_matches_without_writing(monkeypatch
     pool = _FakeGoalsPool()
     result = _run(create_goal_from_user(
         pool, canonical_name="reconcile schema drift", scope_type="global", owner_id="u1",
+        rationale="why this matters", objective="the expected outcome",
     ))
     assert result["outcome"] == "near_matches"
     assert result["candidates"][0]["id"] == "existing-1"
@@ -559,6 +943,7 @@ def test_create_goal_from_user_allow_create_anyway_bypasses_near_match_check(mon
     pool = _FakeGoalsPool()
     result = _run(create_goal_from_user(
         pool, canonical_name="reconcile schema drift", scope_type="global", owner_id="u1",
+        rationale="why this matters", objective="the expected outcome",
         allow_create_anyway=True,
     ))
     assert result["outcome"] == "created"
@@ -579,6 +964,7 @@ def test_create_goal_from_user_does_not_surface_its_own_exact_match(monkeypatch)
     })
     result = _run(create_goal_from_user(
         pool, canonical_name="reconcile schema drift", scope_type="global", owner_id="u1",
+        rationale="why this matters", objective="the expected outcome",
     ))
     assert result["outcome"] == "matched"
     assert result["goal"]["id"] == "existing-1"

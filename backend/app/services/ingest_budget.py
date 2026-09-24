@@ -129,14 +129,18 @@ async def record_embedding(provider: str, model: str, texts: list[str]) -> None:
         await _ACTIVE.record(provider, model, "embedding", sum(estimate_tokens(t) for t in texts))
 
 
-async def record_judge(provider: str, model: str, op: str) -> None:
+async def record_judge(
+    provider: str, model: str, op: str, *, tokens_in: Optional[int] = None, tokens_out: Optional[int] = None,
+) -> None:
     if _ACTIVE is None:
         return
+    tokens_in = _JUDGE_TOKENS_IN if tokens_in is None else max(0, int(tokens_in))
+    tokens_out = _JUDGE_TOKENS_OUT if tokens_out is None else max(0, int(tokens_out))
     if (provider or "").lower() == "jev":
         per_call = float(os.environ.get("INGEST_JEV_COST_PER_CALL_USD", "0"))
         if per_call <= 0:
-            await _ACTIVE.record("jev", model, f"judge:{op}", _JUDGE_TOKENS_IN, _JUDGE_TOKENS_OUT)   # 0-priced, still counted
+            await _ACTIVE.record("jev", model, f"judge:{op}", tokens_in, tokens_out)
             return
         await _ACTIVE.record("openai", model, f"judge:{op}", int(per_call * 1_000_000 / 2.5), 0)
         return
-    await _ACTIVE.record(provider, model, f"judge:{op}", _JUDGE_TOKENS_IN, _JUDGE_TOKENS_OUT)
+    await _ACTIVE.record(provider, model, f"judge:{op}", tokens_in, tokens_out)

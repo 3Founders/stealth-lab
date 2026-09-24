@@ -112,6 +112,10 @@ class FrozenProvider(SemanticProvider):
         rel, conf = self.verdicts.get((_key(a), _key(b)), self.default)
         return {"relation": rel, "confidence": conf}
 
+    async def identity_batch(self, kind: str, a: str, candidates: list) -> list[dict]:
+        return [await self.identity(kind, a, str(getattr(candidate, "text", candidate)))
+                for candidate in candidates]
+
 
 def make_judge(*providers: SemanticProvider, attempts: int = 1) -> SemanticJudge:
     async def no_sleep(_s: float) -> None:
@@ -142,6 +146,10 @@ class CallbackProvider(SemanticProvider):
         rel, conf = self.fn(kind, a, b)
         return {"relation": rel, "confidence": conf}
 
+    async def identity_batch(self, kind: str, a: str, candidates: list) -> list[dict]:
+        return [await self.identity(kind, a, str(getattr(candidate, "text", candidate)))
+                for candidate in candidates]
+
 
 class LenientProvider(SemanticProvider):
     """Test-only judge for suites that exercise durable execution/plan features, not judgment quality: every goal
@@ -153,6 +161,10 @@ class LenientProvider(SemanticProvider):
 
     async def identity(self, kind: str, a: str, b: str) -> dict:
         return {"relation": "applies" if kind == "task_procedure" else "matches", "confidence": 0.95}
+
+    async def identity_batch(self, kind: str, a: str, candidates: list) -> list[dict]:
+        return [await self.identity(kind, a, str(getattr(candidate, "text", candidate)))
+                for candidate in candidates]
 
 
 def install_lenient_default_judge():

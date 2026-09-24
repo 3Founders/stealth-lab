@@ -15,12 +15,14 @@ Sec 8):
   tier 2 -- alias match (always on): a candidate whose normalized text
     matches an EXISTING goal's stored `aliases` entry is the same goal.
   semantic -- FTS + vector candidates (RRF-fused) judged by the semantic
-    chain (JEV -> Gemini -> Gemma): same / narrower / broader / related /
-    distinct (app/services/identity_resolution.py). Persisted to
-    `identity_decisions`. The former SimHash and cosine-threshold auto-merge
-    tiers and the raw-client adjudication were REMOVED: a similarity number
-    never decides identity, a model does. Migration 86's `simhash` column is
-    now unused (kept; dropping it is a later cleanup migration).
+    chain (JEV -> Gemini -> Gemma) in `judge_mode="model"`: same / narrower /
+    broader / related / distinct (app/services/identity_resolution.py).
+    `judge_mode="none"` runs exact/alias matching and stores the embedding but
+    skips candidate generation, model judging, and decision persistence. The
+    former SimHash and cosine-threshold auto-merge tiers and the raw-client
+    adjudication were REMOVED: a similarity number never decides identity, a
+    model does. Migration 86's `simhash` column is now unused (kept; dropping
+    it is a later cleanup migration).
   Explicit merge/review workflow (ingestion.md Sec 8's last paragraph):
     `goals.status='merged'` + `merged_into_id` exist as schema support,
     but nothing here flags "these two rows look related, review them" or
@@ -44,6 +46,7 @@ flow a frontend/MCP caller drives).
 """
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import re
@@ -66,8 +69,45 @@ class GoalQualityRejected(ValueError):
     below -- a real rejection, not a warning, so a caller that doesn't
     explicitly catch it fails loudly rather than writing corpus-polluting
     junk (same "refuse rather than fabricate" posture this module's own
-    tier 5 adjudication and the skill_extraction package's abstain
+    model identity resolution and the skill_extraction package's abstain
     contract already use elsewhere)."""
+
+
+class GoalResolutionCache(dict):
+    def __init__(
+        self,
+        *args: Any,
+        max_concurrency: int = 4,
+        concurrency: Optional[int] = None,
+        **kwargs: Any,
+    ) -> None:
+        if concurrency is not None:
+            max_concurrency = concurrency
+        if (
+            isinstance(max_concurrency, bool)
+            or not isinstance(max_concurrency, int)
+            or max_concurrency < 1
+        ):
+            raise ValueError("max_concurrency must be a positive integer")
+        super().__init__(*args, **kwargs)
+        self.max_concurrency = max_concurrency
+        self._locks: dict[tuple[Any, ...], asyncio.Lock] = {}
+        self._semaphore = asyncio.Semaphore(max_concurrency)
+
+    @property
+    def semaphore(self) -> asyncio.Semaphore:
+        return self._semaphore
+
+    @property
+    def locks(self) -> dict[tuple[Any, ...], asyncio.Lock]:
+        return self._locks
+
+    def lock_for(self, key: tuple[Any, ...]) -> asyncio.Lock:
+        lock = self._locks.get(key)
+        if lock is None:
+            lock = asyncio.Lock()
+            self._locks[key] = lock
+        return lock
 
 
 # ingestion.md Sec 20's own BAD examples ("use rg command", "fix stuff",
@@ -226,7 +266,7 @@ async def find_or_create_goal(
     objective: Optional[str] = None,
     constraints: Optional[list] = None,
     metadata: Optional[dict] = None,
-    expected_outcome: Optional[dict] = None,
+    expected_outcome: Any = None,
     verification_requirement: Optional[dict] = None,
     status: str = "candidate",
     owner_id: Optional[str] = None,
@@ -238,6 +278,7 @@ async def find_or_create_goal(
     client: Optional[Any] = None,           # DEPRECATED: ignored (identity uses `judge`)
     adjudication_model: str = "",           # DEPRECATED: ignored
     judge: Optional[Any] = None,
+    judge_mode: str = "model",
     on_unavailable: Optional[str] = None,
     job_id: Optional[int] = None,
     idempotency_key: Optional[str] = None,
@@ -262,10 +303,18 @@ async def find_or_create_goal(
     from settings). `on_unavailable`: "raise" (default when providers are
     configured -- retryable, no silent duplicate) or "create" (default when
     none are configured; recorded as decision `judge_unavailable`).
+    `judge_mode` is ``"model"`` for semantic identity resolution or
+    ``"none"`` to run only exact/alias matching and retain the goal embedding
+    without generating candidates, calling a judge, or recording an identity
+    decision. Unsupported values are rejected before any storage access.
     `job_id`/`idempotency_key` tie the identity decision to one ingestion
     job so a replay reuses it. `client`/`adjudication_model` are DEPRECATED
     no-ops kept so existing call sites keep working.
     """
+    from app.services.identity_resolution import validate_identity_job_id, validate_judge_mode
+
+    judge_mode = validate_judge_mode(judge_mode)
+    job_id = validate_identity_job_id(job_id)
     resolved_scope_type, resolved_scope_entity_id = validate_scope(
         scope_type, scope_entity_id,
         allow_global_entity_id=bool(scope_type == "global" and scope_entity_id),
@@ -313,13 +362,14 @@ async def find_or_create_goal(
     if on_unavailable is None and visibility != "public":
         on_unavailable = "create"
 
-    # Semantic identity (docs/dedup_and_identity.md): FTS + vector candidates
-    # over canonical goals, RRF-fused, then a MODEL (JEV -> Gemini -> Gemma via
-    # app.services.semantic) decides same / narrower / broader / related /
-    # distinct. No SimHash or cosine-threshold merge exists any more. The
-    # decision is persisted to identity_decisions. If the judge chain is down
-    # while candidates exist this raises SemanticJudgmentUnavailable (a worker
-    # retries the job) unless `on_unavailable="create"`.
+    # Model identity mode: FTS + vector candidates over canonical goals are
+    # RRF-fused, then the semantic chain decides same / narrower / broader /
+    # related / distinct and the decision is persisted. No SimHash or
+    # cosine-threshold auto-merge exists. In none mode exact/alias matching
+    # still happens above, the embedding below is still stored, and the
+    # resolver returns an explicit create outcome without candidate or judge
+    # work or a decision row. A model outage with candidates raises unless
+    # `on_unavailable="create"`.
     from app.services.identity_resolution import propose_goal_relations, resolve_goal_identity
 
     embedding_vec: Optional[list[float]] = None
@@ -332,7 +382,8 @@ async def find_or_create_goal(
         pool, name=canonical_name, description=description, scope_type=resolved_scope_type,
         scope_entity_id=resolved_scope_entity_id, embedding=embedding_vec,
         embedding_model=embedding_meta.model_id if embedding_meta is not None else None,
-        judge=judge, on_unavailable=on_unavailable, job_id=job_id, idempotency_key=idempotency_key,
+        judge=judge, judge_mode=judge_mode, on_unavailable=on_unavailable,
+        job_id=job_id, idempotency_key=idempotency_key,
     )
     if outcome.action == "reuse":
         from app.services.shards import home_pool as _home_pool
@@ -346,9 +397,9 @@ async def find_or_create_goal(
                     "home_shard_id": matched.get("home_shard_id", "K000"), "decision": outcome.decision}
 
     # ingestion.md Sec 20's quality gate runs ONLY here -- right before a
-    # genuinely NEW row would be created -- never earlier. Every dedup
-    # tier above (1/2/2.5/3/4/5) still matches an EXISTING row by this
-    # exact text regardless of its own quality, bad-or-good: this gate
+    # genuinely NEW row would be created -- never earlier. Exact/alias and
+    # model-judged semantic matches above still resolve an EXISTING row by
+    # this exact text regardless of its own quality, bad-or-good: this gate
     # stops NEW corpus pollution, it does not retroactively re-judge
     # legacy rows (CLAUDE.md hard rule 1: "no backfills... legacy rows
     # stay quarantined") or break a caller's dedup hit against one.
@@ -376,8 +427,13 @@ async def find_or_create_goal(
                 return winner
             return await find_or_create_goal(
                 pool, canonical_name=canonical_name, scope_type=scope_type, scope_entity_id=scope_entity_id,
-                provenance=provenance, embedder=embedder, judge=judge, on_unavailable=on_unavailable,
-                job_id=job_id, idempotency_key=idempotency_key, visibility=visibility)
+                provenance=provenance, description=description, objective=objective,
+                constraints=constraints, metadata=metadata, expected_outcome=expected_outcome,
+                verification_requirement=verification_requirement, status=status,
+                owner_id=owner_id, created_from=created_from, created_by=created_by,
+                aliases=aliases, embedder=embedder, judge=judge, judge_mode=judge_mode,
+                on_unavailable=on_unavailable, job_id=job_id, idempotency_key=idempotency_key,
+                visibility=visibility)
         await record_route(pool, "goal", str(goal_id), home_shard)
         wpool = await pools_for(pool).get(home_shard)
     try:
@@ -419,8 +475,13 @@ async def find_or_create_goal(
         return await find_or_create_goal(
             pool, canonical_name=canonical_name, scope_type=scope_type,
             scope_entity_id=scope_entity_id, provenance=provenance,
-            embedder=embedder, judge=judge, on_unavailable=on_unavailable,
-            job_id=job_id, idempotency_key=idempotency_key, visibility=visibility,
+            description=description, objective=objective, constraints=constraints,
+            metadata=metadata, expected_outcome=expected_outcome,
+            verification_requirement=verification_requirement, status=status,
+            owner_id=owner_id, created_from=created_from, created_by=created_by,
+            aliases=aliases, embedder=embedder, judge=judge, judge_mode=judge_mode,
+            on_unavailable=on_unavailable, job_id=job_id, idempotency_key=idempotency_key,
+            visibility=visibility,
         )
     except Exception:
         if home_shard != HOME_SHARD:  # the remote write failed: release the global name claim and route
@@ -440,12 +501,13 @@ async def find_or_create_goal_cached(
     scope_type: str,
     scope_entity_id: Optional[str] = None,
     goal_cache: Optional[dict[tuple, dict[str, Any]]],
+    judge_mode: str = "model",
     **kwargs: Any,
 ) -> dict[str, Any]:
     """Thin wrapper over `find_or_create_goal`: skip the DB round trip
     AND the embedding/semantic-judge call entirely when this exact
-    (scope, normalized name) was already resolved earlier in the SAME
-    caller-owned `goal_cache` dict.
+    (scope, normalized name, judge mode) was already resolved earlier in
+    the SAME caller-owned `goal_cache` dict.
 
     WHY A WRAPPER, NOT CACHE LOGIC INSIDE `find_or_create_goal` ITSELF:
     that function has five distinct return points (exact match, remote
@@ -465,19 +527,44 @@ async def find_or_create_goal_cached(
     sharing one cache across multiple DB transactions/jobs is a caller
     decision this wrapper does not make for you.
 
-    NOT a semantic/fuzzy cache: the key is `normalize_goal_name()` (tier
-    1's own exact-match normalization), same as `find_or_create_goal`'s
-    own first DB check -- a near-duplicate-but-not-identical goal string
-    still goes through the real function's own tier 3/4/5 dedup, exactly
-    as before. This cache only removes REPEATED identical work, never
-    changes which row two different strings resolve to.
+    NOT a semantic/fuzzy cache: the key is `normalize_goal_name()` plus the
+    effective judge mode, same as `find_or_create_goal`'s own first DB check.
+    A near-duplicate-but-not-identical goal string still goes through the real
+    function's semantic identity path. This cache only removes repeated work
+    for the same scope, text, and mode, and never lets a `none` result satisfy
+    a later `model` lookup.
     """
-    key = (scope_type, scope_entity_id, normalize_goal_name(canonical_name))
+    from app.services.identity_resolution import validate_identity_job_id, validate_judge_mode
+
+    judge_mode = validate_judge_mode(judge_mode)
+    validate_identity_job_id(kwargs.get("job_id"))
+    key = (scope_type, scope_entity_id, normalize_goal_name(canonical_name), judge_mode)
     if goal_cache is not None and key in goal_cache:
-        return goal_cache[key]
+        cached = goal_cache[key]
+        if isinstance(cached, GoalQualityRejected):
+            raise cached
+        return cached
+    if isinstance(goal_cache, GoalResolutionCache):
+        async with goal_cache.lock_for(key):
+            if key in goal_cache:
+                cached = goal_cache[key]
+                if isinstance(cached, GoalQualityRejected):
+                    raise cached
+                return cached
+            async with goal_cache.semaphore:
+                try:
+                    result = await find_or_create_goal(
+                        pool, canonical_name=canonical_name, scope_type=scope_type,
+                        scope_entity_id=scope_entity_id, judge_mode=judge_mode, **kwargs,
+                    )
+                except GoalQualityRejected as exc:
+                    goal_cache[key] = exc
+                    raise
+            goal_cache[key] = result
+            return result
     result = await find_or_create_goal(
         pool, canonical_name=canonical_name, scope_type=scope_type,
-        scope_entity_id=scope_entity_id, **kwargs,
+        scope_entity_id=scope_entity_id, judge_mode=judge_mode, **kwargs,
     )
     if goal_cache is not None:
         goal_cache[key] = result

@@ -10,6 +10,7 @@ from app.ingestion import ops_alerts
 from app.services import ingest_budget
 from app.services.governance import BudgetExceeded
 from app.services.semantic.chain import SemanticJudge
+from app.services.semantic.policy import RetryPolicy
 from app.services.semantic.providers import SemanticProvider
 
 
@@ -74,6 +75,10 @@ class Fake(SemanticProvider):
         self.calls += 1
         return {"relation": "distinct"}
 
+    async def identity_batch(self, kind, a, candidates):
+        self.calls += 1
+        return [{"relation": "distinct", "confidence": 0.0} for _ in candidates]
+
 
 def test_judge_chain_records_spend_and_stops_when_over_budget():
     pool = LedgerPool(0.0)
@@ -89,6 +94,52 @@ def test_judge_chain_records_spend_and_stops_when_over_budget():
     with pytest.raises(BudgetExceeded):
         run(judge.judge_identity("goal", "a", "b"))
     assert p.calls == 1                                            # the paid call never happened
+
+
+def test_identity_batch_records_the_full_payload_once():
+    pool = LedgerPool(0.0)
+    ingest_budget.install(pool, cap_usd=10.0, cache_s=0)
+    provider = Fake("gemini")
+    judge = SemanticJudge([provider])
+
+    result = run(judge.judge_identity_batch(
+        "goal", "new goal", ["first candidate " + "x" * 4000, "second candidate " + "y" * 4000]))
+
+    assert result.ok
+    assert provider.calls == 1
+    assert len(pool.rows) == 1
+    assert pool.rows[0][3] == "judge:identity"
+    assert pool.rows[0][5] > ingest_budget._JUDGE_TOKENS_IN
+    assert pool.rows[0][6] == 160
+
+
+def test_identity_batch_records_each_failed_attempt_and_fallback_once():
+    class ParseFailure(Fake):
+        async def identity_batch(self, kind, a, candidates):
+            self.calls += 1
+            raise ValueError("invalid identity batch reply")
+
+    async def no_sleep(_delay):
+        return None
+
+    pool = LedgerPool(0.0)
+    ingest_budget.install(pool, cap_usd=10.0, cache_s=0)
+    primary = ParseFailure("gemini")
+    fallback = Fake("gemma")
+    judge = SemanticJudge(
+        [primary, fallback],
+        RetryPolicy(per_provider_attempts=2, backoff_base_s=0.0, backoff_max_s=0.0, timeout_s=5.0),
+        sleep=no_sleep,
+    )
+
+    result = run(judge.judge_identity_batch("goal", "new goal", ["existing"]))
+
+    assert result.ok
+    assert primary.calls == 2
+    assert fallback.calls == 1
+    assert len(pool.rows) == 3
+    assert [row[1] for row in pool.rows] == ["google", "google", "local"]
+    assert all(row[3] == "judge:identity" for row in pool.rows)
 
 
 def test_embedding_spend_recorded():

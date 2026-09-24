@@ -21,6 +21,60 @@ class RecordingQueuePool:
         return "INSERT 0 1"
 
 
+class _AsyncContext:
+    def __init__(self, value):
+        self.value = value
+
+    async def __aenter__(self):
+        return self.value
+
+    async def __aexit__(self, exc_type, exc, traceback):
+        return False
+
+
+class _LegacyQueuePool:
+    def __init__(self, row):
+        self.row = row
+        self.fetches: list[tuple[str, tuple]] = []
+        self.executions: list[tuple[str, tuple]] = []
+
+    def acquire(self):
+        return _AsyncContext(self)
+
+    def transaction(self):
+        return _AsyncContext(self)
+
+    async def fetch(self, sql, *params):
+        self.fetches.append((sql, params))
+        return [dict(self.row)]
+
+    async def execute(self, sql, *params):
+        self.executions.append((sql, params))
+        return "UPDATE 1"
+
+
+@pytest.mark.parametrize(
+    ("scope_type", "visibility", "owner_id"),
+    [("user", "private", "alice"), ("organization", "org", "tenant-1")],
+)
+@pytest.mark.asyncio
+async def test_document_enqueue_refuses_private_and_org_scope(scope_type, visibility, owner_id):
+    from app.ingestion import queue as q
+
+    with pytest.raises(q.ScopeError, match="writes global public knowledge"):
+        await q.enqueue(
+            object(),
+            "ingest_document",
+            {},
+            idempotency_key="document-scope",
+            scope_type=scope_type,
+            scope_entity_id=owner_id,
+            owner_id=owner_id,
+            visibility=visibility,
+            offload=False,
+        )
+
+
 @pytest.mark.asyncio
 async def test_skill_package_enqueue_uses_json_object_and_decodes_legacy_shape():
     pool = RecordingQueuePool()
@@ -83,3 +137,182 @@ async def test_embedding_metadata_records_the_selected_vector_space(monkeypatch)
     assert metadata.model_id == "gemini:gemini-embedding-001"
     assert metadata.input_type == "document"
     assert len(metadata.text_sha256) == 64
+
+
+@pytest.mark.asyncio
+async def test_worker_overwrites_untrusted_job_context(monkeypatch):
+    from app.ingestion import queue as q
+    from app.ingestion.config import WorkerConfig
+    from app.ingestion.worker import Worker
+    from app.services import object_storage
+
+    seen = []
+
+    async def handler(_pool, payload):
+        seen.append(payload)
+
+    async def complete(_pool, _job):
+        return True
+
+    async def heartbeat(_pool, _job, _lease_seconds):
+        return True
+
+    async def hydrate(payload):
+        return payload
+
+    monkeypatch.setattr(q, "complete", complete)
+    monkeypatch.setattr(q, "heartbeat", heartbeat)
+    monkeypatch.setattr(q, "validate_scope", lambda *_args: None)
+    monkeypatch.setattr(object_storage, "hydrate_payload", hydrate)
+
+    job = q.Job(
+        id=41,
+        job_type="test",
+        payload={
+            "value": "kept",
+            "_job": {
+                "id": 999,
+                "attempt": 99,
+                "idempotency_key": "forged",
+                "scope_type": "user",
+                "scope_entity_id": "forged",
+                "owner_id": "forged",
+                "visibility": "private",
+                "source_id": "forged",
+                "config_version": "forged",
+                "extra": "forged",
+            },
+        },
+        attempt=3,
+        max_attempts=5,
+        worker_id="worker-1",
+        idempotency_key="row-key",
+        scope_type="global",
+        visibility="public",
+    )
+    worker = Worker(object(), WorkerConfig(lease_seconds=10, job_timeout_seconds=10), handlers={"test": handler})
+
+    assert await worker.run_job(job) == "done"
+    assert seen[0]["value"] == "kept"
+    assert seen[0]["_job"] == {
+        "id": 41,
+        "attempt": 3,
+        "idempotency_key": "row-key",
+        "scope_type": "global",
+        "scope_entity_id": None,
+        "owner_id": None,
+        "visibility": "public",
+        "source_id": None,
+        "config_version": None,
+    }
+
+
+@pytest.mark.asyncio
+async def test_legacy_process_replaces_forged_job_metadata(monkeypatch):
+    from app.services import ingestion_jobs
+
+    seen = []
+
+    async def handler(_pool, payload):
+        seen.append(payload)
+
+    row = {
+        "id": 81,
+        "job_type": "test",
+        "payload": {
+            "value": "kept",
+            "_job": {
+                "id": 999,
+                "attempt": 99,
+                "idempotency_key": "forged",
+                "scope_type": "user",
+                "scope_entity_id": "forged",
+                "owner_id": "forged",
+                "visibility": "private",
+                "source_id": "forged",
+                "config_version": "forged",
+                "extra": "forged",
+            },
+        },
+        "attempts": 3,
+        "scope_type": "global",
+        "scope_entity_id": None,
+        "owner_id": None,
+        "visibility": "public",
+        "idempotency_key": "row-key",
+        "source_id": "source-row",
+        "config_version": "config-row",
+    }
+    pool = _LegacyQueuePool(row)
+    monkeypatch.setitem(ingestion_jobs.JOB_HANDLERS, "test", handler)
+
+    result = await ingestion_jobs._process_pending_jobs(
+        pool, limit=1, job_types=None, worker_id="legacy"
+    )
+
+    assert result["done"] == 1
+    assert seen[0]["value"] == "kept"
+    assert seen[0]["_job"] == {
+        "id": 81,
+        "attempt": 3,
+        "idempotency_key": "row-key",
+        "scope_type": "global",
+        "scope_entity_id": None,
+        "owner_id": None,
+        "visibility": "public",
+        "source_id": "source-row",
+        "config_version": "config-row",
+    }
+    select_sql = pool.fetches[0][0]
+    for column in (
+        "scope_type",
+        "scope_entity_id",
+        "owner_id",
+        "visibility",
+        "idempotency_key",
+        "source_id",
+        "config_version",
+    ):
+        assert column in select_sql
+
+
+@pytest.mark.asyncio
+async def test_legacy_process_refuses_invalid_document_scope_before_handler(monkeypatch):
+    from app.services import ingestion_jobs
+
+    called = []
+
+    async def handler(_pool, _payload):
+        called.append(True)
+
+    row = {
+        "id": 82,
+        "job_type": "ingest_document",
+        "payload": {"_job": {"id": 999}},
+        "attempts": 1,
+        "scope_type": "user",
+        "scope_entity_id": "alice",
+        "owner_id": "alice",
+        "visibility": "private",
+        "idempotency_key": "document-key",
+        "source_id": None,
+        "config_version": None,
+    }
+    pool = _LegacyQueuePool(row)
+    monkeypatch.setitem(ingestion_jobs.JOB_HANDLERS, "ingest_document", handler)
+
+    result = await ingestion_jobs._process_pending_jobs(
+        pool, limit=1, job_types=None, worker_id="legacy"
+    )
+
+    assert result == {
+        "claimed": 1,
+        "done": 0,
+        "failed": 1,
+        "unknown_type": 0,
+        "worker_id": "legacy",
+    }
+    assert called == []
+    failure_sql, failure_params = pool.executions[1]
+    assert "status = 'failed'" in failure_sql
+    assert "scope refused" in failure_params[1]

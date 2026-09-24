@@ -17,6 +17,7 @@ different source is never duplicated.
 """
 from __future__ import annotations
 
+import json
 import logging
 from typing import Any, Optional
 
@@ -24,7 +25,22 @@ import asyncpg
 
 from app.services.embeddings import to_pgvector
 from app.services.identity_resolution import (
-    Candidate, default_judge, fts_or_query, record_decision, rrf_fuse, SAME_MIN_CONFIDENCE,
+    SAME_MIN_CONFIDENCE,
+    Candidate,
+    IdentityReplayError,
+    PermanentIdentityConflict,
+    _decision_metadata_mismatch_reason,
+    _load_prior_decision,
+    _row_value,
+    _validate_candidate_objects,
+    _validate_stored_decision_row,
+    canonical_identity_text,
+    default_judge,
+    fts_or_query,
+    record_decision,
+    rrf_fuse,
+    validate_identity_job_id,
+    validate_on_unavailable,
 )
 from app.services.semantic.chain import SemanticJudge
 from app.services.semantic.errors import SemanticJudgmentUnavailable
@@ -37,6 +53,167 @@ def procedure_text(name: str, goal: str, steps: Optional[list]) -> str:
     for s in steps or []:
         parts.append(s if isinstance(s, str) else str(s.get("description") or s.get("text") or s.get("name") or ""))
     return f"{name}: {goal}. Steps: " + "; ".join(p for p in parts if p)[:1200]
+
+
+def _decision_detail(value: Any) -> dict:
+    if value is None:
+        return {}
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except (TypeError, ValueError) as exc:
+            raise IdentityReplayError("stored procedure detail JSON is invalid") from exc
+    if not isinstance(value, dict):
+        raise IdentityReplayError("stored procedure detail must be an object")
+    return value
+
+
+def _procedure_prior_mismatch_reason(
+    row: Any,
+    *,
+    text: str,
+    goal_id: str,
+    scope_type: str,
+    scope_entity_id: Optional[str],
+    job_id: Optional[int] = None,
+) -> Optional[str]:
+    mismatch = _decision_metadata_mismatch_reason(
+        row,
+        candidate_text=canonical_identity_text(text),
+        scope_type=scope_type,
+        scope_entity_id=scope_entity_id,
+        job_id=job_id,
+    )
+    if mismatch:
+        return mismatch
+    detail = _decision_detail(_row_value(row, "detail", {}))
+    stored_goal_id = detail.get("goal_id")
+    if stored_goal_id is None or str(stored_goal_id) != str(goal_id):
+        return "goal_id"
+    return None
+
+
+def _procedure_prior_matches(
+    row: Any,
+    *,
+    text: str,
+    goal_id: str,
+    scope_type: str,
+    scope_entity_id: Optional[str],
+    job_id: Optional[int] = None,
+) -> bool:
+    return _procedure_prior_mismatch_reason(
+        row,
+        text=text,
+        goal_id=goal_id,
+        scope_type=scope_type,
+        scope_entity_id=scope_entity_id,
+        job_id=job_id,
+    ) is None
+
+
+async def _live_procedure(
+    pool: Any,
+    row_id: str,
+    *,
+    goal_id: str,
+    scope_type: str,
+    scope_entity_id: Optional[str],
+) -> bool:
+    from app.services.shards import home_pool
+
+    owner = await home_pool(pool, "procedure", str(row_id), by_row_id=True)
+    query = (
+        "SELECT 1 FROM procedures WHERE id = $1::uuid AND t_invalid IS NULL "
+        "AND availability <> 'disabled' AND achieves_goal_id = $2::uuid "
+        "AND (($3 = 'global' AND (scope_type IS NULL OR scope_type = 'global') "
+        "AND scope_entity_id IS NULL) OR ($3 <> 'global' AND scope_type = $3 "
+        "AND scope_entity_id = $4))"
+    )
+    args = (str(row_id), str(goal_id), scope_type or "global", scope_entity_id)
+    if hasattr(owner, "fetchval"):
+        return bool(await owner.fetchval(query, *args))
+    return bool(await owner.fetchrow(query, *args))
+
+
+async def _latest_live_procedure(
+    pool: Any,
+    row_id: str,
+    *,
+    goal_id: str,
+    scope_type: str,
+    scope_entity_id: Optional[str],
+) -> Optional[str]:
+    from app.services.shards import home_pool
+
+    owner = await home_pool(pool, "procedure", str(row_id), by_row_id=True)
+    target = await owner.fetchrow(
+        "SELECT procedure_id::text AS procedure_id FROM procedures WHERE id = $1::uuid",
+        str(row_id),
+    )
+    procedure_id = _row_value(target, "procedure_id")
+    if not procedure_id:
+        return None
+    latest = await owner.fetchrow(
+        "SELECT id::text AS id FROM procedures "
+        "WHERE procedure_id = $1::uuid AND t_invalid IS NULL AND availability <> 'disabled' "
+        "AND achieves_goal_id = $2::uuid "
+        "AND (($3 = 'global' AND (scope_type IS NULL OR scope_type = 'global') "
+        "AND scope_entity_id IS NULL) OR ($3 <> 'global' AND scope_type = $3 "
+        "AND scope_entity_id = $4)) "
+        "ORDER BY version DESC, t_created DESC, id DESC LIMIT 1",
+        str(procedure_id), str(goal_id), scope_type or "global", scope_entity_id,
+    )
+    latest_id = _row_value(latest, "id")
+    return str(latest_id) if latest_id else None
+
+
+async def _resolve_live_procedure(
+    pool: Any,
+    row_id: str,
+    *,
+    goal_id: str,
+    scope_type: str,
+    scope_entity_id: Optional[str],
+) -> Optional[str]:
+    if await _live_procedure(
+        pool, row_id, goal_id=goal_id, scope_type=scope_type, scope_entity_id=scope_entity_id
+    ):
+        return str(row_id)
+    return await _latest_live_procedure(
+        pool, row_id, goal_id=goal_id, scope_type=scope_type, scope_entity_id=scope_entity_id
+    )
+
+
+async def _replay_procedure_decision(
+    pool: Any,
+    prior: Any,
+    *,
+    goal_id: str,
+    scope_type: str,
+    scope_entity_id: Optional[str],
+    on_unavailable: str,
+) -> tuple[str, Optional[str]]:
+    decision, _candidates, resolved = _validate_stored_decision_row(prior, "procedure")
+    if decision == "judge_unavailable" and on_unavailable != "create":
+        raise IdentityReplayError("stored judge_unavailable decision conflicts with on_unavailable='raise'")
+    detail = _decision_detail(_row_value(prior, "detail", {}))
+    stored_goal_id = detail.get("goal_id")
+    if stored_goal_id is None or str(stored_goal_id) != str(goal_id):
+        raise PermanentIdentityConflict(
+            "procedure", str(_row_value(prior, "idempotency_key", "")),
+            "goal identity differs from the stored decision",
+        )
+    if decision in ("distinct", "judge_unavailable", "no_candidates"):
+        return decision, None
+    if decision not in ("same", "new_version"):
+        raise IdentityReplayError(f"unsupported procedure replay decision: {decision!r}")
+    live_id = await _resolve_live_procedure(
+        pool, str(resolved), goal_id=goal_id, scope_type=scope_type, scope_entity_id=scope_entity_id
+    )
+    if live_id is None:
+        raise IdentityReplayError("stored procedure decision targets a dead procedure")
+    return decision, live_id
 
 
 async def _candidates(pool: asyncpg.Pool, goal_id: str, text: str, embedding: Optional[list[float]], model: Optional[str],
@@ -87,12 +264,37 @@ async def resolve_procedure_identity(
     """Procedure identity WITHIN one Goal: returns (decision, resolved_row_id) with decision in
     no_candidates | same | new_version | distinct | judge_unavailable. Shared by ingest_procedure and by
     capture_procedure(procedure_dedup=True), so every adapter that opts in gets the identical behaviour."""
+    on_unavailable = validate_on_unavailable(on_unavailable)
+    job_id = validate_identity_job_id(job_id)
+    if on_unavailable is None:
+        on_unavailable = "raise" if judge.providers else "create"
     text = procedure_text(name, goal_text, steps)
+    idempotency_key = f"proc:{source_key}" if source_key else None
+    if idempotency_key:
+        prior = await _load_prior_decision(pool, "procedure", idempotency_key)
+        if prior is not None:
+            mismatch = _procedure_prior_mismatch_reason(
+                prior,
+                text=text,
+                goal_id=goal_id,
+                scope_type=scope_type,
+                scope_entity_id=scope_entity_id,
+                job_id=job_id,
+            )
+            if mismatch:
+                raise PermanentIdentityConflict(
+                    "procedure", idempotency_key, f"{mismatch} differs from the stored decision"
+                )
+            return await _replay_procedure_decision(
+                pool, prior, goal_id=goal_id, scope_type=scope_type,
+                scope_entity_id=scope_entity_id, on_unavailable=on_unavailable,
+            )
+
     emb, model = None, None
     if embedder is not None:
         emb = await embedder.embed_one(text, input_type="document")
         model = embedder.embedding_model_id()
-    cands = await _candidates(pool, goal_id, text, emb, model)
+    cands = _validate_candidate_objects(await _candidates(pool, goal_id, text, emb, model))
     decision, resolved, provider, mdl = "no_candidates", None, None, None
     if cands:
         for cand in cands:
@@ -109,11 +311,23 @@ async def resolve_procedure_identity(
                 break
         else:
             decision = "distinct"
-        await record_decision(
-            pool, object_type="procedure", candidate_text=text, scope_type=scope_type, scope_entity_id=scope_entity_id,
-            decision=decision, resolved_id=resolved, candidates=cands, judge=judge, provider=provider, model=mdl,
-            fts_n=sum(1 for c in cands if c.fts_rank), vec_n=sum(1 for c in cands if c.vec_rank), job_id=job_id,
-            idempotency_key=f"proc:{source_key}" if source_key else None, detail={"goal_id": goal_id})
+    if decision == "no_candidates" and idempotency_key is None:
+        return decision, resolved
+    written = await record_decision(
+        pool, object_type="procedure", candidate_text=text, scope_type=scope_type, scope_entity_id=scope_entity_id,
+        decision=decision, resolved_id=resolved, candidates=cands, judge=judge, provider=provider, model=mdl,
+        fts_n=sum(1 for c in cands if c.fts_rank), vec_n=sum(1 for c in cands if c.vec_rank), job_id=job_id,
+        idempotency_key=idempotency_key, detail={"goal_id": goal_id},
+    )
+    if written is None:
+        if idempotency_key is not None:
+            raise IdentityReplayError("identity decision was not persisted")
+        return decision, resolved
+    if _row_value(written, "decision", None) is not None:
+        return await _replay_procedure_decision(
+            pool, written, goal_id=goal_id, scope_type=scope_type,
+            scope_entity_id=scope_entity_id, on_unavailable=on_unavailable,
+        )
     return decision, resolved
 
 
@@ -137,6 +351,8 @@ async def ingest_procedure(
     """Idempotent per ``source_key``. Returns {action, id, procedure_id, goal_id, decision}."""
     from app.services.procedures import capture_procedure, supersede_procedure
 
+    on_unavailable = validate_on_unavailable(on_unavailable)
+    job_id = validate_identity_job_id(job_id)
     judge = judge if judge is not None else default_judge()
     if on_unavailable is None:
         on_unavailable = "raise" if judge.providers else "create"

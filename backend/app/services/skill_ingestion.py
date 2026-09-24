@@ -40,6 +40,7 @@ import yaml
 
 from app.services import artifact_blocks
 from app.services.access import TenantScope, tenant_transaction
+from app.services.identity_resolution import identity_idempotency_key, validate_identity_job_id
 from app.services.applicability import find_applicable_procedures
 from app.services.embeddings import Embedder
 from app.services.procedure_claim_refs import add_procedure_claim_ref
@@ -871,6 +872,7 @@ async def _open_ingestion_provenance(
     run_id: Optional[str],
     injection_signals: list[str],
     owner_id: Optional[str],
+    visibility: str = "public",
 ) -> tuple[str, bool, str]:
     """Register the document's Source (reusing an existing row on re-ingest)
     and open the IngestionContext every derived row will stamp.
@@ -894,6 +896,7 @@ async def _open_ingestion_provenance(
         owner_id=owner_id,
     )
     resolved_scope_type = "entity" if domain else "global"
+    resolved_scope_entity_id = domain or None
     classification = (
         SKILL_MD_CLASSIFICATION_SCREENED if injection_signals
         else SKILL_MD_CLASSIFICATION_PUBLIC
@@ -905,11 +908,12 @@ async def _open_ingestion_provenance(
         extractor_version=extractor_version,
         actor_id=created_by,
         scope_type=resolved_scope_type,
-        scope_entity_id=domain,
+        scope_entity_id=resolved_scope_entity_id,
         source_ref=source["id"],
         source_uri=artifact.uri,
         source_hash=artifact.content_hash,
         classification=classification,
+        visibility=visibility,
         owner_id=owner_id,
         run_ref=run_id,
     )
@@ -1895,7 +1899,8 @@ _LANGUAGE_BY_EXT = {
 
 async def _preserve_script_artifact(
     pool: asyncpg.Pool, artifact: Any, resource: Any, raw_url: str, *, created_by: str,
-    role: str = "executable_source",
+    role: str = "executable_source", owner_id: Optional[str] = None,
+    visibility: str = "public", ingestion_context_id: Optional[str] = None,
 ) -> str:
     """Preserve one bundled resource's exact bytes as an immutable `ingested_artifacts` row,
     keyed by content hash. Found source is NOT trusted: `execution_allowed` starts false and
@@ -1923,12 +1928,14 @@ async def _preserve_script_artifact(
     mime_type = "text/x-script" if role == "executable_source" else "text/plain"
     row = await pool.fetchrow(
         "INSERT INTO ingested_artifacts (id, source_type, uri, repository, path, \"commit\", content_hash, "
-        " role, mime_type, language, byte_size, content_ref, extraction_status, execution_allowed, visibility) "
-        "VALUES (gen_random_uuid(), 'skill_package_resource', $1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, $11, false, 'public') "
+        " role, mime_type, language, byte_size, content_ref, extraction_status, execution_allowed, visibility, "
+        "owner_id, ingestion_context_id) "
+        "VALUES (gen_random_uuid(), 'skill_package_resource', $1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, $11, false, $12::visibility_level, $13, $14::uuid) "
         "ON CONFLICT (source_type, uri, content_hash) WHERE role IS NOT NULL "
         "DO UPDATE SET last_seen = now() RETURNING id",
         raw_url, getattr(artifact, "repository", None), resource.path, getattr(artifact, "commit", None), resource.sha256,
         role, mime_type, _LANGUAGE_BY_EXT.get(ext), int(getattr(resource, "size", 0) or 0), content_ref, status,
+        visibility, owner_id, ingestion_context_id,
     )
     return str(row["id"])
 
@@ -1936,7 +1943,12 @@ async def _preserve_script_artifact(
 async def _persist_script_procedures(
     pool: asyncpg.Pool, artifact: Any, *,
     scripts: list[Any], created_by: str, provenance: str = "prior_library",
-    embedder: Optional[Any] = None, client: Optional[Any] = None,
+    embedder: Optional[Any] = None, goal_judge: Optional[Any] = None,
+    goal_cache: Optional[dict] = None,
+    goal_resolution_skips: Optional[set[tuple[Any, ...]]] = None,
+    identity_job_id: Optional[int] = None, scope_type: str = "global",
+    scope_entity_id: Optional[str] = None, owner_id: Optional[str] = None,
+    visibility: str = "public", ingestion_context_id: Optional[str] = None,
 ) -> list[str]:
     """Each bundled executable resource the extractor found is (1) PRESERVED as an immutable artifact (bytes by
     hash, commit, path, size, language; unscreened, execution not allowed) and (2) proposed as a ONE-STEP candidate
@@ -1947,11 +1959,14 @@ async def _persist_script_procedures(
     `scripts` is `ExtractedDocument.implementations` (paths already validated against the discovered file list).
     Identity goes through `capture_procedure(procedure_dedup=True)` with a stable `source_key`. Returns stable
     procedure ids."""
+    identity_job_id = validate_identity_job_id(identity_job_id)
+    scope_entity_id = scope_entity_id or None
     if getattr(artifact, "source_type", None) != "skill_package":
         return []
     from app.services.goal_categories import normalize_goal_from_path
     from app.services.goals import GoalQualityRejected
     from app.services.procedures import capture_procedure
+    from app.services.v0_gate import V0Violation
     import os as _os
 
     resources_by_path = {r.path: r for r in getattr(artifact, "resources", ())}
@@ -1961,8 +1976,17 @@ async def _persist_script_procedures(
         if resource is None:
             continue  # the extractor already filtered non-real paths; defense in depth
         raw_url = f"https://raw.githubusercontent.com/{artifact.repository}/{artifact.commit}/{script.resource_path}"
-        artifact_id = await _preserve_script_artifact(pool, artifact, resource, raw_url, created_by=created_by)
+        artifact_id = await _preserve_script_artifact(
+            pool, artifact, resource, raw_url, created_by=created_by, owner_id=owner_id,
+            visibility=visibility, ingestion_context_id=ingestion_context_id,
+        )
         goal = script.goal or normalize_goal_from_path(script.resource_path) or f"run {script.resource_path}"
+        goal_key = _goal_prefetch_key(
+            scope_type=scope_type,
+            scope_entity_id=scope_entity_id,
+            canonical_name=goal,
+            judge_mode="model",
+        )
         locator = {k: v for k, v in {
             "source_id": getattr(artifact, "source_id", None) or artifact.uri, "uri": raw_url,
             "path": script.resource_path, "commit": getattr(artifact, "commit", None),
@@ -1974,17 +1998,34 @@ async def _persist_script_procedures(
             "binding": {"kind": "source_artifact", "source_artifact": artifact_id, "entrypoint": script.resource_path,
                         "runtime": runtime, "args": [], "sandbox_policy": "isolated"},
         }
+        source_key = f"skill-script:{artifact.content_hash}:{script.resource_path}"
+        if goal_resolution_skips and goal_key in goal_resolution_skips:
+            continue
         try:
             result = await capture_procedure(
                 pool, name=_content_name(goal, script.resource_path),
-                goal=goal, steps=[step], provenance=provenance, scope_type="global", created_by=created_by,
-                goal_embedder=embedder, goal_adjudication_client=client,
-                procedure_dedup=True, source_key=f"skill-script:{artifact.content_hash}:{script.resource_path}",
+                goal=goal, steps=[step], provenance=provenance,
+                scope_type=scope_type, scope_entity_id=scope_entity_id,
+                owner_id=owner_id, visibility=visibility, created_by=created_by,
+                goal_cache=goal_cache,
+                goal_embedder=embedder, goal_judge=goal_judge, judge_mode="model",
+                procedure_dedup=True, source_key=source_key,
+                ingestion_context_id=ingestion_context_id,
+                identity_job_id=identity_job_id,
+                identity_idempotency_key=identity_idempotency_key(
+                    job_id=identity_job_id,
+                    source_hash=resource.sha256,
+                    object_type="goal",
+                    semantic_role=f"script_goal:{script.resource_path}",
+                    scope_type=scope_type,
+                    scope_entity_id=scope_entity_id,
+                    text=goal,
+                ),
                 source_locator=locator, require_source_locators=True,
                 source_artifacts=[{"artifact_id": artifact_id, "path": script.resource_path, "role": "executable_source", "execution_allowed": False}],
             )
-        except GoalQualityRejected:
-            continue  # a low-quality goal rejects only this script's procedure (ingestion.md Sec 20)
+        except (V0Violation, GoalQualityRejected):
+            continue
         out.append(str(result["procedure_id"]))
     return out
 
@@ -2007,10 +2048,270 @@ _REFERENCE_ROLE_GOAL_VERB = {
 }
 
 
+@dataclass
+class _GoalPrefetchRequest:
+    key: tuple[Any, ...]
+    canonical_name: str
+    scope_type: str
+    scope_entity_id: Optional[str]
+    judge_mode: str
+    kwargs: dict[str, Any]
+    required: bool = False
+
+
+def _goal_prefetch_key(
+    *, scope_type: str, scope_entity_id: Optional[str], canonical_name: str, judge_mode: str
+) -> tuple[Any, ...]:
+    from app.services.goals import normalize_goal_name
+
+    return (scope_type, scope_entity_id, normalize_goal_name(canonical_name), judge_mode)
+
+
+def _build_goal_prefetch_requests(
+    artifact: Any,
+    extracted: Any,
+    *,
+    fingerprint: str,
+    identity_job_id: Optional[int],
+    scope_type: str,
+    scope_entity_id: Optional[str],
+    provenance: str,
+    embedder: Any,
+    goal_judge: Any,
+    created_by: str,
+    owner_id: Optional[str],
+    visibility: str,
+) -> list[_GoalPrefetchRequest]:
+    from app.services.goal_categories import normalize_goal_from_path
+
+    requests: dict[tuple[Any, ...], _GoalPrefetchRequest] = {}
+
+    def add(
+        canonical_name: str,
+        *,
+        judge_mode: str,
+        required: bool,
+        goal_kwargs: dict[str, Any],
+    ) -> None:
+        key = _goal_prefetch_key(
+            scope_type=scope_type,
+            scope_entity_id=scope_entity_id,
+            canonical_name=canonical_name,
+            judge_mode=judge_mode,
+        )
+        existing = requests.get(key)
+        if existing is None:
+            requests[key] = _GoalPrefetchRequest(
+                key=key,
+                canonical_name=canonical_name,
+                scope_type=scope_type,
+                scope_entity_id=scope_entity_id,
+                judge_mode=judge_mode,
+                kwargs={
+                    "canonical_name": canonical_name,
+                    "scope_type": scope_type,
+                    "scope_entity_id": scope_entity_id,
+                    **goal_kwargs,
+                },
+                required=required,
+            )
+        elif required:
+            existing.required = True
+
+    for proc in extracted.procedures:
+        for step in proc.steps:
+            step_key = identity_idempotency_key(
+                job_id=identity_job_id,
+                source_hash=fingerprint,
+                object_type="goal",
+                semantic_role="step_goal",
+                scope_type=scope_type,
+                scope_entity_id=scope_entity_id,
+                text=step.action,
+            )
+            add(
+                step.action,
+                judge_mode="none",
+                required=False,
+                goal_kwargs={
+                    "provenance": provenance,
+                    "created_from": "skill_extraction_step",
+                    "owner_id": owner_id,
+                    "visibility": visibility,
+                    "embedder": embedder,
+                    "job_id": identity_job_id,
+                    "idempotency_key": step_key,
+                },
+            )
+        procedure_key = identity_idempotency_key(
+            job_id=identity_job_id,
+            source_hash=fingerprint,
+            object_type="goal",
+            semantic_role="procedure_goal",
+            scope_type=scope_type,
+            scope_entity_id=scope_entity_id,
+            text=proc.goal,
+        )
+        add(
+            proc.goal,
+            judge_mode="model",
+            required=True,
+            goal_kwargs={
+                "provenance": provenance,
+                "created_from": "procedure_capture",
+                "owner_id": owner_id,
+                "visibility": visibility,
+                "embedder": embedder,
+                "judge": goal_judge,
+                "job_id": identity_job_id,
+                "idempotency_key": procedure_key,
+            },
+        )
+
+    resources_by_path = {
+        resource.path: resource for resource in (getattr(artifact, "resources", ()) or ())
+    }
+    if getattr(artifact, "source_type", None) == "skill_package":
+        for script in extracted.implementations:
+            resource = resources_by_path.get(script.resource_path)
+            if resource is None:
+                continue
+            goal = script.goal or normalize_goal_from_path(script.resource_path) or f"run {script.resource_path}"
+            script_key = identity_idempotency_key(
+                job_id=identity_job_id,
+                source_hash=resource.sha256,
+                object_type="goal",
+                semantic_role=f"script_goal:{script.resource_path}",
+                scope_type=scope_type,
+                scope_entity_id=scope_entity_id,
+                text=goal,
+            )
+            add(
+                goal,
+                judge_mode="model",
+                required=False,
+                goal_kwargs={
+                    "provenance": provenance,
+                    "created_from": "procedure_capture",
+                    "owner_id": owner_id,
+                    "visibility": visibility,
+                    "embedder": embedder,
+                    "judge": goal_judge,
+                    "job_id": identity_job_id,
+                    "idempotency_key": script_key,
+                },
+            )
+        for reference in extracted.reference_resources:
+            resource = resources_by_path.get(reference.resource_path)
+            if resource is None:
+                continue
+            verb = _REFERENCE_ROLE_GOAL_VERB.get(reference.role, "consult")
+            goal = reference.note or f"{verb} {reference.resource_path}"
+            reference_key = identity_idempotency_key(
+                job_id=identity_job_id,
+                source_hash=resource.sha256,
+                object_type="goal",
+                semantic_role=f"reference_goal:{reference.resource_path}",
+                scope_type=scope_type,
+                scope_entity_id=scope_entity_id,
+                text=goal,
+            )
+            add(
+                goal,
+                judge_mode="model",
+                required=False,
+                goal_kwargs={
+                    "provenance": provenance,
+                    "created_from": "procedure_capture",
+                    "owner_id": owner_id,
+                    "visibility": visibility,
+                    "embedder": embedder,
+                    "judge": goal_judge,
+                    "job_id": identity_job_id,
+                    "idempotency_key": reference_key,
+                },
+            )
+
+    for goal in extracted.goals:
+        standalone_key = identity_idempotency_key(
+            job_id=identity_job_id,
+            source_hash=fingerprint,
+            object_type="goal",
+            semantic_role="standalone_goal",
+            scope_type=scope_type,
+            scope_entity_id=scope_entity_id,
+            text=f"{goal.canonical_name}: {goal.description}" if goal.description else goal.canonical_name,
+        )
+        add(
+            goal.canonical_name,
+            judge_mode="model",
+            required=False,
+            goal_kwargs={
+                "provenance": provenance,
+                "description": goal.description,
+                "expected_outcome": goal.expected_outcome,
+                "verification_requirement": goal.verification_requirement,
+                "created_from": "skill_extraction",
+                "created_by": created_by,
+                "embedder": embedder,
+                "judge": goal_judge,
+                "owner_id": owner_id,
+                "visibility": visibility,
+                "job_id": identity_job_id,
+                "idempotency_key": standalone_key,
+            },
+        )
+
+    return list(requests.values())
+
+
+async def _prefetch_goal_requests(
+    pool: asyncpg.Pool,
+    requests: list[_GoalPrefetchRequest],
+    goal_cache: dict,
+    resolver: Any,
+) -> set[tuple[Any, ...]]:
+    from app.services.goals import GoalQualityRejected
+    from app.services.v0_gate import V0Violation
+
+    ignored_keys: set[tuple[Any, ...]] = set()
+    if not requests:
+        return ignored_keys
+
+    async def resolve_one(request: _GoalPrefetchRequest) -> None:
+        try:
+            await resolver(
+                pool,
+                goal_cache=goal_cache,
+                judge_mode=request.judge_mode,
+                **request.kwargs,
+            )
+        except (V0Violation, GoalQualityRejected):
+            if request.required:
+                raise
+            ignored_keys.add(request.key)
+
+    tasks = [asyncio.create_task(resolve_one(request)) for request in requests]
+    try:
+        await asyncio.gather(*tasks)
+    except BaseException:
+        for task in tasks:
+            if not task.done():
+                task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        raise
+    return ignored_keys
+
+
 async def _persist_reference_resources(
     pool: asyncpg.Pool, artifact: Any, *,
     references: list[Any], created_by: str, provenance: str = "prior_library",
-    embedder: Optional[Any] = None, client: Optional[Any] = None,
+    embedder: Optional[Any] = None, goal_judge: Optional[Any] = None,
+    goal_cache: Optional[dict] = None,
+    goal_resolution_skips: Optional[set[tuple[Any, ...]]] = None,
+    identity_job_id: Optional[int] = None, scope_type: str = "global",
+    scope_entity_id: Optional[str] = None, owner_id: Optional[str] = None,
+    visibility: str = "public", ingestion_context_id: Optional[str] = None,
 ) -> list[str]:
     """Each bundled NON-executable resource the extractor found (a style/design pattern, bundled
     documentation, a dependency manifest, a test fixture -- skill_extraction/schema.py's
@@ -2025,10 +2326,13 @@ async def _persist_reference_resources(
     `references` is `ExtractedDocument.reference_resources` (paths already validated against the
     discovered file list). Identity goes through `capture_procedure(procedure_dedup=True)` with a
     stable `source_key`, same pattern as scripts. Returns stable procedure ids."""
+    identity_job_id = validate_identity_job_id(identity_job_id)
+    scope_entity_id = scope_entity_id or None
     if getattr(artifact, "source_type", None) != "skill_package":
         return []
     from app.services.goals import GoalQualityRejected
     from app.services.procedures import capture_procedure
+    from app.services.v0_gate import V0Violation
 
     resources_by_path = {r.path: r for r in getattr(artifact, "resources", ())}
     out: list[str] = []
@@ -2038,9 +2342,17 @@ async def _persist_reference_resources(
             continue  # the extractor already filtered non-real paths; defense in depth
         raw_url = f"https://raw.githubusercontent.com/{artifact.repository}/{artifact.commit}/{ref.resource_path}"
         artifact_id = await _preserve_script_artifact(
-            pool, artifact, resource, raw_url, created_by=created_by, role=ref.role)
+            pool, artifact, resource, raw_url, created_by=created_by, role=ref.role,
+            owner_id=owner_id, visibility=visibility, ingestion_context_id=ingestion_context_id,
+        )
         verb = _REFERENCE_ROLE_GOAL_VERB.get(ref.role, "consult")
         goal = ref.note or f"{verb} {ref.resource_path}"
+        goal_key = _goal_prefetch_key(
+            scope_type=scope_type,
+            scope_entity_id=scope_entity_id,
+            canonical_name=goal,
+            judge_mode="model",
+        )
         locator = {k: v for k, v in {
             "source_id": getattr(artifact, "source_id", None) or artifact.uri, "uri": raw_url,
             "path": ref.resource_path, "commit": getattr(artifact, "commit", None),
@@ -2050,17 +2362,34 @@ async def _persist_reference_resources(
             "source_locator": locator,
             # No `binding`: this is retrievable context, never executed (db/98).
         }
+        source_key = f"skill-reference:{artifact.content_hash}:{ref.resource_path}"
+        if goal_resolution_skips and goal_key in goal_resolution_skips:
+            continue
         try:
             result = await capture_procedure(
                 pool, name=_content_name(goal, ref.resource_path),
-                goal=goal, steps=[step], provenance=provenance, scope_type="global", created_by=created_by,
-                goal_embedder=embedder, goal_adjudication_client=client,
-                procedure_dedup=True, source_key=f"skill-reference:{artifact.content_hash}:{ref.resource_path}",
+                goal=goal, steps=[step], provenance=provenance,
+                scope_type=scope_type, scope_entity_id=scope_entity_id,
+                owner_id=owner_id, visibility=visibility, created_by=created_by,
+                goal_cache=goal_cache,
+                goal_embedder=embedder, goal_judge=goal_judge, judge_mode="model",
+                procedure_dedup=True, source_key=source_key,
+                ingestion_context_id=ingestion_context_id,
+                identity_job_id=identity_job_id,
+                identity_idempotency_key=identity_idempotency_key(
+                    job_id=identity_job_id,
+                    source_hash=resource.sha256,
+                    object_type="goal",
+                    semantic_role=f"reference_goal:{ref.resource_path}",
+                    scope_type=scope_type,
+                    scope_entity_id=scope_entity_id,
+                    text=goal,
+                ),
                 source_locator=locator, require_source_locators=True,
                 source_artifacts=[{"artifact_id": artifact_id, "path": ref.resource_path, "role": ref.role, "execution_allowed": False}],
             )
-        except GoalQualityRejected:
-            continue  # a low-quality goal rejects only this resource's procedure (ingestion.md Sec 20)
+        except (V0Violation, GoalQualityRejected):
+            continue
         out.append(str(result["procedure_id"]))
     return out
 
@@ -2068,7 +2397,12 @@ async def _persist_reference_resources(
 async def _persist_independent_steps(
     pool: asyncpg.Pool, artifact: Any, *,
     parent_name: str, steps: list[Any], steps_json: list[dict], created_by: str,
-    provenance: str = "prior_library", embedder: Optional[Any] = None, client: Optional[Any] = None,
+    provenance: str = "prior_library", embedder: Optional[Any] = None,
+    goal_cache: Optional[dict] = None,
+    goal_resolution_skips: Optional[set[tuple[Any, ...]]] = None,
+    identity_job_id: Optional[int] = None, scope_type: str = "global",
+    scope_entity_id: Optional[str] = None, owner_id: Optional[str] = None,
+    visibility: str = "public", ingestion_context_id: Optional[str] = None,
 ) -> list[str]:
     """A step with an empty `depends_on` (schema.md's own documented Procedure.steps shape --
     ExtractedProcedureStep.depends_on) is structurally independent: someone could follow just
@@ -2084,10 +2418,13 @@ async def _persist_independent_steps(
 
     `steps`/`steps_json` are the SAME list, in the SAME order (`ExtractedProcedureStep` objects
     and the already-built step JSONB entries respectively) -- paired positionally, not by id."""
+    identity_job_id = validate_identity_job_id(identity_job_id)
+    scope_entity_id = scope_entity_id or None
     if len(steps) <= 1:
         return []
     from app.services.goals import GoalQualityRejected
     from app.services.procedures import capture_procedure
+    from app.services.v0_gate import V0Violation
 
     locator = {k: v for k, v in {
         "source_id": getattr(artifact, "source_id", None) or artifact.uri, "uri": artifact.uri,
@@ -2099,18 +2436,41 @@ async def _persist_independent_steps(
         if s.depends_on or "source_locator" in entry:
             continue
         goal = s.action
+        goal_key = _goal_prefetch_key(
+            scope_type=scope_type,
+            scope_entity_id=scope_entity_id,
+            canonical_name=goal,
+            judge_mode="none",
+        )
         step = {"order": 0, "description": f"{goal} (step {s.order} of {parent_name})", "goal": goal,
                 "source_locator": locator}
+        source_key = f"skill-step:{artifact.content_hash}:{parent_name}:{s.order}"
+        if goal_resolution_skips and goal_key in goal_resolution_skips:
+            continue
         try:
             result = await capture_procedure(
                 pool, name=_content_name(goal, f"{parent_name} step {s.order}"),
-                goal=goal, steps=[step], provenance=provenance, scope_type="global", created_by=created_by,
-                goal_embedder=embedder, goal_adjudication_client=client,
-                procedure_dedup=True, source_key=f"skill-step:{artifact.content_hash}:{parent_name}:{s.order}",
+                goal=goal, steps=[step], provenance=provenance,
+                scope_type=scope_type, scope_entity_id=scope_entity_id,
+                owner_id=owner_id, visibility=visibility, created_by=created_by,
+                goal_cache=goal_cache,
+                goal_embedder=embedder, judge_mode="none",
+                procedure_dedup=True, source_key=source_key,
+                ingestion_context_id=ingestion_context_id,
+                identity_job_id=identity_job_id,
+                identity_idempotency_key=identity_idempotency_key(
+                    job_id=identity_job_id,
+                    source_hash=getattr(artifact, "bundle_hash", None) or artifact.content_hash,
+                    object_type="goal",
+                    semantic_role="independent_step_goal",
+                    scope_type=scope_type,
+                    scope_entity_id=scope_entity_id,
+                    text=goal,
+                ),
                 source_locator=locator, require_source_locators=True,
             )
-        except GoalQualityRejected:
-            continue  # a low-quality goal rejects only this step's standalone procedure
+        except (V0Violation, GoalQualityRejected):
+            continue
         out.append(str(result["procedure_id"]))
     return out
 
@@ -2136,6 +2496,8 @@ async def compile_skill_artifact(
     *,
     embedder: Optional[Embedder] = None,
     client: Any = None,
+    goal_judge: Optional[Any] = None,
+    identity_job_id: Optional[int] = None,
     domain: Optional[str] = None,
     run_id: Optional[str] = None,
     created_by: str = "skill_md_ingestion",
@@ -2156,6 +2518,13 @@ async def compile_skill_artifact(
     `ingest_skill_md()` (POST /v1/procedures/from_text's deterministic,
     no-LLM, sub-100ms user-paste entry point -- a deliberately separate,
     narrower decision, not an oversight).
+
+    `client` is only the extraction/claim client. `goal_judge` is the
+    separate optional identity judge used for procedure-level and standalone
+    Goals; omitting it uses the configured semantic judge. Direct step Goals
+    and independent-step procedure Goals use `judge_mode="none"`.
+    `identity_job_id` is the trusted leased ingestion-job id used to derive
+    replay keys; it is never synthesized from payload data.
 
     ONE consolidated LLM call (`extractor_module.extract_document`,
     default `app.services.skill_extraction.grounded` -- see that
@@ -2221,7 +2590,13 @@ async def compile_skill_artifact(
     returns `status="rejected"` instead.
     """
     from app.services import screening
-    from app.services.goals import GoalQualityRejected, find_or_create_goal_cached
+    from app.services.goals import (
+        GoalQualityRejected,
+        GoalResolutionCache,
+        find_or_create_goal_cached,
+    )
+
+    identity_job_id = validate_identity_job_id(identity_job_id)
 
     # One dict, this document's whole compile call only (never shared
     # across documents/jobs -- see find_or_create_goal_cached's own
@@ -2230,8 +2605,8 @@ async def compile_skill_artifact(
     # action restated across several extracted procedures, exactly the
     # anthropic-skills xlsx/docx schema-package shape that motivated
     # this (12-17 procedures/document, real measured 800-900s jobs) --
-    # resolves via one embedding+judge round trip instead of N.
-    goal_cache: dict = {}
+    # resolves once per identity mode instead of once per occurrence.
+    goal_cache = GoalResolutionCache(max_concurrency=4)
     from app.services.skill_extraction import grounded as _grounded_extractor
     from app.services.skill_extraction import ungrounded as _ungrounded_extractor
     from app.services.skill_extraction.schema import SkillExtractionTransientFailure
@@ -2343,6 +2718,7 @@ async def compile_skill_artifact(
         )
     quarantined = admission.decision == "review"
     resolved_scope_type = "entity" if domain else "global"
+    resolved_scope_entity_id = domain or None
 
     # --- staleness precheck: this exact content already produced a
     # procedure under this extractor_version? Rows written for an
@@ -2352,7 +2728,9 @@ async def compile_skill_artifact(
     already_rows = await pool.fetch(
         "SELECT id, procedure_id FROM ingested_artifacts "
         "WHERE source_type = $1 AND uri = $2 AND content_hash = $3 "
-        "AND extractor_version = $4 AND procedure_row_id IS NOT NULL AND t_invalid IS NULL",
+        "AND extractor_version = $4 AND procedure_row_id IS NOT NULL AND t_invalid IS NULL "
+        "AND (ingestion_context_id IS NULL OR "
+        "(SELECT status FROM ingestion_contexts WHERE id = ingested_artifacts.ingestion_context_id) = 'completed')",
         artifact.source_type, artifact.uri, fingerprint, extractor_version,
     )
     if already_rows:
@@ -2437,289 +2815,371 @@ async def compile_skill_artifact(
             quarantined=quarantined, admission_escalated=admission.escalated,
         )
 
-    # --- content changed: mark any PRIOR procedure(s) from this exact
-    # artifact URI stale (see this function's own docstring for why this
-    # replaces exact version-chain supersession). ---
-    prior_rows = await pool.fetch(
-        "SELECT DISTINCT procedure_row_id FROM ingested_artifacts WHERE source_type = $1 "
-        "AND uri = $2 AND procedure_row_id IS NOT NULL AND t_invalid IS NULL",
-        artifact.source_type, artifact.uri,
-    )
-    marked_stale = bool(prior_rows)
-    for prior in prior_rows:
-        await mark_procedure_stale(
-            pool, procedure_row_id=str(prior["procedure_row_id"]),
-            reason=(
-                f"source content changed for {artifact.uri} -- re-extracted "
-                f"under {extractor_version}"
-            ),
-            detected_by=created_by,
-        )
-
     # --- Source + IngestionContext, once per artifact ---
     first_view = _ExtractedProcedureView.from_extracted(extracted.procedures[0])
     source_id, _source_reused, ingestion_context_id = await _open_ingestion_provenance(
         pool, artifact, first_view, domain=domain, created_by=created_by,
         extractor_version=extractor_version, run_id=run_id,
         injection_signals=injection_signals, owner_id=owner_id,
+        visibility=_DOCUMENT_PROCEDURE_VISIBILITY,
     )
 
-    procedure_ids: list[str] = []
-    version_row_ids: list[str] = []
-    script_procedure_ids: list[str] = []
-    reference_procedure_ids: list[str] = []
-    independent_step_procedure_ids: list[str] = []
-    artifact_ids: list[str] = []
-    all_document_claim_ids: list[str] = []
-    all_document_claim_evidence_ids: list[str] = []
-    first_observation_id: Optional[str] = None
-    first_document_evidence_id: Optional[str] = None
-    first_artifact_block_ids: list[str] = []
-    first_block_observation_ids: list[str] = []
-    screening_decision: Optional[str] = None
-    screening_decision_ids: list[str] = []
-
-    for i, proc in enumerate(extracted.procedures):
-        view = _ExtractedProcedureView.from_extracted(proc)
-        # ingestion.md Sec 3/11: "Step S1 -> Goal G2" -- each step's own
-        # free-text `goal` (s.action, the pre-existing convention this
-        # steps JSONB shape already used) ALSO resolves to a real Goal
-        # row, additive via a `goal_id` key (migration 83's own comment
-        # names exactly this: "a writer-populated goal_id key inside that
-        # JSONB, not a schema change"). Optional 0..N (Sec 6) -- a low-
-        # quality/V0-invalid step description just skips its own goal_id,
-        # never blocks the procedure (only the procedure's OWN achieves_
-        # goal is load-bearing enough to propagate a rejection).
-        #
-        # Cost tradeoff, disclosed: `embedder` IS passed (so step-level
-        # Goals are searchable/dedupable, matching Sec 17's "Goals: embed
-        # globally" with no step-vs-procedure carve-out) but `client`
-        # (tier 5 LLM adjudication) is NOT -- an extra full LLM call per
-        # step, on top of one per NEW step-goal's embedding, would
-        # multiply this document's real API cost by its step count; tier
-        # 1/2/2.5/3/4 (exact/alias/simhash/embedding-similarity) still
-        # dedup step-goals without it.
-        step_goal_scope_type = "entity" if domain else "global"
-        steps_json = []
-        for s in proc.steps:
-            step_entry = {"order": s.order, "goal": s.action}
-            for script in extracted.implementations:
-                res = next((r for r in getattr(artifact, "resources", ()) if r.path == script.resource_path), None)
-                if res is not None and script.resource_path and script.resource_path in (s.action or ""):
-                    step_entry["source_locator"] = {
-                        "source_id": getattr(artifact, "source_id", None) or artifact.uri, "uri": artifact.uri,
-                        "path": script.resource_path, "content_hash": res.sha256, "granularity": "document"}
-                    break
-            try:
-                step_goal = await find_or_create_goal_cached(
-                    pool, canonical_name=s.action, scope_type=step_goal_scope_type,
-                    scope_entity_id=domain, goal_cache=goal_cache, provenance=provenance,
-                    created_from="skill_extraction_step", embedder=embedder,
-                )
-                step_entry["goal_id"] = step_goal["id"]
-            except (V0Violation, GoalQualityRejected):
-                pass
-            steps_json.append(step_entry)
-        independent_step_procedure_ids.extend(await _persist_independent_steps(
-            pool, artifact, parent_name=proc.name, steps=proc.steps, steps_json=steps_json,
-            created_by=created_by, provenance=provenance, embedder=embedder, client=client,
-        ))
-        retrieval_doc = build_procedure_retrieval_document({
-            "name": proc.name, "goal": proc.goal, "steps": steps_json,
-            "preconditions": proc.preconditions, "invariants": [],
-            "postconditions": proc.postconditions,
-            "failure_conditions": proc.failure_conditions,
-            "domain": domain, "domain_payload": {},
-        })
-        goal_vec, embedding_metadata = await embedder.embed_one_with_metadata(
-            retrieval_doc, input_type="document",
-        )
-        retrieval_doc_sha = retrieval_document_sha256(retrieval_doc)
-        disp_name, disp_desc, disp_quality = build_display_metadata(
-            {"name": proc.name, "goal": proc.goal, "capability_statement": proc.goal}
-        )
-        disp_version = (
-            DISPLAY_METADATA_VERSION if disp_quality is None else DISPLAY_METADATA_FALLBACK_VERSION
-        )
-
-        result = await capture_procedure(
-            pool, name=proc.name, goal=proc.goal, steps=steps_json,
-            provenance=provenance, domain=domain,
-            domain_payload=_domain_payload_for_extracted(
-                artifact, proc, embedding=embedding_metadata.__dict__,
-            ),
-            scope_type="entity" if domain else "global", scope_entity_id=domain,
-            created_by=created_by, goal_cache=goal_cache,
-            embedding=goal_vec, embedding_model_id=embedding_metadata.model_id,
-            embedding_provider=embedding_metadata.provider,
-            embedding_input_type=embedding_metadata.input_type,
-            embedding_text_hash=embedding_metadata.text_sha256,
-            retrieval_document=retrieval_doc, retrieval_document_version=RETRIEVAL_DOCUMENT_VERSION,
-            retrieval_document_sha256=retrieval_doc_sha,
-            display_name=disp_name, display_description=disp_desc,
-            display_metadata_version=disp_version,
-            invariants=invariants, owner_id=owner_id,
-            availability="quarantined" if quarantined else "active",
-            goal_embedder=embedder, goal_adjudication_client=client,
-            procedure_dedup=True, source_key=f"skill:{artifact.content_hash}:{proc.name}",
-            source_locator={k: v for k, v in {
-                "source_id": getattr(artifact, "source_id", None) or artifact.uri, "uri": artifact.uri,
-                "content_hash": artifact.content_hash, "commit": getattr(artifact, "commit", None),
-                "path": getattr(artifact, "path", None), "granularity": "document"}.items() if v},
-            **_structured_fields_from_extracted(proc),
-        )
-        procedure_row_id = str(result["id"])
-        procedure_id = str(result["procedure_id"])
-        procedure_ids.append(procedure_id)
-        version_row_ids.append(procedure_row_id)
-
-        # capability_statement column: the extracted `goal` IS already a
-        # real, grounded, LLM-produced sentence (the whole point of this
-        # rearchitecture) -- stamped here too so existing readers of this
-        # column (retrieval ranking text, replay diffing) keep working.
-        if not result.get("reused"):     # a reused (same-method) procedure keeps its own context/capability; this source is attached as provenance
-            await pool.execute(
-                "UPDATE procedures SET capability_statement = $2, ingestion_context_id = $3::uuid "
-                "WHERE id = $1::uuid",
-                procedure_row_id, proc.goal, ingestion_context_id,
-            )
-
-        observation_id = await _emit_document_observation(
-            pool, view, ingestion_context_id=ingestion_context_id, owner_id=owner_id,
-            extractor_kind="model", source_label="skill_extraction",
-        )
-        if first_observation_id is None:
-            first_observation_id = observation_id
-
-        (
-            screening_decision, decision_ids, claim_ids,
-        ) = await _emit_document_screening_and_claims(
-            pool, artifact, view,
-            source_id=source_id, ingestion_context_id=ingestion_context_id,
-            observation_id=observation_id, procedure_id=procedure_id,
-            procedure_version=_FRESH_PROCEDURE_VERSION, extractor_version=extractor_version,
-            created_by=created_by, scope_type=resolved_scope_type, scope_entity_id=domain,
-            visibility=_DOCUMENT_PROCEDURE_VISIBILITY, embedder=embedder, client=client,
-            claim_extraction_llm_model=claim_extraction_llm_model, skip_extraction=False,
-        )
-        screening_decision_ids = decision_ids
-        all_document_claim_ids.extend(claim_ids)
-
-        # Bundled scripts/references become one-step procedures (once per document, on its
-        # first procedure's turn).
-        if i == 0:
-            script_procedure_ids.extend(await _persist_script_procedures(
-                pool, artifact, scripts=extracted.implementations, created_by=created_by,
-                provenance=provenance, embedder=embedder, client=client,
-            ))
-            reference_procedure_ids.extend(await _persist_reference_resources(
-                pool, artifact, references=extracted.reference_resources, created_by=created_by,
-                provenance=provenance, embedder=embedder, client=client,
-            ))
-
-        document_evidence_id = await _emit_document_evidence(
-            pool, procedure_row_id=procedure_row_id, target_version=_FRESH_PROCEDURE_VERSION,
-            source_hash=artifact.content_hash, context_key=artifact.uri,
-            extractor_version=extractor_version, ingestion_context_id=ingestion_context_id,
+    try:
+        goal_requests = _build_goal_prefetch_requests(
+            artifact,
+            extracted,
+            fingerprint=fingerprint,
+            identity_job_id=identity_job_id,
+            scope_type=resolved_scope_type,
+            scope_entity_id=resolved_scope_entity_id,
+            provenance=provenance,
+            embedder=embedder,
+            goal_judge=goal_judge,
             created_by=created_by,
+            owner_id=owner_id,
+            visibility=_DOCUMENT_PROCEDURE_VISIBILITY,
         )
-        if first_document_evidence_id is None:
-            first_document_evidence_id = document_evidence_id
-        for claim_id in claim_ids:
-            ev_id = await _emit_document_claim_evidence(
-                pool, claim_id=claim_id, source_hash=artifact.content_hash,
-                context_key=artifact.uri, extractor_version=extractor_version,
-                ingestion_context_id=ingestion_context_id, created_by=created_by,
+        ignored_goal_keys = await _prefetch_goal_requests(
+            pool,
+            goal_requests,
+            goal_cache,
+            find_or_create_goal_cached,
+        )
+        prior_rows = await pool.fetch(
+            "SELECT DISTINCT procedure_row_id FROM ingested_artifacts WHERE source_type = $1 "
+            "AND uri = $2 AND procedure_row_id IS NOT NULL AND t_invalid IS NULL "
+            "AND (ingestion_context_id IS NULL OR "
+            "(SELECT status FROM ingestion_contexts WHERE id = ingested_artifacts.ingestion_context_id) = 'completed')",
+            artifact.source_type, artifact.uri,
+        )
+        marked_stale = bool(prior_rows)
+        for prior in prior_rows:
+            await mark_procedure_stale(
+                pool, procedure_row_id=str(prior["procedure_row_id"]),
+                reason=(
+                    f"source content changed for {artifact.uri} -- re-extracted "
+                    f"under {extractor_version}"
+                ),
+                detected_by=created_by,
             )
-            all_document_claim_evidence_ids.append(ev_id)
+        procedure_ids: list[str] = []
+        version_row_ids: list[str] = []
+        script_procedure_ids: list[str] = []
+        reference_procedure_ids: list[str] = []
+        independent_step_procedure_ids: list[str] = []
+        artifact_ids: list[str] = []
+        all_document_claim_ids: list[str] = []
+        all_document_claim_evidence_ids: list[str] = []
+        first_observation_id: Optional[str] = None
+        first_document_evidence_id: Optional[str] = None
+        first_artifact_block_ids: list[str] = []
+        first_block_observation_ids: list[str] = []
+        screening_decision: Optional[str] = None
+        screening_decision_ids: list[str] = []
 
-        if i == 0:
-            # `ingested_artifacts` has ONE row per document (its unique
-            # identity -- source_type, uri, content_hash, extractor_version
-            # -- is document-level, via idx_ingested_artifacts_compilation_
-            # identity), not per-procedure. Calling `_write_artifact_row`
-            # once per `extracted.procedures` entry made every document
-            # producing >1 procedure self-conflict on its own second write
-            # (same identity, no ON CONFLICT) and fail the whole job. The
-            # row links to the FIRST procedure only -- matches
-            # IngestOutcome.procedure_id/artifact_id below, which were
-            # already only ever reading index [0].
-            artifact_id = await _write_artifact_row(
-                pool, artifact, run_id=run_id, procedure_id=procedure_id,
-                procedure_row_id=procedure_row_id, extractor_version=extractor_version,
-                owner_id=owner_id, admission=admission,
-                source_ref=source_id, ingestion_context_id=ingestion_context_id,
+        for i, proc in enumerate(extracted.procedures):
+            view = _ExtractedProcedureView.from_extracted(proc)
+            procedure_goal_key = identity_idempotency_key(
+                job_id=identity_job_id,
+                source_hash=fingerprint,
+                object_type="goal",
+                semantic_role="procedure_goal",
+                scope_type=resolved_scope_type,
+                scope_entity_id=resolved_scope_entity_id,
+                text=proc.goal,
             )
-            artifact_ids.append(artifact_id)
-            artifact_block_ids = await _persist_document_blocks(
-                pool, artifact, artifact_id=artifact_id,
-                ingestion_context_id=ingestion_context_id, created_by=created_by,
-                scope_type=resolved_scope_type, scope_entity_id=domain,
+            # ingestion.md Sec 3/11: "Step S1 -> Goal G2" -- each step's own
+            # free-text `goal` (s.action, the pre-existing convention this
+            # steps JSONB shape already used) ALSO resolves to a real Goal
+            # row, additive via a `goal_id` key (migration 83's own comment
+            # names exactly this: "a writer-populated goal_id key inside that
+            # JSONB, not a schema change"). Optional 0..N (Sec 6) -- a low-
+            # quality/V0-invalid step description just skips its own goal_id,
+            # never blocks the procedure (only the procedure's OWN achieves_
+            # goal is load-bearing enough to propagate a rejection).
+            step_goal_scope_type = resolved_scope_type
+            steps_json = []
+            for s in proc.steps:
+                step_entry = {"order": s.order, "goal": s.action}
+                for script in extracted.implementations:
+                    res = next((r for r in getattr(artifact, "resources", ()) if r.path == script.resource_path), None)
+                    if res is not None and script.resource_path and script.resource_path in (s.action or ""):
+                        step_entry["source_locator"] = {
+                            "source_id": getattr(artifact, "source_id", None) or artifact.uri, "uri": artifact.uri,
+                            "path": script.resource_path, "content_hash": res.sha256, "granularity": "document"}
+                        break
+                step_goal_key = identity_idempotency_key(
+                    job_id=identity_job_id,
+                    source_hash=fingerprint,
+                    object_type="goal",
+                    semantic_role="step_goal",
+                    scope_type=step_goal_scope_type,
+                    scope_entity_id=resolved_scope_entity_id,
+                    text=s.action,
+                )
+                step_cache_key = _goal_prefetch_key(
+                    scope_type=step_goal_scope_type,
+                    scope_entity_id=resolved_scope_entity_id,
+                    canonical_name=s.action,
+                    judge_mode="none",
+                )
+                if step_cache_key not in ignored_goal_keys:
+                    try:
+                        step_goal = await find_or_create_goal_cached(
+                            pool, canonical_name=s.action, scope_type=step_goal_scope_type,
+                            scope_entity_id=resolved_scope_entity_id, goal_cache=goal_cache, provenance=provenance,
+                            created_from="skill_extraction_step", embedder=embedder, judge_mode="none",
+                            owner_id=owner_id, visibility=_DOCUMENT_PROCEDURE_VISIBILITY,
+                            job_id=identity_job_id, idempotency_key=step_goal_key,
+                        )
+                        step_entry["goal_id"] = step_goal["id"]
+                    except (V0Violation, GoalQualityRejected):
+                        pass
+                steps_json.append(step_entry)
+            independent_step_procedure_ids.extend(await _persist_independent_steps(
+                pool, artifact, parent_name=proc.name, steps=proc.steps, steps_json=steps_json,
+                created_by=created_by, provenance=provenance, embedder=embedder,
+                goal_cache=goal_cache, goal_resolution_skips=ignored_goal_keys,
+                identity_job_id=identity_job_id, scope_type=resolved_scope_type,
+                scope_entity_id=resolved_scope_entity_id, owner_id=owner_id,
+                visibility=_DOCUMENT_PROCEDURE_VISIBILITY,
+                ingestion_context_id=ingestion_context_id,
+            ))
+            retrieval_doc = build_procedure_retrieval_document({
+                "name": proc.name, "goal": proc.goal, "steps": steps_json,
+                "preconditions": proc.preconditions, "invariants": [],
+                "postconditions": proc.postconditions,
+                "failure_conditions": proc.failure_conditions,
+                "domain": domain, "domain_payload": {},
+            })
+            goal_vec, embedding_metadata = await embedder.embed_one_with_metadata(
+                retrieval_doc, input_type="document",
             )
-            await _attach_observation_block_ref(
-                pool, observation_id=observation_id, artifact_id=artifact_id,
-                block_id=artifact_block_ids[0] if artifact_block_ids else None,
+            retrieval_doc_sha = retrieval_document_sha256(retrieval_doc)
+            disp_name, disp_desc, disp_quality = build_display_metadata(
+                {"name": proc.name, "goal": proc.goal, "capability_statement": proc.goal}
             )
-            block_observation_ids = await _emit_block_observations(
-                pool, artifact_block_ids, ingestion_context_id=ingestion_context_id,
-                owner_id=owner_id, procedure_name=proc.name,
+            disp_version = (
+                DISPLAY_METADATA_VERSION if disp_quality is None else DISPLAY_METADATA_FALLBACK_VERSION
             )
-            first_artifact_block_ids = artifact_block_ids
-            first_block_observation_ids = block_observation_ids
 
-    # --- standalone Goals the document expressed, not 1:1 with a
-    # procedure (ingestion.md's own "Step S1 -> Goal G2" model -- these
-    # are real Goal rows via the SAME find_or_create_goal wiring
-    # capture_procedure already uses, not a parallel mechanism). A
-    # malformed standalone goal (fails V0 scope/provenance validation, or
-    # ingestion.md Sec 20's quality gate) is dropped, never fabricated
-    # around -- these are optional 0..N objects (Sec 6), unlike the
-    # primary procedure's own achieves_goal (capture_procedure lets a
-    # GoalQualityRejected there propagate and fail the whole procedure --
-    # "refuse rather than fabricate", not silently drop the main goal). ---
-    for g in extracted.goals:
+            result = await capture_procedure(
+                pool, name=proc.name, goal=proc.goal, steps=steps_json,
+                provenance=provenance, domain=domain,
+                domain_payload=_domain_payload_for_extracted(
+                    artifact, proc, embedding=embedding_metadata.__dict__,
+                ),
+                scope_type=resolved_scope_type, scope_entity_id=resolved_scope_entity_id,
+                created_by=created_by, goal_cache=goal_cache,
+                embedding=goal_vec, embedding_model_id=embedding_metadata.model_id,
+                embedding_provider=embedding_metadata.provider,
+                embedding_input_type=embedding_metadata.input_type,
+                embedding_text_hash=embedding_metadata.text_sha256,
+                retrieval_document=retrieval_doc, retrieval_document_version=RETRIEVAL_DOCUMENT_VERSION,
+                retrieval_document_sha256=retrieval_doc_sha,
+                display_name=disp_name, display_description=disp_desc,
+                display_metadata_version=disp_version,
+                invariants=invariants, owner_id=owner_id,
+                visibility=_DOCUMENT_PROCEDURE_VISIBILITY,
+                availability="quarantined" if quarantined else "active",
+                goal_embedder=embedder, goal_judge=goal_judge, judge_mode="model",
+                procedure_dedup=True, source_key=f"skill:{artifact.content_hash}:{proc.name}",
+                identity_job_id=identity_job_id,
+                identity_idempotency_key=procedure_goal_key,
+                ingestion_context_id=ingestion_context_id,
+                source_locator={k: v for k, v in {
+                    "source_id": getattr(artifact, "source_id", None) or artifact.uri, "uri": artifact.uri,
+                    "content_hash": artifact.content_hash, "commit": getattr(artifact, "commit", None),
+                    "path": getattr(artifact, "path", None), "granularity": "document"}.items() if v},
+                **_structured_fields_from_extracted(proc),
+            )
+            procedure_row_id = str(result["id"])
+            procedure_id = str(result["procedure_id"])
+            procedure_ids.append(procedure_id)
+            version_row_ids.append(procedure_row_id)
+
+            # capability_statement column: the extracted `goal` IS already a
+            # real, grounded, LLM-produced sentence (the whole point of this
+            # rearchitecture) -- stamped here too so existing readers of this
+            # column (retrieval ranking text, replay diffing) keep working.
+            if not result.get("reused"):     # a reused (same-method) procedure keeps its own context/capability; this source is attached as provenance
+                await pool.execute(
+                    "UPDATE procedures SET capability_statement = $2, ingestion_context_id = $3::uuid "
+                    "WHERE id = $1::uuid",
+                    procedure_row_id, proc.goal, ingestion_context_id,
+                )
+
+            observation_id = await _emit_document_observation(
+                pool, view, ingestion_context_id=ingestion_context_id, owner_id=owner_id,
+                extractor_kind="model", source_label="skill_extraction",
+            )
+            if first_observation_id is None:
+                first_observation_id = observation_id
+
+            (
+                screening_decision, decision_ids, claim_ids,
+            ) = await _emit_document_screening_and_claims(
+                pool, artifact, view,
+                source_id=source_id, ingestion_context_id=ingestion_context_id,
+                observation_id=observation_id, procedure_id=procedure_id,
+                procedure_version=_FRESH_PROCEDURE_VERSION, extractor_version=extractor_version,
+                created_by=created_by, scope_type=resolved_scope_type, scope_entity_id=resolved_scope_entity_id,
+                visibility=_DOCUMENT_PROCEDURE_VISIBILITY, embedder=embedder, client=client,
+                claim_extraction_llm_model=claim_extraction_llm_model, skip_extraction=False,
+            )
+            screening_decision_ids = decision_ids
+            all_document_claim_ids.extend(claim_ids)
+
+            # Bundled scripts/references become one-step procedures (once per document, on its
+            # first procedure's turn).
+            if i == 0:
+                script_procedure_ids.extend(await _persist_script_procedures(
+                    pool, artifact, scripts=extracted.implementations, created_by=created_by,
+                    provenance=provenance, embedder=embedder, goal_judge=goal_judge,
+                    goal_cache=goal_cache, goal_resolution_skips=ignored_goal_keys,
+                    identity_job_id=identity_job_id, scope_type=resolved_scope_type,
+                    scope_entity_id=resolved_scope_entity_id, owner_id=owner_id,
+                    visibility=_DOCUMENT_PROCEDURE_VISIBILITY,
+                    ingestion_context_id=ingestion_context_id,
+                ))
+                reference_procedure_ids.extend(await _persist_reference_resources(
+                    pool, artifact, references=extracted.reference_resources, created_by=created_by,
+                    provenance=provenance, embedder=embedder, goal_judge=goal_judge,
+                    goal_cache=goal_cache, goal_resolution_skips=ignored_goal_keys,
+                    identity_job_id=identity_job_id, scope_type=resolved_scope_type,
+                    scope_entity_id=resolved_scope_entity_id, owner_id=owner_id,
+                    visibility=_DOCUMENT_PROCEDURE_VISIBILITY,
+                    ingestion_context_id=ingestion_context_id,
+                ))
+
+            document_evidence_id = await _emit_document_evidence(
+                pool, procedure_row_id=procedure_row_id, target_version=_FRESH_PROCEDURE_VERSION,
+                source_hash=artifact.content_hash, context_key=artifact.uri,
+                extractor_version=extractor_version, ingestion_context_id=ingestion_context_id,
+                created_by=created_by,
+            )
+            if first_document_evidence_id is None:
+                first_document_evidence_id = document_evidence_id
+            for claim_id in claim_ids:
+                ev_id = await _emit_document_claim_evidence(
+                    pool, claim_id=claim_id, source_hash=artifact.content_hash,
+                    context_key=artifact.uri, extractor_version=extractor_version,
+                    ingestion_context_id=ingestion_context_id, created_by=created_by,
+                )
+                all_document_claim_evidence_ids.append(ev_id)
+
+            if i == 0:
+                # `ingested_artifacts` has ONE row per document (its unique
+                # identity -- source_type, uri, content_hash, extractor_version
+                # -- is document-level, via idx_ingested_artifacts_compilation_
+                # identity), not per-procedure. Calling `_write_artifact_row`
+                # once per `extracted.procedures` entry made every document
+                # producing >1 procedure self-conflict on its own second write
+                # (same identity, no ON CONFLICT) and fail the whole job. The
+                # row links to the FIRST procedure only -- matches
+                # IngestOutcome.procedure_id/artifact_id below, which were
+                # already only ever reading index [0].
+                artifact_id = await _write_artifact_row(
+                    pool, artifact, run_id=run_id, procedure_id=procedure_id,
+                    procedure_row_id=procedure_row_id, extractor_version=extractor_version,
+                    owner_id=owner_id, admission=admission,
+                    source_ref=source_id, ingestion_context_id=ingestion_context_id,
+                )
+                artifact_ids.append(artifact_id)
+                artifact_block_ids = await _persist_document_blocks(
+                    pool, artifact, artifact_id=artifact_id,
+                    ingestion_context_id=ingestion_context_id, created_by=created_by,
+                    scope_type=resolved_scope_type, scope_entity_id=resolved_scope_entity_id,
+                )
+                await _attach_observation_block_ref(
+                    pool, observation_id=observation_id, artifact_id=artifact_id,
+                    block_id=artifact_block_ids[0] if artifact_block_ids else None,
+                )
+                block_observation_ids = await _emit_block_observations(
+                    pool, artifact_block_ids, ingestion_context_id=ingestion_context_id,
+                    owner_id=owner_id, procedure_name=proc.name,
+                )
+                first_artifact_block_ids = artifact_block_ids
+                first_block_observation_ids = block_observation_ids
+
+        # --- standalone Goals the document expressed, not 1:1 with a
+        # procedure (ingestion.md's own "Step S1 -> Goal G2" model -- these
+        # are real Goal rows via the SAME find_or_create_goal wiring
+        # capture_procedure already uses, not a parallel mechanism). A
+        # malformed standalone goal (fails V0 scope/provenance validation, or
+        # ingestion.md Sec 20's quality gate) is dropped, never fabricated
+        # around -- these are optional 0..N objects (Sec 6), unlike the
+        # primary procedure's own achieves_goal (capture_procedure lets a
+        # GoalQualityRejected there propagate and fail the whole procedure --
+        # "refuse rather than fabricate", not silently drop the main goal). ---
+        for g in extracted.goals:
+            standalone_goal_key = identity_idempotency_key(
+                job_id=identity_job_id,
+                source_hash=fingerprint,
+                object_type="goal",
+                semantic_role="standalone_goal",
+                scope_type=resolved_scope_type,
+                scope_entity_id=resolved_scope_entity_id,
+                text=f"{g.canonical_name}: {g.description}" if g.description else g.canonical_name,
+            )
+            standalone_cache_key = _goal_prefetch_key(
+                scope_type=resolved_scope_type,
+                scope_entity_id=resolved_scope_entity_id,
+                canonical_name=g.canonical_name,
+                judge_mode="model",
+            )
+            if standalone_cache_key in ignored_goal_keys:
+                continue
+            try:
+                await find_or_create_goal_cached(
+                    pool, canonical_name=g.canonical_name,
+                    scope_type=resolved_scope_type, scope_entity_id=resolved_scope_entity_id,
+                    goal_cache=goal_cache,
+                    provenance=provenance, description=g.description,
+                    expected_outcome=g.expected_outcome,
+                    verification_requirement=g.verification_requirement,
+                    created_from="skill_extraction", created_by=created_by,
+                    embedder=embedder, judge=goal_judge, judge_mode="model",
+                    owner_id=owner_id, visibility=_DOCUMENT_PROCEDURE_VISIBILITY,
+                    job_id=identity_job_id, idempotency_key=standalone_goal_key,
+                )
+            except (V0Violation, GoalQualityRejected):
+                continue
+
+        await complete_ingestion_context(pool, ingestion_context_id, status="completed")
+        return IngestOutcome(
+            status="captured",
+            extraction_model=extraction_model_used,
+            procedure_id=procedure_ids[0] if procedure_ids else None,
+            version_row_id=version_row_ids[0] if version_row_ids else None,
+            artifact_id=artifact_ids[0] if artifact_ids else None,
+            marked_stale=marked_stale,
+            capability_abstained=False,
+            injection_screened=bool(injection_signals),
+            reason=screen_reason or (admission.reason if quarantined else None),
+            script_procedure_ids=script_procedure_ids,
+            reference_procedure_ids=reference_procedure_ids,
+            independent_step_procedure_ids=independent_step_procedure_ids,
+            dependency_count=0,
+            artifact_block_ids=first_artifact_block_ids,
+            block_observation_ids=first_block_observation_ids,
+            screening_decision=screening_decision,
+            screening_decision_ids=screening_decision_ids,
+            document_claim_ids=all_document_claim_ids,
+            document_claim_evidence_ids=all_document_claim_evidence_ids,
+            source_id=source_id,
+            ingestion_context_id=ingestion_context_id,
+            observation_id=first_observation_id,
+            document_evidence_id=first_document_evidence_id,
+            admission_decision=admission.decision, quarantined=quarantined,
+            admission_escalated=admission.escalated,
+        )
+    except BaseException:
         try:
-            await find_or_create_goal_cached(
-                pool, canonical_name=g.canonical_name,
-                scope_type="entity" if domain else "global", scope_entity_id=domain,
-                goal_cache=goal_cache,
-                provenance=provenance, description=g.description,
-                expected_outcome=g.expected_outcome,
-                verification_requirement=g.verification_requirement,
-                created_from="skill_extraction", created_by=created_by,
-                embedder=embedder, client=client,
-            )
-        except (V0Violation, GoalQualityRejected):
-            continue
-
-    await complete_ingestion_context(pool, ingestion_context_id, status="completed")
-    return IngestOutcome(
-        status="captured",
-        extraction_model=extraction_model_used,
-        procedure_id=procedure_ids[0] if procedure_ids else None,
-        version_row_id=version_row_ids[0] if version_row_ids else None,
-        artifact_id=artifact_ids[0] if artifact_ids else None,
-        marked_stale=marked_stale,
-        capability_abstained=False,
-        injection_screened=bool(injection_signals),
-        reason=screen_reason or (admission.reason if quarantined else None),
-        script_procedure_ids=script_procedure_ids,
-        reference_procedure_ids=reference_procedure_ids,
-        independent_step_procedure_ids=independent_step_procedure_ids,
-        dependency_count=0,
-        artifact_block_ids=first_artifact_block_ids,
-        block_observation_ids=first_block_observation_ids,
-        screening_decision=screening_decision,
-        screening_decision_ids=screening_decision_ids,
-        document_claim_ids=all_document_claim_ids,
-        document_claim_evidence_ids=all_document_claim_evidence_ids,
-        source_id=source_id,
-        ingestion_context_id=ingestion_context_id,
-        observation_id=first_observation_id,
-        document_evidence_id=first_document_evidence_id,
-        admission_decision=admission.decision, quarantined=quarantined,
-        admission_escalated=admission.escalated,
-    )
+            await complete_ingestion_context(pool, ingestion_context_id, status="failed")
+        except BaseException:
+            log.exception("failed to mark ingestion context failed")
+        raise
 
 _ACCEPTED_STATUSES = frozenset({"captured", "new_version"})
 

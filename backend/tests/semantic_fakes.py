@@ -52,6 +52,12 @@ class ScriptedProvider(SemanticProvider):
     async def claim_relation(self, a, b):
         return self._next("claim_relation", a, b)
 
+    async def identity(self, kind, a, b):
+        return self._next("identity", kind, a, b)
+
+    async def identity_batch(self, kind, a, candidates):
+        return self._next("identity_batch", kind, a, candidates)
+
 
 def make_judge(*providers, attempts=2, deadline_s=None, metrics=None, job_max_retries=3):
     sleeps: list[float] = []

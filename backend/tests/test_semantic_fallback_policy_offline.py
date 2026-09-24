@@ -118,7 +118,7 @@ def test_error_classification():
 def test_provider_chain_config_order_and_unconfigured_providers_are_skipped():
     s = SimpleNamespace(
         semantic_provider_primary="jev", semantic_provider_fallbacks="gemini,gemma", jev_base_url="http://jev",
-        jev_api_key=None, jev_capabilities="applicability,retention,summary", gemini_api_key="k1",
+        jev_api_key=None, jev_model="jev-latest", jev_capabilities="applicability,retention,summary", gemini_api_key="k1",
         gemini_api_keys="k2,k3", semantic_gemini_model="gemini-x", semantic_gemini_base_url="http://g/",
         local_model_name="gemma-local", use_local_models=False, local_judge_model="gemma2",
         local_base_url="http://localhost:11434/v1", semantic_provider_timeout_ms=1000)

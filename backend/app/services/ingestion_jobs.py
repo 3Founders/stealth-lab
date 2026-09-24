@@ -252,6 +252,17 @@ def _general_compute_client() -> Optional[Any]:
     return _RotatingOpenAIClient(clients)
 
 
+def _trusted_identity_job_id(payload: dict) -> Optional[int]:
+    from app.services.identity_resolution import validate_identity_job_id
+
+    job = payload.get("_job") if isinstance(payload, dict) else None
+    if job is None:
+        return None
+    if not isinstance(job, dict):
+        raise ValueError("ingestion payload _job context must be an object")
+    return validate_identity_job_id(job.get("id"))
+
+
 async def handle_ingest_skill_package(pool: asyncpg.Pool, payload: dict) -> None:
     """Ingest exactly one immutable skill package, retryably and idempotently."""
     from app.config import settings
@@ -261,6 +272,7 @@ async def handle_ingest_skill_package(pool: asyncpg.Pool, payload: dict) -> None
     from app.services.ingestion_sources.manifest import CorpusSourceSpec
     from app.services.skill_ingestion import compile_skill_artifact
 
+    identity_job_id = _trusted_identity_job_id(payload)
     commit = str(payload["commit"])
     path = str(payload["path"])
 
@@ -311,7 +323,9 @@ async def handle_ingest_skill_package(pool: asyncpg.Pool, payload: dict) -> None
             client=client,
             admission_llm_model=settings.general_compute_judge_model or "gemma-4-31B-it",
             extraction_llm_model=settings.general_compute_judge_model or "gemma-4-31B-it",
+            fallback_extraction_llm_model=settings.general_compute_fallback_model or None,
             claim_extraction_llm_model=settings.general_compute_judge_model or "gemma-4-31B-it",
+            identity_job_id=identity_job_id,
         )
         status = getattr(outcome, "status", None)
         _tel.set_attrs(
@@ -320,13 +334,15 @@ async def handle_ingest_skill_package(pool: asyncpg.Pool, payload: dict) -> None
             items_duplicate=int(status in ("duplicate", "unchanged")),
             items_rejected=int(status == "rejected"),
             items_failed=int(status == "error"),
-            procedure_id=getattr(outcome, "procedure_id", None))
+            procedure_id=getattr(outcome, "procedure_id", None),
+            extraction_model=getattr(outcome, "extraction_model", None))
         if status == "error":
             _tel.fail(sp, _tel.FailureCode.INGESTION_ERROR)
         elif status == "rejected":
             _tel.fail(sp, _tel.FailureCode.INGESTION_PARSE_ERROR, force_keep=False)
         elif status in ("duplicate", "unchanged"):
             _tel.set_attrs(sp, failure_code=_tel.FailureCode.DUPLICATE_OBJECT)
+
 
 async def handle_ingest_document(pool: asyncpg.Pool, payload: dict) -> None:
     """Ingest exactly one document (HTML/PDF/DOCX/Markdown/API -- any format a
@@ -353,6 +369,7 @@ async def handle_ingest_document(pool: asyncpg.Pool, payload: dict) -> None:
     from app.services.ingestion_sources.document_adapters.github_adapter import GitHubFileAdapter
     from app.services.skill_ingestion import compile_skill_artifact
 
+    identity_job_id = _trusted_identity_job_id(payload)
     locator = DocumentLocator(
         local_path=payload.get("local_path"), uri=payload.get("uri"),
         raw_bytes=payload.get("raw_bytes"),
@@ -399,6 +416,7 @@ async def handle_ingest_document(pool: asyncpg.Pool, payload: dict) -> None:
             extraction_llm_model=settings.general_compute_judge_model or "gemma-4-31B-it",
             fallback_extraction_llm_model=settings.general_compute_fallback_model or None,
             claim_extraction_llm_model=settings.general_compute_judge_model or "gemma-4-31B-it",
+            identity_job_id=identity_job_id,
         )
         status = getattr(outcome, "status", None)
         _tel.set_attrs(
@@ -1684,7 +1702,8 @@ async def claim_jobs(
     async with pool.acquire() as conn:
         async with conn.transaction():
             rows = await conn.fetch(
-                "SELECT id, job_type, payload, attempts FROM ingestion_jobs "
+                "SELECT id, job_type, payload, attempts, scope_type, scope_entity_id, owner_id, visibility, "
+                "idempotency_key, source_id, config_version FROM ingestion_jobs "
                 "WHERE status = 'pending' "
                 "AND (run_after IS NULL OR run_after <= now()) "
                 "AND ($1::text[] IS NULL OR job_type = ANY($1::text[])) "
@@ -1737,12 +1756,36 @@ async def _process_pending_jobs(
     failed = 0
     unknown_type = 0
 
+    from app.ingestion import queue as ingestion_queue
+
     for job in jobs:
         job_id = job["id"]
         job_type = job["job_type"]
+        try:
+            ingestion_queue.validate_scope(
+                job_type, job.get("scope_type"), job.get("visibility"), job.get("owner_id"))
+        except ingestion_queue.ScopeError as exc:
+            failed += 1
+            await pool.execute(
+                "UPDATE ingestion_jobs SET status = 'failed', attempts = attempts + 1, "
+                "last_error = $2, completed_at = now() WHERE id = $1",
+                job_id, f"scope refused: {exc}",
+            )
+            continue
         payload = job["payload"]
         if isinstance(payload, str):
             payload = json.loads(payload)
+        payload = dict(payload or {})
+        try:
+            payload["_job"] = ingestion_queue.trusted_job_metadata(job, attempt_field="attempts")
+        except ValueError as exc:
+            failed += 1
+            await pool.execute(
+                "UPDATE ingestion_jobs SET status = 'failed', attempts = attempts + 1, "
+                "last_error = $2, completed_at = now() WHERE id = $1",
+                job_id, repr(exc),
+            )
+            continue
 
         handler = JOB_HANDLERS.get(job_type)
         if handler is None:

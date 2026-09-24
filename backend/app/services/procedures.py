@@ -147,8 +147,9 @@ async def capture_procedure(
     availability: str = "active",
     is_engineering_fixture: bool = False,
     goal_embedder: Optional[Any] = None,
-    goal_adjudication_client: Optional[Any] = None,   # DEPRECATED no-op (identity uses goal_judge)
+    goal_adjudication_client: Optional[Any] = None,
     goal_judge: Optional[Any] = None,
+    judge_mode: str = "model",
     goal_on_unavailable: Optional[str] = None,
     identity_job_id: Optional[int] = None,
     identity_idempotency_key: Optional[str] = None,
@@ -158,6 +159,7 @@ async def capture_procedure(
     require_source_locators: Optional[bool] = None,
     source_artifacts: Optional[list] = None,
     goal_cache: Optional[dict] = None,
+    ingestion_context_id: Optional[str] = None,
 ) -> dict:
     """
     Inserts a new procedure, always starting `candidate` / `fresh` /
@@ -190,7 +192,16 @@ async def capture_procedure(
     at retrieval time / a future extraction step's job at capture time,
     not this function's. Passing `preconditions=[]` here is honest about
     what capture alone can produce without that wiring existing yet.
+
+    ``judge_mode="model"`` keeps Goal semantic identity model-judged;
+    ``judge_mode="none"`` keeps exact/alias matching and goal embedding but
+    skips semantic candidates, LLM judging, and the optional procedure
+    dedup judge.
     """
+    from app.services.identity_resolution import validate_identity_job_id, validate_judge_mode
+
+    judge_mode = validate_judge_mode(judge_mode)
+    identity_job_id = validate_identity_job_id(identity_job_id)
     if visibility not in ("public", "private", "org"):
         raise ValueError(f"visibility must be 'public', 'private' or 'org', got {visibility!r}")
     if visibility == "org" and not tenant_id:
@@ -245,13 +256,6 @@ async def capture_procedure(
     # scope. `goal` (the TEXT column) is untouched -- this is additive,
     # not a replacement (ingestion.md Sec 5: "use existing schema wherever
     # possible... do not create a replacement architecture").
-    #
-    # `goal_embedder`/`goal_adjudication_client` (both optional, default
-    # None) pass straight through to find_or_create_goal's own tier 3/4
-    # (embedding similarity) and tier 5 (LLM adjudication) dedup passes.
-    # A caller that omits them still gets tier 1/2 (exact/alias) and tier
-    # 2.5 (SimHash, always on, zero cost) dedup -- but the Goal is never
-    # embedded/searchable without an embedder passed here.
     from app.services.goals import find_or_create_goal_cached
 
     resolved_goal = await find_or_create_goal_cached(
@@ -266,6 +270,7 @@ async def capture_procedure(
         visibility=visibility if visibility in ("public", "private") else "public",
         embedder=goal_embedder,
         judge=goal_judge,
+        judge_mode=judge_mode,
         on_unavailable=goal_on_unavailable,
         job_id=identity_job_id,
         idempotency_key=identity_idempotency_key,
@@ -277,7 +282,7 @@ async def capture_procedure(
     # new Procedure on this Goal. Callers that opt in get {"reused": True} when nothing new was
     # created and MUST NOT re-stamp extractor metadata onto the existing row. Local-tier callers
     # (private/project scope: local_sync, trace/episode extraction) do not opt in.
-    if procedure_dedup:
+    if procedure_dedup and judge_mode == "model":
         from app.services.identity_resolution import default_judge
         _judge = goal_judge if goal_judge is not None else default_judge()
         if _judge.providers:
@@ -379,7 +384,7 @@ async def capture_procedure(
             retrieval_document, retrieval_document_version, retrieval_document_sha256,
             display_name, display_description, display_metadata_version, tenant_id,
             availability, is_engineering_fixture, achieves_goal_id, home_shard_id, source_key, source_locator,
-            source_artifacts
+            source_artifacts, ingestion_context_id
         ) VALUES (
             $24::uuid, $40::uuid, $1, $2, $3::jsonb, $4::jsonb, $5::jsonb, $6::jsonb,
             $7::jsonb, $8::jsonb, $9::jsonb, $10::jsonb,
@@ -388,7 +393,8 @@ async def capture_procedure(
             $20, $21, $22::visibility_level, $23::vector,
             $25, $26, $27, $28, $29, $30, $31,
             $32, $33, $34, $35, $36, $37, $38::uuid,
-            $39::procedure_availability, $41, $42::uuid, $43, $44, $45::jsonb, $46::jsonb
+            $39::procedure_availability, $41, $42::uuid, $43, $44, $45::jsonb, $46::jsonb,
+            $47::uuid
         )
         ON CONFLICT (source_key) WHERE source_key IS NOT NULL AND t_invalid IS NULL DO NOTHING
         RETURNING id, procedure_id
@@ -445,6 +451,7 @@ async def capture_procedure(
         source_key,
         source_locator,
         source_artifacts,
+        ingestion_context_id,
     )
     if row is None:
         if home_shard_id != "K000":

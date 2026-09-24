@@ -57,7 +57,7 @@ async def test_paraphrase_is_merged_only_because_the_judge_said_same(pool):
     assert len(prov.calls) == 1                                     # the model decided, once
     row = await pool.fetchrow("SELECT * FROM identity_decisions WHERE resolved_id=$1::uuid", a["id"])
     assert row["decision"] == "same" and row["judge_provider"] == "frozen-jev" and row["fts_candidates"] + row["vector_candidates"] >= 1
-    assert row["prompt_version"] == "identity@v1" and row["candidates"]
+    assert row["prompt_version"] == "identity@v2" and row["candidates"]
     assert n("locate every call site of a function") in await pool.fetchval("SELECT aliases FROM goals WHERE id=$1::uuid", a["id"])
 
 

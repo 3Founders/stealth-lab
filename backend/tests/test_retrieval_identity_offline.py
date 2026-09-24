@@ -118,9 +118,14 @@ def test_procedure_projection_links_goal_directly():
 # --------------------------------------------------------------------- prompts
 
 def test_identity_reply_parser_is_strict():
-    assert prompts.parse_identity("goal", {"relation": "same", "confidence": 2}) == {"relation": "same", "confidence": 1.0}
+    assert prompts.parse_identity("goal", {"relation": "same", "confidence": 1}) == {"relation": "same", "confidence": 1.0}
+    for invalid_confidence in (2, -0.1, True, "0.9", float("nan"), float("inf")):
+        with pytest.raises(ValueError):
+            prompts.parse_identity("goal", {"relation": "same", "confidence": invalid_confidence})
     with pytest.raises(ValueError):
-        prompts.parse_identity("goal", {"relation": "contradicts", "confidence": 0.9})      # not a goal relation
+        prompts.parse_identity("goal", {"relation": "same"})
+    with pytest.raises(ValueError):
+        prompts.parse_identity("goal", {"relation": "contradicts", "confidence": 0.9})
     with pytest.raises(ValueError):
         prompts.parse_identity("task_procedure", {"relation": "applies_maybe"})
     assert set(prompts.IDENTITY_RELATIONS) == set(prompts.IDENTITY_SYSTEM_PROMPTS)
@@ -160,7 +165,7 @@ def test_failure_classification():
 def test_production_startup_refuses_to_run_without_providers(monkeypatch):
     from app.config import settings
 
-    for name in ("jev_base_url", "gemini_api_key", "gemini_api_keys", "voyage_api_key", "local_model_name"):
+    for name in ("jev_base_url", "gemini_api_key", "gemini_api_keys", "voyage_api_key", "local_model_name", "vertex_project"):
         monkeypatch.setattr(settings, name, None, raising=False)
     monkeypatch.setattr(settings, "use_local_models", False, raising=False)
     monkeypatch.setattr(settings, "database_url", "postgresql://x/y", raising=False)

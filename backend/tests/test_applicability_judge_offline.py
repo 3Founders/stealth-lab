@@ -178,14 +178,30 @@ class _FakeHTTPClient:
         return self._responder(url, json)
 
 
+def _systemone_answers(questions, *, verdict="APPLICABLE", claim_choices=()):
+    """A fake /v1/systemone reply: one typed answer per question key, matching
+    the shape RemoteHTTPJudge._applicability_questions() asks for."""
+    answers = {
+        "verdict": {"type": "choice", "choice": verdict, "confidence": 0.9,
+                    "probabilities": {"APPLICABLE": 0.9, "PARTIALLY_APPLICABLE": 0.0,
+                                      "INAPPLICABLE": 0.05, "UNKNOWN": 0.05}},
+        "contradiction": {"type": "noul", "noul": 0.0},
+        "preconditions_met": {"type": "noul", "noul": 1.0},
+    }
+    for i, choice in enumerate(claim_choices):
+        answers[f"claim_{i}"] = {"type": "choice", "choice": choice, "confidence": 0.8}
+    assert set(answers) == set(questions)
+    return answers
+
+
 def test_remote_http_judge_parses_the_documented_contract():
     def responder(url, payload):
-        assert url.endswith("/judge-applicability")
-        assert payload["goal"] == "goal"
+        assert url.endswith("/v1/systemone")
+        assert payload["model"] == "jev-latest"
+        assert "goal" in payload["state"]
         return _FakeHTTPResponse({
-            "verdict": "APPLICABLE", "applicability_probability": 0.9,
-            "contradiction_probability": 0.0, "supporting_claim_ids": ["c1"],
-            "blocking_claim_ids": [], "unknown_requirements": [],
+            "model": "jev-1.0", "answers": _systemone_answers(payload["questions"], claim_choices=["supports"]),
+            "usage": {"input_tokens": 1, "output_tokens": 1},
         })
 
     candidate = JudgeCandidateInput(
@@ -219,24 +235,23 @@ def test_remote_http_judge_batches_concurrently_not_one_call_at_a_time():
     calls = []
 
     async def _slow_post(url, json, headers=None):
-        calls.append(json["candidate"]["candidate_id"])
+        calls.append(json["state"])
         return _FakeHTTPResponse({
-            "verdict": "UNKNOWN", "applicability_probability": 0.5,
-            "contradiction_probability": 0.0, "supporting_claim_ids": [],
-            "blocking_claim_ids": [], "unknown_requirements": [],
+            "model": "jev-1.0", "answers": _systemone_answers(json["questions"], verdict="UNKNOWN"),
+            "usage": {},
         })
 
     class _Client:
         post = staticmethod(_slow_post)
 
     candidates = [
-        JudgeCandidateInput(candidate_id=f"c{i}", candidate_version=1, candidate_purpose="p", conditions=[], claims=[])
+        JudgeCandidateInput(candidate_id=f"c{i}", candidate_version=1, candidate_purpose=f"p{i}", conditions=[], claims=[])
         for i in range(10)
     ]
     judge = RemoteHTTPJudge("http://judge.internal", http_client=_Client(), max_concurrency=4)
     judgments = _run(judge.judge_batch("goal", candidates))
     assert len(judgments) == 10
-    assert set(calls) == {f"c{i}" for i in range(10)}
+    assert len(set(calls)) == 10
     assert judge.last_batch_latency_ms is not None
 
 

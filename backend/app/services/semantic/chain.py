@@ -22,8 +22,10 @@ from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable, Optional
 
 from app.services import ingest_budget
+from app.services.governance import estimate_tokens
 from app.services.semantic.errors import (
     ErrorKind,
+    ProviderError,
     SemanticJudgmentUnavailable,
     classify_exception,
 )
@@ -119,9 +121,35 @@ class SemanticJudge:
         result is ok=False and the caller must fail closed / retry."""
         return await self._run("identity", CAP_IDENTITY, lambda p: p.identity(kind, a, b))
 
+    async def judge_identity_batch(self, kind: str, a: str, candidates: list) -> ChainResult:
+        if not candidates:
+            return ChainResult(ok=True, value=[])
+
+        def token_estimate() -> tuple[int, int]:
+            payload = "\n".join([
+                kind, a, *(str(getattr(candidate, "text", candidate)) for candidate in candidates)
+            ])
+            return estimate_tokens(payload) + 200, 80 + 40 * len(candidates)
+
+        async def call(p: SemanticProvider) -> Any:
+            method = getattr(p, "identity_batch", None)
+            if not callable(method):
+                raise ProviderError(
+                    ErrorKind.PERMANENT,
+                    "identity batch contract requires a callable identity_batch operation for judge_identity_batch; pair fallback is forbidden",
+                    provider=getattr(p, "name", "?"),
+                )
+            return await method(kind, a, candidates)
+
+        return await self._run(
+            "identity", CAP_IDENTITY, call, token_estimate=token_estimate)
+
     # ---- core -------------------------------------------------------
 
-    async def _run(self, op: str, capability: str, call: Callable[[SemanticProvider], Awaitable[Any]]) -> ChainResult:
+    async def _run(
+        self, op: str, capability: str, call: Callable[[SemanticProvider], Awaitable[Any]],
+        *, token_estimate: Optional[Callable[[], tuple[int, int]]] = None,
+    ) -> ChainResult:
         m, pol = self.metrics, self.policy
         start = self._mono()
         attempts: list[Attempt] = []
@@ -157,15 +185,22 @@ class SemanticJudge:
                     m.inc("semantic.retries")
                     await self._sleep(delay)
                     continue
-                dt = (self._mono() - t0) * 1000
-                attempts.append(Attempt(p.name, n, True, latency_ms=dt))
-                await ingest_budget.record_judge(p.name, p.model, op)
-                fallback = p is not eligible[0]
-                m.inc(f"semantic.provider_selected.{p.name}")
-                if fallback:
-                    m.inc("semantic.fallback_used")
-                m.event("provider_selected", op=op, provider=p.name, fallback=fallback)
-                return ChainResult(True, value, p.name, p.model, fallback, attempts, (self._mono() - start) * 1000)
+                else:
+                    dt = (self._mono() - t0) * 1000
+                    attempts.append(Attempt(p.name, n, True, latency_ms=dt))
+                    if token_estimate is None:
+                        await ingest_budget.record_judge(p.name, p.model, op)
+                    fallback = p is not eligible[0]
+                    m.inc(f"semantic.provider_selected.{p.name}")
+                    if fallback:
+                        m.inc("semantic.fallback_used")
+                    m.event("provider_selected", op=op, provider=p.name, fallback=fallback)
+                    return ChainResult(True, value, p.name, p.model, fallback, attempts, (self._mono() - start) * 1000)
+                finally:
+                    if token_estimate is not None:
+                        tokens_in, tokens_out = token_estimate()
+                        await ingest_budget.record_judge(
+                            p.name, p.model, op, tokens_in=tokens_in, tokens_out=tokens_out)
             if deadline_hit:
                 break
 

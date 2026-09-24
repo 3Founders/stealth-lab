@@ -29,7 +29,7 @@ SCOPE_TYPES = ("global", "organization", "team", "project", "repository", "branc
 # Handlers that write PUBLIC/GLOBAL canonical knowledge: a job for them must be
 # explicitly global+public, or it is refused (no worker publishes private
 # knowledge globally just because it is processing the source).
-PUBLIC_ONLY_JOB_TYPES = frozenset({"ingest_skill_package"})
+PUBLIC_ONLY_JOB_TYPES = frozenset({"ingest_skill_package", "ingest_document"})
 
 
 @dataclass
@@ -47,6 +47,31 @@ class Job:
     idempotency_key: Optional[str] = None
     source_id: Optional[str] = None
     config_version: Optional[str] = None
+
+
+_TRUSTED_JOB_FIELDS = (
+    "idempotency_key",
+    "scope_type",
+    "scope_entity_id",
+    "owner_id",
+    "visibility",
+    "source_id",
+    "config_version",
+)
+
+
+def trusted_job_metadata(job: Any, *, attempt_field: str = "attempt") -> dict[str, Any]:
+    from app.services.identity_resolution import validate_identity_job_id
+
+    if isinstance(job, dict):
+        job_id = job["id"]
+        attempt = job[attempt_field]
+        fields = {name: job[name] for name in _TRUSTED_JOB_FIELDS if name in job}
+    else:
+        job_id = job.id
+        attempt = getattr(job, attempt_field)
+        fields = {name: getattr(job, name, None) for name in _TRUSTED_JOB_FIELDS}
+    return {"id": validate_identity_job_id(job_id), "attempt": attempt, **fields}
 
 
 class ScopeError(ValueError):

@@ -119,6 +119,9 @@ class Settings(BaseSettings):
     # anything.
     general_compute_panel_models: str = ""
     general_compute_judge_model: str = ""
+    # Optional second model for transient extraction/provider failures. The
+    # same OpenAI-compatible client/base URL is used for both models.
+    general_compute_fallback_model: str = ""
 
     # --- Vertex AI (OAuth2/ADC, no API key) ---
     # The Cloud Run job's own attached service account already has
@@ -198,11 +201,14 @@ class Settings(BaseSettings):
     # confirmed live 2026-09-22 as the actual cause of sustained
     # SemanticJudgmentUnavailable storms even with a healthy key pool.
     semantic_provider_fallbacks: str = "vertex,gemini,gemma"
-    # JEV = the operator-hosted judge service (POST {url}/judge-applicability,
-    # same contract RemoteHTTPJudge already speaks). Comma-separated ops it
-    # really exposes; anything else skips JEV and goes to the next provider.
+    # JEV = TypeSafe AI's hosted System One model ("Jev"). ONE endpoint,
+    # POST {url}/v1/systemone, body {state, model, questions}, typed
+    # choice/score/noul answers back -- see RemoteHTTPJudge in
+    # applicability_judge.py. Comma-separated capabilities it really
+    # exposes; anything else skips JEV and goes to the next provider.
     jev_base_url: Optional[str] = None
     jev_api_key: Optional[str] = None
+    jev_model: str = "jev-latest"
     jev_capabilities: str = "applicability"
     # Gemini over its OpenAI-compatible endpoint; keys reuse gemini_api_key(s)
     # above. Default is a free-tier-eligible flash model.

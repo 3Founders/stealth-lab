@@ -9,6 +9,7 @@ not a synthetic "skill A/skill B" placeholder.
 """
 from __future__ import annotations
 
+import asyncio
 import json
 
 import pytest
@@ -518,6 +519,25 @@ class CompilerFakePool:
         return None
 
 
+class ContextAwareCompilerPool(CompilerFakePool):
+    def __init__(self, context_status):
+        super().__init__(
+            already_rows=[{"id": "partial-artifact", "procedure_id": "partial-procedure"}],
+            prior_stale_rows=[{"procedure_row_id": "partial-procedure-row"}],
+        )
+        self.context_status = context_status
+
+    async def fetch(self, sql, *params):
+        normalized = self._norm(sql)
+        if "SELECT id, procedure_id FROM ingested_artifacts" in normalized:
+            self.calls.append(("fetch", normalized, params))
+            return [] if self.context_status != "completed" else await super().fetch(sql, *params)
+        if "SELECT DISTINCT procedure_row_id FROM ingested_artifacts" in normalized:
+            self.calls.append(("fetch", normalized, params))
+            return [] if self.context_status != "completed" else await super().fetch(sql, *params)
+        return await super().fetch(sql, *params)
+
+
 @pytest.fixture
 def no_dup(monkeypatch):
     """Retained for the (few) remaining `ingest_skill_md`-path tests that
@@ -691,6 +711,224 @@ async def test_compile_step_resolves_its_own_goal_id():
     )
 
 
+@pytest.mark.asyncio
+async def test_compile_step_goal_skips_identity_judge_but_parent_goal_is_judged(monkeypatch):
+    from app.services.identity_resolution import Candidate
+    from app.services.semantic.chain import ChainResult
+
+    procedure_goal = "restore pandas DataFrame append compatibility across the repository"
+    step_goal = "locate every legacy DataFrame append call site"
+    calls = []
+
+    class CountingBatchJudge:
+        providers = ()
+        chain_id = "counting:test"
+
+        async def judge_identity_batch(self, kind, text, candidates):
+            calls.append((kind, text, tuple(candidates)))
+            return ChainResult(
+                ok=True,
+                value=[{"relation": "distinct", "confidence": 0.99} for _ in candidates],
+                provider="counting",
+                model="test",
+            )
+
+    judge = CountingBatchJudge()
+
+    async def semantic_candidate(*_args, **_kwargs):
+        return [
+            Candidate(
+                id="semantic-goal-candidate",
+                name="an existing related goal",
+                text="resolve an existing semantically related goal",
+                vec_rank=1,
+            )
+        ], 0, 1
+
+    monkeypatch.setattr(
+        "app.services.identity_resolution.generate_goal_candidates", semantic_candidate
+    )
+    monkeypatch.setattr(
+        "app.services.identity_resolution.default_judge", lambda: judge
+    )
+    response = _grounded_response(
+        goal=procedure_goal,
+        steps=[{
+            "order": 0,
+            "action": step_goal,
+            "source_quote": "DataFrame.append",
+        }],
+    )
+    outcome = await compile_skill_artifact(
+        CompilerFakePool(),
+        _skill_artifact(),
+        embedder=FakeEmbedder(),
+        client=FakeLLMClient(response),
+        goal_judge=judge,
+    )
+
+    assert outcome.status == "captured"
+    goal_calls = [text for kind, text, _candidates in calls if kind == "goal"]
+    assert (
+        sum(text == step_goal for text in goal_calls),
+        sum(text == procedure_goal for text in goal_calls),
+    ) == (0, 1)
+
+
+@pytest.mark.asyncio
+async def test_compile_independent_step_procedures_use_none_goal_mode(monkeypatch):
+    from app.services import procedures, skill_ingestion
+
+    real_capture = procedures.capture_procedure
+    modes = []
+
+    async def recording_capture(pool, **kwargs):
+        modes.append((kwargs["name"], kwargs.get("judge_mode"), kwargs.get("goal_judge")))
+        return await real_capture(pool, **kwargs)
+
+    class Judge:
+        providers = ()
+        chain_id = "test:judge"
+
+    judge = Judge()
+    monkeypatch.setattr(procedures, "capture_procedure", recording_capture)
+    monkeypatch.setattr(skill_ingestion, "capture_procedure", recording_capture)
+    response = _grounded_response(
+        steps=[
+            {"order": 0, "action": "locate the failing DataFrame.append call", "source_quote": "DataFrame.append"},
+            {"order": 1, "action": "replace it with pandas.concat", "source_quote": "pandas.concat"},
+        ],
+    )
+
+    outcome = await compile_skill_artifact(
+        CompilerFakePool(), _skill_artifact(), embedder=FakeEmbedder(),
+        client=FakeLLMClient(response), goal_judge=judge,
+    )
+
+    assert outcome.status == "captured"
+    assert [mode for name, mode, _judge in modes if name == "pandas-append-fix"] == ["model"]
+    assert [mode for name, mode, _judge in modes if name in {
+        "locate the failing DataFrame.append call", "replace it with pandas.concat",
+    }] == ["none", "none"]
+    assert all(injected is judge for name, mode, injected in modes if mode == "model")
+
+
+@pytest.mark.asyncio
+async def test_compile_prefetch_bounds_goal_concurrency_and_keeps_procedure_writes_serial(monkeypatch):
+    from app.services import procedures, skill_ingestion
+
+    goal_active = 0
+    goal_peak = 0
+    goal_calls = 0
+    procedure_active = 0
+    procedure_peak = 0
+    procedure_calls = 0
+
+    async def fake_find(pool, **kwargs):
+        nonlocal goal_active, goal_peak, goal_calls
+        goal_active += 1
+        goal_calls += 1
+        goal_peak = max(goal_peak, goal_active)
+        await asyncio.sleep(0.005)
+        goal_active -= 1
+        return {
+            "id": f"goal-{goal_calls}",
+            "canonical_name": kwargs["canonical_name"],
+            "created": True,
+        }
+
+    async def fake_capture(pool, **kwargs):
+        nonlocal procedure_active, procedure_peak, procedure_calls
+        procedure_calls += 1
+        procedure_active += 1
+        procedure_peak = max(procedure_peak, procedure_active)
+        await asyncio.sleep(0.001)
+        procedure_active -= 1
+        return {
+            "id": f"proc-row-{procedure_calls}",
+            "procedure_id": f"proc-{procedure_calls}",
+        }
+
+    monkeypatch.setattr("app.services.goals.find_or_create_goal", fake_find)
+    monkeypatch.setattr(procedures, "capture_procedure", fake_capture)
+    monkeypatch.setattr(skill_ingestion, "capture_procedure", fake_capture)
+    response = _grounded_response(steps=[
+        {"order": 0, "action": "locate the failing call site"},
+        {"order": 1, "action": "inspect the resulting stack trace"},
+        {"order": 2, "action": "apply the smallest safe correction"},
+        {"order": 3, "action": "run the focused regression test"},
+        {"order": 4, "action": "verify the corrected behavior"},
+    ])
+
+    outcome = await compile_skill_artifact(
+        CompilerFakePool(), _skill_artifact(), embedder=FakeEmbedder(),
+        client=FakeLLMClient(response),
+    )
+
+    assert outcome.status == "captured"
+    assert 1 < goal_peak <= 4
+    assert procedure_peak == 1
+
+
+@pytest.mark.asyncio
+async def test_compile_required_goal_failure_precedes_stale_and_procedure_writes(monkeypatch):
+    from app.services.goals import GoalQualityRejected
+
+    procedure_goal = "find and fix a removed pandas DataFrame method call"
+
+    async def fake_find(pool, **kwargs):
+        if kwargs.get("judge_mode") == "model" and kwargs.get("canonical_name") == procedure_goal:
+            raise GoalQualityRejected("required procedure goal rejected")
+        return {
+            "id": "goal-1",
+            "canonical_name": kwargs["canonical_name"],
+            "created": True,
+        }
+
+    monkeypatch.setattr("app.services.goals.find_or_create_goal", fake_find)
+    pool = CompilerFakePool(prior_stale_rows=[{"procedure_row_id": "old-proc-row"}])
+
+    with pytest.raises(GoalQualityRejected, match="required procedure goal rejected"):
+        await compile_skill_artifact(
+            pool, _skill_artifact(), embedder=FakeEmbedder(),
+            client=FakeLLMClient(_grounded_response()),
+        )
+
+    assert pool.captured["procedures"] == []
+    assert not any("UPDATE procedures SET staleness" in call[1] for call in pool.calls)
+
+
+@pytest.mark.asyncio
+async def test_compile_optional_goal_rejection_is_not_repeated(monkeypatch):
+    from app.services.goals import GoalQualityRejected
+
+    calls = []
+
+    async def fake_find(pool, **kwargs):
+        calls.append((kwargs["canonical_name"], kwargs["judge_mode"]))
+        if kwargs["canonical_name"] == "fix stuff":
+            raise GoalQualityRejected("optional step goal rejected")
+        return {
+            "id": f"goal-{len(calls)}",
+            "canonical_name": kwargs["canonical_name"],
+            "created": True,
+        }
+
+    monkeypatch.setattr("app.services.goals.find_or_create_goal", fake_find)
+    response = _grounded_response(steps=[
+        {"order": 0, "action": "fix stuff"},
+        {"order": 1, "action": "fix stuff"},
+    ])
+
+    outcome = await compile_skill_artifact(
+        CompilerFakePool(), _skill_artifact(), embedder=FakeEmbedder(),
+        client=FakeLLMClient(response),
+    )
+
+    assert outcome.status == "captured"
+    assert calls.count(("fix stuff", "none")) == 1
+
+
 def test_content_name_uses_what_the_procedure_does():
     from app.services.skill_ingestion import _content_name
     assert _content_name("  Tag the  release commit. ", "fb") == "Tag the release commit"
@@ -800,6 +1038,53 @@ async def test_compile_llm_call_failure_is_rejected_not_fabricated():
 
 
 @pytest.mark.asyncio
+async def test_compile_post_open_judge_failure_marks_context_failed_and_reraises(monkeypatch):
+    from app.services.identity_resolution import Candidate
+    from app.services.semantic.chain import ChainResult
+    from app.services.semantic.errors import SemanticJudgmentUnavailable
+
+    async def candidates(*_args, **_kwargs):
+        return [
+            Candidate(
+                id="existing-goal",
+                name="an existing related goal",
+                text="an existing related goal",
+                fts_rank=1,
+            )
+        ], 1, 0
+
+    class FailingJudge:
+        providers = ("test",)
+
+        async def judge_identity_batch(self, *_args, **_kwargs):
+            return ChainResult(ok=False, reason="post-open judge failure")
+
+    monkeypatch.setattr(
+        "app.services.identity_resolution.generate_goal_candidates", candidates
+    )
+    pool = CompilerFakePool()
+    with pytest.raises(SemanticJudgmentUnavailable, match="post-open judge failure"):
+        await compile_skill_artifact(
+            pool,
+            _skill_artifact(),
+            embedder=FakeEmbedder(),
+            client=FakeLLMClient(_grounded_response(steps=[{
+                "order": 0,
+                "action": "locate the failing call",
+                "source_quote": "DataFrame.append",
+            }])),
+            goal_judge=FailingJudge(),
+        )
+
+    context_updates = [
+        params for key, params in pool.captured["updates"]
+        if key == "ingestion_contexts.complete"
+    ]
+    assert len(context_updates) == 1
+    assert context_updates[0][1] == "failed"
+
+
+@pytest.mark.asyncio
 async def test_compile_multi_procedure_document_writes_multiple_rows():
     """ingestion.md's own '0..N Procedures per source' model -- a real,
     new capability this rearchitecture adds."""
@@ -857,6 +1142,19 @@ async def test_compile_unchanged_content_short_circuits_before_any_llm_call():
     assert ("ingested_artifacts.last_seen", ("art-1",)) in [
         (k, p) for k, p in pool.captured["updates"] if k == "ingested_artifacts.last_seen"
     ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("context_status", ["open", "failed"])
+async def test_compile_incomplete_context_does_not_short_circuit_or_stale_partial_document(context_status):
+    pool = ContextAwareCompilerPool(context_status)
+    outcome = await compile_skill_artifact(
+        pool, _skill_artifact(), embedder=FakeEmbedder(), client=FakeLLMClient(_grounded_response()),
+    )
+
+    assert outcome.status == "captured"
+    assert outcome.marked_stale is False
+    assert any("ingestion_contexts" in sql for _kind, sql, _params in pool.calls if sql)
 
 
 @pytest.mark.asyncio
@@ -1284,6 +1582,38 @@ async def test_handle_ingest_document_captures_a_real_goal_from_html(monkeypatch
     assert len(pool.captured["procedures"]) == 1
     proc_args = pool.captured["procedures"][0]
     assert proc_args[1] == "deploy the payments service to production and confirm health"
+
+
+@pytest.mark.asyncio
+async def test_handle_ingest_document_forwards_trusted_job_id_to_compile(monkeypatch):
+    from types import SimpleNamespace
+
+    from app.services import ingestion_jobs, skill_ingestion
+
+    html = (
+        b"<html><head><title>Deploy Runbook</title></head><body>"
+        b"<h1>Deploy the payments service</h1>"
+        b"<p>First run the migration. Then restart the service and confirm health.</p>"
+        b"</body></html>"
+    )
+    captured_kwargs = []
+
+    async def fake_compile(*_args, **kwargs):
+        captured_kwargs.append(kwargs)
+        return SimpleNamespace(status="captured")
+
+    monkeypatch.setattr(ingestion_jobs, "_general_compute_client", lambda: FakeLLMClient("{}"))
+    monkeypatch.setattr("app.services.embeddings.Embedder", lambda *a, **kw: FakeEmbedder())
+    monkeypatch.setattr(skill_ingestion, "compile_skill_artifact", fake_compile)
+
+    await ingestion_jobs.handle_ingest_document(CompilerFakePool(), {
+        "raw_bytes": html, "content_type_hint": "text/html",
+        "uri": "https://example.com/docs/deploy-runbook.html",
+        "_job": {"id": 731, "idempotency_key": "trusted-job-731"},
+    })
+
+    assert len(captured_kwargs) == 1
+    assert captured_kwargs[0]["identity_job_id"] == 731
 
 
 @pytest.mark.asyncio

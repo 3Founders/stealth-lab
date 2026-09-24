@@ -349,21 +349,30 @@ class LLMJudge:
             raise SemanticJudgmentUnavailable(f"LLMJudge call failed: {exc!r}") from exc
 
 
+SYSTEMONE_PATH = "/v1/systemone"
+
+
 class RemoteHTTPJudge:
-    """Operator-hosted judge service (this is the "JEV" transport): POSTs to
-    `{base_url}/judge-applicability`, one candidate per request, bounded
-    concurrency. ANY transport/HTTP/contract failure RAISES ProviderError
-    (classified TRANSIENT/PERMANENT) -- it never returns fabricated UNKNOWN
-    judgments. The provider chain owns retry and fallback."""
+    """TypeSafe AI's hosted "Jev" System One model (this is the "JEV"
+    transport): ONE endpoint, `POST {base_url}/v1/systemone`, body
+    `{state, model, questions}` where each question is typed
+    (choice/score/noul); the reply is `{model, answers: {qid: {...}},
+    usage}` -- never free text (https://docs.typesafe.ai/concepts/system-one).
+    Every operation below is built from that one primitive: a fixed set of
+    typed questions per call, parsed back into this module's/prompts.py's
+    strict contracts. ANY transport/HTTP/contract failure RAISES
+    ProviderError (classified TRANSIENT/PERMANENT) -- it never returns
+    fabricated UNKNOWN judgments. The provider chain owns retry and
+    fallback."""
 
     def __init__(
         self, base_url: str, *, http_client: Any = None,
-        model: str = "jev", timeout_seconds: float = 10.0,
+        model: str = "jev-latest", timeout_seconds: float = 10.0,
         max_concurrency: int = 8, api_key: Optional[str] = None,
     ):
         self.base_url = base_url.rstrip("/")
         self._http_client = http_client  # injected httpx.AsyncClient-like object; tests supply a fake
-        self.model = model
+        self.model = model  # both the "jev" chain label AND the TypeSafe `model` request field (e.g. "jev-latest")
         self.timeout_seconds = timeout_seconds
         self.max_concurrency = max_concurrency
         self.api_key = api_key
@@ -397,6 +406,51 @@ class RemoteHTTPJudge:
             if owned:
                 await client.aclose()
 
+    async def systemone(self, state: str, questions: dict) -> dict:
+        """POST /v1/systemone; returns the `answers` map, one entry per
+        question key, keyed the same as the request's `questions`."""
+        body = await self.post_json(SYSTEMONE_PATH, {"state": state, "model": self.model, "questions": questions})
+        answers = body.get("answers")
+        if not isinstance(answers, dict) or answers.keys() != questions.keys():
+            raise ProviderError(ErrorKind.TRANSIENT, f"systemone reply missing answers for {questions.keys()}",
+                               provider=self.model)
+        return answers
+
+    def _applicability_questions(self, candidate: JudgeCandidateInput) -> dict:
+        conditions = "; ".join(f"[{c.kind}] {c.text}" for c in candidate.conditions) or "(none given)"
+        questions: dict = {
+            "verdict": {
+                "type": "choice",
+                "instructions": "Whether the candidate applies to the goal, given its purpose, its "
+                                 f"requirement conditions ({conditions}), and the known claims below.",
+                "criteria": {
+                    "APPLICABLE": "Clearly fits the goal; every REQUIRED condition is met by the claims.",
+                    "PARTIALLY_APPLICABLE": "Fits the goal but only in part, or some REQUIRED conditions are unmet.",
+                    "INAPPLICABLE": "Does not fit the goal, or a claim contradicts a REQUIRED condition.",
+                    "UNKNOWN": "The claims given do not settle it either way.",
+                },
+            },
+            "contradiction": {
+                "type": "noul",
+                "instructions": "A given claim directly contradicts a REQUIRED condition or the candidate's purpose.",
+            },
+            "preconditions_met": {
+                "type": "noul",
+                "instructions": "Every REQUIRED condition is satisfied by the given claims.",
+            },
+        }
+        for i, claim in enumerate(candidate.claims):
+            statement = claim.get("statement") or ""
+            questions[f"claim_{i}"] = {
+                "type": "choice",
+                "instructions": f'Whether the claim "{statement}" supports or contradicts the candidate '
+                                 "applying to the goal.",
+                "criteria": {"supports": "Makes the candidate more likely to apply.",
+                            "contradicts": "Makes the candidate less likely to apply.",
+                            "unrelated": "Neither."},
+            }
+        return questions
+
     async def judge_batch(
         self, goal: str, candidates: list[JudgeCandidateInput],
     ) -> list[ApplicabilityJudgment]:
@@ -409,18 +463,36 @@ class RemoteHTTPJudge:
 
         async def _call_one(candidate: JudgeCandidateInput) -> ApplicabilityJudgment:
             async with semaphore:
-                body = await self.post_json("/judge-applicability", {
-                    "goal": goal, "candidate": {
-                        "candidate_id": candidate.candidate_id,
-                        "candidate_version": candidate.candidate_version,
-                        "purpose": candidate.candidate_purpose,
-                    },
-                    "claims": candidate.claims,
-                    "preconditions": [{"text": c.text, "kind": c.kind} for c in candidate.conditions],
-                })
+                state = json.dumps({
+                    "goal": goal, "candidate_purpose": candidate.candidate_purpose,
+                    "claims": [{"claim_id": str(cl.get("claim_id") or cl.get("id")), "statement": cl.get("statement")}
+                              for cl in candidate.claims],
+                }, default=str, ensure_ascii=False)
+                answers = await self.systemone(state, self._applicability_questions(candidate))
+                supporting, blocking = [], []
+                for i, claim in enumerate(candidate.claims):
+                    claim_id = str(claim.get("claim_id") or claim.get("id"))
+                    choice = answers[f"claim_{i}"].get("choice")
+                    if choice == "supports":
+                        supporting.append(claim_id)
+                    elif choice == "contradicts":
+                        blocking.append(claim_id)
+                verdict_answer = answers["verdict"]
+                probabilities = verdict_answer.get("probabilities") or {}
+                parsed = {
+                    "verdict": verdict_answer.get("choice"),
+                    "applicability_probability": float(probabilities.get("APPLICABLE", 0.0))
+                                                  + 0.5 * float(probabilities.get("PARTIALLY_APPLICABLE", 0.0)),
+                    "contradiction_probability": answers["contradiction"].get("noul", 0.0),
+                    "preconditions_met_probability": answers["preconditions_met"].get("noul", 0.0),
+                    "supporting_claim_ids": supporting,
+                    "blocking_claim_ids": blocking,
+                    "unknown_requirements": [],
+                    "reason": "",  # System One is typed-only; it never synthesizes prose (honest scope limit)
+                }
                 try:
-                    return parse_judgment_dict(goal, candidate, body, model=self.model)
-                except ValueError as exc:
+                    return parse_judgment_dict(goal, candidate, parsed, model=self.model)
+                except (ValueError, KeyError) as exc:
                     raise ProviderError(ErrorKind.TRANSIENT, f"invalid judgment: {exc}", provider=self.model) from exc
 
         try:
