@@ -103,8 +103,17 @@ async def test_levels_track_graph_mutation_and_rejection(pool):
     await _edge(pool, p3, p2)
     await _edge(pool, b, p3)
     assert (await _levels(pool, c))[c]["abstraction_level"] == 4 == await _independent_level(pool, c)
-    await _edge(pool, b, p3, status="rejected", expected_status="accepted")
+    rejected = await _edge(pool, b, p3, status="rejected", expected_status="accepted")
     assert (await _levels(pool, c))[c]["abstraction_level"] == 2 == await _independent_level(pool, c)
+
+    # The stored projection matches an independent recomputation, and refreshing
+    # it read only this edge's component -- never the rest of the corpus.
+    total_goals = await pool.fetchval("SELECT count(*) FROM goal_search_index")
+    assert rejected["projection"]["component_goals"] <= 6 < total_goals or total_goals <= 6
+    for goal_id in (a, b, c, p1, p2, p3):
+        stored = await pool.fetchval(
+            "SELECT abstraction_level FROM goal_abstraction_state WHERE goal_id = $1", goal_id)
+        assert stored in (None, await _independent_level(pool, goal_id)), goal_id
 
 
 @pytest.mark.asyncio

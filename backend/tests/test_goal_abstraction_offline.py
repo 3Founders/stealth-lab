@@ -219,6 +219,22 @@ class FakePool:
     async def fetch(self, sql: str, *args: Any):
         normalized = " ".join(sql.split())
         self.statements.append((normalized, args))
+        if "WITH RECURSIVE descendants" in normalized and "up(goal_id)" in normalized:
+            # component closure of the changed edge over accepted relations
+            edges = [
+                (r["specific_goal_id"], r["abstract_goal_id"])
+                for r in self.relations.values() if r["status"] == "accepted"
+            ]
+            seen = {str(args[0]), str(args[1])}
+            frontier = list(seen)
+            while frontier:
+                current = frontier.pop()
+                for source, target in edges:
+                    for nxt in ((target,) if source == current else ()) + ((source,) if target == current else ()):
+                        if nxt not in seen:
+                            seen.add(nxt)
+                            frontier.append(nxt)
+            return [{"goal_id": goal_id} for goal_id in sorted(seen)]
         if "FROM goals" in normalized and "WHERE id = ANY" in normalized:
             ids = [str(item) for item in args[0]]
             self.canonical_batches.append(ids)

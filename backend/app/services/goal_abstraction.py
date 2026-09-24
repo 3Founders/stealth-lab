@@ -1065,18 +1065,63 @@ async def recompute_affected_goal_abstraction_state(
     tenant_scope: TenantScope,
     pools: Optional[ShardPools] = None,
 ) -> dict[str, Any]:
-    """Refresh projection rows for the changed edge's descendants and ancestors."""
+    """Refresh projection rows for the changed edge's descendants and ancestors.
+
+    Bounded to the edge's own component: the Goals whose state can change
+    (descendants of the specific end, ancestors of the abstract end) plus what
+    their state depends on (their ancestors for levels, their descendants for
+    coverage). Nothing outside that closure is read or hydrated."""
     specific = _uuid(specific_goal_id, "specific_goal_id")
     abstract = _uuid(abstract_goal_id, "abstract_goal_id")
     if specific == abstract:
         raise GoalRelationSelfError("a Goal cannot specialize itself")
+    closure_tenant_sql, closure_tenant_params = tenant_predicate(tenant_scope, alias="r", param_index=3)
+    closure_rows = await pool.fetch(
+        f"""
+        WITH RECURSIVE descendants(goal_id) AS (
+            SELECT $1::uuid
+            UNION
+            SELECT r.specific_goal_id FROM goal_relations r
+            JOIN descendants d ON r.abstract_goal_id = d.goal_id
+            WHERE r.relation_type = 'SPECIALIZES' AND r.status = 'accepted' AND {closure_tenant_sql}
+        ), ancestors(goal_id) AS (
+            SELECT $2::uuid
+            UNION
+            SELECT r.abstract_goal_id FROM goal_relations r
+            JOIN ancestors a ON r.specific_goal_id = a.goal_id
+            WHERE r.relation_type = 'SPECIALIZES' AND r.status = 'accepted' AND {closure_tenant_sql}
+        ), seeds(goal_id) AS (
+            SELECT goal_id FROM descendants UNION SELECT goal_id FROM ancestors
+        ), up(goal_id) AS (
+            SELECT goal_id FROM seeds
+            UNION
+            SELECT r.abstract_goal_id FROM goal_relations r
+            JOIN up u ON r.specific_goal_id = u.goal_id
+            WHERE r.relation_type = 'SPECIALIZES' AND r.status = 'accepted' AND {closure_tenant_sql}
+        ), down(goal_id) AS (
+            SELECT goal_id FROM seeds
+            UNION
+            SELECT r.specific_goal_id FROM goal_relations r
+            JOIN down d ON r.abstract_goal_id = d.goal_id
+            WHERE r.relation_type = 'SPECIALIZES' AND r.status = 'accepted' AND {closure_tenant_sql}
+        )
+        SELECT goal_id::text AS goal_id FROM up
+        UNION
+        SELECT goal_id::text FROM down
+        """,
+        specific,
+        abstract,
+        *closure_tenant_params,
+    )
+    closure_ids = sorted({str(row["goal_id"]) for row in closure_rows} | {specific, abstract})
     scope_sql, scope_params, _ = scope_predicates(
-        access_scope, tenant_scope, alias="g", param_index=1
+        access_scope, tenant_scope, alias="g", param_index=2
     )
     projected_rows = await pool.fetch(
         _projected_goal_rows(
-            f"g.status IN ('active', 'candidate') AND {scope_sql}"
+            f"g.goal_id = ANY($1::uuid[]) AND g.status IN ('active', 'candidate') AND {scope_sql}"
         ),
+        closure_ids,
         *scope_params,
     )
     snapshots, hydration = await _hydrate_projected_goals(pool, projected_rows, pools=pools)
@@ -1090,6 +1135,7 @@ async def recompute_affected_goal_abstraction_state(
             "usable_edges": 0,
             "orphan_edges": 0,
             "cross_scope_edges": 0,
+            "component_goals": len(closure_ids),
             "unavailable_shards": dict(hydration.unavailable_shards),
             "missing_ids": list(hydration.missing_ids),
             "partial": True,
@@ -1146,8 +1192,8 @@ async def recompute_affected_goal_abstraction_state(
             for row in affected_rows
             if str(row["goal_id"]) in snapshots
         }
-        all_relation_scope_sql, all_relation_scope_params = tenant_predicate(
-            tenant_scope, alias="r", param_index=1
+        component_relation_sql, component_relation_params = tenant_predicate(
+            tenant_scope, alias="r", param_index=2
         )
         relation_rows = await conn.fetch(
             f"""
@@ -1157,9 +1203,12 @@ async def recompute_affected_goal_abstraction_state(
             FROM goal_relations r
             WHERE r.relation_type = 'SPECIALIZES'
               AND r.status = 'accepted'
-              AND {all_relation_scope_sql}
+              AND r.specific_goal_id = ANY($1::uuid[])
+              AND r.abstract_goal_id = ANY($1::uuid[])
+              AND {component_relation_sql}
             """,
-            *all_relation_scope_params,
+            closure_ids,
+            *component_relation_params,
         )
         usable_relations, orphan_edges, cross_scope_edges = _partition_projection_relations(
             relation_rows, snapshots
@@ -1180,6 +1229,7 @@ async def recompute_affected_goal_abstraction_state(
         "usable_edges": len(usable_relations),
         "orphan_edges": orphan_edges,
         "cross_scope_edges": cross_scope_edges,
+        "component_goals": len(closure_ids),
         "unavailable_shards": dict(hydration.unavailable_shards),
         "missing_ids": list(hydration.missing_ids),
         "partial": False,
