@@ -126,6 +126,7 @@ export default function GoalPage() {
     );
   }
   const p = goal.data;
+  const hierarchyUnavailable = p.hierarchy_available === false;
   const directSpecifics = p.specializes ?? [];
   const directAbstracts = p.abstracts ?? [];
   const rankingText = rankingExplanation(p.ranking);
@@ -160,7 +161,7 @@ export default function GoalPage() {
           )}
           <div><span>Status</span><span style={{ textTransform: "capitalize" }}>{p.status ?? "unknown"}</span></div>
           <div><span>Direct resolution</span><span>{goalResolutionLabel(p)}{p.resolved_at ? ` · ${new Date(p.resolved_at).toLocaleDateString()}` : ""}</span></div>
-          {p.coverage && <div><span>Descendant coverage</span><span>{p.coverage.resolved_count} of {p.coverage.total_count} resolved</span></div>}
+          {p.coverage && p.coverage.total_count > 0 && <div><span>Descendant coverage</span><span>{p.coverage.resolved_count} of {p.coverage.total_count} more specific goals resolved (not this goal)</span></div>}
           <div><span>Ranking</span><span>{rankingText ?? "Not ranked"}</span></div>
           {rankingSignals.map((signal) => <div key={signal}><span>Signal</span><span>{signal}</span></div>)}
           {(p.scope_type || p.created_by || p.proposer) && (
@@ -173,9 +174,17 @@ export default function GoalPage() {
           <p className="small dim">Direct accepted relationships to this goal, separate from resolution on more specific goals.</p>
         </div>
         <div className="log" style={{ gridColumn: "1 / span 12", maxWidth: "48em" }}>
-          {p.abstraction_level !== undefined && <div><span>Abstraction level</span><span>{p.abstraction_level}</span></div>}
-          <div><span>More specific goals</span><span>{directSpecifics.length ? "Direct children" : "None recorded"}</span></div>
-          <div><span>More abstract goals</span><span>{directAbstracts.length ? "Direct parents" : "None recorded"}</span></div>
+          {hierarchyUnavailable ? (
+            <div><span>Hierarchy</span><span>Temporarily unavailable. Reload in a moment.</span></div>
+          ) : (
+            <>
+              {typeof p.abstraction_level === "number" && (
+                <div><span>Abstraction level</span><span>{p.abstraction_level === 0 ? "0 (no more abstract goal recorded)" : p.abstraction_level}</span></div>
+              )}
+              <div><span>More specific goals</span><span>{directSpecifics.length ? `${directSpecifics.length} direct` : "None recorded"}</span></div>
+              <div><span>More abstract goals</span><span>{directAbstracts.length ? `${directAbstracts.length} direct` : "None recorded"}</span></div>
+            </>
+          )}
         </div>
         {directSpecifics.length > 0 && (
           <div className="cells" style={{ gridColumn: "1 / span 12" }}>
@@ -185,6 +194,7 @@ export default function GoalPage() {
                 <div>
                   <Link href={`/goals/${specific.id}`}>{specific.canonical_name}</Link>
                   {specific.description && <p>{specific.description}</p>}
+                  <span className="status" data-s={specific.resolved_at ? "verified" : "unknown"} style={{ marginTop: 8 }}>{goalResolutionLabel(specific)}</span>
                 </div>
               </div>
             ))}
@@ -198,6 +208,7 @@ export default function GoalPage() {
                 <div>
                   <Link href={`/goals/${abstract.id}`}>{abstract.canonical_name}</Link>
                   {abstract.description && <p>{abstract.description}</p>}
+                  <span className="status" data-s={abstract.resolved_at ? "verified" : "unknown"} style={{ marginTop: 8 }}>{goalResolutionLabel(abstract)}</span>
                 </div>
               </div>
             ))}

@@ -58,4 +58,6 @@ HEALTHCHECK --interval=10s --timeout=5s --start-period=15s --retries=5 \
 # on why that's still loopback-only in effect from the host's side.
 # Migration failure must stop the container, not silently serve against a
 # half-migrated database -- `&&`, not `;`.
-CMD ["sh", "-c", "python scripts/migrate.py && exec uvicorn app.mcp_server.server:app --host 0.0.0.0 --port 8765"]
+# $PORT is set by hosted platforms (Railway, Cloud Run, Render); 8765 locally.
+# --workers 1 is load-bearing (TasksExtension keeps task state in memory).
+CMD ["sh", "-c", "python scripts/migrate.py && exec uvicorn app.mcp_server.server:app --host 0.0.0.0 --port ${PORT:-8765} --workers 1 --proxy-headers --forwarded-allow-ips='*'"]

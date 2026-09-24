@@ -52,11 +52,15 @@ export interface Goal extends Row {
   status?: string;
   resolved_at?: string | null;
   ranking?: GoalRanking | null;
-  abstraction_level?: number;
-  specializes?: GoalHierarchyNeighbor[];
-  abstracts?: GoalHierarchyNeighbor[];
+  // Derived server-side from accepted SPECIALIZES edges. `null` (with
+  // hierarchy_available=false) means "could not be derived right now", never
+  // "a root with no relations".
+  hierarchy_available?: boolean;
+  abstraction_level?: number | null;
+  specializes?: GoalHierarchyNeighbor[] | null;
+  abstracts?: GoalHierarchyNeighbor[] | null;
   benchmarks?: Benchmark[];
-  coverage?: GoalCoverage;
+  coverage?: GoalCoverage | null;
   created_by?: string | null;
   proposer?: string | null;
   scope_type?: string | null;

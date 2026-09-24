@@ -172,7 +172,7 @@ export default function Home() {
           <h2 id="h-use" className="h1">Start with a goal.</h2>
         </Reveal>
         <div className="close-links">
-          <Link href="/#install">Install keळ <span>from source</span></Link>
+          <Link href="/#install">Install keळ <span>one command</span></Link>
           <Link href="/goals">Explore goals <span>→</span></Link>
           <Link href="/search">Search knowledge <span>→</span></Link>
           <Link href="/docs">Read the docs <span>→</span></Link>

@@ -2,6 +2,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import type { LegalDoc } from "@/lib/legal";
+import InstallCommand from "@/components/InstallCommand";
 
 const SECTIONS = [
   { id: "getting-started", label: "Getting started" },
@@ -43,28 +44,24 @@ export default function DocsSidebar({ legalDocs }: { legalDocs: LegalDoc[] }) {
             <h2>Getting started</h2>
             <p>Get MCP installed and connected.</p>
 
-            <h3>1. Clone and install</h3>
-            <pre><code>{`git clone https://github.com/3Founders/stealth-lab
-cd stealth-lab
-pip install -e packaging/`}</code></pre>
-            <p>Installs from source. There is no hosted installer or PyPI release yet.</p>
+            <h3>1. Install</h3>
+            <p>One command connects your coding agent to keळ. It finds Claude Code, Cursor, VS Code, Windsurf, Codex and Claude Desktop on your machine and adds keळ to each. Nothing else is installed: no database, no server, no Python.</p>
+            <InstallCommand />
 
-            <h3>2. Configure the MCP server</h3>
-            <p>In <code>backend/.env</code>, set at minimum:</p>
+            <h3>2. Restart your agent</h3>
+            <p>Restart it (or reload its MCP servers). You should see the <code>find_ways</code> and <code>report_discovery</code> tools and the <code>survey_repo</code> and <code>plan_and_run</code> prompts.</p>
+
+            <h3>3. Use it</h3>
+            <p>Once per repository, run the <code>survey_repo</code> prompt so your agent writes <code>.stealth/claims.md</code> (facts about the repo). After that, ask for what you want done; the agent calls <code>find_ways</code>, plans the work itself and shows you the plan before changing anything.</p>
+
+            <h3>Other options</h3>
             <table><tbody>
-              <tr><td><code>DATABASE_URL</code></td><td>Your Postgres 15+ database (needs the <code>pgvector</code> extension).</td></tr>
-              <tr><td><code>VOYAGE_API_KEY</code></td><td>Used for embeddings.</td></tr>
-              <tr><td><code>STEALTHLAB_MCP_TOKEN</code></td><td>Only needed when hosting the server over HTTP.</td></tr>
+              <tr><td><code>npx -y stealthlab-mcp install --client claude-code</code></td><td>Configure one agent only.</td></tr>
+              <tr><td><code>npx -y stealthlab-mcp doctor</code></td><td>Check that the keळ server is reachable.</td></tr>
+              <tr><td><code>npx -y stealthlab-mcp uninstall</code></td><td>Remove keळ from your agents.</td></tr>
             </tbody></table>
-
-            <h3>3. Start MCP locally</h3>
-            <p>The MCP server lets your coding agent search keळ, inspect ways, check whether they apply, run/reproduce them, and record what happened.</p>
-            <p>Quickstart with the MCP Inspector:</p>
-            <pre><code>{`cd backend
-MCP_SERVER_REQUEST_TIMEOUT=300000 mcp dev app/mcp_server/server.py:server --with-editable .`}</code></pre>
-
             <p className="small dim" style={{ marginTop: 14 }}>
-              For deeper setup, see <code>backend/README_MCP_SERVER.md</code> in the repository.
+              Reading is free and needs no account. Reporting what you learned (<code>report_discovery</code>) needs a signed-in account.
             </p>
           </section>
         )}

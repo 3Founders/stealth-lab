@@ -383,6 +383,42 @@ def _build_token_verifier(shared_token: str) -> OidcAwareTokenVerifier:
 
 _MCP_PORT = 8765  # not the SDK's default 8000, which app/main.py's FastAPI app already uses
 
+
+def _public_origin() -> Optional[str]:
+    """Hosted deployments set STEALTHLAB_MCP_PUBLIC_URL (e.g.
+    https://mcp.example.com). Unset keeps the loopback defaults."""
+    raw = os.environ.get("STEALTHLAB_MCP_PUBLIC_URL", "").strip().rstrip("/")
+    if not raw:
+        return None
+    from urllib.parse import urlsplit
+
+    parts = urlsplit(raw)
+    if parts.scheme not in ("http", "https") or not parts.netloc:
+        raise RuntimeError(f"STEALTHLAB_MCP_PUBLIC_URL must be an http(s) origin, got {raw!r}")
+    return f"{parts.scheme}://{parts.netloc}"
+
+
+_PUBLIC_ORIGIN = _public_origin()
+_ISSUER_URL = _PUBLIC_ORIGIN or f"http://127.0.0.1:{_MCP_PORT}"
+
+
+def _transport_security():
+    """The SDK only accepts localhost Host/Origin headers by default (DNS-
+    rebinding protection). A hosted server must also accept its own public
+    host, or every request through the real domain is refused."""
+    if _PUBLIC_ORIGIN is None:
+        return None
+    from urllib.parse import urlsplit
+
+    from mcp.server.transport_security import TransportSecuritySettings
+
+    parts = urlsplit(_PUBLIC_ORIGIN)
+    return TransportSecuritySettings(
+        enable_dns_rebinding_protection=True,
+        allowed_hosts=[parts.netloc, f"{parts.hostname}:*", "127.0.0.1:*", "localhost:*", "[::1]:*"],
+        allowed_origins=[_PUBLIC_ORIGIN, "http://127.0.0.1:*", "http://localhost:*", "http://[::1]:*"],
+    )
+
 _TOKEN_VERIFIER = _build_token_verifier(_require_mcp_token())
 
 # MCP v1 surface (final_thing.md): an agent sees exactly two tools -- find the
@@ -429,8 +465,8 @@ server = MCPServer(
     # by protocol design, not by an oversight here.
     token_verifier=_TOKEN_VERIFIER,
     auth=AuthSettings(
-        issuer_url=AnyHttpUrl(f"http://127.0.0.1:{_MCP_PORT}"),
-        resource_server_url=AnyHttpUrl(f"http://127.0.0.1:{_MCP_PORT}/mcp"),
+        issuer_url=AnyHttpUrl(_ISSUER_URL),
+        resource_server_url=AnyHttpUrl(f"{_ISSUER_URL}/mcp"),
         required_scopes=["stealthlab:tools"],
     ),
 )
@@ -752,7 +788,7 @@ async def local_sync_preflight(request: Request) -> Response:
 # middleware, /mcp route, every custom_route above including local-sync) --
 # see anonymous_read.py's own module docstring for why this is the robust
 # shape (injects a credential rather than forking the SDK's auth enforcement).
-app = AnonymousReadInjectorMiddleware(server.streamable_http_app())
+app = AnonymousReadInjectorMiddleware(server.streamable_http_app(transport_security=_transport_security()))
 
 
 def _resolve_caller_identity(fallback: str) -> str:

@@ -907,7 +907,12 @@ async def record_decision(
 async def load_goal_identity_decision(
     pool: asyncpg.Pool, decision_id: str
 ) -> Optional[dict[str, Any]]:
-    normalized = _uuid(decision_id, "decision_id")
+    from uuid import UUID
+
+    try:
+        normalized = str(UUID(str(decision_id)))
+    except (TypeError, ValueError, AttributeError) as exc:
+        raise ValueError("decision_id must be a UUID") from exc
     row = await pool.fetchrow(
         """
         SELECT id::text AS id, candidate_text, scope_type, scope_entity_id, decision,
