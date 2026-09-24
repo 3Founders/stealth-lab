@@ -10,6 +10,7 @@ find_best_way's lookup step) all delegate here. There is no second ranker.
       -> compact query representation (query + top claim statements)
       TIER 1  Goal:       FTS + ANN on goal_search_index -> RRF fusion -> top-k
                           -> JEV/NLI judge (kind=task_goal) -> resolved Goal(s)
+                          -> accepted visible hierarchy expansion
       TIER 2  Procedure:  goal-CONSTRAINED FTS + ANN on procedure_search_index
                           -> RRF -> hydrate ONLY the shards holding the candidates
                           (one batched query per shard) -> hard constraints
@@ -17,6 +18,7 @@ find_best_way's lookup step) all delegate here. There is no second ranker.
                           -> JEV/NLI judge (kind=task_procedure, local claims in
                           context) -> evidence (verification stats, linked
                           claims) -> Pareto / policy selection
+
 
 Deterministic code generates candidates and applies hard FACTUAL constraints.
 Semantic judgment is the model's. Failure modes are explicit and tested:
@@ -28,7 +30,7 @@ Semantic judgment is the model's. Failure modes are explicit and tested:
     candidates_only  no semantic provider answered: fused candidates are returned,
                 `degraded=True`, nothing is marked judged, no winner is chosen.
 There is NO silent switch to a heuristic ranker, and no fabricated certainty.
-Hierarchy (goal_relations) is never read.
+Accepted, visible goal_relations are used only for bounded candidate expansion.
 """
 from __future__ import annotations
 
@@ -44,8 +46,12 @@ from typing import Any, Optional, Sequence
 import asyncpg
 
 from app import telemetry as _tel
-from app.services.access import AccessScope, visibility_predicate
+from app.services.access import AccessScope, TenantScope, tenant_predicate, visibility_predicate
 from app.services.embeddings import to_pgvector
+from app.services.hierarchical_goal_routing import (
+    HierarchicalGoalRoutingConfig,
+    route_hierarchical_goal_candidates,
+)
 from app.services.identity_resolution import default_judge, fts_or_query, rrf_fuse
 from app.services.semantic.chain import SemanticJudge
 from app.services.shards import ShardPools, hydrate_rows, pools_for
@@ -66,6 +72,7 @@ class RetrievalConfig:
     procedure_alternatives: int = 5
     min_confidence: float = 0.6     # model confidence needed to call a verdict "firm"
     judge_concurrency: int = 4
+    include_hierarchy_paths: bool = True
 
 
 @dataclass
@@ -100,6 +107,7 @@ class RetrievalMeta:
     unavailable_shards: dict[str, str] = field(default_factory=dict)
     missing_ids: list[str] = field(default_factory=list)
     disqualified: list[dict] = field(default_factory=list)
+    goal_routing: Optional[dict[str, Any]] = None
 
     def degrade(self, reason: str) -> None:
         self.degraded = True
@@ -165,12 +173,62 @@ class Hit:
     confidence: Optional[float] = None
     judged: bool = False
     extra: dict = field(default_factory=dict)
+    hierarchy: Optional[dict] = None
 
     def brief(self) -> dict:
         d = {"id": self.id, "name": self.name, "home_shard_id": self.home_shard_id, "rrf": round(self.rrf, 6),
              "fts_rank": self.fts_rank, "vec_rank": self.vec_rank, "judged": self.judged,
              "relation": self.relation, "confidence": self.confidence}
-        return {k: v for k, v in d.items() if v is not None}
+        d = {k: v for k, v in d.items() if v is not None}
+        if self.hierarchy is not None:
+            d["hierarchy"] = self.hierarchy
+        return d
+
+
+def _default_tenant_scope(scope: AccessScope) -> TenantScope:
+    return TenantScope.unrestricted() if scope.is_unrestricted else TenantScope.commons()
+
+
+def _goal_visibility_predicate(
+    scope: AccessScope, alias: str = "", param_index: int = 1
+) -> tuple[str, list[Any]]:
+    prefix = f"{alias}." if alias else ""
+    if scope.is_unrestricted:
+        return "TRUE", []
+    if scope.viewer_id is None:
+        return f"{prefix}visibility = 'public'", []
+    if not scope.include_private:
+        return f"{prefix}visibility = 'public'", []
+    clauses = [f"{prefix}visibility = 'public'", f"{prefix}owner_id = ${param_index}"]
+    params: list[Any] = [scope.viewer_id]
+    if scope.org_ids:
+        index = param_index + 1
+        clauses.append(
+            f"({prefix}visibility = 'org' AND {prefix}scope_type = 'organization' "
+            f"AND {prefix}scope_entity_id = ANY(${index}::text[]))"
+        )
+        params.append(list(scope.org_ids))
+    return "(" + " OR ".join(clauses) + ")", params
+
+
+def _public_relation_provenance(value: Any) -> dict[str, Any]:
+    data = value.as_dict() if hasattr(value, "as_dict") else dict(value)
+    public = {
+        "id": data.get("edge_id") or data.get("relation_id") or data.get("relation_version_id"),
+        "name": data.get("relation_type"),
+        "status": data.get("status"),
+        "confidence": data.get("confidence"),
+        "path": list(data.get("abstraction_path") or []),
+        "from_goal_id": data.get("from_goal_id"),
+        "to_goal_id": data.get("to_goal_id"),
+        "specific_goal_id": data.get("specific_goal_id"),
+        "abstract_goal_id": data.get("abstract_goal_id"),
+        "direction": data.get("direction"),
+        "hop": data.get("hop"),
+        "relation_type": data.get("relation_type"),
+        "abstraction_path": list(data.get("abstraction_path") or []),
+    }
+    return {key: item for key, item in public.items() if item is not None}
 
 
 async def _legs(
@@ -327,6 +385,355 @@ async def search_goals(
         # nothing is marked resolved -- callers see resolution == 'unjudged'.
         return GoalSearchResult(top[: cfg.unjudged_goal_fanin], cands, "unjudged")
     return GoalSearchResult([], cands, "none")
+
+
+_HIERARCHY_GOAL_SELECT = """
+    SELECT id::text AS id, canonical_name, description, status, scope_type,
+           scope_entity_id, visibility::text AS visibility, owner_id, version,
+           home_shard_id, t_invalid
+    FROM goals
+    WHERE id = ANY($1::uuid[]) AND t_invalid IS NULL
+"""
+
+
+def _hierarchy_scope_key(scope_type: Any, scope_entity_id: Any) -> tuple[str, Optional[str]]:
+    normalized_type = str(scope_type or "global")
+    return normalized_type, None if normalized_type == "global" else scope_entity_id
+
+
+def _hierarchy_projection(row: Any, prefix: str) -> dict[str, Any]:
+    goal_id = str(row[f"{prefix}_projection_id"])
+    return {
+        "id": goal_id,
+        "goal_id": goal_id,
+        "canonical_name": row.get(f"{prefix}_canonical_name"),
+        "description": row.get(f"{prefix}_description"),
+        "status": row.get(f"{prefix}_projected_status"),
+        "scope_type": row.get(f"{prefix}_projected_scope_type"),
+        "scope_entity_id": row.get(f"{prefix}_projected_scope_entity_id"),
+        "visibility": row.get(f"{prefix}_projected_visibility"),
+        "owner_id": row.get(f"{prefix}_projected_owner_id"),
+        "home_shard_id": row.get(f"{prefix}_home_shard_id"),
+        "version": row.get(f"{prefix}_projected_version"),
+    }
+
+
+def _hierarchy_projection_is_current(projection: dict[str, Any], source: dict[str, Any]) -> bool:
+    if source.get("t_invalid") is not None:
+        return False
+    if str(source.get("status")) not in ("active", "candidate"):
+        return False
+    if str(projection.get("status")) != str(source.get("status")):
+        return False
+    if int(projection.get("version") or 0) != int(source.get("version") or 0):
+        return False
+    if _hierarchy_scope_key(projection.get("scope_type"), projection.get("scope_entity_id")) != _hierarchy_scope_key(
+        source.get("scope_type"), source.get("scope_entity_id")
+    ):
+        return False
+    if str(projection.get("visibility")) != str(source.get("visibility")):
+        return False
+    if projection.get("owner_id") != source.get("owner_id"):
+        return False
+    return str(projection.get("home_shard_id")) == str(source.get("home_shard_id"))
+
+
+def _hierarchy_flat_diagnostics(
+    anchors: Sequence[Hit], reasons: Sequence[str], config: HierarchicalGoalRoutingConfig,
+    *, degraded_reasons: Sequence[str] = (), details: Optional[dict[str, Any]] = None,
+) -> dict[str, Any]:
+    diagnostics = {
+        "mode": "flat",
+        "used_flat_fallback": True,
+        "fallback_reasons": list(dict.fromkeys(reasons)),
+        "degraded": bool(degraded_reasons),
+        "degraded_reasons": list(dict.fromkeys(degraded_reasons)),
+        "truncated": any(reason in ("hop_limit_reached", "fanout_limit_reached", "graph_candidate_limit_reached") for reason in degraded_reasons),
+        "semantic_anchor_count": len(anchors),
+        "graph_candidate_count": 0,
+        "input_relation_count": 0,
+        "accepted_relation_count": 0,
+        "relevant_accepted_relation_count": 0,
+        "ignored_relation_statuses": {},
+        "ignored_relation_types": {},
+        "invalid_relation_count": 0,
+        "anchors_missing_goal_id": 0,
+        "limits": {
+            "max_hops": config.max_hops,
+            "max_fanout": config.max_fanout,
+            "max_graph_candidates": config.max_graph_candidates,
+            "expand_parents": config.expand_parents,
+            "expand_children": config.expand_children,
+        },
+    }
+    if details:
+        diagnostics.update(details)
+    return diagnostics
+
+
+async def _route_goal_candidates(
+    pool: Any, goal_result: GoalSearchResult, *, scope: AccessScope, cfg: RetrievalConfig,
+    meta: RetrievalMeta, pools: Optional[ShardPools] = None, tenant_scope: Optional[TenantScope] = None,
+) -> list[Hit]:
+    anchors = list(goal_result.resolved)
+    tenant_scope = tenant_scope or _default_tenant_scope(scope)
+    routing_config = HierarchicalGoalRoutingConfig()
+    if not anchors:
+        meta.goal_routing = _hierarchy_flat_diagnostics(anchors, ("no_semantic_anchors",), routing_config)
+        return anchors
+    if goal_result.resolution != "matches":
+        meta.goal_routing = _hierarchy_flat_diagnostics(anchors, ("semantic_resolution_not_matches",), routing_config)
+        return anchors
+
+    anchor_ids = [str(goal.id) for goal in anchors]
+    edge_limit = 2 * routing_config.max_fanout * len(anchor_ids)
+    t0 = time.monotonic()
+    try:
+        relation_tenant_sql, relation_tenant_params = tenant_predicate(
+            tenant_scope, alias="r", param_index=2
+        )
+        next_index = 2 + len(relation_tenant_params)
+        specific_vis_sql, specific_vis_params = _goal_visibility_predicate(
+            scope, alias="s", param_index=next_index
+        )
+        next_index += len(specific_vis_params)
+        abstract_vis_sql, abstract_vis_params = _goal_visibility_predicate(
+            scope, alias="n", param_index=next_index
+        )
+        limit_index = next_index + len(abstract_vis_params)
+        rows = await pool.fetch(
+            f"""
+            SELECT r.specific_goal_id::text AS specific_goal_id,
+                   r.abstract_goal_id::text AS abstract_goal_id,
+                   r.relation_type, r.status, r.confidence, r.provenance,
+                   r.decision_id::text AS decision_id, r.decided_by, r.decided_at,
+                   s.goal_id::text AS specific_projection_id,
+                   s.canonical_name AS specific_canonical_name,
+                   s.short_description AS specific_description,
+                   s.status AS specific_projected_status,
+                   s.version AS specific_projected_version,
+                   s.scope_type AS specific_projected_scope_type,
+                   s.scope_entity_id AS specific_projected_scope_entity_id,
+                   s.visibility::text AS specific_projected_visibility,
+                   s.owner_id AS specific_projected_owner_id,
+                   s.home_shard_id AS specific_home_shard_id,
+                   n.goal_id::text AS abstract_projection_id,
+                   n.canonical_name AS abstract_canonical_name,
+                   n.short_description AS abstract_description,
+                   n.status AS abstract_projected_status,
+                   n.version AS abstract_projected_version,
+                   n.scope_type AS abstract_projected_scope_type,
+                   n.scope_entity_id AS abstract_projected_scope_entity_id,
+                   n.visibility::text AS abstract_projected_visibility,
+                   n.owner_id AS abstract_projected_owner_id,
+                   n.home_shard_id AS abstract_home_shard_id
+            FROM goal_relations r
+            JOIN goal_search_index s ON s.goal_id = r.specific_goal_id
+            JOIN goal_search_index n ON n.goal_id = r.abstract_goal_id
+            WHERE r.relation_type = 'SPECIALIZES'
+              AND r.status = 'accepted'
+              AND (r.specific_goal_id = ANY($1::uuid[]) OR r.abstract_goal_id = ANY($1::uuid[]))
+              AND s.status IN ('active', 'candidate')
+              AND n.status IN ('active', 'candidate')
+              AND {relation_tenant_sql}
+              AND {specific_vis_sql}
+              AND {abstract_vis_sql}
+               AND COALESCE(s.scope_type, 'global') = COALESCE(n.scope_type, 'global')
+               AND s.scope_entity_id IS NOT DISTINCT FROM n.scope_entity_id
+               AND COALESCE(r.scope_type, 'global') = COALESCE(s.scope_type, 'global')
+               AND r.scope_entity_id IS NOT DISTINCT FROM s.scope_entity_id
+
+            ORDER BY r.specific_goal_id, r.abstract_goal_id
+            LIMIT ${limit_index}
+            """,
+            anchor_ids,
+            *relation_tenant_params,
+            *specific_vis_params,
+            *abstract_vis_params,
+            edge_limit + 1,
+        )
+    except Exception as exc:
+        meta.latency_ms["goal_hierarchy"] = (time.monotonic() - t0) * 1000
+        reason = "hierarchy_query_error"
+        degraded_reason = f"goal hierarchy query failed: {type(exc).__name__}"
+        meta.degrade(degraded_reason)
+        meta.goal_routing = _hierarchy_flat_diagnostics(
+            anchors, (reason,), routing_config, degraded_reasons=(degraded_reason,),
+        )
+        return anchors
+
+    meta.latency_ms["goal_hierarchy"] = (time.monotonic() - t0) * 1000
+    meta.counts["goal_hierarchy_input_relations"] = len(rows)
+    if len(rows) > edge_limit:
+        reason = "graph_edge_limit_reached"
+        meta.degrade("goal hierarchy edge limit reached")
+        meta.goal_routing = _hierarchy_flat_diagnostics(
+            anchors, (reason,), routing_config,
+            degraded_reasons=(reason,), details={"input_relation_count": len(rows), "truncated": True},
+        )
+        return anchors
+    if not rows:
+        meta.goal_routing = _hierarchy_flat_diagnostics(anchors, ("no_edges",), routing_config)
+        return anchors
+
+    relation_edges: list[dict[str, Any]] = []
+    projections: dict[str, dict[str, Any]] = {}
+    for raw in rows:
+        row = dict(raw)
+        specific = _hierarchy_projection(row, "specific")
+        abstract = _hierarchy_projection(row, "abstract")
+        projections[specific["goal_id"]] = specific
+        projections[abstract["goal_id"]] = abstract
+        row["specific_goal"] = specific
+        row["abstract_goal"] = abstract
+        relation_edges.append(row)
+
+    async def fetch(goal_pool: Any, goal_ids: list[str]):
+        return await goal_pool.fetch(_HIERARCHY_GOAL_SELECT, goal_ids)
+
+    routes = {
+        goal_id: str(projection.get("home_shard_id") or "K000")
+        for goal_id, projection in projections.items()
+    }
+    try:
+        hydration = await hydrate_rows(pools or pools_for(pool), routes, fetch)
+    except Exception as exc:
+        reason = "hierarchy_hydration_error"
+        degraded_reason = f"goal hierarchy hydration failed: {type(exc).__name__}"
+        meta.degrade(degraded_reason)
+        meta.goal_routing = _hierarchy_flat_diagnostics(
+            anchors, (reason,), routing_config, degraded_reasons=(degraded_reason,),
+        )
+        return anchors
+
+    meta.shards_touched = sorted(set(meta.shards_touched) | set(hydration.shard_batches))
+    meta.unavailable_shards.update(hydration.unavailable_shards)
+    meta.missing_ids.extend(hydration.missing_ids)
+    missing_ids = sorted(set(hydration.missing_ids) | {
+        goal_id for goal_id in projections if goal_id not in hydration.rows
+    })
+    stale_ids = sorted(
+        goal_id for goal_id, projection in projections.items()
+        if goal_id in hydration.rows and not _hierarchy_projection_is_current(projection, hydration.rows[goal_id])
+    )
+    fallback_reasons: list[str] = []
+    degraded_reasons: list[str] = []
+    if hydration.partial:
+        fallback_reasons.append("unavailable_shard")
+        degraded_reasons.append("unavailable_shard")
+    if missing_ids:
+        fallback_reasons.append("missing_goal")
+        degraded_reasons.append("missing_goal")
+    if stale_ids:
+        fallback_reasons.append("stale_goal_projection")
+        degraded_reasons.append("stale_goal_projection")
+    if fallback_reasons:
+        for reason in degraded_reasons:
+            meta.degrade(f"goal hierarchy {reason}")
+        meta.goal_routing = _hierarchy_flat_diagnostics(
+            anchors, fallback_reasons, routing_config,
+            degraded_reasons=degraded_reasons,
+            details={
+                "input_relation_count": len(relation_edges),
+                "accepted_relation_count": len(relation_edges),
+                "missing_goal_ids": missing_ids,
+                "stale_goal_ids": stale_ids,
+                "unavailable_shards": dict(hydration.unavailable_shards),
+            },
+        )
+        return anchors
+
+    anchor_payloads = [
+        {
+            "id": goal.id,
+            "goal_id": goal.id,
+            "canonical_name": goal.name,
+            "text": goal.text,
+            "home_shard_id": goal.home_shard_id,
+            "score": goal.rrf,
+        }
+        for goal in anchors
+    ]
+    try:
+        routed = route_hierarchical_goal_candidates(
+            anchor_payloads,
+            relation_edges,
+            goal_records=hydration.rows,
+            config=routing_config,
+        )
+    except Exception as exc:
+        reason = "hierarchy_routing_error"
+        degraded_reason = f"goal hierarchy routing failed: {type(exc).__name__}"
+        meta.degrade(degraded_reason)
+        meta.goal_routing = _hierarchy_flat_diagnostics(
+            anchors, (reason,), routing_config, degraded_reasons=(degraded_reason,),
+        )
+        return anchors
+
+    routing_diagnostics = routed.diagnostics.as_dict()
+    if routed.diagnostics.degraded or routed.diagnostics.truncated:
+        reason = "hierarchy_degraded" if routed.diagnostics.degraded else "hierarchy_truncated"
+        fallback_reasons = [reason, *routing_diagnostics.get("fallback_reasons", [])]
+        degraded_reasons = [*routing_diagnostics.get("degraded_reasons", []), reason]
+        for degraded_reason in degraded_reasons:
+            meta.degrade(f"goal hierarchy {degraded_reason}")
+        routing_diagnostics.update({
+            "mode": "flat",
+            "used_flat_fallback": True,
+            "fallback_reasons": list(dict.fromkeys(fallback_reasons)),
+            "degraded": True,
+            "degraded_reasons": list(dict.fromkeys(degraded_reasons)),
+            "truncated": routed.diagnostics.truncated,
+            "graph_candidate_count": 0,
+        })
+        meta.goal_routing = routing_diagnostics
+        return anchors
+
+    graph_hits: list[Hit] = []
+    for candidate in routed.graph_candidates:
+        goal_id = str(candidate.goal_id)
+        source = hydration.rows.get(goal_id)
+        if source is None:
+            reason = "missing_graph_goal"
+            meta.degrade(f"goal hierarchy {reason}")
+            meta.goal_routing = _hierarchy_flat_diagnostics(
+                anchors, (reason,), routing_config, degraded_reasons=(reason,),
+            )
+            return anchors
+        hierarchy = {"origin": "graph"}
+        if cfg.include_hierarchy_paths:
+            hierarchy.update({
+                "abstraction_path": list(candidate.abstraction_path),
+                "relation_provenance": [
+                    _public_relation_provenance(item) for item in candidate.relation_provenance
+                ],
+            })
+        name = str(source.get("canonical_name") or goal_id)
+        description = source.get("description") or ""
+        graph_hits.append(Hit(
+            id=goal_id,
+            name=name,
+            text=f"{name}: {description}".strip(": "),
+            home_shard_id=str(source.get("home_shard_id") or "K000"),
+            rrf=0.0,
+            hierarchy=hierarchy,
+        ))
+
+    meta.counts["goal_hierarchy_graph_candidates"] = len(graph_hits)
+    meta.goal_routing = routing_diagnostics
+    if cfg.include_hierarchy_paths:
+        meta.goal_routing["paths"] = [hit.hierarchy for hit in graph_hits]
+    flat_ids = {str(candidate.id) for candidate in goal_result.candidates}
+    goal_result.candidates = list(goal_result.candidates) + [
+        hit for hit in graph_hits if str(hit.id) not in flat_ids
+    ]
+    routed_goals = list(anchors)
+    seen = {str(goal.id) for goal in anchors}
+    for hit in graph_hits:
+        if hit.id not in seen:
+            routed_goals.append(hit)
+            seen.add(hit.id)
+    return routed_goals
 
 
 # ------------------------------------------------------------------- tier 2
@@ -522,25 +929,37 @@ async def find_best_way(
     pool: asyncpg.Pool, goal_text: str, *, local_claims: Sequence[LocalClaim | dict] = (), scope: AccessScope,
     embedder: Any = None, judge: Optional[SemanticJudge] = None, pools: Optional[ShardPools] = None,
     cfg: RetrievalConfig = RetrievalConfig(), current_scope: Optional[dict] = None, require_verified: bool = False,
-    record: bool = True,
+    record: bool = True, tenant_scope: Optional[TenantScope] = None,
 ) -> dict[str, Any]:
     """The one recommendation entry point: Goal resolution -> Procedure retrieval
     -> applicability/evidence -> selection. Never raises for semantic outages."""
     meta = RetrievalMeta()
+    tenant_scope = tenant_scope or _default_tenant_scope(scope)
     t0 = time.monotonic()
     ctx = await build_query_context(goal_text, local_claims, embedder=embedder, cfg=cfg)
     meta.local_claim_ids = ctx.claim_ids
     g = await search_goals(pool, ctx, scope=scope, embedder=embedder, judge=judge, cfg=cfg, meta=meta)
-    p = await retrieve_procedures(pool, ctx, g.resolved, scope=scope, pools=pools, embedder=embedder, judge=judge, cfg=cfg,
+    routed_goals = await _route_goal_candidates(
+        pool, g, scope=scope, cfg=cfg, meta=meta, pools=pools, tenant_scope=tenant_scope,
+    )
+    p = await retrieve_procedures(pool, ctx, routed_goals, scope=scope, pools=pools, embedder=embedder, judge=judge, cfg=cfg,
                                   meta=meta, current_scope=current_scope, require_verified=require_verified)
     meta.latency_ms["total"] = (time.monotonic() - t0) * 1000
     def _public(item):
         return None if item is None else {k: v for k, v in item.items() if k != "_row"}
 
+    flat_candidates = [
+        candidate for candidate in g.candidates[: cfg.rerank_top_k]
+        if candidate.hierarchy is None
+    ]
+    graph_candidates = [
+        candidate for candidate in g.candidates
+        if candidate.hierarchy is not None and candidate.hierarchy.get("origin") == "graph"
+    ]
     out = {
         "goal": goal_text,
         "goal_resolution": {"status": g.resolution, "goals": [h.brief() for h in g.resolved],
-                            "candidates": [h.brief() for h in g.candidates[: cfg.rerank_top_k]]},
+                            "candidates": [h.brief() for h in flat_candidates + graph_candidates]},
         "recommendation": _public(p.selected),
         "alternatives": [_public(i) for i in p.alternatives],
         "frontier": [i["procedure_id"] for i in p.frontier],
@@ -587,14 +1006,19 @@ async def search_procedures(
     embedder: Any = None, judge: Optional[SemanticJudge] = None, pools: Optional[ShardPools] = None,
     cfg: RetrievalConfig = RetrievalConfig(), current_scope: Optional[dict] = None, require_verified: bool = False,
     invariant_bindings: Optional[dict] = None, excluded_procedure_ids: Optional[Sequence[str]] = None,
+    tenant_scope: Optional[TenantScope] = None,
 ) -> GoalFirstResult:
     """Tier 1 -> Tier 2 without the recommendation envelope: the full ranked/diagnosed procedure set."""
     meta = RetrievalMeta()
+    tenant_scope = tenant_scope or _default_tenant_scope(scope)
     t0 = time.monotonic()
     ctx = await build_query_context(query_text, local_claims, embedder=embedder, cfg=cfg)
     meta.local_claim_ids = ctx.claim_ids
     g = await search_goals(pool, ctx, scope=scope, embedder=embedder, judge=judge, cfg=cfg, meta=meta)
-    p = await retrieve_procedures(pool, ctx, g.resolved, scope=scope, pools=pools, embedder=embedder, judge=judge, cfg=cfg,
+    routed_goals = await _route_goal_candidates(
+        pool, g, scope=scope, cfg=cfg, meta=meta, pools=pools, tenant_scope=tenant_scope,
+    )
+    p = await retrieve_procedures(pool, ctx, routed_goals, scope=scope, pools=pools, embedder=embedder, judge=judge, cfg=cfg,
                                   meta=meta, current_scope=current_scope, require_verified=require_verified,
                                   invariant_bindings=invariant_bindings, excluded_procedure_ids=excluded_procedure_ids)
     meta.latency_ms["total"] = (time.monotonic() - t0) * 1000

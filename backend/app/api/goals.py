@@ -19,10 +19,19 @@ from typing import Any, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
-from app.api.deps import AuthenticatedPrincipal, get_scope, require_authenticated_user, require_scopes
+from app.api.deps import (
+    AuthenticatedPrincipal,
+    enforce_limits,
+    get_auth_context,
+    get_scope,
+    require_authenticated_user,
+    require_scopes,
+)
 from app.services import auth_context as _ac
+from app.services import benchmark_transfer as _benchmark_transfer
 from app.services import product_model as pm
-from app.services.access import AccessScope
+from app.services.access import AccessScope, TenantScope
+from app.services.goal_hierarchy_read import enrich_goal
 from app.services.goals import create_goal_from_user, get_goal, search_goals
 from app.services.v0_gate import V0Violation
 
@@ -31,6 +40,16 @@ router = APIRouter(prefix="/v1/goals", tags=["goals"])
 
 async def get_pool(request: Request):
     return request.app.state.pool
+
+
+async def get_request_tenant_scope(request: Request) -> TenantScope:
+    principal = await get_auth_context(request)
+    org_ids = tuple(getattr(principal, "org_ids", ()) or ())
+    if len(org_ids) > 1:
+        raise HTTPException(status_code=409, detail="ambiguous organization membership")
+    if org_ids:
+        return TenantScope.for_tenant(org_ids[0])
+    return TenantScope.commons()
 
 
 def _owner_key(principal: AuthenticatedPrincipal) -> str:
@@ -142,6 +161,7 @@ async def inspect_goal_route(
     goal_id: str,
     pool=Depends(get_pool),
     scope: AccessScope = Depends(get_scope),
+    tenant_scope: TenantScope = Depends(get_request_tenant_scope),
 ) -> dict[str, Any]:
     """A missing id and one that exists-but-isn't-visible are the same
     404 -- no enumeration signal, same posture every other single-row-by-id
@@ -149,7 +169,22 @@ async def inspect_goal_route(
     result = await get_goal(pool, goal_id, scope=scope)
     if result is None:
         raise HTTPException(404, "goal not found")
-    return result
+    enriched = await enrich_goal(
+        pool,
+        result,
+        access_scope=scope,
+        tenant_scope=tenant_scope,
+    )
+    if enriched is not None:
+        return enriched
+    return {
+        **result,
+        "specializes": [],
+        "abstracts": [],
+        "abstraction_level": 0,
+        "benchmarks": [],
+        "coverage": {"total_count": 0, "resolved_count": 0, "ratio": 0.0},
+    }
 
 
 class GoalCreateBody(BaseModel):
@@ -391,6 +426,37 @@ async def freeze_benchmark(
 
         logging.getLogger(__name__).warning("audit write failed for benchmark_frozen")
     return result
+
+
+@_products_router.post(
+    "/benchmarks/{benchmark_id}/transfer",
+    status_code=202,
+    dependencies=[Depends(require_scopes(_ac.KNOWLEDGE_PUBLISH))],
+)
+async def enqueue_benchmark_transfers_route(
+    benchmark_id: str,
+    pool=Depends(get_pool),
+    principal: AuthenticatedPrincipal = Depends(require_authenticated_user),
+    scope_key: str = Depends(enforce_limits),
+) -> dict[str, Any]:
+    del scope_key
+    try:
+        access_scope = principal.access_scope()
+        source = await _benchmark_transfer.get_benchmark_transfer_source(
+            pool, benchmark_id, access_scope=access_scope
+        )
+        if source["status"] != "frozen":
+            raise HTTPException(status_code=409, detail="source benchmark must be frozen")
+        transfers = await _benchmark_transfer.enqueue_benchmark_transfers(
+            pool, source["benchmark_id"], access_scope=access_scope
+        )
+        return {"source_benchmark_id": source["benchmark_id"], "transfers": transfers}
+    except HTTPException:
+        raise
+    except _benchmark_transfer.BenchmarkSourceInvalid as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 @_products_router.get("/benchmarks/{benchmark_id}")

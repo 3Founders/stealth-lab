@@ -32,6 +32,10 @@ class WorkerConfig:
     reconcile_goals: bool = True      # INGEST_RECONCILE_GOALS   (judge concurrently created paraphrase goals)
     reconcile_claims: bool = True     # INGEST_RECONCILE_CLAIMS  (judge claims created while the judge was down)
     reconcile_window_minutes: float = 30.0  # INGEST_RECONCILE_WINDOW_MINUTES (> the longest job)
+    goal_abstraction_candidate_limit: int = 100
+    goal_abstraction_neighbor_seed_limit: int = 20
+    goal_abstraction_neighbor_limit: int = 100
+    goal_abstraction_minimum_confidence: float = 0.9
 
     @classmethod
     def from_env(cls) -> "WorkerConfig":
@@ -50,6 +54,10 @@ class WorkerConfig:
             reconcile_goals=os.environ.get("INGEST_RECONCILE_GOALS", "1") not in ("0", "false", "False"),
             reconcile_claims=os.environ.get("INGEST_RECONCILE_CLAIMS", "1") not in ("0", "false", "False"),
             reconcile_window_minutes=_float("INGEST_RECONCILE_WINDOW_MINUTES", 30.0),
+            goal_abstraction_candidate_limit=max(1, _int("GOAL_ABSTRACTION_CANDIDATE_LIMIT", 100)),
+            goal_abstraction_neighbor_seed_limit=max(1, _int("GOAL_ABSTRACTION_NEIGHBOR_SEED_LIMIT", 20)),
+            goal_abstraction_neighbor_limit=max(1, _int("GOAL_ABSTRACTION_NEIGHBOR_LIMIT", 100)),
+            goal_abstraction_minimum_confidence=_float("GOAL_ABSTRACTION_MINIMUM_CONFIDENCE", 0.9),
         )
 
 

@@ -42,6 +42,7 @@ def is_retryable(exc: BaseException) -> bool:
     contract/data errors are permanent (retrying cannot help). Unknown errors
     are retryable until ``max_attempts`` is exhausted."""
     from app.services.embeddings import EmbeddingError
+    from app.services.goal_abstraction import GoalRelationDependencyError
     from app.services.semantic.errors import SemanticJudgmentUnavailable
     from app.services.object_storage import ObjectStoreCorrupt, ObjectStoreUnavailable, PayloadTooLarge
     from app.services.shards import NoWritableShard, ShardUnavailable
@@ -58,9 +59,10 @@ def is_retryable(exc: BaseException) -> bool:
             return False
     except Exception:  # noqa: BLE001
         pass
-    if isinstance(exc, (SemanticJudgmentUnavailable, ShardUnavailable, EmbeddingError, asyncio.TimeoutError, TimeoutError,
-                        ConnectionError, OSError, asyncpg.PostgresConnectionError, asyncpg.TooManyConnectionsError,
-                        asyncpg.CannotConnectNowError, asyncpg.DeadlockDetectedError, asyncpg.SerializationError)):
+    if isinstance(exc, (SemanticJudgmentUnavailable, GoalRelationDependencyError, ShardUnavailable, EmbeddingError,
+                        asyncio.TimeoutError, TimeoutError, ConnectionError, OSError, asyncpg.PostgresConnectionError,
+                        asyncpg.TooManyConnectionsError, asyncpg.CannotConnectNowError, asyncpg.DeadlockDetectedError,
+                        asyncpg.SerializationError)):
         return True
     if isinstance(exc, (ValueError, TypeError, AssertionError, NotImplementedError)):
         return False
@@ -77,9 +79,12 @@ class Worker:
         self.job_types = job_types
         if handlers is None:
             import app.ingestion.handlers  # noqa: F401 -- registers ingest_candidate_bundle
+            from app.services import benchmark_transfer
             from app.services.ingestion_jobs import JOB_HANDLERS
 
             handlers = JOB_HANDLERS
+            if handlers.get(benchmark_transfer.JOB_TYPE) is not benchmark_transfer.handle_benchmark_transfer:
+                handlers[benchmark_transfer.JOB_TYPE] = benchmark_transfer.handle_benchmark_transfer
         self.handlers = handlers
         self.pools = pools
         self.stop = asyncio.Event()

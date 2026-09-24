@@ -74,6 +74,163 @@ _SAFE_GOAL_CREATE_DECISIONS = frozenset({
     "distinct", "related", "narrower", "broader",
     "judge_unavailable", "no_candidates",
 })
+GOAL_ABSTRACTION_PLACEMENT_JOB = "goal_abstraction_placement"
+GOAL_ABSTRACTION_AUDIT_JOB = "goal_abstraction_audit"
+GOAL_ABSTRACTION_PLACEMENT_VERSION = "goal_abstraction_placement_v1"
+GOAL_ABSTRACTION_AUDIT_REASONS = frozenset({"orphan", "uncertain"})
+
+
+def goal_abstraction_placement_key(goal_id: str) -> str:
+    return f"goal-abstraction-placement:{goal_id}"
+
+
+def goal_abstraction_audit_key(goal_id: str, reason: str) -> str:
+    if reason not in GOAL_ABSTRACTION_AUDIT_REASONS:
+        raise ValueError(f"unsupported Goal abstraction audit reason: {reason}")
+    return f"goal-abstraction-audit:{goal_id}:{reason}"
+
+
+async def _enqueue_goal_abstraction_job(
+    pool: asyncpg.Pool,
+    *,
+    job_type: str,
+    payload: dict[str, Any],
+    idempotency_key: str,
+    goal_id: str,
+    scope_type: str,
+    scope_entity_id: Optional[str],
+    owner_id: Optional[str],
+    visibility: str,
+    max_attempts: int,
+    config_version: str,
+) -> tuple[Optional[int], bool]:
+    from app.ingestion import queue as ingestion_queue
+
+    ingestion_queue.validate_scope(job_type, scope_type, visibility, owner_id)
+    if isinstance(pool, asyncpg.Pool):
+        return await ingestion_queue.enqueue(
+            pool,
+            job_type,
+            payload,
+            idempotency_key=idempotency_key,
+            source_id=goal_id,
+            scope_type=scope_type,
+            scope_entity_id=scope_entity_id,
+            owner_id=owner_id,
+            visibility=visibility,
+            config_version=config_version,
+            max_attempts=max_attempts,
+            offload=False,
+        )
+    auth_scope = {
+        "public": "global_public",
+        "private": "user_private",
+        "org": "tenant_private",
+    }.get(visibility, "system_internal")
+    result = await pool.execute(
+        """
+        INSERT INTO ingestion_jobs (
+            job_type, payload, idempotency_key, source_id, scope_type, scope_entity_id,
+            owner_id, visibility, config_version, max_attempts, submitted_by_user_id,
+            auth_tenant_id, auth_scope, auth_visibility, publication_allowed
+        ) VALUES (
+            $1, $2::jsonb, $3, $4, $5, $6, $7, $8, $9, $10, $11,
+            $12::uuid, $13, $14, false
+        )
+        ON CONFLICT (job_type, idempotency_key)
+            WHERE idempotency_key IS NOT NULL
+        DO NOTHING
+        """,
+        job_type,
+        payload,
+        idempotency_key,
+        goal_id,
+        scope_type,
+        scope_entity_id,
+        owner_id,
+        visibility,
+        config_version,
+        max_attempts,
+        owner_id if visibility == "private" else None,
+        scope_entity_id if visibility == "org" else None,
+        auth_scope,
+        visibility,
+    )
+    return None, str(result).endswith(" 1")
+
+
+async def enqueue_goal_abstraction_placement(
+    pool: asyncpg.Pool,
+    goal_id: str,
+    *,
+    identity_decision_id: Optional[str],
+    judge_mode: str = "model",
+    scope_type: str,
+    scope_entity_id: Optional[str],
+    owner_id: Optional[str],
+    visibility: str,
+    goal_version: int = 1,
+) -> tuple[Optional[int], bool]:
+    from app.ingestion.config import WorkerConfig
+
+    judge_mode = validate_judge_mode(judge_mode)
+    config = WorkerConfig.from_env()
+    key = goal_abstraction_placement_key(str(goal_id))
+    payload = {
+        "goal_id": str(goal_id),
+        "identity_decision_id": str(identity_decision_id) if identity_decision_id else None,
+        "judge_mode": judge_mode,
+        "goal_version": int(goal_version),
+        "candidate_limit": config.goal_abstraction_candidate_limit,
+        "neighbor_seed_limit": config.goal_abstraction_neighbor_seed_limit,
+        "neighbor_limit": config.goal_abstraction_neighbor_limit,
+        "minimum_confidence": config.goal_abstraction_minimum_confidence,
+        "idempotency_key": key,
+    }
+    return await _enqueue_goal_abstraction_job(
+        pool,
+        job_type=GOAL_ABSTRACTION_PLACEMENT_JOB,
+        payload=payload,
+        idempotency_key=key,
+        goal_id=str(goal_id),
+        scope_type=scope_type,
+        scope_entity_id=scope_entity_id,
+        owner_id=owner_id,
+        visibility=visibility,
+        max_attempts=config.max_attempts,
+        config_version=GOAL_ABSTRACTION_PLACEMENT_VERSION,
+    )
+
+
+async def enqueue_goal_abstraction_audit(
+    pool: asyncpg.Pool,
+    goal_id: str,
+    *,
+    reason: str,
+    scope_type: str,
+    scope_entity_id: Optional[str],
+    owner_id: Optional[str],
+    visibility: str,
+) -> tuple[Optional[int], bool]:
+    key = goal_abstraction_audit_key(str(goal_id), reason)
+    payload = {
+        "goal_id": str(goal_id),
+        "reason": reason,
+        "idempotency_key": key,
+    }
+    return await _enqueue_goal_abstraction_job(
+        pool,
+        job_type=GOAL_ABSTRACTION_AUDIT_JOB,
+        payload=payload,
+        idempotency_key=key,
+        goal_id=str(goal_id),
+        scope_type=scope_type,
+        scope_entity_id=scope_entity_id,
+        owner_id=owner_id,
+        visibility=visibility,
+        max_attempts=3,
+        config_version=GOAL_ABSTRACTION_PLACEMENT_VERSION,
+    )
 
 
 class PermanentIdentityConflict(ValueError):
@@ -698,6 +855,27 @@ async def record_decision(
         )
     _validate_stored_decision_row(prior, object_type)
     return prior if return_row else _row_value(prior, "id")
+
+
+async def load_goal_identity_decision(
+    pool: asyncpg.Pool, decision_id: str
+) -> Optional[dict[str, Any]]:
+    normalized = _uuid(decision_id, "decision_id")
+    row = await pool.fetchrow(
+        """
+        SELECT id::text AS id, candidate_text, scope_type, scope_entity_id, decision,
+               resolved_id::text AS resolved_id, candidates, judge_provider, judge_model,
+               fts_candidates, vector_candidates, job_id, detail, idempotency_key
+        FROM identity_decisions
+        WHERE object_type = 'goal' AND id = $1::uuid
+        """,
+        normalized,
+    )
+    if row is None:
+        return None
+    result = dict(row)
+    result["candidates"] = _stored_candidates(result.get("candidates"))
+    return result
 
 
 async def resolve_goal_identity(

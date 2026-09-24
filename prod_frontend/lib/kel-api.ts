@@ -26,6 +26,20 @@ export interface GoalRanking {
   explanation: string;
 }
 
+export interface GoalHierarchyNeighbor {
+  id: string;
+  canonical_name: string;
+  description?: string | null;
+  status?: string;
+  resolved_at?: string | null;
+}
+
+export interface GoalCoverage {
+  total_count: number;
+  resolved_count: number;
+  ratio: number;
+}
+
 export interface Goal extends Row {
   id: string;
   canonical_name: string;
@@ -38,6 +52,11 @@ export interface Goal extends Row {
   status?: string;
   resolved_at?: string | null;
   ranking?: GoalRanking | null;
+  abstraction_level?: number;
+  specializes?: GoalHierarchyNeighbor[];
+  abstracts?: GoalHierarchyNeighbor[];
+  benchmarks?: Benchmark[];
+  coverage?: GoalCoverage;
   created_by?: string | null;
   proposer?: string | null;
   scope_type?: string | null;

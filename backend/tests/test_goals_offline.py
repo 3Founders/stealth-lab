@@ -11,6 +11,7 @@ import asyncio
 import asyncpg
 import pytest
 
+from app.services.access import AccessScope
 from app.services.goals import (
     GoalQualityRejected,
     GoalResolutionCache,
@@ -49,6 +50,53 @@ def test_normalize_goal_name_distinct_synonyms_stay_distinct():
 
 def test_normalize_goal_name_same_text_different_case_and_spacing_collides():
     assert normalize_goal_name("Find   References") == normalize_goal_name("find references")
+
+
+def test_get_goal_hydrates_remote_goal_without_goal_tenant_sql(monkeypatch):
+    goal_id = "00000000-0000-4000-8000-000000000901"
+    calls = []
+
+    class RemotePool:
+        def __init__(self):
+            self.statements = []
+
+        async def fetchrow(self, sql, *args):
+            self.statements.append((sql, args))
+            return {
+                "id": goal_id,
+                "canonical_name": "Remote goal",
+                "description": "Remote description",
+                "status": "active",
+                "visibility": "public",
+                "owner_id": None,
+                "scope_type": "global",
+                "scope_entity_id": None,
+                "resolved_at": None,
+                "version": 1,
+                "t_invalid": None,
+                "metadata": {},
+                "home_shard_id": "K001",
+            }
+
+    remote = RemotePool()
+
+    async def routed(pool, object_type, object_id):
+        calls.append((pool, object_type, object_id))
+        return remote
+
+    async def procedures(*args, **kwargs):
+        return []
+
+    monkeypatch.setattr("app.services.shards.home_pool", routed)
+    monkeypatch.setattr("app.services.shards.fanout_fetch", procedures)
+
+    result = _run(get_goal(object(), goal_id, scope=AccessScope.anonymous()))
+
+    assert result["id"] == goal_id
+    assert len(calls) == 1
+    assert calls[0][1:] == ("goal", goal_id)
+    assert any("FROM goals" in sql for sql, _args in remote.statements)
+    assert all("tenant_id" not in sql for sql, _args in remote.statements)
 
 
 # --- find_or_create_goal: FakePool -------------------------------------

@@ -5,9 +5,9 @@ import { useParams } from "next/navigation";
 import AnimatedHeading from "@/components/AnimatedHeading";
 import StateNotice from "@/components/NotConnected";
 import {
-  getGoalContributors, getMyProfile, getGoal, getGoalBenchmarks, getGoalSolutions, getProcedure, getRankedProcedures,
+  getGoalContributors, getMyProfile, getGoal, getGoalSolutions, getProcedure, getRankedProcedures,
   humanize, listBenchmarkSubmissions, listProcedureSubmissions, rankedProcedureRowId, reviewBenchmarkSubmission, reviewProcedureSubmission,
-  type Benchmark, type GoalContributor, type Goal, type ProcedureDetail, type RankedProcedure, type SubmissionResult,
+  type GoalContributor, type Goal, type ProcedureDetail, type RankedProcedure, type SubmissionResult,
 } from "@/lib/kel-api";
 import { goalResolutionLabel, rankingExplanation, rankingSignalSummary } from "@/lib/goal-display";
 import { getSession } from "@/lib/session";
@@ -21,7 +21,6 @@ const bucketToStatus: Record<string, string> = {
 export default function GoalPage() {
   const { id } = useParams<{ id: string }>();
   const [goal, setGoal] = useState<ApiState<Goal>>({ kind: "loading" });
-  const [benchmarks, setBenchmarks] = useState<ApiState<Benchmark[]>>({ kind: "loading" });
   const [procedures, setProcedures] = useState<ApiState<ProcedureDetail[]>>({ kind: "loading" });
   // The ordered, bucketed list of Ways is computed by the backend ONLY
   // (app/economy/ranking.py) — this page never re-derives rank/bucket
@@ -81,13 +80,12 @@ export default function GoalPage() {
     loadPendingSubmissions();
     // Accepting can change the ranked ways / benchmarks lists below.
     getRankedProcedures(id).then((rr) => setRanked(rr.kind === "ok" ? { kind: "ok", data: rr.data.ranked } : (rr as ApiState<RankedProcedure[]>)));
-    getGoalBenchmarks(id).then((rr) => setBenchmarks(rr.kind === "ok" ? { kind: "ok", data: rr.data.benchmarks ?? [] } : (rr as ApiState<Benchmark[]>)));
+    getGoal(id).then(setGoal);
   }
 
   useEffect(() => {
     const ac = new AbortController();
     getGoal(id, ac.signal).then(setGoal);
-    getGoalBenchmarks(id, ac.signal).then((r) => setBenchmarks(r.kind === "ok" ? { kind: "ok", data: r.data.benchmarks ?? [] } : (r as ApiState<Benchmark[]>)));
     getGoalContributors(id, ac.signal).then((r) => setContributors(r.kind === "ok" ? { kind: "ok", data: r.data.contributors } : (r as ApiState<GoalContributor[]>)));
 
     (async () => {
@@ -128,6 +126,8 @@ export default function GoalPage() {
     );
   }
   const p = goal.data;
+  const directSpecifics = p.specializes ?? [];
+  const directAbstracts = p.abstracts ?? [];
   const rankingText = rankingExplanation(p.ranking);
   const rankingSignals = rankingSignalSummary(p.ranking);
   const groups: Array<{ bucket: RankedProcedure["bucket"]; label: string }> = [
@@ -159,13 +159,50 @@ export default function GoalPage() {
             <div><span>Constraints</span><span>{p.constraints.map((constraint) => (typeof constraint === "string" ? constraint : JSON.stringify(constraint))).join(" · ")}</span></div>
           )}
           <div><span>Status</span><span style={{ textTransform: "capitalize" }}>{p.status ?? "unknown"}</span></div>
-          <div><span>Resolution</span><span>{goalResolutionLabel(p)}{p.resolved_at ? ` · ${new Date(p.resolved_at).toLocaleDateString()}` : ""}</span></div>
+          <div><span>Direct resolution</span><span>{goalResolutionLabel(p)}{p.resolved_at ? ` · ${new Date(p.resolved_at).toLocaleDateString()}` : ""}</span></div>
+          {p.coverage && <div><span>Descendant coverage</span><span>{p.coverage.resolved_count} of {p.coverage.total_count} resolved</span></div>}
           <div><span>Ranking</span><span>{rankingText ?? "Not ranked"}</span></div>
           {rankingSignals.map((signal) => <div key={signal}><span>Signal</span><span>{signal}</span></div>)}
           {(p.scope_type || p.created_by || p.proposer) && (
             <div><span>Scope</span><span>{[p.scope_type, p.created_by ? `contributed by ${p.created_by}` : p.proposer ? `proposed by ${p.proposer}` : null].filter(Boolean).join(" · ") || "Not recorded"}</span></div>
           )}
         </div>
+
+        <div style={{ gridColumn: "1 / span 12", marginTop: 16 }}>
+          <h2 className="h3" style={{ marginBottom: 4 }}>Goal hierarchy</h2>
+          <p className="small dim">Direct accepted relationships to this goal, separate from resolution on more specific goals.</p>
+        </div>
+        <div className="log" style={{ gridColumn: "1 / span 12", maxWidth: "48em" }}>
+          {p.abstraction_level !== undefined && <div><span>Abstraction level</span><span>{p.abstraction_level}</span></div>}
+          <div><span>More specific goals</span><span>{directSpecifics.length ? "Direct children" : "None recorded"}</span></div>
+          <div><span>More abstract goals</span><span>{directAbstracts.length ? "Direct parents" : "None recorded"}</span></div>
+        </div>
+        {directSpecifics.length > 0 && (
+          <div className="cells" style={{ gridColumn: "1 / span 12" }}>
+            {directSpecifics.map((specific) => (
+              <div className="cell" key={specific.id}>
+                <div className="n"><span>↓</span></div>
+                <div>
+                  <Link href={`/goals/${specific.id}`}>{specific.canonical_name}</Link>
+                  {specific.description && <p>{specific.description}</p>}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+        {directAbstracts.length > 0 && (
+          <div className="cells" style={{ gridColumn: "1 / span 12" }}>
+            {directAbstracts.map((abstract) => (
+              <div className="cell" key={abstract.id}>
+                <div className="n"><span>↑</span></div>
+                <div>
+                  <Link href={`/goals/${abstract.id}`}>{abstract.canonical_name}</Link>
+                  {abstract.description && <p>{abstract.description}</p>}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
 
         {/* what we know */}
         <div style={{ gridColumn: "1 / span 12", marginTop: 16 }}>
@@ -197,9 +234,9 @@ export default function GoalPage() {
           <h2 className="h3" style={{ marginBottom: 4 }}>How do we know this was solved?</h2>
           <p className="small dim">Success criteria and evaluation methods recorded as Benchmarks for this goal. A goal may use more than one kind.</p>
         </div>
-        {benchmarks.kind === "ok" && benchmarks.data.length > 0 ? (
+        {p.benchmarks && p.benchmarks.length > 0 ? (
           <div style={{ gridColumn: "1 / span 12", display: "grid", gap: 20 }}>
-            {benchmarks.data.map((b) => (
+            {p.benchmarks.map((b) => (
               <div className="log" key={b.id} style={{ padding: "16px 18px" }}>
                 <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}>
                   <b style={{ fontWeight: 400, fontSize: 17 }}>{b.name}</b>
@@ -213,7 +250,7 @@ export default function GoalPage() {
             ))}
           </div>
         ) : (
-          <StateNotice state={benchmarks} empty={benchmarks.kind === "ok" ? "No benchmark or success criteria recorded for this goal yet." : undefined} />
+          <div className="empty" style={{ gridColumn: "1 / span 12" }}><p>No benchmark or success criteria recorded for this goal yet.</p></div>
         )}
 
         {/* pending review (reviewer-only) */}

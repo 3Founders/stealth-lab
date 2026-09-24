@@ -28,18 +28,54 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import math
 from typing import Any, Optional
 
 from app import telemetry as _tel
 import asyncpg
 
+from app.ingestion.config import WorkerConfig
+from app.services.access import AccessScope, TenantScope, tenant_predicate
 from app.services.claim_evidence import record_claim_evidence
+from app.services.goal_abstraction import (
+    GoalRelationCycleError,
+    GoalRelationDependencyError,
+    GoalRelationRedundancyError,
+    GoalRelationScopeError,
+    GoalRelationSelfError,
+    GoalRelationStatusConflict,
+    GoalRelationVisibilityError,
+    RELATION_AUTHORITY,
+    RELATION_POLICY,
+    RELATION_POLICY_VERSION,
+    adjudicate_goal_relation,
+    expand_goal_neighbors,
+    persist_goal_relation,
+)
+from app.services.identity_resolution import (
+    Candidate,
+    GOAL_ABSTRACTION_AUDIT_JOB,
+    GOAL_ABSTRACTION_AUDIT_REASONS,
+    GOAL_ABSTRACTION_PLACEMENT_JOB,
+    SAME_MIN_CONFIDENCE,
+    _RELATION_TO_DECISION,
+    canonical_identity_text,
+    default_judge,
+    enqueue_goal_abstraction_audit,
+    generate_goal_candidates,
+    goal_abstraction_placement_key,
+    load_goal_identity_decision,
+    record_decision,
+    validate_identity_job_id,
+)
 from app.services.observations import (
     extract_deterministic_observations,
     extract_deterministic_observations_from_run_event,
     persist_observation,
     promote_observation_to_claim,
 )
+from app.services.semantic.errors import SemanticJudgmentUnavailable
+from app.services.shards import ShardUnavailable, home_pool, pools_for
 
 # --------------------------------------------------------------------------
 # IngestionContext for the TRACE / execution-derived path (Gate G1, §A1).
@@ -683,11 +719,696 @@ async def handle_promote_observation_to_claim(pool: asyncpg.Pool, payload: dict)
         )
 
 
+def _placement_bounded_int(value: Any, default: int, field: str, maximum: int = 1000) -> int:
+    if value is None:
+        return default
+    if isinstance(value, bool) or not isinstance(value, int) or value < 1 or value > maximum:
+        raise ValueError(f"{field} must be an integer between 1 and {maximum}")
+    return value
+
+
+def _placement_context(payload: Any) -> dict[str, Any]:
+    from app.ingestion import queue as ingestion_queue
+
+    if not isinstance(payload, dict):
+        raise ValueError("goal_abstraction_placement payload must be an object")
+    goal_id = payload.get("goal_id")
+    if not isinstance(goal_id, str) or not goal_id.strip():
+        raise ValueError("goal_abstraction_placement payload requires goal_id")
+    raw_job = payload.get("_job") or {}
+    if not isinstance(raw_job, dict):
+        raise ValueError("goal_abstraction_placement job metadata must be an object")
+    job_id = validate_identity_job_id(raw_job.get("id"))
+    scope_type = str(raw_job.get("scope_type") or "global")
+    scope_entity_id = raw_job.get("scope_entity_id")
+    if scope_type == "global":
+        scope_entity_id = None
+    visibility = str(raw_job.get("visibility") or "public")
+    owner_id = raw_job.get("owner_id")
+    ingestion_queue.validate_scope(
+        GOAL_ABSTRACTION_PLACEMENT_JOB,
+        scope_type,
+        visibility,
+        owner_id,
+    )
+    placement_key = goal_abstraction_placement_key(goal_id)
+    payload_key = payload.get("idempotency_key")
+    job_key = raw_job.get("idempotency_key")
+    if payload_key is not None and str(payload_key) != placement_key:
+        raise ValueError("goal_abstraction_placement payload idempotency key is invalid")
+    if job_key is not None and str(job_key) != placement_key:
+        raise ValueError("goal_abstraction_placement job idempotency key is invalid")
+    config = WorkerConfig()
+    candidate_limit = _placement_bounded_int(
+        payload.get("candidate_limit"),
+        config.goal_abstraction_candidate_limit,
+        "candidate_limit",
+    )
+    neighbor_seed_limit = _placement_bounded_int(
+        payload.get("neighbor_seed_limit"),
+        config.goal_abstraction_neighbor_seed_limit,
+        "neighbor_seed_limit",
+    )
+    neighbor_limit = _placement_bounded_int(
+        payload.get("neighbor_limit"),
+        config.goal_abstraction_neighbor_limit,
+        "neighbor_limit",
+    )
+    minimum_confidence = payload.get(
+        "minimum_confidence", config.goal_abstraction_minimum_confidence
+    )
+    if (
+        isinstance(minimum_confidence, bool)
+        or not isinstance(minimum_confidence, (int, float))
+        or not math.isfinite(float(minimum_confidence))
+        or not 0.0 <= float(minimum_confidence) <= 1.0
+    ):
+        raise ValueError("minimum_confidence must be a finite number between 0 and 1")
+    if visibility == "private":
+        access_scope = AccessScope.for_user(str(owner_id))
+    elif visibility == "org":
+        access_scope = AccessScope.for_org_member(
+            str(owner_id), [str(scope_entity_id)]
+        )
+    else:
+        access_scope = AccessScope.anonymous()
+    judge_mode = str(payload.get("judge_mode") or "model")
+    if judge_mode not in ("model", "none"):
+        raise ValueError("goal_abstraction_placement judge_mode must be model or none")
+    return {
+        "goal_id": goal_id,
+        "goal_version": int(payload.get("goal_version", 1)),
+        "identity_decision_id": payload.get("identity_decision_id"),
+        "judge_mode": judge_mode,
+        "candidate_limit": candidate_limit,
+        "neighbor_seed_limit": neighbor_seed_limit,
+        "neighbor_limit": neighbor_limit,
+        "minimum_confidence": float(minimum_confidence),
+        "idempotency_key": placement_key,
+        "job_id": job_id,
+        "scope_type": scope_type,
+        "scope_entity_id": scope_entity_id,
+        "visibility": visibility,
+        "owner_id": owner_id,
+        "access_scope": access_scope,
+        "tenant_scope": (
+            TenantScope.for_tenant(str(scope_entity_id))
+            if visibility == "org" and scope_entity_id
+            else TenantScope.commons()
+        ),
+    }
+
+
+def _normalized_goal_scope(goal: Any) -> tuple[str, Optional[str]]:
+    scope_type = str(goal.get("scope_type") or "global")
+    scope_entity_id = goal.get("scope_entity_id")
+    if scope_type == "global":
+        scope_entity_id = None
+    return scope_type, None if scope_entity_id in (None, "") else str(scope_entity_id)
+
+
+def _goal_matches_job(goal: Any, context: dict[str, Any]) -> bool:
+    if _normalized_goal_scope(goal) != (
+        context["scope_type"],
+        context["scope_entity_id"],
+    ):
+        return False
+    if str(goal.get("visibility")) != context["visibility"]:
+        return False
+    if context["visibility"] == "private" and goal.get("owner_id") != context["owner_id"]:
+        return False
+    return True
+
+
+def _goal_privacy(goal: Any) -> tuple[str, Optional[str]]:
+    visibility = str(goal.get("visibility"))
+    owner_id = str(goal.get("owner_id")) if goal.get("owner_id") is not None else None
+    return visibility, owner_id if visibility == "private" else None
+
+
+def _raise_partial(unavailable: Any, missing_ids: Any) -> None:
+    if unavailable:
+        shard_id, reason = next(iter(dict(unavailable).items()))
+        raise ShardUnavailable(str(shard_id), str(reason))
+    if missing_ids:
+        raise GoalRelationDependencyError(
+            {"goal_abstraction": "incomplete hydration"}, [str(item) for item in missing_ids]
+        )
+
+
+def _candidate_text(goal: Any) -> str:
+    name = str(goal.get("canonical_name") or "")
+    description = goal.get("description")
+    return f"{name}: {description}" if description else name
+
+
+def _candidate_from_goal(goal: Any) -> Candidate:
+    return Candidate(
+        id=str(goal["id"]),
+        name=str(goal.get("canonical_name") or ""),
+        text=_candidate_text(goal),
+        home_shard_id=goal.get("home_shard_id"),
+    )
+
+
+def _deduplicate_candidates(
+    candidates: list[Candidate], limit: int
+) -> list[Candidate]:
+    result: list[Candidate] = []
+    seen: set[str] = set()
+    for candidate in candidates:
+        if candidate.id in seen:
+            continue
+        seen.add(candidate.id)
+        result.append(candidate)
+        if len(result) >= limit:
+            break
+    return result
+
+
+async def _expand_placement_neighbors(
+    pool: asyncpg.Pool,
+    candidates: list[Candidate],
+    *,
+    context: dict[str, Any],
+    seed_limit: int,
+    neighbor_limit: int,
+    pools: Any,
+) -> list[Candidate]:
+    expanded = list(candidates)
+    for seed in candidates[:seed_limit]:
+        result = await expand_goal_neighbors(
+            pool,
+            seed.id,
+            access_scope=context["access_scope"],
+            tenant_scope=context["tenant_scope"],
+            direction="both",
+            limit=neighbor_limit,
+            pools=pools,
+        )
+        if result.get("partial"):
+            _raise_partial(
+                result.get("unavailable_shards"), result.get("missing_ids")
+            )
+        for item in [*(result.get("parents") or []), *(result.get("children") or [])]:
+            expanded.append(_candidate_from_goal(item["goal"]))
+    return _deduplicate_candidates(expanded, context["candidate_limit"])
+
+
+async def _load_goal_embedding(
+    pool: asyncpg.Pool, goal_id: str
+) -> tuple[Optional[list[float]], Optional[str]]:
+    owner = await home_pool(pool, "goal", goal_id)
+    row = await owner.fetchrow(
+        """
+        SELECT embedding::text AS embedding, embedding_model_id
+        FROM goals
+        WHERE id = $1::uuid AND t_invalid IS NULL AND status <> 'merged'
+        """,
+        goal_id,
+    )
+    if row is None:
+        raise GoalRelationDependencyError(
+            {"goal_abstraction": "canonical Goal unavailable"}, [goal_id]
+        )
+    value = row.get("embedding")
+    if value is None:
+        return None, None
+    if isinstance(value, str):
+        stripped = value.strip().lstrip("[").rstrip("]")
+        if not stripped:
+            return None, None
+        try:
+            vector = [float(item) for item in stripped.split(",")]
+        except (TypeError, ValueError) as exc:
+            raise GoalRelationDependencyError(
+                {"goal_abstraction": "stored Goal embedding is invalid"}, [goal_id]
+            ) from exc
+    elif isinstance(value, (list, tuple)):
+        try:
+            vector = [float(item) for item in value]
+        except (TypeError, ValueError) as exc:
+            raise GoalRelationDependencyError(
+                {"goal_abstraction": "stored Goal embedding is invalid"}, [goal_id]
+            ) from exc
+    else:
+        raise GoalRelationDependencyError(
+            {"goal_abstraction": "stored Goal embedding is invalid"}, [goal_id]
+        )
+    if not vector or not all(math.isfinite(item) for item in vector):
+        raise GoalRelationDependencyError(
+            {"goal_abstraction": "stored Goal embedding is invalid"}, [goal_id]
+        )
+    model = row.get("embedding_model_id")
+    if not model:
+        raise GoalRelationDependencyError(
+            {"goal_abstraction": "stored Goal embedding has no model"}, [goal_id]
+        )
+    return vector, str(model)
+
+
+def _validate_placement_decision(
+    decision: dict[str, Any], anchor: Any, context: dict[str, Any]
+) -> None:
+    decision_scope = (
+        str(decision.get("scope_type") or "global"),
+        decision.get("scope_entity_id"),
+    )
+    if decision_scope[0] == "global":
+        decision_scope = ("global", None)
+    if decision_scope != _normalized_goal_scope(anchor):
+        raise ValueError("Goal identity decision scope does not match the placement job")
+    if canonical_identity_text(str(decision.get("candidate_text") or "")) != canonical_identity_text(
+        _candidate_text(anchor)
+    ):
+        raise ValueError("Goal identity decision text does not match the placement Goal")
+
+
+async def _placement_candidate_decisions(
+    pool: asyncpg.Pool,
+    anchor: Any,
+    candidates: list[Candidate],
+    *,
+    context: dict[str, Any],
+    judge: Any,
+) -> list[tuple[Candidate, Optional[str], Optional[str], Optional[str]]]:
+    decisions: dict[str, Candidate] = {}
+    decision_metadata: dict[str, tuple[Optional[str], Optional[str], Optional[str]]] = {}
+    if context.get("judge_mode") == "none":
+        return []
+    decision_id = context.get("identity_decision_id")
+    if decision_id:
+        prior = await load_goal_identity_decision(pool, str(decision_id))
+        if prior is None:
+            raise ValueError("Goal identity decision for placement was not found")
+        _validate_placement_decision(prior, anchor, context)
+        prior_candidates = prior.get("candidates") or []
+        prior_by_id = {str(candidate.id): candidate for candidate in prior_candidates}
+        for candidate in candidates:
+            remembered = prior_by_id.get(candidate.id)
+            if remembered is None:
+                continue
+            candidate.relation = remembered.relation
+            candidate.confidence = remembered.confidence
+            decisions[candidate.id] = candidate
+            decision_metadata[candidate.id] = (
+                str(prior["id"]),
+                prior.get("judge_provider"),
+                prior.get("judge_model"),
+            )
+    missing = [candidate for candidate in candidates if candidate.id not in decisions]
+    if not missing:
+        return [
+            (
+                decisions[candidate.id],
+                *decision_metadata[candidate.id],
+            )
+            for candidate in candidates
+            if candidate.id in decisions
+        ]
+    if judge is None:
+        judge = default_judge()
+    result = await judge.judge_identity_batch(
+        "goal", _candidate_text(anchor), [candidate.text for candidate in missing]
+    )
+    if not bool(getattr(result, "ok", False)):
+        raise SemanticJudgmentUnavailable(
+            f"goal abstraction judgment unavailable ({getattr(result, 'reason', 'no provider result')})",
+            attempts=getattr(result, "attempts", None),
+        )
+    verdicts = getattr(result, "value", None)
+    if not isinstance(verdicts, list) or len(verdicts) != len(missing):
+        raise SemanticJudgmentUnavailable(
+            "goal abstraction judgment returned an invalid verdict count"
+        )
+    for candidate, verdict in zip(missing, verdicts):
+        if not isinstance(verdict, dict):
+            raise SemanticJudgmentUnavailable("goal abstraction judgment returned a malformed verdict")
+        relation = verdict.get("relation")
+        confidence = verdict.get("confidence")
+        if relation not in {
+            "same", "specializes", "generalizes", "related", "contradicts", "distinct"
+        }:
+            raise SemanticJudgmentUnavailable("goal abstraction judgment returned an unsupported relation")
+        if (
+            isinstance(confidence, bool)
+            or not isinstance(confidence, (int, float))
+            or not math.isfinite(float(confidence))
+            or not 0.0 <= float(confidence) <= 1.0
+        ):
+            raise SemanticJudgmentUnavailable("goal abstraction judgment returned invalid confidence")
+        if relation == "same" and float(confidence) < SAME_MIN_CONFIDENCE:
+            relation = "related"
+        candidate.relation = relation
+        candidate.confidence = float(confidence)
+    same = next(
+        (
+            (candidate, float(candidate.confidence))
+            for candidate in missing
+            if candidate.relation == "same"
+        ),
+        None,
+    )
+    if same is not None:
+        final_decision = "same"
+        resolved_id = same[0].id
+    else:
+        first = missing[0].relation or "distinct"
+        final_decision = _RELATION_TO_DECISION.get(first, "related")
+        resolved_id = None
+    remembered = await record_decision(
+        pool,
+        object_type="goal",
+        candidate_text=_candidate_text(anchor),
+        scope_type=context["scope_type"],
+        scope_entity_id=context["scope_entity_id"],
+        decision=final_decision,
+        resolved_id=resolved_id,
+        candidates=missing,
+        judge=judge,
+        provider=getattr(result, "provider", None),
+        model=getattr(result, "model", None),
+        fts_n=0,
+        vec_n=0,
+        job_id=context.get("job_id"),
+        idempotency_key=(
+            f"{context['idempotency_key']}:recall"
+            if context.get("job_id") is not None
+            else None
+        ),
+        detail={
+            "operation": "goal_abstraction_placement",
+            "source_decision_id": decision_id,
+        },
+    )
+    remembered_id = str(remembered["id"]) if remembered is not None else None
+    remembered_candidates: dict[str, Candidate] = {}
+    remembered_providers: dict[str, tuple[Optional[str], Optional[str]]] = {}
+    if remembered_id:
+        stored = await load_goal_identity_decision(pool, remembered_id)
+        if stored is not None:
+            remembered_candidates = {
+                str(candidate.id): candidate for candidate in stored.get("candidates") or []
+            }
+            remembered_providers = {
+                str(candidate.id): (
+                    stored.get("judge_provider"),
+                    stored.get("judge_model"),
+                )
+                for candidate in stored.get("candidates") or []
+            }
+    for candidate in missing:
+        stable = remembered_candidates.get(candidate.id)
+        if stable is not None:
+            candidate.relation = stable.relation
+            candidate.confidence = stable.confidence
+        provider, model = remembered_providers.get(
+            candidate.id,
+            (getattr(result, "provider", None), getattr(result, "model", None)),
+        )
+        decisions[candidate.id] = candidate
+        decision_metadata[candidate.id] = (remembered_id, provider, model)
+    return [
+        (
+            decisions[candidate.id],
+            *decision_metadata[candidate.id],
+        )
+        for candidate in candidates
+        if candidate.id in decisions
+    ]
+
+
+async def _goal_relation_state(
+    pool: asyncpg.Pool,
+    specific: str,
+    abstract: str,
+    tenant_scope: TenantScope,
+) -> Optional[str]:
+    tenant_sql, tenant_params = tenant_predicate(
+        tenant_scope, alias="r", param_index=3
+    )
+    row = await pool.fetchrow(
+        f"""
+        SELECT r.status
+        FROM goal_relations r
+        WHERE r.specific_goal_id = $1::uuid
+          AND r.abstract_goal_id = $2::uuid
+          AND r.relation_type = 'SPECIALIZES'
+          AND {tenant_sql}
+        """,
+        specific,
+        abstract,
+        *tenant_params,
+    )
+    return None if row is None else str(row["status"])
+
+
+async def _enqueue_placement_audit(
+    pool: asyncpg.Pool,
+    goal_id: str,
+    reason: str,
+    context: dict[str, Any],
+) -> None:
+    await enqueue_goal_abstraction_audit(
+        pool,
+        goal_id,
+        reason=reason,
+        scope_type=context["scope_type"],
+        scope_entity_id=context["scope_entity_id"],
+        owner_id=context["owner_id"],
+        visibility=context["visibility"],
+    )
+
+
+async def handle_goal_abstraction_placement(
+    pool: asyncpg.Pool,
+    payload: dict,
+    *,
+    judge: Any = None,
+) -> dict[str, Any]:
+    context = _placement_context(payload)
+    goal_id = context["goal_id"]
+    pools = pools_for(pool)
+    anchor_result = await expand_goal_neighbors(
+        pool,
+        goal_id,
+        access_scope=context["access_scope"],
+        tenant_scope=context["tenant_scope"],
+        direction="both",
+        limit=context["neighbor_limit"],
+        pools=pools,
+    )
+    if anchor_result.get("partial"):
+        _raise_partial(
+            anchor_result.get("unavailable_shards"), anchor_result.get("missing_ids")
+        )
+    anchor = anchor_result.get("goal")
+    if anchor is None:
+        raise GoalRelationDependencyError(
+            {"goal_abstraction": "Goal projection is pending"}, [goal_id]
+        )
+    if not _goal_matches_job(anchor, context):
+        raise ValueError("placement job scope does not match the canonical Goal")
+    local_candidates = [
+        _candidate_from_goal(item["goal"])
+        for item in [
+            *(anchor_result.get("parents") or []),
+            *(anchor_result.get("children") or []),
+        ]
+    ]
+    embedding, embedding_model = await _load_goal_embedding(pool, goal_id)
+    recalled, fts_count, vector_count = await generate_goal_candidates(
+        pool,
+        _candidate_text(anchor),
+        scope_type=context["scope_type"],
+        scope_entity_id=context["scope_entity_id"],
+        embedding=embedding,
+        embedding_model=embedding_model,
+        fts_k=context["candidate_limit"],
+        vector_k=context["candidate_limit"],
+        top_n=context["candidate_limit"],
+        exclude_id=goal_id,
+    )
+    candidates = _deduplicate_candidates(
+        [*local_candidates, *recalled], context["candidate_limit"]
+    )
+    candidates = await _expand_placement_neighbors(
+        pool,
+        candidates,
+        context=context,
+        seed_limit=context["neighbor_seed_limit"],
+        neighbor_limit=context["neighbor_limit"],
+        pools=pools,
+    )
+    rejected_count = 0
+    privacy_safe_candidates: list[Candidate] = []
+    for candidate in candidates:
+        try:
+            privacy_check = await adjudicate_goal_relation(
+                pool,
+                goal_id,
+                candidate.id,
+                access_scope=context["access_scope"],
+                tenant_scope=context["tenant_scope"],
+                pools=pools,
+            )
+        except (GoalRelationScopeError, GoalRelationVisibilityError, GoalRelationSelfError):
+            rejected_count += 1
+            continue
+        if _goal_privacy(privacy_check["specific_goal"]) != _goal_privacy(
+            privacy_check["abstract_goal"]
+        ):
+            rejected_count += 1
+            continue
+        privacy_safe_candidates.append(candidate)
+    decided = await _placement_candidate_decisions(
+        pool, anchor, privacy_safe_candidates, context=context, judge=judge
+    )
+    accepted_count = len(anchor_result.get("parents") or []) + len(
+        anchor_result.get("children") or []
+    )
+    proposed_count = 0
+    uncertain = False
+    for candidate, decision_id, provider, model in decided:
+        relation = candidate.relation
+        if relation == "same":
+            uncertain = True
+            continue
+        if relation not in ("specializes", "generalizes"):
+            continue
+        specific, abstract = (
+            (goal_id, candidate.id)
+            if relation == "specializes"
+            else (candidate.id, goal_id)
+        )
+        try:
+            adjudication = await adjudicate_goal_relation(
+                pool,
+                specific,
+                abstract,
+                access_scope=context["access_scope"],
+                tenant_scope=context["tenant_scope"],
+                pools=pools,
+            )
+        except (GoalRelationScopeError, GoalRelationVisibilityError, GoalRelationSelfError):
+            rejected_count += 1
+            continue
+        if _goal_privacy(adjudication["specific_goal"]) != _goal_privacy(
+            adjudication["abstract_goal"]
+        ):
+            rejected_count += 1
+            continue
+        current_status = await _goal_relation_state(
+            pool, specific, abstract, context["tenant_scope"]
+        )
+        if current_status == "rejected":
+            uncertain = True
+            rejected_count += 1
+            continue
+        if current_status == "accepted":
+            accepted_count += 1
+            continue
+        confidence = float(candidate.confidence or 0.0)
+        high_confidence = confidence >= context["minimum_confidence"]
+        try:
+            if high_confidence:
+                await persist_goal_relation(
+                    pool,
+                    specific,
+                    abstract,
+                    status="accepted",
+                    provenance="identity_resolution",
+                    access_scope=context["access_scope"],
+                    tenant_scope=context["tenant_scope"],
+                    confidence=confidence,
+                    decision_id=decision_id,
+                    decision_metadata={
+                        "operation": "goal_abstraction_placement",
+                        "policy": RELATION_POLICY,
+                        "policy_version": RELATION_POLICY_VERSION,
+                        "authority": RELATION_AUTHORITY,
+                        "relation": relation,
+                        "judge_provider": provider,
+                        "judge_model": model,
+                    },
+                    decided_by=None if decision_id else RELATION_AUTHORITY,
+                    expected_status=current_status,
+                    pools=pools,
+                )
+                accepted_count += 1
+            else:
+                uncertain = True
+                if current_status is None:
+                    await persist_goal_relation(
+                        pool,
+                        specific,
+                        abstract,
+                        status="proposed",
+                        provenance="identity_resolution",
+                        access_scope=context["access_scope"],
+                        tenant_scope=context["tenant_scope"],
+                        confidence=confidence,
+                        decision_id=decision_id,
+                        decision_metadata={
+                            "operation": "goal_abstraction_placement",
+                            "policy": RELATION_POLICY,
+                            "policy_version": RELATION_POLICY_VERSION,
+                            "authority": RELATION_AUTHORITY,
+                            "relation": relation,
+                        },
+                        decided_by=None if decision_id else RELATION_AUTHORITY,
+                        expected_status=current_status,
+                        pools=pools,
+                    )
+                    proposed_count += 1
+        except (
+            GoalRelationCycleError,
+            GoalRelationRedundancyError,
+            GoalRelationScopeError,
+            GoalRelationStatusConflict,
+            GoalRelationVisibilityError,
+            GoalRelationSelfError,
+        ):
+            rejected_count += 1
+            uncertain = True
+    if uncertain:
+        await _enqueue_placement_audit(pool, goal_id, "uncertain", context)
+    if accepted_count == 0:
+        await _enqueue_placement_audit(pool, goal_id, "orphan", context)
+    return {
+        "goal_id": goal_id,
+        "candidates": len(candidates),
+        "fts_candidates": fts_count,
+        "vector_candidates": vector_count,
+        "accepted_edges": accepted_count,
+        "proposed_edges": proposed_count,
+        "rejected_edges": rejected_count,
+        "uncertain": uncertain,
+    }
+
+
+async def handle_goal_abstraction_audit(
+    pool: asyncpg.Pool, payload: dict
+) -> dict[str, Any]:
+    del pool
+    if not isinstance(payload, dict):
+        raise ValueError("goal_abstraction_audit payload must be an object")
+    goal_id = payload.get("goal_id")
+    reason = payload.get("reason")
+    if not isinstance(goal_id, str) or not goal_id.strip():
+        raise ValueError("goal_abstraction_audit payload requires goal_id")
+    if reason not in GOAL_ABSTRACTION_AUDIT_REASONS:
+        raise ValueError("goal_abstraction_audit payload has an invalid reason")
+    return {"goal_id": goal_id, "reason": reason, "audited": True}
+
+
 JOB_HANDLERS: dict[str, JobHandler] = {
     "normalize_trace_event": handle_normalize_trace_event,
     "promote_observation_to_claim": handle_promote_observation_to_claim,
     "ingest_skill_package": handle_ingest_skill_package,
     "ingest_document": handle_ingest_document,
+    GOAL_ABSTRACTION_PLACEMENT_JOB: handle_goal_abstraction_placement,
+    GOAL_ABSTRACTION_AUDIT_JOB: handle_goal_abstraction_audit,
     # 'extract_procedure_from_episode' is registered further down, right
     # after its handler is defined -- that handler sits below the sweep it
     # belongs with, and a forward reference here would be a NameError at
@@ -1737,6 +2458,9 @@ async def process_pending_jobs(
     Returns real counts, not estimates, same discipline as
     process_collector_file()'s own return value.
     """
+    from app.services import benchmark_transfer
+
+    benchmark_transfer.register_handler()
     with _tel.span("ingestion.batch", kind="CHAIN", on_error=_tel.FailureCode.INGESTION_ERROR,
                    worker=worker_id) as sp:
         totals = await _process_pending_jobs(

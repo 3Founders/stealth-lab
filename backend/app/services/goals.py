@@ -49,18 +49,20 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import logging
 import re
 from typing import Any, Optional
 
 import asyncpg
 
-from app.services.access import AccessScope, TenantScope, scope_predicates
+from app.services.access import AccessScope, TenantScope
 from app.services.embeddings import to_pgvector
 from app.services.v0_gate import validate_provenance, validate_scope
 from app.utils.ids import uuid7
 
 _NON_ALNUM_RE = re.compile(r"[^a-z0-9 ]")
 _WHITESPACE_RE = re.compile(r"\s+")
+log = logging.getLogger(__name__)
 
 
 class GoalQualityRejected(ValueError):
@@ -215,6 +217,28 @@ def goal_embedding_text(canonical_name: str, description: Optional[str] = None) 
     return canonical_name
 
 
+def _goal_visibility_predicate(
+    scope: AccessScope, alias: str = "", param_index: int = 1
+) -> tuple[str, list[Any]]:
+    prefix = f"{alias}." if alias else ""
+    if scope.is_unrestricted:
+        return "TRUE", []
+    if scope.viewer_id is None:
+        return f"{prefix}visibility = 'public'", []
+    if not scope.include_private:
+        return f"{prefix}visibility = 'public'", []
+    clauses = [f"{prefix}visibility = 'public'", f"{prefix}owner_id = ${param_index}"]
+    params: list[Any] = [scope.viewer_id]
+    if scope.org_ids:
+        index = param_index + 1
+        clauses.append(
+            f"({prefix}visibility = 'org' AND {prefix}scope_type = 'organization' "
+            f"AND {prefix}scope_entity_id = ANY(${index}::text[]))"
+        )
+        params.append(list(scope.org_ids))
+    return "(" + " OR ".join(clauses) + ")", params
+
+
 async def _find_remote_exact(pool, normalized: str, canonical_name: str, scope_type: str, scope_entity_id) -> Optional[dict]:
     """Exact identity across ALL shards: the global goal_names index (name) and the goal projection
     (aliases) -- then the canonical row is read from its home shard."""
@@ -246,13 +270,16 @@ async def _finish_remote_goal(pool, goal_id: str) -> None:
     from app.services.search_projection import enqueue, project_object
     from app.services.shards import pools_for
 
-    await enqueue(pool, "goal", goal_id)
+    try:
+        await enqueue(pool, "goal", goal_id)
+    except Exception:
+        log.warning("goal %s projection enqueue failed after canonical write", goal_id, exc_info=True)
     try:
         async with pool.acquire() as conn:
             async with conn.transaction():
                 await project_object(conn, "goal", goal_id, pools=pools_for(pool))
-    except Exception:  # noqa: BLE001 -- the outbox entry repairs it
-        pass
+    except Exception:
+        log.warning("goal %s immediate projection failed after canonical write", goal_id, exc_info=True)
 
 
 async def find_or_create_goal(
@@ -374,7 +401,11 @@ async def find_or_create_goal(
     # resolver returns an explicit create outcome without candidate or judge
     # work or a decision row. A model outage with candidates raises unless
     # `on_unavailable="create"`.
-    from app.services.identity_resolution import propose_goal_relations, resolve_goal_identity
+    from app.services.identity_resolution import (
+        enqueue_goal_abstraction_placement,
+        propose_goal_relations,
+        resolve_goal_identity,
+    )
 
     embedding_vec: Optional[list[float]] = None
     embedding_meta = None
@@ -493,7 +524,24 @@ async def find_or_create_goal(
             await pool.execute("DELETE FROM object_routes WHERE object_type = 'goal' AND object_id = $1::uuid", str(goal_id))
         raise
     if outcome.relations:
-        await propose_goal_relations(pool, str(row["id"]), outcome.relations, decision_id=outcome.decision_id)
+        try:
+            await propose_goal_relations(pool, str(row["id"]), outcome.relations, decision_id=outcome.decision_id)
+        except Exception:
+            log.warning("goal %s optional relation proposals failed", row["id"], exc_info=True)
+    try:
+        await enqueue_goal_abstraction_placement(
+            pool,
+            str(row["id"]),
+            identity_decision_id=outcome.decision_id,
+            judge_mode=judge_mode,
+            scope_type=resolved_scope_type,
+            scope_entity_id=resolved_scope_entity_id,
+            owner_id=owner_id,
+            visibility=visibility,
+            goal_version=int(row.get("version", 1)),
+        )
+    except Exception:
+        log.warning("goal %s abstraction placement enqueue failed", row["id"], exc_info=True)
     return {"id": str(row["id"]), "canonical_name": row["canonical_name"], "created": True,
             "home_shard_id": row.get("home_shard_id", home_shard), "decision": outcome.decision}
 
@@ -580,7 +628,6 @@ async def get_goal(
     goal_id: str,
     *,
     scope: Optional[AccessScope] = None,
-    tenant_scope: Optional[TenantScope] = None,
 ) -> Optional[dict[str, Any]]:
     """One Goal plus its live Procedures (ingestion.md Sec 18). Summaries only
     (id/name/status) -- never the full procedure row, keeping this a
@@ -592,9 +639,11 @@ async def get_goal(
     identical to a genuinely missing id (no enumeration signal).
     """
     scope = scope or AccessScope.unrestricted()
-    tenant_scope = tenant_scope or TenantScope.unrestricted()
-    scope_sql, scope_params, next_idx = scope_predicates(scope, tenant_scope, param_index=2)
-    row = await pool.fetchrow(
+    scope_sql, scope_params = _goal_visibility_predicate(scope, param_index=2)
+    from app.services.shards import home_pool
+
+    owner = await home_pool(pool, "goal", goal_id)
+    row = await owner.fetchrow(
         f"SELECT * FROM goals WHERE id = $1 AND t_invalid IS NULL AND {scope_sql}",
         goal_id, *scope_params,
     )

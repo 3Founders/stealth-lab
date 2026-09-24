@@ -16,7 +16,7 @@ from fastapi import HTTPException
 
 import app.api.goals as goals_api
 from app.api.deps import AuthenticatedPrincipal
-from app.services.access import AccessScope
+from app.services.access import AccessScope, TenantScope
 from app.services.v0_gate import V0Violation
 
 PRINCIPAL = AuthenticatedPrincipal(user_id="user-uuid-1", subject="supabase-uid-1", email="c@x.dev")
@@ -125,17 +125,76 @@ def test_inspect_goal_route_404s_on_missing_or_invisible(monkeypatch):
 
     monkeypatch.setattr("app.api.goals.get_goal", fake_get)
     with pytest.raises(HTTPException) as excinfo:
-        _run(goals_api.inspect_goal_route(goal_id="missing", pool=object(), scope=AccessScope.unrestricted()))
+        _run(goals_api.inspect_goal_route(
+            goal_id="missing",
+            pool=object(),
+            scope=AccessScope.unrestricted(),
+            tenant_scope=TenantScope.commons(),
+        ))
     assert excinfo.value.status_code == 404
 
 
 def test_inspect_goal_route_returns_the_full_record(monkeypatch):
+    scope = AccessScope.unrestricted()
+    captured = {}
+
     async def fake_get(pool, goal_id, *, scope):
+        captured["get_access_scope"] = scope
         return {"id": goal_id, "canonical_name": "x"}
 
+    async def fake_enrich(pool, goal, *, access_scope, tenant_scope):
+        captured.update(access_scope=access_scope, tenant_scope=tenant_scope)
+        return {
+            **goal,
+            "abstraction_level": 0,
+            "specializes": [],
+            "abstracts": [],
+            "benchmarks": [],
+        }
+
     monkeypatch.setattr("app.api.goals.get_goal", fake_get)
-    result = _run(goals_api.inspect_goal_route(goal_id="g1", pool=object(), scope=AccessScope.unrestricted()))
+    monkeypatch.setattr("app.api.goals.enrich_goal", fake_enrich)
+    tenant_scope = TenantScope.commons()
+    result = _run(goals_api.inspect_goal_route(
+        goal_id="g1", pool=object(), scope=scope, tenant_scope=tenant_scope,
+    ))
     assert result["id"] == "g1"
+    assert result["specializes"] == [] and result["abstracts"] == []
+    assert result["benchmarks"] == [] and result["abstraction_level"] == 0
+    assert captured["access_scope"] is scope
+    assert "get_tenant_scope" not in captured
+    assert captured["tenant_scope"] is tenant_scope
+
+
+def test_inspect_goal_route_keeps_canonical_goal_when_hierarchy_projection_lags(monkeypatch):
+    tenant_scope = TenantScope.commons()
+    scope = AccessScope.anonymous()
+    canonical = {
+        "id": "g1",
+        "canonical_name": "Canonical goal",
+        "status": "active",
+        "procedures": [],
+    }
+
+    async def fake_get(pool, goal_id, *, scope):
+        return canonical
+
+    async def fake_enrich(pool, goal, *, access_scope, tenant_scope):
+        return None
+
+    monkeypatch.setattr("app.api.goals.get_goal", fake_get)
+    monkeypatch.setattr("app.api.goals.enrich_goal", fake_enrich)
+    result = _run(goals_api.inspect_goal_route(
+        goal_id="g1", pool=object(), scope=scope, tenant_scope=tenant_scope,
+    ))
+
+    assert result["id"] == "g1"
+    assert result["canonical_name"] == "Canonical goal"
+    assert result["specializes"] == []
+    assert result["abstracts"] == []
+    assert result["abstraction_level"] == 0
+    assert result["benchmarks"] == []
+    assert result["coverage"] == {"total_count": 0, "resolved_count": 0, "ratio": 0.0}
 
 
 # --- create_goal_route ---------------------------------------------------
