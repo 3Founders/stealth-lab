@@ -14,7 +14,7 @@ set -euo pipefail
 # Hosted endpoint. Empty until the production URL is fixed; override with
 # STEALTHLAB_MCP_URL=... or --url.
 DEFAULT_URL=""
-PKG="stealthlab-mcp@latest"
+PKG="${STEALTHLAB_MCP_PACKAGE:-stealthlab-mcp@latest}"   # override to pin a version
 
 URL="${STEALTHLAB_MCP_URL:-$DEFAULT_URL}"
 ARGS=()
@@ -38,7 +38,7 @@ node_ok() {
 
 if node_ok; then
   say "==> Registering StealthLab MCP ($URL) with your agents"
-  exec npx -y "$PKG" install --url "$URL" ${ARGS[@]+"${ARGS[@]}"}
+  exec npx -y --package="$PKG" stealthlab-mcp install --url "$URL" ${ARGS[@]+"${ARGS[@]}"}
 fi
 
 say "Node.js 18.17+ not found -- registering what can be done without it."

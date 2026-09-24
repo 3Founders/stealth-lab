@@ -25,6 +25,9 @@ curl -fsSL https://<site>/install.sh | bash -s -- --client claude-code
 $env:STEALTHLAB_CLIENTS = "claude-code,cursor"; irm https://<site>/install.ps1 | iex
 ```
 
+`STEALTHLAB_MCP_PACKAGE` pins what the scripts install (for example
+`stealthlab-mcp@0.1.0`, or a local `.tgz` for testing before a release).
+
 Other commands: `stealthlab-mcp doctor` checks that the endpoint answers
 `initialize`. `stealthlab-mcp uninstall` removes the entries. `--dry-run`
 shows what would change without changing anything.
@@ -72,7 +75,8 @@ copy is written first, and a file that doesn't parse is left untouched.
    the `NPM_TOKEN` secret).
 3. The site serves the installers at `/install.sh` and `/install.ps1`. The
    `prod_frontend` pre-build step copies them from `install/` into
-   `prod_frontend/public/` (`scripts/sync-installers.mjs`).
+   `prod_frontend/public/` (`scripts/sync-installers.mjs`), and writes
+   `NEXT_PUBLIC_KEL_MCP_URL` into them as the default endpoint when it is set.
 
 ## Tests
 

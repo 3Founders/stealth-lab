@@ -44,8 +44,14 @@ npx -y stealthlab-mcp doctor --url https://mcp.<your-domain>/mcp
 
 ## 4. Point the installers at it
 
-Set the same URL in the three places the installers read it from, then
-release:
+**Website one-liners (`curl | bash`, `irm | iex`):** set
+`NEXT_PUBLIC_KEL_MCP_URL=https://mcp.<your-domain>/mcp` on the website
+deployment and rebuild it. The build step (`prod_frontend/scripts/sync-installers.mjs`)
+writes it into the served `install.sh` and `install.ps1` as their default
+endpoint. No repository edit is needed.
+
+**`npx -y stealthlab-mcp install` with no `--url`** reads the default baked into
+the npm package. Set the same URL in the three places below, then release:
 
 1. `packaging/npm/package.json` → `stealthlab.defaultMcpUrl`
 2. `packaging/npm/install/install.sh` → `DEFAULT_URL`

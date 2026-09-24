@@ -6,6 +6,7 @@
 #   $env:STEALTHLAB_MCP_URL = "https://<host>/mcp"     # override the endpoint
 #   $env:STEALTHLAB_CLIENTS = "claude-code,cursor"     # only these clients
 #   $env:STEALTHLAB_TOKEN   = "<token>"                # optional; reads are anonymous
+#   $env:STEALTHLAB_MCP_PACKAGE = "stealthlab-mcp@0.1.0" # optional; pin a version
 #
 # Installs nothing StealthLab-side on this machine: it registers the HOSTED
 # StealthLab MCP endpoint with the coding agents it finds (Claude Code,
@@ -18,7 +19,7 @@
 
     # Hosted endpoint. Empty until the production URL is fixed.
     $DefaultUrl = ""
-    $Pkg = "stealthlab-mcp@latest"
+    $Pkg = if ($env:STEALTHLAB_MCP_PACKAGE) { $env:STEALTHLAB_MCP_PACKAGE } else { "stealthlab-mcp@latest" }  # override to pin a version
 
     $Url = if ($env:STEALTHLAB_MCP_URL) { $env:STEALTHLAB_MCP_URL } else { $DefaultUrl }
     if (-not $Url) {
@@ -38,7 +39,7 @@
 
     if ($nodeOk) {
         Write-Host "==> Registering StealthLab MCP ($Url) with your agents" -ForegroundColor Cyan
-        & npx -y $Pkg @cliArgs
+        & npx -y "--package=$Pkg" stealthlab-mcp @cliArgs
         return
     }
 
