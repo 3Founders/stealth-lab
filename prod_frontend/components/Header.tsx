@@ -85,16 +85,25 @@ export default function Header() {
     }
   };
 
-  const item = (l: (typeof links)[number]) => (
-    <Link
-      key={l.href}
-      href={l.href}
-      aria-current={pathname === l.href || (l.href === "/#about" && aboutInView) ? "page" : undefined}
-      onClick={l.label === "About" ? onAbout : l.label === "Home" ? onHome : () => setOpen(false)}
-    >
-      {l.label}
-    </Link>
-  );
+  const item = (l: (typeof links)[number]) => {
+    const isHome = l.href === "/";
+    const isAbout = l.href === "/#about";
+    const active = isAbout
+      ? pathname === "/" && aboutInView
+      : isHome
+        ? pathname === "/" && !aboutInView
+        : pathname === l.href;
+    return (
+      <Link
+        key={l.href}
+        href={l.href}
+        aria-current={active ? "page" : undefined}
+        onClick={l.label === "About" ? onAbout : l.label === "Home" ? onHome : () => setOpen(false)}
+      >
+        {l.label}
+      </Link>
+    );
+  };
 
   return (
     <div className="nav-wrap">
