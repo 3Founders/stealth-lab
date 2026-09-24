@@ -93,6 +93,21 @@ class GitHubFileAdapter(DocumentSourceAdapter):
             raise RuntimeError(f"GitHub did not resolve {owner}/{repo}@{ref} to a commit SHA")
         return str(sha).lower()
 
+    def _license_spdx(self, owner: str, repo: str) -> str | None:
+        """The repo's GitHub-detected (Licensee) SPDX id, or None when there is no LICENSE
+        file or GitHub couldn't classify it -- the same source github_corpus.py uses for
+        skill packages, so screening.spdx_license_signal can gate documents too."""
+        import json
+
+        status, body = self._http_get(f"https://api.github.com/repos/{owner}/{repo}/license")
+        if status != 200:
+            return None
+        try:
+            spdx = (json.loads(body.decode("utf-8")).get("license") or {}).get("spdx_id")
+        except (ValueError, AttributeError):
+            return None  # best-effort: an unreadable license response never blocks the fetch
+        return str(spdx) if spdx else None
+
     def fetch(self, locator: DocumentLocator) -> RawDocument:
         if not self.can_handle(locator):
             raise AdapterNotApplicable(f"GitHubFileAdapter cannot handle {locator!r}")
@@ -106,10 +121,14 @@ class GitHubFileAdapter(DocumentSourceAdapter):
         if status != 200:
             raise RuntimeError(f"GitHub raw fetch {raw_url} returned {status}")
         uri = f"https://github.com/{owner}/{repo}/blob/{commit}/{safe_path}"
+        metadata = dict(locator.metadata)
+        spdx = self._license_spdx(owner, repo)
+        if spdx:
+            metadata["license_spdx"] = spdx
         return RawDocument(
             source_type=self.source_type, uri=uri, content=body,
             repository=f"{owner}/{repo}", path=safe_path, commit=commit,
-            fetched_at=datetime.now(timezone.utc), metadata=dict(locator.metadata),
+            fetched_at=datetime.now(timezone.utc), metadata=metadata,
         )
 
     def normalize(self, raw: RawDocument) -> CanonicalDocument:
@@ -131,6 +150,7 @@ class GitHubFileAdapter(DocumentSourceAdapter):
             doc,
             source_id=_source_id(raw.uri),
             source_type=self.source_type,
+            license=raw.metadata.get("license_spdx") or doc.license,
         )
 
 

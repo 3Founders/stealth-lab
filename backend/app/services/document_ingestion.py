@@ -102,7 +102,9 @@ def source_artifact_from_canonical_document(doc: CanonicalDocument) -> SourceArt
         commit=doc.version,
         discovered_at=doc.fetched_at,
         source_id=doc.source_id,
-        license_metadata={"license": doc.license} if doc.license else {},
+        # "spdx_id" is the key screening.spdx_license_signal reads (same shape as
+        # github_corpus.py's skill-package license_metadata); "license" kept for existing readers.
+        license_metadata={"license": doc.license, "spdx_id": doc.license} if doc.license else {},
     )
 
 
