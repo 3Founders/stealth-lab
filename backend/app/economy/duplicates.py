@@ -1,106 +1,146 @@
-"""
-Near-duplicate scoring for a new contribution submission (§10 anti-gaming,
-§3 Layer 1). Reuses the exact pattern app/services/dedup.py already
-established (pgvector cosine similarity via the `<=>` operator, embeddings
-built through app.services.embeddings.Embedder) -- this module does not add
-a second similarity engine, it applies the existing one to submissions.
-
-Best-effort throughout: an embedding failure (provider down, no API key
-configured) must never block a submission -- it degrades to "no duplicate
-score available", never a fabricated one.
-"""
+"""Best-effort near-duplicate scoring for contribution submissions."""
 from __future__ import annotations
 
 from typing import Any, Optional
 
 import asyncpg
 
+from app.services.access import AccessScope, TenantScope, scope_predicates
 from app.services.embeddings import Embedder, to_pgvector
 
 
 async def embed_submission_text(embedder: Optional[Embedder], text: str) -> Optional[list[float]]:
-    """Best-effort embedding for a submission's dedup text. None on any failure."""
     if not text or not text.strip():
         return None
     try:
-        e = embedder or Embedder()
-        vec, _meta = await e.embed_one_with_metadata(text, input_type="document")
-        return vec
+        embedder = embedder or Embedder()
+        vector, _metadata = await embedder.embed_one_with_metadata(text, input_type="document")
+        return vector
     except Exception:
         return None
 
 
 def submission_dedup_text(*, name: str, rationale: Optional[str], steps: Optional[list]) -> str:
     step_text = " ".join(
-        s if isinstance(s, str) else str((s or {}).get("description") or (s or {}).get("action") or s)
-        for s in (steps or [])
+        step if isinstance(step, str) else str((step or {}).get("description") or (step or {}).get("action") or step)
+        for step in (steps or [])
     )
     return " ".join(part for part in (name, rationale or "", step_text) if part).strip()
 
 
+def _empty_result(method: str) -> dict[str, Any]:
+    return {
+        "best_match_id": None,
+        "best_match_kind": None,
+        "score": None,
+        "candidates": [],
+        "method": method,
+    }
+
+
+def _predicates(
+    scope: AccessScope,
+    alias: str,
+    param_index: int,
+    tenant_scope: Optional[TenantScope] = None,
+) -> tuple[str, list[Any], int]:
+    return scope_predicates(
+        scope,
+        tenant_scope or TenantScope.unrestricted(),
+        alias=alias,
+        param_index=param_index,
+    )
+
+
 async def score_procedure_duplicate(
-    pool: asyncpg.Pool, *, goal_id: str, embedding: Optional[list[float]], top_k: int = 3,
+    pool: asyncpg.Pool,
+    *,
+    goal_id: str,
+    embedding: Optional[list[float]],
+    top_k: int = 3,
+    scope: AccessScope = AccessScope.anonymous(),
+    tenant_scope: Optional[TenantScope] = None,
 ) -> dict[str, Any]:
-    """
-    Best matching existing Procedure submission or accepted Procedure for
-    the SAME goal, by cosine similarity. Returns
-    {"best_match_id", "best_match_kind", "score", "candidates"} -- score is
-    None (not 0.0) when nothing could be compared, so a caller never reads
-    "no evidence of duplication" as "confirmed original."
-    """
     if embedding is None:
-        return {"best_match_id": None, "best_match_kind": None, "score": None, "candidates": [], "method": "skipped_no_embedding"}
-    vec = to_pgvector(embedding)
+        return _empty_result("skipped_no_embedding")
+    scope = scope or AccessScope.anonymous()
+    vector = to_pgvector(embedding)
+    submission_sql, submission_params, next_index = _predicates(scope, "s", 3)
+    submission_goal_sql, submission_goal_params, next_index = _predicates(
+        scope, "sg", next_index
+    )
+    procedure_sql, procedure_params, next_index = _predicates(
+        scope, "p", next_index, tenant_scope
+    )
+    procedure_goal_sql, procedure_goal_params, next_index = _predicates(
+        scope, "pg", next_index
+    )
+    params = [
+        vector,
+        goal_id,
+        *submission_params,
+        *submission_goal_params,
+        *procedure_params,
+        *procedure_goal_params,
+    ]
+    limit_index = next_index
     rows = await pool.fetch(
-        """
-        SELECT id, 'submission' AS kind, 1 - (embedding <=> $1::vector) AS similarity
-        FROM procedure_submissions
-        WHERE goal_id = $2 AND embedding IS NOT NULL AND status <> 'rejected'
+        f"""
+        SELECT s.id, 'submission' AS kind, 1 - (s.embedding <=> $1::vector) AS similarity
+        FROM procedure_submissions s
+        JOIN goals sg ON sg.id = s.goal_id
+        WHERE s.goal_id = $2 AND s.embedding IS NOT NULL AND s.status <> 'rejected'
+          AND sg.t_invalid IS NULL AND {submission_sql} AND {submission_goal_sql}
         UNION ALL
         SELECT p.id, 'procedure' AS kind, 1 - (p.embedding <=> $1::vector) AS similarity
         FROM procedures p
-        JOIN solutions s ON s.target_id = p.id AND s.target_table = 'procedures'
-        WHERE s.goal_id = $2 AND p.embedding IS NOT NULL AND p.t_invalid IS NULL
+        JOIN solutions sol ON sol.target_table = 'procedures'
+          AND (sol.target_id = p.id OR sol.target_id = p.procedure_id)
+          AND sol.status = 'active'
+        JOIN goals pg ON pg.id = sol.goal_id
+        WHERE sol.goal_id = $2 AND p.embedding IS NOT NULL AND p.t_invalid IS NULL
+          AND pg.t_invalid IS NULL AND {procedure_sql} AND {procedure_goal_sql}
         ORDER BY similarity DESC
-        LIMIT $3
+        LIMIT ${limit_index}
         """,
-        vec, goal_id, top_k,
+        *params,
+        top_k,
     )
     if not rows:
-        return {"best_match_id": None, "best_match_kind": None, "score": None, "candidates": [], "method": "cosine"}
+        return _empty_result("cosine")
     best = rows[0]
     return {
         "best_match_id": str(best["id"]),
         "best_match_kind": best["kind"],
         "score": float(best["similarity"]),
-        "candidates": [{"id": str(r["id"]), "kind": r["kind"], "similarity": float(r["similarity"])} for r in rows],
+        "candidates": [
+            {"id": str(row["id"]), "kind": row["kind"], "similarity": float(row["similarity"])}
+            for row in rows
+        ],
         "method": "cosine",
     }
 
 
 async def score_against_parent(
-    pool: asyncpg.Pool, *, parent_procedure_row_id: str, embedding: Optional[list[float]],
+    pool: asyncpg.Pool,
+    *,
+    parent_procedure_row_id: str,
+    embedding: Optional[list[float]],
+    scope: AccessScope = AccessScope.anonymous(),
+    tenant_scope: Optional[TenantScope] = None,
 ) -> dict[str, Any]:
-    """
-    §3 of the harden+consolidate directive: "is this actually a meaningful
-    improvement over the DECLARED PARENT" -- a different, narrower question
-    than score_procedure_duplicate's corpus-wide scan. An improvement
-    submission is compared specifically against the one procedure it
-    claims to improve, not against whichever sibling happens to be
-    nearest in the whole goal's corpus (which could miss a near-identical
-    rewrite of the parent if something else in the corpus is even closer,
-    or flag a false positive against an unrelated sibling).
-
-    Returns {"score": float|None, "method": str}. `score` is None when
-    either side has no embedding to compare -- never fabricated as 0
-    ("definitely different") or 1 ("definitely identical").
-    """
     if embedding is None:
         return {"score": None, "method": "skipped_no_embedding"}
-    vec = to_pgvector(embedding)
+    scope = scope or AccessScope.anonymous()
+    visibility_sql, visibility_params, _ = _predicates(
+        scope, "p", 3, tenant_scope
+    )
     similarity = await pool.fetchval(
-        "SELECT 1 - (embedding <=> $1::vector) FROM procedures WHERE id = $2 AND embedding IS NOT NULL",
-        vec, parent_procedure_row_id,
+        f"SELECT 1 - (p.embedding <=> $1::vector) FROM procedures p "
+        f"WHERE p.id = $2 AND p.embedding IS NOT NULL AND p.t_invalid IS NULL AND {visibility_sql}",
+        to_pgvector(embedding),
+        parent_procedure_row_id,
+        *visibility_params,
     )
     if similarity is None:
         return {"score": None, "method": "parent_has_no_embedding"}
@@ -108,29 +148,44 @@ async def score_against_parent(
 
 
 async def score_benchmark_duplicate(
-    pool: asyncpg.Pool, *, goal_id: str, embedding: Optional[list[float]], top_k: int = 3,
+    pool: asyncpg.Pool,
+    *,
+    goal_id: str,
+    embedding: Optional[list[float]],
+    top_k: int = 3,
+    scope: AccessScope = AccessScope.anonymous(),
+    tenant_scope: Optional[TenantScope] = None,
 ) -> dict[str, Any]:
-    """Same pattern as score_procedure_duplicate, scoped to Benchmark submissions + accepted Benchmarks."""
     if embedding is None:
-        return {"best_match_id": None, "best_match_kind": None, "score": None, "candidates": [], "method": "skipped_no_embedding"}
-    vec = to_pgvector(embedding)
+        return _empty_result("skipped_no_embedding")
+    scope = scope or AccessScope.anonymous()
+    submission_sql, submission_params, next_index = _predicates(scope, "s", 3)
+    goal_sql, goal_params, next_index = _predicates(scope, "g", next_index)
+    params = [to_pgvector(embedding), goal_id, *submission_params, *goal_params]
+    limit_index = next_index
     rows = await pool.fetch(
-        """
-        SELECT id, 'submission' AS kind, 1 - (embedding <=> $1::vector) AS similarity
-        FROM benchmark_submissions
-        WHERE goal_id = $2 AND embedding IS NOT NULL AND status <> 'rejected'
+        f"""
+        SELECT s.id, 'submission' AS kind, 1 - (s.embedding <=> $1::vector) AS similarity
+        FROM benchmark_submissions s
+        JOIN goals g ON g.id = s.goal_id
+        WHERE s.goal_id = $2 AND s.embedding IS NOT NULL AND s.status <> 'rejected'
+          AND g.t_invalid IS NULL AND {submission_sql} AND {goal_sql}
         ORDER BY similarity DESC
-        LIMIT $3
+        LIMIT ${limit_index}
         """,
-        vec, goal_id, top_k,
+        *params,
+        top_k,
     )
     if not rows:
-        return {"best_match_id": None, "best_match_kind": None, "score": None, "candidates": [], "method": "cosine"}
+        return _empty_result("cosine")
     best = rows[0]
     return {
         "best_match_id": str(best["id"]),
         "best_match_kind": best["kind"],
         "score": float(best["similarity"]),
-        "candidates": [{"id": str(r["id"]), "kind": r["kind"], "similarity": float(r["similarity"])} for r in rows],
+        "candidates": [
+            {"id": str(row["id"]), "kind": row["kind"], "similarity": float(row["similarity"])}
+            for row in rows
+        ],
         "method": "cosine",
     }

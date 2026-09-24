@@ -45,13 +45,21 @@ from typing import Any, Awaitable, Callable, Optional
 import asyncpg
 
 from app.economy import constants as c
+from app.services.access import AccessScope, TenantScope, scope_predicates
 from app.services.procedures import OUTCOME_WRITER_STAMP
 from app.utils.ids import uuid7
 
 LLMEvaluator = Callable[[dict[str, Any]], Awaitable[dict[str, Any]]]
 
 
-def evaluate_layer1(*, name: str, steps: Optional[list], rationale: Optional[str]) -> dict[str, Any]:
+def evaluate_layer1(
+    *,
+    name: str,
+    steps: Optional[list],
+    rationale: Optional[str],
+    preconditions: Optional[list] = None,
+    expected_outcome: Optional[dict] = None,
+) -> dict[str, Any]:
     """Deterministic/schema checks only -- no network call, no judgment call."""
     issues: list[str] = []
     if not name or not name.strip():
@@ -60,6 +68,10 @@ def evaluate_layer1(*, name: str, steps: Optional[list], rationale: Optional[str
         issues.append("missing_steps")
     if not rationale or not rationale.strip():
         issues.append("missing_rationale")
+    if preconditions is not None and (not isinstance(preconditions, list) or not preconditions):
+        issues.append("missing_preconditions")
+    if expected_outcome is not None and (not isinstance(expected_outcome, dict) or not expected_outcome):
+        issues.append("missing_expected_outcome")
     return {"passed": not issues, "issues": issues, "method": "deterministic_v1"}
 
 
@@ -181,6 +193,8 @@ async def record_usage_event(
     execution_run_id: Optional[str] = None, evidence_id: Optional[str] = None,
     benchmark_id: Optional[str] = None, context_key: Optional[str] = None,
     metadata: Optional[dict] = None,
+    access_scope: AccessScope = AccessScope.unrestricted(),
+    tenant_scope: Optional[TenantScope] = None,
 ) -> Optional[dict[str, Any]]:
     """
     Records one real execution of a Procedure. Never called for a view,
@@ -197,7 +211,16 @@ async def record_usage_event(
     execution_run_id/evidence_id are given but don't establish what they
     claim.
     """
-    proc = await pool.fetchrow("SELECT procedure_id, created_by, achieves_goal_id FROM procedures WHERE id = $1", procedure_row_id)
+    access_scope = access_scope or AccessScope.unrestricted()
+    visibility_sql, visibility_params, _ = scope_predicates(
+        access_scope, tenant_scope or TenantScope.unrestricted(), alias="p", param_index=2
+    )
+    proc = await pool.fetchrow(
+        f"SELECT p.procedure_id, p.created_by, p.achieves_goal_id FROM procedures p "
+        f"WHERE p.id = $1 AND p.t_invalid IS NULL AND {visibility_sql}",
+        procedure_row_id,
+        *visibility_params,
+    )
     if proc is None:
         return None
     contributor_id = proc["created_by"] or "unknown"
@@ -212,14 +235,34 @@ async def record_usage_event(
             execution_run_id=execution_run_id, evidence_id=evidence_id,
         )
 
-    goal_id = None
+    goal_id = proc["achieves_goal_id"] if "achieves_goal_id" in proc else None
+    if goal_id is not None:
+        goal_id = str(goal_id)
     if benchmark_id is not None:
-        goal_id = await pool.fetchval("SELECT goal_id FROM benchmarks WHERE id = $1", benchmark_id)
+        benchmark_goal_id = await pool.fetchval(
+            "SELECT goal_id FROM benchmarks WHERE id = $1", benchmark_id
+        )
+        if benchmark_goal_id is not None:
+            benchmark_goal_id = str(benchmark_goal_id)
+            if goal_id is not None and goal_id != benchmark_goal_id:
+                raise VerificationMismatch("benchmark does not belong to the procedure's Goal")
+            goal_id = benchmark_goal_id
     if goal_id is None:
         goal_id = await pool.fetchval(
-            "SELECT goal_id FROM solutions WHERE target_id = $1 AND target_table = 'procedures' LIMIT 1",
+            "SELECT goal_id FROM solutions WHERE target_id = $1 "
+            "AND target_table = 'procedures' AND status = 'active' LIMIT 1",
+            str(proc["procedure_id"]),
+        )
+        if goal_id is not None:
+            goal_id = str(goal_id)
+    if goal_id is None:
+        goal_id = await pool.fetchval(
+            "SELECT goal_id FROM solutions WHERE target_id = $1 "
+            "AND target_table = 'procedures' AND status = 'active' LIMIT 1",
             procedure_row_id,
         )
+        if goal_id is not None:
+            goal_id = str(goal_id)
 
     row_id = str(uuid7())
     try:

@@ -81,7 +81,7 @@ describe("kel-api economy fetchers — real endpoints, real params", () => {
     vi.stubGlobal("fetch", fetchMock);
     const { createProcedureSubmission } = await import("@/lib/kel-api");
     await mockToken("t");
-    await createProcedureSubmission({ goal_id: "g1", submission_type: "new", name: "n", steps: ["s"] });
+    await createProcedureSubmission({ goal_id: "g1", submission_type: "new", name: "n", steps: ["s"], rationale: "because", preconditions: [{ subject: "repo", predicate: "exists", value: true }], expected_outcome: { summary: "done" } });
     const [url, init] = fetchMock.mock.calls[0];
     expect(String(url)).toBe("http://backend.test/v1/economy/procedure-submissions");
     const body = JSON.parse((init as RequestInit).body as string);
@@ -97,11 +97,45 @@ describe("kel-api economy fetchers — real endpoints, real params", () => {
     vi.stubGlobal("fetch", fetchMock);
     const { createBenchmarkSubmission } = await import("@/lib/kel-api");
     await mockToken("t");
-    await createBenchmarkSubmission({ goal_id: "g1", name: "bench" });
+    await createBenchmarkSubmission({ goal_id: "g1", name: "bench", description: "why", success_criteria: { summary: "passes" }, failure_criteria: ["fails"], scope_conditions: ["same runtime"] });
     const [, init] = fetchMock.mock.calls[0];
     const body = JSON.parse((init as RequestInit).body as string);
     expect(body).not.toHaveProperty("procedure_id");
     expect(body).not.toHaveProperty("procedure_row_id");
     expect(body).not.toHaveProperty("submitted_by");
+  });
+
+  it("getGoals and findGoals forward resolution and offset pagination", async () => {
+    vi.resetModules();
+    const { getGoals, findGoals } = await import("@/lib/kel-api");
+    const listPath = await capturedPath(() => getGoals({ limit: 7, offset: 14, resolved: "unresolved" }));
+    const findPath = await capturedPath(() => findGoals("find references", { limit: 5, offset: 10, resolved: "resolved" }));
+    expect(listPath).toBe("/v1/goals?limit=7&offset=14&resolved=unresolved");
+    expect(findPath).toBe("/v1/goals/find?q=find%20references&limit=5&offset=10&resolved=resolved");
+  });
+
+  it("strips client provenance and visibility from contribution payloads", async () => {
+    vi.resetModules();
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response('{"id":"s1","status":"candidate"}', { status: 200 }))
+      .mockResolvedValueOnce(new Response('{"id":"b1","status":"candidate"}', { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const { createProcedureSubmission, createBenchmarkSubmission } = await import("@/lib/kel-api");
+    await mockToken("t");
+    await createProcedureSubmission({
+      goal_id: "g1", submission_type: "new", name: "n", steps: ["s"], rationale: "because",
+      preconditions: [{ subject: "repo", predicate: "exists", value: true }], expected_outcome: { summary: "done" },
+      provenance: "spoofed", visibility: "private",
+    } as never);
+    await createBenchmarkSubmission({
+      goal_id: "g1", name: "bench", description: "why", success_criteria: { summary: "passes" },
+      failure_criteria: ["fails"], scope_conditions: ["same runtime"], provenance: "spoofed", visibility: "private",
+    } as never);
+    const procedureBody = JSON.parse((fetchMock.mock.calls[0][1] as RequestInit).body as string);
+    const benchmarkBody = JSON.parse((fetchMock.mock.calls[1][1] as RequestInit).body as string);
+    expect(procedureBody).not.toHaveProperty("provenance");
+    expect(procedureBody).not.toHaveProperty("visibility");
+    expect(benchmarkBody).not.toHaveProperty("provenance");
+    expect(benchmarkBody).not.toHaveProperty("visibility");
   });
 });

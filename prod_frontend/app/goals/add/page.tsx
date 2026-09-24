@@ -12,11 +12,11 @@ export default function AddGoalPage() {
 
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
+  const [rationale, setRationale] = useState("");
+  const [success, setSuccess] = useState("");
   const [objective, setObjective] = useState("");
   const [constraints, setConstraints] = useState<string[]>([""]);
 
-  // near_matches puts the flow on hold: the person either picks one of the
-  // candidates below, or explicitly re-submits with allow_create_anyway.
   const [candidates, setCandidates] = useState<Goal[] | null>(null);
   const [created, setCreated] = useState<Goal | null>(null);
   const [result, setResult] = useState<ApiState<CreateGoalResult>>({ kind: "idle" });
@@ -30,8 +30,10 @@ export default function AddGoalPage() {
     const r = await createGoal({
       canonical_name: title.trim(),
       description: description.trim() || undefined,
+      rationale: rationale.trim(),
       objective: objective.trim() || undefined,
-      constraints: constraints.map((c) => c.trim()).filter(Boolean),
+      expected_outcome: { summary: success.trim() },
+      constraints: constraints.map((constraint) => constraint.trim()).filter(Boolean),
       allow_create_anyway: allowCreateAnyway || undefined,
     });
     setResult(r);
@@ -77,6 +79,7 @@ export default function AddGoalPage() {
         <section className="frame grid" style={{ paddingBottom: 120 }}>
           <div className="cform-result">
             <b>{created.canonical_name}</b>
+            {created.created_by && <p className="small dim">Attributed to {created.created_by}.</p>}
             {result.data.outcome === "matched" ? (
               <p>This goal already exists. Anyone can contribute a way to accomplish it, or a benchmark to check whether it&rsquo;s been accomplished.</p>
             ) : (
@@ -100,13 +103,13 @@ export default function AddGoalPage() {
         <section className="frame grid" style={{ paddingBottom: 120, rowGap: 28 }}>
           {candidates.length > 0 && (
             <ul className="list" style={{ gridColumn: "1 / span 12" }} aria-label="Near matches">
-              {candidates.map((c, i) => (
-                <li key={c.id}>
-                  <Link href={`/goals/${c.id}`}>
-                    <span className="n">{String(i + 1).padStart(2, "0")}</span>
+              {candidates.map((candidate, index) => (
+                <li key={candidate.id}>
+                  <Link href={`/goals/${candidate.id}`}>
+                    <span className="n">{String(index + 1).padStart(2, "0")}</span>
                     <div>
-                      <h3>{c.canonical_name}</h3>
-                      {c.description && <p className="desc">{c.description}</p>}
+                      <h3>{candidate.canonical_name}</h3>
+                      {candidate.description && <p className="desc">{candidate.description}</p>}
                     </div>
                     <span className="caption dim" aria-hidden="true">→</span>
                   </Link>
@@ -115,7 +118,7 @@ export default function AddGoalPage() {
             </ul>
           )}
           <div className="cform-submit" style={{ gridColumn: "1 / span 12" }}>
-            <button className="btn-ink" type="button" disabled={submitting} onClick={(e) => submit(e, true)}>
+            <button className="btn-ink" type="button" disabled={submitting} onClick={(event) => submit(event, true)}>
               <span>{submitting ? "Adding…" : "None of these — create anyway"}</span><span className="sq" aria-hidden="true">→</span>
             </button>
             <button type="button" className="small dim" style={{ background: "none", border: "none", textDecoration: "underline", cursor: "pointer" }} onClick={() => setCandidates(null)}>
@@ -139,26 +142,36 @@ export default function AddGoalPage() {
         <form className="cform" onSubmit={submit}>
           <div className="cfield">
             <label htmlFor="title">Title</label>
-            <input id="title" type="text" value={title} onChange={(e) => setTitle(e.target.value)} required maxLength={500} placeholder="e.g. Deploy a service to staging" />
+            <input id="title" type="text" value={title} onChange={(event) => setTitle(event.target.value)} required maxLength={500} placeholder="e.g. Deploy a service to staging" />
           </div>
 
           <div className="cfield">
             <label htmlFor="description">Description</label>
-            <textarea id="description" value={description} onChange={(e) => setDescription(e.target.value)} placeholder="What is this, and why does it matter?" />
+            <textarea id="description" value={description} onChange={(event) => setDescription(event.target.value)} placeholder="What is this, and why does it matter?" />
+          </div>
+
+          <div className="cfield">
+            <label htmlFor="goal-rationale">Rationale</label>
+            <textarea id="goal-rationale" value={rationale} onChange={(event) => setRationale(event.target.value)} required placeholder="Why is this worth accomplishing?" />
+          </div>
+
+          <div className="cfield">
+            <label htmlFor="goal-success">Success</label>
+            <textarea id="goal-success" value={success} onChange={(event) => setSuccess(event.target.value)} required placeholder="What observable outcome means this goal is accomplished?" />
           </div>
 
           <div className="cfield">
             <label htmlFor="objective">Objective</label>
-            <textarea id="objective" value={objective} onChange={(e) => setObjective(e.target.value)} placeholder="What outcome counts as this being accomplished?" />
+            <textarea id="objective" value={objective} onChange={(event) => setObjective(event.target.value)} placeholder="What outcome counts as this being accomplished?" />
           </div>
 
           <div className="cfield">
             <label>Constraints</label>
-            {constraints.map((c, i) => (
-              <div className="cstep-row" key={i}>
-                <input type="text" value={c} onChange={(e) => setConstraints(constraints.map((x, j) => (j === i ? e.target.value : x)))} placeholder="Something any way to accomplish this must respect" />
+            {constraints.map((constraint, index) => (
+              <div className="cstep-row" key={index}>
+                <input type="text" value={constraint} onChange={(event) => setConstraints(constraints.map((value, valueIndex) => valueIndex === index ? event.target.value : value))} placeholder="Something any way to accomplish this must respect" />
                 {constraints.length > 1 && (
-                  <button type="button" className="cstep-remove" onClick={() => setConstraints(constraints.filter((_, j) => j !== i))} aria-label={`Remove constraint ${i + 1}`}>×</button>
+                  <button type="button" className="cstep-remove" onClick={() => setConstraints(constraints.filter((_, valueIndex) => valueIndex !== index))} aria-label={`Remove constraint ${index + 1}`}>×</button>
                 )}
               </div>
             ))}
@@ -166,7 +179,7 @@ export default function AddGoalPage() {
           </div>
 
           <div className="cform-submit">
-            <button className="btn-ink" type="submit" disabled={submitting || !title.trim()}>
+            <button className="btn-ink" type="submit" disabled={submitting || !title.trim() || !rationale.trim() || !success.trim()}>
               <span>{submitting ? "Checking…" : "Add goal"}</span><span className="sq" aria-hidden="true">→</span>
             </button>
             {result.kind === "unauthenticated" && <span className="small dim">Your session expired. <Link href="/sign-in" style={{ textDecoration: "underline" }}>Sign in again</Link>.</span>}

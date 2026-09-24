@@ -28,6 +28,7 @@ import asyncpg
 
 from app.services.access import AccessScope
 from app.services.applicability import _CANDIDATE_BASE_WHERE, PROCEDURE_COLS_NO_HEAVY, check_hard_constraints
+from app.services.goal_ranking import ProcedureRankingService
 from app.services.goals import normalize_goal_name
 
 DEFAULT_MAX_DEPTH = 6
@@ -62,8 +63,8 @@ class ResolvedGoalNode:
     verification_requirement: dict = field(default_factory=dict)
     procedure: Optional[dict] = None
     # Real other feasible Procedures linked to this same Goal, beyond the
-    # one chosen (already-ordered verified-first/recency-second, same
-    # order `_feasible_procedures_for_goal` returned) -- kept, not
+    # one chosen (in the order established by the central ranking, or the
+    # original order when that read is unavailable) -- kept, not
     # discarded, so the planner agent can fall back to an alternate
     # decomposition strategy when the chosen one fails (Prompt 2 Sec 10:
     # "alternative Procedure"), the same "keep the real runner-ups" discipline. Each entry is the real procedure ROW (id,
@@ -148,15 +149,61 @@ async def _feasible_procedures_for_goal(
     return results
 
 
+async def _rank_feasible_procedures(
+    pool: asyncpg.Pool,
+    feasible: list[dict],
+    *,
+    current_scope: dict,
+    access_scope: AccessScope,
+) -> list[dict]:
+    if len(feasible) < 2:
+        return feasible
+    try:
+        service = ProcedureRankingService(
+            pool,
+            scope=access_scope,
+            current_scope=current_scope,
+            require_verified=False,
+        )
+        procedure_ids = [str(proc["id"]) for proc in feasible]
+        ranker = getattr(service, "rank_for_goal", None)
+        if not callable(ranker):
+            ranker = service.rank
+        ranked = await ranker(procedure_ids)
+    except Exception:
+        return feasible
+    if not isinstance(ranked, (list, tuple)) or not ranked:
+        return feasible
+    ranks: dict[str, int] = {}
+    for position, result in enumerate(ranked):
+        if not isinstance(result, dict):
+            return feasible
+        row_id = result.get("procedure_row_id") or result.get("id")
+        if row_id is None:
+            continue
+        raw_rank = result.get("rank")
+        try:
+            rank = int(raw_rank) if raw_rank is not None else position + 1
+        except (TypeError, ValueError):
+            rank = position + 1
+        ranks.setdefault(str(row_id), rank)
+    if not ranks:
+        return feasible
+    fallback_rank = max(ranks.values()) + 1
+    return sorted(
+        feasible,
+        key=lambda proc: ranks.get(str(proc["id"]), fallback_rank),
+    )
+
+
 def _procedure_cost_score(proc: dict) -> Optional[float]:
     """Real, named extension point for Prompt 2 Sec 11's Procedure-level
     cost routing -- NOT implemented yet, by explicit founder direction
     ("rank it by cost eventually, but for now don't estimate -- create a
     placeholder we can plug a real scoring function into, don't add
-    anything for now"). Always returns `None` today, so `resolve_goal()`'s
-    existing verified-first/recency-second ordering (`feasible[0]`) is
-    completely unchanged -- this function is called but its result does
-    not yet affect selection.
+    anything for now"). Always returns `None` today, so this hook does not
+    affect the central ranking or selection -- it is called but its result
+    does not yet participate in routing.
 
     A real version later will need to eagerly resolve+cost EVERY feasible
     candidate's own subtree -- a real cost/complexity tradeoff, deliberately
@@ -320,10 +367,12 @@ async def resolve_goal(
     current_scope = context.get("current_scope") or {}
     candidates = await _feasible_procedures_for_goal(pool, goal_id, current_scope=current_scope, access_scope=scope)
     feasible = [p for p, ok in candidates if ok]
+    feasible = await _rank_feasible_procedures(
+        pool, feasible, current_scope=current_scope, access_scope=scope,
+    )
     # Sec 11 cost-routing hook (real, inert -- see _procedure_cost_score's
     # own docstring): called so it is exercised/discoverable, but its
-    # result does not affect selection today. `proc = feasible[0]` below
-    # stays exactly the existing verified-first/recency-second pick.
+    # result does not affect the central ranking or selection today.
     for _proc in feasible:
         _proc["_cost_score"] = _procedure_cost_score(_proc)
     # Repo facts (find_ways, final_thing.md): an optional request-scoped

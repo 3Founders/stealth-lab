@@ -11,16 +11,57 @@ import { API_URL, apiDelete, apiGet, apiPost, apiPut, apiUpload, type ApiState }
 
 export type Row = Record<string, unknown>;
 
+export type GoalResolution = "all" | "resolved" | "unresolved";
+
+export interface GoalRankingSignal {
+  label: string;
+  value: number | null;
+  available: boolean;
+}
+
+export interface GoalRanking {
+  score: number | null;
+  state: string;
+  signals: Record<string, GoalRankingSignal>;
+  explanation: string;
+}
+
 export interface Goal extends Row {
   id: string;
   canonical_name: string;
   description?: string | null;
+  rationale?: string | null;
   objective?: string | null;
+  expected_outcome?: Row | null;
+  verification_requirement?: Row | null;
   constraints?: unknown[];
   status?: string;
+  resolved_at?: string | null;
+  ranking?: GoalRanking | null;
+  created_by?: string | null;
   proposer?: string | null;
+  scope_type?: string | null;
+  scope_entity_id?: string | null;
+  visibility?: string | null;
+  owner_id?: string | null;
   metadata?: Row;
+  t_created?: string | null;
 }
+
+export interface GoalPage {
+  goals: Goal[];
+  has_more: boolean;
+}
+
+export interface GoalListOptions {
+  limit?: number;
+  offset?: number;
+  resolved?: GoalResolution;
+  status?: string;
+}
+
+export type GoalResolutionFilter = GoalResolution;
+export type GoalListParams = GoalListOptions;
 
 export interface Benchmark extends Row {
   id: string;
@@ -34,6 +75,7 @@ export interface Benchmark extends Row {
   comparison_policy?: Row;
   status?: string;
   frozen_at?: string | null;
+  created_by?: string | null;
 }
 
 export interface Solution extends Row {
@@ -42,6 +84,7 @@ export interface Solution extends Row {
   solution_type: "procedure" | "task_graph" | "task";
   target_id: string;
   target_table: string;
+  version?: number;
   status?: string;
   proposer?: string | null;
 }
@@ -52,20 +95,16 @@ export interface Evaluation extends Row {
   benchmark_id: string;
   solution_id: string;
   procedure_id?: string | null;
+  procedure_version?: number | null;
   run_count?: number;
   aggregate_result?: "pass" | "fail" | "partial" | "inconclusive" | null;
   status?: string;
+  metrics?: Row | null;
+  verification_summary?: Row | null;
   created_at?: string;
   completed_at?: string | null;
 }
 
-/**
- * Canonical evidence trust summary (backend: app.services.evidence_trust.summarize).
- * success_count/failure_count are kept for older readers but now mean
- * VERIFIED specifically — verified_success/verified_failure are the same
- * numbers under their honest names; claimed_success/unknown are real,
- * separate buckets, never folded into "success".
- */
 export interface EvidenceSummary {
   total?: number;
   outcome_bearing_total?: number;
@@ -85,7 +124,12 @@ export interface ProcedureDetail extends Row {
   goal?: string | null;
   display_name?: string | null;
   display_description?: string | null;
+  rationale?: string | null;
   applicability_summary?: string | null;
+  expected_outcome?: Row | null;
+  expected_effects?: unknown[];
+  postconditions?: unknown[];
+  failure_conditions?: unknown[];
   failure_modes?: unknown[];
   steps?: unknown[];
   preconditions?: unknown[];
@@ -113,21 +157,94 @@ export interface ProcedureVersionRow extends Row {
 
 export interface EvidenceRow extends Row {
   id: string;
-  outcome?: string;
-  created_at?: string;
-  summary?: string;
-  description?: string;
+  evidence_type?: string | null;
+  target_type?: string | null;
+  target_id?: string | null;
+  target_version?: number | null;
+  direction?: string | null;
+  outcome_status?: string | null;
+  success_criteria?: Row | null;
+  failure_class?: string | null;
+  independence_group?: string | null;
+  context_key?: string | null;
+  created_by?: string | null;
+  source_id?: string | null;
+  content_ref?: string | null;
+  extractor_version?: string | null;
+  t_valid?: string | null;
+  t_created?: string | null;
+  t_invalid?: string | null;
 }
 
 const j = (v: unknown) => encodeURIComponent(String(v));
 
-export const getGoals = (limit = 100, signal?: AbortSignal) =>
-  apiGet<{ goals: Goal[] }>(`/v1/goals?limit=${limit}`, signal);
+function goalPage(data: GoalPage | Goal[]): GoalPage {
+  if (Array.isArray(data)) return { goals: data, has_more: false };
+  return { goals: data.goals ?? [], has_more: Boolean(data.has_more) };
+}
+
+function goalQuery(options: GoalListOptions): string {
+  const params = new URLSearchParams();
+  params.set("limit", String(Math.max(1, Math.min(options.limit ?? 50, 200))));
+  params.set("offset", String(Math.max(0, options.offset ?? 0)));
+  params.set("resolved", options.resolved ?? "all");
+  if (options.status) params.set("status", options.status);
+  return params.toString();
+}
+
+function normalizeGoalArguments(
+  limitOrOptions: number | GoalListOptions,
+  signalOrOffset?: AbortSignal | number,
+  resolution?: GoalResolution | AbortSignal,
+  maybeSignal?: AbortSignal,
+): { options: GoalListOptions; signal?: AbortSignal } {
+  const filter = typeof resolution === "string" ? resolution : undefined;
+  const signalFromResolution = typeof resolution === "object" ? resolution : undefined;
+  if (typeof limitOrOptions === "object") {
+    return { options: limitOrOptions, signal: signalOrOffset as AbortSignal | undefined };
+  }
+  if (typeof signalOrOffset === "number") {
+    return {
+      options: { limit: limitOrOptions, offset: signalOrOffset, resolved: filter ?? "all" },
+      signal: signalFromResolution ?? maybeSignal,
+    };
+  }
+  return {
+    options: { limit: limitOrOptions, resolved: filter ?? "all" },
+    signal: signalFromResolution ?? (signalOrOffset as AbortSignal | undefined),
+  };
+}
+
+export function getGoals(
+  limitOrOptions: number | GoalListOptions = 50,
+  signalOrOffset?: AbortSignal | number,
+  resolution?: GoalResolution | AbortSignal,
+  signal?: AbortSignal,
+) {
+  const normalized = normalizeGoalArguments(limitOrOptions, signalOrOffset, resolution, signal);
+  return apiGet<GoalPage | Goal[]>(`/v1/goals?${goalQuery(normalized.options)}`, normalized.signal)
+    .then((result) => result.kind === "ok" ? { ...result, data: goalPage(result.data) } : result);
+}
+
+export function findGoals(
+  query: string,
+  limitOrOptions: number | GoalListOptions = 10,
+  signalOrOffset?: AbortSignal | number,
+  resolution?: GoalResolution | AbortSignal,
+  signal?: AbortSignal,
+) {
+  const normalized = normalizeGoalArguments(limitOrOptions, signalOrOffset, resolution, signal);
+  const list = goalQuery({ ...normalized.options, limit: Math.min(normalized.options.limit ?? 10, 50) });
+  return apiGet<GoalPage | Goal[]>(`/v1/goals/find?q=${j(query)}&${list}`, normalized.signal)
+    .then((result) => result.kind === "ok" ? { ...result, data: goalPage(result.data) } : result);
+}
 
 export interface GoalInput {
   canonical_name: string;
   description?: string;
+  rationale: string;
   objective?: string;
+  expected_outcome: Row;
   constraints?: string[];
   scope_type?: string;
   scope_entity_id?: string;
@@ -146,11 +263,15 @@ export interface CreateGoalResult extends Row {
   candidates?: Goal[];
 }
 
-/** `proposer`/`owner_id` are derived server-side from the caller's verified
- * session (app/api/goals.py) -- never sent from here, there's nothing
- * for this form to spoof. */
-export const createGoal = (body: GoalInput, signal?: AbortSignal) =>
-  apiPost<CreateGoalResult>("/v1/goals", body, signal);
+const identitylessGoalFields = new Set([
+  "provenance", "visibility", "created_by", "owner_id", "proposer", "submitted_by",
+]);
+
+export const createGoal = (body: GoalInput, signal?: AbortSignal) => {
+  const payload = { ...body } as Record<string, unknown>;
+  for (const field of identitylessGoalFields) delete payload[field];
+  return apiPost<CreateGoalResult>("/v1/goals", payload, signal);
+};
 
 export const getGoal = (id: string, signal?: AbortSignal) => apiGet<Goal>(`/v1/goals/${j(id)}`, signal);
 
@@ -190,19 +311,49 @@ export interface RankedProcedure {
   version: number;
   display_name?: string | null;
   display_description?: string | null;
+  name?: string | null;
+  goal?: string | null;
   applicability_summary?: string | null;
   created_by?: string | null;
   bucket: "verified" | "candidate" | "needs_evidence" | "verified_failure";
   bucket_label: string;
   rank: number;
   of: number;
+  lane?: string;
+  ranking_lane?: string;
+  cold_start_lane?: string;
+  score?: number | null;
+  quality_score?: number | null;
+  reliability_score?: number | null;
+  credible_lower_bound?: number | null;
+  credible_upper_bound?: number | null;
+  bayesian_lower_bound?: number | null;
+  bayesian_upper_bound?: number | null;
+  credible_lower_95?: number | null;
+  posterior_lower_credible_bound?: number | null;
+  posterior_lower_bound?: number | null;
   wilson_lower_bound: number;
   wilson_upper_bound: number;
   evidence_count: number;
   success_count: number;
+  failure_count?: number;
+  attempts?: number;
   independent_groups: number;
+  independent_evidence?: number;
+  contexts?: number;
+  raw?: Row;
+  signals?: Row;
+  explanation?: string | null;
   cost?: Row;
   context_matched: boolean;
+}
+
+export function rankedProcedureRowId(
+  ranked: readonly Pick<RankedProcedure, "procedure_id" | "procedure_row_id">[],
+  stableProcedureId: string | null | undefined,
+): string | null {
+  if (!stableProcedureId) return null;
+  return ranked.find((item) => item.procedure_id === stableProcedureId)?.procedure_row_id ?? null;
 }
 
 export const getRankedProcedures = (goalId: string, contextKey?: string, signal?: AbortSignal) =>
@@ -280,6 +431,8 @@ export interface SubmissionResult extends Row {
   status_reason?: string | null;
   procedure_row_id?: string | null;
   benchmark_id?: string | null;
+  created_by?: string | null;
+  submitted_by?: string | null;
   duplicate_score?: number | null;
   parent_similarity_score?: number | null;
 }
@@ -289,32 +442,50 @@ export interface ProcedureSubmissionInput {
   submission_type: "new" | "improvement";
   name: string;
   steps: string[];
-  rationale?: string;
+  rationale: string;
+  preconditions: Row[];
+  expected_outcome: Row;
+  expected_effects?: unknown[];
+  postconditions?: unknown[];
+  failure_conditions?: unknown[];
+  existing_evidence?: unknown[];
+  previous_executions?: unknown[];
+  known_failure_modes?: unknown[];
   applicability_context?: Row;
   constraints?: string[];
   implementation_requirements?: Row;
   supporting_evidence?: string[];
   parent_procedure_row_id?: string;
-  provenance?: string;
-  visibility?: "public" | "private";
 }
 
 export interface BenchmarkSubmissionInput {
   goal_id: string;
   name: string;
-  description?: string;
-  success_criteria?: Row;
+  description: string;
+  success_criteria: Row;
+  failure_criteria: string[];
+  scope_conditions: string[];
   invariants?: string[];
   verification_method?: Row;
-  provenance?: string;
-  visibility?: "public" | "private";
+  environment_specification?: Row;
+  comparison_policy?: Row;
+}
+
+const clientOwnedFields = new Set([
+  "provenance", "visibility", "scope_type", "scope_entity_id", "created_by", "owner_id", "proposer", "submitted_by",
+]);
+
+function withoutClientOwnedFields<T extends object>(body: T): T {
+  const payload = { ...body } as Record<string, unknown>;
+  for (const field of clientOwnedFields) delete payload[field];
+  return payload as T;
 }
 
 export const createProcedureSubmission = (body: ProcedureSubmissionInput, signal?: AbortSignal) =>
-  apiPost<SubmissionResult>("/v1/economy/procedure-submissions", body, signal);
+  apiPost<SubmissionResult>("/v1/economy/procedure-submissions", withoutClientOwnedFields(body), signal);
 
 export const createBenchmarkSubmission = (body: BenchmarkSubmissionInput, signal?: AbortSignal) =>
-  apiPost<SubmissionResult>("/v1/economy/benchmark-submissions", body, signal);
+  apiPost<SubmissionResult>("/v1/economy/benchmark-submissions", withoutClientOwnedFields(body), signal);
 
 export const listProcedureSubmissions = (goalId: string, status?: string, signal?: AbortSignal) =>
   apiGet<{ submissions: SubmissionResult[] }>(

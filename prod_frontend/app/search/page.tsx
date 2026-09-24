@@ -1,48 +1,68 @@
 "use client";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { apiGet, labelOf, type ApiState } from "@/lib/api";
+import { findGoals, type GoalPage, type GoalResolution } from "@/lib/kel-api";
+import { goalResolutionLabel, rankingExplanation } from "@/lib/goal-display";
 import AnimatedHeading from "@/components/AnimatedHeading";
 import StateNotice from "@/components/NotConnected";
 import { bucket, track } from "@/lib/analytics";
+import type { ApiState } from "@/lib/api";
 
-type Row = Record<string, unknown>;
-type Groups = { name: string; rows: Row[] }[];
-
-type Scope = "goals" | "claims";
-const scopes: { key: Scope; label: string }[] = [
-  { key: "goals", label: "Goals" },
-  { key: "claims", label: "Claims" },
+const PAGE_SIZE = 10;
+const filters: { key: GoalResolution; label: string }[] = [
+  { key: "all", label: "All" },
+  { key: "unresolved", label: "Unresolved" },
+  { key: "resolved", label: "Resolved" },
 ];
 
 export default function SearchPage() {
-  const [q, setQ] = useState("");
+  const [query, setQuery] = useState("");
   const [asked, setAsked] = useState("");
-  const [state, setState] = useState<ApiState<Groups>>({ kind: "idle" });
-  const [scope, setScope] = useState<Scope>("goals");
-  const ac = useRef<AbortController | undefined>(undefined);
+  const [resolution, setResolution] = useState<GoalResolution>("all");
+  const [offset, setOffset] = useState(0);
+  const [state, setState] = useState<ApiState<GoalPage>>({ kind: "idle" });
+  const controller = useRef<AbortController | undefined>(undefined);
 
-  async function run(e: React.FormEvent) {
-    e.preventDefault();
-    const term = q.trim();
-    if (!term) return;
-    ac.current?.abort();
-    ac.current = new AbortController();
-    setAsked(term); setState({ kind: "loading" });
-    track("search_submit");                                   // never the query text
-    const enc = encodeURIComponent(term);
-    const [s, g] = await Promise.all([
-      apiGet<{ results: Record<string, Row[]> }>(`/v1/search?q=${enc}&limit=10`, ac.current.signal),
-      apiGet<{ goals: Row[] }>(`/v1/goals/find?q=${enc}&limit=10`, ac.current.signal),
-    ]);
-    if (s.kind === "unconfigured") return setState(s);
-    if (s.kind === "error" && g.kind === "error") return setState(s);
-    const groups: Groups = [];
-    if (g.kind === "ok") groups.push({ name: "goals", rows: g.data.goals ?? [] });
-    if (s.kind === "ok") for (const [name, rows] of Object.entries(s.data.results ?? {})) groups.push({ name, rows });
-    setState({ kind: "ok", data: groups });
-    track("search_result", { results: bucket(groups.reduce((n, g) => n + g.rows.length, 0)) });
+  async function load(term: string, nextResolution: GoalResolution, nextOffset: number) {
+    const normalized = term.trim();
+    if (!normalized) return;
+    controller.current?.abort();
+    const activeController = new AbortController();
+    controller.current = activeController;
+    setAsked(normalized);
+    setState({ kind: "loading" });
+    const response = await findGoals(
+      normalized,
+      { limit: PAGE_SIZE, offset: nextOffset, resolved: nextResolution },
+      activeController.signal,
+    );
+    if (controller.current !== activeController) return;
+    setState(response);
+    if (response.kind === "ok") {
+      track("search_result", { results: bucket(response.data.goals.length) });
+    }
   }
+
+  function run(event: React.FormEvent) {
+    event.preventDefault();
+    track("search_submit");
+    setOffset(0);
+    void load(query, resolution, 0);
+  }
+
+  function changeResolution(nextResolution: GoalResolution) {
+    setResolution(nextResolution);
+    setOffset(0);
+    const term = asked || query;
+    if (term.trim()) void load(term, nextResolution, 0);
+  }
+
+  function changeOffset(nextOffset: number) {
+    setOffset(Math.max(0, nextOffset));
+    if (asked) void load(asked, resolution, Math.max(0, nextOffset));
+  }
+
+  useEffect(() => () => controller.current?.abort(), []);
 
   return (
     <>
@@ -53,44 +73,55 @@ export default function SearchPage() {
       <section className="frame grid" style={{ paddingBottom: 120 }}>
         <form className="ask" onSubmit={run} role="search">
           <label htmlFor="goal" className="skip">Describe a goal</label>
-          <input id="goal" value={q} onChange={(e) => setQ(e.target.value)} placeholder="e.g. deploy a service to staging" autoComplete="off" />
+          <input id="goal" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="e.g. deploy a service to staging" autoComplete="off" />
           <button className="btn-ink" type="submit">Find ways <span className="sq" aria-hidden="true">→</span></button>
         </form>
-        <div className="scopes" aria-label="Search in" role="tablist">
-          {scopes.map((s) => (
-            <button key={s.key} type="button" role="tab" aria-pressed={scope === s.key} onClick={() => setScope(s.key)}>{s.label}</button>
+        <div className="scopes" aria-label="Goal resolution" role="tablist">
+          {filters.map((filter) => (
+            <button key={filter.key} type="button" role="tab" aria-pressed={resolution === filter.key} onClick={() => changeResolution(filter.key)}>
+              {filter.label}
+            </button>
           ))}
         </div>
         <div className="hits" aria-live="polite">
-          {scope === "claims" ? (
-            <div className="empty"><p>Claims search is coming soon.</p></div>
+          {state.kind === "ok" && state.data.goals.length > 0 ? (
+            <ul className="list" aria-label="Search results">
+              {state.data.goals.map((goal, index) => {
+                const explanation = rankingExplanation(goal.ranking);
+                return (
+                  <li key={goal.id}>
+                    <Link href={`/goals/${goal.id}`}>
+                      <span className="n">{String(index + 1).padStart(2, "0")}</span>
+                      <div>
+                        <h3>{goal.canonical_name}</h3>
+                        {goal.description && <p className="desc">{goal.description}</p>}
+                        <div className="meta">
+                          <span>{goalResolutionLabel(goal)}</span>
+                          {explanation && <span>{explanation}</span>}
+                        </div>
+                      </div>
+                      <span className="caption dim" aria-hidden="true">→</span>
+                    </Link>
+                  </li>
+                );
+              })}
+            </ul>
           ) : (
-            <>
-              {state.kind === "idle" && null}
-              {state.kind === "ok" && state.data.some((g) => g.name === "goals" && g.rows.length > 0) && (
-                <div style={{ marginBottom: 32 }}>
-                  {state.data.filter((g) => g.name === "goals").map((g) => (
-                    <div key={g.name}>
-                      <div className="caption dim" style={{ marginBottom: 8 }}>{g.name} · {g.rows.length}</div>
-                      <ul className="list" style={{ gridColumn: "auto" }}>
-                        {g.rows.map((r, i) => (
-                          <li key={String(r.id ?? i)}>
-                            <Link href={`/goals/${r.id}`}>
-                              <span className="n">{String(i + 1).padStart(2, "0")}</span>
-                              <h3>{labelOf(r)}</h3>
-                              <span className="caption dim">{typeof r.status === "string" ? r.status : ""}</span>
-                            </Link>
-                          </li>
-                        ))}
-                      </ul>
-                    </div>
-                  ))}
-                </div>
-              )}
-              {state.kind !== "idle" && !(state.kind === "ok" && state.data.some((g) => g.name === "goals" && g.rows.length > 0)) && (
-                <StateNotice state={state} empty={state.kind === "ok" ? `No recorded goals found for “${asked}”.` : undefined} />
-              )}
-            </>
+            <StateNotice
+              state={state}
+              empty={state.kind === "ok" ? `No recorded goals found for “${asked}”.` : undefined}
+            />
+          )}
+          {state.kind === "ok" && (
+            <div className="pager" aria-label="Search result pages">
+              <button type="button" className="btn-ink" disabled={offset === 0} onClick={() => changeOffset(offset - PAGE_SIZE)}>
+                <span>Previous</span>
+              </button>
+              <span className="small dim">Page {Math.floor(offset / PAGE_SIZE) + 1}</span>
+              <button type="button" className="btn-ink" disabled={!state.data.has_more} onClick={() => changeOffset(offset + PAGE_SIZE)}>
+                <span>Next</span>
+              </button>
+            </div>
           )}
         </div>
       </section>

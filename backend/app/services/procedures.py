@@ -820,8 +820,10 @@ async def record_execution_outcome(
     just happened as a direct result of this call.
     """
     from app.services.shards import home_pool as _home_pool
-    pool = await _home_pool(pool, "procedure", str(procedure_row_id), by_row_id=True)  # evidence/edges live with the procedure
+    control_pool = pool
+    pool = await _home_pool(control_pool, "procedure", str(procedure_row_id), by_row_id=True)  # evidence/edges live with the procedure
     scope = tenant_scope if tenant_scope is not None else TenantScope.commons()
+    goal_ids_to_resolve: list[str] = []
     async with tenant_transaction(pool, scope) as conn:
         row = await conn.fetchrow(
             "SELECT * FROM procedures WHERE id = $1 FOR UPDATE", procedure_row_id
@@ -832,6 +834,7 @@ async def record_execution_outcome(
         stats = dict(row["verification_stats"])
         verification_state = row["verification_state"]
         availability = row["availability"]
+        promoted = False
 
         # B2 hardening: a self-report (execution_verified=False) records
         # its claim as evidence (below) but MUST NOT touch the
@@ -844,13 +847,20 @@ async def record_execution_outcome(
             stats.setdefault("consecutive_failures", 0)
             stats.setdefault("quarantine_entered_at", None)
             stats.setdefault("consecutive_successes_since_quarantine", 0)
+            stats["context_keys_seen"] = [
+                str(value).strip() for value in stats["context_keys_seen"]
+                if value is not None and str(value).strip()
+            ]
 
             stats["attempts"] = stats.get("attempts", 0) + 1
             stats["match_cost_total"] = stats.get("match_cost_total", 0) + match_cost
             stats["realised_savings_total"] = stats.get("realised_savings_total", 0) + realised_savings
 
-            if context_key not in stats["context_keys_seen"]:
-                stats["context_keys_seen"].append(context_key)
+            normalized_context_key = (
+                context_key.strip() if isinstance(context_key, str) else None
+            )
+            if normalized_context_key and normalized_context_key not in stats["context_keys_seen"]:
+                stats["context_keys_seen"].append(normalized_context_key)
             stats["distinct_contexts"] = len(stats["context_keys_seen"])
 
             if success:
@@ -880,6 +890,31 @@ async def record_execution_outcome(
                 and stats["distinct_contexts"] >= MIN_DISTINCT_CONTEXTS_FOR_VERIFIED
             ):
                 verification_state = "verified"
+                promoted = True
+
+            if promoted:
+                goal_ids: list[str] = []
+                seen_goal_ids: set[str] = set()
+                direct_goal_id = row.get("achieves_goal_id")
+                if direct_goal_id is not None:
+                    value = str(direct_goal_id)
+                    if value not in seen_goal_ids:
+                        seen_goal_ids.add(value)
+                        goal_ids.append(value)
+                solution_rows = await control_pool.fetch(
+                    "SELECT DISTINCT goal_id FROM solutions "
+                    "WHERE target_id = $1 AND status = 'active'",
+                    str(row["procedure_id"]),
+                )
+                for solution_row in solution_rows:
+                    value = solution_row.get("goal_id")
+                    if value is None:
+                        continue
+                    value = str(value)
+                    if value not in seen_goal_ids:
+                        seen_goal_ids.add(value)
+                        goal_ids.append(value)
+                goal_ids_to_resolve = goal_ids
 
             # Ticket 13's circuit breaker: open (quarantine) after 5
             # failures; close (un-quarantine) after 5 consecutive
@@ -997,15 +1032,25 @@ async def record_execution_outcome(
             """,
             procedure_row_id, stats, verification_state, availability,
         )
+        if goal_ids_to_resolve:
+            await conn.fetch(
+                "UPDATE goals SET resolved_at = COALESCE(resolved_at, now()) "
+                "WHERE id = ANY($1::uuid[]) AND t_invalid IS NULL "
+                "AND status <> 'merged' RETURNING id",
+                goal_ids_to_resolve,
+            )
         result = dict(updated)
-        # Additive: the real evidence row this call just wrote, so a
-        # caller sitting on a durable execution_run (app/mcp_server/
-        # server.py's reproduce_procedure/find_best_way) can hand both ids
-        # to app.economy.verification.record_usage_event without a second,
-        # fragile lookup-by-timestamp query. Every existing caller that
-        # only reads verification_state/availability/etc. is unaffected.
         result["evidence_id"] = str(evidence.id)
-        return result
+
+    if goal_ids_to_resolve:
+        for goal_id in goal_ids_to_resolve:
+            goal_pool = await _home_pool(control_pool, "goal", goal_id)
+            await goal_pool.execute(
+                "UPDATE goals SET resolved_at = COALESCE(resolved_at, now()) "
+                "WHERE id = $1::uuid AND t_invalid IS NULL AND status <> 'merged'",
+                goal_id,
+            )
+    return result
 
 
 async def check_quarantine_and_disable(pool: asyncpg.Pool, procedure_row_id: str) -> dict:

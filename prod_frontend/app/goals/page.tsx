@@ -1,95 +1,154 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import AnimatedHeading from "@/components/AnimatedHeading";
 import StateNotice from "@/components/NotConnected";
 import { CATEGORIES, categoryOf, type Category } from "@/lib/mock-adapter";
-import { getGoals, getGoalStats, timeAgo, type Goal, type GoalStats } from "@/lib/kel-api";
+import { getGoals, type Goal, type GoalPage, type GoalResolution } from "@/lib/kel-api";
+import { goalResolutionLabel, rankingExplanation, splitGoalsByResolution } from "@/lib/goal-display";
 import type { ApiState } from "@/lib/api";
 
+const PAGE_SIZE = 50;
+const resolutionFilters: { key: GoalResolution; label: string }[] = [
+  { key: "all", label: "All" },
+  { key: "unresolved", label: "Unresolved" },
+  { key: "resolved", label: "Resolved" },
+];
+
 export default function GoalsPage() {
-  const [state, setState] = useState<ApiState<Goal[]>>({ kind: "loading" });
-  const [stats, setStats] = useState<Record<string, GoalStats | null>>({});
+  const [state, setState] = useState<ApiState<GoalPage>>({ kind: "loading" });
+  const [resolution, setResolution] = useState<GoalResolution>("all");
+  const [offset, setOffset] = useState(0);
   const [cat, setCat] = useState<Category>("All");
 
   useEffect(() => {
     const ac = new AbortController();
-    getGoals(100, ac.signal).then((r) => setState(r.kind === "ok" ? { kind: "ok", data: r.data.goals ?? [] } : (r as ApiState<Goal[]>)));
-    return () => ac.abort();
-  }, []);
-
-  // Per-row stats are real (solutions + evaluations), not mocked — fetched once the goal
-  // list itself is in, one small pair of calls per row. See lib/kel-api.ts#getGoalStats.
-  useEffect(() => {
-    if (state.kind !== "ok") return;
-    const ac = new AbortController();
-    Promise.all(state.data.map(async (p) => [p.id, await getGoalStats(p.id, ac.signal)] as const)).then((pairs) => {
-      setStats(Object.fromEntries(pairs));
+    let active = true;
+    getGoals({ limit: PAGE_SIZE, offset, resolved: resolution }, ac.signal).then((response) => {
+      if (active) setState(response);
     });
-    return () => ac.abort();
-  }, [state]);
+    return () => {
+      active = false;
+      ac.abort();
+    };
+  }, [offset, resolution]);
 
-  const rows =
-    state.kind === "ok"
-      ? state.data
-          .filter((p) => cat === "All" || categoryOf(p) === cat)
-          .slice()
-          .sort((a, b) => {
-            const sa = stats[a.id], sb = stats[b.id];
-            const score = (s: GoalStats | null | undefined) => (s ? s.verifiedRuns * 2 + s.ways : 0);
-            return score(sb) - score(sa);
-          })
-      : [];
+  const goals = state.kind === "ok" ? state.data.goals : [];
+  const split = useMemo(() => splitGoalsByResolution(goals), [goals]);
+  const sections = resolution === "all"
+    ? [
+        { key: "unresolved", label: "Unresolved goals", goals: split.unresolved },
+        { key: "resolved", label: "Resolved goals", goals: split.resolved },
+      ]
+    : resolution === "unresolved"
+      ? [{ key: "unresolved", label: "Unresolved goals", goals: split.unresolved }]
+      : [{ key: "resolved", label: "Resolved goals", goals: split.resolved }];
+
+  function visibleGoals(items: Goal[]): Goal[] {
+    return items.filter((goal) => cat === "All" || categoryOf(goal) === cat);
+  }
 
   return (
     <>
       <section className="page-hero frame grid">
         <div className="marker caption" style={{ gridColumn: "1 / -1" }}><b>GOALS</b></div>
         <h1 className="display"><AnimatedHeading>Goals</AnimatedHeading></h1>
-        <p className="lead">Discover goals worth accomplishing, and the ways people and agents have found to reach them.</p>
+        <p className="lead">Discover goals worth accomplishing and the ways people and agents have found to reach them.</p>
         <p className="small dim" style={{ gridColumn: "1 / span 12", marginTop: 8 }}>
           <Link href="/goals/add" style={{ textDecoration: "underline" }}>Add a goal →</Link> if yours isn&rsquo;t here yet, or open one below to contribute a way or a benchmark to it.
         </p>
       </section>
 
       <section className="frame grid" style={{ paddingBottom: 120, rowGap: 40 }}>
-        <nav className="tabs" aria-label="Category">
-          {CATEGORIES.map((c) => (
-            <button key={c} type="button" aria-pressed={cat === c} onClick={() => setCat(c)}>{c}</button>
+        <nav className="tabs" aria-label="Goal resolution">
+          {resolutionFilters.map((filter) => (
+            <button
+              key={filter.key}
+              type="button"
+              aria-pressed={resolution === filter.key}
+              onClick={() => {
+                setResolution(filter.key);
+                setOffset(0);
+              }}
+            >
+              {filter.label}
+            </button>
           ))}
         </nav>
 
-        <div style={{ gridColumn: "1 / span 12" }}>
-          <h2 className="h3" style={{ marginBottom: 4 }}>Hot goals</h2>
-        </div>
+        <nav className="tabs" aria-label="Category">
+          {CATEGORIES.map((category) => (
+            <button key={category} type="button" aria-pressed={cat === category} onClick={() => setCat(category)}>
+              {category}
+            </button>
+          ))}
+        </nav>
 
-        {state.kind === "ok" && rows.length > 0 ? (
-          <ul className="list" aria-label="Goals">
-            {rows.map((p, i) => {
-              const s = stats[p.id];
-              const recent = s?.lastActivity ? timeAgo(s.lastActivity) : null;
+        {state.kind !== "ok" ? (
+          <StateNotice state={state} />
+        ) : (
+          <>
+            {sections.map((section) => {
+              const rows = visibleGoals(section.goals);
               return (
-                <li key={p.id}>
-                  <Link href={`/goals/${p.id}`}>
-                    <span className="n">{String(i + 1).padStart(3, "0")}</span>
-                    <div>
-                      <h3>{p.canonical_name}</h3>
-                      {p.description && <p className="desc">{p.description}</p>}
-                      <div className="meta">
-                        <span>{categoryOf(p)}</span>
-                        <span>{s ? `${s.ways} way${s.ways === 1 ? "" : "s"}` : "…"}</span>
-                        <span>{s ? `${s.verifiedRuns} verified run${s.verifiedRuns === 1 ? "" : "s"}` : "…"}</span>
-                        <span>{recent ? `updated ${recent}` : "no recorded activity yet"}</span>
-                      </div>
+                <div key={section.key} style={{ gridColumn: "1 / span 12" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 16, flexWrap: "wrap" }}>
+                    <h2 className="h3" style={{ marginBottom: 4 }}>{section.label}</h2>
+                    <span className="caption dim">{rows.length} shown</span>
+                  </div>
+                  {rows.length > 0 ? (
+                    <ul className="list" aria-label={section.label}>
+                      {rows.map((goal, index) => {
+                        const explanation = rankingExplanation(goal.ranking);
+                        return (
+                          <li key={goal.id}>
+                            <Link href={`/goals/${goal.id}`}>
+                              <span className="n">{String(index + 1).padStart(3, "0")}</span>
+                              <div>
+                                <h3>{goal.canonical_name}</h3>
+                                {goal.description && <p className="desc">{goal.description}</p>}
+                                <div className="meta">
+                                  <span>{goalResolutionLabel(goal)}</span>
+                                  <span>{categoryOf(goal)}</span>
+                                  {goal.created_by && <span>contributed by {goal.created_by}</span>}
+                                  {explanation && <span>{explanation}</span>}
+                                </div>
+                              </div>
+                              <span className="caption dim" aria-hidden="true">→</span>
+                            </Link>
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  ) : (
+                    <div className="empty" style={{ marginTop: 8 }}>
+                      <p>No {section.label.toLowerCase()} match this page.</p>
                     </div>
-                    <span className="caption dim" aria-hidden="true">→</span>
-                  </Link>
-                </li>
+                  )}
+                </div>
               );
             })}
-          </ul>
-        ) : (
-          <StateNotice state={state} empty={state.kind === "ok" ? "No goals are recorded yet." : undefined} />
+
+            <div className="pager" aria-label="Goal pages">
+              <button
+                type="button"
+                className="btn-ink"
+                disabled={offset === 0}
+                onClick={() => setOffset(Math.max(0, offset - PAGE_SIZE))}
+              >
+                <span>Previous</span>
+              </button>
+              <span className="small dim">Page {Math.floor(offset / PAGE_SIZE) + 1}</span>
+              <button
+                type="button"
+                className="btn-ink"
+                disabled={!state.data.has_more}
+                onClick={() => setOffset(offset + PAGE_SIZE)}
+              >
+                <span>Next</span>
+              </button>
+            </div>
+          </>
         )}
       </section>
     </>

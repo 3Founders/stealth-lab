@@ -37,25 +37,50 @@ def _owner_key(principal: AuthenticatedPrincipal) -> str:
     return principal.subject
 
 
+async def _require_visible_goal(pool: Any, goal_id: str, scope: AccessScope) -> dict[str, Any]:
+    goal = await pm.get_goal_for_product(pool, goal_id, scope=scope)
+    if goal is None:
+        raise HTTPException(status_code=404, detail="goal not found or out of scope")
+    return goal
+
+
 # ---------------------------------------------------------------------------
 # Goal
 # ---------------------------------------------------------------------------
 @router.get("")
 async def list_goals_route(
-    status: Optional[str] = None, limit: int = Query(50, ge=1, le=200),
+    status: Optional[str] = None,
+    resolved: Optional[str] = Query(default="all"),
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
     pool=Depends(get_pool), scope: AccessScope = Depends(get_scope),
 ) -> dict[str, Any]:
-    """Plain recency-ordered listing -- the product surface's "browse all
-    goals" need, distinct from /search below (which requires a query)."""
-    return {"goals": await pm.list_goals(pool, scope=scope, status=status, limit=limit)}
+    resolved_value = getattr(resolved, "default", resolved)
+    limit_value = getattr(limit, "default", limit)
+    offset_value = getattr(offset, "default", offset)
+    goals, has_more = await pm.list_goals(
+        pool, scope=scope, status=status, resolved=resolved_value,
+        limit=limit_value, offset=offset_value,
+    )
+    return {"goals": goals, "has_more": has_more}
 
 
 @router.get("/find")
 async def find_goals_route(
-    q: str, limit: int = Query(10, ge=1, le=50), pool=Depends(get_pool),
-    scope: AccessScope = Depends(get_scope),
+    q: str,
+    resolved: Optional[str] = Query(default="all"),
+    limit: int = Query(10, ge=1, le=50),
+    offset: int = Query(0, ge=0),
+    pool=Depends(get_pool), scope: AccessScope = Depends(get_scope),
 ) -> dict[str, Any]:
-    return {"query": q, "goals": await pm.find_goal(pool, q, scope=scope, limit=limit)}
+    resolved_value = getattr(resolved, "default", resolved)
+    limit_value = getattr(limit, "default", limit)
+    offset_value = getattr(offset, "default", offset)
+    goals, has_more = await pm.find_goal(
+        pool, q, scope=scope, resolved=resolved_value,
+        limit=limit_value, offset=offset_value,
+    )
+    return {"query": q, "goals": goals, "has_more": has_more}
 
 
 @router.get("/search")
@@ -64,6 +89,8 @@ async def search_goals_route(
     scope_type: Optional[str] = Query(default=None),
     scope_entity_id: Optional[str] = Query(default=None),
     status: Optional[str] = Query(default=None),
+    resolved: Optional[str] = Query(default="all"),
+    offset: int = Query(0, ge=0),
     semantic: bool = Query(
         default=False,
         description="Also embed `q` and RRF-fuse a semantic leg -- one real "
@@ -84,14 +111,28 @@ async def search_goals_route(
 
         query_embedding, _meta = await Embedder().embed_one_with_metadata(q, input_type="query")
 
-    results = await search_goals(
-        pool, query_text=q, query_embedding=query_embedding,
-        scope=scope, status=status, limit=limit,
-    )
-    if scope_type is not None:
+    resolved_value = getattr(resolved, "default", resolved)
+    offset_value = getattr(offset, "default", offset)
+    status_value = getattr(status, "default", status)
+    limit_value = getattr(limit, "default", limit)
+    scope_type_value = getattr(scope_type, "default", scope_type)
+    scope_entity_value = getattr(scope_entity_id, "default", scope_entity_id)
+    search_kwargs = {
+        "query_text": q,
+        "query_embedding": query_embedding,
+        "scope": scope,
+        "status": status_value,
+        "limit": limit_value,
+    }
+    if resolved_value != "all":
+        search_kwargs["resolved"] = resolved_value
+    if offset_value:
+        search_kwargs["offset"] = offset_value
+    results = await search_goals(pool, **search_kwargs)
+    if scope_type_value is not None:
         results = [
             r for r in results
-            if r.get("scope_type") == scope_type and r.get("scope_entity_id") == scope_entity_id
+            if r.get("scope_type") == scope_type_value and r.get("scope_entity_id") == scope_entity_value
         ]
     return results
 
@@ -114,8 +155,11 @@ async def inspect_goal_route(
 class GoalCreateBody(BaseModel):
     canonical_name: str = Field(min_length=1, max_length=500)
     description: Optional[str] = Field(default=None, max_length=4000)
+    rationale: Optional[str] = Field(default=None, max_length=4000)
     objective: Optional[str] = Field(default=None, max_length=4000)
+    expected_outcome: Optional[dict[str, Any]] = Field(default=None)
     constraints: list[Any] = Field(default_factory=list)
+    metadata: dict[str, Any] = Field(default_factory=dict)
     scope_type: str = Field(default="global")
     scope_entity_id: Optional[str] = Field(default=None)
     allow_create_anyway: bool = Field(
@@ -159,10 +203,15 @@ async def create_goal_route(
         embedder = Embedder(data_classification=DataClass.USER_PRIVATE, policy_pool=pool)
 
     async def _create(with_embedder):
+        expected_outcome = body.expected_outcome
+        if expected_outcome is None and body.objective:
+            expected_outcome = {"summary": body.objective}
         return await create_goal_from_user(
             pool, canonical_name=body.canonical_name, description=body.description,
-            objective=body.objective, constraints=body.constraints,
-            scope_type=body.scope_type, scope_entity_id=body.scope_entity_id,
+            rationale=body.rationale, objective=body.objective,
+            expected_outcome=expected_outcome, constraints=body.constraints,
+            metadata=body.metadata, scope_type=body.scope_type,
+            scope_entity_id=body.scope_entity_id,
             owner_id=_owner_key(principal), embedder=with_embedder,
             allow_create_anyway=body.allow_create_anyway,
         )
@@ -287,6 +336,7 @@ class EvaluationCompleteIn(BaseModel):
 @_products_router.post("/benchmarks", dependencies=[Depends(require_scopes(_ac.KNOWLEDGE_WRITE))])
 async def create_benchmark(body: BenchmarkIn, pool=Depends(get_pool),
                            scope: AccessScope = Depends(get_scope)) -> dict[str, Any]:
+    await _require_visible_goal(pool, body.goal_id, scope)
     try:
         return await pm.create_benchmark(pool, **body.model_dump())
     except ValueError as e:
@@ -310,6 +360,9 @@ async def freeze_benchmark(
     benchmark_id: str, pool=Depends(get_pool), scope: AccessScope = Depends(get_scope),
     principal: AuthenticatedPrincipal = Depends(require_authenticated_user),
 ) -> dict[str, Any]:
+    benchmark = await pm.get_benchmark(pool, benchmark_id, scope=scope)
+    if benchmark is None:
+        raise HTTPException(status_code=404, detail="benchmark not found")
     accepted_submission = await pool.fetchval(
         "SELECT id FROM benchmark_submissions WHERE benchmark_id = $1 AND status = 'accepted' LIMIT 1",
         benchmark_id,
@@ -368,6 +421,7 @@ async def associate_solution(
     body: SolutionIn, pool=Depends(get_pool), scope: AccessScope = Depends(get_scope),
     principal: AuthenticatedPrincipal = Depends(require_authenticated_user),
 ) -> dict[str, Any]:
+    await _require_visible_goal(pool, body.goal_id, scope)
     # Never let a public call downgrade an association the canonical
     # review workflow already made 'active' -- the ON CONFLICT upsert
     # below would otherwise let anyone "un-list" an accepted Procedure/
@@ -391,6 +445,7 @@ async def associate_solution(
 @_products_router.post("/evaluations", dependencies=[Depends(require_scopes(_ac.KNOWLEDGE_WRITE))])
 async def request_evaluation(body: EvaluationIn, pool=Depends(get_pool),
                              scope: AccessScope = Depends(get_scope)) -> dict[str, Any]:
+    await _require_visible_goal(pool, body.goal_id, scope)
     try:
         return await pm.request_evaluation(pool, **body.model_dump())
     except ValueError as e:
@@ -401,6 +456,8 @@ async def request_evaluation(body: EvaluationIn, pool=Depends(get_pool),
 async def complete_evaluation(evaluation_id: str, body: EvaluationCompleteIn,
                               pool=Depends(get_pool),
                               scope: AccessScope = Depends(get_scope)) -> dict[str, Any]:
+    if await pm.get_evaluation(pool, evaluation_id, scope=scope) is None:
+        raise HTTPException(status_code=404, detail="evaluation not found")
     try:
         return await pm.complete_evaluation(
             pool, evaluation_id, execution_ids=body.execution_ids,
@@ -414,6 +471,8 @@ async def complete_evaluation(evaluation_id: str, body: EvaluationCompleteIn,
 async def invalidate_evaluation(evaluation_id: str, reason: str = Query(...),
                                 pool=Depends(get_pool),
                                 scope: AccessScope = Depends(get_scope)) -> dict[str, Any]:
+    if await pm.get_evaluation(pool, evaluation_id, scope=scope) is None:
+        raise HTTPException(status_code=404, detail="evaluation not found")
     try:
         return await pm.invalidate_evaluation(pool, evaluation_id, reason=reason)
     except ValueError as e:

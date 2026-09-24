@@ -22,6 +22,7 @@ authenticated subject, never a client-supplied string.
 from __future__ import annotations
 
 from datetime import timedelta
+import inspect
 from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -35,7 +36,7 @@ from app.economy import standing as standing_service
 from app.economy import submissions as submissions_service
 from app.economy import verification as verification_service
 from app.services import auth_context as _ac
-from app.services.access import AccessScope
+from app.services.access import AccessScope, TenantScope
 from app.services.governance import RateLimit, RateLimiter, RateLimitExceeded
 from app.services.product_model import get_goal_for_product, list_goal_solutions
 
@@ -77,6 +78,22 @@ def _require_self_or_admin(principal: AuthenticatedPrincipal, contributor_id: st
     raise HTTPException(status_code=403, detail="you may only view your own economic data")
 
 
+def _tenant_scope(principal: AuthenticatedPrincipal) -> TenantScope:
+    if principal.org_ids:
+        return TenantScope.for_tenant(principal.org_ids[0])
+    return TenantScope.commons()
+
+
+def _supported_kwargs(function: Any, values: dict[str, Any]) -> dict[str, Any]:
+    try:
+        parameters = inspect.signature(function).parameters
+    except (TypeError, ValueError):
+        return values
+    if any(parameter.kind == inspect.Parameter.VAR_KEYWORD for parameter in parameters.values()):
+        return values
+    return {key: value for key, value in values.items() if key in parameters}
+
+
 # ---- request bodies --------------------------------------------------------
 # No identity fields (submitted_by / executed_by / reviewed_by / created_by)
 # on any of these -- the acting identity is always server-derived from the
@@ -85,19 +102,23 @@ def _require_self_or_admin(principal: AuthenticatedPrincipal, contributor_id: st
 # pass closed.
 class ProcedureSubmissionIn(BaseModel):
     goal_id: str
-    submission_type: str  # 'new' | 'improvement'
+    submission_type: str
     name: str
     steps: list[Any] = Field(default_factory=list)
     rationale: Optional[str] = None
+    preconditions: list[Any] = Field(default_factory=list)
+    expected_outcome: dict[str, Any] = Field(default_factory=dict)
+    expected_effects: list[Any] = Field(default_factory=list)
+    postconditions: list[Any] = Field(default_factory=list)
+    failure_conditions: list[Any] = Field(default_factory=list)
+    existing_evidence: list[Any] = Field(default_factory=list)
+    previous_executions: list[Any] = Field(default_factory=list)
+    known_failure_modes: list[Any] = Field(default_factory=list)
     applicability_context: dict[str, Any] = Field(default_factory=dict)
     constraints: list[Any] = Field(default_factory=list)
     implementation_requirements: dict[str, Any] = Field(default_factory=dict)
     supporting_evidence: list[Any] = Field(default_factory=list)
     parent_procedure_row_id: Optional[str] = None
-    provenance: Optional[str] = None
-    scope_type: Optional[str] = None
-    scope_entity_id: Optional[str] = None
-    visibility: str = "public"
 
 
 class SubmissionReviewIn(BaseModel):
@@ -110,12 +131,12 @@ class BenchmarkSubmissionIn(BaseModel):
     name: str
     description: Optional[str] = None
     success_criteria: dict[str, Any] = Field(default_factory=dict)
+    failure_criteria: list[Any] = Field(default_factory=list)
+    scope_conditions: list[Any] = Field(default_factory=list)
     invariants: list[Any] = Field(default_factory=list)
     verification_method: dict[str, Any] = Field(default_factory=dict)
-    provenance: Optional[str] = None
-    scope_type: Optional[str] = None
-    scope_entity_id: Optional[str] = None
-    visibility: str = "public"
+    environment_specification: dict[str, Any] = Field(default_factory=dict)
+    comparison_policy: dict[str, Any] = Field(default_factory=dict)
 
 
 class UsageEventIn(BaseModel):
@@ -143,7 +164,13 @@ async def create_procedure_submission(
     principal: AuthenticatedPrincipal = Depends(_authenticated_and_rate_limited),
 ) -> dict[str, Any]:
     try:
-        return await submissions_service.create_procedure_submission(pool, actor_subject=principal.subject, **body.model_dump())
+        return await submissions_service.create_procedure_submission(
+            pool,
+            actor_subject=principal.subject,
+            access_scope=principal.access_scope(),
+            tenant_scope=_tenant_scope(principal),
+            **body.model_dump(),
+        )
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e))
 
@@ -152,13 +179,24 @@ async def create_procedure_submission(
 async def list_procedure_submissions(
     goal_id: Optional[str] = None, status: Optional[str] = None, submitted_by: Optional[str] = None,
     limit: int = Query(50, ge=1, le=200), pool=Depends(get_pool),
+    principal: AuthenticatedPrincipal = Depends(require_authenticated_user),
 ) -> dict[str, Any]:
-    return {"submissions": await submissions_service.list_procedure_submissions(pool, goal_id=goal_id, status=status, submitted_by=submitted_by, limit=limit)}
+    return {
+        "submissions": await submissions_service.list_procedure_submissions(
+            pool, scope=principal.access_scope(), goal_id=goal_id, status=status,
+            submitted_by=submitted_by, limit=limit, tenant_scope=_tenant_scope(principal),
+        )
+    }
 
 
 @router.get("/procedure-submissions/{submission_id}")
-async def get_procedure_submission(submission_id: str, pool=Depends(get_pool)) -> dict[str, Any]:
-    row = await submissions_service.get_procedure_submission(pool, submission_id)
+async def get_procedure_submission(
+    submission_id: str, pool=Depends(get_pool),
+    principal: AuthenticatedPrincipal = Depends(require_authenticated_user),
+) -> dict[str, Any]:
+    row = await submissions_service.get_procedure_submission(
+        pool, submission_id, scope=principal.access_scope(), tenant_scope=_tenant_scope(principal)
+    )
     if row is None:
         raise HTTPException(status_code=404, detail="procedure submission not found")
     return row
@@ -170,7 +208,16 @@ async def review_procedure_submission(
     principal: AuthenticatedPrincipal = Depends(require_authenticated_user),
 ) -> dict[str, Any]:
     try:
-        return await submissions_service.review_procedure_submission(pool, submission_id=submission_id, decision=body.decision, actor_subject=principal.subject, note=body.note)
+        values = {
+            "submission_id": submission_id,
+            "decision": body.decision,
+            "actor_subject": principal.subject,
+            "note": body.note,
+            "access_scope": principal.access_scope(),
+            "tenant_scope": _tenant_scope(principal),
+        }
+        values = _supported_kwargs(submissions_service.review_procedure_submission, values)
+        return await submissions_service.review_procedure_submission(pool, **values)
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e))
 
@@ -182,7 +229,13 @@ async def create_benchmark_submission(
     principal: AuthenticatedPrincipal = Depends(_authenticated_and_rate_limited),
 ) -> dict[str, Any]:
     try:
-        return await submissions_service.create_benchmark_submission(pool, actor_subject=principal.subject, **body.model_dump())
+        return await submissions_service.create_benchmark_submission(
+            pool,
+            actor_subject=principal.subject,
+            access_scope=principal.access_scope(),
+            tenant_scope=_tenant_scope(principal),
+            **body.model_dump(),
+        )
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e))
 
@@ -191,13 +244,24 @@ async def create_benchmark_submission(
 async def list_benchmark_submissions(
     goal_id: Optional[str] = None, status: Optional[str] = None, submitted_by: Optional[str] = None,
     limit: int = Query(50, ge=1, le=200), pool=Depends(get_pool),
+    principal: AuthenticatedPrincipal = Depends(require_authenticated_user),
 ) -> dict[str, Any]:
-    return {"submissions": await submissions_service.list_benchmark_submissions(pool, goal_id=goal_id, status=status, submitted_by=submitted_by, limit=limit)}
+    return {
+        "submissions": await submissions_service.list_benchmark_submissions(
+            pool, scope=principal.access_scope(), goal_id=goal_id, status=status,
+            submitted_by=submitted_by, limit=limit, tenant_scope=_tenant_scope(principal),
+        )
+    }
 
 
 @router.get("/benchmark-submissions/{submission_id}")
-async def get_benchmark_submission(submission_id: str, pool=Depends(get_pool)) -> dict[str, Any]:
-    row = await submissions_service.get_benchmark_submission(pool, submission_id)
+async def get_benchmark_submission(
+    submission_id: str, pool=Depends(get_pool),
+    principal: AuthenticatedPrincipal = Depends(require_authenticated_user),
+) -> dict[str, Any]:
+    row = await submissions_service.get_benchmark_submission(
+        pool, submission_id, scope=principal.access_scope(), tenant_scope=_tenant_scope(principal)
+    )
     if row is None:
         raise HTTPException(status_code=404, detail="benchmark submission not found")
     return row
@@ -209,7 +273,16 @@ async def review_benchmark_submission(
     principal: AuthenticatedPrincipal = Depends(require_authenticated_user),
 ) -> dict[str, Any]:
     try:
-        return await submissions_service.review_benchmark_submission(pool, submission_id=submission_id, decision=body.decision, actor_subject=principal.subject, note=body.note)
+        values = {
+            "submission_id": submission_id,
+            "decision": body.decision,
+            "actor_subject": principal.subject,
+            "note": body.note,
+            "access_scope": principal.access_scope(),
+            "tenant_scope": _tenant_scope(principal),
+        }
+        values = _supported_kwargs(submissions_service.review_benchmark_submission, values)
+        return await submissions_service.review_benchmark_submission(pool, **values)
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e))
 
@@ -221,7 +294,13 @@ async def record_usage_event(
     principal: AuthenticatedPrincipal = Depends(_authenticated_and_rate_limited),
 ) -> dict[str, Any]:
     try:
-        row = await verification_service.record_usage_event(pool, executor_subject=principal.subject, **body.model_dump())
+        row = await verification_service.record_usage_event(
+            pool,
+            executor_subject=principal.subject,
+            access_scope=principal.access_scope(),
+            tenant_scope=_tenant_scope(principal),
+            **body.model_dump(),
+        )
     except verification_service.VerificationMismatch as e:
         raise HTTPException(status_code=422, detail=str(e))
     if row is None:
@@ -233,19 +312,20 @@ async def record_usage_event(
 
 
 @router.get("/procedures/{procedure_row_id}/usage-events")
-async def list_procedure_usage_events(procedure_row_id: str, limit: int = Query(50, ge=1, le=200), pool=Depends(get_pool)) -> dict[str, Any]:
-    rows = await pool.fetch(
-        "SELECT * FROM procedure_usage_events WHERE procedure_row_id = $1 ORDER BY created_at DESC LIMIT $2",
-        procedure_row_id, limit,
+async def list_procedure_usage_events(
+    procedure_row_id: str, limit: int = Query(50, ge=1, le=200), pool=Depends(get_pool),
+    principal: AuthenticatedPrincipal = Depends(require_authenticated_user),
+) -> dict[str, Any]:
+    rows = await submissions_service.list_procedure_usage_events(
+        pool, procedure_row_id=procedure_row_id, scope=principal.access_scope(),
+        tenant_scope=_tenant_scope(principal), limit=limit,
     )
-    return {"usage_events": [dict(r) for r in rows]}
+    return {"usage_events": rows}
 
 
 # ---- Contextual ranking (§5/§6 of the harden+consolidate directive) -------
-# ONE canonical ranking implementation: app.economy.ranking wraps the
-# pre-existing, more rigorous Wilson-based capability estimator
-# (procedure_graph_api.get_solution_view) rather than recomputing its own
-# statistics. See app/economy/ranking.py's module docstring.
+# ONE canonical ranking implementation: app.economy.ranking delegates to the
+# centralized Bayesian Procedure ranking service.
 @router.get("/goals/{goal_id}/procedures/ranked")
 async def ranked_procedures_for_goal(
     goal_id: str, context_key: Optional[str] = None, pool=Depends(get_pool), scope: AccessScope = Depends(get_scope),

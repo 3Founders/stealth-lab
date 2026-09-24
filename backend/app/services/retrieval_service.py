@@ -611,14 +611,15 @@ async def diagnose_procedures(pool: asyncpg.Pool, query_text: str, **kw) -> tupl
 
 async def search_goal_candidates(
     pool: asyncpg.Pool, *, query_text: Optional[str], query_embedding: Optional[list[float]] = None,
-    embedding_model: Optional[str] = None, scope: AccessScope, status: Optional[str] = None, limit: int = 10,
-    cfg: RetrievalConfig = RetrievalConfig(),
+    embedding_model: Optional[str] = None, scope: AccessScope, status: Optional[str] = None,
+    resolved: str = "all", limit: int = 10, cfg: RetrievalConfig = RetrievalConfig(),
 ) -> list[dict]:
-    """Judge-free Goal search (search-as-you-type / browse): FTS + ANN over the global goal projection, RRF-fused,
-    canonical rows hydrated by shard. Same candidate machinery as Tier 1, without the semantic rerank."""
+    """Judge-free Goal search with resolution filtering and safe public rows."""
     if not query_text and not query_embedding:
         raise ValueError("search_goal_candidates requires query_text and/or query_embedding")
-    where = f"status IN ('active', 'candidate')" if status is None else "status = $1"
+    if resolved not in ("all", "resolved", "unresolved"):
+        raise ValueError("resolved must be all, resolved, or unresolved")
+    where = "status IN ('active', 'candidate')" if status is None else "status = $1"
     params = [] if status is None else [status]
     cfg2 = replace_cfg(cfg, search_top_k=max(limit * 3, 10))
     cands, _n, _m = await _legs(
@@ -626,18 +627,64 @@ async def search_goal_candidates(
         text_expr="canonical_name || COALESCE(': ' || short_description, '')", extra_cols="",
         ctx_text=query_text or "", embedding=query_embedding, embedding_model=embedding_model, scope=scope,
         where_extra=where, extra_params=params, cfg=cfg2)
-    top = cands[:limit]
-    if not top:
+    candidate_hits = cands
+    if not candidate_hits:
         return []
     pools = pools_for(pool)
 
     async def fetch(p, ids):
         return await p.fetch(
-            "SELECT id, canonical_name, description, status, scope_type, scope_entity_id, expected_outcome, "
-            "verification_requirement, home_shard_id FROM goals WHERE id = ANY($1::uuid[])", ids)
+            "SELECT id, canonical_name, description, objective, constraints, expected_outcome, "
+            "verification_requirement, status, metadata, resolved_at, visibility, owner_id, "
+            "scope_type, scope_entity_id, home_shard_id FROM goals "
+            "WHERE id = ANY($1::uuid[])", ids)
 
-    hyd = await hydrate_rows(pools, {h.id: h.home_shard_id for h in top}, fetch)
-    return [{**hyd.rows[h.id], "id": h.id} for h in top if h.id in hyd.rows]
+    hyd = await hydrate_rows(pools, {h.id: h.home_shard_id for h in candidate_hits}, fetch)
+    rows: list[dict] = []
+    for hit in candidate_hits:
+        source = hyd.rows.get(hit.id)
+        if source is None:
+            continue
+        row = dict(source)
+        row["id"] = str(row.get("id") or hit.id)
+        row.pop("embedding", None)
+        row.pop("ranking_raw", None)
+        if resolved == "resolved" and row.get("resolved_at") is None:
+            continue
+        if resolved == "unresolved" and row.get("resolved_at") is not None:
+            continue
+        rows.append(row)
+    from app.services.goal_ranking import public_goal_ranking, rank_goal_candidates
+
+    ranked = rank_goal_candidates(rows)
+    by_id = {str(row["id"]): row for row in rows}
+    return [
+        {
+            **by_id[str(item["goal_id"])],
+            "ranking": public_goal_ranking(item),
+        }
+        for item in ranked
+        if str(item.get("goal_id")) in by_id
+    ][:limit]
+
+
+async def search_goal_candidates_page(
+    pool: asyncpg.Pool, *, query_text: Optional[str], query_embedding: Optional[list[float]] = None,
+    embedding_model: Optional[str] = None, scope: AccessScope, status: Optional[str] = None,
+    resolved: str = "all", limit: int = 10, offset: int = 0,
+    cfg: RetrievalConfig = RetrievalConfig(),
+) -> tuple[list[dict], bool]:
+    """Return one candidate page and whether another page exists."""
+    if offset < 0:
+        raise ValueError("offset must be non-negative")
+    page_size = max(1, int(limit))
+    rows = await search_goal_candidates(
+        pool, query_text=query_text, query_embedding=query_embedding,
+        embedding_model=embedding_model, scope=scope, status=status,
+        resolved=resolved, limit=offset + page_size + 1, cfg=cfg,
+    )
+    page = rows[offset:offset + page_size]
+    return page, len(rows) > offset + page_size
 
 
 def replace_cfg(cfg: RetrievalConfig, **kw) -> RetrievalConfig:

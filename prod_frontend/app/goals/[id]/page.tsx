@@ -6,9 +6,10 @@ import AnimatedHeading from "@/components/AnimatedHeading";
 import StateNotice from "@/components/NotConnected";
 import {
   getGoalContributors, getMyProfile, getGoal, getGoalBenchmarks, getGoalSolutions, getProcedure, getRankedProcedures,
-  humanize, listBenchmarkSubmissions, listProcedureSubmissions, reviewBenchmarkSubmission, reviewProcedureSubmission,
+  humanize, listBenchmarkSubmissions, listProcedureSubmissions, rankedProcedureRowId, reviewBenchmarkSubmission, reviewProcedureSubmission,
   type Benchmark, type GoalContributor, type Goal, type ProcedureDetail, type RankedProcedure, type SubmissionResult,
 } from "@/lib/kel-api";
+import { goalResolutionLabel, rankingExplanation, rankingSignalSummary } from "@/lib/goal-display";
 import { getSession } from "@/lib/session";
 import { categoryOf } from "@/lib/mock-adapter";
 import type { ApiState } from "@/lib/api";
@@ -87,18 +88,22 @@ export default function GoalPage() {
     const ac = new AbortController();
     getGoal(id, ac.signal).then(setGoal);
     getGoalBenchmarks(id, ac.signal).then((r) => setBenchmarks(r.kind === "ok" ? { kind: "ok", data: r.data.benchmarks ?? [] } : (r as ApiState<Benchmark[]>)));
-    getRankedProcedures(id, undefined, ac.signal).then((r) => setRanked(r.kind === "ok" ? { kind: "ok", data: r.data.ranked } : (r as ApiState<RankedProcedure[]>)));
     getGoalContributors(id, ac.signal).then((r) => setContributors(r.kind === "ok" ? { kind: "ok", data: r.data.contributors } : (r as ApiState<GoalContributor[]>)));
 
-    // Procedures for this goal come through the Solution association (goal -> solution ->
-    // procedure); each one is then fetched for its real claims (ranking/evidence come from
-    // getRankedProcedures above, not re-derived here).
     (async () => {
-      const sol = await getGoalSolutions(id, ac.signal);
+      const [sol, ranking] = await Promise.all([
+        getGoalSolutions(id, ac.signal),
+        getRankedProcedures(id, undefined, ac.signal),
+      ]);
+      if (ranking.kind !== "ok") setRanked(ranking as ApiState<RankedProcedure[]>);
+      else setRanked({ kind: "ok", data: ranking.data.ranked });
       if (sol.kind !== "ok") return setProcedures(sol as ApiState<ProcedureDetail[]>);
-      const targets = sol.data.solutions.filter((s) => s.target_table === "procedures");
-      const details = await Promise.all(targets.map((s) => getProcedure(s.target_id, ac.signal)));
-      const ok = details.filter((d): d is { kind: "ok"; data: ProcedureDetail } => d.kind === "ok").map((d) => d.data);
+      const targets = sol.data.solutions.filter((solution) => solution.target_table === "procedures");
+      const rowIds = targets
+        .map((solution) => rankedProcedureRowId(ranking.kind === "ok" ? ranking.data.ranked : [], solution.target_id))
+        .filter((rowId): rowId is string => Boolean(rowId));
+      const details = await Promise.all(rowIds.map((rowId) => getProcedure(rowId, ac.signal)));
+      const ok = details.filter((detail): detail is { kind: "ok"; data: ProcedureDetail } => detail.kind === "ok").map((detail) => detail.data);
       setProcedures({ kind: "ok", data: ok });
     })();
 
@@ -123,6 +128,8 @@ export default function GoalPage() {
     );
   }
   const p = goal.data;
+  const rankingText = rankingExplanation(p.ranking);
+  const rankingSignals = rankingSignalSummary(p.ranking);
   const groups: Array<{ bucket: RankedProcedure["bucket"]; label: string }> = [
     { bucket: "verified", label: "Verified" }, { bucket: "candidate", label: "Candidate" },
     { bucket: "needs_evidence", label: "Needs evidence" }, { bucket: "verified_failure", label: "Verified failure" },
@@ -139,15 +146,24 @@ export default function GoalPage() {
       </section>
 
       <section className="frame grid" style={{ paddingBottom: 100, rowGap: 40 }}>
-        {/* structured info */}
         <div className="log" style={{ gridColumn: "1 / span 12", maxWidth: "48em" }}>
           {p.objective && (<div><span>Objective</span><span>{p.objective}</span></div>)}
+          {p.rationale && (<div><span>Rationale</span><span>{p.rationale}</span></div>)}
+          {p.expected_outcome && humanize(p.expected_outcome).map(([key, value]) => (
+            <div key={`outcome-${key}`}><span>Success</span><span>{value}</span></div>
+          ))}
+          {p.verification_requirement && humanize(p.verification_requirement).map(([key, value]) => (
+            <div key={`verification-${key}`}><span>Verification</span><span>{value}</span></div>
+          ))}
           {Array.isArray(p.constraints) && p.constraints.length > 0 && (
-            <div><span>Constraints</span><span>{p.constraints.map((c) => (typeof c === "string" ? c : JSON.stringify(c))).join(" · ")}</span></div>
+            <div><span>Constraints</span><span>{p.constraints.map((constraint) => (typeof constraint === "string" ? constraint : JSON.stringify(constraint))).join(" · ")}</span></div>
           )}
           <div><span>Status</span><span style={{ textTransform: "capitalize" }}>{p.status ?? "unknown"}</span></div>
-          {(p.scope_type || p.proposer) && (
-            <div><span>Scope</span><span>{[p.scope_type, p.proposer ? `proposed by ${p.proposer}` : null].filter(Boolean).join(" · ") || "Not recorded"}</span></div>
+          <div><span>Resolution</span><span>{goalResolutionLabel(p)}{p.resolved_at ? ` · ${new Date(p.resolved_at).toLocaleDateString()}` : ""}</span></div>
+          <div><span>Ranking</span><span>{rankingText ?? "Not ranked"}</span></div>
+          {rankingSignals.map((signal) => <div key={signal}><span>Signal</span><span>{signal}</span></div>)}
+          {(p.scope_type || p.created_by || p.proposer) && (
+            <div><span>Scope</span><span>{[p.scope_type, p.created_by ? `contributed by ${p.created_by}` : p.proposer ? `proposed by ${p.proposer}` : null].filter(Boolean).join(" · ") || "Not recorded"}</span></div>
           )}
         </div>
 

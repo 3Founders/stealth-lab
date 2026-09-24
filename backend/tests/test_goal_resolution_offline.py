@@ -12,6 +12,7 @@ import asyncio
 import app.execution.goal_resolution as gr
 from app.services.access import AccessScope
 from app.services.applicability import ApplicabilityResult
+from app.services.procedures import OUTCOME_WRITER_STAMP, OUTCOME_WRITER_STAMP_CLAIMED
 
 
 def _run(coro):
@@ -39,6 +40,71 @@ class _FakePool:
 
     async def fetch(self, sql, *params):
         raise AssertionError(f"unexpected fetch: {' '.join(sql.split())[:80]}")
+
+
+class _RankingPool(_FakePool):
+    def __init__(self, goals: dict[str, dict], procedures: list[dict], evidence: list[dict]):
+        super().__init__(goals)
+        self.procedures = procedures
+        self.evidence = evidence
+        self.requested_procedure_ids: list[list[str]] = []
+
+    async def fetch(self, sql, *params):
+        normalized = " ".join(sql.split())
+        if "FROM evidence" in normalized:
+            return self.evidence
+        if "FROM procedures" in normalized:
+            self.requested_procedure_ids.append(list(params[0]))
+            return self.procedures
+        raise AssertionError(f"unexpected fetch: {normalized[:80]}")
+
+
+def _ranking_procedure(row_id: str, name: str, **overrides) -> dict:
+    row = {
+        "id": row_id,
+        "procedure_id": row_id,
+        "version": 1,
+        "name": name,
+        "goal": name,
+        "steps": [],
+        "preconditions": [],
+        "scope": {},
+        "exclusions": [],
+        "invariants": [],
+        "verification_state": "candidate",
+        "staleness": "fresh",
+        "availability": "active",
+        "approval_status": "proposed",
+        "verification_stats": {},
+    }
+    row.update(overrides)
+    return row
+
+
+def _ranking_evidence(
+    row_id: str,
+    target_id: str,
+    *,
+    status: str = "success",
+    version: int = 1,
+    writer: str = OUTCOME_WRITER_STAMP,
+) -> dict:
+    row = {
+        "id": row_id,
+        "evidence_type": "execution_result",
+        "target_type": "procedure",
+        "target_id": target_id,
+        "target_version": version,
+        "direction": "supports" if status == "success" else "contradicts",
+        "outcome_status": status,
+        "created_by": writer,
+        "independence_group": row_id,
+        "context_key": row_id,
+        "t_invalid": None,
+    }
+    if status == "success":
+        row["success_criteria"] = {"metrics": {"passed": True}}
+    return row
 
 
 def _goal(goal_id: str, name: str, **overrides) -> dict:
@@ -163,6 +229,84 @@ def test_procedure_node_keeps_real_alternate_feasible_procedures(monkeypatch):
     node = _run(gr.resolve_goal(pool, "G-parent", scope=SCOPE))
     assert node.procedure["name"] == "strategy-a"
     assert [p["name"] for p in node.procedure_alternates] == ["strategy-b"]
+
+
+def test_resolution_ranks_feasible_procedures_from_trusted_exact_version_evidence(monkeypatch):
+    procedures = [
+        _ranking_procedure("P-1", "one-of-one"),
+        _ranking_procedure("P-95", "ninety-five-of-one-hundred"),
+        _ranking_procedure("P-self", "self-report"),
+        _ranking_procedure("P-infeasible", "infeasible", availability="disabled"),
+    ]
+    evidence = [_ranking_evidence("E-1", "P-1")]
+    evidence.extend(
+        _ranking_evidence(f"E-wrong-{index}", "P-1", version=2) for index in range(100)
+    )
+    evidence.extend(
+        _ranking_evidence(f"E-95-success-{index}", "P-95") for index in range(95)
+    )
+    evidence.extend(
+        _ranking_evidence(f"E-95-failure-{index}", "P-95", status="failure") for index in range(5)
+    )
+    evidence.extend(
+        _ranking_evidence(
+            f"E-self-{index}", "P-self", writer=OUTCOME_WRITER_STAMP_CLAIMED,
+        )
+        for index in range(100)
+    )
+    pool = _RankingPool(
+        {"G-1": _goal(
+            "G-1", "rank a procedure", verification_requirement={"method": "deterministic_check"},
+        )},
+        procedures,
+        evidence,
+    )
+
+    async def fake_feasible(pool, goal_id, *, current_scope, access_scope):
+        return [
+            (procedures[0], True),
+            (procedures[1], True),
+            (procedures[2], True),
+            (procedures[3], False),
+        ]
+
+    monkeypatch.setattr(gr, "_feasible_procedures_for_goal", fake_feasible)
+    node = _run(gr.resolve_goal(pool, "G-1", scope=SCOPE))
+
+    assert node.procedure["name"] == "ninety-five-of-one-hundred"
+    assert [procedure["name"] for procedure in node.procedure_alternates] == [
+        "one-of-one", "self-report",
+    ]
+    assert "infeasible" not in [procedure["name"] for procedure in node.procedure_alternates]
+    assert node.procedure["steps"] == []
+    assert node.verification_requirement == {"method": "deterministic_check"}
+    assert pool.requested_procedure_ids == [["P-1", "P-95", "P-self"]]
+
+
+def test_resolution_preserves_feasible_order_when_ranking_read_fails(monkeypatch):
+    pool = _FakePool({"G-1": _goal("G-1", "rank a procedure")})
+    procedures = [
+        {"id": "P-1", "procedure_id": "P-1", "name": "first", "version": 1, "steps": []},
+        {"id": "P-2", "procedure_id": "P-2", "name": "second", "version": 1, "steps": []},
+    ]
+
+    async def fake_feasible(pool, goal_id, *, current_scope, access_scope):
+        return [(procedures[0], True), (procedures[1], True)]
+
+    class FailingRanking:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def rank_for_goal(self, procedure_ids):
+            raise RuntimeError("ranking read failed")
+
+    monkeypatch.setattr(gr, "_feasible_procedures_for_goal", fake_feasible)
+    monkeypatch.setattr(gr, "ProcedureRankingService", FailingRanking)
+
+    node = _run(gr.resolve_goal(pool, "G-1", scope=SCOPE))
+
+    assert node.procedure["name"] == "first"
+    assert [procedure["name"] for procedure in node.procedure_alternates] == ["second"]
 
 
 def test_procedure_cost_score_hook_is_called_but_inert(monkeypatch):

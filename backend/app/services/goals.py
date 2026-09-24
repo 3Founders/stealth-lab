@@ -266,6 +266,7 @@ async def find_or_create_goal(
     objective: Optional[str] = None,
     constraints: Optional[list] = None,
     metadata: Optional[dict] = None,
+    rationale: Optional[str] = None,
     expected_outcome: Any = None,
     verification_requirement: Optional[dict] = None,
     status: str = "candidate",
@@ -320,6 +321,9 @@ async def find_or_create_goal(
         allow_global_entity_id=bool(scope_type == "global" and scope_entity_id),
     )
     validate_provenance(provenance)
+    goal_metadata = dict(metadata or {})
+    if rationale is not None:
+        goal_metadata["rationale"] = rationale
 
     normalized = normalize_goal_name(canonical_name)
     if not normalized:
@@ -428,7 +432,7 @@ async def find_or_create_goal(
             return await find_or_create_goal(
                 pool, canonical_name=canonical_name, scope_type=scope_type, scope_entity_id=scope_entity_id,
                 provenance=provenance, description=description, objective=objective,
-                constraints=constraints, metadata=metadata, expected_outcome=expected_outcome,
+                constraints=constraints, metadata=metadata, rationale=rationale, expected_outcome=expected_outcome,
                 verification_requirement=verification_requirement, status=status,
                 owner_id=owner_id, created_from=created_from, created_by=created_by,
                 aliases=aliases, embedder=embedder, judge=judge, judge_mode=judge_mode,
@@ -455,7 +459,7 @@ async def find_or_create_goal(
             """,
             str(goal_id), canonical_name, normalized, description, objective,
             constraints if constraints is not None else [],
-            metadata if metadata is not None else {},
+            goal_metadata,
             expected_outcome if expected_outcome is not None else {},
             verification_requirement if verification_requirement is not None else {},
             status, provenance, created_from, owner_id, visibility,
@@ -476,7 +480,7 @@ async def find_or_create_goal(
             pool, canonical_name=canonical_name, scope_type=scope_type,
             scope_entity_id=scope_entity_id, provenance=provenance,
             description=description, objective=objective, constraints=constraints,
-            metadata=metadata, expected_outcome=expected_outcome,
+            metadata=metadata, rationale=rationale, expected_outcome=expected_outcome,
             verification_requirement=verification_requirement, status=status,
             owner_id=owner_id, created_from=created_from, created_by=created_by,
             aliases=aliases, embedder=embedder, judge=judge, judge_mode=judge_mode,
@@ -597,8 +601,20 @@ async def get_goal(
     if not row:
         return None
     goal = dict(row)
-    goal.pop("embedding", None)  # never serialize a raw vector to a caller
+    goal.pop("embedding", None)
+    goal.pop("ranking_raw", None)
     goal["id"] = str(goal["id"])
+    metadata = goal.get("metadata")
+    if isinstance(metadata, str):
+        try:
+            metadata = json.loads(metadata)
+        except (TypeError, ValueError):
+            metadata = None
+    if isinstance(metadata, dict) and "rationale" in metadata:
+        goal.setdefault("rationale", metadata["rationale"])
+    from app.services.goal_ranking import public_goal_ranking, score_goal_candidate
+
+    goal["ranking"] = public_goal_ranking(score_goal_candidate(goal))
     # str-cast every id -- asyncpg returns a real uuid.UUID object, which
     # does not compare equal to the str ids find_or_create_goal returns
     # (a real inconsistency this module's own live verification caught:
@@ -625,32 +641,56 @@ async def search_goals(
     scope: Optional[AccessScope] = None,
     tenant_scope: Optional[TenantScope] = None,
     status: Optional[str] = None,
+    resolved: str = "all",
     limit: int = 10,
+    offset: int = 0,
 ) -> list[dict[str, Any]]:
-    """Lexical + optional semantic search over goals, RRF-fused
-    (ingestion.md Sec 18). At least one of `query_text`/`query_embedding`
-    is required -- a caller with neither has nothing to search for.
-
-    This is the "search near matches" half of ingestion.md Sec 19's
-    create-Goal flow, and the general Goal-search surface Sec 18 asks
-    for. Deliberately NOT the heavyweight multi-table
-    `retrieval.ProceduralRetriever` -- Goal is one table with no
-    hierarchy/graph expansion, so a small dedicated fuse is simpler and
-    correct, not a shortcut.
-    """
+    """Lexical + optional semantic search over Goals, RRF-fused."""
     if not query_text and not query_embedding:
         raise ValueError("search_goals requires query_text and/or query_embedding")
-    # CONVERGED: the same candidate machinery as Tier-1 retrieval (global goal projection: FTS + ANN + RRF,
-    # visibility-filtered, canonical rows hydrated from each goal's home shard). No second goal ranker.
+    if offset < 0:
+        raise ValueError("offset must be non-negative")
     from app.services import retrieval_service as rs
 
     model = None
     if query_embedding:
         model = await pool.fetchval(
             "SELECT embedding_model FROM goal_search_index WHERE embedding IS NOT NULL GROUP BY 1 ORDER BY count(*) DESC LIMIT 1")
-    return await rs.search_goal_candidates(
+    page_size = max(1, int(limit))
+    rows, _has_more = await rs.search_goal_candidates_page(
         pool, query_text=query_text, query_embedding=query_embedding, embedding_model=model,
-        scope=scope or AccessScope.unrestricted(), status=status, limit=limit)
+        scope=scope or AccessScope.unrestricted(), status=status, resolved=resolved,
+        limit=page_size, offset=offset,
+    )
+    return rows
+
+
+async def search_goals_page(
+    pool: asyncpg.Pool,
+    *,
+    query_text: Optional[str] = None,
+    query_embedding: Optional[list[float]] = None,
+    scope: Optional[AccessScope] = None,
+    tenant_scope: Optional[TenantScope] = None,
+    status: Optional[str] = None,
+    resolved: str = "all",
+    limit: int = 10,
+    offset: int = 0,
+) -> tuple[list[dict[str, Any]], bool]:
+    """Return one resolved/search page and whether more results exist."""
+    if not query_text and not query_embedding:
+        raise ValueError("search_goals requires query_text and/or query_embedding")
+    from app.services import retrieval_service as rs
+
+    model = None
+    if query_embedding:
+        model = await pool.fetchval(
+            "SELECT embedding_model FROM goal_search_index WHERE embedding IS NOT NULL GROUP BY 1 ORDER BY count(*) DESC LIMIT 1")
+    return await rs.search_goal_candidates_page(
+        pool, query_text=query_text, query_embedding=query_embedding, embedding_model=model,
+        scope=scope or AccessScope.unrestricted(), status=status, resolved=resolved,
+        limit=limit, offset=offset,
+    )
 
 
 async def create_goal_from_user(
@@ -661,10 +701,12 @@ async def create_goal_from_user(
     scope_entity_id: Optional[str] = None,
     owner_id: str,
     description: Optional[str] = None,
+    rationale: Optional[str] = None,
     objective: Optional[str] = None,
     constraints: Optional[list] = None,
     expected_outcome: Optional[dict] = None,
     verification_requirement: Optional[dict] = None,
+    metadata: Optional[dict] = None,
     embedder: Optional[Any] = None,
     client: Optional[Any] = None,
     adjudication_model: str = "gemma-4-31B-it",
@@ -723,6 +765,7 @@ async def create_goal_from_user(
         pool, canonical_name=canonical_name, scope_type=scope_type,
         scope_entity_id=scope_entity_id, provenance="system_pending_review",
         description=description, objective=objective, constraints=constraints,
+        metadata=metadata, rationale=rationale,
         expected_outcome=expected_outcome,
         verification_requirement=verification_requirement,
         owner_id=owner_id, visibility="public", created_from="user_created",

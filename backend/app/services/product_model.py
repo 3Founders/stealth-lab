@@ -34,7 +34,7 @@ Benchmark/Solution/Evaluation visibility on a goal being visible
 from __future__ import annotations
 
 import json
-from typing import Any, Optional
+from typing import Any, Mapping, Optional, Sequence
 
 import asyncpg
 
@@ -89,7 +89,79 @@ def _row(r: asyncpg.Record | None) -> Optional[dict[str, Any]]:
         if k in ("id", "goal_id", "benchmark_id", "solution_id", "target_id",
                  "procedure_id") and v is not None:
             d[k] = str(v)
+    d.pop("embedding", None)
     return d
+
+
+_GOAL_READ_COLUMNS = (
+    "g.id, g.canonical_name, g.description, g.objective, g.constraints, "
+    "g.input_schema, g.expected_outcome, g.verification_requirement, g.status, "
+    "g.metadata, g.resolved_at, g.visibility, g.owner_id, g.scope_type, "
+    "g.scope_entity_id, g.provenance, g.created_from, g.aliases, g.tags, "
+    "g.version, g.t_valid, g.t_invalid, g.t_created, g.t_expired, g.created_by"
+)
+
+
+def _resolution_clause(resolved: Optional[bool | str], alias: str = "g") -> str:
+    if resolved is None or resolved == "all":
+        return ""
+    if resolved is True or resolved == "resolved":
+        return f"{alias}.resolved_at IS NOT NULL"
+    if resolved is False or resolved == "unresolved":
+        return f"{alias}.resolved_at IS NULL"
+    raise ValueError("resolved must be all, resolved, unresolved, or a boolean")
+
+
+def _public_goal_row(
+    row: asyncpg.Record | Mapping[str, Any],
+    ranking: Optional[Mapping[str, Any]] = None,
+) -> dict[str, Any]:
+    result = _row(row)
+    if result is None:
+        return {}
+    result.pop("_rank", None)
+    result.pop("ranking_raw", None)
+    metadata = result.get("metadata")
+    if isinstance(metadata, dict) and "rationale" in metadata:
+        result.setdefault("rationale", metadata["rationale"])
+    from app.services.goal_ranking import public_goal_ranking, score_goal_candidate
+
+    result["ranking"] = public_goal_ranking(
+        ranking if ranking is not None else score_goal_candidate(result)
+    )
+    return result
+
+
+def _rank_goal_rows(
+    rows: Sequence[asyncpg.Record | Mapping[str, Any]],
+    *,
+    resolved: Optional[bool | str] = None,
+) -> list[dict[str, Any]]:
+    from app.services.goal_ranking import rank_goal_candidates
+
+    materialized = [(_row(row), row) for row in rows]
+    materialized = [(value, source) for value, source in materialized if value is not None]
+    if resolved is True or resolved == "resolved":
+        matching = [
+            (value, source) for value, source in materialized
+            if value.get("resolved_at") is not None
+        ]
+        if matching:
+            materialized = matching
+    elif resolved is False or resolved == "unresolved":
+        matching = [
+            (value, source) for value, source in materialized
+            if value.get("resolved_at") is None
+        ]
+        if matching:
+            materialized = matching
+    source = {str(value["id"]): original for value, original in materialized}
+    ranked = rank_goal_candidates([value for value, _ in materialized])
+    return [
+        _public_goal_row(source[str(item["goal_id"])], item)
+        for item in ranked
+        if str(item.get("goal_id")) in source
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -107,68 +179,79 @@ async def get_goal_for_product(
     sql, params, _ = scope_predicates(scope, tenant_scope or TenantScope.unrestricted(),
                                       alias="g", param_index=2)
     r = await pool.fetchrow(
-        f"SELECT g.* FROM goals g WHERE g.id = $1 AND g.t_invalid IS NULL AND {sql}", goal_id, *params,
+        f"SELECT {_GOAL_READ_COLUMNS} FROM goals g WHERE g.id = $1 AND g.t_invalid IS NULL AND {sql}",
+        goal_id, *params,
     )
-    return _row(r)
+    return _public_goal_row(r) if r is not None else None
 
 
 async def list_goals(
     pool: asyncpg.Pool, *, scope: AccessScope, status: Optional[str] = None,
-    limit: int = 50, tenant_scope: Optional[TenantScope] = None,
-) -> list[dict[str, Any]]:
-    """Plain recency-ordered listing (the product surface's "browse all
-    goals" need) -- distinct from app.services.goals.search_goals, which
-    requires a query_text/query_embedding and can't do a bare listing.
-    `status`, if given, filters on goals.status (candidate/active/
-    deprecated/merged -- the ingestion-lifecycle vocabulary), NOT the
-    former Problem-only open/active/solved/archived vocabulary that
-    concept had before migration 110 retired it."""
+    resolved: Optional[bool | str] = None, limit: int = 50, offset: int = 0,
+    tenant_scope: Optional[TenantScope] = None,
+) -> tuple[list[dict[str, Any]], bool]:
+    """List visible Goals with resolution filtering and offset pagination."""
+    if offset < 0:
+        raise ValueError("offset must be non-negative")
     clauses, args = ["g.t_invalid IS NULL"], []
     idx = 1
     if status:
         clauses.append(f"g.status = ${idx}")
         args.append(status)
         idx += 1
-    sql, params, _ = scope_predicates(scope, tenant_scope or TenantScope.unrestricted(),
-                                      alias="g", param_index=idx)
+    resolution_sql = _resolution_clause(resolved)
+    if resolution_sql:
+        clauses.append(resolution_sql)
+    sql, params, idx = scope_predicates(
+        scope, tenant_scope or TenantScope.unrestricted(), alias="g", param_index=idx,
+    )
     args.extend(params)
-    idx += len(params)
-    where = " AND ".join([*clauses, sql])
-    args.append(min(int(limit), 200))
+    page_size = min(max(int(limit), 1), 200)
+    limit_idx, offset_idx = idx, idx + 1
+    args.extend([page_size + 1, max(int(offset), 0)])
     rows = await pool.fetch(
-        f"SELECT g.* FROM goals g WHERE {where} ORDER BY g.t_created DESC LIMIT ${idx}",
+        f"SELECT {_GOAL_READ_COLUMNS} FROM goals g "
+        f"WHERE {' AND '.join([*clauses, sql])} "
+        f"ORDER BY g.t_created DESC, g.id LIMIT ${limit_idx} OFFSET ${offset_idx}",
         *args,
     )
-    return [_row(r) for r in rows]
+    ranked = _rank_goal_rows(rows, resolved=resolved)
+    return ranked[:page_size], len(rows) > page_size
 
 
 async def find_goal(
-    pool: asyncpg.Pool, query: str, *, scope: AccessScope, limit: int = 10,
+    pool: asyncpg.Pool, query: str, *, scope: AccessScope,
+    resolved: Optional[bool | str] = None, limit: int = 10, offset: int = 0,
     tenant_scope: Optional[TenantScope] = None,
-) -> list[dict[str, Any]]:
-    """
-    NL goal text -> Goal(s), ranked. A natural-language goal is not a strict
-    boolean query, so the words are OR'd into the tsquery and `ts_rank`
-    does the discrimination; a goal must still share at least one lexeme
-    with the query (rank > 0). Searches canonical_name + description +
-    objective.
-    """
+) -> tuple[list[dict[str, Any]], bool]:
+    """Find visible Goals and return one page plus a continuation flag."""
+    if offset < 0:
+        raise ValueError("offset must be non-negative")
     import re as _re
     words = [w for w in _re.split(r"[^a-z0-9]+", query.lower()) if len(w) > 1]
     if not words:
-        return []
-    tsq = " | ".join(words)  # OR: an NL goal is not a boolean AND query
-    sql, params, _ = scope_predicates(scope, tenant_scope or TenantScope.unrestricted(),
-                                      alias="g", param_index=2)
+        return [], False
+    tsq = " | ".join(words)
     doc = "g.canonical_name || ' ' || COALESCE(g.description,'') || ' ' || COALESCE(g.objective,'')"
-    rows = await pool.fetch(
-        f"SELECT g.*, ts_rank(to_tsvector('english', {doc}), to_tsquery('english', $1)) AS _rank "
-        f"FROM goals g WHERE g.t_invalid IS NULL AND {sql} "
-        f"AND to_tsvector('english', {doc}) @@ to_tsquery('english', $1) "
-        f"ORDER BY _rank DESC LIMIT ${2 + len(params)}",
-        tsq, *params, min(int(limit), 50),
+    clauses = ["g.t_invalid IS NULL"]
+    resolution_sql = _resolution_clause(resolved)
+    if resolution_sql:
+        clauses.append(resolution_sql)
+    sql, params, idx = scope_predicates(
+        scope, tenant_scope or TenantScope.unrestricted(), alias="g", param_index=2,
     )
-    return [_row(r) for r in rows]
+    page_size = min(max(int(limit), 1), 50)
+    limit_idx, offset_idx = idx, idx + 1
+    rows = await pool.fetch(
+        f"SELECT {_GOAL_READ_COLUMNS}, "
+        f"ts_rank(to_tsvector('english', {doc}), to_tsquery('english', $1)) AS _rank "
+        f"FROM goals g WHERE {' AND '.join([*clauses, sql])} "
+        f"AND to_tsvector('english', {doc}) @@ to_tsquery('english', $1) "
+        f"ORDER BY _rank DESC, g.id LIMIT ${limit_idx} OFFSET ${offset_idx}",
+        tsq, *params, page_size + 1, max(int(offset), 0),
+    )
+    ranked = _rank_goal_rows(rows, resolved=resolved)
+    return ranked[:page_size], len(rows) > page_size
 
 
 # ---------------------------------------------------------------------------
@@ -863,7 +946,9 @@ async def find_best_verified_solution(
     ever looks up an existing verified leaderboard entry, never runs
     anything).
     """
-    matches = await find_goal(pool, goal, scope=scope, limit=limit, tenant_scope=tenant_scope)
+    matches, _has_more = await find_goal(
+        pool, goal, scope=scope, limit=limit, tenant_scope=tenant_scope,
+    )
     if not matches:
         return {"goal": goal, "matched_goal": None,
                 "result": "no matching goal", "current_best": []}
