@@ -63,6 +63,7 @@ WHAT THIS MODULE DOES NOT DO
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import re
@@ -343,7 +344,7 @@ def _render_hints(document_hints: Optional[dict[str, Any]]) -> str:
 
 def _extract_from_chunk(
     client: Any, chunk: list[Block], blocks_by_index: dict[int, Block], *,
-    hint_lines: str, model: str, temperature: float,
+    hint_lines: str, model: str, temperature: float, usage_sink: Optional[list] = None,
 ) -> list[ClaimCandidate]:
     """One structured extraction call over a SINGLE chunk's prose text.
     Same fail-closed contract as `extract_claim_candidates` itself, scoped
@@ -365,6 +366,8 @@ def _extract_from_chunk(
             temperature=temperature,
             max_tokens=2000,
         )
+        if usage_sink is not None:
+            usage_sink.append(getattr(response, "usage", None))
         text = (response.choices[0].message.content or "").strip()
         parsed = json.loads(text)
         raw_claims = parsed["claims"]
@@ -389,7 +392,7 @@ def _extract_from_chunk(
 def extract_claim_candidates(
     client: Any, blocks: list[Block], *,
     document_hints: Optional[dict[str, Any]] = None,
-    model: str = "gemma-4-31B-it", temperature: float = 0.1,
+    model: str = "gemma-4-31B-it", temperature: float = 0.1, usage_sink: Optional[list] = None,
 ) -> list[ClaimCandidate]:
     """One structured extraction call per chunk of `blocks`' prose text
     (Phase 11: a short document is one chunk; a long one is several,
@@ -434,7 +437,7 @@ def extract_claim_candidates(
         # grounded in the same source text. Concatenation IS consolidation.
         candidates.extend(_extract_from_chunk(
             client, chunk, blocks_by_index,
-            hint_lines=hint_lines, model=model, temperature=temperature,
+            hint_lines=hint_lines, model=model, temperature=temperature, usage_sink=usage_sink,
         ))
     return candidates
 
@@ -495,9 +498,16 @@ async def extract_claim_candidates_cached(
         raw = json.loads(cached) if isinstance(cached, str) else cached
         return [_candidate_from_dict(d) for d in raw]
 
-    candidates = extract_claim_candidates(
-        client, blocks, document_hints=document_hints, model=model, temperature=temperature,
+    # Sync client + one call per chunk: run in a worker thread so it doesn't freeze the event
+    # loop (and every other ingestion lane in this process) for the whole document.
+    usage: list = []
+    candidates = await asyncio.to_thread(
+        extract_claim_candidates, client, blocks, document_hints=document_hints, model=model,
+        temperature=temperature, usage_sink=usage,
     )
+    from app.services import ingest_budget
+    for u in usage:
+        await ingest_budget.record_completion(model, "claim_extraction", u)
     # `client is None` means extraction never actually ran (Phase 9's own
     # "no client -> []" fail-closed path, NOT "ran and found nothing") --
     # caching that would wrongly serve a permanent empty result even after
