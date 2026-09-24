@@ -547,6 +547,34 @@ async def _validate_accepted_edge(conn: Any, specific: str, abstract: str) -> No
         )
 
 
+async def is_accepted_edge_redundant(
+    pool: Any, specific_goal_id: str | UUID, abstract_goal_id: str | UUID
+) -> bool:
+    """Whether another accepted path already carries specific -> abstract, so
+    the direct edge adds nothing (the graph keeps direct edges only)."""
+    specific = _uuid(specific_goal_id, "specific_goal_id")
+    abstract = _uuid(abstract_goal_id, "abstract_goal_id")
+    return bool(await pool.fetchval(
+        """
+        WITH RECURSIVE reach(goal_id) AS (
+            SELECT r.abstract_goal_id
+            FROM goal_relations r
+            WHERE r.specific_goal_id = $1::uuid
+              AND r.relation_type = 'SPECIALIZES' AND r.status = 'accepted'
+              AND r.abstract_goal_id <> $2::uuid
+            UNION
+            SELECT r.abstract_goal_id
+            FROM goal_relations r
+            JOIN reach ON r.specific_goal_id = reach.goal_id
+            WHERE r.relation_type = 'SPECIALIZES' AND r.status = 'accepted'
+        )
+        SELECT EXISTS (SELECT 1 FROM reach WHERE goal_id = $2::uuid)
+        """,
+        specific,
+        abstract,
+    ))
+
+
 def _relation_result(
     row: Mapping[str, Any], *, created: bool, persisted: bool
 ) -> dict[str, Any]:

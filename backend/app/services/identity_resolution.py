@@ -202,6 +202,53 @@ async def enqueue_goal_abstraction_placement(
     )
 
 
+PLACEMENT_REPAIR_WINDOW_MINUTES = 7 * 24 * 60
+PLACEMENT_REPAIR_BATCH = 200
+
+
+async def enqueue_missing_goal_placements(
+    pool: asyncpg.Pool,
+    *,
+    window_minutes: int = PLACEMENT_REPAIR_WINDOW_MINUTES,
+    limit: int = PLACEMENT_REPAIR_BATCH,
+) -> int:
+    """Repair sweep: a Goal whose placement enqueue failed at creation time
+    (find_or_create_goal logs and continues -- placement is optional
+    enrichment) is re-enqueued here. Reads the control-plane projection, so
+    Goals on every shard are covered. Bounded to recently projected Goals so
+    it never pushes the whole legacy corpus through the judge in one pass."""
+    rows = await pool.fetch(
+        "SELECT g.goal_id::text AS id, COALESCE(g.scope_type, 'global') AS scope_type, g.scope_entity_id, "
+        "g.owner_id, g.visibility::text AS visibility, g.version "
+        "FROM goal_search_index g "
+        "WHERE g.status IN ('active', 'candidate') "
+        "AND g.updated_at >= now() - make_interval(mins => $1) "
+        "AND NOT EXISTS (SELECT 1 FROM ingestion_jobs j WHERE j.job_type = $3 "
+        "                AND j.idempotency_key = 'goal-abstraction-placement:' || g.goal_id::text) "
+        "ORDER BY g.updated_at DESC, g.goal_id LIMIT $2",
+        int(window_minutes), int(limit), GOAL_ABSTRACTION_PLACEMENT_JOB,
+    )
+    enqueued = 0
+    for row in rows:
+        scope_type = str(row["scope_type"])
+        try:
+            _job_id, created = await enqueue_goal_abstraction_placement(
+                pool,
+                str(row["id"]),
+                identity_decision_id=None,
+                scope_type=scope_type,
+                scope_entity_id=None if scope_type == "global" else row["scope_entity_id"],
+                owner_id=row["owner_id"],
+                visibility=str(row["visibility"]),
+                goal_version=int(row["version"] or 1),
+            )
+        except Exception:  # noqa: BLE001 -- retried on the next sweep
+            log.warning("goal %s placement re-enqueue failed", row["id"], exc_info=True)
+            continue
+        enqueued += int(bool(created))
+    return enqueued
+
+
 async def enqueue_goal_abstraction_audit(
     pool: asyncpg.Pool,
     goal_id: str,

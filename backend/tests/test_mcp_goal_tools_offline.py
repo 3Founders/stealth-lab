@@ -140,7 +140,7 @@ def test_create_goal_default_uses_embeddings(monkeypatch):
     captured = {}
 
     async def fake_create(pool, *, canonical_name, description, scope_type, scope_entity_id,
-                           owner_id, embedder, allow_create_anyway):
+                           owner_id, embedder, allow_create_anyway, rationale=None, objective=None):
         captured["embedder"] = embedder
         captured["allow_create_anyway"] = allow_create_anyway
         return {"outcome": "created", "goal": {"id": "g1"}}
@@ -161,7 +161,7 @@ def test_create_goal_use_embeddings_false_skips_the_embedder(monkeypatch):
     captured = {}
 
     async def fake_create(pool, *, canonical_name, description, scope_type, scope_entity_id,
-                           owner_id, embedder, allow_create_anyway):
+                           owner_id, embedder, allow_create_anyway, rationale=None, objective=None):
         captured["embedder"] = embedder
         return {"outcome": "created", "goal": {"id": "g1"}}
 

@@ -3497,6 +3497,7 @@ async def list_goal_procedures(goal_id: str, ctx: Context) -> str:
 @server.tool()
 async def create_goal(
     canonical_name: str, ctx: Context,
+    rationale: str = "", objective: str = "",
     description: Optional[str] = None,
     scope_type: str = "global", scope_entity_id: Optional[str] = None,
     allow_create_anyway: bool = False, use_embeddings: bool = True,
@@ -3510,6 +3511,9 @@ async def create_goal(
     inspect/reuse one of the returned candidates via `inspect_goal`) to
     proceed. New goals start `status='candidate'` -- never born
     active/reviewed (ingestion.md Sec 19's own "candidate lifecycle").
+
+    `rationale` (why it is worth accomplishing) and `objective` (what counts
+    as accomplished) are required, same as the website's Add-a-Goal form.
 
     Returns {"outcome": "near_matches", "candidates": [...]}
          or {"outcome": "created" | "matched", "goal": {...}}.
@@ -3526,11 +3530,12 @@ async def create_goal(
     try:
         result = await create_goal_from_user(
             pool, canonical_name=canonical_name, description=description,
+            rationale=rationale, objective=objective or None,
             scope_type=scope_type, scope_entity_id=scope_entity_id,
             owner_id=_resolve_caller_identity(fallback="mcp_create_goal"),
             embedder=embedder, allow_create_anyway=allow_create_anyway,
         )
-    except (V0Violation, GoalQualityRejected) as exc:
+    except (V0Violation, GoalQualityRejected, ValueError) as exc:
         return f"REFUSED: {exc}"
     return json.dumps(result, default=str)
 

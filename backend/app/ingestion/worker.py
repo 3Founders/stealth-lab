@@ -238,6 +238,12 @@ class Worker:
                     window_minutes=self.cfg.reconcile_window_minutes)
             except Exception:  # noqa: BLE001 -- retried next run; never fails the batch
                 log.warning('goal reconciliation failed; will retry next run', exc_info=True)
+            from app.services.identity_resolution import enqueue_missing_goal_placements
+
+            try:
+                self.counts['placement_repair'] = await enqueue_missing_goal_placements(self.pool)
+            except Exception:  # noqa: BLE001 -- retried next run; never fails the batch
+                log.warning('goal placement repair failed; will retry next run', exc_info=True)
         if self.cfg.reconcile_claims:
             from app.ingestion.handlers import Dependencies
             from app.services.claim_identity import reconcile_claims

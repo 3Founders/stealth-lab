@@ -50,6 +50,7 @@ from app.services.goal_abstraction import (
     RELATION_POLICY_VERSION,
     adjudicate_goal_relation,
     expand_goal_neighbors,
+    is_accepted_edge_redundant,
     persist_goal_relation,
 )
 from app.services.identity_resolution import (
@@ -1272,6 +1273,7 @@ async def handle_goal_abstraction_placement(
     )
     proposed_count = 0
     uncertain = False
+    created_edges: list[tuple[str, str, Optional[str], dict[str, Any]]] = []
     for candidate, decision_id, provider, model in decided:
         relation = candidate.relation
         if relation == "same":
@@ -1339,6 +1341,13 @@ async def handle_goal_abstraction_placement(
                     pools=pools,
                 )
                 accepted_count += 1
+                created_edges.append((specific, abstract, decision_id, {
+                    "operation": "goal_abstraction_placement",
+                    "policy": RELATION_POLICY,
+                    "policy_version": RELATION_POLICY_VERSION,
+                    "authority": RELATION_AUTHORITY,
+                    "relation": relation,
+                }))
             else:
                 uncertain = True
                 if current_status is None:
@@ -1374,6 +1383,10 @@ async def handle_goal_abstraction_placement(
         ):
             rejected_count += 1
             uncertain = True
+    pruned = await _prune_redundant_placement_edges(pool, created_edges, context=context, pools=pools)
+    accepted_count -= len(pruned)
+    live_edges = [edge for edge in created_edges if edge[:2] not in pruned]
+    transfers_enqueued = await _enqueue_neighbor_benchmark_transfers(pool, goal_id, live_edges, context=context)
     if uncertain:
         await _enqueue_placement_audit(pool, goal_id, "uncertain", context)
     if accepted_count == 0:
@@ -1386,8 +1399,91 @@ async def handle_goal_abstraction_placement(
         "accepted_edges": accepted_count,
         "proposed_edges": proposed_count,
         "rejected_edges": rejected_count,
+        "pruned_redundant_edges": len(pruned),
+        "benchmark_transfers_enqueued": transfers_enqueued,
         "uncertain": uncertain,
     }
+
+
+_NEIGHBOR_TRANSFER_LIMIT = 20
+
+
+async def _prune_redundant_placement_edges(
+    pool: asyncpg.Pool,
+    created_edges: list[tuple[str, str, Optional[str], dict[str, Any]]],
+    *,
+    context: dict[str, Any],
+    pools: Any,
+) -> set[tuple[str, str]]:
+    """Edges this placement accepted can become implied by another edge it
+    accepted later (the judge may name both a parent and that parent's own
+    parent). Keep only direct edges: record the implied ones as rejected with
+    the reason, so the graph stays sparse whatever order candidates came in."""
+    pruned: set[tuple[str, str]] = set()
+    for specific, abstract, decision_id, metadata in created_edges:
+        if not await is_accepted_edge_redundant(pool, specific, abstract):
+            continue
+        try:
+            await persist_goal_relation(
+                pool,
+                specific,
+                abstract,
+                status="rejected",
+                provenance="identity_resolution",
+                access_scope=context["access_scope"],
+                tenant_scope=context["tenant_scope"],
+                decision_id=decision_id,
+                decision_metadata={**metadata, "outcome": "transitively_redundant"},
+                decided_by=None if decision_id else RELATION_AUTHORITY,
+                expected_status="accepted",
+                pools=pools,
+            )
+        except GoalRelationStatusConflict:
+            continue
+        pruned.add((specific, abstract))
+    return pruned
+
+
+async def _enqueue_neighbor_benchmark_transfers(
+    pool: asyncpg.Pool,
+    goal_id: str,
+    edges: list[tuple[str, str, Optional[str], dict[str, Any]]],
+    *,
+    context: dict[str, Any],
+) -> int:
+    """Automatic Benchmark enrichment: frozen Benchmarks of the Goals this
+    placement newly connected to become transfer CANDIDATES for the Goal. The
+    transfer job judges each one (benchmark_transfer); nothing is copied here.
+    Optional enrichment -- a failure is logged and never fails placement."""
+    neighbors = sorted({abstract if specific == goal_id else specific for specific, abstract, *_ in edges})
+    if not neighbors:
+        return 0
+    from app.services import benchmark_transfer
+
+    try:
+        rows = await pool.fetch(
+            "SELECT id::text AS id FROM benchmarks WHERE goal_id = ANY($1::uuid[]) AND status = 'frozen' "
+            "ORDER BY frozen_at DESC NULLS LAST, id LIMIT $2",
+            neighbors,
+            _NEIGHBOR_TRANSFER_LIMIT,
+        )
+    except Exception:  # noqa: BLE001 -- enrichment is optional
+        log.warning("goal %s: neighbour benchmark lookup failed", goal_id, exc_info=True)
+        return 0
+    enqueued = 0
+    for row in rows:
+        try:
+            _job_id, created = await benchmark_transfer.enqueue_benchmark_transfer(
+                pool,
+                row["id"],
+                goal_id,
+                access_scope=context["access_scope"],
+                tenant_scope=context["tenant_scope"],
+            )
+            enqueued += int(bool(created))
+        except Exception:  # noqa: BLE001 -- one bad candidate never blocks the rest
+            log.warning("goal %s: benchmark %s transfer not enqueued", goal_id, row["id"], exc_info=True)
+    return enqueued
 
 
 async def handle_goal_abstraction_audit(

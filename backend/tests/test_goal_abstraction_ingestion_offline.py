@@ -243,7 +243,19 @@ def wire_handler(
         persister or default_persist,
     )
     monkeypatch.setattr(ingestion_jobs, "enqueue_goal_abstraction_audit", enqueue_audit)
-    return {"states": states, "audits": audit_reasons}
+    redundant_edges: set[tuple[str, str]] = set()
+    transfers: list[tuple[str, str]] = []
+
+    async def redundant(_pool: Any, specific: str, abstract: str) -> bool:
+        return (specific, abstract) in redundant_edges
+
+    async def neighbor_transfers(_pool: Any, goal_id: str, edges: Any, **_kwargs: Any) -> int:
+        transfers.extend((goal_id, edge[1] if edge[0] == goal_id else edge[0]) for edge in edges)
+        return len(edges)
+
+    monkeypatch.setattr(ingestion_jobs, "is_accepted_edge_redundant", redundant)
+    monkeypatch.setattr(ingestion_jobs, "_enqueue_neighbor_benchmark_transfers", neighbor_transfers)
+    return {"states": states, "audits": audit_reasons, "redundant": redundant_edges, "transfers": transfers}
 
 
 @pytest.mark.asyncio
@@ -441,3 +453,120 @@ async def test_scope_rejection_never_persists_an_edge(monkeypatch):
     assert result["accepted_edges"] == 0
     assert result["rejected_edges"] == 1
     assert not state["states"]
+
+
+@pytest.mark.asyncio
+async def test_placement_prunes_an_edge_its_own_later_edge_implies(monkeypatch):
+    # The judge says the new Goal specializes both EXISTING and that Goal's
+    # parent; once both are accepted, the edge to the ancestor is implied.
+    parent_goal = "01900000-0000-7000-8000-00000000abcd"
+    candidates = [
+        Candidate(parent_goal, "Ship software", "Ship software"),
+        Candidate(EXISTING_GOAL, existing_goal()["canonical_name"], "General safe deployment"),
+    ]
+    writes: list[dict[str, Any]] = []
+
+    async def adjudicate(_pool: Any, specific: str, abstract: str, **_kwargs: Any) -> dict[str, Any]:
+        public = {"visibility": "public", "owner_id": None}
+        return {"specific_goal": public, "abstract_goal": public}
+
+    async def persist(_pool: Any, specific: str, abstract: str, **values: Any) -> dict[str, Any]:
+        writes.append({"specific": specific, "abstract": abstract, **values})
+        state["states"][(specific, abstract)] = values["status"]
+        return {"created": True, "persisted": True}
+
+    class Judge:
+        async def judge_identity_batch(self, kind: str, a: str, texts: list[str]) -> Any:
+            class R:
+                ok = True
+                provider = "fake"
+                model = "fake"
+                value = [{"relation": "specializes", "confidence": 0.95} for _ in texts]
+            return R()
+
+    state = wire_handler(monkeypatch, candidates=candidates, decision=None, adjudicator=adjudicate, persister=persist)
+    state["redundant"].add((NEW_GOAL, parent_goal))
+    monkeypatch.setattr(ingestion_jobs, "record_decision", _record_nothing)
+    result = await ingestion_jobs.handle_goal_abstraction_placement(
+        object(), {**payload(), "identity_decision_id": None}, judge=Judge()
+    )
+
+    assert result["pruned_redundant_edges"] == 1
+    assert result["accepted_edges"] == 1
+    pruned = [w for w in writes if w["status"] == "rejected"]
+    assert [(w["specific"], w["abstract"]) for w in pruned] == [(NEW_GOAL, parent_goal)]
+    assert pruned[0]["expected_status"] == "accepted"
+    assert pruned[0]["decision_metadata"]["outcome"] == "transitively_redundant"
+    # Only the surviving direct neighbour's Benchmarks become transfer candidates.
+    assert state["transfers"] == [(NEW_GOAL, EXISTING_GOAL)]
+
+
+async def _record_nothing(*_args: Any, **_kwargs: Any) -> None:
+    return None
+
+
+@pytest.mark.asyncio
+async def test_neighbor_benchmark_enrichment_enqueues_frozen_benchmarks_and_never_fails(monkeypatch):
+    from app.services import benchmark_transfer
+
+    queries: list[tuple[str, tuple]] = []
+
+    class Pool:
+        async def fetch(self, sql: str, *args: Any) -> list[dict[str, Any]]:
+            queries.append((" ".join(sql.split()), args))
+            return [{"id": "b-ok"}, {"id": "b-broken"}]
+
+    enqueued: list[tuple[str, str]] = []
+
+    async def enqueue(_pool: Any, benchmark_id: str, target_goal_id: str, **_kwargs: Any) -> tuple[int, bool]:
+        if benchmark_id == "b-broken":
+            raise RuntimeError("source no longer visible")
+        enqueued.append((benchmark_id, target_goal_id))
+        return 1, True
+
+    monkeypatch.setattr(benchmark_transfer, "enqueue_benchmark_transfer", enqueue)
+    context = {"access_scope": object(), "tenant_scope": object()}
+    edges = [(NEW_GOAL, EXISTING_GOAL, None, {})]
+    count = await ingestion_jobs._enqueue_neighbor_benchmark_transfers(Pool(), NEW_GOAL, edges, context=context)
+
+    assert count == 1 and enqueued == [("b-ok", NEW_GOAL)]
+    sql, args = queries[0]
+    assert "status = 'frozen'" in sql and args[0] == [EXISTING_GOAL] and args[1] == 20
+
+
+@pytest.mark.asyncio
+async def test_neighbor_benchmark_enrichment_without_new_edges_does_nothing():
+    class Pool:
+        async def fetch(self, *_args: Any) -> list[dict[str, Any]]:
+            raise AssertionError("no lookup without a newly connected neighbour")
+
+    assert await ingestion_jobs._enqueue_neighbor_benchmark_transfers(
+        Pool(), NEW_GOAL, [], context={"access_scope": None, "tenant_scope": None}) == 0
+
+
+@pytest.mark.asyncio
+async def test_placement_repair_sweep_reenqueues_goals_without_a_placement_job(monkeypatch):
+    import app.services.identity_resolution as ir
+
+    class Pool:
+        async def fetch(self, sql: str, *args: Any) -> list[dict[str, Any]]:
+            assert "NOT EXISTS (SELECT 1 FROM ingestion_jobs" in " ".join(sql.split())
+            return [
+                {"id": NEW_GOAL, "scope_type": "global", "scope_entity_id": None, "owner_id": None,
+                 "visibility": "public", "version": 1},
+                {"id": EXISTING_GOAL, "scope_type": "global", "scope_entity_id": None, "owner_id": None,
+                 "visibility": "public", "version": 2},
+            ]
+
+    calls: list[str] = []
+
+    async def enqueue(_pool: Any, goal_id: str, **kwargs: Any) -> tuple[int, bool]:
+        if goal_id == EXISTING_GOAL:
+            raise RuntimeError("queue briefly unavailable")
+        calls.append(goal_id)
+        assert kwargs["identity_decision_id"] is None and kwargs["scope_entity_id"] is None
+        return 7, True
+
+    monkeypatch.setattr(ir, "enqueue_goal_abstraction_placement", enqueue)
+    assert await ir.enqueue_missing_goal_placements(Pool()) == 1
+    assert calls == [NEW_GOAL]
