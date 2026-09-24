@@ -71,12 +71,18 @@ async def enqueue_documents(pool, docs: list[dict], *, config_version: Optional[
     created = duplicate = 0
     for doc in docs:
         payload = dict(doc)
-        for req in ("repository", "path", "commit"):
-            if not payload.get(req):
-                raise ValueError(f"document missing {req!r}: {doc}")
+        if payload.get("uri") and not payload.get("repository"):
+            # A web URL (UrlFetchAdapter): no commit exists, so the URL itself is the identity.
+            key, source = "url:" + hashlib.sha256(payload["uri"].encode()).hexdigest()[:32], payload["uri"]
+        else:
+            for req in ("repository", "path", "commit"):
+                if not payload.get(req):
+                    raise ValueError(f"document missing {req!r}: {doc}")
+            key = document_key(payload["repository"], payload["commit"], payload["path"])
+            source = payload["repository"]
         _, made = await q.enqueue(
-            pool, DOC_JOB, payload, idempotency_key=document_key(payload["repository"], payload["commit"], payload["path"]),
-            source_id=payload.get("source_id") or payload["repository"], scope_type="global", visibility="public",
+            pool, DOC_JOB, payload, idempotency_key=key,
+            source_id=payload.get("source_id") or source, scope_type="global", visibility="public",
             config_version=config_version,
             authority=JobAuthority(submitted_by_service_id=submitted_by, scope="global_public", visibility="public"))
         created += made

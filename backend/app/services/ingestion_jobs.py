@@ -421,8 +421,11 @@ async def handle_ingest_document(pool: asyncpg.Pool, payload: dict) -> None:
     # 2026-09-23: without this, a payload naming a real GitHub-hosted .html file
     # was silently matched to the format-only HtmlAdapter by uri suffix and then
     # failed at fetch() with AdapterNotApplicable, never reaching the network.
-    github_adapter = GitHubFileAdapter()
-    adapter = github_adapter if github_adapter.can_handle(locator) else select_adapter(locator)
+    from app.services.ingestion_sources.document_adapters.url_adapter import UrlFetchAdapter
+
+    # Network transports first (GitHub file, then any http(s) URL), then local/raw format adapters.
+    adapter = next((a for a in (GitHubFileAdapter(), UrlFetchAdapter()) if a.can_handle(locator)), None) \
+        or select_adapter(locator)
     if adapter is None:
         # Refuse rather than fabricate: no registered format recognizes this
         # locator. A payload built by a real enqueue path should never hit

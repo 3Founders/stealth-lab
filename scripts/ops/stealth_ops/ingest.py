@@ -24,10 +24,10 @@ def count_manifest(path: str) -> int:
 
 
 def manifest_kind(path: str) -> str:
-    """'document' for GitHub-document lines ({"repository","path","commit"}), else 'skill-package'."""
+    """'document' for GitHub-document ({"repository","path","commit"}) or web ({"uri"}) lines, else 'skill-package'."""
     with open(path, encoding="utf-8") as fh:
         first = next((json.loads(line) for line in fh if line.strip()), {})
-    return "document" if "repository" in first and "repo" not in first else "skill-package"
+    return "document" if ("repository" in first or "uri" in first) and "repo" not in first else "skill-package"
 
 
 def metrics() -> dict[str, Any]:
