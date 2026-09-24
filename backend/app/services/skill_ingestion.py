@@ -1976,7 +1976,7 @@ async def _persist_script_procedures(
         }
         try:
             result = await capture_procedure(
-                pool, name=f"{artifact.source_id}:{script.resource_path}",
+                pool, name=_content_name(goal, script.resource_path),
                 goal=goal, steps=[step], provenance=provenance, scope_type="global", created_by=created_by,
                 goal_embedder=embedder, goal_adjudication_client=client,
                 procedure_dedup=True, source_key=f"skill-script:{artifact.content_hash}:{script.resource_path}",
@@ -1987,6 +1987,15 @@ async def _persist_script_procedures(
             continue  # a low-quality goal rejects only this script's procedure (ingestion.md Sec 20)
         out.append(str(result["procedure_id"]))
     return out
+
+
+def _content_name(text: Optional[str], fallback: str, limit: int = 120) -> str:
+    """A procedure name that says what it does (its goal/action text), not where it came from --
+    provenance lives in source_locator/source_key. Trimmed on a word boundary."""
+    name = " ".join((text or "").split()).rstrip(".")
+    if not name:
+        return fallback
+    return name if len(name) <= limit else name[:limit].rsplit(" ", 1)[0]
 
 
 _REFERENCE_ROLE_GOAL_VERB = {
@@ -2043,7 +2052,7 @@ async def _persist_reference_resources(
         }
         try:
             result = await capture_procedure(
-                pool, name=f"{artifact.source_id}:{ref.resource_path}",
+                pool, name=_content_name(goal, ref.resource_path),
                 goal=goal, steps=[step], provenance=provenance, scope_type="global", created_by=created_by,
                 goal_embedder=embedder, goal_adjudication_client=client,
                 procedure_dedup=True, source_key=f"skill-reference:{artifact.content_hash}:{ref.resource_path}",
@@ -2090,11 +2099,11 @@ async def _persist_independent_steps(
         if s.depends_on or "source_locator" in entry:
             continue
         goal = s.action
-        step = {"order": 0, "description": f"{parent_name} -- step {s.order}", "goal": goal,
+        step = {"order": 0, "description": f"{goal} (step {s.order} of {parent_name})", "goal": goal,
                 "source_locator": locator}
         try:
             result = await capture_procedure(
-                pool, name=f"{parent_name}:step{s.order}",
+                pool, name=_content_name(goal, f"{parent_name} step {s.order}"),
                 goal=goal, steps=[step], provenance=provenance, scope_type="global", created_by=created_by,
                 goal_embedder=embedder, goal_adjudication_client=client,
                 procedure_dedup=True, source_key=f"skill-step:{artifact.content_hash}:{parent_name}:{s.order}",

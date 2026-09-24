@@ -691,6 +691,14 @@ async def test_compile_step_resolves_its_own_goal_id():
     )
 
 
+def test_content_name_uses_what_the_procedure_does():
+    from app.services.skill_ingestion import _content_name
+    assert _content_name("  Tag the  release commit. ", "fb") == "Tag the release commit"
+    assert _content_name("", "fallback-name") == "fallback-name"
+    long = "word " * 60
+    assert len(_content_name(long, "fb")) <= 120 and not _content_name(long, "fb").endswith(" ")
+
+
 @pytest.mark.asyncio
 async def test_compile_promotes_independent_steps_but_not_dependent_ones():
     """A step with an empty depends_on (schema.md's Procedure.steps.depends_on) is
@@ -713,8 +721,10 @@ async def test_compile_promotes_independent_steps_but_not_dependent_ones():
     assert outcome.status == "captured"
     names = [p[0] for p in pool.captured["procedures"]]
     assert "pandas-append-fix" in names
-    assert "pandas-append-fix:step0" in names  # promoted: empty depends_on
-    assert "pandas-append-fix:step1" not in names  # not promoted: depends_on=[0]
+    # promoted procedures are named after what they do, not "parent:stepN"
+    assert "locate the failing DataFrame.append call" in names  # promoted: empty depends_on
+    assert "replace it with pandas.concat" not in names  # not promoted: depends_on=[0]
+    assert not any(":step" in n for n in names)
     assert len(pool.captured["procedures"]) == 2
     assert outcome.independent_step_procedure_ids  # non-empty: one real promotion happened
 
