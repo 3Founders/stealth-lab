@@ -110,6 +110,13 @@ def accepted_paths(
     return seen
 
 
+
+def _decoded_jsonb(value: Any) -> dict[str, Any]:
+    # The real pool's jsonb codec takes Python objects; a pre-serialized
+    # string would be stored as a JSON string and violate the object CHECK.
+    assert isinstance(value, dict), f"jsonb parameter must be a dict, got {type(value).__name__}"
+    return dict(value)
+
 class _Acquire:
     def __init__(self, pool: "FakePool"):
         self.pool = pool
@@ -307,7 +314,7 @@ class FakePool:
                 "confidence": args[3],
                 "provenance": args[4],
                 "decision_id": str(args[5]) if args[5] else None,
-                "decision_metadata": json.loads(args[6]),
+                "decision_metadata": _decoded_jsonb(args[6]),
                 "decided_by": args[7],
                 "decided_at": args[8],
                 "scope_type": args[9],
@@ -326,7 +333,7 @@ class FakePool:
                 "confidence": args[3],
                 "provenance": args[4],
                 "decision_id": str(args[5]) if args[5] else None,
-                "decision_metadata": json.loads(args[6]),
+                "decision_metadata": _decoded_jsonb(args[6]),
                 "decided_by": args[7],
                 "decided_at": args[8],
                 "scope_type": args[9],

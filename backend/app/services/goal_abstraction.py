@@ -663,9 +663,10 @@ async def persist_goal_relation(
         scope_type = None
         scope_entity_id = None
     relation_tenant = tenant_scope.tenant_id
-    metadata_json = json.dumps(
-        normalized_metadata or {}, sort_keys=True, separators=(",", ":")
-    )
+    # The pool's jsonb codec (app/db/session.py) encodes Python values itself;
+    # passing a pre-serialized string would be stored as a JSON *string* and
+    # fail goal_relations_decision_metadata_object_chk on every decision.
+    metadata_json = dict(normalized_metadata or {})
     projection_refresh_required = status in {"accepted", "rejected"}
     async with tenant_transaction(pool, tenant_scope) as conn:
         lock_scope = scope_type or ":".join(sorted((specific, abstract)))

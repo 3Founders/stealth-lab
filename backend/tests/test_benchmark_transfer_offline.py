@@ -61,6 +61,13 @@ def _benchmark(benchmark_id: str, goal_id: str, name: str, *, status="frozen", f
     }
 
 
+
+def _decoded_jsonb(value):
+    # The real pool's jsonb codec takes Python values; a pre-serialized string
+    # would be stored as a JSON string rather than an object.
+    assert not isinstance(value, str), "jsonb parameter must not be pre-serialized"
+    return value
+
 class FakePool:
     def __init__(self):
         self.goals = {}
@@ -348,14 +355,14 @@ class FakePool:
                 "name": args[2],
                 "description": args[3],
                 "version": 1,
-                "evaluation_protocol": json.loads(args[4]),
-                "environment_specification": json.loads(args[5]),
-                "success_criteria": json.loads(args[6]),
-                "comparison_policy": json.loads(args[7]),
+                "evaluation_protocol": _decoded_jsonb(args[4]),
+                "environment_specification": _decoded_jsonb(args[5]),
+                "success_criteria": _decoded_jsonb(args[6]),
+                "comparison_policy": _decoded_jsonb(args[7]),
                 "status": "draft",
                 "frozen_at": None,
                 "provenance": args[8],
-                "metadata": json.loads(args[9]),
+                "metadata": _decoded_jsonb(args[9]),
             }
             self.benchmarks[str(row["id"])] = row
             self.writes.append(("benchmark", row))
@@ -372,13 +379,13 @@ class FakePool:
                 "benchmark_id": args[2],
                 "name": args[3],
                 "description": args[4],
-                "success_criteria": json.loads(args[5]),
-                "invariants": json.loads(args[6]),
-                "verification_method": json.loads(args[7]),
+                "success_criteria": _decoded_jsonb(args[5]),
+                "invariants": _decoded_jsonb(args[6]),
+                "verification_method": _decoded_jsonb(args[7]),
                 "status": "needs_review",
                 "status_reason": args[8],
-                "layer1_result": json.loads(args[9]),
-                "layer2_result": json.loads(args[10]),
+                "layer1_result": _decoded_jsonb(args[9]),
+                "layer2_result": _decoded_jsonb(args[10]),
                 "submitted_by": args[11],
                 "provenance": args[12],
                 "scope_type": args[13],
@@ -402,7 +409,7 @@ class FakePool:
                 "decision": args[7],
                 "confidence": args[8],
                 "reason": args[9],
-                "provenance": json.loads(args[10]),
+                "provenance": _decoded_jsonb(args[10]),
                 "source_fingerprint": args[11],
                 "target_fingerprint": args[12],
                 "relation_fingerprint": args[13],
@@ -608,7 +615,7 @@ async def test_transfer_creates_draft_and_needs_review_without_source_state_prop
     lineage = next(iter(value.lineage.values()))
 
     assert result["decision"] == "transferable"
-    assert judge.calls[0][0] == "task_procedure"
+    assert judge.calls[0][0] == "benchmark_transfer"
     assert source_before["status"] == "frozen"
     assert target["status"] == "draft" and target["frozen_at"] is None
     assert "Abstract goal" in target["name"]

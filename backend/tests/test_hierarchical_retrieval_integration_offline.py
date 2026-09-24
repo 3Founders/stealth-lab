@@ -102,6 +102,24 @@ def _patched_flow(monkeypatch, goal_result, captured, hydration=None):
     monkeypatch.setattr(retrieval, "hydrate_rows", fake_hydrate)
 
 
+class _Verdict:
+    def __init__(self, relation):
+        self.ok = True
+        self.value = {"relation": relation, "confidence": 0.9}
+        self.provider = "fake"
+
+
+class _GraphJudge:
+    def __init__(self, relations):
+        self.relations = relations
+        self.kinds = set()
+
+    async def judge_identity(self, kind, a, b):
+        self.kinds.add(kind)
+        name = b.split(":", 1)[0]
+        return _Verdict(self.relations.get(name, "unrelated"))
+
+
 @pytest.mark.asyncio
 async def test_accepted_edges_expand_after_anchors_without_score_or_applicability(monkeypatch):
     anchor = _anchor()
@@ -114,20 +132,25 @@ async def test_accepted_edges_expand_after_anchors_without_score_or_applicabilit
     captured = {}
     _patched_flow(monkeypatch, result, captured)
 
+    judge = _GraphJudge({"Parent": "partial", "Child": "unrelated"})
     response = await retrieval.find_best_way(
         pool,
         "anchor task",
         scope=AccessScope.unrestricted(),
         pools=FakePools(),
+        judge=judge,
         record=False,
         tenant_scope=TenantScope.commons(),
     )
 
-    assert [goal.id for goal in captured["goals"]] == ["anchor", "parent", "child"]
-
-
-    assert all(goal.rrf == 0.0 for goal in captured["goals"][1:])
-    assert all(goal.judged is False and goal.relation is None for goal in captured["goals"][1:])
+    # Graph neighbours are judged in context like any other Goal candidate;
+    # only the one the judge admits reaches Procedure retrieval.
+    assert [goal.id for goal in captured["goals"]] == ["anchor", "parent"]
+    assert judge.kinds == {"task_goal"}
+    parent = captured["goals"][1]
+    assert parent.rrf == 0.0 and parent.judged is True and parent.relation == "partial"
+    routing = response["retrieval"]["goal_routing"]
+    assert routing["graph_judged"] == 2 and routing["graph_admitted"] == 1
     assert response["goal_resolution"]["status"] == "matches"
     assert [candidate["id"] for candidate in response["goal_resolution"]["candidates"]] == [
         "anchor", "flat", "parent", "child",

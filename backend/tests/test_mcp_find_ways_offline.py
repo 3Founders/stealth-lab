@@ -226,3 +226,97 @@ def test_server_side_compile_and_execute_tools_are_gone():
                  "list_goal_artifacts", "get_goal_artifact"):
         assert not hasattr(srv, name), name
         assert name not in srv._TOOL_SCOPES, name
+
+
+# ---------------------------------------------------------------------
+# canonical contextual Goal judgment (retrieval_service) is the primary path
+# ---------------------------------------------------------------------
+
+import app.services.retrieval_service as rs
+
+
+def _hit(goal_id, name, relation, confidence, hierarchy=None):
+    return rs.Hit(goal_id, name, name, "K000", rrf=0.5, relation=relation, confidence=confidence,
+                  judged=True, hierarchy=hierarchy)
+
+
+def _patch_canonical(monkeypatch, result, routed=None, captured=None):
+    captured = captured if captured is not None else {}
+
+    async def fake_search_goals(pool, ctx, *, scope, embedder=None, judge=None, cfg=None, meta=None):
+        captured["ctx"] = ctx
+        meta.providers.append("jev")
+        return result
+
+    async def fake_route(pool, goal_result, *, scope, cfg, meta, pools=None, tenant_scope=None, ctx=None, judge=None):
+        captured["route_judge"] = judge
+        return list(routed if routed is not None else goal_result.resolved)
+
+    monkeypatch.setattr(rs, "search_goals", fake_search_goals)
+    monkeypatch.setattr(rs, "_route_goal_candidates", fake_route)
+    monkeypatch.setattr(rs, "default_judge", lambda: object())
+    return captured
+
+
+def _forbid_lexical(monkeypatch):
+    async def forbidden(*a, **k):
+        raise AssertionError("the lexical re-ranker must not run when the judge answered")
+    monkeypatch.setattr("app.execution.intent_resolution.resolve_intent", forbidden)
+
+
+def test_find_ways_resolves_through_contextual_judgment_with_repo_facts(monkeypatch):
+    _forbid_lexical(monkeypatch)
+    parent = _hit("G-P", "parent goal", "partial", 0.7, hierarchy={"origin": "graph", "admitted": True})
+    captured = _patch_canonical(
+        monkeypatch,
+        rs.GoalSearchResult([_hit("G-1", "do the thing", "matches", 0.92)], [], "matches"),
+        routed=[_hit("G-1", "do the thing", "matches", 0.92), parent],
+    )
+    seen = {}
+
+    async def fake_resolve_goal(pool, goal_id, *, context, scope, max_depth=6, embedder=None):
+        seen["goal_id"] = goal_id
+        return _fake_tree(goal_id)
+
+    monkeypatch.setattr("app.execution.goal_resolution.resolve_goal", fake_resolve_goal)
+    claims = "CLAIM|R-001|current|runtime|repository|Node 20.11|source=.nvmrc:1#sha=9f2c1ab|version=1"
+    result = json.loads(_run(srv.find_ways(query="do the thing", ctx=FakeContext(), repo_claims=claims,
+                                           use_llm=False, semantic=False)))
+    assert result["outcome"] == "resolved" and seen["goal_id"] == "G-1"
+    assert result["goal_judgment"]["mode"] == "contextual"
+    assert result["goal_judgment"]["local_claim_ids"] == ["R-001"]
+    assert "Node 20.11" in captured["ctx"].text          # repo facts reach the judge
+    assert captured["route_judge"] is not None           # hierarchy neighbours are judged too
+    assert [g["goal"]["id"] for g in result["goal_judgment"]["related_goals"]] == ["G-P"]
+
+
+def test_find_ways_close_matches_stay_ambiguous(monkeypatch):
+    _forbid_lexical(monkeypatch)
+    _patch_canonical(monkeypatch, rs.GoalSearchResult(
+        [_hit("G-1", "one", "matches", 0.9), _hit("G-2", "two", "matches", 0.86)], [], "matches"))
+    result = json.loads(_run(srv.find_ways(query="x", ctx=FakeContext(), use_llm=False, semantic=False)))
+    assert result["outcome"] == "ambiguous"
+    assert [c["goal"]["id"] for c in result["candidates"]] == ["G-1", "G-2"]
+
+
+def test_find_ways_partial_only_is_ambiguous_not_a_guess(monkeypatch):
+    _forbid_lexical(monkeypatch)
+    _patch_canonical(monkeypatch, rs.GoalSearchResult([_hit("G-1", "broader", "partial", 0.8)], [], "partial"))
+    result = json.loads(_run(srv.find_ways(query="x", ctx=FakeContext(), use_llm=False, semantic=False)))
+    assert result["outcome"] == "ambiguous"
+
+
+def test_find_ways_judged_no_match_stays_no_match(monkeypatch):
+    _forbid_lexical(monkeypatch)
+    _patch_canonical(monkeypatch, rs.GoalSearchResult([], [], "none"))
+    result = json.loads(_run(srv.find_ways(query="nothing like it", ctx=FakeContext(), use_llm=False, semantic=False)))
+    assert result["outcome"] == "no_match"
+    assert result["proposed_goal"]["canonical_name"] == "nothing like it"
+
+
+def test_find_ways_uses_lexical_fallback_only_when_no_judge_answered(monkeypatch):
+    _patch_canonical(monkeypatch, rs.GoalSearchResult([_hit("G-9", "x", None, None)], [], "unjudged"))
+    _patch_resolve_intent(monkeypatch, _ambiguous_intent())
+    result = json.loads(_run(srv.find_ways(query="do a thing", ctx=FakeContext(), use_llm=False, semantic=False)))
+    assert result["outcome"] == "ambiguous"
+    assert result["goal_judgment"]["mode"] == "lexical_fallback"

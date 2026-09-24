@@ -109,7 +109,15 @@ def test_repo_specific_discovery_is_repository_scoped(monkeypatch):
 def test_source_locator_carries_no_local_path(monkeypatch):
     captured = _wire(monkeypatch)
     _report()
-    assert captured["source"]["locator"] == "stealth-discovery:P-1"
+    assert captured["source"]["locator"] == "stealth-discovery:P-1:user-1"
+
+
+def test_source_row_is_private_to_the_reporter(monkeypatch):
+    # A shared public source would publicly record who reported on which Procedure.
+    captured = _wire(monkeypatch)
+    _report()
+    assert captured["source"]["visibility"] == "private"
+    assert captured["source"]["owner_id"] == "user-1"
 
 
 def test_secrets_in_proof_are_redacted(monkeypatch):

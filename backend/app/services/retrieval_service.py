@@ -474,6 +474,7 @@ def _hierarchy_flat_diagnostics(
 async def _route_goal_candidates(
     pool: Any, goal_result: GoalSearchResult, *, scope: AccessScope, cfg: RetrievalConfig,
     meta: RetrievalMeta, pools: Optional[ShardPools] = None, tenant_scope: Optional[TenantScope] = None,
+    ctx: Optional[QueryContext] = None, judge: Optional[SemanticJudge] = None,
 ) -> list[Hit]:
     anchors = list(goal_result.resolved)
     tenant_scope = tenant_scope or _default_tenant_scope(scope)
@@ -727,13 +728,41 @@ async def _route_goal_candidates(
     goal_result.candidates = list(goal_result.candidates) + [
         hit for hit in graph_hits if str(hit.id) not in flat_ids
     ]
+    # A neighbouring Goal in the graph is a CANDIDATE, not an answer: it goes
+    # through the same contextual Goal judgment (query + local Claims) as the
+    # flat candidates before any of its Procedures are considered. Graph
+    # adjacency alone never makes a parent's or child's Procedures eligible.
+    admitted = await _judge_graph_candidates(graph_hits, ctx=ctx, judge=judge, cfg=cfg, meta=meta)
     routed_goals = list(anchors)
     seen = {str(goal.id) for goal in anchors}
-    for hit in graph_hits:
+    for hit in admitted:
         if hit.id not in seen:
             routed_goals.append(hit)
             seen.add(hit.id)
     return routed_goals
+
+
+async def _judge_graph_candidates(
+    graph_hits: list[Hit], *, ctx: Optional[QueryContext], judge: Optional[SemanticJudge],
+    cfg: RetrievalConfig, meta: RetrievalMeta,
+) -> list[Hit]:
+    if not graph_hits:
+        return []
+    routing = meta.goal_routing if meta.goal_routing is not None else {}
+    if ctx is None or judge is None:
+        routing["graph_admitted"] = 0
+        routing["graph_not_admitted_reason"] = "no contextual judge supplied"
+        return []
+    to_judge = graph_hits[: cfg.rerank_top_k]
+    await _judge_all(judge, "task_goal", ctx.text, to_judge, cfg, meta, stage="goal_hierarchy")
+    admitted = [h for h in to_judge if h.judged and h.relation in ("matches", "partial")]
+    routing["graph_judged"] = sum(1 for h in to_judge if h.judged)
+    routing["graph_admitted"] = len(admitted)
+    routing["graph_not_judged_beyond_budget"] = max(0, len(graph_hits) - len(to_judge))
+    for hit in graph_hits:
+        if hit.hierarchy is not None:
+            hit.hierarchy["admitted"] = hit in admitted
+    return admitted
 
 
 # ------------------------------------------------------------------- tier 2
@@ -941,6 +970,7 @@ async def find_best_way(
     g = await search_goals(pool, ctx, scope=scope, embedder=embedder, judge=judge, cfg=cfg, meta=meta)
     routed_goals = await _route_goal_candidates(
         pool, g, scope=scope, cfg=cfg, meta=meta, pools=pools, tenant_scope=tenant_scope,
+        ctx=ctx, judge=judge if judge is not None else default_judge(),
     )
     p = await retrieve_procedures(pool, ctx, routed_goals, scope=scope, pools=pools, embedder=embedder, judge=judge, cfg=cfg,
                                   meta=meta, current_scope=current_scope, require_verified=require_verified)
@@ -1017,6 +1047,7 @@ async def search_procedures(
     g = await search_goals(pool, ctx, scope=scope, embedder=embedder, judge=judge, cfg=cfg, meta=meta)
     routed_goals = await _route_goal_candidates(
         pool, g, scope=scope, cfg=cfg, meta=meta, pools=pools, tenant_scope=tenant_scope,
+        ctx=ctx, judge=judge if judge is not None else default_judge(),
     )
     p = await retrieve_procedures(pool, ctx, routed_goals, scope=scope, pools=pools, embedder=embedder, judge=judge, cfg=cfg,
                                   meta=meta, current_scope=current_scope, require_verified=require_verified,

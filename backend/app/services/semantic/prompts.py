@@ -163,6 +163,9 @@ IDENTITY_RELATIONS = {
     # Retrieval-time relevance (A = the user's task + compact local-claim context)
     "task_goal": ("matches", "partial", "unrelated"),
     "task_procedure": ("applies", "partial", "not_applicable"),
+    # Benchmark transfer (A = the target Goal + transfer direction, B = a source
+    # Benchmark defined for a neighbouring Goal): does B still validly measure A?
+    "benchmark_transfer": ("transferable", "partial", "uncertain", "not_transferable"),
 }
 
 IDENTITY_SYSTEM_PROMPTS = {
@@ -202,6 +205,19 @@ IDENTITY_SYSTEM_PROMPTS = {
         '"confidence":<0-1>}. not_applicable if a local claim contradicts a precondition or the '
         "method targets a different situation. Do not guess: if the claims do not settle it, partial."
     ),
+    "benchmark_transfer": (
+        "A is a target GOAL (its outcome, constraints, expected outcome and verification requirement) "
+        "plus the direction of the transfer along the Goal hierarchy. B is a BENCHMARK that was defined "
+        "for a neighbouring Goal. Decide whether B, as written, is still a valid measure of A. Reason "
+        "about what A means versus what B measures, B's success and failure criteria, its evaluation "
+        "protocol and environment, observability of the measured outcome in A's setting, invariants and "
+        "constraints, parameter differences or adapters A would need, and the risk of false passes or "
+        "false failures if B were used for A. Graph adjacency alone never makes B valid. Reply with "
+        'EXACTLY one JSON object: {"relation":"transferable|partial|uncertain|not_transferable",'
+        '"confidence":<0-1>}. transferable: B measures A without changes. partial: B measures part of A, '
+        "or only with stated adaptation. uncertain: the information does not settle it. "
+        "not_transferable: B would not validly measure A."
+    ),
 }
 
 
@@ -227,6 +243,13 @@ _IDENTITY_BATCH_GUIDANCE = {
     "task_procedure": (
         "applies: B can be applied to this task in this environment. partial: B applies only partly or with caveats. "
         "not_applicable: local claims contradict a precondition or B targets a different situation."
+    ),
+    "benchmark_transfer": (
+        "A is a target Goal plus transfer direction; each candidate is a Benchmark defined for a neighbouring Goal. "
+        "Weigh Goal meaning, what the Benchmark measures, success and failure criteria, protocol, environment, "
+        "observability, invariants, parameter differences, adapters, and false-pass/false-fail risk. "
+        "transferable: the Benchmark validly measures A unchanged. partial: it measures part of A or needs a "
+        "stated adaptation. uncertain: not settled by the information given. not_transferable: not a valid measure of A."
     ),
 }
 

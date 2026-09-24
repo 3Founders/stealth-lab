@@ -3709,11 +3709,15 @@ async def find_ways(
       Used for this request only -- never stored or logged.
 
     What happens:
-      1. Goal search (`resolve_intent`). Three honest outcomes, never a guess:
-         "resolved" (one Goal clearly best), "ambiguous" (2+ too close to
-         call -- you pick, or rephrase), "no_match" (nothing known).
-         When ambiguous, repo facts can break the tie, but only if one Goal
-         fits the repo clearly better (same margin search uses).
+      1. Goal search. Hybrid (lexical + vector) candidates, each judged by
+         the JEV/NLI judge against your query AND your repo facts; accepted
+         Goal-hierarchy neighbours of a match are judged the same way and
+         listed under `goal_judgment.related_goals`. Three honest outcomes,
+         never a guess: "resolved" (one Goal clearly best), "ambiguous" (2+
+         too close to call, or only partial matches -- you pick, or
+         rephrase), "no_match" (nothing known). If no judge answers, a
+         lexical re-ranker is used instead and `goal_judgment.mode` says
+         "lexical_fallback".
       2. Procedure choice (`resolve_goal`): feasible Procedures for the Goal,
          and recursively for its sub-Goals. With repo facts, the 5-20 most
          related facts per Procedure go to the NLI/JEV judge together with
@@ -3764,33 +3768,50 @@ async def find_ways(
                        "procedure_check": None}
 
     scope = _caller_access_scope()
-    intent = await _resolve_intent(
-        pool, query, context={"current_scope": current_scope},
-        client=client, embedder=embedder, scope=scope, top_k=top_k,
+    # Goal choice goes through the canonical retrieval service: hybrid
+    # candidates -> contextual JEV/NLI judgment of each candidate against the
+    # query AND the repo facts -> bounded hierarchy expansion (judged too).
+    # The older lexical re-ranker only runs when no semantic judge answered,
+    # and the response says so.
+    goal_choice = await _find_ways_goal_choice(
+        pool, query, facts, scope=scope, embedder=embedder, top_k=top_k,
     )
+    if goal_choice is not None:
+        outcome, selected_goal, payload = goal_choice
+        if outcome != "resolved":
+            return json.dumps({"outcome": outcome, "repo_facts": repo_report, **payload}, default=str)
+        goal_judgment = payload["goal_judgment"]
+    else:
+        intent = await _resolve_intent(
+            pool, query, context={"current_scope": current_scope},
+            client=client, embedder=embedder, scope=scope, top_k=top_k,
+        )
+        goal_judgment = {"mode": "lexical_fallback", "reason": "no semantic judge answered"}
 
-    if intent.outcome == "ambiguous" and facts:
-        winner, detail = _rf.goal_tiebreak(intent.candidates, facts, margin=_AMBIGUITY_MARGIN)
-        repo_report["goal_tiebreak"] = {"resolved": winner is not None, "candidates": detail}
-        if winner is not None:
-            intent.outcome, intent.selected_goal = "resolved", winner.goal
+        if intent.outcome == "ambiguous" and facts:
+            winner, detail = _rf.goal_tiebreak(intent.candidates, facts, margin=_AMBIGUITY_MARGIN)
+            repo_report["goal_tiebreak"] = {"resolved": winner is not None, "candidates": detail}
+            if winner is not None:
+                intent.outcome, intent.selected_goal = "resolved", winner.goal
 
-    if intent.outcome != "resolved":
-        return json.dumps({
-            "outcome": intent.outcome,
-            "repo_facts": repo_report,
-            "normalized": {
-                "outcome": intent.normalized.outcome, "object": intent.normalized.object,
-                "action": intent.normalized.action, "used_fallback": intent.normalized.used_fallback,
-            },
-            "candidates": [
-                {"goal": c.goal, "score": c.score, "rationale": c.rationale} for c in intent.candidates
-            ],
-            "proposed_goal": intent.proposed_goal,
-            "rationale": intent.rationale,
-        }, default=str)
+        if intent.outcome != "resolved":
+            return json.dumps({
+                "outcome": intent.outcome,
+                "repo_facts": repo_report,
+                "goal_judgment": goal_judgment,
+                "normalized": {
+                    "outcome": intent.normalized.outcome, "object": intent.normalized.object,
+                    "action": intent.normalized.action, "used_fallback": intent.normalized.used_fallback,
+                },
+                "candidates": [
+                    {"goal": c.goal, "score": c.score, "rationale": c.rationale} for c in intent.candidates
+                ],
+                "proposed_goal": intent.proposed_goal,
+                "rationale": intent.rationale,
+            }, default=str)
+        selected_goal = intent.selected_goal
 
-    goal_id = intent.selected_goal["id"]
+    goal_id = selected_goal["id"]
     resolve_context: dict = {"current_scope": current_scope}
     selector = None
     if facts:
@@ -3815,6 +3836,7 @@ async def find_ways(
     return json.dumps({
         "outcome": "resolved",
         **goal_tree_to_knowledge(tree),
+        "goal_judgment": goal_judgment,
         "repo_facts": repo_report,
         "next": (
             "Compile this into .stealth/procedures.md and .stealth/run.md yourself "
@@ -3822,6 +3844,84 @@ async def find_ways(
             "for past discoveries. Report fixes/better ways with report_discovery."
         ),
     }, default=str)
+
+
+# Two judged "matches" closer than this in confidence are a tie: find_ways
+# reports "ambiguous" rather than picking one.
+_FIND_WAYS_CONFIDENCE_MARGIN = 0.1
+
+
+def _judged_goal_candidate(hit: Any) -> dict:
+    candidate = {
+        "goal": {"id": hit.id, "canonical_name": hit.name},
+        "score": hit.confidence,
+        "rationale": f"judge relation={hit.relation} confidence={hit.confidence}",
+    }
+    if getattr(hit, "hierarchy", None) is not None:
+        candidate["hierarchy"] = hit.hierarchy
+    return candidate
+
+
+async def _find_ways_goal_choice(
+    pool: Any, query: str, facts: list, *, scope: Any, embedder: Any, top_k: int,
+) -> Optional[tuple[str, Optional[dict], dict]]:
+    """Canonical Goal choice for find_ways. Returns None when no semantic judge
+    answered (the caller then uses the lexical fallback and says so)."""
+    from app.services import retrieval_service as rs
+
+    cfg = rs.RetrievalConfig()
+    meta = rs.RetrievalMeta()
+    judge = rs.default_judge()
+    # Repo facts are request-scoped: they only enter the judge's context text.
+    # The working set is chosen by overlap (no per-fact embedding calls).
+    local_claims = [{"id": f["claim_id"], "statement": f["statement"]} for f in facts]
+    try:
+        ctx = await rs.build_query_context(query, local_claims, embedder=None, cfg=cfg)
+        found = await rs.search_goals(pool, ctx, scope=scope, embedder=embedder, judge=judge, cfg=cfg, meta=meta)
+        routed = await rs._route_goal_candidates(
+            pool, found, scope=scope, cfg=cfg, meta=meta, ctx=ctx, judge=judge,
+        )
+    except Exception:  # noqa: BLE001 -- the lexical path still answers; the reply records the fallback
+        import logging
+        logging.getLogger(__name__).warning("find_ways canonical goal choice failed; using lexical fallback", exc_info=True)
+        return None
+    if found.resolution == "unjudged":
+        return None
+    judgment = {
+        "mode": "contextual",
+        "resolution": found.resolution,
+        "providers": list(meta.providers),
+        "degraded_reasons": list(meta.degraded_reasons),
+        "local_claim_ids": ctx.claim_ids,
+        "hierarchy": meta.goal_routing,
+        "related_goals": [
+            _judged_goal_candidate(hit) for hit in routed if getattr(hit, "hierarchy", None) is not None
+        ],
+    }
+    resolved = list(found.resolved)
+    if found.resolution == "matches" and resolved:
+        top = resolved[0]
+        runner_up = resolved[1] if len(resolved) > 1 else None
+        if runner_up is None or (top.confidence or 0) - (runner_up.confidence or 0) >= _FIND_WAYS_CONFIDENCE_MARGIN:
+            return "resolved", {"id": top.id, "canonical_name": top.name}, {"goal_judgment": judgment}
+        return "ambiguous", None, {
+            "goal_judgment": judgment,
+            "candidates": [_judged_goal_candidate(hit) for hit in resolved[:top_k]],
+            "rationale": "two or more Goals match this request about equally well -- pick one or rephrase",
+        }
+    if found.resolution == "partial" and resolved:
+        return "ambiguous", None, {
+            "goal_judgment": judgment,
+            "candidates": [_judged_goal_candidate(hit) for hit in resolved[:top_k]],
+            "rationale": "known Goals only partly cover this request (broader, narrower or overlapping)",
+        }
+    return "no_match", None, {
+        "goal_judgment": judgment,
+        "candidates": [],
+        "proposed_goal": {"canonical_name": query.strip()[:200], "description": None, "scope_type": "global",
+                          "scope_entity_id": None},
+        "rationale": "no known Goal matches this request in context -- propose a new Goal for review",
+    }
 
 
 DISCOVERY_KINDS = frozenset({"fix", "missing_step", "precondition", "better_way", "correction", "filled_gap"})
@@ -3886,10 +3986,14 @@ async def report_discovery(
     stable_id = str(proc["procedure_id"])
     where = f"step {step_order}" if step_order is not None else "procedure"
     created_by = _resolve_caller_identity(fallback="report_discovery")
+    # The source row is the reporter's own and as private as the claim: a
+    # shared public row would publicly record who reported on which Procedure
+    # (sources dedupe on source_type + locator + publisher, so the locator is
+    # per reporter).
     src = await register_source(
-        pool, source_type="agent_execution", locator=f"stealth-discovery:{stable_id}",
+        pool, source_type="agent_execution", locator=f"stealth-discovery:{stable_id}:{scope.viewer_id}",
         provenance="company_ingested", created_by=created_by,
-        visibility="public", owner_id=scope.viewer_id, scope_type="global", scope_entity_id=None,
+        visibility="private", owner_id=scope.viewer_id, scope_type="global", scope_entity_id=None,
     )
     claim_id = await capture_claim(
         pool,

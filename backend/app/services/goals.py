@@ -742,6 +742,13 @@ async def search_goals_page(
     )
 
 
+_SERVER_OWNED_GOAL_METADATA = frozenset({
+    "owner_id", "provenance", "created_by", "created_from", "visibility", "scope_type",
+    "scope_entity_id", "status", "resolved_at", "abstraction_level", "abstracts", "specializes",
+    "parents", "children", "verification", "verification_state", "verified", "benchmarks",
+})
+
+
 async def create_goal_from_user(
     pool: asyncpg.Pool,
     *,
@@ -786,6 +793,16 @@ async def create_goal_from_user(
     own default) -- ingestion.md Sec 19's "candidate lifecycle", never
     born active/reviewed.
     """
+    rationale = (rationale or "").strip()
+    if not rationale:
+        raise ValueError("rationale is required: say why this Goal is worth accomplishing")
+    if not expected_outcome and objective and objective.strip():
+        expected_outcome = {"summary": objective.strip()}
+    if not expected_outcome:
+        raise ValueError("expected_outcome (or objective) is required: say what counts as accomplished")
+    # Identity, lifecycle, placement and resolution are server-owned; a
+    # caller can't smuggle them in through free-form metadata.
+    metadata = {k: v for k, v in (metadata or {}).items() if k not in _SERVER_OWNED_GOAL_METADATA}
     if not allow_create_anyway:
         query_embedding = None
         if embedder is not None:

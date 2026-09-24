@@ -850,13 +850,13 @@ def test_search_goals_delegates_to_the_canonical_candidate_search(monkeypatch):
 
     async def fake(pool, **kw):
         seen.update(kw)
-        return [{"id": "g1", "canonical_name": "find references"}]
+        return [{"id": "g1", "canonical_name": "find references"}], False
 
     class _Pool:
         async def fetchval(self, *a):
             return "model-x"
 
-    monkeypatch.setattr(rs, "search_goal_candidates", fake)
+    monkeypatch.setattr(rs, "search_goal_candidates_page", fake)
     out = _run(search_goals(_Pool(), query_text="find refs", query_embedding=[0.1] * 4, limit=5, status="active"))
     assert out == [{"id": "g1", "canonical_name": "find references"}]
     assert seen["query_text"] == "find refs" and seen["embedding_model"] == "model-x" and seen["status"] == "active" and seen["limit"] == 5

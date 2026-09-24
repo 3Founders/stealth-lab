@@ -31,6 +31,10 @@ SPECIFIC_TO_ABSTRACT = "specific_to_abstract"
 ABSTRACT_TO_SPECIFIC = "abstract_to_specific"
 SOURCE_TO_TARGET = "source_to_target"
 TRANSFER_ACTOR = "benchmark_transfer"
+# A dedicated judgment kind (app/services/semantic/prompts.py) whose criteria
+# cover success/failure criteria, observability, invariants, adapters and
+# false-pass/false-fail risk -- not the task->Procedure applicability prompt.
+TRANSFER_JUDGE_KIND = "benchmark_transfer"
 COMMONS_TENANT_ID = "00000000-0000-0000-0000-000000000001"
 
 
@@ -134,8 +138,11 @@ def _json_list(value: Any, field: str) -> list[Any]:
     return list(parsed)
 
 
-def _json_text(value: Any) -> str:
-    return canonical_json(value)
+def _jsonb(value: Any) -> Any:
+    """A JSON-normalized Python value for a jsonb parameter. The pool's jsonb
+    codec (app/db/session.py) serializes it; passing canonical_json() text
+    instead would be stored as a JSON string, not an object."""
+    return json.loads(canonical_json(value))
 
 
 def _scope_from_row(row: Mapping[str, Any]) -> dict[str, Any]:
@@ -1053,7 +1060,7 @@ def _parse_judge_result(result: Any, judge: Any) -> TransferDecision:
     chain = getattr(judge, "chain_id", None) or parsed_provenance.get("judge_chain")
     provenance = {
         "operation": "judge_identity_batch",
-        "kind": "task_procedure",
+        "kind": TRANSFER_JUDGE_KIND,
         "judge_chain": chain,
         "judge_provider": provider,
         "judge_model": model,
@@ -1107,7 +1114,7 @@ async def _judge_transfer(
         method = getattr(judge, "judge_batch", None)
     if not callable(method):
         raise _judge_unavailable("configured judge has no batch identity operation")
-    result = await _maybe_await(method("task_procedure", target_text, [source_text]))
+    result = await _maybe_await(method(TRANSFER_JUDGE_KIND, target_text, [source_text]))
     return _parse_judge_result(result, judge)
 
 
@@ -1223,12 +1230,12 @@ async def _get_or_insert_benchmark(
             RETURNING *
             """,
             str(uuid7()), target["goal_id"], name, source["description"],
-            _json_text(source["evaluation_protocol"]),
-            _json_text(source["environment_specification"]),
-            _json_text(source["success_criteria"]),
-            _json_text(source["comparison_policy"]),
+            _jsonb(source["evaluation_protocol"]),
+            _jsonb(source["environment_specification"]),
+            _jsonb(source["success_criteria"]),
+            _jsonb(source["comparison_policy"]),
             TRANSFER_PROVENANCE,
-            _json_text(_target_metadata(source, target, context, decision)),
+            _jsonb(_target_metadata(source, target, context, decision)),
         )
         created = existing is not None
     if existing is None:
@@ -1301,8 +1308,8 @@ async def _get_or_insert_submission(
             RETURNING *
             """,
             str(uuid7()), target["goal_id"], benchmark["id"], name, source["description"],
-            _json_text(source["success_criteria"]), _json_text(source["invariants"]), _json_text({}),
-            status_reason, _json_text({}), _json_text({}), TRANSFER_ACTOR, TRANSFER_PROVENANCE,
+            _jsonb(source["success_criteria"]), _jsonb(source["invariants"]), _jsonb({}),
+            status_reason, _jsonb({}), _jsonb({}), TRANSFER_ACTOR, TRANSFER_PROVENANCE,
             target["scope"]["scope_type"], target["scope"]["scope_entity_id"],
             target["scope"]["owner_id"], target["scope"]["visibility"], context["idempotency_key"],
         )
@@ -1616,7 +1623,7 @@ async def _persist_decision(
             """,
             str(uuid7()), context["idempotency_key"], state["source"]["benchmark_id"], state["source"]["goal_id"], state["target"]["goal_id"],
             context["direction"], SOURCE_TO_TARGET, decision.decision, decision.confidence, decision.reason,
-            _json_text(lineage_provenance), state["source"]["source_fingerprint"], state["target"]["target_fingerprint"],
+            _jsonb(lineage_provenance), state["source"]["source_fingerprint"], state["target"]["target_fingerprint"],
             state["relation"]["relation_fingerprint"], TRANSFER_VERSION,
             decision.provenance.get("judge_chain"), decision.provenance.get("judge_provider"),
             decision.provenance.get("judge_model"), TRANSFER_VERSION, job_id,

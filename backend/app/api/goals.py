@@ -176,14 +176,18 @@ async def inspect_goal_route(
         tenant_scope=tenant_scope,
     )
     if enriched is not None:
-        return enriched
+        return {**enriched, "hierarchy_available": True}
+    # The hierarchy could not be derived right now (projection lag, an
+    # unavailable shard). Say so instead of presenting the Goal as a root
+    # with no relations; Benchmarks still come from their canonical source.
     return {
         **result,
-        "specializes": [],
-        "abstracts": [],
-        "abstraction_level": 0,
-        "benchmarks": [],
-        "coverage": {"total_count": 0, "resolved_count": 0, "ratio": 0.0},
+        "hierarchy_available": False,
+        "specializes": None,
+        "abstracts": None,
+        "abstraction_level": None,
+        "benchmarks": await pm.list_goal_benchmarks(pool, goal_id, scope=scope),
+        "coverage": None,
     }
 
 

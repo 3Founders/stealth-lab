@@ -168,9 +168,9 @@ def _component_sql(
         SELECT goal_id FROM up
     )
     SELECT {_PROJECTED_GOAL_COLUMNS}
-    FROM component c
-    JOIN ({_PROJECTED_GOAL_SOURCE}) g ON g.goal_id = c.goal_id
-    WHERE g.status IN ('active', 'candidate')
+    FROM ({_PROJECTED_GOAL_SOURCE}) g
+    WHERE g.goal_id IN (SELECT goal_id FROM component)
+      AND g.status IN ('active', 'candidate')
       AND {visible_sql}
     ORDER BY g.canonical_name, g.goal_id
     """
@@ -340,8 +340,12 @@ async def enrich_goals(
     ORDER BY goal_id, version DESC, created_at DESC, id
     """
     visible_goal_ids = [goal_id for goal_id in goal_ids if goal_id in snapshots]
+    from app.services.product_model import _row as _benchmark_row
+
+    # Same decoding every other Benchmark reader applies (legacy rows hold
+    # JSON-string jsonb values), so the Goal page gets objects, not strings.
     benchmark_rows = [
-        dict(row) for row in await pool.fetch(benchmark_sql, visible_goal_ids)
+        _benchmark_row(row) for row in await pool.fetch(benchmark_sql, visible_goal_ids)
     ]
     benchmarks_by_goal: dict[str, list[dict[str, Any]]] = {}
     for row in benchmark_rows:

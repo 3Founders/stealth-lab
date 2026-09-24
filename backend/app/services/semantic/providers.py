@@ -93,6 +93,18 @@ _IDENTITY_CRITERIA = {
         "partial": "B applies only partly, or with caveats not settled by the claims.",
         "not_applicable": "A local claim contradicts a precondition of B, or B targets a different situation.",
     },
+    "benchmark_transfer": {
+        "transferable": (
+            "Benchmark B validly measures target Goal A unchanged: same measured outcome, success and failure "
+            "criteria observable in A's environment, invariants and constraints hold, low false-pass/false-fail risk."
+        ),
+        "partial": "B measures part of A, or only with a stated parameter change or adapter.",
+        "uncertain": "The Goal and Benchmark descriptions do not settle whether B is a valid measure of A.",
+        "not_transferable": (
+            "B would not validly measure A: different outcome, unobservable criteria, violated invariants, "
+            "or a high risk of false passes or false failures."
+        ),
+    },
 }
 
 

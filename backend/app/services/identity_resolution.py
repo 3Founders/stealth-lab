@@ -1063,6 +1063,49 @@ async def relink_procedures_of_merged_goals(pool: asyncpg.Pool) -> int:
     return int(res.split()[-1])
 
 
+_RELATION_COLUMNS = (
+    "relation_type, status, confidence, provenance, decision_id, decision_metadata, "
+    "decided_by, decided_at, scope_type, scope_entity_id, tenant_id"
+)
+
+
+async def _move_goal_relations(conn: asyncpg.Connection, loser_id: str, survivor_id: str) -> None:
+    """Re-point the loser's hierarchy edges at the survivor inside the caller's
+    transaction. Decision and scope columns travel with each edge (migration
+    113 requires them on accepted/rejected rows). An accepted edge that would
+    close a cycle once re-pointed is kept as a non-routing 'proposed' edge
+    for review instead of aborting the whole merge."""
+    rows = await conn.fetch(
+        f"SELECT specific_goal_id::text AS s, abstract_goal_id::text AS a, {_RELATION_COLUMNS} "
+        "FROM goal_relations WHERE specific_goal_id = $1::uuid OR abstract_goal_id = $1::uuid",
+        loser_id,
+    )
+    for row in rows:
+        specific = survivor_id if row["s"] == loser_id else row["s"]
+        abstract = survivor_id if row["a"] == loser_id else row["a"]
+        if specific == abstract:
+            continue
+        values = [row[c.strip()] for c in _RELATION_COLUMNS.split(",")]
+        insert = (
+            f"INSERT INTO goal_relations (specific_goal_id, abstract_goal_id, {_RELATION_COLUMNS}) "
+            "VALUES ($1::uuid, $2::uuid, $3, $4, $5, $6, $7::uuid, $8::jsonb, $9, $10, $11, $12, $13::uuid) "
+            "ON CONFLICT (specific_goal_id, abstract_goal_id, relation_type) DO NOTHING"
+        )
+        try:
+            async with conn.transaction():
+                await conn.execute(insert, specific, abstract, *values)
+        except asyncpg.CheckViolationError:
+            if row["status"] != "accepted":
+                raise
+            metadata = dict(row["decision_metadata"] or {})
+            metadata["demoted_on_merge"] = {"loser_goal_id": loser_id, "reason": "would create an accepted cycle"}
+            values[1] = "proposed"
+            values[5] = metadata
+            await conn.execute(insert, specific, abstract, *values)
+    await conn.execute(
+        "DELETE FROM goal_relations WHERE specific_goal_id = $1::uuid OR abstract_goal_id = $1::uuid", loser_id)
+
+
 async def merge_goal(pool: asyncpg.Pool, loser_id: str, survivor_id: str, *, decision_id: Optional[str] = None) -> dict[str, int]:
     """Merge ``loser`` into ``survivor`` atomically: every Procedure
     that pointed at the loser now points at the survivor, hierarchy edges move,
@@ -1080,15 +1123,7 @@ async def merge_goal(pool: asyncpg.Pool, loser_id: str, survivor_id: str, *, dec
                 return {"procedures": 0, "already_merged": 1}
             procs = int((await conn.execute(
                 "UPDATE procedures SET achieves_goal_id = $2::uuid WHERE achieves_goal_id = $1::uuid", loser_id, survivor_id)).split()[-1])
-            await conn.execute(
-                "INSERT INTO goal_relations (specific_goal_id, abstract_goal_id, relation_type, status, confidence, provenance) "
-                "SELECT CASE WHEN specific_goal_id = $1::uuid THEN $2::uuid ELSE specific_goal_id END, "
-                "       CASE WHEN abstract_goal_id = $1::uuid THEN $2::uuid ELSE abstract_goal_id END, relation_type, status, confidence, provenance "
-                "FROM goal_relations WHERE (specific_goal_id = $1::uuid OR abstract_goal_id = $1::uuid) "
-                "AND NOT (specific_goal_id = $1::uuid AND abstract_goal_id = $2::uuid) "
-                "AND NOT (abstract_goal_id = $1::uuid AND specific_goal_id = $2::uuid) "
-                "ON CONFLICT DO NOTHING", loser_id, survivor_id)
-            await conn.execute("DELETE FROM goal_relations WHERE specific_goal_id = $1::uuid OR abstract_goal_id = $1::uuid", loser_id)
+            await _move_goal_relations(conn, loser_id, survivor_id)
             await conn.execute(
                 "UPDATE goals g SET aliases = (SELECT ARRAY(SELECT DISTINCT a FROM unnest(g.aliases || l.aliases || ARRAY[l.canonical_name]) a "
                 "WHERE a <> g.canonical_name)) FROM goals l WHERE g.id = $2::uuid AND l.id = $1::uuid", loser_id, survivor_id)
@@ -1207,14 +1242,9 @@ async def _merge_goal_sharded(pool: asyncpg.Pool, loser_id: str, survivor_id: st
             continue
         moved += int((await spool.execute(
             "UPDATE procedures SET achieves_goal_id = $2::uuid WHERE achieves_goal_id = $1::uuid", loser_id, survivor_id)).split()[-1])
-    await pool.execute(
-        "INSERT INTO goal_relations (specific_goal_id, abstract_goal_id, relation_type, status, confidence, provenance) "
-        "SELECT CASE WHEN specific_goal_id = $1::uuid THEN $2::uuid ELSE specific_goal_id END, "
-        "       CASE WHEN abstract_goal_id = $1::uuid THEN $2::uuid ELSE abstract_goal_id END, relation_type, status, confidence, provenance "
-        "FROM goal_relations WHERE (specific_goal_id = $1::uuid OR abstract_goal_id = $1::uuid) "
-        "AND NOT (specific_goal_id = $1::uuid AND abstract_goal_id = $2::uuid) "
-        "AND NOT (abstract_goal_id = $1::uuid AND specific_goal_id = $2::uuid) ON CONFLICT DO NOTHING", loser_id, survivor_id)
-    await pool.execute("DELETE FROM goal_relations WHERE specific_goal_id = $1::uuid OR abstract_goal_id = $1::uuid", loser_id)
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            await _move_goal_relations(conn, loser_id, survivor_id)
     lrow = await lpool.fetchrow("SELECT canonical_name, aliases FROM goals WHERE id = $1::uuid", loser_id)
     survivor_shard = await pool.fetchval("SELECT home_shard_id FROM object_routes WHERE object_type='goal' AND object_id=$1::uuid", survivor_id) or HOME_SHARD
     surv_pool = pool if survivor_shard == HOME_SHARD else await sp.get(survivor_shard)

@@ -182,19 +182,26 @@ def test_inspect_goal_route_keeps_canonical_goal_when_hierarchy_projection_lags(
     async def fake_enrich(pool, goal, *, access_scope, tenant_scope):
         return None
 
+    async def fake_benchmarks(pool, goal_id, *, scope):
+        return [{"id": "b1", "goal_id": goal_id}]
+
     monkeypatch.setattr("app.api.goals.get_goal", fake_get)
     monkeypatch.setattr("app.api.goals.enrich_goal", fake_enrich)
+    monkeypatch.setattr("app.api.goals.pm.list_goal_benchmarks", fake_benchmarks)
     result = _run(goals_api.inspect_goal_route(
         goal_id="g1", pool=object(), scope=scope, tenant_scope=tenant_scope,
     ))
 
     assert result["id"] == "g1"
     assert result["canonical_name"] == "Canonical goal"
-    assert result["specializes"] == []
-    assert result["abstracts"] == []
-    assert result["abstraction_level"] == 0
-    assert result["benchmarks"] == []
-    assert result["coverage"] == {"total_count": 0, "resolved_count": 0, "ratio": 0.0}
+    # Unknown, not "a root with no relations": the page must not claim a level.
+    assert result["hierarchy_available"] is False
+    assert result["specializes"] is None
+    assert result["abstracts"] is None
+    assert result["abstraction_level"] is None
+    assert result["coverage"] is None
+    # Benchmarks don't depend on the hierarchy and still come from benchmarks.goal_id.
+    assert result["benchmarks"] == [{"id": "b1", "goal_id": "g1"}]
 
 
 # --- create_goal_route ---------------------------------------------------
