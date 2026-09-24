@@ -1901,6 +1901,7 @@ async def _preserve_script_artifact(
     pool: asyncpg.Pool, artifact: Any, resource: Any, raw_url: str, *, created_by: str,
     role: str = "executable_source", owner_id: Optional[str] = None,
     visibility: str = "public", ingestion_context_id: Optional[str] = None,
+    store_bytes: Optional[bool] = None, source_type: str = "skill_package_resource",
 ) -> str:
     """Preserve one bundled resource's exact bytes as an immutable `ingested_artifacts` row,
     keyed by content hash. Found source is NOT trusted: `execution_allowed` starts false and
@@ -1913,15 +1914,21 @@ async def _preserve_script_artifact(
     REFERENCE_ROLES (style_reference, design_reference, documentation, dependency_manifest,
     test_fixture, see skill_extraction/schema.py) -- the upsert identity (db/105) is the same
     (source_type, uri, content_hash) regardless of role, since byte-identical content is
-    byte-identical content whatever it's classified as."""
+    byte-identical content whatever it's classified as.
+
+    `store_bytes` (default: only for role='executable_source'): only executables need the
+    hashed copy -- step_binding refuses to run without it. A reference file is kept as its
+    commit-pinned URL + hash + the step's description, never copied (S5)."""
     import os as _os
 
     from app.services.object_storage import get_store, store_blob
 
+    if store_bytes is None:
+        store_bytes = role == "executable_source"
     ext = _os.path.splitext(resource.path)[1].lower()
     content_ref = None
     status = "metadata_only"
-    store = get_store()
+    store = get_store() if store_bytes else None
     if store is not None and getattr(resource, "content", b""):
         content_ref = await store_blob(pool, store, resource.content, content_type="text/plain")
         status = "stored"
@@ -1930,12 +1937,12 @@ async def _preserve_script_artifact(
         "INSERT INTO ingested_artifacts (id, source_type, uri, repository, path, \"commit\", content_hash, "
         " role, mime_type, language, byte_size, content_ref, extraction_status, execution_allowed, visibility, "
         "owner_id, ingestion_context_id) "
-        "VALUES (gen_random_uuid(), 'skill_package_resource', $1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, $11, false, $12::visibility_level, $13, $14::uuid) "
+        "VALUES (gen_random_uuid(), $15, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, $11, false, $12::visibility_level, $13, $14::uuid) "
         "ON CONFLICT (source_type, uri, content_hash) WHERE role IS NOT NULL "
         "DO UPDATE SET last_seen = now() RETURNING id",
         raw_url, getattr(artifact, "repository", None), resource.path, getattr(artifact, "commit", None), resource.sha256,
         role, mime_type, _LANGUAGE_BY_EXT.get(ext), int(getattr(resource, "size", 0) or 0), content_ref, status,
-        visibility, owner_id, ingestion_context_id,
+        visibility, owner_id, ingestion_context_id, source_type,
     )
     return str(row["id"])
 

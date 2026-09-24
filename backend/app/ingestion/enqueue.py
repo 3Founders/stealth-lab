@@ -11,6 +11,9 @@
     # manifest JSON lines: {"repository": "owner/repo", "path": "...", "commit": "<sha>", ...extra}
     python -m app.ingestion.enqueue document --manifest docs.jsonl
 
+    # whole repos: reusable files (UI/CI/infra/scripts/...) -> Goal + 1-step Procedure each
+    python -m app.ingestion.enqueue repo --repository shadcn-ui/ui [--commit <sha>] [--domains ui_design,ci_cd]
+
     # any registered job type with an explicit payload and scope
     python -m app.ingestion.enqueue raw --job-type normalize_trace_event --payload '{"trace_event_id": "..."}' \
         --idempotency-key trace-event:123 --scope-type session --scope-entity-id s1 --visibility private --owner-id u1
@@ -32,6 +35,7 @@ from app.ingestion.config import control_database_url
 
 SKILL_JOB = "ingest_skill_package"
 DOC_JOB = "ingest_document"
+REPO_JOB = "ingest_repo"
 
 
 def skill_package_key(source_id: str, commit: str, path: str) -> str:
@@ -80,6 +84,30 @@ async def enqueue_documents(pool, docs: list[dict], *, config_version: Optional[
     return {"created": created, "duplicate": duplicate}
 
 
+async def enqueue_repos(pool, repos: list[dict], *, submitted_by: Optional[str] = None) -> dict:
+    """One ingest_repo job per (repository, commit); a missing commit is pinned to HEAD now."""
+    from app.services.ingestion_sources.github_corpus import _default_http_get
+
+    created = duplicate = 0
+    for repo in repos:
+        payload = {k: v for k, v in repo.items() if v is not None}
+        if not payload.get("repository"):
+            raise ValueError(f"repo missing 'repository': {repo}")
+        if not payload.get("commit"):
+            status, body = _default_http_get(f"https://api.github.com/repos/{payload['repository']}/commits/HEAD")
+            if status != 200:
+                raise ValueError(f"cannot resolve HEAD for {payload['repository']}: HTTP {status}")
+            payload["commit"] = json.loads(body.decode("utf-8"))["sha"]
+        key = "repo:" + hashlib.sha256(f"{payload['repository']}\x00{payload['commit']}".encode()).hexdigest()[:32]
+        _, made = await q.enqueue(
+            pool, REPO_JOB, payload, idempotency_key=key, source_id=payload["repository"], scope_type="global",
+            visibility="public", authority=JobAuthority(submitted_by_service_id=submitted_by, scope="global_public",
+                                                        visibility="public"))
+        created += made
+        duplicate += not made
+    return {"created": created, "duplicate": duplicate}
+
+
 def _parse(argv=None) -> argparse.Namespace:
     p = argparse.ArgumentParser(prog="python -m app.ingestion.enqueue", description=__doc__.split("\n\n")[0])
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -96,6 +124,12 @@ def _parse(argv=None) -> argparse.Namespace:
     d.add_argument("--path")
     d.add_argument("--commit")
     d.add_argument("--config-version")
+    rp = sub.add_parser("repo")
+    rp.add_argument("--manifest", help='JSON lines {"repository", "commit"?, "domains"?, "per_domain"?}')
+    rp.add_argument("--repository")
+    rp.add_argument("--commit")
+    rp.add_argument("--domains", help="comma-separated DOMAINS names (default: all)")
+    rp.add_argument("--per-domain", type=int)
     r = sub.add_parser("raw")
     r.add_argument("--job-type", required=True)
     r.add_argument("--payload", required=True, help="JSON object")
@@ -128,6 +162,14 @@ async def _amain(a: argparse.Namespace) -> int:
             else:
                 docs = [{"repository": a.repository, "path": a.path, "commit": a.commit}]
             print(json.dumps(await enqueue_documents(pool, docs, config_version=a.config_version)))
+        elif a.cmd == "repo":
+            if a.manifest:
+                with open(a.manifest, encoding="utf-8") as fh:
+                    repos = [json.loads(line) for line in fh if line.strip()]
+            else:
+                repos = [{"repository": a.repository, "commit": a.commit, "per_domain": a.per_domain,
+                          "domains": a.domains.split(",") if a.domains else None}]
+            print(json.dumps(await enqueue_repos(pool, repos)))
         else:
             jid, made = await q.enqueue(
                 pool, a.job_type, json.loads(a.payload), idempotency_key=a.idempotency_key, source_id=a.source_id,
