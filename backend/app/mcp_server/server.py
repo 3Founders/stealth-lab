@@ -106,7 +106,6 @@ from starlette.responses import HTMLResponse, JSONResponse, Response
 from app.mcp_server.tasks_extension import TasksExtension
 from app.mcp_server.anonymous_read import _ANONYMOUS_READ_TOKEN, AnonymousReadInjectorMiddleware
 from app.mcp_server.claim_graph_page import CLAIM_GRAPH_HTML, FORCE_GRAPH_JS
-from app.mcp_server.goal_run_page import GOAL_RUN_HTML
 from app.mcp_server.procedure_graph_page import PROCEDURE_GRAPH_HTML
 from app.services import claim_graph_api
 from app.services import procedure_task_graph_api
@@ -395,13 +394,18 @@ _TOKEN_VERIFIER = _build_token_verifier(_require_mcp_token())
 MCP_SURFACE = os.environ.get("STEALTHLAB_MCP_SURFACE", "v1").strip().lower()
 
 _V1_INSTRUCTIONS = (
-    "StealthLab: proven procedures for coding tasks. 1) find_ways(query, "
-    "execute=false) returns a step-by-step plan (Goal -> Procedure -> steps). 2) Read "
-    "stealth://procedures/{procedure_id}/claims for the facts and past "
-    "discoveries a step needs. 3) Do the work yourself (or hand one-line step "
-    "pointers to subagents) and verify each step. 4) report_discovery(...) "
-    "anything you had to fix or found a better way to do -- it's saved "
-    "privately and comes back with that procedure next time. Reads need no "
+    "StealthLab: proven procedures for coding tasks. You plan; StealthLab "
+    "knows. 0) Once per repo, run the survey_repo prompt to write "
+    ".stealth/claims.md (facts about this repo, each citing file:line). "
+    "1) find_ways(query, repo_claims=<claims.md text>) returns knowledge: the "
+    "Goal, the chosen Procedure(s) with every step in full, alternatives, and "
+    "which repo facts supported or blocked each choice. 2) You compile the "
+    "plan into .stealth/procedures.md + .stealth/run.md yourself (the "
+    "plan_and_run prompt has the format), then do each step or hand a "
+    "one-line pointer to a subagent, and check each step's proof. 3) "
+    "report_discovery(...) anything you had to fix or found a better way to "
+    "do -- it's saved privately and comes back through "
+    "stealth://procedures/{procedure_id}/claims next time. Reads need no "
     "token; report_discovery needs a signed-in user."
 )
 _V2_INSTRUCTIONS = (
@@ -450,11 +454,10 @@ _TOOL_SCOPES: dict[str, str] = {
     **{n: _READ for n in (
         "retrieve_precedent", "search_procedures", "get_claim_graph", "get_relevant_claims", "get_procedure",
         "check_applicability", "check_procedure", "search_goals", "inspect_goal", "list_goal_procedures",
-        "resolve_intent", "explain_goal_route", "estimate_goal_cost", "compile_goal", "find_ways",
+        "resolve_intent", "explain_goal_route", "find_ways",
         "get_route_decision", "project_knowledge", "inspect_trajectory",
         "list_trajectory_events", "inspect_extraction", "list_extraction_objects",
-        "inspect_trajectory_provenance", "get_goal_run_status", "list_goal_artifacts", "get_goal_artifact",
-        "inspect_run", "list_stealth_edits", "generate_review_packet", "preview_local_sync")},
+        "inspect_trajectory_provenance",         "inspect_run", "list_stealth_edits", "generate_review_packet", "preview_local_sync")},
     **{n: _WRITE for n in (
         "submit_procedure", "create_goal", "report_execution", "record_run_update", "record_stealth_edit",
         "declare_file_intent", "report_node_progress", "commit_local_sync", "init_workspace",
@@ -462,7 +465,7 @@ _TOOL_SCOPES: dict[str, str] = {
         "report_discovery")},
     **{n: _acx.INGESTION_SUBMIT for n in ("ingest_trajectory", "run_semantic_extraction", "reextract_trajectory")},
     **{n: _EXEC for n in (
-        "find_best_way", "reproduce_procedure", "execute_goal", "continue_run",
+        "find_best_way", "reproduce_procedure", "continue_run",
         "resume_execution_run", "retry_run_node")},
     "decide_procedure": _acx.KNOWLEDGE_PUBLISH,
 }
@@ -676,63 +679,6 @@ async def procedure_graph_data(request: Request) -> JSONResponse:
         link_mode=(qp.get("link_mode") or "all"),
     )
     return JSONResponse(json.loads(json.dumps(result, default=str)))
-
-
-# ---------------------------------------------------------------------------
-# Goal-run viewer -- the local-workspace counterpart of /claim-graph and
-# /procedure-graph. Deliberately NOT a force-graph: renders ONE real
-# `.stealth/goal_run.md` (compile-time or execute-time, `compile_goal`/
-# `execute_goal`'s own `workspace_root` write) as a left-to-right
-# sequence, plus its `.stealth/artifacts/` manifest -- both real local
-# filesystem reads, no DB at all (see goal_run_page.py's own module
-# docstring for why a sequence, not a general graph). Same read-only,
-# unauthenticated `@server.custom_route` posture as the two routes above.
-# ---------------------------------------------------------------------------
-
-
-@server.custom_route("/goal-run", methods=["GET"], include_in_schema=False)
-async def goal_run_page(request: Request) -> HTMLResponse:  # noqa: ARG001
-    return HTMLResponse(GOAL_RUN_HTML)
-
-
-@server.custom_route("/goal-run/data", methods=["GET"], include_in_schema=False)
-async def goal_run_data(request: Request) -> JSONResponse:
-    from app.execution.goal_execution import read_goal_run_status
-    from app.stealth.artifacts import list_artifacts
-
-    denied = await _route_gate(request)
-    if denied is not None:
-        return denied
-    workspace_root = request.query_params.get("workspace_root")
-    if not workspace_root:
-        return JSONResponse({"error": "workspace_root query parameter is required"}, status_code=400)
-    status = read_goal_run_status(workspace_root)
-    artifacts = list_artifacts(workspace_root)
-    return JSONResponse(json.loads(json.dumps({"status": status, "artifacts": artifacts}, default=str)))
-
-
-@server.custom_route("/goal-run/artifact", methods=["GET"], include_in_schema=False)
-async def goal_run_artifact(request: Request) -> Response:
-    from app.stealth.artifacts import read_artifact
-
-    denied = await _route_gate(request)
-    if denied is not None:
-        return denied
-    qp = request.query_params
-    workspace_root, goal_id, execution_id, filename = (
-        qp.get("workspace_root"), qp.get("goal_id"), qp.get("execution_id"), qp.get("filename"),
-    )
-    if not all([workspace_root, goal_id, execution_id, filename]):
-        return JSONResponse(
-            {"error": "workspace_root, goal_id, execution_id, and filename are all required"}, status_code=400,
-        )
-    content = read_artifact(workspace_root, goal_id, execution_id, filename)
-    if content is None:
-        return JSONResponse({"error": "artifact not found"}, status_code=404)
-    return Response(
-        content, media_type="application/octet-stream",
-        headers={"content-disposition": f'attachment; filename="{filename.rsplit("/", 1)[-1]}"'},
-    )
 
 
 # ---------------------------------------------------------------------------
@@ -3606,7 +3552,7 @@ async def resolve_intent(
        "candidates": [...]}
         -- exactly one existing Goal cleared both a minimum relevance
         floor and a decisive margin over the runner-up. Call
-        `explain_goal_route`/`compile_goal` next with its id.
+        `explain_goal_route` next with its id (or just use `find_ways`).
 
       {"outcome": "ambiguous", "candidates": [...], "normalized": {...}}
         -- 2+ existing Goals are plausible and too close to call.
@@ -3683,10 +3629,7 @@ async def resolve_intent(
 def _resolved_goal_node_to_dict(node) -> dict:
     """Full, honest recursive dump of a ResolvedGoalNode tree -- every
     field, including every unresolved_reason and every child, never
-    trimmed. Both `explain_goal_route` and `compile_goal` build off this
-    same conversion so the tree a caller inspects and the tree the DAG
-    was flattened from are provably the same object, not two
-    independently-serialized views that could drift."""
+    trimmed. `explain_goal_route` returns it as-is."""
     return {
         "goal_id": node.goal_id, "goal_name": node.goal_name, "depth": node.depth,
         "chosen": node.chosen,
@@ -3748,394 +3691,50 @@ async def explain_goal_route(
 
 
 @server.tool()
-async def compile_goal(
-    goal_id: str, ctx: Context, current_scope_json: str = "{}", max_depth: int = 6,
-    semantic: bool = False, workspace_root: Optional[str] = None,
-) -> str:
-    """
-    Meta-harness/execu.md Sec 16/27: resolve a Goal recursively
-    (`resolve_goal`) and flatten the result into a concrete, ordered DAG
-    (`flatten_goal_tree`) -- the real "compile" half of the product loop
-    (Sec 0). Pure compile, no persistence, no execution -- the same
-    "plan_only" posture `find_best_way(mode="plan_only")` already
-    established for Procedure-based plans, applied here to Goal-based
-    ones. A caller wanting a durable, resumable run compiles first via
-    this tool, inspects the result, then drives execution through the
-    existing durable-run machinery (out of this tool's own scope).
-
-    Every node is either `kind="step"` (real, concrete work: a procedure step carrying a `binding`;
-    `executor` is derived from that binding, never fabricated) or `kind="human"` (a
-    real NEEDS_INPUT node, Sec 21 -- `rationale` says exactly what could
-    not be resolved). `deps` chains nodes in the exact order the
-    Procedure(s) along the way declared their own steps.
-
-    Returns `{"tree": <full resolution trace>, "nodes": [<flattened DAG,
-    in dependency order>]}` -- both the "why" and the "what to execute",
-    never just one.
-
-    `semantic` is accepted for backward compatibility and has no effect.
-
-    `workspace_root` (Sec 13, opt-in): when given, ALSO writes a real
-    `.stealth/goal_run.md` reflecting the COMPILED-but-not-executed plan
-    -- `find_best_way(mode="plan_only")` already writes a real `run.md`
-    for a Procedure-based plan the same way (`RUN|...|pending|...`)
-    before anything runs; this closes the same gap for Goal-based plans.
-    Every node's `status` is `"planned"` (kind="step" -- a real bound
-    step WOULD be dispatched here) or `"needs_input"`
-    (kind="human" -- a real, already-known gap), never `"success"`/
-    `"failure"`, since nothing has actually executed. Calling `execute_
-    goal` afterward on the SAME `workspace_root` overwrites this same
-    file with the real post-execution trace -- one real file, two
-    honest states depending on which tool last wrote it.
-    """
-    from app.execution.goal_compiler import compiled_goal_to_run_md, flatten_goal_tree
-    from app.execution.goal_resolution import GoalResolutionError, resolve_goal
-
-    pool = ctx.request_context.lifespan_context["pool"]
-    try:
-        current_scope = json.loads(current_scope_json)
-    except json.JSONDecodeError as exc:
-        return f"REFUSED: current_scope_json is not valid JSON -- {exc}"
-
-    embedder = None
-    if semantic:
-        from app.services.embeddings import Embedder
-        embedder = Embedder()
-
-    try:
-        tree = await resolve_goal(
-            pool, goal_id, context={"current_scope": current_scope}, scope=_caller_access_scope(),
-            max_depth=max_depth, embedder=embedder,
-        )
-    except GoalResolutionError as exc:
-        return f"REFUSED: {exc}"
-
-    nodes = flatten_goal_tree(tree)
-    if workspace_root:
-        from app.execution.goal_execution import write_goal_run_md_file
-        write_goal_run_md_file(workspace_root, compiled_goal_to_run_md(nodes))
-    return json.dumps({
-        "tree": _resolved_goal_node_to_dict(tree),
-        "nodes": [
-            {
-                "node_id": n.node_id, "goal_id": n.goal_id, "goal_name": n.goal_name,
-                "kind": n.kind, "step_order": n.step_order, "executor": n.executor,
-                "deps": n.deps, "rationale": n.rationale, "depth": n.depth,
-            }
-            for n in nodes
-        ],
-    }, default=str)
-
-
-@server.tool()
-async def estimate_goal_cost(
-    goal_id: str, ctx: Context, current_scope_json: str = "{}", max_depth: int = 6,
-    semantic: bool = False,
-) -> str:
-    """
-    Meta-harness/execu.md Sec 13/14/27: real, empirical cost estimation
-    -- resolves the Goal (`resolve_goal`), then aggregates real recorded
-    step execution telemetry (`step_execution_telemetry`, migration 98) up the
-    tree per Sec 13's own formula.
-
-    HONEST BY DESIGN, stated plainly rather than glossed over: this
-    tool's numbers are only as good as what has actually been recorded.
-    A Goal (or any step along its route) that has never been executed
-    returns `confidence="none"` and an explicit `basis` naming exactly
-    which part of the route lacks data -- never a fabricated number to
-    make the tool look more capable than it is. `monetary_cost_usd` is
-    ALWAYS `null` -- no pricing table exists anywhere in this codebase.
-    As real executions accumulate (`step_binding.execute_node`'s own
-    automatic telemetry recording), the SAME goal_id will start
-    returning real, increasingly confident (`"low"` then `"empirical"`
-    at 5+ real samples) numbers on its own -- no code change needed,
-    per the founder's own instruction: "after some runs and
-    accumulation of evidence we will[, estimate]."
-
-    Returns `{"tree": <full resolution trace, same shape as
-    explain_goal_route>, "cost": {confidence, sample_count,
-    success_rate, expected_attempts, expected_wall_seconds,
-    expected_prompt_tokens, expected_completion_tokens,
-    monetary_cost_usd, basis, ...}}`.
-
-    `semantic` is accepted for backward compatibility and has no effect.
-    """
-    from app.execution.goal_cost import estimate_goal_cost as _estimate_goal_cost
-    from app.execution.goal_resolution import GoalResolutionError, resolve_goal
-
-    pool = ctx.request_context.lifespan_context["pool"]
-    try:
-        current_scope = json.loads(current_scope_json)
-    except json.JSONDecodeError as exc:
-        return f"REFUSED: current_scope_json is not valid JSON -- {exc}"
-
-    embedder = None
-    if semantic:
-        from app.services.embeddings import Embedder
-        embedder = Embedder()
-
-    try:
-        tree = await resolve_goal(
-            pool, goal_id, context={"current_scope": current_scope}, scope=_caller_access_scope(),
-            max_depth=max_depth, embedder=embedder,
-        )
-    except GoalResolutionError as exc:
-        return f"REFUSED: {exc}"
-
-    cost = await _estimate_goal_cost(pool, tree)
-    return json.dumps({
-        "tree": _resolved_goal_node_to_dict(tree),
-        "cost": {
-            "confidence": cost.confidence, "sample_count": cost.sample_count,
-            "success_rate": cost.success_rate, "expected_attempts": cost.expected_attempts,
-            "mean_wall_seconds": cost.mean_wall_seconds, "expected_wall_seconds": cost.expected_wall_seconds,
-            "mean_prompt_tokens": cost.mean_prompt_tokens, "expected_prompt_tokens": cost.expected_prompt_tokens,
-            "mean_completion_tokens": cost.mean_completion_tokens,
-            "expected_completion_tokens": cost.expected_completion_tokens,
-            "monetary_cost_usd": cost.monetary_cost_usd,
-            "verification_cost_seconds": cost.verification_cost_seconds,
-            "orchestration_overhead_seconds": cost.orchestration_overhead_seconds,
-            "basis": cost.basis,
-        },
-    }, default=str)
-
-
-@server.tool()
-async def execute_goal(
-    goal_id: str, ctx: Context, current_scope_json: str = "{}", max_depth: int = 6,
-    workspace_root: Optional[str] = None, execution_id: Optional[str] = None,
-    semantic: bool = False,
-) -> str:
-    """
-    REAL, SIDE-EFFECTING EXECUTION -- Prompt 2 Sec 7/9/10: resolves the
-    Goal (`resolve_goal`, same as `compile_goal`/`explain_goal_route`)
-    then actually RUNS every bound step leaf in the resolved tree via the
-    real `step_binding.execute_node()` chokepoint -- the same dispatch
-    `find_best_way`'s tier-1/2 paths use, sandboxed where the binding's
-    own kind is sandboxed. Every attempt is automatically recorded into
-    the real step-telemetry ledger (`step_execution_telemetry`) whether it succeeds or fails, so `estimate_goal_cost`
-    gets real evidence from every call to this tool.
-
-    `semantic` is accepted for backward compatibility and has no effect.
-
-    Real verification (Prompt 2 Sec 9, `goal_verification.py`): a node
-    that reports `status='success'` is NOT yet done -- this Goal's own
-    real `verification_requirement` (`goals.verification_requirement`,
-    migration 83) is checked against the real result
-    (`deterministic_check` actually runs a real sandboxed command;
-    `artifact_inspection` checks the real output files the
-    step produced; `human_review` is never auto-passed; no
-    contract at all is honestly `unverified`, which still counts as a
-    pass -- Sec 9 asks that a contract exist, not that every Goal
-    already has one today). A `failed_verification` result is treated
-    exactly like an execution failure below.
-
-    Real fallback (Prompt 2 Sec 10): at Procedure level ("alternative Procedure"):
-if a WHOLE Procedure's
-        own decomposition fails (not merely `needs_input` -- a
-        structural gap is not something a different decomposition is
-        reliably better at closing), the next real feasible alternate
-        Procedure linked to that same Goal is lazily resolved and tried.
-        If EVERY real Procedure this Goal links is tried and all fail,
-        that node's `human_intervention_needed` is set `true` -- Sec
-        10's own terminal escalation rung, past which this tool has no
-        further automatic recourse.
-    Never substitutes a different Goal at either rung. Every attempt
-    (step order/binding kind/procedure id, status, notes, verification
-    state/detail) is kept, not just the last one.
-
-    Real durability (Prompt 2 Sec 12), opt-in via `workspace_root`: pass
-    a real local checkout path and every node's real outcome is recorded
-    into that checkout's own `.stealth/events.jsonl` (the same durable,
-    fsync'd, single-writer-locked journal `generator.py` already uses --
-    not a new mechanism). Call again with the SAME `workspace_root` and
-    the `execution_id` this call returns to RESUME after a real crash: a
-    node whose last recorded outcome was `'success'` is reused, never
-    re-executed; anything else is retried for real. HONEST SCOPE LIMIT,
-    stated plainly: this is NOT the Postgres `execution_runs`/
-    `durable_run.py` machinery (anchored to a real `procedure_id`, a
-    documented one-way-door invariant -- see `goal_execution.py`'s own
-    module docstring for why forcing a bare-step Goal route
-    through it would be dishonest) -- there is no lease/worker-ownership
-    fencing here, so two concurrent resumes of the same `execution_id`
-    are not safely serialized against each other. Omitting
-    `workspace_root` (the default) keeps the original, purely in-memory,
-    non-durable behavior exactly as before this capability existed.
-
-    Same `workspace_root` also writes a real, human/agent-readable
-    `.stealth/goal_run.md` (Sec 13) -- `GOAL_RUN|<execution_id>|<outcome>`
-    plus one `GOAL_NODE|...` line per real node, `rg`-able like every
-    other `.stealth/` page. A deliberately SEPARATE page/grammar from the
-    existing Procedure-anchored `run.md` (see `pipe_format.py`'s own
-    comment on why), built straight from this call's own real result,
-    never re-derived.
-
-    Real output files a step actually produced (`NodeResult.
-    data["output_files"]`) are written to `.stealth/artifacts/<goal_id>/
-    <execution_id>/<filename>` (Sec 5, completing the `.stealth/` ABI
-    list) and listed both in `node_results[goal_id]["artifacts"]` and as
-    `ARTIFACT|...` lines in `goal_run.md` -- never a hash reference only
-    (that is the SEPARATE, Postgres-anchored `record_artifact()` a
-    Procedure-run uses); this stores the real content locally, addressable
-    without a DB round-trip.
-
-    An `unresolved` leaf anywhere in the tree is never executed and never
-    silently treated as a pass -- the overall `outcome` becomes
-    `"needs_input"` (Sec 21's vocabulary), naming exactly which Goal(s)
-    need a route before this can run to completion.
-
-    Returns `{"tree": <full resolution trace>, "outcome": "success"|
-    "failure"|"needs_input", "execution_id": <str, only when
-    workspace_root was given>, "node_results": {goal_id: {status,
-    attempts: [...], used_binding_kind, resumed_from_journal}},
-    "procedure_results": {goal_id: {status, attempts: [{procedure_id,
-    procedure_name, status}, ...], used_procedure_id,
-    human_intervention_needed, resumed_from_journal}},
-    "unresolved_goal_names": [...]}`.
-    """
-    from app.execution.goal_execution import execute_goal_tree
-    from app.execution.goal_resolution import GoalResolutionError, resolve_goal
-
-    pool = ctx.request_context.lifespan_context["pool"]
-    try:
-        current_scope = json.loads(current_scope_json)
-    except json.JSONDecodeError as exc:
-        return f"REFUSED: current_scope_json is not valid JSON -- {exc}"
-
-    embedder = None
-    if semantic:
-        from app.services.embeddings import Embedder
-        embedder = Embedder()
-
-    try:
-        tree = await resolve_goal(
-            pool, goal_id, context={"current_scope": current_scope}, scope=_caller_access_scope(),
-            max_depth=max_depth, embedder=embedder,
-        )
-    except GoalResolutionError as exc:
-        return f"REFUSED: {exc}"
-
-    execution = await execute_goal_tree(
-        pool, tree, {"current_scope": current_scope, "goal_id": goal_id}, scope=_caller_access_scope(),
-        workspace_root=workspace_root, execution_id=execution_id,
-    )
-    return json.dumps({
-        "tree": _resolved_goal_node_to_dict(tree),
-        "outcome": execution.outcome,
-        "execution_id": execution.execution_id,
-        "node_results": {
-            gid: {
-                "goal_name": r.goal_name, "status": r.status,
-                "used_binding_kind": r.used_binding_kind,
-                "resumed_from_journal": r.resumed_from_journal,
-                "artifacts": r.artifacts,
-                "attempts": [
-                    {
-                        "step_order": a.step_order, "binding_kind": a.binding_kind,
-                        "status": a.status, "notes": a.notes,
-                        "verification_state": a.verification_state, "verification_detail": a.verification_detail,
-                    }
-                    for a in r.attempts
-                ],
-            }
-            for gid, r in execution.node_results.items()
-        },
-        "procedure_results": {
-            gid: {
-                "goal_name": r.goal_name, "status": r.status,
-                "used_procedure_id": r.used_procedure_id,
-                "human_intervention_needed": r.human_intervention_needed,
-                "resumed_from_journal": r.resumed_from_journal,
-                "attempts": [
-                    {"procedure_id": a.procedure_id, "procedure_name": a.procedure_name, "status": a.status}
-                    for a in r.attempts
-                ],
-            }
-            for gid, r in execution.procedure_results.items()
-        },
-        "unresolved_goal_names": execution.unresolved_goal_names,
-    }, default=str)
-
-
-@server.tool()
 async def find_ways(
     query: str, ctx: Context,
-    workspace_root: Optional[str] = None, execute: bool = True,
+    repo_claims: str = "",
     current_scope_json: str = "{}", max_depth: int = 6,
     semantic: bool = True, use_llm: bool = True, top_k: int = 5,
-    repo_claims: str = "",
 ) -> str:
     """
+    Find the known ways to do something. Returns KNOWLEDGE, not a plan: you
+    (the planner agent) compile the plan and write `.stealth/` yourself --
+    the `plan_and_run` prompt has the format.
 
-    ONE call, the whole thing: fuzzy text -> Goal search -> Procedure
-    search -> a compiled DAG -> (by default) a real execution ->
-    `goal_run.md`. The v1 entry point (final_thing.md); pass `execute=False`
-    to get just the plan and do the work yourself -- no token needed.
+    query: what you want done, in plain words ("add a DOCX export").
+    repo_claims: the text of this repo's `.stealth/claims.md`
+      (`CLAIM|R-001|current|stack|repository|Node 20.11|source=.nvmrc:1#sha=9f2c|version=1`
+      lines; up to 200 facts / 64 KB; write it with the `survey_repo` prompt).
+      Used for this request only -- never stored or logged.
 
-    Composes ONLY existing, already-tested primitives, verbatim, in the
-    same order `resolve_intent` -> `compile_goal` -> `execute_goal`
-    already run as three separate calls -- no new resolution,
-    compilation, or execution logic lives here:
-      1. `app.execution.intent_resolution.resolve_intent` -- fuzzy
-         `query` -> Goal search (peer "ingestion"'s real lexical+
-         semantic search_goals).
-      2. `app.execution.goal_resolution.resolve_goal` -- recursively
-         resolves the matched Goal, which ALREADY searches and selects
-         feasible Procedures internally (`_feasible_procedures_for_goal`)
-         -- this is why one call covers both Goal and Procedure search,
-         not two separate lookups glued together.
-      3. `app.execution.goal_compiler.flatten_goal_tree` -- the DAG.
-      4. `execute=True` (default): `app.execution.goal_execution.
-         execute_goal_tree` -- real dispatch, same as `execute_goal`.
-         `execute=False`: `compiled_goal_to_run_md` instead -- a real
-         "planned" dry-run, same as `compile_goal`.
+    What happens:
+      1. Goal search (`resolve_intent`). Three honest outcomes, never a guess:
+         "resolved" (one Goal clearly best), "ambiguous" (2+ too close to
+         call -- you pick, or rephrase), "no_match" (nothing known).
+         When ambiguous, repo facts can break the tie, but only if one Goal
+         fits the repo clearly better (same margin search uses).
+      2. Procedure choice (`resolve_goal`): feasible Procedures for the Goal,
+         and recursively for its sub-Goals. With repo facts, the 5-20 most
+         related facts per Procedure go to the NLI/JEV judge together with
+         the Procedure's preconditions and its steps' runtime needs. A
+         contradicted REQUIRED precondition drops the Procedure; a
+         contradicted runtime need only moves it to the back.
+      3. The result, per Goal: the chosen Procedure with every step in full
+         (what to do, source locator, binding, needs, success check), the
+         alternatives, and `repo_fit` (which of your fact ids supported or
+         blocked it). Steps are `action` (has a script/tool), `subgoal`
+         (see the entry with that goal_id), or `instruction` (do it from the
+         text). No node ids, no order, no file writes, no execution -- those
+         are the planner's job.
 
-    Three honest outcomes on the SEARCH step, never a guess (identical
-    vocabulary to `resolve_intent`'s own tool):
-      `{"outcome": "resolved", ...}` -- exactly one Goal cleared both a
-        relevance floor and a decisive margin. Proceeds to compile/
-        execute automatically.
-      `{"outcome": "ambiguous", "candidates": [...]}` -- 2+ plausible
-        Goals, too close to call. Stops here -- never guesses which one.
-      `{"outcome": "no_match", "proposed_goal": {...}}` -- nothing
-        matched. Stops here -- `proposed_goal` is a real, disclosed
-        skeleton for review via `create_goal`, nothing written.
-
-    `workspace_root` (opt-in, same contract as `compile_goal`/
-    `execute_goal`): writes the real `.stealth/goal_run.md` -- a
-    `"planned"` dry-run when `execute=False`, the real post-execution
-    outcome when `execute=True`.
-
-    `repo_claims` (final_thing.md): the text of the repo's `.stealth/claims.md`
-    (`CLAIM|R-001|current|stack|repository|Node 20.11|source=...|version=1`
-    lines; up to 200 facts / 64 KB). Used only for this request -- never
-    stored or logged. Two effects: (1) when the Goal search is ambiguous, a
-    cheap token-overlap score against the repo facts can break the tie;
-    (2) the feasible Procedures are checked against the 5-20 most related
-    facts by the claim-conditioned NLI/JEV judge -- ones whose REQUIRED
-    conditions the repo contradicts are dropped, the rest re-ordered, and each
-    chosen procedure carries `repo_fit` with the supporting/blocking fact ids.
-    Everything is reported under `repo_facts`; if the judge chain is down the
-    plan still comes back with `procedure_check.status = "not_checked"`.
+    Read-only; needs no token. Report what you learn with `report_discovery`.
     """
-    from app.execution.goal_compiler import compiled_goal_to_run_md, flatten_goal_tree
-    from app.execution.goal_execution import execute_goal_tree, write_goal_run_md_file
+    from app.execution import repo_facts as _rf
+    from app.execution.goal_knowledge import goal_tree_to_knowledge
     from app.execution.goal_resolution import GoalResolutionError, resolve_goal
+    from app.execution.intent_resolution import _AMBIGUITY_MARGIN
     from app.execution.intent_resolution import resolve_intent as _resolve_intent
-
-    if execute:
-        # find_ways is classified _READ in _TOOL_SCOPES (so plan-only
-        # calls, execute=False, are free -- same tier as compile_goal),
-        # deliberately NOT _EXEC like execute_goal/find_best_way. That
-        # means the blanket per-tool check in _enforce_tool_scope never
-        # gates this specific, real side-effecting path -- so it's
-        # gated explicitly, right here, the moment a caller actually
-        # asks for execution. Same failure shape (PermissionError ->
-        # "forbidden: ...") every other _EXEC-scoped tool already
-        # produces, not a different REFUSED-string convention.
-        token = get_access_token()
-        if token is not None and _EXEC not in (token.scopes or []):
-            raise PermissionError(f"forbidden: find_ways with execute=True requires scope {_EXEC!r}")
 
     pool = ctx.request_context.lifespan_context["pool"]
     try:
@@ -4157,9 +3756,6 @@ async def find_ways(
     if semantic:
         from app.services.embeddings import Embedder
         embedder = Embedder()
-
-    from app.execution import repo_facts as _rf
-    from app.execution.intent_resolution import _AMBIGUITY_MARGIN
 
     facts, facts_truncated = _rf.parse_repo_claims(repo_claims) if repo_claims.strip() else ([], False)
     repo_report: Optional[dict] = None
@@ -4216,66 +3812,15 @@ async def find_ways(
     if selector is not None:
         repo_report["procedure_check"] = selector.report()
 
-    nodes = flatten_goal_tree(tree)
-
-    if not execute:
-        if workspace_root:
-            write_goal_run_md_file(workspace_root, compiled_goal_to_run_md(nodes))
-        return json.dumps({
-            "outcome": "resolved", "goal_id": goal_id, "executed": False,
-            "repo_facts": repo_report,
-            "tree": _resolved_goal_node_to_dict(tree),
-            "nodes": [
-                {
-                    "node_id": n.node_id, "goal_id": n.goal_id, "goal_name": n.goal_name,
-                    "kind": n.kind, "step_order": n.step_order, "executor": n.executor,
-                    "deps": n.deps, "rationale": n.rationale, "depth": n.depth,
-                }
-                for n in nodes
-            ],
-        }, default=str)
-
-    execution = await execute_goal_tree(
-        pool, tree, {"current_scope": current_scope, "goal_id": goal_id}, scope=scope,
-        workspace_root=workspace_root,
-    )
     return json.dumps({
-        "outcome": "resolved", "goal_id": goal_id, "executed": True,
+        "outcome": "resolved",
+        **goal_tree_to_knowledge(tree),
         "repo_facts": repo_report,
-        "tree": _resolved_goal_node_to_dict(tree),
-        "execution_outcome": execution.outcome,
-        "execution_id": execution.execution_id,
-        "node_results": {
-            gid: {
-                "goal_name": r.goal_name, "status": r.status,
-                "used_binding_kind": r.used_binding_kind,
-                "resumed_from_journal": r.resumed_from_journal,
-                "artifacts": r.artifacts,
-                "attempts": [
-                    {
-                        "step_order": a.step_order, "binding_kind": a.binding_kind,
-                        "status": a.status, "notes": a.notes,
-                        "verification_state": a.verification_state, "verification_detail": a.verification_detail,
-                    }
-                    for a in r.attempts
-                ],
-            }
-            for gid, r in execution.node_results.items()
-        },
-        "procedure_results": {
-            gid: {
-                "goal_name": r.goal_name, "status": r.status,
-                "used_procedure_id": r.used_procedure_id,
-                "human_intervention_needed": r.human_intervention_needed,
-                "resumed_from_journal": r.resumed_from_journal,
-                "attempts": [
-                    {"procedure_id": a.procedure_id, "procedure_name": a.procedure_name, "status": a.status}
-                    for a in r.attempts
-                ],
-            }
-            for gid, r in execution.procedure_results.items()
-        },
-        "unresolved_goal_names": execution.unresolved_goal_names,
+        "next": (
+            "Compile this into .stealth/procedures.md and .stealth/run.md yourself "
+            "(prompt: plan_and_run). Read stealth://procedures/{procedure_id}/claims "
+            "for past discoveries. Report fixes/better ways with report_discovery."
+        ),
     }, default=str)
 
 
@@ -4369,84 +3914,6 @@ async def report_discovery(
         "redacted": bool(matched),
         "next": f"returned by stealth://procedures/{stable_id}/claims for you; sharing/verification/credits are v2",
     }, default=str)
-
-
-@server.tool()
-async def get_goal_run_status(workspace_root: str, ctx: Context) -> str:  # noqa: ARG001
-    """
-    Meta-harness/execu.md Sec 14's "run status" gap, closed: the real
-    read side of `compile_goal`/`execute_goal`'s own `workspace_root`
-    write. Reads `.stealth/goal_run.md` at `workspace_root` (whichever
-    of the two tools wrote it last -- a compile-time `"planned"` trace
-    or a real post-execution one, same grammar either way) and returns
-    it as structured JSON via `parse_goal_run_md` -- no re-derivation,
-    no DB round-trip, just the real file on disk.
-
-    Returns `REFUSED: ...` when no `goal_run.md` exists at this
-    `workspace_root` yet (never compiled/executed there) -- a real,
-    common state, not a crash.
-
-    No `ctx`/pool use at all -- this is a pure local filesystem read,
-    same posture `compile_goal`'s own `workspace_root` write already
-    has. `ctx` stays in the signature only because every `@server.tool()`
-    here takes one.
-    """
-    from app.execution.goal_execution import read_goal_run_status
-
-    status = read_goal_run_status(workspace_root)
-    if status is None:
-        return f"REFUSED: no .stealth/goal_run.md found at workspace_root={workspace_root!r} -- compile_goal or execute_goal must be called with this workspace_root first"
-    return json.dumps(status, default=str)
-
-
-@server.tool()
-async def list_goal_artifacts(workspace_root: str, ctx: Context) -> str:  # noqa: ARG001
-    """
-    Meta-harness/execu.md Sec 14's "artifacts" gap, closed: lists every
-    real file `execute_goal_tree` wrote under
-    `.stealth/artifacts/<goal_id>/<execution_id>/` at `workspace_root`
-    (Sec 5's real local artifact store) -- one entry per real file
-    actually on disk, never a manifest cache that could drift. An empty
-    list is the honest common case (no Goal execution at this
-    `workspace_root` produced a file artifact), not an error.
-
-    Pair with `get_goal_artifact` to fetch one entry's real bytes.
-    """
-    from app.stealth.artifacts import list_artifacts
-
-    return json.dumps(list_artifacts(workspace_root), default=str)
-
-
-@server.tool()
-async def get_goal_artifact(
-    workspace_root: str, goal_id: str, execution_id: str, filename: str, ctx: Context,
-) -> str:  # noqa: ARG001
-    """
-    Fetches one real artifact `execute_goal_tree` wrote (Sec 5/14) --
-    the read counterpart of `list_goal_artifacts`. Returns
-    `{"filename", "size_bytes", "content_base64"}` -- base64 because
-    MCP tools return `str`, not raw bytes; content is never re-encoded
-    or transformed, the real file bytes round-trip exactly.
-
-    Returns `REFUSED: ...` (never raises) when the file doesn't exist OR
-    `filename` would escape `.stealth/artifacts/<goal_id>/<execution_id>/`
-    -- the same defensive posture `write_execution_artifacts` already
-    applies on the write side, mirrored here on the read side.
-    """
-    import base64
-
-    from app.stealth.artifacts import read_artifact
-
-    content = read_artifact(workspace_root, goal_id, execution_id, filename)
-    if content is None:
-        return (
-            f"REFUSED: no artifact found at workspace_root={workspace_root!r} "
-            f"goal_id={goal_id!r} execution_id={execution_id!r} filename={filename!r}"
-        )
-    return json.dumps({
-        "filename": filename, "size_bytes": len(content),
-        "content_base64": base64.b64encode(content).decode("ascii"),
-    })
 
 
 # ---------------------------------------------------------------------------
@@ -5741,11 +5208,9 @@ from app.mcp_server.resources import register_resources
 from app.mcp_server.prompts import register_prompts
 
 register_resources(server, surface=MCP_SURFACE)
-if MCP_SURFACE != "v1":
-    # The orchestration prompts name v2 tools (find_best_way, search_procedures,
-    # ...); exposing them on the two-tool v1 surface would point agents at
-    # tools that aren't there.
-    register_prompts(server)
+# v1 gets only survey_repo + plan_and_run: the older orchestration prompts
+# name v2 tools (find_best_way, search_procedures, ...) that aren't there.
+register_prompts(server, surface=MCP_SURFACE)
 
 
 if __name__ == "__main__":

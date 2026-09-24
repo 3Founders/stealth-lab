@@ -1,6 +1,7 @@
 """
 MCP v1 surface (final_thing.md): exactly two tools (find_ways,
-report_discovery), the three related-claims resources, no prompts. The rest
+report_discovery), the three related-claims resources, and the two client-side
+prompts (survey_repo, plan_and_run). The rest
 of the suite runs with STEALTHLAB_MCP_SURFACE=v2 (conftest) because tool
 registration happens once at import -- so the real v1 surface is imported in a
 fresh subprocess here, not in this process.
@@ -40,7 +41,7 @@ def _surface(value: str) -> dict:
     return json.loads(out.stdout.strip().splitlines()[-1])
 
 
-def test_v1_exposes_exactly_two_tools_three_claim_resources_and_no_prompts():
+def test_v1_exposes_exactly_two_tools_three_claim_resources_and_two_prompts():
     s = _surface("v1")
     assert s["tools"] == ["find_ways", "report_discovery"]
     assert s["resources"] == [
@@ -48,14 +49,14 @@ def test_v1_exposes_exactly_two_tools_three_claim_resources_and_no_prompts():
         "stealth://goals/{goal_id}/claims",
         "stealth://procedures/{procedure_id}/claims",
     ]
-    assert s["prompts"] == []
+    assert s["prompts"] == ["plan_and_run", "survey_repo"]
 
 
 def test_v2_still_exposes_the_legacy_surface():
     s = _surface("v2")
     assert {"find_ways", "report_discovery", "find_best_way", "search_goals"} <= set(s["tools"])
     assert "stealth://runs/{run_id}" in s["resources"]
-    assert s["prompts"]
+    assert {"solve_with_stealth", "survey_repo", "plan_and_run"} <= set(s["prompts"])
 
 
 def test_surface_includes_pure_rule():

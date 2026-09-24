@@ -56,19 +56,17 @@ class ResolvedGoalNode:
     # is just a procedure node with a single step child; there is no separate Implementation object.
     step: Optional[dict] = None
     # This Goal's own real `goals.verification_requirement` (migration
-    # 83, JSONB, default '{}' -- a real column, unpopulated by anything
-    # until Prompt 2 Sec 9's goal_verification.py gave it a real
-    # consumer). Threaded through unchanged, never invented -- an empty
+    # 83, JSONB, default '{}'). Threaded through unchanged as the Goal's
+    # success check for the planner, never invented -- an empty
     # dict is the honest, common default, not an error.
     verification_requirement: dict = field(default_factory=dict)
     procedure: Optional[dict] = None
     # Real other feasible Procedures linked to this same Goal, beyond the
     # one chosen (already-ordered verified-first/recency-second, same
     # order `_feasible_procedures_for_goal` returned) -- kept, not
-    # discarded, so a real executor (goal_execution.py) can fall back to
-    # an alternate decomposition strategy when the chosen one's own
-    # execution fails (Prompt 2 Sec 10: "alternative Procedure"), the
-    # same "keep the real runner-ups" discipline. Each entry is the real procedure ROW (id,
+    # discarded, so the planner agent can fall back to an alternate
+    # decomposition strategy when the chosen one fails (Prompt 2 Sec 10:
+    # "alternative Procedure"), the same "keep the real runner-ups" discipline. Each entry is the real procedure ROW (id,
     # procedure_id, name, version, steps, ...), not a pre-resolved tree --
     # resolving every alternate's own subgoals eagerly would be real,
     # wasted recursive work for the overwhelmingly common case where the
@@ -221,9 +219,8 @@ async def resolve_goal_via_procedure(
 ) -> ResolvedGoalNode:
     """Lazy, real resolution of ONE SPECIFIC alternate Procedure for a
     Goal that already has a resolved tree via its FIRST-choice Procedure
-    -- Prompt 2 Sec 10's "alternative Procedure" fallback rung, called
-    by `goal_execution.py` ONLY if/when the first-choice Procedure's own
-    execution actually fails (resolving every alternate eagerly inside
+    -- Prompt 2 Sec 10's "alternative Procedure" fallback rung, for use
+    ONLY if/when the first-choice Procedure actually fails (resolving every alternate eagerly inside
     `resolve_goal` itself would be real, wasted recursive work for the
     overwhelmingly common case where the first choice succeeds).
 
@@ -348,6 +345,14 @@ async def resolve_goal(
             procedure={
                 "id": str(proc["id"]), "procedure_id": str(proc["procedure_id"]),
                 "name": proc.get("name"), "version": proc.get("version"),
+                # The full step list travels with the choice: the planner agent
+                # compiles the plan from it (final_architecture.md), so a step
+                # with no binding and no matching sub-Goal is still an
+                # instruction it can carry out, not a dead end.
+                "goal": proc.get("goal"), "description": proc.get("display_description"),
+                "verification_state": proc.get("verification_state"),
+                "preconditions": proc.get("preconditions") or [],
+                "steps": sorted(proc.get("steps") or [], key=lambda s: s.get("order", 0) if isinstance(s, dict) else 0),
                 **({"repo_fit": proc["_repo_fit"]} if proc.get("_repo_fit") else {}),
             },
             verification_requirement=goal.get("verification_requirement") or {},

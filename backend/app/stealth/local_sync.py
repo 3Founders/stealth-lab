@@ -24,9 +24,7 @@ local edit can become a real row -- never a bulk or implicit one.
 
 GRAMMAR REUSED, NOT REINVENTED: parses the exact pipe grammar
 `app.stealth.pipe_format` renders (`CLAIM|...`, `PROCEDURE|...`/`STEP|...`,
-`GOAL|...`) -- this module is that grammar's one real reader, the
-render/parse pair `goal_run.md` already has (`render_goal_run_md` /
-`parse_goal_run_md`) but claims/procedures/goals never got. A line that
+`GOAL|...`) -- this module is that grammar's one real reader. A line that
 does not match the grammar is skipped, not fabricated into a row.
 
 IDENTITY: `generator.py` confirms every backend-derived row already

@@ -12,7 +12,6 @@ from app.stealth.pipe_format import (
     ClaimLine,
     CollabLine,
     GoalLine,
-    GoalRunLine,
     GroupLine,
     NodeLine,
     ProcedureLine,
@@ -22,12 +21,10 @@ from app.stealth.pipe_format import (
     VerifyLine,
     VerifyReqLine,
     render_claims_md,
-    render_goal_run_md,
     render_goals_md,
     render_index_md,
     render_procedures_md,
     render_run_md,
-    parse_goal_run_md,
 )
 
 
@@ -287,132 +284,6 @@ def test_collab_summary_a_resolved_blocker_does_not_affect_a_separate_open_one()
     other_blocker = CollabLine("c-b2", "BLOCKER", "a", "second, still open", "t2")
     md = render_run_md(run, [], [resolved_blocker, resolution, other_blocker])
     assert "open_blockers=1" in md
-
-
-# ===========================================================================
-# goal_run.md (Prompt 2 Sec 12/13)
-# ===========================================================================
-
-
-def test_goal_run_md_exact_grammar():
-    nodes = [
-        GoalRunLine(
-            goal_id="G-1", kind="step", status="success", goal_name="do it",
-            binding="command", verification_state="checked",
-        ),
-        GoalRunLine(
-            goal_id="G-parent", kind="procedure", status="failure", goal_name="the parent goal",
-            procedure_id=None, human_intervention_needed=True,
-        ),
-    ]
-    md = render_goal_run_md("E-1", "failure", nodes)
-    lines = md.splitlines()
-    assert "GOAL_RUN|E-1|failure" in lines
-    assert "GOAL_NODE|G-1|step|success|do it|binding=command|proc=-|verify=checked|human_intervention=False|resumed=False" in lines
-    assert "GOAL_NODE|G-parent|procedure|failure|the parent goal|binding=-|proc=-|verify=-|human_intervention=True|resumed=False" in lines
-
-
-def test_goal_run_md_empty_nodes_is_honest():
-    md = render_goal_run_md("E-1", "success", [])
-    assert "(no nodes)" in md
-
-
-def test_goal_run_md_never_fabricates_a_missing_binding_or_procedure():
-    nodes = [GoalRunLine(goal_id="G-1", kind="step", status="failure")]
-    md = render_goal_run_md("E-1", "failure", nodes)
-    node_line = [ln for ln in md.splitlines() if ln.startswith("GOAL_NODE|")][0]
-    assert "binding=-" in node_line
-    assert "proc=-" in node_line
-    assert "verify=-" in node_line
-
-
-def test_goal_run_md_marks_resumed_nodes_honestly():
-    nodes = [GoalRunLine(goal_id="G-1", kind="step", status="success", resumed_from_journal=True)]
-    md = render_goal_run_md("E-1", "success", nodes)
-    assert "resumed=True" in md
-
-
-def test_goal_run_md_renders_real_artifact_lines():
-    nodes = [GoalRunLine(
-        goal_id="G-1", kind="step", status="success",
-        artifacts=[{"filename": "out.txt", "sha256": "abc123", "size_bytes": 11}],
-    )]
-    md = render_goal_run_md("E-1", "success", nodes)
-    assert "ARTIFACT|G-1|out.txt|sha256=abc123|size=11" in md.splitlines()
-
-
-def test_goal_run_md_no_artifacts_emits_no_artifact_lines():
-    nodes = [GoalRunLine(goal_id="G-1", kind="step", status="success")]
-    md = render_goal_run_md("E-1", "success", nodes)
-    assert not any(ln.startswith("ARTIFACT|") for ln in md.splitlines())
-
-
-# ---------------------------------------------------------------------
-# parse_goal_run_md -- the real inverse of render_goal_run_md
-# ---------------------------------------------------------------------
-
-
-def test_parse_goal_run_md_round_trips_every_field():
-    nodes = [
-        GoalRunLine(
-            goal_id="G-1", kind="step", status="success", goal_name="do the real thing",
-            binding="command", procedure_id="P-1", verification_state="checked",
-            human_intervention_needed=True, resumed_from_journal=True,
-        ),
-    ]
-    md = render_goal_run_md("E-1", "success", nodes)
-    parsed = parse_goal_run_md(md)
-    assert parsed["execution_id"] == "E-1"
-    assert parsed["outcome"] == "success"
-    assert len(parsed["nodes"]) == 1
-    n = parsed["nodes"][0]
-    assert n["goal_id"] == "G-1"
-    assert n["kind"] == "step"
-    assert n["status"] == "success"
-    assert n["goal_name"] == "do the real thing"
-    assert n["binding"] == "command"
-    assert n["procedure_id"] == "P-1"
-    assert n["verification_state"] == "checked"
-    assert n["human_intervention_needed"] is True
-    assert n["resumed_from_journal"] is True
-
-
-def test_parse_goal_run_md_never_fabricates_missing_fields():
-    nodes = [GoalRunLine(goal_id="G-1", kind="step", status="failure")]
-    md = render_goal_run_md("E-1", "failure", nodes)
-    n = parse_goal_run_md(md)["nodes"][0]
-    assert n["binding"] is None
-    assert n["procedure_id"] is None
-    assert n["verification_state"] is None
-    assert n["human_intervention_needed"] is False
-    assert n["resumed_from_journal"] is False
-
-
-def test_parse_goal_run_md_recovers_real_artifacts_per_node():
-    nodes = [GoalRunLine(
-        goal_id="G-1", kind="step", status="success",
-        artifacts=[{"filename": "out.txt", "sha256": "abc123", "size_bytes": 11}],
-    )]
-    md = render_goal_run_md("E-1", "success", nodes)
-    n = parse_goal_run_md(md)["nodes"][0]
-    assert n["artifacts"] == [{"filename": "out.txt", "sha256": "abc123", "size_bytes": "11"}]
-
-
-def test_parse_goal_run_md_handles_multiple_nodes_in_order():
-    nodes = [
-        GoalRunLine(goal_id="G-1", kind="step", status="success", binding="command"),
-        GoalRunLine(goal_id="G-2", kind="human", status="needs_input"),
-    ]
-    md = render_goal_run_md("E-1", "success", nodes)
-    parsed = parse_goal_run_md(md)
-    assert [n["goal_id"] for n in parsed["nodes"]] == ["G-1", "G-2"]
-
-
-def test_parse_goal_run_md_on_the_no_nodes_case_returns_empty_list():
-    md = render_goal_run_md("E-1", "success", [])
-    parsed = parse_goal_run_md(md)
-    assert parsed["execution_id"] == "E-1"
-    assert parsed["nodes"] == []
 
 
 # ===========================================================================

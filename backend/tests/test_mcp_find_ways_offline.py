@@ -1,11 +1,10 @@
 """
-Offline (no real DB, no real network) thin-wrapper tests for the new
-`find_ways` MCP tool -- the unified "search Goal + Procedure, compile a
-DAG, run it" entry point. Composes `resolve_intent` + `resolve_goal` +
-`flatten_goal_tree` + `execute_goal_tree`/`compiled_goal_to_run_md`
-verbatim; these tests only prove the wrapper layer (outcome routing,
-JSON shape, param threading), not those functions' own logic (already
-covered by their own offline test files).
+Offline (no real DB, no real network) wrapper tests for `find_ways` -- the v1
+"search Goal + Procedure, return the knowledge" entry point. Composes
+`resolve_intent` + `resolve_goal` + `goal_tree_to_knowledge`; these prove the
+wrapper (outcome routing, JSON shape, param threading) and that it never
+compiles, executes, or writes files -- the planner agent does that
+(final_architecture.md).
 """
 from __future__ import annotations
 
@@ -13,7 +12,6 @@ import asyncio
 import json
 
 import app.mcp_server.server as srv
-from app.execution.goal_execution import GoalExecutionResult, GoalNodeExecutionResult, StepAttempt
 from app.execution.goal_resolution import GoalResolutionError, ResolvedGoalNode
 from app.execution.intent_resolution import GoalCandidate, IntentResolution, NormalizedIntent
 
@@ -33,10 +31,14 @@ class FakeContext:
 
 
 def _fake_tree(goal_id="G-1"):
+    step = {"order": 0, "goal": "run make", "binding": {"kind": "command", "command": "make"},
+            "expected_outcome": "build/ exists"}
     return ResolvedGoalNode(
-        goal_id=goal_id, goal_name="do the thing", depth=0, chosen="step",
-        step={"order": 0, "procedure_id": "P-1", "binding": {"kind": "command", "command": "make"}},
-        rationale="chosen binding",
+        goal_id=goal_id, goal_name="do the thing", depth=0, chosen="procedure",
+        procedure={"id": "V-1", "procedure_id": "P-1", "name": "make it", "version": 2, "steps": [step]},
+        children=[ResolvedGoalNode(goal_id=f"{goal_id}#s0", goal_name="run make", depth=1, chosen="step",
+                                   step={**step, "procedure_id": "P-1"})],
+        rationale="selected procedure 'make it'",
     )
 
 
@@ -98,8 +100,7 @@ def test_find_ways_translates_resolution_error_to_refused(monkeypatch):
         raise GoalResolutionError(f"root goal_id {goal_id!r} does not exist or is not live")
 
     monkeypatch.setattr("app.execution.goal_resolution.resolve_goal", fake_resolve_goal)
-    ctx = FakeContext()
-    result = _run(srv.find_ways(query="do the thing", ctx=ctx, use_llm=False, semantic=False))
+    result = _run(srv.find_ways(query="do the thing", ctx=FakeContext(), use_llm=False, semantic=False))
     assert result.startswith("REFUSED:")
 
 
@@ -110,9 +111,7 @@ def test_find_ways_translates_resolution_error_to_refused(monkeypatch):
 
 def test_find_ways_ambiguous_outcome_returns_candidates_and_stops(monkeypatch):
     _patch_resolve_intent(monkeypatch, _ambiguous_intent())
-    ctx = FakeContext()
-    raw = _run(srv.find_ways(query="do a thing", ctx=ctx, use_llm=False, semantic=False))
-    result = json.loads(raw)
+    result = json.loads(_run(srv.find_ways(query="do a thing", ctx=FakeContext(), use_llm=False, semantic=False)))
     assert result["outcome"] == "ambiguous"
     assert len(result["candidates"]) == 2
     assert result["candidates"][0]["goal"]["id"] == "G-1"
@@ -120,110 +119,55 @@ def test_find_ways_ambiguous_outcome_returns_candidates_and_stops(monkeypatch):
 
 def test_find_ways_no_match_outcome_returns_proposed_goal_and_stops(monkeypatch):
     _patch_resolve_intent(monkeypatch, _no_match_intent())
-    ctx = FakeContext()
-    raw = _run(srv.find_ways(query="something nobody has", ctx=ctx, use_llm=False, semantic=False))
+    raw = _run(srv.find_ways(query="something nobody has", ctx=FakeContext(), use_llm=False, semantic=False))
     result = json.loads(raw)
     assert result["outcome"] == "no_match"
     assert result["proposed_goal"]["canonical_name"] == "something nobody has"
 
 
-def test_find_ways_resolved_outcome_proceeds_to_compile_and_execute(monkeypatch):
+def test_find_ways_resolved_returns_knowledge_not_a_compiled_plan(monkeypatch):
     _patch_resolve_intent(monkeypatch, _resolved_intent())
 
     async def fake_resolve_goal(pool, goal_id, *, context, scope, max_depth=6, embedder=None):
         return _fake_tree(goal_id)
 
-    async def fake_execute_tree(pool, tree, context, *, scope, workspace_root=None, execution_id=None):
-        return GoalExecutionResult(
-            outcome="success",
-            node_results={
-                "G-1": GoalNodeExecutionResult(
-                    goal_id="G-1", goal_name="do the thing", status="success",
-                    used_binding_kind="command",
-                    attempts=[StepAttempt(step_order=0, binding_kind="command", status="success", notes="ok")],
-                ),
-            },
-        )
-
     monkeypatch.setattr("app.execution.goal_resolution.resolve_goal", fake_resolve_goal)
-    monkeypatch.setattr("app.execution.goal_execution.execute_goal_tree", fake_execute_tree)
-    ctx = FakeContext()
-    raw = _run(srv.find_ways(query="do the thing", ctx=ctx, use_llm=False, semantic=False))
-    result = json.loads(raw)
+    result = json.loads(_run(srv.find_ways(query="do the thing", ctx=FakeContext(), use_llm=False, semantic=False)))
     assert result["outcome"] == "resolved"
-    assert result["goal_id"] == "G-1"
-    assert result["executed"] is True
-    assert result["execution_outcome"] == "success"
-    assert result["node_results"]["G-1"]["status"] == "success"
+    assert result["goal"] == {"goal_id": "G-1", "name": "do the thing", "check": None}
+    [proc] = result["procedures"]
+    assert (proc["procedure_id"], proc["version_id"], proc["name"]) == ("P-1", "V-1", "make it")
+    [step] = proc["steps"]
+    assert step["kind"] == "action" and step["do"] == "run make" and step["check"] == "build/ exists"
+    # the planner compiles: no node ids, no execution result, no run file
+    for gone in ("nodes", "executed", "execution_outcome", "node_results", "tree"):
+        assert gone not in result
+    assert "plan_and_run" in result["next"]
 
 
-# ---------------------------------------------------------------------
-# execute=False -- plan-only, same honesty as compile_goal
-# ---------------------------------------------------------------------
+def test_find_ways_no_longer_takes_execute_or_workspace_root():
+    import inspect
+
+    params = inspect.signature(srv.find_ways).parameters
+    assert "execute" not in params and "workspace_root" not in params
+    assert "repo_claims" in params
 
 
-def test_find_ways_execute_false_compiles_only_never_runs(monkeypatch):
-    _patch_resolve_intent(monkeypatch, _resolved_intent())
-
-    async def fake_resolve_goal(pool, goal_id, *, context, scope, max_depth=6, embedder=None):
-        return _fake_tree(goal_id)
-
-    called = {"execute_tree": False}
-
-    async def fake_execute_tree(*a, **k):
-        called["execute_tree"] = True
-        raise AssertionError("execute_goal_tree must not be called when execute=False")
-
-    monkeypatch.setattr("app.execution.goal_resolution.resolve_goal", fake_resolve_goal)
-    monkeypatch.setattr("app.execution.goal_execution.execute_goal_tree", fake_execute_tree)
-    ctx = FakeContext()
-    raw = _run(srv.find_ways(query="do the thing", ctx=ctx, execute=False, use_llm=False, semantic=False))
-    result = json.loads(raw)
-    assert result["executed"] is False
-    assert result["nodes"][0]["kind"] == "step"
-    assert called["execute_tree"] is False
-
-
-def test_find_ways_execute_false_with_workspace_root_writes_a_planned_goal_run_md(monkeypatch, tmp_path):
+def test_find_ways_writes_nothing_to_disk(monkeypatch, tmp_path):
     _patch_resolve_intent(monkeypatch, _resolved_intent())
 
     async def fake_resolve_goal(pool, goal_id, *, context, scope, max_depth=6, embedder=None):
         return _fake_tree(goal_id)
 
     monkeypatch.setattr("app.execution.goal_resolution.resolve_goal", fake_resolve_goal)
-    ctx = FakeContext()
-    ws = str(tmp_path)
-    _run(srv.find_ways(query="do the thing", ctx=ctx, execute=False, workspace_root=ws,
-                        use_llm=False, semantic=False))
-    goal_run_path = tmp_path / ".stealth" / "goal_run.md"
-    assert goal_run_path.exists()
-    assert "GOAL_RUN|-|planned" in goal_run_path.read_text()
+    monkeypatch.chdir(tmp_path)
+    _run(srv.find_ways(query="do the thing", ctx=FakeContext(), use_llm=False, semantic=False))
+    assert list(tmp_path.iterdir()) == []
 
 
 # ---------------------------------------------------------------------
-# param threading
+# param threading / access
 # ---------------------------------------------------------------------
-
-
-def test_find_ways_threads_workspace_root_into_execute_goal_tree(monkeypatch):
-    _patch_resolve_intent(monkeypatch, _resolved_intent())
-    captured = {}
-
-    async def fake_resolve_goal(pool, goal_id, *, context, scope, max_depth=6, embedder=None):
-        return _fake_tree(goal_id)
-
-    async def fake_execute_tree(pool, tree, context, *, scope, workspace_root=None, execution_id=None):
-        captured["workspace_root"] = workspace_root
-        return GoalExecutionResult(outcome="success", execution_id="E-1")
-
-    monkeypatch.setattr("app.execution.goal_resolution.resolve_goal", fake_resolve_goal)
-    monkeypatch.setattr("app.execution.goal_execution.execute_goal_tree", fake_execute_tree)
-    ctx = FakeContext()
-    raw = _run(srv.find_ways(query="do the thing", ctx=ctx, workspace_root="/tmp/ws",
-                              use_llm=False, semantic=False))
-    result = json.loads(raw)
-    assert captured["workspace_root"] == "/tmp/ws"
-    assert result["execution_id"] == "E-1"
 
 
 def test_find_ways_semantic_true_constructs_and_threads_a_real_embedder(monkeypatch):
@@ -238,40 +182,18 @@ def test_find_ways_semantic_true_constructs_and_threads_a_real_embedder(monkeypa
         captured["goal_embedder"] = embedder
         return _fake_tree(goal_id)
 
-    async def fake_execute_tree(pool, tree, context, *, scope, workspace_root=None, execution_id=None):
-        return GoalExecutionResult(outcome="success")
-
     monkeypatch.setattr("app.execution.intent_resolution.resolve_intent", fake_resolve_intent)
     monkeypatch.setattr("app.execution.goal_resolution.resolve_goal", fake_resolve_goal)
-    monkeypatch.setattr("app.execution.goal_execution.execute_goal_tree", fake_execute_tree)
-    ctx = FakeContext()
-    _run(srv.find_ways(query="do the thing", ctx=ctx, semantic=True, use_llm=False))
+    _run(srv.find_ways(query="do the thing", ctx=FakeContext(), semantic=True, use_llm=False))
     assert captured["intent_embedder"] is not None
     assert captured["goal_embedder"] is not None
 
 
-def test_find_ways_is_classified_read_not_exec_in_the_tool_scope_table():
-    """Plan-only calls (execute=False) must be free, same tier as
-    compile_goal -- the blanket per-tool table must NOT gate this tool
-    at all; execute=True is gated dynamically, in-function, instead."""
+def test_find_ways_is_classified_read_in_the_tool_scope_table():
     assert srv._TOOL_SCOPES["find_ways"] == srv._acx.RETRIEVAL_READ
 
 
-def test_find_ways_execute_true_denied_for_a_read_only_token(monkeypatch):
-    from mcp.server.auth.provider import AccessToken
-
-    read_only = AccessToken(token="anon", client_id="anon", scopes=["stealthlab:tools", srv._acx.RETRIEVAL_READ])
-    monkeypatch.setattr(srv, "get_access_token", lambda: read_only)
-    _patch_resolve_intent(monkeypatch, _resolved_intent())
-    ctx = FakeContext()
-    try:
-        _run(srv.find_ways(query="do the thing", ctx=ctx, execute=True, use_llm=False, semantic=False))
-        assert False, "expected PermissionError"
-    except PermissionError as exc:
-        assert "find_ways" in str(exc) and "execute=True" in str(exc)
-
-
-def test_find_ways_execute_false_allowed_for_a_read_only_token(monkeypatch):
+def test_find_ways_allowed_for_a_read_only_token(monkeypatch):
     from mcp.server.auth.provider import AccessToken
 
     read_only = AccessToken(token="anon", client_id="anon", scopes=["stealthlab:tools", srv._acx.RETRIEVAL_READ])
@@ -282,32 +204,8 @@ def test_find_ways_execute_false_allowed_for_a_read_only_token(monkeypatch):
         return _fake_tree(goal_id)
 
     monkeypatch.setattr("app.execution.goal_resolution.resolve_goal", fake_resolve_goal)
-    ctx = FakeContext()
-    raw = _run(srv.find_ways(query="do the thing", ctx=ctx, execute=False, use_llm=False, semantic=False))
-    result = json.loads(raw)
-    assert result["executed"] is False  # no PermissionError raised
-
-
-def test_find_ways_execute_true_allowed_for_a_token_with_exec_scope(monkeypatch):
-    from mcp.server.auth.provider import AccessToken
-
-    full_token = AccessToken(token="real", client_id="real",
-                              scopes=["stealthlab:tools", srv._acx.RETRIEVAL_READ, srv._acx.EXECUTION_RUN])
-    monkeypatch.setattr(srv, "get_access_token", lambda: full_token)
-    _patch_resolve_intent(monkeypatch, _resolved_intent())
-
-    async def fake_resolve_goal(pool, goal_id, *, context, scope, max_depth=6, embedder=None):
-        return _fake_tree(goal_id)
-
-    async def fake_execute_tree(pool, tree, context, *, scope, workspace_root=None, execution_id=None):
-        return GoalExecutionResult(outcome="success")
-
-    monkeypatch.setattr("app.execution.goal_resolution.resolve_goal", fake_resolve_goal)
-    monkeypatch.setattr("app.execution.goal_execution.execute_goal_tree", fake_execute_tree)
-    ctx = FakeContext()
-    raw = _run(srv.find_ways(query="do the thing", ctx=ctx, execute=True, use_llm=False, semantic=False))
-    result = json.loads(raw)
-    assert result["executed"] is True
+    result = json.loads(_run(srv.find_ways(query="do the thing", ctx=FakeContext(), use_llm=False, semantic=False)))
+    assert result["outcome"] == "resolved"
 
 
 def test_find_ways_use_llm_false_never_constructs_a_client(monkeypatch):
@@ -319,6 +217,12 @@ def test_find_ways_use_llm_false_never_constructs_a_client(monkeypatch):
         return _no_match_intent()
 
     monkeypatch.setattr("app.execution.intent_resolution.resolve_intent", fake_resolve_intent)
-    ctx = FakeContext()
-    _run(srv.find_ways(query="do the thing", ctx=ctx, use_llm=False, semantic=False))
+    _run(srv.find_ways(query="do the thing", ctx=FakeContext(), use_llm=False, semantic=False))
     assert captured["client"] is None
+
+
+def test_server_side_compile_and_execute_tools_are_gone():
+    for name in ("compile_goal", "execute_goal", "estimate_goal_cost", "get_goal_run_status",
+                 "list_goal_artifacts", "get_goal_artifact"):
+        assert not hasattr(srv, name), name
+        assert name not in srv._TOOL_SCOPES, name

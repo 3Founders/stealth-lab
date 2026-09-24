@@ -2,6 +2,7 @@
 
 What we're building, in plain words, plus what v1 contains and what moves to v2.
 Everything not listed under v1 is v2: the code stays, it's just not part of v1.
+The architecture as built is in `final_architecture.md`.
 
 ---
 
@@ -28,10 +29,17 @@ the next person gets the improved version.
 3. You ask for something: "add a DOCX export."
 4. The **planner** (the main agent) calls `find_ways` and sends your repo facts along.
 5. StealthLab finds the best-matching Goal and Procedure. Your repo facts pick
-   the right one and rule out ones that can't work here. It returns a
-   step-by-step plan.
-6. The planner saves the plan into `.stealth/`: one line per step saying what to
-   do, which facts matter, and how to check it worked. It shows you the plan.
+   the right one and rule out ones that can't work here. It returns the
+   **knowledge**, not a plan: the Goal tree, the chosen Procedure(s) with every
+   step in full (what to do, source locator, success check, requirements), the
+   alternatives it rejected and why, and which of your fact IDs supported or
+   blocked each choice.
+6. The **planner compiles the plan itself**. It reads that knowledge against
+   the repo it can actually see, drops steps already done, orders the rest, and
+   writes `.stealth/procedures.md` and `.stealth/run.md` locally: one line per
+   step saying what to do, which facts matter, and how to check it worked. It
+   shows you the plan. The backend never writes into your repo and never
+   decides node order.
 7. For each ready step, the planner sends a small **executor** agent a one-line
    pointer. The executor greps the few lines it needs, does the work, and reports
    back: result, proof (diff, test output), and anything it learned.
@@ -93,7 +101,7 @@ by default. For this repo they override global claims.
 
 | Tool | What it does | Access |
 |---|---|---|
-| `find_ways(query, ...)` | Fuzzy query → Goal → Procedure → DAG plan. `execute=False` returns just the plan and needs no token. `execute=True` also runs it, and needs a token. | read (plan) / exec (run) |
+| `find_ways(query, repo_claims?)` | Fuzzy query → Goal → chosen Procedure(s), returned as knowledge (Goal tree + full steps + rejected alternatives + repo-fact verdicts). No compiling, no file writes, no execution; the planner compiles. Needs no token. | read |
 | `report_discovery(kind, procedure_id, problem, solution, step_order?, proof?, repo?)` | Records what was learned as a **private candidate claim** linked to the Procedure step. `kind` is one of fix, missing_step, precondition, better_way, correction, filled_gap. Proof text is redacted for secrets. | sign-in required |
 
 **Three read-only resources** (claims only, returned as grep-friendly `CLAIM|…`
@@ -105,7 +113,9 @@ lines in contiguous blocks, scoped to the caller):
 | `stealth://goals/{goal_id}/claims` | Claims related to the Goal |
 | `stealth://claims/{claim_id}` | One claim with its evidence |
 
-No prompts in v1.
+**Two prompts:** `survey_repo` (write `.stealth/claims.md`) and
+`plan_and_run` (compile `run.md`, dispatch, verify, report). Both are
+instructions the client runs locally, since only the client can see the repo.
 
 **Switching:** `STEALTHLAB_MCP_SURFACE=v1` is the default. `STEALTHLAB_MCP_SURFACE=v2`
 brings back the full legacy surface. v2 tools are still importable Python
@@ -115,11 +125,11 @@ functions; they just aren't registered on MCP in v1.
 
 ## Still to build for v1
 
-- [x] v1 surface gating (2 tools + claim resources, no prompts)
+- [x] v1 surface gating (2 tools + claim resources + 2 client-side prompts)
 - [x] `report_discovery` (private candidate claim, redacted, linked to step)
 - [x] related-claims resources (grouped, caller-scoped, never unrestricted)
-- [ ] **Repo survey:** agent prompt/skill that writes `.stealth/claims.md` from
-      repo files, grouped by topic, with `source=file:line#sha`
+- [x] **Repo survey:** the `survey_repo` MCP prompt writes `.stealth/claims.md`
+      from repo files, grouped by topic, with `source=file:line#sha`
 - [x] **`find_ways` takes repo claims** (`repo_claims` = the claims.md text,
       ≤200 facts / 64 KB, request-scoped, never stored). Goal step: when search
       is ambiguous, repo fit (token overlap) breaks the tie only if one Goal
@@ -130,19 +140,24 @@ functions; they just aren't registered on MCP in v1.
       verdict, and the chosen one carries `repo_fit` with supporting/blocking
       fact ids. Judge down → `not_checked`, plan still returned. Live-verified:
       JEV judged a real procedure APPLICABLE citing R-001/R-003/R-004.
-- [ ] **Feed step requirements to the judge:** today the judge sees only
-      written preconditions, not what a step's binding needs (e.g.
-      `runtime: python`). Live run: "no Python toolchain" did not block a
-      Python-script procedure because it had no written precondition.
+- [x] **Feed step requirements to the judge:** a step's binding needs (e.g.
+      `runtime: python`) now go to the judge as IMPLEMENTATION_BINDING
+      conditions. Contradicted, they move the Procedure to the back (by the
+      judge's own rule they never disqualify: a runtime can be installed).
 - [ ] **Merge duplicate Goals:** "docx-js library" and "'docx' library" are the
       same npm package, but they're two Goals, so no repo fact can separate
       them and search stays ambiguous.
-- [ ] **Richer plan output:** step description, source locator, success check,
-      and claim ids per node
-- [ ] **Goal path writes the local pages:** `goals.md`, `procedures.md`,
-      `claims.md` (grouped), and a `run.md`-style node list for the chosen plan
-- [ ] **Planner skill for Claude Code:** plan → dispatch tiny packets to
-      subagents → verify with the check → revise plan → `report_discovery`
+- [x] **`find_ways` returns knowledge, not a plan:** drop `execute`,
+      `workspace_root`, `flatten_goal_tree` node IDs, and the `goal_run.md` write
+      from v1. Return per step: description, source locator, success check,
+      binding requirements, and the Procedure-level supporting/blocking fact IDs.
+      Server-side compile/execute is deleted, not parked: `compile_goal`,
+      `execute_goal`, `estimate_goal_cost`, the goal-run status/artifact tools,
+      the `/goal-run` viewer, and their modules (see `final_architecture.md`).
+- [x] **Planner instructions (MCP prompt, not a Claude-only skill):** how to
+      compile that knowledge into `procedures.md` + `run.md` (`NODE|…` lines),
+      dispatch tiny packets to executors, verify with the check, revise `run.md`
+      locally, and call `report_discovery`. The planner owns every local page.
 - [ ] Fix `init_workspace`-style raw writes before any repo facts are synced
       (they land public with no owner)
 - [ ] Update `proj_status.md` / `demo.md` to this definition of the product
@@ -159,8 +174,7 @@ functions; they just aren't registered on MCP in v1.
   `decide_procedure`, `report_execution`
 - **Split-up Goal tools (folded into `find_ways`):** `resolve_intent`,
   `search_goals`, `inspect_goal`, `list_goal_procedures`, `create_goal`,
-  `explain_goal_route`, `compile_goal`, `execute_goal`, `estimate_goal_cost`,
-  `get_goal_run_status`, `list_goal_artifacts`, `get_goal_artifact`
+  `explain_goal_route`. (The compile/execute/goal-run tools are deleted.)
 - **Durable multi-agent runs (need the old path's run rows):** `continue_run`,
   `inspect_run`, `resume_execution_run`, `retry_run_node`,
   `report_node_progress`, `record_run_update`, `declare_file_intent`,

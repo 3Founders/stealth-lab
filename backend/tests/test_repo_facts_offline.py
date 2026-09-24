@@ -228,7 +228,7 @@ def test_find_ways_tiebreak_resolves_ambiguous_and_wires_selector(monkeypatch):
 
     monkeypatch.setattr("app.execution.intent_resolution.resolve_intent", fake_intent)
     monkeypatch.setattr("app.execution.goal_resolution.resolve_goal", fake_resolve_goal)
-    raw = _run(srv.find_ways(query="add docx export", ctx=_Ctx(), execute=False, use_llm=False,
+    raw = _run(srv.find_ways(query="add docx export", ctx=_Ctx(), use_llm=False,
                              semantic=False, repo_claims=CLAIMS_MD))
     out = json.loads(raw)
     assert out["outcome"] == "resolved" and captured["goal_id"] == "G-js"
@@ -244,5 +244,5 @@ def test_find_ways_without_repo_claims_has_no_repo_facts(monkeypatch):
                                 proposed_goal={"canonical_name": query})
 
     monkeypatch.setattr("app.execution.intent_resolution.resolve_intent", fake_intent)
-    out = json.loads(_run(srv.find_ways(query="x", ctx=_Ctx(), execute=False, use_llm=False, semantic=False)))
+    out = json.loads(_run(srv.find_ways(query="x", ctx=_Ctx(), use_llm=False, semantic=False)))
     assert out["repo_facts"] is None

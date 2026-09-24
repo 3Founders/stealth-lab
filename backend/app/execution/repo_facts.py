@@ -19,6 +19,12 @@ the shared judgment cache -- these are facts about a user's private repo):
    >= 0.75 drops the Procedure; the rest are re-ordered by verdict. If the
    judge chain is unavailable the order is left untouched and the result says
    "not_checked" -- the plan is never blocked on it.
+
+   Besides the written preconditions, each Procedure's steps' binding needs
+   (e.g. `runtime: python`) go to the judge as IMPLEMENTATION_BINDING
+   conditions. By the judge's own rule those demote a Procedure the repo
+   contradicts ("no Python toolchain") to the back of the list but never
+   disqualify it -- the agent can still install a runtime.
 """
 from __future__ import annotations
 
@@ -118,6 +124,31 @@ def select_claims_for(proc: dict, claims: list[dict]) -> list[dict]:
     return related
 
 
+def binding_conditions(proc: dict) -> list:
+    """One IMPLEMENTATION_BINDING condition per distinct binding need across
+    the Procedure's own steps (runtime / network / credentials / other resources)."""
+    from app.execution.goal_knowledge import step_needs
+    from app.services.applicability_judge import RequirementCondition
+
+    seen: list[str] = []
+    for step in proc.get("steps") or []:
+        needs = step_needs(step) if isinstance(step, dict) else {}
+        for key, value in needs.items():
+            if key in ("sandbox_policy", "entrypoint"):  # how it runs, not what the repo must have
+                continue
+            if key == "runtime":
+                text = f"The repository can run {value} code"
+            elif key == "network":
+                text = "A step needs network access"
+            elif key == "credentials":
+                text = f"A step needs credentials: {value}"
+            else:
+                text = f"A step needs {key}={value}"
+            if text not in seen:
+                seen.append(text)
+    return [RequirementCondition(text=t, kind="IMPLEMENTATION_BINDING") for t in seen]
+
+
 @dataclass
 class RepoFactsProcedureSelector:
     """Plugged into resolve_goal via context["_procedure_selector"]. Called
@@ -145,7 +176,7 @@ class RepoFactsProcedureSelector:
 
         if not feasible or not self.claims:
             return feasible, []
-        conds = {str(p["id"]): extract_requirement_conditions(p) for p in feasible}
+        conds = {str(p["id"]): extract_requirement_conditions(p) + binding_conditions(p) for p in feasible}
         # Judge only where it can change something: the root Goal, a choice
         # between several Procedures, or a Procedure with real conditions.
         if depth > 0 and len(feasible) == 1 and not conds[str(feasible[0]["id"])]:

@@ -43,7 +43,7 @@ def atomic_write(path: str, content: str) -> None:
 def atomic_write_bytes(path: str, content: bytes) -> None:
     """Binary sibling of `atomic_write` -- same temp-then-fsync-then-
     `os.replace` pattern, for real binary artifact content
-    (`app.stealth.artifacts`) that is never valid to open in text mode."""
+    that is never valid to open in text mode."""
     directory = os.path.dirname(path) or "."
     os.makedirs(directory, exist_ok=True)
     fd, tmp_path = tempfile.mkstemp(dir=directory, prefix=".tmp-stealth-")

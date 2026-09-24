@@ -34,6 +34,7 @@ for _k, _v in _ENV_BEFORE.items():
 _EXPECTED = {
     "solve_with_stealth", "debug_with_stealth", "research_with_stealth",
     "improve_with_stealth", "verify_with_stealth", "contribute_learning",
+    "survey_repo", "plan_and_run",  # the v1 pair; v2 (this process) registers everything
 }
 _REAL_TOOLS = {
     "search_procedures", "find_best_way", "check_applicability", "decompose_task",
@@ -52,7 +53,7 @@ def _prompt_names():
     return {p.name for p in srv.server._prompt_manager.list_prompts()}
 
 
-def test_all_six_prompts_registered():
+def test_all_prompts_registered():
     assert _prompt_names() == _EXPECTED
 
 
@@ -155,3 +156,43 @@ def test_get_prompt_renders_through_sdk(name, args):
 def test_get_prompt_unknown_name_raises():
     with pytest.raises(Exception):
         _run(srv.server.get_prompt("no_such_prompt", {}))
+
+
+# --------------------------------------------------------------------------
+# v1 pair: survey_repo + plan_and_run (final_architecture.md)
+# --------------------------------------------------------------------------
+_V1_NAMES = {"find_ways", "report_discovery"}
+_V2_ONLY = ("find_best_way", "search_procedures", "init_workspace", "compile_goal", "execute_goal",
+            "commit_local_sync", "inspect_run")
+
+
+def test_v1_surface_gets_only_the_two_v1_prompts():
+    assert [n for n, _, _ in prm.prompts_for_surface("v1")] == ["survey_repo", "plan_and_run"]
+    assert {n for n, _, _ in prm.prompts_for_surface("v2")} == _EXPECTED
+
+
+def test_v1_prompts_name_only_v1_tools():
+    for body in (prm.survey_repo(), prm.plan_and_run("add a docx export")):
+        for bad in _V2_ONLY:
+            assert bad not in body, f"v1 prompt names v2 tool {bad!r}"
+        for smell in _AUTONOMY_SMELLS:
+            assert smell not in body.lower()
+    assert "find_ways" in prm.plan_and_run("x") and "report_discovery" in prm.plan_and_run("x")
+
+
+def test_survey_repo_states_the_claims_grammar_the_parser_reads():
+    from app.execution.repo_facts import parse_repo_claims
+
+    import re
+
+    example = re.search(r"e\.g\. `(CLAIM\|[^`]+)`", prm.survey_repo("/repo")).group(1)
+    claims, _ = parse_repo_claims(example)
+    assert claims == [{"claim_id": "R-001", "statement": "Node 20.11", "topic": "runtime",
+                       "scope": "repository", "source": ".nvmrc:1#sha=9f2c1ab"}]
+
+
+def test_plan_and_run_has_the_tiny_packet_and_node_format():
+    body = prm.plan_and_run("x")
+    assert 'Do node N-3. Read: rg "N-3" .stealth/run.md' in body
+    assert prm.RUN_MD_FORMAT in body
+    assert "survey_repo" in body  # facts first

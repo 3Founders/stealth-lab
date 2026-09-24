@@ -228,8 +228,116 @@ _PROMPTS = [
 ]
 
 
-def register_prompts(server) -> None:
-    """Bind the recommended-workflow prompts to `server`. Called once from
-    server.py."""
-    for name, title, fn in _PROMPTS:
+# ===========================================================================
+# v1 prompts (final_architecture.md). The only two on the v1 surface. They
+# name only v1 tools/resources, and they run on the CLIENT: only the agent
+# can see the user's repo, so the server never reads or writes it.
+# ===========================================================================
+
+CLAIMS_MD_FORMAT = (
+    "CLAIM|<id>|<status>|<topic>|repository|<statement>|source=<path>:<line>#sha=<sha7>|version=<n>"
+)
+RUN_MD_FORMAT = (
+    "NODE|<node_id>|<status>|<what to do>|step=<P-n>:<order>|claims=<R-a..R-b,...>|deps=<node_ids or ->|check=<how to tell it worked>"
+)
+_TOPICS = "stack, runtime, deps, build, test, lint, ci, layout, conventions, env, absent"
+
+
+def survey_repo(repo_path: str = "") -> str:
+    """Look around this repo and write .stealth/claims.md: short, cited facts
+    (runtime, dependencies, how to build and test) that find_ways uses to
+    pick Procedures that fit."""
+    where = f" at `{repo_path}`" if repo_path else ""
+    return f"""Survey the repository{where} and write `.stealth/claims.md`.
+
+1. Read only what states facts, not the whole codebase: manifests and
+   lockfiles (package.json, pyproject.toml, requirements*.txt, go.mod,
+   Cargo.toml, ...), version pins (.nvmrc, .python-version, .tool-versions),
+   build/test config (Makefile, tsconfig, jest/vitest/pytest config),
+   CI workflows, Dockerfile, README / AGENTS.md / CLAUDE.md, .env.example.
+2. Write one fact per line, in this exact format:
+   `{CLAIMS_MD_FORMAT}`
+   e.g. `CLAIM|R-001|current|runtime|repository|Node 20.11|source=.nvmrc:1#sha=9f2c1ab|version=1`
+   - statement: one plain sentence a stranger could check ("Tests run with `pnpm test`").
+   - source: the file and line that shows it; sha = first 7 chars of
+     `git hash-object <path>`, so the fact goes stale when the file changes.
+   - Facts about absence are useful ("No Python toolchain"): topic `absent`,
+     source=`search:<what you looked for>`.
+3. Group by topic, in this order: {_TOPICS}. Number ids R-001, R-002, ...
+   straight down the file, so every topic is one contiguous range and an
+   agent can read a whole topic in one `rg`/read.
+4. Rules: only what a file actually shows -- never guess. Never copy a
+   secret or an env value (names only). At most 200 facts; prefer the ones
+   that change how work is done. Start the file with a `#` comment line
+   saying what it is and when it was written.
+5. Re-survey: keep the id of a fact that still holds, set `status=stale` on
+   one whose source line changed and re-check it, append new facts at the
+   end of their topic block.
+
+These facts stay on this machine. They're sent only as the `repo_claims`
+argument of find_ways, used for that one request, and never stored."""
+
+
+def plan_and_run(task: str) -> str:
+    """Do a task with StealthLab: get the known ways with find_ways, compile
+    your own plan into .stealth/run.md, do or delegate each step, check it,
+    and report what you learned."""
+    return f"""Task: {task}
+
+You are the planner. StealthLab returns knowledge; you make the plan and
+own every file in `.stealth/`.
+
+1. Facts. If `.stealth/claims.md` is missing, run the survey_repo prompt first.
+2. Ask. Call `find_ways(query=<the task>, repo_claims=<text of .stealth/claims.md>)`.
+   - "ambiguous": show the candidates, pick with the user, call again with a sharper query.
+   - "no_match": say so and do the task without StealthLab.
+   - "resolved": you get `procedures` (each with full `steps`, `alternatives`,
+     `repo_fit`) and `unresolved`.
+3. Read past discoveries: `stealth://procedures/<procedure_id>/claims` for each chosen Procedure.
+4. Write `.stealth/procedures.md`: each Procedure under its own header so its steps sit together:
+   `PROCEDURE|P-1|<procedure_id>|v<version>|<name>|goal=<goal_name>`
+   `STEP|P-1:<order>|<action|instruction|subgoal>|<do>|locator=<source_locator.uri or ->|needs=<k=v,...>|check=<check or ->`
+5. Compile `.stealth/run.md` -- one line per unit of work:
+   `{RUN_MD_FORMAT}`
+   e.g. `NODE|N-3|ready|Configure page size|step=P-1:3|claims=R-001..R-004|deps=N-2|check=node build.js && test -s out.docx`
+   - Expand `subgoal` steps into that sub-Procedure's steps. `instruction`
+     steps are real work too: do them from their text.
+   - Drop what the repo already has, as `skipped` with the fact that shows it.
+   - `claims=` names the contiguous fact ranges the step needs; keep it small.
+   - `check=` must be concrete (a command, a file that must exist, a test).
+     If the Procedure gives none, write one.
+   - status: ready | blocked | running | done | failed | skipped.
+   Show the plan to the user and get an OK before changing their code.
+6. Do. For each ready node whose deps are done, either do it yourself
+   (short plans) or give a subagent ONE line and nothing else:
+   `Do node N-3. Read: rg "N-3" .stealth/run.md, then the claims and step lines it names. Reply with: result, proof (diff / command output), anything you learned.`
+   Use subagents for long plans, independent steps in parallel, or when you
+   want the work checked by someone who didn't do it.
+7. Check. Run the node's `check` yourself. Pass: mark `done` and note the
+   proof. Fail: retry once with the error, else try an alternative
+   Procedure, else ask the user.
+8. Learn. When a step needed a fix or there was a better way:
+   - rewrite the remaining nodes in `run.md` now;
+   - add new repo facts to `.stealth/claims.md` in their topic block;
+   - if it would help anyone doing this Procedure, not just this repo, call
+     `report_discovery(kind, procedure_id, problem, solution, step_order, proof, repo)`
+     with kind = fix | missing_step | precondition | better_way | correction | filled_gap.
+     Pass `repo` when it only holds for this repository.
+9. Finish: tell the user what was done, the proof, and what was learned."""
+
+
+_V1_PROMPTS = [
+    ("survey_repo", "Survey this repo into .stealth/claims.md", survey_repo),
+    ("plan_and_run", "Do a task with StealthLab (plan, run, check, report)", plan_and_run),
+]
+
+
+def prompts_for_surface(surface: str = "v2") -> list:
+    """v1: only survey_repo + plan_and_run. v2: everything."""
+    return list(_V1_PROMPTS) if surface == "v1" else [*_PROMPTS, *_V1_PROMPTS]
+
+
+def register_prompts(server, surface: str = "v2") -> None:
+    """Bind the prompts for `surface` to `server`. Called once from server.py."""
+    for name, title, fn in prompts_for_surface(surface):
         server.prompt(name=name, title=title, description=(fn.__doc__ or "").strip())(fn)
