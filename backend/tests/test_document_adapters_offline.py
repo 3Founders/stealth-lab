@@ -528,6 +528,32 @@ def test_github_file_adapter_fetches_at_resolved_commit_with_provenance():
     assert doc.title == "Guide"
 
 
+def test_github_file_adapter_carries_repo_license_to_the_spdx_gate():
+    """A GitHub document now carries its repo's detected SPDX id under the key the
+    license gate reads -- before, documents arrived with license_metadata={} and the
+    gate never fired on the ingest_document path."""
+    from app.services.document_ingestion import source_artifact_from_canonical_document
+    from app.services.screening import spdx_license_signal
+
+    fake = _FakeGitHubDocs()
+
+    def with_license(url):
+        if url.endswith("/license"):
+            return 200, json.dumps({"license": {"spdx_id": "GPL-3.0"}}).encode()
+        return fake(url)
+
+    adapter = GitHubFileAdapter(http_get=with_license)
+    doc = adapter.fetch_and_normalize(DocumentLocator(repository="acme/widgets", path="docs/guide.md"))
+    assert doc.license == "GPL-3.0"
+    artifact = source_artifact_from_canonical_document(doc)
+    assert artifact.license_metadata["spdx_id"] == "GPL-3.0"
+    assert spdx_license_signal(artifact.license_metadata["spdx_id"]) is not None
+
+    unlicensed = GitHubFileAdapter(http_get=fake).fetch_and_normalize(
+        DocumentLocator(repository="acme/widgets", path="docs/guide.md"))
+    assert source_artifact_from_canonical_document(unlicensed).license_metadata == {}
+
+
 def test_github_file_adapter_rejects_path_traversal():
     fake = _FakeGitHubDocs()
     adapter = GitHubFileAdapter(http_get=fake)

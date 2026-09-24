@@ -421,8 +421,11 @@ async def handle_ingest_document(pool: asyncpg.Pool, payload: dict) -> None:
     # 2026-09-23: without this, a payload naming a real GitHub-hosted .html file
     # was silently matched to the format-only HtmlAdapter by uri suffix and then
     # failed at fetch() with AdapterNotApplicable, never reaching the network.
-    github_adapter = GitHubFileAdapter()
-    adapter = github_adapter if github_adapter.can_handle(locator) else select_adapter(locator)
+    from app.services.ingestion_sources.document_adapters.url_adapter import UrlFetchAdapter
+
+    # Network transports first (GitHub file, then any http(s) URL), then local/raw format adapters.
+    adapter = next((a for a in (GitHubFileAdapter(), UrlFetchAdapter()) if a.can_handle(locator)), None) \
+        or select_adapter(locator)
     if adapter is None:
         # Refuse rather than fabricate: no registered format recognizes this
         # locator. A payload built by a real enqueue path should never hit
@@ -2576,3 +2579,26 @@ async def requeue_stuck_jobs(pool: asyncpg.Pool, *, older_than_minutes: int = 30
         return int(result.split()[-1])
     except (ValueError, IndexError):
         return 0
+
+
+async def handle_ingest_repo(pool: asyncpg.Pool, payload: dict) -> None:
+    """One GitHub repo -> a Goal + one-step Procedure per reusable file (app.services.repo_ingestion).
+    Payload: {"repository": "owner/repo", "commit"?: sha, "domains"?: [...], "per_domain"?: int}."""
+    from app.config import settings
+    from app.services.embeddings import Embedder
+    from app.services.repo_ingestion import ingest_repo
+
+    client = _general_compute_client()
+    if client is None:
+        raise RuntimeError("handle_ingest_repo: no LLM client configured (GENERAL_COMPUTE_*)")
+    summary = await ingest_repo(
+        pool, payload["repository"], commit=payload.get("commit"), client=client,
+        model=settings.general_compute_judge_model or "gemma-4-31B-it",
+        embedder=Embedder(rate_limit_pool=pool), per_domain=int(payload.get("per_domain") or 10),
+        domains=payload.get("domains"), job_id=_trusted_identity_job_id(payload),
+    )
+    log.info("ingest_repo %s@%s: %s captured, skipped=%s", summary["repository"], str(summary["commit"])[:10],
+             len(summary["captured"]), summary["skipped"])
+
+
+JOB_HANDLERS["ingest_repo"] = handle_ingest_repo

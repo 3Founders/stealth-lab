@@ -13,12 +13,14 @@ single-module removal, never a scattered edit.
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from typing import Any, Optional
 
 from pydantic import BaseModel, Field, ValidationError
 
+from app.services import ingest_budget
 from app.services.skill_extraction.schema import (
     ExtractedDocument,
     ExtractedGoal,
@@ -263,7 +265,8 @@ async def extract_document(
         )
 
     try:
-        response = client.chat.completions.create(
+        response = await asyncio.to_thread(  # sync client: keep it off the event loop
+            client.chat.completions.create,
             model=model,
             messages=[
                 {"role": "system", "content": _SYSTEM_PROMPT},
@@ -276,6 +279,7 @@ async def extract_document(
             # documents' full structured response mid-JSON.
             max_tokens=16000,
         )
+        await ingest_budget.record_completion(model, "extraction", getattr(response, "usage", None))
         text = (response.choices[0].message.content or "").strip()
         if not text:
             raise SkillExtractionTransientFailure(

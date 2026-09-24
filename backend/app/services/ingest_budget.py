@@ -129,6 +129,16 @@ async def record_embedding(provider: str, model: str, texts: list[str]) -> None:
         await _ACTIVE.record(provider, model, "embedding", sum(estimate_tokens(t) for t in texts))
 
 
+async def record_completion(model: str, op: str, usage: Any, provider: str = "google") -> None:
+    """Chat-completion calls on the ingestion path (document/claim extraction), priced from the
+    response's own `usage` -- before this, extraction never reached llm_spend at all, so its cost
+    was invisible and the daily cap undercounted."""
+    if _ACTIVE is None or usage is None:
+        return
+    await _ACTIVE.record(provider, model, op, int(getattr(usage, "prompt_tokens", 0) or 0),
+                         int(getattr(usage, "completion_tokens", 0) or 0))
+
+
 async def record_judge(
     provider: str, model: str, op: str, *, tokens_in: Optional[int] = None, tokens_out: Optional[int] = None,
 ) -> None:

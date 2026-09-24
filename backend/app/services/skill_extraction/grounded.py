@@ -22,6 +22,7 @@ capture" posture, generalized from steps-only to the new object types.
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import re
@@ -30,6 +31,7 @@ from typing import Any, Optional
 from pydantic import BaseModel, Field, ValidationError, field_validator
 
 from app.services.claim_extraction import _normalize_for_containment
+from app.services import ingest_budget
 from app.services.skill_extraction.schema import (
     ExtractedDocument,
     ExtractedGoal,
@@ -334,7 +336,8 @@ async def extract_document(
         )
 
     try:
-        response = client.chat.completions.create(
+        response = await asyncio.to_thread(  # sync client: keep it off the event loop
+            client.chat.completions.create,
             model=model,
             messages=[
                 {"role": "system", "content": _SYSTEM_PROMPT},
@@ -352,6 +355,7 @@ async def extract_document(
             # large real document has needed so far.
             max_tokens=16000,
         )
+        await ingest_budget.record_completion(model, "extraction", getattr(response, "usage", None))
         text = (response.choices[0].message.content or "").strip()
         if not text:
             raise SkillExtractionTransientFailure(

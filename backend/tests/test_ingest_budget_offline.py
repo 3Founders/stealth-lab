@@ -230,3 +230,63 @@ def test_noise_control_warns_after_consecutive_checks_and_renotifies_only_after_
     assert len(sent) == 1 and "expired leases" in sent[0]          # 1st check quiet, 2nd notifies, 3rd/4th silent (cooldown)
     run(ops_alerts.run(pool, _metrics(), T, send=sent.append))
     assert len(sent) == 2 and sent[1].startswith("[RESOLVED]")
+
+
+# --- P6: extraction / claim-extraction calls reach the ledger -------------------
+
+class _Usage:
+    prompt_tokens, completion_tokens = 1200, 300
+
+
+class _ThreadCheckingClient:
+    """Sync OpenAI-shaped client that records which thread it ran on."""
+
+    def __init__(self, content: str):
+        import threading
+        self._content, self.threads, self._main = content, [], threading.get_ident()
+
+    @property
+    def chat(self):
+        return self
+
+    @property
+    def completions(self):
+        return self
+
+    def create(self, **_kw):
+        import threading
+        self.threads.append(threading.get_ident())
+        msg = type("M", (), {"content": self._content})()
+        return type("R", (), {"choices": [type("C", (), {"message": msg, "finish_reason": "stop"})()],
+                              "usage": _Usage()})()
+
+
+def test_record_completion_writes_real_token_counts():
+    pool = LedgerPool()
+    ingest_budget.install(pool, cap_usd=100.0)
+    run(ingest_budget.record_completion("gemini-3.8-flash", "extraction", _Usage()))
+    (_scope, provider, model, op, cost, tin, tout), = pool.rows
+    assert (provider, model, op, tin, tout) == ("google", "gemini-3.8-flash", "extraction", 1200, 300)
+    assert cost > 0
+
+
+def test_record_completion_is_a_noop_without_a_budget_or_usage():
+    run(ingest_budget.record_completion("m", "extraction", _Usage()))   # nothing installed
+    pool = LedgerPool()
+    ingest_budget.install(pool, cap_usd=100.0)
+    run(ingest_budget.record_completion("m", "extraction", None))
+    assert pool.rows == []
+
+
+def test_document_extraction_runs_off_the_event_loop_and_is_recorded():
+    """The sync client used to run inline inside async extract_document, freezing every
+    other ingestion lane in the process for the whole call."""
+    import threading
+    from app.services.skill_extraction import ungrounded
+
+    pool = LedgerPool()
+    ingest_budget.install(pool, cap_usd=100.0)
+    client = _ThreadCheckingClient('{"abstain": true}')
+    run(ungrounded.extract_document(client, "some document"))
+    assert client.threads and client.threads[0] != threading.get_ident()
+    assert [r[3] for r in pool.rows] == ["extraction"]
