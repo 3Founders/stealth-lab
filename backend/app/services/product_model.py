@@ -208,6 +208,30 @@ async def _projection_catch_up(pool: Any) -> None:
     await _catch_up_projection(pool, RetrievalMeta())
 
 
+async def _with_demand(pool: Any, rows: list[dict[str, Any]], *, scope: AccessScope) -> list[dict[str, Any]]:
+    """Attach community demand (open Credit commitments, quadratic, aggregated over
+    visible accepted descendants) to canonical Goal rows: shown as `demand` and fed
+    to Goal ranking's demand factor. A signal, never truth."""
+    if not rows:
+        return rows
+    from app.economy.commitments import goal_demand, ranking_inputs
+
+    try:
+        demand = await goal_demand(pool, [str(row["id"]) for row in rows], access_scope=scope)
+    except Exception:  # noqa: BLE001 -- demand is optional; the list still answers
+        log.warning("goal demand unavailable for this page", exc_info=True)
+        return rows
+    out = []
+    for row in rows:
+        item = dict(row)
+        goal_demand_row = demand.get(str(row["id"]))
+        if goal_demand_row:
+            item["demand"] = goal_demand_row
+            item.update(ranking_inputs(goal_demand_row))
+        out.append(item)
+    return out
+
+
 async def _hydrate_goal_page(
     pool: Any, page: Sequence[Mapping[str, Any]], *, scope: AccessScope, tenant_scope: TenantScope,
 ) -> list[tuple[dict[str, Any], Mapping[str, Any]]]:
@@ -263,7 +287,7 @@ async def list_goals(
     )
     rows = [canonical for canonical, _ in await _hydrate_goal_page(
         pool, page[:page_size], scope=scope, tenant_scope=tenant)]
-    ranked = _rank_goal_rows(rows, resolved=resolved)
+    ranked = _rank_goal_rows(await _with_demand(pool, rows, scope=scope), resolved=resolved)
     return ranked[:page_size], len(page) > page_size
 
 
@@ -354,7 +378,9 @@ async def list_goals_browse(
         *args,
     )
     entries: list[dict[str, Any]] = []
-    for canonical, projected in await _hydrate_goal_page(pool, page[:page_size], scope=scope, tenant_scope=tenant):
+    hydrated = await _hydrate_goal_page(pool, page[:page_size], scope=scope, tenant_scope=tenant)
+    with_demand = await _with_demand(pool, [canonical for canonical, _ in hydrated], scope=scope)
+    for canonical, (_, projected) in zip(with_demand, hydrated):
         entry = _public_goal_row(canonical)
         count = int(projected["specific_count"] or 0)
         entry["specific_count"] = count
@@ -438,7 +464,7 @@ async def find_goal(
     )
     rows = [canonical for canonical, _ in await _hydrate_goal_page(
         pool, page[:page_size], scope=scope, tenant_scope=tenant)]
-    ranked = _rank_goal_rows(rows, resolved=resolved)
+    ranked = _rank_goal_rows(await _with_demand(pool, rows, scope=scope), resolved=resolved)
     return ranked[:page_size], len(page) > page_size
 
 

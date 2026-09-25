@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import AnimatedHeading from "@/components/AnimatedHeading";
 import StateNotice from "@/components/NotConnected";
+import GoalDemandPanel from "@/components/GoalDemandPanel";
 import {
   getGoalContributors, getMyProfile, getGoal, getGoalSolutions, getProcedure, getRankedProcedures,
   humanize, listBenchmarkSubmissions, listProcedureSubmissions, rankedProcedureRowId, reviewBenchmarkSubmission, reviewProcedureSubmission,
@@ -183,6 +184,12 @@ export default function GoalPage() {
               )}
               <div><span>More specific goals</span><span>{directSpecifics.length ? `${directSpecifics.length} direct` : "None recorded"}</span></div>
               <div><span>More abstract goals</span><span>{directAbstracts.length ? `${directAbstracts.length} direct` : "None recorded"}</span></div>
+              {p.hierarchy_complete === false && (
+                <div><span>Note</span><span>Some related goals couldn’t be loaded right now, so these lists may be incomplete. Reload in a moment.</span></div>
+              )}
+              {isReviewer && (
+                <div><span>Review</span><span><Link href="/review/hierarchy" style={{ textDecoration: "underline" }}>Proposed relationships awaiting review</Link></span></div>
+              )}
             </>
           )}
         </div>
@@ -263,6 +270,9 @@ export default function GoalPage() {
         ) : (
           <div className="empty" style={{ gridColumn: "1 / span 12" }}><p>No benchmark or success criteria recorded for this goal yet.</p></div>
         )}
+
+        {/* community demand (Credit commitments; escrow bounty) */}
+        <GoalDemandPanel goalId={id} resolved={Boolean(p.resolved_at)} />
 
         {/* pending review (reviewer-only) */}
         {isReviewer && (

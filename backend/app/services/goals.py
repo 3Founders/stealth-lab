@@ -663,6 +663,17 @@ async def get_goal(
         goal.setdefault("rationale", metadata["rationale"])
     from app.services.goal_ranking import public_goal_ranking, score_goal_candidate
 
+    # community demand (open Credit commitments) feeds the ranking's demand factor;
+    # a signal only -- never resolution or verification
+    try:
+        from app.economy.commitments import goal_demand, ranking_inputs
+
+        demand = (await goal_demand(pool, [goal["id"]], access_scope=scope)).get(goal["id"])
+        if demand:
+            goal["demand"] = demand
+            goal.update(ranking_inputs(demand))
+    except Exception:  # noqa: BLE001 -- demand is optional; the Goal still answers
+        log.warning("goal %s demand unavailable", goal["id"], exc_info=True)
     goal["ranking"] = public_goal_ranking(score_goal_candidate(goal))
     # str-cast every id -- asyncpg returns a real uuid.UUID object, which
     # does not compare equal to the str ids find_or_create_goal returns

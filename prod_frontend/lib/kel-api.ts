@@ -61,6 +61,12 @@ export interface Goal extends Row {
   abstracts?: GoalHierarchyNeighbor[] | null;
   benchmarks?: Benchmark[];
   coverage?: GoalCoverage | null;
+  // false when a direct parent/child exists but could not be shown right now
+  // (its shard was unreachable or its record is being refreshed): the lists
+  // below are then not the whole neighbourhood.
+  hierarchy_complete?: boolean;
+  // Community demand (open Credit commitments). A signal, never truth.
+  demand?: GoalDemand | null;
   created_by?: string | null;
   proposer?: string | null;
   scope_type?: string | null;
@@ -73,6 +79,35 @@ export interface Goal extends Row {
   browse_kind?: "root" | "standalone";
   specific_count?: number;
   specifics?: GoalSpecificPreview[];
+}
+
+export interface GoalDemandTotals {
+  committed_credits: number;
+  supporters: number;
+  /** sum over supporters of sqrt(their Credits): one large balance cannot dominate */
+  demand_score: number;
+}
+
+export interface GoalDemand {
+  /** open commitments on this Goal itself */
+  direct: GoalDemandTotals;
+  /** on this Goal or any accepted more-specific Goal you can see, each counted once */
+  aggregated: GoalDemandTotals;
+}
+
+export interface GoalCommitment {
+  id: string;
+  credits: number;
+  created_at: string;
+  /** null while open; "bounty_payout" once paid to the solver; "goal_commitment_release" when returned */
+  settlement: "bounty_payout" | "goal_commitment_release" | null;
+  settled_at?: string | null;
+}
+
+export interface GoalCommitmentsResult extends GoalDemand {
+  goal_id: string;
+  resolved: boolean;
+  mine: GoalCommitment[];
 }
 
 export interface GoalSpecificPreview {
@@ -544,6 +579,55 @@ export const reviewProcedureSubmission = (submissionId: string, decision: "accep
 
 export const reviewBenchmarkSubmission = (submissionId: string, decision: "accepted" | "rejected", note?: string, signal?: AbortSignal) =>
   apiPost<SubmissionResult>(`/v1/economy/benchmark-submissions/${j(submissionId)}/review`, { decision, note }, signal);
+
+// ---- Credit commitments (escrow bounty) ----------------------------------
+export const getGoalCommitments = (goalId: string, signal?: AbortSignal) =>
+  apiGet<GoalCommitmentsResult>(`/v1/economy/goals/${j(goalId)}/commitments`, signal);
+
+/** Lock Credits on a Goal. Paid to whoever's Procedure resolves it; withdraw any
+ * time before that. `idempotencyKey` makes a retried click the same commitment. */
+export const commitToGoal = (goalId: string, credits: number, idempotencyKey: string, signal?: AbortSignal) =>
+  apiPost<{ id: string; goal_id: string; credits: number; created: boolean }>(
+    `/v1/economy/goals/${j(goalId)}/commitments`, { credits, idempotency_key: idempotencyKey }, signal);
+
+export const withdrawCommitment = (goalId: string, commitmentId: string, signal?: AbortSignal) =>
+  apiDelete<{ commitment_id: string; released: number }>(
+    `/v1/economy/goals/${j(goalId)}/commitments/${j(commitmentId)}`, signal);
+
+// ---- Goal hierarchy review queue (reviewers: knowledge:publish) -----------
+export interface ProposedRelation {
+  specific_goal: { id: string; canonical_name: string; description?: string | null };
+  abstract_goal: { id: string; canonical_name: string; description?: string | null };
+  relation: "SPECIALIZES";
+  confidence: number | null;
+  provenance: string | null;
+  judge: Record<string, string>;
+  proposed_at: string;
+}
+
+export interface HierarchyReviewItem {
+  id: string;
+  goal_id: string;
+  reason: "orphan" | "uncertain";
+  status: "open" | "resolved" | "dismissed";
+  canonical_name: string;
+  short_description?: string | null;
+  created_at: string;
+}
+
+export const listProposedRelations = (offset = 0, signal?: AbortSignal) =>
+  apiGet<{ items: ProposedRelation[]; has_more: boolean }>(`/v1/goal-review/relations?limit=50&offset=${offset}`, signal);
+
+export const decideProposedRelation = (
+  specificGoalId: string, abstractGoalId: string, decision: "accept" | "reject", reason: string, signal?: AbortSignal,
+) => apiPost<{ relation: Row }>("/v1/goal-review/relations/decide",
+  { specific_goal_id: specificGoalId, abstract_goal_id: abstractGoalId, decision, reason }, signal);
+
+export const listHierarchyReviewItems = (signal?: AbortSignal) =>
+  apiGet<{ items: HierarchyReviewItem[]; has_more: boolean }>("/v1/goal-review/items?status=open&limit=50", signal);
+
+export const closeHierarchyReviewItem = (itemId: string, status: "resolved" | "dismissed", signal?: AbortSignal) =>
+  apiPost<{ id: string; status: string }>(`/v1/goal-review/items/${j(itemId)}/close`, { status }, signal);
 
 export interface GoalContributor {
   contributor_id: string;

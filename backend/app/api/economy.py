@@ -384,6 +384,64 @@ async def clawback_credit_event(
         raise HTTPException(status_code=422, detail=str(e))
 
 
+# ---- Credit commitments to Goals (escrow bounty, migration 119) -------------
+class CommitmentIn(BaseModel):
+    credits: int = Field(ge=1, le=1_000_000)
+    idempotency_key: str = Field(min_length=1, max_length=200)
+
+
+@router.post("/goals/{goal_id}/commitments", status_code=201)
+async def commit_credits_to_goal(
+    goal_id: str, body: CommitmentIn, pool=Depends(get_pool),
+    principal: AuthenticatedPrincipal = Depends(_authenticated_and_rate_limited),
+) -> dict[str, Any]:
+    """Lock Credits on a Goal you can see. Paid to the contributor of the Procedure
+    that resolves it; withdraw any time before that. Identity is the caller's."""
+    from app.economy import commitments
+
+    try:
+        return await commitments.commit(
+            pool, goal_id=goal_id, contributor_id=principal.subject, credits=body.credits,
+            idempotency_key=body.idempotency_key, access_scope=principal.access_scope())
+    except commitments.GoalNotCommittable as exc:
+        raise HTTPException(status_code=404 if "not found" in str(exc) else 409, detail=str(exc)) from exc
+    except commitments.InsufficientCredits as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except commitments.CommitmentError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@router.delete("/goals/{goal_id}/commitments/{commitment_id}")
+async def withdraw_commitment(
+    goal_id: str, commitment_id: str, pool=Depends(get_pool),
+    principal: AuthenticatedPrincipal = Depends(_authenticated_and_rate_limited),
+) -> dict[str, Any]:
+    from app.economy import commitments
+
+    try:
+        return await commitments.withdraw(pool, commitment_id=commitment_id, contributor_id=principal.subject)
+    except commitments.CommitmentError as exc:
+        raise HTTPException(status_code=404 if "not found" in str(exc) else 409, detail=str(exc)) from exc
+
+
+@router.get("/goals/{goal_id}/commitments")
+async def goal_commitment_totals(
+    goal_id: str, pool=Depends(get_pool), scope: AccessScope = Depends(get_scope),
+) -> dict[str, Any]:
+    """Demand on this Goal (open commitments only): on the Goal itself and
+    aggregated over its accepted descendants you can see. Totals only; your own
+    commitments are listed when you are signed in."""
+    from app.economy import commitments
+
+    goal = await get_goal_for_product(pool, goal_id, scope=scope)
+    if goal is None:
+        raise HTTPException(status_code=404, detail="goal not found")
+    demand = (await commitments.goal_demand(pool, [goal_id], access_scope=scope)).get(goal_id, {})
+    mine = await commitments.my_commitments(pool, goal_id=goal_id, contributor_id=scope.viewer_id) \
+        if scope.viewer_id else []
+    return {"goal_id": goal_id, "resolved": goal.get("resolved_at") is not None, **demand, "mine": mine}
+
+
 # ---- Goal-level contributors (§11) -----------------------------------------
 @router.get("/goals/{goal_id}/contributors")
 async def goal_contributors(goal_id: str, pool=Depends(get_pool), scope: AccessScope = Depends(get_scope)) -> dict[str, Any]:

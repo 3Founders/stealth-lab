@@ -1046,11 +1046,16 @@ async def record_execution_outcome(
                 "WHERE id = $1::uuid AND t_invalid IS NULL AND status <> 'merged'",
                 goal_id,
             )
-            await _after_goal_resolution(control_pool, goal_id, remote=goal_pool is not control_pool)
+            await _after_goal_resolution(
+                control_pool, goal_id, remote=goal_pool is not control_pool,
+                procedure_row_id=str(procedure_row_id), procedure_id=promoted_procedure_id)
     return result
 
 
-async def _after_goal_resolution(control_pool: Any, goal_id: str, *, remote: bool) -> None:
+async def _after_goal_resolution(
+    control_pool: Any, goal_id: str, *, remote: bool,
+    procedure_row_id: Optional[str] = None, procedure_id: Optional[str] = None,
+) -> None:
     """Keep DERIVED state in step with a changed `goals.resolved_at` (which stays
     the only resolution signal): the Goal's search projection (a control-database
     Goal is queued by trigger; a remote one needs it here) and the abstraction
@@ -1071,6 +1076,16 @@ async def _after_goal_resolution(control_pool: Any, goal_id: str, *, remote: boo
         await refresh_goal_abstraction_state_after_resolution(control_pool, goal_id, pools=pools_for(control_pool))
     except Exception:  # noqa: BLE001
         logging.getLogger(__name__).warning("goal %s abstraction state refresh after resolution failed", goal_id, exc_info=True)
+    # Escrow bounty: open Credit commitments on this Goal are paid to the verifying
+    # Procedure's contributor (released on self-dealing / no contributor). AFTER
+    # resolution, never a cause of it; idempotent, so a lost call is repaired by
+    # the next resolution of the Goal or `settle_goal_bounties` by hand.
+    try:
+        from app.economy.commitments import settle_goal_bounties
+
+        await settle_goal_bounties(control_pool, goal_id, procedure_row_id=procedure_row_id, procedure_id=procedure_id)
+    except Exception:  # noqa: BLE001
+        logging.getLogger(__name__).warning("goal %s bounty settlement failed", goal_id, exc_info=True)
 
 
 async def check_quarantine_and_disable(pool: asyncpg.Pool, procedure_row_id: str) -> dict:

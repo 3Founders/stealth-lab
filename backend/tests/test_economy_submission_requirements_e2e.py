@@ -277,11 +277,13 @@ def test_benchmark_submission_reuses_criteria_columns_and_scopes_reads():
             assert await service.get_benchmark_submission(
                 pool, submission["id"], scope=AccessScope.for_user(other),
             ) is None
+            # scoped to this submitter: other tests' PUBLIC submissions in the same
+            # database are visible to everyone and are not what this checks
             assert len(await service.list_benchmark_submissions(
-                pool, scope=AccessScope.for_user(owner),
+                pool, scope=AccessScope.for_user(owner), submitted_by=owner,
             )) == 1
             assert await service.list_benchmark_submissions(
-                pool, scope=AccessScope.for_user(other),
+                pool, scope=AccessScope.for_user(other), submitted_by=owner,
             ) == []
         finally:
             await _cleanup(pool, prefix)

@@ -22,6 +22,8 @@ class _PagePool:
         if "FROM goal_search_index" in compact:
             self.sql, self.args = compact, args
             return [{"goal_id": row["id"], "home_shard_id": "K000"} for row in self.rows]
+        if "goal_commitments" in compact:
+            return []                      # community demand: no open commitments in this fixture
         self.hydrate_sql = compact
         wanted = set(args[0])
         return [row for row in self.rows if row["id"] in wanted]

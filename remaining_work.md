@@ -134,7 +134,19 @@ These need a human with accounts; agents can prepare and verify.
 
 ## P1 — missing product features
 
-### 7. Community demand via Credit commitments (the demand signal)
+### 7. Community demand via Credit commitments -- DONE (escrow bounty)
+- Owner decision: escrow bounty. Migration 119 + `app/economy/commitments.py`:
+  commit locks Credits (append-only negative row, balance never negative,
+  idempotency key); withdraw before resolution releases them; on resolution
+  (`goals.resolved_at`, set only by verification) each open commitment is paid to
+  the contributor of the verifying Procedure (`bounty_payout`), released on
+  self-dealing or when the Procedure has no human contributor; settled exactly
+  once (unique index + DB trigger checks amount/goal/recipient).
+  API: `POST|GET /v1/economy/goals/{id}/commitments`, `DELETE .../{commitment_id}`.
+  Ranking receives quadratic demand (sum of sqrt(credits) per supporter).
+  `tests/test_goal_commitments_e2e.py`.
+
+#### (history) Community demand via Credit commitments
 **Why:** Credits today are rewards only (`credit_ledger_events.reason` ∈
 `new_procedure, improvement, verified_reuse, clawback, admin_adjustment`).
 Nothing lets a user commit Credits to a Goal, so demand is always
@@ -157,7 +169,14 @@ goes to the contributor of the verifying Procedure, or back to committers.
   negative; ranking receives real demand; commitments never touch
   `resolved_at`, verification, or Procedure ranking (add tests asserting this).
 
-### 8. Upward demand aggregation (depends on 7)
+### 8. Upward demand aggregation -- DONE
+- `commitments.goal_demand`: open commitments on the Goal or any visible accepted
+  descendant, each commitment counted once per Goal (diamond-safe); private Goals
+  the viewer cannot see contribute nothing. Totals only, never committer ids.
+- Still open: ORDER the roots browse by aggregated demand (demand is attached to
+  entries and feeds ranking; the browse order is unchanged).
+
+#### (history) Upward demand aggregation
 - For a Goal, aggregate demand = distinct commitment events on the Goal **or any
   accepted descendant**, each event counted once per ancestor even with
   multiple paths (dedupe by event id, not by path). Scope/visibility: private
@@ -179,7 +198,12 @@ goes to the contributor of the verifying Procedure, or back to committers.
   `tests/test_goals_browse_e2e.py`.
 - Still open: order by aggregated demand once item 8 exists.
 
-### 10. Review queue for proposed hierarchy edges
+### 10. Review queue for proposed hierarchy edges -- DONE
+- `/v1/goal-review` (knowledge:publish) + `app/services/goal_review.py`; migration
+  118 `goal_review_items` (the audit job records orphan/uncertain Goals);
+  reviewer page `prod_frontend/app/review/hierarchy`. `tests/test_goal_review_e2e.py`.
+
+#### (history) Review queue for proposed hierarchy edges
 **Why:** low-confidence placements are stored as `proposed`; nothing promotes or
 rejects them. `handle_goal_abstraction_audit` (`app/services/ingestion_jobs.py`)
 is a **no-op** that returns `audited: True`.
@@ -193,7 +217,12 @@ is a **no-op** that returns `audited: True`.
 - **Done when:** a reviewer can accept/reject; clients still cannot create
   accepted edges directly; tests for forged edge / cycle via review.
 
-### 11. Frontend completion
+### 11. Frontend completion -- partly DONE
+- Done: demand/commitment panel on the Goal page (`components/GoalDemandPanel.tsx`),
+  reviewer queue page, "hierarchy incomplete" notice (`hierarchy_complete`).
+- Open: "procedures observed on more specific goals" section; README installer note.
+
+#### (history) Frontend completion
 - Demand UI (commit/withdraw, totals, supporters) — separate from resolution.
 - Root discovery page (item 9), proposed-edge review (item 10).
 - Optional: "procedures observed on more specific goals" section on abstract
@@ -206,7 +235,12 @@ is a **no-op** that returns `audited: True`.
   opt-in publish flow with review, verification of discoveries, Credits for
   accepted ones. Must never turn request-scoped repo Claims into public facts.
 
-### 13. Benchmark transfer propagation after review
+### 13. Benchmark transfer propagation after review -- DONE
+- `benchmark_transfer.propagate_after_freeze` (called by the freeze endpoint):
+  judged transfers to direct neighbours, never back through the lineage, bounded
+  by `STEALTH_BENCHMARK_TRANSFER_MAX_HOPS` (3). `tests/test_benchmark_propagation_e2e.py`.
+
+#### (history) Benchmark transfer propagation after review
 - Transfer is judged (`benchmark_transfer` judgment kind) and produces a draft
   target Benchmark + `needs_review` submission. Recursion today only happens if
   a reviewer freezes the transferred Benchmark and someone calls
