@@ -57,7 +57,7 @@ export default function Header() {
       return;
     }
     const io = new IntersectionObserver(
-      (entries) => entries.forEach((e) => { if (e.isIntersecting) setAboutInView(e.isIntersecting); }),
+      (entries) => entries.forEach((e) => setAboutInView(e.isIntersecting)),
       { rootMargin: "-40% 0px -55% 0px" },
     );
     io.observe(el);
