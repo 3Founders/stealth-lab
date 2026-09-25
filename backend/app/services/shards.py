@@ -146,6 +146,60 @@ def shard_read_timeout_s() -> float:
         return 10.0
 
 
+# ------------------------------------------------------------ control project B (search/log database)
+# The control plane may be split over two databases (each hosted project has a
+# storage cap). Control project A (the control database, K000) keeps everything
+# joined or transactional together; project B holds only tables nothing joins to:
+SEARCH_DB_TABLES = (
+    "procedure_search_index", "claim_search_index", "retrieval_decisions", "identity_decisions", "llm_spend",
+)
+_SEARCH_POOLS: dict[tuple[str, int], Any] = {}
+_SEARCH_POOL_LOCKS: dict[tuple[str, int], asyncio.Lock] = {}
+
+
+def search_database_url() -> Optional[str]:
+    """SEARCH_DATABASE_URL (environment first, then settings/.env); None = no project B."""
+    value = os.environ.get("SEARCH_DATABASE_URL")
+    if value is None:
+        try:
+            from app.config import settings
+            value = settings.search_database_url
+        except Exception:  # noqa: BLE001 -- settings unavailable: behave as unset
+            value = None
+    value = (value or "").strip()
+    return value or None
+
+
+async def search_pool(pool: Any) -> Any:
+    """The pool for SEARCH_DB_TABLES. Without SEARCH_DATABASE_URL this is `pool`
+    itself (same object, same transaction if it is a connection): single-database
+    deployments are unchanged. With it, one lazily created process-wide pool per
+    event loop for project B."""
+    dsn = search_database_url()
+    if dsn is None:
+        return pool
+    key = (dsn, id(asyncio.get_running_loop()))
+    existing = _SEARCH_POOLS.get(key)
+    if existing is not None:
+        return existing
+    lock = _SEARCH_POOL_LOCKS.setdefault(key, asyncio.Lock())
+    async with lock:
+        existing = _SEARCH_POOLS.get(key)
+        if existing is None:
+            from app.db.session import create_pool
+
+            existing = _SEARCH_POOLS[key] = await create_pool(
+                dsn, min_size=0, max_size=int(os.environ.get("SEARCH_DB_POOL_MAX", "10")))
+        return existing
+
+
+async def close_search_pools() -> None:
+    for key, pool in list(_SEARCH_POOLS.items()):
+        _SEARCH_POOLS.pop(key, None)
+        if hasattr(pool, "close"):
+            await pool.close()
+
+
 _POOLS: dict[int, "ShardPools"] = {}
 
 

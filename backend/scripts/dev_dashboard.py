@@ -54,6 +54,12 @@ async def get_pool():
 # row rather than an exception, so a partially-migrated DB still renders.
 
 
+async def _search_pool(pool):
+    """llm_spend lives on the search/log database when SEARCH_DATABASE_URL is set."""
+    from app.services.shards import search_pool
+    return await search_pool(pool)
+
+
 async def _val(pool, sql, default="-"):
     try:
         v = await pool.fetchval(sql)
@@ -173,7 +179,7 @@ async def section_governance(pool):
         (
             "llm_spend calls (last 24h)",
             await _val(
-                pool,
+                await _search_pool(pool),
                 "SELECT count(*) FROM llm_spend"
                 " WHERE occurred_at > now() - interval '24 hours'",
             ),
@@ -181,7 +187,7 @@ async def section_governance(pool):
         (
             "llm_spend estimated $ (last 24h)",
             await _val(
-                pool,
+                await _search_pool(pool),
                 "SELECT COALESCE(round(sum(estimated_cost), 4), 0) FROM llm_spend"
                 " WHERE occurred_at > now() - interval '24 hours'",
             ),

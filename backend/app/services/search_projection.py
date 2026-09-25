@@ -27,7 +27,7 @@ from typing import Any, Optional
 import asyncpg
 
 from app.services.embeddings import to_pgvector
-from app.services.shards import HOME_SHARD, OBJECT_TYPES, ShardPools, lookup_routes
+from app.services.shards import HOME_SHARD, OBJECT_TYPES, ShardPools, lookup_routes, search_pool
 
 log = logging.getLogger(__name__)
 
@@ -235,10 +235,15 @@ async def project_object(
         pool = await pools.get(shard)
         row = await pool.fetchrow(_READ_SQL[object_type], object_id)
     table, key = _INDEX_TABLE[object_type]
+    # Goal projections live with the Goal hierarchy on the control database;
+    # Procedure/Claim projections live on the search database (project B) when one
+    # is configured. The outbox entry stays on the control database, in the caller's
+    # transaction: a failed write here leaves it pending and the drainer retries it.
+    target = conn if object_type == "goal" else await search_pool(conn)
     if row is None or (object_type == "goal" and row["status"] == "merged"):
-        await conn.execute(f"DELETE FROM {table} WHERE {key} = $1::uuid", object_id)
+        await target.execute(f"DELETE FROM {table} WHERE {key} = $1::uuid", object_id)
         return "deleted"
-    await _upsert(conn, object_type, build_projection(object_type, dict(row), shard))
+    await _upsert(target, object_type, build_projection(object_type, dict(row), shard))
     return "upserted"
 
 
@@ -340,12 +345,13 @@ async def reindex(
                 "INSERT INTO projection_outbox (object_type, object_id) SELECT $1, x::uuid FROM unnest($2::text[]) x "
                 "ON CONFLICT (object_type, object_id) WHERE status = 'pending' DO NOTHING", t, ids)
         table, key = _INDEX_TABLE[t]
+        index_pool = pool if t == "goal" else await search_pool(pool)
         orphan_sql = f"DELETE FROM {table} WHERE NOT ({key}::text = ANY($1::text[]))"
         params: list[Any] = [ids]
         if shard:
             orphan_sql = f"DELETE FROM {table} WHERE home_shard_id = $2 AND NOT ({key}::text = ANY($1::text[]))"
             params.append(shard)
-        orphans = int((await pool.execute(orphan_sql, *params)).split()[-1])
+        orphans = int((await index_pool.execute(orphan_sql, *params)).split()[-1])
         drained = await drain_outbox(pool, batch=batch, pools=pools)
         out[t] = {"enqueued": len(ids), "orphans_deleted": orphans, **drained}
     return out
@@ -361,6 +367,15 @@ async def verify_projection(pool: asyncpg.Pool) -> dict[str, Any]:
     for t in OBJECT_TYPES:
         table, key = _INDEX_TABLE[t]
         canon = _CANONICAL_IDS[t]
+        index_pool = pool if t == "goal" else await search_pool(pool)
+        if index_pool is not pool:
+            # the projection is on the search database: no cross-database joins,
+            # compare id sets instead (same definitions as the SQL below)
+            entry = await _verify_type_across_databases(pool, index_pool, t, table, key, canon)
+            report["types"][t] = entry
+            if entry["missing"] or entry["orphans"] or entry["route_mismatch"] or entry["unrouted"]:
+                report["ok"] = False
+            continue
         missing = await pool.fetchval(
             f"SELECT count(*) FROM ({canon}) c(id) WHERE NOT EXISTS (SELECT 1 FROM {table} i WHERE i.{key}::text = c.id) "
             f"AND NOT EXISTS (SELECT 1 FROM projection_outbox o WHERE o.status = 'pending' "
@@ -383,6 +398,26 @@ async def verify_projection(pool: asyncpg.Pool) -> dict[str, Any]:
             report["ok"] = False
     report["lag"] = await projection_lag(pool)
     return report
+
+
+async def _verify_type_across_databases(
+    pool: Any, index_pool: Any, object_type: str, table: str, key: str, canon: str,
+) -> dict[str, Any]:
+    canonical = {r[0] for r in await pool.fetch(canon)}
+    routes = {r["id"]: r["home_shard_id"] for r in await pool.fetch(
+        "SELECT object_id::text AS id, home_shard_id FROM object_routes WHERE object_type = $1", object_type)}
+    pending = {r[0] for r in await pool.fetch(
+        "SELECT object_id::text FROM projection_outbox WHERE status = 'pending' AND object_type = $1", object_type)}
+    projected = {r["id"]: r["home_shard_id"] for r in await index_pool.fetch(
+        f"SELECT {key}::text AS id, home_shard_id FROM {table}")}
+    return {
+        "missing": len(canonical - set(projected) - pending),
+        "lagging": len(pending),
+        "orphans": len(set(projected) - set(routes)),
+        "route_mismatch": sum(1 for oid, shard in projected.items() if oid in routes and routes[oid] != shard),
+        "unrouted": len(canonical - set(routes)),
+        "database": "search",
+    }
 
 
 # ------------------------------------------------ in-process drainer (API / MCP server processes)

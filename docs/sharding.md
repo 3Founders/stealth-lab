@@ -1,90 +1,132 @@
 # Sharding
 
-Sharding is **storage sharding**, not semantic. It never follows Goal hierarchy.
+Sharding is **storage sharding**, not semantic. It never follows the Goal hierarchy:
+a Goal's home is chosen by weighted rendezvous hashing and never moves; the Goal DAG
+(`goal_relations`) is one canonical table on the control database.
+
+Every database is a hosted project with a hard storage cap (today: Neon, 500 MB each),
+so the control plane itself is split in two.
+
+## Layout
 
 ```
-CONTROL DB (this database, shard "K000")
-  knowledge_shards      registry: shard_id, status, weight, dsn_env (NAME of an env var; never a DSN)
-  object_routes         (object_type, object_id) -> home_shard_id            [global routing]
-  goal_search_index / procedure_search_index / claim_search_index            [projections]
-  goal_relations        hierarchy, separate, optional
-  identity_decisions, retrieval_decisions, projection_outbox, ingestion_jobs
-KNOWLEDGE SHARDS  K000 (built-in) K001 K002 …   canonical goals/procedures/claims
+CONTROL PROJECT A  (the control database, shard "K000")        joined or transactional together
+  knowledge_shards            registry: shard_id, status, weight, dsn_env (NAME of an env var), capacity_bytes
+  object_routes               (object_type, object_id) -> home_shard_id                 [global routing]
+  procedure_row_routes        procedure version row -> home shard
+  goal_names                  global exact-name identity index (scope, normalized name) -> goal, shard
+  goal_relations              the Goal DAG (proposed / accepted / rejected SPECIALIZES edges)
+  goal_search_index           Goal projection (+ derived resolved_at, t_created)       [joined with goal_relations]
+  goal_abstraction_state      derived levels / coverage
+  projection_outbox           pending projection refreshes (same transaction as the canonical write)
+  ingestion_jobs              lease-based job queue
+  benchmarks, benchmark_submissions, solutions, evaluations, benchmark_transfer_decisions
+  credit_ledger_events + economy tables (append-only ledger)
+  all PRIVATE / ORG canonical Goals, Procedures, Claims (never leave K000)
+
+CONTROL PROJECT B  (search/log database, SEARCH_DATABASE_URL)  nothing joins to these
+  procedure_search_index      Procedure projection (FTS + ANN)
+  claim_search_index          Claim projection (FTS + ANN)
+  retrieval_decisions         per-request retrieval record (+ shard fan-out / latency telemetry)
+  identity_decisions          every Goal/Claim/Procedure identity judgment (idempotent replay per key)
+  llm_spend                   model-cost ledger (CostGovernor, ingest budget)
+
+KNOWLEDGE SHARDS  K001 .. K0nn   canonical PUBLIC knowledge, each object once:
+  a Goal + the Procedures (all versions) that achieve that exact Goal + their execution
+  evidence, edges, change sets + the Goal's Claims
 ```
+
+With `SEARCH_DATABASE_URL` unset, project B's five tables simply live on A (a single-database
+deployment is unchanged and pays nothing: `shards.search_pool(pool)` returns `pool` itself).
+`shards.search_pool` is the ONE accessor for B; `shards.SEARCH_DB_TABLES` lists what lives there.
+
+Why this split: A holds everything that is joined in SQL (hierarchy walks join `goal_relations` with
+`goal_search_index`; browsing and routing join routes and names) or written in the same transaction
+as a canonical row (routes, names, outbox). B holds tables nothing joins to and no canonical write
+shares a transaction with: projections are rebuilt from the outbox on A, and the three logs are
+written by single idempotent statements.
 
 ## Placement (`app/services/shards.py`)
 
-* New Goal → `choose_shard(goal_id, writable_shards)`: weighted **rendezvous hashing** over
-  `status='active' AND weight>0` shards. Deterministic on every worker/provider; adding a shard
-  only moves the keys that hash to it (and existing objects never move — `home_shard_id` is stored).
-* Existing Goal → its `home_shard_id` is the preferred shard for new Goal-local Procedures
-  (`choose_child_shard`); if that shard is `full/readonly/unhealthy` the new object rolls over to
-  another shard while the Goal keeps its identity and shard. A Goal may therefore end up with
-  knowledge on more than one shard; `object_routes` says where each object lives.
-* Cross-goal objects keep **one** canonical home; they are exposed through the projections, never
-  duplicated into every shard.
-* Rollover lever: `python -m app.ingestion.admin shard-status K002 full`.
+* New Goal -> `choose_shard(goal_id, writable_shards)`: weighted **rendezvous hashing** over
+  `status='active' AND weight>0` shards. Deterministic; adding a shard only moves the keys that hash to
+  it (existing objects never move -- `home_shard_id` is stored). Hierarchy never influences placement.
+* A Goal's Procedures and Claims go to the Goal's shard (`choose_child_shard`); if it is
+  `full/readonly/unhealthy` the new object rolls over to another shard, the Goal keeps its shard.
+* Private/org rows always stay on K000.
+* **Capacity guard** (`app/services/shard_capacity.py`): every worker loop (and `admin shard-capacity`)
+  measures each shard against `knowledge_shards.capacity_bytes` and marks a remote shard `full` at
+  `STEALTH_SHARD_FULL_RATIO` (default 0.85) -- new objects roll over before the provider refuses writes.
+  K000 is never marked full (private data has no other home); it is reported as
+  `control_database_near_capacity`.
 
-## Retrieval touches only the shards it needs
+## Reads touch only the databases they need
 
-Projections carry `home_shard_id`. `hydrate_rows` groups candidate ids by shard and runs **one**
-query per involved shard (concurrently), never one per id and never on uninvolved shards
-(`test_candidates_on_multiple_shards_are_hydrated_in_one_batch_per_shard_and_untouched_shards_are_not_queried`).
-`ShardPools` connects lazily from `dsn_env`, backs off a dead shard for 10 s (no connection
-storm), and reports outages as `unavailable_shards` (never as "no such object").
+* **By id / exact name / owning Goal** (`app/services/routed_reads.py`, `home_pool`): the object's home
+  shard, via `object_routes`, `goal_names` or the procedure projection -- never "ask every shard", never
+  "look only in the control database".
+* **Many known ids**: `hydrate_rows` groups ids by shard, one query per involved shard, concurrently,
+  each bounded by `STEALTH_SHARD_READ_TIMEOUT_S` (a slow shard is reported unavailable, not waited on).
+* **Genuine scans** (no id: counts, Claims by subject, legacy applicability legs): `fanout_*` helpers run
+  the same SQL on every readable shard, bounded per shard.
+* **Hierarchy** traversal runs entirely on A (`goal_relations` + `goal_search_index`); only the Goals
+  actually displayed / judged are read from their shards.
+* **Telemetry**: `shards.track_shard_requests()` records distinct shards, targeted hydrations vs
+  broadcasts, route lookups, per-shard latency, timeouts and cold connects; `find_best_way` and
+  `find_ways` store it in `retrieval_decisions.detail.shard_requests`.
 
 ## Projection consistency
 
-Canonical write in the control DB ⇒ trigger `sl_canonical_touch` records the route and one
-coalesced `projection_outbox` row **in the same transaction**. `drain_outbox` applies entries
-idempotently under a per-object advisory lock (it always projects *current* canonical state), so
-replay, duplicate drainers and out-of-order entries converge. Lag is observable
-(`admin status`). Repair: `admin reindex [goal|claim|procedure|all] [--shard K]`; check:
-`admin verify-projections` (missing / orphans / route mismatches / lag). Remote-homed objects are
-read through `ShardPools`; a shard-side writer must call `search_projection.enqueue` after commit
-(`reindex --shard` repairs a lost call).
+A canonical write on K000 records its route and one coalesced `projection_outbox` row **in the same
+transaction** (trigger `sl_canonical_touch`); remote writers enqueue after commit. `drain_outbox`
+applies entries idempotently under a per-object advisory lock on A: Goal projections are written on A,
+Procedure/Claim projections on B. The outbox entry is marked applied only after the projection write,
+so a failed write to B leaves it pending and it is retried -- never lost. Repair:
+`admin reindex [goal|claim|procedure|all] [--shard K]`; check: `admin verify-projections` (for B-hosted
+types it compares id sets across the two databases instead of joining).
 
 ## Remote canonical writes (migration 96)
 
-Canonical rows really live in the shard databases. The control database used to foreign-key into
-`procedures`/`goals`/`knowledge_nodes`; migration 96 **replaced** those FKs (it did not just drop them):
+Cross-object FKs are replaced by route-aware validation triggers (`sl_check_ref`); `goal_names` is the
+global unique index for exact Goal identity; hard `DELETE` of a referenced Goal/Procedure is refused;
+`admin verify-refs` checks every routed object exists on its shard.
 
-* `sl_check_ref` triggers: a reference (`procedures.achieves_goal_id`, `execution_plans.procedure_row_id`,
-  `goal_relations.*`, `claim_sources.claim_id`, `goals.merged_into_id`, ...) is valid iff
-  the object exists in this database **or** the global routing table homes it on another shard
-  (`object_routes`, and `procedure_row_routes` for versioned procedure rows). Same-shard integrity is kept.
-* `goal_names` is the **global unique index for exact goal identity** (a per-database unique index cannot see other shards).
-* hard `DELETE` of a goal/procedure that is still referenced is refused (tombstone instead), replacing `ON DELETE`.
-* `goals.home_shard_id` / `procedures.home_shard_id` are no longer local FKs on shard databases.
-* `admin verify-refs` checks every routed object exists on its shard and every remote procedure's goal resolves.
+## Runbook
 
-Write path (public data): `find_or_create_goal` claims the name in `goal_names`, records the route, writes the goal on its
-shard, projects it immediately (outbox repairs a failure). `capture_procedure` writes on the goal's shard (rolling over
-if it is full/readonly), registers `object_routes` + `procedure_row_routes`. Versions (`supersede_procedure`) and
-execution evidence (`record_execution_outcome`) run **on the procedure's home shard** (evidence, edges and change sets are
-colocated with it, so the existing engine triggers and transactions still work). Claims (`claim_identity.ingest_claim`)
-are placed with their goal. `merge_goal` repoints procedures on every shard. Retrieval hydrates only involved shards.
+Provision a knowledge shard:
 
-Provisioning a shard: `python scripts/migrate.py --dsn <shard dsn>` (same migrations), then
-`python -m app.ingestion.admin register-shard K001 --dsn-env K001_DATABASE_URL` (checks the schema first).
-Operators can stop remote placement instantly with `STEALTH_REMOTE_SHARD_WRITES=0`.
+```
+python scripts/migrate.py --dsn <shard dsn>
+python -m app.ingestion.admin register-shard K001 --dsn-env K001_DATABASE_URL --capacity-bytes 524288000
+```
 
-**Rules:** private/org rows always stay on K000 (so `data_rights`, personal sync and other private-only paths are complete on
-the control database). Everything else that touches `procedures`/evidence/claims uses one of two mechanisms
-(`services/shards.py`):
+Bring up the search/log database (control project B):
 
-* **by id -> `home_pool(pool, "procedure", id[, by_row_id=True])`**: the row's home shard (one extra indexed lookup only when a
-  remote shard is registered). Used by `get/supersede/record_execution_outcome/approve/reject`, `procedure_graph_api`
-  (detail/versions/evidence), `fetch_procedure_version`, MCP `_resolve_live_procedure`, `local_sync`, admin reextract, publication
-  withdraw/dependency targets, failure handlers, synthesis/extraction follow-up UPDATEs, `index_freshness.mark_procedure_indexed`.
-* **scans -> `fanout_fetch / fanout_fetchrow / fanout_fetchval_sum / fanout_sum_row / fanout_best_row / all_pools`**: the same SQL on
-  the control DB and every readable shard, then merged in Python. Lenient by default (an unreachable shard is skipped and logged);
-  `strict=True` for writers and verifiers (`admin verify-dedup`, claim-ref backfill, episode idempotency) so a shard outage is never
-  read as "nothing there". Used by goal resolution, `list_goal_procedures`, `get_goal`, `applicability` (legacy candidate legs, claim
-  and evidence reads), `contributors`, `index_freshness`, extraction registry, replay, task/repository/product views, stealth
-  projection, `claim_impact`, `procedure_claim_refs`.
+```
+python scripts/migrate.py --target search --dsn <B dsn>     # creates only B's five tables (migration 117)
+export SEARCH_DATABASE_URL=<B dsn>                           # every API / MCP / worker process
+python -m app.ingestion.admin search-db-backfill             # reindex procedure + claim projections into B, verify
+```
 
-Known approximations (documented, not silent): the legacy `applicability` ranker's id-only lexical/embedding legs are concatenated
-per shard (each leg keeps its own order; cost/similarity legs that return the sort key are merged exactly). The canonical retrieval
-path does not use them - it works from the global projections. Sharding is proven by `tests/test_sharded_readers_e2e.py` and
-`tests/test_sharded_writes_e2e.py` against a second real PostgreSQL database.
+The three logs start empty on B (history stays on A until pruned or dropped by hand).
+
+Keep new public Goals off the control database once remote shards exist:
+
+```
+python -m app.ingestion.admin shard-weight K000 0            # K000 keeps private/org data and existing rows
+```
+
+Keep the control databases small (schedule it, e.g. daily):
+
+```
+python -m app.ingestion.admin prune-operational --older-than-days 30 --apply
+```
+
+(prunes only finished rows: old `retrieval_decisions`, applied `projection_outbox` entries, done/cancelled
+`ingestion_jobs`; never canonical data, relations, the Credit ledger or identity decisions.)
+
+Watch capacity: `python -m app.ingestion.admin shard-capacity` (report) / `--apply` (the worker does this
+every loop). Stop remote placement instantly with `STEALTH_REMOTE_SHARD_WRITES=0`.
+
+Sharding is proven by `tests/test_sharded_*_e2e.py`, `tests/test_shard_capacity_e2e.py` (two real
+databases) and the A/B split by `tests/test_search_database_e2e.py`.

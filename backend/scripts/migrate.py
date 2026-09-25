@@ -31,6 +31,13 @@ Usage:
     python3 scripts/migrate.py --dry-run       # show what would run, apply nothing
     python3 scripts/migrate.py --status        # show ledger state, apply nothing
     python3 scripts/migrate.py --dsn <url>     # override $DATABASE_URL
+    python3 scripts/migrate.py --target search  # the search/log database (project B):
+                                                # $SEARCH_DATABASE_URL or --dsn
+
+Targets: every file belongs to the control database (and knowledge shards)
+unless its FIRST line is `-- target: search`; those files create the tables of
+the search/log database (docs/sharding.md, control project B) and run ONLY with
+`--target search`, which runs nothing else. Each database keeps its own ledger.
 """
 from __future__ import annotations
 
@@ -108,19 +115,31 @@ async def _ledger_checksum(conn: asyncpg.Connection, filename: str) -> str | Non
     return row["checksum"] if row else None
 
 
-def _build_plan() -> list[tuple[Path, str]]:
-    """Returns (path, kind) pairs in real apply order -- every file in
-    db/*.sql, lexical, all tagged 'schema'. No seeds/ subfolder."""
-    return [(f, "schema") for f in _real_files(DB_DIR)]
+TARGETS = ("control", "search")
 
 
-async def run(dsn: str, dry_run: bool = False, status_only: bool = False) -> int:
+def _target_of(path: Path) -> str:
+    """'search' iff the file's first line is `-- target: search`, else 'control'."""
+    with path.open(encoding="utf-8") as handle:
+        first = handle.readline().strip().lower()
+    return "search" if first.replace(" ", "") == "--target:search" else "control"
+
+
+def _build_plan(target: str = "control") -> list[tuple[Path, str]]:
+    """Returns (path, kind) pairs in real apply order -- the db/*.sql files of
+    `target`, numeric order, all tagged 'schema'. No seeds/ subfolder."""
+    if target not in TARGETS:
+        raise ValueError(f"target must be one of {TARGETS}")
+    return [(f, "schema") for f in _real_files(DB_DIR) if _target_of(f) == target]
+
+
+async def run(dsn: str, dry_run: bool = False, status_only: bool = False, target: str = "control") -> int:
     conn = await asyncpg.connect(dsn)
     exit_code = 0
     try:
         await _ensure_ledger(conn)
 
-        for path, kind in _build_plan():
+        for path, kind in _build_plan(target):
             checksum = _checksum(path)
             ledger_checksum = await _ledger_checksum(conn, path.name)
 
@@ -173,11 +192,15 @@ def main() -> int:
         load_dotenv(Path(__file__).resolve().parents[1] / ".env")
     except ImportError:
         pass
-    ap.add_argument("--dsn", default=os.environ.get("DATABASE_URL"),
-                     help="defaults to $DATABASE_URL")
+    ap.add_argument("--dsn", default=None,
+                     help="defaults to $DATABASE_URL ($SEARCH_DATABASE_URL with --target search)")
+    ap.add_argument("--target", choices=TARGETS, default="control",
+                    help="control (default: control database / knowledge shards) or search (project B)")
     ap.add_argument("--dry-run", action="store_true", help="show what would run, apply nothing")
     ap.add_argument("--status", action="store_true", help="show ledger state, apply nothing")
     args = ap.parse_args()
+    if args.dsn is None:
+        args.dsn = os.environ.get("SEARCH_DATABASE_URL" if args.target == "search" else "DATABASE_URL")
 
     if not args.dsn:
         print("ERROR: no DATABASE_URL in environment and no --dsn given.")
@@ -186,7 +209,7 @@ def main() -> int:
         print("ERROR: --dry-run and --status are mutually exclusive.")
         return 1
 
-    return asyncio.run(run(args.dsn, dry_run=args.dry_run, status_only=args.status))
+    return asyncio.run(run(args.dsn, dry_run=args.dry_run, status_only=args.status, target=args.target))
 
 
 if __name__ == "__main__":

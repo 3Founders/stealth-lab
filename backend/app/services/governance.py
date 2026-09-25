@@ -520,14 +520,17 @@ class CostGovernor:
     async def spend_since(
         self, since: datetime, scope_key: Optional[str] = None
     ) -> float:
+        from app.services.shards import search_pool
+
+        db = await search_pool(self._pool)   # llm_spend lives on the search/log database when configured
         if scope_key:
-            value = await self._pool.fetchval(
+            value = await db.fetchval(
                 "SELECT COALESCE(SUM(estimated_cost), 0) FROM llm_spend "
                 "WHERE occurred_at >= $1 AND scope_key = $2",
                 since, scope_key,
             )
         else:
-            value = await self._pool.fetchval(
+            value = await db.fetchval(
                 "SELECT COALESCE(SUM(estimated_cost), 0) FROM llm_spend "
                 "WHERE occurred_at >= $1",
                 since,
@@ -569,7 +572,9 @@ class CostGovernor:
     ) -> float:
         cost = estimate_cost(provider, input_tokens, output_tokens)
         try:
-            await self._pool.execute(
+            from app.services.shards import search_pool
+
+            await (await search_pool(self._pool)).execute(
                 "INSERT INTO llm_spend (scope_key, provider, model, operation, "
                 "estimated_cost, input_tokens, output_tokens) "
                 "VALUES ($1,$2,$3,$4,$5,$6,$7)",

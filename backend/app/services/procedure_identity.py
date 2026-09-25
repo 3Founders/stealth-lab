@@ -244,7 +244,9 @@ async def _candidates(pool: asyncpg.Pool, goal_id: str, text: str, embedding: Op
     from app.services.shards import HOME_SHARD, multi_shard
 
     if await multi_shard(pool):
-        for r in await pool.fetch(
+        from app.services.shards import search_pool
+
+        for r in await (await search_pool(pool)).fetch(
                 "SELECT procedure_row_id::text AS id, name, search_text FROM procedure_search_index "
                 "WHERE goal_id = $1::uuid AND home_shard_id <> $2 AND status = 'active' ORDER BY procedure_id LIMIT $3", goal_id, HOME_SHARD, k):
             by.setdefault(r["id"], Candidate(r["id"], r["name"], (r["search_text"] or r["name"])[:1500]))

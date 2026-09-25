@@ -762,7 +762,9 @@ def _validate_stored_decision_row(row: Any, object_type: str) -> tuple[str, list
 
 
 async def _load_prior_decision(pool, object_type: str, key: str) -> Optional[asyncpg.Record]:
-    return await pool.fetchrow(
+    from app.services.shards import search_pool
+
+    return await (await search_pool(pool)).fetchrow(
         "SELECT id::text AS id, candidate_text, scope_type, scope_entity_id, decision, "
         "resolved_id::text AS resolved_id, candidates, judge_provider, judge_model, "
         "fts_candidates, vector_candidates, job_id, detail, idempotency_key "
@@ -862,8 +864,10 @@ async def record_decision(
         raise IdentityReplayError("fts_n must be a non-negative integer")
     if isinstance(vec_n, bool) or not isinstance(vec_n, int) or vec_n < 0:
         raise IdentityReplayError("vec_n must be a non-negative integer")
+    from app.services.shards import search_pool
+
     try:
-        row = await pool.fetchrow(
+        row = await (await search_pool(pool)).fetchrow(
             """
             INSERT INTO identity_decisions (object_type, candidate_text, scope_type, scope_entity_id, decision,
                 resolved_id, candidates, judge_chain, judge_provider, judge_model, prompt_version,
@@ -913,7 +917,9 @@ async def load_goal_identity_decision(
         normalized = str(UUID(str(decision_id)))
     except (TypeError, ValueError, AttributeError) as exc:
         raise ValueError("decision_id must be a UUID") from exc
-    row = await pool.fetchrow(
+    from app.services.shards import search_pool
+
+    row = await (await search_pool(pool)).fetchrow(
         """
         SELECT id::text AS id, candidate_text, scope_type, scope_entity_id, decision,
                resolved_id::text AS resolved_id, candidates, judge_provider, judge_model,

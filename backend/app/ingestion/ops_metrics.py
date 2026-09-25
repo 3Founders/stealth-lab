@@ -15,6 +15,8 @@ import asyncio
 import time
 from typing import Any
 
+from app.services import shards as sh
+
 _RATE_LIMIT_RX = r"429|RESOURCE_EXHAUSTED|RateLimit|rate.?limit"
 
 
@@ -55,15 +57,16 @@ async def _providers(pool: Any, primary: str) -> dict[str, Any]:
         FROM ingestion_jobs
         WHERE last_error IS NOT NULL AND coalesce(completed_at, claimed_at, started_at) > now() - interval '15 minutes'
         """)
-    ident = await pool.fetch(
+    sdb = await sh.search_pool(pool)
+    ident = await sdb.fetch(
         "SELECT judge_provider, count(*) AS n FROM identity_decisions "
         "WHERE created_at > now() - interval '60 minutes' AND judge_provider IS NOT NULL GROUP BY 1")
     by_provider = {r["judge_provider"]: int(r["n"]) for r in ident}
     total = sum(by_provider.values())
     fallback = sum(n for p, n in by_provider.items() if p != primary)
-    unavailable = await pool.fetchval(
+    unavailable = await sdb.fetchval(
         "SELECT count(*) FROM identity_decisions WHERE decision = 'judge_unavailable' AND created_at > now() - interval '60 minutes'")
-    spend = await pool.fetch(
+    spend = await sdb.fetch(
         "SELECT provider, operation, count(*) AS calls, coalesce(sum(input_tokens),0) AS tin, coalesce(sum(output_tokens),0) AS tout "
         "FROM llm_spend WHERE scope_key = 'ingestion' AND occurred_at > now() - interval '60 minutes' GROUP BY 1, 2")
     calls: dict[str, int] = {}
@@ -81,7 +84,7 @@ async def _providers(pool: Any, primary: str) -> dict[str, Any]:
 
 
 async def _retrieval(pool: Any) -> dict[str, Any]:
-    r = await pool.fetchrow(
+    r = await (await sh.search_pool(pool)).fetchrow(
         """
         SELECT count(*) AS n,
                count(*) FILTER (WHERE degraded) AS degraded,
@@ -142,7 +145,7 @@ async def collect(pool: Any, pools: Any = None, *, probe_timeout_s: float = 10.0
     jobs, providers, retrieval, lag, shard_rows, budget = await asyncio.gather(
         _jobs(pool), _providers(pool, primary), _retrieval(pool), sp.projection_lag(pool),
         _shards(pool, pools, probe_timeout_s), IngestBudget(pool).status(fresh=True))
-    tokens = await pool.fetchrow(
+    tokens = await (await sh.search_pool(pool)).fetchrow(
         "SELECT coalesce(sum(input_tokens),0) AS tin, coalesce(sum(output_tokens),0) AS tout, count(*) AS calls, "
         "count(*) FILTER (WHERE operation = 'embedding') AS embed_calls "
         "FROM llm_spend WHERE occurred_at > now() - interval '24 hours'")

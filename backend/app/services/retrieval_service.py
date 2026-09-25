@@ -54,7 +54,7 @@ from app.services.hierarchical_goal_routing import (
 )
 from app.services.identity_resolution import default_judge, fts_or_query, rrf_fuse
 from app.services.semantic.chain import SemanticJudge
-from app.services.shards import ShardPools, hydrate_rows, pools_for, track_shard_requests
+from app.services.shards import ShardPools, hydrate_rows, pools_for, search_pool, track_shard_requests
 
 log = logging.getLogger(__name__)
 
@@ -952,7 +952,7 @@ async def retrieve_procedures(
     t0 = time.monotonic()
     with _tel.span("retrieval.procedure_search", kind="RETRIEVER", on_error=_tel.FailureCode.RETRIEVAL_ERROR) as sp:
         cands, n_fts, n_vec = await _legs(
-            pool, table="procedure_search_index", id_col="procedure_id", name_col="name",
+            await search_pool(pool), table="procedure_search_index", id_col="procedure_id", name_col="name",
             text_expr="name || COALESCE(': ' || summary, '') || COALESCE(' preconditions: ' || preconditions_summary, '')",
             extra_cols=", procedure_row_id::text AS procedure_row_id, goal_id::text AS goal_id",
             ctx_text=ctx.query, embedding=emb, embedding_model=model, scope=scope,
@@ -1125,7 +1125,7 @@ async def find_best_way(
 
 async def _record(pool, query, scope, g: GoalSearchResult, p: ProcedureSearchResult, meta: RetrievalMeta) -> None:
     try:
-        await pool.execute(
+        await (await search_pool(pool)).execute(
             "INSERT INTO retrieval_decisions (query_sha256, viewer_id, goal_ids, procedure_ids, selected_procedure_id, "
             "local_claim_ids, mode, degraded, detail) VALUES ($1, $2, $3::uuid[], $4::uuid[], $5::uuid, $6, $7, $8, $9::jsonb)",
             hashlib.sha256(query.encode()).hexdigest(), getattr(scope, "viewer_id", None), [h.id for h in g.resolved],

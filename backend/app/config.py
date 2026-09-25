@@ -45,6 +45,10 @@ class Settings(BaseSettings):
     )
 
     database_url: Optional[str] = None
+    # Control project B ("search/log database", docs/sharding.md): procedure/claim
+    # search projections, retrieval/identity decision logs and llm_spend. Unset =
+    # everything stays on the control database (single-database deployments).
+    search_database_url: Optional[str] = None
 
     # --- CORS (app/main.py) ---
     # Comma-separated list of allowed browser origins. Single-origin default

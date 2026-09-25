@@ -67,6 +67,7 @@ def _parse(argv=None) -> argparse.Namespace:
     ri.add_argument("object_type", nargs="?", default="all", choices=["goal", "claim", "procedure", "all"])
     ri.add_argument("--shard")
     sub.add_parser("drain-projections")
+    sub.add_parser("search-db-backfill")   # fill project B: reindex procedure + claim projections, then verify
     sub.add_parser("verify-projections")
     sub.add_parser("verify-dedup")
     sub.add_parser("verify-refs")
@@ -185,6 +186,16 @@ async def _amain(a: argparse.Namespace) -> int:
                 print(json.dumps(await sp.reindex(pool, t, shard=a.shard, pools=pools), default=str, indent=2))
             else:
                 print(json.dumps(await sp.drain_outbox(pool, pools=pools)))
+        elif a.cmd == "search-db-backfill":
+            if sh.search_database_url() is None:
+                print("ERROR: SEARCH_DATABASE_URL is not set: procedure/claim projections are on the control database",
+                      file=sys.stderr)
+                return 2
+            pools = sh.ShardPools(pool)
+            out = {t: await sp.reindex(pool, t, pools=pools) for t in ("procedure", "claim")}
+            out["verify"] = await sp.verify_projection(pool)
+            print(json.dumps(out, default=str, indent=2))
+            return 0 if out["verify"]["ok"] else 1
         elif a.cmd == "verify-projections":
             rep = await sp.verify_projection(pool)
             print(json.dumps(rep, default=str, indent=2))
@@ -235,7 +246,7 @@ async def _amain(a: argparse.Namespace) -> int:
             merged_ids = [str(r["id"]) for r in await sh.fanout_fetch(pool, "SELECT id FROM goals WHERE status = 'merged'", strict=True)]
             dangling = await sh.fanout_fetchval_sum(
                 pool, "SELECT count(*) FROM procedures WHERE t_invalid IS NULL AND achieves_goal_id = ANY($1::uuid[])", merged_ids, strict=True) if merged_ids else 0
-            unjudged = await pool.fetchval("SELECT count(*) FROM identity_decisions WHERE decision = 'judge_unavailable' AND resolved_id IS NULL")
+            unjudged = await (await sh.search_pool(pool)).fetchval("SELECT count(*) FROM identity_decisions WHERE decision = 'judge_unavailable' AND resolved_id IS NULL")
             rep = {"duplicate_goal_names": dup, "live_procedures_without_goal_link": unlinked,
                    "live_procedures_linked_to_merged_goals": dangling, "goals_created_while_judge_unavailable": unjudged}
             print(json.dumps(rep, default=str, indent=2))

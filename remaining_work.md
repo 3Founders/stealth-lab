@@ -27,12 +27,31 @@ Items are independent unless a dependency is named. Read "Ground rules" first.
    This bug class broke the hierarchy in production once already.
 5. **Migrations:** never edit an applied migration (`scripts/migrate.py` records
    checksums and exits 1 on mismatch; the MCP container runs
-   `migrate && serve`). Next free number: **115**. Every migration idempotent.
+   `migrate && serve`). Next free number: **118**. Every migration idempotent.
+   A migration whose first line is `-- target: search` belongs to the search/log
+   database and runs only with `scripts/migrate.py --target search` (117 is one).
 6. **Test against a real database**, not only fakes. Offline tests use fake
    pools and missed four production-breaking SQL bugs. Any change to SQL in
    `goal_abstraction.py`, `goal_hierarchy_read.py`, `ingestion_jobs.py`,
    `benchmark_transfer.py`, `identity_resolution.py`, `retrieval_service.py`,
    `economy/*` needs a `*_e2e.py` test (see `tests/test_goal_abstraction_e2e.py`).
+
+7. **Database layout** (docs/sharding.md is authoritative; every hosted project is
+   capped at 500 MB):
+   - **Control project A** (control DB, K000): knowledge_shards, object_routes,
+     procedure_row_routes, goal_names, goal_relations, goal_search_index,
+     goal_abstraction_state, projection_outbox, ingestion_jobs, benchmarks /
+     benchmark_submissions / solutions / evaluations / benchmark_transfer_decisions,
+     credit ledger + economy tables, all private/org canonical rows.
+   - **Control project B** (search/log DB, `SEARCH_DATABASE_URL`, optional):
+     procedure_search_index, claim_search_index, retrieval_decisions,
+     identity_decisions, llm_spend. Accessed ONLY through `shards.search_pool(pool)`
+     (returns `pool` itself when unset). Never JOIN these with A's tables.
+   - **Knowledge shards K001..K0nn**: public canonical Goals with their exact-Goal
+     Procedures, evidence and Claims. Placement is HRW + capacity guard, never hierarchy.
+   - Reads by known id/name/owning Goal go through `app/services/routed_reads.py`
+     or `home_pool` -- never a query on the control DB's own `goals`/`procedures`
+     for an object that may be remote, never a broadcast when the id is known.
 
 ### Local live-DB setup (Linux)
 ```bash
@@ -220,7 +239,7 @@ is a **no-op** that returns `audited: True`.
   tolerant readers for legacy rows; consider a one-off data repair migration.
 - Some call sites may use raw `asyncpg.connect` without the codec — check each.
 
-### 16. `goal_abstraction_state` is written but never read
+### 16. `goal_abstraction_state` is written but never read (coverage now refreshed on resolution)
 - Maintained on every relation decision (now bounded to the component), but all
   reads derive live. Its `direct_resolved_at` / coverage go stale when a Goal
   resolves (no recompute on resolution). Either use it (root discovery could)
@@ -248,7 +267,17 @@ Root-cause each (code or stale test); never skip or delete a test to get green.
   checksum (breaks deploys) — leave the file; only fix if a deliberate ledger
   correction is planned.
 
+### 20a. Operations for the split control plane -- *human*
+- Provision B: `python scripts/migrate.py --target search --dsn <B>`, set
+  `SEARCH_DATABASE_URL` on every process, `admin search-db-backfill`.
+- `admin shard-weight K000 0` once remote shards exist (public Goals never land on A).
+- Schedule `admin prune-operational --older-than-days 30 --apply` (daily).
+- Register shards with `--capacity-bytes 524288000`; the worker marks them `full` at 85%.
+
 ### 20. Performance measurements (none recorded yet)
+- Per-request telemetry now exists: `retrieval_decisions.detail.shard_requests`
+  (distinct shards, hydrations vs broadcasts, route lookups, per-shard latency,
+  timeouts, cold connects) for find_best_way and find_ways.
 - Measure on a realistic corpus (≥50k Goals, ≥10k accepted edges): placement
   latency, judge calls per placement, hierarchical vs flat retrieval latency,
   transfer latency, component-bounded recompute on a large root.

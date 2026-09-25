@@ -16,7 +16,7 @@ from __future__ import annotations
 import logging
 from typing import Any, Optional, Sequence
 
-from app.services.shards import HOME_SHARD, home_pool, hydrate_rows, lookup_routes, multi_shard, pools_for
+from app.services.shards import HOME_SHARD, home_pool, hydrate_rows, lookup_routes, multi_shard, pools_for, search_pool
 
 log = logging.getLogger(__name__)
 
@@ -113,7 +113,7 @@ async def fetch_goal_procedures(
         f"SELECT {columns} FROM procedures WHERE achieves_goal_id = ANY($1::uuid[]) AND {where}", ids)]
     if not await multi_shard(pool):
         return rows
-    refs = await pool.fetch(
+    refs = await (await search_pool(pool)).fetch(
         "SELECT procedure_row_id::text AS id, home_shard_id FROM procedure_search_index "
         "WHERE goal_id = ANY($1::uuid[]) AND home_shard_id <> $2", ids, HOME_SHARD)
     if not refs:

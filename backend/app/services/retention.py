@@ -22,12 +22,15 @@ _PRUNABLE = (
 async def prune_operational_rows(pool: Any, *, older_than_days: int, apply: bool = False) -> dict[str, Any]:
     if older_than_days < 1:
         raise ValueError("older_than_days must be at least 1")
+    from app.services.shards import SEARCH_DB_TABLES, search_pool
+
     report: dict[str, Any] = {"older_than_days": older_than_days, "applied": apply, "tables": {}}
     for table, column, condition in _PRUNABLE:
+        db = await search_pool(pool) if table in SEARCH_DB_TABLES else pool
         where = f"{column} < now() - make_interval(days => $1) AND {condition}"
         if apply:
-            tag = await pool.execute(f"DELETE FROM {table} WHERE {where}", older_than_days)
+            tag = await db.execute(f"DELETE FROM {table} WHERE {where}", older_than_days)
             report["tables"][table] = int(str(tag).split()[-1])
         else:
-            report["tables"][table] = int(await pool.fetchval(f"SELECT count(*) FROM {table} WHERE {where}", older_than_days))
+            report["tables"][table] = int(await db.fetchval(f"SELECT count(*) FROM {table} WHERE {where}", older_than_days))
     return report
