@@ -14,8 +14,8 @@ metadata:
 spec:
   template:
     spec:
-      parallelism: 8              # tasks running at once (each = one worker process)
-      taskCount: 8
+      parallelism: 4              # tasks running at once (each = one worker process)
+      taskCount: 4
       template:
         spec:
           maxRetries: 1           # infra-level retry only; job-level retry/backoff is the queue's
@@ -24,13 +24,23 @@ spec:
             - image: REGION-docker.pkg.dev/PROJECT/stealth/ingest-worker:latest
               args: ["--once", "--max-jobs", "500"]
               resources:
-                limits: { cpu: "1", memory: 1Gi }
+                limits: { cpu: "2", memory: 2Gi }
               env:
                 - { name: STEALTHLAB_ENV, value: PRODUCTION }
+                # 4 tasks x 4 lanes = 16 concurrent ingestion lanes.
                 - { name: INGEST_WORKER_CONCURRENCY, value: "4" }   # lanes per task; DB pool = 2*lanes+4
+                # Public GitHub API: 60 req/hr unauthenticated, 5000 req/hr with a token.
+                - { name: GITHUB_TOKEN, valueFrom: { secretKeyRef: { name: stealth-github-token, key: latest } } }
                 - { name: INGEST_LEASE_SECONDS, value: "300" }
-                - { name: INGEST_JOB_TIMEOUT_SECONDS, value: "1200" }
+                # Multi-procedure documents take 800-1200s+; stays under timeoutSeconds (3600).
+                - { name: INGEST_JOB_TIMEOUT_SECONDS, value: "3000" }
                 - { name: INGEST_IDLE_EXIT_SECONDS, value: "20" }
+                # Vertex AI via the job's own service account (ADC, no API key): judge + embeddings.
+                - { name: VERTEX_PROJECT, value: "kell-509215" }
+                - { name: VERTEX_REGION, value: "us-central1" }
+                # Set ONLY here, not config.py's default: local dev without ADC keeps gemini,voyage.
+                # embeddings.py has no runtime fallback across providers by design (no mixed spaces).
+                - { name: EMBEDDING_PROVIDER_CHAIN, value: "vertex" }
                 - { name: RELEASE, value: "@RELEASE@" }                      # git sha; stamped by `stealth-ops deploy-workers`
                 - { name: OBSERVABILITY_ENABLED, value: "@OBSERVABILITY_ENABLED@" }
                 - { name: OBSERVABILITY_BACKEND, value: "@OBSERVABILITY_BACKEND@" }
@@ -44,7 +54,17 @@ spec:
                 - { name: AWS_DEFAULT_REGION, value: auto }
                 - { name: CONTROL_DATABASE_URL, valueFrom: { secretKeyRef: { name: stealth-control-db-url, key: latest } } }
                 - { name: GEMINI_API_KEY,       valueFrom: { secretKeyRef: { name: stealth-gemini-key,    key: latest } } }
-                - { name: VOYAGE_API_KEY,       valueFrom: { secretKeyRef: { name: stealth-voyage-key,    key: latest } } }
+                - { name: GEMINI_API_KEYS,      valueFrom: { secretKeyRef: { name: stealth-gemini-keys,   key: latest } } }
+                # Document/skill extraction uses the Gemini OpenAI-compatible endpoint through the
+                # general-compute client; the worker refuses to start without key + model. The key
+                # pool rotates on per-key quota exhaustion (_general_compute_client).
+                - { name: GENERAL_COMPUTE_API_KEY, valueFrom: { secretKeyRef: { name: stealth-gemini-key, key: latest } } }
+                - { name: GENERAL_COMPUTE_API_KEYS, valueFrom: { secretKeyRef: { name: stealth-gemini-keys, key: latest } } }
+                - { name: GENERAL_COMPUTE_BASE_URL, value: "https://generativelanguage.googleapis.com/v1beta/openai/" }
+                - { name: GENERAL_COMPUTE_JUDGE_MODEL, value: "gemini-3.8-flash" }
+                - { name: GENERAL_COMPUTE_FALLBACK_MODEL, value: "gemma-4-31b-it" }
+                - { name: SEMANTIC_GEMINI_MODEL, value: "gemini-3.8-flash" }
+                - { name: VOYAGE_API_KEY,      valueFrom: { secretKeyRef: { name: stealth-voyage-key,    key: latest } } }
                 - { name: JEV_BASE_URL,         valueFrom: { secretKeyRef: { name: stealth-jev-url,       key: latest } } }
                 - { name: JEV_API_KEY,          valueFrom: { secretKeyRef: { name: stealth-jev-key,       key: latest } } }
                 - { name: AWS_ACCESS_KEY_ID,     valueFrom: { secretKeyRef: { name: stealth-object-storage-key-id, key: latest } } }
