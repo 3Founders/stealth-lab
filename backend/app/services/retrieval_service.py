@@ -438,6 +438,16 @@ def _hierarchy_projection_is_current(projection: dict[str, Any], source: dict[st
     return str(projection.get("home_shard_id")) == str(source.get("home_shard_id"))
 
 
+# Routing reasons that only mean "the expansion was bounded" (see
+# hierarchical_goal_routing._TRUNCATION_REASONS) -- never a reason to drop it.
+_HIERARCHY_BOUNDED_REASONS = frozenset({"hop_limit_reached", "fanout_limit_reached", "graph_candidate_limit_reached"})
+# Ranking-only columns of the hierarchy edge query; not part of an edge.
+_HIERARCHY_RANKING_COLUMNS = (
+    "anchor_id", "side", "neighbour_id", "neighbour_name", "neighbour_relevance",
+    "specific_relevance", "abstract_relevance", "side_rank", "side_total",
+)
+
+
 def _hierarchy_flat_diagnostics(
     anchors: Sequence[Hit], reasons: Sequence[str], config: HierarchicalGoalRoutingConfig,
     *, degraded_reasons: Sequence[str] = (), details: Optional[dict[str, Any]] = None,
@@ -448,7 +458,7 @@ def _hierarchy_flat_diagnostics(
         "fallback_reasons": list(dict.fromkeys(reasons)),
         "degraded": bool(degraded_reasons),
         "degraded_reasons": list(dict.fromkeys(degraded_reasons)),
-        "truncated": any(reason in ("hop_limit_reached", "fanout_limit_reached", "graph_candidate_limit_reached") for reason in degraded_reasons),
+        "truncated": any(reason in _HIERARCHY_BOUNDED_REASONS for reason in degraded_reasons),
         "semantic_anchor_count": len(anchors),
         "graph_candidate_count": 0,
         "input_relation_count": 0,
@@ -487,7 +497,11 @@ async def _route_goal_candidates(
         return anchors
 
     anchor_ids = [str(goal.id) for goal in anchors]
-    edge_limit = 2 * routing_config.max_fanout * len(anchor_ids)
+    max_fanout = routing_config.max_fanout
+    # Neighbours are ranked by lexical relevance to the query so that, when an
+    # anchor has more than `max_fanout` parents or children, the bounded set we
+    # keep is the most promising one -- never "all or nothing".
+    query_terms = fts_or_query(ctx.query) if ctx is not None else None
     t0 = time.monotonic()
     try:
         relation_tenant_sql, relation_tenant_params = tenant_predicate(
@@ -501,9 +515,11 @@ async def _route_goal_candidates(
         abstract_vis_sql, abstract_vis_params = _goal_visibility_predicate(
             scope, alias="n", param_index=next_index
         )
-        limit_index = next_index + len(abstract_vis_params)
+        query_index = next_index + len(abstract_vis_params)
+        fanout_index = query_index + 1
         rows = await pool.fetch(
             f"""
+            WITH edge_rows AS (
             SELECT r.specific_goal_id::text AS specific_goal_id,
                    r.abstract_goal_id::text AS abstract_goal_id,
                    r.relation_type, r.status, r.confidence, r.provenance,
@@ -527,7 +543,9 @@ async def _route_goal_candidates(
                    n.scope_entity_id AS abstract_projected_scope_entity_id,
                    n.visibility::text AS abstract_projected_visibility,
                    n.owner_id AS abstract_projected_owner_id,
-                   n.home_shard_id AS abstract_home_shard_id
+                   n.home_shard_id AS abstract_home_shard_id,
+                   COALESCE(ts_rank_cd(s.search_tsv, to_tsquery('english', ${query_index}::text)), 0) AS specific_relevance,
+                   COALESCE(ts_rank_cd(n.search_tsv, to_tsquery('english', ${query_index}::text)), 0) AS abstract_relevance
             FROM goal_relations r
             JOIN goal_search_index s ON s.goal_id = r.specific_goal_id
             JOIN goal_search_index n ON n.goal_id = r.abstract_goal_id
@@ -543,15 +561,33 @@ async def _route_goal_candidates(
                AND s.scope_entity_id IS NOT DISTINCT FROM n.scope_entity_id
                AND COALESCE(r.scope_type, 'global') = COALESCE(s.scope_type, 'global')
                AND r.scope_entity_id IS NOT DISTINCT FROM s.scope_entity_id
-
-            ORDER BY r.specific_goal_id, r.abstract_goal_id
-            LIMIT ${limit_index}
+            ), sides AS (
+                SELECT e.*, e.specific_goal_id AS anchor_id, 'parents' AS side,
+                       e.abstract_goal_id AS neighbour_id, e.abstract_canonical_name AS neighbour_name,
+                       e.abstract_relevance AS neighbour_relevance
+                  FROM edge_rows e WHERE e.specific_goal_id::uuid = ANY($1::uuid[])
+                UNION ALL
+                SELECT e.*, e.abstract_goal_id, 'children',
+                       e.specific_goal_id, e.specific_canonical_name,
+                       e.specific_relevance
+                  FROM edge_rows e WHERE e.abstract_goal_id::uuid = ANY($1::uuid[])
+            ), ranked AS (
+                SELECT sides.*,
+                       row_number() OVER (PARTITION BY anchor_id, side
+                                          ORDER BY neighbour_relevance DESC, neighbour_name NULLS LAST, neighbour_id) AS side_rank,
+                       count(*) OVER (PARTITION BY anchor_id, side) AS side_total
+                  FROM sides
+            )
+            SELECT * FROM ranked
+             WHERE side_rank <= ${fanout_index}
+             ORDER BY anchor_id, side, side_rank
             """,
             anchor_ids,
             *relation_tenant_params,
             *specific_vis_params,
             *abstract_vis_params,
-            edge_limit + 1,
+            query_terms,
+            max_fanout,
         )
     except Exception as exc:
         meta.latency_ms["goal_hierarchy"] = (time.monotonic() - t0) * 1000
@@ -565,22 +601,31 @@ async def _route_goal_candidates(
 
     meta.latency_ms["goal_hierarchy"] = (time.monotonic() - t0) * 1000
     meta.counts["goal_hierarchy_input_relations"] = len(rows)
-    if len(rows) > edge_limit:
-        reason = "graph_edge_limit_reached"
-        meta.degrade("goal hierarchy edge limit reached")
-        meta.goal_routing = _hierarchy_flat_diagnostics(
-            anchors, (reason,), routing_config,
-            degraded_reasons=(reason,), details={"input_relation_count": len(rows), "truncated": True},
-        )
-        return anchors
     if not rows:
         meta.goal_routing = _hierarchy_flat_diagnostics(anchors, ("no_edges",), routing_config)
         return anchors
 
+    # The query already kept at most `max_fanout` neighbours per anchor and
+    # direction (most query-relevant first). Record where it had to cut, but keep
+    # what it kept: a large neighbourhood is bounded, never discarded.
+    truncated_sides = sorted({
+        (str(row["anchor_id"]), str(row["side"]), int(row["side_total"]))
+        for row in rows if int(row["side_total"]) > max_fanout
+    })
+    relevance: dict[str, float] = {}
+    seen_edges: set[tuple[str, str]] = set()
     relation_edges: list[dict[str, Any]] = []
     projections: dict[str, dict[str, Any]] = {}
     for raw in rows:
         row = dict(raw)
+        neighbour_id = str(row["neighbour_id"])
+        relevance[neighbour_id] = max(relevance.get(neighbour_id, 0.0), float(row["neighbour_relevance"] or 0.0))
+        edge_key = (str(row["specific_goal_id"]), str(row["abstract_goal_id"]))
+        if edge_key in seen_edges:  # an edge between two anchors is returned once per side
+            continue
+        seen_edges.add(edge_key)
+        for ranking_column in _HIERARCHY_RANKING_COLUMNS:
+            row.pop(ranking_column, None)
         specific = _hierarchy_projection(row, "specific")
         abstract = _hierarchy_projection(row, "abstract")
         projections[specific["goal_id"]] = specific
@@ -672,10 +717,17 @@ async def _route_goal_candidates(
         return anchors
 
     routing_diagnostics = routed.diagnostics.as_dict()
-    if routed.diagnostics.degraded or routed.diagnostics.truncated:
-        reason = "hierarchy_degraded" if routed.diagnostics.degraded else "hierarchy_truncated"
+    # Hitting a size limit (hops / fanout / candidate cap) is expected on a large
+    # DAG and only means the expansion is bounded. Only a real integrity problem
+    # (invalid or cyclic relations, anchors without ids) falls back to flat.
+    bounded_reasons = [r for r in routed.diagnostics.degraded_reasons if r in _HIERARCHY_BOUNDED_REASONS]
+    blocking_reasons = [r for r in routed.diagnostics.degraded_reasons if r not in _HIERARCHY_BOUNDED_REASONS]
+    if truncated_sides:
+        bounded_reasons.append("fanout_limit_reached")
+    if blocking_reasons:
+        reason = "hierarchy_degraded"
         fallback_reasons = [reason, *routing_diagnostics.get("fallback_reasons", [])]
-        degraded_reasons = [*routing_diagnostics.get("degraded_reasons", []), reason]
+        degraded_reasons = [*blocking_reasons, reason]
         for degraded_reason in degraded_reasons:
             meta.degrade(f"goal hierarchy {degraded_reason}")
         routing_diagnostics.update({
@@ -720,7 +772,22 @@ async def _route_goal_candidates(
             hierarchy=hierarchy,
         ))
 
+    # The judge budget (`rerank_top_k`) may be smaller than the bounded
+    # neighbourhood: judge the most query-relevant neighbours first, whichever
+    # direction they came from (stable sort keeps traversal order for ties).
+    graph_hits.sort(key=lambda hit: -relevance.get(hit.id, 0.0))
     meta.counts["goal_hierarchy_graph_candidates"] = len(graph_hits)
+    routing_diagnostics.update({
+        "degraded": False,
+        "degraded_reasons": [],
+        "truncated": bool(bounded_reasons),
+        "truncation_reasons": list(dict.fromkeys(bounded_reasons)),
+    })
+    if truncated_sides:
+        routing_diagnostics["truncated_sides"] = [
+            {"goal_id": goal_id, "direction": side, "kept": max_fanout, "available": total}
+            for goal_id, side, total in truncated_sides
+        ]
     meta.goal_routing = routing_diagnostics
     if cfg.include_hierarchy_paths:
         meta.goal_routing["paths"] = [hit.hierarchy for hit in graph_hits]

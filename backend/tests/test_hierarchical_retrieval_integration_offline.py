@@ -40,8 +40,18 @@ def _canonical(goal_id, name, version=1):
     }
 
 
-def _edge(specific, abstract, specific_name, abstract_name):
+def _edge(specific, abstract, specific_name, abstract_name, *, anchor="anchor", side_total=1, relevance=0.0):
+    # The hierarchy query returns each edge once per anchor side it touches,
+    # already bounded to `max_fanout` rows per side (side_total = visible count).
+    side, neighbour = ("parents", abstract) if specific == anchor else ("children", specific)
     return {
+        "anchor_id": anchor,
+        "side": side,
+        "neighbour_id": neighbour,
+        "neighbour_name": abstract_name if side == "parents" else specific_name,
+        "neighbour_relevance": relevance,
+        "side_rank": 1,
+        "side_total": side_total,
         "specific_goal_id": specific,
         "abstract_goal_id": abstract,
         "relation_type": "SPECIALIZES",
@@ -247,26 +257,123 @@ async def test_hierarchy_failure_returns_flat_results_with_diagnostics(monkeypat
 
 
 @pytest.mark.asyncio
-async def test_truncation_returns_flat_results_and_ambiguous_resolution_is_unchanged(monkeypatch):
+async def test_wide_neighbourhood_is_bounded_not_discarded(monkeypatch):
+    # An anchor with 17 children: the query keeps the 8 most relevant (side_total
+    # says 17 were visible). Those 8 still go through the contextual judge; the
+    # hierarchy is NOT thrown away because the neighbourhood was large.
     anchor = _anchor()
-    edges = [
-        _edge("anchor", f"child-{index}", "Anchor", f"Child {index}")
-        for index in range(17)
+    kept = [
+        _edge(f"child-{index}", "anchor", f"Child {index}", "Anchor", side_total=17)
+        for index in range(8)
     ]
-    pool = FakePool(edges)
+    pool = FakePool(kept)
+    rows = {"anchor": _canonical("anchor", "Anchor")}
+    rows.update({f"child-{index}": _canonical(f"child-{index}", f"Child {index}") for index in range(8)})
     captured = {}
-    _patched_flow(monkeypatch, retrieval.GoalSearchResult([anchor], [anchor], "matches"), captured)
+    _patched_flow(
+        monkeypatch, retrieval.GoalSearchResult([anchor], [anchor], "matches"), captured,
+        hydration=HydrationResult(rows=rows),
+    )
+    judge = _GraphJudge({"Child 3": "matches"})
 
-    truncated = await retrieval.find_best_way(
+    response = await retrieval.find_best_way(
         pool,
         "anchor task",
         scope=AccessScope.unrestricted(),
         pools=FakePools(),
+        judge=judge,
         record=False,
     )
-    assert [goal.id for goal in captured["goals"]] == ["anchor"]
-    assert truncated["retrieval"]["goal_routing"]["fallback_reasons"] == ["graph_edge_limit_reached"]
-    assert truncated["retrieval"]["goal_routing"]["truncated"] is True
+
+    assert [goal.id for goal in captured["goals"]] == ["anchor", "child-3"]
+    routing = response["retrieval"]["goal_routing"]
+    assert routing["mode"] == "hierarchical"
+    assert routing["used_flat_fallback"] is False
+    assert routing["truncated"] is True
+    assert routing["truncation_reasons"] == ["fanout_limit_reached"]
+    assert routing["truncated_sides"] == [
+        {"goal_id": "anchor", "direction": "children", "kept": 8, "available": 17},
+    ]
+    assert routing["degraded"] is False
+    assert routing["graph_judged"] == 8
+    assert response["retrieval"]["degraded"] is False
+    # the query itself bounds each side and ranks by relevance to the query
+    hierarchy_sql, hierarchy_params = pool.queries[0]
+    assert "row_number() OVER (PARTITION BY anchor_id, side" in hierarchy_sql
+    assert "side_rank <=" in hierarchy_sql
+    assert hierarchy_params[-1] == 8
+    assert hierarchy_params[-2] is not None  # the query's terms rank neighbours
+
+
+@pytest.mark.asyncio
+async def test_most_relevant_neighbours_are_judged_first_whatever_their_direction(monkeypatch):
+    # 9 neighbours but a judge budget of 8: the child most relevant to the query
+    # is judged even though parents are traversed first.
+    anchor = _anchor()
+    parents = [
+        _edge("anchor", f"parent-{index}", "Anchor", f"Parent {index}", relevance=0.0)
+        for index in range(8)
+    ]
+    best_child = _edge("child-best", "anchor", "Child Best", "Anchor", relevance=0.9)
+    pool = FakePool([*parents, best_child])
+    rows = {"anchor": _canonical("anchor", "Anchor"), "child-best": _canonical("child-best", "Child Best")}
+    rows.update({f"parent-{index}": _canonical(f"parent-{index}", f"Parent {index}") for index in range(8)})
+    captured = {}
+    _patched_flow(
+        monkeypatch, retrieval.GoalSearchResult([anchor], [anchor], "matches"), captured,
+        hydration=HydrationResult(rows=rows),
+    )
+    judge = _GraphJudge({"Child Best": "matches"})
+
+    response = await retrieval.find_best_way(
+        pool, "anchor task", scope=AccessScope.unrestricted(), pools=FakePools(), judge=judge, record=False,
+    )
+
+    assert [goal.id for goal in captured["goals"]] == ["anchor", "child-best"]
+    routing = response["retrieval"]["goal_routing"]
+    assert routing["graph_judged"] == 8
+    assert routing["graph_not_judged_beyond_budget"] == 1
+
+
+@pytest.mark.asyncio
+async def test_anchor_parent_and_child_both_matched_keeps_the_hierarchy(monkeypatch):
+    # Search matched both an abstract Goal and one of its specialisations. The
+    # one-hop limit is reached (each anchor's neighbour has further edges) --
+    # that bounds the walk, it must not switch the hierarchy off.
+    abstract = _anchor("abstract", "Abstract")
+    specific = _anchor("specific", "Specific")
+    edges = [
+        _edge("specific", "abstract", "Specific", "Abstract", anchor="specific"),
+        _edge("specific", "abstract", "Specific", "Abstract", anchor="abstract"),
+        _edge("sibling", "abstract", "Sibling", "Abstract", anchor="abstract"),
+        _edge("grandchild", "specific", "Grandchild", "Specific", anchor="specific"),
+    ]
+    pool = FakePool(edges)
+    rows = {goal_id: _canonical(goal_id, goal_id.title()) for goal_id in ("abstract", "specific", "sibling", "grandchild")}
+    captured = {}
+    _patched_flow(
+        monkeypatch, retrieval.GoalSearchResult([abstract, specific], [abstract, specific], "matches"), captured,
+        hydration=HydrationResult(rows=rows),
+    )
+    judge = _GraphJudge({"Sibling": "partial", "Grandchild": "matches"})
+
+    response = await retrieval.find_best_way(
+        pool, "task", scope=AccessScope.unrestricted(), pools=FakePools(), judge=judge, record=False,
+    )
+
+    assert {goal.id for goal in captured["goals"]} == {"abstract", "specific", "sibling", "grandchild"}
+    routing = response["retrieval"]["goal_routing"]
+    assert routing["mode"] == "hierarchical"
+    assert routing["used_flat_fallback"] is False
+    assert "hop_limit_reached" in routing["truncation_reasons"]
+    assert response["retrieval"]["degraded"] is False
+
+
+@pytest.mark.asyncio
+async def test_ambiguous_resolution_does_not_expand_the_hierarchy(monkeypatch):
+    anchor = _anchor()
+    pool = FakePool([_edge("child", "anchor", "Child", "Anchor")])
+    captured = {}
 
     async def unexpected_query(*args, **kwargs):
         raise AssertionError("ambiguous resolution must not query hierarchy")
@@ -288,3 +395,4 @@ async def test_truncation_returns_flat_results_and_ambiguous_resolution_is_uncha
     assert [goal.id for goal in captured["goals"]] == ["anchor"]
     assert unchanged["goal_resolution"]["status"] == "partial"
     assert unchanged["retrieval"]["goal_routing"]["fallback_reasons"] == ["semantic_resolution_not_matches"]
+    assert pool.queries == []
