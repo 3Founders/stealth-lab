@@ -69,6 +69,17 @@ export interface Goal extends Row {
   owner_id?: string | null;
   metadata?: Row;
   t_created?: string | null;
+  // Only on the `view=roots` browse listing.
+  browse_kind?: "root" | "standalone";
+  specific_count?: number;
+  specifics?: GoalSpecificPreview[];
+}
+
+export interface GoalSpecificPreview {
+  id: string;
+  canonical_name: string;
+  status?: string;
+  resolved_at?: string | null;
 }
 
 export interface GoalPage {
@@ -76,11 +87,14 @@ export interface GoalPage {
   has_more: boolean;
 }
 
+export type GoalView = "all" | "roots";
+
 export interface GoalListOptions {
   limit?: number;
   offset?: number;
   resolved?: GoalResolution;
   status?: string;
+  view?: GoalView;
 }
 
 export type GoalResolutionFilter = GoalResolution;
@@ -212,6 +226,7 @@ function goalQuery(options: GoalListOptions): string {
   params.set("offset", String(Math.max(0, options.offset ?? 0)));
   params.set("resolved", options.resolved ?? "all");
   if (options.status) params.set("status", options.status);
+  if (options.view === "roots") params.set("view", "roots");
   return params.toString();
 }
 

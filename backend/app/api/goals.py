@@ -72,16 +72,66 @@ async def list_goals_route(
     resolved: Optional[str] = Query(default="all"),
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
+    view: str = Query(
+        default="all",
+        pattern="^(all|roots)$",
+        description="`all` = flat list (newest first). `roots` = browse view: Goals with "
+        "no visible accepted parent -- roots of a hierarchy (with their direct "
+        "specifics) plus standalone Goals with no accepted edges.",
+    ),
     pool=Depends(get_pool), scope: AccessScope = Depends(get_scope),
 ) -> dict[str, Any]:
     resolved_value = getattr(resolved, "default", resolved)
     limit_value = getattr(limit, "default", limit)
     offset_value = getattr(offset, "default", offset)
+    view_value = getattr(view, "default", view)
+    if view_value == "roots":
+        goals, has_more = await pm.list_goals_browse(
+            pool, scope=scope, resolved=resolved_value, limit=limit_value, offset=offset_value,
+        )
+        return {"goals": goals, "has_more": has_more, "view": "roots"}
     goals, has_more = await pm.list_goals(
         pool, scope=scope, status=status, resolved=resolved_value,
         limit=limit_value, offset=offset_value,
     )
     return {"goals": goals, "has_more": has_more}
+
+
+@router.get("/choose")
+async def choose_goal_route(
+    q: str = Query(min_length=1, max_length=2000),
+    top_k: int = Query(default=5, ge=1, le=10),
+    pool=Depends(get_pool), scope: AccessScope = Depends(get_scope),
+) -> dict[str, Any]:
+    """The agent's "which Goal is this?" step, before submitting a Procedure.
+
+    Same three honest outcomes as MCP `find_ways` -- `resolved` (one Goal
+    clearly best), `ambiguous` (2+ too close to call, or only partial matches:
+    the caller picks or rephrases), `no_match` (nothing known; `proposed_goal`
+    is a skeleton, nothing is written). Both use `app.services.goal_choice`.
+    If no semantic judge answered, the reply is `unjudged` with lexical
+    candidates: a caller must never treat that as a confident choice."""
+    from app.services.embeddings import Embedder
+    from app.services.goal_choice import choose_goal
+
+    try:
+        choice = await choose_goal(pool, q, [], scope=scope, embedder=Embedder(), top_k=top_k)
+    except Exception:  # noqa: BLE001 -- embedder down: fall through to the lexical, labelled answer
+        choice = None
+    if choice is not None:
+        outcome, selected, payload = choice
+        return {"outcome": outcome, "selected_goal": selected, **payload}
+    goals, _more = await pm.find_goal(pool, q, scope=scope, limit=top_k)
+    return {
+        "outcome": "unjudged",
+        "selected_goal": None,
+        "goal_judgment": {"mode": "lexical_fallback", "reason": "no semantic judge answered"},
+        "candidates": [
+            {"goal": {"id": str(g["id"]), "canonical_name": g.get("canonical_name")}}
+            for g in goals
+        ],
+        "rationale": "no judge answered; these are lexical matches only -- pick one yourself",
+    }
 
 
 @router.get("/find")

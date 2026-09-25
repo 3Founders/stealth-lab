@@ -41,7 +41,9 @@ import asyncpg
 from app.services.access import (
     AccessScope,
     TenantScope,
+    next_tenant_param_index,
     scope_predicates,
+    tenant_predicate,
     tenant_transaction,
 )
 from app.services.procedure_extraction.capability import wilson_interval
@@ -217,6 +219,141 @@ async def list_goals(
     )
     ranked = _rank_goal_rows(rows, resolved=resolved)
     return ranked[:page_size], len(rows) > page_size
+
+
+BROWSE_SPECIFICS_PREVIEW = 6
+_LIVE_GOAL_STATUSES_SQL = "('active', 'candidate')"
+
+
+async def list_goals_browse(
+    pool: asyncpg.Pool, *, scope: AccessScope,
+    resolved: Optional[bool | str] = None, limit: int = 50, offset: int = 0,
+    tenant_scope: Optional[TenantScope] = None,
+) -> tuple[list[dict[str, Any]], bool]:
+    """The default way to browse Goals: the most abstract ones first.
+
+    An entry is a Goal with NO visible accepted parent. `browse_kind` says which:
+    "root" (>=1 visible accepted specific Goal beneath it) or "standalone" (no
+    accepted edges at all -- listed too, so a brand-new Goal never vanishes
+    just because placement hasn't attached it yet). Only `accepted`
+    SPECIALIZES edges count; proposed/rejected are non-routing evidence.
+
+    Visibility is applied to the EDGE ENDPOINTS as well as the Goal: a private
+    parent does not stop a Goal being a root for a viewer who can't see that
+    parent, and a private descendant contributes nothing to a public root's
+    `specific_count` or `specifics`. Nothing here reads or writes
+    `resolved_at` beyond the caller's own filter, so resolution never
+    propagates through the hierarchy.
+
+    Order is roots by how many Goals sit directly beneath them, then
+    standalone Goals, newest first. It is deliberately NOT abstraction_level
+    (levels are derived and equal depth is not equal category); direct count is
+    the cheap page-local proxy for component size.
+    """
+    if offset < 0:
+        raise ValueError("offset must be non-negative")
+    tenant = tenant_scope or TenantScope.unrestricted()
+    clauses = ["g.t_invalid IS NULL", f"g.status IN {_LIVE_GOAL_STATUSES_SQL}"]
+    resolution_sql = _resolution_clause(resolved)
+    if resolution_sql:
+        clauses.append(resolution_sql)
+    args: list[Any] = []
+    goal_sql, goal_params, idx = scope_predicates(scope, tenant, alias="g", param_index=1)
+    args.extend(goal_params)
+    clauses.append(goal_sql)
+    rel_sql, rel_params = tenant_predicate(tenant, alias="r", param_index=idx)
+    idx = next_tenant_param_index(tenant, idx)
+    args.extend(rel_params)
+    parent_sql, parent_params, idx = scope_predicates(scope, tenant, alias="pg", param_index=idx)
+    args.extend(parent_params)
+    child_sql, child_params, idx = scope_predicates(scope, tenant, alias="cg", param_index=idx)
+    args.extend(child_params)
+    page_size = min(max(int(limit), 1), 200)
+    limit_idx, offset_idx = idx, idx + 1
+    args.extend([page_size + 1, max(int(offset), 0)])
+
+    edge = (
+        "r.relation_type = 'SPECIALIZES' AND r.status = 'accepted' "
+        f"AND {{other}}.t_invalid IS NULL AND {{other}}.status IN {_LIVE_GOAL_STATUSES_SQL} "
+        "AND COALESCE(r.scope_type, 'global') = COALESCE(g.scope_type, 'global') "
+        "AND r.scope_entity_id IS NOT DISTINCT FROM g.scope_entity_id "
+        "AND COALESCE(r.scope_type, 'global') = COALESCE({other}.scope_type, 'global') "
+        "AND r.scope_entity_id IS NOT DISTINCT FROM {other}.scope_entity_id "
+        f"AND {rel_sql} AND {{other_vis}}"
+    )
+    parent_edge = edge.format(other="pg", other_vis=parent_sql)
+    child_edge = edge.format(other="cg", other_vis=child_sql)
+    rows = await pool.fetch(
+        f"""
+        WITH base AS (
+            SELECT {_GOAL_READ_COLUMNS},
+                   (SELECT count(*) FROM goal_relations r
+                      JOIN goals cg ON cg.id = r.specific_goal_id
+                     WHERE r.abstract_goal_id = g.id AND {child_edge}) AS specific_count,
+                   EXISTS (SELECT 1 FROM goal_relations r
+                      JOIN goals pg ON pg.id = r.abstract_goal_id
+                     WHERE r.specific_goal_id = g.id AND {parent_edge}) AS has_parent
+              FROM goals g
+             WHERE {' AND '.join(clauses)}
+        )
+        SELECT * FROM base WHERE NOT has_parent
+         ORDER BY (specific_count > 0) DESC, specific_count DESC, t_created DESC, id
+         LIMIT ${limit_idx} OFFSET ${offset_idx}
+        """,
+        *args,
+    )
+    page = rows[:page_size]
+    entries: list[dict[str, Any]] = []
+    for row in page:
+        entry = _public_goal_row(row)
+        entry.pop("has_parent", None)
+        count = int(row["specific_count"] or 0)
+        entry["specific_count"] = count
+        entry["browse_kind"] = "root" if count else "standalone"
+        entry["specifics"] = []
+        entries.append(entry)
+    root_ids = [str(e["id"]) for e in entries if e["specific_count"]]
+    if root_ids:
+        # Fresh predicate/param sequence: every placeholder here is used, and
+        # the child endpoint gets the same visibility + tenant + same-scope rules.
+        s_args: list[Any] = [root_ids]
+        s_rel_sql, s_rel_params = tenant_predicate(tenant, alias="r", param_index=2)
+        s_idx = next_tenant_param_index(tenant, 2)
+        s_args.extend(s_rel_params)
+        s_child_sql, s_child_params, s_idx = scope_predicates(scope, tenant, alias="cg", param_index=s_idx)
+        s_args.extend(s_child_params)
+        spec_rows = await pool.fetch(
+            f"""
+            SELECT root_id, id, canonical_name, status, resolved_at FROM (
+                SELECT r.abstract_goal_id::text AS root_id, cg.id::text AS id, cg.canonical_name,
+                       cg.status, cg.resolved_at,
+                       row_number() OVER (PARTITION BY r.abstract_goal_id
+                                          ORDER BY cg.canonical_name, cg.id) AS rn
+                  FROM goal_relations r
+                  JOIN goals g ON g.id = r.abstract_goal_id
+                  JOIN goals cg ON cg.id = r.specific_goal_id
+                 WHERE r.abstract_goal_id = ANY($1::uuid[])
+                   AND r.relation_type = 'SPECIALIZES' AND r.status = 'accepted'
+                   AND cg.t_invalid IS NULL AND cg.status IN {_LIVE_GOAL_STATUSES_SQL}
+                   AND COALESCE(r.scope_type, 'global') = COALESCE(g.scope_type, 'global')
+                   AND r.scope_entity_id IS NOT DISTINCT FROM g.scope_entity_id
+                   AND COALESCE(r.scope_type, 'global') = COALESCE(cg.scope_type, 'global')
+                   AND r.scope_entity_id IS NOT DISTINCT FROM cg.scope_entity_id
+                   AND {s_rel_sql} AND {s_child_sql}
+            ) t WHERE rn <= {BROWSE_SPECIFICS_PREVIEW}
+            ORDER BY root_id, rn
+            """,
+            *s_args,
+        )
+        by_root: dict[str, list[dict[str, Any]]] = {}
+        for spec in spec_rows:
+            by_root.setdefault(spec["root_id"], []).append({
+                "id": spec["id"], "canonical_name": spec["canonical_name"],
+                "status": spec["status"], "resolved_at": spec["resolved_at"],
+            })
+        for entry in entries:
+            entry["specifics"] = by_root.get(str(entry["id"]), [])
+    return entries, len(rows) > page_size
 
 
 async def find_goal(

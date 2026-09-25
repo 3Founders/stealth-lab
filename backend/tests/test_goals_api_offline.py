@@ -268,3 +268,67 @@ def test_create_goal_route_returns_near_matches_without_writing(monkeypatch):
     body = goals_api.GoalCreateBody(canonical_name="x", use_embeddings=False)
     result = _run(goals_api.create_goal_route(body, pool=object(), principal=PRINCIPAL))
     assert result["outcome"] == "near_matches"
+
+
+# --- view=roots + choose ------------------------------------------------
+
+def test_list_goals_route_view_roots_uses_the_browse_query(monkeypatch):
+    calls = {}
+
+    async def fake_browse(pool, *, scope, resolved, limit, offset):
+        calls["browse"] = (resolved, limit, offset)
+        return [{"id": "g1", "browse_kind": "root", "specific_count": 2, "specifics": []}], True
+
+    async def fail_flat(*a, **k):
+        raise AssertionError("view=roots must not use the flat list")
+
+    monkeypatch.setattr("app.api.goals.pm.list_goals_browse", fake_browse)
+    monkeypatch.setattr("app.api.goals.pm.list_goals", fail_flat)
+    result = _run(goals_api.list_goals_route(
+        status=None, resolved="unresolved", limit=20, offset=40, view="roots",
+        pool=object(), scope=AccessScope.anonymous(),
+    ))
+    assert calls["browse"] == ("unresolved", 20, 40)
+    assert result == {
+        "goals": [{"id": "g1", "browse_kind": "root", "specific_count": 2, "specifics": []}],
+        "has_more": True, "view": "roots",
+    }
+
+
+def test_list_goals_route_default_view_is_still_the_flat_list(monkeypatch):
+    async def fake_flat(pool, *, scope, status, resolved, limit, offset):
+        return [{"id": "g9"}], False
+
+    monkeypatch.setattr("app.api.goals.pm.list_goals", fake_flat)
+    result = _run(goals_api.list_goals_route(
+        status=None, resolved="all", limit=50, offset=0, view="all",
+        pool=object(), scope=AccessScope.anonymous(),
+    ))
+    assert result == {"goals": [{"id": "g9"}], "has_more": False}
+
+
+def test_choose_goal_route_passes_the_three_honest_outcomes_through(monkeypatch):
+    async def fake_choose(pool, query, facts, *, scope, embedder, top_k):
+        return "ambiguous", None, {"candidates": [{"goal": {"id": "a"}}, {"goal": {"id": "b"}}], "rationale": "tie"}
+
+    monkeypatch.setattr("app.services.goal_choice.choose_goal", fake_choose)
+    monkeypatch.setattr("app.services.embeddings.Embedder", lambda: object())
+    result = _run(goals_api.choose_goal_route(q="fix flaky test", top_k=5, pool=object(), scope=AccessScope.anonymous()))
+    assert result["outcome"] == "ambiguous" and result["selected_goal"] is None
+    assert [c["goal"]["id"] for c in result["candidates"]] == ["a", "b"]
+
+
+def test_choose_goal_route_never_claims_a_choice_when_no_judge_answered(monkeypatch):
+    async def no_judge(pool, query, facts, *, scope, embedder, top_k):
+        return None
+
+    async def lexical(pool, q, *, scope, limit):
+        return [{"id": "g1", "canonical_name": "Fix flaky test"}], False
+
+    monkeypatch.setattr("app.services.goal_choice.choose_goal", no_judge)
+    monkeypatch.setattr("app.services.embeddings.Embedder", lambda: object())
+    monkeypatch.setattr("app.api.goals.pm.find_goal", lexical)
+    result = _run(goals_api.choose_goal_route(q="flaky", top_k=5, pool=object(), scope=AccessScope.anonymous()))
+    assert result["outcome"] == "unjudged" and result["selected_goal"] is None
+    assert result["goal_judgment"]["mode"] == "lexical_fallback"
+    assert result["candidates"] == [{"goal": {"id": "g1", "canonical_name": "Fix flaky test"}}]

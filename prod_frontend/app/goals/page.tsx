@@ -4,7 +4,7 @@ import Link from "next/link";
 import AnimatedHeading from "@/components/AnimatedHeading";
 import StateNotice from "@/components/NotConnected";
 import { CATEGORIES, categoryOf, type Category } from "@/lib/mock-adapter";
-import { getGoals, type Goal, type GoalPage, type GoalResolution } from "@/lib/kel-api";
+import { getGoals, type Goal, type GoalPage, type GoalResolution, type GoalView } from "@/lib/kel-api";
 import { goalResolutionLabel, rankingExplanation, splitGoalsByResolution } from "@/lib/goal-display";
 import type { ApiState } from "@/lib/api";
 
@@ -15,27 +15,35 @@ const resolutionFilters: { key: GoalResolution; label: string }[] = [
   { key: "resolved", label: "Resolved" },
 ];
 
+const viewOptions: { key: GoalView; label: string }[] = [
+  { key: "roots", label: "Browse" },
+  { key: "all", label: "All goals" },
+];
+
 export default function GoalsPage() {
   const [state, setState] = useState<ApiState<GoalPage>>({ kind: "loading" });
   const [resolution, setResolution] = useState<GoalResolution>("all");
   const [offset, setOffset] = useState(0);
   const [cat, setCat] = useState<Category>("All");
+  const [view, setView] = useState<GoalView>("roots");
 
   useEffect(() => {
     const ac = new AbortController();
     let active = true;
-    getGoals({ limit: PAGE_SIZE, offset, resolved: resolution }, ac.signal).then((response) => {
+    getGoals({ limit: PAGE_SIZE, offset, resolved: resolution, view }, ac.signal).then((response) => {
       if (active) setState(response);
     });
     return () => {
       active = false;
       ac.abort();
     };
-  }, [offset, resolution]);
+  }, [offset, resolution, view]);
 
   const goals = state.kind === "ok" ? state.data.goals : [];
   const split = useMemo(() => splitGoalsByResolution(goals), [goals]);
-  const sections = resolution === "all"
+  const sections = view === "roots"
+    ? [{ key: "browse", label: "Goals", goals }]
+    : resolution === "all"
     ? [
         { key: "unresolved", label: "Unresolved goals", goals: split.unresolved },
         { key: "resolved", label: "Resolved goals", goals: split.resolved },
@@ -60,6 +68,22 @@ export default function GoalsPage() {
       </section>
 
       <section className="frame grid" style={{ paddingBottom: 120, rowGap: 40 }}>
+        <nav className="tabs" aria-label="Goal view">
+          {viewOptions.map((option) => (
+            <button
+              key={option.key}
+              type="button"
+              aria-pressed={view === option.key}
+              onClick={() => {
+                setView(option.key);
+                setOffset(0);
+              }}
+            >
+              {option.label}
+            </button>
+          ))}
+        </nav>
+
         <nav className="tabs" aria-label="Goal resolution">
           {resolutionFilters.map((filter) => (
             <button
@@ -108,6 +132,13 @@ export default function GoalsPage() {
                                 <h3>{goal.canonical_name}</h3>
                                 {goal.description && <p className="desc">{goal.description}</p>}
                                 <div className="meta">
+                                  {view === "roots" && (
+                                    <span>
+                                      {goal.browse_kind === "root"
+                                        ? `Has ${goal.specific_count ?? 0} specific goal${goal.specific_count === 1 ? "" : "s"}`
+                                        : "Standalone"}
+                                    </span>
+                                  )}
                                   <span>{goalResolutionLabel(goal)}</span>
                                   <span>{categoryOf(goal)}</span>
                                   {goal.created_by && <span>contributed by {goal.created_by}</span>}
@@ -116,6 +147,22 @@ export default function GoalsPage() {
                               </div>
                               <span className="caption dim" aria-hidden="true">→</span>
                             </Link>
+                            {view === "roots" && goal.browse_kind === "root" && (goal.specifics?.length ?? 0) > 0 && (
+                              <ul className="small dim" aria-label={`Specific goals under ${goal.canonical_name}`} style={{ margin: "4px 0 12px 48px", display: "flex", gap: 12, flexWrap: "wrap", listStyle: "none", padding: 0 }}>
+                                {goal.specifics!.map((specific) => (
+                                  <li key={specific.id}>
+                                    <Link href={`/goals/${specific.id}`} style={{ textDecoration: "underline" }}>{specific.canonical_name}</Link>
+                                  </li>
+                                ))}
+                                {(goal.specific_count ?? 0) > goal.specifics!.length && (
+                                  <li>
+                                    <Link href={`/goals/${goal.id}`} style={{ textDecoration: "underline" }}>
+                                      +{(goal.specific_count ?? 0) - goal.specifics!.length} more
+                                    </Link>
+                                  </li>
+                                )}
+                              </ul>
+                            )}
                           </li>
                         );
                       })}

@@ -114,6 +114,15 @@ describe("kel-api economy fetchers — real endpoints, real params", () => {
     expect(findPath).toBe("/v1/goals/find?q=find%20references&limit=5&offset=10&resolved=resolved");
   });
 
+  it("getGoals sends view=roots only when asked, and never for find", async () => {
+    vi.resetModules();
+    const { getGoals } = await import("@/lib/kel-api");
+    const roots = await capturedPath(() => getGoals({ limit: 50, offset: 0, resolved: "all", view: "roots" }));
+    const flat = await capturedPath(() => getGoals({ limit: 50, offset: 0, resolved: "all", view: "all" }));
+    expect(roots).toBe("/v1/goals?limit=50&offset=0&resolved=all&view=roots");
+    expect(flat).toBe("/v1/goals?limit=50&offset=0&resolved=all");
+  });
+
   it("strips client provenance and visibility from contribution payloads", async () => {
     vi.resetModules();
     const fetchMock = vi.fn()

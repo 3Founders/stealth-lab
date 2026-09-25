@@ -148,15 +148,17 @@ goes to the contributor of the verifying Procedure, or back to committers.
 - **Done when:** e2e test with a diamond (C→A, C→B, A→R, B→R) shows one event on
   C counted once on R; a private descendant contributes nothing to public R.
 
-### 9. Root / top-level Goal discovery
-- `GET /v1/goals/roots`: Goals with **no accepted parents and ≥1 accepted
-  descendant** (roots of meaningful components), visible to the caller,
-  ranked by component size / aggregated demand (item 8) — **never sorted by
-  abstraction_level** and never treating equal depth as equal category.
-- prod_frontend page (e.g. `/goals/explore`) linking into the hierarchy
-  (multiple parents; not presented as a single tree).
-- **Done when:** endpoint + page + tests (orphans excluded, private components
-  excluded for anonymous viewers).
+### 9. Root / top-level Goal discovery — DONE as the default browse view
+- Decision (owner): no separate discovery page. `/goals` defaults to the most
+  abstract Goals; `GET /v1/goals?view=roots` returns Goals with **no visible
+  accepted parent** — `browse_kind: "root"` (>=1 visible accepted specific, with
+  up to 6 direct `specifics` and `specific_count`) or `"standalone"` (no
+  accepted edges, so a new Goal never vanishes before placement). "All goals"
+  toggle keeps the flat list. Ordered by direct specific count, then newest —
+  never by abstraction level. Private parents/descendants never leak counts or
+  names (endpoints are visibility-filtered). `product_model.list_goals_browse`,
+  `tests/test_goals_browse_e2e.py`.
+- Still open: order by aggregated demand once item 8 exists.
 
 ### 10. Review queue for proposed hierarchy edges
 **Why:** low-confidence placements are stored as `proposed`; nothing promotes or

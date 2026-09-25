@@ -70,7 +70,9 @@ from pydantic import AnyHttpUrl
 from app.db.session import create_pool
 from app.execution import durable_resume as _dres
 from app.execution import durable_run as _dr
-from app.services.access import AccessScope, visibility_predicate
+from datetime import timedelta
+
+from app.services.access import AccessScope, TenantScope, visibility_predicate
 from app.services.applicability import verified_procedure_candidates
 from app.services.authn import (
     FetchingJwks,
@@ -441,8 +443,12 @@ _V1_INSTRUCTIONS = (
     "one-line pointer to a subagent, and check each step's proof. 3) "
     "report_discovery(...) anything you had to fix or found a better way to "
     "do -- it's saved privately and comes back through "
-    "stealth://procedures/{procedure_id}/claims next time. Reads need no "
-    "token; report_discovery needs a signed-in user."
+    "stealth://procedures/{procedure_id}/claims next time. 4) If find_ways "
+    "found no good way (or a clearly better one), submit_way(goal_id, ...) "
+    "proposes yours for that Goal -- pick goal_id from find_ways' resolved or "
+    "ambiguous candidates; it enters human review, it is never live or "
+    "verified on submission. Reads need no token; report_discovery and "
+    "submit_way need a signed-in user."
 )
 _V2_INSTRUCTIONS = (
     "Retrieval, Goal/Procedure, and knowledge-graph "
@@ -498,7 +504,7 @@ _TOOL_SCOPES: dict[str, str] = {
         "submit_procedure", "create_goal", "report_execution", "record_run_update", "record_stealth_edit",
         "declare_file_intent", "report_node_progress", "commit_local_sync", "init_workspace",
         "open_exploration", "close_exploration", "verify_completion", "unsync_local_project",
-        "report_discovery")},
+        "report_discovery", "submit_way")},
     **{n: _acx.INGESTION_SUBMIT for n in ("ingest_trajectory", "run_semantic_extraction", "reextract_trajectory")},
     **{n: _EXEC for n in (
         "find_best_way", "reproduce_procedure", "continue_run",
@@ -520,7 +526,7 @@ def _enforce_tool_scope(tool_name: str) -> None:
         raise PermissionError(f"forbidden: tool {tool_name!r} requires scope {needed!r}")
 
 
-V1_TOOLS: frozenset[str] = frozenset({"find_ways", "report_discovery"})
+V1_TOOLS: frozenset[str] = frozenset({"find_ways", "report_discovery", "submit_way"})
 
 
 def surface_includes(tool_name: str, surface: str = None) -> bool:  # type: ignore[assignment]
@@ -3887,82 +3893,17 @@ async def find_ways(
     }, default=str)
 
 
-# Two judged "matches" closer than this in confidence are a tie: find_ways
-# reports "ambiguous" rather than picking one.
-_FIND_WAYS_CONFIDENCE_MARGIN = 0.1
-
-
-def _judged_goal_candidate(hit: Any) -> dict:
-    candidate = {
-        "goal": {"id": hit.id, "canonical_name": hit.name},
-        "score": hit.confidence,
-        "rationale": f"judge relation={hit.relation} confidence={hit.confidence}",
-    }
-    if getattr(hit, "hierarchy", None) is not None:
-        candidate["hierarchy"] = hit.hierarchy
-    return candidate
+from app.services.goal_choice import (  # noqa: E402 -- shared with the REST API
+    CONFIDENCE_MARGIN as _FIND_WAYS_CONFIDENCE_MARGIN,
+    choose_goal as _find_ways_goal_choice_impl,
+    judged_goal_candidate as _judged_goal_candidate,
+)
 
 
 async def _find_ways_goal_choice(
     pool: Any, query: str, facts: list, *, scope: Any, embedder: Any, top_k: int,
 ) -> Optional[tuple[str, Optional[dict], dict]]:
-    """Canonical Goal choice for find_ways. Returns None when no semantic judge
-    answered (the caller then uses the lexical fallback and says so)."""
-    from app.services import retrieval_service as rs
-
-    cfg = rs.RetrievalConfig()
-    meta = rs.RetrievalMeta()
-    judge = rs.default_judge()
-    # Repo facts are request-scoped: they only enter the judge's context text.
-    # The working set is chosen by overlap (no per-fact embedding calls).
-    local_claims = [{"id": f["claim_id"], "statement": f["statement"]} for f in facts]
-    try:
-        ctx = await rs.build_query_context(query, local_claims, embedder=None, cfg=cfg)
-        found = await rs.search_goals(pool, ctx, scope=scope, embedder=embedder, judge=judge, cfg=cfg, meta=meta)
-        routed = await rs._route_goal_candidates(
-            pool, found, scope=scope, cfg=cfg, meta=meta, ctx=ctx, judge=judge,
-        )
-    except Exception:  # noqa: BLE001 -- the lexical path still answers; the reply records the fallback
-        import logging
-        logging.getLogger(__name__).warning("find_ways canonical goal choice failed; using lexical fallback", exc_info=True)
-        return None
-    if found.resolution == "unjudged":
-        return None
-    judgment = {
-        "mode": "contextual",
-        "resolution": found.resolution,
-        "providers": list(meta.providers),
-        "degraded_reasons": list(meta.degraded_reasons),
-        "local_claim_ids": ctx.claim_ids,
-        "hierarchy": meta.goal_routing,
-        "related_goals": [
-            _judged_goal_candidate(hit) for hit in routed if getattr(hit, "hierarchy", None) is not None
-        ],
-    }
-    resolved = list(found.resolved)
-    if found.resolution == "matches" and resolved:
-        top = resolved[0]
-        runner_up = resolved[1] if len(resolved) > 1 else None
-        if runner_up is None or (top.confidence or 0) - (runner_up.confidence or 0) >= _FIND_WAYS_CONFIDENCE_MARGIN:
-            return "resolved", {"id": top.id, "canonical_name": top.name}, {"goal_judgment": judgment}
-        return "ambiguous", None, {
-            "goal_judgment": judgment,
-            "candidates": [_judged_goal_candidate(hit) for hit in resolved[:top_k]],
-            "rationale": "two or more Goals match this request about equally well -- pick one or rephrase",
-        }
-    if found.resolution == "partial" and resolved:
-        return "ambiguous", None, {
-            "goal_judgment": judgment,
-            "candidates": [_judged_goal_candidate(hit) for hit in resolved[:top_k]],
-            "rationale": "known Goals only partly cover this request (broader, narrower or overlapping)",
-        }
-    return "no_match", None, {
-        "goal_judgment": judgment,
-        "candidates": [],
-        "proposed_goal": {"canonical_name": query.strip()[:200], "description": None, "scope_type": "global",
-                          "scope_entity_id": None},
-        "rationale": "no known Goal matches this request in context -- propose a new Goal for review",
-    }
+    return await _find_ways_goal_choice_impl(pool, query, facts, scope=scope, embedder=embedder, top_k=top_k)
 
 
 DISCOVERY_KINDS = frozenset({"fix", "missing_step", "precondition", "better_way", "correction", "filled_gap"})
@@ -4058,6 +3999,123 @@ async def report_discovery(
         "procedure_id": stable_id, "step_order": step_order, "kind": kind,
         "redacted": bool(matched),
         "next": f"returned by stealth://procedures/{stable_id}/claims for you; sharing/verification/credits are v2",
+    }, default=str)
+
+
+_WAY_MAX_STEPS = 50
+_WAY_TEXT_MAX = 4000
+_WAY_TOTAL_MAX = 64_000
+_WAY_PATH = "mcp/submit_way"
+
+
+@server.tool()
+async def submit_way(
+    goal_id: str, name: str, steps_json: str, rationale: str,
+    preconditions_json: str, expected_outcome_json: str, ctx: Context,
+    submission_type: str = "new", parent_procedure_id: Optional[str] = None,
+) -> str:
+    """
+    Propose a way to achieve a Goal. Use it when find_ways found no good way,
+    or you carried out a better one. Choose `goal_id` from find_ways' `resolved`
+    Goal or one of its `ambiguous` candidates -- never invent one; a `no_match`
+    means the Goal doesn't exist yet and a person creates it first.
+
+    Nothing you submit goes live. It is recorded as a submission that a
+    human reviewer must accept; only then does it count for Credits, and it
+    becomes "verified" only through real, evidenced reuse -- never by being
+    submitted, never by an agent's own say-so. Requires a signed-in user;
+    your identity comes from the token, not from any argument.
+
+    steps_json: JSON array, 1-50 steps, each a plain-language string or
+      {"order": int, "goal": str}. Say what to do and how to tell it worked.
+    rationale: why this works (required, plain sentences).
+    preconditions_json: required, a non-empty JSON array of
+      {"subject","predicate","value"} facts that must hold for this to apply
+      (same shape the website form uses).
+    expected_outcome_json: required, a non-empty JSON object describing the
+      success state.
+    submission_type: "new", or "improvement" (then parent_procedure_id, the
+      version row id of the Procedure you improve, is required).
+
+    Returns the submission id and its status: `candidate` (passed the
+    automated checks) or `needs_review` (flagged -- duplicate of an existing
+    way, missing pieces, or a conflict of interest); either way a reviewer
+    decides. Limits: 10 submissions per hour per user; secrets in the text
+    are redacted before storage.
+    """
+    from app.economy import constants as econ
+    from app.economy import submissions as submissions_service
+    from app.services.governance import RateLimit, RateLimiter, RateLimitExceeded
+    from app.services.trace_redaction import redact_value
+
+    scope = _caller_access_scope()
+    if not scope.viewer_id:
+        return "REFUSED: sign in to contribute -- submit_way needs a real user identity"
+
+    def _load(text: str, label: str, kind: type):
+        try:
+            value = json.loads(text)
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"{label} must be valid JSON ({exc})") from exc
+        if not isinstance(value, kind):
+            raise ValueError(f"{label} must be a JSON {'array' if kind is list else 'object'}")
+        return value
+
+    try:
+        if len(steps_json) + len(preconditions_json) + len(expected_outcome_json) + len(rationale) > _WAY_TOTAL_MAX:
+            raise ValueError(f"submission is larger than {_WAY_TOTAL_MAX} characters")
+        steps = _load(steps_json, "steps_json", list)
+        preconditions = _load(preconditions_json, "preconditions_json", list)
+        expected_outcome = _load(expected_outcome_json, "expected_outcome_json", dict)
+        if not 1 <= len(steps) <= _WAY_MAX_STEPS:
+            raise ValueError(f"steps_json needs 1-{_WAY_MAX_STEPS} steps")
+        for step in steps:
+            text = step if isinstance(step, str) else (step.get("goal") if isinstance(step, dict) else None)
+            if not isinstance(text, str) or not text.strip():
+                raise ValueError('each step must be a non-empty string or {"order": int, "goal": str}')
+            if len(text) > _WAY_TEXT_MAX:
+                raise ValueError(f"a step is longer than {_WAY_TEXT_MAX} characters")
+        if len(name) > 200 or len(rationale) > _WAY_TEXT_MAX:
+            raise ValueError("name (200) or rationale (4000) is too long")
+    except ValueError as exc:
+        return f"REFUSED: {exc}"
+
+    matched: list[str] = []
+    payload = redact_value({
+        "name": name.strip(), "rationale": rationale.strip(), "steps": steps,
+        "preconditions": preconditions, "expected_outcome": expected_outcome,
+    }, matched)
+
+    pool = ctx.request_context.lifespan_context["pool"]
+    limit = RateLimit(max_requests=econ.SUBMISSION_RATE_LIMIT_MAX,
+                      window=timedelta(hours=econ.SUBMISSION_RATE_LIMIT_WINDOW_HOURS))
+    try:
+        await RateLimiter(pool, limits={_WAY_PATH: limit}).check_and_record(f"user:{scope.viewer_id}", _WAY_PATH)
+    except RateLimitExceeded as exc:
+        return f"REFUSED: rate limit -- retry in {exc.retry_after_seconds}s ({exc})"
+
+    org_ids = tuple(scope.org_ids or ())
+    tenant_scope = TenantScope.for_tenant(org_ids[0]) if org_ids else TenantScope.commons()
+    try:
+        row = await submissions_service.create_procedure_submission(
+            pool, goal_id=goal_id, submission_type=submission_type,
+            parent_procedure_row_id=parent_procedure_id, actor_subject=scope.viewer_id,
+            access_scope=scope, tenant_scope=tenant_scope, **payload,
+        )
+    except ValueError as exc:
+        return f"REFUSED: {exc}"
+
+    layer1 = row.get("layer1_result")
+    if isinstance(layer1, str):
+        layer1 = json.loads(layer1)
+    return json.dumps({
+        "submission_id": str(row["id"]), "goal_id": str(row["goal_id"]),
+        "procedure_row_id": str(row["procedure_row_id"]) if row.get("procedure_row_id") else None,
+        "status": row["status"], "status_reason": row.get("status_reason"),
+        "automated_check_issues": (layer1 or {}).get("issues", []),
+        "redacted": bool(matched),
+        "next": "A human reviewer decides; nothing is live or verified until then. "
+                "Track it at GET /v1/economy/procedure-submissions/{submission_id}.",
     }, default=str)
 
 
