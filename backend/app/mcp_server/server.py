@@ -3906,6 +3906,14 @@ async def _find_ways_impl(
 
     goal_id = selected_goal["id"]
     resolve_context: dict = {"current_scope": current_scope}
+    # Procedures go through THE shared tier (retrieval_service): hard constraints ->
+    # contextual Procedure JEV/NLI against the request + its repo facts ->
+    # evidence-aware selection. The facts stay request-scoped (never stored).
+    from app.services import retrieval_service as _rs
+
+    resolve_context["_query_context"] = await _rs.build_query_context(
+        query, [{"id": f["claim_id"], "statement": f["statement"]} for f in facts], embedder=None)
+    resolve_context["_judge"] = _rs.default_judge()
     selector = None
     if facts:
         judge = None

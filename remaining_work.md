@@ -218,7 +218,17 @@ is a **no-op** that returns `audited: True`.
 
 ## P2 — correctness and tech debt
 
-### 14. Two Procedure-selection paths (consolidate or declare authority)
+### 14. Two Procedure-selection paths -- DONE (one authoritative tier)
+- `retrieval_service._rank_procedure_candidates` is THE Procedure tier: hard
+  constraints -> contextual Procedure JEV/NLI (query + local Claims) ->
+  evidence-aware selection. REST `retrieve_procedures` (projection search) and
+  MCP `find_ways` (`rank_goal_procedures`: every Procedure of the chosen Goal)
+  only differ in candidate generation. `RepoFactsProcedureSelector` remains a
+  filter after the tier. `tests/test_procedure_tier_agreement_e2e.py` proves the
+  two doors agree. `ProcedureRankingService` is no longer a runtime selector
+  (economy ranking only).
+
+#### (history) Two Procedure-selection paths (consolidate or declare authority)
 - REST / `find_best_way`: `retrieval_service.retrieve_procedures` (hard
   constraints → `task_procedure` judge → Wilson-LCB Pareto).
 - MCP `find_ways`: `app/execution/goal_resolution.resolve_goal` +

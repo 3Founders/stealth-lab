@@ -27,8 +27,6 @@ from typing import Any, Literal, Optional
 import asyncpg
 
 from app.services.access import AccessScope
-from app.services.applicability import _CANDIDATE_BASE_WHERE, PROCEDURE_COLS_NO_HEAVY, check_hard_constraints
-from app.services.goal_ranking import ProcedureRankingService
 from app.services.goals import normalize_goal_name
 from app.services.routed_reads import fetch_goal
 
@@ -115,83 +113,42 @@ async def resolve_goal_id_for_text(
 
 async def _feasible_procedures_for_goal(
     pool: asyncpg.Pool, goal_id: str, *, current_scope: dict, access_scope: AccessScope,
+    goal_name: str = "", depth: int = 0, context: Optional[dict] = None,
 ) -> list[tuple[dict, bool]]:
-    """Real Procedures whose `achieves_goal_id` names this Goal
-    (backend/db/83_goals.sql's own FK, `ingestion` lane), each real-
-    feasibility-checked via `applicability.py`'s own non-compensatory
-    hard-constraint cascade -- never a second applicability mechanism.
+    """Procedures that achieve exactly this Goal, in the order of THE Procedure
+    tier every door shares (`retrieval_service.rank_goal_procedures`): hard
+    constraints -> contextual Procedure JEV/NLI -> evidence-aware selection.
+    Returns [(row, applicable)]: applicable rows first in that order, then the
+    ones the hard constraints or a firm `not_applicable` verdict excluded.
 
-    `require_verified=False`: a Goal->Procedure link here is a real,
-    structural fact (the `achieves_goal_id` FK itself), not automatic
-    candidate SEARCH the cold-start gate exists to guard (ticket 13's
-    own "explicit invocation" posture -- this compiler already knows
-    exactly which Procedures claim to achieve this Goal; it is not
-    fishing through the whole corpus by similarity).
+    `context["_query_context"]` (the request + its repo facts) and
+    `context["_judge"]` switch on the contextual judgment; without them the
+    order is the tier's deterministic tie-break (verified first, then newest).
+    A sub-Goal is judged against its own name with the same request-scoped facts.
     """
-    from app.services.routed_reads import fetch_goal_procedures
+    from app.services import retrieval_service as rs
 
-    # A Goal's Procedures usually share its shard but are not guaranteed to
-    # (rollover): locate them through the projection and read only the shards
-    # that hold them, instead of asking every shard.
-    rows = await fetch_goal_procedures(
-        pool, [goal_id], columns=PROCEDURE_COLS_NO_HEAVY, where=_CANDIDATE_BASE_WHERE,
+    context = context or {}
+    root_ctx = context.get("_query_context")
+    node_ctx = root_ctx
+    if root_ctx is not None and depth > 0 and goal_name:
+        text = goal_name + root_ctx.text[len(root_ctx.query):] if root_ctx.text.startswith(root_ctx.query) else goal_name
+        node_ctx = rs.QueryContext(query=goal_name, claims=root_ctx.claims, text=text)
+    result = await rs.rank_goal_procedures(
+        pool, goal_id, node_ctx, scope=access_scope, judge=context.get("_judge") if node_ctx is not None else None,
+        meta=context.get("_retrieval_meta"), current_scope=current_scope,
     )
-    rows = sorted(rows, key=lambda r: (r["verification_state"] != "verified", -r["t_created"].timestamp()))[:20]
-    results: list[tuple[dict, bool]] = []
-    for row in rows:
-        proc = dict(row)
-        result = await check_hard_constraints(
-            pool, proc, current_scope=current_scope, access_scope=access_scope, require_verified=False,
-        )
-        results.append((proc, result.applicable))
-    return results
-
-
-async def _rank_feasible_procedures(
-    pool: asyncpg.Pool,
-    feasible: list[dict],
-    *,
-    current_scope: dict,
-    access_scope: AccessScope,
-) -> list[dict]:
-    if len(feasible) < 2:
-        return feasible
-    try:
-        service = ProcedureRankingService(
-            pool,
-            scope=access_scope,
-            current_scope=current_scope,
-            require_verified=False,
-        )
-        procedure_ids = [str(proc["id"]) for proc in feasible]
-        ranker = getattr(service, "rank_for_goal", None)
-        if not callable(ranker):
-            ranker = service.rank
-        ranked = await ranker(procedure_ids)
-    except Exception:
-        return feasible
-    if not isinstance(ranked, (list, tuple)) or not ranked:
-        return feasible
-    ranks: dict[str, int] = {}
-    for position, result in enumerate(ranked):
-        if not isinstance(result, dict):
-            return feasible
-        row_id = result.get("procedure_row_id") or result.get("id")
-        if row_id is None:
-            continue
-        raw_rank = result.get("rank")
-        try:
-            rank = int(raw_rank) if raw_rank is not None else position + 1
-        except (TypeError, ValueError):
-            rank = position + 1
-        ranks.setdefault(str(row_id), rank)
-    if not ranks:
-        return feasible
-    fallback_rank = max(ranks.values()) + 1
-    return sorted(
-        feasible,
-        key=lambda proc: ranks.get(str(proc["id"]), fallback_rank),
+    ordered = []
+    if result.selected is not None:
+        ordered.append(result.selected)
+    ordered.extend(item for item in result.ranked if item is not result.selected)
+    applicable_ids = {str(item["id"]) for item in ordered}
+    out: list[tuple[dict, bool]] = [(item["_row"], True) for item in ordered]
+    out.extend(
+        (diagnostic.procedure, False) for diagnostic in result.diagnostics
+        if str(diagnostic.procedure["id"]) not in applicable_ids
     )
+    return out
 
 
 def _procedure_cost_score(proc: dict) -> Optional[float]:
@@ -361,11 +318,11 @@ async def resolve_goal(
 
     # Procedure decomposition path
     current_scope = context.get("current_scope") or {}
-    candidates = await _feasible_procedures_for_goal(pool, goal_id, current_scope=current_scope, access_scope=scope)
-    feasible = [p for p, ok in candidates if ok]
-    feasible = await _rank_feasible_procedures(
-        pool, feasible, current_scope=current_scope, access_scope=scope,
+    candidates = await _feasible_procedures_for_goal(
+        pool, goal_id, current_scope=current_scope, access_scope=scope,
+        goal_name=goal_name, depth=depth, context=context,
     )
+    feasible = [p for p, ok in candidates if ok]   # already in the shared tier's order
     # Sec 11 cost-routing hook (real, inert -- see _procedure_cost_score's
     # own docstring): called so it is exercised/discoverable, but its
     # result does not affect the central ranking or selection today.

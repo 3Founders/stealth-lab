@@ -158,7 +158,7 @@ class _Pool:
 
 
 def _patch_feasible(monkeypatch, procs):
-    async def fake_feasible(pool, goal_id, *, current_scope, access_scope):
+    async def fake_feasible(pool, goal_id, *, current_scope, access_scope, **_kwargs):
         return [(p, True) for p in procs]
 
     async def fake_children(pool, goal, proc, **kw):

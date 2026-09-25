@@ -149,7 +149,7 @@ def _bound_proc(pid="P-1"):
 def test_one_step_procedure_resolves_to_a_bound_step_leaf(monkeypatch):
     pool = _FakePool({"G-1": _goal("G-1", "find references", verification_requirement={"method": "deterministic_check", "command": "true"})})
 
-    async def fake_feasible(pool, goal_id, *, current_scope, access_scope):
+    async def fake_feasible(pool, goal_id, *, current_scope, access_scope, **_kwargs):
         return [(_bound_proc(), True)]
     monkeypatch.setattr(gr, "_feasible_procedures_for_goal", fake_feasible)
     node = _run(gr.resolve_goal(pool, "G-1", scope=SCOPE))
@@ -163,7 +163,7 @@ def test_one_step_procedure_resolves_to_a_bound_step_leaf(monkeypatch):
 def test_bound_step_wins_over_a_goal_text_match(monkeypatch):
     pool = _FakePool({"G-1": _goal("G-1", "x")})
 
-    async def fake_feasible(pool, goal_id, *, current_scope, access_scope):
+    async def fake_feasible(pool, goal_id, *, current_scope, access_scope, **_kwargs):
         return [(_bound_proc(), True)]
 
     async def boom(*a, **k):
@@ -190,7 +190,7 @@ def test_procedure_decomposes_into_child_goals(monkeypatch):
         "G-child": _goal("G-child", "regenerate bindings"),
     })
 
-    async def fake_feasible(pool, goal_id, *, current_scope, access_scope):
+    async def fake_feasible(pool, goal_id, *, current_scope, access_scope, **_kwargs):
         if goal_id == "G-parent":
             return [({
                 "id": "P-1", "procedure_id": "P-1", "name": "modify-generated-api", "version": 1,
@@ -222,7 +222,7 @@ def test_procedure_node_keeps_real_alternate_feasible_procedures(monkeypatch):
     proc_a = {"id": "P-1", "procedure_id": "P-1", "name": "strategy-a", "version": 1, "steps": []}
     proc_b = {"id": "P-2", "procedure_id": "P-2", "name": "strategy-b", "version": 1, "steps": []}
 
-    async def fake_feasible(pool, goal_id, *, current_scope, access_scope):
+    async def fake_feasible(pool, goal_id, *, current_scope, access_scope, **_kwargs):
         return [(proc_a, True), (proc_b, True)]
     monkeypatch.setattr(gr, "_feasible_procedures_for_goal", fake_feasible)
 
@@ -231,82 +231,63 @@ def test_procedure_node_keeps_real_alternate_feasible_procedures(monkeypatch):
     assert [p["name"] for p in node.procedure_alternates] == ["strategy-b"]
 
 
-def test_resolution_ranks_feasible_procedures_from_trusted_exact_version_evidence(monkeypatch):
-    procedures = [
-        _ranking_procedure("P-1", "one-of-one"),
-        _ranking_procedure("P-95", "ninety-five-of-one-hundred"),
-        _ranking_procedure("P-self", "self-report"),
-        _ranking_procedure("P-infeasible", "infeasible", availability="disabled"),
-    ]
-    evidence = [_ranking_evidence("E-1", "P-1")]
-    evidence.extend(
-        _ranking_evidence(f"E-wrong-{index}", "P-1", version=2) for index in range(100)
-    )
-    evidence.extend(
-        _ranking_evidence(f"E-95-success-{index}", "P-95") for index in range(95)
-    )
-    evidence.extend(
-        _ranking_evidence(f"E-95-failure-{index}", "P-95", status="failure") for index in range(5)
-    )
-    evidence.extend(
-        _ranking_evidence(
-            f"E-self-{index}", "P-self", writer=OUTCOME_WRITER_STAMP_CLAIMED,
-        )
-        for index in range(100)
-    )
-    pool = _RankingPool(
-        {"G-1": _goal(
-            "G-1", "rank a procedure", verification_requirement={"method": "deterministic_check"},
-        )},
-        procedures,
-        evidence,
-    )
-
-    async def fake_feasible(pool, goal_id, *, current_scope, access_scope):
-        return [
-            (procedures[0], True),
-            (procedures[1], True),
-            (procedures[2], True),
-            (procedures[3], False),
-        ]
-
-    monkeypatch.setattr(gr, "_feasible_procedures_for_goal", fake_feasible)
-    node = _run(gr.resolve_goal(pool, "G-1", scope=SCOPE))
-
-    assert node.procedure["name"] == "ninety-five-of-one-hundred"
-    assert [procedure["name"] for procedure in node.procedure_alternates] == [
-        "one-of-one", "self-report",
-    ]
-    assert "infeasible" not in [procedure["name"] for procedure in node.procedure_alternates]
-    assert node.procedure["steps"] == []
-    assert node.verification_requirement == {"method": "deterministic_check"}
-    assert pool.requested_procedure_ids == [["P-1", "P-95", "P-self"]]
-
-
-def test_resolution_preserves_feasible_order_when_ranking_read_fails(monkeypatch):
+def test_resolution_keeps_the_shared_tier_order_and_drops_infeasible(monkeypatch):
+    # Ordering is decided by THE Procedure tier (retrieval_service); resolve_goal
+    # takes it as-is -- there is no second ranker in find_ways any more.
     pool = _FakePool({"G-1": _goal("G-1", "rank a procedure")})
     procedures = [
+        {"id": "P-2", "procedure_id": "P-2", "name": "second-by-evidence-first", "version": 1, "steps": []},
         {"id": "P-1", "procedure_id": "P-1", "name": "first", "version": 1, "steps": []},
-        {"id": "P-2", "procedure_id": "P-2", "name": "second", "version": 1, "steps": []},
+        {"id": "P-x", "procedure_id": "P-x", "name": "excluded", "version": 1, "steps": []},
     ]
 
-    async def fake_feasible(pool, goal_id, *, current_scope, access_scope):
-        return [(procedures[0], True), (procedures[1], True)]
-
-    class FailingRanking:
-        def __init__(self, *args, **kwargs):
-            pass
-
-        async def rank_for_goal(self, procedure_ids):
-            raise RuntimeError("ranking read failed")
+    async def fake_feasible(pool, goal_id, *, current_scope, access_scope, **_kwargs):
+        return [(procedures[0], True), (procedures[1], True), (procedures[2], False)]
 
     monkeypatch.setattr(gr, "_feasible_procedures_for_goal", fake_feasible)
-    monkeypatch.setattr(gr, "ProcedureRankingService", FailingRanking)
-
     node = _run(gr.resolve_goal(pool, "G-1", scope=SCOPE))
 
-    assert node.procedure["name"] == "first"
-    assert [procedure["name"] for procedure in node.procedure_alternates] == ["second"]
+    assert node.procedure["name"] == "second-by-evidence-first"
+    assert [procedure["name"] for procedure in node.procedure_alternates] == ["first"]
+    assert not hasattr(gr, "ProcedureRankingService")
+
+
+def test_feasible_procedures_use_the_shared_tier_with_the_request_context(monkeypatch):
+    from app.services import retrieval_service as rs
+
+    calls = []
+    selected = {"id": "V-2", "_row": {"id": "V-2", "name": "judged winner"}}
+    other = {"id": "V-1", "_row": {"id": "V-1", "name": "applies too"}}
+
+    class _Diag:
+        def __init__(self, row):
+            self.procedure = row
+
+    async def fake_rank(pool, goal_id, ctx, *, scope, judge, meta, current_scope):
+        calls.append((goal_id, ctx, judge))
+        return rs.ProcedureSearchResult(
+            [other, selected], selected, [], [], "pareto",
+            diagnostics=[_Diag(selected["_row"]), _Diag(other["_row"]), _Diag({"id": "V-0", "name": "hard-excluded"})])
+
+    monkeypatch.setattr(rs, "rank_goal_procedures", fake_rank)
+    root = rs.QueryContext(query="export docx", claims=[], text="export docx\nKnown in this environment: node 20")
+    judge = object()
+    context = {"_query_context": root, "_judge": judge}
+
+    out = _run(gr._feasible_procedures_for_goal(
+        None, "G-1", current_scope={}, access_scope=SCOPE, goal_name="write the file", depth=1, context=context))
+
+    assert [(row["name"], ok) for row, ok in out] == [
+        ("judged winner", True), ("applies too", True), ("hard-excluded", False)]
+    goal_id, node_ctx, used_judge = calls[0]
+    assert used_judge is judge
+    # a sub-Goal is judged against its own name, with the same request-scoped facts
+    assert node_ctx.query == "write the file"
+    assert node_ctx.text == "write the file\nKnown in this environment: node 20"
+
+    calls.clear()
+    _run(gr._feasible_procedures_for_goal(None, "G-1", current_scope={}, access_scope=SCOPE))
+    assert calls[0][1] is None and calls[0][2] is None   # no request context: deterministic order, no judge
 
 
 def test_procedure_cost_score_hook_is_called_but_inert(monkeypatch):
@@ -325,7 +306,7 @@ def test_procedure_cost_score_hook_is_called_but_inert(monkeypatch):
 
     monkeypatch.setattr(gr, "_procedure_cost_score", spy_cost_score)
 
-    async def fake_feasible(pool, goal_id, *, current_scope, access_scope):
+    async def fake_feasible(pool, goal_id, *, current_scope, access_scope, **_kwargs):
         return [(proc_a, True), (proc_b, True)]
     monkeypatch.setattr(gr, "_feasible_procedures_for_goal", fake_feasible)
 
@@ -363,7 +344,7 @@ async def _async_result(value):
 def test_step_with_no_matching_goal_text_is_an_honest_unresolved_child(monkeypatch):
     pool = _FakePool({"G-parent": _goal("G-parent", "do the thing")})
 
-    async def fake_feasible(pool, goal_id, *, current_scope, access_scope):
+    async def fake_feasible(pool, goal_id, *, current_scope, access_scope, **_kwargs):
         return [({
             "id": "P-1", "procedure_id": "P-1", "name": "p", "version": 1,
             "steps": [{"order": 0, "goal": "some totally unmatched free text"}],
@@ -393,7 +374,7 @@ def test_cycle_is_detected_not_infinite_looped(monkeypatch):
         "G-B": _goal("G-B", "b"),
     })
 
-    async def fake_feasible(pool, goal_id, *, current_scope, access_scope):
+    async def fake_feasible(pool, goal_id, *, current_scope, access_scope, **_kwargs):
         other = "G-B" if goal_id == "G-A" else "G-A"
         return [({"id": f"P-{goal_id}", "procedure_id": f"P-{goal_id}", "name": "p", "version": 1,
                   "steps": [{"order": 0, "goal": other}]}, True)]
@@ -418,7 +399,7 @@ def test_cycle_is_detected_not_infinite_looped(monkeypatch):
 def test_recursion_limit_is_honored(monkeypatch):
     pool = _FakePool({f"G-{i}": _goal(f"G-{i}", f"goal {i}") for i in range(10)})
 
-    async def fake_feasible(pool, goal_id, *, current_scope, access_scope):
+    async def fake_feasible(pool, goal_id, *, current_scope, access_scope, **_kwargs):
         n = int(goal_id.split("-")[1])
         return [({"id": f"P-{n}", "procedure_id": f"P-{n}", "name": "p", "version": 1,
                   "steps": [{"order": 0, "goal": f"G-{n + 1}"}]}, True)]
@@ -449,7 +430,7 @@ def test_recursion_limit_is_honored(monkeypatch):
 def test_no_feasible_procedure_is_honest_unresolved(monkeypatch):
     pool = _FakePool({"G-1": _goal("G-1", "impossible goal")})
 
-    async def fake_feasible(pool, goal_id, *, current_scope, access_scope):
+    async def fake_feasible(pool, goal_id, *, current_scope, access_scope, **_kwargs):
         return []
     monkeypatch.setattr(gr, "_feasible_procedures_for_goal", fake_feasible)
 

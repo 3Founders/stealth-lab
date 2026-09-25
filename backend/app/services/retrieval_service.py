@@ -41,7 +41,7 @@ import math
 import re
 import time
 from dataclasses import dataclass, field
-from typing import Any, Optional, Sequence
+from typing import Any, Mapping, Optional, Sequence
 
 import asyncpg
 
@@ -974,6 +974,61 @@ async def retrieve_procedures(
     if hyd.partial:
         meta.degrade("shard unavailable: " + ", ".join(sorted(hyd.unavailable_shards)) + " (candidates on it were NOT evaluated)")
 
+    return await _rank_procedure_candidates(
+        pool, ctx, cands, hyd.rows, scope=scope, judge=judge, cfg=cfg, meta=meta, current_scope=current_scope,
+        require_verified=require_verified, invariant_bindings=invariant_bindings,
+        excluded_procedure_ids=excluded_procedure_ids,
+    )
+
+
+async def rank_goal_procedures(
+    pool: Any, goal_id: str, ctx: Optional[QueryContext], *, scope: AccessScope,
+    judge: Optional[SemanticJudge] = None, cfg: RetrievalConfig = RetrievalConfig(),
+    meta: Optional[RetrievalMeta] = None, current_scope: Optional[dict] = None, require_verified: bool = False,
+    limit: int = 20,
+) -> ProcedureSearchResult:
+    """Tier 2 for a Goal that is ALREADY chosen (find_ways resolves a Goal tree node
+    by node): every live Procedure that achieves exactly this Goal is a candidate
+    (no similarity cut -- the Goal is known), then the SAME tier as
+    `retrieve_procedures`: hard constraints -> contextual Procedure judgment ->
+    evidence-aware selection. The historical order (verified first, then newest)
+    is only the tie-break when no judge answers. `judge=None` skips judgment."""
+    from app.services.applicability import _CANDIDATE_BASE_WHERE
+    from app.services.routed_reads import fetch_goal_procedures
+
+    meta = meta if meta is not None else RetrievalMeta()
+    rows = await fetch_goal_procedures(pool, [str(goal_id)], columns=_hydrate_cols(), where=_CANDIDATE_BASE_WHERE)
+    if not rows:
+        return ProcedureSearchResult([], None, [], [], "no procedure is linked to the goal")
+    rows.sort(key=lambda r: (r.get("verification_state") != "verified",
+                             -(r["t_created"].timestamp() if r.get("t_created") is not None else 0.0)))
+    rows = rows[:limit]
+    by_row: dict[str, dict] = {}
+    cands: list[Hit] = []
+    for index, row in enumerate(rows):
+        row_id = str(row["id"])
+        by_row[row_id] = row
+        cands.append(Hit(
+            id=str(row["procedure_id"]), name=row["name"], text=row["name"],
+            home_shard_id=str(row.get("home_shard_id") or "K000"), rrf=1.0 / (1 + index),
+            extra={"procedure_row_id": row_id, "goal_id": str(goal_id)},
+        ))
+    return await _rank_procedure_candidates(
+        pool, ctx, cands, by_row, scope=scope, judge=judge, cfg=cfg, meta=meta, current_scope=current_scope,
+        require_verified=require_verified,
+    )
+
+
+async def _rank_procedure_candidates(
+    pool: Any, ctx: Optional[QueryContext], cands: Sequence[Hit], rows_by_id: Mapping[str, dict], *,
+    scope: AccessScope, judge: Optional[SemanticJudge], cfg: RetrievalConfig, meta: RetrievalMeta,
+    current_scope: Optional[dict], require_verified: bool, invariant_bindings: Optional[dict] = None,
+    excluded_procedure_ids: Optional[Sequence[str]] = None,
+) -> ProcedureSearchResult:
+    """THE Procedure tier, shared by every door (REST find_best_way, MCP find_ways):
+    hard factual constraints -> contextual Procedure JEV/NLI (query + local Claims)
+    -> evidence-aware selection (`_select`). Candidates arrive with their canonical
+    rows; `c.rrf` is each door's own presentation prior (fused rank / historical order)."""
     # -- hard factual constraints (existing cascade: scope/exclusions/staleness/verification/preconditions)
     from app.services.applicability import check_hard_constraints
 
@@ -982,7 +1037,7 @@ async def retrieve_procedures(
     diagnostics: list = []
     excluded = {str(x) for x in (excluded_procedure_ids or [])}
     for c in cands:
-        row = hyd.rows.get(c.extra["procedure_row_id"])
+        row = rows_by_id.get(c.extra["procedure_row_id"])
         if row is None or str(row["procedure_id"]) in excluded:
             continue
         row["_similarity_score"] = c.rrf
@@ -1002,7 +1057,8 @@ async def retrieve_procedures(
     hits = [c for c, _ in live]
     for c, row in live:
         c.text = f"{row['name']}: {row['display_description'] or row['goal']}. {row['capability_statement'] or ''}"
-    await _judge_all(judge, "task_procedure", ctx.text, hits, cfg, meta, stage="procedure")
+    if judge is not None and ctx is not None:
+        await _judge_all(judge, "task_procedure", ctx.text, hits, cfg, meta, stage="procedure")
 
     items: list[dict] = []
     for c, row in live:
