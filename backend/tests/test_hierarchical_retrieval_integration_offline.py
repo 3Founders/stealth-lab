@@ -45,11 +45,12 @@ def _edge(specific, abstract, specific_name, abstract_name, *, anchor="anchor", 
     # already bounded to `max_fanout` rows per side (side_total = visible count).
     side, neighbour = ("parents", abstract) if specific == anchor else ("children", specific)
     return {
-        "anchor_id": anchor,
+        "node_id": anchor,
         "side": side,
         "neighbour_id": neighbour,
         "neighbour_name": abstract_name if side == "parents" else specific_name,
-        "neighbour_relevance": relevance,
+        "neighbour_semantic": relevance,
+        "neighbour_lexical": 0.0,
         "side_rank": 1,
         "side_total": side_total,
         "specific_goal_id": specific,
@@ -189,7 +190,7 @@ async def test_accepted_edges_expand_after_anchors_without_score_or_applicabilit
     assert "n.tenant_id =" not in hierarchy_sql
     assert "s.visibility" in hierarchy_sql
     assert "n.visibility" in hierarchy_sql
-    assert hierarchy_params[1] == "00000000-0000-0000-0000-000000000001"
+    assert hierarchy_params[2] == "00000000-0000-0000-0000-000000000001"  # after the up and down id arrays
 
 
 @pytest.mark.asyncio
@@ -229,10 +230,10 @@ async def test_hierarchy_failure_returns_flat_results_with_diagnostics(monkeypat
         hydration = None
     else:
         pool = FakePool([edge])
-        rows = {
-            "anchor": _canonical("anchor", "Anchor"),
-            "child": _canonical("child", "Child", version=2 if failure == "stale" else 1),
-        }
+        rows = {"anchor": _canonical("anchor", "Anchor")}
+        if failure == "stale":
+            rows["child"] = _canonical("child", "Child", version=2)
+        # "unavailable": the child lives on the unreachable shard, so its row is absent
         hydration = HydrationResult(
             rows=rows,
             unavailable_shards={"K001": "offline"} if failure == "unavailable" else {},
@@ -299,10 +300,11 @@ async def test_wide_neighbourhood_is_bounded_not_discarded(monkeypatch):
     assert response["retrieval"]["degraded"] is False
     # the query itself bounds each side and ranks by relevance to the query
     hierarchy_sql, hierarchy_params = pool.queries[0]
-    assert "row_number() OVER (PARTITION BY anchor_id, side" in hierarchy_sql
+    assert "row_number() OVER (PARTITION BY node_id, side" in hierarchy_sql
     assert "side_rank <=" in hierarchy_sql
+    assert "embedding <=>" in hierarchy_sql  # neighbours are ranked by meaning first
     assert hierarchy_params[-1] == 8
-    assert hierarchy_params[-2] is not None  # the query's terms rank neighbours
+    assert hierarchy_params[-4] is not None  # the query's terms break ties
 
 
 @pytest.mark.asyncio
@@ -365,34 +367,87 @@ async def test_anchor_parent_and_child_both_matched_keeps_the_hierarchy(monkeypa
     routing = response["retrieval"]["goal_routing"]
     assert routing["mode"] == "hierarchical"
     assert routing["used_flat_fallback"] is False
-    assert "hop_limit_reached" in routing["truncation_reasons"]
     assert response["retrieval"]["degraded"] is False
 
 
 @pytest.mark.asyncio
-async def test_ambiguous_resolution_does_not_expand_the_hierarchy(monkeypatch):
-    anchor = _anchor()
+async def test_partial_resolution_expands_and_a_judged_neighbour_can_win(monkeypatch):
+    # The flat step only found a PARTIAL match (e.g. the query is more specific
+    # than any stored wording). The hierarchy still expands from it, and a child
+    # the judge calls a firm match becomes the resolved Goal.
+    anchor = retrieval.Hit("anchor", "Anchor", "Anchor", "K000", rrf=0.9, relation="partial", confidence=0.7, judged=True)
     pool = FakePool([_edge("child", "anchor", "Child", "Anchor")])
     captured = {}
+    _patched_flow(monkeypatch, retrieval.GoalSearchResult([anchor], [anchor], "partial"), captured)
+    judge = _GraphJudge({"Child": "matches"})
 
-    async def unexpected_query(*args, **kwargs):
-        raise AssertionError("ambiguous resolution must not query hierarchy")
-
-    monkeypatch.setattr(retrieval, "pools_for", unexpected_query)
-    captured["goals"] = []
-    _patched_flow(
-        monkeypatch,
-        retrieval.GoalSearchResult([anchor], [anchor], "partial"),
-        captured,
+    response = await retrieval.find_best_way(
+        pool, "specific task", scope=AccessScope.unrestricted(), pools=FakePools(), judge=judge, record=False,
     )
+
+    assert [goal.id for goal in captured["goals"]] == ["anchor", "child"]
+    assert response["goal_resolution"]["status"] == "matches"
+    assert [goal["id"] for goal in response["goal_resolution"]["goals"]] == ["child"]
+    assert response["retrieval"]["goal_routing"]["seed_mode"] == "partial"
+
+
+@pytest.mark.asyncio
+async def test_no_flat_match_still_reaches_a_judged_neighbour(monkeypatch):
+    # Nothing matched directly, but a judged candidate's neighbour does.
+    unrelated = retrieval.Hit("anchor", "Anchor", "Anchor", "K000", rrf=0.9, relation="unrelated", confidence=0.8, judged=True)
+    pool = FakePool([_edge("child", "anchor", "Child", "Anchor")])
+    captured = {}
+    _patched_flow(monkeypatch, retrieval.GoalSearchResult([], [unrelated], "none"), captured)
+    judge = _GraphJudge({"Child": "matches"})
+
+    response = await retrieval.find_best_way(
+        pool, "task", scope=AccessScope.unrestricted(), pools=FakePools(), judge=judge, record=False,
+    )
+
+    assert [goal.id for goal in captured["goals"]] == ["child"]  # the unrelated seed itself is not a result
+    assert response["goal_resolution"]["status"] == "matches"
+    assert response["retrieval"]["goal_routing"]["seed_mode"] == "judged_candidates"
+
+
+@pytest.mark.asyncio
+async def test_a_stale_neighbour_is_dropped_alone(monkeypatch):
+    anchor = _anchor()
+    pool = FakePool([
+        _edge("anchor", "parent", "Anchor", "Parent"),
+        _edge("child", "anchor", "Child", "Anchor"),
+    ])
+    rows = {
+        "anchor": _canonical("anchor", "Anchor"),
+        "parent": _canonical("parent", "Parent", version=2),  # projection says version 1: stale
+        "child": _canonical("child", "Child"),
+    }
+    captured = {}
+    _patched_flow(monkeypatch, retrieval.GoalSearchResult([anchor], [anchor], "matches"), captured,
+                  hydration=HydrationResult(rows=rows))
+    judge = _GraphJudge({"Child": "partial", "Parent": "matches"})
+
+    response = await retrieval.find_best_way(
+        pool, "task", scope=AccessScope.unrestricted(), pools=FakePools(), judge=judge, record=False,
+    )
+
+    assert [goal.id for goal in captured["goals"]] == ["anchor", "child"]
+    routing = response["retrieval"]["goal_routing"]
+    assert routing["mode"] == "hierarchical"
+    assert routing["dropped_goal_ids"] == ["parent"]
+    assert response["retrieval"]["degraded"] is True  # reported, not hidden
+
+
+@pytest.mark.asyncio
+async def test_unjudged_resolution_does_not_expand_the_hierarchy(monkeypatch):
+    anchor = retrieval.Hit("anchor", "Anchor", "Anchor", "K000", rrf=0.9)
+    pool = FakePool([_edge("child", "anchor", "Child", "Anchor")])
+    captured = {}
+    _patched_flow(monkeypatch, retrieval.GoalSearchResult([anchor], [anchor], "unjudged"), captured)
+
     unchanged = await retrieval.find_best_way(
-        pool,
-        "ambiguous task",
-        scope=AccessScope.unrestricted(),
-        pools=FakePools(),
-        record=False,
+        pool, "task", scope=AccessScope.unrestricted(), pools=FakePools(), record=False,
     )
     assert [goal.id for goal in captured["goals"]] == ["anchor"]
-    assert unchanged["goal_resolution"]["status"] == "partial"
-    assert unchanged["retrieval"]["goal_routing"]["fallback_reasons"] == ["semantic_resolution_not_matches"]
+    assert unchanged["goal_resolution"]["status"] == "unjudged"
+    assert unchanged["retrieval"]["goal_routing"]["fallback_reasons"] == ["semantic_resolution_unjudged"]
     assert pool.queries == []

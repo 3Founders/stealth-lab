@@ -52,6 +52,9 @@ async def choose_goal(
         routed = await rs._route_goal_candidates(
             pool, found, scope=scope, cfg=cfg, meta=meta, ctx=ctx, judge=judge,
         )
+        # Flat and hierarchy candidates compete on the same judged verdicts: a
+        # neighbour the judge calls a firm match can be the chosen Goal.
+        found = rs.combine_goal_resolution(found, routed, cfg)
     except Exception:  # noqa: BLE001 -- the caller's fallback still answers; the reply records it
         log.warning("canonical goal choice failed; caller must fall back", exc_info=True)
         return None

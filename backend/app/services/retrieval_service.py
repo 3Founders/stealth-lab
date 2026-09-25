@@ -73,6 +73,12 @@ class RetrievalConfig:
     min_confidence: float = 0.6     # model confidence needed to call a verdict "firm"
     judge_concurrency: int = 4
     include_hierarchy_paths: bool = True
+    # Hierarchy expansion (bounded; the flat candidates always remain the baseline)
+    hierarchy_max_hops: int = 2         # parents of parents / children of children
+    hierarchy_max_fanout: int = 8       # neighbours kept per Goal and direction (most relevant first)
+    hierarchy_max_candidates: int = 32  # neighbour Goals kept in total
+    hierarchy_judge_top_k: int = 8      # neighbours sent to the contextual Goal judge
+    hierarchy_seed_max: int = 3         # judged candidates expanded when nothing matched
 
 
 @dataclass
@@ -87,6 +93,8 @@ class QueryContext:
     claims: list[LocalClaim]
     text: str                       # query + local claims: used ONLY by the judge (never for candidate generation)
     dropped_claims: int = 0
+    query_embedding: Optional[list[float]] = None   # set by search_goals; ranks hierarchy neighbours
+    embedding_model: Optional[str] = None
 
     @property
     def claim_ids(self) -> list[str]:
@@ -356,6 +364,7 @@ async def search_goals(
             emb = await embedder.embed_one(ctx.query, input_type="query")
             model = embedder.embedding_model_id()
             meta.embedding_model = model
+            ctx.query_embedding, ctx.embedding_model = emb, model
         except Exception:  # noqa: BLE001 -- FTS-only, flagged
             meta.degrade("embedding provider unavailable: lexical candidates only")
         meta.latency_ms["embed"] = (time.monotonic() - t0) * 1000
@@ -443,8 +452,8 @@ def _hierarchy_projection_is_current(projection: dict[str, Any], source: dict[st
 _HIERARCHY_BOUNDED_REASONS = frozenset({"hop_limit_reached", "fanout_limit_reached", "graph_candidate_limit_reached"})
 # Ranking-only columns of the hierarchy edge query; not part of an edge.
 _HIERARCHY_RANKING_COLUMNS = (
-    "anchor_id", "side", "neighbour_id", "neighbour_name", "neighbour_relevance",
-    "specific_relevance", "abstract_relevance", "side_rank", "side_total",
+    "node_id", "side", "neighbour_id", "neighbour_name", "neighbour_semantic", "neighbour_lexical",
+    "specific_semantic", "abstract_semantic", "specific_lexical", "abstract_lexical", "side_rank", "side_total",
 )
 
 
@@ -481,149 +490,211 @@ def _hierarchy_flat_diagnostics(
     return diagnostics
 
 
+def _hierarchy_seeds(goal_result: GoalSearchResult, cfg: RetrievalConfig) -> tuple[list[Hit], str]:
+    """The Goals the hierarchy is expanded from. Judged matches or partial
+    matches when there are any; otherwise the top judged candidates, so a query
+    worded more specifically (or more broadly) than every stored Goal can still
+    reach the right Goal through the graph. Unjudged results never expand: a
+    neighbour could not be judged either."""
+    if goal_result.resolution in ("matches", "partial"):
+        return list(goal_result.resolved), goal_result.resolution
+    if goal_result.resolution == "none":
+        judged = [hit for hit in goal_result.candidates if hit.judged and hit.hierarchy is None]
+        return judged[: cfg.hierarchy_seed_max], "judged_candidates"
+    return [], goal_result.resolution
+
+
+async def _fetch_hierarchy_edges(
+    pool: Any, *, up_ids: Sequence[str], down_ids: Sequence[str], scope: AccessScope,
+    tenant_scope: TenantScope, fanout: int, ctx: Optional[QueryContext],
+) -> list[Any]:
+    """Accepted edges leaving `up_ids` upward (their parents) and `down_ids`
+    downward (their children), at most `fanout` per node and direction. The kept
+    ones are the most relevant to the query: embedding similarity first (same
+    embedding model only), lexical rank second. One control-database query."""
+    relation_tenant_sql, relation_tenant_params = tenant_predicate(tenant_scope, alias="r", param_index=3)
+    index = 3 + len(relation_tenant_params)
+    specific_vis_sql, specific_vis_params = _goal_visibility_predicate(scope, alias="s", param_index=index)
+    index += len(specific_vis_params)
+    abstract_vis_sql, abstract_vis_params = _goal_visibility_predicate(scope, alias="n", param_index=index)
+    index += len(abstract_vis_params)
+    q_i, e_i, m_i, f_i = index, index + 1, index + 2, index + 3
+    embedding = ctx.query_embedding if ctx is not None else None
+    model = ctx.embedding_model if ctx is not None else None
+
+    def semantic(alias: str) -> str:
+        return (f"CASE WHEN ${e_i}::vector IS NOT NULL AND {alias}.embedding IS NOT NULL "
+                f"AND {alias}.embedding_model = ${m_i}::text THEN 1 - ({alias}.embedding <=> ${e_i}::vector) ELSE 0 END")
+
+    return await pool.fetch(
+        f"""
+        WITH edge_rows AS (
+        SELECT r.specific_goal_id::text AS specific_goal_id,
+               r.abstract_goal_id::text AS abstract_goal_id,
+               r.relation_type, r.status, r.confidence, r.provenance,
+               r.decision_id::text AS decision_id, r.decided_by, r.decided_at,
+               s.goal_id::text AS specific_projection_id,
+               s.canonical_name AS specific_canonical_name,
+               s.short_description AS specific_description,
+               s.status AS specific_projected_status,
+               s.version AS specific_projected_version,
+               s.scope_type AS specific_projected_scope_type,
+               s.scope_entity_id AS specific_projected_scope_entity_id,
+               s.visibility::text AS specific_projected_visibility,
+               s.owner_id AS specific_projected_owner_id,
+               s.home_shard_id AS specific_home_shard_id,
+               n.goal_id::text AS abstract_projection_id,
+               n.canonical_name AS abstract_canonical_name,
+               n.short_description AS abstract_description,
+               n.status AS abstract_projected_status,
+               n.version AS abstract_projected_version,
+               n.scope_type AS abstract_projected_scope_type,
+               n.scope_entity_id AS abstract_projected_scope_entity_id,
+               n.visibility::text AS abstract_projected_visibility,
+               n.owner_id AS abstract_projected_owner_id,
+               n.home_shard_id AS abstract_home_shard_id,
+               {semantic("s")} AS specific_semantic,
+               {semantic("n")} AS abstract_semantic,
+               COALESCE(ts_rank_cd(s.search_tsv, to_tsquery('english', ${q_i}::text)), 0) AS specific_lexical,
+               COALESCE(ts_rank_cd(n.search_tsv, to_tsquery('english', ${q_i}::text)), 0) AS abstract_lexical
+        FROM goal_relations r
+        JOIN goal_search_index s ON s.goal_id = r.specific_goal_id
+        JOIN goal_search_index n ON n.goal_id = r.abstract_goal_id
+        WHERE r.relation_type = 'SPECIALIZES'
+          AND r.status = 'accepted'
+          AND (r.specific_goal_id = ANY($1::uuid[]) OR r.abstract_goal_id = ANY($2::uuid[]))
+          AND s.status IN ('active', 'candidate')
+          AND n.status IN ('active', 'candidate')
+          AND {relation_tenant_sql}
+          AND {specific_vis_sql}
+          AND {abstract_vis_sql}
+          AND COALESCE(s.scope_type, 'global') = COALESCE(n.scope_type, 'global')
+          AND s.scope_entity_id IS NOT DISTINCT FROM n.scope_entity_id
+          AND COALESCE(r.scope_type, 'global') = COALESCE(s.scope_type, 'global')
+          AND r.scope_entity_id IS NOT DISTINCT FROM s.scope_entity_id
+        ), sides AS (
+            SELECT e.*, e.specific_goal_id AS node_id, 'parents' AS side,
+                   e.abstract_goal_id AS neighbour_id, e.abstract_canonical_name AS neighbour_name,
+                   e.abstract_semantic AS neighbour_semantic, e.abstract_lexical AS neighbour_lexical
+              FROM edge_rows e WHERE e.specific_goal_id::uuid = ANY($1::uuid[])
+            UNION ALL
+            SELECT e.*, e.abstract_goal_id, 'children',
+                   e.specific_goal_id, e.specific_canonical_name,
+                   e.specific_semantic, e.specific_lexical
+              FROM edge_rows e WHERE e.abstract_goal_id::uuid = ANY($2::uuid[])
+        ), ranked AS (
+            SELECT sides.*,
+                   row_number() OVER (PARTITION BY node_id, side
+                                      ORDER BY neighbour_semantic DESC, neighbour_lexical DESC,
+                                               neighbour_name NULLS LAST, neighbour_id) AS side_rank,
+                   count(*) OVER (PARTITION BY node_id, side) AS side_total
+              FROM sides
+        )
+        SELECT * FROM ranked
+         WHERE side_rank <= ${f_i}
+         ORDER BY node_id, side, side_rank
+        """,
+        list(up_ids),
+        list(down_ids),
+        *relation_tenant_params,
+        *specific_vis_params,
+        *abstract_vis_params,
+        fts_or_query(ctx.query) if ctx is not None else None,
+        to_pgvector(embedding) if embedding is not None and model else None,
+        model,
+        fanout,
+    )
+
+
 async def _route_goal_candidates(
     pool: Any, goal_result: GoalSearchResult, *, scope: AccessScope, cfg: RetrievalConfig,
     meta: RetrievalMeta, pools: Optional[ShardPools] = None, tenant_scope: Optional[TenantScope] = None,
     ctx: Optional[QueryContext] = None, judge: Optional[SemanticJudge] = None,
 ) -> list[Hit]:
+    """Hybrid anchors -> bounded accepted-DAG neighbourhood -> contextual Goal judge.
+
+    The hierarchy only ADDS candidates: every neighbour still goes through the
+    same query + local-Claims judgment as a flat candidate. Size limits bound the
+    neighbourhood (most query-relevant kept); they never switch it off. A
+    neighbour that is stale, missing or on an unreachable shard is dropped on its
+    own. Only a structural problem (invalid/cyclic relations) or a failed query
+    falls back to flat retrieval, which always remains the baseline."""
     anchors = list(goal_result.resolved)
     tenant_scope = tenant_scope or _default_tenant_scope(scope)
-    routing_config = HierarchicalGoalRoutingConfig()
-    if not anchors:
-        meta.goal_routing = _hierarchy_flat_diagnostics(anchors, ("no_semantic_anchors",), routing_config)
+    routing_config = HierarchicalGoalRoutingConfig(
+        max_hops=cfg.hierarchy_max_hops, max_fanout=cfg.hierarchy_max_fanout,
+        max_graph_candidates=cfg.hierarchy_max_candidates,
+    )
+    seeds, seed_mode = _hierarchy_seeds(goal_result, cfg)
+    if not seeds:
+        reason = "semantic_resolution_unjudged" if goal_result.resolution == "unjudged" else "no_semantic_anchors"
+        meta.goal_routing = _hierarchy_flat_diagnostics(anchors, (reason,), routing_config)
         return anchors
-    if goal_result.resolution != "matches":
-        meta.goal_routing = _hierarchy_flat_diagnostics(anchors, ("semantic_resolution_not_matches",), routing_config)
-        return anchors
+    seed_ids = list(dict.fromkeys(str(goal.id) for goal in seeds))
 
-    anchor_ids = [str(goal.id) for goal in anchors]
-    max_fanout = routing_config.max_fanout
-    # Neighbours are ranked by lexical relevance to the query so that, when an
-    # anchor has more than `max_fanout` parents or children, the bounded set we
-    # keep is the most promising one -- never "all or nothing".
-    query_terms = fts_or_query(ctx.query) if ctx is not None else None
+    # -- bounded breadth-first walk: parents upward, children downward
     t0 = time.monotonic()
+    edges: dict[tuple[str, str], dict[str, Any]] = {}
+    relevance: dict[str, tuple[float, float]] = {}
+    truncated_sides: list[tuple[str, str, int]] = []
+    bounded_reasons: list[str] = []
+    kept_nodes: set[str] = set(seed_ids)
+    up_ids, down_ids = list(seed_ids), list(seed_ids)
     try:
-        relation_tenant_sql, relation_tenant_params = tenant_predicate(
-            tenant_scope, alias="r", param_index=2
-        )
-        next_index = 2 + len(relation_tenant_params)
-        specific_vis_sql, specific_vis_params = _goal_visibility_predicate(
-            scope, alias="s", param_index=next_index
-        )
-        next_index += len(specific_vis_params)
-        abstract_vis_sql, abstract_vis_params = _goal_visibility_predicate(
-            scope, alias="n", param_index=next_index
-        )
-        query_index = next_index + len(abstract_vis_params)
-        fanout_index = query_index + 1
-        rows = await pool.fetch(
-            f"""
-            WITH edge_rows AS (
-            SELECT r.specific_goal_id::text AS specific_goal_id,
-                   r.abstract_goal_id::text AS abstract_goal_id,
-                   r.relation_type, r.status, r.confidence, r.provenance,
-                   r.decision_id::text AS decision_id, r.decided_by, r.decided_at,
-                   s.goal_id::text AS specific_projection_id,
-                   s.canonical_name AS specific_canonical_name,
-                   s.short_description AS specific_description,
-                   s.status AS specific_projected_status,
-                   s.version AS specific_projected_version,
-                   s.scope_type AS specific_projected_scope_type,
-                   s.scope_entity_id AS specific_projected_scope_entity_id,
-                   s.visibility::text AS specific_projected_visibility,
-                   s.owner_id AS specific_projected_owner_id,
-                   s.home_shard_id AS specific_home_shard_id,
-                   n.goal_id::text AS abstract_projection_id,
-                   n.canonical_name AS abstract_canonical_name,
-                   n.short_description AS abstract_description,
-                   n.status AS abstract_projected_status,
-                   n.version AS abstract_projected_version,
-                   n.scope_type AS abstract_projected_scope_type,
-                   n.scope_entity_id AS abstract_projected_scope_entity_id,
-                   n.visibility::text AS abstract_projected_visibility,
-                   n.owner_id AS abstract_projected_owner_id,
-                   n.home_shard_id AS abstract_home_shard_id,
-                   COALESCE(ts_rank_cd(s.search_tsv, to_tsquery('english', ${query_index}::text)), 0) AS specific_relevance,
-                   COALESCE(ts_rank_cd(n.search_tsv, to_tsquery('english', ${query_index}::text)), 0) AS abstract_relevance
-            FROM goal_relations r
-            JOIN goal_search_index s ON s.goal_id = r.specific_goal_id
-            JOIN goal_search_index n ON n.goal_id = r.abstract_goal_id
-            WHERE r.relation_type = 'SPECIALIZES'
-              AND r.status = 'accepted'
-              AND (r.specific_goal_id = ANY($1::uuid[]) OR r.abstract_goal_id = ANY($1::uuid[]))
-              AND s.status IN ('active', 'candidate')
-              AND n.status IN ('active', 'candidate')
-              AND {relation_tenant_sql}
-              AND {specific_vis_sql}
-              AND {abstract_vis_sql}
-               AND COALESCE(s.scope_type, 'global') = COALESCE(n.scope_type, 'global')
-               AND s.scope_entity_id IS NOT DISTINCT FROM n.scope_entity_id
-               AND COALESCE(r.scope_type, 'global') = COALESCE(s.scope_type, 'global')
-               AND r.scope_entity_id IS NOT DISTINCT FROM s.scope_entity_id
-            ), sides AS (
-                SELECT e.*, e.specific_goal_id AS anchor_id, 'parents' AS side,
-                       e.abstract_goal_id AS neighbour_id, e.abstract_canonical_name AS neighbour_name,
-                       e.abstract_relevance AS neighbour_relevance
-                  FROM edge_rows e WHERE e.specific_goal_id::uuid = ANY($1::uuid[])
-                UNION ALL
-                SELECT e.*, e.abstract_goal_id, 'children',
-                       e.specific_goal_id, e.specific_canonical_name,
-                       e.specific_relevance
-                  FROM edge_rows e WHERE e.abstract_goal_id::uuid = ANY($1::uuid[])
-            ), ranked AS (
-                SELECT sides.*,
-                       row_number() OVER (PARTITION BY anchor_id, side
-                                          ORDER BY neighbour_relevance DESC, neighbour_name NULLS LAST, neighbour_id) AS side_rank,
-                       count(*) OVER (PARTITION BY anchor_id, side) AS side_total
-                  FROM sides
+        for _hop in range(cfg.hierarchy_max_hops):
+            if not up_ids and not down_ids:
+                break
+            rows = await _fetch_hierarchy_edges(
+                pool, up_ids=up_ids, down_ids=down_ids, scope=scope, tenant_scope=tenant_scope,
+                fanout=cfg.hierarchy_max_fanout, ctx=ctx,
             )
-            SELECT * FROM ranked
-             WHERE side_rank <= ${fanout_index}
-             ORDER BY anchor_id, side, side_rank
-            """,
-            anchor_ids,
-            *relation_tenant_params,
-            *specific_vis_params,
-            *abstract_vis_params,
-            query_terms,
-            max_fanout,
-        )
+            wanted = {("parents", node) for node in up_ids} | {("children", node) for node in down_ids}
+            new_up: dict[str, None] = {}
+            new_down: dict[str, None] = {}
+            for raw in rows:
+                row = dict(raw)
+                side, node = str(row["side"]), str(row["node_id"])
+                if (side, node) not in wanted:
+                    continue
+                if int(row["side_total"]) > cfg.hierarchy_max_fanout:
+                    truncated_sides.append((node, side, int(row["side_total"])))
+                neighbour = str(row["neighbour_id"])
+                score = (float(row["neighbour_semantic"] or 0.0), float(row["neighbour_lexical"] or 0.0))
+                relevance[neighbour] = max(relevance.get(neighbour, (0.0, 0.0)), score)
+                edges.setdefault((str(row["specific_goal_id"]), str(row["abstract_goal_id"])), row)
+                if neighbour not in kept_nodes:
+                    (new_up if side == "parents" else new_down)[neighbour] = None
+            # global cap on the neighbourhood: keep the most relevant new Goals
+            capacity = max(cfg.hierarchy_max_candidates - (len(kept_nodes) - len(seed_ids)), 0)
+            fresh = sorted(set(new_up) | set(new_down), key=lambda gid: (relevance[gid], gid), reverse=True)
+            if len(fresh) > capacity:
+                bounded_reasons.append("graph_candidate_limit_reached")
+                fresh = fresh[:capacity]
+            kept_nodes.update(fresh)
+            up_ids = [gid for gid in new_up if gid in kept_nodes]
+            down_ids = [gid for gid in new_down if gid in kept_nodes]
     except Exception as exc:
         meta.latency_ms["goal_hierarchy"] = (time.monotonic() - t0) * 1000
-        reason = "hierarchy_query_error"
         degraded_reason = f"goal hierarchy query failed: {type(exc).__name__}"
         meta.degrade(degraded_reason)
         meta.goal_routing = _hierarchy_flat_diagnostics(
-            anchors, (reason,), routing_config, degraded_reasons=(degraded_reason,),
+            anchors, ("hierarchy_query_error",), routing_config, degraded_reasons=(degraded_reason,),
         )
         return anchors
-
     meta.latency_ms["goal_hierarchy"] = (time.monotonic() - t0) * 1000
-    meta.counts["goal_hierarchy_input_relations"] = len(rows)
-    if not rows:
+    meta.counts["goal_hierarchy_input_relations"] = len(edges)
+    if not edges:
         meta.goal_routing = _hierarchy_flat_diagnostics(anchors, ("no_edges",), routing_config)
         return anchors
+    if truncated_sides:
+        bounded_reasons.append("fanout_limit_reached")
 
-    # The query already kept at most `max_fanout` neighbours per anchor and
-    # direction (most query-relevant first). Record where it had to cut, but keep
-    # what it kept: a large neighbourhood is bounded, never discarded.
-    truncated_sides = sorted({
-        (str(row["anchor_id"]), str(row["side"]), int(row["side_total"]))
-        for row in rows if int(row["side_total"]) > max_fanout
-    })
-    relevance: dict[str, float] = {}
-    seen_edges: set[tuple[str, str]] = set()
     relation_edges: list[dict[str, Any]] = []
     projections: dict[str, dict[str, Any]] = {}
-    for raw in rows:
-        row = dict(raw)
-        neighbour_id = str(row["neighbour_id"])
-        relevance[neighbour_id] = max(relevance.get(neighbour_id, 0.0), float(row["neighbour_relevance"] or 0.0))
-        edge_key = (str(row["specific_goal_id"]), str(row["abstract_goal_id"]))
-        if edge_key in seen_edges:  # an edge between two anchors is returned once per side
+    for key, raw in edges.items():
+        if key[0] not in kept_nodes or key[1] not in kept_nodes:
             continue
-        seen_edges.add(edge_key)
+        row = dict(raw)
         for ranking_column in _HIERARCHY_RANKING_COLUMNS:
             row.pop(ranking_column, None)
         specific = _hierarchy_projection(row, "specific")
@@ -637,107 +708,72 @@ async def _route_goal_candidates(
     async def fetch(goal_pool: Any, goal_ids: list[str]):
         return await goal_pool.fetch(_HIERARCHY_GOAL_SELECT, goal_ids)
 
-    routes = {
-        goal_id: str(projection.get("home_shard_id") or "K000")
-        for goal_id, projection in projections.items()
-    }
+    routes = {goal_id: str(projection.get("home_shard_id") or "K000") for goal_id, projection in projections.items()}
+    t1 = time.monotonic()
     try:
         hydration = await hydrate_rows(pools or pools_for(pool), routes, fetch)
     except Exception as exc:
-        reason = "hierarchy_hydration_error"
         degraded_reason = f"goal hierarchy hydration failed: {type(exc).__name__}"
         meta.degrade(degraded_reason)
         meta.goal_routing = _hierarchy_flat_diagnostics(
-            anchors, (reason,), routing_config, degraded_reasons=(degraded_reason,),
+            anchors, ("hierarchy_hydration_error",), routing_config, degraded_reasons=(degraded_reason,),
         )
         return anchors
-
+    meta.latency_ms["goal_hierarchy_hydrate"] = (time.monotonic() - t1) * 1000
     meta.shards_touched = sorted(set(meta.shards_touched) | set(hydration.shard_batches))
     meta.unavailable_shards.update(hydration.unavailable_shards)
     meta.missing_ids.extend(hydration.missing_ids)
-    missing_ids = sorted(set(hydration.missing_ids) | {
-        goal_id for goal_id in projections if goal_id not in hydration.rows
-    })
+
+    # A Goal that could not be read, or whose projection disagrees with its
+    # canonical row, is dropped ON ITS OWN (with its edges); the rest stays.
+    missing_ids = sorted(goal_id for goal_id in projections if goal_id not in hydration.rows)
     stale_ids = sorted(
         goal_id for goal_id, projection in projections.items()
         if goal_id in hydration.rows and not _hierarchy_projection_is_current(projection, hydration.rows[goal_id])
     )
-    fallback_reasons: list[str] = []
-    degraded_reasons: list[str] = []
+    dropped = set(missing_ids) | set(stale_ids)
     if hydration.partial:
-        fallback_reasons.append("unavailable_shard")
-        degraded_reasons.append("unavailable_shard")
+        meta.degrade("goal hierarchy unavailable_shard")
     if missing_ids:
-        fallback_reasons.append("missing_goal")
-        degraded_reasons.append("missing_goal")
+        meta.degrade("goal hierarchy missing_goal")
     if stale_ids:
-        fallback_reasons.append("stale_goal_projection")
-        degraded_reasons.append("stale_goal_projection")
-    if fallback_reasons:
-        for reason in degraded_reasons:
-            meta.degrade(f"goal hierarchy {reason}")
-        meta.goal_routing = _hierarchy_flat_diagnostics(
-            anchors, fallback_reasons, routing_config,
-            degraded_reasons=degraded_reasons,
-            details={
-                "input_relation_count": len(relation_edges),
-                "accepted_relation_count": len(relation_edges),
-                "missing_goal_ids": missing_ids,
-                "stale_goal_ids": stale_ids,
-                "unavailable_shards": dict(hydration.unavailable_shards),
-            },
-        )
-        return anchors
+        meta.degrade("goal hierarchy stale_goal_projection")
+    if dropped:
+        relation_edges = [
+            edge for edge in relation_edges
+            if str(edge["specific_goal_id"]) not in dropped and str(edge["abstract_goal_id"]) not in dropped
+        ]
 
     anchor_payloads = [
-        {
-            "id": goal.id,
-            "goal_id": goal.id,
-            "canonical_name": goal.name,
-            "text": goal.text,
-            "home_shard_id": goal.home_shard_id,
-            "score": goal.rrf,
-        }
-        for goal in anchors
+        {"id": goal.id, "goal_id": goal.id, "canonical_name": goal.name, "text": goal.text,
+         "home_shard_id": goal.home_shard_id, "score": goal.rrf}
+        for goal in seeds if str(goal.id) not in dropped
     ]
     try:
         routed = route_hierarchical_goal_candidates(
-            anchor_payloads,
-            relation_edges,
-            goal_records=hydration.rows,
-            config=routing_config,
+            anchor_payloads, relation_edges, goal_records=hydration.rows, config=routing_config,
         )
     except Exception as exc:
-        reason = "hierarchy_routing_error"
         degraded_reason = f"goal hierarchy routing failed: {type(exc).__name__}"
         meta.degrade(degraded_reason)
         meta.goal_routing = _hierarchy_flat_diagnostics(
-            anchors, (reason,), routing_config, degraded_reasons=(degraded_reason,),
+            anchors, ("hierarchy_routing_error",), routing_config, degraded_reasons=(degraded_reason,),
         )
         return anchors
 
     routing_diagnostics = routed.diagnostics.as_dict()
-    # Hitting a size limit (hops / fanout / candidate cap) is expected on a large
-    # DAG and only means the expansion is bounded. Only a real integrity problem
-    # (invalid or cyclic relations, anchors without ids) falls back to flat.
-    bounded_reasons = [r for r in routed.diagnostics.degraded_reasons if r in _HIERARCHY_BOUNDED_REASONS]
+    # Size limits only mean "bounded"; only a structural problem falls back to flat.
+    bounded_reasons += [r for r in routed.diagnostics.degraded_reasons if r in _HIERARCHY_BOUNDED_REASONS]
     blocking_reasons = [r for r in routed.diagnostics.degraded_reasons if r not in _HIERARCHY_BOUNDED_REASONS]
-    if truncated_sides:
-        bounded_reasons.append("fanout_limit_reached")
     if blocking_reasons:
-        reason = "hierarchy_degraded"
-        fallback_reasons = [reason, *routing_diagnostics.get("fallback_reasons", [])]
-        degraded_reasons = [*blocking_reasons, reason]
+        degraded_reasons = [*blocking_reasons, "hierarchy_degraded"]
         for degraded_reason in degraded_reasons:
             meta.degrade(f"goal hierarchy {degraded_reason}")
         routing_diagnostics.update({
-            "mode": "flat",
-            "used_flat_fallback": True,
-            "fallback_reasons": list(dict.fromkeys(fallback_reasons)),
-            "degraded": True,
-            "degraded_reasons": list(dict.fromkeys(degraded_reasons)),
-            "truncated": routed.diagnostics.truncated,
-            "graph_candidate_count": 0,
+            "mode": "flat", "used_flat_fallback": True,
+            "fallback_reasons": list(dict.fromkeys(["hierarchy_degraded", *routing_diagnostics.get("fallback_reasons", [])])),
+            "degraded": True, "degraded_reasons": list(dict.fromkeys(degraded_reasons)),
+            "truncated": bool(bounded_reasons), "graph_candidate_count": 0,
         })
         meta.goal_routing = routing_diagnostics
         return anchors
@@ -746,59 +782,48 @@ async def _route_goal_candidates(
     for candidate in routed.graph_candidates:
         goal_id = str(candidate.goal_id)
         source = hydration.rows.get(goal_id)
-        if source is None:
-            reason = "missing_graph_goal"
-            meta.degrade(f"goal hierarchy {reason}")
-            meta.goal_routing = _hierarchy_flat_diagnostics(
-                anchors, (reason,), routing_config, degraded_reasons=(reason,),
-            )
-            return anchors
-        hierarchy = {"origin": "graph"}
+        if source is None or goal_id in dropped:
+            continue
+        hierarchy: dict[str, Any] = {"origin": "graph"}
         if cfg.include_hierarchy_paths:
             hierarchy.update({
                 "abstraction_path": list(candidate.abstraction_path),
-                "relation_provenance": [
-                    _public_relation_provenance(item) for item in candidate.relation_provenance
-                ],
+                "relation_provenance": [_public_relation_provenance(item) for item in candidate.relation_provenance],
             })
         name = str(source.get("canonical_name") or goal_id)
         description = source.get("description") or ""
         graph_hits.append(Hit(
-            id=goal_id,
-            name=name,
-            text=f"{name}: {description}".strip(": "),
-            home_shard_id=str(source.get("home_shard_id") or "K000"),
-            rrf=0.0,
-            hierarchy=hierarchy,
+            id=goal_id, name=name, text=f"{name}: {description}".strip(": "),
+            home_shard_id=str(source.get("home_shard_id") or "K000"), rrf=0.0, hierarchy=hierarchy,
         ))
 
-    # The judge budget (`rerank_top_k`) may be smaller than the bounded
-    # neighbourhood: judge the most query-relevant neighbours first, whichever
-    # direction they came from (stable sort keeps traversal order for ties).
-    graph_hits.sort(key=lambda hit: -relevance.get(hit.id, 0.0))
+    # Judge the most query-relevant neighbours first, whatever their direction
+    # (stable sort keeps traversal order for ties).
+    graph_hits.sort(key=lambda hit: relevance.get(hit.id, (0.0, 0.0)), reverse=True)
     meta.counts["goal_hierarchy_graph_candidates"] = len(graph_hits)
     routing_diagnostics.update({
+        "seed_mode": seed_mode,
+        "seed_count": len(anchor_payloads),
         "degraded": False,
         "degraded_reasons": [],
         "truncated": bool(bounded_reasons),
         "truncation_reasons": list(dict.fromkeys(bounded_reasons)),
+        "dropped_goal_ids": sorted(dropped),
     })
     if truncated_sides:
         routing_diagnostics["truncated_sides"] = [
-            {"goal_id": goal_id, "direction": side, "kept": max_fanout, "available": total}
-            for goal_id, side, total in truncated_sides
+            {"goal_id": goal_id, "direction": side, "kept": cfg.hierarchy_max_fanout, "available": total}
+            for goal_id, side, total in sorted(set(truncated_sides))
         ]
     meta.goal_routing = routing_diagnostics
     if cfg.include_hierarchy_paths:
         meta.goal_routing["paths"] = [hit.hierarchy for hit in graph_hits]
     flat_ids = {str(candidate.id) for candidate in goal_result.candidates}
-    goal_result.candidates = list(goal_result.candidates) + [
-        hit for hit in graph_hits if str(hit.id) not in flat_ids
-    ]
-    # A neighbouring Goal in the graph is a CANDIDATE, not an answer: it goes
-    # through the same contextual Goal judgment (query + local Claims) as the
-    # flat candidates before any of its Procedures are considered. Graph
-    # adjacency alone never makes a parent's or child's Procedures eligible.
+    goal_result.candidates = list(goal_result.candidates) + [hit for hit in graph_hits if str(hit.id) not in flat_ids]
+    # A neighbouring Goal is a CANDIDATE, not an answer: it goes through the same
+    # contextual Goal judgment (query + local Claims) as the flat candidates
+    # before any of its Procedures are considered. Adjacency alone never makes a
+    # parent's or child's Procedures eligible.
     admitted = await _judge_graph_candidates(graph_hits, ctx=ctx, judge=judge, cfg=cfg, meta=meta)
     routed_goals = list(anchors)
     seen = {str(goal.id) for goal in anchors}
@@ -807,6 +832,26 @@ async def _route_goal_candidates(
             routed_goals.append(hit)
             seen.add(hit.id)
     return routed_goals
+
+
+def combine_goal_resolution(goal_result: GoalSearchResult, routed: Sequence[Hit], cfg: RetrievalConfig) -> GoalSearchResult:
+    """The Goal resolution after hierarchy expansion: flat and graph candidates
+    compete on the SAME judged verdicts. A neighbour the judge calls a firm match
+    can therefore be the chosen Goal; adjacency alone never can."""
+    if goal_result.resolution == "unjudged":
+        return goal_result
+    judged = [hit for hit in routed if hit.judged]
+    matches = sorted(
+        (hit for hit in judged if hit.relation == "matches" and (hit.confidence or 0) >= cfg.min_confidence),
+        key=lambda hit: (-(hit.confidence or 0), -hit.rrf, hit.id))
+    partial = sorted(
+        (hit for hit in judged if hit.relation in ("partial", "matches")),
+        key=lambda hit: (-(hit.confidence or 0), -hit.rrf, hit.id))
+    if matches:
+        return GoalSearchResult(matches[: cfg.goal_resolve_max], goal_result.candidates, "matches")
+    if partial:
+        return GoalSearchResult(partial[: cfg.goal_resolve_max], goal_result.candidates, "partial")
+    return goal_result
 
 
 async def _judge_graph_candidates(
@@ -820,7 +865,7 @@ async def _judge_graph_candidates(
         routing["graph_admitted"] = 0
         routing["graph_not_admitted_reason"] = "no contextual judge supplied"
         return []
-    to_judge = graph_hits[: cfg.rerank_top_k]
+    to_judge = graph_hits[: cfg.hierarchy_judge_top_k]
     await _judge_all(judge, "task_goal", ctx.text, to_judge, cfg, meta, stage="goal_hierarchy")
     admitted = [h for h in to_judge if h.judged and h.relation in ("matches", "partial")]
     routing["graph_judged"] = sum(1 for h in to_judge if h.judged)
@@ -1039,6 +1084,7 @@ async def find_best_way(
         pool, g, scope=scope, cfg=cfg, meta=meta, pools=pools, tenant_scope=tenant_scope,
         ctx=ctx, judge=judge if judge is not None else default_judge(),
     )
+    g = combine_goal_resolution(g, routed_goals, cfg)
     p = await retrieve_procedures(pool, ctx, routed_goals, scope=scope, pools=pools, embedder=embedder, judge=judge, cfg=cfg,
                                   meta=meta, current_scope=current_scope, require_verified=require_verified)
     meta.latency_ms["total"] = (time.monotonic() - t0) * 1000
@@ -1116,6 +1162,7 @@ async def search_procedures(
         pool, g, scope=scope, cfg=cfg, meta=meta, pools=pools, tenant_scope=tenant_scope,
         ctx=ctx, judge=judge if judge is not None else default_judge(),
     )
+    g = combine_goal_resolution(g, routed_goals, cfg)
     p = await retrieve_procedures(pool, ctx, routed_goals, scope=scope, pools=pools, embedder=embedder, judge=judge, cfg=cfg,
                                   meta=meta, current_scope=current_scope, require_verified=require_verified,
                                   invariant_bindings=invariant_bindings, excluded_procedure_ids=excluded_procedure_ids)
