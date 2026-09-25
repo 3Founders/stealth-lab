@@ -68,7 +68,8 @@ export default function GoalsPage() {
       </section>
 
       <section className="frame grid" style={{ paddingBottom: 120, rowGap: 40 }}>
-        <nav className="tabs" aria-label="Goal view">
+        <div style={{ gridColumn: "1 / span 12", display: "flex", flexWrap: "wrap", alignItems: "center", gap: "12px 32px" }}>
+        <nav className="tabs" style={{ marginTop: 0 }} aria-label="Goal view">
           {viewOptions.map((option) => (
             <button
               key={option.key}
@@ -84,7 +85,7 @@ export default function GoalsPage() {
           ))}
         </nav>
 
-        <nav className="tabs" aria-label="Goal resolution">
+        <nav className="tabs" style={{ marginTop: 0 }} aria-label="Goal resolution">
           {resolutionFilters.map((filter) => (
             <button
               key={filter.key}
@@ -100,13 +101,14 @@ export default function GoalsPage() {
           ))}
         </nav>
 
-        <nav className="tabs" aria-label="Category">
+        <nav className="tabs" style={{ marginTop: 0 }} aria-label="Category">
           {CATEGORIES.map((category) => (
             <button key={category} type="button" aria-pressed={cat === category} onClick={() => setCat(category)}>
               {category}
             </button>
           ))}
         </nav>
+        </div>
 
         {state.kind !== "ok" ? (
           <StateNotice state={state} />
