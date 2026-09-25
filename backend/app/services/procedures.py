@@ -824,6 +824,7 @@ async def record_execution_outcome(
     pool = await _home_pool(control_pool, "procedure", str(procedure_row_id), by_row_id=True)  # evidence/edges live with the procedure
     scope = tenant_scope if tenant_scope is not None else TenantScope.commons()
     goal_ids_to_resolve: list[str] = []
+    promoted_procedure_id: Optional[str] = None
     async with tenant_transaction(pool, scope) as conn:
         row = await conn.fetchrow(
             "SELECT * FROM procedures WHERE id = $1 FOR UPDATE", procedure_row_id
@@ -893,28 +894,14 @@ async def record_execution_outcome(
                 promoted = True
 
             if promoted:
-                goal_ids: list[str] = []
-                seen_goal_ids: set[str] = set()
+                # Only the exact Goal is resolved inside this transaction. Goals
+                # linked through `solutions` are looked up AFTER commit: reading
+                # them here needed a second pooled connection while this one holds
+                # the row lock -- with concurrent reports on one Procedure every
+                # other connection waits on that lock and the pool deadlocks.
                 direct_goal_id = row.get("achieves_goal_id")
-                if direct_goal_id is not None:
-                    value = str(direct_goal_id)
-                    if value not in seen_goal_ids:
-                        seen_goal_ids.add(value)
-                        goal_ids.append(value)
-                solution_rows = await control_pool.fetch(
-                    "SELECT DISTINCT goal_id FROM solutions "
-                    "WHERE target_id = $1 AND status = 'active'",
-                    str(row["procedure_id"]),
-                )
-                for solution_row in solution_rows:
-                    value = solution_row.get("goal_id")
-                    if value is None:
-                        continue
-                    value = str(value)
-                    if value not in seen_goal_ids:
-                        seen_goal_ids.add(value)
-                        goal_ids.append(value)
-                goal_ids_to_resolve = goal_ids
+                goal_ids_to_resolve = [str(direct_goal_id)] if direct_goal_id is not None else []
+                promoted_procedure_id = str(row["procedure_id"])
 
             # Ticket 13's circuit breaker: open (quarantine) after 5
             # failures; close (un-quarantine) after 5 consecutive
@@ -1042,6 +1029,15 @@ async def record_execution_outcome(
         result = dict(updated)
         result["evidence_id"] = str(evidence.id)
 
+    if promoted_procedure_id is not None:
+        # after commit: Goals this Procedure is an active Solution for (control DB)
+        for solution_row in await control_pool.fetch(
+            "SELECT DISTINCT goal_id FROM solutions WHERE target_id = $1 AND status = 'active'",
+            promoted_procedure_id,
+        ):
+            value = solution_row.get("goal_id")
+            if value is not None and str(value) not in goal_ids_to_resolve:
+                goal_ids_to_resolve.append(str(value))
     if goal_ids_to_resolve:
         for goal_id in goal_ids_to_resolve:
             goal_pool = await _home_pool(control_pool, "goal", goal_id)
@@ -1050,7 +1046,31 @@ async def record_execution_outcome(
                 "WHERE id = $1::uuid AND t_invalid IS NULL AND status <> 'merged'",
                 goal_id,
             )
+            await _after_goal_resolution(control_pool, goal_id, remote=goal_pool is not control_pool)
     return result
+
+
+async def _after_goal_resolution(control_pool: Any, goal_id: str, *, remote: bool) -> None:
+    """Keep DERIVED state in step with a changed `goals.resolved_at` (which stays
+    the only resolution signal): the Goal's search projection (a control-database
+    Goal is queued by trigger; a remote one needs it here) and the abstraction
+    coverage of its ancestors. Best-effort -- the outbox / `admin reindex` repair a
+    lost refresh; resolution itself is already committed and never propagates."""
+    import logging
+
+    from app.services.goal_abstraction import refresh_goal_abstraction_state_after_resolution
+    from app.services.search_projection import enqueue
+    from app.services.shards import pools_for
+
+    if remote:
+        try:
+            await enqueue(control_pool, "goal", goal_id)
+        except Exception:  # noqa: BLE001
+            logging.getLogger(__name__).warning("goal %s projection refresh after resolution not queued", goal_id, exc_info=True)
+    try:
+        await refresh_goal_abstraction_state_after_resolution(control_pool, goal_id, pools=pools_for(control_pool))
+    except Exception:  # noqa: BLE001
+        logging.getLogger(__name__).warning("goal %s abstraction state refresh after resolution failed", goal_id, exc_info=True)
 
 
 async def check_quarantine_and_disable(pool: asyncpg.Pool, procedure_row_id: str) -> dict:

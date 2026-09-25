@@ -382,29 +382,18 @@ async def _resolve_goals_by_normalized_name(
     from app.services.goals import normalize_goal_name
 
     normalized_names = sorted({normalize_goal_name(n) for n in normalized_names_in if n} - {""})
-    goal_by_normalized: dict[str, dict] = {}
     if not normalized_names:
-        return goal_by_normalized
+        return {}
 
-    if scope_type and scope_type != "global":
-        rows = await pool.fetch(
-            "SELECT id, normalized_name, canonical_name, expected_outcome, scope_type, tags, status, version, aliases, verification_requirement, scope_entity_id FROM goals "
-            "WHERE normalized_name = ANY($1::text[]) AND t_invalid IS NULL "
-            "AND ((scope_type = $2 AND scope_entity_id IS NOT DISTINCT FROM $3) OR scope_type = 'global')",
-            normalized_names, scope_type, scope_entity_id,
-        )
-    else:
-        rows = await pool.fetch(
-            "SELECT id, normalized_name, canonical_name, expected_outcome, scope_type, tags, status, version, aliases, verification_requirement, scope_entity_id FROM goals "
-            "WHERE normalized_name = ANY($1::text[]) AND t_invalid IS NULL AND scope_type = 'global'",
-            normalized_names,
-        )
-    for r in rows:
-        key = r["normalized_name"]
-        existing = goal_by_normalized.get(key)
-        if existing is None or (existing["scope_type"] == "global" and r["scope_type"] != "global"):
-            goal_by_normalized[key] = dict(r)
-    return goal_by_normalized
+    from app.services.routed_reads import find_goals_by_exact_names
+
+    # The global goal_names index finds Goals homed on any shard; the caller's
+    # own scope is preferred over 'global' (the same precedence as before).
+    return await find_goals_by_exact_names(
+        pool, normalized_names, scope_type=scope_type, scope_entity_id=scope_entity_id,
+        columns=("id, normalized_name, canonical_name, expected_outcome, scope_type, tags, status, version, "
+                 "aliases, verification_requirement, scope_entity_id"),
+    )
 
 
 def _stringify_jsonb(value: Any) -> Optional[str]:

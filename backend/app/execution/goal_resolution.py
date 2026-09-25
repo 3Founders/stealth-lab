@@ -30,6 +30,7 @@ from app.services.access import AccessScope
 from app.services.applicability import _CANDIDATE_BASE_WHERE, PROCEDURE_COLS_NO_HEAVY, check_hard_constraints
 from app.services.goal_ranking import ProcedureRankingService
 from app.services.goals import normalize_goal_name
+from app.services.routed_reads import fetch_goal
 
 DEFAULT_MAX_DEPTH = 6
 
@@ -98,22 +99,18 @@ async def resolve_goal_id_for_text(
     overwhelmingly common case for a step whose own text was never
     itself ingested as a Goal name.
     """
+    from app.services.routed_reads import find_goals_by_exact_names
+
     normalized = normalize_goal_name(text or "")
     if not normalized:
         return None
-    if scope_type and scope_type != "global":
-        rows = await pool.fetch(
-            "SELECT * FROM goals WHERE normalized_name = $1 AND t_invalid IS NULL "
-            "AND ((scope_type = $2 AND scope_entity_id IS NOT DISTINCT FROM $3) OR scope_type = 'global') "
-            "ORDER BY (scope_type != 'global') ASC LIMIT 1",
-            normalized, scope_type, scope_entity_id,
-        )
-    else:
-        rows = await pool.fetch(
-            "SELECT * FROM goals WHERE normalized_name = $1 AND t_invalid IS NULL AND scope_type = 'global' LIMIT 1",
-            normalized,
-        )
-    return dict(rows[0]) if rows else None
+    # The global goal_names index covers Goals homed on every shard (a query on
+    # this database's own `goals` table would miss remote ones); the caller's
+    # scope is preferred over 'global', exactly as before.
+    found = await find_goals_by_exact_names(
+        pool, [normalized], scope_type=scope_type, scope_entity_id=scope_entity_id,
+    )
+    return found.get(normalized)
 
 
 async def _feasible_procedures_for_goal(
@@ -131,12 +128,13 @@ async def _feasible_procedures_for_goal(
     exactly which Procedures claim to achieve this Goal; it is not
     fishing through the whole corpus by similarity).
     """
-    from app.services.shards import fanout_fetch
-    rows = await fanout_fetch(     # a goal's procedures usually share its shard but are not guaranteed to
-        pool,
-        f"SELECT {PROCEDURE_COLS_NO_HEAVY} FROM procedures WHERE achieves_goal_id = $1::uuid AND {_CANDIDATE_BASE_WHERE} "
-        "ORDER BY (verification_state = 'verified') DESC, t_created DESC LIMIT 20",
-        goal_id,
+    from app.services.routed_reads import fetch_goal_procedures
+
+    # A Goal's Procedures usually share its shard but are not guaranteed to
+    # (rollover): locate them through the projection and read only the shards
+    # that hold them, instead of asking every shard.
+    rows = await fetch_goal_procedures(
+        pool, [goal_id], columns=PROCEDURE_COLS_NO_HEAVY, where=_CANDIDATE_BASE_WHERE,
     )
     rows = sorted(rows, key=lambda r: (r["verification_state"] != "verified", -r["t_created"].timestamp()))[:20]
     results: list[tuple[dict, bool]] = []
@@ -236,9 +234,7 @@ async def _resolve_procedure_children(
         step_goal_row = None
         step_goal_id = step.get("goal_id")  # future-proofing: a real per-step FK, once one exists (none does today)
         if step_goal_id:
-            step_goal_row = await pool.fetchrow(
-                "SELECT id FROM goals WHERE id = $1::uuid AND t_invalid IS NULL", step_goal_id,
-            )
+            step_goal_row = await fetch_goal(pool, str(step_goal_id), columns="id")
         if step_goal_row is None:
             step_goal_row = await resolve_goal_id_for_text(
                 pool, step.get("goal") or step.get("action") or "",
@@ -280,7 +276,7 @@ async def resolve_goal_via_procedure(
     resolution that already finished.
     """
     context = context or {}
-    goal_row = await pool.fetchrow("SELECT * FROM goals WHERE id = $1::uuid AND t_invalid IS NULL", goal_id)
+    goal_row = await fetch_goal(pool, goal_id)
     if goal_row is None:
         raise GoalResolutionError(f"goal_id {goal_id!r} does not exist or is not live")
     goal = dict(goal_row)
@@ -339,7 +335,7 @@ async def resolve_goal(
     context = context or {}
     visited = visited or frozenset()
 
-    goal_row = await pool.fetchrow("SELECT * FROM goals WHERE id = $1::uuid AND t_invalid IS NULL", goal_id)
+    goal_row = await fetch_goal(pool, goal_id)
     if goal_row is None:
         if depth == 0:
             raise GoalResolutionError(f"root goal_id {goal_id!r} does not exist or is not live")

@@ -34,6 +34,7 @@ Benchmark/Solution/Evaluation visibility on a goal being visible
 from __future__ import annotations
 
 import json
+import logging
 from typing import Any, Mapping, Optional, Sequence
 
 import asyncpg
@@ -48,6 +49,8 @@ from app.services.access import (
 )
 from app.services.procedure_extraction.capability import wilson_interval
 from app.utils.ids import uuid7
+
+log = logging.getLogger(__name__)
 
 CREATED_BY = "product_model"
 
@@ -177,14 +180,55 @@ async def get_goal_for_product(
     exposing any Benchmark/Solution/Evaluation -- deliberately lighter
     than app.services.goals.get_goal (no procedure hydration), since every
     caller here only needs "does this goal exist and is it visible to
-    `scope`", not the full Goal+Procedures view."""
+    `scope`", not the full Goal+Procedures view. Read from the Goal's home
+    shard (a remote Goal is not in this database's `goals`)."""
+    from app.services.shards import home_pool
+
     sql, params, _ = scope_predicates(scope, tenant_scope or TenantScope.unrestricted(),
                                       alias="g", param_index=2)
-    r = await pool.fetchrow(
+    owner = await home_pool(pool, "goal", str(goal_id))
+    r = await owner.fetchrow(
         f"SELECT {_GOAL_READ_COLUMNS} FROM goals g WHERE g.id = $1 AND g.t_invalid IS NULL AND {sql}",
         goal_id, *params,
     )
     return _public_goal_row(r) if r is not None else None
+
+
+# Goal lists page over the control database's goal projection (it covers Goals on
+# every shard), then read ONLY the page's canonical rows, each batch from its home
+# shard. Visibility is applied twice: on the projection to page, and again on the
+# canonical row, so a stale projection can never expose a Goal.
+
+
+async def _projection_catch_up(pool: Any) -> None:
+    """Read-your-writes for lists: apply a small pending projection backlog first
+    (the same bounded catch-up retrieval uses; a large backlog is never blocking)."""
+    from app.services.retrieval_service import RetrievalMeta, _catch_up_projection
+
+    await _catch_up_projection(pool, RetrievalMeta())
+
+
+async def _hydrate_goal_page(
+    pool: Any, page: Sequence[Mapping[str, Any]], *, scope: AccessScope, tenant_scope: TenantScope,
+) -> list[tuple[dict[str, Any], Mapping[str, Any]]]:
+    """[(canonical row, projection row)] in page order; Goals that are no longer
+    live or visible on their canonical row are dropped."""
+    from app.services.shards import hydrate_rows, pools_for
+
+    if not page:
+        return []
+    sql, params, _ = scope_predicates(scope, tenant_scope, alias="g", param_index=2)
+
+    async def fetch(goal_pool: Any, ids: list[str]):
+        return await goal_pool.fetch(
+            f"SELECT {_GOAL_READ_COLUMNS} FROM goals g WHERE g.id = ANY($1::uuid[]) "
+            f"AND g.t_invalid IS NULL AND {sql}", ids, *params)
+
+    hydration = await hydrate_rows(
+        pools_for(pool), {str(row["goal_id"]): str(row["home_shard_id"] or "K000") for row in page}, fetch)
+    if hydration.partial:
+        log.warning("goal page: shards unavailable %s", hydration.unavailable_shards)
+    return [(hydration.rows[str(row["goal_id"])], row) for row in page if str(row["goal_id"]) in hydration.rows]
 
 
 async def list_goals(
@@ -195,7 +239,9 @@ async def list_goals(
     """List visible Goals with resolution filtering and offset pagination."""
     if offset < 0:
         raise ValueError("offset must be non-negative")
-    clauses, args = ["g.t_invalid IS NULL"], []
+    tenant = tenant_scope or TenantScope.unrestricted()
+    await _projection_catch_up(pool)
+    clauses, args = ["TRUE"], []
     idx = 1
     if status:
         clauses.append(f"g.status = ${idx}")
@@ -204,21 +250,21 @@ async def list_goals(
     resolution_sql = _resolution_clause(resolved)
     if resolution_sql:
         clauses.append(resolution_sql)
-    sql, params, idx = scope_predicates(
-        scope, tenant_scope or TenantScope.unrestricted(), alias="g", param_index=idx,
-    )
+    sql, params, idx = scope_predicates(scope, tenant, alias="g", param_index=idx)
     args.extend(params)
     page_size = min(max(int(limit), 1), 200)
     limit_idx, offset_idx = idx, idx + 1
     args.extend([page_size + 1, max(int(offset), 0)])
-    rows = await pool.fetch(
-        f"SELECT {_GOAL_READ_COLUMNS} FROM goals g "
+    page = await pool.fetch(
+        f"SELECT g.goal_id, g.home_shard_id FROM goal_search_index g "
         f"WHERE {' AND '.join([*clauses, sql])} "
-        f"ORDER BY g.t_created DESC, g.id LIMIT ${limit_idx} OFFSET ${offset_idx}",
+        f"ORDER BY g.t_created DESC NULLS LAST, g.goal_id LIMIT ${limit_idx} OFFSET ${offset_idx}",
         *args,
     )
+    rows = [canonical for canonical, _ in await _hydrate_goal_page(
+        pool, page[:page_size], scope=scope, tenant_scope=tenant)]
     ranked = _rank_goal_rows(rows, resolved=resolved)
-    return ranked[:page_size], len(rows) > page_size
+    return ranked[:page_size], len(page) > page_size
 
 
 BROWSE_SPECIFICS_PREVIEW = 6
@@ -249,11 +295,16 @@ async def list_goals_browse(
     standalone Goals, newest first. It is deliberately NOT abstraction_level
     (levels are derived and equal depth is not equal category); direct count is
     the cheap page-local proxy for component size.
+
+    The graph and the paging run on the control database (goal_relations +
+    goal projection, covering every shard); only the page's canonical rows are
+    read, each from its home shard.
     """
     if offset < 0:
         raise ValueError("offset must be non-negative")
     tenant = tenant_scope or TenantScope.unrestricted()
-    clauses = ["g.t_invalid IS NULL", f"g.status IN {_LIVE_GOAL_STATUSES_SQL}"]
+    await _projection_catch_up(pool)
+    clauses = [f"g.status IN {_LIVE_GOAL_STATUSES_SQL}"]
     resolution_sql = _resolution_clause(resolved)
     if resolution_sql:
         clauses.append(resolution_sql)
@@ -274,7 +325,7 @@ async def list_goals_browse(
 
     edge = (
         "r.relation_type = 'SPECIALIZES' AND r.status = 'accepted' "
-        f"AND {{other}}.t_invalid IS NULL AND {{other}}.status IN {_LIVE_GOAL_STATUSES_SQL} "
+        f"AND {{other}}.status IN {_LIVE_GOAL_STATUSES_SQL} "
         "AND COALESCE(r.scope_type, 'global') = COALESCE(g.scope_type, 'global') "
         "AND r.scope_entity_id IS NOT DISTINCT FROM g.scope_entity_id "
         "AND COALESCE(r.scope_type, 'global') = COALESCE({other}.scope_type, 'global') "
@@ -283,31 +334,29 @@ async def list_goals_browse(
     )
     parent_edge = edge.format(other="pg", other_vis=parent_sql)
     child_edge = edge.format(other="cg", other_vis=child_sql)
-    rows = await pool.fetch(
+    page = await pool.fetch(
         f"""
         WITH base AS (
-            SELECT {_GOAL_READ_COLUMNS},
+            SELECT g.goal_id, g.home_shard_id, g.t_created,
                    (SELECT count(*) FROM goal_relations r
-                      JOIN goals cg ON cg.id = r.specific_goal_id
-                     WHERE r.abstract_goal_id = g.id AND {child_edge}) AS specific_count,
+                      JOIN goal_search_index cg ON cg.goal_id = r.specific_goal_id
+                     WHERE r.abstract_goal_id = g.goal_id AND {child_edge}) AS specific_count,
                    EXISTS (SELECT 1 FROM goal_relations r
-                      JOIN goals pg ON pg.id = r.abstract_goal_id
-                     WHERE r.specific_goal_id = g.id AND {parent_edge}) AS has_parent
-              FROM goals g
+                      JOIN goal_search_index pg ON pg.goal_id = r.abstract_goal_id
+                     WHERE r.specific_goal_id = g.goal_id AND {parent_edge}) AS has_parent
+              FROM goal_search_index g
              WHERE {' AND '.join(clauses)}
         )
         SELECT * FROM base WHERE NOT has_parent
-         ORDER BY (specific_count > 0) DESC, specific_count DESC, t_created DESC, id
+         ORDER BY (specific_count > 0) DESC, specific_count DESC, t_created DESC NULLS LAST, goal_id
          LIMIT ${limit_idx} OFFSET ${offset_idx}
         """,
         *args,
     )
-    page = rows[:page_size]
     entries: list[dict[str, Any]] = []
-    for row in page:
-        entry = _public_goal_row(row)
-        entry.pop("has_parent", None)
-        count = int(row["specific_count"] or 0)
+    for canonical, projected in await _hydrate_goal_page(pool, page[:page_size], scope=scope, tenant_scope=tenant):
+        entry = _public_goal_row(canonical)
+        count = int(projected["specific_count"] or 0)
         entry["specific_count"] = count
         entry["browse_kind"] = "root" if count else "standalone"
         entry["specifics"] = []
@@ -325,16 +374,16 @@ async def list_goals_browse(
         spec_rows = await pool.fetch(
             f"""
             SELECT root_id, id, canonical_name, status, resolved_at FROM (
-                SELECT r.abstract_goal_id::text AS root_id, cg.id::text AS id, cg.canonical_name,
+                SELECT r.abstract_goal_id::text AS root_id, cg.goal_id::text AS id, cg.canonical_name,
                        cg.status, cg.resolved_at,
                        row_number() OVER (PARTITION BY r.abstract_goal_id
-                                          ORDER BY cg.canonical_name, cg.id) AS rn
+                                          ORDER BY cg.canonical_name, cg.goal_id) AS rn
                   FROM goal_relations r
-                  JOIN goals g ON g.id = r.abstract_goal_id
-                  JOIN goals cg ON cg.id = r.specific_goal_id
+                  JOIN goal_search_index g ON g.goal_id = r.abstract_goal_id
+                  JOIN goal_search_index cg ON cg.goal_id = r.specific_goal_id
                  WHERE r.abstract_goal_id = ANY($1::uuid[])
                    AND r.relation_type = 'SPECIALIZES' AND r.status = 'accepted'
-                   AND cg.t_invalid IS NULL AND cg.status IN {_LIVE_GOAL_STATUSES_SQL}
+                   AND cg.status IN {_LIVE_GOAL_STATUSES_SQL}
                    AND COALESCE(r.scope_type, 'global') = COALESCE(g.scope_type, 'global')
                    AND r.scope_entity_id IS NOT DISTINCT FROM g.scope_entity_id
                    AND COALESCE(r.scope_type, 'global') = COALESCE(cg.scope_type, 'global')
@@ -353,7 +402,7 @@ async def list_goals_browse(
             })
         for entry in entries:
             entry["specifics"] = by_root.get(str(entry["id"]), [])
-    return entries, len(rows) > page_size
+    return entries, len(page) > page_size
 
 
 async def find_goal(
@@ -361,34 +410,36 @@ async def find_goal(
     resolved: Optional[bool | str] = None, limit: int = 10, offset: int = 0,
     tenant_scope: Optional[TenantScope] = None,
 ) -> tuple[list[dict[str, Any]], bool]:
-    """Find visible Goals and return one page plus a continuation flag."""
+    """Find visible Goals and return one page plus a continuation flag.
+
+    Lexical search over the goal projection (name, aliases, description) so Goals on
+    every shard are found; the page's canonical rows come from their home shards."""
     if offset < 0:
         raise ValueError("offset must be non-negative")
     import re as _re
     words = [w for w in _re.split(r"[^a-z0-9]+", query.lower()) if len(w) > 1]
     if not words:
         return [], False
+    tenant = tenant_scope or TenantScope.unrestricted()
+    await _projection_catch_up(pool)
     tsq = " | ".join(words)
-    doc = "g.canonical_name || ' ' || COALESCE(g.description,'') || ' ' || COALESCE(g.objective,'')"
-    clauses = ["g.t_invalid IS NULL"]
+    clauses = ["g.search_tsv @@ to_tsquery('english', $1)"]
     resolution_sql = _resolution_clause(resolved)
     if resolution_sql:
         clauses.append(resolution_sql)
-    sql, params, idx = scope_predicates(
-        scope, tenant_scope or TenantScope.unrestricted(), alias="g", param_index=2,
-    )
+    sql, params, idx = scope_predicates(scope, tenant, alias="g", param_index=2)
     page_size = min(max(int(limit), 1), 50)
     limit_idx, offset_idx = idx, idx + 1
-    rows = await pool.fetch(
-        f"SELECT {_GOAL_READ_COLUMNS}, "
-        f"ts_rank(to_tsvector('english', {doc}), to_tsquery('english', $1)) AS _rank "
-        f"FROM goals g WHERE {' AND '.join([*clauses, sql])} "
-        f"AND to_tsvector('english', {doc}) @@ to_tsquery('english', $1) "
-        f"ORDER BY _rank DESC, g.id LIMIT ${limit_idx} OFFSET ${offset_idx}",
+    page = await pool.fetch(
+        f"SELECT g.goal_id, g.home_shard_id, ts_rank(g.search_tsv, to_tsquery('english', $1)) AS _rank "
+        f"FROM goal_search_index g WHERE {' AND '.join([*clauses, sql])} "
+        f"ORDER BY _rank DESC, g.goal_id LIMIT ${limit_idx} OFFSET ${offset_idx}",
         tsq, *params, page_size + 1, max(int(offset), 0),
     )
+    rows = [canonical for canonical, _ in await _hydrate_goal_page(
+        pool, page[:page_size], scope=scope, tenant_scope=tenant)]
     ranked = _rank_goal_rows(rows, resolved=resolved)
-    return ranked[:page_size], len(rows) > page_size
+    return ranked[:page_size], len(page) > page_size
 
 
 # ---------------------------------------------------------------------------
@@ -896,14 +947,11 @@ async def _ineligible_solution_reasons(
 
     proc_targets = by_type.get("procedure", {})
     if proc_targets:
-        from app.services.shards import fanout_fetch
-        rows = await fanout_fetch(
-            pool,
-            "SELECT procedure_id::text AS pid, staleness::text AS st FROM procedures "
-            "WHERE procedure_id = ANY($1::uuid[]) AND t_invalid IS NULL",
-            list(proc_targets),
+        from app.services.routed_reads import fetch_procedures_by_stable_ids
+        rows = await fetch_procedures_by_stable_ids(
+            pool, list(proc_targets), columns="procedure_id, staleness::text AS st",
         )
-        live = {r["pid"]: r["st"] for r in rows}
+        live = {str(r["procedure_id"]): r["st"] for r in rows}
         for tid, sids in proc_targets.items():
             reason = None
             if tid not in live:

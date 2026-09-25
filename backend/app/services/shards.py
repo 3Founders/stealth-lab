@@ -18,6 +18,8 @@ never silently treated as nonexistent.
 from __future__ import annotations
 
 import asyncio
+import contextlib
+import contextvars
 import hashlib
 import logging
 import math
@@ -65,6 +67,85 @@ async def multi_shard(pool: Any) -> bool:
         return False
 
 
+# ------------------------------------------------------------ per-request telemetry
+# One recorder per request (a ContextVar, so concurrent requests never mix): how
+# many independent databases a request touched, how (targeted hydration vs
+# broadcast), how long each took, route lookups, timeouts and cold connects.
+# Recording is a no-op when no recorder is active.
+
+
+@dataclass
+class ShardRequestStats:
+    shards: set = field(default_factory=set)
+    hydrations: int = 0
+    broadcasts: int = 0
+    broadcast_width_max: int = 0
+    route_lookups: int = 0
+    route_lookup_ms: float = 0.0
+    shard_latency_ms: dict = field(default_factory=dict)   # shard_id -> max latency seen
+    timeouts: dict = field(default_factory=dict)           # shard_id -> count
+    unavailable: dict = field(default_factory=dict)        # shard_id -> reason
+    cold_connects: int = 0
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "distinct_shards": len(self.shards), "shards": sorted(self.shards),
+            "hydrations": self.hydrations, "broadcasts": self.broadcasts,
+            "broadcast_width_max": self.broadcast_width_max, "route_lookups": self.route_lookups,
+            "route_lookup_ms": round(self.route_lookup_ms, 2),
+            "shard_latency_ms": {k: round(v, 2) for k, v in sorted(self.shard_latency_ms.items())},
+            "timeouts": dict(self.timeouts), "unavailable": dict(self.unavailable),
+            "cold_connects": self.cold_connects,
+        }
+
+
+_REQUEST_STATS: contextvars.ContextVar[Optional[ShardRequestStats]] = contextvars.ContextVar(
+    "shard_request_stats", default=None)
+
+
+@contextlib.contextmanager
+def track_shard_requests():
+    """Record every shard access made inside this block (and tasks it spawns)."""
+    stats = ShardRequestStats()
+    token = _REQUEST_STATS.set(stats)
+    try:
+        yield stats
+    finally:
+        _REQUEST_STATS.reset(token)
+
+
+def current_shard_stats() -> Optional[ShardRequestStats]:
+    return _REQUEST_STATS.get()
+
+
+def _note_shard(shard_id: str, latency_ms: Optional[float] = None) -> None:
+    stats = _REQUEST_STATS.get()
+    if stats is None:
+        return
+    stats.shards.add(shard_id)
+    if latency_ms is not None:
+        stats.shard_latency_ms[shard_id] = max(stats.shard_latency_ms.get(shard_id, 0.0), latency_ms)
+
+
+def _note_failure(shard_id: str, reason: str) -> None:
+    stats = _REQUEST_STATS.get()
+    if stats is None:
+        return
+    stats.unavailable[shard_id] = reason
+    if reason == "timeout":
+        stats.timeouts[shard_id] = stats.timeouts.get(shard_id, 0) + 1
+
+
+def shard_read_timeout_s() -> float:
+    """Deadline for ONE read on ONE shard database. A slow shard is reported as
+    unavailable instead of stalling the whole request (parallel reads wait for the
+    slowest). Operators tune it with STEALTH_SHARD_READ_TIMEOUT_S."""
+    try:
+        return float(os.environ.get("STEALTH_SHARD_READ_TIMEOUT_S", "10"))
+    except ValueError:
+        return 10.0
+
+
 _POOLS: dict[int, "ShardPools"] = {}
 
 
@@ -82,13 +163,20 @@ async def home_pool(pool: Any, object_type: str, object_id: str, *, by_row_id: b
     zero-extra-query case when no remote shard is registered), else the shard's pool."""
     if not await multi_shard(pool):
         return pool
+    t0 = time.monotonic()
     if object_type == "procedure" and by_row_id:
         shard = await pool.fetchval("SELECT home_shard_id FROM procedure_row_routes WHERE row_id = $1::uuid", object_id)
     else:
         shard = await pool.fetchval(
             "SELECT home_shard_id FROM object_routes WHERE object_type = $1 AND object_id = $2::uuid", object_type, object_id)
+    stats = _REQUEST_STATS.get()
+    if stats is not None:
+        stats.route_lookups += 1
+        stats.route_lookup_ms += (time.monotonic() - t0) * 1000
     if shard in (None, HOME_SHARD):
+        _note_shard(HOME_SHARD)
         return pool
+    _note_shard(shard)
     return await pools_for(pool).get(shard)
 
 
@@ -130,6 +218,7 @@ class ShardInfo:
     weight: int
     dsn_env: Optional[str] = None
     capacity_rows: Optional[int] = None
+    capacity_bytes: Optional[int] = None   # storage limit (migration 116), enforced by shard_capacity
 
     @property
     def writable(self) -> bool:
@@ -172,10 +261,9 @@ def choose_child_shard(preferred_shard: Optional[str], key: str, shards: Sequenc
 
 
 async def list_shards(pool: asyncpg.Pool | asyncpg.Connection) -> list[ShardInfo]:
-    rows = await pool.fetch(
-        "SELECT shard_id, status, weight, dsn_env, capacity_rows FROM knowledge_shards ORDER BY shard_id"
-    )
-    return [ShardInfo(r["shard_id"], r["status"], r["weight"], r["dsn_env"], r["capacity_rows"]) for r in rows]
+    rows = await pool.fetch("SELECT * FROM knowledge_shards ORDER BY shard_id")
+    return [ShardInfo(r["shard_id"], r["status"], r["weight"], r["dsn_env"], r["capacity_rows"],
+                      dict(r).get("capacity_bytes")) for r in rows]
 
 
 _SHARD_CACHE: dict[int, tuple[float, list[ShardInfo]]] = {}
@@ -202,6 +290,7 @@ def invalidate_shard_cache() -> None:
 async def register_shard(
     pool: asyncpg.Pool, shard_id: str, *, dsn_env: Optional[str], weight: int = 100,
     status: str = "active", capacity_rows: Optional[int] = None, notes: Optional[str] = None,
+    capacity_bytes: Optional[int] = None,
 ) -> ShardInfo:
     """Idempotent upsert of a shard record (never stores a DSN)."""
     if dsn_env is not None and "://" in dsn_env:
@@ -217,8 +306,10 @@ async def register_shard(
         """,
         shard_id, status, weight, dsn_env, capacity_rows, notes,
     )
+    if capacity_bytes is not None:
+        await pool.execute("UPDATE knowledge_shards SET capacity_bytes = $2 WHERE shard_id = $1", shard_id, capacity_bytes)
     invalidate_shard_cache()
-    return ShardInfo(shard_id, status, weight, dsn_env, capacity_rows)
+    return ShardInfo(shard_id, status, weight, dsn_env, capacity_rows, capacity_bytes)
 
 
 async def set_shard_status(pool: asyncpg.Pool, shard_id: str, status: str) -> None:
@@ -313,6 +404,9 @@ class ShardPools:
                 raise ShardUnavailable(shard_id, f"env var {info.dsn_env!r} is not set")
             try:
                 self.connects += 1
+                stats = _REQUEST_STATS.get()
+                if stats is not None:
+                    stats.cold_connects += 1
                 pool = await self._factory(dsn)
             except Exception as exc:  # noqa: BLE001 -- recorded, surfaced as ShardUnavailable
                 self._failed_until[shard_id] = time.monotonic() + self._backoff_s
@@ -343,7 +437,7 @@ async def hydrate_rows(
     pools: ShardPools,
     id_to_shard: dict[str, str],
     fetch: Callable[[Any, list[str]], Awaitable[Sequence[Any]]],
-    *, id_key: str = "id",
+    *, id_key: str = "id", timeout_s: Optional[float] = None,
 ) -> HydrationResult:
     """Fetch canonical rows for ``id_to_shard`` with ONE call to ``fetch(pool,
     ids)`` per involved shard (never per id, never for uninvolved shards).
@@ -351,27 +445,41 @@ async def hydrate_rows(
     ``fetch`` returns records/dicts carrying ``id_key``. Reachable shards that
     do not return an id yield it in ``missing_ids`` (a real absence);
     unreachable shards yield ``unavailable_shards`` (an outage, NOT absence).
+    Every shard read is bounded by ``timeout_s`` (default
+    ``shard_read_timeout_s()``); a timed-out shard is reported, not waited on.
     """
     result = HydrationResult()
     by_shard: dict[str, list[str]] = {}
     for oid, sid in id_to_shard.items():
         by_shard.setdefault(sid, []).append(oid)
+    deadline = shard_read_timeout_s() if timeout_s is None else timeout_s
+    stats = _REQUEST_STATS.get()
+    if stats is not None and by_shard:
+        stats.hydrations += 1
 
     async def one(sid: str, ids: list[str]) -> None:
         t0 = time.monotonic()
         result.shard_batches[sid] = len(ids)
         try:
             pool = await pools.get(sid)
-            rows = await fetch(pool, ids)
+            rows = await asyncio.wait_for(fetch(pool, ids), deadline)
         except ShardUnavailable as exc:
             result.unavailable_shards[sid] = exc.reason
+            _note_failure(sid, exc.reason)
             return
-        except (asyncpg.PostgresConnectionError, OSError, asyncio.TimeoutError) as exc:
+        except asyncio.TimeoutError:
+            result.unavailable_shards[sid] = "timeout"
+            _note_failure(sid, "timeout")
+            log.warning("shard %s hydrate timed out after %.1fs", sid, deadline)
+            return
+        except (asyncpg.PostgresConnectionError, OSError) as exc:
             result.unavailable_shards[sid] = f"query failed: {type(exc).__name__}"
+            _note_failure(sid, result.unavailable_shards[sid])
             log.warning("shard %s hydrate failed: %s", sid, exc)
             return
         finally:
             result.shard_latency_ms[sid] = (time.monotonic() - t0) * 1000
+            _note_shard(sid, result.shard_latency_ms[sid])
         found = set()
         for r in rows:
             d = dict(r)
@@ -440,6 +548,7 @@ async def all_pools(pool: Any, *, strict: bool = False) -> list[tuple[str, Any]]
     silently miss data pass strict=True."""
     out: list[tuple[str, Any]] = [(HOME_SHARD, pool)]
     if not await multi_shard(pool):
+        _note_shard(HOME_SHARD)
         return out
     sp = pools_for(pool)
     for info in await cached_shards(pool):
@@ -447,25 +556,44 @@ async def all_pools(pool: Any, *, strict: bool = False) -> list[tuple[str, Any]]
             continue
         try:
             out.append((info.shard_id, await sp.get(info.shard_id)))
-        except ShardUnavailable:
+        except ShardUnavailable as exc:
+            _note_failure(info.shard_id, exc.reason)
             if strict:
                 raise
             log.warning("shard %s unavailable: skipped in fan-out read", info.shard_id)
+    stats = _REQUEST_STATS.get()
+    if stats is not None:
+        stats.broadcasts += 1
+        stats.broadcast_width_max = max(stats.broadcast_width_max, len(out))
+        stats.shards.update(sid for sid, _ in out)
     return out
+
+
+async def _bounded(shard_id: str, awaitable: Awaitable[Any], *, strict: bool) -> Any:
+    """One broadcast leg under the per-shard deadline: a timed-out shard is skipped
+    (lenient, logged) or raised as ShardUnavailable (strict) -- never waited on forever."""
+    try:
+        return await asyncio.wait_for(awaitable, shard_read_timeout_s())
+    except asyncio.TimeoutError:
+        _note_failure(shard_id, "timeout")
+        if strict:
+            raise ShardUnavailable(shard_id, "timeout") from None
+        log.warning("shard %s timed out: skipped in fan-out read", shard_id)
+        return None
 
 
 async def fanout_fetch(pool: Any, sql: str, *args: Any, strict: bool = False) -> list:
     pools = await all_pools(pool, strict=strict)
     if len(pools) == 1:
         return list(await pools[0][1].fetch(sql, *args))
-    parts = await asyncio.gather(*[p.fetch(sql, *args) for _, p in pools])
-    return [r for part in parts for r in part]
+    parts = await asyncio.gather(*[_bounded(sid, p.fetch(sql, *args), strict=strict) for sid, p in pools])
+    return [r for part in parts if part for r in part]
 
 
 async def fanout_fetchrow(pool: Any, sql: str, *args: Any) -> Any:
     """First non-null row over the shards (for an id whose route is unknown)."""
-    for _, p in await all_pools(pool):
-        row = await p.fetchrow(sql, *args)
+    for sid, p in await all_pools(pool):
+        row = await _bounded(sid, p.fetchrow(sql, *args), strict=False)
         if row is not None:
             return row
     return None
@@ -473,7 +601,7 @@ async def fanout_fetchrow(pool: Any, sql: str, *args: Any) -> Any:
 
 async def fanout_fetchval_sum(pool: Any, sql: str, *args: Any, strict: bool = False) -> int:
     pools = await all_pools(pool, strict=strict)
-    vals = await asyncio.gather(*[p.fetchval(sql, *args) for _, p in pools])
+    vals = await asyncio.gather(*[_bounded(sid, p.fetchval(sql, *args), strict=strict) for sid, p in pools])
     return int(sum(v or 0 for v in vals))
 
 
@@ -495,7 +623,7 @@ async def fanout_sum_row(pool: Any, sql: str, *args: Any, strict: bool = False) 
     """For a single-row aggregate query (``SELECT count(*) AS a, sum(..) AS b``): run it on every shard via ``fetchrow``
     and add the columns up. Non-numeric/NULL values count as 0."""
     pools = await all_pools(pool, strict=strict)
-    rows = await asyncio.gather(*[p.fetchrow(sql, *args) for _, p in pools])
+    rows = await asyncio.gather(*[_bounded(sid, p.fetchrow(sql, *args), strict=strict) for sid, p in pools])
     out: dict[str, Any] = {}
     for row in rows:
         if row is None:
@@ -507,5 +635,6 @@ async def fanout_sum_row(pool: Any, sql: str, *args: Any, strict: bool = False) 
 
 async def fanout_best_row(pool: Any, sql: str, *args: Any, key: Callable[[Any], Any]) -> Any:
     """``fetchrow`` on every shard (the SQL already has ORDER BY .. LIMIT 1), then keep the row with the greatest ``key``."""
-    rows = [r for r in await asyncio.gather(*[p.fetchrow(sql, *args) for _, p in await all_pools(pool)]) if r is not None]
+    rows = [r for r in await asyncio.gather(*[_bounded(sid, p.fetchrow(sql, *args), strict=False)
+                                              for sid, p in await all_pools(pool)]) if r is not None]
     return max(rows, key=key) if rows else None

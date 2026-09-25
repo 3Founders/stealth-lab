@@ -45,9 +45,15 @@ def _parse(argv=None) -> argparse.Namespace:
     rs.add_argument("--dsn-env", required=True, help="NAME of the env var holding the DSN (never the DSN)")
     rs.add_argument("--weight", type=int, default=100)
     rs.add_argument("--capacity-rows", type=int)
+    rs.add_argument("--capacity-bytes", type=int, help="storage limit of the shard database, e.g. 524288000 for 500 MB")
     ss = sub.add_parser("shard-status")
     ss.add_argument("shard_id")
     ss.add_argument("status", choices=["active", "full", "readonly", "unhealthy", "retired"])
+    sc = sub.add_parser("shard-capacity")
+    sc.add_argument("--apply", action="store_true", help="mark shards over the threshold 'full' (default: report only)")
+    pr = sub.add_parser("prune-operational")
+    pr.add_argument("--older-than-days", type=int, required=True)
+    pr.add_argument("--apply", action="store_true", help="delete (default: count only)")
     sh_ = sub.add_parser("shards")
     sh_.add_argument("--json", action="store_true")
     sw = sub.add_parser("shard-weight")
@@ -116,7 +122,13 @@ async def _amain(a: argparse.Namespace) -> int:
             if problems:
                 print("ERROR: not a usable knowledge shard: " + "; ".join(problems) + " -- provision it with: python scripts/migrate.py --dsn <shard dsn>", file=sys.stderr)
                 return 2
-            print(await sh.register_shard(pool, a.shard_id, dsn_env=a.dsn_env, weight=a.weight, capacity_rows=a.capacity_rows))
+            print(await sh.register_shard(pool, a.shard_id, dsn_env=a.dsn_env, weight=a.weight, capacity_rows=a.capacity_rows, capacity_bytes=a.capacity_bytes))
+        elif a.cmd == "shard-capacity":
+            from app.services.shard_capacity import enforce_shard_capacity
+            print(json.dumps(await enforce_shard_capacity(pool, apply=a.apply), default=str))
+        elif a.cmd == "prune-operational":
+            from app.services.retention import prune_operational_rows
+            print(json.dumps(await prune_operational_rows(pool, older_than_days=a.older_than_days, apply=a.apply)))
         elif a.cmd == "shard-status":
             await sh.set_shard_status(pool, a.shard_id, a.status)
             print(f"{a.shard_id} -> {a.status} (existing objects keep their shard; only NEW placements change)")

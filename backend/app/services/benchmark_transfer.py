@@ -489,6 +489,15 @@ async def _visible_goal_snapshot(
         """,
         goal_id,
     )
+    return _snapshot_if_current(projection, canonical, tenant_scope)
+
+
+def _snapshot_if_current(
+    projection: Mapping[str, Any], canonical: Optional[Mapping[str, Any]], tenant_scope: TenantScope,
+) -> Optional[dict[str, Any]]:
+    """The canonical Goal, only if it is live and agrees with its projection on
+    status, version, scope, visibility and owner (otherwise the Goal is treated as
+    not visible -- never trusted on a stale projection)."""
     if canonical is None:
         return None
     if (
@@ -510,6 +519,67 @@ async def _visible_goal_snapshot(
         "tenant_id": str(tenant_scope.tenant_id) if tenant_scope.tenant_id is not None else None,
         "home_shard_id": str(projection.get("home_shard_id") or HOME_SHARD),
     }
+
+
+async def _visible_goal_snapshots(
+    pool: Any,
+    goal_ids: Sequence[str],
+    *,
+    access_scope: AccessScope,
+    tenant_scope: TenantScope,
+) -> dict[str, dict[str, Any]]:
+    """Batch twin of `_visible_goal_snapshot`: ONE projection query for all ids,
+    then the canonical rows read with one query per involved shard, concurrently
+    (instead of projection + route lookup + canonical read per Goal, in turn).
+    Same visibility and consistency rules, Goal by Goal."""
+    from app.services.shards import hydrate_rows, pools_for
+
+    ids = list(dict.fromkeys(str(goal_id) for goal_id in goal_ids))
+    if not ids:
+        return {}
+    scope_sql, scope_params = _goal_visibility_predicate(
+        _query_access_scope(access_scope or AccessScope.anonymous()), alias="g", param_index=2,
+    )
+    projections = {
+        str(row["id"]): row
+        for row in await pool.fetch(
+            f"""
+            SELECT g.goal_id::text AS id, g.canonical_name, g.status AS projected_status,
+                   g.version AS projected_version, g.scope_type AS projected_scope_type,
+                   g.scope_entity_id AS projected_scope_entity_id,
+                   g.visibility::text AS projected_visibility,
+                   g.owner_id AS projected_owner_id, g.home_shard_id
+            FROM goal_search_index g
+            WHERE g.goal_id = ANY($1::uuid[]) AND g.status IN ('active', 'candidate') AND {scope_sql}
+            """,
+            ids,
+            *scope_params,
+        )
+    }
+    if not projections:
+        return {}
+
+    async def fetch(goal_pool: Any, shard_ids: list[str]):
+        return await goal_pool.fetch(
+            """
+            SELECT id::text AS id, canonical_name, description, objective, constraints,
+                   expected_outcome, verification_requirement, version, status, t_invalid,
+                   scope_type, scope_entity_id, visibility::text AS visibility,
+                   owner_id, home_shard_id
+            FROM goals
+            WHERE id = ANY($1::uuid[]) AND t_invalid IS NULL
+            """,
+            shard_ids,
+        )
+
+    hydration = await hydrate_rows(
+        pools_for(pool), {goal_id: str(row["home_shard_id"] or HOME_SHARD) for goal_id, row in projections.items()}, fetch)
+    snapshots: dict[str, dict[str, Any]] = {}
+    for goal_id, projection in projections.items():
+        snapshot = _snapshot_if_current(projection, hydration.rows.get(goal_id), tenant_scope)
+        if snapshot is not None:
+            snapshots[goal_id] = snapshot
+    return snapshots
 
 
 def _scope_key_for_goal(row: Mapping[str, Any]) -> tuple[str, Optional[str]]:
@@ -786,22 +856,26 @@ async def _load_direct_neighbors(
         source["goal_id"],
         *relation_scope_params,
     )
+    raws = [raw for raw in (_row_dict(row) for row in rows) if raw is not None]
+    target_ids = [
+        target_id
+        for target_id in (_required_id(raw.get("target_goal_id"), "target_goal_id") for raw in raws)
+        if target_id != str(source["goal_id"])
+    ]
+    # All neighbour Goals in one projection query + one read per involved shard.
+    snapshots = await _visible_goal_snapshots(
+        pool, target_ids, access_scope=access_scope, tenant_scope=tenant_scope,
+    )
     result: list[dict[str, Any]] = []
-    for row in rows:
-        raw = _row_dict(row)
-        if raw is None:
-            continue
+    for raw in raws:
         target_id = _required_id(raw.get("target_goal_id"), "target_goal_id")
         if target_id == str(source["goal_id"]):
             continue
-        try:
-            target = await get_benchmark_transfer_target(
-                pool,
-                target_id,
-                access_scope=access_scope,
-                tenant_scope=tenant_scope,
-            )
-        except BenchmarkTransferError:
+        goal = snapshots.get(target_id)
+        if goal is None:
+            continue  # not found / not visible: skipped, exactly as a single-target load
+        target = _target_from_goal(goal)
+        if not _scope_visible(target["scope"], access_scope or AccessScope.anonymous()):
             continue
         _require_same_scope(source["scope"], target["scope"])
         if str(source.get("tenant_id")) != str(target.get("tenant_id")):

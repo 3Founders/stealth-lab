@@ -51,7 +51,7 @@ def _norm_version(provider: Optional[str]) -> str:
 _GOAL_SQL = (
     "SELECT id, canonical_name, description, aliases, status, version, visibility, owner_id, "
     "scope_type, scope_entity_id, home_shard_id, embedding::text AS embedding, embedding_model_id, "
-    "embedding_provider FROM goals WHERE id = $1::uuid AND t_invalid IS NULL"
+    "embedding_provider, resolved_at, t_created FROM goals WHERE id = $1::uuid AND t_invalid IS NULL"
 )
 _PROC_SQL = (
     "SELECT id, procedure_id, name, goal, achieves_goal_id, display_description, capability_statement, "
@@ -104,7 +104,9 @@ def build_projection(object_type: str, row: dict, shard_id: str) -> dict:
             key=str(row["id"]), canonical_name=row["canonical_name"],
             short_description=_cap(row.get("description"), 500) or None,
             aliases=list(row.get("aliases") or []), search_text=_cap(text),
-            status=row["status"], version=row["version"], **common,
+            status=row["status"], version=row["version"],
+            # derived copies: goals.resolved_at stays the authoritative resolution signal
+            resolved_at=row.get("resolved_at"), t_created=row.get("t_created"), **common,
         )
     if object_type == "procedure":
         text = " ".join(x for x in [
@@ -148,9 +150,9 @@ def build_projection(object_type: str, row: dict, shard_id: str) -> dict:
 _UPSERT_GOAL = """
 INSERT INTO goal_search_index (goal_id, canonical_name, short_description, aliases, search_text, search_tsv,
     embedding, embedding_model, embedding_version, embedding_dim, home_shard_id, status, version,
-    visibility, owner_id, scope_type, scope_entity_id, updated_at)
+    visibility, owner_id, scope_type, scope_entity_id, resolved_at, t_created, updated_at)
 VALUES ($1::uuid, $2, $3, $4, $5, to_tsvector('english', $5), $6::vector, $7, $8, $9, $10, $11, $12,
-    $13::visibility_level, $14, $15, $16, now())
+    $13::visibility_level, $14, $15, $16, $17, $18, now())
 ON CONFLICT (goal_id) DO UPDATE SET
     canonical_name = EXCLUDED.canonical_name, short_description = EXCLUDED.short_description,
     aliases = EXCLUDED.aliases, search_text = EXCLUDED.search_text, search_tsv = EXCLUDED.search_tsv,
@@ -158,7 +160,8 @@ ON CONFLICT (goal_id) DO UPDATE SET
     embedding_version = EXCLUDED.embedding_version, embedding_dim = EXCLUDED.embedding_dim,
     home_shard_id = EXCLUDED.home_shard_id, status = EXCLUDED.status, version = EXCLUDED.version,
     visibility = EXCLUDED.visibility, owner_id = EXCLUDED.owner_id, scope_type = EXCLUDED.scope_type,
-    scope_entity_id = EXCLUDED.scope_entity_id, updated_at = now(), projected_at = now()
+    scope_entity_id = EXCLUDED.scope_entity_id, resolved_at = EXCLUDED.resolved_at,
+    t_created = EXCLUDED.t_created, updated_at = now(), projected_at = now()
 """
 _UPSERT_PROC = """
 INSERT INTO procedure_search_index (procedure_id, procedure_row_id, name, summary, goal_id,
@@ -203,7 +206,8 @@ async def _upsert(conn, object_type: str, p: dict) -> None:
     tail = (p["visibility"], p["owner_id"], p["scope_type"], p["scope_entity_id"])
     if object_type == "goal":
         await conn.execute(_UPSERT_GOAL, p["key"], p["canonical_name"], p["short_description"], p["aliases"],
-                           p["search_text"], *common, p["status"], p["version"], *tail)
+                           p["search_text"], *common, p["status"], p["version"], *tail,
+                           p.get("resolved_at"), p.get("t_created"))
     elif object_type == "procedure":
         await conn.execute(_UPSERT_PROC, p["key"], p["procedure_row_id"], p["name"], p["summary"], p["goal_id"],
                            p["preconditions_summary"], p["outcome_summary"], p["verification_summary"],

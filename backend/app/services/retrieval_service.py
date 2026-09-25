@@ -54,7 +54,7 @@ from app.services.hierarchical_goal_routing import (
 )
 from app.services.identity_resolution import default_judge, fts_or_query, rrf_fuse
 from app.services.semantic.chain import SemanticJudge
-from app.services.shards import ShardPools, hydrate_rows, pools_for
+from app.services.shards import ShardPools, hydrate_rows, pools_for, track_shard_requests
 
 log = logging.getLogger(__name__)
 
@@ -116,6 +116,10 @@ class RetrievalMeta:
     missing_ids: list[str] = field(default_factory=list)
     disqualified: list[dict] = field(default_factory=list)
     goal_routing: Optional[dict[str, Any]] = None
+    # Per-request physical cost (shards.track_shard_requests): distinct databases
+    # touched, targeted hydrations vs broadcasts, route lookups, per-shard latency,
+    # timeouts, cold connects. Judge time is in latency_ms["*_rerank"].
+    shard_requests: Optional[dict[str, Any]] = None
 
     def degrade(self, reason: str) -> None:
         self.degraded = True
@@ -964,7 +968,7 @@ async def retrieve_procedures(
     t0 = time.monotonic()
     hyd = await hydrate_rows(pools, {c.extra["procedure_row_id"]: c.home_shard_id for c in cands}, _fetch_procedures)
     meta.latency_ms["hydrate"] = (time.monotonic() - t0) * 1000
-    meta.shards_touched = sorted(hyd.shard_batches)
+    meta.shards_touched = sorted(set(meta.shards_touched) | set(hyd.shard_batches))
     meta.unavailable_shards.update(hyd.unavailable_shards)
     meta.missing_ids.extend(hyd.missing_ids)
     if hyd.partial:
@@ -1077,16 +1081,18 @@ async def find_best_way(
     meta = RetrievalMeta()
     tenant_scope = tenant_scope or _default_tenant_scope(scope)
     t0 = time.monotonic()
-    ctx = await build_query_context(goal_text, local_claims, embedder=embedder, cfg=cfg)
-    meta.local_claim_ids = ctx.claim_ids
-    g = await search_goals(pool, ctx, scope=scope, embedder=embedder, judge=judge, cfg=cfg, meta=meta)
-    routed_goals = await _route_goal_candidates(
-        pool, g, scope=scope, cfg=cfg, meta=meta, pools=pools, tenant_scope=tenant_scope,
-        ctx=ctx, judge=judge if judge is not None else default_judge(),
-    )
-    g = combine_goal_resolution(g, routed_goals, cfg)
-    p = await retrieve_procedures(pool, ctx, routed_goals, scope=scope, pools=pools, embedder=embedder, judge=judge, cfg=cfg,
-                                  meta=meta, current_scope=current_scope, require_verified=require_verified)
+    with track_shard_requests() as shard_stats:
+        ctx = await build_query_context(goal_text, local_claims, embedder=embedder, cfg=cfg)
+        meta.local_claim_ids = ctx.claim_ids
+        g = await search_goals(pool, ctx, scope=scope, embedder=embedder, judge=judge, cfg=cfg, meta=meta)
+        routed_goals = await _route_goal_candidates(
+            pool, g, scope=scope, cfg=cfg, meta=meta, pools=pools, tenant_scope=tenant_scope,
+            ctx=ctx, judge=judge if judge is not None else default_judge(),
+        )
+        g = combine_goal_resolution(g, routed_goals, cfg)
+        p = await retrieve_procedures(pool, ctx, routed_goals, scope=scope, pools=pools, embedder=embedder, judge=judge,
+                                      cfg=cfg, meta=meta, current_scope=current_scope, require_verified=require_verified)
+    meta.shard_requests = shard_stats.as_dict()
     meta.latency_ms["total"] = (time.monotonic() - t0) * 1000
     def _public(item):
         return None if item is None else {k: v for k, v in item.items() if k != "_row"}
@@ -1127,7 +1133,8 @@ async def _record(pool, query, scope, g: GoalSearchResult, p: ProcedureSearchRes
             meta.local_claim_ids, meta.mode, meta.degraded,
             {"goal_resolution": g.resolution, "reasons": meta.degraded_reasons, "providers": meta.providers,
              "shards": meta.shards_touched, "unavailable_shards": meta.unavailable_shards,
-             "counts": meta.counts, "selection": p.selection_reason})
+             "counts": meta.counts, "selection": p.selection_reason,
+             "shard_requests": meta.shard_requests, "latency_ms": meta.latency_ms})
     except Exception:  # noqa: BLE001 -- the decision log never fails a retrieval
         log.warning("retrieval decision not recorded", exc_info=True)
 

@@ -842,6 +842,28 @@ class ProcedureRankingService:
             return {"context_key": self.context_key}
         return {}
 
+    async def _read_on_home_shards(self, ids: list[str], sql: str, *args: Any) -> list[Any]:
+        """Run ``sql`` (``$1`` = the id array) once per shard that homes any of
+        ``ids`` (version row ids or stable procedure ids), concurrently. Evidence
+        lives with its Procedure, so the same routing serves both reads. A single
+        database is one plain query."""
+        from app.services.shards import HOME_SHARD, hydrate_rows, multi_shard, pools_for
+
+        if not await multi_shard(self.pool):
+            return list(await self.pool.fetch(sql, ids, *args))
+        routes = await self.pool.fetch(
+            "SELECT row_id::text AS id, home_shard_id FROM procedure_row_routes WHERE row_id = ANY($1::uuid[]) "
+            "UNION ALL SELECT object_id::text, home_shard_id FROM object_routes "
+            "WHERE object_type = 'procedure' AND object_id = ANY($1::uuid[])", ids)
+        id_to_shard = {value: HOME_SHARD for value in ids}
+        id_to_shard.update({str(row["id"]): str(row["home_shard_id"]) for row in routes})
+
+        async def fetch(shard_pool: Any, shard_ids: list[str]):
+            return await shard_pool.fetch(sql, shard_ids, *args)
+
+        hydration = await hydrate_rows(pools_for(self.pool), id_to_shard, fetch)
+        return list(hydration.rows.values())
+
     async def fetch_candidates(self, procedure_ids: Sequence[str]) -> list[dict[str, Any]]:
         ids = [str(value) for value in _id_sequence(procedure_ids) if value is not None]
         if not ids:
@@ -872,7 +894,7 @@ class ProcedureRankingService:
             "ORDER BY CASE WHEN p.id = ANY($1::uuid[]) THEN 0 ELSE 1 END, "
             "p.version DESC, p.id"
         )
-        rows = await self.pool.fetch(sql, ids, *p_scope_params)
+        rows = await self._read_on_home_shards(ids, sql, *p_scope_params)
         selected: dict[str, dict[str, Any]] = {}
         exact_procedure_ids: set[str] = set()
         requested = set(ids)
@@ -919,7 +941,7 @@ class ProcedureRankingService:
             f"AND {e_scope_sql} "
             "ORDER BY e.t_created ASC, e.id"
         )
-        rows = await self.pool.fetch(sql, ids, _TRUSTED_WRITER_STAMP, *e_scope_params)
+        rows = await self._read_on_home_shards(ids, sql, _TRUSTED_WRITER_STAMP, *e_scope_params)
         return [dict(row) for row in rows]
 
     async def _eligible(self, procedure: Mapping[str, Any]) -> tuple[bool, list[str]]:

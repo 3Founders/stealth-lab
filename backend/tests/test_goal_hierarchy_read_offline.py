@@ -59,6 +59,7 @@ def goal(
         "projected_scope_entity_id": scope_entity,
         "projected_visibility": visibility,
         "projected_owner_id": owner,
+        "projected_resolved_at": resolved_at,   # derived copy of goals.resolved_at (migration 115)
         "tenant_id": tenant,
     }
     return projected, canonical
@@ -301,7 +302,9 @@ async def test_enrichment_is_direct_accepted_visible_batched_and_non_mutating():
         "abstraction_level",
         "benchmarks",
         "coverage",
+        "hierarchy_complete",
     }
+    assert all(goal["hierarchy_complete"] for goal in result)
     root, grandchild, orphan = result
     assert [goal["id"] for goal in root["specializes"]] == [gid(2), gid(4)]
     assert root["abstracts"] == []
@@ -426,7 +429,11 @@ async def test_private_neighbors_and_resolution_coverage_appear_only_for_their_v
 
 
 @pytest.mark.asyncio
-async def test_unavailable_component_shard_does_not_turn_unknown_hierarchy_into_a_root():
+async def test_unavailable_shard_keeps_structure_and_flags_the_missing_neighbour():
+    # The hierarchy itself (edges, level, coverage) comes from the control
+    # database, so an unreachable shard cannot turn Root into something it is not.
+    # The child homed on the dead shard cannot be SHOWN: it is left out on its own
+    # and the entry says its neighbour list is incomplete -- the page is not blanked.
     control, remote_one, remote_two, _ = fixture()
     pools = FakePools(
         control,
@@ -442,12 +449,16 @@ async def test_unavailable_component_shard_does_not_turn_unknown_hierarchy_into_
         pools=pools,
     )
 
-    assert result == []
+    [root] = result
+    assert root["abstraction_level"] == 0
+    assert root["coverage"] == {"total_count": 3, "resolved_count": 2, "ratio": 2 / 3}
+    assert [goal["id"] for goal in root["specializes"]] == [gid(4)]
+    assert root["hierarchy_complete"] is False
     assert remote_one.canonical_batches == []
 
 
 @pytest.mark.asyncio
-async def test_every_added_key_is_exact_and_projection_staleness_fails_closed():
+async def test_a_stale_neighbour_is_left_out_alone_and_flagged():
     control, remote_one, remote_two, pools = fixture()
     control.projected[gid(2)]["projected_version"] = 2
 
@@ -459,6 +470,8 @@ async def test_every_added_key_is_exact_and_projection_staleness_fails_closed():
         pools=pools,
     )
 
-    assert result == []
+    [root] = result
+    assert [goal["id"] for goal in root["specializes"]] == [gid(4)]   # the stale child is never shown
+    assert root["hierarchy_complete"] is False
     assert len(remote_one.canonical_batches) == 1
-    assert len(remote_two.canonical_batches) == 1
+    assert remote_two.canonical_batches == []   # only DISPLAYED Goals are read: the grandchild is not

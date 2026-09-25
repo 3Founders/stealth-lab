@@ -124,12 +124,15 @@ def test_exact_promotion_resolves_all_links_and_preserves_timestamps():
                     target_id=procedure["procedure_id"],
                     provenance="system_pending_review",
                     proposer="goal-resolution-e2e",
+                    # only ACTIVE (accepted) solution links resolve a Goal; a merely
+                    # proposed link must not (anyone can propose one)
+                    status="active",
                 )
 
             result = await _record_successes(pool, procedure["id"], 10)
             assert result["verification_state"] == "verified"
             first = {
-                row["id"]: row["resolved_at"]
+                str(row["id"]): row["resolved_at"]
                 for row in await pool.fetch(
                     "SELECT id, resolved_at FROM goals WHERE id = ANY($1::uuid[])", goal_ids
                 )
@@ -148,7 +151,7 @@ def test_exact_promotion_resolves_all_links_and_preserves_timestamps():
                 failure_class="external_failure",
             )
             after = {
-                row["id"]: row["resolved_at"]
+                str(row["id"]): row["resolved_at"]
                 for row in await pool.fetch(
                     "SELECT id, resolved_at FROM goals WHERE id = ANY($1::uuid[])", goal_ids
                 )

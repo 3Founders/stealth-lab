@@ -18,7 +18,7 @@ _LIVE_GOAL_STATUSES = frozenset({"active", "candidate"})
 
 _PROJECTED_GOAL_SOURCE = """
 SELECT goal_id, canonical_name, home_shard_id, status, version, scope_type,
-       scope_entity_id, visibility, owner_id
+       scope_entity_id, visibility, owner_id, resolved_at
 FROM goal_search_index
 """
 
@@ -27,7 +27,7 @@ goal_id::text AS id, home_shard_id, status AS projected_status,
 version AS projected_version, scope_type AS projected_scope_type,
 scope_entity_id AS projected_scope_entity_id,
 visibility::text AS projected_visibility, owner_id AS projected_owner_id,
-canonical_name
+canonical_name, resolved_at AS projected_resolved_at
 """
 
 _GOAL_SELECT = """
@@ -283,6 +283,18 @@ async def enrich_goals(
     tenant_scope: TenantScope,
     pools: Optional[ShardPools] = None,
 ) -> list[dict[str, Any]]:
+    """Hierarchy view of each Goal: direct parents/children, derived level,
+    coverage, Benchmarks.
+
+    The component (ancestors + descendants), its accepted edges, levels and
+    coverage all come from the control database (goal_relations + the goal
+    projection, including its derived `resolved_at` copy) -- no shard is read
+    for them. Canonical rows are read only for the Goals actually DISPLAYED (the
+    requested Goals and their direct parents/children), each batch from its home
+    shard; those rows are authoritative for what is shown. A displayed Goal that
+    cannot be read or is stale is left out on its own -- it never blanks the page.
+    Resolution is per Goal: coverage counts descendants' own `resolved_at`, and
+    nothing here resolves anything."""
     goal_ids = _unique([_goal_id(goal) for goal in goals])
     if not goal_ids:
         return []
@@ -290,37 +302,23 @@ async def enrich_goals(
     projected_rows = [dict(row) for row in await pool.fetch(component_sql, goal_ids, *component_params)]
     if not projected_rows:
         return []
-    component_ids = [str(row["id"]) for row in projected_rows]
-    routes = {
-        str(row["id"]): str(row.get("home_shard_id") or HOME_SHARD)
-        for row in projected_rows
-    }
-
-    async def fetch(goal_pool: Any, ids: list[str]) -> Sequence[Mapping[str, Any]]:
-        return await goal_pool.fetch(_GOAL_SELECT, ids)
-
-    hydration = await hydrate_rows(pools or pools_for(pool), routes, fetch)
     projections = {str(row["id"]): row for row in projected_rows}
-    snapshots: dict[str, dict[str, Any]] = {}
-    for goal_id, projected in projections.items():
-        canonical = hydration.rows.get(goal_id)
-        if canonical is None or not _hydration_is_current(projected, canonical):
-            return []
-        snapshots[goal_id] = _snapshot(projected, canonical)
-    if hydration.partial:
-        return []
+    component_ids = list(projections)
 
     edge_sql, edge_params = _edge_sql(access_scope, tenant_scope)
     edges = [dict(row) for row in await pool.fetch(edge_sql, component_ids, *edge_params)]
     usable_edges = [
         edge
         for edge in edges
-        if str(edge["specific_goal_id"]) in snapshots
-        and str(edge["abstract_goal_id"]) in snapshots
-        and _same_scope(snapshots[str(edge["specific_goal_id"])], snapshots[str(edge["abstract_goal_id"])])
+        if str(edge["specific_goal_id"]) in projections
+        and str(edge["abstract_goal_id"]) in projections
+        and _scope_key(projections[str(edge["specific_goal_id"])].get("projected_scope_type"),
+                       projections[str(edge["specific_goal_id"])].get("projected_scope_entity_id"))
+        == _scope_key(projections[str(edge["abstract_goal_id"])].get("projected_scope_type"),
+                      projections[str(edge["abstract_goal_id"])].get("projected_scope_entity_id"))
     ]
-    children: dict[str, set[str]] = {goal_id: set() for goal_id in snapshots}
-    parents: dict[str, set[str]] = {goal_id: set() for goal_id in snapshots}
+    children: dict[str, set[str]] = {goal_id: set() for goal_id in projections}
+    parents: dict[str, set[str]] = {goal_id: set() for goal_id in projections}
     for edge in usable_edges:
         specific = str(edge["specific_goal_id"])
         abstract = str(edge["abstract_goal_id"])
@@ -328,10 +326,27 @@ async def enrich_goals(
         parents[specific].add(abstract)
 
     try:
-        state_rows = derive_goal_abstraction_state(snapshots, usable_edges)
+        state_rows = derive_goal_abstraction_state(projections, usable_edges)
     except GoalRelationCycleError:
         return []
     state_by_id = {str(row["goal_id"]): row for row in state_rows}
+
+    # Canonical rows only for what is displayed.
+    requested = [goal_id for goal_id in goal_ids if goal_id in projections]
+    displayed = set(requested)
+    for goal_id in requested:
+        displayed |= children[goal_id] | parents[goal_id]
+    routes = {goal_id: str(projections[goal_id].get("home_shard_id") or HOME_SHARD) for goal_id in displayed}
+
+    async def fetch(goal_pool: Any, ids: list[str]) -> Sequence[Mapping[str, Any]]:
+        return await goal_pool.fetch(_GOAL_SELECT, ids)
+
+    hydration = await hydrate_rows(pools or pools_for(pool), routes, fetch)
+    snapshots: dict[str, dict[str, Any]] = {}
+    for goal_id in displayed:
+        canonical = hydration.rows.get(goal_id)
+        if canonical is not None and _hydration_is_current(projections[goal_id], canonical):
+            snapshots[goal_id] = _snapshot(projections[goal_id], canonical)
 
     benchmark_sql = """
     SELECT *
@@ -339,7 +354,7 @@ async def enrich_goals(
     WHERE goal_id = ANY($1::uuid[])
     ORDER BY goal_id, version DESC, created_at DESC, id
     """
-    visible_goal_ids = [goal_id for goal_id in goal_ids if goal_id in snapshots]
+    visible_goal_ids = [goal_id for goal_id in requested if goal_id in snapshots]
     from app.services.product_model import _row as _benchmark_row
 
     # Same decoding every other Benchmark reader applies (legacy rows hold
@@ -360,19 +375,19 @@ async def enrich_goals(
             continue
         state = state_by_id[goal_id]
         descendant_ids = _descendants(goal_id, children)
+        neighbours = children[goal_id] | parents[goal_id]
         resolved_count = sum(
-            1
-            for descendant_id in descendant_ids
-            if snapshots[descendant_id].get("resolved_at") is not None
+            1 for descendant_id in descendant_ids
+            if projections[descendant_id].get("projected_resolved_at") is not None
         )
         result.append(
             {
                 **dict(goal),
                 "specializes": _public_goals(
-                    [snapshots[child_id] for child_id in children[goal_id]]
+                    [snapshots[child_id] for child_id in children[goal_id] if child_id in snapshots]
                 ),
                 "abstracts": _public_goals(
-                    [snapshots[parent_id] for parent_id in parents[goal_id]]
+                    [snapshots[parent_id] for parent_id in parents[goal_id] if parent_id in snapshots]
                 ),
                 "abstraction_level": int(state["abstraction_level"]),
                 "benchmarks": benchmarks_by_goal.get(goal_id, []),
@@ -381,6 +396,10 @@ async def enrich_goals(
                     "resolved_count": resolved_count,
                     "ratio": resolved_count / len(descendant_ids) if descendant_ids else 0.0,
                 },
+                # False when a direct parent/child exists (level and coverage count
+                # it) but could not be shown (shard unreachable / stale projection):
+                # a UI must not present the lists as the whole neighbourhood.
+                "hierarchy_complete": all(neighbour in snapshots for neighbour in neighbours),
             }
         )
     return result

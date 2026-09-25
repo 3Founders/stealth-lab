@@ -3525,14 +3525,11 @@ async def list_goal_procedures(goal_id: str, ctx: Context) -> str:
     exists as a focused, single-purpose tool for a caller that only wants
     that one relationship."""
     pool = ctx.request_context.lifespan_context["pool"]
-    from app.services.shards import fanout_fetch
-    rows = await fanout_fetch(
-        pool, "SELECT id, procedure_id, name, verification_state, availability, t_created "
-        "FROM procedures WHERE achieves_goal_id = $1::uuid AND t_invalid IS NULL "
-        "ORDER BY t_created DESC LIMIT 100",
-        goal_id,
+    from app.services.routed_reads import fetch_goal_procedures
+    rows = await fetch_goal_procedures(
+        pool, [goal_id], columns="id, procedure_id, name, verification_state, availability, t_created",
     )
-    rows = sorted(rows, key=lambda r: r.get("t_created") or 0, reverse=True)[:100] if len(rows) > 1 else rows
+    rows = sorted(rows, key=lambda r: (r.get("t_created") is not None, r.get("t_created") or 0), reverse=True)[:100]
     return json.dumps([{k: v for k, v in dict(r).items() if k != "t_created"} for r in rows], default=str)
 
 
@@ -3781,6 +3778,53 @@ async def find_ways(
 
     Read-only; needs no token. Report what you learn with `report_discovery`.
     """
+    import time as _time
+
+    from app.services.shards import track_shard_requests
+
+    t0 = _time.monotonic()
+    with track_shard_requests() as shard_stats:
+        reply = await _find_ways_impl(
+            query, ctx, repo_claims=repo_claims, current_scope_json=current_scope_json, max_depth=max_depth,
+            semantic=semantic, use_llm=use_llm, top_k=top_k,
+        )
+    await _record_find_ways(ctx, query, reply, shard_stats.as_dict(), (_time.monotonic() - t0) * 1000)
+    return reply
+
+
+async def _record_find_ways(ctx: Context, query: str, reply: str, shard_requests: dict, total_ms: float) -> None:
+    """Durable per-request cost record (retrieval_decisions, mode 'find_ways'): the
+    physical fan-out and latency of one find_ways call, for measuring -- never the
+    repo facts (request-scoped, never stored) and never the reply body."""
+    import hashlib as _hashlib
+
+    outcome = "refused" if reply.startswith("REFUSED") else "unknown"
+    if reply.startswith("{"):
+        try:
+            outcome = str(json.loads(reply).get("outcome") or "unknown")
+        except (ValueError, AttributeError):
+            pass
+    import logging as _logging
+
+    _log = _logging.getLogger(__name__)
+    _log.info("find_ways outcome=%s total_ms=%.1f shards=%s", outcome, total_ms, shard_requests)
+    try:
+        pool = ctx.request_context.lifespan_context["pool"]
+        await pool.execute(
+            "INSERT INTO retrieval_decisions (query_sha256, viewer_id, mode, degraded, detail) "
+            "VALUES ($1, $2, 'find_ways', $3, $4::jsonb)",
+            _hashlib.sha256(query.encode()).hexdigest(), _caller_access_scope().viewer_id,
+            bool(shard_requests.get("unavailable")),
+            {"outcome": outcome, "total_ms": round(total_ms, 1), "shard_requests": shard_requests,
+             "shards": shard_requests.get("shards", [])})
+    except Exception:  # noqa: BLE001 -- the cost record never fails a request
+        _log.warning("find_ways cost record not written", exc_info=True)
+
+
+async def _find_ways_impl(
+    query: str, ctx: Context, *, repo_claims: str, current_scope_json: str, max_depth: int,
+    semantic: bool, use_llm: bool, top_k: int,
+) -> str:
     from app.execution import repo_facts as _rf
     from app.execution.goal_knowledge import goal_tree_to_knowledge
     from app.execution.goal_resolution import GoalResolutionError, resolve_goal

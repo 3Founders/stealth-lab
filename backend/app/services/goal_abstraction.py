@@ -1237,6 +1237,46 @@ async def recompute_affected_goal_abstraction_state(
     }
 
 
+async def refresh_goal_abstraction_state_after_resolution(
+    pool: Any, goal_id: str | UUID, *, pools: Optional[ShardPools] = None,
+) -> dict[str, Any]:
+    """`goals.resolved_at` changed for `goal_id`: its own `direct_resolved_at` and
+    every ancestor's coverage are now stale in `goal_abstraction_state`. Refresh
+    exactly that part of the component (one bounded recompute per accepted parent
+    edge; a Goal with only children refreshes itself through one child edge).
+
+    This only updates the DERIVED projection; nothing here resolves any Goal:
+    resolution never propagates through the hierarchy."""
+    goal = _uuid(goal_id, "goal_id")
+    rows = await pool.fetch(
+        """
+        SELECT specific_goal_id::text AS specific, abstract_goal_id::text AS abstract,
+               (specific_goal_id = $1::uuid) AS is_parent_edge
+          FROM goal_relations
+         WHERE relation_type = 'SPECIALIZES' AND status = 'accepted'
+           AND (specific_goal_id = $1::uuid OR abstract_goal_id = $1::uuid)
+         ORDER BY is_parent_edge DESC, specific_goal_id, abstract_goal_id
+        """,
+        goal,
+    )
+    parent_edges = [row for row in rows if row["is_parent_edge"]]
+    edges = parent_edges or rows[:1]
+    if not edges:
+        return {"recomputed": False, "reason": "no_accepted_edges", "edges": 0}
+    results = [
+        await recompute_affected_goal_abstraction_state(
+            pool, row["specific"], row["abstract"], access_scope=AccessScope.unrestricted(),
+            tenant_scope=TenantScope.unrestricted(), pools=pools,
+        )
+        for row in edges
+    ]
+    return {
+        "recomputed": all(result.get("recomputed") for result in results),
+        "edges": len(edges),
+        "goals_recomputed": sum(int(result.get("goals_recomputed") or 0) for result in results),
+    }
+
+
 async def rebuild_goal_abstraction_state(
     pool: Any,
     *,

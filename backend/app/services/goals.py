@@ -669,15 +669,18 @@ async def get_goal(
     # (a real inconsistency this module's own live verification caught:
     # `search_goals` result ids failing a plain `==` against
     # `find_or_create_goal`'s). Kept consistent everywhere in this module.
+    from app.services.routed_reads import fetch_goal_procedures
+
+    procedure_rows = sorted(
+        await fetch_goal_procedures(
+            pool, [goal_id], columns="id, procedure_id, name, verification_state, availability, t_created",
+        ),
+        key=lambda r: (r.get("t_created") is not None, r.get("t_created") or 0), reverse=True,
+    )[:50]
     goal["procedures"] = [
-        {**dict(r), "id": str(r["id"]), "procedure_id": str(r["procedure_id"])}
-        for r in (await __import__("app.services.shards", fromlist=["fanout_fetch"]).fanout_fetch(
-            pool,
-            "SELECT id, procedure_id, name, verification_state, availability "
-            "FROM procedures WHERE achieves_goal_id = $1 AND t_invalid IS NULL "
-            "ORDER BY t_created DESC LIMIT 50",
-            goal_id,
-        ))[:50]
+        {**{k: v for k, v in dict(r).items() if k != "t_created"},
+         "id": str(r["id"]), "procedure_id": str(r["procedure_id"])}
+        for r in procedure_rows
     ]
     return goal
 

@@ -464,6 +464,15 @@ class FakePool:
         compact = " ".join(sql.split())
         if "FROM goal_relations r" in compact:
             return await self.fetchrow(sql, *args)
+        if "ANY($1::uuid[])" in compact and ("FROM goal_search_index" in compact or "FROM goals" in compact):
+            # batched neighbour load: answer id by id with the single-Goal handlers
+            single = sql.replace("ANY($1::uuid[])", "$1::uuid")
+            rows = []
+            for value in args[0]:
+                row = await self.fetchrow(single, value, *args[1:])
+                if row is not None:
+                    rows.append(row)
+            return rows
         raise AssertionError(f"unexpected fetch: {compact[:180]}")
 
 

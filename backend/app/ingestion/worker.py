@@ -244,6 +244,13 @@ class Worker:
                 self.counts['placement_repair'] = await enqueue_missing_goal_placements(self.pool)
             except Exception:  # noqa: BLE001 -- retried next run; never fails the batch
                 log.warning('goal placement repair failed; will retry next run', exc_info=True)
+        from app.services.shard_capacity import enforce_shard_capacity
+
+        try:   # storage guard: full shards stop taking NEW objects before the provider refuses writes
+            capacity = await enforce_shard_capacity(self.pool, apply=True)
+            self.counts['shards_marked_full'] = sum(1 for row in capacity if row.get("action") == "marked_full")
+        except Exception:  # noqa: BLE001 -- retried next run; never fails the batch
+            log.warning('shard capacity check failed; will retry next run', exc_info=True)
         if self.cfg.reconcile_claims:
             from app.ingestion.handlers import Dependencies
             from app.services.claim_identity import reconcile_claims

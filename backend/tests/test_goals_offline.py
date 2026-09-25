@@ -88,7 +88,7 @@ def test_get_goal_hydrates_remote_goal_without_goal_tenant_sql(monkeypatch):
         return []
 
     monkeypatch.setattr("app.services.shards.home_pool", routed)
-    monkeypatch.setattr("app.services.shards.fanout_fetch", procedures)
+    monkeypatch.setattr("app.services.routed_reads.fetch_goal_procedures", procedures)
 
     result = _run(get_goal(object(), goal_id, scope=AccessScope.anonymous()))
 

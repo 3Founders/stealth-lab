@@ -287,10 +287,8 @@ async def _fetch_procedure(pool: asyncpg.Pool, procedure_id: str) -> Optional[di
 
 
 async def _fetch_goal(pool: asyncpg.Pool, goal_id: str) -> Optional[dict]:
-    row = await pool.fetchrow(
-        "SELECT * FROM goals WHERE id = $1::uuid AND t_invalid IS NULL", goal_id,
-    )
-    return dict(row) if row else None
+    from app.services.routed_reads import fetch_goal
+    return await fetch_goal(pool, goal_id)
 
 
 @dataclass

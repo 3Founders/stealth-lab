@@ -123,7 +123,13 @@ async def project_state(
     tenant = tenant_scope or TenantScope.unrestricted()
     scope_sql, scope_params, _ = scope_predicates(scope, tenant, param_index=3)
 
-    rows = await pool.fetch(
+    from app.services.shards import fanout_fetch
+
+    # Claims about a subject can be homed on any shard (they are placed with their
+    # Goal) and no index maps subject -> shard: this is a genuine scan, so it runs
+    # on every readable shard (bounded per shard; a single database is one query).
+    rows = await fanout_fetch(
+        pool,
         "SELECT id, properties, t_valid, t_invalid FROM knowledge_nodes "
         "WHERE node_type = 'claim' "
         "AND properties->>'subject' = ANY($1::text[]) "

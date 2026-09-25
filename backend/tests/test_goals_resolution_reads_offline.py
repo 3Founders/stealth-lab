@@ -8,15 +8,23 @@ from app.services.access import AccessScope
 
 
 class _PagePool:
+    """Pages are chosen on the goal projection (`sql`/`args`: covers every shard),
+    then the page's canonical rows are read (`hydrate_sql`)."""
+
     def __init__(self, rows):
         self.rows = rows
         self.sql = ""
         self.args = ()
+        self.hydrate_sql = ""
 
     async def fetch(self, sql, *args):
-        self.sql = " ".join(sql.split())
-        self.args = args
-        return self.rows
+        compact = " ".join(sql.split())
+        if "FROM goal_search_index" in compact:
+            self.sql, self.args = compact, args
+            return [{"goal_id": row["id"], "home_shard_id": "K000"} for row in self.rows]
+        self.hydrate_sql = compact
+        wanted = set(args[0])
+        return [row for row in self.rows if row["id"] in wanted]
 
 
 def _run(coro):
@@ -51,7 +59,7 @@ def test_list_goals_filters_status_and_resolution_with_offset_page():
     assert "embedding" not in goals[0]
     assert "g.resolved_at IS NOT NULL" in pool.sql
     assert "g.status = $1" in pool.sql
-    assert "SELECT g.id," in pool.sql
+    assert "SELECT g.id," in pool.hydrate_sql and "embedding" not in pool.hydrate_sql
     assert "SELECT g.*" not in pool.sql
     assert "embedding" not in pool.sql
     assert "LIMIT $2 OFFSET $3" in pool.sql
@@ -83,7 +91,7 @@ def test_find_goal_defaults_to_all_resolution_states_and_safe_projection():
     assert has_more is False
     assert "embedding" not in goals[0]
     assert "g.resolved_at IS" not in pool.sql
-    assert "SELECT g.id," in pool.sql
+    assert "SELECT g.id," in pool.hydrate_sql and "embedding" not in pool.hydrate_sql
     assert "SELECT g.*" not in pool.sql
     assert "embedding" not in pool.sql
     assert "LIMIT $2 OFFSET $3" in pool.sql

@@ -189,20 +189,19 @@ async def _claim_matches_precondition(
     except (ValueError, TypeError, AttributeError):
         return False  # malformed claim_id -- fail closed, never a raised DB error
 
+    from app.services.routed_reads import fetch_claim
+
     scope = scope or AccessScope.unrestricted()
     vis_sql, vis_params = visibility_predicate(scope, param_index=3)
-    rows = await fanout_fetch(     # a claim may live on any shard
-        pool,
-        f"SELECT properties, t_valid, t_invalid FROM knowledge_nodes "
-        f"WHERE id = $1::uuid AND node_type = 'claim' "
-        f"AND properties->>'truth_state' = 'IN' "
-        f"AND t_valid <= $2 AND (t_invalid IS NULL OR t_invalid > $2) "
-        f"AND {vis_sql}",
-        claim_uuid, as_of, *vis_params,
+    row = await fetch_claim(     # the claim id is known: read it from its home shard
+        pool, claim_uuid, columns="properties, t_valid, t_invalid",
+        where=(f"properties->>'truth_state' = 'IN' "
+               f"AND t_valid <= $2 AND (t_invalid IS NULL OR t_invalid > $2) AND {vis_sql}"),
+        args=(as_of, *vis_params),
     )
-    if not rows:
+    if row is None:
         return False
-    properties = dict(rows[0]["properties"])
+    properties = dict(row["properties"])
     return properties.get("predicate") == predicate and properties.get("object") == expected_object
 
 
@@ -443,11 +442,9 @@ async def check_hard_constraints(
                 as_of=as_of, scope=access_scope,
             )
             if not satisfied and client is not None:
-                row = await fanout_fetchrow(
-                    pool,
-                    "SELECT properties FROM knowledge_nodes WHERE id = $1::uuid "
-                    "AND node_type = 'claim'", claim_id,
-                )
+                from app.services.routed_reads import fetch_claim
+
+                row = await fetch_claim(pool, str(claim_id), columns="properties")
                 if row is not None:
                     candidate_claims = [dict(row["properties"])]
         else:
