@@ -47,21 +47,33 @@ export default function Header() {
     return () => { cancelled = true; };
   }, [pathname]);
 
-  // Mirrors SectionRail's own scroll-tracking: the "About" nav link should read as
-  // active while its section is on screen, the same way SectionRail's dots already do --
-  // usePathname alone can't see this, since #about is a same-page anchor, not a route.
+  // About is the last nav-highlightable section on the page, so "in view" here means
+  // "scrolled past the About threshold", not "About is currently on screen" -- an
+  // IntersectionObserver watching only #about would flip back to false once the user
+  // scrolls past it into whatever comes after, wrongly handing the highlight back to
+  // Home. usePathname alone can't see this either, since #about is a same-page anchor.
   useEffect(() => {
     const el = document.getElementById("about");
     if (!el) {
       setAboutInView(false);
       return;
     }
-    const io = new IntersectionObserver(
-      (entries) => entries.forEach((e) => setAboutInView(e.isIntersecting)),
-      { rootMargin: "-40% 0px -55% 0px" },
-    );
-    io.observe(el);
-    return () => io.disconnect();
+    let raf = 0;
+    const compute = () => {
+      raf = 0;
+      setAboutInView(el.getBoundingClientRect().top <= window.innerHeight * 0.4);
+    };
+    const onScroll = () => {
+      if (!raf) raf = requestAnimationFrame(compute);
+    };
+    compute();
+    window.addEventListener("scroll", onScroll, { passive: true });
+    window.addEventListener("resize", onScroll);
+    return () => {
+      if (raf) cancelAnimationFrame(raf);
+      window.removeEventListener("scroll", onScroll);
+      window.removeEventListener("resize", onScroll);
+    };
   }, [pathname]);
 
   // On the homepage, About glides in place; elsewhere the default navigation to /#about runs and SmoothScroll resolves it.
