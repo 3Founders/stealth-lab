@@ -8,7 +8,8 @@ from contextlib import AsyncExitStack
 from collections.abc import Mapping
 from dataclasses import dataclass
 from numbers import Real
-from typing import Any, Optional
+import os
+from typing import Any, Optional, Sequence
 
 from app.execution.plans import canonical_json, sha256_hex
 from app.ingestion import queue as ingestion_queue
@@ -1016,6 +1017,7 @@ async def enqueue_benchmark_transfers(
     max_attempts: int = 5,
     config_version: Optional[str] = None,
     authority: Any = None,
+    exclude_goal_ids: Sequence[str] = (),
 ) -> list[dict[str, Any]]:
     effective_tenant = tenant_scope or TenantScope.commons()
     register_handler()
@@ -1025,6 +1027,8 @@ async def enqueue_benchmark_transfers(
     contexts = await _load_direct_neighbors(
         pool, source, access_scope=access_scope, tenant_scope=effective_tenant
     )
+    excluded = {str(goal_id) for goal_id in exclude_goal_ids}
+    contexts = [context for context in contexts if str(context["target"]["goal_id"]) not in excluded]
     results: list[dict[str, Any]] = []
     for context in contexts:
         job_id, created = await _enqueue_context(
@@ -1043,6 +1047,69 @@ async def enqueue_benchmark_transfers(
             "idempotency_key": context["idempotency_key"],
         })
     return results
+
+
+# ------------------------------------------------------------------ automatic propagation
+# A Benchmark that has been reviewed and FROZEN offers itself to its direct graph
+# neighbours; each neighbour still gets its own judged transfer decision (never an
+# automatic copy). Only a transferable/partial verdict creates a target Benchmark,
+# and only a frozen (reviewed) Benchmark propagates, so a not_transferable or
+# uncertain verdict stops the walk by construction. The walk never goes back
+# through the Goals it came from and is bounded in hops.
+
+
+def transfer_max_hops() -> int:
+    try:
+        return max(1, int(os.environ.get("STEALTH_BENCHMARK_TRANSFER_MAX_HOPS", "3")))
+    except ValueError:
+        return 3
+
+
+async def transfer_lineage(pool: Any, benchmark_id: str, *, limit: int) -> list[str]:
+    """Goal ids a Benchmark was transferred through, nearest first ([] = authored
+    directly), from the durable `benchmark_transfer_decisions` lineage."""
+    goals: list[str] = []
+    current = str(benchmark_id)
+    for _ in range(limit):
+        row = await pool.fetchrow(
+            "SELECT source_benchmark_id::text AS source, source_goal_id::text AS goal "
+            "FROM benchmark_transfer_decisions WHERE target_benchmark_id = $1::uuid "
+            "AND decision IN ('transferable', 'partial') ORDER BY created_at LIMIT 1",
+            current,
+        )
+        if row is None:
+            break
+        goals.append(row["goal"])
+        current = row["source"]
+    return goals
+
+
+async def propagate_after_freeze(pool: Any, benchmark_id: str, *, authority: Any = None) -> dict[str, Any]:
+    """Queue judged transfers of a just-frozen Benchmark to its direct neighbours.
+    Scope-aware: a public source only reaches public neighbours; a private one
+    only its owner's. Idempotent (the transfer jobs are keyed) and never fatal to
+    the freeze."""
+    max_hops = transfer_max_hops()
+    goal = await pool.fetchrow(
+        "SELECT b.goal_id::text AS goal_id, g.visibility::text AS visibility, g.owner_id "
+        "FROM benchmarks b JOIN goal_search_index g ON g.goal_id = b.goal_id WHERE b.id = $1::uuid",
+        str(benchmark_id),
+    )
+    if goal is None:
+        return {"propagated": False, "reason": "source_goal_not_visible"}
+    if goal["visibility"] == "public":
+        scope = AccessScope.anonymous()
+    elif goal["owner_id"]:
+        scope = AccessScope.for_user(goal["owner_id"])
+    else:
+        return {"propagated": False, "reason": "private_source_without_owner"}
+    lineage = await transfer_lineage(pool, str(benchmark_id), limit=max_hops + 1)
+    if len(lineage) >= max_hops:
+        return {"propagated": False, "reason": "max_hops_reached", "hops": len(lineage), "max_hops": max_hops}
+    transfers = await enqueue_benchmark_transfers(
+        pool, str(benchmark_id), access_scope=scope, authority=authority, exclude_goal_ids=lineage,
+    )
+    return {"propagated": True, "hops": len(lineage), "max_hops": max_hops, "transfers": transfers}
 
 
 async def _maybe_await(value: Any) -> Any:

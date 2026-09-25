@@ -17,6 +17,7 @@ from app.api import profile as profile_api
 from app.api.profile import avatar_router as profile_avatar_api
 from app.api import trajectories
 from app.api import economy
+from app.api import goal_review as goal_review_api
 from app.api.deps import require_trustworthy_identity
 from app.config import settings
 from app.db.session import close_pool, create_pool
@@ -165,6 +166,7 @@ app.include_router(contributors_api.router)
 app.include_router(profile_api.router)
 app.include_router(profile_avatar_api)
 app.include_router(economy.router)
+app.include_router(goal_review_api.router)
 
 
 @app.get("/health")

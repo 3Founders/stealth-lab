@@ -479,6 +479,15 @@ async def freeze_benchmark(
         import logging
 
         logging.getLogger(__name__).warning("audit write failed for benchmark_frozen")
+    # A reviewed, frozen Benchmark is offered to its direct graph neighbours: each
+    # gets its own judged transfer (async, idempotent jobs). Never fatal to the freeze.
+    try:
+        result["transfer_propagation"] = await _benchmark_transfer.propagate_after_freeze(pool, benchmark_id)
+    except Exception:  # noqa: BLE001
+        import logging
+
+        logging.getLogger(__name__).warning("benchmark transfer propagation not queued", exc_info=True)
+        result["transfer_propagation"] = {"propagated": False, "reason": "enqueue_failed"}
     return result
 
 

@@ -1489,7 +1489,8 @@ async def _enqueue_neighbor_benchmark_transfers(
 async def handle_goal_abstraction_audit(
     pool: asyncpg.Pool, payload: dict
 ) -> dict[str, Any]:
-    del pool
+    """Placement could not place this Goal (`orphan`) or could not decide
+    (`uncertain`): open a reviewer queue item (idempotent; goal_review_items)."""
     if not isinstance(payload, dict):
         raise ValueError("goal_abstraction_audit payload must be an object")
     goal_id = payload.get("goal_id")
@@ -1498,7 +1499,10 @@ async def handle_goal_abstraction_audit(
         raise ValueError("goal_abstraction_audit payload requires goal_id")
     if reason not in GOAL_ABSTRACTION_AUDIT_REASONS:
         raise ValueError("goal_abstraction_audit payload has an invalid reason")
-    return {"goal_id": goal_id, "reason": reason, "audited": True}
+    from app.services.goal_review import record_review_item
+
+    recorded = await record_review_item(pool, goal_id=goal_id, reason=reason)
+    return {"goal_id": goal_id, "reason": reason, "audited": True, **recorded}
 
 
 JOB_HANDLERS: dict[str, JobHandler] = {
