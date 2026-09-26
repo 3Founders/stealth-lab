@@ -376,6 +376,36 @@ Run each one by hand first, **without** `--apply`, to see what it would do.
 
 **Check:** the dry runs print counts and sizes, and nothing unexpected is marked for deletion or `full`.
 
+### 19b. Model recommender
+
+This is optional; it can come after launch. Design: [model_routing_plan.md](model_routing_plan.md).
+
+The tables already exist:
+- `routing_*` on the control DB, created by migration 120 in step 5;
+- the recommender's two log tables on project B, created by migration 121 in step 6.
+
+The worker image installs `requirements-routing.txt` (JAX and NumPyro). The API and MCP images do not need it.
+
+```bash
+set -a; source ~/.stealth-ops/secrets.env; set +a
+cd backend
+A="python -m app.ingestion.admin"
+# 1) prices (USD per million tokens) for every model you will recommend -- unpriced models are never recommended
+DATABASE_URL="$CONTROL_DATABASE_URL" $A routing-price anthropic/claude-opus --input <in> --output <out> --cached <cached>
+# 2) optional facts: version lineage (a new version starts from its predecessor), open weights, local
+DATABASE_URL="$CONTROL_DATABASE_URL" $A routing-model google/gemma-4 --open-weights --local
+# 3) seed data, if you have it: per-instance public benchmark results as JSONL
+#    {"goal_id", "model", "scaffold", "instance_key", "accepted", "check_kind": "benchmark", "tokens_in"?, ...}
+DATABASE_URL="$CONTROL_DATABASE_URL" $A routing-import results.jsonl
+# 4) first fit, then schedule it DAILY next to step 19's jobs
+DATABASE_URL="$CONTROL_DATABASE_URL" $A routing-refit
+DATABASE_URL="$CONTROL_DATABASE_URL" $A routing-status
+```
+
+**Check:** `routing-status` shows an active parameter version. Its diagnostics show `divergences: 0` and `max_r_hat` below 1.05.
+
+The MCP tools `recommend_models` and `report_model_run` are exposed on the full (v2) surface only. Adding them to the default v1 surface is a product decision: add both names to `V1_TOOLS` in `app/mcp_server/server.py`.
+
 ---
 
 ## Part E: verify, then ingest

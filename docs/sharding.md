@@ -22,6 +22,7 @@ CONTROL PROJECT A  (the control database, shard "K000")        joined or transac
   ingestion_jobs              lease-based job queue
   benchmarks, benchmark_submissions, solutions, evaluations, benchmark_transfer_decisions
   credit_ledger_events + economy tables (append-only ledger)
+  routing_models, routing_prices, routing_params, routing_posteriors   model recommender (draws, prices)
   all PRIVATE / ORG canonical Goals, Procedures, Claims (never leave K000)
 
 CONTROL PROJECT B  (search/log database, SEARCH_DATABASE_URL)  nothing joins to these
@@ -30,6 +31,8 @@ CONTROL PROJECT B  (search/log database, SEARCH_DATABASE_URL)  nothing joins to 
   retrieval_decisions         per-request retrieval record (+ shard fan-out / latency telemetry)
   identity_decisions          every Goal/Claim/Procedure identity judgment (idempotent replay per key)
   llm_spend                   model-cost ledger (CostGovernor, ingest budget)
+  routing_observations        model-recommender attempt outcomes (never pruned: the fit uses all of them)
+  routing_decisions           model-recommender decision log with propensities (off-policy evaluation)
 
 KNOWLEDGE SHARDS  K001 .. K0nn   canonical PUBLIC knowledge, each object once:
   a Goal + the Procedures (all versions) that achieve that exact Goal + their execution

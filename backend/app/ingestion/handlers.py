@@ -136,3 +136,8 @@ async def handle_ingest_candidate_bundle(pool: asyncpg.Pool, payload: dict) -> d
 
 
 JOB_HANDLERS[JOB_TYPE] = handle_ingest_candidate_bundle
+
+# model recommender refits (app/routing/jobs.py; the handlers import JAX lazily)
+from app.routing import jobs as _routing_jobs  # noqa: E402
+
+_routing_jobs.register()

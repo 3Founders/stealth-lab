@@ -68,6 +68,8 @@ def _parse(argv=None) -> argparse.Namespace:
     ri.add_argument("--shard")
     sub.add_parser("drain-projections")
     sub.add_parser("search-db-backfill")   # fill project B: reindex procedure + claim projections, then verify
+    from app.routing import admin_cli as _routing_cli   # model recommender: routing-* commands
+    _routing_cli.add_parsers(sub)
     sub.add_parser("verify-projections")
     sub.add_parser("verify-dedup")
     sub.add_parser("verify-refs")
@@ -101,6 +103,9 @@ async def _amain(a: argparse.Namespace) -> int:
 
     pool = await create_pool(control_database_url(), max_size=2)
     try:
+        if a.cmd.startswith("routing-"):
+            from app.routing import admin_cli as _routing_cli
+            return await _routing_cli.run(pool, a)
         if a.cmd == "status":
             print(json.dumps({"jobs": await q.stats(pool), "projection_lag": await sp.projection_lag(pool)}, default=str, indent=2))
         elif a.cmd == "failures":

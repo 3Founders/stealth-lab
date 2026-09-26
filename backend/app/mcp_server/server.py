@@ -496,7 +496,7 @@ _TOOL_SCOPES: dict[str, str] = {
     **{n: _READ for n in (
         "retrieve_precedent", "search_procedures", "get_claim_graph", "get_relevant_claims", "get_procedure",
         "check_applicability", "check_procedure", "search_goals", "inspect_goal", "list_goal_procedures",
-        "resolve_intent", "explain_goal_route", "find_ways",
+        "resolve_intent", "explain_goal_route", "find_ways", "recommend_models",
         "get_route_decision", "project_knowledge", "inspect_trajectory",
         "list_trajectory_events", "inspect_extraction", "list_extraction_objects",
         "inspect_trajectory_provenance",         "inspect_run", "list_stealth_edits", "generate_review_packet", "preview_local_sync")},
@@ -504,7 +504,7 @@ _TOOL_SCOPES: dict[str, str] = {
         "submit_procedure", "create_goal", "report_execution", "record_run_update", "record_stealth_edit",
         "declare_file_intent", "report_node_progress", "commit_local_sync", "init_workspace",
         "open_exploration", "close_exploration", "verify_completion", "unsync_local_project",
-        "report_discovery", "submit_way")},
+        "report_discovery", "submit_way", "report_model_run")},
     **{n: _acx.INGESTION_SUBMIT for n in ("ingest_trajectory", "run_semantic_extraction", "reextract_trajectory")},
     **{n: _EXEC for n in (
         "find_best_way", "reproduce_procedure", "continue_run",
@@ -3301,6 +3301,118 @@ async def report_execution(procedure_id: str, success: bool, context_key: str, c
                     }
 
     return json.dumps(response, default=str)
+
+
+@server.tool()
+async def recommend_models(ctx: Context, candidates: list[Any], goal_id: str | None = None,
+                           procedure_id: str | None = None, check_kind: str | None = None,
+                           instance_key: str | None = None,
+                           previous_attempts: list[dict[str, Any]] | None = None,
+                           constraints: dict[str, Any] | None = None) -> str:
+    """
+    Which model(s) to run for a Goal: the cheapest LADDER likely to give a verified
+    success ("try A; if the check rejects it, B"). Call it after find_ways /
+    planning, with the Procedure you will follow. It never changes which Procedure is
+    right -- only which model runs it.
+
+    candidates: the units YOU can run, each "model|scaffold" (e.g.
+      "google/gemma-4|claude-code") or {"model", "scaffold", "version"?}.
+    goal_id / procedure_id: the Goal, or the Procedure (its Goal is used).
+    check_kind: how you will check each attempt -- tests (default),
+      procedure_check, judge, self_report.
+    instance_key: reuse the one returned earlier when asking again for the SAME task.
+    previous_attempts: after a rejected rung, [{"unit": "model|scaffold",
+      "accepted": false, "check_kind"?}] -- the next recommendation conditions on it
+      (a failure means this instance is probably hard).
+    constraints: {value_usd?, wrong_penalty_usd?, reliability_target? (0.9),
+      reliability_confidence? (0.9), max_cost_usd?, max_rungs? (3), check_cost_usd?,
+      open_weights_only?, local_only?}.
+
+    Returns the recommended ladder with P(success), expected cost and credible
+    bounds, alternatives, and the instance_key / recommendation_id to pass to
+    report_model_run after each attempt.
+    """
+    pool = ctx.request_context.lifespan_context["pool"]
+    from app.routing.service import RoutingError, recommend
+
+    scope = _caller_access_scope()
+    if goal_id is None and procedure_id is None:
+        return "REFUSED: give goal_id or procedure_id"
+    if procedure_id is not None:
+        from app.services.applicability import ProcedureNotFound
+        try:
+            procedure = await _resolve_live_procedure(pool, procedure_id, scope)
+        except ProcedureNotFound as exc:
+            return f"REFUSED: {exc}"
+        procedure_id = str(procedure["procedure_id"])
+        if goal_id is None:
+            if procedure.get("achieves_goal_id") is None:
+                return "REFUSED: this procedure is not linked to a goal; pass goal_id"
+            goal_id = str(procedure["achieves_goal_id"])
+    try:
+        result = await recommend(
+            pool, goal_id=goal_id, candidates=candidates, access_scope=scope, procedure_id=procedure_id,
+            check_kind=check_kind, instance_key=instance_key, previous_attempts=previous_attempts or (),
+            constraints=constraints)
+    except RoutingError as exc:
+        return f"REFUSED: {exc}"
+    return json.dumps(result, default=str)
+
+
+@server.tool()
+async def report_model_run(ctx: Context, model: str, scaffold: str, accepted: bool, instance_key: str,
+                           goal_id: str | None = None, procedure_id: str | None = None,
+                           version: str | None = None, check_kind: str = "self_report",
+                           recommendation_id: str | None = None, attempt_index: int = 0,
+                           pass_fraction: float | None = None, tokens_in: int | None = None,
+                           tokens_out: int | None = None, tokens_cached: int | None = None,
+                           cost_usd: float | None = None, latency_ms: int | None = None) -> str:
+    """
+    Report one attempt's outcome to the model recommender: which model ran, whether
+    the check accepted it, and what it cost. Call it after EVERY rung of a ladder
+    recommend_models gave you (pass its instance_key and recommendation_id), so the
+    per-Goal model scores learn. It only feeds the recommender -- it does not
+    verify or change any Procedure.
+
+    check_kind: tests | procedure_check | judge | self_report (how the attempt was
+    judged; host reports can never claim 'benchmark').
+    """
+    pool = ctx.request_context.lifespan_context["pool"]
+    from app.routing.service import record_observation
+    from app.routing.store import ObservationRejected
+
+    scope = _caller_access_scope()
+    visibility, owner_id = "public", None
+    if procedure_id is not None:
+        from app.services.applicability import ProcedureNotFound
+        try:
+            procedure = await _resolve_live_procedure(pool, procedure_id, scope)
+        except ProcedureNotFound as exc:
+            return f"REFUSED: {exc}"
+        procedure_id = str(procedure["procedure_id"])
+        goal_id = goal_id or (str(procedure["achieves_goal_id"]) if procedure.get("achieves_goal_id") else None)
+        visibility, owner_id = str(procedure.get("visibility") or "public"), procedure.get("owner_id")
+    if goal_id is None:
+        return "REFUSED: give goal_id or a procedure_id linked to a goal"
+    from app.routing.store import visible_goal
+    goal = await visible_goal(pool, goal_id, scope)
+    if goal is None:
+        return f"REFUSED: goal {goal_id} not found"
+    if procedure_id is None:
+        visibility, owner_id = goal["visibility"], goal["owner_id"]
+    try:
+        observation_id = await record_observation(pool, {
+            "source": "live", "goal_id": goal_id, "procedure_id": procedure_id,
+            "model_key": f"{model}@{version}" if version else model, "scaffold": scaffold,
+            "instance_key": instance_key, "attempt_index": attempt_index, "check_kind": check_kind,
+            "accepted": accepted, "pass_fraction": pass_fraction, "tokens_in": tokens_in, "tokens_out": tokens_out,
+            "tokens_cached": tokens_cached, "cost_usd": cost_usd, "latency_ms": latency_ms,
+            "reporter": _resolve_caller_identity(fallback="anonymous-host"), "recommendation_id": recommendation_id,
+            "visibility": visibility, "owner_id": owner_id,
+        })
+    except (ObservationRejected, ValueError) as exc:
+        return f"REFUSED: {exc}"
+    return json.dumps({"observation_id": observation_id, "goal_id": goal_id})
 
 
 @server.tool()

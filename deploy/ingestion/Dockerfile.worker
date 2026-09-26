@@ -10,7 +10,8 @@ WORKDIR /repo
 RUN apt-get update && apt-get install -y --no-install-recommends git && rm -rf /var/lib/apt/lists/*
 COPY backend/requirements.txt backend/requirements.txt
 COPY backend/requirements-objectstore.txt backend/requirements-objectstore.txt
-RUN pip install --no-cache-dir -r backend/requirements.txt -r backend/requirements-objectstore.txt
+COPY backend/requirements-routing.txt backend/requirements-routing.txt
+RUN pip install --no-cache-dir -r backend/requirements.txt -r backend/requirements-objectstore.txt     -r backend/requirements-routing.txt
 COPY backend/ backend/
 WORKDIR /repo/backend
 

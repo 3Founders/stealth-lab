@@ -152,6 +152,7 @@ def shard_read_timeout_s() -> float:
 # joined or transactional together; project B holds only tables nothing joins to:
 SEARCH_DB_TABLES = (
     "procedure_search_index", "claim_search_index", "retrieval_decisions", "identity_decisions", "llm_spend",
+    "routing_observations", "routing_decisions",   # model recommender logs (migrations 120/121)
 )
 _SEARCH_POOLS: dict[tuple[str, int], Any] = {}
 _SEARCH_POOL_LOCKS: dict[tuple[str, int], asyncio.Lock] = {}
