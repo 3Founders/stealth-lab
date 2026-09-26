@@ -33,6 +33,8 @@ class Var:
 
 MANIFEST: list[Var] = [
     Var("CONTROL_DATABASE_URL", "stealth-control-db-url", note="Neon DIRECT url of the control DB (provision-control)"),
+    Var("SEARCH_DATABASE_URL", "stealth-search-db-url", required=False, scope="both",
+        note="Neon DIRECT url of project B (search indexes + logs); unset = everything stays on the control DB"),
     Var("GEMINI_API_KEY", "stealth-gemini-key", note="embeddings + judge fallback"),
     Var("GEMINI_API_KEYS", "stealth-gemini-keys", required=False, note="extra keys spread rate limits"),
     Var("VOYAGE_API_KEY", "stealth-voyage-key", required=False, note="fallback embedder"),

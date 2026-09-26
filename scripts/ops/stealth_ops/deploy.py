@@ -60,6 +60,8 @@ def deploy_cloudrun(*, dry_run: bool, log=print) -> None:
     sha = git_sha()
     image = f"{region}-docker.pkg.dev/{project}/{repo_name}/ingest-worker:{sha[:12]}"
     shard_names = [(s["dsn_env"], f"stealth-{s['shard_id'].lower()}-db-url") for s in shardops.registry() if s.get("dsn_env")]
+    if env.get("SEARCH_DATABASE_URL"):   # project B: only referenced once its secret exists
+        shard_names.append(("SEARCH_DATABASE_URL", "stealth-search-db-url"))
     rendered = render_job(image=image, env=env, shard_names=shard_names)
     out = OPS_HOME / "rendered-job.yaml"
     OPS_HOME.mkdir(parents=True, exist_ok=True)

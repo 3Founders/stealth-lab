@@ -142,10 +142,12 @@ def provision(shard_id: str, *, weight: int = 100, log=print) -> dict[str, Any]:
         if existing:
             log(f"{shard_id}: already registered (status={existing['status']}, weight={existing['weight']}) -- left unchanged")
         else:
-            r = admin("register-shard", shard_id, "--dsn-env", env_var(shard_id), "--weight", str(weight))
+            capacity = load_env().get("OPS_SHARD_CAPACITY_BYTES", str(500 * 1024 * 1024))   # the Neon project's storage limit
+            r = admin("register-shard", shard_id, "--dsn-env", env_var(shard_id), "--weight", str(weight),
+                      "--capacity-bytes", capacity)
             if not r.ok:
                 raise OpsError(f"{shard_id}: register-shard refused: {(r.err or r.out)[-400:]}")
-            log(f"{shard_id}: registered (active, weight {weight}); connectivity + schema verified by register-shard")
+            log(f"{shard_id}: registered (active, weight {weight}, capacity {capacity} bytes); connectivity + schema verified by register-shard")
             result["registered"] = True
     refs = admin("verify-refs")
     if not refs.ok:
