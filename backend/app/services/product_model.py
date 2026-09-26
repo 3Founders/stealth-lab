@@ -232,6 +232,60 @@ async def _with_demand(pool: Any, rows: list[dict[str, Any]], *, scope: AccessSc
     return out
 
 
+async def _demand_ranked_goals(
+    pool: Any, filter_sql: str, filter_args: Sequence[Any], *, scope: AccessScope,
+) -> list[dict[str, Any]]:
+    """UNRESOLVED Goals passing `filter_sql` (alias g, params $1..) that have open
+    community demand on themselves or on a visible accepted descendant, ranked as ONE
+    population (not per page). Returns [{goal_id, home_shard_id, ranking}] best first.
+
+    List rows carry no procedure coverage, tractability or freshness signal (those
+    need the Goal page), so in a list demand and resolution are the only non-neutral
+    factors: every other unresolved Goal ties at the neutral score and follows these
+    in newest-first order. Goals with demand are few (open commitments), so ranking
+    them globally is cheap; no shard is read here."""
+    from app.economy.commitments import MAX_AGGREGATION_DEPTH, goal_demand, ranking_inputs
+    from app.services.goal_ranking import rank_goal_candidates
+
+    rows = await pool.fetch(
+        f"""
+        WITH RECURSIVE up(goal_id, depth) AS (
+            SELECT DISTINCT c.goal_id, 0 FROM goal_commitments c WHERE c.settlement IS NULL
+            UNION
+            SELECT r.abstract_goal_id, up.depth + 1
+              FROM up JOIN goal_relations r ON r.specific_goal_id = up.goal_id
+               AND r.relation_type = 'SPECIALIZES' AND r.status = 'accepted'
+             WHERE up.depth < {int(MAX_AGGREGATION_DEPTH)}
+        )
+        SELECT g.goal_id::text AS goal_id, g.home_shard_id
+          FROM goal_search_index g
+         WHERE g.goal_id IN (SELECT goal_id FROM up) AND g.resolved_at IS NULL AND {filter_sql}
+        """,
+        *filter_args)
+    if not rows:
+        return []
+    shards = {r["goal_id"]: r["home_shard_id"] for r in rows}
+    try:
+        demand = await goal_demand(pool, list(shards), access_scope=scope)
+    except Exception:  # noqa: BLE001 -- demand is optional; lists fall back to newest-first
+        log.warning("goal demand unavailable for ranking", exc_info=True)
+        return []
+    cohort = []
+    for goal_id in shards:
+        inputs = ranking_inputs(demand.get(goal_id) or {})
+        if inputs:
+            cohort.append({"id": goal_id, "goal_id": goal_id, "resolved_at": None, **inputs})
+    ranked = rank_goal_candidates(cohort)
+    return [{"goal_id": item["goal_id"], "home_shard_id": shards[item["goal_id"]], "ranking": item}
+            for item in ranked]
+
+
+def _merge_pages(top: Sequence[Any], offset: int, page_size: int) -> tuple[list[Any], int, int]:
+    """(top rows on this page, offset into the rest, rows to take from the rest + 1)."""
+    taken = list(top[offset:offset + page_size])
+    return taken, max(0, offset - len(top)), page_size - len(taken) + 1
+
+
 async def _hydrate_goal_page(
     pool: Any, page: Sequence[Mapping[str, Any]], *, scope: AccessScope, tenant_scope: TenantScope,
 ) -> list[tuple[dict[str, Any], Mapping[str, Any]]]:
@@ -276,19 +330,33 @@ async def list_goals(
         clauses.append(resolution_sql)
     sql, params, idx = scope_predicates(scope, tenant, alias="g", param_index=idx)
     args.extend(params)
+    filter_sql = " AND ".join([*clauses, sql])
     page_size = min(max(int(limit), 1), 200)
-    limit_idx, offset_idx = idx, idx + 1
-    args.extend([page_size + 1, max(int(offset), 0)])
-    page = await pool.fetch(
+    offset = max(int(offset), 0)
+    # Global order (not per page): unresolved Goals with community demand, ranked as
+    # one population; then the rest -- unresolved before resolved, newest first.
+    top = [] if (resolved is True or resolved == "resolved") else \
+        await _demand_ranked_goals(pool, filter_sql, args, scope=scope)
+    taken, rest_offset, rest_limit = _merge_pages(top, offset, page_size)
+    top_ids = [t["goal_id"] for t in top]
+    ex_idx = idx
+    rest = await pool.fetch(
         f"SELECT g.goal_id, g.home_shard_id FROM goal_search_index g "
-        f"WHERE {' AND '.join([*clauses, sql])} "
-        f"ORDER BY g.t_created DESC NULLS LAST, g.goal_id LIMIT ${limit_idx} OFFSET ${offset_idx}",
-        *args,
+        f"WHERE {filter_sql} AND NOT (g.goal_id = ANY(${ex_idx}::uuid[])) "
+        f"ORDER BY (g.resolved_at IS NOT NULL), g.t_created DESC NULLS LAST, g.goal_id "
+        f"LIMIT ${ex_idx + 1} OFFSET ${ex_idx + 2}",
+        *args, top_ids, rest_limit, rest_offset,
     )
-    rows = [canonical for canonical, _ in await _hydrate_goal_page(
-        pool, page[:page_size], scope=scope, tenant_scope=tenant)]
-    ranked = _rank_goal_rows(await _with_demand(pool, rows, scope=scope), resolved=resolved)
-    return ranked[:page_size], len(page) > page_size
+    room = page_size - len(taken)
+    page = [{"goal_id": t["goal_id"], "home_shard_id": t["home_shard_id"]} for t in taken] + list(rest[:room])
+    hydrated = await _hydrate_goal_page(pool, page, scope=scope, tenant_scope=tenant)
+    rows = await _with_demand(pool, [canonical for canonical, _ in hydrated], scope=scope)
+    top_rank = {t["goal_id"]: t["ranking"] for t in taken}
+    rest_rows = [r for r in rows if str(r["id"]) not in top_rank]
+    from app.services.goal_ranking import rank_goal_candidates
+    rest_rank = {str(item["goal_id"]): item for item in rank_goal_candidates(rest_rows)}
+    out = [_public_goal_row(r, top_rank.get(str(r["id"])) or rest_rank.get(str(r["id"]))) for r in rows]
+    return out, (offset + page_size < len(top)) or len(rest) > room
 
 
 BROWSE_SPECIFICS_PREVIEW = 6
@@ -315,10 +383,12 @@ async def list_goals_browse(
     `resolved_at` beyond the caller's own filter, so resolution never
     propagates through the hierarchy.
 
-    Order is roots by how many Goals sit directly beneath them, then
+    Order: first the unresolved entries with community demand (open Credit
+    commitments on the Goal or anything beneath it), ranked as one population by
+    that demand; then roots by how many Goals sit directly beneath them, then
     standalone Goals, newest first. It is deliberately NOT abstraction_level
     (levels are derived and equal depth is not equal category); direct count is
-    the cheap page-local proxy for component size.
+    the cheap proxy for component size.
 
     The graph and the paging run on the control database (goal_relations +
     goal projection, covering every shard); only the page's canonical rows are
@@ -344,8 +414,8 @@ async def list_goals_browse(
     child_sql, child_params, idx = scope_predicates(scope, tenant, alias="cg", param_index=idx)
     args.extend(child_params)
     page_size = min(max(int(limit), 1), 200)
-    limit_idx, offset_idx = idx, idx + 1
-    args.extend([page_size + 1, max(int(offset), 0)])
+    offset = max(int(offset), 0)
+    ids_idx, limit_idx, offset_idx = idx, idx + 1, idx + 2
 
     edge = (
         "r.relation_type = 'SPECIALIZES' AND r.status = 'accepted' "
@@ -358,8 +428,7 @@ async def list_goals_browse(
     )
     parent_edge = edge.format(other="pg", other_vis=parent_sql)
     child_edge = edge.format(other="cg", other_vis=child_sql)
-    page = await pool.fetch(
-        f"""
+    base_sql = f"""
         WITH base AS (
             SELECT g.goal_id, g.home_shard_id, g.t_created,
                    (SELECT count(*) FROM goal_relations r
@@ -369,14 +438,28 @@ async def list_goals_browse(
                       JOIN goal_search_index pg ON pg.goal_id = r.abstract_goal_id
                      WHERE r.specific_goal_id = g.goal_id AND {parent_edge}) AS has_parent
               FROM goal_search_index g
-             WHERE {' AND '.join(clauses)}
+             WHERE {' AND '.join(clauses)} AND {{ids_clause}}
         )
         SELECT * FROM base WHERE NOT has_parent
          ORDER BY (specific_count > 0) DESC, specific_count DESC, t_created DESC NULLS LAST, goal_id
-         LIMIT ${limit_idx} OFFSET ${offset_idx}
-        """,
-        *args,
-    )
+        """
+    # entries with demand first (ranked globally); a Goal is only an entry if it is a root
+    demand_top = [] if (resolved is True or resolved == "resolved") else await _demand_ranked_goals(
+        pool, " AND ".join(clauses), goal_params, scope=scope)
+    top: list[Any] = []
+    if demand_top:
+        roots = {str(r["goal_id"]): r for r in await pool.fetch(
+            base_sql.format(ids_clause=f"g.goal_id = ANY(${ids_idx}::uuid[])"),
+            *args, [t["goal_id"] for t in demand_top])}
+        top = [roots[t["goal_id"]] for t in demand_top if t["goal_id"] in roots]
+    taken, rest_offset, rest_limit = _merge_pages(top, offset, page_size)
+    rest = await pool.fetch(
+        base_sql.format(ids_clause=f"NOT (g.goal_id = ANY(${ids_idx}::uuid[]))")
+        + f" LIMIT ${limit_idx} OFFSET ${offset_idx}",
+        *args, [str(t["goal_id"]) for t in top], rest_limit, rest_offset)
+    room = page_size - len(taken)
+    page = list(taken) + list(rest[:room])
+    has_more = (offset + page_size < len(top)) or len(rest) > room
     entries: list[dict[str, Any]] = []
     hydrated = await _hydrate_goal_page(pool, page[:page_size], scope=scope, tenant_scope=tenant)
     with_demand = await _with_demand(pool, [canonical for canonical, _ in hydrated], scope=scope)
@@ -428,7 +511,7 @@ async def list_goals_browse(
             })
         for entry in entries:
             entry["specifics"] = by_root.get(str(entry["id"]), [])
-    return entries, len(page) > page_size
+    return entries, has_more
 
 
 async def find_goal(

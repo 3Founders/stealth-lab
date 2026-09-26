@@ -1054,10 +1054,13 @@ def unresolved_opportunity_score(
 
     The factor order is the product requested by the product model:
     ``demand × unmet_need × tractability × freshness``.  Missing factors are
-    neutral 1.0; an explicitly observed zero remains zero.
+    neutral 1.0; an explicitly observed zero remains zero.  Demand is a multiplier
+    in [0, 2] (1 + strength from demand_factor_from_commitments), so community
+    demand can raise an opportunity but never lower it below neutral.
     """
+    demand_value = 1.0 if demand is None else min(2.0, max(0.0, _finite_float(demand, "demand")))
     return (
-        _clamp_factor(demand, name="demand")
+        demand_value
         * _clamp_factor(unmet_need, name="unmet_need")
         * _clamp_factor(tractability, name="tractability")
         * _clamp_factor(freshness, name="freshness")
@@ -1110,6 +1113,14 @@ def freshness_percentile(
     return [missing if rank is None else _clamp_factor(rank, name="freshness") for rank in ranks]
 
 
+def _share_at_or_below(value: float, peers: Sequence[float]) -> float:
+    """Empirical CDF: the share of `peers` (which include this value) at or below it.
+    Always > 0 for a positive value, so any backing lifts a Goal above no backing."""
+    if not peers:
+        return 1.0
+    return sum(1 for peer in peers if peer <= value) / len(peers)
+
+
 def demand_factor_from_commitments(
     *,
     normalized_demand: Any = None,
@@ -1117,23 +1128,28 @@ def demand_factor_from_commitments(
     supporter_count: Any = None,
     cohort: Optional[Sequence[Any]] = None,
 ) -> tuple[float, bool, dict[str, Any]]:
-    """Compute demand only from commitment/supporter signals.
+    """Demand multiplier from commitment/supporter signals: 1.0 (neutral) without
+    any, 1 + strength with some, strength in (0, 1]. Demand can therefore only RAISE
+    a Goal's opportunity -- backing a Goal never ranks it below an unbacked one.
 
-    Credits and the reward ledger are intentionally not parameters.  A caller
-    may pass a future committed-credit or supporter count; absent those, the
-    factor is neutral 1.0 and explicitly marked unavailable.
+    strength = geometric mean over the observed signals (aggregated quadratic
+    committed Credits, supporters) of the Goal's empirical-CDF position among the
+    cohort (peers without the signal count as 0). With no cohort, any positive
+    signal is full strength. Credits and the reward ledger are intentionally not
+    parameters; `normalized_demand` is an already-normalized strength in [0, 1].
     """
     if normalized_demand is not None:
-        normalized = _clamp_factor(normalized_demand, name="normalized_demand")
-        return normalized, True, {
-            "normalized_demand": normalized,
+        strength = _clamp_factor(normalized_demand, name="normalized_demand")
+        return 1.0 + strength, True, {
+            "normalized_demand": strength,
             "committed_credit_count": committed_credit_count,
             "supporter_count": supporter_count,
             "credits_used_as_demand": False,
             "reason": "explicit normalized demand signal",
         }
     observed = [
-        value for value in (committed_credit_count, supporter_count)
+        (name, value) for name, value in (("committed_credit_count", committed_credit_count),
+                                          ("supporter_count", supporter_count))
         if value is not None
     ]
     if not observed:
@@ -1144,29 +1160,28 @@ def demand_factor_from_commitments(
             "credits_used_as_demand": False,
             "reason": "no committed-credit or supporter signal exists",
         }
-    if cohort is None:
-        factors = [1.0 if _finite_float(value, "commitment count") > 0 else 0.0 for value in observed]
-    else:
-        factors = []
-        for name, value in (("committed_credit_count", committed_credit_count), ("supporter_count", supporter_count)):
-            if value is None:
-                continue
-            peer_values = [
-                item.get(name) if isinstance(item, Mapping) else item
-                for item in cohort
-            ]
-            peer_values.append(value)
-            ranks = percentile_ranks(peer_values, missing=0.0)
-            factors.append(0.0 if _finite_float(value, "commitment count") <= 0 else float(ranks[-1]))
-    factor = 1.0
-    for value in factors:
-        factor *= value
-    return factor, True, {
-        "normalized_demand": factor,
+    positions = []
+    for name, value in observed:
+        own = _finite_float(value, "commitment count")
+        if own <= 0:
+            positions.append(0.0)
+            continue
+        if cohort is None:
+            positions.append(1.0)
+            continue
+        peers = [
+            _finite_float(item.get(name) if isinstance(item, Mapping) else item, "commitment count")
+            if (item.get(name) if isinstance(item, Mapping) else item) is not None else 0.0
+            for item in cohort
+        ]
+        positions.append(_share_at_or_below(own, peers + [own]))
+    strength = math.prod(positions) ** (1.0 / len(positions))
+    return 1.0 + strength, True, {
+        "normalized_demand": strength,
         "committed_credit_count": committed_credit_count,
         "supporter_count": supporter_count,
         "credits_used_as_demand": False,
-        "reason": "normalized from explicit committed-credit/supporter signals",
+        "reason": "strength from explicit committed-credit/supporter signals; the multiplier is 1 + strength",
     }
 
 
@@ -1499,7 +1514,7 @@ def score_goal_candidate(
     else:
         score = unresolved_opportunity_score(demand, unmet_need, tractability, freshness_factor)
         signals = {
-            "demand": demand,
+            "demand": demand - 1.0,              # strength (shown as a %); the score uses 1 + strength
             "unmet_need": unmet_need,
             "tractability": 1.0 if tractability is None else tractability,
             "freshness": freshness_factor,

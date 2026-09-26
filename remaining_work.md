@@ -145,6 +145,10 @@ These need a human with accounts; agents can prepare and verify.
   API: `POST|GET /v1/economy/goals/{id}/commitments`, `DELETE .../{commitment_id}`.
   Ranking receives quadratic demand (sum of sqrt(credits) per supporter).
   `tests/test_goal_commitments_e2e.py`.
+- Ranking fixes: demand is a multiplier 1 + strength (never below the neutral 1.0,
+  so backing a Goal can only raise it); Goal lists and the roots view rank Goals
+  with demand as ONE population (not per page) and put them first, then the rest
+  newest-first / by child count. `tests/test_goal_list_ranking_e2e.py`.
 
 #### (history) Community demand via Credit commitments
 **Why:** Credits today are rewards only (`credit_ledger_events.reason` ∈

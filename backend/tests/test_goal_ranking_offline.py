@@ -517,3 +517,22 @@ def test_economy_adapter_calls_central_service(monkeypatch):
     assert result == [{"procedure_row_id": "central"}]
     assert calls[-1][0] == "rank"
     assert calls[-1][1] == ("p1",)
+
+
+def test_demand_only_ever_raises_a_goal_never_below_an_unbacked_one():
+    """Backing a Goal must not rank it below Goals nobody backed (the old percentile
+    factor gave the least-backed Goal a demand factor below the neutral 1.0)."""
+    cohort = [
+        {"goal_id": "unbacked", "resolved_at": None},
+        {"goal_id": "small", "resolved_at": None, "committed_credit_count": 1.0, "supporter_count": 1},
+        {"goal_id": "big", "resolved_at": None, "committed_credit_count": 900.0, "supporter_count": 12},
+    ]
+    ranked = [item["goal_id"] for item in rank_goal_candidates(cohort)]
+    assert ranked == ["big", "small", "unbacked"]
+    factor, available, signals = demand_factor_from_commitments(
+        committed_credit_count=1.0, supporter_count=1, cohort=cohort)
+    assert available and 1.0 < factor <= 2.0 and 0 < signals["normalized_demand"] <= 1.0
+    assert demand_factor_from_commitments(committed_credit_count=0.0, supporter_count=0)[0] == 1.0
+    # the displayed demand signal is the strength (a percentage), not the multiplier
+    small = next(i for i in rank_goal_candidates(cohort) if i["goal_id"] == "small")
+    assert small["signals"]["demand"] == pytest.approx(small["demand_factor"] - 1.0)

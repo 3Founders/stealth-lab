@@ -19,11 +19,11 @@ class _PagePool:
 
     async def fetch(self, sql, *args):
         compact = " ".join(sql.split())
+        if "goal_commitments" in compact:
+            return []                      # community demand: no open commitments in this fixture
         if "FROM goal_search_index" in compact:
             self.sql, self.args = compact, args
             return [{"goal_id": row["id"], "home_shard_id": "K000"} for row in self.rows]
-        if "goal_commitments" in compact:
-            return []                      # community demand: no open commitments in this fixture
         self.hydrate_sql = compact
         wanted = set(args[0])
         return [row for row in self.rows if row["id"] in wanted]
@@ -64,8 +64,8 @@ def test_list_goals_filters_status_and_resolution_with_offset_page():
     assert "SELECT g.id," in pool.hydrate_sql and "embedding" not in pool.hydrate_sql
     assert "SELECT g.*" not in pool.sql
     assert "embedding" not in pool.sql
-    assert "LIMIT $2 OFFSET $3" in pool.sql
-    assert pool.args == ("active", 2, 3)
+    assert "NOT (g.goal_id = ANY($2::uuid[]))" in pool.sql and "LIMIT $3 OFFSET $4" in pool.sql
+    assert pool.args == ("active", [], 2, 3)
 
 
 def test_list_goals_resolved_false_selects_only_unresolved_goals():
@@ -79,7 +79,7 @@ def test_list_goals_resolved_false_selects_only_unresolved_goals():
     assert has_more is False
     assert "g.resolved_at IS NULL" in pool.sql
     assert "g.status = " not in pool.sql
-    assert pool.args == (6, 0)
+    assert pool.args == ([], 6, 0)
 
 
 def test_find_goal_defaults_to_all_resolution_states_and_safe_projection():
