@@ -102,3 +102,6 @@ pokemon_red.gb
 pokemon_red.gbc
 pokemon-agent/saves/
 pokemon-agent/roms/
+
+# Neon shard connection strings (backend/scripts/provision_neon_shards.py) -- secrets
+.neon_shards.env

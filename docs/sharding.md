@@ -93,7 +93,18 @@ global unique index for exact Goal identity; hard `DELETE` of a referenced Goal/
 
 ## Runbook
 
-Provision a knowledge shard:
+Provision many knowledge shards at once (Neon projects K001..K100: create, migrate, register; idempotent, resumable):
+
+```
+export NEON_API_KEY=...   DATABASE_URL=<control db>
+python scripts/provision_neon_shards.py --count 100 --region <app region> --dry-run
+python scripts/provision_neon_shards.py --count 100 --region <app region> --weight 0
+```
+
+Connection strings go to `backend/.neon_shards.env` (git-ignored); load them into every API / MCP / worker
+process, then raise weights (`admin shard-weight K001 100` ...) when ready.
+
+Provision a single knowledge shard by hand:
 
 ```
 python scripts/migrate.py --dsn <shard dsn>
