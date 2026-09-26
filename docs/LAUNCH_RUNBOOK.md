@@ -404,6 +404,15 @@ DATABASE_URL="$CONTROL_DATABASE_URL" $A routing-status
 
 **Check:** `routing-status` shows an active parameter version. Its diagnostics show `divergences: 0` and `max_r_hat` below 1.05.
 
+**Step-level routing** (per run.md node) was added by migrations 122 (control) and 123 (project B). On an existing deployment:
+1. Apply the migrations:
+   - control DB: `python scripts/migrate.py` (the MCP container also does this on deploy);
+   - project B: `python scripts/migrate.py --target search --dsn "$SEARCH_DATABASE_URL"`.
+2. Run `routing-refit` **once** after deploying. Parameters fitted before this version have no step priors, so step-level requests answer "run routing-refit once" until then. Whole-task requests keep working throughout.
+3. Redeploy the MCP server (step 12), so hosted agents see the new `recommend_models` / `report_model_run` parameters and the per-node flow in the `plan_and_run` prompt.
+
+**Check:** `recommend_models` with a `step_order` returns `"status": "ok"` and a `step` block.
+
 The MCP tools `recommend_models` and `report_model_run` are on both the default (v1) and the full (v2) surface.
 
 ---

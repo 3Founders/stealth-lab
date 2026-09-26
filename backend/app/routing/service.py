@@ -223,6 +223,9 @@ async def recommend(pool: Any, *, goal_id: str, candidates: Sequence[Any], acces
             rho=float(constraints.get("reliability_target") or cfg.reliability_target),
             confidence=float(constraints.get("reliability_confidence") or cfg.reliability_confidence),
             attempts=attempts, rng=rng, continuation=continuation, node_weights_after=(node_w, draw_w),
+            allow_repeats=bool(constraints.get("allow_retries", True)),
+            exclude_units=[col for a, col in attempts_cols if col < len(usable)] if not constraints.get(
+                "allow_retries", True) else (),
             max_cost=None if constraints.get("max_cost_usd") is None else float(constraints["max_cost_usd"]))
     except ValueError as exc:
         raise RoutingError(str(exc)) from exc

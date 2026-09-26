@@ -985,19 +985,24 @@ async def rank_goal_procedures(
     pool: Any, goal_id: str, ctx: Optional[QueryContext], *, scope: AccessScope,
     judge: Optional[SemanticJudge] = None, cfg: RetrievalConfig = RetrievalConfig(),
     meta: Optional[RetrievalMeta] = None, current_scope: Optional[dict] = None, require_verified: bool = False,
-    limit: int = 20,
+    limit: int = 20, candidate_goal_ids: Optional[Sequence[str]] = None,
 ) -> ProcedureSearchResult:
     """Tier 2 for a Goal that is ALREADY chosen (find_ways resolves a Goal tree node
     by node): every live Procedure that achieves exactly this Goal is a candidate
     (no similarity cut -- the Goal is known), then the SAME tier as
     `retrieve_procedures`: hard constraints -> contextual Procedure judgment ->
     evidence-aware selection. The historical order (verified first, then newest)
-    is only the tie-break when no judge answers. `judge=None` skips judgment."""
+    is only the tie-break when no judge answers. `judge=None` skips judgment.
+
+    `candidate_goal_ids` replaces the candidate source (default: this Goal only) --
+    used for Procedures observed on the Goal's more specific Goals, which then pass
+    through exactly the same tier, judged against the SAME request."""
     from app.services.applicability import _CANDIDATE_BASE_WHERE
     from app.services.routed_reads import fetch_goal_procedures
 
     meta = meta if meta is not None else RetrievalMeta()
-    rows = await fetch_goal_procedures(pool, [str(goal_id)], columns=_hydrate_cols(), where=_CANDIDATE_BASE_WHERE)
+    source_goals = [str(g) for g in (candidate_goal_ids or [goal_id])]
+    rows = await fetch_goal_procedures(pool, source_goals, columns=_hydrate_cols(), where=_CANDIDATE_BASE_WHERE)
     if not rows:
         return ProcedureSearchResult([], None, [], [], "no procedure is linked to the goal")
     rows.sort(key=lambda r: (r.get("verification_state") != "verified",
@@ -1011,7 +1016,8 @@ async def rank_goal_procedures(
         cands.append(Hit(
             id=str(row["procedure_id"]), name=row["name"], text=row["name"],
             home_shard_id=str(row.get("home_shard_id") or "K000"), rrf=1.0 / (1 + index),
-            extra={"procedure_row_id": row_id, "goal_id": str(goal_id)},
+            extra={"procedure_row_id": row_id,
+                   "goal_id": str(row.get("achieves_goal_id") or goal_id)},
         ))
     return await _rank_procedure_candidates(
         pool, ctx, cands, by_row, scope=scope, judge=judge, cfg=cfg, meta=meta, current_scope=current_scope,

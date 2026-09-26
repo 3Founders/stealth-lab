@@ -263,7 +263,7 @@ def test_feasible_procedures_use_the_shared_tier_with_the_request_context(monkey
         def __init__(self, row):
             self.procedure = row
 
-    async def fake_rank(pool, goal_id, ctx, *, scope, judge, meta, current_scope):
+    async def fake_rank(pool, goal_id, ctx, *, scope, judge, meta, current_scope, candidate_goal_ids=None):
         calls.append((goal_id, ctx, judge))
         return rs.ProcedureSearchResult(
             [other, selected], selected, [], [], "pareto",

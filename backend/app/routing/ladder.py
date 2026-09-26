@@ -185,13 +185,22 @@ def choose(p: np.ndarray, node_weights: np.ndarray, alpha: np.ndarray, beta: np.
            wrong_penalty: float, candidates: Sequence[int], max_rungs: int, rho: float,
            confidence: float, attempts: Sequence[Attempt] = (), max_cost: Optional[float] = None,
            rng: np.random.Generator, continuation: Optional[np.ndarray] = None,
-           node_weights_after: Optional[tuple[np.ndarray, np.ndarray]] = None) -> LadderResult:
+           node_weights_after: Optional[tuple[np.ndarray, np.ndarray]] = None,
+           allow_repeats: bool = True, exclude_units: Sequence[int] = ()) -> LadderResult:
     """Evaluate every ladder over `candidates` (indices into p's unit axis; earlier
     attempts may use other units) and choose one."""
     node_w, draw_w = node_weights_after if node_weights_after is not None else belief(node_weights, p, attempts)
     cand = list(candidates)
     local = enumerate_ladders(len(cand), max_rungs)
     ladders = [tuple(cand[i] for i in lad) for lad in local]
+    if not allow_repeats:
+        # deterministic generation (e.g. temperature 0): a retry of the same unit on the same
+        # instance reproduces its answer, so repeats -- within a ladder or of a unit already
+        # tried -- buy nothing
+        banned = set(exclude_units)
+        ladders = [lad for lad in ladders if len(set(lad)) == len(lad) and not banned & set(lad)]
+        if not ladders:
+            raise ValueError("every candidate has already been tried on this instance")
     ok, wrong, cost, util, step_ok = evaluate(p, node_w, alpha, beta, cost_ok, cost_fail, cost_check,
                                               value, wrong_penalty, ladders, continuation)
     step_ok = None if continuation is None else step_ok

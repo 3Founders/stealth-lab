@@ -3334,7 +3334,8 @@ async def recommend_models(ctx: Context, candidates: list[Any], goal_id: str | N
       (a failure means this instance is probably hard).
     constraints: {value_usd?, wrong_penalty_usd?, reliability_target? (0.9),
       reliability_confidence? (0.9), max_cost_usd?, max_rungs? (3), check_cost_usd?,
-      open_weights_only?, local_only?}.
+      open_weights_only?, local_only?, allow_retries? (true; false when your generation is
+      deterministic, e.g. temperature 0 -- a same-model retry would reproduce its answer)}.
 
     STEP LEVEL (one run.md node at a time; needs procedure_id): pass step_order (the
     Procedure step this node runs) and step_role (plan | edit | verify | other).
@@ -3955,6 +3956,59 @@ async def _record_find_ways(ctx: Context, query: str, reply: str, shard_requests
         _log.warning("find_ways cost record not written", exc_info=True)
 
 
+CANDIDATE_WAYS_MAX_CANDIDATES = 2
+CANDIDATE_WAYS_PER_CANDIDATE = 2
+
+
+async def _attach_candidate_ways(pool, candidates: list, query: str, facts: list, *, scope) -> None:
+    """An ambiguous answer stays ambiguous (the planner chooses), but each of the top
+    candidate Goals carries `ways`: its own Procedures AND those observed on its more
+    specific Goals, passed through THE shared Procedure tier and judged against THIS
+    request -- only the ones judged applicable are listed, each labelled with the Goal
+    it was observed on. Never fatal to the answer."""
+    from app.execution.goal_resolution import _specific_goal_ids
+    from app.services import retrieval_service as _rs
+    from app.services.routed_reads import fetch_goal
+
+    try:
+        qctx = await _rs.build_query_context(
+            query, [{"id": f["claim_id"], "statement": f["statement"]} for f in facts], embedder=None)
+        judge = _rs.default_judge()
+    except Exception:  # noqa: BLE001
+        return
+    if judge is None:
+        return
+    for cand in candidates[:CANDIDATE_WAYS_MAX_CANDIDATES]:
+        goal = cand.get("goal") or {}
+        goal_id = goal.get("id") or goal.get("goal_id")
+        if not goal_id:
+            continue
+        try:
+            specific = await _specific_goal_ids(pool, str(goal_id), query, access_scope=scope)
+            result = await _rs.rank_goal_procedures(
+                pool, str(goal_id), qctx, scope=scope, judge=judge,
+                candidate_goal_ids=[str(goal_id), *specific])
+        except Exception:  # noqa: BLE001 -- knowledge is an addition; the answer still stands
+            import logging
+            logging.getLogger(__name__).warning("candidate ways unavailable for goal %s", goal_id, exc_info=True)
+            continue
+        ordered = ([result.selected] if result.selected is not None else []) + [
+            item for item in result.ranked if item is not result.selected]
+        ways = []
+        for item in ordered[:CANDIDATE_WAYS_PER_CANDIDATE]:
+            row = item["_row"]
+            source = str(row.get("achieves_goal_id") or goal_id)
+            source_row = await fetch_goal(pool, source) if source != str(goal_id) else None
+            ways.append({
+                "procedure_id": str(row["procedure_id"]), "name": row.get("name"),
+                "verification_state": row.get("verification_state"),
+                "steps": sorted(row.get("steps") or [], key=lambda st: st.get("order", 0) if isinstance(st, dict) else 0),
+                "observed_on_goal": None if source == str(goal_id) else {
+                    "goal_id": source, "goal_name": (source_row or {}).get("canonical_name")},
+            })
+        cand["ways"] = ways
+
+
 async def _find_ways_impl(
     query: str, ctx: Context, *, repo_claims: str, current_scope_json: str, max_depth: int,
     semantic: bool, use_llm: bool, top_k: int,
@@ -4004,6 +4058,8 @@ async def _find_ways_impl(
     if goal_choice is not None:
         outcome, selected_goal, payload = goal_choice
         if outcome != "resolved":
+            if outcome == "ambiguous" and payload.get("candidates"):
+                await _attach_candidate_ways(pool, payload["candidates"], query, facts, scope=scope)
             return json.dumps({"outcome": outcome, "repo_facts": repo_report, **payload}, default=str)
         goal_judgment = payload["goal_judgment"]
     else:

@@ -105,3 +105,8 @@ pokemon-agent/roms/
 
 # Neon shard connection strings (backend/scripts/provision_neon_shards.py) -- secrets
 .neon_shards.env
+
+# BigCodeBench local demo: downloaded dataset and run outputs (regenerable)
+experiments/bigcodebench/data/
+experiments/bigcodebench/runs/
+experiments/bigcodebench/__pycache__/

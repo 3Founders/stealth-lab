@@ -319,3 +319,139 @@ def _parse_abstraction_response(
     if len(validated.step_phrases) != expected_step_count:
         return None
     return validated.capability_statement, validated.step_phrases
+
+
+# --------------------------------------------------------------------------- code solutions
+
+CODE_SOLUTION_TAG = "code_solution_v1@1"
+_CODE_SOLUTION_SYSTEM_PROMPT = (
+    "You turn ONE verified solution into a reusable procedure for the whole class of tasks it belongs to. "
+    "Reply with JSON only: {\"capability_statement\": one sentence naming the general kind of task this "
+    "solves (no task-specific names or numbers), \"steps\": 3-7 items, each {\"action\": an imperative, "
+    "method-level instruction, \"apis\": [library calls the step uses, e.g. \"pandas.DataFrame.groupby\"]}, "
+    "\"pitfalls\": requirements the tests enforced that are easy to miss (exact return types, edge cases, "
+    "raised exceptions, output format)}. Describe the method; never paste the solution's code. "
+    "If the solution holds no reusable method, reply {\"abstain\": true}."
+)
+
+
+class _CodeSolutionStep(BaseModel):
+    action: str = Field(min_length=1)
+    apis: list[str] = Field(default_factory=list)
+
+
+class _CodeSolutionResponse(BaseModel):
+    capability_statement: str = Field(min_length=1)
+    steps: list[_CodeSolutionStep] = Field(min_length=1, max_length=10)
+    pitfalls: list[str] = Field(default_factory=list)
+
+
+def verified_code_solution(evidence: ProcedureEvidence) -> Optional[dict]:
+    """The episode's verified code-solution observation, if it has one:
+    {"observation_type": "code_solution", "properties": {"code": ..., "verified": true}}."""
+    for obs in evidence.observations:
+        props = obs.get("properties") or {}
+        if obs.get("observation_type") == "code_solution" and props.get("verified") and props.get("code"):
+            return obs
+    return None
+
+
+def _grounded_apis(apis: list[str], code: str) -> tuple[list[str], list[str]]:
+    """(kept, dropped): an API is grounded when its final name appears as an identifier
+    in the verified code -- a step may not cite a call the solution never made."""
+    import re
+
+    kept, dropped = [], []
+    for api in apis:
+        name = str(api).strip().rstrip("()").split(".")[-1]
+        if name and re.search(r"\b" + re.escape(name) + r"\b", code):
+            kept.append(str(api).strip())
+        else:
+            dropped.append(str(api).strip())
+    return kept, dropped
+
+
+def parse_code_solution_response(text: str, code: str) -> Any:
+    """Pure: `_ABSTAIN`; None (unparseable, or mostly ungrounded calls); or
+    (capability_statement, [(action, grounded_apis)], pitfalls, dropped_apis)."""
+    import json
+
+    stripped = text.strip()
+    start, end = stripped.find("{"), stripped.rfind("}")
+    if start < 0 or end < start:
+        return None
+    try:
+        raw = json.loads(stripped[start:end + 1])
+    except json.JSONDecodeError:
+        return None
+    if isinstance(raw, dict) and raw.get("abstain") is True:
+        return _ABSTAIN
+    try:
+        parsed = _CodeSolutionResponse.model_validate(raw)
+    except ValidationError:
+        return None
+    steps, all_dropped, all_cited = [], [], 0
+    for step in parsed.steps:
+        kept, dropped = _grounded_apis(step.apis, code)
+        all_cited += len(step.apis)
+        all_dropped += dropped
+        steps.append((step.action.strip(), kept))
+    if all_cited and len(all_dropped) > all_cited / 2:
+        return None                       # mostly invented calls: not a faithful account of the solution
+    return parsed.capability_statement.strip(), steps, [p.strip() for p in parsed.pitfalls if p.strip()], all_dropped
+
+
+class CodeSolutionExtractor(ExtractionStrategy):
+    """
+    For episodes whose evidence is a VERIFIED code solution (e.g. a benchmark task graded
+    by its test suite) rather than an agent's tool trace. GroundedHybridExtractor derives
+    steps from the tool-call pattern, which for a single-shot answer is only "write code,
+    run tests" -- no method. This strategy reads the solution itself and asks for the
+    method, keeping the same groundedness discipline: every library call a step cites must
+    occur in the verified code (ungrounded ones are dropped; a response mostly made of
+    them is refused), and the solution's code is never stored. Pitfalls the tests
+    enforced become the procedure's failure_conditions.
+    """
+
+    def __init__(self, client: Any, model: str = "gemma-4-31B-it", temperature: float = 0.2):
+        self._client = client
+        self._model = model
+        self._temperature = temperature
+
+    async def extract(
+        self, pool: asyncpg.Pool, evidence: ProcedureEvidence, *,
+        repo_root: Optional[str] = None, entry_seed_files: Optional[list[str]] = None,
+    ) -> Optional[ExtractedProcedure]:
+        solution = verified_code_solution(evidence)
+        if solution is None:
+            return None
+        code = str(solution["properties"]["code"])
+        task = next((str((o.get("properties") or {}).get("text") or "") for o in evidence.observations
+                     if o.get("observation_type") == "task_statement"), evidence.goal_text)
+        user_prompt = ("Task:\n" + task[:6000] + "\n\nVerified solution (passes the full test suite):\n"
+                       + "```python\n" + code[:8000] + "\n```")
+        try:
+            response = self._client.chat.completions.create(
+                model=self._model,
+                messages=[{"role": "system", "content": _CODE_SOLUTION_SYSTEM_PROMPT},
+                          {"role": "user", "content": user_prompt}],
+                temperature=self._temperature, max_tokens=1200,
+            )
+            text = response.choices[0].message.content.strip()
+        except Exception as exc:  # noqa: BLE001 -- surfaced, never patched over
+            raise ExtractionTransientFailure(f"LLM call failed: {exc!r}",
+                                             is_rate_limit=_looks_like_rate_limit(exc)) from exc
+        parsed = parse_code_solution_response(text, code)
+        if parsed is _ABSTAIN:
+            return None
+        if parsed is None:
+            raise ExtractionTransientFailure(
+                f"code-solution response unusable (unparseable or mostly ungrounded): {text[:200]!r}")
+        capability_statement, steps, pitfalls, _dropped = parsed
+        return ExtractedProcedure(
+            name=evidence.goal_text[:100], goal=evidence.goal_text, capability_statement=capability_statement,
+            steps=[ProcedureStep(order=i, action=action,
+                                 allowed_implementations=[{"type": "library_call", "name": api} for api in apis])
+                   for i, (action, apis) in enumerate(steps, start=1)],
+            failure_conditions=pitfalls,
+        )

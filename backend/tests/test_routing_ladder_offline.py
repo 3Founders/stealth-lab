@@ -187,3 +187,18 @@ def test_a_long_remaining_run_makes_the_step_choice_more_reliable():
     step_ok_rest = with_rest.draw_weights @ with_rest.p_step_ok[with_rest.chosen]
     assert step_ok_rest >= step_ok_alone - 1e-9
     assert with_rest.draw_weights @ with_rest.p_ok[with_rest.chosen] < step_ok_rest   # the run is harder than the step
+
+
+def test_no_retry_mode_never_repeats_a_unit_or_retries_a_tried_one():
+    rng = np.random.default_rng(8)
+    p, ew = _p(np.array([[1.0, 2.0, 3.0]] * 30), np.full(30, 0.5), 10)
+    zero = np.zeros(30)
+    kwargs = dict(cost_check=0.0, value=5.0, wrong_penalty=5.0, candidates=[0, 1, 2], max_rungs=3, rho=0.5,
+                  confidence=0.5, rng=rng)
+    costs_ = np.array([0.01, 0.1, 1.0])
+    res = ladder.choose(p, ew, zero, zero, costs_, costs_, allow_repeats=False, **kwargs)
+    assert all(len(set(lad)) == len(lad) for lad in res.ladders)
+    after = ladder.choose(p, ew, zero, zero, costs_, costs_, allow_repeats=False, exclude_units=[0], **kwargs)
+    assert all(0 not in lad for lad in after.ladders)
+    with pytest.raises(ValueError):
+        ladder.choose(p, ew, zero, zero, costs_, costs_, allow_repeats=False, exclude_units=[0, 1, 2], **kwargs)

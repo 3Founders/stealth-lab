@@ -111,9 +111,41 @@ async def resolve_goal_id_for_text(
     return found.get(normalized)
 
 
+SPECIFIC_GOAL_DEPTH = 2          # how far below a Goal its "more specific" ways are looked for
+SPECIFIC_GOAL_LIMIT = 20         # at most this many more-specific Goals are considered, most relevant first
+
+
+async def _specific_goal_ids(pool: asyncpg.Pool, goal_id: str, query: str, *, access_scope: AccessScope) -> list[str]:
+    """Visible, live Goals up to SPECIFIC_GOAL_DEPTH accepted SPECIALIZES edges below
+    `goal_id`, ordered by full-text relevance to the request (then newest)."""
+    from app.services.access import visibility_predicate
+
+    vis, vis_params = visibility_predicate(access_scope, alias="g", param_index=4)
+    rows = await pool.fetch(
+        f"""
+        WITH RECURSIVE down(goal_id, depth) AS (
+            SELECT r.specific_goal_id, 1 FROM goal_relations r
+             WHERE r.abstract_goal_id = $1::uuid AND r.relation_type = 'SPECIALIZES' AND r.status = 'accepted'
+            UNION
+            SELECT r.specific_goal_id, down.depth + 1 FROM down
+              JOIN goal_relations r ON r.abstract_goal_id = down.goal_id
+               AND r.relation_type = 'SPECIALIZES' AND r.status = 'accepted'
+             WHERE down.depth < $2
+        )
+        SELECT g.goal_id::text AS id
+          FROM goal_search_index g
+         WHERE g.goal_id IN (SELECT goal_id FROM down) AND g.status IN ('active', 'candidate') AND {vis}
+         ORDER BY ts_rank(g.search_tsv, plainto_tsquery('english', $3)) DESC, g.t_created DESC NULLS LAST, g.goal_id
+         LIMIT {int(SPECIFIC_GOAL_LIMIT)}
+        """,
+        str(goal_id), SPECIFIC_GOAL_DEPTH, query[:2000], *vis_params)
+    return [r["id"] for r in rows]
+
+
 async def _feasible_procedures_for_goal(
     pool: asyncpg.Pool, goal_id: str, *, current_scope: dict, access_scope: AccessScope,
     goal_name: str = "", depth: int = 0, context: Optional[dict] = None,
+    candidate_goal_ids: Optional[list[str]] = None,
 ) -> list[tuple[dict, bool]]:
     """Procedures that achieve exactly this Goal, in the order of THE Procedure
     tier every door shares (`retrieval_service.rank_goal_procedures`): hard
@@ -136,7 +168,7 @@ async def _feasible_procedures_for_goal(
         node_ctx = rs.QueryContext(query=goal_name, claims=root_ctx.claims, text=text)
     result = await rs.rank_goal_procedures(
         pool, goal_id, node_ctx, scope=access_scope, judge=context.get("_judge") if node_ctx is not None else None,
-        meta=context.get("_retrieval_meta"), current_scope=current_scope,
+        meta=context.get("_retrieval_meta"), current_scope=current_scope, candidate_goal_ids=candidate_goal_ids,
     )
     ordered = []
     if result.selected is not None:
@@ -323,6 +355,25 @@ async def resolve_goal(
         goal_name=goal_name, depth=depth, context=context,
     )
     feasible = [p for p, ok in candidates if ok]   # already in the shared tier's order
+    observed_on: Optional[dict] = None
+    if not feasible and context.get("_judge") is not None and context.get("_query_context") is not None:
+        # No way of its own: offer ways OBSERVED ON its more specific Goals -- through the
+        # same tier, judged against this request (never offered unjudged), labelled with
+        # the Goal each was observed on.
+        specific = await _specific_goal_ids(pool, goal_id, context["_query_context"].query, access_scope=scope)
+        if specific:
+            lower = await _feasible_procedures_for_goal(
+                pool, goal_id, current_scope=current_scope, access_scope=scope, goal_name=goal_name,
+                depth=depth, context=context, candidate_goal_ids=specific,
+            )
+            lower_feasible = [p for p, ok in lower if ok]
+            if lower_feasible:
+                feasible = lower_feasible
+                source_goal = str(feasible[0].get("achieves_goal_id") or "")
+                source_row = await fetch_goal(pool, source_goal) if source_goal else None
+                observed_on = {"goal_id": source_goal,
+                               "goal_name": (source_row or {}).get("canonical_name"),
+                               "specific_goals_considered": len(specific)}
     # Sec 11 cost-routing hook (real, inert -- see _procedure_cost_score's
     # own docstring): called so it is exercised/discoverable, but its
     # result does not affect the central ranking or selection today.
@@ -356,12 +407,15 @@ async def resolve_goal(
                 "preconditions": proc.get("preconditions") or [],
                 "steps": sorted(proc.get("steps") or [], key=lambda s: s.get("order", 0) if isinstance(s, dict) else 0),
                 **({"repo_fit": proc["_repo_fit"]} if proc.get("_repo_fit") else {}),
+                **({"observed_on_more_specific_goal": observed_on} if observed_on else {}),
             },
             verification_requirement=goal.get("verification_requirement") or {},
             children=children, procedure_alternates=feasible[1:],
             rationale=(
                 f"selected procedure {proc.get('name')!r} ({proc['id']}) among "
                 f"{len(feasible)} feasible / {len(candidates)} linked to this Goal"
+                + (f"; observed on the more specific Goal {observed_on['goal_name']!r}, judged applicable "
+                   "to this request" if observed_on else "")
             ),
             procedures_linked=len(candidates), procedures_feasible=len(feasible),
         )

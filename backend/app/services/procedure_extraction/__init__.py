@@ -158,6 +158,16 @@ async def extract_procedure(
     strategy, extracted_by, allowed_binders = await _select_strategy(
         pool, client=client, extractor_scope=extractor_scope,
     )
+    # A verified code solution (not a tool trace) is extracted from its content: the
+    # tool-pattern strategies would see only "write code, run tests".
+    from app.services.procedure_extraction.strategies import (
+        CODE_SOLUTION_TAG, CodeSolutionExtractor, verified_code_solution,
+    )
+    if client is not None and verified_code_solution(evidence) is not None:
+        from app.config import settings as _settings
+
+        strategy = CodeSolutionExtractor(client, model=_settings.general_compute_judge_model or "gemma-4-31B-it")
+        extracted_by = CODE_SOLUTION_TAG
 
     # ExtractionTransientFailure (strategies.py) is deliberately NOT caught
     # here -- it must propagate to the caller (the ingestion job handler)

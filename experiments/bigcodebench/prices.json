@@ -1,0 +1,7 @@
+{
+  "_note": "USD per million tokens. General Compute publishes no per-model rates (checked 2026-09-26): the three open-model rows are PLACEHOLDERS to exercise the pipeline -- replace with the provider's real rates before quoting any cost. Sonnet 5 is Anthropic's list price.",
+  "gemma-4-31B-it": {"input": 0.10, "output": 0.30, "placeholder": true},
+  "gpt-oss-120b": {"input": 0.15, "output": 0.60, "placeholder": true},
+  "deepseek-v3.2": {"input": 0.28, "output": 0.42, "placeholder": true},
+  "claude-sonnet-5": {"input": 2.00, "output": 10.00, "placeholder": false}
+}
