@@ -1,0 +1,4 @@
+export function Banana({className = '', mono = false}: {className?: string; mono?: boolean}) {
+ return <svg className={className} viewBox="0 0 480 480" fill="none" aria-hidden="true"><path d="M350 63c10 117-34 230-143 253-54 12-102-5-131-36 34 84 101 136 189 104C369 346 409 224 371 74Z" fill={mono?'currentColor':'#edc52c'}/><path d="M350 63c-3 125-52 233-143 253-51 12-102-5-131-36 61 50 134 54 200-7 58-54 82-129 84-202Z" fill={mono?'currentColor':'#ffde4a'}/><path d="M92 298c62 66 143 65 204 7 55-53 79-134 70-210" stroke={mono?'currentColor':'#b7931f'} strokeWidth="2"/><path d="m350 63 4-22 13-2 4 35Z" fill={mono?'currentColor':'#454634'}/><path d="m76 280-9-4 5 16 10 5Z" fill={mono?'currentColor':'#454634'}/></svg>;
+}
+export function Brand() { return <span className="brand"><Banana/><span>ke<span lang="mr">ळ</span></span></span>; }

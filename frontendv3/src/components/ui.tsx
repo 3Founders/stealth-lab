@@ -1,0 +1,6 @@
+import { Banana } from './brand';
+export function PageHead({eyebrow,title,children}:{eyebrow:string;title:string;children?:React.ReactNode}){return <header className="page-head"><p className="eyebrow">{eyebrow}</p><h1>{title}</h1>{children && <div className="intro">{children}</div>}</header>}
+export function Empty({title,children}:{title:string;children?:React.ReactNode}){return <div className="empty"><Banana/><h2>{title}</h2><div>{children}</div></div>}
+export function Skeleton(){return <div className="skeletons" role="status" aria-label="Loading knowledge"><span className="sr-only">Loading. This can take a few seconds.</span>{[1,2,3].map(i=><div className="skeleton" key={i}><i/><i/><i/></div>)}</div>}
+export function Badge({children}:{children:React.ReactNode}){return <span className="badge">{children}</span>}
+export function SearchForm({value='',action='/search',label='What would you like to do?',placeholder='What’s the best way to…?'}:{value?:string;action?:string;label?:string;placeholder?:string}){return <form action={action} className="search-form" role="search"><label className="sr-only" htmlFor="query">{label}</label><span className="search-icon" aria-hidden="true">⌕</span><input id="query" name="q" defaultValue={value} placeholder={placeholder} required maxLength={1000}/><button type="submit" aria-label="Search">↗</button></form>}

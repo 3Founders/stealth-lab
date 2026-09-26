@@ -1,0 +1,36 @@
+# `gcloud builds submit` (deploy/ingestion/cloudbuild.yaml) uploads this repo's
+# working directory as the Cloud Build source archive BEFORE the build even
+# starts -- it reads THIS file, not .dockerignore, for that upload step.
+# deploy/ingestion/Dockerfile.worker only ever COPYs backend/ (plus needs
+# deploy/ingestion/Dockerfile.worker itself, referenced via `-f` in
+# cloudbuild.yaml). Allowlisting rather than blocklisting: this repo root
+# accumulates large unrelated trees over time -- a full AutomationBench/.venv
+# virtualenv (20,233 files, ~93% of the prior upload) was found sitting here
+# with nothing excluding it, and a blocklist would need updating every time
+# something new like that shows up. `!X/` + `!X/**` is the standard
+# gitignore-syntax "un-ignore everything under X" idiom; gcloud parses this
+# file with the same syntax.
+
+*
+
+!deploy/
+!deploy/**
+
+!backend/
+!backend/**
+
+# Re-exclude from the allowed trees what still shouldn't ship (mirrors
+# .dockerignore, which gcloud does not read for this upload step).
+backend/.env
+backend/.venv/
+backend/__pycache__/
+backend/**/__pycache__/
+backend/.pytest_cache/
+backend/stealthlab_backend.egg-info/
+backend/conflict_candidates.json
+backend/*_results.json
+backend/experiment_*
+backend/after_*
+backend/*.log
+backend/*.jsonl
+backend/scripts/dev_dashboard.py

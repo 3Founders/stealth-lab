@@ -67,9 +67,9 @@ def deploy_cloudrun(*, dry_run: bool, log=print) -> None:
     OPS_HOME.mkdir(parents=True, exist_ok=True)
     out.write_text(rendered, encoding="utf-8")
     cmds = [
-        ["gcloud", "builds", "submit", "--project", project, "--config", "deploy/ingestion/cloudbuild.yaml",
+        ["gcloud.cmd", "builds", "submit", "--project", project, "--config", "deploy/ingestion/cloudbuild.yaml",
          f"--substitutions=_IMAGE={image},_RELEASE={sha[:12]}", "."],
-        ["gcloud", "run", "jobs", "replace", str(out), "--region", region, "--project", project],
+        ["gcloud.cmd", "run", "jobs", "replace", str(out), "--region", region, "--project", project],
     ]
     for c in cmds:
         log(("DRY " if dry_run else "RUN ") + " ".join(c))
