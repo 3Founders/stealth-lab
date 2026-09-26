@@ -404,7 +404,7 @@ DATABASE_URL="$CONTROL_DATABASE_URL" $A routing-status
 
 **Check:** `routing-status` shows an active parameter version. Its diagnostics show `divergences: 0` and `max_r_hat` below 1.05.
 
-The MCP tools `recommend_models` and `report_model_run` are exposed on the full (v2) surface only. Adding them to the default v1 surface is a product decision: add both names to `V1_TOOLS` in `app/mcp_server/server.py`.
+The MCP tools `recommend_models` and `report_model_run` are on both the default (v1) and the full (v2) surface.
 
 ---
 

@@ -1,6 +1,7 @@
 """
-MCP v1 surface (final_thing.md): exactly three tools (find_ways,
-report_discovery, submit_way), the three related-claims resources, and the two client-side
+MCP v1 surface (final_thing.md): five tools (find_ways, report_discovery,
+submit_way, plus the model recommender's recommend_models and report_model_run),
+the three related-claims resources, and the two client-side
 prompts (survey_repo, plan_and_run). The rest
 of the suite runs with STEALTHLAB_MCP_SURFACE=v2 (conftest) because tool
 registration happens once at import -- so the real v1 surface is imported in a
@@ -41,9 +42,9 @@ def _surface(value: str) -> dict:
     return json.loads(out.stdout.strip().splitlines()[-1])
 
 
-def test_v1_exposes_exactly_three_tools_three_claim_resources_and_two_prompts():
+def test_v1_exposes_exactly_five_tools_three_claim_resources_and_two_prompts():
     s = _surface("v1")
-    assert s["tools"] == ["find_ways", "report_discovery", "submit_way"]
+    assert s["tools"] == ["find_ways", "recommend_models", "report_discovery", "report_model_run", "submit_way"]
     assert s["resources"] == [
         "stealth://claims/{claim_id}",
         "stealth://goals/{goal_id}/claims",

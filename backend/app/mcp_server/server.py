@@ -447,8 +447,12 @@ _V1_INSTRUCTIONS = (
     "found no good way (or a clearly better one), submit_way(goal_id, ...) "
     "proposes yours for that Goal -- pick goal_id from find_ways' resolved or "
     "ambiguous candidates; it enters human review, it is never live or "
-    "verified on submission. Reads need no token; report_discovery and "
-    "submit_way need a signed-in user."
+    "verified on submission. 5) Optional, to pick the cheapest model that "
+    "will pass: recommend_models(procedure_id, candidates=[\"model|scaffold\", ...]) "
+    "returns a ladder (try A; if its check fails, B); after each attempt call "
+    "report_model_run(...) with the returned instance_key so the per-goal model "
+    "scores learn. Reads need no token; report_discovery, submit_way and "
+    "report_model_run need a signed-in user or write token."
 )
 _V2_INSTRUCTIONS = (
     "Retrieval, Goal/Procedure, and knowledge-graph "
@@ -526,7 +530,8 @@ def _enforce_tool_scope(tool_name: str) -> None:
         raise PermissionError(f"forbidden: tool {tool_name!r} requires scope {needed!r}")
 
 
-V1_TOOLS: frozenset[str] = frozenset({"find_ways", "report_discovery", "submit_way"})
+V1_TOOLS: frozenset[str] = frozenset({
+    "find_ways", "report_discovery", "submit_way", "recommend_models", "report_model_run"})
 
 
 def surface_includes(tool_name: str, surface: str = None) -> bool:  # type: ignore[assignment]

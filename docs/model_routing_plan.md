@@ -314,7 +314,7 @@ Built: P0–P2 plus the P3 learning loop. Code is in `backend/app/routing/`. Tes
 **Where things are:**
 - **Decision (API, numpy only):** `predict.py` + `ladder.py`. The ladder uses the exact Bayes-optimal continuation after rejections. The Thompson-sampling propensity is exact over the stored draws.
 - **Inference (worker, JAX/NumPyro):** `model.py` + `fit.py`.
-- **MCP:** two new tools, `recommend_models` and `report_model_run`, on the v2 surface. No existing tool changed.
+- **MCP:** two new tools, `recommend_models` and `report_model_run`, on both the v1 and v2 surfaces. No existing tool changed.
 - **Admin commands:** `routing-status`, `routing-refit`, `routing-local-refit`, `routing-price`, `routing-model`, `routing-import`, `routing-audit`, `routing-sbc`.
 
 **Not built yet:**
