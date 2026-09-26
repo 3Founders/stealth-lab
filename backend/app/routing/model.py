@@ -9,6 +9,14 @@ Procedure pi (optional):
 
     eps[i] ~ N(0, sigma_eps[g]^2)    shared by every attempt on the instance: failures
                                      of consecutive rungs are correlated, by construction.
+A STEP attempt (one run.md node of Procedure pi, step k) adds the step's own terms:
+
+    ... - d[pi, k] + <e[pi, k], z[m]>        d ~ N(mu_role[role], tau_d^2), e ~ N(0, tau_e^2 I)
+
+so a step can be easier or harder than the whole task and need different skills; a
+never-seen step is its role's prior. Steps of one run share the run's eps: failing
+step 2 is evidence the run is hard, which the next step's recommendation uses.
+
 The Bernoulli-logit draw itself is the attempt-level randomness (a retry of the same
 unit is a fresh draw given eps). An extra per-attempt Gaussian term would not be
 identifiable from binary outcomes -- it only rescales the logit -- so there is none.
@@ -46,7 +54,7 @@ import numpyro
 import numpyro.distributions as dist
 from jax.scipy.special import expit, logit, logsumexp
 
-from app.routing.config import CHECK_KINDS, CHECK_PRIORS
+from app.routing.config import CHECK_KINDS, CHECK_PRIORS, STEP_ROLES
 from app.routing.quadrature import standard_normal_rule
 
 from app.routing.model_constants import effective_dims  # noqa: E402,F401
@@ -197,6 +205,17 @@ def joint_model(data: Mapping[str, Any], k: int, eps_nodes: int) -> None:
     c = tau_c * (_std_normal("xi_proc", (max(p_count, 1), k)) if k > 0 else jnp.zeros((max(p_count, 1), 0)))
     numpyro.deterministic("proc_c", c)
 
+    # --- step terms (always sampled: their priors serve never-seen steps at decision time)
+    n_steps = data.get("n_steps", 0)
+    mu_role = numpyro.sample("mu_role", dist.Normal(jnp.zeros(len(STEP_ROLES)), 1.0).to_event(1))
+    tau_d = _halfnormal("tau_d", 0.5)
+    tau_e = _halfnormal("tau_e", 0.3)
+    step_role = jnp.asarray(data.get("step_role", np.zeros(max(n_steps, 1), dtype=np.int32)))
+    step_d = mu_role[step_role] + tau_d * _std_normal("xi_d", (max(n_steps, 1),))
+    step_e = tau_e * (_std_normal("xi_e", (max(n_steps, 1), k)) if k > 0 else jnp.zeros((max(n_steps, 1), 0)))
+    numpyro.deterministic("step_d", step_d)
+    numpyro.deterministic("step_e", step_e)
+
     alpha_k, beta_k = check_rates()
     tau_rho = _halfnormal("tau_rho", 0.5)
     rho = tau_rho * _std_normal("xi_rho", (max(r_count, 1),))
@@ -207,8 +226,12 @@ def joint_model(data: Mapping[str, Any], k: int, eps_nodes: int) -> None:
     pi_, wk = data["att_proc"], data["att_week"]
     zm = z[mi]
     proc_term = jnp.where((pi_ >= 0)[:, None], c[jnp.clip(pi_, 0)], 0.0)
+    att_step = jnp.asarray(data.get("att_step", -np.ones(data["n_attempts"], dtype=np.int32)))
+    has_step = att_step >= 0
+    step_term = jnp.where(has_step, -step_d[jnp.clip(att_step, 0)]
+                          + (step_e[jnp.clip(att_step, 0)] * zm).sum(axis=1), 0.0)
     logit_r = (theta_hist[mi, wk] + gamma[si] + delta[mi, si] - x[gi, 0]
-               + (x[gi, 2:] * zm).sum(axis=1) + (proc_term * zm).sum(axis=1))
+               + (x[gi, 2:] * zm).sum(axis=1) + (proc_term * zm).sum(axis=1) + step_term)
     sig_eps_r = jnp.exp(x[gi, 1])
     check, reporter = data["att_check"], data["att_reporter"]
     alpha_r = reporter_alpha(alpha_k, check, reporter, rho)

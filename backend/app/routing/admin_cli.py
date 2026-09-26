@@ -60,6 +60,7 @@ def _import_row(raw: dict) -> dict:
         "latency_ms": raw.get("latency_ms"), "reporter": None, "recommendation_id": None,
         "visibility": raw.get("visibility") or "public", "owner_id": raw.get("owner_id"),
         "occurred_at": datetime.fromisoformat(occurred) if isinstance(occurred, str) else occurred,
+        "step_order": raw.get("step_order"), "step_role": raw.get("step_role"),
     }
 
 

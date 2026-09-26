@@ -23,6 +23,19 @@ its propensity is EXACT (the fraction of draw-weight whose argmax is that ladder
 If no ladder meets the constraint, the ladder with the highest (1 - confidence)
 quantile of P(ok) is returned, marked meets_target=False -- the most reliable option,
 stated as such.
+
+STEP-LEVEL routing (one run.md node at a time): the value of a step is the value of
+the WHOLE run, which also needs the remaining steps to succeed. `continuation[s, n]`
+is P(every later step succeeds | eps node n, draw s) under a base policy for those
+steps, and it multiplies each node's step success before integrating over eps:
+
+    P(ok_run) = E_eps[ P(step ok | eps) * P(rest ok | eps) ]
+
+Because eps is shared, a hard run lowers both factors together -- the product is
+correct, the product of their averages would not be. The reliability target and the
+utility then refer to the whole run. This is a one-step rollout (Bertsekas): choose
+this step optimally assuming the base policy afterwards, re-solve at the next step
+with the updated belief. With continuation = 1 it is exactly the task-level ladder.
 """
 from __future__ import annotations
 
@@ -55,11 +68,16 @@ class LadderResult:
     propensity: float
     meets_target: bool
     thompson_draw: Optional[int] = None
+    p_step_ok: Optional[np.ndarray] = None   # (L, S): this step alone (step-level only)
     extra: dict = field(default_factory=dict)
 
     def summary(self, i: int) -> dict:
         w = self.draw_weights
+        out = {}
+        if self.p_step_ok is not None:
+            out["p_step_success"] = float(w @ self.p_step_ok[i])
         return {
+            **out,
             "p_success": float(w @ self.p_ok[i]),
             "p_wrong_delivered": float(w @ self.p_wrong[i]),
             "expected_cost_usd": float(w @ self.cost[i]),
@@ -105,9 +123,13 @@ def belief(node_weights: np.ndarray, p: np.ndarray, attempts: Sequence[Attempt])
 
 def evaluate(p: np.ndarray, node_w: np.ndarray, alpha: np.ndarray, beta: np.ndarray,
              cost_ok: np.ndarray, cost_fail: np.ndarray, cost_check: float,
-             value: float, wrong_penalty: float, ladders: Sequence[tuple[int, ...]]
-             ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-    """(p_ok, p_wrong, cost, utility), each (L, S). Prefixes are shared (depth-first)."""
+             value: float, wrong_penalty: float, ladders: Sequence[tuple[int, ...]],
+             continuation: Optional[np.ndarray] = None,
+             ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """(p_ok, p_wrong, cost, utility, p_step_ok), each (L, S). p_ok is the RUN's success
+    (this step accepted and correct, times the continuation); p_step_ok the step's own.
+    Prefixes are shared (depth-first)."""
+    cont = np.ones_like(node_w) if continuation is None else continuation
     s_count = p.shape[0]
     acc_ok = p * (1 - beta)[:, None, None]
     acc_wrong = (1 - p) * alpha[:, None, None]
@@ -117,6 +139,7 @@ def evaluate(p: np.ndarray, node_w: np.ndarray, alpha: np.ndarray, beta: np.ndar
     index = {lad: i for i, lad in enumerate(ladders)}
     prefixes = {lad[:j] for lad in ladders for j in range(1, len(lad))}
     out_ok = np.empty((len(ladders), s_count))
+    out_step = np.empty_like(out_ok)
     out_wrong = np.empty_like(out_ok)
     out_cost = np.empty_like(out_ok)
 
@@ -130,7 +153,8 @@ def evaluate(p: np.ndarray, node_w: np.ndarray, alpha: np.ndarray, beta: np.ndar
             cost2 = cost + reach * step_cost[:, u, :]
             if lad in index:
                 i = index[lad]
-                out_ok[i] = (ok2 * node_w).sum(axis=1)
+                out_ok[i] = (ok2 * cont * node_w).sum(axis=1)
+                out_step[i] = (ok2 * node_w).sum(axis=1)
                 out_wrong[i] = (wrong2 * node_w).sum(axis=1)
                 out_cost[i] = (cost2 * node_w).sum(axis=1)
             if lad in prefixes:
@@ -139,22 +163,38 @@ def evaluate(p: np.ndarray, node_w: np.ndarray, alpha: np.ndarray, beta: np.ndar
     zeros = np.zeros_like(node_w)
     extend((), np.ones_like(node_w), zeros, zeros, zeros)
     utility = value * out_ok - wrong_penalty * out_wrong - out_cost
-    return out_ok, out_wrong, out_cost, utility
+    return out_ok, out_wrong, out_cost, utility, out_step
+
+
+def ladder_node_ok(p: np.ndarray, alpha: np.ndarray, beta: np.ndarray, lad: Sequence[int]) -> np.ndarray:
+    """(S, N): P(the ladder ends accepted AND correct | eps node) -- NOT integrated, so
+    it can be multiplied with other steps' factors at the same eps."""
+    reach = np.ones((p.shape[0], p.shape[2]))
+    ok = np.zeros_like(reach)
+    for u in lad:
+        pu = p[:, u, :]
+        acc_ok = pu * (1 - beta)[:, None]
+        acc_wrong = (1 - pu) * alpha[:, None]
+        ok += reach * acc_ok
+        reach = reach * (1 - acc_ok - acc_wrong)
+    return ok
 
 
 def choose(p: np.ndarray, node_weights: np.ndarray, alpha: np.ndarray, beta: np.ndarray,
            cost_ok: np.ndarray, cost_fail: np.ndarray, *, cost_check: float, value: float,
            wrong_penalty: float, candidates: Sequence[int], max_rungs: int, rho: float,
            confidence: float, attempts: Sequence[Attempt] = (), max_cost: Optional[float] = None,
-           rng: np.random.Generator) -> LadderResult:
+           rng: np.random.Generator, continuation: Optional[np.ndarray] = None,
+           node_weights_after: Optional[tuple[np.ndarray, np.ndarray]] = None) -> LadderResult:
     """Evaluate every ladder over `candidates` (indices into p's unit axis; earlier
     attempts may use other units) and choose one."""
-    node_w, draw_w = belief(node_weights, p, attempts)
+    node_w, draw_w = node_weights_after if node_weights_after is not None else belief(node_weights, p, attempts)
     cand = list(candidates)
     local = enumerate_ladders(len(cand), max_rungs)
     ladders = [tuple(cand[i] for i in lad) for lad in local]
-    ok, wrong, cost, util = evaluate(p, node_w, alpha, beta, cost_ok, cost_fail, cost_check,
-                                     value, wrong_penalty, ladders)
+    ok, wrong, cost, util, step_ok = evaluate(p, node_w, alpha, beta, cost_ok, cost_fail, cost_check,
+                                              value, wrong_penalty, ladders, continuation)
+    step_ok = None if continuation is None else step_ok
     mass = (draw_w[None, :] * (ok >= rho)).sum(axis=1)
     feasible = mass >= confidence - 1e-12
     if max_cost is not None:
@@ -171,7 +211,8 @@ def choose(p: np.ndarray, node_weights: np.ndarray, alpha: np.ndarray, beta: np.
         s_star = int(rng.choice(len(draw_w), p=draw_w))
         chosen = int(argmax_per_draw[s_star])
         propensity = float(draw_w[argmax_per_draw == chosen].sum())
-        return LadderResult(ladders, ok, wrong, cost, util, draw_w, feasible, chosen, propensity, True, s_star)
+        return LadderResult(ladders, ok, wrong, cost, util, draw_w, feasible, chosen, propensity, True, s_star,
+                            p_step_ok=step_ok)
 
     if not affordable.any():
         raise ValueError("no ladder fits max_cost_usd, even a single attempt")
@@ -179,4 +220,4 @@ def choose(p: np.ndarray, node_weights: np.ndarray, alpha: np.ndarray, beta: np.
                       for i in range(len(ladders))])
     best = np.flatnonzero(lower == lower.max())
     chosen = int(best[np.argmax((util[best] * draw_w).sum(axis=1))])        # tie: higher expected utility
-    return LadderResult(ladders, ok, wrong, cost, util, draw_w, feasible, chosen, 1.0, False)
+    return LadderResult(ladders, ok, wrong, cost, util, draw_w, feasible, chosen, 1.0, False, p_step_ok=step_ok)

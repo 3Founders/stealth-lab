@@ -313,9 +313,18 @@ own every file in `.stealth/`.
    `Do node N-3. Read: rg "N-3" .stealth/run.md, then the claims and step lines it names. Reply with: result, proof (diff / command output), anything you learned.`
    Use subagents for long plans, independent steps in parallel, or when you
    want the work checked by someone who didn't do it.
+   Optional, to keep cost down: before a node, call `recommend_models(procedure_id,
+   candidates=<the models you can run, "model|scaffold">, step_order=<the node's step>,
+   step_role=plan|edit|verify|other, instance_key=<one key for this whole run>,
+   previous_steps=<earlier nodes: step_order, unit, accepted>, remaining_steps=<nodes still
+   to come>)` and run the node (or its subagent) with the first model of the returned
+   ladder; after its check, if the ladder has a next model, that is the retry.
 7. Check. Run the node's `check` yourself. Pass: mark `done` and note the
    proof. Fail: retry once with the error, else try an alternative
-   Procedure, else ask the user.
+   Procedure, else ask the user. If you used recommend_models, call
+   `report_model_run(model, scaffold, accepted=<check passed>, instance_key, procedure_id,
+   step_order, step_role, check_kind="tests" or "procedure_check", tokens_in, tokens_out)`
+   after every attempt, pass or fail.
 8. Learn. When a step needed a fix or there was a better way:
    - rewrite the remaining nodes in `run.md` now;
    - add new repo facts to `.stealth/claims.md` in their topic block;

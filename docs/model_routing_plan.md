@@ -212,12 +212,34 @@ score(g, u) = demand(g) · E[ reduction in the regret of the ladder decision for
 - The sweep budget is a tenant/ops setting.
 - This is adaptive testing from IRT, applied to routing.
 
-## 10. Step-level routing (a later phase)
+## 10. Step-level routing (built)
 
-- **Steps with their own check become sub-problems.** A run.md step that has its own check, or that points to a sub-Procedure or sub-Goal, is routed by the same machinery on that sub-Goal. This is recursive, and needs no new model.
-- **Steps without their own check need a joint model.** They go into a joint task-level model where task success depends on the per-step assignments, through additive per-role terms in the logit (planner / editor / runner roles × unit).
-- **The objective stays the task-level U from §6**, including switching costs (§4). This avoids steps that succeed locally but hurt later steps.
-- **Step roles only get separated by varied data.** Exploration (§7) produces runs with varied step assignments. Until those exist, the posterior for step roles stays wide, and the chance constraint keeps assignments conservative. That is the correct behaviour, not a fallback.
+A run.md node (one Procedure step) can be routed on its own. `plan_and_run` already gives
+every node a concrete `check=` and runs nodes as one-line subagent tasks. So each step has
+its own pass/fail signal, and switching models between steps costs almost nothing (no long
+context to re-send).
+
+- **The unit is (Procedure, step order).** Observations carry `step_order` and a `step_role`
+  (plan / edit / verify / other); migrations 122/123.
+- **Step terms in the model.** The logit gains `- d[π,k] + <e[π,k], z[m]>`, with
+  `d ~ N(mu_role[role], tau_d²)` and `e ~ N(0, tau_e² I)`. A step can be easier or harder
+  than the whole task and need different skills. A never-seen step uses its role's prior.
+  Stored per Procedure as a `procedure_steps` posterior row.
+- **One run = one instance.** All steps of a run share the run's eps: failing step 2 is
+  evidence the run is hard, and the next step's recommendation starts stronger. Instances
+  are keyed by (reporter, instance_key) across Goals, because sub-Procedure steps belong to
+  other Goals.
+- **The decision is a one-step rollout (Bertsekas).** The value of a step is the value of
+  the whole run. The step's success at each eps node is multiplied by P(every remaining step
+  succeeds | eps) under a base policy for those steps: the most reliable ladder over their
+  three most reliable units. The reliability target (ρ) and the utility therefore refer to
+  the WHOLE run. Each later step is re-solved properly, with the updated belief, when its
+  turn comes. Without remaining steps this is exactly the task-level ladder.
+- **Default value of a run** = value multiplier × the priciest candidate's step cost ×
+  (1 + remaining steps).
+- **Downstream breakage** (a step passes its own check but breaks a later one) is covered
+  by the check's false-accept rate. Attributing a later failure back to an earlier step is
+  not modelled.
 
 ## 11. Integration with Stealth
 
@@ -312,7 +334,7 @@ Built: P0–P2 plus the P3 learning loop. Code is in `backend/app/routing/`. Tes
 4. **The local refit marginalizes the global draws as a J-component mixture inside NUTS.** It then does *defensive importance resampling* to one local draw per global draw, so every stored draw set stays row-aligned with the global draws. The per-draw weights are bounded by construction.
 
 **Where things are:**
-- **Decision (API, numpy only):** `predict.py` + `ladder.py`. The ladder uses the exact Bayes-optimal continuation after rejections. The Thompson-sampling propensity is exact over the stored draws.
+- **Decision (API, numpy only):** `predict.py` + `ladder.py`, task level and step level (§10). The ladder uses the exact Bayes-optimal continuation after rejections. The Thompson-sampling propensity is exact over the stored draws.
 - **Inference (worker, JAX/NumPyro):** `model.py` + `fit.py`.
 - **MCP:** two new tools, `recommend_models` and `report_model_run`, on both the v1 and v2 surfaces. No existing tool changed.
 - **Admin commands:** `routing-status`, `routing-refit`, `routing-local-refit`, `routing-price`, `routing-model`, `routing-import`, `routing-audit`, `routing-sbc`.
@@ -321,6 +343,5 @@ Built: P0–P2 plus the P3 learning loop. Code is in `backend/app/routing/`. Tes
 - the active offline sweeps (§9, EVI × demand), which need a sandbox that runs arbitrary models;
 - per-tenant budget duals (no tenant budget setting exists yet);
 - the latency weight;
-- step-level routing (§10, P4);
 - using the partial pass fraction as extra evidence (it is stored now);
 - the flow-VI path validated against NUTS on subsamples (the path exists, and NUTS is used below `STEALTH_ROUTING_NUTS_MAX_LATENTS`).

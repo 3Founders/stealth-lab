@@ -21,6 +21,8 @@ def _i(name: str, default: int) -> int:
 
 
 CHECK_KINDS = ("benchmark", "tests", "procedure_check", "judge", "self_report")
+# Roles of a Procedure step when a single step (a run.md node) is routed on its own.
+STEP_ROLES = ("plan", "edit", "verify", "other")
 
 # Prior Beta(a, b) on each check's false-accept (alpha) and false-reject (beta) rate.
 # 'benchmark' DEFINES correctness (plan §0.4): both rates are exactly 0 and not learned.

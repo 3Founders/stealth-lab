@@ -150,19 +150,46 @@ def unit_terms(g: Globals, units: Sequence[tuple[str, str]], predecessors: Mappi
 
 
 def success_given_eps(g: Globals, goal_x: np.ndarray, proc_c: Optional[np.ndarray], base: np.ndarray,
-                      z: np.ndarray, *, eps_nodes: int) -> tuple[np.ndarray, np.ndarray]:
-    """P(correct | eps node) for every draw and unit: (S, U, N); plus the eps node
-    weights (N,). eps is left as nodes so the ladder can condition all rungs on the
-    SAME instance difficulty."""
+                      z: np.ndarray, *, eps_nodes: int, item_d: Optional[np.ndarray] = None,
+                      item_e: Optional[np.ndarray] = None) -> tuple[np.ndarray, np.ndarray]:
+    """P(correct | eps node) for every draw and column: (S, U, N); plus the eps node
+    weights (N,). eps is left as nodes so the ladder can condition all rungs -- and all
+    steps of a run -- on the SAME run difficulty.
+
+    A column is a unit attempting an item: the whole task (item_d = item_e = 0) or one
+    step of the Procedure (its difficulty item_d (S, U) and skill loading item_e (S, U, K))."""
     ex, ew = standard_normal_rule(eps_nodes)
     a = goal_x[:, 2:]                                          # (S, K)
     skill = np.einsum("sk,suk->su", a, z)
     if proc_c is not None:
         skill = skill + np.einsum("sk,suk->su", proc_c, z)
+    if item_e is not None:
+        skill = skill + np.einsum("suk,suk->su", item_e, z)
     logit_su = base - goal_x[:, [0]] + skill                   # (S, U)
+    if item_d is not None:
+        logit_su = logit_su - item_d
     sig_eps = np.exp(goal_x[:, 1])                             # (S,)
     arg = logit_su[:, :, None] - sig_eps[:, None, None] * ex[None, None, :]
     return 1.0 / (1.0 + np.exp(-arg)), ew
+
+
+def step_draws(g: Globals, stored: Optional[Mapping[str, np.ndarray]], order: int, role: Optional[str],
+               rng: np.random.Generator) -> tuple[np.ndarray, np.ndarray, str]:
+    """(d (S,), e (S, K), role) of one Procedure step, aligned with `g`: its fitted draws
+    when the step has been observed, otherwise its role's prior
+    d ~ N(mu_role[role], tau_d^2), e ~ N(0, tau_e^2 I) -- the same prior as model.py."""
+    from app.routing.config import STEP_ROLES
+
+    if stored is not None:
+        orders = [int(o) for o in stored["orders"]]
+        if int(order) in orders:
+            i = orders.index(int(order))
+            return stored["d"][:, i], stored["e"][:, i, :], STEP_ROLES[int(stored["roles"][i])]
+    role = role if role in STEP_ROLES else "other"
+    arr = g.arrays
+    d = arr["mu_role"][:, STEP_ROLES.index(role)] + arr["tau_d"] * rng.standard_normal(g.draws)
+    e = arr["tau_e"][:, None] * rng.standard_normal((g.draws, g.k))
+    return d, e, role
 
 
 def check_rates(g: Globals, check_kind: str) -> tuple[np.ndarray, np.ndarray]:

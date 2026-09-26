@@ -58,8 +58,17 @@ async def recommend(pool: Any, *, goal_id: str, candidates: Sequence[Any], acces
                     procedure_id: Optional[str] = None, check_kind: Optional[str] = None,
                     instance_key: Optional[str] = None, previous_attempts: Sequence[Mapping[str, Any]] = (),
                     constraints: Optional[Mapping[str, Any]] = None, now: Optional[datetime] = None,
-                    cfg: RoutingDefaults = DEFAULTS, record: bool = True) -> dict[str, Any]:
-    """The ladder to run for one instance of `goal_id` (docs/model_routing_plan.md §6-§7)."""
+                    cfg: RoutingDefaults = DEFAULTS, record: bool = True,
+                    step_order: Optional[int] = None, step_role: Optional[str] = None,
+                    previous_steps: Sequence[Mapping[str, Any]] = (),
+                    remaining_steps: Sequence[Mapping[str, Any]] = ()) -> dict[str, Any]:
+    """The ladder to run for one instance of `goal_id` (docs/model_routing_plan.md §6-§7, §10).
+
+    Task level (step_order None): a ladder for the whole task.
+    Step level: a ladder for ONE step of `procedure_id`'s run. `previous_steps` are the
+    run's earlier steps (they share the run's difficulty, so a failure there informs
+    this step); `remaining_steps` are the steps still to come, so the target and the
+    value are the WHOLE run's (one-step rollout, see ladder.py)."""
     constraints = dict(constraints or {})
     goal = await store.visible_goal(pool, goal_id, access_scope)
     if goal is None:
@@ -72,6 +81,11 @@ async def recommend(pool: Any, *, goal_id: str, candidates: Sequence[Any], acces
     check_kind = check_kind or cfg.default_check_kind
     if check_kind not in CHECK_KINDS:
         raise RoutingError(f"check_kind must be one of {CHECK_KINDS}")
+    step_level = step_order is not None
+    if (step_level or previous_steps or remaining_steps) and not procedure_id:
+        raise RoutingError("step-level routing needs the procedure_id whose steps these are")
+    if not step_level and (previous_steps or remaining_steps):
+        raise RoutingError("previous_steps / remaining_steps need step_order (the step being routed)")
 
     stored_goal = (await store.load_posteriors(pool, "goal", [goal_id])).get(goal_id)
     # Use the global draws the Goal's posterior was fitted against, so every quantity
@@ -80,19 +94,28 @@ async def recommend(pool: Any, *, goal_id: str, candidates: Sequence[Any], acces
     if g is None:
         return {"status": "not_ready", "reason": "no fitted model yet: the nightly refit (admin routing-refit) "
                                                   "has never run", "goal_id": goal_id}
+    if step_level and "mu_role" not in g.arrays:
+        return {"status": "not_ready", "reason": "the fitted parameters predate step-level routing: run "
+                                                  "admin routing-refit once", "goal_id": goal_id}
     now = now or predict.utc_now()
     instance_key = instance_key or str(uuid.uuid4())
-    rng = np.random.default_rng(_seed(goal_id, instance_key, len(previous_attempts), g.version))
+    rng = np.random.default_rng(_seed(goal_id, instance_key, step_order, len(previous_attempts),
+                                      len(previous_steps), g.version))
 
     from app.routing.fit import aligned_goal_draws
 
     goal_x = (predict.unpack(stored_goal["draws"])["x"] if stored_goal and stored_goal["version"] == g.version
               else await aligned_goal_draws(pool, g, goal_id, rng=rng))
-    proc_c = None
+    proc_c, stored_steps = None, None
     if procedure_id:
-        stored_proc = (await store.load_posteriors(pool, "procedure", [procedure_id])).get(procedure_id)
+        posts = await store.load_posteriors(pool, "procedure", [procedure_id])
+        stored_proc = posts.get(procedure_id)
         proc_c = (predict.unpack(stored_proc["draws"])["c"] if stored_proc and stored_proc["version"] == g.version
                   else predict.procedure_prior_draws(g, rng))
+        if step_level:
+            steps_row = (await store.load_posteriors(pool, "procedure_steps", [procedure_id])).get(procedure_id)
+            if steps_row and steps_row["version"] == g.version:
+                stored_steps = predict.unpack(steps_row["draws"])
 
     registry = await store.model_registry(pool)
     prices = await store.current_prices(pool, [m for m, _ in units])
@@ -110,51 +133,106 @@ async def recommend(pool: Any, *, goal_id: str, candidates: Sequence[Any], acces
     if not usable:
         return {"status": "no_usable_candidates", "excluded": excluded, "goal_id": goal_id}
 
-    attempts_in = [dict(a) for a in previous_attempts]
-    attempt_units = _parse_units([a.get("unit") or {"model": a.get("model"), "scaffold": a.get("scaffold"),
-                                                     "version": a.get("version")} for a in attempts_in])
-    all_units = usable + [u for u in attempt_units if u not in usable]
-    predecessors = {m: r.get("predecessor") for m, r in registry.items()}
-    base, z = predict.unit_terms(g, all_units, predecessors, now, rng)
-    p, eps_w = predict.success_given_eps(g, goal_x, proc_c, base, z, eps_nodes=cfg.gh_eps_nodes)
+    # ---- columns: (unit, item); item None = the whole task, int = that step's order
+    item_cache: dict[Optional[int], tuple[np.ndarray, np.ndarray]] = {}
+    roles: dict[int, str] = {}
 
-    token_meta = g.meta.get("tokens", {})
-    goal_tokens = await store.goal_token_stats(pool, goal_id)
-    cost_ok, cost_fail = np.zeros(len(all_units)), np.zeros(len(all_units))
-    for i, (m, s) in enumerate(all_units):
-        if m not in prices:
-            continue                                           # an earlier attempt's unit: its cost is sunk
-        key = unit_id(m, s)
+    def item_terms(order: Optional[int], role: Optional[str] = None) -> tuple[np.ndarray, np.ndarray]:
+        if order not in item_cache:
+            if order is None:
+                item_cache[order] = (np.zeros(g.draws), np.zeros((g.draws, g.k)))
+            else:
+                d, e, used_role = predict.step_draws(g, stored_steps, int(order), role, rng)
+                item_cache[order] = (d, e)
+                roles[int(order)] = used_role
+        return item_cache[order]
+
+    current = int(step_order) if step_level else None
+    item_terms(current, step_role)
+    columns: list[tuple[tuple[str, str], Optional[int]]] = [(u, current) for u in usable]
+    attempt_specs = []
+    for a in previous_attempts:
+        attempt_specs.append((a, current))
+    for a in previous_steps:
+        if a.get("step_order") is None:
+            raise RoutingError("every previous_steps entry needs its step_order")
+        order = int(a["step_order"])
+        item_terms(order, a.get("step_role"))
+        attempt_specs.append((a, order))
+    attempts_cols = []
+    for a, order in attempt_specs:
+        unit = _parse_units([a.get("unit") or {"model": a.get("model"), "scaffold": a.get("scaffold"),
+                                               "version": a.get("version")}])[0]
+        if (unit, order) not in columns:
+            columns.append((unit, order))
+        attempts_cols.append((a, columns.index((unit, order))))
+
+    predecessors = {m: r.get("predecessor") for m, r in registry.items()}
+    distinct_units = list(dict.fromkeys(u for u, _ in columns))
+    base_u, z_u = predict.unit_terms(g, distinct_units, predecessors, now, rng)
+
+    def success(cols: Sequence[tuple[tuple[str, str], Optional[int]]]) -> tuple[np.ndarray, np.ndarray]:
+        idx = [distinct_units.index(u) for u, _ in cols]
+        item_d = np.stack([item_terms(o)[0] for _, o in cols], axis=1)
+        item_e = np.stack([item_terms(o)[1] for _, o in cols], axis=1)
+        return predict.success_given_eps(g, goal_x, proc_c, base_u[:, idx], z_u[:, idx, :],
+                                         eps_nodes=cfg.gh_eps_nodes, item_d=item_d, item_e=item_e)
+
+    p, eps_w = success(columns)
+
+    token_meta = g.meta.get("tokens_step" if step_level else "tokens", {})
+    goal_tokens = await store.goal_token_stats(pool, goal_id, steps=step_level)
+    cost_ok, cost_fail = np.zeros(len(columns)), np.zeros(len(columns))
+    for i, (u, _order) in enumerate(columns[:len(usable)]):          # earlier attempts' costs are sunk
+        key = unit_id(*u)
         for outcome, target in (("1", cost_ok), ("0", cost_fail)):
-            target[i] = costs.dollars(prices[m], *costs.expected_tokens(
+            target[i] = costs.dollars(prices[u[0]], *costs.expected_tokens(
                 outcome, token_meta.get("global", {}), token_meta.get("units", {}).get(key), goal_tokens.get(key), cfg))
 
-    value = float(constraints.get("value_usd") or cfg.value_multiplier * max(cost_ok[:len(usable)]))
-    wrong_penalty = float(constraints.get("wrong_penalty_usd") or cfg.wrong_penalty_ratio * value)
     alpha, beta = predict.check_rates(g, check_kind)
     attempts = []
-    for a, unit in zip(attempts_in, attempt_units):
+    for a, col in attempts_cols:
         a_alpha, a_beta = predict.check_rates(g, a.get("check_kind") or check_kind)
-        attempts.append(ladder.Attempt(all_units.index(unit), bool(a.get("accepted")), a_alpha, a_beta))
+        attempts.append(ladder.Attempt(col, bool(a.get("accepted")), a_alpha, a_beta))
+    node_w, draw_w = ladder.belief(eps_w, p, attempts)
+    max_rungs = int(constraints.get("max_rungs") or cfg.max_rungs)
+
+    # ---- the rest of the run: P(every later step succeeds | eps) under a base policy
+    continuation, later = None, []
+    for r in remaining_steps:
+        if r.get("step_order") is None:
+            raise RoutingError("every remaining_steps entry needs its step_order")
+        if current is not None and int(r["step_order"]) == current:
+            continue
+        later.append(r)
+    if later:
+        continuation = np.ones_like(node_w)
+        for r in later:
+            order = int(r["step_order"])
+            item_terms(order, r.get("step_role"))
+            p_r, _ = success([(u, order) for u in usable])
+            continuation = continuation * _base_policy_node_ok(p_r, node_w, draw_w, alpha, beta, max_rungs)
+
+    step_scale = 1 + len(later)
+    value = float(constraints.get("value_usd") or cfg.value_multiplier * max(cost_ok[:len(usable)]) * step_scale)
+    wrong_penalty = float(constraints.get("wrong_penalty_usd") or cfg.wrong_penalty_ratio * value)
     try:
         result = ladder.choose(
             p, eps_w, alpha, beta, cost_ok, cost_fail, cost_check=float(constraints.get("check_cost_usd") or 0.0),
-            value=value, wrong_penalty=wrong_penalty, candidates=range(len(usable)),
-            max_rungs=int(constraints.get("max_rungs") or cfg.max_rungs),
+            value=value, wrong_penalty=wrong_penalty, candidates=range(len(usable)), max_rungs=max_rungs,
             rho=float(constraints.get("reliability_target") or cfg.reliability_target),
             confidence=float(constraints.get("reliability_confidence") or cfg.reliability_confidence),
-            attempts=attempts, rng=rng,
+            attempts=attempts, rng=rng, continuation=continuation, node_weights_after=(node_w, draw_w),
             max_cost=None if constraints.get("max_cost_usd") is None else float(constraints["max_cost_usd"]))
     except ValueError as exc:
         raise RoutingError(str(exc)) from exc
 
     def describe(i: int) -> dict[str, Any]:
-        return {"ladder": [unit_id(*all_units[u]) for u in result.ladders[i]], **result.summary(i)}
+        return {"ladder": [unit_id(*columns[u][0]) for u in result.ladders[i]], **result.summary(i)}
 
     chosen = describe(result.chosen)
     feasible = [i for i in np.argsort(-(result.utility @ result.draw_weights)) if result.feasible[i]]
     alternatives = [describe(int(i)) for i in feasible if int(i) != result.chosen][:4]
-    node_w, _ = ladder.belief(eps_w, p, attempts)
     single = {unit_id(*usable[u]): float(result.draw_weights @ (p[:, u, :] * node_w).sum(axis=1))
               for u in range(len(usable))}
     recommendation_id = str(uuid.uuid4())
@@ -169,17 +247,42 @@ async def recommend(pool: Any, *, goal_id: str, candidates: Sequence[Any], acces
         "evidence": {"goal_observations": stored_goal["n_observations"] if stored_goal else 0,
                      "goal_posterior": (stored_goal or {}).get("method") or "prior (parents + embedding)"},
         "how_to_report": "after each rung, call report_model_run(model, scaffold, accepted, instance_key, "
-                         "goal_id or procedure_id, check_kind, tokens..., recommendation_id, attempt_index)",
+                         "goal_id or procedure_id, check_kind, tokens..., recommendation_id, attempt_index"
+                         + (", step_order, step_role)" if step_level else ")"),
     }
+    if step_level:
+        response["step"] = {"step_order": current, "step_role": roles.get(current),
+                            "fitted": stored_steps is not None and current in [int(o) for o in stored_steps["orders"]],
+                            "remaining_steps": len(later), "previous_steps": len(previous_steps),
+                            "p_success_is": "the whole run: this step and every remaining step"
+                            if later else "this step (no remaining steps given)"}
     if record:
         await store.record_decision(pool, {
             "id": recommendation_id, "goal_id": goal_id, "procedure_id": procedure_id, "instance_key": instance_key,
             "params_version": g.version, "candidates": [unit_id(*u) for u in usable], "ladder": chosen["ladder"],
             "propensity": result.propensity, "meets_target": result.meets_target,
             "predicted": {"recommended": chosen, "alternatives": alternatives},
-            "constraints": {**constraints, "check_kind": check_kind, "previous_attempts": len(attempts)},
-            "visibility": goal["visibility"], "owner_id": goal["owner_id"]})
+            "constraints": {**constraints, "check_kind": check_kind, "previous_attempts": len(previous_attempts),
+                            "previous_steps": len(previous_steps), "remaining_steps": len(later)},
+            "visibility": goal["visibility"], "owner_id": goal["owner_id"], "step_order": current})
     return response
+
+
+def _base_policy_node_ok(p: np.ndarray, node_w: np.ndarray, draw_w: np.ndarray, alpha: np.ndarray,
+                         beta: np.ndarray, max_rungs: int, top: int = 3) -> np.ndarray:
+    """(S, N) P(a later step succeeds | eps) under its base policy: the most reliable
+    ladder over its three most reliable units (the rollout's reference behaviour for
+    the rest of the run; each later step is re-solved properly when its turn comes)."""
+    single = (p * node_w[:, None, :]).sum(axis=2).T @ draw_w          # (U,) expected single-attempt success
+    best_units = list(np.argsort(-single)[:min(top, p.shape[1])])
+    best, best_ok, best_nodes = None, -1.0, None
+    for lad in ladder.enumerate_ladders(len(best_units), max_rungs):
+        units = [int(best_units[i]) for i in lad]
+        nodes = ladder.ladder_node_ok(p, alpha, beta, units)
+        expected = float(draw_w @ (nodes * node_w).sum(axis=1))
+        if expected > best_ok:
+            best, best_ok, best_nodes = units, expected, nodes
+    return best_nodes
 
 
 async def record_observation(pool: Any, obs: Mapping[str, Any], *, enqueue_refit: bool = True) -> str:

@@ -126,3 +126,61 @@ async def test_unknown_goal_and_empty_candidates_are_refused(pool):
     goal = await _goal(pool, f"e2e {_run_id()} refusal goal")
     with pytest.raises(RoutingError):
         await recommend(pool, goal_id=goal, candidates=[], access_scope=ANON)
+
+
+@pytest.mark.asyncio
+async def test_step_level_routing_end_to_end(pool):
+    """Step attempts are fitted per (Procedure, step); a step recommendation uses the
+    fitted step, conditions on the run's earlier steps, and with remaining steps its
+    success is the whole run's; a reported step attempt refits the step locally."""
+    run = _run_id()
+    small, big = f"e2e{run}/small", f"e2e{run}/big"
+    goal = await _goal(pool, f"e2e {run} add pagination to an api endpoint")
+    proc = str(uuid.uuid4())
+    await store.set_price(pool, small, input_per_mtok=0.1, output_per_mtok=0.4)
+    await store.set_price(pool, big, input_per_mtok=5.0, output_per_mtok=25.0)
+    rng = np.random.default_rng(3)
+    true_d = {1: -1.0, 2: 0.3, 3: 1.2}
+    rows = []
+    for i in range(36):
+        eps = 0.8 * rng.standard_normal()
+        for order, d in true_d.items():
+            for model, theta in ((small, 0.4), (big, 2.4)):
+                p = 1 / (1 + np.exp(-(theta - d - eps)))
+                rows.append({**_obs(goal, model, f"{run}-r{i}", bool(rng.random() < p), i // 6,
+                                    tokens_in=8000, tokens_out=900),
+                             "procedure_id": proc, "step_order": order,
+                             "step_role": ("plan", "edit", "verify")[order - 1]})
+    await store.insert_observations(pool, rows)
+    await nightly_refit(pool, CFG, seed=5)
+    steps_post = (await store.load_posteriors(pool, "procedure_steps", [proc]))[proc]
+    assert steps_post["method"] == "joint"
+
+    cands = [f"{small}|claude-code", f"{big}|claude-code"]
+    base = dict(goal_id=goal, candidates=cands, access_scope=ANON, procedure_id=proc, cfg=CFG, record=False,
+                instance_key=f"{run}-live")
+    alone = await recommend(pool, step_order=2, step_role="edit", **base)
+    assert alone["status"] == "ok" and alone["step"]["fitted"] is True and alone["step"]["step_role"] == "edit"
+    with_rest = await recommend(pool, step_order=2, step_role="edit",
+                                remaining_steps=[{"step_order": 3, "step_role": "verify"}], **base)
+    rec = with_rest["recommended"]
+    assert rec["p_success"] < rec["p_step_success"]              # the run also needs step 3
+    after_fail = await recommend(pool, step_order=2, step_role="edit",
+                                 previous_steps=[{"step_order": 1, "unit": f"{big}|claude-code", "accepted": False}],
+                                 **base)
+    assert (after_fail["p_correct_single_attempt"][f"{small}|claude-code"]
+            < alone["p_correct_single_attempt"][f"{small}|claude-code"])   # a hard run: step 2 is harder too
+    unseen = await recommend(pool, step_order=9, step_role="verify", **base)
+    assert unseen["step"]["fitted"] is False                     # served from the role's prior
+
+    obs_id = await record_observation(pool, {**_obs(goal, small, f"{run}-live", True, 40), "source": "live",
+                                             "check_kind": "tests", "reporter": f"host-{run}", "procedure_id": proc,
+                                             "step_order": 2, "step_role": "edit"})
+    assert obs_id
+    await local_refit(pool, goal, CFG, seed=6)
+    assert (await store.load_posteriors(pool, "procedure_steps", [proc]))[proc]["method"] == "local_nuts"
+
+    with pytest.raises(RoutingError):
+        await recommend(pool, goal_id=goal, candidates=cands, access_scope=ANON, step_order=1, cfg=CFG)
+    with pytest.raises(store.ObservationRejected):
+        await record_observation(pool, {**_obs(goal, small, "x", True, 41), "step_order": 1})   # no procedure

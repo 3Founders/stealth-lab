@@ -3313,7 +3313,10 @@ async def recommend_models(ctx: Context, candidates: list[Any], goal_id: str | N
                            procedure_id: str | None = None, check_kind: str | None = None,
                            instance_key: str | None = None,
                            previous_attempts: list[dict[str, Any]] | None = None,
-                           constraints: dict[str, Any] | None = None) -> str:
+                           constraints: dict[str, Any] | None = None,
+                           step_order: int | None = None, step_role: str | None = None,
+                           previous_steps: list[dict[str, Any]] | None = None,
+                           remaining_steps: list[dict[str, Any]] | None = None) -> str:
     """
     Which model(s) to run for a Goal: the cheapest LADDER likely to give a verified
     success ("try A; if the check rejects it, B"). Call it after find_ways /
@@ -3332,6 +3335,14 @@ async def recommend_models(ctx: Context, candidates: list[Any], goal_id: str | N
     constraints: {value_usd?, wrong_penalty_usd?, reliability_target? (0.9),
       reliability_confidence? (0.9), max_cost_usd?, max_rungs? (3), check_cost_usd?,
       open_weights_only?, local_only?}.
+
+    STEP LEVEL (one run.md node at a time; needs procedure_id): pass step_order (the
+    Procedure step this node runs) and step_role (plan | edit | verify | other).
+    previous_steps: the run's earlier nodes, [{"step_order", "unit", "accepted",
+      "check_kind"?}] -- a failed earlier step means the run is hard, so this step
+      starts stronger. remaining_steps: the nodes still to come, [{"step_order",
+      "step_role"?}] -- the reliability target and value are then the WHOLE run's.
+    Use one instance_key for the whole run.
 
     Returns the recommended ladder with P(success), expected cost and credible
     bounds, alternatives, and the instance_key / recommendation_id to pass to
@@ -3358,7 +3369,8 @@ async def recommend_models(ctx: Context, candidates: list[Any], goal_id: str | N
         result = await recommend(
             pool, goal_id=goal_id, candidates=candidates, access_scope=scope, procedure_id=procedure_id,
             check_kind=check_kind, instance_key=instance_key, previous_attempts=previous_attempts or (),
-            constraints=constraints)
+            constraints=constraints, step_order=step_order, step_role=step_role,
+            previous_steps=previous_steps or (), remaining_steps=remaining_steps or ())
     except RoutingError as exc:
         return f"REFUSED: {exc}"
     return json.dumps(result, default=str)
@@ -3371,7 +3383,8 @@ async def report_model_run(ctx: Context, model: str, scaffold: str, accepted: bo
                            recommendation_id: str | None = None, attempt_index: int = 0,
                            pass_fraction: float | None = None, tokens_in: int | None = None,
                            tokens_out: int | None = None, tokens_cached: int | None = None,
-                           cost_usd: float | None = None, latency_ms: int | None = None) -> str:
+                           cost_usd: float | None = None, latency_ms: int | None = None,
+                           step_order: int | None = None, step_role: str | None = None) -> str:
     """
     Report one attempt's outcome to the model recommender: which model ran, whether
     the check accepted it, and what it cost. Call it after EVERY rung of a ladder
@@ -3381,6 +3394,8 @@ async def report_model_run(ctx: Context, model: str, scaffold: str, accepted: bo
 
     check_kind: tests | procedure_check | judge | self_report (how the attempt was
     judged; host reports can never claim 'benchmark').
+    step_order / step_role: set them when the attempt ran ONE step (a run.md node) of
+    procedure_id, judged by that node's check; omit them for a whole-task attempt.
     """
     pool = ctx.request_context.lifespan_context["pool"]
     from app.routing.service import record_observation
@@ -3413,7 +3428,7 @@ async def report_model_run(ctx: Context, model: str, scaffold: str, accepted: bo
             "accepted": accepted, "pass_fraction": pass_fraction, "tokens_in": tokens_in, "tokens_out": tokens_out,
             "tokens_cached": tokens_cached, "cost_usd": cost_usd, "latency_ms": latency_ms,
             "reporter": _resolve_caller_identity(fallback="anonymous-host"), "recommendation_id": recommendation_id,
-            "visibility": visibility, "owner_id": owner_id,
+            "visibility": visibility, "owner_id": owner_id, "step_order": step_order, "step_role": step_role,
         })
     except (ObservationRejected, ValueError) as exc:
         return f"REFUSED: {exc}"

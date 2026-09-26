@@ -11,7 +11,7 @@ import uuid
 from datetime import datetime
 from typing import Any, Iterable, Mapping, Optional, Sequence
 
-from app.routing.config import CHECK_KINDS
+from app.routing.config import CHECK_KINDS, STEP_ROLES
 from app.routing.costs import Price
 from app.services.access import AccessScope, visibility_predicate
 from app.services.shards import search_pool
@@ -24,6 +24,7 @@ _OBS_COLUMNS = (
     "source", "goal_id", "procedure_id", "model_key", "scaffold", "instance_key", "attempt_index", "check_kind",
     "accepted", "gold_correct", "pass_fraction", "tokens_in", "tokens_out", "tokens_cached", "cost_usd",
     "latency_ms", "reporter", "recommendation_id", "visibility", "owner_id", "occurred_at",
+    "step_order", "step_role",
 )
 
 
@@ -49,6 +50,15 @@ def validate_observation(obs: Mapping[str, Any]) -> dict[str, Any]:
         raise ObservationRejected("model and scaffold may not contain '|'")
     if row["accepted"] is None:
         raise ObservationRejected("accepted is required")
+    if row["step_order"] is not None:
+        if not row["procedure_id"]:
+            raise ObservationRejected("a step attempt (step_order) needs its procedure_id")
+        row["step_order"] = int(row["step_order"])
+        row["step_role"] = row["step_role"] or "other"
+        if row["step_role"] not in STEP_ROLES:
+            raise ObservationRejected(f"step_role must be one of {STEP_ROLES}")
+    elif row["step_role"] is not None:
+        raise ObservationRejected("step_role needs a step_order")
     row["accepted"] = bool(row["accepted"])
     row["attempt_index"] = int(row["attempt_index"] or 0)
     row["visibility"] = row["visibility"] or "public"
@@ -101,15 +111,17 @@ async def all_observations(pool: Any, *, public_only: bool) -> list[dict]:
     return [dict(r) for r in rows]
 
 
-async def goal_token_stats(pool: Any, goal_id: str) -> dict[str, dict[str, list[float]]]:
-    """{unit: {"1"|"0": [n, mean ln in, mean ln out, mean ln(1+cached)]}} for one Goal."""
+async def goal_token_stats(pool: Any, goal_id: str, *, steps: bool = False) -> dict[str, dict[str, list[float]]]:
+    """{unit: {"1"|"0": [n, mean ln in, mean ln out, mean ln(1+cached)]}} for one Goal's
+    whole-task attempts, or (steps=True) its single-step attempts."""
     log = await search_pool(pool)
+    kind = "step_order IS NOT NULL" if steps else "step_order IS NULL"
     rows = await log.fetch(
         "SELECT model_key || '|' || scaffold AS unit, accepted, count(*) AS n, "
         "avg(ln(greatest(tokens_in, 1))) AS li, avg(ln(greatest(tokens_out, 1))) AS lo, "
         "avg(ln(1 + coalesce(tokens_cached, 0))) AS lc "
-        "FROM routing_observations WHERE goal_id = $1::uuid AND tokens_in IS NOT NULL AND tokens_out IS NOT NULL "
-        "GROUP BY 1, 2", str(goal_id))
+        f"FROM routing_observations WHERE goal_id = $1::uuid AND tokens_in IS NOT NULL AND tokens_out IS NOT NULL "
+        f"AND {kind} GROUP BY 1, 2", str(goal_id))
     out: dict[str, dict[str, list[float]]] = {}
     for r in rows:
         out.setdefault(r["unit"], {})["1" if r["accepted"] else "0"] = [
@@ -121,12 +133,12 @@ async def record_decision(pool: Any, row: Mapping[str, Any]) -> None:
     log = await search_pool(pool)
     await log.execute(
         "INSERT INTO routing_decisions (id, goal_id, procedure_id, instance_key, params_version, candidates, ladder, "
-        "propensity, meets_target, predicted, constraints, visibility, owner_id) "
-        "VALUES ($1::uuid, $2::uuid, $3::uuid, $4, $5, $6::jsonb, $7::jsonb, $8, $9, $10::jsonb, $11::jsonb, $12, $13)",
+        "propensity, meets_target, predicted, constraints, visibility, owner_id, step_order) "
+        "VALUES ($1::uuid, $2::uuid, $3::uuid, $4, $5, $6::jsonb, $7::jsonb, $8, $9, $10::jsonb, $11::jsonb, $12, $13, $14)",
         row["id"], row["goal_id"], row.get("procedure_id"), row["instance_key"], row.get("params_version"),
         json.dumps(row["candidates"]), json.dumps(row["ladder"]), float(row["propensity"]), bool(row["meets_target"]),
         json.dumps(row["predicted"]), json.dumps(row.get("constraints") or {}), row.get("visibility") or "public",
-        row.get("owner_id"))
+        row.get("owner_id"), row.get("step_order"))
 
 
 # ------------------------------------------------------------------ control DB

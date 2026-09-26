@@ -44,7 +44,7 @@ def test_ladder_values_match_brute_force_simulation():
     c_ok, c_fail = np.array([0.02, 0.60]), np.array([0.05, 0.90])
     p, ew = _p(logits, sig, 40)
     lads = [(0,), (1,), (0, 1), (0, 0, 1)]
-    ok, wrong, cost, util = ladder.evaluate(p, np.tile(ew, (2, 1)), alpha, beta, c_ok, c_fail, 0.01, 3.0, 3.0, lads)
+    ok, wrong, cost, util, _ = ladder.evaluate(p, np.tile(ew, (2, 1)), alpha, beta, c_ok, c_fail, 0.01, 3.0, 3.0, lads)
     for s in range(2):
         for i, lad in enumerate(lads):
             sim = _simulate(logits[s], sig[s], alpha[s], beta[s], lad, c_ok, c_fail, 0.01, 400_000, rng)
@@ -129,3 +129,61 @@ def test_token_costs_pool_toward_data_and_price_live():
 def test_ladder_enumeration_allows_retries():
     lads = ladder.enumerate_ladders(2, 3)
     assert len(lads) == 2 + 4 + 8 and (0, 0, 0) in lads and (1, 0) in lads
+
+
+def test_step_level_run_success_matches_brute_force_with_shared_run_difficulty():
+    """Step A's ladder weighted by the continuation (step B under its base ladder) at the
+    SAME eps equals the simulated probability that the whole two-step run succeeds. The
+    naive product of the two steps' averages is wrong: with a shared run difficulty,
+    easy runs pass both steps and hard runs fail both, so it UNDERSTATES the run."""
+    rng = np.random.default_rng(4)
+    la = np.array([[0.8, 2.4]])                   # step A: cheap, strong
+    lb = np.array([[0.5, 2.0]])                   # step B: harder
+    sig = np.array([1.4])
+    alpha, beta = np.array([0.05]), np.array([0.05])
+    pa, ew = _p(la, sig, 40)
+    pb, _ = _p(lb, sig, 40)
+    node_w = ew[None, :]
+    cont = ladder.ladder_node_ok(pb, alpha, beta, [1])            # step B: strong model, one rung
+    ok, _, _, _, step_ok = ladder.evaluate(pa, node_w, alpha, beta, np.zeros(2), np.zeros(2), 0.0, 1.0, 1.0,
+                                           [(0, 1)], continuation=cont)
+    n = 600_000
+    eps = sig[0] * rng.standard_normal(n)
+
+    def run_ladder(logits, lad):
+        done = np.zeros(n, dtype=bool)
+        good = np.zeros(n, dtype=bool)
+        for u in lad:
+            live = ~done
+            correct = rng.random(n) < 1 / (1 + np.exp(-(logits[u] - eps)))
+            accept = np.where(correct, rng.random(n) < 1 - beta[0], rng.random(n) < alpha[0])
+            good |= live & accept & correct
+            done |= live & accept
+        return good
+
+    sim_run = (run_ladder(la[0], (0, 1)) & run_ladder(lb[0], (1,))).mean()
+    assert ok[0, 0] == pytest.approx(sim_run, abs=3e-3)
+    naive = step_ok[0, 0] * float((cont * node_w).sum())
+    assert naive < ok[0, 0] - 0.005                               # outcomes cluster by run difficulty
+
+
+def test_a_long_remaining_run_makes_the_step_choice_more_reliable():
+    """With many hard steps still to come, the run target is harder to meet, so the
+    chosen ladder for this step is at least as reliable as without them."""
+    rng = np.random.default_rng(6)
+    draws = 150
+    logits = np.column_stack([rng.normal(1.0, 0.3, draws), rng.normal(3.0, 0.3, draws)])
+    p, ew = _p(logits, np.full(draws, 0.6), 20)
+    zero = np.zeros(draws)
+    costs_ = np.array([0.01, 0.5])
+    kwargs = dict(cost_check=0.0, value=5.0, wrong_penalty=5.0, candidates=[0, 1], max_rungs=2, rho=0.5,
+                  confidence=0.5, rng=np.random.default_rng(0))
+    alone = ladder.choose(p, ew, zero, zero, costs_, costs_, **kwargs)
+    later = np.ones((draws, 20))
+    for _ in range(4):
+        later = later * ladder.ladder_node_ok(p, zero, zero, [1, 1])
+    with_rest = ladder.choose(p, ew, zero, zero, costs_, costs_, continuation=later, **kwargs)
+    step_ok_alone = alone.draw_weights @ alone.p_ok[alone.chosen]
+    step_ok_rest = with_rest.draw_weights @ with_rest.p_step_ok[with_rest.chosen]
+    assert step_ok_rest >= step_ok_alone - 1e-9
+    assert with_rest.draw_weights @ with_rest.p_ok[with_rest.chosen] < step_ok_rest   # the run is harder than the step

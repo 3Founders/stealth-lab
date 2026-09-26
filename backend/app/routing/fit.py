@@ -20,7 +20,7 @@ from typing import Any, Mapping, Optional, Sequence
 
 import numpy as np
 
-from app.routing.config import CHECK_KINDS, DEFAULTS, RoutingDefaults
+from app.routing.config import CHECK_KINDS, DEFAULTS, STEP_ROLES, RoutingDefaults
 from app.routing.predict import Globals, goal_prior_draws, load_globals, pack, unpack, week_index
 
 log = logging.getLogger(__name__)
@@ -142,11 +142,19 @@ def build_joint_data(observations: Sequence[Mapping[str, Any]], goal_meta: Mappi
     from app.routing.model_constants import effective_dims
     k_eff = effective_dims(len(models), cfg.latent_dims)
 
+    # one instance = one concrete run: every attempt with the same (reporter, instance_key),
+    # across Goals (a run's sub-Procedure steps belong to other Goals) -- they share eps
     instances: dict[tuple[str, str], int] = {}
     att_instance = []
     for o in obs:
-        key = (str(o["goal_id"]), str(o["instance_key"]))
+        key = (str(o.get("reporter") or ""), str(o["instance_key"]))
         att_instance.append(instances.setdefault(key, len(instances)))
+    steps = sorted({step_key(o) for o in obs if step_key(o) is not None})
+    st_ix = {st: i for i, st in enumerate(steps)}
+    roles: dict[tuple[str, int], str] = {}
+    for o in obs:
+        if step_key(o) is not None and o.get("step_role"):
+            roles[step_key(o)] = o["step_role"]
     gold = np.array([-1 if o.get("gold_correct") is None else int(bool(o["gold_correct"])) for o in obs], dtype=np.int32)
     data = {
         "k": k_eff, "n_models": len(models), "n_scaffolds": max(len(scaffolds), 1), "n_goals": len(goals),
@@ -166,6 +174,9 @@ def build_joint_data(observations: Sequence[Mapping[str, Any]], goal_meta: Mappi
         "att_accepted": np.array([bool(o["accepted"]) for o in obs]),
         "att_gold": gold,
         "att_instance": np.array(att_instance, dtype=np.int32),
+        "n_steps": len(steps),
+        "step_role": np.array([STEP_ROLES.index(roles.get(st, "other")) for st in steps] or [0], dtype=np.int32),
+        "att_step": np.array([st_ix[step_key(o)] if step_key(o) is not None else -1 for o in obs], dtype=np.int32),
     }
     meta = {
         "k": k_eff, "models": models, "scaffolds": scaffolds or ["_none"], "reporters": reporters,
@@ -177,14 +188,24 @@ def build_joint_data(observations: Sequence[Mapping[str, Any]], goal_meta: Mappi
         "goal_observations": {g: sum(1 for o in obs if str(o["goal_id"]) == g) for g in goals},
         "procedure_observations": {p: sum(1 for o in obs if str(o.get("procedure_id")) == p) for p in procs},
         "_pca_mean": pca_mean, "_pca_components": pca_comp,
+        "steps": [[pid, order, roles.get((pid, order), "other")] for pid, order in steps],
+        "step_roles": list(STEP_ROLES),
     }
     return data, meta
+
+
+def step_key(o: Mapping[str, Any]) -> Optional[tuple[str, int]]:
+    """(procedure_id, step_order) of a step attempt; None for a whole-task attempt."""
+    if o.get("step_order") is None or not o.get("procedure_id"):
+        return None
+    return str(o["procedure_id"]), int(o["step_order"])
 
 
 def latent_count(data: Mapping[str, Any], k: int) -> int:
     k = int(data.get("k", k))
     m, s, g, p, w = data["n_models"], data["n_scaffolds"], data["n_goals"], data["n_procedures"], data["n_weeks"]
-    return m * (1 + w + k) + s + m * s + g * (k + 2) + max(p, 1) * k + data["n_reporters"] + 40
+    return (m * (1 + w + k) + s + m * s + g * (k + 2) + max(p, 1) * k + data["n_reporters"]
+            + data.get("n_steps", 0) * (1 + k) + 40)
 
 
 # ================================================================ joint fit
@@ -225,7 +246,7 @@ def run_joint(data: dict[str, Any], cfg: RoutingDefaults = DEFAULTS, *, seed: in
         samples = {k_: np.asarray(v) for k_, v in post.items()}
         diag = {"final_elbo_loss": float(result.losses[-1]), "svi_steps": 20000}
     det = Predictive(joint_model, posterior_samples=samples, return_sites=[
-        "theta_hist", "z", "gamma", "delta", "w", "tau", "goal_x", "proc_c"])(jax.random.PRNGKey(seed + 2), *args)
+        "theta_hist", "z", "gamma", "delta", "w", "tau", "goal_x", "proc_c", "step_d", "step_e"])(jax.random.PRNGKey(seed + 2), *args)
     samples.update({k_: np.asarray(v) for k_, v in det.items()})
     return samples, chosen, diag
 
@@ -255,6 +276,7 @@ def global_arrays(samples: Mapping[str, np.ndarray], meta: Mapping[str, Any]) ->
         "sigma_theta": samples["sigma_theta"], "sigma_drift": samples["sigma_drift"],
         "z": samples["z"], "gamma": samples["gamma"], "delta": samples["delta"], "w": samples["w"],
         "tau": samples["tau"], "tau_c": samples["tau_c"], "tau_rho": samples["tau_rho"],
+        "mu_role": samples["mu_role"], "tau_d": samples["tau_d"], "tau_e": samples["tau_e"],
         "alpha": alpha, "beta": beta,
         "pca_mean": np.asarray(meta["_pca_mean"]), "pca_components": np.asarray(meta["_pca_components"]),
     }
@@ -262,7 +284,23 @@ def global_arrays(samples: Mapping[str, np.ndarray], meta: Mapping[str, Any]) ->
 
 def public_meta(meta: Mapping[str, Any]) -> dict[str, Any]:
     return {k: v for k, v in meta.items() if not k.startswith("_") and k not in (
-        "goals", "procedures", "goal_observations", "procedure_observations")}
+        "goals", "procedures", "goal_observations", "procedure_observations", "steps")}
+
+
+def step_posts(steps: Sequence[Sequence[Any]], step_d: np.ndarray, step_e: np.ndarray, *, version: int,
+               method: str, counts: Mapping[tuple[str, int], int]) -> list[dict[str, Any]]:
+    """One 'procedure_steps' posterior row per Procedure: all its fitted steps' draws."""
+    by_proc: dict[str, list[int]] = defaultdict(list)
+    for i, (pid, _order, _role) in enumerate(steps):
+        by_proc[str(pid)].append(i)
+    rows = []
+    for pid, idx in by_proc.items():
+        rows.append({"kind": "procedure_steps", "id": pid, "version": version, "method": method,
+                     "draws": pack({"orders": np.array([int(steps[i][1]) for i in idx]),
+                                    "roles": np.array([STEP_ROLES.index(steps[i][2]) for i in idx]),
+                                    "d": step_d[:, idx], "e": step_e[:, idx, :]}),
+                     "n_observations": sum(counts.get((pid, int(steps[i][1])), 0) for i in idx)})
+    return rows
 
 
 async def nightly_refit(pool: Any, cfg: RoutingDefaults = DEFAULTS, *, seed: int = 0,
@@ -281,7 +319,9 @@ async def nightly_refit(pool: Any, cfg: RoutingDefaults = DEFAULTS, *, seed: int
     arrays = global_arrays(samples, meta)
     from app.routing.service import token_summary
 
-    stored_meta = {**public_meta(meta), "tokens": token_summary(observations)}
+    stored_meta = {**public_meta(meta),
+                   "tokens": token_summary([o for o in observations if step_key(o) is None]),
+                   "tokens_step": token_summary([o for o in observations if step_key(o) is not None])}
     version = await store.save_params(pool, method=used, draws=pack(arrays), meta=stored_meta, diagnostics=diag)
     last_at: dict[str, Any] = {}
     for o in observations:
@@ -294,6 +334,12 @@ async def nightly_refit(pool: Any, cfg: RoutingDefaults = DEFAULTS, *, seed: int
                "draws": pack({"c": samples["proc_c"][:, i, :]}),
                "n_observations": meta["procedure_observations"].get(p, 0)}
               for i, p in enumerate(meta["procedures"])]
+    step_counts: dict[tuple[str, int], int] = defaultdict(int)
+    for o in observations:
+        if step_key(o) is not None:
+            step_counts[step_key(o)] += 1
+    posts += step_posts(meta["steps"], samples["step_d"], samples["step_e"], version=version, method="joint",
+                        counts=step_counts)
     await store.save_posteriors(pool, posts)
     # Goals the joint fit does not cover (private observations) are refreshed against
     # the new global draws right away, so no stored posterior stays misaligned.
@@ -378,7 +424,7 @@ async def local_refit(pool: Any, goal_id: str, cfg: RoutingDefaults = DEFAULTS, 
                                             "draws": pack({"x": x}), "n_observations": 0}])
         return {"goal_id": goal_id, "observations": 0}
     local = _local_data(g, observations, rng)
-    xi_goal, xi_proc, ess = _local_posterior(g, mu, local, cfg, seed)
+    xi_goal, xi_proc, steps_out, ess = _local_posterior(g, mu, local, cfg, seed)
     x = mu + g.arrays["tau"] * xi_goal
     rows = [{"kind": "goal", "id": goal_id, "version": g.version, "method": "local_nuts", "draws": pack({"x": x}),
              "n_observations": len(observations), "last_observation_at": observations[-1]["occurred_at"]}]
@@ -386,6 +432,13 @@ async def local_refit(pool: Any, goal_id: str, cfg: RoutingDefaults = DEFAULTS, 
         rows.append({"kind": "procedure", "id": pid, "version": g.version, "method": "local_nuts",
                      "draws": pack({"c": g.arrays["tau_c"][:, None] * xi_proc[:, j, :]}),
                      "n_observations": sum(1 for o in observations if str(o.get("procedure_id")) == pid)})
+    if local["steps"]:
+        counts: dict[tuple[str, int], int] = defaultdict(int)
+        for o in observations:
+            if step_key(o) is not None:
+                counts[step_key(o)] += 1
+        rows += step_posts(local["steps"], steps_out["d"], steps_out["e"], version=g.version, method="local_nuts",
+                           counts=counts)
     await store.save_posteriors(pool, rows)
     return {"goal_id": goal_id, "observations": len(observations), "params_version": g.version, "ess": ess}
 
@@ -439,9 +492,17 @@ def _local_data(g: Globals, observations: Sequence[Mapping[str, Any]], rng: np.r
             anchor_theta[:, i] = arr["theta_last"][:, m_ix[pred]]
             anchor_z[:, i, :] = arr["z"][:, m_ix[pred], :]
             has_anchor[i] = True
-    instances: dict[str, int] = {}
-    inst = np.array([instances.setdefault(str(o["instance_key"]), len(instances)) for o in observations], dtype=np.int32)
+    instances: dict[tuple[str, str], int] = {}
+    inst = np.array([instances.setdefault((str(o.get("reporter") or ""), str(o["instance_key"])), len(instances))
+                     for o in observations], dtype=np.int32)
+    steps = sorted({step_key(o) for o in observations if step_key(o) is not None})
+    roles = {step_key(o): o["step_role"] for o in observations if step_key(o) is not None and o.get("step_role")}
+    step_list = [[pid, order, roles.get((pid, order), "other")] for pid, order in steps]
     return {
+        "steps": step_list,
+        "step_role": np.array([STEP_ROLES.index(r) for _, _, r in step_list] or [0], dtype=np.int32),
+        "step": np.array([steps.index(step_key(o)) if step_key(o) is not None else -1 for o in observations],
+                         dtype=np.int32),
         "known_theta": known_theta, "known_z": known_z, "known_gd": known_gd,
         "new_m_slot": new_m_slot, "new_s_slot": new_s_slot, "new_pair_slot": new_pair_slot,
         "n_new_models": len(new_models), "n_new_scaffolds": len(new_scaffolds), "n_new_pairs": len(new_pairs),
@@ -461,7 +522,7 @@ def _local_data(g: Globals, observations: Sequence[Mapping[str, Any]], rng: np.r
 
 
 def _local_posterior(g: Globals, mu: np.ndarray, local: Mapping[str, Any], cfg: RoutingDefaults,
-                     seed: int) -> tuple[np.ndarray, np.ndarray, dict]:
+                     seed: int) -> tuple[np.ndarray, np.ndarray, dict, dict]:
     """NUTS over the local non-centred block with the global draws marginalised as a
     J-component mixture, then one importance-resampled local draw per global draw."""
     import jax
@@ -487,6 +548,7 @@ def _local_posterior(g: Globals, mu: np.ndarray, local: Mapping[str, Any], cfg: 
         "mu": jnp.asarray(mu), "tau": jnp.asarray(arr["tau"]), "tau_c": jnp.asarray(arr["tau_c"]),
         "sigma_theta": jnp.asarray(arr["sigma_theta"]),
         "tau_rho": jnp.asarray(arr["tau_rho"]),
+        "mu_role": jnp.asarray(arr["mu_role"]), "tau_d": jnp.asarray(arr["tau_d"]), "tau_e": jnp.asarray(arr["tau_e"]),
         "alpha": jnp.asarray(arr["alpha"]), "beta": jnp.asarray(arr["beta"]),
         "known_theta": jnp.asarray(local["known_theta"]), "known_z": jnp.asarray(local["known_z"]),
         "known_gd": jnp.asarray(local["known_gd"]), "anchor_theta": jnp.asarray(local["anchor_theta"]),
@@ -501,6 +563,8 @@ def _local_posterior(g: Globals, mu: np.ndarray, local: Mapping[str, Any], cfg: 
     rep_ix = jnp.asarray(local["reporter"])
     accepted, gold = jnp.asarray(local["accepted"]), jnp.asarray(local["gold"])
     instance, n_inst = jnp.asarray(local["instance"]), local["n_instances"]
+    n_steps = max(len(local["steps"]), 1)
+    step_ix, step_role = jnp.asarray(local["step"]), jnp.asarray(local["step_role"])
 
     def loglik_per_draw(latent: Mapping[str, Any], rows: Any) -> Any:
         """(len(rows),) log-likelihood of this Goal's attempts under global draws `rows`."""
@@ -519,7 +583,12 @@ def _local_posterior(g: Globals, mu: np.ndarray, local: Mapping[str, Any], cfg: 
               + jnp.where(s_slot >= 0, TAU_GAMMA * latent["xi_s"][jnp.clip(s_slot, 0)], 0.0)[None, :]
               + jnp.where(pair_slot >= 0, TAU_DELTA * latent["xi_pair"][jnp.clip(pair_slot, 0)], 0.0)[None, :])
         cp = jnp.where((proc_ix >= 0)[None, :, None], c[:, jnp.clip(proc_ix, 0), :], 0.0)
-        logit_r = (theta + gd - x[:, [0]] + (x[:, None, 2:] * z).sum(-1) + (cp * z).sum(-1))  # (J, R)
+        sd = f["mu_role"][:, step_role] + f["tau_d"][:, None] * latent["xi_d"][None, :]          # (J, NSt)
+        se_ = f["tau_e"][:, None, None] * latent["xi_e"][None, :, :]                            # (J, NSt, K)
+        st = jnp.clip(step_ix, 0)
+        step_term = jnp.where((step_ix >= 0)[None, :], -sd[:, st] + (se_[:, st, :] * z).sum(-1), 0.0)
+        logit_r = (theta + gd - x[:, [0]] + (x[:, None, 2:] * z).sum(-1) + (cp * z).sum(-1)   # (J, R)
+                   + step_term)
         sig_eps = jnp.exp(x[:, 1])
         base_alpha = f["alpha"][:, check]
         rho = f["tau_rho"][:, None] * latent["xi_rho"][None, :]                        # (J, NR)
@@ -534,11 +603,19 @@ def _local_posterior(g: Globals, mu: np.ndarray, local: Mapping[str, Any], cfg: 
     sub = jnp.asarray(subset)
 
     def local_model() -> None:
+        def std(name: str, shape: tuple) -> Any:
+            # zero-size blocks (no skill dimensions) are constants, not sample sites
+            if 0 in shape:
+                return jnp.zeros(shape)
+            return numpyro.sample(name, dist.Normal(jnp.zeros(shape), 1.0).to_event(len(shape)))
+
         latent = {
             "xi_goal": numpyro.sample("xi_goal", dist.Normal(jnp.zeros(d), 1.0).to_event(1)),
-            "xi_proc": numpyro.sample("xi_proc", dist.Normal(jnp.zeros((n_proc, k)), 1.0).to_event(2)),
+            "xi_proc": std("xi_proc", (n_proc, k)),
+            "xi_d": std("xi_d", (n_steps,)),
+            "xi_e": std("xi_e", (n_steps, k)),
             "xi_m": numpyro.sample("xi_m", dist.Normal(jnp.zeros(nm), 1.0).to_event(1)),
-            "xi_z": numpyro.sample("xi_z", dist.Normal(jnp.zeros((nm, k)), 1.0).to_event(2)),
+            "xi_z": std("xi_z", (nm, k)),
             "xi_s": numpyro.sample("xi_s", dist.Normal(jnp.zeros(ns), 1.0).to_event(1)),
             "xi_pair": numpyro.sample("xi_pair", dist.Normal(jnp.zeros(npair), 1.0).to_event(1)),
             "xi_rho": numpyro.sample("xi_rho", dist.Normal(jnp.zeros(nrep), 1.0).to_event(1)),
@@ -549,8 +626,11 @@ def _local_posterior(g: Globals, mu: np.ndarray, local: Mapping[str, Any], cfg: 
     mcmc = MCMC(NUTS(local_model, target_accept_prob=0.9), num_warmup=cfg.local_warmup, num_samples=per_chain,
                 num_chains=chains, chain_method="sequential", progress_bar=False)
     mcmc.run(jax.random.PRNGKey(seed))
-    post = mcmc.get_samples()
+    post = dict(mcmc.get_samples())
     t_count = post["xi_goal"].shape[0]
+    for name, shape in (("xi_proc", (n_proc, k)), ("xi_z", (nm, k)), ("xi_e", (n_steps, k)), ("xi_d", (n_steps,))):
+        if name not in post:
+            post[name] = jnp.zeros((t_count, *shape))
     all_rows = jnp.arange(s_count)
     ll_all = jax.vmap(lambda t: loglik_per_draw({k_: v[t] for k_, v in post.items()}, all_rows))(jnp.arange(t_count))
     ll_all = np.asarray(ll_all)                                       # (T, S)
@@ -558,6 +638,8 @@ def _local_posterior(g: Globals, mu: np.ndarray, local: Mapping[str, Any], cfg: 
     log_w = ll_all - log_q[:, None]                                   # defensive-mixture importance weights
     xi_goal = np.empty((s_count, d))
     xi_proc = np.empty((s_count, n_proc, k))
+    xi_d = np.empty((s_count, n_steps))
+    xi_e = np.empty((s_count, n_steps, k))
     ess = []
     for j in range(s_count):
         w = np.exp(log_w[:, j] - log_w[:, j].max())
@@ -566,7 +648,12 @@ def _local_posterior(g: Globals, mu: np.ndarray, local: Mapping[str, Any], cfg: 
         t = int(rng.choice(t_count, p=w))
         xi_goal[j] = np.asarray(post["xi_goal"][t])
         xi_proc[j] = np.asarray(post["xi_proc"][t])
-    return xi_goal, xi_proc, {"min": float(np.min(ess)), "median": float(np.median(ess)), "samples": t_count,
+        xi_d[j] = np.asarray(post["xi_d"][t])
+        xi_e[j] = np.asarray(post["xi_e"][t])
+    role = np.asarray(local["step_role"])
+    steps_out = {"d": arr["mu_role"][:, role] + arr["tau_d"][:, None] * xi_d,
+                 "e": arr["tau_e"][:, None, None] * xi_e}
+    return xi_goal, xi_proc, steps_out, {"min": float(np.min(ess)), "median": float(np.median(ess)), "samples": t_count,
                               "mixture_draws": j_count}
 
 
@@ -580,9 +667,12 @@ def simulate(rng: np.random.Generator, data: dict[str, Any], samples: Mapping[st
     c = samples["proc_c"][s]
     mi, gi, pi_ = data["att_model"], data["att_goal"], data["att_proc"]
     proc_term = np.where((pi_ >= 0)[:, None], c[np.clip(pi_, 0, None)], 0.0)
+    att_step = data.get("att_step", -np.ones(len(mi), dtype=np.int32))
+    st = np.clip(att_step, 0, None)
+    step_term = np.where(att_step >= 0, -samples["step_d"][s][st] + (samples["step_e"][s][st] * z[mi]).sum(1), 0.0)
     logit = (th[mi, data["att_week"]] + samples["gamma"][s][data["att_scaffold"]]
              + samples["delta"][s][mi, data["att_scaffold"]] - x[gi, 0] + (x[gi, 2:] * z[mi]).sum(1)
-             + (proc_term * z[mi]).sum(1))
+             + (proc_term * z[mi]).sum(1) + step_term)
     inst_goal = np.zeros(data["n_instances"], dtype=np.int64)
     inst_goal[data["att_instance"]] = gi
     eps = (np.exp(x[inst_goal, 1]) * rng.standard_normal(data["n_instances"]))[data["att_instance"]]
@@ -600,7 +690,7 @@ def simulation_based_calibration(data: dict[str, Any], cfg: RoutingDefaults = DE
 
     k = int(data["k"])
     prior = Predictive(joint_model, num_samples=sims, return_sites=[
-        "theta_hist", "z", "gamma", "delta", "goal_x", "proc_c", "sigma_theta"])(
+        "theta_hist", "z", "gamma", "delta", "goal_x", "proc_c", "sigma_theta", "step_d", "step_e"])(
         jax.random.PRNGKey(seed), {**data, "n_attempts": 0}, k, cfg.gh_eps_nodes)
     prior = {key: np.asarray(v) for key, v in prior.items()}
     rng = np.random.default_rng(seed)

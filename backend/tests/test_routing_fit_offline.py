@@ -98,7 +98,7 @@ def test_local_refit_stays_aligned_and_learns_from_one_goal(fitted):
     results = {}
     for name, obs in (("hard", hard), ("easy", easy)):
         local = fit._local_data(g, obs, rng)
-        xi_goal, _, ess = fit._local_posterior(g, mu, local, CFG, seed=3)
+        xi_goal, _, _, ess = fit._local_posterior(g, mu, local, CFG, seed=3)
         x = mu + g.arrays["tau"] * xi_goal
         assert x.shape == (CFG.draws, g.k + 2)
         assert ess["median"] > 1.0
@@ -116,3 +116,42 @@ def test_simulation_based_calibration_runs_on_the_design(fitted):
     ranks = fit.simulation_based_calibration(data, small, sims=2, draws=20)
     assert set(ranks) == {"goal0_difficulty", "model0_ability", "goal0_log_sigma_eps"}
     assert all(0 <= r <= 20 for rs in ranks.values() for r in rs)
+
+
+def test_step_difficulties_are_recovered_and_the_local_refit_returns_them():
+    """Runs of a 3-step Procedure (steps share the run's difficulty): the joint fit
+    converges and orders the steps' difficulties correctly; the local refit returns
+    aligned step draws for every observed step."""
+    rng = np.random.default_rng(11)
+    goal = str(uuid.UUID(int=77))
+    proc = str(uuid.UUID(int=78))
+    true_d = {1: -1.5, 2: 0.0, 3: 1.5}
+    roles = {1: "plan", 2: "edit", 3: "verify"}
+    obs = []
+    for run in range(70):
+        eps = 0.7 * rng.standard_normal()
+        for order, d in true_d.items():
+            model = ("lab/small", "lab/big")[run % 2]
+            p = 1 / (1 + np.exp(-(THETA[model] - 0.5 - d - eps)))
+            obs.append(dict(goal_id=goal, model_key=model, scaffold="claude-code", instance_key=f"run-{run}",
+                            check_kind="benchmark", accepted=bool(rng.random() < p),
+                            occurred_at=T0 + timedelta(days=run // 10), procedure_id=proc, reporter=None,
+                            gold_correct=None, visibility="public", step_order=order, step_role=roles[order]))
+    registry = {"lab/small": {"predecessor": None}, "lab/big": {"predecessor": None}}
+    data, info = fit.build_joint_data(obs, {goal: {"embedding": None, "visibility": "public"}}, {}, registry, CFG)
+    assert data["n_steps"] == 3 and data["n_instances"] == 70
+    samples, method, diag = fit.run_joint(data, CFG, seed=2)
+    assert method == "nuts" and diag["divergences"] == 0 and diag["max_r_hat"] < 1.05
+    orders = [s_[1] for s_ in info["steps"]]
+    d_mean = dict(zip(orders, samples["step_d"].mean(axis=0)))
+    assert d_mean[1] < d_mean[2] < d_mean[3]
+    posts = fit.step_posts(info["steps"], samples["step_d"], samples["step_e"], version=1, method="joint",
+                           counts={})
+    assert len(posts) == 1 and posts[0]["kind"] == "procedure_steps" and posts[0]["id"] == proc
+
+    g = Globals(version=1, arrays=fit.global_arrays(samples, info), meta={**fit.public_meta(info), "tokens": {}})
+    local = fit._local_data(g, obs[:30], np.random.default_rng(0))
+    assert [s_[1] for s_ in local["steps"]] == [1, 2, 3]
+    mu = fit._goal_prior_parts(g, g.phi1(None), [])
+    _, _, steps_out, _ = fit._local_posterior(g, mu, local, CFG, seed=4)
+    assert steps_out["d"].shape == (CFG.draws, 3) and steps_out["e"].shape == (CFG.draws, 3, g.k)
