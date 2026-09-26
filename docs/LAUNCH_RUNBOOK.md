@@ -14,6 +14,17 @@ Workers (Cloud Run job)      ingestion
 Website (prod_frontend)      talks to the API; points installers at the MCP URL
 ```
 
+### What changed recently (read this if you used an earlier version of this runbook)
+
+| Commit | What it adds | What you must do |
+|---|---|---|
+| `8c57638`, `7df90df` | Per-Goal model recommender; the MCP tools `recommend_models` and `report_model_run` (v1 and v2 surfaces) | Migrations 120 (control) and 121 (project B), then step 19b |
+| `b71a234` | Goal ranking: demand only raises a Goal; lists and the roots view rank globally | Nothing beyond a normal deploy (API + website) |
+| `4c67865` | Step-level routing (per run.md node) | Migrations 122 (control) and 123 (project B); `routing-refit` once; redeploy MCP (step 19b) |
+| `865d0f8` | (1) Benchmark import (`benchmark-import`); (2) Procedures from verified code solutions; (3) `find_ways` offers judged ways from more specific Goals and lists ways on ambiguous candidates; (4) `recommend_models` constraint `allow_retries` | **No migration, no new variable.** Redeploy the API and MCP (step 12). Benchmark import is optional (step 19c) |
+
+Details of each item are in the steps below. The newest migrations are **122** on the control DB and shards, and **123** on project B.
+
 Two rules for the whole runbook:
 
 * **Never paste a connection string into a command line, a chat, an issue or a commit.** Put it in
@@ -57,7 +68,7 @@ git checkout main
 git pull
 ```
 
-**Check:** `git log --oneline -1` shows `feat(ops): script to provision knowledge shards as Neon projects` or a later commit.
+**Check:** `git log --oneline -1` shows `865d0f8 feat: benchmark import, code-solution Procedures, ways from more specific Goals, no-retry routing` or a later commit.
 
 ### 3. Create the secrets file
 
@@ -71,6 +82,9 @@ GEMINI_API_KEYS=...            # optional: comma-separated extra keys
 VOYAGE_API_KEY=...             # optional fallback embedder
 JEV_BASE_URL=...               # optional preferred judge
 JEV_API_KEY=...
+GENERAL_COMPUTE_API_KEY=...          # needed for skill-package ingestion and for Procedures from verified code solutions
+GENERAL_COMPUTE_API_KEYS=...         # optional: comma-separated extra keys, rotated on 429
+GENERAL_COMPUTE_JUDGE_MODEL=gemma-4-31B-it   # the extraction model; must exist in your General Compute catalog
 DAILY_LLM_BUDGET_USD=10
 # shard sizing for a 500 MB Neon project
 OPS_SHARD_CAPACITY_BYTES=524288000
@@ -115,7 +129,7 @@ This creates a copy-on-write Neon branch, which costs nothing until used. It nev
      DATABASE_URL="$CONTROL_DATABASE_URL" python scripts/migrate.py
      ```
 
-**Check:** `cd backend && DATABASE_URL="$CONTROL_DATABASE_URL" python scripts/migrate.py --status` shows no pending migrations. The newest applied migration is `119_goal_commitments_escrow.sql` or later.
+**Check:** `cd backend && DATABASE_URL="$CONTROL_DATABASE_URL" python scripts/migrate.py --status` shows no pending migrations. The newest applied migration is `122_step_routing.sql` or later. Migrations 121 and 123 start with `-- target: search`; they belong to project B (step 6) and are not applied here.
 
 ### 6. Search/log database (project B)
 
@@ -136,7 +150,7 @@ This creates a copy-on-write Neon branch, which costs nothing until used. It nev
 
 Do **not** backfill yet. That happens in step 14, after every process knows about B.
 
-**Check:** `python scripts/migrate.py --target search --dsn "$SEARCH_DATABASE_URL" --status` shows nothing pending.
+**Check:** `python scripts/migrate.py --target search --dsn "$SEARCH_DATABASE_URL" --status` shows nothing pending, and the newest applied migration is `123_step_routing_search.sql` or later.
 
 ### 7. Create the knowledge shards K001..K100
 
@@ -222,6 +236,7 @@ In Railway, open each service → **Variables → Raw Editor**, and paste those 
 | `SEARCH_DATABASE_URL` | ✓ | ✓ | from the paste above |
 | `K001_DATABASE_URL` … `K100_DATABASE_URL` | ✓ | ✓ | from the paste above |
 | `GEMINI_API_KEY`, `VOYAGE_API_KEY`, `JEV_BASE_URL` | ✓ | ✓ | as in the secrets file |
+| `GENERAL_COMPUTE_API_KEY`, `GENERAL_COMPUTE_JUDGE_MODEL` (+ optional `GENERAL_COMPUTE_API_KEYS`) | ✓ | ✓ | as in the secrets file. They must also reach the workers, which run extraction |
 | `DAILY_LLM_BUDGET_USD`, `SERVICE_TOKEN_KEYS` | ✓ | ✓ | same values as the workers |
 | `STEALTHLAB_MCP_PUBLIC_URL` | | ✓ | `https://mcp.<your-domain>/mcp` |
 | `STEALTHLAB_MCP_TOKEN` | | ✓ | a long random string |
@@ -415,6 +430,59 @@ DATABASE_URL="$CONTROL_DATABASE_URL" $A routing-status
 
 The MCP tools `recommend_models` and `report_model_run` are on both the default (v1) and the full (v2) surface.
 
+**No-retry ladders** (commit `865d0f8`, no migration): `recommend_models` accepts the constraint `"allow_retries": false`. The recommended ladder then:
+- never repeats a model;
+- never includes a model that was already tried on this task.
+
+Use it when generation is deterministic (temperature 0), where a repeat attempt would return the same answer and only cost money. The default `true` keeps the old behaviour. If no ladder satisfies the constraint, the call returns an error instead of a ladder with repeats.
+
+### 19c. Benchmark import (optional, after 19b)
+
+This turns a public benchmark into Goals that the recommender and `find_ways` can use. Today the only source is **BigCodeBench**. The command is idempotent: re-running it creates nothing new.
+
+What it writes:
+- **Goals:** one per task, plus a few domain Goals (from the task's libraries). Each task Goal gets an accepted `SPECIALIZES` edge to its domain Goals. It never overrides an edge a reviewer accepted or rejected.
+- **A frozen benchmark per task:** the test code, and which tests are *visible* (about 1/3, used as the runtime check) versus *hidden* (the full suite is the gold grade).
+- **Nothing else:** the reference solution is stored only as a hash. Tasks are split into fit and held-out sets with a fixed seed (`--fit-fraction 0.6`, `--seed kel-v1`).
+
+It writes Goals into the knowledge store (control DB or shards), so take a snapshot first and do a dry run:
+
+```bash
+set -a; source ~/.stealth-ops/secrets.env; set +a
+scripts/ops/stealth-ops snapshot-prod --name pre-benchmark-import
+cd backend
+DATABASE_URL="$CONTROL_DATABASE_URL" python -m app.ingestion.admin benchmark-import --source bigcodebench --download data/ --dry-run
+DATABASE_URL="$CONTROL_DATABASE_URL" python -m app.ingestion.admin benchmark-import --source bigcodebench --download data/ --limit 20 --manifest bcb-manifest.json --embed
+```
+
+- `--download data/` fetches `v0.1.4` (about 2.4 MB) from Hugging Face. Use `--file <path>` for a local copy instead.
+- Start with `--limit 20`, then drop the limit.
+- `--embed` needs an embedding provider (`GEMINI_API_KEY` or `VOYAGE_API_KEY`).
+- The manifest (task → Goal, benchmark, split, visible tests) is what benchmark runners and `routing-import` read.
+
+**Check:**
+- the dry run prints the domain counts and the fit/held-out split;
+- the real run's report shows `benchmarks_created` / `edges_created` counts;
+- re-running the same command reports `benchmarks_existing` instead of new ones;
+- the new Goals appear under their domain Goals in `/review/hierarchy`.
+
+A local, isolated demo of the whole loop (import → model attempts → Procedures → recommender → `find_ways` on held-out tasks) is in [experiments/bigcodebench/README.md](../experiments/bigcodebench/README.md). It only touches a local Postgres database, never production.
+
+### 19d. Retrieval changes to know about (commit `865d0f8`, no action needed)
+
+These take effect when the API and MCP are redeployed (step 12). They need no migration and no new variable; they use the judge that is already configured (`JEV_BASE_URL` / `GEMINI_API_KEY`).
+
+- **Ways from more specific Goals:** when `find_ways` settles on a Goal with no usable Procedure of its own, it now also considers Procedures of that Goal's more specific Goals.
+  - It looks up to 2 accepted `SPECIALIZES` levels down, at most 20 Goals, most relevant to the request first.
+  - Each candidate goes through the normal Procedure tier and is **judged against the request**. Nothing is offered unjudged; with no judge, behaviour is unchanged.
+  - An offered Procedure carries `observed_on_more_specific_goal` (the Goal it came from), and the rationale says so.
+- **Ways on ambiguous answers:** when the answer is `ambiguous`, it stays `ambiguous`, but each of the top 2 candidate Goals now lists up to 2 judged `ways`, each with `observed_on_goal` when it came from a more specific Goal. A failure here never breaks the answer; it is logged as a warning.
+- **Procedures from verified code solutions:** when a run's evidence contains a `code_solution` observation marked `verified`, extraction uses the code-solution extractor (tag `code_solution_v1@1`).
+  - It produces method-level steps that cite only APIs present in the code, plus pitfalls.
+  - The code itself is never stored.
+  - It uses `GENERAL_COMPUTE_JUDGE_MODEL` (default `gemma-4-31B-it`).
+  - Until some pipeline records such observations (today only the benchmark demo does), it never fires.
+
 ---
 
 ## Part E: verify, then ingest
@@ -433,8 +501,10 @@ Then check by hand:
 2. In B's SQL editor, `SELECT count(*) FROM retrieval_decisions WHERE t_created > now() - interval '10 minutes';` returns more than 0. Logging now goes to B.
 3. After the smoke test, `SELECT shard_id, count(*) FROM object_routes GROUP BY 1;` on the control DB shows a new row on some K0xx shard, not only on K000.
 4. On a Goal page, commit 1 Credit, then withdraw it. Your balance returns to where it started.
+5. Call `find_ways` with a broad task that matches several Goals, so the answer is `ambiguous`. The top candidates carry a `ways` list, which may be empty when nothing is judged applicable.
+6. If step 19b is done, call `recommend_models` for a Goal with `constraints: {"allow_retries": false}`. The returned ladder has no model twice.
 
-**Check:** all three commands exit 0, and the four manual checks behave as described.
+**Check:** all three commands exit 0, and the manual checks behave as described.
 
 ### 21. First real ingestion: small first
 
@@ -469,6 +539,31 @@ On a Windows machine without the tool installed, run the installer from the webs
 - once in **PowerShell 7**.
 
 **Check:** both finish, and `stealthlab-mcp doctor` reports the hosted URL as reachable.
+
+### 24. Known test status (so you don't chase old failures)
+
+```bash
+cd backend
+python -m pytest -q tests -k offline
+```
+
+As of `865d0f8`, **27 offline tests fail**. The same 27 also fail on the commit before it (`4c67865`), so they were already failing before these changes:
+
+| File | Failures |
+|---|---|
+| `test_stealth_projects_me_offline.py` | 6 |
+| `test_bypass_closure_offline.py`, `test_economy_hardening_offline.py` | 3 each |
+| `test_local_registry_and_key_store_offline.py`, `test_ongoing_sync_hooks_offline.py` | 2 each |
+| `test_auth_enforcement_offline.py`, `test_auth_hardening_offline.py`, `test_auth_redteam_offline.py`, `test_claim_graph_api_offline.py`, `test_enqueue_documents_offline.py`, `test_local_sync_bridge_offline.py`, `test_phase1_security_boundaries_offline.py` (hand-written tenant filter in `goal_abstraction.py`), `test_phase2_authorization_offline.py`, `test_procdoc_v2_pipeline_offline.py` (embedding recipe in `ingestion_jobs.py`), `test_retrieval_identity_offline.py`, `test_skill_ingestion_offline.py` | 1 each |
+
+Some of these depend on test order or on your local environment. For example, `test_auth_enforcement_offline.py` passes when run alone.
+
+**Database (e2e) tests:**
+- Run them against a **fresh** local database: `DATABASE_URL=<local test db> python -m pytest -q tests/<file>_e2e.py`.
+- `test_goal_resolution_reads_e2e.py` and `test_e2e_ingest_retrieve_execute.py` fail on a database reused across many runs, because rows left over from earlier runs break their counts. They pass on a fresh one.
+- The new e2e tests pass: `test_specific_goal_ways_e2e.py`, `test_benchmark_import_e2e.py`, and the offline `test_code_solution_extraction_offline.py` / `test_benchmark_import_offline.py`.
+
+**Known bug, not fixed yet:** when extraction runs without an LLM client, Procedures made by the deterministic extractor are tagged with the LLM extractor's name (`extracted_by`). Keep this in mind when you filter Procedures by extractor.
 
 ---
 
