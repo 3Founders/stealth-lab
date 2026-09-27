@@ -69,7 +69,15 @@ def _loads_object(text: str) -> dict:
     try:
         data = json.loads(text)
     except json.JSONDecodeError as exc:
-        raise ValueError(f"not valid JSON: {exc}") from exc
+        # A model sometimes wraps the object in prose or an unclosed fence. Accept the outermost
+        # {...} span only if it is itself one valid JSON object; anything else stays an error.
+        start, end = text.find("{"), text.rfind("}")
+        if start < 0 or end <= start:
+            raise ValueError(f"not valid JSON: {exc}") from exc
+        try:
+            data = json.loads(text[start:end + 1])
+        except json.JSONDecodeError:
+            raise ValueError(f"not valid JSON: {exc}") from exc
     if not isinstance(data, dict):
         raise ValueError("expected a JSON object")
     return data
