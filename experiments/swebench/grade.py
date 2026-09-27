@@ -35,6 +35,15 @@ def run_harness(predictions: str, run_id: str, instance_ids: list[str]) -> None:
            "--dataset_name", _dataset_name(g), "--split", swe_env.CONFIG["dataset"]["split"],
            "--predictions_path", predictions, "--run_id", run_id, "--max_workers", str(g["max_workers"]),
            "--timeout", str(g["timeout_s"])]         # swebench 5.x removed --cache_level
+    if g.get("backend", "docker") == "gce":      # the official harness on Compute Engine, via the GCS queue
+        import gce_queue
+        if predictions == "gold":
+            gce_queue.gold_ids(run_id, instance_ids)
+        else:
+            gce_queue.submit_rows(run_id, [r for r in gce_queue.rows_from(Path(predictions))
+                                           if r["instance_id"] in set(instance_ids)])
+        gce_queue.wait(run_id, instance_ids)
+        return
     if g.get("backend", "docker") == "modal":
         cmd += ["--modal", "true"]
     if instance_ids:

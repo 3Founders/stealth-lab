@@ -58,7 +58,24 @@
     "timeout_s": 1800,
     "cache_level": "env",
     "_doc": "backend 'modal' runs the official harness with --modal true (no local Docker or image storage); 'docker' runs it locally. max_workers/cache_level apply to docker only. grading.dataset: swebench 5.x grades from the maintained copy (it carries each instance's prebuilt image); see DEVIATIONS.md 6 and 8. The design and every prompt still come from dataset.name.",
-    "dataset": "SWE-bench/SWE-bench_Verified"
+    "dataset": "SWE-bench/SWE-bench_Verified",
+    "gce": {
+      "bucket": "gs://kel-evals-239594026863",
+      "prefix": "verified",
+      "worker_dataset": "SWE-bench/SWE-bench_Verified",
+      "idle_minutes": 20,
+      "max_hours": 8,
+      "workers": [
+        {
+          "name": "kel-grade-verified-w1",
+          "zone": "us-central1-a",
+          "machine_type": "n2-custom-12-49152",
+          "harness_workers": 8,
+          "disk_gb": 400
+        }
+      ],
+      "_doc": "backend 'gce': the official harness on Compute Engine via the GCS queue (gce_queue.py). Global Compute Engine quota is 12 vCPU, so one 12-vCPU worker; raise the quota to add workers (patches are sharded by instance id)."
+    }
   },
   "kel_database": "kel_swebench",
   "pinned": null,

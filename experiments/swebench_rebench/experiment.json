@@ -65,7 +65,24 @@
       "url": "https://github.com/SWE-rebench/SWE-bench-fork",
       "commit": "e4907b7a90eafaa1f0a6428fd04fe31cdd8b4284"
     },
-    "_doc": "grading.dataset is built by render_grading_dataset.py: each task's eval script is rendered by SWE-rebench's own harness fork (pinned commit) from its install_config, then graded by the pinned swebench 5.0.2 + modal_compat on Modal using the task's prebuilt image."
+    "_doc": "grading.dataset is built by render_grading_dataset.py: each task's eval script is rendered by SWE-rebench's own harness fork (pinned commit) from its install_config, then graded by the pinned swebench 5.0.2 + modal_compat on Modal using the task's prebuilt image.",
+    "gce": {
+      "bucket": "gs://kel-evals-239594026863",
+      "prefix": "rebench",
+      "worker_dataset": "grading_dataset.json",
+      "idle_minutes": 20,
+      "max_hours": 8,
+      "workers": [
+        {
+          "name": "kel-grade-rebench-w1",
+          "zone": "us-central1-a",
+          "machine_type": "n2-custom-12-49152",
+          "harness_workers": 8,
+          "disk_gb": 400
+        }
+      ],
+      "_doc": "backend 'gce': the official harness on Compute Engine via the GCS queue (gce_queue.py). Global Compute Engine quota is 12 vCPU, so one 12-vCPU worker; raise the quota to add workers (patches are sharded by instance id)."
+    }
   },
   "kel_database": "kel_swebench_rebench",
   "pinned": null,

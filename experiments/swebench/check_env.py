@@ -36,8 +36,8 @@ def current() -> dict:
     except Exception:  # noqa: BLE001
         swebench_version = None
     backend = grading_backend()
-    if backend == "modal":
-        docker = "n/a (graded on modal)"      # generation needs no Docker; grading images run remotely
+    if backend in ("modal", "gce"):
+        docker = f"n/a (graded on {backend})"  # generation needs no Docker; grading images run remotely
     else:
         try:
             docker = subprocess.run(["docker", "version", "--format", "{{.Server.Version}}"], capture_output=True,
@@ -54,6 +54,7 @@ def current() -> dict:
         "swebench_version": swebench_version, "docker_server": docker, "grading_backend": backend,
         "modal_ready": modal_ready() if backend == "modal" else None,
         "modal_compat": _modal_compat() if backend == "modal" else None,
+        "gce_harness": "swebench==5.0.2 official, native docker on GCE (gce_grade_startup.sh)" if backend == "gce" else None,
         "python": platform.python_version(),
         "dataset": cfg["dataset"]["name"], "dataset_revision": dataset_revision(),
         "model": cfg["model"]["id"],
@@ -126,7 +127,7 @@ def require_pinned(*, scored: bool = True) -> dict:
         print(f"pinned environment written to {PINNED}")
         return env
     pinned = json.loads(PINNED.read_text(encoding="utf-8"))
-    keys = ("kel_commit", "swebench_version", "docker_server", "grading_backend", "modal_compat", "python", "dataset_revision", "model", "model_host",
+    keys = ("kel_commit", "swebench_version", "docker_server", "grading_backend", "modal_compat", "gce_harness", "python", "dataset_revision", "model", "model_host",
             "max_steps")
     drift = {k: (pinned.get(k), env.get(k)) for k in keys if pinned.get(k) != env.get(k)}
     if drift:
