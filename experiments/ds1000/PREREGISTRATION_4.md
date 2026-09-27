@@ -78,3 +78,56 @@ With Kel used the product's way (KP), models solve held-out transfer tasks more 
 ## Deviations
 
 (filled in during and after the run)
+1. **Sonnet added, through Claude Code subagents (2026-09-27, before any KP result was looked at; AG was complete).** At the user's request, `claude-sonnet-5` runs arms AG and KP through Claude Code subagents (`sonnet_r4.py`, `kel_cli.py`). What changes for Sonnet:
+   - the host is Claude Code, not `coding_agent.Agent`;
+   - its tools are Read/Write/Edit/Glob/Grep, with Bash only for the StealthLab command;
+   - the no-execution rule and the 20-call budget are instructions, not enforced;
+   - batches of 6 tasks from 6 different families, the same batches for both arms;
+   - tokens are estimated (characters / 4);
+   - the survey is run once by a Sonnet subagent.
+
+   Kel's backend is the same as for the open models (real `find_ways` on `kel_ds1000_r4`, same caps). Sonnet is reported separately as Sonnet KP − AG (same paired statistics). It is **not** pooled into the preregistered primary, which stays the three open models.
+2. **Infrastructure re-runs (2026-09-27).**
+   - **Open models:** 94 KN/KP episodes failed with General Compute connection errors or 429 rate limits (call errors, never graded). They were re-run with 3 workers instead of 6, as the rules allow.
+   - **Sonnet KP:** 15 of 17 subagent batches were cut off by a Claude session usage limit. The 73 tasks without a `solution.py` were reset (workspace re-created, their `find_ways` log lines removed) and re-run in `*_retry` batches. The 16 tasks already finished were kept.
+   - **Token counts:** those failed batches reported no token usage, so Sonnet KP's token count covers only the batches that completed.
+
+## Result against the preregistered rule
+
+**Primary, pooled KP − AG, transfer (3 open models, 246 pairs): +3.3 points [−3.4, +10.0], McNemar p = 0.37 → NOT CONFIRMED.**
+
+| | AG | KN | KP | KP − AG | KN − AG | KP − KN |
+|---|---|---|---|---|---|---|
+| Pooled, transfer | 52.0% | 60.6% | 55.3% | +3.3 [−3.4, +10.0], p 0.37 | **+8.5 [+3.2, +14.2], p 0.003** | −5.3 [−10.8, 0.0], p 0.13 |
+| gemma-4-31B-it | 39.0% | | 51.2% | +12.2 [0.0, +24.2], p 0.04 (Holm 0.12) | | |
+| gpt-oss-120b | 61.0% | | 63.4% | +2.4, p 0.77 (never called `find_ways`) | | |
+| deepseek-v3.2 | 56.1% | | 51.2% | −4.9, p 0.57 | | |
+| Sonnet 5 (deviation 1, Claude Code) | 79.3% | – | 82.9% | +3.7 [−7.8, +15.5], p 0.65 | | |
+
+- **Controls (open models):** KP 38.1% vs AG 57.1%; KP lost 4 of 21, gained 0 (p 0.125).
+- **All tasks:** KP lost 30 that AG solved.
+
+**KP usage** (secondary 5):
+
+| | called `find_ways` | resolved | ambiguous | no_match | got a verified solution | mean Kel calls |
+|---|---|---|---|---|---|---|
+| gemma | 86 / 89 | 18 | 43 | 28 | 43 | 1.0 |
+| gpt-oss | 0 / 89 | – | – | – | 0 | 0 |
+| deepseek | 89 / 89 | 25 | 83 | 42 | 45 | 1.9 |
+| Sonnet | 67 / 89 | 18 | 28 | 25 | 33 | 0.8 |
+
+Where KP called `find_ways` (descriptive, secondary 6), KP − AG was +3.7 for the open models and −6.7 for Sonnet.
+
+**Cost** (tokens per solved task):
+
+| | AG | KN | KP |
+|---|---|---|---|
+| gemma | 30k | 18k | 75k |
+| gpt-oss | 13k | 16k | 54k |
+| deepseek | 44k | 53k | 198k |
+| Sonnet (approx.) | 15k | – | 19k |
+
+**Context:**
+- Round 3 single-shot A/K: 63.0% / 66.3%.
+- The agent loop is weaker than single-shot for the open models (AG 52.0%).
+- Sonnet in Claude Code (AG 79.3%) vs Sonnet single-shot in round 3 (82.9%).
