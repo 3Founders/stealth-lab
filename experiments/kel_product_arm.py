@@ -86,17 +86,23 @@ class KelBridge:
             def __init__(self, pool): self.lifespan_context = {"pool": pool}
 
         class Ctx:
-            def __init__(self, pool): self.request_context = RC(pool)
+            def __init__(self, pool, headers=None):
+                self.request_context = RC(pool)
+                self.headers = headers       # an HTTP request's headers: the governor keys on mcp-session-id
 
+        self._Ctx = Ctx
         self._ctx = Ctx(self.pool)
 
     def _call(self, coro, timeout: float = 900):
         return asyncio.run_coroutine_threadsafe(coro, self._loop).result(timeout=timeout)
 
-    def find_ways(self, query: str, repo_claims: str) -> str:
+    def find_ways(self, query: str, repo_claims: str, session: str | None = None) -> str:
+        """`session`: an MCP session id, as the hosted server sees one per connected agent -- the find_ways
+        governor (cache, loop breaker, budget) then applies exactly as in production. None: no governor."""
         import app.mcp_server.server as srv
 
-        return self._call(srv.find_ways(query, self._ctx, repo_claims=repo_claims))
+        ctx = self._Ctx(self.pool, {"mcp-session-id": session, "user-agent": "kel-experiment"}) if session else self._ctx
+        return self._call(srv.find_ways(query, ctx, repo_claims=repo_claims))
 
     def procedure_claims(self, procedure_id: str) -> str:
         from app.mcp_server.resources import procedure_claims_resource
@@ -146,7 +152,7 @@ def make_sandbox(root: str, claims_text: str | None = None):
 
 
 def make_agent(model_client, model: str, max_steps: int, temperature: float, bridge: KelBridge | None,
-               tool_max_chars: dict, system: str | None = None, kel_tools: bool = True):
+               tool_max_chars: dict, system: str | None = None, kel_tools: bool = True, governed: bool = False):
     """kel_tools=False gives the SAME agent (system prompt, sandbox) without Kel: a baseline arm."""
     from app.execution.coding_agent import TOOLS, Agent
 
@@ -163,16 +169,23 @@ def make_agent(model_client, model: str, max_steps: int, temperature: float, bri
                     if claims.strip() == CLAIMS_REF:
                         path = os.path.join(sandbox.root, STEALTH, "claims.md")
                         claims = open(path, encoding="utf-8").read() if os.path.isfile(path) else ""
-                    out = bridge.find_ways(str(args.get("query") or ""), claims[:65536])
+                    out = bridge.find_ways(str(args.get("query") or ""), claims[:65536],
+                                           session=sandbox.root if governed else None)
                     try:
                         d = json.loads(out)
                         procs = d.get("procedures") or []
                         cand_ways = [w for c in (d.get("candidates") or []) for w in (c.get("ways") or [])]
                         summary = {"outcome": d.get("outcome"),
+                                   "governor": (d.get("governor") or {}).get("reason") or
+                                               ("cached" if (d.get("governor") or {}).get("cached") else None),
+                                   "related_examples": len(d.get("related_examples") or []),
+                                   "suggested": bool(d.get("suggested")),
                                    "procedures": [str(p.get("procedure_id")) for p in procs if p.get("procedure_id")],
                                    "candidates": len(d.get("candidates") or []),
                                    "candidate_ways": [str(w.get("procedure_id")) for w in cand_ways],
-                                   "verified_solution": any(p.get("verified_solution") for p in procs + cand_ways)}
+                                   "verified_solution": any(p.get("verified_solution") for p in procs + cand_ways)
+                                   or bool((d.get("suggested") or {}).get("verified_solution"))
+                                   or any(e.get("verified_solution") for e in d.get("related_examples") or [])}
                     except (json.JSONDecodeError, AttributeError):
                         summary = {"outcome": "unparsed"}
                 else:

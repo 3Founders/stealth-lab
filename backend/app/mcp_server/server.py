@@ -3891,6 +3891,12 @@ async def find_ways(
     (the planner agent) compile the plan and write `.stealth/` yourself --
     the `plan_and_run` prompt has the format.
 
+    Call it ONCE, before writing code, for any task you would describe in a
+    sentence or more (a bug fix, a feature, a data transformation, a config
+    change). Don't call it for a one-line edit, a question about this repo's
+    own code, or the same request twice -- repeats are served from cache and
+    then refused.
+
     query: what you want done, in plain words ("add a DOCX export").
     repo_claims: the text of this repo's `.stealth/claims.md`
       (`CLAIM|R-001|current|stack|repository|Node 20.11|source=.nvmrc:1#sha=9f2c|version=1`
@@ -3920,24 +3926,76 @@ async def find_ways(
          (see the entry with that goal_id), or `instruction` (do it from the
          text). No node ids, no order, no file writes, no execution -- those
          are the planner's job.
+      4. On any outcome, `related_examples` (when enabled): verified solutions
+         of SIMILAR past tasks -- worked examples, NOT verified to apply here:
+         adapt them to your request, never copy them as-is. On "ambiguous",
+         `suggested` names the one candidate to start from.
 
     Read-only; needs no token. Report what you learn with `report_discovery`.
     """
     import time as _time
 
+    from app.mcp_server.find_ways_governor import governor as _governor
     from app.services.shards import track_shard_requests
 
     t0 = _time.monotonic()
+    gov, caller = _governor(), _find_ways_caller(ctx)
+    decision = gov.check(caller, query, repo_claims) if gov is not None and caller is not None else None
+    if decision is not None and decision.action != "run":
+        await _record_find_ways(ctx, query, decision.reply, {}, (_time.monotonic() - t0) * 1000,
+                                governor=decision.action)
+        return decision.reply
     with track_shard_requests() as shard_stats:
         reply = await _find_ways_impl(
             query, ctx, repo_claims=repo_claims, current_scope_json=current_scope_json, max_depth=max_depth,
             semantic=semantic, use_llm=use_llm, top_k=top_k,
         )
+    if decision is not None:
+        gov.remember(caller, decision.key, reply)
     await _record_find_ways(ctx, query, reply, shard_stats.as_dict(), (_time.monotonic() - t0) * 1000)
     return reply
 
 
-async def _record_find_ways(ctx: Context, query: str, reply: str, shard_requests: dict, total_ms: float) -> None:
+def _find_ways_caller(ctx: Context) -> Optional[str]:
+    """Who the governor bounds: the MCP session of the HTTP request (the hosted server is always reached over
+    HTTP), else the signed-in viewer on that request. None -- no governor -- for an in-process call with no
+    request at all (internal callers, tests)."""
+    try:
+        headers = ctx.headers
+    except Exception:  # noqa: BLE001 -- no HTTP request
+        headers = None
+    if not headers or not hasattr(headers, "get"):
+        return None
+    sid = headers.get("mcp-session-id")
+    if sid:
+        return f"session:{sid}"
+    viewer = _caller_access_scope().viewer_id
+    return f"viewer:{viewer}" if viewer else f"anonymous:{headers.get('user-agent') or '-'}"
+
+
+def _find_ways_client(ctx: Context) -> Optional[dict]:
+    """The calling agent's self-reported MCP client (name/version) and user agent, for per-client call
+    statistics (which orchestrators under- or over-call). Never raises."""
+    info: dict = {}
+    try:
+        params = getattr(ctx.session, "client_params", None)
+        client_info = getattr(params, "clientInfo", None) or getattr(params, "client_info", None)
+        if client_info is not None:
+            info["name"], info["version"] = getattr(client_info, "name", None), getattr(client_info, "version", None)
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        headers = ctx.headers or {}
+        ua = headers.get("user-agent") if hasattr(headers, "get") else None
+        if ua:
+            info["user_agent"] = str(ua)[:200]
+    except Exception:  # noqa: BLE001
+        pass
+    return info or None
+
+
+async def _record_find_ways(ctx: Context, query: str, reply: str, shard_requests: dict, total_ms: float,
+                            governor: Optional[str] = None) -> None:
     """Durable per-request cost record (retrieval_decisions, mode 'find_ways'): the
     physical fan-out and latency of one find_ways call, for measuring -- never the
     repo facts (request-scoped, never stored) and never the reply body."""
@@ -3963,7 +4021,8 @@ async def _record_find_ways(ctx: Context, query: str, reply: str, shard_requests
             _hashlib.sha256(query.encode()).hexdigest(), _caller_access_scope().viewer_id,
             bool(shard_requests.get("unavailable")),
             {"outcome": outcome, "total_ms": round(total_ms, 1), "shard_requests": shard_requests,
-             "shards": shard_requests.get("shards", [])})
+             "shards": shard_requests.get("shards", []), "client": _find_ways_client(ctx),
+             **({"governor": governor} if governor else {})})
     except Exception:  # noqa: BLE001 -- the cost record never fails a request
         _log.warning("find_ways cost record not written", exc_info=True)
 
@@ -4068,15 +4127,40 @@ async def _find_ways_impl(
     # query AND the repo facts -> bounded hierarchy expansion (judged too).
     # The older lexical re-ranker only runs when no semantic judge answered,
     # and the response says so.
+    # Round-4 fix (knowledge_related_examples): the judged Goal candidates feed `related_examples`.
+    related_hits: Optional[list] = (
+        [] if settings.knowledge_related_examples and settings.knowledge_verified_examples else None)
     goal_choice = await _find_ways_goal_choice(
-        pool, query, facts, scope=scope, embedder=embedder, top_k=top_k,
+        pool, query, facts, scope=scope, embedder=embedder, top_k=top_k, collect=related_hits,
     )
+
+    async def _with_related(body: dict, exclude: tuple = ()) -> str:
+        if related_hits is not None:
+            from app.services import retrieval_service as _rs_rel
+
+            try:
+                body["related_examples"] = await _rs_rel.related_examples(
+                    pool, related_hits, scope=scope, limit=settings.knowledge_related_examples_limit,
+                    drop_confidence=settings.knowledge_related_examples_drop_confidence,
+                    exclude_procedure_ids=exclude)
+            except Exception:  # noqa: BLE001 -- examples are an addition; the answer still stands
+                import logging
+
+                logging.getLogger(__name__).warning("related examples unavailable", exc_info=True)
+                body["related_examples"] = []
+        return json.dumps(body, default=str)
+
     if goal_choice is not None:
         outcome, selected_goal, payload = goal_choice
         if outcome != "resolved":
             if outcome == "ambiguous" and payload.get("candidates"):
                 await _attach_candidate_ways(pool, payload["candidates"], query, facts, scope=scope)
-            return json.dumps({"outcome": outcome, "repo_facts": repo_report, **payload}, default=str)
+                if settings.knowledge_suggested_candidate:
+                    suggestion = _suggested_candidate(payload["candidates"])
+                    if suggestion is not None:
+                        payload["suggested"] = suggestion
+            listed = tuple(w["procedure_id"] for c in payload.get("candidates") or [] for w in c.get("ways") or [])
+            return await _with_related({"outcome": outcome, "repo_facts": repo_report, **payload}, listed)
         goal_judgment = payload["goal_judgment"]
     else:
         intent = await _resolve_intent(
@@ -4092,7 +4176,7 @@ async def _find_ways_impl(
                 intent.outcome, intent.selected_goal = "resolved", winner.goal
 
         if intent.outcome != "resolved":
-            return json.dumps({
+            return await _with_related({
                 "outcome": intent.outcome,
                 "repo_facts": repo_report,
                 "goal_judgment": goal_judgment,
@@ -4105,7 +4189,7 @@ async def _find_ways_impl(
                 ],
                 "proposed_goal": intent.proposed_goal,
                 "rationale": intent.rationale,
-            }, default=str)
+            })
         selected_goal = intent.selected_goal
 
     goal_id = selected_goal["id"]
@@ -4138,9 +4222,10 @@ async def _find_ways_impl(
     if selector is not None:
         repo_report["procedure_check"] = selector.report()
 
-    return json.dumps({
+    knowledge = goal_tree_to_knowledge(tree)
+    return await _with_related({
         "outcome": "resolved",
-        **goal_tree_to_knowledge(tree),
+        **knowledge,
         "goal_judgment": goal_judgment,
         "repo_facts": repo_report,
         "next": (
@@ -4148,7 +4233,7 @@ async def _find_ways_impl(
             "(prompt: plan_and_run). Read stealth://procedures/{procedure_id}/claims "
             "for past discoveries. Report fixes/better ways with report_discovery."
         ),
-    }, default=str)
+    }, tuple(str(p["procedure_id"]) for p in knowledge.get("procedures") or [] if p.get("procedure_id")))
 
 
 from app.services.goal_choice import (  # noqa: E402 -- shared with the REST API
@@ -4159,9 +4244,28 @@ from app.services.goal_choice import (  # noqa: E402 -- shared with the REST API
 
 
 async def _find_ways_goal_choice(
-    pool: Any, query: str, facts: list, *, scope: Any, embedder: Any, top_k: int,
+    pool: Any, query: str, facts: list, *, scope: Any, embedder: Any, top_k: int, collect: Optional[list] = None,
 ) -> Optional[tuple[str, Optional[dict], dict]]:
-    return await _find_ways_goal_choice_impl(pool, query, facts, scope=scope, embedder=embedder, top_k=top_k)
+    return await _find_ways_goal_choice_impl(pool, query, facts, scope=scope, embedder=embedder, top_k=top_k,
+                                             **({"collect": collect} if collect is not None else {}))
+
+
+def _suggested_candidate(candidates: list) -> Optional[dict]:
+    """Round-4 fix (knowledge_suggested_candidate): on an ambiguous answer, weaker agents mis-arbitrated between
+    candidates. Name ONE: the best-scored candidate that has a way, with that way's verified solution when it has
+    one. Still a suggestion -- the request differs from the Goal it was observed on, so the agent adapts it."""
+    ranked = sorted((c for c in candidates if c.get("ways")), key=lambda c: -(c.get("score") or 0.0))
+    if not ranked:
+        return None
+    best, way = ranked[0], ranked[0]["ways"][0]
+    goal = best.get("goal") or {}
+    return {
+        "goal_id": goal.get("id") or goal.get("goal_id"), "goal_name": goal.get("canonical_name") or goal.get("name"),
+        "score": best.get("score"), "procedure_id": way.get("procedure_id"), "way": way.get("name"),
+        **({"verified_solution": way["verified_solution"]} if way.get("verified_solution") else {}),
+        "how_to_use": ("The closest known Goal to your request -- not the same Goal. Follow its way and adapt its "
+                       "verified solution to what YOUR request asks; check every difference."),
+    }
 
 
 DISCOVERY_KINDS = frozenset({"fix", "missing_step", "precondition", "better_way", "correction", "filled_gap"})

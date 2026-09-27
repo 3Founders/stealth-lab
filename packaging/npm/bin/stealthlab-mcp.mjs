@@ -10,6 +10,7 @@ import { parseArgs } from "node:util";
 import { clients, launchSpec, SERVER_NAME } from "../lib/clients.mjs";
 import { configPath, readConfig, readPackage, resolveSettings, writeConfig } from "../lib/config.mjs";
 import { runStdioRelay } from "../lib/proxy.mjs";
+import { runPromptHook } from "../lib/hook.mjs";
 
 const pkg = readPackage();
 const UA = `stealthlab-mcp/${pkg.version} node/${process.versions.node}`;
@@ -23,6 +24,8 @@ Usage:
   stealthlab-mcp doctor                      check the hosted server is reachable
   stealthlab-mcp login --token <token>       save a token (only report_discovery needs one)
   stealthlab-mcp logout                      forget the saved token
+  stealthlab-mcp hook-prompt                 Claude Code UserPromptSubmit hook (installed by "install"):
+                                             looks each task up with find_ways and adds what Kel knows
   stealthlab-mcp [--url <url>]               run the stdio relay (what Claude Desktop launches)
 
 Install options:
@@ -31,6 +34,7 @@ Install options:
   --url <url>     MCP endpoint (default: $STEALTHLAB_MCP_URL, saved config, or the built-in URL)
   --token <tok>   bearer token to send (optional; reads are anonymous)
   --dry-run       show what would change, change nothing
+  --no-hooks      Claude Code: register the MCP server only, without the knowledge hook
 
 Config: ${configPath()}
 `;
@@ -60,7 +64,8 @@ async function cmdInstall(v) {
   const settings = resolveSettings(v);
   const url = requireUrl(settings);
   const { chosen } = pickClients(v.client);
-  const ctx = { url, token: settings.token, stdio: { ...launchSpec(), args: [...launchSpec().args, "--url", url] } };
+  const ctx = { url, token: settings.token, stdio: { ...launchSpec(), args: [...launchSpec().args, "--url", url] },
+                hooks: !v["no-hooks"], hookCommand: { ...launchSpec(), args: [...launchSpec().args, "hook-prompt"] } };
 
   if (!v["dry-run"]) writeConfig({ url, ...(v.token ? { token: v.token } : {}) });
 
@@ -145,6 +150,7 @@ async function main() {
         url: { type: "string" },
         token: { type: "string" },
         "dry-run": { type: "boolean" },
+        "no-hooks": { type: "boolean" },
         help: { type: "boolean", short: "h" },
         version: { type: "boolean", short: "v" },
       },
@@ -172,6 +178,14 @@ async function main() {
     case "logout":
       writeConfig({ token: undefined });
       return out("token removed");
+    case "hook-prompt": {
+      const chunks = [];
+      for await (const c of process.stdin) chunks.push(c);
+      return runPromptHook({
+        stdinText: Buffer.concat(chunks).toString("utf8"), settings: resolveSettings(v), userAgent: UA,
+        write: (s) => process.stdout.write(s + "\n"), log: out,
+      });
+    }
     case "config":
       return out(JSON.stringify({ ...readConfig(), token: readConfig().token ? "<set>" : undefined }, null, 2));
     case undefined:

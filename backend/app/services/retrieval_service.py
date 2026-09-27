@@ -1328,3 +1328,78 @@ async def search_goal_candidates_page(
 def replace_cfg(cfg: RetrievalConfig, **kw) -> RetrievalConfig:
     from dataclasses import replace
     return replace(cfg, **kw)
+
+
+# ------------------------------------------------------------ related examples
+# DS-1000 round 4 (experiments/ds1000/PREREGISTRATION_4.md): a variant of a known task is correctly a DIFFERENT
+# Goal, so the Goal tier answers ambiguous/no_match -- and the agent got nothing, although Kel held the
+# neighbouring verified solution. Related examples carry that knowledge on every outcome, clearly labelled.
+
+RELATED_EXAMPLE_LABEL = ("similar solved problem -- NOT verified to apply to this request; "
+                         "use it as a worked example and adapt it, never copy it as-is")
+_RELATION_ORDER = {"matches": 0, "partial": 1, "unrelated": 2}
+
+
+def related_example_goals(hits: Sequence[Hit], *, drop_confidence: float, limit: int = 8) -> list[Hit]:
+    """Pure: the judged Goal candidates that may contribute related examples. Only JUDGED candidates are
+    eligible (an unjudged Goal was never checked against this request). A candidate is dropped only on a
+    FIRM 'unrelated' (confidence >= `drop_confidence`); a close variant is routinely 'unrelated' at ~0.5 and
+    stays. Order: matches, partial, then low-confidence unrelated; within each, fused retrieval rank."""
+    best: dict[str, Hit] = {}
+    for h in hits:
+        if not h.judged or h.relation not in _RELATION_ORDER:
+            continue
+        if h.relation == "unrelated" and (h.confidence or 0.0) >= drop_confidence:
+            continue
+        seen = best.get(h.id)
+        if seen is None or _RELATION_ORDER[h.relation] < _RELATION_ORDER[seen.relation]:
+            best[h.id] = h
+    return sorted(best.values(), key=lambda h: (_RELATION_ORDER[h.relation], -h.rrf, h.id))[:limit]
+
+
+async def related_examples(
+    pool: Any, hits: Sequence[Hit], *, scope: AccessScope, limit: int = 3, drop_confidence: float = 0.8,
+    exclude_procedure_ids: Sequence[str] = (),
+) -> list[dict]:
+    """Up to `limit` verified solved examples, one per Goal kept by `related_example_goals`, in that order.
+    Each passes the same hard constraints (access scope, staleness, exclusions) as a Procedure, and is read
+    from the provenance model (source_artifacts role 'verified_solution'). No extra judge calls: the Goal
+    verdicts were already made by the Goal tier."""
+    from app.execution.goal_resolution import _verified_solution
+    from app.services.applicability import _CANDIDATE_BASE_WHERE, check_hard_constraints
+    from app.services.routed_reads import fetch_goal_procedures
+    from app.services.verified_solutions import solution_ref
+
+    goals = related_example_goals(hits, drop_confidence=drop_confidence)
+    if not goals or limit <= 0:
+        return []
+    rows = await fetch_goal_procedures(pool, [g.id for g in goals], columns=_hydrate_cols(),
+                                       where=_CANDIDATE_BASE_WHERE)
+    excluded = {str(x) for x in exclude_procedure_ids}
+    by_goal: dict[str, list[dict]] = {}
+    for row in rows:
+        if str(row["procedure_id"]) not in excluded and solution_ref(row.get("source_artifacts")):
+            by_goal.setdefault(str(row.get("achieves_goal_id")), []).append(row)
+    out: list[dict] = []
+    state_cache: dict = {}
+    for goal in goals:
+        candidates = sorted(by_goal.get(goal.id, []), key=lambda r: (
+            r.get("verification_state") != "verified",
+            -(r["t_created"].timestamp() if r.get("t_created") is not None else 0.0)))
+        for row in candidates:
+            res = await check_hard_constraints(pool, row, current_scope={}, access_scope=scope,
+                                               require_verified=False, state_cache=state_cache)
+            if not res.applicable:
+                continue
+            example = await _verified_solution(pool, row)
+            if not example or not example.get("code"):
+                continue
+            out.append({
+                "goal_id": goal.id, "goal_name": goal.name, "procedure_id": str(row["procedure_id"]),
+                "relevance": {"relation": goal.relation, "confidence": goal.confidence},
+                "label": RELATED_EXAMPLE_LABEL, "verified_solution": example,
+            })
+            break
+        if len(out) >= limit:
+            break
+    return out

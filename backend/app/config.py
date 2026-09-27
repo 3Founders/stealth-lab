@@ -131,6 +131,28 @@ class Settings(BaseSettings):
     # (procedures.source_locator + source_artifacts role 'verified_solution', migration 124) and return it with the
     # Procedure from find_ways. Off by default: apply migration 124 everywhere first.
     knowledge_verified_examples: bool = False
+    # DS-1000 round 4 diagnosis (experiments/ds1000/PREREGISTRATION_4.md): variants of a known task are
+    # (correctly) different Goals, so find_ways answered ambiguous/no_match and delivered nothing on ~half of
+    # the requests where Kel held the neighbouring verified solution. `related_examples`: on EVERY outcome, up
+    # to `limit` verified solutions of judged-similar Goals, labelled "not verified to apply". Needs
+    # knowledge_verified_examples (the solutions live on the provenance model). Off until round 5 confirms.
+    knowledge_related_examples: bool = False
+    knowledge_related_examples_limit: int = 3
+    knowledge_related_examples_drop_confidence: float = 0.8
+    # On an ambiguous answer, name ONE suggested candidate (the best-scored one that has a way) so the agent
+    # does not have to arbitrate between candidates itself. Off until round 5 confirms.
+    knowledge_suggested_candidate: bool = False
+
+    # find_ways governor (app/mcp_server/find_ways_governor.py): the server, not the calling model, bounds how
+    # it is used -- identical requests are served from cache, a request repeated more than
+    # `find_ways_identical_limit` times in the window is refused (tool-call loops), a caller is capped at
+    # `find_ways_max_calls_per_window` calls per window, and a request under `find_ways_min_words` words is
+    # answered "handle this yourself". Per process (best effort across instances).
+    find_ways_governor: bool = True
+    find_ways_window_seconds: int = 600
+    find_ways_identical_limit: int = 3
+    find_ways_max_calls_per_window: int = 30
+    find_ways_min_words: int = 3
 
     # --- Vertex AI (OAuth2/ADC, no API key) ---
     # The Cloud Run job's own attached service account already has

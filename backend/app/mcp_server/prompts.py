@@ -288,12 +288,18 @@ You are the planner. StealthLab returns knowledge; you make the plan and
 own every file in `.stealth/`.
 
 1. Facts. If `.stealth/claims.md` is missing, run the survey_repo prompt first.
-2. Ask. Call `find_ways(query=<the task>, repo_claims=<text of .stealth/claims.md>)`.
-   - "ambiguous": show the candidates, pick with the user, call again with a sharper query.
-   - "no_match": say so and do the task without StealthLab.
+2. Ask. Call `find_ways(query=<the task>, repo_claims=<text of .stealth/claims.md>)` once.
    - "resolved": you get `procedures` (each with full `steps`, `alternatives`,
      `repo_fit`, and `verified_solution` when one was recorded: the code that passed its checks
      plus its `locator`; if `code` is null, open the locator yourself) and `unresolved`.
+   - "ambiguous": if it names a `suggested` candidate, start from that one; otherwise pick the
+     closest candidate yourself (or with the user) -- don't re-ask with near-identical wording.
+   - "no_match": do the task without a Procedure, but still read any `related_examples`.
+   - Any outcome may carry `related_examples`: verified solutions of SIMILAR past tasks. They are
+     worked examples, not verified to apply here: compare each to your task, adapt what fits, and
+     never copy one as-is.
+   Small task? If the way you're following has one or two steps, skip steps 4-5: just do it,
+   check it, and go to step 7.
 3. Read past discoveries: `stealth://procedures/<procedure_id>/claims` for each chosen Procedure.
 4. Write `.stealth/procedures.md`: each Procedure under its own header so its steps sit together:
    `PROCEDURE|P-1|<procedure_id>|v<version>|<name>|goal=<goal_name>`

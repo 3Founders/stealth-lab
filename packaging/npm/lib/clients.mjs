@@ -116,6 +116,65 @@ export function removeCodexServer(file) {
   return true;
 }
 
+// --- Claude Code knowledge hook (~/.claude/settings.json) --------------------
+//
+// A UserPromptSubmit hook that runs `stealthlab-mcp hook-prompt`: every task-like prompt gets one
+// find_ways lookup and the knowledge is added to the agent's context (lib/hook.mjs). Our entry is
+// recognised by HOOK_MARK in its command, so other hooks in the file are never touched.
+
+export const HOOK_MARK = "hook-prompt";
+
+export function claudeSettingsPath(env = process.env) {
+  return path.join(env.CLAUDE_CONFIG_DIR || path.join(home(env), ".claude"), "settings.json");
+}
+
+function shellJoin(spec) {
+  return [spec.command, ...spec.args].map((a) => (/[\s"]/.test(a) ? `"${a.replace(/"/g, '\\"')}"` : a)).join(" ");
+}
+
+function readJsonOrThrow(file) {
+  if (!fs.existsSync(file)) return {};
+  const text = fs.readFileSync(file, "utf8");
+  if (!text.trim()) return {};
+  try {
+    return JSON.parse(text);
+  } catch (err) {
+    throw new Error(`${file} is not valid JSON (${err.message}); left untouched -- add the hook by hand`);
+  }
+}
+
+function isOurs(group) {
+  return (group?.hooks || []).some((h) => {
+    const cmd = String(h.command || "");
+    return cmd.includes("stealthlab-mcp") && cmd.trimEnd().endsWith(HOOK_MARK);
+  });
+}
+
+export function upsertClaudeHook(file, commandSpec, timeoutSec = 30) {
+  const doc = readJsonOrThrow(file);
+  if (fs.existsSync(file)) fs.copyFileSync(file, `${file}.bak`);
+  doc.hooks = doc.hooks || {};
+  const groups = (doc.hooks.UserPromptSubmit || []).filter((g) => !isOurs(g));
+  groups.push({ hooks: [{ type: "command", command: shellJoin(commandSpec), timeout: timeoutSec }] });
+  doc.hooks.UserPromptSubmit = groups;
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, JSON.stringify(doc, null, 2) + "\n");
+}
+
+export function removeClaudeHook(file) {
+  if (!fs.existsSync(file)) return false;
+  const doc = readJsonOrThrow(file);
+  const before = doc.hooks?.UserPromptSubmit || [];
+  const after = before.filter((g) => !isOurs(g));
+  if (after.length === before.length) return false;
+  fs.copyFileSync(file, `${file}.bak`);
+  if (after.length) doc.hooks.UserPromptSubmit = after;
+  else delete doc.hooks.UserPromptSubmit;
+  if (doc.hooks && !Object.keys(doc.hooks).length) delete doc.hooks;
+  fs.writeFileSync(file, JSON.stringify(doc, null, 2) + "\n");
+  return true;
+}
+
 // --- CLI-registered clients -------------------------------------------------
 
 function run(bin, args) {
@@ -149,15 +208,20 @@ export function clients({ env = process.env, platform = process.platform } = {})
       id: "claude-code",
       label: "Claude Code",
       detect: () => onPath("claude"),
-      where: () => "claude mcp (user scope)",
-      install: ({ url, token }) => {
+      where: () => "claude mcp (user scope) + knowledge hook in " + claudeSettingsPath(env),
+      install: ({ url, token, hooks = true, hookCommand }) => {
         run("claude", ["mcp", "remove", "--scope", "user", SERVER_NAME]);
         const args = ["mcp", "add", "--scope", "user", "--transport", "http", SERVER_NAME, url];
         if (token) args.push("--header", `Authorization: Bearer ${token}`);
         const r = run("claude", args);
         if (!r.ok) throw new Error(`claude mcp add failed: ${r.out}`);
+        if (hooks && hookCommand) upsertClaudeHook(claudeSettingsPath(env), hookCommand);
+        else removeClaudeHook(claudeSettingsPath(env));
       },
-      uninstall: () => run("claude", ["mcp", "remove", "--scope", "user", SERVER_NAME]).ok,
+      uninstall: () => {
+        const hook = removeClaudeHook(claudeSettingsPath(env));
+        return run("claude", ["mcp", "remove", "--scope", "user", SERVER_NAME]).ok || hook;
+      },
     },
     {
       id: "cursor",
