@@ -169,6 +169,7 @@ Design follows `.scratch/experience_transfer_research.md` (the AutomationBench p
 | **E** | plain retrieval: BM25 top-1 resolved train issue from the **same repo**, with its verified patch |
 | **C1** | a random other train memory item (same repo, hash-chosen), cut to K's exact length. Only where K has notes |
 | **C2** | a generic "how to fix issues" placebo, cut to K's exact length. Only where K has notes |
+| **A0r** | none: a **fresh repeat of A0**, never reused, run **at the same time** as K/E/C1/C2. It measures run-to-run noise (A0r vs A0) and is the time-matched baseline (K vs A0r) |
 
 - **Reuse:** an arm with no notes for an instance reuses that instance's A0 attempt.
 - **Caps:** memory is capped at 3,200 characters, and patches at 2,400.
@@ -179,9 +180,12 @@ Design follows `.scratch/experience_transfer_research.md` (the AutomationBench p
 1. K − A0 > 0, with the CI excluding 0 and p < 0.05;
 2. K − C2 lower bound > −3 points (not a placebo effect);
 3. no repo shows a significant regression;
-4. tokens per resolved instance under K ≤ 1.2× A0's.
+4. tokens per resolved instance under K ≤ 1.2× A0's;
+5. K − A0r > 0, i.e. K also beats the time-matched repeat of A0.
 
-**Secondary:** E − A0, K − E, C1 − A0, C2 − A0, per repo, K − A0 where K had notes, and tokens per resolved instance.
+**Secondary:** E − A0, K − E, C1 − A0, C2 − A0, K − A0r, per repo, K − A0 where K had notes, and tokens per resolved instance.
+
+**Noise:** A0r − A0 and its flip rate (the share of instances whose outcome changed with nothing changed). Read every other difference against it.
 
 **Rules:**
 - No code, prompt or parameter changes after the step budget is frozen.
@@ -300,30 +304,33 @@ python notes.py controls
    python generate.py --part test --arm A0
    ```
 
-2. **Then the other four, started together**, in four terminals or with `&`, so they run at the same time and share provider conditions:
+2. **Then the other five, started together**, in five terminals or with `&`, so they run at the same time and share provider conditions. A0r is the fresh repeat of A0 and must run alongside the others, not later:
 
    ```bash
    python generate.py --part test --arm K
    python generate.py --part test --arm E
    python generate.py --part test --arm C1
    python generate.py --part test --arm C2
+   python generate.py --part test --arm A0r
    ```
 
-3. **Grade all five.** Re-run any with errored instances until none remain:
+   These refuse to start until A0 is complete for every held-out instance and Kel is frozen (step 7).
+
+3. **Grade all six.** Re-run any with errored instances until none remain:
 
    ```bash
-   for arm in A0 K E C1 C2; do python grade.py --tag test_$arm; done
+   for arm in A0 K E C1 C2 A0r; do python grade.py --tag test_$arm; done
    ```
 
 ### 9. Analysis and hand-back
 
 ```bash
-python analyze.py         # prints the primary result, secondaries, cost and VERDICT
+python analyze.py         # prints the primary result, run-to-run noise (A0r), secondaries, cost and VERDICT
 ```
 
 Zip and share `experiments/swebench/runs/`, **excluding `runs/logs/`** (large Docker logs; keep them locally), plus `DEVIATIONS.md`.
 
-**Estimated size:** about 290 train plus about 190 × 5 held-out agent episodes. Episodes where an arm had no notes reuse A0, so there are fewer in practice. At 100–200k tokens per episode on `gpt-oss-120b`, that is roughly 150–250M tokens. Harness grading is about 5–10 minutes per instance per arm, with 4 workers.
+**Estimated size:** about 290 train plus about 190 × 6 held-out agent episodes (A0r adds about 190). Episodes where an arm had no notes reuse A0, so there are fewer in practice. At 100–200k tokens per episode on `gpt-oss-120b`, that is roughly 150–250M tokens. Harness grading is about 5–10 minutes per instance per arm, with 4 workers.
 
 **Tested without Docker (2026-09-27)** on a synthetic repo:
 - design;

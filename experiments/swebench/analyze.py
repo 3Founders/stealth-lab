@@ -8,7 +8,9 @@ Decision rule (fixed): "Kel knowledge helps on repo-level work" only if
   (1) K - A0 > 0 with CI excluding 0 and McNemar p < 0.05,
   (2) K - C2 (placebo) lower CI bound > -0.03,
   (3) no scored repo with a significant regression (McNemar p < 0.05, K < A0),
-  (4) mean cost (tokens) per RESOLVED instance under K is at most 1.2x A0's.
+  (4) mean cost (tokens) per RESOLVED instance under K is at most 1.2x A0's,
+  (5) K - A0r > 0, where A0r is a fresh repeat of A0 run at the same time as K (the time-matched baseline).
+Run-to-run noise is reported as A0r - A0 (discordant pairs = instances whose outcome flipped with no change).
 Harness errors (`status: error`) are excluded from EVERY arm for that instance, never counted as failures.
 """
 from __future__ import annotations
@@ -75,7 +77,10 @@ def main() -> None:
            "n_scored": len(ids), "excluded_harness_errors": sorted(errored)}
     rep["primary_K_minus_A0"] = paired(ids, res["A0"], res["K"], repo_of)
     rep["secondary"] = {f"{y}-{x}": paired(ids, res[x], res[y], repo_of)
-                        for x, y in (("A0", "E"), ("E", "K"), ("A0", "C1"), ("A0", "C2"), ("C2", "K"), ("C1", "K"))}
+                        for x, y in (("A0", "E"), ("E", "K"), ("A0", "C1"), ("A0", "C2"), ("C2", "K"), ("C1", "K"),
+                                     ("A0r", "K"))}
+    noise = paired(ids, res["A0"], res["A0r"], repo_of)
+    rep["noise_A0r_minus_A0"] = {**noise, "flip_rate": round((noise["gained"] + noise["lost"]) / max(noise["n"], 1), 3)}
     rep["per_repo_K_minus_A0"] = {repo: paired([i for i in ids if repo_of[i] == repo], res["A0"], res["K"], repo_of)
                                   for repo in sorted(set(repo_of[i] for i in ids))}
     notes_k = json.loads((swe_env.RUNS / "notes_K.json").read_text(encoding="utf-8"))
@@ -98,13 +103,15 @@ def main() -> None:
         "2_not_explained_by_placebo": bool(placebo.get("n") and placebo["ci95"][0] > -0.03),
         "3_no_repo_regression": not regress, "regressing_repos": regress,
         "4_cost_per_resolved_ratio": round(tok_ratio, 3), "4_cost_ok": tok_ratio <= 1.2,
+        "5_K_beats_time_matched_A0r": bool(rep["secondary"]["K-A0r"].get("n") and rep["secondary"]["K-A0r"]["delta"] > 0),
     }
     rep["decision"]["VERDICT"] = ("KNOWLEDGE HELPS" if all(rep["decision"][k] for k in
-                                  ("1_K_beats_A0", "2_not_explained_by_placebo", "3_no_repo_regression", "4_cost_ok"))
+                                  ("1_K_beats_A0", "2_not_explained_by_placebo", "3_no_repo_regression", "4_cost_ok",
+                                   "5_K_beats_time_matched_A0r"))
                                   else "NOT SHOWN")
     (swe_env.RUNS / "report.json").write_text(json.dumps(rep, indent=1), encoding="utf-8")
-    print(json.dumps({k: rep[k] for k in ("n_scored", "primary_K_minus_A0", "secondary", "coverage_K", "cost",
-                                          "decision")}, indent=1))
+    print(json.dumps({k: rep[k] for k in ("n_scored", "primary_K_minus_A0", "noise_A0r_minus_A0", "secondary",
+                                          "coverage_K", "cost", "decision")}, indent=1))
 
 
 if __name__ == "__main__":

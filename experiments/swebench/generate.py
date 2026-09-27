@@ -2,7 +2,7 @@
 
     python generate.py --part calibration --arm A0 --max-steps 40      # calibration only (unscored)
     python generate.py --part train --arm A0                           # the train pool Kel learns from
-    python generate.py --part test  --arm A0|K|E|C1|C2                 # held-out arms
+    python generate.py --part test  --arm A0|K|E|C1|C2|A0r             # held-out arms (A0r: fresh repeat of A0)
 
 * The agent is app.execution.coding_agent.Agent -- identical tools, budget and decoding for every arm;
   the ONLY difference between arms is the memory block appended to the first user message
@@ -127,7 +127,7 @@ def main() -> None:
     attempts_path = swe_env.RUNS / f"attempts_{tag}.jsonl"
     preds_path = swe_env.RUNS / f"predictions_{tag}.jsonl"
     notes = {}
-    if a.arm != "A0":
+    if a.arm not in ("A0", "A0r"):
         notes = json.loads((swe_env.RUNS / f"notes_{a.arm}.json").read_text(encoding="utf-8"))
     done = {r["instance_id"] for r in load_jsonl(attempts_path) if not r.get("environmental_failure")}
     a0 = {r["instance_id"]: r for r in load_jsonl(swe_env.RUNS / f"attempts_{a.part}_A0.jsonl")
@@ -151,7 +151,7 @@ def main() -> None:
 
     def work(iid: str) -> None:
         text = (notes.get(iid) or {}).get("text")
-        if a.arm != "A0" and not text and iid in a0:
+        if a.arm not in ("A0", "A0r") and not text and iid in a0:
             record(iid, {**a0[iid], "arm": a.arm, "reused_from": "A0"})
             print(f"{iid:<45} reused A0 (no notes)", flush=True)
             return
