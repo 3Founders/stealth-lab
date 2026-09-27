@@ -21,24 +21,36 @@ Whole-repo ingestion speed. These are the stages that cost a cold run, in the or
   2. Fetching never blocks the worker. Every HTTP call, injected or default, runs through
      ``asyncio.to_thread``: the default transport does DNS, TLS handshakes and bounded retry
      sleeps, none of which may stall the event loop the other ingestion lanes share.
-  3. Hash first, then ask. sha256 is computed the moment bytes arrive, and ONE batched query
+  3. License, per file, before any model call. ``app.services.repo_license_policy`` decides
+     ALLOW / QUARANTINE / REJECT for every selected path against a deterministic index built
+     from the pinned tree: each license blob in the tree is fetched once, its own text
+     identified, and the nearest in-repo LICENSE for a path overrides the repository-level
+     SPDX id. Only ALLOW proceeds; REJECT and QUARANTINE skip the fetch and the LLM
+     entirely, are counted separately, and are audited through ``screening``. An
+     unrecognized license is a quarantine, never a permissive default.
+  4. Hash first, then ask. sha256 is computed the moment bytes arrive, and ONE batched query
      asks which of those hashes already produced a captured Procedure for this repository, so
      a re-ingested file is never described twice. When the caller knows a base commit, the
      current tree is diffed against the base tree first and an unchanged blob is not even
      fetched. Same repository + same commit stays idempotent either way: unchanged content is
      recognized, not re-captured.
-  4. Bounded file pipeline. screen -> describe -> capture, at most REPO_FILE_CONCURRENCY files
+  5. Bounded file pipeline. screen -> describe -> capture, at most REPO_FILE_CONCURRENCY files
      in flight, with the same bound handed to ``GoalResolutionCache`` so goal identity
      resolution is capped identically. Output stays in deterministic selection order no matter
      what order files finish in, and screening still precedes every describe call.
-  5. ``BudgetExceeded`` is a cost stop, not a per-file LLM failure: it propagates so the worker
+  6. ``BudgetExceeded`` is a cost stop, not a per-file LLM failure: it propagates so the worker
      hands the job back without spending an attempt, instead of the repo being reported as
      "every description call failed".
 
 Honest scope limits: descriptions are still one call per file (no batching yet), canonical
 writes are still per file, and the content cache only pays off on a repository that has been
 ingested before. License semantics, the screen-then-describe order, and the
-copy-bytes-only-for-executables rule are unchanged by all of the above.
+copy-bytes-only-for-executables rule are unchanged by all of the above. The license verdict
+itself is bounded too: identification is a header matcher, not a detector, so a license whose
+text it does not recognize quarantines the paths that file governs; a license blob that cannot
+be read is treated the same way rather than inheriting the repository-level id; and a
+screening-decision row that fails to write is logged and the skip still counts, because the
+license audit is a record of a skip and never the thing that authorizes it.
 """
 from __future__ import annotations
 
@@ -50,7 +62,7 @@ import os
 import re
 from dataclasses import dataclass
 from types import SimpleNamespace
-from typing import Any, Awaitable, Callable, Iterable, NamedTuple, Optional
+from typing import Any, Awaitable, Callable, Iterable, Mapping, NamedTuple, Optional
 from urllib.parse import quote
 
 log = logging.getLogger(__name__)
@@ -248,6 +260,154 @@ async def fetch_tree(get: Callable[[str], Awaitable[tuple[int, bytes]]], api: st
     return list(doc.get("tree") or [])
 
 
+async def fetch_repo_license(get: Callable[[str], Awaitable[tuple[int, bytes]]], api: str,
+                             commit: str, repository: str) -> Optional[str]:
+    """The repository-level SPDX id GitHub/Licensee reports, pinned to `commit`.
+
+    `?ref={commit}` is load-bearing rather than cosmetic. The unpinned endpoint answers about
+    the default branch, which is a different set of files from the tree this ingester is about
+    to walk, so an unpinned id describes a repository that is not the one being ingested -- and
+    the mismatch is invisible in the result, which would still read as a confident license.
+
+    Anything other than a 200 with a `license.spdx_id` is None, not an error: a repository with
+    no license file is a QUARANTINE the policy decides, not a transport failure, and a transport
+    failure must not be the thing that silently admits one.
+    """
+    try:
+        status, body = await get(f"{api}/license?ref={commit}")
+    except Exception as exc:
+        log.warning("repo_ingestion: license lookup failed for %s@%s (%r); no repository id", repository, commit, exc)
+        return None
+    if status != 200:
+        return None
+    try:
+        doc = json.loads(body.decode("utf-8"))
+    except (ValueError, UnicodeDecodeError):
+        return None
+    declared = doc.get("license") if isinstance(doc, dict) else None
+    if not isinstance(declared, dict):
+        return None
+    spdx = declared.get("spdx_id")
+    return spdx if isinstance(spdx, str) and spdx.strip() else None
+
+
+async def build_license_index(get: Callable[[str], Awaitable[tuple[int, bytes]]], repository: str,
+                              commit: str, tree: list[dict], gate: asyncio.Semaphore,
+                              repo_spdx: Optional[str] = None) -> dict[str, str]:
+    """LICENSE blob path -> the SPDX id that blob's own text identifies, for the pinned tree.
+
+    One raw fetch per license blob, not per selected file: a monorepo with a single root
+    LICENSE and four hundred selected files costs one extra request. `license_paths` is sorted
+    and is exactly the set `resolve_license_file` can return, so the index and the resolver
+    cannot disagree about what exists.
+
+    A blob whose text cannot be read, or read but not identified, is recorded as the empty
+    string rather than omitted or inherited. `decide_repo_license` reads the empty string as
+    "this governing license has no usable id" and quarantines the paths it governs, which is
+    the conservative direction: a license we failed to read is not a license we may use. The
+    one exception is the top-level blob, where `repo_spdx` IS GitHub's own reading of that
+    same file, so an unrecognized header there falls back to the detector's answer rather than
+    to nothing. A subfolder blob never falls back: the farther id does not describe it.
+    """
+    from app.services.repo_license_policy import identify_spdx_from_text, license_paths
+
+    index: dict[str, str] = {}
+    for path in license_paths(tree):
+        index[path] = ""
+        try:
+            async with gate:
+                status, body = await get(raw_url(repository, commit, path))
+        except Exception as exc:
+            log.warning("repo_ingestion: license blob %s/%s unreadable (%r); no id resolved",
+                        repository, path, exc)
+            continue
+        if status != 200 or len(body) > MAX_FILE_BYTES:
+            continue
+        index[path] = identify_spdx_from_text(body.decode("utf-8", "replace")) or ""
+    if repo_spdx:
+        for path in list(index):
+            if not index[path] and "/" not in path:
+                index[path] = repo_spdx
+    return index
+
+
+def partition_by_license(picks: list[tuple[str, Domain]], tree: list[dict], *,
+                         repo_spdx: Optional[str], index: Mapping[str, str],
+                         allow: Optional[Iterable[str]] = None,
+                         ) -> tuple[list[tuple[str, Domain]], list[tuple[str, Domain, Any]]]:
+    """Split the selection into paths that may be ingested and paths that may not.
+
+    One `decide_repo_license` call per selected path, so a repository whose subfolder LICENSE
+    differs from its root LICENSE gets a different verdict per file rather than one verdict for
+    the whole repository. The permitted half is returned in the caller's original selection
+    order; the blocked half carries the full verdict so the caller can count it and write it
+    down. Deterministic in, deterministic out: no wall clock, no iteration over a set.
+    """
+    from app.services.repo_license_policy import decide_repo_license
+
+    permitted: list[tuple[str, Domain]] = []
+    blocked: list[tuple[str, Domain, Any]] = []
+    for path, dom in picks:
+        verdict = decide_repo_license(path=path, tree=tree, repo_spdx=repo_spdx,
+                                      license_spdx_by_path=index, allow=allow)
+        if verdict.decision == "ALLOW":
+            permitted.append((path, dom))
+        else:
+            blocked.append((path, dom, verdict))
+    return permitted, blocked
+
+
+def license_finding(verdict: Any) -> dict:
+    """A non-ALLOW license verdict in the `screening` finding shape, so it can go through the
+    same audit path a content-screen finding uses. `severity` carries the meaning
+    `screening.decide` already knows how to fold: block -> REJECT, flag -> QUARANTINE."""
+    return {
+        "check_type": "license",
+        "signals": [
+            f"repo_license:{verdict.spdx_id or 'NOASSERTION'}",
+            f"repo_license_source:{verdict.source_path or 'repository'}",
+            f"repo_license_verdict:{verdict.decision}",
+        ],
+        "severity": "block" if verdict.decision == "REJECT" else "flag",
+        "reason": verdict.reason,
+    }
+
+
+async def audit_license_verdicts(pool: Any, repository: str, commit: str,
+                                 blocked: list[tuple[str, Domain, Any]], *,
+                                 created_by: str) -> list[str]:
+    """Write one screening-decision row per blocked path. Returns the ids actually written.
+
+    Best effort by design, and the reason is a property of the decision rather than a
+    convenience: the verdict has already been applied to the ingestion (the path is skipped),
+    and the row is the record of that skip. A row that fails to write is therefore logged and
+    counted in the summary, never retried into a failure of the run -- an audit sink being down
+    is not a reason to start ingesting files the policy rejected. The ids come back so a caller
+    can attach them to the job without re-deriving them.
+    """
+    if pool is None or not blocked:
+        return []
+    from app.services import screening
+
+    written: list[str] = []
+    for path, _dom, verdict in blocked:
+        try:
+            result = await screening.record_screening_run(
+                pool,
+                findings=[license_finding(verdict)],
+                detector="repo_ingestion.decide_repo_license",
+                detector_version=verdict.allowlist_version,
+                artifact_uri=f"https://github.com/{repository}/blob/{commit}/{quote(path, safe='/')}",
+                created_by=created_by,
+            )
+        except Exception as exc:
+            log.warning("repo_ingestion: license audit row for %s/%s not written (%r); "
+                        "the skip still counts", repository, path, exc)
+            continue
+        written.extend(str(i) for i in (result.get("decision_ids") or ()))
+    return written
+
+
 async def described_hashes(pool: Any, repository: str, content_hashes: list[str]) -> set[str]:
     """Which of these content hashes already produced a captured Procedure for this repository.
 
@@ -328,8 +488,11 @@ async def _process_one(
         return _Outcome(path, dom.name, sha, None, "binary")
     if not text.strip():
         return _Outcome(path, dom.name, sha, None, "empty")
-    if screen_document_text(text):
-        return _Outcome(path, dom.name, sha, None, "screened")
+    findings = screen_document_text(text)
+    if findings:
+        return _Outcome(path, dom.name, sha, None,
+                        "screened_block" if any(f.get("severity") == "block" for f in findings)
+                        else "screened_flag")
     try:
         desc = await describe_file(client, model, repository, path, dom, text)
     except BudgetExceeded:
@@ -378,11 +541,13 @@ async def ingest_repo(
     per_domain: int = 10, domains: Optional[list[str]] = None, job_id: Optional[int] = None,
     created_by: str = "repo_ingestion", base_commit: Optional[str] = None,
     concurrency: Optional[int] = None, cache_probe: Optional[CacheProbe] = None,
+    license_allow: Optional[Iterable[str]] = None,
 ) -> dict:
     """Ingest one repository at one commit. `base_commit` (when the caller knows the previously
     ingested commit) restricts work to blobs whose git sha changed; `concurrency` overrides
     REPO_FILE_CONCURRENCY; `cache_probe` overrides the described-content query for callers
-    (and offline tests) whose pool cannot serve it.
+    (and offline tests) whose pool cannot serve it; `license_allow` extends the disclosed
+    permissive license allowlist, and cannot lift the copyleft reject floor.
 
     Bytes are collected for the whole selection before the first description, because the
     described-content probe is one query over every hash and a file already known to be described
@@ -390,28 +555,32 @@ async def ingest_repo(
     concurrency: `per_domain * len(DOMAINS)` files of at most MAX_FILE_BYTES, ~22MB at the
     default cap. `asyncio.gather` rather than a TaskGroup on purpose -- it re-raises
     BudgetExceeded itself instead of wrapping it in an ExceptionGroup, which is what the worker's
-    `isinstance(exc, BudgetExceeded)` cost-stop check reads."""
+    `isinstance(exc, BudgetExceeded)` cost-stop check reads.
+
+    The license stage runs between selection and fetching, so a rejected or quarantined file
+    costs one dict lookup rather than a raw download and a description call. `status` is
+    "rejected" or "quarantined" when nothing was captured AND the whole permitted set was
+    empty for that reason; a repository with some permitted files keeps its capture status, and
+    the per-path verdicts for the rest are in `license_decisions` either way."""
     from app.services.goals import GoalResolutionCache
     from app.services.ingestion_sources.github_corpus import _default_http_get
-    from app.services.screening import spdx_license_signal
 
     per_domain = validate_selection(per_domain, domains)
     limit = file_concurrency(concurrency)
     transport = http_get or _default_http_get
+    fetch_gate = asyncio.Semaphore(limit)
 
     async def get(url: str) -> tuple[int, bytes]:
         return await asyncio.to_thread(transport, url)
 
     api = f"https://api.github.com/repos/{repository}"
     commit = commit or _json(await get(f"{api}/commits/HEAD"))["sha"]
-    status, body = await get(f"{api}/license")
-    spdx = ((json.loads(body.decode("utf-8")).get("license") or {}).get("spdx_id")) if status == 200 else None
+    spdx = await fetch_repo_license(get, api, commit, repository)
     summary: dict = {"repository": repository, "commit": commit, "license": spdx, "captured": [],
-                     "skipped": {}, "concurrency": limit}
-    if spdx_license_signal(spdx):
-        return {**summary, "status": "rejected", "reason": f"license {spdx}"}
+                     "skipped": {}, "concurrency": limit, "license_decisions": []}
 
     tree = await fetch_tree(get, api, repository, commit)
+    license_index = await build_license_index(get, repository, commit, tree, fetch_gate, repo_spdx=spdx)
     picks = select_files(tree, per_domain=per_domain, only=domains)
     if base_commit and base_commit != commit:
         try:
@@ -426,6 +595,17 @@ async def ingest_repo(
             picks = [(p, d) for p, d in picks if p in changed]
     summary["selected"] = len(picks)
 
+    permitted, blocked = partition_by_license(
+        picks, tree, repo_spdx=spdx, index=license_index, allow=license_allow)
+    summary["license_blocked"] = len(blocked)
+    if blocked:
+        summary["license_decisions"] = [{"path": p, **v.as_dict()} for p, _d, v in blocked]
+        for path, _dom, verdict in blocked:
+            counter = "license_rejected" if verdict.decision == "REJECT" else "license_quarantined"
+            summary["skipped"][counter] = summary["skipped"].get(counter, 0) + 1
+        await audit_license_verdicts(pool, repository, commit, blocked, created_by=created_by)
+    summary["eligible"] = len(permitted)
+
     async def fetch_one(path: str, dom: Domain) -> _Fetched:
         url = raw_url(repository, commit, path)
         try:
@@ -436,18 +616,20 @@ async def ingest_repo(
             return _Fetched(path, dom, url, None, None, None)
         return _Fetched(path, dom, url, data, hashlib.sha256(data).hexdigest(), None)
 
-    fetch_gate = asyncio.Semaphore(limit)
     async def bounded_fetch(path: str, dom: Domain) -> _Fetched:
         async with fetch_gate:
             return await fetch_one(path, dom)
 
-    fetched_files = await asyncio.gather(*(bounded_fetch(p, d) for p, d in picks))
+    fetched_files = await asyncio.gather(*(bounded_fetch(p, d) for p, d in permitted))
     for f in fetched_files:
         if f.error is not None:
             raise f.error
 
     probe = cache_probe or described_hashes
-    already_described = await probe(pool, repository, sorted({f.sha for f in fetched_files if f.sha}))
+    if fetched_files:
+        already_described = await probe(pool, repository, sorted({f.sha for f in fetched_files if f.sha}))
+    else:
+        already_described = set()
 
     goal_cache = GoalResolutionCache(max_concurrency=limit)
     capture_gate = asyncio.Semaphore(limit)
@@ -468,4 +650,12 @@ async def ingest_repo(
 
     if summary["skipped"].get("llm_error") and not summary["captured"]:
         raise RuntimeError(f"repo_ingestion: every description call failed for {repository}")  # retryable
-    return {**summary, "status": "captured" if summary["captured"] else "empty"}
+    if summary["captured"]:
+        status = "captured"
+    elif summary["skipped"].get("license_rejected"):
+        status = "rejected"
+    elif summary["skipped"].get("license_quarantined"):
+        status = "quarantined"
+    else:
+        status = "empty"
+    return {**summary, "status": status}
