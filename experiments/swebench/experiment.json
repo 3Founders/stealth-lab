@@ -57,7 +57,8 @@
     "max_workers": 4,
     "timeout_s": 1800,
     "cache_level": "env",
-    "_doc": "backend 'modal' runs the official harness with --modal true (no local Docker or image storage); 'docker' runs it locally. max_workers/cache_level apply to docker only."
+    "_doc": "backend 'modal' runs the official harness with --modal true (no local Docker or image storage); 'docker' runs it locally. max_workers/cache_level apply to docker only. grading.dataset: swebench 5.x grades from the maintained copy (it carries each instance's prebuilt image); see DEVIATIONS.md 6 and 8. The design and every prompt still come from dataset.name.",
+    "dataset": "SWE-bench/SWE-bench_Verified"
   },
   "kel_database": "kel_swebench",
   "pinned": null,

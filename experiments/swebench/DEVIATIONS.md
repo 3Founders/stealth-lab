@@ -33,3 +33,18 @@ Each entry: date, what changed, why. Written before continuing (docs/knowledge_s
    dataset. 4.x imports the POSIX-only `resource` module at import time; on Windows a no-op stand-in
    (`winshim/resource.py`, only on the path on Windows) replaces it -- it is used only to raise the local
    open-file limit, which Modal grading never needs. The harness itself is unmodified.
+8. **Back to swebench 5.0.2 + modal 1.5.5, with a transport patch (`modal_compat.py`); entry 7 superseded.**
+   The 4.1.0 gold check errored 12/12 with `FAILED_PRECONDITION: The legacy Sandbox filesystem API is no longer
+   supported`: Modal removed `sandbox.open` server-side, and every released swebench still calls it. So the
+   official Modal path cannot run unpatched in any version. `modal_compat.py` changes two functions in
+   `harness/modal_eval/run_evaluation_modal.py` and nothing else: `write_file` uses
+   `sandbox.filesystem.write_text`, and `get_instance_image` starts from the instance's official prebuilt eval
+   image (`test_spec.image`, the same image the Docker harness runs) instead of 5.0.2's unfinished rebuild.
+   The pylint cgroup write is made best-effort. Patch applied, eval script, log parser and report are the
+   harness's own. `check_env.py` pins the patched file's sha256 (`modal_compat`). Entries 5 (`--cache_level`
+   dropped) and 6 (grading dataset `SWE-bench/SWE-bench_Verified`) apply again.
+   Third fix, found in the one-instance smoke test (psf__requests-1724 resolved remotely, but no local report):
+   the remote result carried `log_dir` as a Linux PosixPath that a Windows client cannot unpickle, so the result
+   was dropped. The remote side returns it as a str; the client saves under its own `get_log_dir` path.
+   `grade.py` runs the harness with PYTHONUTF8=1 on Windows (it writes logs in the locale encoding otherwise).
+   Smoke test after the fix: report.json saved locally, resolved: true.

@@ -50,6 +50,7 @@ def current() -> dict:
         "kel_commit": _git("rev-parse", "HEAD"), "kel_tree_clean": not dirty,
         "swebench_version": swebench_version, "docker_server": docker, "grading_backend": backend,
         "modal_ready": modal_ready() if backend == "modal" else None,
+        "modal_compat": _modal_compat() if backend == "modal" else None,
         "python": platform.python_version(),
         "dataset": cfg["dataset"]["name"], "dataset_revision": dataset_revision(),
         "model": cfg["model"]["id"],
@@ -72,6 +73,17 @@ def modal_ready() -> bool:
     except Exception:  # noqa: BLE001
         return False
     return (Path.home() / ".modal.toml").exists() or bool(os.environ.get("MODAL_TOKEN_ID"))
+
+
+def _modal_compat() -> str | None:
+    """sha256 of the patched harness Modal runner (modal_compat.py), or None when the patch is not applied."""
+    import hashlib
+
+    import modal_compat
+    try:
+        return hashlib.sha256(modal_compat.target().read_bytes()).hexdigest() if modal_compat.applied() else None
+    except SystemExit:
+        return None
 
 
 def dataset_revision() -> str | None:
@@ -98,6 +110,8 @@ def require_pinned(*, scored: bool = True) -> dict:
     if env["grading_backend"] == "modal" and not env["modal_ready"]:
         problems.append("grading.backend is modal but modal is not installed/authenticated (pip install "
                         "\"swebench[modal]\" && modal setup)")
+    if env["grading_backend"] == "modal" and env["modal_compat"] is None:
+        problems.append("the harness's Modal runner is not patched for the current Modal API (python modal_compat.py)")
     if scored and env["max_steps"] is None:
         problems.append("agent.max_steps is not frozen yet -- run the calibration stage first")
     if problems:
@@ -109,7 +123,7 @@ def require_pinned(*, scored: bool = True) -> dict:
         print(f"pinned environment written to {PINNED}")
         return env
     pinned = json.loads(PINNED.read_text(encoding="utf-8"))
-    keys = ("kel_commit", "swebench_version", "docker_server", "grading_backend", "python", "dataset_revision", "model", "model_host",
+    keys = ("kel_commit", "swebench_version", "docker_server", "grading_backend", "modal_compat", "python", "dataset_revision", "model", "model_host",
             "max_steps")
     drift = {k: (pinned.get(k), env.get(k)) for k in keys if pinned.get(k) != env.get(k)}
     if drift:
