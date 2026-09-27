@@ -64,4 +64,8 @@ Everything is round-5 KH exactly: tasks (89: 82 transfer + 7 control), models (g
 
 ## Deviations
 
-(none yet)
+1. **2026-09-28, how to verify the design hash (before any scored episode).** `runs6/design.sha256` = `327e846c…`. It is sha256 over these bytes, concatenated:
+   - `runs6/design.json` (identical to `runs5/design.json`);
+   - `PREREGISTRATION_6.md`, `run_r6.py` and `analyze_r6.py` exactly as committed in `b31f85d` (LF line endings);
+   - `../kel_product_arm.py` as committed in `b31f85d`, but with CRLF line endings (its Windows checkout when hashed).
+   A later rebase re-checked-out the files with `core.autocrlf=true`, so the working copies no longer hash to the same value. The content is unchanged; checked against the committed blobs.
