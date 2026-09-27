@@ -1710,6 +1710,12 @@ single synthesized reports into `.scratch/research/`.
    still collects 1526 tests clean post-change. No blocking questions;
    this task had no real ambiguity once `211c81a` landed.)*
 
+8. `[ ]` claimed @2026-09-27 — claude (session 640be25f) **Local executor layer (`stealthlab-exec`)**:
+   opt-in local MCP runtime in `packaging/npm` that runs external coding agents (OpenCode, Codex, Claude, Gemini,
+   OpenHands, Cline) headlessly in git worktrees, verifies with the step's checks, reports `report_model_run`;
+   plus Claude Code executor/delegator agent definitions and SubagentStart/Stop hooks. Spec:
+   `.scratch/prompts/executor_layer_build_prompt.md`. Deliverable: `packaging/npm/EXECUTOR_SUMMARY.md`.
+
 ### Lane INFRA - Docker boot test (opened 2026-08-27, scoped grant for this task)
 
 Scoped ownership for this task only: `docker-compose.yml`, `backend/Dockerfile`,
